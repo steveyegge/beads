@@ -133,12 +133,11 @@ var createCmd = &cobra.Command{
 		}
 
 		// Agent-specific flags
-		roleType, _ := cmd.Flags().GetString("role-type")
 		agentRig, _ := cmd.Flags().GetString("agent-rig")
 
 		// Validate agent-specific flags require --type=agent
-		if (roleType != "" || agentRig != "") && issueType != "agent" {
-			FatalError("--role-type and --agent-rig flags require --type=agent")
+		if agentRig != "" && issueType != "agent" {
+			FatalError("--agent-rig flag requires --type=agent")
 		}
 
 		// Event-specific flags
@@ -204,7 +203,6 @@ var createCmd = &cobra.Command{
 				CreatedBy:          getActorWithGit(),
 				Owner:              getOwner(),
 				MolType:            molType,
-				RoleType:           roleType,
 				Rig:                agentRig,
 				DueAt:              dueAt,
 				DeferUntil:         deferUntil,
@@ -430,18 +428,12 @@ var createCmd = &cobra.Command{
 
 		// Validate explicit ID format if provided
 		if explicitID != "" {
-			// For agent types, use agent-aware validation.
-			// This fixes the bug where 3-char polecat names like "nux" in
-			// "nx-nexus-polecat-nux" were incorrectly treated as hash suffixes.
-			if issueType == "agent" {
-				if err := validation.ValidateAgentID(explicitID); err != nil {
-					FatalError("invalid agent ID: %v", err)
-				}
-			} else {
-				_, err := validation.ValidateIDFormat(explicitID)
-				if err != nil {
-					FatalError("%v", err)
-				}
+			// Basic format validation for all issue types.
+			// Note: Gas Town-specific agent ID validation (mayor, polecat, witness, etc.)
+			// is handled by gastown, not beads core.
+			_, err := validation.ValidateIDFormat(explicitID)
+			if err != nil {
+				FatalError("%v", err)
 			}
 
 			// Validate prefix matches database prefix
@@ -506,7 +498,6 @@ var createCmd = &cobra.Command{
 				CreatedBy:          getActorWithGit(),
 				Owner:              getOwner(),
 				MolType:            string(molType),
-				RoleType:           roleType,
 				Rig:                agentRig,
 				EventCategory:      eventCategory,
 				EventActor:         eventActor,
@@ -566,7 +557,6 @@ var createCmd = &cobra.Command{
 			CreatedBy:          getActorWithGit(),
 			Owner:              getOwner(),
 			MolType:            molType,
-			RoleType:           roleType,
 			Rig:                agentRig,
 			EventKind:          eventCategory,
 			Actor:              eventActor,
@@ -769,8 +759,15 @@ var createCmd = &cobra.Command{
 
 // flushRoutedRepo ensures the target repo's JSONL is updated after routing an issue.
 // This is critical for multi-repo hydration to work correctly (bd-fix-routing).
+// Respects sync mode: skips JSONL export in dolt-native mode (bd-a9ka).
 func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 	ctx := context.Background()
+
+	// Check sync mode before JSONL export (bd-a9ka: dolt-native mode should skip JSONL)
+	if !ShouldExportJSONL(ctx, targetStore) {
+		debug.Logf("skipping JSONL flush for routed repo (dolt-native mode)")
+		return
+	}
 
 	// Expand the repo path and construct the .beads directory path
 	targetBeadsDir := routing.ExpandPath(repoPath)
@@ -826,7 +823,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 
 		// Perform atomic export (temporary file + rename)
 		if err := performAtomicExport(ctx, jsonlPath, issues, targetStore); err != nil {
-			WarnError("failed to export target repo JSONL: %v", err)
+			WarnError("failed to export to target repo: %v", err)
 			return
 		}
 
@@ -905,7 +902,6 @@ func init() {
 	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")
 	createCmd.Flags().Bool("validate", false, "Validate description contains required sections for issue type")
 	// Agent-specific flags (only valid when --type=agent)
-	createCmd.Flags().String("role-type", "", "Agent role type: polecat|crew|witness|refinery|mayor|deacon (requires --type=agent)")
 	createCmd.Flags().String("agent-rig", "", "Agent's rig name (requires --type=agent)")
 	// Event-specific flags (only valid when --type=event)
 	createCmd.Flags().String("event-category", "", "Event category (e.g., patrol.muted, agent.started) (requires --type=event)")
@@ -978,7 +974,6 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 	if molTypeStr != "" {
 		molType = types.MolType(molTypeStr)
 	}
-	roleType, _ := cmd.Flags().GetString("role-type")
 	agentRig, _ := cmd.Flags().GetString("agent-rig")
 
 	// Extract time-based scheduling flags (bd-xwvo fix)
@@ -1024,9 +1019,8 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		Target:    eventTarget,
 		Payload:   eventPayload,
 		// Molecule/agent fields (bd-xwvo fix)
-		MolType:  molType,
-		RoleType: roleType,
-		Rig:      agentRig,
+		MolType: molType,
+		Rig:     agentRig,
 		// Time scheduling fields (bd-xwvo fix)
 		DueAt:      dueAt,
 		DeferUntil: deferUntil,

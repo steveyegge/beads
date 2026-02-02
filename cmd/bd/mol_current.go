@@ -483,6 +483,17 @@ func printMoleculeProgress(mol *MoleculeProgress) {
 		fmt.Printf("\nNext ready: %s - %s\n", mol.NextStep.ID, mol.NextStep.Title)
 		fmt.Printf("  Start with: bd update %s --status in_progress\n", mol.NextStep.ID)
 	}
+
+	// Show hint about viewing step instructions
+	var hintStepID string
+	if mol.CurrentStep != nil {
+		hintStepID = mol.CurrentStep.ID
+	} else if mol.NextStep != nil {
+		hintStepID = mol.NextStep.ID
+	}
+	if hintStepID != "" {
+		fmt.Printf("\n%s Run `bd show %s` to see detailed instructions.\n", ui.RenderAccent("💡"), hintStepID)
+	}
 }
 
 // getStatusIcon returns the icon for a step status
@@ -670,6 +681,11 @@ func printLargeMoleculeSummary(stats *types.MoleculeProgressStats) {
 	fmt.Printf("  bd mol current %s --limit 50        # First 50 steps\n", stats.MoleculeID)
 	fmt.Printf("  bd mol current %s --range 1-50     # Steps 1-50\n", stats.MoleculeID)
 	fmt.Printf("  bd mol progress %s                 # Efficient progress summary\n", stats.MoleculeID)
+
+	// Show hint about viewing step instructions
+	if stats.CurrentStepID != "" {
+		fmt.Printf("\n%s Run `bd show %s` to see detailed instructions.\n", ui.RenderAccent("💡"), stats.CurrentStepID)
+	}
 }
 
 func init() {

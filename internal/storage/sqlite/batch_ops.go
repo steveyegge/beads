@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -231,11 +232,9 @@ func (s *SQLiteStorage) CreateIssues(ctx context.Context, issues []*types.Issue,
 	return s.CreateIssuesWithOptions(ctx, issues, actor, OrphanResurrect)
 }
 
-// BatchCreateOptions contains options for batch issue creation
-type BatchCreateOptions struct {
-	OrphanHandling       OrphanHandling // How to handle missing parent issues
-	SkipPrefixValidation bool           // Skip prefix validation for existing IDs (used during import)
-}
+// BatchCreateOptions is an alias for storage.BatchCreateOptions for backward compatibility.
+// Deprecated: Use storage.BatchCreateOptions directly.
+type BatchCreateOptions = storage.BatchCreateOptions
 
 // CreateIssuesWithOptions creates multiple issues with configurable orphan handling
 func (s *SQLiteStorage) CreateIssuesWithOptions(ctx context.Context, issues []*types.Issue, actor string, orphanHandling OrphanHandling) error {

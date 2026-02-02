@@ -1,3 +1,5 @@
+//go:build cgo
+
 // Package dolt implements the storage interface using Dolt (versioned MySQL-compatible database).
 //
 // This file implements the dolt sql-server management for federation mode.
@@ -313,4 +315,29 @@ func StopServerByPID(pid int) error {
 		// Force kill
 		return process.Kill()
 	}
+}
+
+// DetectRunningServer checks if a dolt sql-server is running on common ports.
+// Returns (host, port, true) if a server is detected, or ("", 0, false) if not.
+// Tries port 3307 first (Gas Town default), then 3306 (Dolt default).
+func DetectRunningServer() (string, int, bool) {
+	host := "127.0.0.1"
+	// Try Gas Town default port first, then standard MySQL port
+	for _, port := range []int{3307, 3306} {
+		if isServerListening(host, port) {
+			return host, port, true
+		}
+	}
+	return "", 0, false
+}
+
+// isServerListening checks if a server is accepting connections on the given host:port.
+func isServerListening(host string, port int) bool {
+	addr := fmt.Sprintf("%s:%d", host, port)
+	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }

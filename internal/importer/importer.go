@@ -15,24 +15,21 @@ import (
 	"github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
-// OrphanHandling defines how to handle hierarchical child issues whose parents are missing.
-// This mirrors the string values historically used by the SQLite backend config.
-type OrphanHandling string
+// OrphanHandling is an alias for storage.OrphanHandling for backward compatibility.
+// Deprecated: Use storage.OrphanHandling directly.
+type OrphanHandling = storage.OrphanHandling
 
+// Orphan handling constants - aliases for storage package constants.
+// Deprecated: Use storage.OrphanStrict, etc. directly.
 const (
-	// OrphanStrict fails import on missing parent (safest)
-	OrphanStrict OrphanHandling = "strict"
-	// OrphanResurrect auto-resurrects missing parents from JSONL history
-	OrphanResurrect OrphanHandling = "resurrect"
-	// OrphanSkip skips orphaned issues with warning
-	OrphanSkip OrphanHandling = "skip"
-	// OrphanAllow imports orphans without validation (default, works around bugs)
-	OrphanAllow OrphanHandling = "allow"
+	OrphanStrict    = storage.OrphanStrict
+	OrphanResurrect = storage.OrphanResurrect
+	OrphanSkip      = storage.OrphanSkip
+	OrphanAllow     = storage.OrphanAllow
 )
 
 // Options contains import configuration
@@ -45,6 +42,7 @@ type Options struct {
 	OrphanHandling             OrphanHandling       // How to handle missing parent issues (default: allow)
 	ClearDuplicateExternalRefs bool                 // Clear duplicate external_ref values instead of erroring
 	ProtectLocalExportIDs      map[string]time.Time // IDs from left snapshot with timestamps for timestamp-aware protection (GH#865)
+	DeletionIDs                []string             // IDs to delete (from JSONL deletion markers)
 }
 
 // Result contains statistics about the import operation
@@ -53,6 +51,7 @@ type Result struct {
 	Updated             int               // Existing issues updated
 	Unchanged           int               // Existing issues that matched exactly (idempotent)
 	Skipped             int               // Issues skipped (duplicates, errors)
+	Deleted             int               // Issues deleted (from deletion markers)
 	Collisions          int               // Collisions detected
 	IDMapping           map[string]string // Mapping of remapped IDs (old -> new)
 	CollisionIDs        []string          // IDs that collided
@@ -156,6 +155,37 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	// Validate no duplicate external_ref values in batch
 	if err := validateNoDuplicateExternalRefs(issues, opts.ClearDuplicateExternalRefs, result); err != nil {
 		return result, err
+	}
+
+	// Process deletion markers before issue upserts
+	// This ensures deletions are applied before any updates that might conflict
+	if len(opts.DeletionIDs) > 0 {
+		if opts.DryRun {
+			// In dry-run mode, just count how many would be deleted
+			for _, id := range opts.DeletionIDs {
+				// Check if issue exists
+				if _, err := store.GetIssue(ctx, id); err == nil {
+					result.Deleted++
+				}
+			}
+		} else {
+			for _, id := range opts.DeletionIDs {
+				// Check if issue exists before trying to delete
+				if _, err := store.GetIssue(ctx, id); err != nil {
+					// Issue doesn't exist - might already be deleted, skip silently
+					continue
+				}
+				if err := store.DeleteIssue(ctx, id); err != nil {
+					if opts.Strict {
+						return result, fmt.Errorf("failed to delete issue %s: %w", id, err)
+					}
+					// Non-strict mode: log warning and continue
+					fmt.Fprintf(os.Stderr, "Warning: failed to delete issue %s: %v\n", id, err)
+					continue
+				}
+				result.Deleted++
+			}
+		}
 	}
 
 	// Detect and resolve collisions
@@ -422,62 +452,6 @@ func handleRename(ctx context.Context, s storage.Storage, existing *types.Issue,
 			}
 		}
 		return "", nil
-
-		/* OLD CODE REMOVED
-		// Different content - this is a collision during rename
-		// Allocate a new ID for the incoming issue instead of using the desired ID
-		prefix, err := s.GetConfig(ctx, "issue_prefix")
-		if err != nil || prefix == "" {
-			prefix = "bd"
-		}
-
-		oldID := existing.ID
-
-		// Retry up to 3 times to handle concurrent ID allocation
-		const maxRetries = 3
-		for attempt := 0; attempt < maxRetries; attempt++ {
-			newID, err := s.AllocateNextID(ctx, prefix)
-			if err != nil {
-				return "", fmt.Errorf("failed to generate new ID for rename collision: %w", err)
-			}
-
-			// Update incoming issue to use the new ID
-			incoming.ID = newID
-
-			// Delete old ID (only on first attempt)
-			if attempt == 0 {
-				if err := s.DeleteIssue(ctx, oldID); err != nil {
-					return "", fmt.Errorf("failed to delete old ID %s: %w", oldID, err)
-				}
-			}
-
-			// Create with new ID
-			err = s.CreateIssue(ctx, incoming, "import-rename-collision")
-			if err == nil {
-				// Success!
-				return oldID, nil
-			}
-
-			// Check if it's a UNIQUE constraint error
-			if !sqlite.IsUniqueConstraintError(err) {
-				// Not a UNIQUE constraint error, fail immediately
-				return "", fmt.Errorf("failed to create renamed issue with collision resolution %s: %w", newID, err)
-			}
-
-			// UNIQUE constraint error - retry with new ID
-			if attempt == maxRetries-1 {
-				// Last attempt failed
-				return "", fmt.Errorf("failed to create renamed issue with collision resolution after %d retries: %w", maxRetries, err)
-			}
-		}
-
-		// Note: We don't update text references here because it would be too expensive
-		// to scan all issues during every import. Text references to the old ID will
-		// eventually be cleaned up by manual reference updates or remain as stale.
-		// This is acceptable because the old ID no longer exists in the system.
-
-		return oldID, nil
-		*/
 	}
 
 	// Check if old ID still exists (it might have been deleted by another clone)
@@ -908,25 +882,13 @@ func upsertIssues(ctx context.Context, store storage.Storage, issues []*types.Is
 				}
 			}
 			if len(batchForDepth) > 0 {
-				// Prefer a backend-specific import/batch API when available, so we can honor
-				// options like SkipPrefixValidation (multi-repo mode) without requiring the
-				// entire importer to be SQLite-specific.
-				type importBatchCreator interface {
-					CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts sqlite.BatchCreateOptions) error
+				// Use the backend-agnostic batch creation API with full options.
+				batchOpts := storage.BatchCreateOptions{
+					OrphanHandling:       opts.OrphanHandling,
+					SkipPrefixValidation: opts.SkipPrefixValidation,
 				}
-				if bc, ok := store.(importBatchCreator); ok {
-					batchOpts := sqlite.BatchCreateOptions{
-						OrphanHandling:       sqlite.OrphanHandling(opts.OrphanHandling),
-						SkipPrefixValidation: opts.SkipPrefixValidation,
-					}
-					if err := bc.CreateIssuesWithFullOptions(ctx, batchForDepth, "import", batchOpts); err != nil {
-						return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
-					}
-				} else {
-					// Generic fallback. OrphanSkip and OrphanStrict are enforced above.
-					if err := store.CreateIssues(ctx, batchForDepth, "import"); err != nil {
-						return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
-					}
+				if err := store.CreateIssuesWithFullOptions(ctx, batchForDepth, "import", batchOpts); err != nil {
+					return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
 				}
 				result.Created += len(batchForDepth)
 			}
@@ -1599,6 +1561,10 @@ func validateNoDuplicateExternalRefs(issues []*types.Issue, clearDuplicates bool
 	seen := make(map[string][]string)
 
 	for _, issue := range issues {
+		// Skip tombstone records - their external_ref is no longer "claimed" (GH#55u)
+		if issue.Status == types.StatusTombstone {
+			continue
+		}
 		if issue.ExternalRef != nil && *issue.ExternalRef != "" {
 			ref := *issue.ExternalRef
 			seen[ref] = append(seen[ref], issue.ID)

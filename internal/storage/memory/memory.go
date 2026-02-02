@@ -322,6 +322,15 @@ func (m *MemoryStorage) CreateIssues(ctx context.Context, issues []*types.Issue,
 	return nil
 }
 
+// CreateIssuesWithFullOptions creates multiple issues with full options control.
+// For MemoryStorage, this delegates to CreateIssues as the options (orphan handling,
+// prefix validation) are primarily relevant for persistent storage backends.
+func (m *MemoryStorage) CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) error {
+	// MemoryStorage doesn't enforce prefix validation or orphan handling
+	// as it's primarily used for testing and no-db mode
+	return m.CreateIssues(ctx, issues, actor)
+}
+
 // GetIssue retrieves an issue by ID
 func (m *MemoryStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	m.mu.RLock()
@@ -1454,6 +1463,28 @@ func (m *MemoryStorage) GetEvents(ctx context.Context, issueID string, limit int
 	return events, nil
 }
 
+// GetAllEventsSince returns all events with ID greater than sinceID, ordered by ID ascending.
+func (m *MemoryStorage) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*types.Event
+	for _, issueEvents := range m.events {
+		for _, event := range issueEvents {
+			if event.ID > sinceID {
+				result = append(result, event)
+			}
+		}
+	}
+
+	// Sort by ID ascending
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID
+	})
+
+	return result, nil
+}
+
 func (m *MemoryStorage) AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1505,6 +1536,20 @@ func (m *MemoryStorage) GetCommentsForIssues(ctx context.Context, issueIDs []str
 	for _, issueID := range issueIDs {
 		if comments, exists := m.comments[issueID]; exists {
 			result[issueID] = comments
+		}
+	}
+	return result, nil
+}
+
+// GetCommentCounts returns the number of comments for each issue in a single batch query.
+func (m *MemoryStorage) GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string]int)
+	for _, issueID := range issueIDs {
+		if comments, exists := m.comments[issueID]; exists {
+			result[issueID] = len(comments)
 		}
 	}
 	return result, nil

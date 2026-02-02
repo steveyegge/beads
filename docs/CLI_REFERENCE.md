@@ -631,6 +631,41 @@ bd sync
 # 5. Push to remote
 ```
 
+### Key-Value Store
+
+Store user-defined key-value pairs that persist across sessions. Useful for feature flags, environment config, or agent memory.
+
+```bash
+# Set a value
+bd kv set <key> <value>
+bd kv set feature_flag true
+bd kv set api_endpoint https://api.example.com
+
+# Get a value
+bd kv get <key>
+bd kv get feature_flag                 # Prints: true
+bd kv get missing_key                  # Prints: missing_key (not set), exits 1
+
+# Delete a key
+bd kv clear <key>
+bd kv clear feature_flag
+
+# List all key-value pairs
+bd kv list
+bd kv list --json                      # Machine-readable output
+```
+
+**Storage notes:**
+- KV data is stored in the local database with a `kv.` prefix
+- In `dolt-native` or `belt-and-suspenders` sync modes, KV data syncs via Dolt remotes
+- In `git-portable` mode, KV data stays local (not exported to JSONL)
+
+**Use cases:**
+- Feature flags: `bd set debug_mode true`
+- Environment config: `bd set staging_url https://staging.example.com`
+- Agent memory: `bd set last_migration 20240115_add_users.sql`
+- Session state: `bd set current_sprint 42`
+
 ## Issue Types
 
 - `bug` - Something broken that needs fixing
@@ -695,9 +730,20 @@ Default output without `--json`:
 
 ```bash
 bd ready
-# bd-42  Fix authentication bug  [P1, bug, in_progress]
-# bd-43  Add user settings page  [P2, feature, open]
+# ○ bd-42 [P1] [bug] - Fix authentication bug
+# ○ bd-43 [P2] [feature] - Add user settings page
 ```
+
+**Dependency visibility:** When issues have blocking dependencies, they appear inline:
+
+```bash
+bd list --parent epic-123
+# ○ bd-123.1 [P1] [task] - Design API (blocks: bd-123.2, bd-123.3)
+# ○ bd-123.2 [P1] [task] - Implement endpoints (blocked by: bd-123.1, blocks: bd-123.3)
+# ○ bd-123.3 [P1] [task] - Add tests (blocked by: bd-123.1, bd-123.2)
+```
+
+This makes blocking relationships visible without running `bd show` on each issue.
 
 ## Common Patterns for AI Agents
 

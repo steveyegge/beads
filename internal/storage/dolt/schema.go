@@ -1,3 +1,5 @@
+//go:build cgo
+
 package dolt
 
 // schema defines the MySQL-compatible database schema for Dolt.
@@ -49,6 +51,8 @@ CREATE TABLE IF NOT EXISTS issues (
     quality_score DOUBLE,
     -- Federation source system field
     source_system VARCHAR(255) DEFAULT '',
+    -- Custom metadata field (GH#1406)
+    metadata JSON DEFAULT (JSON_OBJECT()),
     -- Source repo for multi-repo
     source_repo VARCHAR(512) DEFAULT '',
     -- Close reason
@@ -75,6 +79,7 @@ CREATE TABLE IF NOT EXISTS issues (
     defer_until DATETIME,
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
+    INDEX idx_issues_issue_type (issue_type),
     INDEX idx_issues_assignee (assignee),
     INDEX idx_issues_created_at (created_at),
     INDEX idx_issues_external_ref (external_ref)
@@ -266,16 +271,20 @@ INSERT IGNORE INTO config (` + "`key`" + `, value) VALUES
 `
 
 // readyIssuesView is a MySQL-compatible view for ready work
-// Note: Dolt supports recursive CTEs like SQLite
+// Note: Dolt supports recursive CTEs like SQLite.
+// Uses EXISTS subquery instead of JOIN to avoid Dolt mergeJoinIter panic.
 const readyIssuesView = `
 CREATE OR REPLACE VIEW ready_issues AS
 WITH RECURSIVE
   blocked_directly AS (
     SELECT DISTINCT d.issue_id
     FROM dependencies d
-    JOIN issues blocker ON d.depends_on_id = blocker.id
     WHERE d.type = 'blocks'
-      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+      AND EXISTS (
+        SELECT 1 FROM issues blocker
+        WHERE blocker.id = d.depends_on_id
+          AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+      )
   ),
   blocked_transitively AS (
     SELECT issue_id, 0 as depth
@@ -296,17 +305,32 @@ WHERE i.status = 'open'
   );
 `
 
-// blockedIssuesView is a MySQL-compatible view for blocked issues
+// blockedIssuesView is a MySQL-compatible view for blocked issues.
+// Uses subquery instead of three-table join to avoid Dolt mergeJoinIter panic.
 const blockedIssuesView = `
 CREATE OR REPLACE VIEW blocked_issues AS
 SELECT
     i.*,
-    COUNT(d.depends_on_id) as blocked_by_count
+    (SELECT COUNT(*)
+     FROM dependencies d
+     WHERE d.issue_id = i.id
+       AND d.type = 'blocks'
+       AND EXISTS (
+         SELECT 1 FROM issues blocker
+         WHERE blocker.id = d.depends_on_id
+           AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+       )
+    ) as blocked_by_count
 FROM issues i
-JOIN dependencies d ON i.id = d.issue_id
-JOIN issues blocker ON d.depends_on_id = blocker.id
 WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-  AND d.type = 'blocks'
-  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-GROUP BY i.id;
+  AND EXISTS (
+    SELECT 1 FROM dependencies d
+    WHERE d.issue_id = i.id
+      AND d.type = 'blocks'
+      AND EXISTS (
+        SELECT 1 FROM issues blocker
+        WHERE blocker.id = d.depends_on_id
+          AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+      )
+  );
 `

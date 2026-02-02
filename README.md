@@ -2,6 +2,8 @@
 
 **Distributed, git-backed graph issue tracker for AI agents.**
 
+**Platforms:** macOS, Linux, Windows, FreeBSD
+
 [![License](https://img.shields.io/github/license/steveyegge/beads)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/steveyegge/beads)](https://goreportcard.com/report/github.com/steveyegge/beads)
 [![Release](https://img.shields.io/github/v/release/steveyegge/beads)](https://github.com/steveyegge/beads/releases)
@@ -13,16 +15,18 @@ Beads provides a persistent, structured memory for coding agents. It replaces me
 ## ⚡ Quick Start
 
 ```bash
-# Install (macOS/Linux/FreeBSD)
+# Install beads CLI (system-wide - don't clone this repo into your project)
 curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 
-# Initialize (Humans run this once)
+# Initialize in YOUR project
+cd your-project
 bd init
 
 # Tell your agent
 echo "Use 'bd' for task tracking" >> AGENTS.md
-
 ```
+
+**Note:** Beads is a CLI tool you install once and use everywhere. You don't need to clone this repository into your project.
 
 ## 🛠 Features
 
@@ -70,5 +74,5 @@ See [docs/COMMUNITY_TOOLS.md](docs/COMMUNITY_TOOLS.md) for a curated list of com
 
 ## 📝 Documentation
 
-* [Installing](docs/INSTALLING.md) | [Agent Workflow](AGENT_INSTRUCTIONS.md) | [Articles](ARTICLES.md) | [Sync Branch Mode](docs/PROTECTED_BRANCHES.md) | [Troubleshooting](docs/TROUBLESHOOTING.md) | [FAQ](docs/FAQ.md)
+* [Installing](docs/INSTALLING.md) | [Agent Workflow](AGENT_INSTRUCTIONS.md) | [Copilot Setup](docs/COPILOT_INTEGRATION.md) | [Articles](ARTICLES.md) | [Sync Branch Mode](docs/PROTECTED_BRANCHES.md) | [Troubleshooting](docs/TROUBLESHOOTING.md) | [FAQ](docs/FAQ.md)
 * [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/steveyegge/beads)

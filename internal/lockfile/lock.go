@@ -10,6 +10,14 @@ import (
 	"time"
 )
 
+// ErrLocked is returned when a lock cannot be acquired because it is held by another process.
+var ErrLocked = errDaemonLocked
+
+// IsLocked returns true if the error indicates a lock is held by another process.
+func IsLocked(err error) bool {
+	return err == errDaemonLocked
+}
+
 // LockInfo represents the metadata stored in the daemon.lock file
 type LockInfo struct {
 	PID       int       `json:"pid"`

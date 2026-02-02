@@ -12,7 +12,6 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
@@ -295,10 +294,10 @@ func CheckLegacyDaemonConfig(path string) DoctorCheck {
 // be kept updated, causing multi-repo hydration to become stale (bd-fix-routing).
 func CheckHydratedRepoDaemons(path string) DoctorCheck {
 	beadsDir := filepath.Join(path, ".beads")
-	dbPath := filepath.Join(beadsDir, "beads.db")
 
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Hydrated Repo Daemons",

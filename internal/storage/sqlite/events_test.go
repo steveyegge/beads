@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -343,6 +345,145 @@ func TestEventTypesInHistory(t *testing.T) {
 	}
 	if !eventTypes[types.EventClosed] {
 		t.Error("Expected EventClosed in history")
+	}
+}
+
+func TestGetAllEventsSinceReturnsAllColumns(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create an issue (prerequisite for events due to FK constraint)
+	issue := &types.Issue{
+		Title:     "Test issue for events",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	err := store.CreateIssue(ctx, issue, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Insert an event directly with ALL fields populated.
+	// No single code path populates old_value, new_value, AND comment together,
+	// so we use direct SQL to ensure GetAllEventsSince reads every column.
+	oldVal := "old-status"
+	newVal := "new-status"
+	commentText := "status change reason"
+	createdAt := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
+
+	_, err = store.db.ExecContext(ctx, `
+		INSERT INTO events (issue_id, event_type, actor, old_value, new_value, comment, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, issue.ID, types.EventStatusChanged, "alice", oldVal, newVal, commentText, createdAt)
+	if err != nil {
+		t.Fatalf("Direct INSERT INTO events failed: %v", err)
+	}
+
+	// Call GetAllEventsSince with sinceID=0 to get all events
+	events, err := store.GetAllEventsSince(ctx, 0)
+	if err != nil {
+		t.Fatalf("GetAllEventsSince failed: %v", err)
+	}
+
+	// Find the event we inserted (it should be the status_changed event)
+	var found *types.Event
+	for _, e := range events {
+		if e.EventType == types.EventStatusChanged {
+			found = e
+			break
+		}
+	}
+
+	if found == nil {
+		t.Fatal("Expected to find the status_changed event in GetAllEventsSince results")
+	}
+
+	// Verify ALL fields are correctly populated
+	if found.ID == 0 {
+		t.Error("Expected non-zero ID")
+	}
+	if found.IssueID != issue.ID {
+		t.Errorf("Expected IssueID %q, got %q", issue.ID, found.IssueID)
+	}
+	if found.EventType != types.EventStatusChanged {
+		t.Errorf("Expected EventType %q, got %q", types.EventStatusChanged, found.EventType)
+	}
+	if found.Actor != "alice" {
+		t.Errorf("Expected Actor %q, got %q", "alice", found.Actor)
+	}
+	if found.OldValue == nil {
+		t.Fatal("Expected OldValue to be non-nil")
+	}
+	if *found.OldValue != oldVal {
+		t.Errorf("Expected OldValue %q, got %q", oldVal, *found.OldValue)
+	}
+	if found.NewValue == nil {
+		t.Fatal("Expected NewValue to be non-nil")
+	}
+	if *found.NewValue != newVal {
+		t.Errorf("Expected NewValue %q, got %q", newVal, *found.NewValue)
+	}
+	if found.Comment == nil {
+		t.Fatal("Expected Comment to be non-nil")
+	}
+	if *found.Comment != commentText {
+		t.Errorf("Expected Comment %q, got %q", commentText, *found.Comment)
+	}
+	if found.CreatedAt.IsZero() {
+		t.Error("Expected non-zero CreatedAt")
+	}
+	// Compare time with second precision (SQLite may not store sub-second precision)
+	if found.CreatedAt.Unix() != createdAt.Unix() {
+		t.Errorf("Expected CreatedAt %v, got %v", createdAt, found.CreatedAt)
+	}
+}
+
+// TestCreateIssueEventType verifies that CreateIssue accepts event type
+// without requiring it in types.custom config (GH#1356).
+// Uses a fresh DB without the custom types that setupTestDB adds.
+func TestCreateIssueEventType(t *testing.T) {
+	// Set up DB without event in types.custom to reproduce the real bug
+	tmpDir, err := os.MkdirTemp("", "beads-event-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	ctx := context.Background()
+
+	store, err := New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+	// Deliberately NOT setting types.custom — event should work without it
+
+	event := &types.Issue{
+		Title:     "state change audit trail",
+		Status:    types.StatusClosed,
+		Priority:  4,
+		IssueType: types.TypeEvent,
+	}
+	err = store.CreateIssue(ctx, event, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue with event type should succeed without types.custom, got: %v", err)
+	}
+
+	// Verify the issue was persisted
+	got, err := store.GetIssue(ctx, event.ID)
+	if err != nil {
+		t.Fatalf("GetIssue failed: %v", err)
+	}
+	if got.IssueType != types.TypeEvent {
+		t.Errorf("Expected IssueType %q, got %q", types.TypeEvent, got.IssueType)
 	}
 }
 

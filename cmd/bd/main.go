@@ -107,6 +107,10 @@ var (
 	// commandTipIDsShown tracks which tip IDs were shown in this command (deduped).
 	// This is used for tip-commit message formatting.
 	commandTipIDsShown map[string]struct{}
+
+	// processSem holds the file-based semaphore slot acquired before opening
+	// a dolt database. Released in PersistentPostRun after store.Close().
+	processSem *ProcessSemaphore
 )
 
 // readOnlyCommands lists commands that only read from the database.
@@ -123,6 +127,7 @@ var readOnlyCommands = map[string]bool{
 	"graph":      true,
 	"duplicates": true,
 	"comments":   true, // list comments (not add)
+	"current":    true, // bd sync mode current
 	// NOTE: "export" is NOT read-only - it writes to clear dirty issues and update jsonl_file_hash
 }
 
@@ -614,6 +619,12 @@ var rootCmd = &cobra.Command{
 			noDaemon = true
 		}
 
+		// Restore should always run in direct mode. It performs git checkouts to read
+		// historical issue data, which could conflict with daemon operations.
+		if cmd.Name() == "restore" {
+			noDaemon = true
+		}
+
 		// Wisp operations auto-bypass daemon
 		// Wisps are ephemeral (Ephemeral=true) and never exported to JSONL,
 		// so daemon can't help anyway. This reduces friction in wisp workflows.
@@ -836,6 +847,17 @@ var rootCmd = &cobra.Command{
 		}
 
 		if backend == configfile.BackendDolt {
+			// Acquire process-level semaphore before opening dolt DB.
+			// This limits concurrent dolt access across ALL bd processes
+			// (gt, hooks, CLI) to prevent lock contention hangs.
+			sem, semErr := acquireProcessSemaphore(beadsDir)
+			if semErr != nil {
+				debug.Logf("process semaphore: failed to acquire: %v (proceeding without)", semErr)
+				// Non-fatal: proceed without semaphore rather than blocking all bd commands
+			} else {
+				processSem = sem
+			}
+
 			// For Dolt, use the dolt subdirectory
 			doltPath := filepath.Join(beadsDir, "dolt")
 
@@ -846,7 +868,7 @@ var rootCmd = &cobra.Command{
 				opts.ServerHost = cfg.GetDoltServerHost()
 				opts.ServerPort = cfg.GetDoltServerPort()
 				if cfg.Database != "" {
-					opts.Database = cfg.Database
+					opts.Database = cfg.GetDoltDatabase()
 				}
 			}
 
@@ -1034,6 +1056,13 @@ var rootCmd = &cobra.Command{
 		if store != nil {
 			_ = store.Close()
 		}
+
+		// Release process-level semaphore after store is closed
+		if processSem != nil {
+			processSem.Release()
+			processSem = nil
+		}
+
 		if profileFile != nil {
 			pprof.StopCPUProfile()
 			_ = profileFile.Close()

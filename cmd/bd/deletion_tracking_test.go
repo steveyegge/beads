@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -398,6 +399,7 @@ func TestSnapshotManagement(t *testing.T) {
 // TestMultiRepoDeletionTracking tests deletion tracking with multi-repo mode
 // This is the test for bd-4oob: snapshot files need to be created per-JSONL file
 func TestMultiRepoDeletionTracking(t *testing.T) {
+	initConfigForTest(t)
 	// Setup workspace directories
 	primaryDir := t.TempDir()
 	additionalDir := t.TempDir()
@@ -566,6 +568,7 @@ func TestMultiRepoDeletionTracking(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_EmptyPaths tests handling of empty path configs
 func TestGetMultiRepoJSONLPaths_EmptyPaths(t *testing.T) {
+	initConfigForTest(t)
 	// Test with empty primary (should default to ".")
 	config.Set("repos.primary", "")
 	config.Set("repos.additional", []string{})
@@ -582,6 +585,7 @@ func TestGetMultiRepoJSONLPaths_EmptyPaths(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_Duplicates tests deduplication of paths
 func TestGetMultiRepoJSONLPaths_Duplicates(t *testing.T) {
+	initConfigForTest(t)
 	// Setup temp dirs
 	primaryDir := t.TempDir()
 	
@@ -618,6 +622,7 @@ func TestGetMultiRepoJSONLPaths_Duplicates(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_PathsWithSpaces tests handling of paths containing spaces
 func TestGetMultiRepoJSONLPaths_PathsWithSpaces(t *testing.T) {
+	initConfigForTest(t)
 	// Create temp dir with space in name
 	baseDir := t.TempDir()
 	primaryDir := filepath.Join(baseDir, "my project")
@@ -658,6 +663,7 @@ func TestGetMultiRepoJSONLPaths_PathsWithSpaces(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_RelativePaths tests handling of relative paths
 func TestGetMultiRepoJSONLPaths_RelativePaths(t *testing.T) {
+	initConfigForTest(t)
 	// Note: Current implementation takes paths as-is without normalization
 	// This test documents current behavior
 	config.Set("repos.primary", ".")
@@ -692,6 +698,7 @@ func TestGetMultiRepoJSONLPaths_RelativePaths(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_TildeExpansion tests that tilde is NOT expanded
 func TestGetMultiRepoJSONLPaths_TildeExpansion(t *testing.T) {
+	initConfigForTest(t)
 	// Current implementation does NOT expand tilde - it's used literally
 	config.Set("repos.primary", "~/repos/main")
 	config.Set("repos.additional", []string{"~/repos/other"})
@@ -846,6 +853,7 @@ func TestMultiRepoSnapshotIsolation(t *testing.T) {
 // - Primary repo: writes all issues (from all repos)
 // - Non-primary repos: only writes issues matching their prefix
 func TestMultiRepoFlushPrefixFiltering(t *testing.T) {
+	initConfigForTest(t)
 	// Setup workspace directories
 	primaryDir := t.TempDir()
 	additionalDir := t.TempDir()
@@ -908,7 +916,7 @@ func TestMultiRepoFlushPrefixFiltering(t *testing.T) {
 
 	// Use batch create with SkipPrefixValidation to simulate multi-repo hydration
 	// (in real multi-repo mode, issues from other repos are imported with prefix validation skipped)
-	if err := store.CreateIssuesWithFullOptions(ctx, []*types.Issue{primaryIssue, additionalIssue}, "test", sqlite.BatchCreateOptions{SkipPrefixValidation: true}); err != nil {
+	if err := store.CreateIssuesWithFullOptions(ctx, []*types.Issue{primaryIssue, additionalIssue}, "test", storage.BatchCreateOptions{SkipPrefixValidation: true, OrphanHandling: storage.OrphanAllow}); err != nil {
 		t.Fatalf("Failed to batch create issues: %v", err)
 	}
 

@@ -51,6 +51,13 @@ func checkAndAutoImport(ctx context.Context, store storage.Storage) bool {
 		return false
 	}
 
+	// Skip JSONL import in dolt-native mode — there is no JSONL to import,
+	// and GetStatistics can panic with a nil pointer when the Dolt backend
+	// connection is not fully initialized.
+	if !ShouldImportJSONL(ctx, store) {
+		return false
+	}
+
 	// Check if database has any issues
 	stats, err := store.GetStatistics(ctx)
 	if err != nil || stats.TotalIssues > 0 {

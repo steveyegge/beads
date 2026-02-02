@@ -16,6 +16,7 @@ const (
 	CategoryIntegration = "Integrations"
 	CategoryMetadata    = "Metadata"
 	CategoryMaintenance = "Maintenance"
+	CategoryPerformance = "Performance"
 	CategoryFederation  = "Federation"
 )
 
@@ -25,6 +26,7 @@ var CategoryOrder = []string{
 	CategoryData,
 	CategoryGit,
 	CategoryRuntime,
+	CategoryPerformance,
 	CategoryIntegration,
 	CategoryFederation,
 	CategoryMetadata,

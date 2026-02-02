@@ -3,6 +3,7 @@ package types
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"strings"
@@ -48,6 +49,11 @@ type Issue struct {
 	// ===== External Integration =====
 	ExternalRef  *string `json:"external_ref,omitempty"`  // e.g., "gh-9", "jira-ABC"
 	SourceSystem string  `json:"source_system,omitempty"` // Adapter/system that created this issue (federation)
+
+	// ===== Custom Metadata =====
+	// Metadata holds arbitrary JSON data for extension points (tool annotations, file lists, etc.)
+	// Validated as well-formed JSON on create/update. See GH#1406.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 
 	// ===== Compaction Metadata =====
 	CompactionLevel   int        `json:"compaction_level,omitempty"`
@@ -108,7 +114,7 @@ type Issue struct {
 	RoleBead     string     `json:"role_bead,omitempty"`     // Role definition bead (required for agents)
 	AgentState   AgentState `json:"agent_state,omitempty"`   // Agent state: idle|running|stuck|stopped
 	LastActivity *time.Time `json:"last_activity,omitempty"` // Updated on each action (timeout detection)
-	RoleType     string     `json:"role_type,omitempty"`     // Role: polecat|crew|witness|refinery|mayor|deacon
+	RoleType     string     `json:"role_type,omitempty"`     // Agent role type (application-defined)
 	Rig          string     `json:"rig,omitempty"`           // Rig name (empty for town-level agents)
 
 	// ===== Molecule Type Fields (swarm coordination) =====
@@ -148,6 +154,7 @@ func (i *Issue) ComputeContentHash() string {
 	w.strPtr(i.ExternalRef)
 	w.str(i.SourceSystem)
 	w.flag(i.Pinned, "pinned")
+	w.str(string(i.Metadata)) // Include metadata in content hash
 	w.flag(i.IsTemplate, "template")
 
 	// Bonded molecules
@@ -360,6 +367,12 @@ func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
 	if !i.AgentState.IsValid() {
 		return fmt.Errorf("invalid agent state: %s", i.AgentState)
 	}
+	// Validate metadata is well-formed JSON if set (GH#1406)
+	if len(i.Metadata) > 0 {
+		if !json.Valid(i.Metadata) {
+			return fmt.Errorf("metadata must be valid JSON")
+		}
+	}
 	return nil
 }
 
@@ -408,6 +421,12 @@ func (i *Issue) ValidateForImport(customStatuses []string) error {
 	// Validate agent state if set
 	if !i.AgentState.IsValid() {
 		return fmt.Errorf("invalid agent state: %s", i.AgentState)
+	}
+	// Validate metadata is well-formed JSON if set (GH#1406)
+	if len(i.Metadata) > 0 {
+		if !json.Valid(i.Metadata) {
+			return fmt.Errorf("metadata must be valid JSON")
+		}
 	}
 	return nil
 }
@@ -486,9 +505,16 @@ const (
 	TypeChore   IssueType = "chore"
 )
 
-// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, event, message)
+// TypeEvent is a system-internal type used by set-state for audit trail beads.
+// Originally a Gas Town type, promoted to built-in internal type. It is not a
+// core work type (not in IsValid) but is accepted by IsValidWithCustom /
+// ValidateWithCustom and treated as built-in for hydration trust (GH#1356).
+const TypeEvent IssueType = "event"
+
+// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, message)
 // were removed from beads core. They are now purely custom types with no built-in constants.
 // Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
+// (event was also a Gas Town type but was promoted to a built-in internal type above.)
 
 // IsValid checks if the issue type is a core work type.
 // Only core work types (bug, feature, task, epic, chore) are built-in.
@@ -501,22 +527,21 @@ func (t IssueType) IsValid() bool {
 	return false
 }
 
-// IsBuiltIn returns true if the type is a built-in type (same as IsValid).
-// Used during multi-repo hydration to determine trust:
-// - Built-in types: validate (catch typos)
+// IsBuiltIn returns true for core work types and system-internal types
+// (i.e. TypeEvent). Used during multi-repo hydration to determine trust:
+// - Built-in/internal types: validate (catch typos)
 // - Custom types (!IsBuiltIn): trust from source repo
 func (t IssueType) IsBuiltIn() bool {
-	return t.IsValid()
+	return t.IsValid() || t == TypeEvent
 }
 
 // IsValidWithCustom checks if the issue type is valid, including custom types.
 // Custom types are user-defined via bd config set types.custom "type1,type2,..."
 func (t IssueType) IsValidWithCustom(customTypes []string) bool {
-	// First check built-in types
-	if t.IsValid() {
+	if t.IsBuiltIn() {
 		return true
 	}
-	// Then check custom types
+	// Check user-configured custom types
 	for _, custom := range customTypes {
 		if string(t) == custom {
 			return true
@@ -661,6 +686,7 @@ type IssueWithCounts struct {
 	*Issue
 	DependencyCount int `json:"dependency_count"`
 	DependentCount  int `json:"dependent_count"`
+	CommentCount    int `json:"comment_count"`
 }
 
 // IssueDetails extends Issue with labels, dependencies, dependents, and comments.

@@ -42,7 +42,11 @@ This is read-only and does not modify the database or git state.`,
 		// Get the issue
 		issue, err := store.GetIssue(ctx, issueID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: issue %s not found: %v\n", issueID, err)
+			fmt.Fprintf(os.Stderr, "Error: issue '%s' not found: %v\n", issueID, err)
+			os.Exit(1)
+		}
+		if issue == nil {
+			fmt.Fprintf(os.Stderr, "Error: issue '%s' not found\n", issueID)
 			os.Exit(1)
 		}
 

@@ -371,7 +371,7 @@ func removeIssueFromJSONL(issueID string) error {
 		if os.IsNotExist(err) {
 			return nil // No file, nothing to clean
 		}
-		return fmt.Errorf("failed to open JSONL: %w", err)
+		return fmt.Errorf("failed to open storage file: %w", err)
 	}
 	var issues []*types.Issue
 	scanner := bufio.NewScanner(f)
@@ -391,10 +391,10 @@ func removeIssueFromJSONL(issueID string) error {
 	}
 	if err := scanner.Err(); err != nil {
 		_ = f.Close()
-		return fmt.Errorf("failed to read JSONL: %w", err)
+		return fmt.Errorf("failed to read storage file: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("failed to close JSONL: %w", err)
+		return fmt.Errorf("failed to close storage file: %w", err)
 	}
 	// Write to temp file atomically
 	temp := fmt.Sprintf("%s.tmp.%d", path, os.Getpid())

@@ -14,6 +14,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -61,7 +62,14 @@ func shouldSkipDueToSameBranch(ctx context.Context, store storage.Storage, opera
 // exportToJSONLWithStore exports issues to JSONL using the provided store.
 // If multi-repo mode is configured, routes issues to their respective JSONL files.
 // Otherwise, exports to a single JSONL file.
+// Respects sync mode: skips JSONL export in dolt-native mode (bd-u9yv).
 func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
+	// Check sync mode before JSONL export (bd-u9yv: dolt-native mode should skip JSONL)
+	if !ShouldExportJSONL(ctx, store) {
+		debug.Logf("skipping JSONL export (dolt-native mode)")
+		return nil
+	}
+
 	// Try multi-repo export first
 	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
 	if ok {
@@ -487,7 +495,7 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 
 		jsonlPath := findJSONLPath()
 		if jsonlPath == "" {
-			log.log("Error: JSONL path not found")
+			log.log("Error: beads storage file not found")
 			return
 		}
 
@@ -519,6 +527,14 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 		}
 		log.log("Exported to JSONL")
 
+		// Export events to JSONL (non-fatal, opt-in via config)
+		if config.GetBool("events-export") {
+			eventsPath := filepath.Join(filepath.Dir(jsonlPath), "events.jsonl")
+			if err := exportEventsToJSONL(exportCtx, store, eventsPath); err != nil {
+				log.log("Warning: events export failed: %v", err)
+			}
+		}
+
 		// GH#885: Defer metadata updates until AFTER git commit succeeds.
 		// This is a helper to finalize the export after git operations.
 		finalizeExportMetadata := func() {
@@ -539,8 +555,10 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 			// This prevents validatePreExport from incorrectly blocking on next export
 			// with "JSONL is newer than database" after daemon auto-export
 			// Dolt backend does not have a SQLite DB file; mtime touch is SQLite-only.
-			if _, ok := store.(*sqlite.SQLiteStorage); ok {
-				dbPath := filepath.Join(beadsDir, "beads.db")
+			// Use store.Path() to get the actual database location, not the JSONL directory,
+			// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
+			if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+				dbPath := sqliteStore.Path()
 				if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
 					log.log("Warning: failed to update database mtime: %v", err)
 				}
@@ -633,6 +651,12 @@ func performAutoImport(ctx context.Context, store storage.Storage, skipGit bool,
 			mode = "local auto-import"
 		}
 
+		// Skip JSONL import in dolt-native mode (JSONL is export-only backup)
+		if !ShouldImportJSONL(importCtx, store) {
+			log.log("Skipping %s (dolt-native mode, JSONL is export-only)", mode)
+			return
+		}
+
 		// Guard: Skip if sync-branch == current-branch (GH#1258)
 		// Local-only mode (skipGit) doesn't use sync-branch, so skip the guard
 		if !skipGit && shouldSkipDueToSameBranch(importCtx, store, mode, log) {
@@ -655,7 +679,7 @@ func performAutoImport(ctx context.Context, store storage.Storage, skipGit bool,
 
 		jsonlPath := findJSONLPath()
 		if jsonlPath == "" {
-			log.log("Error: JSONL path not found")
+			log.log("Error: beads storage file not found")
 			return
 		}
 
@@ -788,7 +812,7 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 
 		jsonlPath := findJSONLPath()
 		if jsonlPath == "" {
-			log.log("Error: JSONL path not found")
+			log.log("Error: beads storage file not found")
 			return
 		}
 
@@ -835,9 +859,16 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 		}
 		log.log("Exported to JSONL")
 
+		// Export events to JSONL (non-fatal, opt-in via config)
+		if config.GetBool("events-export") {
+			syncEventsPath := filepath.Join(beadsDir, "events.jsonl")
+			if err := exportEventsToJSONL(syncCtx, store, syncEventsPath); err != nil {
+				log.log("Warning: events export failed: %v", err)
+			}
+		}
+
 		// GH#885: Defer metadata updates until AFTER git commit succeeds.
 		// Define helper to finalize after git operations.
-		dbPath := filepath.Join(beadsDir, "beads.db")
 		finalizeExportMetadata := func() {
 			// Update export metadata for multi-repo support with stable keys
 			if multiRepoPaths != nil {
@@ -854,7 +885,10 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 			// Update database mtime to be >= JSONL mtime
 			// This prevents validatePreExport from incorrectly blocking on next export
 			// Dolt backend does not have a SQLite DB file; mtime touch is SQLite-only.
-			if _, ok := store.(*sqlite.SQLiteStorage); ok {
+			// Use store.Path() to get the actual database location, not the JSONL directory,
+			// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
+			if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+				dbPath := sqliteStore.Path()
 				if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
 					log.log("Warning: failed to update database mtime: %v", err)
 				}
@@ -867,6 +901,13 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 			// Git-free mode: finalize immediately since there's no git to wait for
 			finalizeExportMetadata()
 			log.log("Local %s complete", mode)
+			return
+		}
+
+		// In dolt-native mode, JSONL is export-only backup — skip git sync and import
+		if !ShouldImportJSONL(syncCtx, store) {
+			finalizeExportMetadata()
+			log.log("%s complete (dolt-native mode, export-only)", mode)
 			return
 		}
 
@@ -974,7 +1015,10 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 		// Update database mtime after import (fixes #278, #301, #321)
 		// Sync branch import can update JSONL timestamp, so ensure DB >= JSONL
 		// Dolt backend does not have a SQLite DB file; mtime touch is SQLite-only.
-		if _, ok := store.(*sqlite.SQLiteStorage); ok {
+		// Use store.Path() to get the actual database location, not the JSONL directory,
+		// since sync-branch imports read JSONL from a worktree but the DB stays in the main repo.
+		if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+			dbPath := sqliteStore.Path()
 			if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
 				log.log("Warning: failed to update database mtime: %v", err)
 			}

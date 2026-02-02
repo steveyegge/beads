@@ -85,6 +85,7 @@ type Storage interface {
 	// Issues
 	CreateIssue(ctx context.Context, issue *types.Issue, actor string) error
 	CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error
+	CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts BatchCreateOptions) error
 	GetIssue(ctx context.Context, id string) (*types.Issue, error)
 	GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error)
 	UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error
@@ -124,6 +125,7 @@ type Storage interface {
 	// Events
 	AddComment(ctx context.Context, issueID, actor, comment string) error
 	GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error)
+	GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error)
 
 	// Comments
 	AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
@@ -132,6 +134,7 @@ type Storage interface {
 	ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
 	GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error)
+	GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error)
 
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)
@@ -226,4 +229,44 @@ type Config struct {
 	User     string
 	Password string
 	SSLMode  string
+}
+
+// CompactableStorage extends Storage with compaction capabilities.
+// Not all storage backends support compaction (e.g., Dolt does not).
+// RPC handlers should type-assert to this interface when compaction is requested.
+// This interface is compatible with compact.Store for use with the compaction subsystem.
+type CompactableStorage interface {
+	Storage
+
+	// CheckEligibility determines if an issue can be compacted at the given tier.
+	// Returns (eligible, reason, error) where reason explains ineligibility.
+	CheckEligibility(ctx context.Context, issueID string, tier int) (bool, string, error)
+
+	// GetTier1Candidates returns issues eligible for Tier 1 (basic) compaction.
+	// Tier 1: closed 30+ days, no open dependents, not already compacted.
+	GetTier1Candidates(ctx context.Context) ([]*types.CompactionCandidate, error)
+
+	// GetTier2Candidates returns issues eligible for Tier 2 (aggressive) compaction.
+	// Tier 2: closed 90+ days, already Tier 1 compacted, meets stricter criteria.
+	GetTier2Candidates(ctx context.Context) ([]*types.CompactionCandidate, error)
+
+	// ApplyCompaction updates the compaction metadata for an issue after compaction.
+	// Sets compaction_level, compacted_at, compacted_at_commit, and original_size fields.
+	ApplyCompaction(ctx context.Context, issueID string, level int, originalSize int, compressedSize int, commitHash string) error
+
+	// MarkIssueDirty marks an issue as needing export to JSONL.
+	MarkIssueDirty(ctx context.Context, issueID string) error
+}
+
+// BatchDeleter extends Storage with batch delete capabilities.
+// Supports cascade deletion and dry-run mode for safe bulk operations.
+type BatchDeleter interface {
+	Storage
+
+	// DeleteIssues deletes multiple issues in a single transaction.
+	// If cascade is true, recursively deletes dependents.
+	// If cascade is false but force is true, deletes issues and orphans dependents.
+	// If both are false, returns an error if any issue has dependents.
+	// If dryRun is true, only computes statistics without deleting.
+	DeleteIssues(ctx context.Context, ids []string, cascade bool, force bool, dryRun bool) (*types.DeleteIssuesResult, error)
 }

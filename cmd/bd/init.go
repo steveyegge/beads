@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
+	"golang.org/x/term"
 )
 
 var initCmd = &cobra.Command{
@@ -42,10 +44,11 @@ With --stealth: configures per-repository git settings for invisible beads usage
   • Claude Code settings with bd onboard instruction
   Perfect for personal use without affecting repo collaborators.
 
-With --backend dolt --server: configures Dolt to connect to an external dolt sql-server
-instead of using the embedded driver. This enables multi-writer access for multi-agent
-environments. Connection settings can be customized with --server-host, --server-port,
-and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment variable.`,
+With --backend dolt: uses Dolt as the storage backend. If a dolt sql-server is detected
+running on port 3307 or 3306, server mode is automatically enabled for multi-writer access.
+Use --server to explicitly enable server mode, or set connection details with --server-host,
+--server-port, and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment
+variable.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
@@ -538,7 +541,23 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 			}
 		}
 
-		// Run contributor wizard if --contributor flag is set
+		// Prompt for contributor mode if:
+		// - In a git repo (needed to set beads.role config)
+		// - Interactive terminal (stdin is TTY)
+		// - No explicit --contributor or --team flag provided
+		if isGitRepo() && !contributor && !team && shouldPromptForRole() {
+			promptedContributor, err := promptContributorMode()
+			if err != nil {
+				// Non-fatal: warn but continue with default behavior
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "Warning: failed to prompt for role: %v\n", err)
+				}
+			} else if promptedContributor {
+				contributor = true // Triggers contributor wizard below
+			}
+		}
+
+		// Run contributor wizard if --contributor flag is set or user chose contributor
 		if contributor {
 			if err := runContributorWizard(ctx, store); err != nil {
 				fmt.Fprintf(os.Stderr, "Error running contributor wizard: %v\n", err)
@@ -724,7 +743,7 @@ func init() {
 	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
 
 	// Dolt server mode flags (bd-dolt.2.2)
-	initCmd.Flags().Bool("server", false, "Configure Dolt in server mode (connect to external dolt sql-server)")
+	initCmd.Flags().Bool("server", false, "Explicitly configure Dolt in server mode for high-concurrency (default: embedded)")
 	initCmd.Flags().String("server-host", "", "Dolt server host (default: 127.0.0.1)")
 	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3306)")
 	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")
@@ -973,4 +992,85 @@ func checkExistingBeadsData(prefix string) error {
 	}
 
 	return checkExistingBeadsDataAt(beadsDir, prefix)
+}
+
+// shouldPromptForRole returns true if we should prompt the user for their role.
+// Skips prompt in non-interactive contexts (CI, scripts, piped input).
+func shouldPromptForRole() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// getBeadsRole reads the beads.role git config value.
+// Returns the role and true if configured, or empty string and false if not set.
+func getBeadsRole() (string, bool) {
+	cmd := exec.Command("git", "config", "--get", "beads.role")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	role := strings.TrimSpace(string(output))
+	if role == "" {
+		return "", false
+	}
+	return role, true
+}
+
+// setBeadsRole writes the beads.role git config value.
+func setBeadsRole(role string) error {
+	cmd := exec.Command("git", "config", "beads.role", role)
+	return cmd.Run()
+}
+
+// promptContributorMode prompts the user to determine if they are a contributor.
+// Returns true if the user indicates they are a contributor, false otherwise.
+//
+// Behavior:
+// - If beads.role is already set: shows current role, offers to change
+// - If not set: prompts "Contributing to someone else's repo? [y/N]"
+// - Sets git config beads.role based on answer
+func promptContributorMode() (isContributor bool, err error) {
+	reader := bufio.NewReader(os.Stdin)
+
+	// Check if role is already configured
+	existingRole, hasRole := getBeadsRole()
+	if hasRole {
+		fmt.Printf("\n%s Already configured as: %s\n", ui.RenderAccent("▶"), ui.RenderBold(existingRole))
+		fmt.Print("Change role? [y/N]: ")
+
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			return false, fmt.Errorf("failed to read input: %w", err)
+		}
+		response = strings.TrimSpace(strings.ToLower(response))
+
+		if response != "y" && response != "yes" {
+			// Keep existing role
+			return existingRole == "contributor", nil
+		}
+		// Fall through to re-prompt
+		fmt.Println()
+	}
+
+	// Prompt for role
+	fmt.Print("Contributing to someone else's repo? [y/N]: ")
+
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false, fmt.Errorf("failed to read input: %w", err)
+	}
+	response = strings.TrimSpace(strings.ToLower(response))
+
+	isContributor = response == "y" || response == "yes"
+
+	// Set the role in git config
+	role := "maintainer"
+	if isContributor {
+		role = "contributor"
+	}
+
+	if err := setBeadsRole(role); err != nil {
+		return isContributor, fmt.Errorf("failed to set beads.role config: %w", err)
+	}
+
+	return isContributor, nil
 }

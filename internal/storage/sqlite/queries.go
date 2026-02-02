@@ -353,6 +353,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	// Time-based scheduling fields (GH#820)
 	var dueAt sql.NullTime
 	var deferUntil sql.NullTime
+	// Custom metadata field (GH#1406)
+	var metadata sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -367,7 +369,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
-		       due_at, defer_until
+		       due_at, defer_until, metadata
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -381,7 +383,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
-		&dueAt, &deferUntil,
+		&dueAt, &deferUntil, &metadata,
 	)
 
 	if err == sql.ErrNoRows {
@@ -517,6 +519,10 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
+	}
+	// Custom metadata field (GH#1406)
+	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+		issue.Metadata = []byte(metadata.String)
 	}
 
 	// Fetch labels for this issue
@@ -805,6 +811,8 @@ var allowedUpdateFields = map[string]bool{
 	// Gate fields (bd-z6kw: support await_id updates for gate discovery)
 	"await_id": true,
 	"waiters":  true,
+	// Custom metadata field (GH#1406)
+	"metadata": true,
 }
 
 // validatePriority validates a priority value
@@ -1458,27 +1466,18 @@ func (s *SQLiteStorage) DeleteIssue(ctx context.Context, id string) error {
 	})
 }
 
-// DeleteIssuesResult contains statistics about a batch deletion operation
-type DeleteIssuesResult struct {
-	DeletedCount      int
-	DependenciesCount int
-	LabelsCount       int
-	EventsCount       int
-	OrphanedIssues    []string
-}
-
 // DeleteIssues deletes multiple issues in a single transaction
 // If cascade is true, recursively deletes dependents
 // If cascade is false but force is true, deletes issues and orphans their dependents
 // If cascade and force are both false, returns an error if any issue has dependents
 // If dryRun is true, only computes statistics without deleting
-func (s *SQLiteStorage) DeleteIssues(ctx context.Context, ids []string, cascade bool, force bool, dryRun bool) (*DeleteIssuesResult, error) {
+func (s *SQLiteStorage) DeleteIssues(ctx context.Context, ids []string, cascade bool, force bool, dryRun bool) (*types.DeleteIssuesResult, error) {
 	if len(ids) == 0 {
-		return &DeleteIssuesResult{}, nil
+		return &types.DeleteIssuesResult{}, nil
 	}
 
 	idSet := buildIDSet(ids)
-	result := &DeleteIssuesResult{}
+	result := &types.DeleteIssuesResult{}
 
 	// Execute in transaction using BEGIN IMMEDIATE (GH#1272 fix)
 	err := s.withTx(ctx, func(conn *sql.Conn) error {
@@ -1520,7 +1519,7 @@ func buildIDSet(ids []string) map[string]bool {
 	return idSet
 }
 
-func (s *SQLiteStorage) resolveDeleteSet(ctx context.Context, exec dbExecutor, ids []string, idSet map[string]bool, cascade bool, force bool, result *DeleteIssuesResult) ([]string, error) {
+func (s *SQLiteStorage) resolveDeleteSet(ctx context.Context, exec dbExecutor, ids []string, idSet map[string]bool, cascade bool, force bool, result *types.DeleteIssuesResult) ([]string, error) {
 	if cascade {
 		return s.expandWithDependents(ctx, exec, ids, idSet)
 	}
@@ -1542,7 +1541,7 @@ func (s *SQLiteStorage) expandWithDependents(ctx context.Context, exec dbExecuto
 	return expandedIDs, nil
 }
 
-func (s *SQLiteStorage) validateNoDependents(ctx context.Context, exec dbExecutor, ids []string, idSet map[string]bool, result *DeleteIssuesResult) error {
+func (s *SQLiteStorage) validateNoDependents(ctx context.Context, exec dbExecutor, ids []string, idSet map[string]bool, result *types.DeleteIssuesResult) error {
 	for _, id := range ids {
 		if err := s.checkSingleIssueValidation(ctx, exec, id, idSet, result); err != nil {
 			return wrapDBError("check dependents", err)
@@ -1551,7 +1550,7 @@ func (s *SQLiteStorage) validateNoDependents(ctx context.Context, exec dbExecuto
 	return nil
 }
 
-func (s *SQLiteStorage) checkSingleIssueValidation(ctx context.Context, exec dbExecutor, id string, idSet map[string]bool, result *DeleteIssuesResult) error {
+func (s *SQLiteStorage) checkSingleIssueValidation(ctx context.Context, exec dbExecutor, id string, idSet map[string]bool, result *types.DeleteIssuesResult) error {
 	var depCount int
 	err := exec.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM dependencies WHERE depends_on_id = ?`, id).Scan(&depCount)
@@ -1591,7 +1590,7 @@ func (s *SQLiteStorage) checkSingleIssueValidation(ctx context.Context, exec dbE
 	return nil
 }
 
-func (s *SQLiteStorage) trackOrphanedIssues(ctx context.Context, exec dbExecutor, ids []string, idSet map[string]bool, result *DeleteIssuesResult) error {
+func (s *SQLiteStorage) trackOrphanedIssues(ctx context.Context, exec dbExecutor, ids []string, idSet map[string]bool, result *types.DeleteIssuesResult) error {
 	orphanSet := make(map[string]bool)
 	for _, id := range ids {
 		if err := s.collectOrphansForID(ctx, exec, id, idSet, orphanSet); err != nil {
@@ -1634,7 +1633,7 @@ func buildSQLInClause(ids []string) (string, []interface{}) {
 	return strings.Join(placeholders, ","), args
 }
 
-func (s *SQLiteStorage) populateDeleteStats(ctx context.Context, exec dbExecutor, inClause string, args []interface{}, result *DeleteIssuesResult) error {
+func (s *SQLiteStorage) populateDeleteStats(ctx context.Context, exec dbExecutor, inClause string, args []interface{}, result *types.DeleteIssuesResult) error {
 	counts := []struct {
 		query string
 		dest  *int
@@ -1658,7 +1657,7 @@ func (s *SQLiteStorage) populateDeleteStats(ctx context.Context, exec dbExecutor
 	return nil
 }
 
-func (s *SQLiteStorage) executeDelete(ctx context.Context, exec dbExecutor, inClause string, args []interface{}, result *DeleteIssuesResult) error {
+func (s *SQLiteStorage) executeDelete(ctx context.Context, exec dbExecutor, inClause string, args []interface{}, result *types.DeleteIssuesResult) error {
 	// Note: This method now creates tombstones instead of hard-deleting
 	// Only dependencies are deleted - issues are converted to tombstones
 
@@ -2031,7 +2030,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       due_at, defer_until, metadata
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC

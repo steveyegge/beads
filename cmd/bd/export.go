@@ -137,6 +137,8 @@ Examples:
 		output, _ := cmd.Flags().GetString("output")
 		statusFilter, _ := cmd.Flags().GetString("status")
 		force, _ := cmd.Flags().GetBool("force")
+		eventsFlag, _ := cmd.Flags().GetBool("events")
+		eventsReset, _ := cmd.Flags().GetBool("events-reset")
 
 		// Additional filter flags
 		assignee, _ := cmd.Flags().GetString("assignee")
@@ -193,6 +195,30 @@ Examples:
 				os.Exit(1)
 			}
 			defer func() { _ = store.Close() }()
+		}
+
+		// Handle --events and --events-reset flags
+		if eventsFlag || eventsReset {
+			eventsPath := filepath.Join(filepath.Dir(dbPath), "events.jsonl")
+			ctx := rootCtx
+
+			if eventsReset {
+				if err := resetEventsExport(ctx, store, eventsPath); err != nil {
+					fmt.Fprintf(os.Stderr, "Error resetting events export: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Fprintf(os.Stderr, "Events export state reset\n")
+			}
+
+			if eventsFlag {
+				if err := exportEventsToJSONL(ctx, store, eventsPath); err != nil {
+					fmt.Fprintf(os.Stderr, "Error exporting events: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Fprintf(os.Stderr, "Events exported to %s\n", eventsPath)
+			}
+
+			return
 		}
 
 		// Normalize labels: trim, dedupe, remove empty
@@ -595,9 +621,10 @@ Examples:
 			// This prevents validatePreExport from incorrectly blocking on next export
 			if output == "" || output == findJSONLPath() {
 				// Dolt backend does not have a SQLite DB file, so only touch mtime for SQLite.
-				if _, ok := store.(*sqlite.SQLiteStorage); ok {
-					beadsDir := filepath.Dir(finalPath)
-					dbPath := filepath.Join(beadsDir, "beads.db")
+				// Use store.Path() to get the actual database location, not the JSONL directory,
+				// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
+				if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+					dbPath := sqliteStore.Path()
 					if err := TouchDatabaseFile(dbPath, finalPath); err != nil {
 						// Log warning but don't fail export
 						fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)
@@ -629,6 +656,8 @@ func init() {
 	exportCmd.Flags().StringP("status", "s", "", "Filter by status")
 	exportCmd.Flags().Bool("force", false, "Force export even if database is empty")
 	exportCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output export statistics in JSON format")
+	exportCmd.Flags().Bool("events", false, "Export events to .beads/events.jsonl (append-only)")
+	exportCmd.Flags().Bool("events-reset", false, "Reset events export state and truncate events.jsonl")
 
 	// Filter flags
 	registerPriorityFlag(exportCmd, "")

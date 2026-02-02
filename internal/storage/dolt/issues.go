@@ -1,3 +1,5 @@
+//go:build cgo
+
 package dolt
 
 import (
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/idgen"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -116,6 +119,16 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 
 // CreateIssues creates multiple issues in a single transaction
 func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
+	return s.CreateIssuesWithFullOptions(ctx, issues, actor, storage.BatchCreateOptions{
+		OrphanHandling:       storage.OrphanAllow,
+		SkipPrefixValidation: false,
+	})
+}
+
+// CreateIssuesWithFullOptions creates multiple issues with full options control.
+// This is the backend-agnostic batch creation method that supports orphan handling
+// and prefix validation options.
+func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) error {
 	if len(issues) == 0 {
 		return nil
 	}
@@ -135,6 +148,15 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	// Get prefix from config for validation
+	var configPrefix string
+	err = tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
+	if err == sql.ErrNoRows || configPrefix == "" {
+		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
+	} else if err != nil {
+		return fmt.Errorf("failed to get config: %w", err)
+	}
 
 	for _, issue := range issues {
 		now := time.Now().UTC()
@@ -174,6 +196,35 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 			issue.ContentHash = issue.ComputeContentHash()
 		}
 
+		// Validate prefix if not skipped (for imports with different prefixes)
+		if !opts.SkipPrefixValidation && issue.ID != "" {
+			if err := validateIssueIDPrefix(issue.ID, configPrefix); err != nil {
+				return fmt.Errorf("prefix validation failed for %s: %w", issue.ID, err)
+			}
+		}
+
+		// Handle orphan checking for hierarchical IDs
+		if issue.ID != "" {
+			if parentID, _, ok := parseHierarchicalID(issue.ID); ok {
+				var parentCount int
+				err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&parentCount)
+				if err != nil {
+					return fmt.Errorf("failed to check parent existence: %w", err)
+				}
+				if parentCount == 0 {
+					switch opts.OrphanHandling {
+					case storage.OrphanStrict:
+						return fmt.Errorf("parent issue %s does not exist (strict mode)", parentID)
+					case storage.OrphanSkip:
+						// Skip this issue
+						continue
+					case storage.OrphanResurrect, storage.OrphanAllow:
+						// Allow orphan - continue with insert
+					}
+				}
+			}
+		}
+
 		if err := insertIssue(ctx, tx, issue); err != nil {
 			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
 		}
@@ -186,6 +237,35 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 	}
 
 	return tx.Commit()
+}
+
+// validateIssueIDPrefix validates that the issue ID has the correct prefix
+func validateIssueIDPrefix(id, prefix string) error {
+	if !strings.HasPrefix(id, prefix+"-") {
+		return fmt.Errorf("issue ID %s does not match configured prefix %s", id, prefix)
+	}
+	return nil
+}
+
+// parseHierarchicalID checks if an ID is hierarchical (e.g., "bd-abc.1") and returns the parent ID and child number
+func parseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
+	// Find the last dot that separates parent from child number
+	lastDot := strings.LastIndex(id, ".")
+	if lastDot == -1 {
+		return "", 0, false
+	}
+
+	parentID = id[:lastDot]
+	suffix := id[lastDot+1:]
+
+	// Parse child number
+	var num int
+	_, err := fmt.Sscanf(suffix, "%d", &num)
+	if err != nil {
+		return "", 0, false
+	}
+
+	return parentID, num, true
 }
 
 // GetIssue retrieves an issue by ID
@@ -386,7 +466,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			event_kind, actor, target, payload,
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
-			due_at, defer_until
+			due_at, defer_until, metadata
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -398,7 +478,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?
+			?, ?, ?
 		)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
@@ -411,7 +491,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
-		issue.DueAt, issue.DeferUntil,
+		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
 	)
 	return err
 }
@@ -429,6 +509,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	var hookBead, roleBead, agentState, roleType, rig sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var qualityScore sql.NullFloat64
+	var metadata sql.NullString
 
 	err := db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
@@ -441,7 +522,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
-		       quality_score, work_type, source_system
+		       quality_score, work_type, source_system, metadata
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -456,7 +537,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
-		&qualityScore, &workType, &sourceSystem,
+		&qualityScore, &workType, &sourceSystem, &metadata,
 	)
 
 	if err == sql.ErrNoRows {
@@ -597,6 +678,10 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	if sourceSystem.Valid {
 		issue.SourceSystem = sourceSystem.String
 	}
+	// Custom metadata field (GH#1406)
+	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+		issue.Metadata = []byte(metadata.String)
+	}
 
 	return &issue, nil
 }
@@ -672,6 +757,7 @@ func isAllowedUpdateField(key string) bool {
 		"role_type": true, "rig": true, "mol_type": true,
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
 		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
+		"metadata": true,
 	}
 	return allowed[key]
 }
@@ -752,6 +838,15 @@ func nullIntVal(i int) interface{} {
 		return nil
 	}
 	return i
+}
+
+// jsonMetadata returns the metadata as a string, or "{}" if empty.
+// Dolt's JSON column type requires valid JSON, so we can't insert empty strings.
+func jsonMetadata(m []byte) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+	return string(m)
 }
 
 func parseJSONStringArray(s string) []string {

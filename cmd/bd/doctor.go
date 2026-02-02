@@ -382,10 +382,22 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, multiRepoTypesCheck)
 	// Don't fail overall check for multi-repo types, just informational
 
-	// Check 7c: JSONL integrity (malformed lines, missing IDs)
+	// Check 7c: Role configuration (beads.role)
+	roleCheck := convertDoctorCheck(doctor.CheckBeadsRole(path))
+	result.Checks = append(result.Checks, roleCheck)
+	// Don't fail overall check for role config, just warn - URL heuristic fallback still works
+
+	// Check 7d: JSONL integrity (malformed lines, missing IDs)
 	jsonlIntegrityCheck := convertWithCategory(doctor.CheckJSONLIntegrity(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, jsonlIntegrityCheck)
 	if jsonlIntegrityCheck.Status == statusWarning || jsonlIntegrityCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 7e: Stale lock files (bootstrap, sync, daemon, startup)
+	staleLockCheck := convertDoctorCheck(doctor.CheckStaleLockFiles(path))
+	result.Checks = append(result.Checks, staleLockCheck)
+	if staleLockCheck.Status == statusWarning || staleLockCheck.Status == statusError {
 		result.OverallOK = false
 	}
 
@@ -673,6 +685,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, migrationsCheck)
 	// Status is determined by the check itself based on migration priorities
 
+	// Check 31: KV store sync status
+	kvSyncCheck := convertDoctorCheck(doctor.CheckKVSyncStatus(path))
+	result.Checks = append(result.Checks, kvSyncCheck)
+	// Don't fail overall check for KV sync warning, just inform
+
 	return result
 }
 
@@ -856,4 +873,3 @@ func printDiagnostics(result doctorResult) {
 		fmt.Printf("%s\n", ui.RenderPass("✓ All checks passed"))
 	}
 }
-
