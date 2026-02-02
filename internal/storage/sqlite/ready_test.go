@@ -905,6 +905,7 @@ func TestGetReadyWorkExternalDeps(t *testing.T) {
 
 	// Create config file for external project
 	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendSQLite // Tests use SQLite
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save external config: %v", err)
 	}
@@ -1157,6 +1158,7 @@ func TestGetBlockedIssuesFiltersExternalDeps(t *testing.T) {
 
 	// Create config file for external project
 	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendSQLite // Tests use SQLite
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save external config: %v", err)
 	}
@@ -1297,6 +1299,7 @@ func TestGetBlockedIssuesPartialExternalDeps(t *testing.T) {
 	}
 
 	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendSQLite // Tests use SQLite
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save external config: %v", err)
 	}
@@ -1536,6 +1539,7 @@ func TestCheckExternalDepsBatching(t *testing.T) {
 		t.Fatalf("failed to create beads dir: %v", err)
 	}
 	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendSQLite // Tests use SQLite
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
 	}
