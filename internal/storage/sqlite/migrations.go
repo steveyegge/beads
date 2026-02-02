@@ -126,7 +126,7 @@ func getMigrationDescription(name string) string {
 		"source_system_column":         "Adds source_system column for federation adapter tracking",
 		"quality_score_column":         "Adds quality_score column for aggregate quality (0.0-1.0) set by Refineries",
 		"metadata_column":              "Adds metadata column for arbitrary JSON data (tool annotations, file lists) per GH#1406",
-		"advice_fields":                "Adds advice targeting columns (advice_target_rig, advice_target_role, advice_target_agent) for hierarchical agent advice",
+		"advice_fields":                "No-op: advice targeting columns removed, now uses subscription-based filtering",
 		"advice_hook_fields":           "Adds advice hook columns (advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure) for executable advice per hq--uaim",
 		"advice_subscription_fields":   "Adds advice subscription columns (advice_subscriptions, advice_subscriptions_exclude) for agent-customized advice filtering per gt-w2mh8a.4",
 	}
