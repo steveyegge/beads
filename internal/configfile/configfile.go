@@ -56,6 +56,7 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
+		Backend:     BackendSQLite,
 		Database:    "beads.db",
 		JSONLExport: "issues.jsonl", // Canonical name (bd-6xd)
 	}

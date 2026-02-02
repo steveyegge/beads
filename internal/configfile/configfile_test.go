@@ -65,7 +65,7 @@ func TestLoadNonexistent(t *testing.T) {
 
 func TestDatabasePath(t *testing.T) {
 	beadsDir := "/home/user/project/.beads"
-	cfg := &Config{Database: "beads.db"}
+	cfg := &Config{Database: "beads.db", Backend: BackendSQLite}
 
 	got := cfg.DatabasePath(beadsDir)
 	want := filepath.Join(beadsDir, "beads.db")
