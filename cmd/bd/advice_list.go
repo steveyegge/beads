@@ -227,8 +227,14 @@ func matchesAnyLabel(issueLabels []string, filterLabels []string) bool {
 	return false
 }
 
-// matchesSubscriptions checks if advice should be shown based on subscriptions
-// An advice matches if its labels intersect with the subscriptions
+// matchesSubscriptions checks if advice should be shown based on subscriptions.
+//
+// Matching rules:
+//   - If advice has rig:X label, agent MUST be subscribed to rig:X (required match)
+//   - If advice has agent:X label, agent MUST be subscribed to agent:X (required match)
+//   - For other labels (role:X, global, topics), ANY match is sufficient
+//
+// This prevents rig-scoped advice from leaking to other rigs via role matches.
 func matchesSubscriptions(issue *types.Issue, issueLabels []string, subscriptions []string) bool {
 	// Build subscription set
 	subSet := make(map[string]bool)
@@ -236,7 +242,23 @@ func matchesSubscriptions(issue *types.Issue, issueLabels []string, subscription
 		subSet[s] = true
 	}
 
-	// Check if any advice labels match subscriptions
+	// Check for required labels (rig:X, agent:X) - these MUST match
+	for _, l := range issueLabels {
+		if strings.HasPrefix(l, "rig:") {
+			// Advice has rig label - agent must be subscribed to this specific rig
+			if !subSet[l] {
+				return false
+			}
+		}
+		if strings.HasPrefix(l, "agent:") {
+			// Advice has agent label - agent must be subscribed to this specific agent
+			if !subSet[l] {
+				return false
+			}
+		}
+	}
+
+	// Check for any optional label match (role:X, global, topics)
 	for _, l := range issueLabels {
 		if subSet[l] {
 			return true
