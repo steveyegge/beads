@@ -216,6 +216,9 @@ func (m *mockStorage) UpdateDecisionPoint(ctx context.Context, dp *types.Decisio
 func (m *mockStorage) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
 	return nil, nil
 }
+func (m *mockStorage) ListRecentlyRespondedDecisions(ctx context.Context, since time.Time, requestedBy string) ([]*types.DecisionPoint, error) {
+	return nil, nil
+}
 func (m *mockStorage) RunInTransaction(ctx context.Context, fn func(tx Transaction) error) error {
 	return nil
 }
