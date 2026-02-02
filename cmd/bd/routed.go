@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"path/filepath"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
@@ -36,12 +36,13 @@ func (r *RoutedResult) Close() {
 // The caller MUST call result.Close() when done to release any routed storage.
 func resolveAndGetIssueWithRouting(ctx context.Context, localStore storage.Storage, id string) (*RoutedResult, error) {
 	// Step 1: Check if routing is needed based on ID prefix
-	if dbPath == "" {
-		// No routing without a database path - use local store
+	// Find the .beads metadata directory (not the database path, which may be external with Dolt)
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		// No beads directory found - use local store
 		return resolveAndGetFromStore(ctx, localStore, id, false)
 	}
 
-	beadsDir := filepath.Dir(dbPath)
 	// Use factory.NewFromConfig as the storage opener to respect backend configuration
 	routedStorage, err := routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
 	if err != nil {
@@ -110,8 +111,10 @@ func getIssueWithRouting(ctx context.Context, localStore storage.Storage, id str
 	}
 
 	// Step 2: Check routes.jsonl for prefix-based routing
-	if dbPath == "" {
-		// No routing without a database path - return original result
+	// Find the .beads metadata directory (not the database path, which may be external with Dolt)
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		// No beads directory found - return original result
 		return &RoutedResult{
 			Issue:      issue,
 			Store:      localStore,
@@ -120,7 +123,6 @@ func getIssueWithRouting(ctx context.Context, localStore storage.Storage, id str
 		}, err
 	}
 
-	beadsDir := filepath.Dir(dbPath)
 	// Use GetRoutedStorageWithOpener with factory to respect backend configuration (bd-m2jr)
 	routedStorage, routeErr := routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
 	if routeErr != nil || routedStorage == nil {
@@ -160,11 +162,12 @@ func getIssueWithRouting(ctx context.Context, localStore storage.Storage, id str
 // Returns nil if no routing is needed (issue should be in local store).
 // The caller is responsible for closing the returned storage.
 func getRoutedStoreForID(ctx context.Context, id string) (*routing.RoutedStorage, error) {
-	if dbPath == "" {
+	// Find the .beads metadata directory (not the database path, which may be external with Dolt)
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
 		return nil, nil
 	}
 
-	beadsDir := filepath.Dir(dbPath)
 	// Use GetRoutedStorageWithOpener with factory to respect backend configuration (bd-m2jr)
 	return routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
 }
@@ -172,11 +175,12 @@ func getRoutedStoreForID(ctx context.Context, id string) (*routing.RoutedStorage
 // needsRouting checks if an ID would be routed to a different beads directory.
 // This is used to decide whether to bypass the daemon for cross-repo lookups.
 func needsRouting(id string) bool {
-	if dbPath == "" {
+	// Find the .beads metadata directory (not the database path, which may be external with Dolt)
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
 		return false
 	}
 
-	beadsDir := filepath.Dir(dbPath)
 	targetDir, routed, err := routing.ResolveBeadsDirForID(context.Background(), id, beadsDir)
 	if err != nil || !routed {
 		return false
