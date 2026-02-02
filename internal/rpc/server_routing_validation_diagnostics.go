@@ -189,7 +189,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp, wasDeduped = s.queryDedup.Execute(req.Operation, req.Args, func() Response {
 			return s.executeOperation(req)
 		})
-		_ = wasDeduped // could be used for metrics later
+		// Record dedup metrics for eligible operations
+		s.metrics.RecordDedup(req.Operation, wasDeduped)
 	} else {
 		resp = s.executeOperation(req)
 	}

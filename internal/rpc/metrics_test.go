@@ -455,3 +455,166 @@ func TestOperationMetricsSlowQueryCount(t *testing.T) {
 		t.Errorf("Expected 2 slow queries, got %d", mixedOp.SlowQueryCount)
 	}
 }
+
+func TestDedupMetrics(t *testing.T) {
+	t.Run("record dedup hit", func(t *testing.T) {
+		m := NewMetrics()
+
+		m.RecordDedup("list", true) // hit
+		m.RecordDedup("list", true) // hit
+
+		m.mu.RLock()
+		hits := m.dedupHits["list"]
+		misses := m.dedupMisses["list"]
+		m.mu.RUnlock()
+
+		if hits != 2 {
+			t.Errorf("Expected 2 dedup hits, got %d", hits)
+		}
+		if misses != 0 {
+			t.Errorf("Expected 0 dedup misses, got %d", misses)
+		}
+	})
+
+	t.Run("record dedup miss", func(t *testing.T) {
+		m := NewMetrics()
+
+		m.RecordDedup("list", false) // miss
+
+		m.mu.RLock()
+		hits := m.dedupHits["list"]
+		misses := m.dedupMisses["list"]
+		m.mu.RUnlock()
+
+		if hits != 0 {
+			t.Errorf("Expected 0 dedup hits, got %d", hits)
+		}
+		if misses != 1 {
+			t.Errorf("Expected 1 dedup miss, got %d", misses)
+		}
+	})
+
+	t.Run("mixed hits and misses", func(t *testing.T) {
+		m := NewMetrics()
+
+		m.RecordDedup("show", false) // miss (first query executes)
+		m.RecordDedup("show", true)  // hit (second waits for result)
+		m.RecordDedup("show", true)  // hit (third waits for result)
+		m.RecordDedup("show", false) // miss (new query after first completed)
+
+		m.mu.RLock()
+		hits := m.dedupHits["show"]
+		misses := m.dedupMisses["show"]
+		m.mu.RUnlock()
+
+		if hits != 2 {
+			t.Errorf("Expected 2 dedup hits, got %d", hits)
+		}
+		if misses != 2 {
+			t.Errorf("Expected 2 dedup misses, got %d", misses)
+		}
+	})
+}
+
+func TestDedupMetricsSnapshot(t *testing.T) {
+	m := NewMetrics()
+
+	// Record some request and dedup data
+	m.RecordRequest("list", 10*time.Millisecond)
+	m.RecordRequest("list", 5*time.Millisecond)
+	m.RecordRequest("show", 15*time.Millisecond)
+
+	// Record dedup events
+	m.RecordDedup("list", false) // miss
+	m.RecordDedup("list", true)  // hit
+	m.RecordDedup("list", true)  // hit
+	m.RecordDedup("show", false) // miss
+
+	snapshot := m.Snapshot(0)
+
+	t.Run("global dedup stats", func(t *testing.T) {
+		if snapshot.TotalDedupHits != 2 {
+			t.Errorf("Expected 2 total dedup hits, got %d", snapshot.TotalDedupHits)
+		}
+		if snapshot.TotalDedupMisses != 2 {
+			t.Errorf("Expected 2 total dedup misses, got %d", snapshot.TotalDedupMisses)
+		}
+		// Hit ratio: 2 / (2+2) = 0.5
+		if snapshot.DedupHitRatio != 0.5 {
+			t.Errorf("Expected dedup hit ratio 0.5, got %f", snapshot.DedupHitRatio)
+		}
+		if snapshot.SavedQueries != 2 {
+			t.Errorf("Expected 2 saved queries, got %d", snapshot.SavedQueries)
+		}
+	})
+
+	t.Run("per-operation dedup stats", func(t *testing.T) {
+		var listOp, showOp *OperationMetrics
+		for i := range snapshot.Operations {
+			if snapshot.Operations[i].Operation == "list" {
+				listOp = &snapshot.Operations[i]
+			}
+			if snapshot.Operations[i].Operation == "show" {
+				showOp = &snapshot.Operations[i]
+			}
+		}
+
+		if listOp == nil {
+			t.Fatal("Expected to find 'list' operation")
+		}
+		if showOp == nil {
+			t.Fatal("Expected to find 'show' operation")
+		}
+
+		if listOp.DedupHits != 2 {
+			t.Errorf("Expected list to have 2 dedup hits, got %d", listOp.DedupHits)
+		}
+		if listOp.DedupMisses != 1 {
+			t.Errorf("Expected list to have 1 dedup miss, got %d", listOp.DedupMisses)
+		}
+		if showOp.DedupHits != 0 {
+			t.Errorf("Expected show to have 0 dedup hits, got %d", showOp.DedupHits)
+		}
+		if showOp.DedupMisses != 1 {
+			t.Errorf("Expected show to have 1 dedup miss, got %d", showOp.DedupMisses)
+		}
+	})
+}
+
+func TestDedupHitRatioEdgeCases(t *testing.T) {
+	t.Run("no dedup data returns zero ratio", func(t *testing.T) {
+		m := NewMetrics()
+		m.RecordRequest("create", 10*time.Millisecond) // non-dedupable op
+
+		snapshot := m.Snapshot(0)
+
+		if snapshot.DedupHitRatio != 0 {
+			t.Errorf("Expected dedup hit ratio 0 when no data, got %f", snapshot.DedupHitRatio)
+		}
+	})
+
+	t.Run("all hits", func(t *testing.T) {
+		m := NewMetrics()
+		m.RecordDedup("list", true)
+		m.RecordDedup("list", true)
+		m.RecordDedup("list", true)
+
+		snapshot := m.Snapshot(0)
+
+		if snapshot.DedupHitRatio != 1.0 {
+			t.Errorf("Expected dedup hit ratio 1.0 when all hits, got %f", snapshot.DedupHitRatio)
+		}
+	})
+
+	t.Run("all misses", func(t *testing.T) {
+		m := NewMetrics()
+		m.RecordDedup("list", false)
+		m.RecordDedup("list", false)
+
+		snapshot := m.Snapshot(0)
+
+		if snapshot.DedupHitRatio != 0 {
+			t.Errorf("Expected dedup hit ratio 0 when all misses, got %f", snapshot.DedupHitRatio)
+		}
+	})
+}

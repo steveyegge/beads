@@ -42,6 +42,10 @@ type Metrics struct {
 	maxSlowQueries     int                     // max recent slow queries to track
 	slowQueryCallback  SlowQueryCallback       // optional callback for slow query logging
 
+	// Query deduplication metrics
+	dedupHits   map[string]int64 // operation -> dedup hit count (query result reused)
+	dedupMisses map[string]int64 // operation -> dedup miss count (query executed)
+
 	// System start time (for uptime calculation)
 	startTime time.Time
 }
@@ -60,6 +64,8 @@ func NewMetrics() *Metrics {
 		recentSlowQueries:  make([]SlowQueryRecord, 0),
 		maxSlowQueries:     100, // Keep last 100 slow queries
 		slowQueryThreshold: DefaultSlowQueryThreshold,
+		dedupHits:          make(map[string]int64),
+		dedupMisses:        make(map[string]int64),
 		startTime:          time.Now(),
 	}
 }
@@ -147,17 +153,37 @@ func (m *Metrics) RecordRejectedConnection() {
 	atomic.AddInt64(&m.rejectedConns, 1)
 }
 
+// RecordDedup records a deduplication event for query coalescing metrics.
+// wasDeduped=true means the query result was reused from an in-flight query (hit).
+// wasDeduped=false means the query was executed (miss, but eligible for dedup).
+func (m *Metrics) RecordDedup(operation string, wasDeduped bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if wasDeduped {
+		m.dedupHits[operation]++
+	} else {
+		m.dedupMisses[operation]++
+	}
+}
+
 // Snapshot returns a point-in-time snapshot of all metrics
 func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 	// Copy data under a short critical section
 	m.mu.RLock()
 
-	// Build union of all operations (from both counts and errors)
+	// Build union of all operations (from counts, errors, and dedup data)
 	opsSet := make(map[string]struct{})
 	for op := range m.requestCounts {
 		opsSet[op] = struct{}{}
 	}
 	for op := range m.requestErrors {
+		opsSet[op] = struct{}{}
+	}
+	for op := range m.dedupHits {
+		opsSet[op] = struct{}{}
+	}
+	for op := range m.dedupMisses {
 		opsSet[op] = struct{}{}
 	}
 
@@ -184,6 +210,16 @@ func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 	recentSlowCopy := make([]SlowQueryRecord, len(m.recentSlowQueries))
 	copy(recentSlowCopy, m.recentSlowQueries)
 
+	// Copy dedup data
+	dedupHitsCopy := make(map[string]int64, len(m.dedupHits))
+	dedupMissesCopy := make(map[string]int64, len(m.dedupMisses))
+	for op, count := range m.dedupHits {
+		dedupHitsCopy[op] = count
+	}
+	for op, count := range m.dedupMisses {
+		dedupMissesCopy[op] = count
+	}
+
 	m.mu.RUnlock()
 
 	// Compute statistics outside the lock
@@ -198,12 +234,17 @@ func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 	// Calculate per-operation stats
 	operations := make([]OperationMetrics, 0, len(opsSet))
 	var totalSlowQueries int64
+	var totalDedupHits, totalDedupMisses int64
 	for op := range opsSet {
 		count := countsCopy[op]
 		errors := errorsCopy[op]
 		samples := latCopy[op]
 		slowCount := slowCountsCopy[op]
+		dedupHits := dedupHitsCopy[op]
+		dedupMisses := dedupMissesCopy[op]
 		totalSlowQueries += slowCount
+		totalDedupHits += dedupHits
+		totalDedupMisses += dedupMisses
 
 		// Ensure success count is never negative
 		successCount := count - errors
@@ -217,6 +258,8 @@ func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 			ErrorCount:    errors,
 			SuccessCount:  successCount,
 			SlowQueryCount: slowCount,
+			DedupHits:     dedupHits,
+			DedupMisses:   dedupMisses,
 		}
 
 		// Calculate latency percentiles if we have samples
@@ -236,6 +279,12 @@ func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
+	// Calculate dedup hit ratio
+	var dedupHitRatio float64
+	if totalDedupHits+totalDedupMisses > 0 {
+		dedupHitRatio = float64(totalDedupHits) / float64(totalDedupHits+totalDedupMisses)
+	}
+
 	return MetricsSnapshot{
 		Timestamp:            time.Now(),
 		UptimeSeconds:        uptimeSeconds,
@@ -249,6 +298,10 @@ func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 		SlowQueryThresholdMS: float64(slowThreshold) / float64(time.Millisecond),
 		TotalSlowQueries:     totalSlowQueries,
 		RecentSlowQueries:    recentSlowCopy,
+		TotalDedupHits:       totalDedupHits,
+		TotalDedupMisses:     totalDedupMisses,
+		DedupHitRatio:        dedupHitRatio,
+		SavedQueries:         totalDedupHits, // each hit is a query we avoided executing
 	}
 }
 
@@ -268,6 +321,11 @@ type MetricsSnapshot struct {
 	SlowQueryThresholdMS float64            `json:"slow_query_threshold_ms"`
 	TotalSlowQueries     int64              `json:"total_slow_queries"`
 	RecentSlowQueries    []SlowQueryRecord  `json:"recent_slow_queries,omitempty"`
+	// Query deduplication stats
+	TotalDedupHits   int64   `json:"total_dedup_hits"`
+	TotalDedupMisses int64   `json:"total_dedup_misses"`
+	DedupHitRatio    float64 `json:"dedup_hit_ratio"` // hits / (hits + misses), 0 if no data
+	SavedQueries     int64   `json:"saved_queries"`   // same as TotalDedupHits (queries avoided)
 }
 
 // OperationMetrics holds metrics for a single operation type
@@ -277,6 +335,8 @@ type OperationMetrics struct {
 	SuccessCount   int64        `json:"success_count"`
 	ErrorCount     int64        `json:"error_count"`
 	SlowQueryCount int64        `json:"slow_query_count,omitempty"`
+	DedupHits      int64        `json:"dedup_hits,omitempty"`
+	DedupMisses    int64        `json:"dedup_misses,omitempty"`
 	Latency        LatencyStats `json:"latency,omitempty"`
 }
 
