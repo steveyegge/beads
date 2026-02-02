@@ -506,3 +506,88 @@ func TestSearchIssues_StatusFilter(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// GetStatistics Tests
+// =============================================================================
+
+func TestGetStatistics_NilDB(t *testing.T) {
+	// Test that GetStatistics returns an error instead of panicking when db is nil
+	store := &DoltStore{
+		db: nil,
+	}
+
+	ctx := context.Background()
+	_, err := store.GetStatistics(ctx)
+	if err == nil {
+		t.Error("expected error when db is nil, got nil")
+	}
+	if err.Error() != "database connection is nil" {
+		t.Errorf("expected 'database connection is nil' error, got: %v", err)
+	}
+}
+
+func TestGetStatistics_ClosedDB(t *testing.T) {
+	// Test that GetStatistics returns a clear error when db is closed
+	store := &DoltStore{
+		db: nil,
+	}
+	store.closed.Store(true)
+
+	ctx := context.Background()
+	_, err := store.GetStatistics(ctx)
+	if err == nil {
+		t.Error("expected error when db is closed, got nil")
+	}
+	if err.Error() != "database connection closed" {
+		t.Errorf("expected 'database connection closed' error, got: %v", err)
+	}
+}
+
+func TestGetStatistics(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Create issues with different statuses
+	openIssue := &types.Issue{
+		ID:        "stats-open",
+		Title:     "Open Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	closedIssue := &types.Issue{
+		ID:        "stats-closed",
+		Title:     "Closed Issue",
+		Status:    types.StatusClosed,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+
+	for _, issue := range []*types.Issue{openIssue, closedIssue} {
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+	}
+
+	// Get statistics
+	stats, err := store.GetStatistics(ctx)
+	if err != nil {
+		t.Fatalf("GetStatistics failed: %v", err)
+	}
+
+	if stats.TotalIssues != 2 {
+		t.Errorf("expected 2 total issues, got %d", stats.TotalIssues)
+	}
+
+	if stats.OpenIssues != 1 {
+		t.Errorf("expected 1 open issue, got %d", stats.OpenIssues)
+	}
+
+	if stats.ClosedIssues != 1 {
+		t.Errorf("expected 1 closed issue, got %d", stats.ClosedIssues)
+	}
+}

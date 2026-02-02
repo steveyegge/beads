@@ -545,9 +545,12 @@ func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter
 
 // GetStatistics returns summary statistics
 func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error) {
-	// Guard against nil database connection (can occur if store is closed)
+	// Guard against nil database connection (prevents panic during health checks)
 	if s.db == nil {
-		return nil, fmt.Errorf("database connection is nil (store may be closed)")
+		if s.closed.Load() {
+			return nil, fmt.Errorf("database connection closed")
+		}
+		return nil, fmt.Errorf("database connection is nil")
 	}
 
 	stats := &types.Statistics{}
