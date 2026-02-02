@@ -107,6 +107,10 @@ var (
 	// commandTipIDsShown tracks which tip IDs were shown in this command (deduped).
 	// This is used for tip-commit message formatting.
 	commandTipIDsShown map[string]struct{}
+
+	// processSem holds the file-based semaphore slot acquired before opening
+	// a dolt database. Released in PersistentPostRun after store.Close().
+	processSem *ProcessSemaphore
 )
 
 // readOnlyCommands lists commands that only read from the database.
@@ -843,6 +847,17 @@ var rootCmd = &cobra.Command{
 		}
 
 		if backend == configfile.BackendDolt {
+			// Acquire process-level semaphore before opening dolt DB.
+			// This limits concurrent dolt access across ALL bd processes
+			// (gt, hooks, CLI) to prevent lock contention hangs.
+			sem, semErr := acquireProcessSemaphore(beadsDir)
+			if semErr != nil {
+				debug.Logf("process semaphore: failed to acquire: %v (proceeding without)", semErr)
+				// Non-fatal: proceed without semaphore rather than blocking all bd commands
+			} else {
+				processSem = sem
+			}
+
 			// For Dolt, use the dolt subdirectory
 			doltPath := filepath.Join(beadsDir, "dolt")
 
@@ -1041,6 +1056,13 @@ var rootCmd = &cobra.Command{
 		if store != nil {
 			_ = store.Close()
 		}
+
+		// Release process-level semaphore after store is closed
+		if processSem != nil {
+			processSem.Release()
+			processSem = nil
+		}
+
 		if profileFile != nil {
 			pprof.StopCPUProfile()
 			_ = profileFile.Close()
