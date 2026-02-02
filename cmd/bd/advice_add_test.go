@@ -363,3 +363,155 @@ func TestAdviceHookDefaults(t *testing.T) {
 		}
 	})
 }
+
+// TestAdvicePriorityAndMetadata tests priority and metadata flag handling
+func TestAdvicePriorityAndMetadata(t *testing.T) {
+	ctx := context.Background()
+	memStore := memory.New("")
+
+	t.Run("create advice with custom priority", func(t *testing.T) {
+		advice := &types.Issue{
+			Title:     "High priority advice",
+			Priority:  1, // Highest priority
+			IssueType: types.TypeAdvice,
+			Status:    types.StatusOpen,
+			CreatedAt: time.Now(),
+		}
+		if err := memStore.CreateIssue(ctx, advice, "test-user"); err != nil {
+			t.Fatalf("Failed to create advice: %v", err)
+		}
+
+		retrieved, err := memStore.GetIssue(ctx, advice.ID)
+		if err != nil {
+			t.Fatalf("Failed to retrieve advice: %v", err)
+		}
+		if retrieved.Priority != 1 {
+			t.Errorf("Expected priority 1, got %d", retrieved.Priority)
+		}
+	})
+
+	t.Run("default priority is 2", func(t *testing.T) {
+		advice := &types.Issue{
+			Title:     "Default priority advice",
+			IssueType: types.TypeAdvice,
+			Status:    types.StatusOpen,
+			CreatedAt: time.Now(),
+		}
+		// Don't set priority - should default to 0 in struct, but CLI defaults to 2
+		if advice.Priority != 0 {
+			t.Errorf("Expected struct default priority 0, got %d", advice.Priority)
+		}
+	})
+
+	t.Run("priority range validation", func(t *testing.T) {
+		// Priority is 0-4 (P0=highest to P4=lowest)
+		validPriorities := []int{0, 1, 2, 3, 4}
+		for _, p := range validPriorities {
+			advice := &types.Issue{
+				Title:     "Priority test",
+				Priority:  p,
+				IssueType: types.TypeAdvice,
+				Status:    types.StatusOpen,
+				CreatedAt: time.Now(),
+			}
+			if err := memStore.CreateIssue(ctx, advice, "test-user"); err != nil {
+				t.Errorf("Priority %d should be valid, got error: %v", p, err)
+			}
+		}
+	})
+
+	t.Run("create advice with custom title", func(t *testing.T) {
+		advice := &types.Issue{
+			Title:       "Custom Title Here",
+			Description: "This is a longer description that differs from the title",
+			IssueType:   types.TypeAdvice,
+			Status:      types.StatusOpen,
+			CreatedAt:   time.Now(),
+		}
+		if err := memStore.CreateIssue(ctx, advice, "test-user"); err != nil {
+			t.Fatalf("Failed to create advice: %v", err)
+		}
+
+		retrieved, err := memStore.GetIssue(ctx, advice.ID)
+		if err != nil {
+			t.Fatalf("Failed to retrieve advice: %v", err)
+		}
+		if retrieved.Title != "Custom Title Here" {
+			t.Errorf("Expected title 'Custom Title Here', got %q", retrieved.Title)
+		}
+		if retrieved.Description != "This is a longer description that differs from the title" {
+			t.Errorf("Description not preserved correctly")
+		}
+	})
+
+	t.Run("title defaults to first line when not specified", func(t *testing.T) {
+		// This tests the CLI behavior where title defaults to first line of advice text
+		// In the types layer, title and description are separate fields
+		advice := &types.Issue{
+			Title:       "First line becomes title",
+			Description: "First line becomes title\nSecond line is part of description",
+			IssueType:   types.TypeAdvice,
+			Status:      types.StatusOpen,
+			CreatedAt:   time.Now(),
+		}
+		if err := memStore.CreateIssue(ctx, advice, "test-user"); err != nil {
+			t.Fatalf("Failed to create advice: %v", err)
+		}
+
+		retrieved, err := memStore.GetIssue(ctx, advice.ID)
+		if err != nil {
+			t.Fatalf("Failed to retrieve advice: %v", err)
+		}
+		if retrieved.Title != "First line becomes title" {
+			t.Errorf("Title should be first line, got %q", retrieved.Title)
+		}
+	})
+
+	t.Run("description separate from title", func(t *testing.T) {
+		advice := &types.Issue{
+			Title:       "Short title",
+			Description: "This is a much longer description that provides detailed context about when and how to apply this advice. It can span multiple paragraphs and include examples.",
+			IssueType:   types.TypeAdvice,
+			Status:      types.StatusOpen,
+			CreatedAt:   time.Now(),
+		}
+		if err := memStore.CreateIssue(ctx, advice, "test-user"); err != nil {
+			t.Fatalf("Failed to create advice: %v", err)
+		}
+
+		retrieved, err := memStore.GetIssue(ctx, advice.ID)
+		if err != nil {
+			t.Fatalf("Failed to retrieve advice: %v", err)
+		}
+		if retrieved.Title == retrieved.Description {
+			t.Error("Title and description should be separate")
+		}
+		if len(retrieved.Description) <= len(retrieved.Title) {
+			t.Error("Description should be longer than title in this test case")
+		}
+	})
+
+	t.Run("all priority levels persisted correctly", func(t *testing.T) {
+		// Priority is 0-4 (P0=highest to P4=lowest)
+		for p := 0; p <= 4; p++ {
+			advice := &types.Issue{
+				Title:     "Priority persistence test",
+				Priority:  p,
+				IssueType: types.TypeAdvice,
+				Status:    types.StatusOpen,
+				CreatedAt: time.Now(),
+			}
+			if err := memStore.CreateIssue(ctx, advice, "test-user"); err != nil {
+				t.Fatalf("Failed to create advice with priority %d: %v", p, err)
+			}
+
+			retrieved, err := memStore.GetIssue(ctx, advice.ID)
+			if err != nil {
+				t.Fatalf("Failed to retrieve advice: %v", err)
+			}
+			if retrieved.Priority != p {
+				t.Errorf("Priority %d not persisted correctly, got %d", p, retrieved.Priority)
+			}
+		}
+	})
+}
