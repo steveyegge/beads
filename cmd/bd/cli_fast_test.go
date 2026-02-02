@@ -1290,16 +1290,8 @@ func TestCLI_AdviceAdd(t *testing.T) {
 			t.Errorf("Expected issue_type 'advice', got: %v", issue["issue_type"])
 		}
 
-		// Verify global scope (no targeting fields set - nil or empty string)
-		if !isEmptyOrNil(issue["advice_target_rig"]) {
-			t.Errorf("Expected empty advice_target_rig for global advice, got: %v", issue["advice_target_rig"])
-		}
-		if !isEmptyOrNil(issue["advice_target_role"]) {
-			t.Errorf("Expected empty advice_target_role for global advice, got: %v", issue["advice_target_role"])
-		}
-		if !isEmptyOrNil(issue["advice_target_agent"]) {
-			t.Errorf("Expected empty advice_target_agent for global advice, got: %v", issue["advice_target_agent"])
-		}
+		// NOTE: advice_target_* fields removed - advice now uses labels (bd-hhbu)
+		// Global advice gets "global" label automatically
 
 		// Verify title defaults to advice text
 		if issue["title"] != "Always check for errors before proceeding" {
@@ -1329,16 +1321,8 @@ func TestCLI_AdviceAdd(t *testing.T) {
 			t.Errorf("Expected issue_type 'advice', got: %v", issue["issue_type"])
 		}
 
-		// Verify rig targeting
-		if issue["advice_target_rig"] != "beads" {
-			t.Errorf("Expected advice_target_rig 'beads', got: %v", issue["advice_target_rig"])
-		}
-		if !isEmptyOrNil(issue["advice_target_role"]) {
-			t.Errorf("Expected empty advice_target_role, got: %v", issue["advice_target_role"])
-		}
-		if !isEmptyOrNil(issue["advice_target_agent"]) {
-			t.Errorf("Expected empty advice_target_agent, got: %v", issue["advice_target_agent"])
-		}
+		// NOTE: advice_target_* fields removed - advice now uses labels (bd-hhbu)
+		// --rig=beads adds "rig:beads" label automatically
 	})
 
 	t.Run("RoleTargetedAdvice", func(t *testing.T) {
@@ -1363,16 +1347,8 @@ func TestCLI_AdviceAdd(t *testing.T) {
 			t.Errorf("Expected issue_type 'advice', got: %v", issue["issue_type"])
 		}
 
-		// Verify role targeting (includes rig)
-		if issue["advice_target_rig"] != "beads" {
-			t.Errorf("Expected advice_target_rig 'beads', got: %v", issue["advice_target_rig"])
-		}
-		if issue["advice_target_role"] != "polecat" {
-			t.Errorf("Expected advice_target_role 'polecat', got: %v", issue["advice_target_role"])
-		}
-		if !isEmptyOrNil(issue["advice_target_agent"]) {
-			t.Errorf("Expected empty advice_target_agent, got: %v", issue["advice_target_agent"])
-		}
+		// NOTE: advice_target_* fields removed - advice now uses labels (bd-hhbu)
+		// --rig=beads adds "rig:beads" label, --role=polecat adds "role:polecat" label
 	})
 }
 
