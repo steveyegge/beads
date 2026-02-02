@@ -126,6 +126,10 @@ func runAdviceList(cmd *cobra.Command, args []string) {
 
 	// JSON output
 	if jsonOutput {
+		// Populate labels for JSON output
+		for _, issue := range filtered {
+			issue.Labels = labelsMap[issue.ID]
+		}
 		outputJSON(filtered)
 		return
 	}
