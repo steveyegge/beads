@@ -47,6 +47,8 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 ## Native Apps
 
+- **[Beads Task-Issue Tracker](https://github.com/w3dev33/beads-task-issue-tracker)** - Cross-platform desktop application (macOS, Windows, Linux) for browsing, creating, and managing Beads issues with a visual interface. Features multi-project support with favorites, image attachments, dashboard with statistics, advanced filtering, and dark/light theme. Built by [@w3dev33](https://github.com/w3dev33). (Tauri/Vue)
+
 - **[Beadster](https://github.com/beadster/beadster)** - macOS app for browsing and managing issues from `.beads/` directories in git repositories. Built by [@podviaznikov](https://github.com/podviaznikov). (Swift)
 
 -  **[Parade](https://github.com/JeremyKalmus/parade)** - Electron app for workflow orchestration with visual Kanban board, discovery wizard, and task visualization. Run with `npx parade-init`. Built by [@JeremyKalmus](https://github.com/JeremyKalmus). (Electron/React)
