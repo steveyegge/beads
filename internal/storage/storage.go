@@ -146,6 +146,9 @@ type Storage interface {
 	GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error)
 	UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
 	ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error)
+	// ListRecentlyRespondedDecisions returns decisions that were responded to
+	// within the given time window, optionally filtered by requesting agent.
+	ListRecentlyRespondedDecisions(ctx context.Context, since time.Time, requestedBy string) ([]*types.DecisionPoint, error)
 
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)

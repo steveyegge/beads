@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -154,6 +155,74 @@ func (s *SQLiteStorage) ListPendingDecisions(ctx context.Context) ([]*types.Deci
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pending decisions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []*types.DecisionPoint
+	for rows.Next() {
+		dp := &types.DecisionPoint{}
+		err := rows.Scan(
+			&dp.IssueID, &dp.Prompt, &dp.Context, &dp.Options,
+			&dp.DefaultOption, &dp.SelectedOption,
+			&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
+			&dp.Iteration, &dp.MaxIterations,
+			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
+			&dp.ParentBeadID, &dp.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan decision point: %w", err)
+		}
+		results = append(results, dp)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating decision points: %w", err)
+	}
+
+	return results, nil
+}
+
+// ListRecentlyRespondedDecisions returns decisions that were responded to
+// within the given time window, optionally filtered by requesting agent.
+func (s *SQLiteStorage) ListRecentlyRespondedDecisions(ctx context.Context, since time.Time, requestedBy string) ([]*types.DecisionPoint, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	var rows *sql.Rows
+	var err error
+
+	if requestedBy != "" {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT issue_id, prompt, COALESCE(context, ''), options,
+				COALESCE(default_option, ''), COALESCE(selected_option, ''),
+				COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
+				iteration, max_iterations,
+				COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
+				COALESCE(parent_bead_id, ''), created_at
+			FROM decision_points
+			WHERE responded_at IS NOT NULL
+			  AND responded_at >= ?
+			  AND requested_by = ?
+			ORDER BY responded_at DESC
+		`, since, requestedBy)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT issue_id, prompt, COALESCE(context, ''), options,
+				COALESCE(default_option, ''), COALESCE(selected_option, ''),
+				COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
+				iteration, max_iterations,
+				COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
+				COALESCE(parent_bead_id, ''), created_at
+			FROM decision_points
+			WHERE responded_at IS NOT NULL
+			  AND responded_at >= ?
+			ORDER BY responded_at DESC
+		`, since)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query recently responded decisions: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 

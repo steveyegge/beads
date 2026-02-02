@@ -1970,6 +1970,34 @@ func (m *MemoryStorage) ListPendingDecisions(ctx context.Context) ([]*types.Deci
 	return results, nil
 }
 
+// ListRecentlyRespondedDecisions returns decisions that were responded to
+// within the given time window, optionally filtered by requesting agent.
+func (m *MemoryStorage) ListRecentlyRespondedDecisions(ctx context.Context, since time.Time, requestedBy string) ([]*types.DecisionPoint, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var results []*types.DecisionPoint
+	for _, dp := range m.decisionPoints {
+		if dp.RespondedAt == nil {
+			continue
+		}
+		if dp.RespondedAt.Before(since) {
+			continue
+		}
+		if requestedBy != "" && dp.RequestedBy != requestedBy {
+			continue
+		}
+		results = append(results, dp)
+	}
+
+	// Sort by responded_at DESC for consistent ordering
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].RespondedAt.After(*results[j].RespondedAt)
+	})
+
+	return results, nil
+}
+
 // ListAllDecisionPoints returns all decision points (for JSONL export).
 func (m *MemoryStorage) ListAllDecisionPoints(ctx context.Context) ([]*types.DecisionPoint, error) {
 	m.mu.RLock()

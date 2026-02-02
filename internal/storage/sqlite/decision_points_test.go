@@ -363,6 +363,96 @@ func TestCloseIssueRemovesPendingDecision(t *testing.T) {
 	}
 }
 
+// TestListRecentlyRespondedDecisions tests listing recently responded decisions
+func TestListRecentlyRespondedDecisions(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issues with decision points
+	var issueIDs []string
+	for i := 0; i < 3; i++ {
+		issue := &types.Issue{
+			Title:     "Test issue",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, issue, "test-user"); err != nil {
+			t.Fatalf("CreateIssue failed: %v", err)
+		}
+		issueIDs = append(issueIDs, issue.ID)
+
+		requestedBy := ""
+		if i == 1 {
+			requestedBy = "agent-a"
+		}
+
+		dp := &types.DecisionPoint{
+			IssueID:       issue.ID,
+			Prompt:        "Decision prompt",
+			Options:       "[]",
+			Iteration:     1,
+			MaxIterations: 3,
+			RequestedBy:   requestedBy,
+		}
+		if err := store.CreateDecisionPoint(ctx, dp); err != nil {
+			t.Fatalf("CreateDecisionPoint failed: %v", err)
+		}
+
+		// Mark first two as responded
+		if i < 2 {
+			now := time.Now()
+			dp.RespondedAt = &now
+			dp.SelectedOption = "a"
+			if err := store.UpdateDecisionPoint(ctx, dp); err != nil {
+				t.Fatalf("UpdateDecisionPoint failed: %v", err)
+			}
+		}
+	}
+
+	// List recently responded decisions (within last 5 minutes)
+	since := time.Now().Add(-5 * time.Minute)
+	responded, err := store.ListRecentlyRespondedDecisions(ctx, since, "")
+	if err != nil {
+		t.Fatalf("ListRecentlyRespondedDecisions failed: %v", err)
+	}
+
+	// Should have 2 responded
+	if len(responded) != 2 {
+		t.Errorf("Expected 2 responded decisions, got %d", len(responded))
+	}
+
+	// All should have non-nil RespondedAt
+	for _, dp := range responded {
+		if dp.RespondedAt == nil {
+			t.Error("Responded decision should have non-nil RespondedAt")
+		}
+	}
+
+	// Test filtering by requested_by
+	filteredResponded, err := store.ListRecentlyRespondedDecisions(ctx, since, "agent-a")
+	if err != nil {
+		t.Fatalf("ListRecentlyRespondedDecisions with filter failed: %v", err)
+	}
+
+	if len(filteredResponded) != 1 {
+		t.Errorf("Expected 1 responded decision with agent-a filter, got %d", len(filteredResponded))
+	}
+
+	// Test with old time window (should return nothing)
+	oldSince := time.Now().Add(1 * time.Hour) // in the future
+	oldResponded, err := store.ListRecentlyRespondedDecisions(ctx, oldSince, "")
+	if err != nil {
+		t.Fatalf("ListRecentlyRespondedDecisions with old window failed: %v", err)
+	}
+
+	if len(oldResponded) != 0 {
+		t.Errorf("Expected 0 responded decisions with future time window, got %d", len(oldResponded))
+	}
+}
+
 // TestDecisionPointIteration tests iteration fields
 func TestDecisionPointIteration(t *testing.T) {
 	store, cleanup := setupTestDB(t)

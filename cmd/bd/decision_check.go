@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/inject"
@@ -44,13 +45,17 @@ Examples:
 }
 
 var (
-	checkInject bool
-	checkID     string
+	checkInject      bool
+	checkID          string
+	checkSince       string
+	checkRequestedBy string
 )
 
 func init() {
 	decisionCheckCmd.Flags().BoolVar(&checkInject, "inject", false, "Output format for Claude Code hooks")
 	decisionCheckCmd.Flags().StringVar(&checkID, "id", "", "Check specific decision ID")
+	decisionCheckCmd.Flags().StringVar(&checkSince, "since", "5m", "Time window for recently responded decisions (e.g., 5m, 1h)")
+	decisionCheckCmd.Flags().StringVar(&checkRequestedBy, "requested-by", "", "Filter by requesting agent")
 
 	decisionCmd.AddCommand(decisionCheckCmd)
 }
@@ -120,13 +125,19 @@ func runDecisionCheck(cmd *cobra.Command, args []string) {
 			})
 		}
 	} else {
-		// Get all pending decisions - these are the ones we might have responded to
-		// Note: ListPendingDecisions returns decisions without responses,
-		// so we need a different approach to find responded ones.
-		// For now, we'll check if there are any pending decisions and report that.
-		// In practice, the --id flag should be used for specific decision tracking.
+		// Parse the --since duration
+		sinceDuration, err := time.ParseDuration(checkSince)
+		if err != nil {
+			if checkInject {
+				os.Exit(0)
+			}
+			fmt.Fprintf(os.Stderr, "Error parsing --since duration: %v\n", err)
+			os.Exit(1)
+		}
+		sinceTime := time.Now().Add(-sinceDuration)
 
-		pendingDecisions, err := store.ListPendingDecisions(ctx)
+		// Get recently responded decisions using the efficient query
+		respondedDecisions, err := store.ListRecentlyRespondedDecisions(ctx, sinceTime, checkRequestedBy)
 		if err != nil {
 			if checkInject {
 				os.Exit(0)
@@ -135,41 +146,28 @@ func runDecisionCheck(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 
-		// Check each pending decision to see if it has been responded
-		// (ListPendingDecisions may be slightly stale)
-		for _, dp := range pendingDecisions {
-			// Re-fetch to get latest state
-			freshDP, err := store.GetDecisionPoint(ctx, dp.IssueID)
-			if err != nil || freshDP == nil {
-				continue
-			}
-
-			// Only include if responded
-			if freshDP.RespondedAt == nil {
-				continue
-			}
-
+		for _, dp := range respondedDecisions {
 			// Parse options for label
 			var options []types.DecisionOption
-			if freshDP.Options != "" {
-				_ = json.Unmarshal([]byte(freshDP.Options), &options)
+			if dp.Options != "" {
+				_ = json.Unmarshal([]byte(dp.Options), &options)
 			}
 
-			selectedLabel := freshDP.SelectedOption
+			selectedLabel := dp.SelectedOption
 			for _, opt := range options {
-				if opt.ID == freshDP.SelectedOption {
+				if opt.ID == dp.SelectedOption {
 					selectedLabel = opt.Label
 					break
 				}
 			}
 
 			responses = append(responses, DecisionResponseSum{
-				ID:          freshDP.IssueID,
-				Prompt:      freshDP.Prompt,
-				Selected:    freshDP.SelectedOption,
+				ID:          dp.IssueID,
+				Prompt:      dp.Prompt,
+				Selected:    dp.SelectedOption,
 				SelectedLbl: selectedLabel,
-				Text:        freshDP.ResponseText,
-				RespondedBy: freshDP.RespondedBy,
+				Text:        dp.ResponseText,
+				RespondedBy: dp.RespondedBy,
 			})
 		}
 	}
