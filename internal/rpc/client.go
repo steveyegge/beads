@@ -440,6 +440,22 @@ func (c *Client) List(args *ListArgs) (*Response, error) {
 	return c.Execute(OpList, args)
 }
 
+// ListWatch is a long-polling endpoint for watch mode (bd-la75).
+// It blocks until mutations occur after the given Since timestamp, then returns the updated issue list.
+func (c *Client) ListWatch(args *ListWatchArgs) (*ListWatchResult, error) {
+	resp, err := c.Execute(OpListWatch, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result ListWatchResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal list watch response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // Count counts issues via the daemon
 func (c *Client) Count(args *CountArgs) (*Response, error) {
 	return c.Execute(OpCount, args)

@@ -463,6 +463,77 @@ func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueF
 	}
 }
 
+// watchIssuesViaRPC implements watch mode using daemon RPC long-polling (bd-la75)
+// This uses the ListWatch endpoint to wait for mutations and returns updated issue lists.
+func watchIssuesViaRPC(ctx context.Context, client *rpc.Client, args *rpc.ListWatchArgs, sortBy string, reverse bool) {
+	// Initial display
+	args.Since = 0 // First call returns immediately with current data
+	result, err := client.ListWatch(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return
+	}
+
+	issues := result.Issues
+	sortIssues(issues, sortBy, reverse)
+	displayPrettyList(issues, true)
+
+	fmt.Fprintf(os.Stderr, "\nWatching for changes via daemon... (Press Ctrl+C to exit)\n")
+
+	// Handle Ctrl+C
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	lastMutationMs := result.LastMutationMs
+
+	for {
+		// Check for interrupt before making next RPC call
+		select {
+		case <-sigChan:
+			fmt.Fprintf(os.Stderr, "\nStopped watching.\n")
+			return
+		case <-ctx.Done():
+			fmt.Fprintf(os.Stderr, "\nStopped watching.\n")
+			return
+		default:
+			// Continue with watch poll
+		}
+
+		// Long-poll for changes since last mutation
+		args.Since = lastMutationMs
+		args.TimeoutMs = 30000 // 30 second poll timeout
+
+		result, err = client.ListWatch(args)
+		if err != nil {
+			// Check if context was cancelled
+			select {
+			case <-ctx.Done():
+				fmt.Fprintf(os.Stderr, "\nStopped watching.\n")
+				return
+			case <-sigChan:
+				fmt.Fprintf(os.Stderr, "\nStopped watching.\n")
+				return
+			default:
+				fmt.Fprintf(os.Stderr, "Error polling for changes: %v\n", err)
+				// Brief pause before retrying
+				time.Sleep(1 * time.Second)
+				continue
+			}
+		}
+
+		// Check if we got new mutations
+		if result.LastMutationMs > lastMutationMs {
+			issues = result.Issues
+			sortIssues(issues, sortBy, reverse)
+			displayPrettyList(issues, true)
+			fmt.Fprintf(os.Stderr, "\nWatching for changes via daemon... (Press Ctrl+C to exit)\n")
+		}
+
+		lastMutationMs = result.LastMutationMs
+	}
+}
+
 // sortIssues sorts a slice of issues by the specified field and direction
 func sortIssues(issues []*types.Issue, sortBy string, reverse bool) {
 	if sortBy == "" {
@@ -1147,14 +1218,47 @@ var listCmd = &cobra.Command{
 			// Apply sorting
 			sortIssues(issues, sortBy, reverse)
 
-			// Handle watch mode (GH#654)
-			// Watch mode requires direct store access for file watching
+			// Handle watch mode via daemon RPC (bd-la75)
+			// Uses long-polling ListWatch endpoint instead of direct file watching
 			if watchMode {
-				if err := ensureDirectMode("watch mode requires direct database access"); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
+				// Build ListWatchArgs from the same parameters as listArgs
+				watchArgs := &rpc.ListWatchArgs{
+					Status:              listArgs.Status,
+					IssueType:           listArgs.IssueType,
+					Assignee:            listArgs.Assignee,
+					Limit:               listArgs.Limit,
+					Priority:            listArgs.Priority,
+					Labels:              listArgs.Labels,
+					LabelsAny:           listArgs.LabelsAny,
+					Query:               listArgs.Query,
+					IDs:                 listArgs.IDs,
+					TitleContains:       listArgs.TitleContains,
+					DescriptionContains: listArgs.DescriptionContains,
+					NotesContains:       listArgs.NotesContains,
+					CreatedAfter:        listArgs.CreatedAfter,
+					CreatedBefore:       listArgs.CreatedBefore,
+					UpdatedAfter:        listArgs.UpdatedAfter,
+					UpdatedBefore:       listArgs.UpdatedBefore,
+					ClosedAfter:         listArgs.ClosedAfter,
+					ClosedBefore:        listArgs.ClosedBefore,
+					EmptyDescription:    listArgs.EmptyDescription,
+					NoAssignee:          listArgs.NoAssignee,
+					NoLabels:            listArgs.NoLabels,
+					PriorityMin:         listArgs.PriorityMin,
+					PriorityMax:         listArgs.PriorityMax,
+					Pinned:              listArgs.Pinned,
+					IncludeTemplates:    listArgs.IncludeTemplates,
+					ParentID:            listArgs.ParentID,
+					ExcludeStatus:       listArgs.ExcludeStatus,
+					ExcludeTypes:        listArgs.ExcludeTypes,
+					Deferred:            listArgs.Deferred,
+					DeferAfter:          listArgs.DeferAfter,
+					DeferBefore:         listArgs.DeferBefore,
+					DueAfter:            listArgs.DueAfter,
+					DueBefore:           listArgs.DueBefore,
+					Overdue:             listArgs.Overdue,
 				}
-				watchIssues(ctx, store, filter, sortBy, reverse)
+				watchIssuesViaRPC(ctx, daemonClient, watchArgs, sortBy, reverse)
 				return
 			}
 

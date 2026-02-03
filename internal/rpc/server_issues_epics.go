@@ -1647,6 +1647,241 @@ func (s *Server) handleList(req *Request) Response {
 	}
 }
 
+// handleListWatch implements long-polling watch mode for bd list --watch (bd-la75)
+// It waits for mutations since the given timestamp and returns updated issue list.
+func (s *Server) handleListWatch(req *Request) Response {
+	var args ListWatchArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid list watch args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	// Set default and max timeout
+	timeoutMs := args.TimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = 30000 // 30 seconds default
+	}
+	if timeoutMs > 60000 {
+		timeoutMs = 60000 // 60 seconds max
+	}
+
+	// If Since > 0, wait for mutations newer than Since
+	if args.Since > 0 {
+		deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+		pollInterval := 100 * time.Millisecond
+
+		for time.Now().Before(deadline) {
+			// Check for mutations newer than Since
+			mutations := s.GetRecentMutations(args.Since)
+			if len(mutations) > 0 {
+				// Found mutations, return updated list
+				break
+			}
+
+			// No mutations yet, wait a bit
+			remaining := time.Until(deadline)
+			if remaining < pollInterval {
+				time.Sleep(remaining)
+			} else {
+				time.Sleep(pollInterval)
+			}
+		}
+	}
+
+	// Build filter from args (same as handleList)
+	filter := types.IssueFilter{
+		Limit: args.Limit,
+	}
+
+	if args.Status != "" && args.Status != "all" {
+		status := types.Status(args.Status)
+		filter.Status = &status
+	}
+	if args.IssueType != "" {
+		issueType := types.IssueType(args.IssueType)
+		filter.IssueType = &issueType
+	}
+	if args.Assignee != "" {
+		filter.Assignee = &args.Assignee
+	}
+	if args.Priority != nil {
+		filter.Priority = args.Priority
+	}
+
+	// Normalize and apply label filters
+	labels := util.NormalizeLabels(args.Labels)
+	labelsAny := util.NormalizeLabels(args.LabelsAny)
+	if len(labels) > 0 {
+		filter.Labels = labels
+	} else if args.Label != "" {
+		filter.Labels = []string{strings.TrimSpace(args.Label)}
+	}
+	if len(labelsAny) > 0 {
+		filter.LabelsAny = labelsAny
+	}
+	if len(args.IDs) > 0 {
+		ids := util.NormalizeLabels(args.IDs)
+		if len(ids) > 0 {
+			filter.IDs = ids
+		}
+	}
+
+	// Pattern matching
+	filter.TitleContains = args.TitleContains
+	filter.DescriptionContains = args.DescriptionContains
+	filter.NotesContains = args.NotesContains
+
+	// Date ranges
+	if args.CreatedAfter != "" {
+		if t, err := parseTimeRPC(args.CreatedAfter); err == nil {
+			filter.CreatedAfter = &t
+		}
+	}
+	if args.CreatedBefore != "" {
+		if t, err := parseTimeRPC(args.CreatedBefore); err == nil {
+			filter.CreatedBefore = &t
+		}
+	}
+	if args.UpdatedAfter != "" {
+		if t, err := parseTimeRPC(args.UpdatedAfter); err == nil {
+			filter.UpdatedAfter = &t
+		}
+	}
+	if args.UpdatedBefore != "" {
+		if t, err := parseTimeRPC(args.UpdatedBefore); err == nil {
+			filter.UpdatedBefore = &t
+		}
+	}
+	if args.ClosedAfter != "" {
+		if t, err := parseTimeRPC(args.ClosedAfter); err == nil {
+			filter.ClosedAfter = &t
+		}
+	}
+	if args.ClosedBefore != "" {
+		if t, err := parseTimeRPC(args.ClosedBefore); err == nil {
+			filter.ClosedBefore = &t
+		}
+	}
+
+	// Empty/null checks
+	filter.EmptyDescription = args.EmptyDescription
+	filter.NoAssignee = args.NoAssignee
+	filter.NoLabels = args.NoLabels
+
+	// Priority range
+	filter.PriorityMin = args.PriorityMin
+	filter.PriorityMax = args.PriorityMax
+
+	// Pinned
+	filter.Pinned = args.Pinned
+
+	// Templates
+	if !args.IncludeTemplates {
+		isTemplate := false
+		filter.IsTemplate = &isTemplate
+	}
+
+	// Parent
+	if args.ParentID != "" {
+		filter.ParentID = &args.ParentID
+	}
+
+	// Ephemeral
+	filter.Ephemeral = args.Ephemeral
+
+	// MolType
+	if args.MolType != "" {
+		molType := types.MolType(args.MolType)
+		filter.MolType = &molType
+	}
+
+	// Status exclusion
+	if len(args.ExcludeStatus) > 0 {
+		for _, s := range args.ExcludeStatus {
+			filter.ExcludeStatus = append(filter.ExcludeStatus, types.Status(s))
+		}
+	}
+
+	// Type exclusion
+	if len(args.ExcludeTypes) > 0 {
+		for _, t := range args.ExcludeTypes {
+			filter.ExcludeTypes = append(filter.ExcludeTypes, types.IssueType(t))
+		}
+	}
+
+	// Time-based scheduling
+	filter.Deferred = args.Deferred
+	if args.DeferAfter != "" {
+		if t, err := parseTimeRPC(args.DeferAfter); err == nil {
+			filter.DeferAfter = &t
+		}
+	}
+	if args.DeferBefore != "" {
+		if t, err := parseTimeRPC(args.DeferBefore); err == nil {
+			filter.DeferBefore = &t
+		}
+	}
+	if args.DueAfter != "" {
+		if t, err := parseTimeRPC(args.DueAfter); err == nil {
+			filter.DueAfter = &t
+		}
+	}
+	if args.DueBefore != "" {
+		if t, err := parseTimeRPC(args.DueBefore); err == nil {
+			filter.DueBefore = &t
+		}
+	}
+	filter.Overdue = args.Overdue
+
+	ctx := s.reqCtx(req)
+
+	// Query issues
+	issues, err := store.SearchIssues(ctx, args.Query, filter)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to list issues: %v", err),
+		}
+	}
+
+	// Populate labels for each issue
+	for _, issue := range issues {
+		labels, _ := store.GetLabels(ctx, issue.ID)
+		issue.Labels = labels
+	}
+
+	// Get current timestamp for LastMutationMs
+	var lastMutationMs int64
+	s.recentMutationsMu.RLock()
+	if len(s.recentMutations) > 0 {
+		lastMutationMs = s.recentMutations[len(s.recentMutations)-1].Timestamp.UnixMilli()
+	} else {
+		lastMutationMs = time.Now().UnixMilli()
+	}
+	s.recentMutationsMu.RUnlock()
+
+	result := ListWatchResult{
+		Issues:         issues,
+		LastMutationMs: lastMutationMs,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
 func (s *Server) handleCount(req *Request) Response {
 	var countArgs CountArgs
 	if err := json.Unmarshal(req.Args, &countArgs); err != nil {

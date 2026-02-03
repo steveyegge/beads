@@ -66,6 +66,9 @@ const (
 
 	// Close operations (bd-ympw)
 	OpCloseContinue = "close_continue"
+
+	// Watch operations (bd-la75)
+	OpListWatch = "list_watch"
 )
 
 // Request represents an RPC request from client to daemon
@@ -812,5 +815,82 @@ type CloseContinueResult struct {
 	AutoAdvanced bool         `json:"auto_advanced"`           // Whether next step was auto-claimed
 	MolComplete  bool         `json:"molecule_complete"`       // Whether the molecule is complete
 	MoleculeID   string       `json:"molecule_id,omitempty"`   // Parent molecule ID
+}
+// ListWatchArgs represents arguments for the list_watch operation (bd-la75)
+// This is a long-polling endpoint for watch mode that blocks until mutations occur.
+type ListWatchArgs struct {
+	// All the standard ListArgs filters
+	Query     string   `json:"query,omitempty"`
+	Status    string   `json:"status,omitempty"`
+	Priority  *int     `json:"priority,omitempty"`
+	IssueType string   `json:"issue_type,omitempty"`
+	Assignee  string   `json:"assignee,omitempty"`
+	Label     string   `json:"label,omitempty"`      // Deprecated: use Labels
+	Labels    []string `json:"labels,omitempty"`     // AND semantics
+	LabelsAny []string `json:"labels_any,omitempty"` // OR semantics
+	IDs       []string `json:"ids,omitempty"`
+	Limit     int      `json:"limit,omitempty"`
+
+	// Pattern matching
+	TitleContains       string `json:"title_contains,omitempty"`
+	DescriptionContains string `json:"description_contains,omitempty"`
+	NotesContains       string `json:"notes_contains,omitempty"`
+
+	// Date ranges (ISO 8601 format)
+	CreatedAfter  string `json:"created_after,omitempty"`
+	CreatedBefore string `json:"created_before,omitempty"`
+	UpdatedAfter  string `json:"updated_after,omitempty"`
+	UpdatedBefore string `json:"updated_before,omitempty"`
+	ClosedAfter   string `json:"closed_after,omitempty"`
+	ClosedBefore  string `json:"closed_before,omitempty"`
+
+	// Empty/null checks
+	EmptyDescription bool `json:"empty_description,omitempty"`
+	NoAssignee       bool `json:"no_assignee,omitempty"`
+	NoLabels         bool `json:"no_labels,omitempty"`
+
+	// Priority range
+	PriorityMin *int `json:"priority_min,omitempty"`
+	PriorityMax *int `json:"priority_max,omitempty"`
+
+	// Pinned filtering
+	Pinned *bool `json:"pinned,omitempty"`
+
+	// Template filtering
+	IncludeTemplates bool `json:"include_templates,omitempty"`
+
+	// Parent filtering
+	ParentID string `json:"parent_id,omitempty"`
+
+	// Ephemeral filtering
+	Ephemeral *bool `json:"ephemeral,omitempty"`
+
+	// Molecule type filtering
+	MolType string `json:"mol_type,omitempty"`
+
+	// Status exclusion (for default non-closed behavior, GH#788)
+	ExcludeStatus []string `json:"exclude_status,omitempty"`
+
+	// Type exclusion (for hiding internal types like gates, bd-7zka.2)
+	ExcludeTypes []string `json:"exclude_types,omitempty"`
+
+	// Time-based scheduling filters (GH#820)
+	Deferred    bool   `json:"deferred,omitempty"`
+	DeferAfter  string `json:"defer_after,omitempty"`
+	DeferBefore string `json:"defer_before,omitempty"`
+	DueAfter    string `json:"due_after,omitempty"`
+	DueBefore   string `json:"due_before,omitempty"`
+	Overdue     bool   `json:"overdue,omitempty"`
+
+	// Watch-specific parameters
+	Since     int64 `json:"since"`               // Unix timestamp in milliseconds (0 = return immediately with initial data)
+	TimeoutMs int   `json:"timeout_ms,omitempty"` // Max wait time in milliseconds (default 30000, max 60000)
+}
+
+// ListWatchResult represents the result of a list_watch operation (bd-la75)
+type ListWatchResult struct {
+	Issues         []*types.Issue `json:"issues"`
+	LastMutationMs int64          `json:"last_mutation_ms"` // Unix timestamp in milliseconds of latest mutation
+	HasMore        bool           `json:"has_more,omitempty"` // True if more mutations occurred during wait
 }
 

@@ -697,3 +697,86 @@ func compareTimePtr(t *testing.T, name string, direct, daemon *time.Time) bool {
 	}
 	return true
 }
+
+// TestHandleListWatch verifies the list_watch RPC handler (bd-la75).
+// It tests:
+// - Initial fetch returns issues immediately when Since=0
+// - LastMutationMs is set to a valid timestamp
+// - Filter parameters are properly applied
+func TestHandleListWatch(t *testing.T) {
+	_, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create some test issues
+	for i := 0; i < 3; i++ {
+		createArgs := &CreateArgs{
+			Title:     "Test issue " + string(rune('A'+i)),
+			IssueType: "task",
+			Priority:  2,
+		}
+		_, err := client.Create(createArgs)
+		if err != nil {
+			t.Fatalf("failed to create test issue %d: %v", i, err)
+		}
+	}
+
+	t.Run("initial fetch returns issues immediately", func(t *testing.T) {
+		args := &ListWatchArgs{
+			Since:     0, // Initial fetch
+			TimeoutMs: 100,
+		}
+		result, err := client.ListWatch(args)
+		if err != nil {
+			t.Fatalf("ListWatch failed: %v", err)
+		}
+
+		if len(result.Issues) < 3 {
+			t.Errorf("expected at least 3 issues, got %d", len(result.Issues))
+		}
+
+		if result.LastMutationMs == 0 {
+			t.Error("expected LastMutationMs to be set")
+		}
+	})
+
+	t.Run("filter by status", func(t *testing.T) {
+		args := &ListWatchArgs{
+			Since:     0,
+			TimeoutMs: 100,
+			Status:    "open",
+		}
+		result, err := client.ListWatch(args)
+		if err != nil {
+			t.Fatalf("ListWatch with status filter failed: %v", err)
+		}
+
+		for _, issue := range result.Issues {
+			if issue.Status != types.StatusOpen {
+				t.Errorf("expected all issues to have status open, got %s for %s", issue.Status, issue.ID)
+			}
+		}
+	})
+
+	t.Run("returns quickly with long timeout when Since=0", func(t *testing.T) {
+		start := time.Now()
+		args := &ListWatchArgs{
+			Since:     0,           // Initial fetch returns immediately
+			TimeoutMs: 30000,       // 30 second timeout should not be reached
+		}
+		_, err := client.ListWatch(args)
+		elapsed := time.Since(start)
+
+		if err != nil {
+			t.Fatalf("ListWatch failed: %v", err)
+		}
+
+		// Should return quickly (within 1 second) since Since=0
+		if elapsed > time.Second {
+			t.Errorf("initial fetch took too long: %v", elapsed)
+		}
+	})
+
+	_ = ctx // silence unused warning
+}
