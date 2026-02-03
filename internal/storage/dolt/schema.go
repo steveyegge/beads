@@ -272,7 +272,8 @@ INSERT IGNORE INTO config (` + "`key`" + `, value) VALUES
 
 // readyIssuesView is a MySQL-compatible view for ready work
 // Note: Dolt supports recursive CTEs like SQLite.
-// Uses EXISTS subquery instead of JOIN to avoid Dolt mergeJoinIter panic.
+// Uses LEFT JOIN instead of NOT EXISTS to avoid Dolt mergeJoinIter panic.
+// See: https://github.com/dolthub/go-mysql-server/issues/3413
 const readyIssuesView = `
 CREATE OR REPLACE VIEW ready_issues AS
 WITH RECURSIVE
@@ -298,11 +299,10 @@ WITH RECURSIVE
   )
 SELECT i.*
 FROM issues i
+LEFT JOIN blocked_transitively bt ON bt.issue_id = i.id
 WHERE i.status = 'open'
   AND (i.ephemeral = 0 OR i.ephemeral IS NULL)
-  AND NOT EXISTS (
-    SELECT 1 FROM blocked_transitively WHERE issue_id = i.id
-  );
+  AND bt.issue_id IS NULL;
 `
 
 // blockedIssuesView is a MySQL-compatible view for blocked issues.
