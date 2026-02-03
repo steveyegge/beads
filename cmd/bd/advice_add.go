@@ -87,6 +87,20 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 	agent, _ := cmd.Flags().GetString("agent")
 	priority, _ := cmd.Flags().GetInt("priority")
 	labels, _ := cmd.Flags().GetStringArray("label")
+
+	// Parse label groups - comma-separated labels in same -l get same group
+	var groupedLabels []string
+	for groupNum, labelArg := range labels {
+		parts := strings.Split(labelArg, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				groupedLabels = append(groupedLabels, fmt.Sprintf("g%d:%s", groupNum, part))
+			}
+		}
+	}
+	labels = groupedLabels
+
 	// Hook flags (hq--uaim)
 	hookCommand, _ := cmd.Flags().GetString("hook-command")
 	hookTrigger, _ := cmd.Flags().GetString("hook-trigger")
@@ -130,7 +144,20 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 	hasTargeting := agent != "" || role != "" || rig != ""
 	hasTargetingLabels := false
 	for _, l := range labels {
-		if l == "global" || strings.HasPrefix(l, "rig:") || strings.HasPrefix(l, "role:") || strings.HasPrefix(l, "agent:") {
+		// Strip group prefix (g0:, g1:, etc.) for targeting check
+		checkLabel := l
+		if len(l) >= 3 && l[0] == 'g' {
+			for i := 1; i < len(l); i++ {
+				if l[i] == ':' && i > 1 {
+					checkLabel = l[i+1:]
+					break
+				}
+				if l[i] < '0' || l[i] > '9' {
+					break
+				}
+			}
+		}
+		if checkLabel == "global" || strings.HasPrefix(checkLabel, "rig:") || strings.HasPrefix(checkLabel, "role:") || strings.HasPrefix(checkLabel, "agent:") {
 			hasTargetingLabels = true
 			break
 		}
