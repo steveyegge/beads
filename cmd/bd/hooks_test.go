@@ -36,7 +36,7 @@ func TestGetEmbeddedHooks(t *testing.T) {
 func TestInstallHooks(t *testing.T) {
 	tmpDir := t.TempDir()
 	runInDir(t, tmpDir, func() {
-		if err := exec.Command("git", "init").Run(); err != nil {
+		if err := gitInitNoTemplate(); err != nil {
 			t.Skipf("Skipping test: git init failed: %v", err)
 		}
 
@@ -79,7 +79,7 @@ func TestInstallHooks(t *testing.T) {
 func TestInstallHooksBackup(t *testing.T) {
 	tmpDir := t.TempDir()
 	runInDir(t, tmpDir, func() {
-		if err := exec.Command("git", "init").Run(); err != nil {
+		if err := gitInitNoTemplate(); err != nil {
 			t.Skipf("Skipping test: git init failed: %v", err)
 		}
 
@@ -125,7 +125,7 @@ func TestInstallHooksBackup(t *testing.T) {
 func TestInstallHooksForce(t *testing.T) {
 	tmpDir := t.TempDir()
 	runInDir(t, tmpDir, func() {
-		if err := exec.Command("git", "init").Run(); err != nil {
+		if err := gitInitNoTemplate(); err != nil {
 			t.Skipf("Skipping test: git init failed: %v", err)
 		}
 
@@ -162,19 +162,23 @@ func TestInstallHooksForce(t *testing.T) {
 func TestUninstallHooks(t *testing.T) {
 	tmpDir := t.TempDir()
 	runInDir(t, tmpDir, func() {
-		if err := exec.Command("git", "init").Run(); err != nil {
+		if err := gitInitNoTemplate(); err != nil {
 			t.Skipf("Skipping test: git init failed: %v", err)
 		}
-
-		gitDirPath, err := git.GetGitDir()
-		if err != nil {
-			t.Fatalf("git.GetGitDir() failed: %v", err)
-		}
-		gitDir := filepath.Join(gitDirPath, "hooks")
 
 		hooks, err := getEmbeddedHooks()
 		if err != nil {
 			t.Fatalf("getEmbeddedHooks() failed: %v", err)
+		}
+		hooksDir, err := git.GetGitHooksDir()
+		if err != nil {
+			t.Fatalf("git.GetGitHooksDir() failed: %v", err)
+		}
+		// Ensure a clean hooks directory even if git templates install hooks.
+		for hookName := range hooks {
+			hookPath := filepath.Join(hooksDir, hookName)
+			_ = os.Remove(hookPath)
+			_ = os.Remove(hookPath + ".backup")
 		}
 		if err := installHooks(hooks, false, false, false); err != nil {
 			t.Fatalf("installHooks() failed: %v", err)
@@ -185,7 +189,7 @@ func TestUninstallHooks(t *testing.T) {
 		}
 
 		for hookName := range hooks {
-			hookPath := filepath.Join(gitDir, hookName)
+			hookPath := filepath.Join(hooksDir, hookName)
 			if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
 				t.Errorf("Hook %s was not removed", hookName)
 			}
@@ -196,8 +200,20 @@ func TestUninstallHooks(t *testing.T) {
 func TestHooksCheckGitHooks(t *testing.T) {
 	tmpDir := t.TempDir()
 	runInDir(t, tmpDir, func() {
-		if err := exec.Command("git", "init").Run(); err != nil {
+		if err := gitInitNoTemplate(); err != nil {
 			t.Skipf("Skipping test: git init failed: %v", err)
+		}
+
+		// Ensure a clean hooks directory even if git templates install hooks.
+		hooksDir, err := git.GetGitHooksDir()
+		if err != nil {
+			t.Fatalf("git.GetGitHooksDir() failed: %v", err)
+		}
+		for _, hookName := range []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"} {
+			hookPath := filepath.Join(hooksDir, hookName)
+			_ = os.Remove(hookPath)
+			_ = os.Remove(hookPath + ".backup")
+			_ = os.Remove(hookPath + ".old")
 		}
 
 		statuses := CheckGitHooks()
@@ -236,8 +252,20 @@ func TestHooksCheckGitHooks(t *testing.T) {
 func TestInstallHooksShared(t *testing.T) {
 	tmpDir := t.TempDir()
 	runInDir(t, tmpDir, func() {
-		if err := exec.Command("git", "init").Run(); err != nil {
+		if err := gitInitNoTemplate(); err != nil {
 			t.Skipf("Skipping test: git init failed (git may not be available): %v", err)
+		}
+
+		// Ensure a clean hooks directory even if git templates install hooks.
+		hooksDir, err := git.GetGitHooksDir()
+		if err != nil {
+			t.Fatalf("git.GetGitHooksDir() failed: %v", err)
+		}
+		for _, hookName := range []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"} {
+			hookPath := filepath.Join(hooksDir, hookName)
+			_ = os.Remove(hookPath)
+			_ = os.Remove(hookPath + ".backup")
+			_ = os.Remove(hookPath + ".old")
 		}
 
 		hooks, err := getEmbeddedHooks()

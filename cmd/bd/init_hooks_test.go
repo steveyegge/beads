@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,15 +12,21 @@ import (
 func TestDetectExistingHooks(t *testing.T) {
 	tmpDir := t.TempDir()
 	runInDir(t, tmpDir, func() {
-		if err := exec.Command("git", "init").Run(); err != nil {
+		if err := gitInitNoTemplate(); err != nil {
 			t.Skipf("Skipping test: git init failed: %v", err)
 		}
 
-		gitDirPath, err := git.GetGitDir()
+		hooksDir, err := git.GetGitHooksDir()
 		if err != nil {
-			t.Fatalf("git.GetGitDir() failed: %v", err)
+			t.Fatalf("git.GetGitHooksDir() failed: %v", err)
 		}
-		hooksDir := filepath.Join(gitDirPath, "hooks")
+		// Ensure a clean hooks directory even if git templates install hooks.
+		for _, hookName := range []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"} {
+			hookPath := filepath.Join(hooksDir, hookName)
+			_ = os.Remove(hookPath)
+			_ = os.Remove(hookPath + ".backup")
+			_ = os.Remove(hookPath + ".old")
+		}
 
 		tests := []struct {
 			name                     string
@@ -101,7 +106,7 @@ func TestDetectExistingHooks(t *testing.T) {
 func TestInstallGitHooks_NoExistingHooks(t *testing.T) {
 	tmpDir := t.TempDir()
 	runInDir(t, tmpDir, func() {
-		if err := exec.Command("git", "init").Run(); err != nil {
+		if err := gitInitNoTemplate(); err != nil {
 			t.Skipf("Skipping test: git init failed: %v", err)
 		}
 
@@ -114,6 +119,9 @@ func TestInstallGitHooks_NoExistingHooks(t *testing.T) {
 		// Note: Can't fully test interactive prompt in automated tests
 		// This test verifies the logic works when no existing hooks present
 		// For full testing, we'd need to mock user input
+		if err := installGitHooks(); err != nil {
+			t.Fatalf("installGitHooks() failed: %v", err)
+		}
 
 		// Check hooks were created
 		preCommitPath := filepath.Join(hooksDir, "pre-commit")
@@ -141,7 +149,7 @@ func TestInstallGitHooks_NoExistingHooks(t *testing.T) {
 func TestInstallGitHooks_ExistingHookBackup(t *testing.T) {
 	tmpDir := t.TempDir()
 	runInDir(t, tmpDir, func() {
-		if err := exec.Command("git", "init").Run(); err != nil {
+		if err := gitInitNoTemplate(); err != nil {
 			t.Skipf("Skipping test: git init failed: %v", err)
 		}
 

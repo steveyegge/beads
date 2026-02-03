@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/git"
@@ -26,4 +27,10 @@ func runInDir(t *testing.T, dir string, fn func()) {
 		git.ResetCaches()
 	}()
 	fn()
+}
+
+func gitInitNoTemplate() error {
+	cmd := exec.Command("git", "init")
+	cmd.Env = append(os.Environ(), "GIT_TEMPLATE_DIR=")
+	return cmd.Run()
 }
