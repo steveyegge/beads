@@ -653,17 +653,6 @@ var rootCmd = &cobra.Command{
 			noDaemon = true
 		}
 
-		// Embedded Dolt is single-process-only; never use daemon/RPC.
-		// (Dolt server mode supports multi-process and won't trigger this.)
-		// This must be checked after dbPath is resolved.
-		if !noDaemon && singleProcessOnlyBackend() {
-			noDaemon = true
-			daemonStatus.AutoStartEnabled = false
-			daemonStatus.FallbackReason = FallbackSingleProcessOnly
-			daemonStatus.Detail = "backend is single-process-only (embedded dolt): daemon mode disabled; using direct mode"
-			debug.Logf("single-process backend detected, using direct mode")
-		}
-
 		// Try to connect to daemon first (unless --no-daemon flag is set or worktree safety check fails)
 		if noDaemon {
 			// Only set FallbackFlagNoDaemon if not already set by auto-bypass logic

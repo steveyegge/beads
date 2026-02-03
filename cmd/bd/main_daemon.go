@@ -24,13 +24,12 @@ type DaemonStatus struct {
 
 // Fallback reason constants
 const (
-	FallbackNone              = "none"
-	FallbackFlagNoDaemon      = "flag_no_daemon"
-	FallbackConnectFailed     = "connect_failed"
-	FallbackHealthFailed      = "health_failed"
-	FallbackWorktreeSafety    = "worktree_safety"
-	FallbackSingleProcessOnly = "single_process_only"
-	cmdDaemon                 = "daemon"
+	FallbackNone           = "none"
+	FallbackFlagNoDaemon   = "flag_no_daemon"
+	FallbackConnectFailed  = "connect_failed"
+	FallbackHealthFailed   = "health_failed"
+	FallbackWorktreeSafety = "worktree_safety"
+	cmdDaemon              = "daemon"
 	cmdImport                 = "import"
 	statusHealthy             = "healthy"
 	FallbackAutoStartDisabled = "auto_start_disabled"

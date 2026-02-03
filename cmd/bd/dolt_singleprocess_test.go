@@ -2,11 +2,9 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func writeDoltWorkspace(t *testing.T, workspaceDir string) (beadsDir string, doltDir string) {
@@ -93,43 +91,4 @@ func TestDoltSingleProcess_DaemonGuardBlocksStartCommand(t *testing.T) {
 	}
 }
 
-// This test uses a helper subprocess because startDaemon calls os.Exit on failure.
-func TestDoltSingleProcess_StartDaemonGuardrailExitsNonZero(t *testing.T) {
-	if os.Getenv("BD_TEST_HELPER_STARTDAEMON") == "1" {
-		// Helper mode: set up environment and invoke startDaemon (should os.Exit(1)).
-		ws := os.Getenv("BD_TEST_WORKSPACE")
-		_, doltDir := writeDoltWorkspace(t, ws)
-		// Ensure FindDatabasePath can resolve.
-		_ = os.Chdir(ws)
-		_ = os.Setenv("BEADS_DB", doltDir)
-		dbPath = ""
-
-		pidFile := filepath.Join(ws, ".beads", "daemon.pid")
-		startDaemon(5*time.Second, false, false, false, false, false, "", pidFile, "info", false, false, 0, 0)
-		return
-	}
-
-	ws := t.TempDir()
-	// Pre-create workspace structure so helper can just use it.
-	_, doltDir := writeDoltWorkspace(t, ws)
-
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatalf("os.Executable: %v", err)
-	}
-
-	cmd := exec.Command(exe, "-test.run", "^TestDoltSingleProcess_StartDaemonGuardrailExitsNonZero$", "-test.v")
-	cmd.Env = append(os.Environ(),
-		"BD_TEST_HELPER_STARTDAEMON=1",
-		"BD_TEST_WORKSPACE="+ws,
-		"BEADS_DB="+doltDir,
-	)
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected non-zero exit; output:\n%s", string(out))
-	}
-	if !strings.Contains(string(out), "daemon mode is not supported") {
-		t.Fatalf("expected output to mention daemon unsupported; got:\n%s", string(out))
-	}
-}
 
