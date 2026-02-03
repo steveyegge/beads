@@ -101,17 +101,6 @@ func parseDistillVar(varFlag, searchableText string) (string, string, error) {
 func runMolDistill(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
-	// mol distill requires direct store access for reading the epic
-	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: mol distill requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol distill %s ...\n", args[0])
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
-		os.Exit(1)
-	}
-
 	varFlags, _ := cmd.Flags().GetStringArray("var")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	outputDir, _ := cmd.Flags().GetString("output")

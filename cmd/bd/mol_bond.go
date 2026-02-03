@@ -87,14 +87,11 @@ func runMolBond(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// mol bond requires direct store access
+	// mol bond requires direct store access for bonding operations
+	// TODO: Add daemon RPC support for mol bond per gt-as9kdm
 	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: mol bond requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol bond %s %s ...\n", args[0], args[1])
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
+		fmt.Fprintf(os.Stderr, "Error: mol bond requires direct database access\n")
+		fmt.Fprintf(os.Stderr, "Hint: mol bond does not yet support daemon mode\n")
 		os.Exit(1)
 	}
 

@@ -35,13 +35,10 @@ Example:
 		ctx := rootCtx
 
 		// mol progress requires direct store access
+		// TODO: Add daemon RPC support for mol progress per gt-as9kdm
 		if store == nil {
-			if daemonClient != nil {
-				fmt.Fprintf(os.Stderr, "Error: mol progress requires direct database access\n")
-				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol progress\n")
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			}
+			fmt.Fprintf(os.Stderr, "Error: mol progress requires direct database access\n")
+			fmt.Fprintf(os.Stderr, "Hint: mol progress does not yet support daemon mode\n")
 			os.Exit(1)
 		}
 

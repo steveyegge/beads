@@ -73,13 +73,10 @@ Use --limit or --range to view specific steps:
 		}
 
 		// mol current requires direct store access for subgraph loading
+		// TODO: Add daemon RPC support for mol current per gt-as9kdm
 		if store == nil {
-			if daemonClient != nil {
-				fmt.Fprintf(os.Stderr, "Error: mol current requires direct database access\n")
-				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol current\n")
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			}
+			fmt.Fprintf(os.Stderr, "Error: mol current requires direct database access\n")
+			fmt.Fprintf(os.Stderr, "Hint: mol current does not yet support daemon mode\n")
 			os.Exit(1)
 		}
 

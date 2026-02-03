@@ -50,13 +50,10 @@ func runMolReadyGated(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
 	// --gated mode requires direct store access
+	// TODO: Add daemon RPC support for ready --gated per gt-as9kdm
 	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: bd ready --gated requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon ready --gated\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
+		fmt.Fprintf(os.Stderr, "Error: bd ready --gated requires direct database access\n")
+		fmt.Fprintf(os.Stderr, "Hint: ready --gated does not yet support daemon mode\n")
 		os.Exit(1)
 	}
 
