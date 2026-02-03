@@ -11,13 +11,9 @@ pkgs.buildGoModule {
   # Go module dependencies hash - if build fails with hash mismatch, update with the "got:" value
   vendorHash = "sha256-YU+bRLVlWtHzJ1QPzcKJ70f+ynp8lMoIeFlm+29BNPE=";
 
-  # GOTOOLCHAIN=auto allows Go to auto-download newer toolchain versions
-  # This is needed because go.mod requires 1.25.6+ but nixpkgs may have older
+  # Allow Go toolchain to auto-download newer version if needed
+  # (go.mod requires 1.25.6+ but nixpkgs may have older)
   env.GOTOOLCHAIN = "auto";
-
-  # proxyVendor fetches modules through proxy.golang.org instead of direct VCS
-  # This allows GOTOOLCHAIN=auto to work during the module fetching phase
-  proxyVendor = true;
 
   # Git is required for tests
   nativeBuildInputs = [ pkgs.git ];
