@@ -1,0 +1,623 @@
+// Package rpc provides RPC server handlers for mol operations (gt-as9kdm).
+// These handlers enable mol bond, squash, and burn to work in daemon mode.
+package rpc
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/steveyegge/beads/internal/formula"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
+)
+
+// MoleculeLabel is the label used to identify molecule templates (protos)
+const MoleculeLabel = "molecule"
+
+// variablePattern matches {{variable}} placeholders
+var serverVariablePattern = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
+
+// ServerTemplateSubgraph holds a template and all its descendants for server-side operations
+type ServerTemplateSubgraph struct {
+	Root         *types.Issue
+	Issues       []*types.Issue
+	Dependencies []*types.Dependency
+	IssueMap     map[string]*types.Issue
+}
+
+// handleMolBond handles the mol bond RPC operation
+func (s *Server) handleMolBond(req *Request) Response {
+	var args MolBondArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
+	}
+
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	// Validate bond type
+	if args.BondType != types.BondTypeSequential && args.BondType != types.BondTypeParallel && args.BondType != types.BondTypeConditional {
+		return Response{Success: false, Error: fmt.Sprintf("invalid bond type '%s', must be: sequential, parallel, or conditional", args.BondType)}
+	}
+
+	// Validate phase flags
+	if args.Ephemeral && args.Pour {
+		return Response{Success: false, Error: "cannot use both ephemeral and pour"}
+	}
+
+	// Dry-run just validates and returns preview
+	if args.DryRun {
+		return s.handleMolBondDryRun(ctx, &args, actor)
+	}
+
+	// Resolve both operands
+	issueA, aIsProto, subgraphA, err := s.resolveOperand(ctx, args.IDa, args.Vars)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("resolving operand A: %v", err)}
+	}
+
+	issueB, bIsProto, subgraphB, err := s.resolveOperand(ctx, args.IDb, args.Vars)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("resolving operand B: %v", err)}
+	}
+
+	// Dispatch based on operand types
+	var result *MolBondResult
+	switch {
+	case aIsProto && bIsProto:
+		result, err = s.bondProtoProto(ctx, issueA, issueB, args.BondType, args.Title, actor)
+	case aIsProto && !bIsProto:
+		result, err = s.bondProtoMol(ctx, subgraphA, issueA, issueB, args.BondType, args.Vars, args.ChildRef, actor, args.Ephemeral, args.Pour)
+	case !aIsProto && bIsProto:
+		result, err = s.bondProtoMol(ctx, subgraphB, issueB, issueA, args.BondType, args.Vars, args.ChildRef, actor, args.Ephemeral, args.Pour)
+	default:
+		result, err = s.bondMolMol(ctx, issueA, issueB, args.BondType, actor)
+	}
+
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("bonding failed: %v", err)}
+	}
+
+	// Emit mutation event
+	s.emitMutation(MutationBonded, result.ResultID, result.ResultType, "")
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+// handleMolBondDryRun returns a preview of what bonding would do
+func (s *Server) handleMolBondDryRun(ctx context.Context, args *MolBondArgs, actor string) Response {
+	// Resolve operands for preview
+	issueA, aIsProto, _, err := s.resolveOperand(ctx, args.IDa, args.Vars)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("resolving operand A: %v", err)}
+	}
+
+	issueB, bIsProto, _, err := s.resolveOperand(ctx, args.IDb, args.Vars)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("resolving operand B: %v", err)}
+	}
+
+	// Build preview result
+	resultType := "compound_molecule"
+	if aIsProto && bIsProto {
+		resultType = "compound_proto"
+	}
+
+	result := &MolBondResult{
+		ResultID:   fmt.Sprintf("(dry-run: %s + %s)", issueA.ID, issueB.ID),
+		ResultType: resultType,
+		BondType:   args.BondType,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+// resolveOperand resolves an operand to an issue, determines if it's a proto,
+// and loads its subgraph if it's a proto
+func (s *Server) resolveOperand(ctx context.Context, operand string, vars map[string]string) (*types.Issue, bool, *ServerTemplateSubgraph, error) {
+	// First try to resolve as an issue ID
+	id, err := s.resolvePartialID(ctx, operand)
+	if err == nil {
+		issue, err := s.storage.GetIssue(ctx, id)
+		if err == nil && issue != nil {
+			isProto := s.isProto(issue)
+			var subgraph *ServerTemplateSubgraph
+			if isProto {
+				subgraph, err = s.loadTemplateSubgraph(ctx, id)
+				if err != nil {
+					return nil, false, nil, fmt.Errorf("loading proto subgraph: %w", err)
+				}
+			} else {
+				// Wrap molecule as single-issue subgraph
+				subgraph = &ServerTemplateSubgraph{
+					Root:     issue,
+					Issues:   []*types.Issue{issue},
+					IssueMap: map[string]*types.Issue{issue.ID: issue},
+				}
+			}
+			return issue, isProto, subgraph, nil
+		}
+	}
+
+	// Try to resolve as a formula name
+	if s.looksLikeFormulaName(operand) {
+		subgraph, err := s.cookFormula(ctx, operand, vars)
+		if err != nil {
+			return nil, false, nil, fmt.Errorf("cooking formula '%s': %w", operand, err)
+		}
+		return subgraph.Root, true, subgraph, nil
+	}
+
+	return nil, false, nil, fmt.Errorf("'%s' not found (not an issue ID or formula name)", operand)
+}
+
+// isProto checks if an issue is a proto (has the molecule label)
+func (s *Server) isProto(issue *types.Issue) bool {
+	if issue == nil {
+		return false
+	}
+	for _, label := range issue.Labels {
+		if label == MoleculeLabel {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeFormulaName checks if an operand looks like a formula name
+func (s *Server) looksLikeFormulaName(operand string) bool {
+	if strings.HasPrefix(operand, "mol-") {
+		return true
+	}
+	if strings.Contains(operand, ".formula") {
+		return true
+	}
+	if strings.Contains(operand, "/") || strings.Contains(operand, "\\") {
+		return true
+	}
+	return false
+}
+
+// cookFormula cooks a formula to an in-memory subgraph
+func (s *Server) cookFormula(ctx context.Context, formulaName string, vars map[string]string) (*ServerTemplateSubgraph, error) {
+	parser := formula.NewParser()
+	f, err := parser.LoadByName(formulaName)
+	if err != nil {
+		return nil, fmt.Errorf("loading formula: %w", err)
+	}
+
+	// Build the cooked subgraph in memory (not persisted to DB)
+	subgraph := &ServerTemplateSubgraph{
+		Issues:   make([]*types.Issue, 0),
+		IssueMap: make(map[string]*types.Issue),
+	}
+
+	// Use formula name as title, description from formula
+	rootTitle := f.Formula
+	if f.Description != "" {
+		rootTitle = f.Description
+	}
+
+	// Cook root step
+	rootIssue := &types.Issue{
+		ID:          fmt.Sprintf("cooked-%s", formulaName),
+		Title:       s.substituteVariables(rootTitle, vars),
+		Description: s.substituteVariables(f.Description, vars),
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeEpic,
+		Labels:      []string{MoleculeLabel},
+		IsTemplate:  true,
+	}
+	subgraph.Root = rootIssue
+	subgraph.Issues = append(subgraph.Issues, rootIssue)
+	subgraph.IssueMap[rootIssue.ID] = rootIssue
+
+	// Cook child steps
+	for i, step := range f.Steps {
+		priority := 2
+		if step.Priority != nil {
+			priority = *step.Priority
+		}
+		issueType := types.TypeTask
+		if step.Type != "" {
+			issueType = types.IssueType(step.Type)
+		}
+		stepIssue := &types.Issue{
+			ID:          fmt.Sprintf("cooked-%s.%d", formulaName, i+1),
+			Title:       s.substituteVariables(step.Title, vars),
+			Description: s.substituteVariables(step.Description, vars),
+			Status:      types.StatusOpen,
+			Priority:    priority,
+			IssueType:   issueType,
+		}
+		subgraph.Issues = append(subgraph.Issues, stepIssue)
+		subgraph.IssueMap[stepIssue.ID] = stepIssue
+
+		// Add parent-child dependency
+		subgraph.Dependencies = append(subgraph.Dependencies, &types.Dependency{
+			IssueID:     stepIssue.ID,
+			DependsOnID: rootIssue.ID,
+			Type:        types.DepParentChild,
+		})
+	}
+
+	return subgraph, nil
+}
+
+// loadTemplateSubgraph loads a proto subgraph from the database
+func (s *Server) loadTemplateSubgraph(ctx context.Context, protoID string) (*ServerTemplateSubgraph, error) {
+	root, err := s.storage.GetIssue(ctx, protoID)
+	if err != nil {
+		return nil, fmt.Errorf("getting root: %w", err)
+	}
+
+	subgraph := &ServerTemplateSubgraph{
+		Root:     root,
+		Issues:   []*types.Issue{root},
+		IssueMap: map[string]*types.Issue{root.ID: root},
+	}
+
+	// Load all children (issues with parent-child dependency to this proto)
+	depMetas, err := s.storage.GetDependentsWithMetadata(ctx, protoID)
+	if err != nil {
+		return nil, fmt.Errorf("getting dependents: %w", err)
+	}
+
+	for _, depMeta := range depMetas {
+		if depMeta.DependencyType != types.DepParentChild {
+			continue
+		}
+		child := &depMeta.Issue
+		subgraph.Issues = append(subgraph.Issues, child)
+		subgraph.IssueMap[child.ID] = child
+		subgraph.Dependencies = append(subgraph.Dependencies, &types.Dependency{
+			IssueID:     child.ID,
+			DependsOnID: protoID,
+			Type:        depMeta.DependencyType,
+		})
+
+		// Recursively load grandchildren
+		if err := s.loadDescendants(ctx, subgraph, child.ID); err != nil {
+			// Non-fatal, continue
+		}
+	}
+
+	return subgraph, nil
+}
+
+// loadDescendants recursively loads descendants of an issue
+func (s *Server) loadDescendants(ctx context.Context, subgraph *ServerTemplateSubgraph, parentID string) error {
+	depMetas, err := s.storage.GetDependentsWithMetadata(ctx, parentID)
+	if err != nil {
+		return err
+	}
+
+	for _, depMeta := range depMetas {
+		if depMeta.DependencyType != types.DepParentChild {
+			continue
+		}
+		if _, exists := subgraph.IssueMap[depMeta.Issue.ID]; exists {
+			continue // Already loaded
+		}
+		child := &depMeta.Issue
+		subgraph.Issues = append(subgraph.Issues, child)
+		subgraph.IssueMap[child.ID] = child
+		subgraph.Dependencies = append(subgraph.Dependencies, &types.Dependency{
+			IssueID:     child.ID,
+			DependsOnID: parentID,
+			Type:        depMeta.DependencyType,
+		})
+
+		// Recurse
+		if err := s.loadDescendants(ctx, subgraph, child.ID); err != nil {
+			// Non-fatal
+		}
+	}
+
+	return nil
+}
+
+// substituteVariables replaces {{var}} placeholders with values
+func (s *Server) substituteVariables(text string, vars map[string]string) string {
+	if vars == nil || len(vars) == 0 {
+		return text
+	}
+	return serverVariablePattern.ReplaceAllStringFunc(text, func(match string) string {
+		// Extract variable name from {{name}}
+		name := match[2 : len(match)-2]
+		if val, ok := vars[name]; ok {
+			return val
+		}
+		return match // Keep original if not found
+	})
+}
+
+// bondProtoProto bonds two protos to create a compound proto
+func (s *Server) bondProtoProto(ctx context.Context, protoA, protoB *types.Issue, bondType, customTitle, actor string) (*MolBondResult, error) {
+	compoundTitle := fmt.Sprintf("Compound: %s + %s", protoA.Title, protoB.Title)
+	if customTitle != "" {
+		compoundTitle = customTitle
+	}
+
+	var compoundID string
+	err := s.storage.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Create compound root issue
+		compound := &types.Issue{
+			Title:       compoundTitle,
+			Description: fmt.Sprintf("Compound proto bonding %s and %s", protoA.ID, protoB.ID),
+			Status:      types.StatusOpen,
+			Priority:    minPriority(protoA.Priority, protoB.Priority),
+			IssueType:   types.TypeEpic,
+			BondedFrom: []types.BondRef{
+				{SourceID: protoA.ID, BondType: bondType},
+				{SourceID: protoB.ID, BondType: bondType},
+			},
+		}
+		if err := tx.CreateIssue(ctx, compound, actor); err != nil {
+			return fmt.Errorf("creating compound: %w", err)
+		}
+		compoundID = compound.ID
+
+		// Add template label
+		if err := tx.AddLabel(ctx, compoundID, MoleculeLabel, actor); err != nil {
+			return fmt.Errorf("adding template label: %w", err)
+		}
+
+		// Add parent-child dependencies from compound to both proto roots
+		depA := &types.Dependency{
+			IssueID:     protoA.ID,
+			DependsOnID: compoundID,
+			Type:        types.DepParentChild,
+		}
+		if err := tx.AddDependency(ctx, depA, actor); err != nil {
+			return fmt.Errorf("linking proto A: %w", err)
+		}
+
+		depB := &types.Dependency{
+			IssueID:     protoB.ID,
+			DependsOnID: compoundID,
+			Type:        types.DepParentChild,
+		}
+		if err := tx.AddDependency(ctx, depB, actor); err != nil {
+			return fmt.Errorf("linking proto B: %w", err)
+		}
+
+		// For sequential/conditional, add blocking dependency: B blocks on A
+		if bondType == types.BondTypeSequential || bondType == types.BondTypeConditional {
+			depType := types.DepBlocks
+			if bondType == types.BondTypeConditional {
+				depType = types.DepConditionalBlocks
+			}
+			seqDep := &types.Dependency{
+				IssueID:     protoB.ID,
+				DependsOnID: protoA.ID,
+				Type:        depType,
+			}
+			if err := tx.AddDependency(ctx, seqDep, actor); err != nil {
+				return fmt.Errorf("adding sequence dep: %w", err)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &MolBondResult{
+		ResultID:   compoundID,
+		ResultType: "compound_proto",
+		BondType:   bondType,
+	}, nil
+}
+
+// bondProtoMol bonds a proto to an existing molecule by spawning the proto
+func (s *Server) bondProtoMol(ctx context.Context, protoSubgraph *ServerTemplateSubgraph, proto, mol *types.Issue, bondType string, vars map[string]string, childRef string, actor string, ephemeralFlag, pourFlag bool) (*MolBondResult, error) {
+	if protoSubgraph == nil {
+		var err error
+		protoSubgraph, err = s.loadTemplateSubgraph(ctx, proto.ID)
+		if err != nil {
+			return nil, fmt.Errorf("loading proto: %w", err)
+		}
+	}
+
+	// Determine ephemeral flag
+	makeEphemeral := mol.Ephemeral
+	if ephemeralFlag {
+		makeEphemeral = true
+	} else if pourFlag {
+		makeEphemeral = false
+	}
+
+	// Spawn the proto
+	spawnResult, err := s.spawnSubgraph(ctx, protoSubgraph, vars, actor, makeEphemeral, mol.ID, childRef)
+	if err != nil {
+		return nil, fmt.Errorf("spawning proto: %w", err)
+	}
+
+	// Attach spawned molecule to existing molecule
+	err = s.storage.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		var depType types.DependencyType
+		switch bondType {
+		case types.BondTypeSequential:
+			depType = types.DepBlocks
+		case types.BondTypeConditional:
+			depType = types.DepConditionalBlocks
+		default:
+			depType = types.DepParentChild
+		}
+		dep := &types.Dependency{
+			IssueID:     spawnResult.NewRootID,
+			DependsOnID: mol.ID,
+			Type:        depType,
+		}
+		return tx.AddDependency(ctx, dep, actor)
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("attaching to molecule: %w", err)
+	}
+
+	return &MolBondResult{
+		ResultID:   mol.ID,
+		ResultType: "compound_molecule",
+		BondType:   bondType,
+		Spawned:    spawnResult.Created,
+		IDMapping:  spawnResult.IDMapping,
+	}, nil
+}
+
+// bondMolMol bonds two molecules together
+func (s *Server) bondMolMol(ctx context.Context, molA, molB *types.Issue, bondType, actor string) (*MolBondResult, error) {
+	err := s.storage.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		var depType types.DependencyType
+		switch bondType {
+		case types.BondTypeSequential:
+			depType = types.DepBlocks
+		case types.BondTypeConditional:
+			depType = types.DepConditionalBlocks
+		default:
+			depType = types.DepParentChild
+		}
+		dep := &types.Dependency{
+			IssueID:     molB.ID,
+			DependsOnID: molA.ID,
+			Type:        depType,
+		}
+		return tx.AddDependency(ctx, dep, actor)
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("linking molecules: %w", err)
+	}
+
+	return &MolBondResult{
+		ResultID:   molA.ID,
+		ResultType: "compound_molecule",
+		BondType:   bondType,
+	}, nil
+}
+
+// SpawnResult holds the result of spawning a subgraph
+type SpawnResult struct {
+	NewRootID string
+	IDMapping map[string]string
+	Created   int
+}
+
+// spawnSubgraph spawns a subgraph, creating new issues with new IDs
+func (s *Server) spawnSubgraph(ctx context.Context, subgraph *ServerTemplateSubgraph, vars map[string]string, actor string, ephemeral bool, parentID, childRef string) (*SpawnResult, error) {
+	idMapping := make(map[string]string)
+	created := 0
+	var newRootID string
+
+	err := s.storage.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// First pass: create all issues with new IDs
+		for _, oldIssue := range subgraph.Issues {
+			newIssue := &types.Issue{
+				Title:       s.substituteVariables(oldIssue.Title, vars),
+				Description: s.substituteVariables(oldIssue.Description, vars),
+				Status:      types.StatusOpen,
+				Priority:    oldIssue.Priority,
+				IssueType:   oldIssue.IssueType,
+				Assignee:    s.substituteVariables(oldIssue.Assignee, vars),
+				Ephemeral:   ephemeral,
+			}
+
+			if err := tx.CreateIssue(ctx, newIssue, actor); err != nil {
+				return fmt.Errorf("creating issue: %w", err)
+			}
+
+			idMapping[oldIssue.ID] = newIssue.ID
+			created++
+
+			if oldIssue.ID == subgraph.Root.ID {
+				newRootID = newIssue.ID
+			}
+
+			// Copy labels
+			for _, label := range oldIssue.Labels {
+				if label == MoleculeLabel {
+					continue // Don't copy template label to spawned instances
+				}
+				if err := tx.AddLabel(ctx, newIssue.ID, label, actor); err != nil {
+					// Non-fatal
+				}
+			}
+		}
+
+		// Second pass: recreate dependencies with mapped IDs
+		for _, dep := range subgraph.Dependencies {
+			newFromID, ok1 := idMapping[dep.IssueID]
+			newToID, ok2 := idMapping[dep.DependsOnID]
+			if !ok1 || !ok2 {
+				continue
+			}
+			newDep := &types.Dependency{
+				IssueID:     newFromID,
+				DependsOnID: newToID,
+				Type:        dep.Type,
+			}
+			if err := tx.AddDependency(ctx, newDep, actor); err != nil {
+				// Non-fatal
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &SpawnResult{
+		NewRootID: newRootID,
+		IDMapping: idMapping,
+		Created:   created,
+	}, nil
+}
+
+// resolvePartialID resolves a partial ID to a full ID using the standard utility
+func (s *Server) resolvePartialID(ctx context.Context, partial string) (string, error) {
+	return utils.ResolvePartialID(ctx, s.storage, partial)
+}
+
+// minPriority returns the higher priority (lower number)
+func minPriority(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// handleMolSquash handles the mol squash RPC operation
+func (s *Server) handleMolSquash(req *Request) Response {
+	var args MolSquashArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
+	}
+
+	// TODO: Implement mol squash handler (gt-as9kdm.2)
+	// For now, return not implemented
+	return Response{Success: false, Error: "mol squash via daemon not yet implemented (gt-as9kdm.2)"}
+}
+
+// handleMolBurn handles the mol burn RPC operation
+func (s *Server) handleMolBurn(req *Request) Response {
+	var args MolBurnArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
+	}
+
+	// TODO: Implement mol burn handler (gt-as9kdm.2)
+	// For now, return not implemented
+	return Response{Success: false, Error: "mol burn via daemon not yet implemented (gt-as9kdm.2)"}
+}

@@ -57,6 +57,11 @@ const (
 	OpDecisionGet     = "decision_get"
 	OpDecisionResolve = "decision_resolve"
 	OpDecisionList    = "decision_list"
+
+	// Mol operations (gt-as9kdm)
+	OpMolBond   = "mol_bond"
+	OpMolSquash = "mol_squash"
+	OpMolBurn   = "mol_burn"
 )
 
 // Request represents an RPC request from client to daemon
@@ -693,5 +698,61 @@ type DecisionResponse struct {
 type DecisionListResponse struct {
 	Decisions []*DecisionResponse `json:"decisions"`
 	Count     int                 `json:"count"`
+}
+
+// Mol operations (gt-as9kdm)
+
+// MolBondArgs represents arguments for the mol bond operation
+type MolBondArgs struct {
+	IDa       string            `json:"id_a"`                  // First operand (proto/molecule ID or formula name)
+	IDb       string            `json:"id_b"`                  // Second operand
+	BondType  string            `json:"bond_type"`             // "sequential", "parallel", "conditional"
+	Title     string            `json:"title,omitempty"`       // Custom title for compound proto
+	Vars      map[string]string `json:"vars,omitempty"`        // Variable substitutions
+	ChildRef  string            `json:"child_ref,omitempty"`   // Custom child reference for dynamic bonding
+	Ephemeral bool              `json:"ephemeral,omitempty"`   // Force spawn as vapor (ephemeral)
+	Pour      bool              `json:"pour,omitempty"`        // Force spawn as liquid (persistent)
+	DryRun    bool              `json:"dry_run,omitempty"`     // Preview mode
+}
+
+// MolBondResult represents the result of a mol bond operation
+type MolBondResult struct {
+	ResultID   string            `json:"result_id"`
+	ResultType string            `json:"result_type"`         // "compound_proto" or "compound_molecule"
+	BondType   string            `json:"bond_type"`
+	Spawned    int               `json:"spawned,omitempty"`   // Number of issues spawned
+	IDMapping  map[string]string `json:"id_mapping,omitempty"` // Old ID -> new ID mapping
+}
+
+// MolSquashArgs represents arguments for the mol squash operation
+type MolSquashArgs struct {
+	MoleculeID   string `json:"molecule_id"`
+	DryRun       bool   `json:"dry_run,omitempty"`
+	KeepChildren bool   `json:"keep_children,omitempty"`
+	Summary      string `json:"summary,omitempty"` // Agent-provided summary
+}
+
+// MolSquashResult represents the result of a mol squash operation
+type MolSquashResult struct {
+	MoleculeID    string   `json:"molecule_id"`
+	DigestID      string   `json:"digest_id"`
+	SquashedIDs   []string `json:"squashed_ids"`
+	SquashedCount int      `json:"squashed_count"`
+	DeletedCount  int      `json:"deleted_count"`
+	KeptChildren  bool     `json:"kept_children"`
+}
+
+// MolBurnArgs represents arguments for the mol burn operation
+type MolBurnArgs struct {
+	MoleculeIDs []string `json:"molecule_ids"` // Can burn multiple
+	DryRun      bool     `json:"dry_run,omitempty"`
+	Force       bool     `json:"force,omitempty"`
+}
+
+// MolBurnResult represents the result of a mol burn operation
+type MolBurnResult struct {
+	DeletedIDs   []string `json:"deleted_ids"`
+	DeletedCount int      `json:"deleted_count"`
+	FailedCount  int      `json:"failed_count"`
 }
 

@@ -584,6 +584,53 @@ func (c *Client) GetConfig(args *GetConfigArgs) (*GetConfigResponse, error) {
 	return &result, nil
 }
 
+// Mol operations (gt-as9kdm)
+
+// MolBond executes a mol bond operation via the daemon
+func (c *Client) MolBond(args *MolBondArgs) (*MolBondResult, error) {
+	resp, err := c.Execute(OpMolBond, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result MolBondResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mol bond response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// MolSquash executes a mol squash operation via the daemon
+func (c *Client) MolSquash(args *MolSquashArgs) (*MolSquashResult, error) {
+	resp, err := c.Execute(OpMolSquash, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result MolSquashResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mol squash response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// MolBurn executes a mol burn operation via the daemon
+func (c *Client) MolBurn(args *MolBurnArgs) (*MolBurnResult, error) {
+	resp, err := c.Execute(OpMolBurn, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result MolBurnResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mol burn response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

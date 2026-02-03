@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/formula"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -87,14 +88,6 @@ func runMolBond(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// mol bond requires direct store access for bonding operations
-	// TODO: Add daemon RPC support for mol bond per gt-as9kdm
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: mol bond requires direct database access\n")
-		fmt.Fprintf(os.Stderr, "Hint: mol bond does not yet support daemon mode\n")
-		os.Exit(1)
-	}
-
 	bondType, _ := cmd.Flags().GetString("type")
 	customTitle, _ := cmd.Flags().GetString("as")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -129,6 +122,19 @@ func runMolBond(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 		vars[parts[0]] = parts[1]
+	}
+
+	// Use daemon RPC when available (gt-as9kdm)
+	if daemonClient != nil {
+		runMolBondViaDaemon(args, bondType, customTitle, vars, childRef, ephemeral, pour, dryRun)
+		return
+	}
+
+	// Fallback to direct store access
+	if store == nil {
+		fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+		fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
+		os.Exit(1)
 	}
 
 	// For dry-run, just check if operands can be resolved (don't cook)
@@ -623,6 +629,60 @@ func looksLikeFormulaName(operand string) bool {
 		return true
 	}
 	return false
+}
+
+// runMolBondViaDaemon executes mol bond via daemon RPC (gt-as9kdm)
+func runMolBondViaDaemon(args []string, bondType, customTitle string, vars map[string]string, childRef string, ephemeral, pour, dryRun bool) {
+	bondArgs := &rpc.MolBondArgs{
+		IDa:       args[0],
+		IDb:       args[1],
+		BondType:  bondType,
+		Title:     customTitle,
+		Vars:      vars,
+		ChildRef:  childRef,
+		Ephemeral: ephemeral,
+		Pour:      pour,
+		DryRun:    dryRun,
+	}
+
+	result, err := daemonClient.MolBond(bondArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Schedule auto-flush
+	markDirtyAndScheduleFlush()
+
+	if jsonOutput {
+		// Convert to BondResult for consistency
+		outputJSON(&BondResult{
+			ResultID:   result.ResultID,
+			ResultType: result.ResultType,
+			BondType:   result.BondType,
+			Spawned:    result.Spawned,
+			IDMapping:  result.IDMapping,
+		})
+		return
+	}
+
+	if dryRun {
+		fmt.Printf("\nDry run: bond %s + %s\n", args[0], args[1])
+		fmt.Printf("  Result: %s (%s)\n", result.ResultID, result.ResultType)
+		fmt.Printf("  Bond type: %s\n", result.BondType)
+		return
+	}
+
+	fmt.Printf("%s Bonded: %s + %s\n", ui.RenderPass("✓"), args[0], args[1])
+	fmt.Printf("  Result: %s (%s)\n", result.ResultID, result.ResultType)
+	if result.Spawned > 0 {
+		fmt.Printf("  Spawned: %d issues\n", result.Spawned)
+	}
+	if ephemeral {
+		fmt.Printf("  Phase: vapor (ephemeral, Ephemeral=true)\n")
+	} else if pour {
+		fmt.Printf("  Phase: liquid (persistent, Ephemeral=false)\n")
+	}
 }
 
 func init() {

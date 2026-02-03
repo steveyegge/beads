@@ -300,6 +300,13 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleDecisionResolve(req)
 	case OpDecisionList:
 		resp = s.handleDecisionList(req)
+	// Mol operations (gt-as9kdm)
+	case OpMolBond:
+		resp = s.handleMolBond(req)
+	case OpMolSquash:
+		resp = s.handleMolSquash(req)
+	case OpMolBurn:
+		resp = s.handleMolBurn(req)
 	default:
 		return Response{
 			Success: false,
