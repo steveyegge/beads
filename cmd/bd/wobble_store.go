@@ -116,6 +116,15 @@ func loadWobbleStore(skillsPath, historyPath string) (wobbleStore, []wobbleHisto
 	return store, history, nil
 }
 
+func loadWobbleHistory() ([]wobbleHistoryEntry, error) {
+	skillsPath, historyPath, err := wobbleStorePaths()
+	if err != nil {
+		return nil, err
+	}
+	_, history, err := loadWobbleStore(skillsPath, historyPath)
+	return history, err
+}
+
 func persistWobbleScan(skills []wobbleSkill, generatedAt time.Time, actor string) error {
 	if len(skills) == 0 {
 		return nil
