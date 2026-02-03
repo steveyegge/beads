@@ -373,15 +373,12 @@ func runCook(cmd *cobra.Command, args []string) {
 	}
 
 	// Validate store access for persist mode
+	// TODO: Add daemon RPC support for cook --persist per gt-as9kdm
 	if flags.persist {
 		CheckReadonly("cook --persist")
 		if store == nil {
-			if daemonClient != nil {
-				fmt.Fprintf(os.Stderr, "Error: cook --persist requires direct database access\n")
-				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon cook %s --persist ...\n", flags.formulaPath)
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			}
+			fmt.Fprintf(os.Stderr, "Error: cook --persist requires direct database access\n")
+			fmt.Fprintf(os.Stderr, "Hint: cook --persist does not yet support daemon mode\n")
 			os.Exit(1)
 		}
 	}

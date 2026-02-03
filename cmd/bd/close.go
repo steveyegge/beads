@@ -235,9 +235,9 @@ create, update, show, or close operation).`,
 
 			// Handle --continue flag in daemon mode
 			// Note: --continue requires direct database access to walk parent-child chain
+			// TODO: Add daemon RPC support for close --continue per gt-as9kdm
 			if continueFlag && len(closedIssues) > 0 {
-				fmt.Fprintf(os.Stderr, "\nNote: --continue requires direct database access\n")
-				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon close %s --continue\n", resolvedIDs[0])
+				fmt.Fprintf(os.Stderr, "\nNote: --continue not yet supported in daemon mode\n")
 			}
 
 			if jsonOutput && len(closedIssues) > 0 {

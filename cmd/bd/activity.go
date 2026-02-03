@@ -114,7 +114,7 @@ func runActivity(cmd *cobra.Command, args []string) {
 	// Single-rig activity requires daemon
 	if daemonClient == nil {
 		fmt.Fprintln(os.Stderr, "Error: activity command requires daemon (mutations not available in direct mode)")
-		fmt.Fprintln(os.Stderr, "Hint: Start daemon with 'bd daemons start .' or remove --no-daemon flag")
+		fmt.Fprintln(os.Stderr, "Hint: Start daemon with 'bd daemons start .'")
 		os.Exit(1)
 	}
 

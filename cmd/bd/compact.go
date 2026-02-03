@@ -162,10 +162,11 @@ Examples:
 		}
 
 		// Handle analyze mode (requires direct database access)
+		// TODO: Add daemon RPC support for compact --analyze per gt-as9kdm
 		if compactAnalyze {
 			if err := ensureDirectMode("compact --analyze requires direct database access"); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Hint: Use --no-daemon flag to bypass daemon and access database directly\n")
+				fmt.Fprintf(os.Stderr, "Hint: compact --analyze does not yet support daemon mode\n")
 				os.Exit(1)
 			}
 			sqliteStore, ok := store.(*sqlite.SQLiteStorage)
@@ -179,10 +180,11 @@ Examples:
 		}
 
 		// Handle apply mode (requires direct database access)
+		// TODO: Add daemon RPC support for compact --apply per gt-as9kdm
 		if compactApply {
 			if err := ensureDirectMode("compact --apply requires direct database access"); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Hint: Use --no-daemon flag to bypass daemon and access database directly\n")
+				fmt.Fprintf(os.Stderr, "Hint: compact --apply does not yet support daemon mode\n")
 				os.Exit(1)
 			}
 			if compactID == "" {
