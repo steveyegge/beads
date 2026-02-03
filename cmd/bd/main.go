@@ -405,6 +405,7 @@ var rootCmd = &cobra.Command{
 			"resolve-conflicts",
 			"setup",
 			"version",
+			"wobble", // Skill drift detection - works with .claude/skills, not .beads database
 			"zsh",
 		}
 		// Check both the command name and parent command name for subcommands
