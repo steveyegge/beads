@@ -162,3 +162,68 @@ func hasAchievement(list []pacmanAchievement, id string) bool {
 }
 
 var _ = sqlite.ErrNotFound
+
+func TestPacmanLeaderboardSkillsFixed(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Setenv("BEADS_DIR", beadsDir); err != nil {
+		t.Fatalf("set BEADS_DIR: %v", err)
+	}
+	defer os.Unsetenv("BEADS_DIR")
+
+	skillsPath, historyPath, err := wobbleStorePaths()
+	if err != nil {
+		t.Fatalf("wobble store paths: %v", err)
+	}
+
+	now := time.Date(2026, 2, 3, 10, 0, 0, 0, time.UTC)
+	firstScan := wobbleStore{
+		Version:     1,
+		GeneratedAt: now.Add(-time.Hour),
+		Skills: []wobbleSkill{{
+			ID:          "beads",
+			Verdict:     "wobbly",
+			ChangeState: "wobbly",
+		}},
+	}
+	firstEntry := buildWobbleHistoryEntry("alice", firstScan.GeneratedAt, firstScan.Skills)
+	if err := writeWobbleStore(skillsPath, historyPath, firstScan, firstEntry); err != nil {
+		t.Fatalf("write wobble store: %v", err)
+	}
+
+	secondScan := wobbleStore{
+		Version:     1,
+		GeneratedAt: now,
+		Skills: []wobbleSkill{{
+			ID:          "beads",
+			Verdict:     "stable",
+			ChangeState: "stable",
+		}},
+	}
+	secondEntry := buildWobbleHistoryEntry("alice", secondScan.GeneratedAt, secondScan.Skills)
+	if err := writeWobbleStore(skillsPath, historyPath, secondScan, secondEntry); err != nil {
+		t.Fatalf("write wobble store: %v", err)
+	}
+
+	scoreboard := pacmanScoreboard{
+		Scores: map[string]pacmanScore{
+			"alice": {Dots: 5},
+			"bob":   {Dots: 2},
+		},
+	}
+	leaders := buildLeaderboard(scoreboard)
+
+	fixed := map[string]int{}
+	for _, leader := range leaders {
+		fixed[leader.Name] = leader.SkillsFixed
+	}
+	if fixed["alice"] != 1 {
+		t.Fatalf("expected alice skills fixed 1, got %d", fixed["alice"])
+	}
+	if fixed["bob"] != 0 {
+		t.Fatalf("expected bob skills fixed 0, got %d", fixed["bob"])
+	}
+}

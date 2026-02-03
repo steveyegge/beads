@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/ui"
@@ -88,6 +90,8 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 	projectPath, _ := cmd.Flags().GetString("project")
 	fromSessions, _ := cmd.Flags().GetBool("from-sessions")
 	days, _ := cmd.Flags().GetInt("days")
+	actor := getPacmanAgentName()
+	generatedAt := time.Now().UTC()
 
 	skillsDir := wobble.DetectSkillsDir(projectPath)
 
@@ -126,6 +130,9 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 				if err != nil {
 					FatalErrorRespectJSON("scan failed: %v", err)
 				}
+				if err := persistWobbleScan(wobbleSkillsFromScanResult(result), generatedAt, actor); err != nil && !jsonOutput {
+					fmt.Fprintf(os.Stderr, "%v\n", prettyWobbleStoreError(err))
+				}
 				if jsonOutput {
 					outputJSON(result)
 				} else {
@@ -136,6 +143,9 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 				if err != nil {
 					FatalErrorRespectJSON("scan failed: %v", err)
 				}
+				if err := persistWobbleScan(wobbleSkillsFromSummary(results), generatedAt, actor); err != nil && !jsonOutput {
+					fmt.Fprintf(os.Stderr, "%v\n", prettyWobbleStoreError(err))
+				}
 				if jsonOutput {
 					outputJSON(results)
 				} else {
@@ -145,6 +155,9 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 			return
 		}
 
+		if err := persistWobbleScan(wobbleSkillsFromRealResults(results), generatedAt, actor); err != nil && !jsonOutput {
+			fmt.Fprintf(os.Stderr, "%v\n", prettyWobbleStoreError(err))
+		}
 		if jsonOutput {
 			outputJSON(results)
 			return
@@ -158,6 +171,9 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 		results, err := wobble.ScanAllSkills(skillsDir, runs)
 		if err != nil {
 			FatalErrorRespectJSON("scan failed: %v", err)
+		}
+		if err := persistWobbleScan(wobbleSkillsFromSummary(results), generatedAt, actor); err != nil && !jsonOutput {
+			fmt.Fprintf(os.Stderr, "%v\n", prettyWobbleStoreError(err))
 		}
 
 		if jsonOutput {
@@ -178,6 +194,9 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 	result, err := wobble.ScanSkill(skillsDir, skillName, runs)
 	if err != nil {
 		FatalErrorRespectJSON("scan failed: %v", err)
+	}
+	if err := persistWobbleScan(wobbleSkillsFromScanResult(result), generatedAt, actor); err != nil && !jsonOutput {
+		fmt.Fprintf(os.Stderr, "%v\n", prettyWobbleStoreError(err))
 	}
 
 	if jsonOutput {

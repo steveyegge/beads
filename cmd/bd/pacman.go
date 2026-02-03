@@ -56,8 +56,9 @@ type pacmanBlocker struct {
 }
 
 type pacmanLeader struct {
-	Name string `json:"name"`
-	Dots int    `json:"dots"`
+	Name        string `json:"name"`
+	Dots        int    `json:"dots"`
+	SkillsFixed int    `json:"skills_fixed,omitempty"`
 }
 
 type pacmanAchievement struct {
@@ -325,7 +326,7 @@ func renderPacmanState(state pacmanState) {
 		fmt.Println("  None")
 	} else {
 		for i, entry := range state.Leaderboard {
-			fmt.Printf("  #%d %s  %d pts\n", i+1, entry.Name, entry.Dots)
+			fmt.Printf("  #%d %-16s %3d pts  %2d fixed\n", i+1, entry.Name, entry.Dots, entry.SkillsFixed)
 		}
 	}
 
@@ -419,9 +420,17 @@ func writePacmanScoreboard(scoreboard pacmanScoreboard) error {
 }
 
 func buildLeaderboard(scoreboard pacmanScoreboard) []pacmanLeader {
+	history, err := loadWobbleHistory()
+	if err != nil {
+		history = nil
+	}
 	leaders := make([]pacmanLeader, 0, len(scoreboard.Scores))
 	for name, score := range scoreboard.Scores {
-		leaders = append(leaders, pacmanLeader{Name: name, Dots: score.Dots})
+		fixed := 0
+		if len(history) > 0 {
+			fixed = skillsFixedFromHistory(history, name)
+		}
+		leaders = append(leaders, pacmanLeader{Name: name, Dots: score.Dots, SkillsFixed: fixed})
 	}
 	sort.SliceStable(leaders, func(i, j int) bool {
 		if leaders[i].Dots != leaders[j].Dots {
@@ -609,7 +618,7 @@ func runGlobalPacman(agent, workspaceRoot string) {
 		fmt.Println("LEADERBOARD:")
 		leaders := buildLeaderboard(pacmanScoreboard{Scores: globalScores})
 		for i, entry := range leaders {
-			fmt.Printf("  #%d %s  %d pts\n", i+1, entry.Name, entry.Dots)
+			fmt.Printf("  #%d %-16s %3d pts  %2d fixed\n", i+1, entry.Name, entry.Dots, entry.SkillsFixed)
 		}
 	}
 }
