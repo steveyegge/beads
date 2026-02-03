@@ -310,6 +310,13 @@ DOTS NEARBY:
   ○ bd-abc ● P1 "Implement login flow"
   ○ bd-xyz ● P2 "Add retry logic"
 
+ACHIEVEMENTS:
+  ✓ First Blood
+  ✓ Streak 5
+  ✓ Ghost Buster
+
+Tip: `bd pacman --global` aggregates dots and scores across your workspace.
+
 BLOCKERS:
   ● bd-456 blocked by bd-789
 

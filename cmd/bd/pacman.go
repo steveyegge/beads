@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -40,12 +41,13 @@ type pacmanPause struct {
 }
 
 type pacmanState struct {
-	Agent       string             `json:"agent"`
-	Score       int                `json:"score"`
-	Dots        []reflectIssueInfo `json:"dots,omitempty"`
-	Blockers    []pacmanBlocker    `json:"blockers,omitempty"`
-	Paused      *pacmanPause       `json:"paused,omitempty"`
-	Leaderboard []pacmanLeader     `json:"leaderboard,omitempty"`
+	Agent        string              `json:"agent"`
+	Score        int                 `json:"score"`
+	Dots         []reflectIssueInfo  `json:"dots,omitempty"`
+	Blockers     []pacmanBlocker     `json:"blockers,omitempty"`
+	Paused       *pacmanPause        `json:"paused,omitempty"`
+	Leaderboard  []pacmanLeader      `json:"leaderboard,omitempty"`
+	Achievements []pacmanAchievement `json:"achievements,omitempty"`
 }
 
 type pacmanBlocker struct {
@@ -56,6 +58,11 @@ type pacmanBlocker struct {
 type pacmanLeader struct {
 	Name string `json:"name"`
 	Dots int    `json:"dots"`
+}
+
+type pacmanAchievement struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
 var pacmanCmd = &cobra.Command{
@@ -161,20 +168,26 @@ func runPacman(cmd *cobra.Command, args []string) {
 }
 
 func renderPacmanArt(state pacmanState) {
-	// Build the maze line with pacman, dots, and ghosts
-	var maze strings.Builder
+	content := renderPacmanArtString(state)
+	fmt.Println("╭──────────────────────────────────────────────────────────╮")
+	padding := 60 - len([]rune(content))
+	if padding < 0 {
+		padding = 0
+	}
+	fmt.Printf("│%-60s│\n", content)
+	fmt.Println("╰──────────────────────────────────────────────────────────╯")
+}
 
-	// Pacman character
+func renderPacmanArtString(state pacmanState) string {
+	var maze strings.Builder
 	maze.WriteString("  ᗧ")
 
-	// Add dots (tasks)
 	for i, dot := range state.Dots {
-		if i >= 4 { // Limit to 4 dots for visual clarity
+		if i >= 4 {
 			maze.WriteString("···")
 			break
 		}
 		maze.WriteString("····○ ")
-		// Truncate ID for display
 		id := dot.ID
 		if len(id) > 6 {
 			id = id[:6]
@@ -182,26 +195,18 @@ func renderPacmanArt(state pacmanState) {
 		maze.WriteString(id)
 	}
 
-	// Add ghost (blocker) if any
 	if len(state.Blockers) > 0 {
-		maze.WriteString(" ····👻")
+		maze.WriteString(" ····◐")
+		if len(state.Blockers) > 1 {
+			maze.WriteString(fmt.Sprintf("x%d", len(state.Blockers)))
+		}
 	}
 
-	// If no dots, show clear path
 	if len(state.Dots) == 0 && len(state.Blockers) == 0 {
 		maze.WriteString("····················✓ CLEAR!")
 	}
 
-	// Print the maze
-	fmt.Println("╭──────────────────────────────────────────────────────────╮")
-	// Center the maze content
-	content := maze.String()
-	padding := 60 - len([]rune(content))
-	if padding < 0 {
-		padding = 0
-	}
-	fmt.Printf("│%-60s│\n", content)
-	fmt.Println("╰──────────────────────────────────────────────────────────╯")
+	return maze.String()
 }
 
 func buildPacmanState(agent string) (pacmanState, error) {
@@ -269,6 +274,7 @@ func buildPacmanState(agent string) (pacmanState, error) {
 		state.Paused = pause
 	}
 
+	state.Achievements = computePacmanAchievements(agent, time.Now().UTC(), state.Paused, score)
 	state.Leaderboard = buildLeaderboard(scoreboard)
 	return state, nil
 }
@@ -317,10 +323,18 @@ func renderPacmanState(state pacmanState) {
 	fmt.Println("LEADERBOARD:")
 	if len(state.Leaderboard) == 0 {
 		fmt.Println("  None")
-		return
+	} else {
+		for i, entry := range state.Leaderboard {
+			fmt.Printf("  #%d %s  %d pts\n", i+1, entry.Name, entry.Dots)
+		}
 	}
-	for i, entry := range state.Leaderboard {
-		fmt.Printf("  #%d %s  %d pts\n", i+1, entry.Name, entry.Dots)
+
+	if len(state.Achievements) > 0 {
+		fmt.Println()
+		fmt.Println("ACHIEVEMENTS:")
+		for _, achievement := range state.Achievements {
+			fmt.Printf("  %s %s\n", ui.RenderPass("✓"), achievement.Label)
+		}
 	}
 }
 
@@ -522,6 +536,7 @@ func runGlobalPacman(agent, workspaceRoot string) {
 	totalDots := 0
 	totalGhosts := 0
 	totalScore := 0
+	globalScores := map[string]pacmanScore{}
 
 	// Walk workspace looking for .beads directories
 	_ = filepath.Walk(workspaceRoot, func(path string, info os.FileInfo, err error) error {
@@ -536,6 +551,7 @@ func runGlobalPacman(agent, workspaceRoot string) {
 			dots := countDotsInProject(path)
 			ghosts := countGhostsInProject(path)
 			score := getScoreForAgent(path, agent)
+			mergeScoreboard(path, globalScores)
 
 			if dots > 0 || ghosts > 0 || score > 0 {
 				projects = append(projects, projectStats{
@@ -560,7 +576,7 @@ func runGlobalPacman(agent, workspaceRoot string) {
 
 	// Render global view
 	fmt.Println("╭──────────────────────────────────────────────────────────╮")
-	fmt.Printf("│  🌍 GLOBAL PACMAN · %d projects · %d dots · %d ghosts       │\n", len(projects), totalDots, totalGhosts)
+	fmt.Printf("│  GLOBAL PACMAN · %d projects · %d dots · %d ghosts          │\n", len(projects), totalDots, totalGhosts)
 	fmt.Println("╰──────────────────────────────────────────────────────────╯")
 	fmt.Println()
 
@@ -582,9 +598,18 @@ func runGlobalPacman(agent, workspaceRoot string) {
 			}
 			ghost := ""
 			if p.Ghosts > 0 {
-				ghost = fmt.Sprintf(" 👻%d", p.Ghosts)
+				ghost = fmt.Sprintf(" ◐%d", p.Ghosts)
 			}
 			fmt.Printf("  %s %-25s %s%s\n", status, p.Name, fmt.Sprintf("(%d pts)", p.Score), ghost)
+		}
+	}
+
+	if len(globalScores) > 0 {
+		fmt.Println()
+		fmt.Println("LEADERBOARD:")
+		leaders := buildLeaderboard(pacmanScoreboard{Scores: globalScores})
+		for i, entry := range leaders {
+			fmt.Printf("  #%d %s  %d pts\n", i+1, entry.Name, entry.Dots)
 		}
 	}
 }
@@ -635,6 +660,23 @@ func getScoreForAgent(beadsDir, agent string) int {
 	return 0
 }
 
+func mergeScoreboard(beadsDir string, scores map[string]pacmanScore) {
+	scoreboardPath := filepath.Join(beadsDir, "scoreboard.json")
+	data, err := os.ReadFile(scoreboardPath)
+	if err != nil {
+		return
+	}
+	var scoreboard pacmanScoreboard
+	if err := json.Unmarshal(data, &scoreboard); err != nil {
+		return
+	}
+	for name, entry := range scoreboard.Scores {
+		current := scores[name]
+		current.Dots += entry.Dots
+		scores[name] = current
+	}
+}
+
 // Badge mode: generate GitHub profile badge
 func generatePacmanBadge(agent string) {
 	scoreboard, err := loadPacmanScoreboard()
@@ -668,5 +710,128 @@ func generatePacmanBadge(agent string) {
 	fmt.Printf("  %s\n", markdown)
 	fmt.Println()
 	fmt.Println("Preview:")
-	fmt.Printf("  🏆 %s: %d dots\n", agent, score)
+	fmt.Printf("  ✓ %s: %d dots\n", agent, score)
+}
+
+func computePacmanAchievements(agent string, now time.Time, pause *pacmanPause, score int) []pacmanAchievement {
+	db := (*sql.DB)(nil)
+	if store != nil {
+		db = store.UnderlyingDB()
+	}
+	if db == nil {
+		if score > 0 {
+			return []pacmanAchievement{{ID: "first-blood", Label: "First Blood"}}
+		}
+		return nil
+	}
+	return computePacmanAchievementsFromDB(db, agent, now, pause)
+}
+
+func computePacmanAchievementsFromDB(db *sql.DB, agent string, now time.Time, pause *pacmanPause) []pacmanAchievement {
+	achievements := []pacmanAchievement{}
+	closedEvents, err := loadClosedEvents(db, agent)
+	if err != nil {
+		return achievements
+	}
+
+	if len(closedEvents) > 0 {
+		achievements = append(achievements, pacmanAchievement{ID: "first-blood", Label: "First Blood"})
+	}
+
+	closedToday := 0
+	for _, event := range closedEvents {
+		if sameDay(event.CreatedAt, now) {
+			closedToday++
+		}
+	}
+	if closedToday >= 5 {
+		achievements = append(achievements, pacmanAchievement{ID: "streak-5", Label: "Streak 5"})
+	}
+
+	if hasGhostBuster(db, closedEvents) {
+		achievements = append(achievements, pacmanAchievement{ID: "ghost-buster", Label: "Ghost Buster"})
+	}
+
+	if hasAssistMaster(db, closedEvents) {
+		achievements = append(achievements, pacmanAchievement{ID: "assist-master", Label: "Assist Master"})
+	}
+
+	if pause != nil {
+		if ts, err := time.Parse(time.RFC3339, pause.TS); err == nil {
+			for _, event := range closedEvents {
+				if event.CreatedAt.After(ts) {
+					achievements = append(achievements, pacmanAchievement{ID: "comeback", Label: "Comeback"})
+					break
+				}
+			}
+		}
+	}
+
+	return achievements
+}
+
+type pacmanClosedEvent struct {
+	IssueID   string
+	CreatedAt time.Time
+}
+
+func loadClosedEvents(db *sql.DB, agent string) ([]pacmanClosedEvent, error) {
+	rows, err := db.Query(`
+		SELECT issue_id, created_at
+		FROM events
+		WHERE event_type = ? AND actor = ?
+	`, types.EventClosed, agent)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var events []pacmanClosedEvent
+	for rows.Next() {
+		var event pacmanClosedEvent
+		if err := rows.Scan(&event.IssueID, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func hasGhostBuster(db *sql.DB, closed []pacmanClosedEvent) bool {
+	for _, event := range closed {
+		var count int
+		err := db.QueryRow(`
+			SELECT COUNT(*)
+			FROM events
+			WHERE issue_id = ? AND event_type = ?
+			  AND (LOWER(new_value) = ? OR new_value LIKE ?)
+		`, event.IssueID, types.EventStatusChanged, string(types.StatusBlocked), "%blocked%").Scan(&count)
+		if err == nil && count > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAssistMaster(db *sql.DB, closed []pacmanClosedEvent) bool {
+	for _, event := range closed {
+		var count int
+		err := db.QueryRow(`
+			SELECT COUNT(*)
+			FROM dependencies d
+			JOIN issues i ON i.id = d.issue_id
+			WHERE d.depends_on_id = ?
+			  AND i.status IN ('open', 'in_progress')
+		`, event.IssueID).Scan(&count)
+		if err == nil && count > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
 }
