@@ -225,8 +225,8 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 
-		// Load the proto subgraph from DB
-		subgraph, err = loadTemplateSubgraph(ctx, store, protoID)
+		// Load the proto subgraph (prefer daemon RPC per gt-as9kdm)
+		subgraph, err = loadSubgraphPreferDaemon(ctx, protoID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading proto: %v\n", err)
 			os.Exit(1)

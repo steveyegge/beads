@@ -204,7 +204,7 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 
 	// Handle persistent molecules individually (they need subgraph loading)
 	for _, id := range persistentIDs {
-		subgraph, err := loadTemplateSubgraph(ctx, store, id)
+		subgraph, err := loadSubgraphPreferDaemon(ctx, id)
 		if err != nil {
 			if !jsonOutput {
 				fmt.Fprintf(os.Stderr, "Warning: failed to load subgraph for %s: %v\n", id, err)
@@ -244,8 +244,8 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 
 // burnWispMolecule handles wisp deletion (no tombstones, ephemeral-only)
 func burnWispMolecule(ctx context.Context, resolvedID string, dryRun, force bool) {
-	// Load the molecule subgraph
-	subgraph, err := loadTemplateSubgraph(ctx, store, resolvedID)
+	// Load the molecule subgraph (prefer daemon RPC per gt-as9kdm)
+	subgraph, err := loadSubgraphPreferDaemon(ctx, resolvedID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading wisp molecule: %v\n", err)
 		os.Exit(1)
@@ -328,8 +328,8 @@ func burnWispMolecule(ctx context.Context, resolvedID string, dryRun, force bool
 
 // burnPersistentMolecule handles mol deletion (with tombstones, cascade delete)
 func burnPersistentMolecule(ctx context.Context, resolvedID string, dryRun, force bool) {
-	// Load the molecule subgraph to show what will be deleted
-	subgraph, err := loadTemplateSubgraph(ctx, store, resolvedID)
+	// Load the molecule subgraph to show what will be deleted (prefer daemon RPC per gt-as9kdm)
+	subgraph, err := loadSubgraphPreferDaemon(ctx, resolvedID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
 		os.Exit(1)

@@ -370,6 +370,38 @@ func init() {
 // Beads Template Functions
 // =============================================================================
 
+// loadSubgraphPreferDaemon loads a template subgraph, preferring daemon RPC over direct store.
+// Per epic gt-as9kdm, we want to eliminate direct DB connections.
+// This function handles ID resolution and falls back to direct store if daemon unavailable.
+func loadSubgraphPreferDaemon(ctx context.Context, issueID string) (*TemplateSubgraph, error) {
+	// Try daemon RPC first (preferred)
+	if daemonClient != nil {
+		// Resolve ID via daemon
+		resolveResp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: issueID})
+		if err != nil {
+			return nil, fmt.Errorf("resolving ID via daemon: %w", err)
+		}
+		var resolvedID string
+		if err := json.Unmarshal(resolveResp.Data, &resolvedID); err != nil {
+			return nil, fmt.Errorf("parsing resolved ID: %w", err)
+		}
+
+		return loadTemplateSubgraphViaDaemon(daemonClient, resolvedID)
+	}
+
+	// Fall back to direct store
+	if store == nil {
+		return nil, fmt.Errorf("no database connection available")
+	}
+
+	resolvedID, err := utils.ResolvePartialID(ctx, store, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving ID: %w", err)
+	}
+
+	return loadTemplateSubgraph(ctx, store, resolvedID)
+}
+
 // loadTemplateSubgraph loads a template epic and all its descendants
 func loadTemplateSubgraph(ctx context.Context, s storage.Storage, templateID string) (*TemplateSubgraph, error) {
 	if s == nil {

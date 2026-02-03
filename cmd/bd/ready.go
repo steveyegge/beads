@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/util"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var readyCmd = &cobra.Command{
@@ -367,14 +366,8 @@ func runMoleculeReady(_ *cobra.Command, molIDArg string) {
 	}
 
 	// Resolve molecule ID
-	moleculeID, err := utils.ResolvePartialID(ctx, store, molIDArg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: molecule '%s' not found\n", molIDArg)
-		os.Exit(1)
-	}
-
-	// Load molecule subgraph
-	subgraph, err := loadTemplateSubgraph(ctx, store, moleculeID)
+	// Load molecule subgraph (prefer daemon RPC per gt-as9kdm)
+	subgraph, err := loadSubgraphPreferDaemon(ctx, molIDArg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
 		os.Exit(1)
@@ -398,7 +391,7 @@ func runMoleculeReady(_ *cobra.Command, molIDArg string) {
 
 	if jsonOutput {
 		output := MoleculeReadyOutput{
-			MoleculeID:     moleculeID,
+			MoleculeID:     subgraph.Root.ID,
 			MoleculeTitle:  subgraph.Root.Title,
 			TotalSteps:     analysis.TotalSteps,
 			ReadySteps:     len(readySteps),
@@ -411,7 +404,7 @@ func runMoleculeReady(_ *cobra.Command, molIDArg string) {
 
 	// Human-readable output
 	fmt.Printf("\n%s Ready steps in molecule: %s\n", ui.RenderAccent("🧪"), subgraph.Root.Title)
-	fmt.Printf("   ID: %s\n", moleculeID)
+	fmt.Printf("   ID: %s\n", subgraph.Root.ID)
 	fmt.Printf("   Total: %d steps, %d ready\n", analysis.TotalSteps, len(readySteps))
 
 	if len(readySteps) == 0 {

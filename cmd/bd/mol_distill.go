@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var molDistillCmd = &cobra.Command{
@@ -117,15 +116,8 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	outputDir, _ := cmd.Flags().GetString("output")
 
-	// Resolve epic ID
-	epicID, err := utils.ResolvePartialID(ctx, store, args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: '%s' not found\n", args[0])
-		os.Exit(1)
-	}
-
-	// Load the epic subgraph
-	subgraph, err := loadTemplateSubgraph(ctx, store, epicID)
+	// Load the epic subgraph (prefer daemon RPC per gt-as9kdm)
+	subgraph, err := loadSubgraphPreferDaemon(ctx, args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading epic: %v\n", err)
 		os.Exit(1)
@@ -172,7 +164,7 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 	}
 
 	if dryRun {
-		fmt.Printf("\nDry run: would distill %d steps from %s into formula\n\n", countSteps(f.Steps), epicID)
+		fmt.Printf("\nDry run: would distill %d steps from %s into formula\n\n", countSteps(f.Steps), subgraph.Root.ID)
 		fmt.Printf("Formula: %s\n", formulaName)
 		fmt.Printf("Output: %s\n", outputPath)
 		if len(replacements) > 0 {

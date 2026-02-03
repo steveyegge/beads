@@ -129,8 +129,8 @@ func runPour(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 
-		// Load the proto subgraph from DB
-		subgraph, err = loadTemplateSubgraph(ctx, store, protoID)
+		// Load the proto subgraph (prefer daemon RPC per gt-as9kdm)
+		subgraph, err = loadSubgraphPreferDaemon(ctx, protoID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading proto: %v\n", err)
 			os.Exit(1)
@@ -161,7 +161,7 @@ func runPour(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %s is not a proto (missing '%s' label)\n", attachID, MoleculeLabel)
 			os.Exit(1)
 		}
-		attachSubgraph, err := loadTemplateSubgraph(ctx, store, attachID)
+		attachSubgraph, err := loadSubgraphPreferDaemon(ctx, attachID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading attachment subgraph %s: %v\n", attachID, err)
 			os.Exit(1)

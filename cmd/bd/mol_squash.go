@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var molSquashCmd = &cobra.Command{
@@ -77,14 +76,8 @@ func runMolSquash(cmd *cobra.Command, args []string) {
 	summary, _ := cmd.Flags().GetString("summary")
 
 	// Resolve molecule ID in main store
-	moleculeID, err := utils.ResolvePartialID(ctx, store, args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving molecule ID %s: %v\n", args[0], err)
-		os.Exit(1)
-	}
-
-	// Load the molecule subgraph from main store
-	subgraph, err := loadTemplateSubgraph(ctx, store, moleculeID)
+	// Load the molecule subgraph (prefer daemon RPC per gt-as9kdm)
+	subgraph, err := loadSubgraphPreferDaemon(ctx, args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
 		os.Exit(1)
@@ -104,17 +97,17 @@ func runMolSquash(cmd *cobra.Command, args []string) {
 	if len(wispChildren) == 0 {
 		if jsonOutput {
 			outputJSON(SquashResult{
-				MoleculeID:    moleculeID,
+				MoleculeID:    subgraph.Root.ID,
 				SquashedCount: 0,
 			})
 		} else {
-			fmt.Printf("No ephemeral children found for molecule %s\n", moleculeID)
+			fmt.Printf("No ephemeral children found for molecule %s\n", subgraph.Root.ID)
 		}
 		return
 	}
 
 	if dryRun {
-		fmt.Printf("\nDry run: would squash %d ephemeral children of %s\n\n", len(wispChildren), moleculeID)
+		fmt.Printf("\nDry run: would squash %d ephemeral children of %s\n\n", len(wispChildren), subgraph.Root.ID)
 		fmt.Printf("Root: %s\n", subgraph.Root.Title)
 		fmt.Printf("\nWisp children to squash:\n")
 		for _, issue := range wispChildren {
