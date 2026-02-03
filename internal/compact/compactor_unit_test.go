@@ -66,11 +66,20 @@ type stubSummarizer struct {
 	summary string
 	err     error
 	calls   int
+	mu      sync.Mutex
 }
 
 func (s *stubSummarizer) SummarizeTier1(ctx context.Context, issue *types.Issue) (string, error) {
+	s.mu.Lock()
 	s.calls++
+	s.mu.Unlock()
 	return s.summary, s.err
+}
+
+func (s *stubSummarizer) getCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
 }
 
 func stubIssue() *types.Issue {
