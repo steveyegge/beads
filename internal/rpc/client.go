@@ -725,6 +725,21 @@ func (c *Client) MolProgressStats(moleculeID string) (*MolProgressStatsResult, e
 	return &result, nil
 }
 
+// Types retrieves available issue types via the daemon (bd-s091)
+func (c *Client) Types(args *TypesArgs) (*TypesResult, error) {
+	resp, err := c.Execute(OpTypes, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result TypesResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal types response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // CloseContinue executes close --continue via the daemon (bd-ympw)
 // This walks the parent-child chain to advance to the next step in a molecule
 func (c *Client) CloseContinue(args *CloseContinueArgs) (*CloseContinueResult, error) {

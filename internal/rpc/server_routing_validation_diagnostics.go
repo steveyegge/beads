@@ -323,6 +323,9 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleConfigList(req)
 	case OpConfigUnset:
 		resp = s.handleConfigUnset(req)
+	// Types operation (bd-s091)
+	case OpTypes:
+		resp = s.handleTypes(req)
 	default:
 		return Response{
 			Success: false,

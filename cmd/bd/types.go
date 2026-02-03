@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -35,20 +36,24 @@ Examples:
   bd types --json       # Output as JSON
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Ensure direct mode for database access (types command needs to read config).
-		// In daemon mode, store is nil so custom types would never be fetched.
-		if err := ensureDirectMode("types command requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Use daemon RPC when available (bd-s091)
+		if daemonClient != nil {
+			runTypesViaDaemon()
 			return
+		}
+
+		// Fallback to direct store access
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
+			os.Exit(1)
 		}
 
 		// Get custom types from config
 		var customTypes []string
 		ctx := context.Background()
-		if store != nil {
-			if ct, err := store.GetCustomTypes(ctx); err == nil {
-				customTypes = ct
-			}
+		if ct, err := store.GetCustomTypes(ctx); err == nil {
+			customTypes = ct
 		}
 
 		if jsonOutput {
@@ -93,4 +98,34 @@ type typeInfo struct {
 
 func init() {
 	rootCmd.AddCommand(typesCmd)
+}
+
+// runTypesViaDaemon executes types via daemon RPC (bd-s091)
+func runTypesViaDaemon() {
+	result, err := daemonClient.Types(&rpc.TypesArgs{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(result)
+		return
+	}
+
+	// Text output
+	fmt.Println("Core work types (built-in):")
+	for _, t := range result.CoreTypes {
+		fmt.Printf("  %-14s %s\n", t.Name, t.Description)
+	}
+
+	if len(result.CustomTypes) > 0 {
+		fmt.Println("\nConfigured custom types:")
+		for _, t := range result.CustomTypes {
+			fmt.Printf("  %s\n", t)
+		}
+	} else {
+		fmt.Println("\nNo custom types configured.")
+		fmt.Println("Configure with: bd config set types.custom \"type1,type2,...\"")
+	}
 }

@@ -842,3 +842,115 @@ func TestHandleCloseContinue_MoleculeComplete(t *testing.T) {
 		t.Error("expected no next step when molecule is complete")
 	}
 }
+
+// Tests for handleTypes (bd-s091)
+
+func TestHandleTypes_Basic(t *testing.T) {
+	server, _ := setupMolTestServer(t)
+
+	req := &Request{
+		Operation: OpTypes,
+		Args:      []byte(`{}`),
+		Actor:     "test",
+	}
+
+	resp := server.handleTypes(req)
+	if !resp.Success {
+		t.Fatalf("types failed: %s", resp.Error)
+	}
+
+	var result TypesResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+
+	// Verify core types are returned
+	if len(result.CoreTypes) != 5 {
+		t.Errorf("expected 5 core types, got %d", len(result.CoreTypes))
+	}
+
+	// Check that expected types are present
+	coreTypeNames := make(map[string]bool)
+	for _, ct := range result.CoreTypes {
+		coreTypeNames[ct.Name] = true
+	}
+	expectedTypes := []string{"task", "bug", "feature", "chore", "epic"}
+	for _, expected := range expectedTypes {
+		if !coreTypeNames[expected] {
+			t.Errorf("expected core type %q not found", expected)
+		}
+	}
+}
+
+func TestHandleTypes_WithCustomTypes(t *testing.T) {
+	server, store := setupMolTestServerWithSQLite(t)
+
+	// Set custom types in config
+	ctx := context.Background()
+	if err := store.SetConfig(ctx, "types.custom", "incident,security,docs"); err != nil {
+		t.Fatalf("failed to set custom types: %v", err)
+	}
+
+	req := &Request{
+		Operation: OpTypes,
+		Args:      []byte(`{}`),
+		Actor:     "test",
+	}
+
+	resp := server.handleTypes(req)
+	if !resp.Success {
+		t.Fatalf("types failed: %s", resp.Error)
+	}
+
+	var result TypesResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+
+	// Verify core types
+	if len(result.CoreTypes) != 5 {
+		t.Errorf("expected 5 core types, got %d", len(result.CoreTypes))
+	}
+
+	// Verify custom types
+	if len(result.CustomTypes) != 3 {
+		t.Errorf("expected 3 custom types, got %d", len(result.CustomTypes))
+	}
+
+	// Check that expected custom types are present
+	customTypeSet := make(map[string]bool)
+	for _, ct := range result.CustomTypes {
+		customTypeSet[ct] = true
+	}
+	expectedCustom := []string{"incident", "security", "docs"}
+	for _, expected := range expectedCustom {
+		if !customTypeSet[expected] {
+			t.Errorf("expected custom type %q not found", expected)
+		}
+	}
+}
+
+func TestHandleTypes_NoCustomTypes(t *testing.T) {
+	server, _ := setupMolTestServerWithSQLite(t)
+
+	req := &Request{
+		Operation: OpTypes,
+		Args:      []byte(`{}`),
+		Actor:     "test",
+	}
+
+	resp := server.handleTypes(req)
+	if !resp.Success {
+		t.Fatalf("types failed: %s", resp.Error)
+	}
+
+	var result TypesResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+
+	// Verify no custom types
+	if len(result.CustomTypes) != 0 {
+		t.Errorf("expected 0 custom types, got %d", len(result.CustomTypes))
+	}
+}

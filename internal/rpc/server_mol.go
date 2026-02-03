@@ -1307,3 +1307,32 @@ func (s *Server) handleCloseContinue(req *Request) Response {
 	data, _ := json.Marshal(result)
 	return Response{Success: true, Data: data}
 }
+
+// handleTypes handles the types RPC operation (bd-s091)
+// Returns core work types and custom types from config
+func (s *Server) handleTypes(req *Request) Response {
+	ctx := s.reqCtx(req)
+
+	// Core work types (always available)
+	coreTypes := []TypeInfo{
+		{Name: string(types.TypeTask), Description: "General work item (default)"},
+		{Name: string(types.TypeBug), Description: "Bug report or defect"},
+		{Name: string(types.TypeFeature), Description: "New feature or enhancement"},
+		{Name: string(types.TypeChore), Description: "Maintenance or housekeeping"},
+		{Name: string(types.TypeEpic), Description: "Large body of work spanning multiple issues"},
+	}
+
+	// Get custom types from storage config
+	var customTypes []string
+	if ct, err := s.storage.GetCustomTypes(ctx); err == nil {
+		customTypes = ct
+	}
+
+	result := &TypesResult{
+		CoreTypes:   coreTypes,
+		CustomTypes: customTypes,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}

@@ -75,6 +75,9 @@ const (
 	OpConfigSet   = "config_set"
 	OpConfigList  = "config_list"
 	OpConfigUnset = "config_unset"
+
+	// Types operation (bd-s091)
+	OpTypes = "types"
 )
 
 // Request represents an RPC request from client to daemon
@@ -949,5 +952,22 @@ type ListWatchResult struct {
 	Issues         []*types.Issue `json:"issues"`
 	LastMutationMs int64          `json:"last_mutation_ms"` // Unix timestamp in milliseconds of latest mutation
 	HasMore        bool           `json:"has_more,omitempty"` // True if more mutations occurred during wait
+}
+
+// TypesArgs represents arguments for the types operation (bd-s091)
+type TypesArgs struct {
+	// No arguments needed - types command just lists available types
+}
+
+// TypesResult represents the result of a types operation
+type TypesResult struct {
+	CoreTypes   []TypeInfo `json:"core_types"`
+	CustomTypes []string   `json:"custom_types,omitempty"`
+}
+
+// TypeInfo describes a single issue type
+type TypeInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
