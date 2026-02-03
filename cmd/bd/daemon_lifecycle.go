@@ -369,7 +369,7 @@ func stopAllDaemons() {
 }
 
 // startDaemon starts the daemon (in foreground if requested, otherwise background)
-func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMode, foreground bool, logFile, pidFile, logLevel string, logJSON, federation bool, federationPort, remotesapiPort int) {
+func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMode, foreground bool, logFile, pidFile, logLevel string, logJSON, federation bool, federationPort, remotesapiPort int, tcpAddr, tlsCert, tlsKey, tcpToken string) {
 	logPath, err := getLogFilePath(logFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -378,7 +378,7 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMo
 
 	// Run in foreground if --foreground flag set or if we're the forked child process
 	if foreground || os.Getenv("BD_DAEMON_FOREGROUND") == "1" {
-		runDaemonLoop(interval, autoCommit, autoPush, autoPull, localMode, logPath, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort)
+		runDaemonLoop(interval, autoCommit, autoPush, autoPull, localMode, logPath, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort, tcpAddr, tlsCert, tlsKey, tcpToken)
 		return
 	}
 
@@ -420,6 +420,18 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMo
 		if remotesapiPort != 0 && remotesapiPort != 8080 {
 			args = append(args, "--remotesapi-port", strconv.Itoa(remotesapiPort))
 		}
+	}
+	if tcpAddr != "" {
+		args = append(args, "--tcp-addr", tcpAddr)
+	}
+	if tlsCert != "" {
+		args = append(args, "--tls-cert", tlsCert)
+	}
+	if tlsKey != "" {
+		args = append(args, "--tls-key", tlsKey)
+	}
+	if tcpToken != "" {
+		args = append(args, "--tcp-token", tcpToken)
 	}
 
 	cmd := exec.Command(exe, args...) // #nosec G204 - bd daemon command from trusted binary

@@ -900,7 +900,7 @@ func setupDaemonTestEnvForDelete(t *testing.T) (context.Context, context.CancelF
 
 	log := daemonLogger{logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))}
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", log)
 	if err != nil {
 		cancel()
 		t.Fatalf("Failed to start RPC server: %v", err)

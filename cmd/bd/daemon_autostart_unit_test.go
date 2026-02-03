@@ -62,7 +62,7 @@ func startTestRPCServer(t *testing.T) (socketPath string, cleanup func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	log := newTestLogger()
 
-	server, _, err := startRPCServer(ctx, socketPath, store, tmpDir, db, log)
+	server, _, err := startRPCServer(ctx, socketPath, store, tmpDir, db, "", "", "", "", log)
 	if err != nil {
 		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || os.IsPermission(err) {
 			cancel()

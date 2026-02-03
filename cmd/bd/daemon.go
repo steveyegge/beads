@@ -249,7 +249,23 @@ Run 'bd daemon --help' to see all subcommands.`,
 
 		federationPort, _ := cmd.Flags().GetInt("federation-port")
 		remotesapiPort, _ := cmd.Flags().GetInt("remotesapi-port")
-		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort)
+		tcpAddr, _ := cmd.Flags().GetString("tcp-addr")
+		if tcpAddr == "" {
+			tcpAddr = os.Getenv("BD_DAEMON_TCP_ADDR")
+		}
+		tlsCert, _ := cmd.Flags().GetString("tls-cert")
+		if tlsCert == "" {
+			tlsCert = os.Getenv("BD_DAEMON_TLS_CERT")
+		}
+		tlsKey, _ := cmd.Flags().GetString("tls-key")
+		if tlsKey == "" {
+			tlsKey = os.Getenv("BD_DAEMON_TLS_KEY")
+		}
+		tcpToken, _ := cmd.Flags().GetString("tcp-token")
+		if tcpToken == "" {
+			tcpToken = os.Getenv("BD_DAEMON_TOKEN")
+		}
+		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort, tcpAddr, tlsCert, tlsKey, tcpToken)
 	},
 }
 
@@ -278,6 +294,10 @@ func init() {
 	daemonCmd.Flags().Bool("federation", false, "Enable federation mode (runs dolt sql-server with remotesapi)")
 	daemonCmd.Flags().Int("federation-port", 3306, "MySQL port for federation mode dolt sql-server")
 	daemonCmd.Flags().Int("remotesapi-port", 8080, "remotesapi port for peer-to-peer sync in federation mode")
+	daemonCmd.Flags().String("tcp-addr", "", "TCP address to listen on (e.g., :9876 or 0.0.0.0:9876)")
+	daemonCmd.Flags().String("tls-cert", "", "TLS certificate file for TCP connections")
+	daemonCmd.Flags().String("tls-key", "", "TLS key file for TCP connections")
+	daemonCmd.Flags().String("tcp-token", "", "Token for TCP connection authentication (or use BD_DAEMON_TOKEN)")
 	daemonCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
 	rootCmd.AddCommand(daemonCmd)
 }
@@ -294,7 +314,7 @@ func computeDaemonParentPID() int {
 	}
 	return os.Getppid()
 }
-func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, localMode bool, logPath, pidFile, logLevel string, logJSON, federation bool, federationPort, remotesapiPort int) {
+func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, localMode bool, logPath, pidFile, logLevel string, logJSON, federation bool, federationPort, remotesapiPort int, tcpAddr, tlsCert, tlsKey, tcpToken string) {
 	level := parseLogLevel(logLevel)
 	logF, log := setupDaemonLogger(logPath, logJSON, level)
 	defer func() { _ = logF.Close() }()
@@ -645,9 +665,21 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	serverCtx, serverCancel := context.WithCancel(ctx)
 	defer serverCancel()
 
-	server, serverErrChan, err := startRPCServer(serverCtx, socketPath, store, workspacePath, daemonDBPath, log)
+	server, serverErrChan, err := startRPCServer(serverCtx, socketPath, store, workspacePath, daemonDBPath, tcpAddr, tlsCert, tlsKey, tcpToken, log)
 	if err != nil {
 		return
+	}
+
+	// Log TCP address if configured
+	if tcpAddr != "" {
+		if tlsCert != "" {
+			log.Info("TCP listener enabled with TLS", "addr", tcpAddr, "cert", tlsCert)
+		} else {
+			log.Info("TCP listener enabled", "addr", tcpAddr)
+		}
+		if tcpToken != "" {
+			log.Info("TCP token authentication enabled")
+		}
 	}
 
 	// Choose event loop based on BEADS_DAEMON_MODE (need to determine early for SetConfig)

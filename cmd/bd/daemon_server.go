@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"time"
@@ -12,7 +13,7 @@ import (
 )
 
 // startRPCServer initializes and starts the RPC server
-func startRPCServer(ctx context.Context, socketPath string, store storage.Storage, workspacePath string, dbPath string, log daemonLogger) (*rpc.Server, chan error, error) {
+func startRPCServer(ctx context.Context, socketPath string, store storage.Storage, workspacePath string, dbPath string, tcpAddr, tlsCert, tlsKey, tcpToken string, log daemonLogger) (*rpc.Server, chan error, error) {
 	// Sync daemon version with CLI version
 	rpc.ServerVersion = Version
 
@@ -20,6 +21,22 @@ func startRPCServer(ctx context.Context, socketPath string, store storage.Storag
 	wispStore := daemon.NewWispStore()
 
 	server := rpc.NewServerWithWispStore(socketPath, store, wispStore, workspacePath, dbPath)
+
+	// Configure TCP listener if address provided
+	if tcpAddr != "" {
+		server.SetTCPAddr(tcpAddr)
+		// Configure TLS if cert and key provided
+		if tlsCert != "" && tlsKey != "" {
+			if err := server.SetTLSConfig(tlsCert, tlsKey); err != nil {
+				return nil, nil, fmt.Errorf("failed to configure TLS: %w", err)
+			}
+		}
+		// Configure token authentication if provided
+		if tcpToken != "" {
+			server.SetTCPToken(tcpToken)
+		}
+	}
+
 	serverErrChan := make(chan error, 1)
 
 	go func() {

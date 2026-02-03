@@ -49,6 +49,38 @@ Examples:
 		federation, _ := cmd.Flags().GetBool("federation")
 		federationPort, _ := cmd.Flags().GetInt("federation-port")
 		remotesapiPort, _ := cmd.Flags().GetInt("remotesapi-port")
+		tcpAddr, _ := cmd.Flags().GetString("tcp-addr")
+		tlsCert, _ := cmd.Flags().GetString("tls-cert")
+		tlsKey, _ := cmd.Flags().GetString("tls-key")
+
+		// Also check environment variables for TCP/TLS config
+		if tcpAddr == "" {
+			tcpAddr = os.Getenv("BD_DAEMON_TCP_ADDR")
+		}
+		if tlsCert == "" {
+			tlsCert = os.Getenv("BD_DAEMON_TLS_CERT")
+		}
+		if tlsKey == "" {
+			tlsKey = os.Getenv("BD_DAEMON_TLS_KEY")
+		}
+
+		// Validate TLS config: both cert and key must be provided together
+		if (tlsCert != "" && tlsKey == "") || (tlsCert == "" && tlsKey != "") {
+			fmt.Fprintf(os.Stderr, "Error: --tls-cert and --tls-key must both be provided\n")
+			os.Exit(1)
+		}
+
+		// TLS requires TCP address
+		if tlsCert != "" && tcpAddr == "" {
+			fmt.Fprintf(os.Stderr, "Error: --tcp-addr is required when using TLS\n")
+			os.Exit(1)
+		}
+
+		// Get TCP token for authentication
+		tcpToken, _ := cmd.Flags().GetString("tcp-token")
+		if tcpToken == "" {
+			tcpToken = os.Getenv("BD_DAEMON_TOKEN")
+		}
 
 		// NOTE: Only load daemon auto-settings from the database in foreground mode.
 		//
@@ -160,8 +192,18 @@ Examples:
 		if logFile != "" {
 			fmt.Printf("Logging to: %s\n", logFile)
 		}
+		if tcpAddr != "" {
+			if tlsCert != "" {
+				fmt.Printf("TCP address: %s (TLS enabled)\n", tcpAddr)
+			} else {
+				fmt.Printf("TCP address: %s\n", tcpAddr)
+			}
+			if tcpToken != "" {
+				fmt.Printf("TCP authentication: token required\n")
+			}
+		}
 
-		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort)
+		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort, tcpAddr, tlsCert, tlsKey, tcpToken)
 	},
 }
 
@@ -178,4 +220,8 @@ func init() {
 	daemonStartCmd.Flags().Bool("federation", false, "Enable federation mode (runs dolt sql-server)")
 	daemonStartCmd.Flags().Int("federation-port", 3306, "MySQL port for federation mode dolt sql-server")
 	daemonStartCmd.Flags().Int("remotesapi-port", 8080, "remotesapi port for peer-to-peer sync in federation mode")
+	daemonStartCmd.Flags().String("tcp-addr", "", "TCP address to listen on (e.g., :9876 or 0.0.0.0:9876)")
+	daemonStartCmd.Flags().String("tls-cert", "", "TLS certificate file for TCP connections")
+	daemonStartCmd.Flags().String("tls-key", "", "TLS key file for TCP connections")
+	daemonStartCmd.Flags().String("tcp-token", "", "Token for TCP connection authentication (or use BD_DAEMON_TOKEN)")
 }

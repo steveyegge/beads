@@ -38,6 +38,8 @@ type Client struct {
 	timeout    time.Duration
 	dbPath     string // Expected database path for validation
 	actor      string // Actor for audit trail (who is performing operations)
+	token      string // Authentication token for TCP connections
+	isRemote   bool   // True if connected via TCP to remote daemon
 }
 
 // TryConnect attempts to connect to the daemon socket
@@ -140,6 +142,113 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 	return client, nil
 }
 
+// GetDaemonHost returns the BD_DAEMON_HOST environment variable if set.
+// When set, clients should connect via TCP to this address instead of Unix socket.
+func GetDaemonHost() string {
+	return os.Getenv("BD_DAEMON_HOST")
+}
+
+// GetDaemonToken returns the BD_DAEMON_TOKEN environment variable if set.
+// This token is used for authentication when connecting to remote daemons via TCP.
+func GetDaemonToken() string {
+	return os.Getenv("BD_DAEMON_TOKEN")
+}
+
+// TryConnectTCP attempts to connect to a remote daemon via TCP.
+// Returns nil if the daemon is not reachable or unhealthy.
+// The token parameter is used for authentication with the remote daemon.
+func TryConnectTCP(addr string, token string) (*Client, error) {
+	return TryConnectTCPWithTimeout(addr, token, 2*time.Second)
+}
+
+// TryConnectTCPWithTimeout attempts to connect to a remote daemon via TCP
+// using the provided dial timeout.
+// Returns nil if the daemon is not reachable or unhealthy.
+func TryConnectTCPWithTimeout(addr string, token string, dialTimeout time.Duration) (*Client, error) {
+	rpcDebugLog("attempting TCP connection to: %s", addr)
+
+	if dialTimeout <= 0 {
+		dialTimeout = 2 * time.Second
+	}
+
+	rpcDebugLog("dialing TCP (timeout: %v)", dialTimeout)
+	dialStart := time.Now()
+	conn, err := dialTCP(addr, dialTimeout)
+	dialDuration := time.Since(dialStart)
+
+	if err != nil {
+		debug.Logf("failed to connect to remote daemon: %v", err)
+		rpcDebugLog("TCP dial failed after %v: %v", dialDuration, err)
+		return nil, fmt.Errorf("failed to connect to remote daemon at %s: %w", addr, err)
+	}
+
+	rpcDebugLog("TCP dial succeeded in %v", dialDuration)
+
+	client := &Client{
+		conn:     conn,
+		timeout:  30 * time.Second,
+		token:    token,
+		isRemote: true,
+	}
+
+	rpcDebugLog("performing health check")
+	healthStart := time.Now()
+	health, err := client.Health()
+	healthDuration := time.Since(healthStart)
+
+	if err != nil {
+		debug.Logf("health check failed: %v", err)
+		rpcDebugLog("health check failed after %v: %v", healthDuration, err)
+		_ = conn.Close()
+		return nil, fmt.Errorf("health check failed for remote daemon at %s: %w", addr, err)
+	}
+
+	if health.Status == "unhealthy" {
+		debug.Logf("remote daemon unhealthy: %s", health.Error)
+		rpcDebugLog("remote daemon unhealthy (checked in %v): %s", healthDuration, health.Error)
+		_ = conn.Close()
+		return nil, fmt.Errorf("remote daemon at %s is unhealthy: %s", addr, health.Error)
+	}
+
+	debug.Logf("connected to remote daemon at %s (status: %s, uptime: %.1fs)",
+		addr, health.Status, health.Uptime)
+	rpcDebugLog("TCP connection successful (health check: %v, status: %s, uptime: %.1fs)",
+		healthDuration, health.Status, health.Uptime)
+
+	return client, nil
+}
+
+// TryConnectAuto attempts to connect to a daemon, automatically choosing
+// between TCP (if BD_DAEMON_HOST is set) or Unix socket (local).
+// For TCP connections, it uses BD_DAEMON_TOKEN for authentication if set.
+// Returns nil if no daemon is available.
+func TryConnectAuto(socketPath string) (*Client, error) {
+	return TryConnectAutoWithTimeout(socketPath, 0)
+}
+
+// TryConnectAutoWithTimeout is like TryConnectAuto but with a custom timeout.
+// For local connections, timeout defaults to 200ms if not specified.
+// For TCP connections, timeout defaults to 2s if not specified.
+func TryConnectAutoWithTimeout(socketPath string, timeout time.Duration) (*Client, error) {
+	// Check if remote daemon host is configured
+	remoteHost := GetDaemonHost()
+	if remoteHost != "" {
+		rpcDebugLog("BD_DAEMON_HOST is set, attempting TCP connection to: %s", remoteHost)
+		token := GetDaemonToken()
+		if timeout <= 0 {
+			timeout = 2 * time.Second
+		}
+		return TryConnectTCPWithTimeout(remoteHost, token, timeout)
+	}
+
+	// Fall back to local Unix socket connection
+	rpcDebugLog("BD_DAEMON_HOST not set, using local Unix socket")
+	if timeout <= 0 {
+		timeout = 200 * time.Millisecond
+	}
+	return TryConnectWithTimeout(socketPath, timeout)
+}
+
 // Close closes the connection to the daemon
 func (c *Client) Close() error {
 	if c.conn != nil {
@@ -161,6 +270,16 @@ func (c *Client) SetDatabasePath(dbPath string) {
 // SetActor sets the actor for audit trail (who is performing operations)
 func (c *Client) SetActor(actor string) {
 	c.actor = actor
+}
+
+// SetToken sets the authentication token for TCP connections
+func (c *Client) SetToken(token string) {
+	c.token = token
+}
+
+// IsRemote returns true if this client is connected to a remote daemon via TCP
+func (c *Client) IsRemote() bool {
+	return c.isRemote
 }
 
 // Execute sends an RPC request and waits for a response
@@ -187,6 +306,7 @@ func (c *Client) ExecuteWithCwd(operation string, args interface{}, cwd string) 
 		ClientVersion: ClientVersion,
 		Cwd:           cwd,
 		ExpectedDB:    c.dbPath, // Send expected database path for validation
+		Token:         c.token,  // Authentication token for TCP connections
 	}
 
 	reqJSON, err := json.Marshal(req)

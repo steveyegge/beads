@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -58,6 +59,10 @@ type Server struct {
 	storage       storage.Storage // Default storage (for backward compat)
 	wispStore     WispStore       // In-memory store for ephemeral wisps
 	listener      net.Listener
+	tcpAddr       string           // TCP address to listen on (e.g., ":9876")
+	tcpListener   net.Listener     // TCP listener (in addition to Unix socket)
+	tlsConfig     *tls.Config      // TLS config for TCP connections (nil = no TLS)
+	tcpToken      string           // Token for TCP authentication (empty = no auth required)
 	mu            sync.RWMutex
 	shutdown      bool
 	shutdownChan  chan struct{}
@@ -309,6 +314,46 @@ func (s *Server) SetConfig(autoCommit, autoPush, autoPull, localMode bool, syncI
 	s.localMode = localMode
 	s.syncInterval = syncInterval
 	s.daemonMode = daemonMode
+}
+
+// SetTCPAddr sets the TCP address to listen on (e.g., ":9876" or "0.0.0.0:9876").
+// Must be called before Start(). When set, the server will listen on both the
+// Unix socket AND the TCP address.
+func (s *Server) SetTCPAddr(addr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tcpAddr = addr
+}
+
+// TCPAddr returns the configured TCP address, or empty string if not set.
+func (s *Server) TCPAddr() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tcpAddr
+}
+
+// TCPListener returns the active TCP listener, or nil if not configured.
+// Used for testing and diagnostics.
+func (s *Server) TCPListener() net.Listener {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tcpListener
+}
+
+// SetTCPToken sets the token required for TCP connection authentication.
+// When set, TCP clients must include this token in their requests.
+// Unix socket connections are not affected (local connections are trusted).
+func (s *Server) SetTCPToken(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tcpToken = token
+}
+
+// TCPToken returns the configured TCP authentication token, or empty string if not set.
+func (s *Server) TCPToken() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tcpToken
 }
 
 // ResetDroppedEventsCount resets the dropped events counter and returns the previous value
