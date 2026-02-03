@@ -23,9 +23,45 @@ type Route struct {
 	Path   string `json:"path"`   // Relative path to .beads directory
 }
 
-// LoadRoutes loads routes from routes.jsonl in the given beads directory.
-// Returns an empty slice if the file doesn't exist.
+// RouteQuerier is a function that queries route beads from a daemon.
+// It returns routes parsed from beads, or nil if unavailable.
+// This is used for dependency injection to avoid import cycles.
+type RouteQuerier func(beadsDir string) ([]Route, error)
+
+// routeQuerier is the global route querier function.
+// Set via SetRouteQuerier by cmd/bd at startup.
+var routeQuerier RouteQuerier
+
+// SetRouteQuerier sets the function used to query routes from beads.
+// This should be called at startup by cmd/bd to inject the daemon-based querier.
+func SetRouteQuerier(q RouteQuerier) {
+	routeQuerier = q
+}
+
+// LoadRoutes loads routes, trying daemon RPC first (if querier set), falling back to routes.jsonl.
+// Returns an empty slice if no routes are found.
 func LoadRoutes(beadsDir string) ([]Route, error) {
+	// Try loading from beads first (via injected querier)
+	if routeQuerier != nil {
+		routes, err := routeQuerier(beadsDir)
+		if err == nil && len(routes) > 0 {
+			if os.Getenv("BD_DEBUG_ROUTING") != "" {
+				fmt.Fprintf(os.Stderr, "[routing] Loaded %d routes from beads\n", len(routes))
+			}
+			return routes, nil
+		}
+		if os.Getenv("BD_DEBUG_ROUTING") != "" && err != nil {
+			fmt.Fprintf(os.Stderr, "[routing] Route bead query failed: %v, falling back to file\n", err)
+		}
+	}
+
+	// Fall back to routes.jsonl
+	return LoadRoutesFromFile(beadsDir)
+}
+
+// LoadRoutesFromFile loads routes from routes.jsonl in the given beads directory.
+// Returns an empty slice if the file doesn't exist.
+func LoadRoutesFromFile(beadsDir string) ([]Route, error) {
 	routesPath := filepath.Join(beadsDir, RoutesFileName)
 	file, err := os.Open(routesPath) //nolint:gosec // routesPath is constructed from known beadsDir
 	if err != nil {
@@ -54,6 +90,42 @@ func LoadRoutes(beadsDir string) ([]Route, error) {
 	}
 
 	return routes, scanner.Err()
+}
+
+// ParseRouteFromTitle extracts a Route from a route bead title.
+// Route beads use title format "prefix → path" (e.g., "gt- → gastown").
+// The path "." or "town root" represents the town-level beads directory.
+// Exported for use by cmd/bd route querier.
+func ParseRouteFromTitle(title string) Route {
+	// Parse title format: "prefix → path" or "prefix -> path"
+	var parts []string
+	if strings.Contains(title, " → ") {
+		parts = strings.SplitN(title, " → ", 2)
+	} else if strings.Contains(title, " -> ") {
+		parts = strings.SplitN(title, " -> ", 2)
+	}
+
+	if len(parts) != 2 {
+		return Route{}
+	}
+
+	prefix := strings.TrimSpace(parts[0])
+	path := strings.TrimSpace(parts[1])
+
+	// Normalize prefix to include hyphen
+	if prefix != "" && !strings.HasSuffix(prefix, "-") {
+		prefix = prefix + "-"
+	}
+
+	// Normalize special path values
+	if path == "town root" || path == "." || path == ".beads" {
+		path = "."
+	}
+
+	return Route{
+		Prefix: prefix,
+		Path:   path,
+	}
 }
 
 // LoadTownRoutes loads routes from the town-level routes.jsonl.

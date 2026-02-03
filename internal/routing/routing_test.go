@@ -139,6 +139,36 @@ func TestExtractProjectFromPath(t *testing.T) {
 	}
 }
 
+func TestParseRouteFromTitle(t *testing.T) {
+	tests := []struct {
+		title      string
+		wantPrefix string
+		wantPath   string
+	}{
+		{"gt- → gastown", "gt-", "gastown"},
+		{"bd- → beads/mayor/rig", "bd-", "beads/mayor/rig"},
+		{"hq- → town root", "hq-", "."},
+		{"hq- → .", "hq-", "."},
+		{"gt -> gastown", "gt-", "gastown"}, // ASCII arrow
+		{"gt- -> gastown", "gt-", "gastown"},
+		{"prefix without arrow", "", ""},      // No arrow
+		{"→ path only", "", ""},               // Missing prefix
+		{"prefix →", "", ""},                  // Missing path (won't split correctly)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.title, func(t *testing.T) {
+			got := ParseRouteFromTitle(tt.title)
+			if got.Prefix != tt.wantPrefix {
+				t.Errorf("ParseRouteFromTitle(%q).Prefix = %q, want %q", tt.title, got.Prefix, tt.wantPrefix)
+			}
+			if got.Path != tt.wantPath {
+				t.Errorf("ParseRouteFromTitle(%q).Path = %q, want %q", tt.title, got.Path, tt.wantPath)
+			}
+		})
+	}
+}
+
 func TestResolveToExternalRef(t *testing.T) {
 	// This test is limited since it requires a routes.jsonl file
 	// Just test that it returns empty string for nonexistent directory

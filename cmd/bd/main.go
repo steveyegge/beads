@@ -257,6 +257,10 @@ func init() {
 	// Custom help function with semantic coloring (Tufte-inspired)
 	// Note: Usage output (shown on errors) is not styled to avoid recursion issues
 	rootCmd.SetHelpFunc(colorizedHelpFunc)
+
+	// Initialize route querier for daemon-based route resolution
+	// This enables LoadRoutes() to query route beads before falling back to routes.jsonl
+	initRouteQuerier()
 }
 
 var rootCmd = &cobra.Command{
