@@ -79,6 +79,10 @@ const (
 
 	// Types operation (bd-s091)
 	OpTypes = "types"
+
+	// Sync operations (bd-wn2g)
+	OpSyncExport = "sync_export"
+	OpSyncStatus = "sync_status"
 )
 
 // Request represents an RPC request from client to daemon
@@ -991,5 +995,42 @@ type TypesResult struct {
 type TypeInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+// Sync operations (bd-wn2g)
+
+// SyncExportArgs represents arguments for the sync export operation
+type SyncExportArgs struct {
+	Force  bool `json:"force,omitempty"`  // Force full export (skip incremental optimization)
+	DryRun bool `json:"dry_run,omitempty"` // Preview mode
+}
+
+// SyncExportResult represents the result of a sync export operation
+type SyncExportResult struct {
+	ExportedCount int    `json:"exported_count"`       // Number of issues exported
+	ChangedCount  int    `json:"changed_count"`        // Number of issues changed since last sync
+	JSONLPath     string `json:"jsonl_path"`           // Path to exported JSONL file
+	Skipped       bool   `json:"skipped,omitempty"`    // True if export was skipped (no changes)
+	Message       string `json:"message,omitempty"`    // Human-readable status message
+}
+
+// SyncStatusArgs represents arguments for the sync status operation
+type SyncStatusArgs struct {
+	// No arguments needed for status
+}
+
+// SyncStatusResult represents the result of a sync status operation
+type SyncStatusResult struct {
+	SyncMode         string `json:"sync_mode"`                    // git-portable, realtime, dolt-native, belt-and-suspenders
+	SyncModeDesc     string `json:"sync_mode_desc"`               // Human-readable description
+	ExportOn         string `json:"export_on"`                    // When export happens
+	ImportOn         string `json:"import_on"`                    // When import happens
+	ConflictStrategy string `json:"conflict_strategy"`            // Conflict resolution strategy
+	LastExport       string `json:"last_export,omitempty"`        // ISO 8601 timestamp
+	LastExportCommit string `json:"last_export_commit,omitempty"` // Short commit hash
+	PendingChanges   int    `json:"pending_changes"`              // Number of dirty issues
+	SyncBranch       string `json:"sync_branch,omitempty"`        // Sync branch name if configured
+	ConflictCount    int    `json:"conflict_count"`               // Number of unresolved conflicts
+	FederationRemote string `json:"federation_remote,omitempty"`  // Federation remote if configured
 }
 

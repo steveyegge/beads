@@ -771,6 +771,38 @@ func (c *Client) CloseContinue(args *CloseContinueArgs) (*CloseContinueResult, e
 	return &result, nil
 }
 
+// Sync operations (bd-wn2g)
+
+// SyncExport exports the database to JSONL via the daemon
+func (c *Client) SyncExport(args *SyncExportArgs) (*SyncExportResult, error) {
+	resp, err := c.Execute(OpSyncExport, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result SyncExportResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal sync export response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// SyncStatus retrieves sync status via the daemon
+func (c *Client) SyncStatus(args *SyncStatusArgs) (*SyncStatusResult, error) {
+	resp, err := c.Execute(OpSyncStatus, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result SyncStatusResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal sync status response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

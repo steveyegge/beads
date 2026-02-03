@@ -328,6 +328,11 @@ func (s *Server) executeOperation(req *Request) Response {
 	// Types operation (bd-s091)
 	case OpTypes:
 		resp = s.handleTypes(req)
+	// Sync operations (bd-wn2g)
+	case OpSyncExport:
+		resp = s.handleSyncExport(req)
+	case OpSyncStatus:
+		resp = s.handleSyncStatus(req)
 	default:
 		return Response{
 			Success: false,

@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
@@ -184,38 +185,43 @@ The --full flag provides the legacy full sync behavior for backwards compatibili
 			noPush = config.GetBool("no-push")
 		}
 
-		// Force direct mode for sync operations.
-		// This prevents stale daemon SQLite connections from corrupting exports.
-		// If the daemon was running but its database file was deleted and recreated
-		// (e.g., during recovery), the daemon's SQLite connection points to the old
-		// (deleted) file, causing export to return incomplete/corrupt data.
-		// Using direct mode ensures we always read from the current database file.
-		//
-		// GH#984: Must use fallbackToDirectMode() instead of just closing daemon.
-		// When connected to daemon, PersistentPreRun skips store initialization.
-		// Just closing daemon leaves store=nil, causing "no database store available"
-		// errors in post-checkout hook's `bd sync --import-only`.
-		if daemonClient != nil {
-			debug.Logf("sync: forcing direct mode for consistency")
-			if err := fallbackToDirectMode("sync requires direct database access"); err != nil {
-				FatalError("failed to initialize direct mode: %v", err)
-			}
-		}
-
-		// Initialize local store after daemon disconnect.
-		// When daemon was connected, PersistentPreRun returns early without initializing
-		// the store global. Commands like --import-only need the store, so we must
-		// initialize it here after closing the daemon connection.
-		if err := ensureStoreActive(); err != nil {
-			FatalError("failed to initialize store: %v", err)
-		}
-
 		// Resolve noGitHistory based on fromMain (fixes #417)
 		noGitHistory = resolveNoGitHistoryForFromMain(fromMain, noGitHistory)
 
-		// Handle --set-mode flag
+		// bd-wn2g: For simple operations (status, default export), use daemon RPC when available.
+		// This avoids forcing direct mode unnecessarily and keeps the daemon consistent.
+		// For complex operations (--full, --import, --resolve, git operations), fall back to direct mode.
+
+		// Handle --status mode via daemon RPC if available (bd-wn2g)
+		if status {
+			if daemonClient != nil {
+				if err := doSyncStatusViaDaemon(); err != nil {
+					debug.Logf("sync status via daemon failed, falling back to direct: %v", err)
+					// Fall through to direct mode below
+				} else {
+					return
+				}
+			}
+			// Direct mode for status
+			if err := ensureDirectModeForSync(); err != nil {
+				FatalError("failed to initialize direct mode: %v", err)
+			}
+			jsonlPath := findJSONLPath()
+			if jsonlPath == "" {
+				FatalError("not in a bd workspace (no .beads directory found)")
+			}
+			if err := showSyncStateStatus(ctx, jsonlPath); err != nil {
+				FatalError("%v", err)
+			}
+			return
+		}
+
+		// Handle --set-mode flag (requires direct mode for database config)
 		setMode, _ := cmd.Flags().GetString("set-mode")
 		if setMode != "" {
+			if err := ensureDirectModeForSync(); err != nil {
+				FatalError("failed to initialize direct mode: %v", err)
+			}
 			if err := SetSyncMode(ctx, store, setMode); err != nil {
 				FatalError("failed to set sync mode: %v", err)
 			}
@@ -223,18 +229,28 @@ The --full flag provides the legacy full sync behavior for backwards compatibili
 			return
 		}
 
+		// bd-wn2g: Default export mode can use daemon RPC (unless it needs direct mode for git ops)
+		// Check if this is a simple export (no git operations required)
+		isSimpleExport := !fullSync && !importOnly && !flushOnly && !squash && !merge && !fromMain && !resolve && !checkIntegrity
+
+		if isSimpleExport && daemonClient != nil {
+			if err := doSyncExportViaDaemon(forceFlag, dryRun); err != nil {
+				debug.Logf("sync export via daemon failed, falling back to direct: %v", err)
+				// Fall through to direct mode below
+			} else {
+				return
+			}
+		}
+
+		// For all other modes or when daemon RPC fails, use direct mode
+		if err := ensureDirectModeForSync(); err != nil {
+			FatalError("failed to initialize direct mode: %v", err)
+		}
+
 		// Find JSONL path
 		jsonlPath := findJSONLPath()
 		if jsonlPath == "" {
 			FatalError("not in a bd workspace (no .beads directory found)")
-		}
-
-		// If status mode, show sync state (new format per spec)
-		if status {
-			if err := showSyncStateStatus(ctx, jsonlPath); err != nil {
-				FatalError("%v", err)
-			}
-			return
 		}
 
 		// If resolve mode, resolve conflicts
@@ -1278,6 +1294,100 @@ func resolveSyncConflictsManually(ctx context.Context, jsonlPath, beadsDir strin
 
 	resolvedCount := len(resolvedIssues)
 	fmt.Printf("\n✓ Manual resolution complete (%d resolved, %d skipped)\n", resolvedCount, skipped)
+
+	return nil
+}
+
+// bd-wn2g: RPC-based sync functions
+
+// ensureDirectModeForSync initializes direct mode for sync operations that need it.
+// This is used for operations that involve git operations or interactive resolution.
+func ensureDirectModeForSync() error {
+	if daemonClient != nil {
+		debug.Logf("sync: switching to direct mode for complex operation")
+		if err := fallbackToDirectMode("sync operation requires direct database access"); err != nil {
+			return err
+		}
+	}
+	return ensureStoreActive()
+}
+
+// doSyncExportViaDaemon performs sync export via the daemon RPC.
+// Returns nil on success, error if it fails and should fall back to direct mode.
+func doSyncExportViaDaemon(force, dryRun bool) error {
+	args := &rpc.SyncExportArgs{
+		Force:  force,
+		DryRun: dryRun,
+	}
+
+	result, err := daemonClient.SyncExport(args)
+	if err != nil {
+		return fmt.Errorf("daemon sync export failed: %w", err)
+	}
+
+	// Display results
+	if result.Skipped {
+		fmt.Println("✓ Already synced (no changes)")
+	} else if dryRun {
+		fmt.Println(result.Message)
+	} else {
+		if result.ChangedCount > 0 && !force {
+			fmt.Printf("✓ Exported %d issues (%d changed since last sync)\n", result.ExportedCount, result.ChangedCount)
+		} else {
+			fmt.Printf("✓ Exported %d issues\n", result.ExportedCount)
+		}
+		if result.JSONLPath != "" {
+			fmt.Printf("✓ %s updated\n", result.JSONLPath)
+		}
+	}
+
+	return nil
+}
+
+// doSyncStatusViaDaemon shows sync status via the daemon RPC.
+// Returns nil on success, error if it fails and should fall back to direct mode.
+func doSyncStatusViaDaemon() error {
+	result, err := daemonClient.SyncStatus(&rpc.SyncStatusArgs{})
+	if err != nil {
+		return fmt.Errorf("daemon sync status failed: %w", err)
+	}
+
+	// Display status in the same format as showSyncStateStatus
+	fmt.Printf("Sync mode: %s (%s)\n", result.SyncMode, result.SyncModeDesc)
+	fmt.Printf("  Export on: %s, Import on: %s\n", result.ExportOn, result.ImportOn)
+	fmt.Printf("Conflict strategy: %s\n", result.ConflictStrategy)
+
+	if result.FederationRemote != "" {
+		fmt.Printf("Federation remote: %s\n", result.FederationRemote)
+	}
+
+	if result.LastExport == "" {
+		fmt.Println("Last export: never")
+	} else {
+		if result.LastExportCommit != "" {
+			fmt.Printf("Last export: %s (commit %s)\n", result.LastExport, result.LastExportCommit)
+		} else {
+			fmt.Printf("Last export: %s\n", result.LastExport)
+		}
+	}
+
+	if result.PendingChanges == 0 {
+		fmt.Println("Pending changes: none")
+	} else {
+		fmt.Printf("Pending changes: %d issues modified since last export\n", result.PendingChanges)
+	}
+
+	if result.SyncBranch == "" {
+		fmt.Println("Import branch: none")
+	} else {
+		fmt.Printf("Import branch: %s\n", result.SyncBranch)
+	}
+
+	if result.ConflictCount == 0 {
+		fmt.Println("Conflicts: none")
+	} else {
+		fmt.Printf("Conflicts: %d unresolved\n", result.ConflictCount)
+	}
 
 	return nil
 }
