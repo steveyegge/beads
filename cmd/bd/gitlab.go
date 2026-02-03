@@ -97,28 +97,28 @@ func getGitLabConfig() GitLabConfig {
 	ctx := context.Background()
 	config := GitLabConfig{}
 
-	config.URL, _ = getGitLabConfigValue(ctx, "gitlab.url")
-	config.Token, _ = getGitLabConfigValue(ctx, "gitlab.token")
-	config.ProjectID, _ = getGitLabConfigValue(ctx, "gitlab.project_id")
+	config.URL = getGitLabConfigValue(ctx, "gitlab.url")
+	config.Token = getGitLabConfigValue(ctx, "gitlab.token")
+	config.ProjectID = getGitLabConfigValue(ctx, "gitlab.project_id")
 
 	return config
 }
 
 // getGitLabConfigValue reads a GitLab configuration value from store or environment.
-func getGitLabConfigValue(ctx context.Context, key string) (value string, source string) {
+func getGitLabConfigValue(ctx context.Context, key string) string {
 	// Try to read from store (works in direct mode)
 	if store != nil {
-		value, _ = store.GetConfig(ctx, key)
+		value, _ := store.GetConfig(ctx, key)
 		if value != "" {
-			return value, "project config (bd config)"
+			return value
 		}
 	} else if dbPath != "" {
 		tempStore, err := sqlite.NewWithTimeout(ctx, dbPath, 5*time.Second)
 		if err == nil {
 			defer func() { _ = tempStore.Close() }()
-			value, _ = tempStore.GetConfig(ctx, key)
+			value, _ := tempStore.GetConfig(ctx, key)
 			if value != "" {
-				return value, "project config (bd config)"
+				return value
 			}
 		}
 	}
@@ -126,13 +126,12 @@ func getGitLabConfigValue(ctx context.Context, key string) (value string, source
 	// Fall back to environment variable
 	envKey := gitlabConfigToEnvVar(key)
 	if envKey != "" {
-		value = os.Getenv(envKey)
-		if value != "" {
-			return value, fmt.Sprintf("environment variable (%s)", envKey)
+		if value := os.Getenv(envKey); value != "" {
+			return value
 		}
 	}
 
-	return "", ""
+	return ""
 }
 
 // gitlabConfigToEnvVar maps GitLab config keys to their environment variable names.
