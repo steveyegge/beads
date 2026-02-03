@@ -135,12 +135,14 @@ var specCompactCmd = &cobra.Command{
 		summaryTokens := len(strings.Fields(summary))
 
 		if daemonClient != nil {
+			moveToArchive := strings.EqualFold(lifecycle, "archived")
 			resp, err := daemonClient.SpecCompact(&rpc.SpecCompactArgs{
 				SpecID:        specID,
 				Lifecycle:     lifecycle,
 				Summary:       summary,
 				SummaryTokens: summaryTokens,
 				ArchivedAt:    &now,
+				MoveToArchive: moveToArchive,
 			})
 			if err != nil {
 				FatalErrorRespectJSON("spec compact failed: %v", err)
@@ -165,23 +167,31 @@ var specCompactCmd = &cobra.Command{
 			FatalErrorRespectJSON("%v", err)
 		}
 
-		store, err := getSpecRegistryStore()
+		specStore, err := getSpecRegistryStore()
 		if err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
 
-		update := spec.SpecRegistryUpdate{
-			Lifecycle:     &lifecycle,
-			Summary:       &summary,
-			SummaryTokens: &summaryTokens,
-			ArchivedAt:    &now,
-		}
-		if err := store.UpdateSpecRegistry(rootCtx, specID, update); err != nil {
-			FatalErrorRespectJSON("update spec registry: %v", err)
+		if strings.EqualFold(lifecycle, "archived") {
+			newSpecID, err := archiveSpecWithSummary(rootCtx, specID, summary, summaryTokens, store, specStore, true)
+			if err != nil {
+				FatalErrorRespectJSON("archive spec failed: %v", err)
+			}
+			specID = newSpecID
+		} else {
+			update := spec.SpecRegistryUpdate{
+				Lifecycle:     &lifecycle,
+				Summary:       &summary,
+				SummaryTokens: &summaryTokens,
+				ArchivedAt:    &now,
+			}
+			if err := specStore.UpdateSpecRegistry(rootCtx, specID, update); err != nil {
+				FatalErrorRespectJSON("update spec registry: %v", err)
+			}
 		}
 
 		if jsonOutput {
-			entry, err := store.GetSpecRegistry(rootCtx, specID)
+			entry, err := specStore.GetSpecRegistry(rootCtx, specID)
 			if err != nil {
 				FatalErrorRespectJSON("get spec: %v", err)
 			}

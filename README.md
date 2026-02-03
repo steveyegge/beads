@@ -268,6 +268,7 @@ bd close bd-xyz --compact-spec --compact-skills
 | `bd spec duplicates` | Find duplicate or overlapping specs |
 | `bd spec delta` | Show spec changes since last scan |
 | `bd spec report` | Generate full spec radar report |
+| `bd spec align` | Spec ↔ bead ↔ code alignment report |
 | `bd spec sync` | Sync spec lifecycle from linked beads |
 | `bd spec volatility` | List specs by stability |
 | `bd spec volatility --trend <spec>` | 4-week visual trend |

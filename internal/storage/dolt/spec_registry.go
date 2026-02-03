@@ -177,6 +177,58 @@ func (s *DoltStore) GetSpecRegistry(ctx context.Context, specID string) (*spec.S
 	return &entry, nil
 }
 
+func (s *DoltStore) MoveSpecRegistry(ctx context.Context, fromSpecID, toSpecID, toPath string) error {
+	if strings.TrimSpace(fromSpecID) == "" || strings.TrimSpace(toSpecID) == "" {
+		return fmt.Errorf("spec id required")
+	}
+	if fromSpecID == toSpecID {
+		return nil
+	}
+	if strings.TrimSpace(toPath) == "" {
+		toPath = toSpecID
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin move spec tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM spec_registry WHERE spec_id = ?`, toSpecID).Scan(&exists); err == nil {
+		return fmt.Errorf("spec target already exists: %s", toSpecID)
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE spec_registry
+		SET spec_id = ?, path = ?
+		WHERE spec_id = ?
+	`, toSpecID, toPath, fromSpecID)
+	if err != nil {
+		return fmt.Errorf("move spec registry: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("spec not found: %s", fromSpecID)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE spec_scan_events
+		SET spec_id = ?
+		WHERE spec_id = ?
+	`, toSpecID, fromSpecID); err != nil {
+		return fmt.Errorf("move spec scan events: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit move spec: %w", err)
+	}
+	return nil
+}
+
 // ListSpecRegistryWithCounts returns registry entries with bead counts.
 func (s *DoltStore) ListSpecRegistryWithCounts(ctx context.Context) ([]spec.SpecRegistryCount, error) {
 	s.mu.RLock()

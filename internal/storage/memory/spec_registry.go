@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/spec"
@@ -119,6 +120,38 @@ func (m *MemoryStorage) UpdateSpecRegistry(_ context.Context, specID string, upd
 		entry.ArchivedAt = updates.ArchivedAt
 	}
 	m.specRegistry[specID] = entry
+	return nil
+}
+
+func (m *MemoryStorage) MoveSpecRegistry(_ context.Context, fromSpecID, toSpecID, toPath string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if strings.TrimSpace(fromSpecID) == "" || strings.TrimSpace(toSpecID) == "" {
+		return nil
+	}
+	if fromSpecID == toSpecID {
+		return nil
+	}
+	if _, exists := m.specRegistry[toSpecID]; exists {
+		return nil
+	}
+	entry, ok := m.specRegistry[fromSpecID]
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(toPath) == "" {
+		toPath = toSpecID
+	}
+	entry.SpecID = toSpecID
+	entry.Path = toPath
+	delete(m.specRegistry, fromSpecID)
+	m.specRegistry[toSpecID] = entry
+
+	if events, ok := m.specScanEvents[fromSpecID]; ok {
+		delete(m.specScanEvents, fromSpecID)
+		m.specScanEvents[toSpecID] = events
+	}
 	return nil
 }
 

@@ -56,6 +56,10 @@ func (m *mockStore) UpdateSpecRegistry(ctx context.Context, specID string, updat
 	return nil
 }
 
+func (m *mockStore) MoveSpecRegistry(ctx context.Context, fromSpecID, toSpecID, toPath string) error {
+	return nil
+}
+
 func (m *mockStore) MarkSpecsMissing(ctx context.Context, specIDs []string, missingAt time.Time) error {
 	m.markedMissing = append(m.markedMissing, specIDs...)
 	return nil

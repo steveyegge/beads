@@ -409,6 +409,7 @@ type SpecCompactArgs struct {
 	SummaryTokens int        `json:"summary_tokens,omitempty"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 	ArchivedAt    *time.Time `json:"archived_at,omitempty"`
+	MoveToArchive bool       `json:"move_to_archive,omitempty"`
 }
 
 // SpecSuggestArgs represents arguments for spec suggest operation.

@@ -214,13 +214,9 @@ func ScanFromSessions(skillsDir string, skillFilter string, days int) ([]RealSca
 			continue
 		}
 
-		// Find the skill path
-		skillPath := filepath.Join(skillsDir, skillName)
-		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-			skillPath = skillPath + ".md"
-			if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-				continue
-			}
+		skillPath, ok := resolveSkillPath(skillsDir, skillName)
+		if !ok {
+			continue
 		}
 
 		// Get structural analysis
@@ -255,6 +251,35 @@ func ScanFromSessions(skillsDir string, skillFilter string, days int) ([]RealSca
 	}
 
 	return results, nil
+}
+
+func resolveSkillPath(skillsDir, skillName string) (string, bool) {
+	candidates := []string{skillName}
+	if strings.Contains(skillName, ":") {
+		parts := strings.Split(skillName, ":")
+		candidates = append(candidates, strings.Join(parts, string(os.PathSeparator)))
+		candidates = append(candidates, strings.Join(parts, "-"))
+		candidates = append(candidates, parts[len(parts)-1])
+	}
+
+	dirs := []string{skillsDir}
+	if skillsDir != DefaultGlobalSkillsDir {
+		dirs = append(dirs, DefaultGlobalSkillsDir)
+	}
+
+	for _, baseDir := range dirs {
+		for _, candidate := range candidates {
+			path := filepath.Join(baseDir, candidate)
+			if _, err := os.Stat(path); err == nil {
+				return path, true
+			}
+			if _, err := os.Stat(path + ".md"); err == nil {
+				return path + ".md", true
+			}
+		}
+	}
+
+	return "", false
 }
 
 // RealScanResult contains analysis from real session data.

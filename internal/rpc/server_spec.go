@@ -3,11 +3,14 @@ package rpc
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/spec"
+	"github.com/steveyegge/beads/internal/specarchive"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -213,11 +216,30 @@ func (s *Server) handleSpecCompact(req *Request) Response {
 		update.ArchivedAt = args.ArchivedAt
 	}
 
-	if err := store.UpdateSpecRegistry(ctx, args.SpecID, update); err != nil {
+	specID := args.SpecID
+	if args.MoveToArchive {
+		beadsDir := beads.FindBeadsDir()
+		if beadsDir == "" {
+			return Response{Success: false, Error: "no .beads directory found"}
+		}
+		repoRoot := filepath.Dir(beadsDir)
+		newSpecID, moved, err := specarchive.MoveSpecFile(repoRoot, specID)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("move spec file: %v", err)}
+		}
+		if moved {
+			if err := specarchive.MoveSpecReferences(ctx, s.storage, store, specID, newSpecID); err != nil {
+				return Response{Success: false, Error: fmt.Sprintf("move spec references: %v", err)}
+			}
+		}
+		specID = newSpecID
+	}
+
+	if err := store.UpdateSpecRegistry(ctx, specID, update); err != nil {
 		return Response{Success: false, Error: fmt.Sprintf("update spec registry: %v", err)}
 	}
 
-	entry, err := store.GetSpecRegistry(ctx, args.SpecID)
+	entry, err := store.GetSpecRegistry(ctx, specID)
 	if err != nil {
 		return Response{Success: false, Error: fmt.Sprintf("get spec: %v", err)}
 	}

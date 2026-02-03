@@ -40,9 +40,11 @@ type specCompactionFactors struct {
 var (
 	specCandidatesThreshold  float64
 	specCandidatesAutoMark   bool
+	specCandidatesArchive    bool
 	specAutoCompactThreshold float64
 	specAutoCompactExecute   bool
 	specAutoCompactDryRun    bool
+	specAutoCompactArchive   bool
 )
 
 var specCandidatesCmd = &cobra.Command{
@@ -128,18 +130,21 @@ var specAutoCompactCmd = &cobra.Command{
 
 func init() {
 	specCandidatesCmd.Flags().BoolVar(&specCandidatesAutoMark, "auto", false, "Auto-mark specs with score >= 0.8")
+	specCandidatesCmd.Flags().BoolVar(&specCandidatesArchive, "archive", false, "Archive specs when auto-marking")
 	specAutoCompactCmd.Flags().Float64Var(&specAutoCompactThreshold, "threshold", 0.8, "Minimum score required for auto-compaction")
 	specAutoCompactCmd.Flags().BoolVar(&specAutoCompactExecute, "execute", false, "Apply compaction (default: dry-run)")
 	specAutoCompactCmd.Flags().BoolVar(&specAutoCompactDryRun, "dry-run", false, "Preview compactions without modifying specs")
+	specAutoCompactCmd.Flags().BoolVar(&specAutoCompactArchive, "archive", true, "Move archived specs to specs/archive")
 
 	specCmd.AddCommand(specCandidatesCmd)
 	specCmd.AddCommand(specAutoCompactCmd)
 }
 
-func runSpecCompletionCandidates(cmd *cobra.Command, _ []string) {
+func runSpecCompletionCandidates(cmd *cobra.Command, args []string) {
 	autoMark := specCandidatesAutoMark
+	archiveRequested := specCandidatesArchive || archiveHintFromArgs(args) || autoMark
 
-	if daemonClient != nil {
+	if daemonClient != nil && !autoMark && !archiveRequested {
 		resp, err := daemonClient.SpecCandidates(&rpc.SpecCandidatesArgs{
 			Auto: autoMark,
 		})
@@ -275,6 +280,32 @@ func runSpecCompletionCandidates(cmd *cobra.Command, _ []string) {
 		for i := range result.Candidates {
 			c := &result.Candidates[i]
 			if c.Score >= 0.8 {
+				specText := readSpecContent(c.SpecID)
+				if archiveRequested || specHasArchiveDirective(specText) {
+					entry, err := specStore.GetSpecRegistry(rootCtx, c.SpecID)
+					if err != nil || entry == nil {
+						c.Error = fmt.Sprintf("spec missing: %v", err)
+						continue
+					}
+					beadsForSpec, err := store.SearchIssues(rootCtx, "", types.IssueFilter{SpecID: &c.SpecID})
+					if err != nil {
+						c.Error = fmt.Sprintf("beads lookup failed: %v", err)
+						continue
+					}
+					summary := buildAutoSpecSummary(entry, specText, beadsForSpec)
+					summaryTokens := len(strings.Fields(summary))
+					newSpecID, err := archiveSpecWithSummary(rootCtx, c.SpecID, summary, summaryTokens, store, specStore, true)
+					if err != nil {
+						c.Error = fmt.Sprintf("archive failed: %v", err)
+						continue
+					}
+					c.SpecID = newSpecID
+					c.Action = "ARCHIVED"
+					c.Marked = true
+					result.Marked++
+					continue
+				}
+
 				lifecycle := "complete"
 				completedAt := time.Now().UTC().Truncate(time.Second)
 				update := spec.SpecRegistryUpdate{
@@ -316,7 +347,11 @@ func renderSpecCompletionCandidates(result rpc.SpecCandidatesResult) {
 		scoreStr := fmt.Sprintf("%.2f", c.Score)
 		action := c.Action
 		if c.Marked {
-			action = ui.RenderPass("MARKED")
+			if c.Action == "ARCHIVED" {
+				action = ui.RenderPass("ARCHIVED")
+			} else {
+				action = ui.RenderPass("MARKED")
+			}
 		} else if c.Error != "" {
 			action = ui.RenderFail("ERROR")
 		}
@@ -446,16 +481,9 @@ func compactSpecCandidate(ctx context.Context, specStore spec.SpecRegistryStore,
 	}
 
 	summary := buildAutoSpecSummary(entry, specText, beadsForSpec)
-	now := time.Now().UTC().Truncate(time.Second)
 	summaryTokens := len(strings.Fields(summary))
-
-	update := spec.SpecRegistryUpdate{
-		Lifecycle:     ptrString("archived"),
-		Summary:       &summary,
-		SummaryTokens: &summaryTokens,
-		ArchivedAt:    &now,
-	}
-	if err := specStore.UpdateSpecRegistry(ctx, specID, update); err != nil {
+	_, err = archiveSpecWithSummary(ctx, specID, summary, summaryTokens, store, specStore, specAutoCompactArchive)
+	if err != nil {
 		return err
 	}
 	markDirtyAndScheduleFlush()

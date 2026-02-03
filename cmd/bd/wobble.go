@@ -98,7 +98,9 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 			skillFilter = args[0]
 		}
 
-		fmt.Printf("🔍 Parsing Claude session transcripts (last %d days)...\n", days)
+		if !jsonOutput {
+			fmt.Printf("🔍 Parsing Claude session transcripts (last %d days)...\n", days)
+		}
 
 		results, err := wobble.ScanFromSessions(skillsDir, skillFilter, days)
 		if err != nil {
@@ -106,15 +108,17 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 		}
 
 		if len(results) == 0 {
-			fmt.Println()
-			fmt.Println("⚠️  No skill invocations found in session transcripts.")
-			fmt.Println("   This could mean:")
-			fmt.Printf("   • No sessions in the last %d days\n", days)
-			fmt.Println("   • Session files are stored elsewhere")
-			fmt.Println("   • No skills were invoked")
-			fmt.Printf("\n   Checked: %s\n", wobble.SessionsDir)
-			fmt.Printf("            %s\n", wobble.ProjectsDir)
-			fmt.Println("\n   Falling back to structural analysis only...")
+			if !jsonOutput {
+				fmt.Println()
+				fmt.Println("⚠️  No skill invocations found in session transcripts.")
+				fmt.Println("   This could mean:")
+				fmt.Printf("   • No sessions in the last %d days\n", days)
+				fmt.Println("   • Session files are stored elsewhere")
+				fmt.Println("   • No skills were invoked")
+				fmt.Printf("\n   Checked: %s\n", wobble.SessionsDir)
+				fmt.Printf("            %s\n", wobble.ProjectsDir)
+				fmt.Println("\n   Falling back to structural analysis only...")
+			}
 
 			// Fall back to structural-only scan
 			if skillFilter != "" {

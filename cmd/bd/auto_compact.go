@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/spec"
+	"github.com/steveyegge/beads/internal/specarchive"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -61,6 +62,7 @@ func maybeAutoCompactDaemon(ctx context.Context, closedIssues []*types.Issue, co
 				Summary:       summary,
 				SummaryTokens: summaryTokens,
 				ArchivedAt:    &now,
+				MoveToArchive: true,
 			})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "spec compact failed for %s: %v\n", specID, err)
@@ -112,20 +114,14 @@ func maybeAutoCompactDirect(ctx context.Context, closedIssues []*types.Issue, co
 		specText := readSpecContent(specID)
 		summary := buildAutoSpecSummary(entry, specText, beads)
 		if compactFlag {
-			now := time.Now().UTC().Truncate(time.Second)
 			summaryTokens := len(strings.Fields(summary))
-			update := spec.SpecRegistryUpdate{
-				Lifecycle:     ptrString("archived"),
-				Summary:       &summary,
-				SummaryTokens: &summaryTokens,
-				ArchivedAt:    &now,
-			}
-			if err := specStore.UpdateSpecRegistry(ctx, specID, update); err != nil {
+			newSpecID, err := archiveSpecWithSummary(ctx, specID, summary, summaryTokens, store, specStore, true)
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "spec compact failed for %s: %v\n", specID, err)
 				continue
 			}
 			if !jsonOutput {
-				fmt.Printf("%s Archived spec: %s\n", ui.RenderPass("✓"), specID)
+				fmt.Printf("%s Archived spec: %s\n", ui.RenderPass("✓"), newSpecID)
 			}
 			continue
 		}
@@ -289,6 +285,92 @@ func readSpecContent(specID string) string {
 		return ""
 	}
 	return string(data)
+}
+
+func archiveSpecWithSummary(ctx context.Context, specID, summary string, summaryTokens int, store storage.Storage, specStore spec.SpecRegistryStore, moveToArchive bool) (string, error) {
+	if specStore == nil || store == nil {
+		return specID, fmt.Errorf("storage not available")
+	}
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return specID, fmt.Errorf("no .beads directory found")
+	}
+	repoRoot := filepath.Dir(beadsDir)
+
+	newSpecID := specID
+	if moveToArchive {
+		movedSpecID, moved, err := specarchive.MoveSpecFile(repoRoot, specID)
+		if err != nil {
+			return specID, err
+		}
+		if moved {
+			if err := specarchive.MoveSpecReferences(ctx, store, specStore, specID, movedSpecID); err != nil {
+				return movedSpecID, err
+			}
+		}
+		newSpecID = movedSpecID
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	update := spec.SpecRegistryUpdate{
+		Lifecycle:     ptrString("archived"),
+		Summary:       &summary,
+		SummaryTokens: &summaryTokens,
+		ArchivedAt:    &now,
+	}
+	if err := specStore.UpdateSpecRegistry(ctx, newSpecID, update); err != nil {
+		return newSpecID, err
+	}
+	return newSpecID, nil
+}
+
+func archiveHintFromArgs(args []string) bool {
+	for _, arg := range args {
+		needle := strings.ToLower(strings.TrimSpace(arg))
+		if needle == "" {
+			continue
+		}
+		if strings.Contains(needle, "archive") ||
+			strings.Contains(needle, "archived") ||
+			strings.Contains(needle, "done") ||
+			strings.Contains(needle, "complete") ||
+			strings.Contains(needle, "completed") ||
+			strings.Contains(needle, "retire") ||
+			strings.Contains(needle, "retired") {
+			return true
+		}
+	}
+	return false
+}
+
+func specHasArchiveDirective(specText string) bool {
+	lines := strings.Split(specText, "\n")
+	for i, raw := range lines {
+		if i > 80 {
+			break
+		}
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "status:") || strings.HasPrefix(lower, "lifecycle:") {
+			if strings.Contains(lower, "archived") ||
+				strings.Contains(lower, "archive") ||
+				strings.Contains(lower, "done") ||
+				strings.Contains(lower, "complete") ||
+				strings.Contains(lower, "completed") ||
+				strings.Contains(lower, "retired") {
+				return true
+			}
+		}
+		if strings.HasPrefix(lower, "archive:") {
+			if strings.Contains(lower, "true") || strings.Contains(lower, "yes") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func extractSpecHighlights(specText string) (string, []string) {
