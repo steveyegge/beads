@@ -227,12 +227,38 @@ func matchesAnyLabel(issueLabels []string, filterLabels []string) bool {
 	return false
 }
 
+// parseGroups extracts group numbers from label prefixes.
+// Labels with gN: prefix are grouped together (AND within group).
+// Labels without prefix are treated as separate groups (backward compat - OR behavior).
+func parseGroups(labels []string) map[int][]string {
+	groups := make(map[int][]string)
+	nextUnprefixedGroup := 1000 // High number for backward compat
+
+	for _, label := range labels {
+		if strings.HasPrefix(label, "g") {
+			// Parse gN: prefix
+			idx := strings.Index(label, ":")
+			if idx > 1 {
+				var groupNum int
+				if _, err := fmt.Sscanf(label[:idx], "g%d", &groupNum); err == nil {
+					groups[groupNum] = append(groups[groupNum], label[idx+1:])
+					continue
+				}
+			}
+		}
+		// No valid prefix - treat as separate group (OR behavior)
+		groups[nextUnprefixedGroup] = append(groups[nextUnprefixedGroup], label)
+		nextUnprefixedGroup++
+	}
+	return groups
+}
+
 // matchesSubscriptions checks if advice should be shown based on subscriptions.
 //
 // Matching rules:
 //   - If advice has rig:X label, agent MUST be subscribed to rig:X (required match)
 //   - If advice has agent:X label, agent MUST be subscribed to agent:X (required match)
-//   - For other labels (role:X, global, topics), ANY match is sufficient
+//   - For other labels: AND within groups (gN: prefix), OR across groups
 //
 // This prevents rig-scoped advice from leaking to other rigs via role matches.
 func matchesSubscriptions(issue *types.Issue, issueLabels []string, subscriptions []string) bool {
@@ -258,13 +284,22 @@ func matchesSubscriptions(issue *types.Issue, issueLabels []string, subscription
 		}
 	}
 
-	// Check for any optional label match (role:X, global, topics)
-	for _, l := range issueLabels {
-		if subSet[l] {
+	// Parse label groups for AND/OR matching
+	groups := parseGroups(issueLabels)
+
+	// OR across groups: if any group fully matches, advice applies
+	for _, groupLabels := range groups {
+		allMatch := true
+		for _, label := range groupLabels {
+			if !subSet[label] {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch && len(groupLabels) > 0 {
 			return true
 		}
 	}
-
 	return false
 }
 
