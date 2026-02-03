@@ -33,13 +33,10 @@ Example:
 		ctx := rootCtx
 
 		// mol show requires direct store access for subgraph loading
+		// Note: forceDirectMode should be set automatically for mol commands in main.go
 		if store == nil {
-			if daemonClient != nil {
-				fmt.Fprintf(os.Stderr, "Error: mol show requires direct database access\n")
-				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol show %s\n", args[0])
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			}
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: ensure beads database exists and is accessible\n")
 			os.Exit(1)
 		}
 

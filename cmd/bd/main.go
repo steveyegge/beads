@@ -642,6 +642,16 @@ var rootCmd = &cobra.Command{
 			forceDirectMode = true
 		}
 
+		// Mol subcommands that need direct database access for subgraph loading.
+		// These commands load hierarchical molecule structures that require direct
+		// store access rather than daemon RPC.
+		if cmd.Parent() != nil && cmd.Parent().Name() == "mol" {
+			switch cmd.Name() {
+			case "show", "run", "spawn":
+				forceDirectMode = true
+			}
+		}
+
 		// Try to connect to daemon first (unless direct mode is forced or worktree safety check fails)
 		if forceDirectMode {
 			// Only set FallbackFlagNoDaemon if not already set by auto-bypass logic
