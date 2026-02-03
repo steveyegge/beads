@@ -33,6 +33,7 @@ var wobbleScanCmd = &cobra.Command{
 
 Without --all, scans a single named skill.
 With --all, scans all skills and ranks by combined risk.
+With --from-sessions, uses REAL data from Claude session transcripts.
 
 Risk factors checked:
   - No "EXECUTE NOW" section
@@ -41,7 +42,12 @@ Risk factors checked:
   - Options without "(default)" marker
   - Content too long (>4000 chars)
   - Missing "DO NOT IMPROVISE" warning
-  - Multiple actions without clear default`,
+  - Multiple actions without clear default
+
+Examples:
+  bd wobble scan beads                    # Analyze with simulation
+  bd wobble scan --from-sessions          # Use REAL session data
+  bd wobble scan beads --from-sessions    # Real data for specific skill`,
 	Args: cobra.MaximumNArgs(1),
 	Run:  runWobbleScan,
 }
@@ -63,6 +69,8 @@ func init() {
 	wobbleScanCmd.Flags().Int("runs", 10, "Number of simulation runs for behavioral analysis")
 	wobbleScanCmd.Flags().Int("top", 10, "Show top N riskiest skills (with --all)")
 	wobbleScanCmd.Flags().String("project", "", "Project path to scan (uses project-local skills)")
+	wobbleScanCmd.Flags().Bool("from-sessions", false, "Use REAL data from Claude session transcripts")
+	wobbleScanCmd.Flags().Int("days", 7, "Days of session history to analyze (with --from-sessions)")
 
 	// Inspect command flags
 	wobbleInspectCmd.Flags().Bool("fix", false, "Show how to fix issues")
@@ -78,8 +86,69 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 	runs, _ := cmd.Flags().GetInt("runs")
 	topN, _ := cmd.Flags().GetInt("top")
 	projectPath, _ := cmd.Flags().GetString("project")
+	fromSessions, _ := cmd.Flags().GetBool("from-sessions")
+	days, _ := cmd.Flags().GetInt("days")
 
 	skillsDir := wobble.DetectSkillsDir(projectPath)
+
+	// Real session data mode
+	if fromSessions {
+		var skillFilter string
+		if len(args) > 0 {
+			skillFilter = args[0]
+		}
+
+		fmt.Printf("🔍 Parsing Claude session transcripts (last %d days)...\n", days)
+
+		results, err := wobble.ScanFromSessions(skillsDir, skillFilter, days)
+		if err != nil {
+			FatalErrorRespectJSON("session scan failed: %v", err)
+		}
+
+		if len(results) == 0 {
+			fmt.Println()
+			fmt.Println("⚠️  No skill invocations found in session transcripts.")
+			fmt.Println("   This could mean:")
+			fmt.Printf("   • No sessions in the last %d days\n", days)
+			fmt.Println("   • Session files are stored elsewhere")
+			fmt.Println("   • No skills were invoked")
+			fmt.Printf("\n   Checked: %s\n", wobble.SessionsDir)
+			fmt.Printf("            %s\n", wobble.ProjectsDir)
+			fmt.Println("\n   Falling back to structural analysis only...")
+
+			// Fall back to structural-only scan
+			if skillFilter != "" {
+				result, err := wobble.ScanSkill(skillsDir, skillFilter, 0)
+				if err != nil {
+					FatalErrorRespectJSON("scan failed: %v", err)
+				}
+				if jsonOutput {
+					outputJSON(result)
+				} else {
+					renderWobbleScanSingle(result)
+				}
+			} else {
+				results, err := wobble.ScanAllSkills(skillsDir, 0)
+				if err != nil {
+					FatalErrorRespectJSON("scan failed: %v", err)
+				}
+				if jsonOutput {
+					outputJSON(results)
+				} else {
+					renderWobbleScanAll(results, topN, skillsDir)
+				}
+			}
+			return
+		}
+
+		if jsonOutput {
+			outputJSON(results)
+			return
+		}
+
+		renderRealSessionResults(results)
+		return
+	}
 
 	if scanAll {
 		results, err := wobble.ScanAllSkills(skillsDir, runs)
@@ -370,4 +439,95 @@ func truncatePath(path string, maxLen int) string {
 	}
 	// Show ... at the start
 	return "..." + path[len(path)-(maxLen-3):]
+}
+
+// renderRealSessionResults displays results from real session data analysis.
+func renderRealSessionResults(results []wobble.RealScanResult) {
+	fmt.Println()
+	fmt.Println("┌─ WOBBLE SCAN: REAL SESSION DATA ───────────────────────┐")
+	fmt.Println("│                                                        │")
+	fmt.Printf("│ 📊 Analyzed %d skills with REAL session data            │\n", len(results))
+	fmt.Println("│                                                        │")
+	fmt.Println("└────────────────────────────────────────────────────────┘")
+	fmt.Println()
+
+	for _, r := range results {
+		fmt.Printf("┌─ WOBBLE REPORT: %s (REAL DATA) ─────────────────┐\n", r.Skill)
+		fmt.Println("│                                                    │")
+
+		// Expected command
+		expected := r.Expected
+		if len(expected) > 42 {
+			expected = expected[:39] + "..."
+		}
+		fmt.Printf("│ Expected: %-41s │\n", expected)
+		fmt.Printf("│ Invocations: %-38d │\n", r.Invocations)
+		fmt.Println("│                                                    │")
+
+		// Behavioral metrics from REAL data
+		if r.Behavioral != nil {
+			fmt.Printf("│ Behavioral Metrics (N=%d REAL runs):              │\n", r.Behavioral.Runs)
+			fmt.Printf("│ ├─ Exact Match Rate: %-27s │\n", fmt.Sprintf("%.0f%%", r.Behavioral.ExactMatchRate*100))
+			fmt.Printf("│ ├─ Variants Found:   %-27d │\n", r.Behavioral.VariantCount)
+			fmt.Printf("│ ├─ Bias:             %-27s │\n", fmt.Sprintf("%.2f", r.Behavioral.Bias))
+			fmt.Printf("│ ├─ Variance:         %-27s │\n", fmt.Sprintf("%.2f", r.Behavioral.Variance))
+			fmt.Printf("│ └─ Wobble Score:     %-27s │\n", fmt.Sprintf("%.2f", r.Behavioral.WobbleScore))
+			fmt.Println("│                                                    │")
+
+			// Show actual variants observed
+			if len(r.Behavioral.Variants) > 1 {
+				fmt.Println("│ Variants observed:                                 │")
+				for i, v := range r.Behavioral.Variants {
+					if i >= 3 {
+						fmt.Printf("│   ... and %d more                                 │\n", len(r.Behavioral.Variants)-3)
+						break
+					}
+					vTrunc := v
+					if len(vTrunc) > 44 {
+						vTrunc = vTrunc[:41] + "..."
+					}
+					fmt.Printf("│   • %-44s │\n", vTrunc)
+				}
+				fmt.Println("│                                                    │")
+			}
+		}
+
+		// Structural risk
+		fmt.Printf("│ Structural Risk: %-31s │\n", fmt.Sprintf("%.0f%%", r.Structure.RiskScore*100))
+
+		// Risk factors
+		if len(r.Structure.ActiveFactors) > 0 {
+			fmt.Println("│ Risk Factors:                                      │")
+			for i, factor := range r.Structure.ActiveFactors {
+				if i >= 3 {
+					break
+				}
+				fmt.Printf("│   • %-44s │\n", factor)
+			}
+		}
+
+		fmt.Println("│                                                    │")
+		fmt.Println("├────────────────────────────────────────────────────┤")
+
+		// Verdict
+		var verdictIcon string
+		switch r.Verdict {
+		case "STABLE":
+			verdictIcon = ui.RenderPass("✅")
+		case "WOBBLY":
+			verdictIcon = ui.RenderWarn("⚠️ ")
+		case "UNSTABLE":
+			verdictIcon = ui.RenderFail("🔴")
+		}
+		fmt.Printf("│ VERDICT: %s %s                              │\n", verdictIcon, r.Verdict)
+		fmt.Println("│                                                    │")
+
+		rec := r.Recommendation
+		if len(rec) > 46 {
+			rec = rec[:43] + "..."
+		}
+		fmt.Printf("│ %-50s │\n", rec)
+		fmt.Println("└────────────────────────────────────────────────────┘")
+		fmt.Println()
+	}
 }
