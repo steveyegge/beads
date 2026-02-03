@@ -4,6 +4,7 @@ package factory
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
@@ -131,6 +132,9 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 // This enables town-level config inheritance: when town's config.yaml has
 // storage-backend: dolt, rig-level workspaces will inherit it even if their
 // local metadata.json doesn't have Backend set. (hq-5813b7)
+//
+// Safety net (gt-q5jzx5): If neither config specifies a backend, detect from
+// filesystem - a directory indicates Dolt, a file indicates SQLite.
 func GetBackendFromConfig(beadsDir string) string {
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil || cfg == nil {
@@ -145,7 +149,37 @@ func GetBackendFromConfig(beadsDir string) string {
 
 	// metadata.json exists but Backend is empty - check config.yaml
 	// This enables town-level inheritance via viper's directory walking
-	return getBackendFromYamlConfig()
+	backend := getBackendFromYamlConfig()
+
+	// Safety net (gt-q5jzx5): If we're defaulting to SQLite, verify the database
+	// isn't actually a Dolt directory. This prevents silent data corruption when
+	// metadata.json exists but lacks a "backend" field.
+	if backend == configfile.BackendSQLite {
+		dbPath := cfg.DatabasePath(beadsDir)
+		if detected := detectBackendFromPath(dbPath); detected != "" {
+			return detected
+		}
+	}
+
+	return backend
+}
+
+// detectBackendFromPath examines the filesystem to detect if a database path
+// is a Dolt directory or SQLite file. Returns empty string if undetermined.
+// This provides a safety net when config is ambiguous (gt-q5jzx5).
+func detectBackendFromPath(dbPath string) string {
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		return "" // Path doesn't exist yet or error - can't determine
+	}
+
+	if info.IsDir() {
+		// Directories are Dolt databases
+		return configfile.BackendDolt
+	}
+
+	// Regular file - assume SQLite (the default)
+	return configfile.BackendSQLite
 }
 
 // getBackendFromYamlConfig returns the storage-backend from config.yaml.
