@@ -1896,6 +1896,20 @@ func (s *Server) handleResolveID(req *Request) Response {
 	}
 
 	ctx := s.reqCtx(req)
+
+	// Check WispStore first for wisp IDs (bd-k59w)
+	if s.wispStore != nil && isWispID(args.ID) {
+		issue, err := s.wispStore.Get(ctx, args.ID)
+		if err == nil && issue != nil {
+			data, _ := json.Marshal(issue.ID)
+			return Response{
+				Success: true,
+				Data:    data,
+			}
+		}
+		// Fall through to regular storage if not found in wispStore
+	}
+
 	resolvedID, err := utils.ResolvePartialID(ctx, s.storage, args.ID)
 	if err != nil {
 		return Response{
