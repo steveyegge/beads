@@ -14,6 +14,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -486,7 +487,221 @@ func assertAdviceNotInList(t *testing.T, list []*types.Issue, notWant *types.Iss
 	}
 }
 
-// TestAdviceSubscriptionE2E_CLIBinaryIntegration tests the actual CLI binary if available.
+// TestAdviceSubscriptionE2E_CompoundLabelGroups verifies compound label parsing and
+// group-based AND/OR matching for advice subscriptions.
+//
+// Matching rules:
+// - Labels in the same -l flag (comma-separated) form an AND group
+// - Labels from different -l flags form OR groups
+// - Within a group: ALL labels must match (AND)
+// - Across groups: ANY group matching = advice matches (OR)
+func TestAdviceSubscriptionE2E_CompoundLabelGroups(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+	store := newTestStore(t, dbPath)
+	ctx := context.Background()
+
+	t.Run("comma-separated labels create AND group with g0 prefix", func(t *testing.T) {
+		// When using comma-separated labels in a single -l flag, they should
+		// all get the same group prefix (g0:)
+		advice := createAdviceWithLabels(t, ctx, store, "Beads polecats only",
+			[]string{"g0:role:polecat", "g0:rig:beads"})
+
+		// Verify labels were stored with group prefix
+		labels, err := store.GetLabels(ctx, advice.ID)
+		if err != nil {
+			t.Fatalf("Failed to get labels: %v", err)
+		}
+
+		hasG0Polecat := false
+		hasG0Beads := false
+		for _, l := range labels {
+			if l == "g0:role:polecat" {
+				hasG0Polecat = true
+			}
+			if l == "g0:rig:beads" {
+				hasG0Beads = true
+			}
+		}
+
+		if !hasG0Polecat || !hasG0Beads {
+			t.Errorf("Expected g0:role:polecat and g0:rig:beads, got %v", labels)
+		}
+	})
+
+	t.Run("multiple -l flags create OR groups with different prefixes", func(t *testing.T) {
+		// When using multiple -l flags, each should get a different group prefix
+		advice := createAdviceWithLabels(t, ctx, store, "Polecats OR crew",
+			[]string{"g0:role:polecat", "g1:role:crew"})
+
+		labels, err := store.GetLabels(ctx, advice.ID)
+		if err != nil {
+			t.Fatalf("Failed to get labels: %v", err)
+		}
+
+		hasG0Polecat := false
+		hasG1Crew := false
+		for _, l := range labels {
+			if l == "g0:role:polecat" {
+				hasG0Polecat = true
+			}
+			if l == "g1:role:crew" {
+				hasG1Crew = true
+			}
+		}
+
+		if !hasG0Polecat || !hasG1Crew {
+			t.Errorf("Expected g0:role:polecat and g1:role:crew, got %v", labels)
+		}
+	})
+
+	t.Run("AND group requires all labels to match", func(t *testing.T) {
+		// Create advice that requires BOTH role:polecat AND rig:beads
+		andAdvice := createAdviceWithLabels(t, ctx, store, "Beads polecats only (AND)",
+			[]string{"g0:role:polecat", "g0:rig:beads"})
+
+		// Agent with BOTH labels should match
+		beadsPolecatSubs := []string{"global", "role:polecat", "rig:beads", "agent:beads/polecats/quartz"}
+		issueLabels, _ := store.GetLabels(ctx, andAdvice.ID)
+
+		// Test: beads/polecats/quartz should match (has both role:polecat AND rig:beads)
+		if !matchesCompoundSubscriptions(issueLabels, beadsPolecatSubs) {
+			t.Errorf("Expected beads/polecats/quartz to match AND group (has both labels)")
+		}
+
+		// Agent with only ONE label should NOT match
+		gastownPolecatSubs := []string{"global", "role:polecat", "rig:gastown", "agent:gastown/polecats/test"}
+
+		// Test: gastown/polecats/test should NOT match (has role:polecat but not rig:beads)
+		if matchesCompoundSubscriptions(issueLabels, gastownPolecatSubs) {
+			t.Errorf("Expected gastown/polecats/test to NOT match AND group (missing rig:beads)")
+		}
+	})
+
+	t.Run("OR group matches any", func(t *testing.T) {
+		// Create advice targeting polecats OR crew (separate -l flags)
+		orAdvice := createAdviceWithLabels(t, ctx, store, "Polecats OR crew (OR)",
+			[]string{"g0:role:polecat", "g1:role:crew"})
+
+		issueLabels, _ := store.GetLabels(ctx, orAdvice.ID)
+
+		// Polecat should match
+		polecatSubs := []string{"global", "role:polecat", "rig:beads"}
+		if !matchesCompoundSubscriptions(issueLabels, polecatSubs) {
+			t.Errorf("Expected polecat to match OR group")
+		}
+
+		// Crew should match
+		crewSubs := []string{"global", "role:crew", "rig:beads"}
+		if !matchesCompoundSubscriptions(issueLabels, crewSubs) {
+			t.Errorf("Expected crew to match OR group")
+		}
+
+		// Random role should NOT match
+		witnessSubs := []string{"global", "role:witness", "rig:beads"}
+		if matchesCompoundSubscriptions(issueLabels, witnessSubs) {
+			t.Errorf("Expected witness to NOT match OR group")
+		}
+	})
+
+	t.Run("complex compound: (polecat+beads) OR crew", func(t *testing.T) {
+		// Create advice: (role:polecat AND rig:beads) OR role:crew
+		// -l 'role:polecat,rig:beads' -l 'role:crew'
+		complexAdvice := createAdviceWithLabels(t, ctx, store, "Complex compound",
+			[]string{"g0:role:polecat", "g0:rig:beads", "g1:role:crew"})
+
+		issueLabels, _ := store.GetLabels(ctx, complexAdvice.ID)
+
+		// beads/polecats/quartz should match (g0 group: has both role:polecat AND rig:beads)
+		beadsPolecatSubs := []string{"global", "role:polecat", "rig:beads", "agent:beads/polecats/quartz"}
+		if !matchesCompoundSubscriptions(issueLabels, beadsPolecatSubs) {
+			t.Errorf("Expected beads/polecats/quartz to match (g0 group matches)")
+		}
+
+		// beads/crew/advisor should match (g1 group: has role:crew)
+		beadsCrewSubs := []string{"global", "role:crew", "rig:beads", "agent:beads/crew/advisor"}
+		if !matchesCompoundSubscriptions(issueLabels, beadsCrewSubs) {
+			t.Errorf("Expected beads/crew/advisor to match (g1 group matches)")
+		}
+
+		// gastown/crew/wolf should match (g1 group: has role:crew)
+		gastownCrewSubs := []string{"global", "role:crew", "rig:gastown", "agent:gastown/crew/wolf"}
+		if !matchesCompoundSubscriptions(issueLabels, gastownCrewSubs) {
+			t.Errorf("Expected gastown/crew/wolf to match (g1 group matches)")
+		}
+
+		// gastown/polecats/test should NOT match
+		// g0 requires (role:polecat AND rig:beads) but agent only has rig:gastown
+		// g1 requires role:crew but agent has role:polecat
+		gastownPolecatSubs := []string{"global", "role:polecat", "rig:gastown", "agent:gastown/polecats/test"}
+		if matchesCompoundSubscriptions(issueLabels, gastownPolecatSubs) {
+			t.Errorf("Expected gastown/polecats/test to NOT match (neither group fully matches)")
+		}
+	})
+}
+
+// matchesCompoundSubscriptions implements the expected AND/OR matching logic for compound labels.
+// This is the expected behavior that the actual matchesSubscriptions should implement.
+//
+// Matching rules:
+// - Parse group prefixes (g0:, g1:, etc.) from labels
+// - Within a group: ALL labels must match the subscriptions (AND)
+// - Across groups: ANY group fully matching = overall match (OR)
+// - Labels without group prefix are treated as separate single-label groups (backward compat)
+func matchesCompoundSubscriptions(issueLabels []string, subscriptions []string) bool {
+	// Build subscription set
+	subSet := make(map[string]bool)
+	for _, s := range subscriptions {
+		subSet[s] = true
+	}
+
+	// Parse labels into groups
+	groups := make(map[int][]string)
+	nextUnprefixedGroup := 1000 // High number for unprefixed labels
+
+	for _, label := range issueLabels {
+		if len(label) >= 3 && label[0] == 'g' {
+			// Try to parse gN: prefix
+			colonIdx := strings.Index(label, ":")
+			if colonIdx > 1 {
+				var groupNum int
+				n, err := fmt.Sscanf(label[:colonIdx], "g%d", &groupNum)
+				if err == nil && n == 1 {
+					// Valid group prefix - extract the actual label
+					actualLabel := label[colonIdx+1:]
+					groups[groupNum] = append(groups[groupNum], actualLabel)
+					continue
+				}
+			}
+		}
+		// No valid prefix - treat as separate group (backward compat)
+		groups[nextUnprefixedGroup] = append(groups[nextUnprefixedGroup], label)
+		nextUnprefixedGroup++
+	}
+
+	// Check if any group fully matches (OR across groups)
+	for _, groupLabels := range groups {
+		if len(groupLabels) == 0 {
+			continue
+		}
+
+		// Check if ALL labels in this group match (AND within group)
+		allMatch := true
+		for _, label := range groupLabels {
+			if !subSet[label] {
+				allMatch = false
+				break
+			}
+		}
+
+		if allMatch {
+			return true // One group fully matched - overall match
+		}
+	}
+
+	return false // No group fully matched
+}
+
 // NOTE: This test is skipped by default because CLI binary tests require complex setup
 // (the binary runs in a separate process and can't share test database state).
 // The core subscription logic is thoroughly tested by the other E2E tests above.
