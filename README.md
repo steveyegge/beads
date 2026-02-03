@@ -128,6 +128,31 @@ bd update bd-a1b2 --ack-spec  # Acknowledge
 
 ---
 
+## Spec Radar Flow
+
+Treat it like a daily weather report for specs.
+
+```bash
+# Morning: see what moved
+bd spec delta
+
+# Midday: clean up ideas
+bd spec triage --sort status
+
+# Weekly: generate a briefing
+bd spec report --out .beads/reports
+
+# Cleanup day: align lifecycle with reality (confirm before apply)
+bd spec sync --apply
+```
+
+Quick reads:
+- `bd spec stale` shows age buckets.
+- `bd spec duplicates` surfaces overlap.
+- `bd spec report` combines summary, triage, staleness, duplicates, delta, and volatility.
+
+---
+
 ## Skill Sync
 
 ```bash
