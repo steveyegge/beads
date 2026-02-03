@@ -142,16 +142,16 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	// Now fetch each issue (safe since rows is closed)
 	var issues []*types.Issue
