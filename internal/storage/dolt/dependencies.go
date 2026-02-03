@@ -563,7 +563,7 @@ func (s *DoltStore) scanIssueIDs(ctx context.Context, rows *sql.Rows) ([]*types.
 	// result sets on one connection - the first must be closed before starting
 	// a new query, otherwise "driver: bad connection" errors occur.
 	// Closing here is safe because sql.Rows.Close() is idempotent.
-	rows.Close()
+	_ = rows.Close()
 
 	if len(ids) == 0 {
 		return nil, nil
