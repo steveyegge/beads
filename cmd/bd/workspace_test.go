@@ -149,3 +149,15 @@ func TestWorkspaceScanCreateBeadsFlag(t *testing.T) {
 		t.Fatalf("expected note to include bead id")
 	}
 }
+
+func TestValidateJSONApplyRequiresYes(t *testing.T) {
+	if err := validateJSONApply(true, true, false); err == nil {
+		t.Fatalf("expected error when --json and --apply without --yes")
+	}
+	if err := validateJSONApply(true, true, true); err != nil {
+		t.Fatalf("unexpected error when --json and --apply with --yes: %v", err)
+	}
+	if err := validateJSONApply(true, false, false); err != nil {
+		t.Fatalf("unexpected error when --json without --apply: %v", err)
+	}
+}

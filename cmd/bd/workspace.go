@@ -96,9 +96,23 @@ func runWorkspaceScan(cmd *cobra.Command, args []string) {
 		FatalErrorRespectJSON("workspace path does not exist: %s", workspacePath)
 	}
 
+	if err := validateJSONApply(jsonOutput, applyChanges, skipConfirm); err != nil {
+		FatalErrorRespectJSON("%s", err.Error())
+	}
+
 	result := scanWorkspace()
 
 	if jsonOutput {
+		if applyChanges {
+			notesCreated, err := applyHubNotes(result, createBeads)
+			if err != nil {
+				FatalErrorRespectJSON("workspace scan failed: %s", err)
+			}
+			result.Summary.NotesCreated = notesCreated
+			if _, err := writeScanReport(result); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to write scan report: %v\n", err)
+			}
+		}
 		outputJSON(result)
 		return
 	}
@@ -135,6 +149,13 @@ func runWorkspaceScan(cmd *cobra.Command, args []string) {
 	if _, err := writeScanReport(result); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to write scan report: %v\n", err)
 	}
+}
+
+func validateJSONApply(isJSON bool, apply bool, yes bool) error {
+	if isJSON && apply && !yes {
+		return fmt.Errorf("--json requires --yes when --apply is set")
+	}
+	return nil
 }
 
 func scanWorkspace() *WorkspaceScanResult {
