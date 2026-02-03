@@ -130,7 +130,7 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 				if err != nil {
 					FatalErrorRespectJSON("scan failed: %v", err)
 				}
-				if err := persistWobbleScan(wobbleSkillsFromScanResult(result), generatedAt, actor); err != nil && !jsonOutput {
+				if err := persistWobbleScan(wobbleSkillsFromScanResult(result, skillsDir), generatedAt, actor); err != nil && !jsonOutput {
 					fmt.Fprintf(os.Stderr, "%v\n", prettyWobbleStoreError(err))
 				}
 				if jsonOutput {
@@ -143,7 +143,7 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 				if err != nil {
 					FatalErrorRespectJSON("scan failed: %v", err)
 				}
-				if err := persistWobbleScan(wobbleSkillsFromSummary(results), generatedAt, actor); err != nil && !jsonOutput {
+				if err := persistWobbleScan(wobbleSkillsFromSummary(results, skillsDir), generatedAt, actor); err != nil && !jsonOutput {
 					fmt.Fprintf(os.Stderr, "%v\n", prettyWobbleStoreError(err))
 				}
 				if jsonOutput {
@@ -155,7 +155,7 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 			return
 		}
 
-		if err := persistWobbleScan(wobbleSkillsFromRealResults(results), generatedAt, actor); err != nil && !jsonOutput {
+		if err := persistWobbleScan(wobbleSkillsFromRealResults(results, skillsDir), generatedAt, actor); err != nil && !jsonOutput {
 			fmt.Fprintf(os.Stderr, "%v\n", prettyWobbleStoreError(err))
 		}
 		if jsonOutput {
@@ -172,7 +172,7 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 		if err != nil {
 			FatalErrorRespectJSON("scan failed: %v", err)
 		}
-		if err := persistWobbleScan(wobbleSkillsFromSummary(results), generatedAt, actor); err != nil && !jsonOutput {
+		if err := persistWobbleScan(wobbleSkillsFromSummary(results, skillsDir), generatedAt, actor); err != nil && !jsonOutput {
 			fmt.Fprintf(os.Stderr, "%v\n", prettyWobbleStoreError(err))
 		}
 
@@ -195,7 +195,7 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 	if err != nil {
 		FatalErrorRespectJSON("scan failed: %v", err)
 	}
-	if err := persistWobbleScan(wobbleSkillsFromScanResult(result), generatedAt, actor); err != nil && !jsonOutput {
+	if err := persistWobbleScan(wobbleSkillsFromScanResult(result, skillsDir), generatedAt, actor); err != nil && !jsonOutput {
 		fmt.Fprintf(os.Stderr, "%v\n", prettyWobbleStoreError(err))
 	}
 
