@@ -25,6 +25,7 @@ func MigrateSpecRegistryTable(db *sql.DB) error {
 				title TEXT DEFAULT '',
 				sha256 TEXT DEFAULT '',
 				mtime DATETIME,
+				git_status TEXT DEFAULT 'tracked',
 				discovered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				last_scanned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				missing_at DATETIME
@@ -40,6 +41,7 @@ func MigrateSpecRegistryTable(db *sql.DB) error {
 		"title":           "TEXT DEFAULT ''",
 		"sha256":          "TEXT DEFAULT ''",
 		"mtime":           "DATETIME",
+		"git_status":      "TEXT DEFAULT 'tracked'",
 		"discovered_at":   "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
 		"last_scanned_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
 		"missing_at":      "DATETIME",

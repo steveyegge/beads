@@ -20,13 +20,14 @@ func (s *DoltStore) UpsertSpecRegistry(ctx context.Context, specs []spec.SpecReg
 
 	stmt, err := s.db.PrepareContext(ctx, `
 		INSERT INTO spec_registry (
-			spec_id, path, title, sha256, mtime, discovered_at, last_scanned_at, missing_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			spec_id, path, title, sha256, mtime, git_status, discovered_at, last_scanned_at, missing_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			path = VALUES(path),
 			title = VALUES(title),
 			sha256 = VALUES(sha256),
 			mtime = VALUES(mtime),
+			git_status = VALUES(git_status),
 			discovered_at = VALUES(discovered_at),
 			last_scanned_at = VALUES(last_scanned_at),
 			missing_at = VALUES(missing_at)
@@ -43,6 +44,7 @@ func (s *DoltStore) UpsertSpecRegistry(ctx context.Context, specs []spec.SpecReg
 			entry.Title,
 			entry.SHA256,
 			entry.Mtime,
+			entry.GitStatus,
 			entry.DiscoveredAt,
 			entry.LastScannedAt,
 			entry.MissingAt,
@@ -59,7 +61,7 @@ func (s *DoltStore) ListSpecRegistry(ctx context.Context) ([]spec.SpecRegistryEn
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT spec_id, path, title, sha256, mtime, discovered_at, last_scanned_at, missing_at,
+		SELECT spec_id, path, title, sha256, mtime, git_status, discovered_at, last_scanned_at, missing_at,
 		       lifecycle, completed_at, summary, summary_tokens, archived_at
 		FROM spec_registry
 		ORDER BY spec_id
@@ -84,6 +86,7 @@ func (s *DoltStore) ListSpecRegistry(ctx context.Context) ([]spec.SpecRegistryEn
 			&entry.Title,
 			&entry.SHA256,
 			&entry.Mtime,
+			&entry.GitStatus,
 			&entry.DiscoveredAt,
 			&entry.LastScannedAt,
 			&missingAt,
@@ -129,7 +132,7 @@ func (s *DoltStore) GetSpecRegistry(ctx context.Context, specID string) (*spec.S
 	var summaryTokens sql.NullInt64
 	var archivedAt sql.NullTime
 	err := s.db.QueryRowContext(ctx, `
-		SELECT spec_id, path, title, sha256, mtime, discovered_at, last_scanned_at, missing_at,
+		SELECT spec_id, path, title, sha256, mtime, git_status, discovered_at, last_scanned_at, missing_at,
 		       lifecycle, completed_at, summary, summary_tokens, archived_at
 		FROM spec_registry
 		WHERE spec_id = ?
@@ -139,6 +142,7 @@ func (s *DoltStore) GetSpecRegistry(ctx context.Context, specID string) (*spec.S
 		&entry.Title,
 		&entry.SHA256,
 		&entry.Mtime,
+		&entry.GitStatus,
 		&entry.DiscoveredAt,
 		&entry.LastScannedAt,
 		&missingAt,
@@ -179,7 +183,7 @@ func (s *DoltStore) ListSpecRegistryWithCounts(ctx context.Context) ([]spec.Spec
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.spec_id, s.path, s.title, s.sha256, s.mtime, s.discovered_at, s.last_scanned_at, s.missing_at,
+		SELECT s.spec_id, s.path, s.title, s.sha256, s.mtime, s.git_status, s.discovered_at, s.last_scanned_at, s.missing_at,
 		       s.lifecycle, s.completed_at, s.summary, s.summary_tokens, s.archived_at,
 		       COUNT(i.id) AS bead_count,
 		       SUM(CASE WHEN i.spec_changed_at IS NOT NULL THEN 1 ELSE 0 END) AS changed_count
@@ -209,6 +213,7 @@ func (s *DoltStore) ListSpecRegistryWithCounts(ctx context.Context) ([]spec.Spec
 			&entry.Title,
 			&entry.SHA256,
 			&entry.Mtime,
+			&entry.GitStatus,
 			&entry.DiscoveredAt,
 			&entry.LastScannedAt,
 			&missingAt,

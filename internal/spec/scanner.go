@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -84,12 +85,15 @@ func Scan(rootDir, specPath string) ([]ScannedSpec, error) {
 			return err
 		}
 
+		gitStatus := getGitStatus(absRoot, path)
+
 		specs = append(specs, ScannedSpec{
 			SpecID: specID,
 			Path:   path,
 			Title:  title,
 			SHA256: hash,
 			Mtime:  info.ModTime().UTC().Truncate(time.Second),
+			GitStatus: gitStatus,
 		})
 		return nil
 	})
@@ -98,6 +102,27 @@ func Scan(rootDir, specPath string) ([]ScannedSpec, error) {
 	}
 
 	return specs, nil
+}
+
+func getGitStatus(repoRoot, absPath string) string {
+	rel, err := filepath.Rel(repoRoot, absPath)
+	if err != nil {
+		return "unknown"
+	}
+	cmd := exec.Command("git", "status", "--porcelain", "--", rel)
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	line := strings.TrimSpace(string(out))
+	if line == "" {
+		return "tracked"
+	}
+	if strings.HasPrefix(line, "??") {
+		return "untracked"
+	}
+	return "modified"
 }
 
 // ExtractTitle reads the first H1 from a markdown file.

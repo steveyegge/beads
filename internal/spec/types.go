@@ -9,6 +9,8 @@ type ScannedSpec struct {
 	Title  string
 	SHA256 string
 	Mtime  time.Time
+	// GitStatus is one of: tracked, untracked, modified, or unknown.
+	GitStatus string
 }
 
 // SpecRegistryEntry represents a stored spec record.
@@ -18,6 +20,7 @@ type SpecRegistryEntry struct {
 	Title         string
 	SHA256        string
 	Mtime         time.Time
+	GitStatus     string
 	DiscoveredAt  time.Time
 	LastScannedAt time.Time
 	MissingAt     *time.Time

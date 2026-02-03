@@ -156,6 +156,7 @@ func TestSpecRegistryUpsert(t *testing.T) {
 			Title:         "Login Feature",
 			SHA256:        "abc123",
 			Mtime:         now,
+			GitStatus:     "tracked",
 			DiscoveredAt:  now,
 			LastScannedAt: now,
 		},
@@ -175,10 +176,14 @@ func TestSpecRegistryUpsert(t *testing.T) {
 	if fetched.Title != "Login Feature" {
 		t.Errorf("Title = %q, want %q", fetched.Title, "Login Feature")
 	}
+	if fetched.GitStatus != "tracked" {
+		t.Errorf("GitStatus = %q, want %q", fetched.GitStatus, "tracked")
+	}
 
 	// Update the entry
 	entries[0].Title = "Login Feature v2"
 	entries[0].SHA256 = "def456"
+	entries[0].GitStatus = "modified"
 	if err := store.UpsertSpecRegistry(ctx, entries); err != nil {
 		t.Fatalf("UpsertSpecRegistry update failed: %v", err)
 	}
@@ -193,5 +198,8 @@ func TestSpecRegistryUpsert(t *testing.T) {
 	}
 	if fetched.SHA256 != "def456" {
 		t.Errorf("SHA256 after update = %q, want %q", fetched.SHA256, "def456")
+	}
+	if fetched.GitStatus != "modified" {
+		t.Errorf("GitStatus after update = %q, want %q", fetched.GitStatus, "modified")
 	}
 }

@@ -614,14 +614,14 @@ func renderSpecList(entries []spec.SpecRegistryCount) {
 		return
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SPEC ID\tTITLE\tBEADS\tCHANGED\tMISSING")
+	fmt.Fprintln(w, "SPEC ID\tTITLE\tGIT\tBEADS\tCHANGED\tMISSING")
 	for _, entry := range entries {
 		missing := ""
 		if entry.Spec.MissingAt != nil {
 			missing = "yes"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\n",
-			entry.Spec.SpecID, entry.Spec.Title, entry.BeadCount, entry.ChangedBeadCount, missing)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\n",
+			entry.Spec.SpecID, entry.Spec.Title, entry.Spec.GitStatus, entry.BeadCount, entry.ChangedBeadCount, missing)
 	}
 	_ = w.Flush()
 }
@@ -638,6 +638,9 @@ func renderSpecShow(result rpc.SpecShowResult) {
 	}
 	if result.Spec.SHA256 != "" {
 		fmt.Printf("Hash: %s\n", result.Spec.SHA256)
+	}
+	if result.Spec.GitStatus != "" {
+		fmt.Printf("Git: %s\n", result.Spec.GitStatus)
 	}
 	if result.Spec.Lifecycle != "" {
 		fmt.Printf("Lifecycle: %s\n", result.Spec.Lifecycle)

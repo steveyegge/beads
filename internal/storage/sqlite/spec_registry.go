@@ -20,13 +20,14 @@ func (s *SQLiteStorage) UpsertSpecRegistry(ctx context.Context, specs []spec.Spe
 
 	stmt, err := s.db.PrepareContext(ctx, `
 		INSERT INTO spec_registry (
-			spec_id, path, title, sha256, mtime, discovered_at, last_scanned_at, missing_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			spec_id, path, title, sha256, mtime, git_status, discovered_at, last_scanned_at, missing_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(spec_id) DO UPDATE SET
 			path = excluded.path,
 			title = excluded.title,
 			sha256 = excluded.sha256,
 			mtime = excluded.mtime,
+			git_status = excluded.git_status,
 			discovered_at = excluded.discovered_at,
 			last_scanned_at = excluded.last_scanned_at,
 			missing_at = excluded.missing_at
@@ -43,6 +44,7 @@ func (s *SQLiteStorage) UpsertSpecRegistry(ctx context.Context, specs []spec.Spe
 			entry.Title,
 			entry.SHA256,
 			entry.Mtime,
+			entry.GitStatus,
 			entry.DiscoveredAt,
 			entry.LastScannedAt,
 			entry.MissingAt,
@@ -59,7 +61,7 @@ func (s *SQLiteStorage) ListSpecRegistry(ctx context.Context) ([]spec.SpecRegist
 	defer s.reconnectMu.RUnlock()
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT spec_id, path, title, sha256, mtime, discovered_at, last_scanned_at, missing_at,
+		SELECT spec_id, path, title, sha256, mtime, git_status, discovered_at, last_scanned_at, missing_at,
 		       lifecycle, completed_at, summary, summary_tokens, archived_at
 		FROM spec_registry
 		ORDER BY spec_id
@@ -85,6 +87,7 @@ func (s *SQLiteStorage) ListSpecRegistry(ctx context.Context) ([]spec.SpecRegist
 			&entry.Title,
 			&entry.SHA256,
 			&mtime,
+			&entry.GitStatus,
 			&discoveredAt,
 			&lastScannedAt,
 			&missingAt,
@@ -136,7 +139,7 @@ func (s *SQLiteStorage) GetSpecRegistry(ctx context.Context, specID string) (*sp
 	var summaryTokens sql.NullInt64
 	var archivedAt sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT spec_id, path, title, sha256, mtime, discovered_at, last_scanned_at, missing_at,
+		SELECT spec_id, path, title, sha256, mtime, git_status, discovered_at, last_scanned_at, missing_at,
 		       lifecycle, completed_at, summary, summary_tokens, archived_at
 		FROM spec_registry
 		WHERE spec_id = ?
@@ -146,6 +149,7 @@ func (s *SQLiteStorage) GetSpecRegistry(ctx context.Context, specID string) (*sp
 		&entry.Title,
 		&entry.SHA256,
 		&mtime,
+		&entry.GitStatus,
 		&discoveredAt,
 		&lastScannedAt,
 		&missingAt,
@@ -191,7 +195,7 @@ func (s *SQLiteStorage) ListSpecRegistryWithCounts(ctx context.Context) ([]spec.
 	defer s.reconnectMu.RUnlock()
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.spec_id, s.path, s.title, s.sha256, s.mtime, s.discovered_at, s.last_scanned_at, s.missing_at,
+		SELECT s.spec_id, s.path, s.title, s.sha256, s.mtime, s.git_status, s.discovered_at, s.last_scanned_at, s.missing_at,
 		       s.lifecycle, s.completed_at, s.summary, s.summary_tokens, s.archived_at,
 		       COUNT(i.id) AS bead_count,
 		       SUM(CASE WHEN i.spec_changed_at IS NOT NULL THEN 1 ELSE 0 END) AS changed_count
@@ -222,6 +226,7 @@ func (s *SQLiteStorage) ListSpecRegistryWithCounts(ctx context.Context) ([]spec.
 			&entry.Title,
 			&entry.SHA256,
 			&mtime,
+			&entry.GitStatus,
 			&discoveredAt,
 			&lastScannedAt,
 			&missingAt,

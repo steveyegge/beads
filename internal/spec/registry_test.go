@@ -165,6 +165,31 @@ func TestUpdateRegistry_Change(t *testing.T) {
 	}
 }
 
+func TestUpdateRegistry_TracksGitStatus(t *testing.T) {
+	store := &mockStore{}
+	now := time.Now().UTC().Truncate(time.Second)
+
+	scanned := []ScannedSpec{
+		{
+			SpecID:    "specs/plan.md",
+			Title:     "Plan",
+			SHA256:    "abc123",
+			Mtime:     now,
+			GitStatus: "modified",
+		},
+	}
+
+	if _, err := UpdateRegistry(context.Background(), store, scanned, now); err != nil {
+		t.Fatalf("UpdateRegistry() error: %v", err)
+	}
+	if len(store.entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(store.entries))
+	}
+	if got := store.entries[0].GitStatus; got != "modified" {
+		t.Fatalf("GitStatus = %q, want %q", got, "modified")
+	}
+}
+
 func TestUpdateRegistry_Missing(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	earlier := now.Add(-time.Hour)

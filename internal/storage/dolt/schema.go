@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS spec_registry (
     title TEXT DEFAULT '',
     sha256 VARCHAR(64) DEFAULT '',
     mtime DATETIME,
+    git_status VARCHAR(16) DEFAULT 'tracked',
     discovered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_scanned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     missing_at DATETIME,
