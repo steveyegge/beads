@@ -36,7 +36,6 @@ const (
 	FallbackAutoStartDisabled = "auto_start_disabled"
 	FallbackAutoStartFailed   = "auto_start_failed"
 	FallbackDaemonUnsupported = "daemon_unsupported"
-	FallbackWispOperation     = "wisp_operation"
 )
 
 // Command group IDs for help organization

@@ -653,15 +653,6 @@ var rootCmd = &cobra.Command{
 			noDaemon = true
 		}
 
-		// Wisp operations auto-bypass daemon
-		// Wisps are ephemeral (Ephemeral=true) and never exported to JSONL,
-		// so daemon can't help anyway. This reduces friction in wisp workflows.
-		if isWispOperation(cmd, args) {
-			noDaemon = true
-			daemonStatus.FallbackReason = FallbackWispOperation
-			debug.Logf("wisp operation detected, using direct mode")
-		}
-
 		// Embedded Dolt is single-process-only; never use daemon/RPC.
 		// (Dolt server mode supports multi-process and won't trigger this.)
 		// This must be checked after dbPath is resolved.
