@@ -134,7 +134,7 @@ func showDaemonHealth() {
 	}
 	socketPath := filepath.Join(beadsDir, "bd.sock")
 
-	client, err := rpc.TryConnect(socketPath)
+	client, err := rpc.TryConnectAuto(socketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error connecting to daemon: %v\n", err)
 		os.Exit(1)
@@ -191,7 +191,7 @@ func showDaemonMetrics() {
 	}
 	socketPath := filepath.Join(beadsDir, "bd.sock")
 
-	client, err := rpc.TryConnect(socketPath)
+	client, err := rpc.TryConnectAuto(socketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error connecting to daemon: %v\n", err)
 		os.Exit(1)

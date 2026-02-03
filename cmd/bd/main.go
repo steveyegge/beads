@@ -656,8 +656,8 @@ var rootCmd = &cobra.Command{
 			daemonStatus.FallbackReason = FallbackWorktreeSafety
 			debug.Logf("git worktree detected without sync-branch, using direct mode for safety")
 		} else {
-			// Attempt daemon connection
-			client, err := rpc.TryConnect(socketPath)
+			// Attempt daemon connection (auto-selects TCP via BD_DAEMON_HOST or local Unix socket)
+			client, err := rpc.TryConnectAuto(socketPath)
 			if err == nil && client != nil {
 				// Set expected database path for validation
 				if dbPath != "" {
@@ -677,7 +677,7 @@ var rootCmd = &cobra.Command{
 						// Kill old daemon and restart with new version
 						if restartDaemonForVersionMismatch() {
 							// Retry connection after restart
-							client, err = rpc.TryConnect(socketPath)
+							client, err = rpc.TryConnectAuto(socketPath)
 							if err == nil && client != nil {
 								if dbPath != "" {
 									absDBPath, _ := filepath.Abs(dbPath)
@@ -752,7 +752,7 @@ var rootCmd = &cobra.Command{
 				startTime := time.Now()
 				if tryAutoStartDaemon(socketPath) {
 					// Retry connection after auto-start
-					client, err := rpc.TryConnect(socketPath)
+					client, err := rpc.TryConnectAuto(socketPath)
 					if err == nil && client != nil {
 						// Set expected database path for validation
 						if dbPath != "" {

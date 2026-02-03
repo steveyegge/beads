@@ -71,7 +71,7 @@ func showDaemonVersion() {
 	}
 
 	socketPath := getSocketPath()
-	client, err := rpc.TryConnect(socketPath)
+	client, err := rpc.TryConnectAuto(socketPath)
 	if err != nil || client == nil {
 		fmt.Fprintf(os.Stderr, "Error: daemon is not running\n")
 		fmt.Fprintf(os.Stderr, "Hint: start daemon with 'bd daemon'\n")

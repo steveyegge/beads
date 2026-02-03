@@ -202,7 +202,7 @@ func CheckDaemonAutoSync(path string) DoctorCheck {
 	}
 
 	// Sync-branch is configured - check daemon's auto-commit/auto-push status
-	client, err := rpc.TryConnect(socketPath)
+	client, err := rpc.TryConnectAuto(socketPath)
 	if err != nil || client == nil {
 		return DoctorCheck{
 			Name:    "Daemon Auto-Sync",
@@ -346,7 +346,7 @@ func CheckHydratedRepoDaemons(path string) DoctorCheck {
 		socketPath := filepath.Join(expandedPath, ".beads", "bd.sock")
 
 		// Try to connect to daemon
-		client, err := rpc.TryConnect(socketPath)
+		client, err := rpc.TryConnectAuto(socketPath)
 		if err == nil && client != nil {
 			_ = client.Close()
 			// Daemon is running, all good

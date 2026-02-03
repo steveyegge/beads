@@ -22,7 +22,7 @@ func queryRoutesFromDaemon(beadsDir string) ([]routing.Route, error) {
 	socketPath := filepath.Join(beadsDir, "bd.sock")
 
 	// Try to connect to daemon
-	client, err := rpc.TryConnect(socketPath)
+	client, err := rpc.TryConnectAuto(socketPath)
 	if err != nil || client == nil {
 		// Daemon not available - not an error, just fall back to file
 		return nil, nil

@@ -257,7 +257,7 @@ func debugLog(msg string, args ...interface{}) {
 }
 
 func isDaemonHealthy(socketPath string) bool {
-	client, err := rpc.TryConnect(socketPath)
+	client, err := rpc.TryConnectAuto(socketPath)
 	if err == nil && client != nil {
 		_ = client.Close()
 		return true

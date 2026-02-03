@@ -168,7 +168,7 @@ func discoverDaemon(socketPath string) DaemonInfo {
 	}
 
 	// Try to connect with timeout (15s to handle high-load scenarios)
-	client, err := rpc.TryConnectWithTimeout(socketPath, 15*time.Second)
+	client, err := rpc.TryConnectAutoWithTimeout(socketPath, 15*time.Second)
 	if err != nil {
 		daemon.Error = fmt.Sprintf("failed to connect: %v", err)
 		// Check for daemon-error file
@@ -335,7 +335,7 @@ func StopDaemon(daemon DaemonInfo) error {
 	}
 
 	// Try graceful shutdown via RPC first (15s timeout for high-load scenarios)
-	client, err := rpc.TryConnectWithTimeout(daemon.SocketPath, 15*time.Second)
+	client, err := rpc.TryConnectAutoWithTimeout(daemon.SocketPath, 15*time.Second)
 	if err == nil && client != nil {
 		defer func() { _ = client.Close() }()
 		if err := client.Shutdown(); err == nil {
@@ -405,7 +405,7 @@ func KillAllDaemons(daemons []DaemonInfo, force bool) KillAllResults {
 // stopDaemonWithTimeout tries RPC shutdown, then SIGTERM with timeout, then SIGKILL
 func stopDaemonWithTimeout(daemon DaemonInfo) error {
 	// Try RPC shutdown first (2 second timeout)
-	client, err := rpc.TryConnectWithTimeout(daemon.SocketPath, 2*time.Second)
+	client, err := rpc.TryConnectAutoWithTimeout(daemon.SocketPath, 2*time.Second)
 	if err == nil && client != nil {
 		defer func() { _ = client.Close() }()
 		if err := client.Shutdown(); err == nil {

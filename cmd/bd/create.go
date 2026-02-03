@@ -867,7 +867,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 
 	// Try to connect to target repo's daemon (if running)
 	flushed := false
-	if client, err := rpc.TryConnect(socketPath); err == nil && client != nil {
+	if client, err := rpc.TryConnectAuto(socketPath); err == nil && client != nil {
 		defer func() { _ = client.Close() }()
 
 		// Daemon is running - ask it to export
