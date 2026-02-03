@@ -138,13 +138,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// Wisp create requires direct store access (daemon auto-bypassed for wisp ops)
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-		os.Exit(1)
-	}
-
+	// Parse flags early so we can check dry-run before requiring store
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	varFlags, _ := cmd.Flags().GetStringArray("var")
 
@@ -174,6 +168,16 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 	}
 
 	if subgraph == nil {
+		// Legacy proto path requires direct store access
+		// (formula cooking above works without store)
+		// TODO: Add daemon RPC support for legacy proto lookup per gt-as9kdm
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: formula '%s' not found\n", args[0])
+			fmt.Fprintf(os.Stderr, "Hint: run 'bd formula list' to see available formulas\n")
+			fmt.Fprintf(os.Stderr, "Hint: legacy proto beads require direct database access\n")
+			os.Exit(1)
+		}
+
 		// Resolve proto ID (legacy path)
 		protoID = args[0]
 		// Try to resolve partial ID if it doesn't look like a full ID
@@ -258,6 +262,14 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 			fmt.Printf("  - %s (from %s)\n", newTitle, issue.ID)
 		}
 		return
+	}
+
+	// Actual wisp creation requires direct store access for write operations
+	// TODO: Add daemon RPC support for wisp creation per gt-as9kdm
+	if store == nil {
+		fmt.Fprintf(os.Stderr, "Error: wisp creation requires direct database access\n")
+		fmt.Fprintf(os.Stderr, "Hint: stop daemon and retry, or start daemon in this workspace\n")
+		os.Exit(1)
 	}
 
 	// Spawn as ephemeral in main database (Ephemeral=true, skips JSONL export)
