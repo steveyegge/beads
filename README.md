@@ -2,7 +2,7 @@
 
 ![Pacman Score](https://img.shields.io/badge/pacman%20score-3%20dots-yellow)
 
-### `bd` — see your chaos, catch the drift
+### `bd` — keep the story straight, even when the work isn't
 
 ```
 $ bd pacman
@@ -17,15 +17,15 @@ YOU: claude | SCORE: 3 dots | #1 codex (5 pts)
 ```
 $ bd recent --all
 
-test-f2y [P1] Implement OAuth login 🔥 volatile  ○ open  just now
-└─ ● specs/auth.md  ✓ active 🔥 volatile  just now
-test-sgo [P3] Update README ⚡ stable  ○ open  just now
-└─ ● specs/docs.md  ✓ active ⚡ stable  1m ago
+test-f2y [P1] Implement OAuth login  ● volatile  ○ open  just now
+└─ ● specs/auth.md  ✓ active  ● volatile  just now
+test-sgo [P3] Update README  ○ stable  ○ open  just now
+└─ ● specs/docs.md  ✓ active  ○ stable  1m ago
 
 Summary: 2 beads, 2 specs | Active: 2 pending | Momentum: 4 items today
 ```
 
-One command. Beads, specs, skills—nested by relationship. Volatility flagged. Orphans called out.
+One command. Beads, specs, skills—nested by relationship. Drift called out. No guesswork.
 
 [![License](https://img.shields.io/github/license/anupamchugh/shadowbook)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/anupamchugh/shadowbook)](https://goreportcard.com/report/github.com/anupamchugh/shadowbook)
@@ -78,12 +78,12 @@ Declining = stabilizing. Flat at zero = locked down. Increasing = chaos growing.
 
 ```bash
 $ bd list --show-volatility
-  bd-42  [🔥 volatile] Implement login    in_progress
-  bd-44  [⚡ stable]    Update README     pending
+  bd-42  [● volatile] Implement login    in_progress
+  bd-44  [○ stable]    Update README     pending
 
 $ bd ready
 ○ Ready (stable): 1. Update README
-🔥 Caution (volatile): 1. Implement login (5 changes/30d, 3 open)
+● Caution (volatile): 1. Implement login (5 changes/30d, 3 open)
 ```
 
 **Cascade impact:**
@@ -91,7 +91,7 @@ $ bd ready
 ```bash
 $ bd spec volatility --with-dependents specs/auth.md
 
-specs/auth.md (🔥 HIGH: 5 changes, 3 open)
+specs/auth.md (● HIGH: 5 changes, 3 open)
 ├── bd-42: Implement login ← DRIFTED
 │   └── bd-43: Add 2FA (blocked)
 └── bd-44: RBAC redesign
@@ -160,17 +160,17 @@ Quick reads:
 bd preflight --check
 ✓ Skills: 47/47 synced
 ✓ Specs: 12 tracked
-🔥 Volatility: 2 specs have high churn
+● Volatility: 2 specs have high churn
 
 bd preflight --check --auto-sync  # Fix drift
 ```
 
 ---
 
-## Wobble Detection
+## Wobble: Measure the Drift
 
 ```
-     You write the recipe. Claude "improves" it.
+     You write the recipe. Claude edits it.
 
      Expected:  bd list --created-after=$(date -v-1d) --sort=created
      Actual:    bd list --status=in_progress  ← "I thought this would help"
@@ -277,7 +277,7 @@ bd close bd-xyz --compact-spec --compact-skills
 | `bd recent --all` | Activity dashboard with volatility |
 | `bd ready` | Work queue, partitioned by volatility |
 | `bd ready --mine` | Work queue filtered to your assignments |
-| `bd list --show-volatility` | Badges: 🔥 volatile / ⚡ stable |
+| `bd list --show-volatility` | Badges: ● volatile / ○ stable |
 | `bd spec scan` | Detect spec changes |
 | `bd spec stale` | Show specs by staleness bucket |
 | `bd spec triage` | Triage specs/ideas by age and git status |
