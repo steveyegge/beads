@@ -366,6 +366,13 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
+	// Drop fk_dep_depends_on to allow external refs (matches SQLite migration 025).
+	// The depends_on_id can reference issues in other databases (external refs).
+	if _, fkErr := db.ExecContext(ctx, "ALTER TABLE dependencies DROP FOREIGN KEY fk_dep_depends_on"); fkErr != nil {
+		// Ignore errors - constraint may not exist in new databases or already dropped
+		_ = fkErr
+	}
+
 	// Create views
 	if _, err := db.ExecContext(ctx, readyIssuesView); err != nil {
 		return fmt.Errorf("failed to create ready_issues view: %w", err)
