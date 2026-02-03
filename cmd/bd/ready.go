@@ -134,9 +134,9 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			}
 
 			// Apply skill filtering if requested (requires direct store access)
+			// TODO: Add skill filtering RPC support per gt-as9kdm
 			if withSkills {
-				fmt.Fprintf(os.Stderr, "Warning: --with-skills requires direct database access\n")
-				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon ready --with-skills\n")
+				fmt.Fprintf(os.Stderr, "Warning: --with-skills not yet supported in daemon mode, skill filtering skipped\n")
 			}
 
 			if jsonOutput {
@@ -354,18 +354,6 @@ var blockedCmd = &cobra.Command{
 func runMoleculeReady(_ *cobra.Command, molIDArg string) {
 	ctx := rootCtx
 
-	// Molecule-ready requires direct store access for subgraph loading
-	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: bd ready --mol requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon ready --mol %s\n", molIDArg)
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
-		os.Exit(1)
-	}
-
-	// Resolve molecule ID
 	// Load molecule subgraph (prefer daemon RPC per gt-as9kdm)
 	subgraph, err := loadSubgraphPreferDaemon(ctx, molIDArg)
 	if err != nil {
