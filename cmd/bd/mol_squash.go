@@ -64,6 +64,17 @@ func runMolSquash(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
+	// mol squash requires direct store access - ensure store is active even when daemon connected
+	if err := ensureStoreActive(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if store == nil {
+		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
+		os.Exit(1)
+	}
+
 	// Parse flags early so we can check dry-run before requiring store
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	keepChildren, _ := cmd.Flags().GetBool("keep-children")
@@ -249,7 +260,7 @@ func squashMolecule(ctx context.Context, s storage.Storage, root *types.Issue, c
 		CloseReason: fmt.Sprintf("Squashed from %d wisps", len(children)),
 		Priority:    root.Priority,
 		IssueType:   types.TypeTask,
-		Ephemeral:        false, // Digest is permanent, not a wisp
+		Ephemeral:   false, // Digest is permanent, not a wisp
 		ClosedAt:    &now,
 	}
 

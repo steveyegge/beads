@@ -56,6 +56,17 @@ func runMolBurn(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
+	// mol burn requires direct store access - ensure store is active even when daemon connected
+	if err := ensureStoreActive(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if store == nil {
+		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
+		os.Exit(1)
+	}
+
 	// Parse flags early so we can check dry-run before requiring store
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	force, _ := cmd.Flags().GetBool("force")
