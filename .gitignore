@@ -141,6 +141,7 @@ bd_shadow
 reference/
 
 # Private specs and design docs (thinking space, not committed)
+specs/
 specs/private/
 specs/active/
 specs/drafts/
