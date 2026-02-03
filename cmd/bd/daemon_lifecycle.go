@@ -369,7 +369,7 @@ func stopAllDaemons() {
 }
 
 // startDaemon starts the daemon (in foreground if requested, otherwise background)
-func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMode, foreground bool, logFile, pidFile, logLevel string, logJSON, federation bool, federationPort, remotesapiPort int, tcpAddr, tlsCert, tlsKey, tcpToken string) {
+func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMode, foreground bool, logFile, pidFile, logLevel string, logJSON, federation bool, federationPort, remotesapiPort int, tcpAddr, tlsCert, tlsKey, tcpToken, httpAddr string) {
 	logPath, err := getLogFilePath(logFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -378,7 +378,7 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMo
 
 	// Run in foreground if --foreground flag set or if we're the forked child process
 	if foreground || os.Getenv("BD_DAEMON_FOREGROUND") == "1" {
-		runDaemonLoop(interval, autoCommit, autoPush, autoPull, localMode, logPath, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort, tcpAddr, tlsCert, tlsKey, tcpToken)
+		runDaemonLoop(interval, autoCommit, autoPush, autoPull, localMode, logPath, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort, tcpAddr, tlsCert, tlsKey, tcpToken, httpAddr)
 		return
 	}
 
@@ -432,6 +432,9 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMo
 	}
 	if tcpToken != "" {
 		args = append(args, "--tcp-token", tcpToken)
+	}
+	if httpAddr != "" {
+		args = append(args, "--http-addr", httpAddr)
 	}
 
 	cmd := exec.Command(exe, args...) // #nosec G204 - bd daemon command from trusted binary

@@ -82,6 +82,12 @@ Examples:
 			tcpToken = os.Getenv("BD_DAEMON_TOKEN")
 		}
 
+		// Get HTTP address for Connect-RPC style API
+		httpAddr, _ := cmd.Flags().GetString("http-addr")
+		if httpAddr == "" {
+			httpAddr = os.Getenv("BD_DAEMON_HTTP_ADDR")
+		}
+
 		// NOTE: Only load daemon auto-settings from the database in foreground mode.
 		//
 		// In background mode, `bd daemon start` spawns a child process to run the
@@ -202,8 +208,11 @@ Examples:
 				fmt.Printf("TCP authentication: token required\n")
 			}
 		}
+		if httpAddr != "" {
+			fmt.Printf("HTTP address: %s (Connect-RPC style API)\n", httpAddr)
+		}
 
-		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort, tcpAddr, tlsCert, tlsKey, tcpToken)
+		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort, tcpAddr, tlsCert, tlsKey, tcpToken, httpAddr)
 	},
 }
 
@@ -224,4 +233,5 @@ func init() {
 	daemonStartCmd.Flags().String("tls-cert", "", "TLS certificate file for TCP connections")
 	daemonStartCmd.Flags().String("tls-key", "", "TLS key file for TCP connections")
 	daemonStartCmd.Flags().String("tcp-token", "", "Token for TCP connection authentication (or use BD_DAEMON_TOKEN)")
+	daemonStartCmd.Flags().String("http-addr", "", "HTTP address for Connect-RPC style API (e.g., :9080)")
 }

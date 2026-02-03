@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -90,6 +91,35 @@ func (s *Server) Start(_ context.Context) error {
 			listenerType = "tls"
 		}
 		go s.acceptLoop(tcpListener, listenerType)
+	}
+
+	// Start HTTP server if configured
+	s.mu.Lock()
+	httpAddr := s.httpAddr
+	tcpToken := s.tcpToken // Reuse TCP token for HTTP auth
+	s.mu.Unlock()
+
+	if httpAddr != "" {
+		httpServer := NewHTTPServer(s, httpAddr, tcpToken)
+		s.mu.Lock()
+		s.httpServer = httpServer
+		s.mu.Unlock()
+
+		// Start HTTP server in separate goroutine
+		go func() {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			// Cancel when shutdown is requested
+			go func() {
+				<-s.shutdownChan
+				cancel()
+			}()
+
+			if err := httpServer.Start(ctx); err != nil && err != http.ErrServerClosed {
+				fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
+			}
+		}()
 	}
 
 	// Store listener under lock

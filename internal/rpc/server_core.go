@@ -63,6 +63,8 @@ type Server struct {
 	tcpListener   net.Listener     // TCP listener (in addition to Unix socket)
 	tlsConfig     *tls.Config      // TLS config for TCP connections (nil = no TLS)
 	tcpToken      string           // Token for TCP authentication (empty = no auth required)
+	httpAddr      string           // HTTP address to listen on (e.g., ":9080")
+	httpServer    *HTTPServer      // HTTP server (wraps RPC in HTTP POST endpoints)
 	mu            sync.RWMutex
 	shutdown      bool
 	shutdownChan  chan struct{}
@@ -354,6 +356,29 @@ func (s *Server) TCPToken() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.tcpToken
+}
+
+// SetHTTPAddr sets the HTTP address to listen on (e.g., ":9080" or "0.0.0.0:9080").
+// Must be called before Start(). When set, the server will start an HTTP endpoint
+// that wraps RPC operations in Connect-RPC style HTTP POST requests.
+func (s *Server) SetHTTPAddr(addr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.httpAddr = addr
+}
+
+// HTTPAddr returns the configured HTTP address, or empty string if not set.
+func (s *Server) HTTPAddr() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.httpAddr
+}
+
+// HTTPServer returns the HTTP server instance, or nil if not configured.
+func (s *Server) HTTPServer() *HTTPServer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.httpServer
 }
 
 // ResetDroppedEventsCount resets the dropped events counter and returns the previous value

@@ -265,7 +265,11 @@ Run 'bd daemon --help' to see all subcommands.`,
 		if tcpToken == "" {
 			tcpToken = os.Getenv("BD_DAEMON_TOKEN")
 		}
-		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort, tcpAddr, tlsCert, tlsKey, tcpToken)
+		httpAddr, _ := cmd.Flags().GetString("http-addr")
+		if httpAddr == "" {
+			httpAddr = os.Getenv("BD_DAEMON_HTTP_ADDR")
+		}
+		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort, tcpAddr, tlsCert, tlsKey, tcpToken, httpAddr)
 	},
 }
 
@@ -298,6 +302,7 @@ func init() {
 	daemonCmd.Flags().String("tls-cert", "", "TLS certificate file for TCP connections")
 	daemonCmd.Flags().String("tls-key", "", "TLS key file for TCP connections")
 	daemonCmd.Flags().String("tcp-token", "", "Token for TCP connection authentication (or use BD_DAEMON_TOKEN)")
+	daemonCmd.Flags().String("http-addr", "", "HTTP address for Connect-RPC style API (e.g., :9080)")
 	daemonCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
 	rootCmd.AddCommand(daemonCmd)
 }
@@ -314,7 +319,7 @@ func computeDaemonParentPID() int {
 	}
 	return os.Getppid()
 }
-func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, localMode bool, logPath, pidFile, logLevel string, logJSON, federation bool, federationPort, remotesapiPort int, tcpAddr, tlsCert, tlsKey, tcpToken string) {
+func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, localMode bool, logPath, pidFile, logLevel string, logJSON, federation bool, federationPort, remotesapiPort int, tcpAddr, tlsCert, tlsKey, tcpToken, httpAddr string) {
 	level := parseLogLevel(logLevel)
 	logF, log := setupDaemonLogger(logPath, logJSON, level)
 	defer func() { _ = logF.Close() }()
@@ -665,7 +670,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	serverCtx, serverCancel := context.WithCancel(ctx)
 	defer serverCancel()
 
-	server, serverErrChan, err := startRPCServer(serverCtx, socketPath, store, workspacePath, daemonDBPath, tcpAddr, tlsCert, tlsKey, tcpToken, log)
+	server, serverErrChan, err := startRPCServer(serverCtx, socketPath, store, workspacePath, daemonDBPath, tcpAddr, tlsCert, tlsKey, tcpToken, httpAddr, log)
 	if err != nil {
 		return
 	}
@@ -680,6 +685,11 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		if tcpToken != "" {
 			log.Info("TCP token authentication enabled")
 		}
+	}
+
+	// Log HTTP address if configured
+	if httpAddr != "" {
+		log.Info("HTTP listener enabled (Connect-RPC style API)", "addr", httpAddr)
 	}
 
 	// Choose event loop based on BEADS_DAEMON_MODE (need to determine early for SetConfig)

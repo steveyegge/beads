@@ -13,7 +13,7 @@ import (
 )
 
 // startRPCServer initializes and starts the RPC server
-func startRPCServer(ctx context.Context, socketPath string, store storage.Storage, workspacePath string, dbPath string, tcpAddr, tlsCert, tlsKey, tcpToken string, log daemonLogger) (*rpc.Server, chan error, error) {
+func startRPCServer(ctx context.Context, socketPath string, store storage.Storage, workspacePath string, dbPath string, tcpAddr, tlsCert, tlsKey, tcpToken, httpAddr string, log daemonLogger) (*rpc.Server, chan error, error) {
 	// Sync daemon version with CLI version
 	rpc.ServerVersion = Version
 
@@ -35,6 +35,11 @@ func startRPCServer(ctx context.Context, socketPath string, store storage.Storag
 		if tcpToken != "" {
 			server.SetTCPToken(tcpToken)
 		}
+	}
+
+	// Configure HTTP listener if address provided (Connect-RPC style API)
+	if httpAddr != "" {
+		server.SetHTTPAddr(httpAddr)
 	}
 
 	serverErrChan := make(chan error, 1)
