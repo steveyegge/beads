@@ -24,20 +24,12 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// TestNoDaemonFlagDeprecated verifies that --no-daemon is rejected in production mode.
-// The flag is still allowed in tests (BEADS_TEST_MODE=1) for backwards compatibility.
-func TestNoDaemonFlagDeprecated(t *testing.T) {
-	// This test runs in a subprocess to verify the error message
-	if os.Getenv("BD_TEST_NO_DAEMON_SUBPROCESS") == "1" {
-		// Subprocess mode: verify the noDaemon flag has been removed
-		os.Unsetenv("BEADS_TEST_MODE")
-
-		// The --no-daemon flag has been removed (bd-e5e5). We verify
-		// the FallbackFlagNoDaemon constant still exists for internal use
-		if FallbackFlagNoDaemon != "flag_no_daemon" {
-			t.Fatal("FallbackFlagNoDaemon constant should still exist")
-		}
-		return
+// TestFallbackConstantsValid verifies that expected fallback reason constants exist
+// and deprecated ones (FallbackWispOperation, FallbackSingleProcessOnly) are removed.
+func TestFallbackConstantsValid(t *testing.T) {
+	// FallbackFlagNoDaemon still exists for internal use (forced direct mode)
+	if FallbackFlagNoDaemon != "flag_no_daemon" {
+		t.Fatal("FallbackFlagNoDaemon constant should still exist for internal use")
 	}
 
 	// Verify the deprecated constants are removed
@@ -228,7 +220,7 @@ func TestNoUnexpectedFallbackReasons(t *testing.T) {
 	// Valid reasons that can still occur:
 	validReasons := []string{
 		FallbackNone,              // Using daemon successfully
-		FallbackFlagNoDaemon,      // --no-daemon flag (deprecated but exists)
+		FallbackFlagNoDaemon,      // Forced direct mode (doctor, restore, edit, profile, sandbox)
 		FallbackConnectFailed,     // Daemon not running
 		FallbackHealthFailed,      // Daemon unhealthy
 		FallbackWorktreeSafety,    // Git worktree safety check
@@ -333,41 +325,31 @@ func TestDoltBackendCanUseDaemon(t *testing.T) {
 	})
 }
 
-// TestNoDaemonFlagDeprecationMessage verifies the deprecation message is shown
-// when --no-daemon is used in production (not in test mode).
-func TestNoDaemonFlagDeprecationMessage(t *testing.T) {
+// TestNoDaemonFlagRemoved verifies that --no-daemon flag no longer exists.
+// The flag was fully removed in bd-e5e5; using it should produce an unknown flag error.
+func TestNoDaemonFlagRemoved(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping subprocess test in short mode")
 	}
 
-	// Run bd --no-daemon list in subprocess without BEADS_TEST_MODE
+	// Run bd --no-daemon list in subprocess
 	exe, err := exec.LookPath("bd")
 	if err != nil {
-		t.Skip("bd binary not in PATH, skipping deprecation message test")
+		t.Skip("bd binary not in PATH, skipping flag removal test")
 	}
 
 	cmd := exec.Command(exe, "--no-daemon", "list")
-	// Remove BEADS_TEST_MODE to trigger deprecation
-	env := os.Environ()
-	filteredEnv := make([]string, 0, len(env))
-	for _, e := range env {
-		if !strings.HasPrefix(e, "BEADS_TEST_MODE=") {
-			filteredEnv = append(filteredEnv, e)
-		}
-	}
-	cmd.Env = filteredEnv
-
 	output, err := cmd.CombinedOutput()
 
-	// We expect either:
-	// 1. An error with deprecation message
-	// 2. Success (if run in a valid beads workspace)
-	// The key is that if there's an error, it should mention deprecation
-	if err != nil {
-		outputStr := string(output)
-		if strings.Contains(outputStr, "deprecated") || strings.Contains(outputStr, "no-daemon") {
-			t.Log("Deprecation message confirmed")
-		}
-		// Other errors (like "no beads directory") are acceptable
+	// We expect an error because --no-daemon is an unknown flag
+	if err == nil {
+		t.Fatal("expected error for unknown --no-daemon flag, but command succeeded")
+	}
+
+	outputStr := string(output)
+	// Should mention unknown flag
+	if !strings.Contains(outputStr, "unknown flag") && !strings.Contains(outputStr, "no-daemon") {
+		t.Logf("output: %s", outputStr)
+		// Other errors (like "no beads directory") may occur first, which is acceptable
 	}
 }
