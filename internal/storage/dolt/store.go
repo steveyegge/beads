@@ -39,12 +39,13 @@ import (
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
-	db       *sql.DB
-	dbPath   string       // Path to Dolt database directory
-	closed   atomic.Bool  // Tracks whether Close() has been called
-	connStr  string       // Connection string for reconnection
-	mu       sync.RWMutex // Protects concurrent access
-	readOnly bool         // True if opened in read-only mode
+	db         *sql.DB
+	dbPath     string       // Path to Dolt database directory
+	closed     atomic.Bool  // Tracks whether Close() has been called
+	connStr    string       // Connection string for reconnection
+	mu         sync.RWMutex // Protects concurrent access
+	readOnly   bool         // True if opened in read-only mode
+	serverMode bool         // True if connected to dolt sql-server (vs embedded)
 
 	// embeddedConnector is non-nil only in embedded mode. It must be closed to release
 	// filesystem locks held by the embedded engine.
@@ -81,6 +82,63 @@ func newEmbeddedOpenBackoff() backoff.BackOff {
 	bo := backoff.NewExponentialBackOff()
 	bo.MaxElapsedTime = embeddedOpenMaxElapsed
 	return bo
+}
+
+// Server mode retry configuration.
+// Server mode uses go-sql-driver/mysql which doesn't have built-in retry like the
+// embedded driver. We add retry for transient connection errors (stale pool connections,
+// brief network issues, server restarts).
+const serverRetryMaxElapsed = 30 * time.Second
+
+func newServerRetryBackoff() backoff.BackOff {
+	bo := backoff.NewExponentialBackOff()
+	bo.MaxElapsedTime = serverRetryMaxElapsed
+	return bo
+}
+
+// isRetryableError returns true if the error is a transient connection error
+// that should be retried in server mode.
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	// MySQL driver transient errors
+	if strings.Contains(errStr, "driver: bad connection") {
+		return true
+	}
+	if strings.Contains(errStr, "invalid connection") {
+		return true
+	}
+	// Network transient errors (brief blips, not persistent failures)
+	if strings.Contains(errStr, "broken pipe") {
+		return true
+	}
+	if strings.Contains(errStr, "connection reset") {
+		return true
+	}
+	// Don't retry "connection refused" - that means server is down
+	return false
+}
+
+// withRetry executes an operation with retry for transient errors.
+// Only active in server mode; embedded mode has driver-level retry.
+func (s *DoltStore) withRetry(ctx context.Context, op func() error) error {
+	if !s.serverMode {
+		return op()
+	}
+
+	bo := newServerRetryBackoff()
+	return backoff.Retry(func() error {
+		err := op()
+		if err != nil && isRetryableError(err) {
+			return err // Retryable - backoff will retry
+		}
+		if err != nil {
+			return backoff.Permanent(err) // Non-retryable - stop immediately
+		}
+		return nil
+	}, backoff.WithContext(bo, ctx))
 }
 
 // New creates a new Dolt storage backend
@@ -223,6 +281,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		remote:            cfg.Remote,
 		branch:            "main",
 		readOnly:          cfg.ReadOnly,
+		serverMode:        cfg.ServerMode,
 	}
 
 	// Schema initialization:
