@@ -137,7 +137,7 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	dbPath = ""
 	actor = ""
 	jsonOutput = false
-	noDaemon = false
+	daemonStatus.FallbackReason = FallbackNone // replaces noDaemon = false
 	noAutoFlush = false
 	noAutoImport = false
 	sandboxMode = false
@@ -901,7 +901,7 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 	dbPath = ""
 	actor = ""
 	jsonOutput = false
-	noDaemon = false
+	daemonStatus.FallbackReason = FallbackNone // replaces noDaemon = false
 	noAutoFlush = false
 	noAutoImport = false
 	sandboxMode = false

@@ -138,7 +138,7 @@ func runBDForCoverage(t *testing.T, dir string, args ...string) (stdout string, 
 	dbPath = ""
 	actor = ""
 	jsonOutput = false
-	noDaemon = false
+	daemonStatus.FallbackReason = FallbackNone // replaces noDaemon = false
 	noAutoFlush = false
 	noAutoImport = false
 	sandboxMode = false

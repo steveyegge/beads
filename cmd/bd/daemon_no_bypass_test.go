@@ -29,13 +29,11 @@ import (
 func TestNoDaemonFlagDeprecated(t *testing.T) {
 	// This test runs in a subprocess to verify the error message
 	if os.Getenv("BD_TEST_NO_DAEMON_SUBPROCESS") == "1" {
-		// Subprocess mode: run bd with --no-daemon without BEADS_TEST_MODE
-		// This should produce a deprecation error
+		// Subprocess mode: verify the noDaemon flag has been removed
 		os.Unsetenv("BEADS_TEST_MODE")
 
-		// The noDaemon flag should trigger the deprecation error in main.go
-		// We can't easily test this without a full bd binary, so we check
-		// that the constant still exists for the deprecation check
+		// The --no-daemon flag has been removed (bd-e5e5). We verify
+		// the FallbackFlagNoDaemon constant still exists for internal use
 		if FallbackFlagNoDaemon != "flag_no_daemon" {
 			t.Fatal("FallbackFlagNoDaemon constant should still exist")
 		}

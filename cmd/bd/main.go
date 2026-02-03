@@ -39,7 +39,6 @@ var (
 
 	// Daemon mode
 	daemonClient *rpc.Client // RPC client when daemon is running
-	noDaemon     bool        // Force direct mode (no daemon)
 
 	// Signal-aware context for graceful cancellation
 	rootCtx    context.Context
@@ -226,7 +225,6 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db)")
 	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $BD_ACTOR, git user.name, $USER)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
-	rootCmd.PersistentFlags().BoolVar(&noDaemon, "no-daemon", false, "Force direct storage mode, bypass daemon if running")
 	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
 	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
 	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables daemon and auto-sync")
@@ -311,22 +309,6 @@ var rootCmd = &cobra.Command{
 				Value  interface{}
 				WasSet bool
 			}{jsonOutput, true}
-		}
-		if !cmd.Flags().Changed("no-daemon") {
-			noDaemon = config.GetBool("no-daemon")
-		} else {
-			flagOverrides["no-daemon"] = struct {
-				Value  interface{}
-				WasSet bool
-			}{noDaemon, true}
-		}
-
-		// DEPRECATED: --no-daemon is no longer allowed (causes Dolt CPU issues)
-		// See bead gu-fnx for context
-		// Allow in test mode to not break existing tests (hq--5vj3)
-		if noDaemon && os.Getenv("BEADS_TEST_MODE") != "1" {
-			fmt.Fprintf(os.Stderr, "Error: The --no-daemon flag is deprecated. Consult the mayor about enabling the systemctl-level Dolt daemon.\n")
-			os.Exit(1)
 		}
 
 		if !cmd.Flags().Changed("no-auto-flush") {
@@ -466,12 +448,15 @@ var rootCmd = &cobra.Command{
 		// Protect forks from accidentally committing upstream issue database
 		ensureForkProtection()
 
+		// Track if direct mode is forced for this command (profile, sandbox, edit, doctor, restore)
+		forceDirectMode := false
+
 		// Performance profiling setup
 		// When --profile is enabled, force direct mode to capture actual database operations
 		// rather than just RPC serialization/network overhead. This gives accurate profiles
 		// of the storage layer, query performance, and business logic.
 		if profileEnabled {
-			noDaemon = true
+			forceDirectMode = true
 			timestamp := time.Now().Format("20060102-150405")
 			if f, _ := os.Create(fmt.Sprintf("bd-profile-%s-%s.prof", cmd.Name(), timestamp)); f != nil {
 				profileFile = f
@@ -484,8 +469,8 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Auto-detect sandboxed environment (Phase 2 for GH #353)
-		// Only auto-enable if user hasn't explicitly set --sandbox or --no-daemon
-		if !cmd.Flags().Changed("sandbox") && !cmd.Flags().Changed("no-daemon") {
+		// Only auto-enable if user hasn't explicitly set --sandbox
+		if !cmd.Flags().Changed("sandbox") {
 			if isSandboxed() {
 				sandboxMode = true
 				fmt.Fprintf(os.Stderr, "ℹ️  Sandbox detected, using direct mode\n")
@@ -494,7 +479,7 @@ var rootCmd = &cobra.Command{
 
 		// If sandbox mode is set, enable all sandbox flags
 		if sandboxMode {
-			noDaemon = true
+			forceDirectMode = true
 			noAutoFlush = true
 			noAutoImport = true
 			// Use shorter lock timeout in sandbox mode unless explicitly set
@@ -506,7 +491,7 @@ var rootCmd = &cobra.Command{
 		// Force direct mode for human-only interactive commands
 		// edit: can take minutes in $EDITOR, daemon connection times out (GH #227)
 		if cmd.Name() == "edit" {
-			noDaemon = true
+			forceDirectMode = true
 		}
 
 		// Set auto-flush based on flag (invert no-auto-flush)
@@ -648,21 +633,21 @@ var rootCmd = &cobra.Command{
 		// repair daemon/DB issues, so attempting to connect to (or auto-start) a daemon
 		// can add noise and timeouts.
 		if cmd.Name() == "doctor" {
-			noDaemon = true
+			forceDirectMode = true
 		}
 
 		// Restore should always run in direct mode. It performs git checkouts to read
 		// historical issue data, which could conflict with daemon operations.
 		if cmd.Name() == "restore" {
-			noDaemon = true
+			forceDirectMode = true
 		}
 
-		// Try to connect to daemon first (unless --no-daemon flag is set or worktree safety check fails)
-		if noDaemon {
+		// Try to connect to daemon first (unless direct mode is forced or worktree safety check fails)
+		if forceDirectMode {
 			// Only set FallbackFlagNoDaemon if not already set by auto-bypass logic
 			if daemonStatus.FallbackReason == FallbackNone {
 				daemonStatus.FallbackReason = FallbackFlagNoDaemon
-				debug.Logf("--no-daemon flag set, using direct mode")
+				debug.Logf("direct mode forced for this command")
 			}
 		} else if shouldDisableDaemonForWorktree() {
 			// In a git worktree without sync-branch configured - daemon is unsafe
@@ -854,7 +839,8 @@ var rootCmd = &cobra.Command{
 			(cmd.Parent() != nil && (cmd.Parent().Name() == "daemon" || cmd.Parent().Name() == "daemons"))
 		rigFlag, _ := cmd.Flags().GetString("rig")
 		isCrossRig := rigFlag != ""
-		if daemonClient == nil && !noDaemon && !isDaemonCommand && !isCrossRig {
+		// Only enforce daemon requirement if direct mode wasn't explicitly forced
+		if daemonClient == nil && daemonStatus.FallbackReason == FallbackNone && !isDaemonCommand && !isCrossRig {
 			// Check if Dolt server mode is enabled
 			checkBeadsDir := beads.FindBeadsDir()
 			if checkBeadsDir == "" && dbPath != "" {
@@ -868,9 +854,7 @@ var rootCmd = &cobra.Command{
 					if daemonStatus.Detail != "" {
 						fmt.Fprintf(os.Stderr, "Detail: %s\n", daemonStatus.Detail)
 					}
-					fmt.Fprintf(os.Stderr, "\nTo fix:\n")
-					fmt.Fprintf(os.Stderr, "  1. Start daemon: bd daemon start\n")
-					fmt.Fprintf(os.Stderr, "  2. Or use --no-daemon to force direct mode (not recommended)\n")
+					fmt.Fprintf(os.Stderr, "\nTo fix: start daemon with 'bd daemon start'\n")
 					os.Exit(1)
 				}
 			}

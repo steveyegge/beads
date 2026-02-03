@@ -299,19 +299,27 @@ func setDaemonStatus(ds DaemonStatus) {
 }
 
 // isNoDaemon returns true if daemon mode is disabled.
+// With the removal of --no-daemon flag, this now checks if direct mode is forced.
 func isNoDaemon() bool {
 	if shouldUseGlobals() {
-		return noDaemon
+		return daemonStatus.FallbackReason != FallbackNone
 	}
 	return cmdCtx.NoDaemon
 }
 
-// setNoDaemon updates the no-daemon flag.
+// setNoDaemon updates the no-daemon state by setting the fallback reason.
+// Deprecated: Prefer setting daemonStatus.FallbackReason directly.
 func setNoDaemon(nd bool) {
+	if nd {
+		if daemonStatus.FallbackReason == FallbackNone {
+			daemonStatus.FallbackReason = FallbackFlagNoDaemon
+		}
+	} else {
+		daemonStatus.FallbackReason = FallbackNone
+	}
 	if cmdCtx != nil {
 		cmdCtx.NoDaemon = nd
 	}
-	noDaemon = nd
 }
 
 // isReadonlyMode returns true if read-only mode is enabled.
@@ -546,7 +554,7 @@ func syncCommandContext() {
 	cmdCtx.DBPath = dbPath
 	cmdCtx.Actor = actor
 	cmdCtx.JSONOutput = jsonOutput
-	cmdCtx.NoDaemon = noDaemon
+	cmdCtx.NoDaemon = daemonStatus.FallbackReason != FallbackNone // derived from daemonStatus
 	cmdCtx.SandboxMode = sandboxMode
 	cmdCtx.AllowStale = allowStale
 	cmdCtx.NoDb = noDb
