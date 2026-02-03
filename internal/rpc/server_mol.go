@@ -1163,3 +1163,94 @@ func (s *Server) findParentMolecule(ctx context.Context, issueID string) string 
 
 	return ""
 }
+
+// handleCloseContinue handles the close --continue RPC operation (bd-ympw)
+// This walks the parent-child chain to find the next ready step in a molecule
+func (s *Server) handleCloseContinue(req *Request) Response {
+	var args CloseContinueArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
+	}
+
+	ctx := s.reqCtx(req)
+	actor := args.Actor
+	if actor == "" {
+		actor = s.reqActor(req)
+	}
+
+	// Resolve the closed step ID
+	closedStepID, err := utils.ResolvePartialID(ctx, s.storage, args.ClosedStepID)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("resolving step ID: %v", err)}
+	}
+
+	// Get the closed step
+	closedStep, err := s.storage.GetIssue(ctx, closedStepID)
+	if err != nil || closedStep == nil {
+		return Response{Success: false, Error: fmt.Sprintf("could not get closed step: %v", err)}
+	}
+
+	result := &CloseContinueResult{
+		ClosedStep: closedStep,
+	}
+
+	// Find parent molecule by walking up the parent-child chain
+	moleculeID := s.findParentMolecule(ctx, closedStepID)
+	if moleculeID == "" {
+		// Not part of a molecule - nothing to advance, return empty result
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+	result.MoleculeID = moleculeID
+
+	// Load molecule progress to find next step
+	progress, err := s.getMoleculeProgress(ctx, moleculeID, 0, 0, 0)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("could not load molecule: %v", err)}
+	}
+
+	// Check if molecule is complete
+	if progress.Completed >= progress.Total {
+		result.MolComplete = true
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	// Find next ready step from the progress steps
+	var nextStep *types.Issue
+	for _, step := range progress.Steps {
+		if step.Status == "ready" {
+			// Get full issue details
+			issue, err := s.storage.GetIssue(ctx, step.IssueID)
+			if err == nil && issue != nil {
+				nextStep = issue
+				break
+			}
+		}
+	}
+
+	if nextStep == nil {
+		// No ready steps - might be blocked
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	result.NextStep = nextStep
+
+	// Auto-claim if requested
+	if args.AutoClaim {
+		updates := map[string]interface{}{
+			"status": types.StatusInProgress,
+		}
+		if err := s.storage.UpdateIssue(ctx, nextStep.ID, updates, actor); err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("could not claim next step: %v", err)}
+		}
+		result.AutoAdvanced = true
+
+		// Emit mutation event for the claimed step
+		s.emitMutation(MutationUpdate, nextStep.ID, nextStep.Title, "")
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}

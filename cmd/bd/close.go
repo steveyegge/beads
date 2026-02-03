@@ -233,11 +233,28 @@ create, update, show, or close operation).`,
 				result.Close()
 			}
 
-			// Handle --continue flag in daemon mode
-			// Note: --continue requires direct database access to walk parent-child chain
-			// TODO: Add daemon RPC support for close --continue per gt-as9kdm
-			if continueFlag && len(closedIssues) > 0 {
-				fmt.Fprintf(os.Stderr, "\nNote: --continue not yet supported in daemon mode\n")
+			// Handle --continue flag in daemon mode (bd-ympw)
+			if continueFlag && len(closedIssues) > 0 && len(resolvedIDs) == 1 {
+				autoClaim := !noAuto
+				continueArgs := &rpc.CloseContinueArgs{
+					ClosedStepID: resolvedIDs[0],
+					AutoClaim:    autoClaim,
+					Actor:        actor,
+				}
+				continueResult, err := daemonClient.CloseContinue(continueArgs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not advance to next step: %v\n", err)
+				} else if continueResult != nil {
+					if jsonOutput {
+						// Include continue result in JSON output
+						outputJSON(map[string]interface{}{
+							"closed":   closedIssues,
+							"continue": continueResult,
+						})
+						return
+					}
+					PrintContinueResultFromRPC(continueResult)
+				}
 			}
 
 			if jsonOutput && len(closedIssues) > 0 {
@@ -401,6 +418,33 @@ create, update, show, or close operation).`,
 			outputJSON(closedIssues)
 		}
 	},
+}
+
+// PrintContinueResultFromRPC prints the result of advancing to the next step from RPC
+func PrintContinueResultFromRPC(result *rpc.CloseContinueResult) {
+	if result == nil {
+		return
+	}
+
+	if result.MolComplete {
+		fmt.Printf("\n%s Molecule %s complete! All steps closed.\n", ui.RenderPass("✓"), result.MoleculeID)
+		fmt.Println("Consider: bd mol squash " + result.MoleculeID + " --summary '...'")
+		return
+	}
+
+	if result.NextStep == nil {
+		fmt.Println("\nNo ready steps in molecule (may be blocked).")
+		return
+	}
+
+	fmt.Printf("\nNext ready in molecule:\n")
+	fmt.Printf("  %s: %s\n", result.NextStep.ID, result.NextStep.Title)
+
+	if result.AutoAdvanced {
+		fmt.Printf("\n%s Marked in_progress (use --no-auto to skip)\n", ui.RenderWarn("→"))
+	} else {
+		fmt.Printf("\nStart with: bd update %s --status in_progress\n", result.NextStep.ID)
+	}
 }
 
 func init() {

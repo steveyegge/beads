@@ -63,6 +63,9 @@ const (
 	OpMolSquash  = "mol_squash"
 	OpMolBurn    = "mol_burn"
 	OpMolCurrent = "mol_current"
+
+	// Close operations (bd-ympw)
+	OpCloseContinue = "close_continue"
 )
 
 // Request represents an RPC request from client to daemon
@@ -791,5 +794,23 @@ type MolCurrentProgress struct {
 // MolCurrentResult represents the result of a mol current operation
 type MolCurrentResult struct {
 	Molecules []*MolCurrentProgress `json:"molecules"`
+}
+
+// Close continue operation (bd-ympw)
+
+// CloseContinueArgs represents arguments for the close --continue operation
+type CloseContinueArgs struct {
+	ClosedStepID string `json:"closed_step_id"` // The step that was just closed
+	AutoClaim    bool   `json:"auto_claim"`     // Whether to auto-claim the next step
+	Actor        string `json:"actor"`          // Actor name for updates
+}
+
+// CloseContinueResult represents the result of a close --continue operation
+type CloseContinueResult struct {
+	ClosedStep   *types.Issue `json:"closed_step"`             // The step that was closed
+	NextStep     *types.Issue `json:"next_step,omitempty"`     // The next ready step
+	AutoAdvanced bool         `json:"auto_advanced"`           // Whether next step was auto-claimed
+	MolComplete  bool         `json:"molecule_complete"`       // Whether the molecule is complete
+	MoleculeID   string       `json:"molecule_id,omitempty"`   // Parent molecule ID
 }
 

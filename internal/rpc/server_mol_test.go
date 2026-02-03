@@ -54,6 +54,10 @@ func createTestProto(t *testing.T, store storage.Storage, id, title string) *typ
 	if err := store.CreateIssue(context.Background(), proto, "test"); err != nil {
 		t.Fatalf("failed to create proto: %v", err)
 	}
+	// Labels are stored in a separate table - add them explicitly
+	if err := store.AddLabel(context.Background(), proto.ID, MoleculeLabel, "test"); err != nil {
+		t.Fatalf("failed to add molecule label: %v", err)
+	}
 	return proto
 }
 
@@ -600,5 +604,241 @@ func TestIsProto(t *testing.T) {
 
 	if server.isProto(nil) {
 		t.Error("expected nil to not be identified as proto")
+	}
+}
+
+// Tests for handleCloseContinue (bd-ympw)
+
+func TestHandleCloseContinue_InvalidArgs(t *testing.T) {
+	server, _ := setupMolTestServer(t)
+
+	req := &Request{
+		Operation: OpCloseContinue,
+		Args:      []byte(`{"invalid json`),
+		Actor:     "test",
+	}
+
+	resp := server.handleCloseContinue(req)
+	if resp.Success {
+		t.Error("expected failure for invalid JSON args")
+	}
+	if resp.Error == "" {
+		t.Error("expected error message")
+	}
+}
+
+func TestHandleCloseContinue_NonExistentStep(t *testing.T) {
+	server, store := setupMolTestServerWithSQLite(t)
+
+	// Create some test data to ensure the store is initialized
+	createTestMolecule(t, store, "bd-mol1", "Test Molecule", false)
+
+	args := CloseContinueArgs{
+		ClosedStepID: "bd-nonexistent",
+		AutoClaim:    true,
+		Actor:        "test",
+	}
+	argsJSON, _ := json.Marshal(args)
+
+	req := &Request{
+		Operation: OpCloseContinue,
+		Args:      argsJSON,
+		Actor:     "test",
+	}
+
+	resp := server.handleCloseContinue(req)
+	if resp.Success {
+		t.Error("expected failure for non-existent step")
+	}
+}
+
+func TestHandleCloseContinue_NotPartOfMolecule(t *testing.T) {
+	server, store := setupMolTestServerWithSQLite(t)
+
+	// Create a standalone issue (not part of a molecule)
+	standalone := createTestMolecule(t, store, "bd-standalone", "Standalone Issue", false)
+
+	// Close the issue first
+	ctx := context.Background()
+	store.CloseIssue(ctx, standalone.ID, "Closed", "test", "")
+
+	args := CloseContinueArgs{
+		ClosedStepID: standalone.ID,
+		AutoClaim:    true,
+		Actor:        "test",
+	}
+	argsJSON, _ := json.Marshal(args)
+
+	req := &Request{
+		Operation: OpCloseContinue,
+		Args:      argsJSON,
+		Actor:     "test",
+	}
+
+	resp := server.handleCloseContinue(req)
+	if !resp.Success {
+		t.Fatalf("expected success for standalone issue: %s", resp.Error)
+	}
+
+	var result CloseContinueResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	// Should return empty result (no molecule to advance)
+	if result.MoleculeID != "" {
+		t.Errorf("expected empty molecule ID, got %s", result.MoleculeID)
+	}
+	if result.NextStep != nil {
+		t.Error("expected nil next step")
+	}
+}
+
+func TestHandleCloseContinue_WithMolecule(t *testing.T) {
+	server, store := setupMolTestServerWithSQLite(t)
+
+	// Create a molecule (proto) with children (steps)
+	// Use createTestProto so findParentMolecule will recognize it as a molecule root
+	mol := createTestProto(t, store, "bd-mol1", "Test Molecule")
+	step1 := createTestChild(t, store, "bd-step1", "Step 1", mol.ID, false)
+	step2 := createTestChild(t, store, "bd-step2", "Step 2", mol.ID, false)
+
+	ctx := context.Background()
+
+	// Close step1
+	store.CloseIssue(ctx, step1.ID, "Closed", "test", "")
+	_ = step2 // suppress unused warning
+	_ = server // suppress unused warning
+
+	args := CloseContinueArgs{
+		ClosedStepID: step1.ID,
+		AutoClaim:    false, // Don't auto-claim
+		Actor:        "test",
+	}
+	argsJSON, _ := json.Marshal(args)
+
+	req := &Request{
+		Operation: OpCloseContinue,
+		Args:      argsJSON,
+		Actor:     "test",
+	}
+
+	resp := server.handleCloseContinue(req)
+	if !resp.Success {
+		t.Fatalf("expected success: %s", resp.Error)
+	}
+
+	var result CloseContinueResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if result.MoleculeID != mol.ID {
+		t.Errorf("expected molecule ID %s, got %s", mol.ID, result.MoleculeID)
+	}
+	if result.MolComplete {
+		t.Error("expected molecule not complete")
+	}
+	if result.NextStep == nil {
+		t.Error("expected next step to be found")
+	} else if result.NextStep.ID != step2.ID {
+		t.Errorf("expected next step %s, got %s", step2.ID, result.NextStep.ID)
+	}
+	if result.AutoAdvanced {
+		t.Error("expected auto_advanced to be false")
+	}
+}
+
+func TestHandleCloseContinue_AutoClaim(t *testing.T) {
+	server, store := setupMolTestServerWithSQLite(t)
+
+	// Create a molecule (proto) with children (steps)
+	mol := createTestProto(t, store, "bd-mol1", "Test Molecule")
+	step1 := createTestChild(t, store, "bd-step1", "Step 1", mol.ID, false)
+	step2 := createTestChild(t, store, "bd-step2", "Step 2", mol.ID, false)
+
+	// Close step1
+	ctx := context.Background()
+	store.CloseIssue(ctx, step1.ID, "Closed", "test", "")
+
+	args := CloseContinueArgs{
+		ClosedStepID: step1.ID,
+		AutoClaim:    true, // Auto-claim the next step
+		Actor:        "test",
+	}
+	argsJSON, _ := json.Marshal(args)
+
+	req := &Request{
+		Operation: OpCloseContinue,
+		Args:      argsJSON,
+		Actor:     "test",
+	}
+
+	resp := server.handleCloseContinue(req)
+	if !resp.Success {
+		t.Fatalf("expected success: %s", resp.Error)
+	}
+
+	var result CloseContinueResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if !result.AutoAdvanced {
+		t.Error("expected auto_advanced to be true")
+	}
+	if result.NextStep == nil {
+		t.Fatal("expected next step")
+	}
+
+	// Verify step2 is now in_progress
+	step2Updated, err := store.GetIssue(ctx, step2.ID)
+	if err != nil {
+		t.Fatalf("failed to get step2: %v", err)
+	}
+	if step2Updated.Status != types.StatusInProgress {
+		t.Errorf("expected step2 status in_progress, got %s", step2Updated.Status)
+	}
+}
+
+func TestHandleCloseContinue_MoleculeComplete(t *testing.T) {
+	server, store := setupMolTestServerWithSQLite(t)
+
+	// Create a molecule (proto) with only one child
+	mol := createTestProto(t, store, "bd-mol1", "Test Molecule")
+	step1 := createTestChild(t, store, "bd-step1", "Step 1", mol.ID, false)
+
+	// Close step1 (the only step)
+	ctx := context.Background()
+	store.CloseIssue(ctx, step1.ID, "Closed", "test", "")
+
+	args := CloseContinueArgs{
+		ClosedStepID: step1.ID,
+		AutoClaim:    true,
+		Actor:        "test",
+	}
+	argsJSON, _ := json.Marshal(args)
+
+	req := &Request{
+		Operation: OpCloseContinue,
+		Args:      argsJSON,
+		Actor:     "test",
+	}
+
+	resp := server.handleCloseContinue(req)
+	if !resp.Success {
+		t.Fatalf("expected success: %s", resp.Error)
+	}
+
+	var result CloseContinueResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if !result.MolComplete {
+		t.Error("expected molecule to be complete")
+	}
+	if result.NextStep != nil {
+		t.Error("expected no next step when molecule is complete")
 	}
 }

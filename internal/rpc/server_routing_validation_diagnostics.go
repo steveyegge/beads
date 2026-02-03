@@ -309,6 +309,9 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleMolBurn(req)
 	case OpMolCurrent:
 		resp = s.handleMolCurrent(req)
+	// Close operations (bd-ympw)
+	case OpCloseContinue:
+		resp = s.handleCloseContinue(req)
 	default:
 		return Response{
 			Success: false,
