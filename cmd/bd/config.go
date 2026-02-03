@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
@@ -78,9 +79,16 @@ var configSetCmd = &cobra.Command{
 			return
 		}
 
-		// Database-stored config requires direct mode
-		if err := ensureDirectMode("config set requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Use daemon RPC when available (bd-wmil)
+		if daemonClient != nil {
+			runConfigSetViaDaemon(key, value)
+			return
+		}
+
+		// Fallback to direct store access
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
 			os.Exit(1)
 		}
 
@@ -108,6 +116,29 @@ var configSetCmd = &cobra.Command{
 			fmt.Printf("Set %s = %s\n", key, value)
 		}
 	},
+}
+
+// runConfigSetViaDaemon executes config set via daemon RPC (bd-wmil)
+func runConfigSetViaDaemon(key, value string) {
+	args := &rpc.ConfigSetArgs{
+		Key:   key,
+		Value: value,
+	}
+
+	result, err := daemonClient.ConfigSet(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]string{
+			"key":   result.Key,
+			"value": result.Value,
+		})
+	} else {
+		fmt.Printf("Set %s = %s\n", result.Key, result.Value)
+	}
 }
 
 var configGetCmd = &cobra.Command{
@@ -138,9 +169,16 @@ var configGetCmd = &cobra.Command{
 			return
 		}
 
-		// Database-stored config requires direct mode
-		if err := ensureDirectMode("config get requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Use daemon RPC when available (bd-wmil)
+		if daemonClient != nil {
+			runConfigGetViaDaemon(key)
+			return
+		}
+
+		// Fallback to direct store access
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
 			os.Exit(1)
 		}
 
@@ -175,49 +213,98 @@ var configGetCmd = &cobra.Command{
 	},
 }
 
+// runConfigGetViaDaemon executes config get via daemon RPC (bd-wmil)
+func runConfigGetViaDaemon(key string) {
+	args := &rpc.GetConfigArgs{
+		Key: key,
+	}
+
+	result, err := daemonClient.GetConfig(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]string{
+			"key":   result.Key,
+			"value": result.Value,
+		})
+	} else {
+		if result.Value == "" {
+			fmt.Printf("%s (not set)\n", key)
+		} else {
+			fmt.Printf("%s\n", result.Value)
+		}
+	}
+}
+
 var configListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all configuration",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Config operations work in direct mode only
-		if err := ensureDirectMode("config list requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Use daemon RPC when available (bd-wmil)
+		if daemonClient != nil {
+			runConfigListViaDaemon()
+			return
+		}
+
+		// Fallback to direct store access
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
 			os.Exit(1)
 		}
 
 		ctx := rootCtx
-		config, err := store.GetAllConfig(ctx)
+		cfg, err := store.GetAllConfig(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error listing config: %v\n", err)
 			os.Exit(1)
 		}
 
-		if jsonOutput {
-			outputJSON(config)
-			return
-		}
-
-		if len(config) == 0 {
-			fmt.Println("No configuration set")
-			return
-		}
-
-		// Sort keys for consistent output
-		keys := make([]string, 0, len(config))
-		for k := range config {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		fmt.Println("\nConfiguration:")
-		for _, k := range keys {
-			fmt.Printf("  %s = %s\n", k, config[k])
-		}
-
-		// Check for config.yaml overrides that take precedence (bd-20j)
-		// This helps diagnose when effective config differs from database config
-		showConfigYAMLOverrides(config)
+		printConfigList(cfg)
 	},
+}
+
+// runConfigListViaDaemon executes config list via daemon RPC (bd-wmil)
+func runConfigListViaDaemon() {
+	result, err := daemonClient.ConfigList()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	printConfigList(result.Config)
+}
+
+// printConfigList outputs the config map in the appropriate format
+func printConfigList(cfg map[string]string) {
+	if jsonOutput {
+		outputJSON(cfg)
+		return
+	}
+
+	if len(cfg) == 0 {
+		fmt.Println("No configuration set")
+		return
+	}
+
+	// Sort keys for consistent output
+	keys := make([]string, 0, len(cfg))
+	for k := range cfg {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	fmt.Println("\nConfiguration:")
+	for _, k := range keys {
+		fmt.Printf("  %s = %s\n", k, cfg[k])
+	}
+
+	// Check for config.yaml overrides that take precedence (bd-20j)
+	// This helps diagnose when effective config differs from database config
+	showConfigYAMLOverrides(cfg)
 }
 
 // showConfigYAMLOverrides warns when config.yaml or env vars override database settings.
@@ -248,13 +335,20 @@ var configUnsetCmd = &cobra.Command{
 	Short: "Delete a configuration value",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		// Config operations work in direct mode only
-		if err := ensureDirectMode("config unset requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+		key := args[0]
+
+		// Use daemon RPC when available (bd-wmil)
+		if daemonClient != nil {
+			runConfigUnsetViaDaemon(key)
+			return
 		}
 
-		key := args[0]
+		// Fallback to direct store access
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
+			os.Exit(1)
+		}
 
 		ctx := rootCtx
 		if err := store.DeleteConfig(ctx, key); err != nil {
@@ -270,6 +364,27 @@ var configUnsetCmd = &cobra.Command{
 			fmt.Printf("Unset %s\n", key)
 		}
 	},
+}
+
+// runConfigUnsetViaDaemon executes config unset via daemon RPC (bd-wmil)
+func runConfigUnsetViaDaemon(key string) {
+	args := &rpc.ConfigUnsetArgs{
+		Key: key,
+	}
+
+	result, err := daemonClient.ConfigUnset(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]string{
+			"key": result.Key,
+		})
+	} else {
+		fmt.Printf("Unset %s\n", result.Key)
+	}
 }
 
 var configValidateCmd = &cobra.Command{

@@ -2492,6 +2492,117 @@ func (s *Server) handleGetConfig(req *Request) Response {
 	}
 }
 
+// handleConfigSet sets a config value in the database (bd-wmil)
+func (s *Server) handleConfigSet(req *Request) Response {
+	var args ConfigSetArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid config_set args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Set config value in database
+	if err := store.SetConfig(ctx, args.Key, args.Value); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to set config %q: %v", args.Key, err),
+		}
+	}
+
+	result := ConfigSetResponse{
+		Key:   args.Key,
+		Value: args.Value,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleConfigList lists all config values from the database (bd-wmil)
+func (s *Server) handleConfigList(req *Request) Response {
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Get all config values from database
+	config, err := store.GetAllConfig(ctx)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to list config: %v", err),
+		}
+	}
+
+	result := ConfigListResponse{
+		Config: config,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleConfigUnset deletes a config value from the database (bd-wmil)
+func (s *Server) handleConfigUnset(req *Request) Response {
+	var args ConfigUnsetArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid config_unset args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Delete config value from database
+	if err := store.DeleteConfig(ctx, args.Key); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to unset config %q: %v", args.Key, err),
+		}
+	}
+
+	result := ConfigUnsetResponse{
+		Key: args.Key,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
 // Gate handlers
 
 func (s *Server) handleGateCreate(req *Request) Response {

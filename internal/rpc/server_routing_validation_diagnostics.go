@@ -314,6 +314,13 @@ func (s *Server) executeOperation(req *Request) Response {
 	// Close operations (bd-ympw)
 	case OpCloseContinue:
 		resp = s.handleCloseContinue(req)
+	// Config operations (bd-wmil)
+	case OpConfigSet:
+		resp = s.handleConfigSet(req)
+	case OpConfigList:
+		resp = s.handleConfigList(req)
+	case OpConfigUnset:
+		resp = s.handleConfigUnset(req)
 	default:
 		return Response{
 			Success: false,

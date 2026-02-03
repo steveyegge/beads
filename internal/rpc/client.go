@@ -600,6 +600,53 @@ func (c *Client) GetConfig(args *GetConfigArgs) (*GetConfigResponse, error) {
 	return &result, nil
 }
 
+// Config operations (bd-wmil)
+
+// ConfigSet sets a config value via the daemon
+func (c *Client) ConfigSet(args *ConfigSetArgs) (*ConfigSetResponse, error) {
+	resp, err := c.Execute(OpConfigSet, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result ConfigSetResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config set response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// ConfigList lists all config values via the daemon
+func (c *Client) ConfigList() (*ConfigListResponse, error) {
+	resp, err := c.Execute(OpConfigList, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result ConfigListResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config list response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// ConfigUnset deletes a config value via the daemon
+func (c *Client) ConfigUnset(args *ConfigUnsetArgs) (*ConfigUnsetResponse, error) {
+	resp, err := c.Execute(OpConfigUnset, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result ConfigUnsetResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config unset response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // Mol operations (gt-as9kdm)
 
 // MolBond executes a mol bond operation via the daemon

@@ -69,6 +69,11 @@ const (
 
 	// Watch operations (bd-la75)
 	OpListWatch = "list_watch"
+
+	// Config operations (bd-wmil)
+	OpConfigSet   = "config_set"
+	OpConfigList  = "config_list"
+	OpConfigUnset = "config_unset"
 )
 
 // Request represents an RPC request from client to daemon
@@ -662,6 +667,38 @@ type GetConfigArgs struct {
 type GetConfigResponse struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+}
+
+// ConfigSetArgs represents arguments for setting a config value (bd-wmil)
+type ConfigSetArgs struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// ConfigSetResponse represents the response from config_set operation
+type ConfigSetResponse struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// ConfigListArgs represents arguments for listing all config values (bd-wmil)
+type ConfigListArgs struct {
+	// No arguments needed
+}
+
+// ConfigListResponse represents the response from config_list operation
+type ConfigListResponse struct {
+	Config map[string]string `json:"config"`
+}
+
+// ConfigUnsetArgs represents arguments for unsetting a config value (bd-wmil)
+type ConfigUnsetArgs struct {
+	Key string `json:"key"`
+}
+
+// ConfigUnsetResponse represents the response from config_unset operation
+type ConfigUnsetResponse struct {
+	Key string `json:"key"`
 }
 
 // Decision point operations
