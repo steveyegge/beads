@@ -547,6 +547,18 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 				return
 			}
 
+			// Update metadata hash to match imported JSONL
+			// This prevents pre-export validation from failing
+			if currentHash, err := computeJSONLHash(jsonlPath); err == nil {
+				hashKey := "jsonl_content_hash"
+				if repoKey != "" {
+					hashKey += ":" + repoKey
+				}
+				if err := store.SetMetadata(exportCtx, hashKey, currentHash); err != nil {
+					log.log("Failed to update JSONL hash after auto-import", "error", err)
+				}
+			}
+
 			log.log("Auto-import complete, proceeding with export")
 		}
 
