@@ -96,13 +96,24 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 		cfg = configfile.DefaultConfig()
 	}
 
-	backend := cfg.GetBackend()
+	// Use GetBackendFromConfig for robust backend detection.
+	// This handles cases where metadata.json has an incorrect backend value
+	// by falling back to filesystem detection (gt-q5jzx5, dolt_doctor fix).
+	backend := GetBackendFromConfig(beadsDir)
 	switch backend {
 	case configfile.BackendSQLite:
 		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
 	case configfile.BackendDolt:
 		// Merge Dolt server mode config into options (config provides defaults, opts can override)
-		if cfg.IsDoltServerMode() {
+		// Check server mode: IsDoltServerMode() uses cfg.GetBackend(), but we may have detected
+		// Dolt via filesystem when cfg.Backend is wrong. Check server settings directly too.
+		isServerMode := cfg.IsDoltServerMode()
+		if !isServerMode && (cfg.DoltServerEnabled || cfg.DoltMode == "server" || os.Getenv("BEADS_DOLT_SERVER_MODE") == "1") {
+			// Config has server settings but IsDoltServerMode() returned false due to
+			// backend mismatch - trust the server settings (dolt_doctor fix)
+			isServerMode = true
+		}
+		if isServerMode {
 			opts.ServerMode = true
 			if opts.ServerHost == "" {
 				opts.ServerHost = cfg.GetDoltServerHost()
@@ -142,18 +153,18 @@ func GetBackendFromConfig(beadsDir string) string {
 		return getBackendFromYamlConfig()
 	}
 
-	// If metadata.json has an explicit backend, use it
-	if cfg.Backend != "" {
-		return cfg.Backend
+	// Determine backend: use explicit config if set, else fall back to config.yaml
+	backend := cfg.Backend
+	if backend == "" {
+		// metadata.json exists but Backend is empty - check config.yaml
+		// This enables town-level inheritance via viper's directory walking
+		backend = getBackendFromYamlConfig()
 	}
 
-	// metadata.json exists but Backend is empty - check config.yaml
-	// This enables town-level inheritance via viper's directory walking
-	backend := getBackendFromYamlConfig()
-
-	// Safety net (gt-q5jzx5): If we're defaulting to SQLite, verify the database
-	// isn't actually a Dolt directory. This prevents silent data corruption when
-	// metadata.json exists but lacks a "backend" field.
+	// Safety net (gt-q5jzx5, dolt_doctor fix): When backend is sqlite, verify the
+	// database path isn't actually a Dolt directory. This catches misconfigurations
+	// where metadata.json has backend: "sqlite" but database points to a Dolt path.
+	// A directory path always indicates Dolt; SQLite databases are files.
 	if backend == configfile.BackendSQLite {
 		dbPath := cfg.DatabasePath(beadsDir)
 		if detected := detectBackendFromPath(dbPath); detected != "" {
