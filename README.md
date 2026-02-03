@@ -8,7 +8,7 @@
 $ bd pacman
 
 ╭──────────────────────────────────────────────────────────╮
-│  ᗧ····○ bd-abc····○ bd-xyz····○ bd-123 ····👻            │
+│  ᗧ····○ bd-abc····○ bd-xyz····○ bd-123 ····◐            │
 ╰──────────────────────────────────────────────────────────╯
 
 YOU: claude | SCORE: 3 dots | #1 codex (5 pts)
@@ -185,7 +185,7 @@ Based on Anthropic's ["Hot Mess of AI"](https://alignment.anthropic.com/2026/hot
 $ bd wobble scan --from-sessions --days 7
 
 ┌─ WOBBLE SCAN: REAL SESSION DATA ───────────────────────┐
-│ 📊 Analyzed 18 skills with REAL session data           │
+│ Analyzed 18 skills with REAL session data             │
 └────────────────────────────────────────────────────────┘
 
 ┌─ WOBBLE REPORT: my-skill (REAL DATA) ──────────────────┐
@@ -194,7 +194,7 @@ $ bd wobble scan --from-sessions --days 7
 │ Variants Found: 5                                      │
 │ Wobble Score: 0.85                                     │
 │                                                        │
-│ VERDICT: 🔴 UNSTABLE                                   │
+│ VERDICT: ● UNSTABLE                                    │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -228,6 +228,22 @@ bd wobble scan --all --top 10
 # Project health audit
 bd wobble inspect . --fix
 ```
+
+**Drift dashboard:**
+
+```bash
+bd drift
+```
+
+Shows last wobble scan, stable/wobbly/unstable counts, skills fixed since last scan, and spec/bead drift summary.
+
+**Cascade impact:**
+
+```bash
+bd cascade beads
+```
+
+Lists known dependents from the wobble store (`.beads/wobble/skills.json`).
 
 **Fixing wobbly skills:**
 
@@ -282,6 +298,8 @@ bd close bd-xyz --compact-spec --compact-skills
 | `bd wobble scan --all` | Rank all skills by wobble risk |
 | `bd wobble scan --from-sessions` | Use REAL session data |
 | `bd wobble inspect .` | Project skill health audit |
+| `bd drift` | Wobble + spec/bead drift summary |
+| `bd cascade <skill>` | Wobble cascade impact from stored dependents |
 | `bd pacman` | Pacman mode: dots (ready work), blockers, leaderboard |
 | `bd pacman --pause "reason"` | Pause signal for other agents (file-based) |
 | `bd pacman --resume` | Clear pause signal |
@@ -300,7 +318,7 @@ Gamified task management for coordinating multiple agents. No server required.
 $ bd pacman
 
 ╭──────────────────────────────────────────────────────────╮
-│  ᗧ····○ bd-abc····○ bd-xyz····○ bd-123 ····👻            │
+│  ᗧ····○ bd-abc····○ bd-xyz····○ bd-123 ····◐            │
 ╰──────────────────────────────────────────────────────────╯
 
 YOU: claude
@@ -373,15 +391,15 @@ bd pacman --resume                  # After incident
 $ bd pacman --global
 
 ╭──────────────────────────────────────────────────────────╮
-│  🌍 GLOBAL PACMAN · 5 projects · 42 dots · 8 ghosts      │
+│  GLOBAL PACMAN · 5 projects · 42 dots · 8 ghosts        │
 ╰──────────────────────────────────────────────────────────╯
 
 YOU: claude
 TOTAL SCORE: 15 dots across all projects
 
 PROJECTS:
-  18○ project-alpha              (5 pts) 👻3
-  12○ project-beta               (3 pts) 👻5
+  18○ project-alpha              (5 pts) ◐3
+  12○ project-beta               (3 pts) ◐5
   8○  api-backend                (2 pts)
   4○  mobile-app                 (5 pts)
   ✓   my-tool                    (10 pts)
@@ -422,3 +440,12 @@ Every spec casts a shadow over code. When the spec moves, the shadow should move
 ---
 
 MIT License · Built on [beads](https://github.com/steveyegge/beads)
+
+### Wobble Drift
+
+```bash
+bd drift
+bd cascade <skill>
+```
+
+Drift shows the last wobble scan summary plus spec/bead drift counts. Cascade prints the dependents recorded in `.beads/wobble/skills.json`.
