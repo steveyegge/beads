@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/util"
@@ -463,6 +464,17 @@ func (s *Server) handleCreate(req *Request) Response {
 
 	// Route wisps (ephemeral issues) to in-memory WispStore
 	if isWisp(issue) && s.wispStore != nil {
+		// Generate ID for wisp if not already set (gt-tlrw90)
+		// Wisps use in-memory store which doesn't generate IDs like SQLite does
+		if issue.ID == "" {
+			// Use IDPrefix for wisp-specific prefix, fallback to "wisp"
+			prefix := "wisp"
+			if issue.IDPrefix != "" {
+				prefix = issue.IDPrefix
+			}
+			// Generate a hash-based ID (6 chars is usually sufficient for wisps)
+			issue.ID = idgen.GenerateHashID(prefix, issue.Title, issue.Description, s.reqActor(req), issue.CreatedAt, 6, 0)
+		}
 		if err := s.wispStore.Create(ctx, issue); err != nil {
 			return Response{
 				Success: false,
