@@ -59,10 +59,11 @@ const (
 	OpDecisionList    = "decision_list"
 
 	// Mol operations (gt-as9kdm)
-	OpMolBond    = "mol_bond"
-	OpMolSquash  = "mol_squash"
-	OpMolBurn    = "mol_burn"
-	OpMolCurrent = "mol_current"
+	OpMolBond          = "mol_bond"
+	OpMolSquash        = "mol_squash"
+	OpMolBurn          = "mol_burn"
+	OpMolCurrent       = "mol_current"
+	OpMolProgressStats = "mol_progress_stats"
 
 	// Close operations (bd-ympw)
 	OpCloseContinue = "close_continue"
@@ -836,6 +837,24 @@ type MolCurrentResult struct {
 	Molecules []*MolCurrentProgress `json:"molecules"`
 }
 
+// MolProgressStatsArgs represents arguments for the mol progress stats operation
+type MolProgressStatsArgs struct {
+	MoleculeID string `json:"molecule_id"` // The ID of the molecule
+}
+
+// MolProgressStatsResult represents the result of a mol progress stats operation
+// Uses indexed queries for efficient progress tracking of large molecules
+type MolProgressStatsResult struct {
+	MoleculeID    string  `json:"molecule_id"`
+	MoleculeTitle string  `json:"molecule_title"`
+	Total         int     `json:"total"`           // Total steps (direct children)
+	Completed     int     `json:"completed"`       // Closed steps
+	InProgress    int     `json:"in_progress"`     // Steps currently in progress
+	CurrentStepID string  `json:"current_step_id"` // First in_progress step ID (if any)
+	FirstClosed   *string `json:"first_closed,omitempty"`
+	LastClosed    *string `json:"last_closed,omitempty"`
+}
+
 // Close continue operation (bd-ympw)
 
 // CloseContinueArgs represents arguments for the close --continue operation
@@ -853,6 +872,7 @@ type CloseContinueResult struct {
 	MolComplete  bool         `json:"molecule_complete"`       // Whether the molecule is complete
 	MoleculeID   string       `json:"molecule_id,omitempty"`   // Parent molecule ID
 }
+
 // ListWatchArgs represents arguments for the list_watch operation (bd-la75)
 // This is a long-polling endpoint for watch mode that blocks until mutations occur.
 type ListWatchArgs struct {

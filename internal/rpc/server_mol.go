@@ -934,6 +934,59 @@ func (s *Server) handleMolCurrent(req *Request) Response {
 	return Response{Success: true, Data: data}
 }
 
+// handleMolProgressStats handles the mol progress stats RPC operation (bd-ck35)
+// Returns efficient aggregate progress stats without loading all steps
+func (s *Server) handleMolProgressStats(req *Request) Response {
+	var args MolProgressStatsArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
+	}
+
+	if args.MoleculeID == "" {
+		return Response{Success: false, Error: "molecule_id is required"}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{Success: false, Error: "storage not available"}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Resolve partial ID to full ID
+	resolvedID, err := utils.ResolvePartialID(ctx, store, args.MoleculeID)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("molecule '%s' not found", args.MoleculeID)}
+	}
+
+	// Get progress stats using indexed queries (efficient for large molecules)
+	stats, err := store.GetMoleculeProgress(ctx, resolvedID)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("failed to get molecule progress: %v", err)}
+	}
+
+	// Convert to RPC result type (time.Time -> *string)
+	result := MolProgressStatsResult{
+		MoleculeID:    stats.MoleculeID,
+		MoleculeTitle: stats.MoleculeTitle,
+		Total:         stats.Total,
+		Completed:     stats.Completed,
+		InProgress:    stats.InProgress,
+		CurrentStepID: stats.CurrentStepID,
+	}
+	if stats.FirstClosed != nil {
+		t := stats.FirstClosed.Format("2006-01-02T15:04:05Z07:00")
+		result.FirstClosed = &t
+	}
+	if stats.LastClosed != nil {
+		t := stats.LastClosed.Format("2006-01-02T15:04:05Z07:00")
+		result.LastClosed = &t
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
 // getMoleculeProgress loads a molecule and computes detailed progress
 func (s *Server) getMoleculeProgress(ctx context.Context, moleculeID string, limit, rangeStart, rangeEnd int) (*MolCurrentProgress, error) {
 	// Load the molecule root

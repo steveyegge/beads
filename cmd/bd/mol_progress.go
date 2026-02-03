@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -34,11 +36,15 @@ Example:
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
 
-		// mol progress requires direct store access
-		// TODO: Add daemon RPC support for mol progress per gt-as9kdm
+		// Use daemon RPC when available (bd-ck35)
+		if daemonClient != nil {
+			runMolProgressViaDaemon(args)
+			return
+		}
+
+		// Fallback to direct store access
 		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: mol progress requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: mol progress does not yet support daemon mode\n")
+			fmt.Fprintf(os.Stderr, "Error: mol progress requires direct database access or daemon connection\n")
 			os.Exit(1)
 		}
 
@@ -203,6 +209,80 @@ func formatDuration(hours float64) string {
 	}
 	weeks := days / 7
 	return fmt.Sprintf("~%.1f weeks", weeks)
+}
+
+// runMolProgressViaDaemon runs mol progress through the daemon RPC (bd-ck35)
+func runMolProgressViaDaemon(args []string) {
+	if len(args) != 1 {
+		// TODO: Support auto-discovery via daemon (would need a new RPC)
+		fmt.Fprintf(os.Stderr, "Error: molecule-id required when using daemon mode\n")
+		fmt.Fprintf(os.Stderr, "Usage: bd mol progress <molecule-id>\n")
+		os.Exit(1)
+	}
+
+	moleculeID := args[0]
+	result, err := daemonClient.MolProgressStats(moleculeID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Convert RPC result to types.MoleculeProgressStats for shared output functions
+	stats := rpcResultToStats(result)
+
+	if jsonOutput {
+		// Add computed fields for JSON output
+		output := map[string]interface{}{
+			"molecule_id":     stats.MoleculeID,
+			"molecule_title":  stats.MoleculeTitle,
+			"total":           stats.Total,
+			"completed":       stats.Completed,
+			"in_progress":     stats.InProgress,
+			"current_step_id": stats.CurrentStepID,
+		}
+		if stats.Total > 0 {
+			output["percent"] = float64(stats.Completed) * 100 / float64(stats.Total)
+		}
+		if stats.FirstClosed != nil && stats.LastClosed != nil && stats.Completed > 1 {
+			duration := stats.LastClosed.Sub(*stats.FirstClosed)
+			if duration > 0 {
+				rate := float64(stats.Completed-1) / duration.Hours()
+				output["rate_per_hour"] = rate
+				remaining := stats.Total - stats.Completed
+				if rate > 0 {
+					etaHours := float64(remaining) / rate
+					output["eta_hours"] = etaHours
+				}
+			}
+		}
+		outputJSON(output)
+		return
+	}
+
+	printMoleculeProgressStats(stats)
+}
+
+// rpcResultToStats converts RPC result to types.MoleculeProgressStats
+func rpcResultToStats(result *rpc.MolProgressStatsResult) *types.MoleculeProgressStats {
+	stats := &types.MoleculeProgressStats{
+		MoleculeID:    result.MoleculeID,
+		MoleculeTitle: result.MoleculeTitle,
+		Total:         result.Total,
+		Completed:     result.Completed,
+		InProgress:    result.InProgress,
+		CurrentStepID: result.CurrentStepID,
+	}
+	if result.FirstClosed != nil {
+		if t, err := time.Parse(time.RFC3339, *result.FirstClosed); err == nil {
+			stats.FirstClosed = &t
+		}
+	}
+	if result.LastClosed != nil {
+		if t, err := time.Parse(time.RFC3339, *result.LastClosed); err == nil {
+			stats.LastClosed = &t
+		}
+	}
+	return stats
 }
 
 func init() {

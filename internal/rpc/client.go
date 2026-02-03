@@ -709,6 +709,22 @@ func (c *Client) MolCurrent(args *MolCurrentArgs) (*MolCurrentResult, error) {
 	return &result, nil
 }
 
+// MolProgressStats gets efficient progress stats for a molecule via the daemon
+func (c *Client) MolProgressStats(moleculeID string) (*MolProgressStatsResult, error) {
+	args := &MolProgressStatsArgs{MoleculeID: moleculeID}
+	resp, err := c.Execute(OpMolProgressStats, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result MolProgressStatsResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mol progress stats response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // CloseContinue executes close --continue via the daemon (bd-ympw)
 // This walks the parent-child chain to advance to the next step in a molecule
 func (c *Client) CloseContinue(args *CloseContinueArgs) (*CloseContinueResult, error) {

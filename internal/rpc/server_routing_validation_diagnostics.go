@@ -311,6 +311,8 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleMolBurn(req)
 	case OpMolCurrent:
 		resp = s.handleMolCurrent(req)
+	case OpMolProgressStats:
+		resp = s.handleMolProgressStats(req)
 	// Close operations (bd-ympw)
 	case OpCloseContinue:
 		resp = s.handleCloseContinue(req)
