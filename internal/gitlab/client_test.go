@@ -111,7 +111,7 @@ func TestFetchIssues_Success(t *testing.T) {
 			{ID: 2, IID: 2, Title: "Second issue", State: "opened"},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(issues)
+		_ = json.NewEncoder(w).Encode(issues)
 	}))
 	defer server.Close()
 
@@ -143,12 +143,12 @@ func TestFetchIssues_Pagination(t *testing.T) {
 			w.Header().Set("X-Next-Page", "2")
 			w.Header().Set("X-Total-Pages", "2")
 			issues := []Issue{{ID: 1, IID: 1, Title: "Issue 1"}}
-			json.NewEncoder(w).Encode(issues)
+			_ = json.NewEncoder(w).Encode(issues)
 		} else {
 			// Second page - no more pages
 			w.Header().Set("X-Total-Pages", "2")
 			issues := []Issue{{ID: 2, IID: 2, Title: "Issue 2"}}
-			json.NewEncoder(w).Encode(issues)
+			_ = json.NewEncoder(w).Encode(issues)
 		}
 	}))
 	defer server.Close()
@@ -174,7 +174,7 @@ func TestFetchIssuesSince(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedURL = r.URL.String()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]Issue{})
+		_ = json.NewEncoder(w).Encode([]Issue{})
 	}))
 	defer server.Close()
 
@@ -205,12 +205,12 @@ func TestCreateIssue_Success(t *testing.T) {
 		}
 
 		// Capture request body
-		json.NewDecoder(r.Body).Decode(&capturedBody)
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 
 		// Return created issue
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(Issue{
+		_ = json.NewEncoder(w).Encode(Issue{
 			ID:    100,
 			IID:   42,
 			Title: "New issue",
@@ -250,10 +250,10 @@ func TestUpdateIssue_Success(t *testing.T) {
 			t.Errorf("URL path = %s, want to contain /projects/123/issues/42", r.URL.Path)
 		}
 
-		json.NewDecoder(r.Body).Decode(&capturedBody)
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Issue{
+		_ = json.NewEncoder(w).Encode(Issue{
 			ID:    100,
 			IID:   42,
 			Title: "Updated title",
@@ -297,7 +297,7 @@ func TestGetIssueLinks_Success(t *testing.T) {
 				LinkType:    "blocks",
 			},
 		}
-		json.NewEncoder(w).Encode(links)
+		_ = json.NewEncoder(w).Encode(links)
 	}))
 	defer server.Close()
 
@@ -327,7 +327,7 @@ func TestRateLimiting(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]Issue{{ID: 1, IID: 1, Title: "After retry"}})
+		_ = json.NewEncoder(w).Encode([]Issue{{ID: 1, IID: 1, Title: "After retry"}})
 	}))
 	defer server.Close()
 
@@ -351,7 +351,7 @@ func TestRateLimiting(t *testing.T) {
 func TestErrorHandling(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"message": "401 Unauthorized"}`))
+		_, _ = w.Write([]byte(`{"message": "401 Unauthorized"}`))
 	}))
 	defer server.Close()
 
@@ -389,7 +389,7 @@ func TestProjectIDURLEncoding(t *testing.T) {
 			t.Errorf("Server path = %s, want to contain decoded 'group/subgroup/project'", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]Issue{})
+		_ = json.NewEncoder(w).Encode([]Issue{})
 	}))
 	defer server.Close()
 
@@ -431,7 +431,7 @@ func TestFetchIssueByIID(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Issue{
+		_ = json.NewEncoder(w).Encode(Issue{
 			ID:    100,
 			IID:   42,
 			Title: "Single issue",
@@ -467,11 +467,11 @@ func TestCreateIssueLink(t *testing.T) {
 			t.Errorf("Method = %s, want POST", r.Method)
 		}
 
-		json.NewDecoder(r.Body).Decode(&capturedBody)
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(IssueLink{
+		_ = json.NewEncoder(w).Encode(IssueLink{
 			SourceIssue: &Issue{IID: 42},
 			TargetIssue: &Issue{IID: 43},
 			LinkType:    "blocks",
@@ -513,7 +513,7 @@ func TestCreateIssueLink(t *testing.T) {
 func TestUpdateIssue_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"message": "Issue not found"}`))
+		_, _ = w.Write([]byte(`{"message": "Issue not found"}`))
 	}))
 	defer server.Close()
 
@@ -533,7 +533,7 @@ func TestUpdateIssue_Error(t *testing.T) {
 func TestUpdateIssue_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{invalid json`))
+		_, _ = w.Write([]byte(`{invalid json`))
 	}))
 	defer server.Close()
 
@@ -553,7 +553,7 @@ func TestUpdateIssue_InvalidJSON(t *testing.T) {
 func TestGetIssueLinks_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"message": "Access denied"}`))
+		_, _ = w.Write([]byte(`{"message": "Access denied"}`))
 	}))
 	defer server.Close()
 
@@ -573,7 +573,7 @@ func TestGetIssueLinks_Error(t *testing.T) {
 func TestGetIssueLinks_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`not valid json`))
+		_, _ = w.Write([]byte(`not valid json`))
 	}))
 	defer server.Close()
 
@@ -593,7 +593,7 @@ func TestGetIssueLinks_InvalidJSON(t *testing.T) {
 func TestFetchIssueByIID_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"message": "Issue not found"}`))
+		_, _ = w.Write([]byte(`{"message": "Issue not found"}`))
 	}))
 	defer server.Close()
 
@@ -613,7 +613,7 @@ func TestFetchIssueByIID_Error(t *testing.T) {
 func TestFetchIssueByIID_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{malformed`))
+		_, _ = w.Write([]byte(`{malformed`))
 	}))
 	defer server.Close()
 
@@ -633,7 +633,7 @@ func TestFetchIssueByIID_InvalidJSON(t *testing.T) {
 func TestCreateIssueLink_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"message": "Target issue not found"}`))
+		_, _ = w.Write([]byte(`{"message": "Target issue not found"}`))
 	}))
 	defer server.Close()
 
@@ -654,7 +654,7 @@ func TestCreateIssueLink_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{broken json`))
+		_, _ = w.Write([]byte(`{broken json`))
 	}))
 	defer server.Close()
 
@@ -675,7 +675,7 @@ func TestCreateIssue_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{not valid json`))
+		_, _ = w.Write([]byte(`{not valid json`))
 	}))
 	defer server.Close()
 
@@ -695,7 +695,7 @@ func TestCreateIssue_InvalidJSON(t *testing.T) {
 func TestFetchIssuesSince_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"message": "Server error"}`))
+		_, _ = w.Write([]byte(`{"message": "Server error"}`))
 	}))
 	defer server.Close()
 
@@ -731,7 +731,7 @@ func TestRetryMarshalError(t *testing.T) {
 		}
 		// Third attempt succeeds
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Issue{ID: 1, IID: 1, Title: "After retry"})
+		_ = json.NewEncoder(w).Encode(Issue{ID: 1, IID: 1, Title: "After retry"})
 	}))
 	defer server.Close()
 
@@ -760,7 +760,7 @@ func TestFetchIssues_PaginationLimit(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// Always return X-Next-Page to simulate infinite pagination (malformed response)
 		w.Header().Set("X-Next-Page", "999")
-		json.NewEncoder(w).Encode([]Issue{{ID: requestCount, IID: requestCount, Title: "Issue"}})
+		_ = json.NewEncoder(w).Encode([]Issue{{ID: requestCount, IID: requestCount, Title: "Issue"}})
 	}))
 	defer server.Close()
 
@@ -790,7 +790,7 @@ func TestFetchIssuesSince_PaginationLimit(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// Always return X-Next-Page to simulate infinite pagination
 		w.Header().Set("X-Next-Page", "999")
-		json.NewEncoder(w).Encode([]Issue{{ID: requestCount, IID: requestCount, Title: "Issue"}})
+		_ = json.NewEncoder(w).Encode([]Issue{{ID: requestCount, IID: requestCount, Title: "Issue"}})
 	}))
 	defer server.Close()
 
@@ -819,7 +819,7 @@ func TestFetchIssues_ContextCancellation(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// Always return X-Next-Page to continue pagination
 		w.Header().Set("X-Next-Page", "2")
-		json.NewEncoder(w).Encode([]Issue{{ID: requestCount, IID: requestCount, Title: "Issue"}})
+		_ = json.NewEncoder(w).Encode([]Issue{{ID: requestCount, IID: requestCount, Title: "Issue"}})
 	}))
 	defer server.Close()
 
@@ -859,7 +859,7 @@ func TestFetchIssuesSince_ContextCancellation(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// Always return X-Next-Page to continue pagination
 		w.Header().Set("X-Next-Page", "2")
-		json.NewEncoder(w).Encode([]Issue{{ID: requestCount, IID: requestCount, Title: "Issue"}})
+		_ = json.NewEncoder(w).Encode([]Issue{{ID: requestCount, IID: requestCount, Title: "Issue"}})
 	}))
 	defer server.Close()
 
