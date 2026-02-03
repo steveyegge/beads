@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/beads/internal/wobble"
 )
 
 func TestWriteWobbleStore(t *testing.T) {
@@ -86,5 +88,26 @@ func TestParseSkillDependentsFrontMatter(t *testing.T) {
 	}
 	if deps[0] != "pacman" || deps[1] != "spec-tracker" {
 		t.Fatalf("unexpected dependents order: %v", deps)
+	}
+}
+
+func TestWobbleSkillsFromSummaryIncludesDependents(t *testing.T) {
+	tmpDir := t.TempDir()
+	skillDir := filepath.Join(tmpDir, "beads")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	content := "---\ndepends_on: [spec-tracker]\n---\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+
+	results := []wobble.SkillSummary{{Name: "beads", StructuralRisk: 0.1}}
+	skills := wobbleSkillsFromSummary(results, tmpDir)
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if len(skills[0].Dependents) != 1 || skills[0].Dependents[0] != "spec-tracker" {
+		t.Fatalf("unexpected dependents: %v", skills[0].Dependents)
 	}
 }

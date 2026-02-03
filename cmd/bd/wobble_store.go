@@ -185,15 +185,20 @@ func normalizeWobbleVerdict(verdict string) string {
 	return "unknown"
 }
 
-func wobbleSkillsFromSummary(results []wobble.SkillSummary) []wobbleSkill {
+func wobbleSkillsFromSummary(results []wobble.SkillSummary, skillsDir string) []wobbleSkill {
 	skills := make([]wobbleSkill, 0, len(results))
 	for _, result := range results {
 		verdict, _ := wobble.GetVerdict(0, result.StructuralRisk)
 		normalized := normalizeWobbleVerdict(verdict)
+		dependents, err := parseSkillDependents(skillsDir, result.Name)
+		if err != nil {
+			dependents = nil
+		}
 		skills = append(skills, wobbleSkill{
 			ID:          result.Name,
 			Verdict:     normalized,
 			ChangeState: normalized,
+			Dependents:  dependents,
 		})
 	}
 	return skills
@@ -300,26 +305,36 @@ func normalizeDependent(value string) string {
 	return dep
 }
 
-func wobbleSkillsFromScanResult(result *wobble.ScanResult) []wobbleSkill {
+func wobbleSkillsFromScanResult(result *wobble.ScanResult, skillsDir string) []wobbleSkill {
 	if result == nil {
 		return nil
 	}
 	verdict := normalizeWobbleVerdict(result.Verdict)
+	dependents, err := parseSkillDependents(skillsDir, result.Skill)
+	if err != nil {
+		dependents = nil
+	}
 	return []wobbleSkill{{
 		ID:          result.Skill,
 		Verdict:     verdict,
 		ChangeState: verdict,
+		Dependents:  dependents,
 	}}
 }
 
-func wobbleSkillsFromRealResults(results []wobble.RealScanResult) []wobbleSkill {
+func wobbleSkillsFromRealResults(results []wobble.RealScanResult, skillsDir string) []wobbleSkill {
 	skills := make([]wobbleSkill, 0, len(results))
 	for _, result := range results {
 		verdict := normalizeWobbleVerdict(result.Verdict)
+		dependents, err := parseSkillDependents(skillsDir, result.Skill)
+		if err != nil {
+			dependents = nil
+		}
 		skills = append(skills, wobbleSkill{
 			ID:          result.Skill,
 			Verdict:     verdict,
 			ChangeState: verdict,
+			Dependents:  dependents,
 		})
 	}
 	return skills
