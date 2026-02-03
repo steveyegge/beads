@@ -320,6 +320,41 @@ bd advice list --for beads/polecats/quartz
 bd advice list -l testing -l security
 ```
 
+### Compound Label Groups (AND/OR Semantics) - IMPLEMENTED (2026-02-03)
+
+Labels support compound targeting with AND and OR semantics:
+
+#### AND Semantics (comma-separated)
+Labels within the same `-l` flag form an AND group:
+```bash
+bd advice add 'X' -l 'role:polecat,rig:beads'
+```
+This advice only matches agents who are BOTH polecats AND in beads rig.
+
+#### OR Semantics (multiple flags)
+Separate `-l` flags form OR groups:
+```bash
+bd advice add 'X' -l 'role:polecat' -l 'role:crew'
+```
+This advice matches agents who are EITHER polecats OR crew.
+
+#### Complex Combinations
+You can combine AND and OR for sophisticated targeting:
+```bash
+# (polecat+beads) OR crew
+bd advice add 'X' -l 'role:polecat,rig:beads' -l 'role:crew'
+```
+This matches agents who are (polecats in beads rig) OR (crew members).
+
+#### Storage Format
+Labels are stored with group prefixes: `g0:`, `g1:`, etc.
+- `g0:role:polecat, g0:rig:beads` = AND (both must match)
+- `g0:role:polecat, g1:role:crew` = OR (either matches)
+
+#### Backward Compatibility
+Existing labels without group prefixes are treated as separate groups (OR behavior),
+maintaining full backward compatibility with previously created advice.
+
 ### Future Work (Optional)
 
 - [ ] Add rig.yaml subscription config parsing for per-rig defaults

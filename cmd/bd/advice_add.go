@@ -45,6 +45,16 @@ Examples:
   # Using explicit labels
   bd advice add "Security best practices" -l security -l testing
 
+  # COMPOUND LABELS (AND/OR semantics):
+  # AND: Comma-separated labels in same -l flag (must match ALL)
+  bd advice add 'Beads polecat workflow' -l 'role:polecat,rig:beads'
+
+  # OR: Separate -l flags (matches ANY group)
+  bd advice add 'For polecats or crew' -l 'role:polecat' -l 'role:crew'
+
+  # Complex: (polecat+beads) OR crew
+  bd advice add 'Beads polecats or any crew' -l 'role:polecat,rig:beads' -l 'role:crew'
+
   # With description for more context
   bd advice add "Check hook status first" -d "Always run gt hook before announcing"
 

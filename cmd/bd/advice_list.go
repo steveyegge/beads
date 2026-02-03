@@ -36,6 +36,12 @@ Examples:
   # Show all advice applicable to an agent (auto-subscribes to context labels)
   bd advice list --for=beads/polecats/quartz
 
+  # COMPOUND LABEL MATCHING:
+  # When advice uses compound labels (AND groups), --for matches correctly:
+  #   - Advice with 'g0:role:polecat,g0:rig:beads' requires BOTH to match
+  #   - Agent must be subscribed to role:polecat AND rig:beads
+  #   - The --for flag auto-generates these subscriptions from the agent path
+
   # Include closed advice
   bd advice list --all`,
 	Run: runAdviceList,
