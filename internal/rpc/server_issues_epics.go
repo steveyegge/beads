@@ -318,6 +318,26 @@ func (s *Server) handleCreate(req *Request) Response {
 		issueID = childID
 	}
 
+	// Generate wisp ID if not provided (gt-tlrw90)
+	// Wisps bypass the regular storage path which auto-generates IDs,
+	// so we need to generate one here when creating ephemeral issues without an ID
+	if issueID == "" && createArgs.Ephemeral {
+		// Get configured prefix for ID generation
+		configPrefix, err := store.GetConfig(ctx, "issue_prefix")
+		if err != nil || configPrefix == "" {
+			configPrefix = "bd" // fallback to default prefix
+		}
+		// Combine with IDPrefix if set (e.g., "hq" + "wisp" → "hq-wisp")
+		wispPrefix := configPrefix
+		if createArgs.IDPrefix != "" {
+			wispPrefix = configPrefix + "-" + createArgs.IDPrefix
+		} else {
+			wispPrefix = configPrefix + "-wisp"
+		}
+		// Generate hash-based ID using title, description, and timestamp
+		issueID = idgen.GenerateHashID(wispPrefix, createArgs.Title, createArgs.Description, s.reqActor(req), time.Now(), 6, 0)
+	}
+
 	var design, acceptance, notes, assignee, externalRef *string
 	if createArgs.Design != "" {
 		design = &createArgs.Design
