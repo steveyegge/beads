@@ -22,11 +22,10 @@ import (
 // - Thread safety (mutexes grouped with the data they protect)
 type CommandContext struct {
 	// Configuration (derived from flags and config)
-	DBPath       string
-	Actor        string
-	JSONOutput   bool
-	NoDaemon     bool
-	SandboxMode  bool
+	DBPath      string
+	Actor       string
+	JSONOutput  bool
+	SandboxMode bool
 	AllowStale   bool
 	NoDb         bool
 	ReadonlyMode bool
@@ -298,30 +297,6 @@ func setDaemonStatus(ds DaemonStatus) {
 	daemonStatus = ds
 }
 
-// isNoDaemon returns true if daemon mode is disabled.
-// With the removal of --no-daemon flag, this now checks if direct mode is forced.
-func isNoDaemon() bool {
-	if shouldUseGlobals() {
-		return daemonStatus.FallbackReason != FallbackNone
-	}
-	return cmdCtx.NoDaemon
-}
-
-// setNoDaemon updates the no-daemon state by setting the fallback reason.
-// Deprecated: Prefer setting daemonStatus.FallbackReason directly.
-func setNoDaemon(nd bool) {
-	if nd {
-		if daemonStatus.FallbackReason == FallbackNone {
-			daemonStatus.FallbackReason = FallbackFlagNoDaemon
-		}
-	} else {
-		daemonStatus.FallbackReason = FallbackNone
-	}
-	if cmdCtx != nil {
-		cmdCtx.NoDaemon = nd
-	}
-}
-
 // isReadonlyMode returns true if read-only mode is enabled.
 func isReadonlyMode() bool {
 	if shouldUseGlobals() {
@@ -554,7 +529,6 @@ func syncCommandContext() {
 	cmdCtx.DBPath = dbPath
 	cmdCtx.Actor = actor
 	cmdCtx.JSONOutput = jsonOutput
-	cmdCtx.NoDaemon = daemonStatus.FallbackReason != FallbackNone // derived from daemonStatus
 	cmdCtx.SandboxMode = sandboxMode
 	cmdCtx.AllowStale = allowStale
 	cmdCtx.NoDb = noDb
