@@ -34,7 +34,7 @@ Built on [beads](https://github.com/steveyegge/beads).
 
 ---
 
-## Four Drifts, One Tool
+## Five Drifts, One Tool
 
 | Drift | Problem | Solution |
 |-------|---------|----------|
@@ -42,6 +42,7 @@ Built on [beads](https://github.com/steveyegge/beads).
 | **Skill Drift** | Claude has skills Codex lacks | `bd preflight --check` |
 | **Visibility Drift** | Can't see what's active | `bd recent --all` |
 | **Stability Drift** | Specs churning while work in flight | `bd spec volatility` |
+| **Behavioral Drift** | Claude "helpfully" deviates from instructions | `bd wobble scan` |
 
 ---
 
@@ -166,6 +167,83 @@ bd preflight --check --auto-sync  # Fix drift
 
 ---
 
+## Wobble Detection
+
+```
+     You write the recipe. Claude "improves" it.
+
+     Expected:  bd list --created-after=$(date -v-1d) --sort=created
+     Actual:    bd list --status=in_progress  ← "I thought this would help"
+
+                    ᗧ····~····~····~····
+                         wobble →
+```
+
+Based on Anthropic's ["Hot Mess of AI"](https://alignment.anthropic.com/2026/hot-mess-of-ai/) paper: extended reasoning amplifies incoherence. Wobble catches it.
+
+```bash
+$ bd wobble scan --from-sessions --days 7
+
+┌─ WOBBLE SCAN: REAL SESSION DATA ───────────────────────┐
+│ 📊 Analyzed 18 skills with REAL session data           │
+└────────────────────────────────────────────────────────┘
+
+┌─ WOBBLE REPORT: my-skill (REAL DATA) ──────────────────┐
+│ Invocations: 6                                         │
+│ Exact Match Rate: 33%                                  │
+│ Variants Found: 5                                      │
+│ Wobble Score: 0.85                                     │
+│                                                        │
+│ VERDICT: 🔴 UNSTABLE                                   │
+└────────────────────────────────────────────────────────┘
+```
+
+**The formula** (from the paper):
+```
+Wobble = Variance / (Bias² + Variance)
+
+High wobble = Claude does something different every time
+High bias   = Claude consistently does the wrong thing
+```
+
+**Structural risk factors** that predict high wobble:
+- No `EXECUTE NOW` section with explicit command
+- Multiple options without `(default)` marker
+- Content > 4000 chars (Claude overthinks)
+- Missing "DO NOT IMPROVISE" constraint
+- Numbered steps without clear default
+
+**Two modes:**
+
+```bash
+# Simulated analysis (fast, no history needed)
+bd wobble scan my-skill
+
+# Real session analysis (parses actual Claude behavior)
+bd wobble scan --from-sessions --days 14
+
+# Rank all skills by risk
+bd wobble scan --all --top 10
+
+# Project health audit
+bd wobble inspect . --fix
+```
+
+**Fixing wobbly skills:**
+
+```markdown
+## EXECUTE NOW
+
+**Run this immediately:**
+```bash
+your-exact-command --with-flags
+```
+
+**Do NOT improvise.** Run the command above first.
+```
+
+---
+
 ## Auto-Compaction
 
 ```bash
@@ -199,6 +277,10 @@ bd close bd-xyz --compact-spec --compact-skills
 | `bd preflight --check` | Skills + specs + volatility |
 | `bd resume --spec <path>` | Unblock paused issues |
 | `bd assign <id> --to <agent>` | Assign a bead to someone |
+| `bd wobble scan <skill>` | Analyze skill for drift risk |
+| `bd wobble scan --all` | Rank all skills by wobble risk |
+| `bd wobble scan --from-sessions` | Use REAL session data |
+| `bd wobble inspect .` | Project skill health audit |
 | `bd pacman` | Pacman mode: dots (ready work), blockers, leaderboard |
 | `bd pacman --pause "reason"` | Pause signal for other agents (file-based) |
 | `bd pacman --resume` | Clear pause signal |
