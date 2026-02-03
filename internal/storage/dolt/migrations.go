@@ -3,71 +3,54 @@
 package dolt
 
 import (
-	"context"
 	"database/sql"
+	"fmt"
+	"log"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/storage/dolt/migrations"
 )
 
-// applyMigrations applies schema migrations for existing databases.
-// This is called during schema initialization and handles adding new columns
-// that may be missing from databases created with older schema versions.
-// All migrations are idempotent (safe to run multiple times).
-func applyMigrations(ctx context.Context, db *sql.DB) error {
-	// Migration: Add metadata column to issues table if missing (GH#1414)
-	if err := migrateMetadataColumn(ctx, db); err != nil {
-		return err
-	}
-
-	return nil
+// Migration represents a single schema migration for Dolt.
+type Migration struct {
+	Name string
+	Func func(*sql.DB) error
 }
 
-// migrateMetadataColumn checks if the metadata column exists in the issues table
-// and adds it if missing. This handles existing databases created before the
-// metadata column was added (GH#1406).
-//
-// The migration is idempotent: running it multiple times has no effect if the
-// column already exists.
-func migrateMetadataColumn(ctx context.Context, db *sql.DB) error {
-	// Check if the metadata column exists using SHOW COLUMNS
-	exists, err := columnExists(ctx, db, "issues", "metadata")
-	if err != nil {
-		return err
-	}
+// migrationsList is the ordered list of all Dolt schema migrations.
+// Each migration must be idempotent - safe to run multiple times.
+// New migrations should be appended to the end of this list.
+var migrationsList = []Migration{
+	{"wisp_type_column", migrations.MigrateWispTypeColumn},
+}
 
-	if exists {
-		// Column already exists, nothing to do
-		return nil
-	}
-
-	// Add the metadata column with the same definition as in schema.go
-	_, err = db.ExecContext(ctx,
-		"ALTER TABLE issues ADD COLUMN metadata JSON DEFAULT (JSON_OBJECT())")
-	if err != nil {
-		// Check if the error is because column already exists (race condition protection)
-		errLower := strings.ToLower(err.Error())
-		if strings.Contains(errLower, "duplicate column") ||
-			strings.Contains(errLower, "already exists") {
-			return nil
+// RunMigrations executes all registered Dolt migrations in order.
+// Each migration is idempotent and checks whether its changes have
+// already been applied before making modifications.
+func RunMigrations(db *sql.DB) error {
+	for _, m := range migrationsList {
+		if err := m.Func(db); err != nil {
+			return fmt.Errorf("dolt migration %q failed: %w", m.Name, err)
 		}
-		return err
+	}
+
+	// Commit schema changes via Dolt (idempotent - no-ops if nothing changed)
+	_, err := db.Exec("CALL DOLT_COMMIT('-Am', 'schema: auto-migrate')")
+	if err != nil {
+		// "nothing to commit" is expected when migrations were already applied
+		if !strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
+			log.Printf("dolt migration commit warning: %v", err)
+		}
 	}
 
 	return nil
 }
 
-// columnExists checks if a column exists in a table using SHOW COLUMNS.
-// This works in both embedded and server modes for Dolt/MySQL.
-func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
-	// #nosec G202 -- table and column names are from internal code, not user input
-	// Note: SHOW COLUMNS ... LIKE doesn't support parameterized queries in Dolt,
-	// so we use string formatting. The values are internal constants, not user input.
-	query := "SHOW COLUMNS FROM " + table + " LIKE '" + column + "'"
-	rows, err := db.QueryContext(ctx, query)
-	if err != nil {
-		return false, err
+// ListMigrations returns the names of all registered migrations.
+func ListMigrations() []string {
+	names := make([]string, len(migrationsList))
+	for i, m := range migrationsList {
+		names[i] = m.Name
 	}
-	defer rows.Close()
-
-	// If there's at least one row, the column exists
-	return rows.Next(), rows.Err()
+	return names
 }
