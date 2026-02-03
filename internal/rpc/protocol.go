@@ -59,10 +59,11 @@ const (
 	OpDecisionList    = "decision_list"
 
 	// Mol operations (gt-as9kdm)
-	OpMolBond    = "mol_bond"
-	OpMolSquash  = "mol_squash"
-	OpMolBurn    = "mol_burn"
-	OpMolCurrent = "mol_current"
+	OpMolBond       = "mol_bond"
+	OpMolSquash     = "mol_squash"
+	OpMolBurn       = "mol_burn"
+	OpMolCurrent    = "mol_current"
+	OpMolReadyGated = "mol_ready_gated"
 )
 
 // Request represents an RPC request from client to daemon
@@ -791,5 +792,26 @@ type MolCurrentProgress struct {
 // MolCurrentResult represents the result of a mol current operation
 type MolCurrentResult struct {
 	Molecules []*MolCurrentProgress `json:"molecules"`
+}
+
+// MolReadyGatedArgs represents arguments for the mol ready --gated operation
+type MolReadyGatedArgs struct {
+	Limit int `json:"limit,omitempty"` // Maximum number of molecules to return
+}
+
+// MolReadyGatedMolecule represents a molecule ready for gate-resume dispatch
+type MolReadyGatedMolecule struct {
+	MoleculeID    string `json:"molecule_id"`
+	MoleculeTitle string `json:"molecule_title"`
+	ClosedGateID  string `json:"closed_gate_id,omitempty"`
+	ClosedGateType string `json:"closed_gate_type,omitempty"` // await_type of the closed gate
+	ReadyStepID   string `json:"ready_step_id,omitempty"`
+	ReadyStepTitle string `json:"ready_step_title,omitempty"`
+}
+
+// MolReadyGatedResult represents the result of a mol ready --gated operation
+type MolReadyGatedResult struct {
+	Molecules []*MolReadyGatedMolecule `json:"molecules"`
+	Count     int                      `json:"count"`
 }
 

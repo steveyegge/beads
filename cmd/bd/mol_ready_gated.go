@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -49,11 +50,16 @@ Examples:
 func runMolReadyGated(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
-	// --gated mode requires direct store access
-	// TODO: Add daemon RPC support for ready --gated per gt-as9kdm
+	// Use daemon RPC when available (bd-2n56)
+	if daemonClient != nil {
+		runMolReadyGatedViaDaemon()
+		return
+	}
+
+	// Fallback to direct store access
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: bd ready --gated requires direct database access\n")
-		fmt.Fprintf(os.Stderr, "Hint: ready --gated does not yet support daemon mode\n")
+		fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+		fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
 		os.Exit(1)
 	}
 
@@ -92,6 +98,66 @@ func runMolReadyGated(cmd *cobra.Command, args []string) {
 		}
 		if mol.ReadyStep != nil {
 			fmt.Printf("   Ready step: %s - %s\n", mol.ReadyStep.ID, mol.ReadyStep.Title)
+		}
+		fmt.Println()
+	}
+
+	fmt.Println("To dispatch a molecule:")
+	fmt.Println("  gt sling <agent> --mol <molecule-id>")
+}
+
+// runMolReadyGatedViaDaemon executes mol ready --gated via daemon RPC (bd-2n56)
+func runMolReadyGatedViaDaemon() {
+	args := &rpc.MolReadyGatedArgs{
+		Limit: 100,
+	}
+
+	result, err := daemonClient.MolReadyGated(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		// Convert RPC result to local output format for consistency
+		output := GatedReadyOutput{
+			Molecules: make([]*GatedMolecule, len(result.Molecules)),
+			Count:     result.Count,
+		}
+		for i, mol := range result.Molecules {
+			output.Molecules[i] = &GatedMolecule{
+				MoleculeID:    mol.MoleculeID,
+				MoleculeTitle: mol.MoleculeTitle,
+				ClosedGate: &types.Issue{
+					ID:        mol.ClosedGateID,
+					AwaitType: mol.ClosedGateType,
+				},
+				ReadyStep: &types.Issue{
+					ID:    mol.ReadyStepID,
+					Title: mol.ReadyStepTitle,
+				},
+			}
+		}
+		outputJSON(output)
+		return
+	}
+
+	// Human-readable output
+	if result.Count == 0 {
+		fmt.Printf("\n%s No molecules ready for gate-resume dispatch\n\n", ui.RenderWarn(""))
+		return
+	}
+
+	fmt.Printf("\n%s Molecules ready for gate-resume dispatch (%d):\n\n",
+		ui.RenderAccent(""), result.Count)
+
+	for i, mol := range result.Molecules {
+		fmt.Printf("%d. %s: %s\n", i+1, ui.RenderID(mol.MoleculeID), mol.MoleculeTitle)
+		if mol.ClosedGateID != "" {
+			fmt.Printf("   Gate closed: %s (%s)\n", mol.ClosedGateID, mol.ClosedGateType)
+		}
+		if mol.ReadyStepID != "" {
+			fmt.Printf("   Ready step: %s - %s\n", mol.ReadyStepID, mol.ReadyStepTitle)
 		}
 		fmt.Println()
 	}

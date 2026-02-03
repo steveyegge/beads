@@ -309,6 +309,8 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleMolBurn(req)
 	case OpMolCurrent:
 		resp = s.handleMolCurrent(req)
+	case OpMolReadyGated:
+		resp = s.handleMolReadyGated(req)
 	default:
 		return Response{
 			Success: false,
