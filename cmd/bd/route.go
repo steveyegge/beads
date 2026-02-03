@@ -90,7 +90,7 @@ func runRouteMigrate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Found %d routes to migrate\n", len(allRoutes))
 
 	if routeMigrateDryRun {
-		fmt.Println("\nDry run - no changes will be made:\n")
+		fmt.Println("\nDry run - no changes will be made:")
 		for _, r := range allRoutes {
 			fmt.Printf("  %s → %s (from %s)\n", r.Prefix, r.Path, r.Source)
 		}
