@@ -725,6 +725,21 @@ func (c *Client) MolProgressStats(moleculeID string) (*MolProgressStatsResult, e
 	return &result, nil
 }
 
+// MolReadyGated retrieves molecules ready for gate-resume dispatch via the daemon (bd-2n56)
+func (c *Client) MolReadyGated(args *MolReadyGatedArgs) (*MolReadyGatedResult, error) {
+	resp, err := c.Execute(OpMolReadyGated, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result MolReadyGatedResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mol ready gated response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // Types retrieves available issue types via the daemon (bd-s091)
 func (c *Client) Types(args *TypesArgs) (*TypesResult, error) {
 	resp, err := c.Execute(OpTypes, args)

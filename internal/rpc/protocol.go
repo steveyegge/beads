@@ -64,6 +64,7 @@ const (
 	OpMolBurn          = "mol_burn"
 	OpMolCurrent       = "mol_current"
 	OpMolProgressStats = "mol_progress_stats"
+	OpMolReadyGated    = "mol_ready_gated"
 
 	// Close operations (bd-ympw)
 	OpCloseContinue = "close_continue"
@@ -856,6 +857,27 @@ type MolProgressStatsResult struct {
 	CurrentStepID string  `json:"current_step_id"` // First in_progress step ID (if any)
 	FirstClosed   *string `json:"first_closed,omitempty"`
 	LastClosed    *string `json:"last_closed,omitempty"`
+}
+
+// MolReadyGatedArgs represents arguments for the mol ready --gated operation
+type MolReadyGatedArgs struct {
+	Limit int `json:"limit,omitempty"` // Maximum number of molecules to return
+}
+
+// MolReadyGatedMolecule represents a molecule ready for gate-resume dispatch
+type MolReadyGatedMolecule struct {
+	MoleculeID     string `json:"molecule_id"`
+	MoleculeTitle  string `json:"molecule_title"`
+	ClosedGateID   string `json:"closed_gate_id,omitempty"`
+	ClosedGateType string `json:"closed_gate_type,omitempty"` // await_type of the closed gate
+	ReadyStepID    string `json:"ready_step_id,omitempty"`
+	ReadyStepTitle string `json:"ready_step_title,omitempty"`
+}
+
+// MolReadyGatedResult represents the result of a mol ready --gated operation
+type MolReadyGatedResult struct {
+	Molecules []*MolReadyGatedMolecule `json:"molecules"`
+	Count     int                      `json:"count"`
 }
 
 // Close continue operation (bd-ympw)

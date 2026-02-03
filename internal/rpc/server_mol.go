@@ -1308,6 +1308,158 @@ func (s *Server) handleCloseContinue(req *Request) Response {
 	return Response{Success: true, Data: data}
 }
 
+// handleMolReadyGated handles the mol ready --gated RPC operation (bd-2n56)
+func (s *Server) handleMolReadyGated(req *Request) Response {
+	var args MolReadyGatedArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Find gate-ready molecules
+	molecules, err := s.findGateReadyMolecules(ctx, args.Limit)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("finding gate-ready molecules: %v", err)}
+	}
+
+	result := &MolReadyGatedResult{
+		Molecules: molecules,
+		Count:     len(molecules),
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+// findGateReadyMolecules finds molecules where a gate has closed and work can resume.
+//
+// Logic:
+// 1. Find all closed gate beads
+// 2. For each closed gate, find what step it was blocking
+// 3. Check if that step is now ready (unblocked)
+// 4. Find the parent molecule
+// 5. Filter out molecules that are already hooked by someone
+func (s *Server) findGateReadyMolecules(ctx context.Context, limit int) ([]*MolReadyGatedMolecule, error) {
+	if limit == 0 {
+		limit = 100
+	}
+
+	// Step 1: Find all closed gate beads
+	gateType := types.IssueType("gate")
+	closedStatus := types.StatusClosed
+	gateFilter := types.IssueFilter{
+		IssueType: &gateType,
+		Status:    &closedStatus,
+		Limit:     limit,
+	}
+
+	closedGates, err := s.storage.SearchIssues(ctx, "", gateFilter)
+	if err != nil {
+		return nil, fmt.Errorf("searching closed gates: %w", err)
+	}
+
+	if len(closedGates) == 0 {
+		return []*MolReadyGatedMolecule{}, nil
+	}
+
+	// Step 2: Get ready work to check which steps are ready
+	// IncludeMolSteps: true because we specifically need to see molecule steps here
+	readyIssues, err := s.storage.GetReadyWork(ctx, types.WorkFilter{Limit: 500, IncludeMolSteps: true})
+	if err != nil {
+		return nil, fmt.Errorf("getting ready work: %w", err)
+	}
+	readyIDs := make(map[string]bool)
+	for _, issue := range readyIssues {
+		readyIDs[issue.ID] = true
+	}
+
+	// Step 3: Get hooked molecules to filter out
+	hookedStatus := types.StatusHooked
+	hookedFilter := types.IssueFilter{
+		Status: &hookedStatus,
+		Limit:  100,
+	}
+	hookedIssues, err := s.storage.SearchIssues(ctx, "", hookedFilter)
+	if err != nil {
+		// Non-fatal: just continue without filtering
+		hookedIssues = nil
+	}
+	hookedMolecules := make(map[string]bool)
+	for _, issue := range hookedIssues {
+		// If the hooked issue is a molecule root, mark it
+		hookedMolecules[issue.ID] = true
+		// Also find parent molecule for hooked steps
+		if parentMol := s.findParentMolecule(ctx, issue.ID); parentMol != "" {
+			hookedMolecules[parentMol] = true
+		}
+	}
+
+	// Step 4: For each closed gate, find issues that depend on it (were blocked)
+	moleculeMap := make(map[string]*MolReadyGatedMolecule)
+
+	for _, gate := range closedGates {
+		// Find issues that depend on this gate (GetDependents returns issues where depends_on_id = gate.ID)
+		dependents, err := s.storage.GetDependents(ctx, gate.ID)
+		if err != nil {
+			continue
+		}
+
+		for _, dependent := range dependents {
+			// Check if the previously blocked step is now ready
+			if !readyIDs[dependent.ID] {
+				continue
+			}
+
+			// Find the parent molecule
+			moleculeID := s.findParentMolecule(ctx, dependent.ID)
+			if moleculeID == "" {
+				continue
+			}
+
+			// Skip if already hooked
+			if hookedMolecules[moleculeID] {
+				continue
+			}
+
+			// Get molecule details
+			moleculeIssue, err := s.storage.GetIssue(ctx, moleculeID)
+			if err != nil || moleculeIssue == nil {
+				continue
+			}
+
+			// Add to results (dedupe by molecule ID)
+			if _, exists := moleculeMap[moleculeID]; !exists {
+				moleculeMap[moleculeID] = &MolReadyGatedMolecule{
+					MoleculeID:     moleculeID,
+					MoleculeTitle:  moleculeIssue.Title,
+					ClosedGateID:   gate.ID,
+					ClosedGateType: gate.AwaitType,
+					ReadyStepID:    dependent.ID,
+					ReadyStepTitle: dependent.Title,
+				}
+			}
+		}
+	}
+
+	// Convert to slice
+	var molecules []*MolReadyGatedMolecule
+	for _, mol := range moleculeMap {
+		molecules = append(molecules, mol)
+	}
+
+	// Sort by molecule ID for consistent ordering
+	for i := 0; i < len(molecules); i++ {
+		for j := i + 1; j < len(molecules); j++ {
+			if molecules[i].MoleculeID > molecules[j].MoleculeID {
+				molecules[i], molecules[j] = molecules[j], molecules[i]
+			}
+		}
+	}
+
+	return molecules, nil
+}
+
 // handleTypes handles the types RPC operation (bd-s091)
 // Returns core work types and custom types from config
 func (s *Server) handleTypes(req *Request) Response {

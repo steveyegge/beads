@@ -313,6 +313,8 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleMolCurrent(req)
 	case OpMolProgressStats:
 		resp = s.handleMolProgressStats(req)
+	case OpMolReadyGated:
+		resp = s.handleMolReadyGated(req)
 	// Close operations (bd-ympw)
 	case OpCloseContinue:
 		resp = s.handleCloseContinue(req)
