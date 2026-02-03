@@ -57,6 +57,10 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 - **[jira-beads-sync](https://github.com/conallob/jira-beads-sync)** - CLI tool & Claude Code plugin to sync tasks from Jira into beads and publish beads task states back to Jira. Built by [@conallob](https://github.com/conallob). (Go)
 
+## SDKs & Libraries
+
+- **[beads-sdk](https://github.com/HerbCaudill/beads-sdk)** - Typed TypeScript SDK with zero runtime dependencies. High-level `BeadsClient` for CRUD, filtering, search, labels, dependencies, comments, epics, and sync. Includes `DaemonSocket` for real-time mutation watching via the beads daemon. Install with `pnpm add @herbcaudill/beads-sdk`. Built by [@HerbCaudill](https://github.com/HerbCaudill). (TypeScript)
+
 ## Claude Code Orchestration
 
 - **[beads-orchestration](https://github.com/AvivK5498/Claude-Code-Beads-Orchestration)** - Multi-agent orchestration skill for Claude Code. Orchestrator investigates issues, manages beads tasks automatically, and delegates to tech-specific supervisors on isolated branches. Includes hooks for workflow enforcement, epic/subtask support, and optional external provider delegation (Codex/Gemini). Install via npm: `npm install -g @avivkaplan/beads-orchestration`. Built by [@AvivK5498](https://github.com/AvivK5498). (Node.js/Python)
