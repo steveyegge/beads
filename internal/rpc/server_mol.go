@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/storage"
@@ -605,9 +606,190 @@ func (s *Server) handleMolSquash(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
 	}
 
-	// TODO: Implement mol squash handler (gt-as9kdm.2)
-	// For now, return not implemented
-	return Response{Success: false, Error: "mol squash via daemon not yet implemented (gt-as9kdm.2)"}
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	// Resolve molecule ID
+	moleculeID, err := s.resolvePartialID(ctx, args.MoleculeID)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("resolving molecule ID: %v", err)}
+	}
+
+	// Load the molecule subgraph
+	subgraph, err := s.loadTemplateSubgraph(ctx, moleculeID)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("loading molecule: %v", err)}
+	}
+
+	// Filter to only ephemeral children (exclude root)
+	var wispChildren []*types.Issue
+	for _, issue := range subgraph.Issues {
+		if issue.ID == subgraph.Root.ID {
+			continue // Skip root
+		}
+		if issue.Ephemeral {
+			wispChildren = append(wispChildren, issue)
+		}
+	}
+
+	// Dry-run: just return preview
+	if args.DryRun {
+		result := &MolSquashResult{
+			MoleculeID:    moleculeID,
+			SquashedCount: len(wispChildren),
+			KeptChildren:  args.KeepChildren,
+		}
+		for _, child := range wispChildren {
+			result.SquashedIDs = append(result.SquashedIDs, child.ID)
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	// No children to squash
+	if len(wispChildren) == 0 {
+		result := &MolSquashResult{
+			MoleculeID:    moleculeID,
+			SquashedCount: 0,
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	// Perform the squash
+	result, err := s.squashMolecule(ctx, subgraph.Root, wispChildren, args.KeepChildren, args.Summary, actor)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("squash failed: %v", err)}
+	}
+
+	// Emit mutation event
+	s.emitMutation(MutationSquashed, result.DigestID, "digest", "")
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+// squashMolecule performs the squash operation
+func (s *Server) squashMolecule(ctx context.Context, root *types.Issue, children []*types.Issue, keepChildren bool, summary string, actor string) (*MolSquashResult, error) {
+	// Collect child IDs
+	childIDs := make([]string, len(children))
+	for i, c := range children {
+		childIDs[i] = c.ID
+	}
+
+	// Generate digest content
+	var digestContent string
+	if summary != "" {
+		digestContent = summary
+	} else {
+		digestContent = s.generateDigest(root, children)
+	}
+
+	result := &MolSquashResult{
+		MoleculeID:    root.ID,
+		SquashedIDs:   childIDs,
+		SquashedCount: len(children),
+		KeptChildren:  keepChildren,
+	}
+
+	// Create digest issue in transaction
+	var digestID string
+	err := s.storage.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Create digest issue (permanent, not ephemeral)
+		now := time.Now()
+		digestIssue := &types.Issue{
+			Title:       fmt.Sprintf("Digest: %s", root.Title),
+			Description: digestContent,
+			Status:      types.StatusClosed,
+			CloseReason: fmt.Sprintf("Squashed from %d wisps", len(children)),
+			Priority:    root.Priority,
+			IssueType:   types.TypeTask,
+			Ephemeral:   false,
+			ClosedAt:    &now,
+		}
+		if err := tx.CreateIssue(ctx, digestIssue, actor); err != nil {
+			return fmt.Errorf("creating digest issue: %w", err)
+		}
+		digestID = digestIssue.ID
+
+		// Link digest to root as parent-child
+		dep := &types.Dependency{
+			IssueID:     digestID,
+			DependsOnID: root.ID,
+			Type:        types.DepParentChild,
+		}
+		if err := tx.AddDependency(ctx, dep, actor); err != nil {
+			return fmt.Errorf("linking digest to root: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	result.DigestID = digestID
+
+	// Delete children if not keeping them
+	if !keepChildren {
+		deleted := 0
+		for _, id := range childIDs {
+			if err := s.storage.DeleteIssue(ctx, id); err != nil {
+				continue // Non-fatal
+			}
+			deleted++
+		}
+		result.DeletedCount = deleted
+	}
+
+	return result, nil
+}
+
+// generateDigest creates a summary from the molecule execution
+func (s *Server) generateDigest(root *types.Issue, children []*types.Issue) string {
+	var sb strings.Builder
+
+	sb.WriteString("## Molecule Execution Summary\n\n")
+	sb.WriteString(fmt.Sprintf("**Molecule**: %s\n", root.Title))
+	sb.WriteString(fmt.Sprintf("**Steps**: %d\n\n", len(children)))
+
+	// Count completed vs other statuses
+	completed := 0
+	inProgress := 0
+	for _, c := range children {
+		switch c.Status {
+		case types.StatusClosed:
+			completed++
+		case types.StatusInProgress:
+			inProgress++
+		}
+	}
+	sb.WriteString(fmt.Sprintf("**Completed**: %d/%d\n", completed, len(children)))
+	if inProgress > 0 {
+		sb.WriteString(fmt.Sprintf("**In Progress**: %d\n", inProgress))
+	}
+	sb.WriteString("\n---\n\n")
+
+	// List each step with its outcome
+	sb.WriteString("### Steps\n\n")
+	for i, child := range children {
+		status := string(child.Status)
+		sb.WriteString(fmt.Sprintf("%d. **[%s]** %s\n", i+1, status, child.Title))
+		if child.Description != "" {
+			desc := child.Description
+			if len(desc) > 200 {
+				desc = desc[:200] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("   %s\n", desc))
+		}
+		if child.CloseReason != "" {
+			sb.WriteString(fmt.Sprintf("   *Outcome: %s*\n", child.CloseReason))
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
 }
 
 // handleMolBurn handles the mol burn RPC operation
@@ -617,7 +799,89 @@ func (s *Server) handleMolBurn(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
 	}
 
-	// TODO: Implement mol burn handler (gt-as9kdm.2)
-	// For now, return not implemented
-	return Response{Success: false, Error: "mol burn via daemon not yet implemented (gt-as9kdm.2)"}
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	if len(args.MoleculeIDs) == 0 {
+		return Response{Success: false, Error: "no molecule IDs provided"}
+	}
+
+	/// Dry-run: just return preview
+	if args.DryRun {
+		var allIDs []string
+		var failedCount int
+		for _, molID := range args.MoleculeIDs {
+			resolvedID, err := s.resolvePartialID(ctx, molID)
+			if err != nil {
+				failedCount++
+				continue
+			}
+			allIDs = append(allIDs, resolvedID)
+		}
+		result := &MolBurnResult{
+			DeletedIDs:   allIDs,
+			DeletedCount: len(allIDs),
+			FailedCount:  failedCount,
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	// Perform the burn
+	result, err := s.burnMolecules(ctx, args.MoleculeIDs, args.Force, actor)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("burn failed: %v", err)}
+	}
+
+	// Emit mutation events for each deleted molecule
+	for _, id := range result.DeletedIDs {
+		s.emitMutation(MutationBurned, id, "burned", "")
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+// burnMolecules deletes the specified molecules and their children
+func (s *Server) burnMolecules(ctx context.Context, moleculeIDs []string, force bool, actor string) (*MolBurnResult, error) {
+	result := &MolBurnResult{
+		DeletedIDs: make([]string, 0),
+	}
+
+	for _, molID := range moleculeIDs {
+		// Resolve molecule ID
+		resolvedID, err := s.resolvePartialID(ctx, molID)
+		if err != nil {
+			result.FailedCount++
+			continue
+		}
+
+		// Load subgraph to get all children
+		subgraph, err := s.loadTemplateSubgraph(ctx, resolvedID)
+		if err != nil {
+			result.FailedCount++
+			continue
+		}
+
+		// Delete all issues in subgraph (children first, then root)
+		// Collect IDs in reverse order (children before parents)
+		var toDelete []string
+		for _, issue := range subgraph.Issues {
+			if issue.ID != subgraph.Root.ID {
+				toDelete = append(toDelete, issue.ID)
+			}
+		}
+		toDelete = append(toDelete, subgraph.Root.ID)
+
+		// Delete each issue
+		for _, id := range toDelete {
+			if err := s.storage.DeleteIssue(ctx, id); err != nil {
+				continue // Non-fatal, continue with others
+			}
+			result.DeletedIDs = append(result.DeletedIDs, id)
+			result.DeletedCount++
+		}
+	}
+
+	return result, nil
 }

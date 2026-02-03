@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -56,39 +57,25 @@ func runMolBurn(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// mol burn requires direct store access - ensure store is active even when daemon connected
+	// Parse flags early
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	force, _ := cmd.Flags().GetBool("force")
+
+	// Use daemon RPC when available (gt-as9kdm)
+	if daemonClient != nil {
+		runMolBurnViaDaemon(args, dryRun, force)
+		return
+	}
+
+	// Fallback to direct store access
 	if err := ensureStoreActive(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
+		fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+		fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
 		os.Exit(1)
-	}
-
-	// Parse flags early so we can check dry-run before requiring store
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	force, _ := cmd.Flags().GetBool("force")
-
-	// Check connectivity requirements:
-	// - Dry-run only needs read capability (daemon OR store)
-	// - Actual burn needs store for delete operations (no RPC endpoint yet)
-	if dryRun {
-		// Dry-run only needs read capability
-		if store == nil && daemonClient == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-			os.Exit(1)
-		}
-	} else {
-		// Actual burn requires direct store for delete operations
-		// TODO: Add daemon RPC support for mol burn per gt-as9kdm
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: mol burn requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: stop daemon and retry, or start daemon in this workspace\n")
-			os.Exit(1)
-		}
 	}
 
 	// Single ID: use original logic for backward compatibility
@@ -428,4 +415,55 @@ func init() {
 	molBurnCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 
 	molCmd.AddCommand(molBurnCmd)
+}
+
+// runMolBurnViaDaemon executes mol burn via daemon RPC (gt-as9kdm)
+func runMolBurnViaDaemon(moleculeIDs []string, dryRun, force bool) {
+	burnArgs := &rpc.MolBurnArgs{
+		MoleculeIDs: moleculeIDs,
+		DryRun:      dryRun,
+		Force:       force,
+	}
+
+	result, err := daemonClient.MolBurn(burnArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Schedule auto-flush
+	markDirtyAndScheduleFlush()
+
+	if jsonOutput {
+		// Output BatchBurnResult for consistency with direct store path
+		batchResult := &BatchBurnResult{
+			Results: []BurnResult{{
+				DeletedIDs:   result.DeletedIDs,
+				DeletedCount: result.DeletedCount,
+			}},
+			TotalDeleted: result.DeletedCount,
+			FailedCount:  result.FailedCount,
+		}
+		outputJSON(batchResult)
+		return
+	}
+
+	if dryRun {
+		fmt.Printf("\nDry run: would burn %d molecule(s)\n", len(moleculeIDs))
+		fmt.Printf("  Total issues to delete: %d\n", result.DeletedCount)
+		if result.FailedCount > 0 {
+			fmt.Printf("  Failed to resolve: %d\n", result.FailedCount)
+		}
+		return
+	}
+
+	if result.DeletedCount == 0 && result.FailedCount == len(moleculeIDs) {
+		fmt.Fprintf(os.Stderr, "Error: failed to burn any molecules\n")
+		os.Exit(1)
+	}
+
+	fmt.Printf("%s Burned %d molecule(s): %d issues deleted\n", ui.RenderPass("✓"), len(moleculeIDs)-result.FailedCount, result.DeletedCount)
+	if result.FailedCount > 0 {
+		fmt.Printf("  %d failed\n", result.FailedCount)
+	}
 }

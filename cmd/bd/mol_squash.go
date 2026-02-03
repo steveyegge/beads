@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -64,40 +65,26 @@ func runMolSquash(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// mol squash requires direct store access - ensure store is active even when daemon connected
+	// Parse flags early
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	keepChildren, _ := cmd.Flags().GetBool("keep-children")
+	summary, _ := cmd.Flags().GetString("summary")
+
+	// Use daemon RPC when available (gt-as9kdm)
+	if daemonClient != nil {
+		runMolSquashViaDaemon(args[0], dryRun, keepChildren, summary)
+		return
+	}
+
+	// Fallback to direct store access
 	if err := ensureStoreActive(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
+		fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+		fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
 		os.Exit(1)
-	}
-
-	// Parse flags early so we can check dry-run before requiring store
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	keepChildren, _ := cmd.Flags().GetBool("keep-children")
-	summary, _ := cmd.Flags().GetString("summary")
-
-	// Check connectivity requirements:
-	// - Dry-run only needs read capability (daemon OR store)
-	// - Actual squash needs store for write operations (no RPC endpoint yet)
-	if dryRun {
-		// Dry-run only needs read capability
-		if store == nil && daemonClient == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-			os.Exit(1)
-		}
-	} else {
-		// Actual squash requires direct store for write operations
-		// TODO: Add daemon RPC support for mol squash per gt-as9kdm
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: mol squash requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: stop daemon and retry, or start daemon in this workspace\n")
-			os.Exit(1)
-		}
 	}
 
 	// Resolve molecule ID in main store
@@ -331,4 +318,60 @@ func init() {
 	molSquashCmd.Flags().String("summary", "", "Agent-provided summary (bypasses auto-generation)")
 
 	molCmd.AddCommand(molSquashCmd)
+}
+
+// runMolSquashViaDaemon executes mol squash via daemon RPC (gt-as9kdm)
+func runMolSquashViaDaemon(moleculeID string, dryRun, keepChildren bool, summary string) {
+	squashArgs := &rpc.MolSquashArgs{
+		MoleculeID:   moleculeID,
+		DryRun:       dryRun,
+		KeepChildren: keepChildren,
+		Summary:      summary,
+	}
+
+	result, err := daemonClient.MolSquash(squashArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Schedule auto-flush
+	markDirtyAndScheduleFlush()
+
+	if jsonOutput {
+		// Convert to SquashResult for consistency
+		outputJSON(&SquashResult{
+			MoleculeID:    result.MoleculeID,
+			DigestID:      result.DigestID,
+			SquashedIDs:   result.SquashedIDs,
+			SquashedCount: result.SquashedCount,
+			DeletedCount:  result.DeletedCount,
+			KeptChildren:  result.KeptChildren,
+		})
+		return
+	}
+
+	if dryRun {
+		fmt.Printf("\nDry run: would squash molecule %s\n", moleculeID)
+		fmt.Printf("  Ephemeral children to squash: %d\n", result.SquashedCount)
+		if keepChildren {
+			fmt.Printf("  --keep-children: children would NOT be deleted\n")
+		} else {
+			fmt.Printf("  Children would be deleted after digest creation.\n")
+		}
+		return
+	}
+
+	if result.SquashedCount == 0 {
+		fmt.Printf("No ephemeral children found for molecule %s\n", moleculeID)
+		return
+	}
+
+	fmt.Printf("%s Squashed molecule: %d children → 1 digest\n", ui.RenderPass("✓"), result.SquashedCount)
+	fmt.Printf("  Digest ID: %s\n", result.DigestID)
+	if result.DeletedCount > 0 {
+		fmt.Printf("  Deleted: %d wisps\n", result.DeletedCount)
+	} else if result.KeptChildren {
+		fmt.Printf("  Children preserved (--keep-children)\n")
+	}
 }
