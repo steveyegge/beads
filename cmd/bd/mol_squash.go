@@ -64,16 +64,30 @@ func runMolSquash(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// mol squash requires direct store access (daemon auto-bypassed for wisp ops)
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-		os.Exit(1)
-	}
-
+	// Parse flags early so we can check dry-run before requiring store
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	keepChildren, _ := cmd.Flags().GetBool("keep-children")
 	summary, _ := cmd.Flags().GetString("summary")
+
+	// Check connectivity requirements:
+	// - Dry-run only needs read capability (daemon OR store)
+	// - Actual squash needs store for write operations (no RPC endpoint yet)
+	if dryRun {
+		// Dry-run only needs read capability
+		if store == nil && daemonClient == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+			fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
+			os.Exit(1)
+		}
+	} else {
+		// Actual squash requires direct store for write operations
+		// TODO: Add daemon RPC support for mol squash per gt-as9kdm
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: mol squash requires direct database access\n")
+			fmt.Fprintf(os.Stderr, "Hint: stop daemon and retry, or start daemon in this workspace\n")
+			os.Exit(1)
+		}
+	}
 
 	// Resolve molecule ID in main store
 	// Load the molecule subgraph (prefer daemon RPC per gt-as9kdm)

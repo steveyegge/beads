@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var molBurnCmd = &cobra.Command{
@@ -57,15 +56,29 @@ func runMolBurn(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// mol burn requires direct store access (daemon auto-bypassed for wisp ops)
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-		os.Exit(1)
-	}
-
+	// Parse flags early so we can check dry-run before requiring store
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	force, _ := cmd.Flags().GetBool("force")
+
+	// Check connectivity requirements:
+	// - Dry-run only needs read capability (daemon OR store)
+	// - Actual burn needs store for delete operations (no RPC endpoint yet)
+	if dryRun {
+		// Dry-run only needs read capability
+		if store == nil && daemonClient == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+			fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
+			os.Exit(1)
+		}
+	} else {
+		// Actual burn requires direct store for delete operations
+		// TODO: Add daemon RPC support for mol burn per gt-as9kdm
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: mol burn requires direct database access\n")
+			fmt.Fprintf(os.Stderr, "Hint: stop daemon and retry, or start daemon in this workspace\n")
+			os.Exit(1)
+		}
+	}
 
 	// Single ID: use original logic for backward compatibility
 	if len(args) == 1 {
@@ -79,27 +92,21 @@ func runMolBurn(cmd *cobra.Command, args []string) {
 
 // burnSingleMolecule handles the single molecule case (original behavior)
 func burnSingleMolecule(ctx context.Context, moleculeID string, dryRun, force bool) {
-	// Resolve molecule ID in main store
-	resolvedID, err := utils.ResolvePartialID(ctx, store, moleculeID)
+	// Load the molecule subgraph (prefer daemon RPC per gt-as9kdm)
+	// This handles both ID resolution and loading the root issue
+	subgraph, err := loadSubgraphPreferDaemon(ctx, moleculeID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving molecule ID %s: %v\n", moleculeID, err)
-		os.Exit(1)
-	}
-
-	// Load the molecule
-	rootIssue, err := store.GetIssue(ctx, resolvedID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading molecule %s: %v\n", moleculeID, err)
 		os.Exit(1)
 	}
 
 	// Branch based on molecule phase
-	if rootIssue.Ephemeral {
+	if subgraph.Root.Ephemeral {
 		// Wisp: direct delete without tombstones
-		burnWispMolecule(ctx, resolvedID, dryRun, force)
+		burnWispMolecule(ctx, subgraph.Root.ID, dryRun, force)
 	} else {
 		// Mol: cascade delete with tombstones
-		burnPersistentMolecule(ctx, resolvedID, dryRun, force)
+		burnPersistentMolecule(ctx, subgraph.Root.ID, dryRun, force)
 	}
 }
 
@@ -109,30 +116,22 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 	var persistentIDs []string
 	var failedResolve []string
 
-	// First pass: resolve and categorize all IDs
+	// First pass: load and categorize all molecules using loadSubgraphPreferDaemon
+	// This works with either daemon RPC or direct store access
 	for _, moleculeID := range moleculeIDs {
-		resolvedID, err := utils.ResolvePartialID(ctx, store, moleculeID)
+		subgraph, err := loadSubgraphPreferDaemon(ctx, moleculeID)
 		if err != nil {
 			if !jsonOutput {
-				fmt.Fprintf(os.Stderr, "Warning: failed to resolve %s: %v\n", moleculeID, err)
+				fmt.Fprintf(os.Stderr, "Warning: failed to load %s: %v\n", moleculeID, err)
 			}
 			failedResolve = append(failedResolve, moleculeID)
 			continue
 		}
 
-		issue, err := store.GetIssue(ctx, resolvedID)
-		if err != nil {
-			if !jsonOutput {
-				fmt.Fprintf(os.Stderr, "Warning: failed to load %s: %v\n", resolvedID, err)
-			}
-			failedResolve = append(failedResolve, moleculeID)
-			continue
-		}
-
-		if issue.Ephemeral {
-			wispIDs = append(wispIDs, resolvedID)
+		if subgraph.Root.Ephemeral {
+			wispIDs = append(wispIDs, subgraph.Root.ID)
 		} else {
-			persistentIDs = append(persistentIDs, resolvedID)
+			persistentIDs = append(persistentIDs, subgraph.Root.ID)
 		}
 	}
 
