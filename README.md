@@ -160,6 +160,12 @@ bd close bd-xyz --compact-spec --compact-skills
 | `bd ready --mine` | Work queue filtered to your assignments |
 | `bd list --show-volatility` | Badges: 🔥 volatile / ⚡ stable |
 | `bd spec scan` | Detect spec changes |
+| `bd spec stale` | Show specs by staleness bucket |
+| `bd spec triage` | Triage specs/ideas by age and git status |
+| `bd spec duplicates` | Find duplicate or overlapping specs |
+| `bd spec delta` | Show spec changes since last scan |
+| `bd spec report` | Generate full spec radar report |
+| `bd spec sync` | Sync spec lifecycle from linked beads |
 | `bd spec volatility` | List specs by stability |
 | `bd spec volatility --trend <spec>` | 4-week visual trend |
 | `bd spec volatility --with-dependents <spec>` | Cascade impact |
