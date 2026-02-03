@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 )
@@ -14,8 +15,11 @@ import (
 func startRPCServer(ctx context.Context, socketPath string, store storage.Storage, workspacePath string, dbPath string, log daemonLogger) (*rpc.Server, chan error, error) {
 	// Sync daemon version with CLI version
 	rpc.ServerVersion = Version
-	
-	server := rpc.NewServer(socketPath, store, workspacePath, dbPath)
+
+	// Create in-memory wisp store for ephemeral issues
+	wispStore := daemon.NewWispStore()
+
+	server := rpc.NewServerWithWispStore(socketPath, store, wispStore, workspacePath, dbPath)
 	serverErrChan := make(chan error, 1)
 
 	go func() {

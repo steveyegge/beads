@@ -24,6 +24,67 @@ func containsLabel(labels []string, label string) bool {
 	return false
 }
 
+// removeLabel removes a label from the list if present
+func removeLabel(labels []string, label string) []string {
+	result := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if l != label {
+			result = append(result, l)
+		}
+	}
+	return result
+}
+
+// applyUpdatesToIssue applies a map of updates to an issue struct.
+// Used for wisp updates where we can't use the storage layer.
+func applyUpdatesToIssue(issue *types.Issue, updates map[string]interface{}) {
+	for key, value := range updates {
+		switch key {
+		case "title":
+			if v, ok := value.(string); ok {
+				issue.Title = v
+			}
+		case "description":
+			if v, ok := value.(string); ok {
+				issue.Description = v
+			}
+		case "status":
+			if v, ok := value.(string); ok {
+				issue.Status = types.Status(v)
+			}
+		case "priority":
+			if v, ok := value.(int); ok {
+				issue.Priority = v
+			}
+		case "issue_type":
+			if v, ok := value.(string); ok {
+				issue.IssueType = types.IssueType(v)
+			}
+		case "assignee":
+			if v, ok := value.(string); ok {
+				issue.Assignee = v
+			}
+		case "notes":
+			if v, ok := value.(string); ok {
+				issue.Notes = v
+			}
+		case "design":
+			if v, ok := value.(string); ok {
+				issue.Design = v
+			}
+		case "acceptance_criteria":
+			if v, ok := value.(string); ok {
+				issue.AcceptanceCriteria = v
+			}
+		case "pinned":
+			if v, ok := value.(bool); ok {
+				issue.Pinned = v
+			}
+		}
+	}
+	issue.UpdatedAt = time.Now()
+}
+
 // parseTimeRPC parses time strings in multiple formats (RFC3339, YYYY-MM-DD, etc.)
 // Matches the parseTimeFlag behavior in cmd/bd/list.go for CLI parity
 func parseTimeRPC(s string) (time.Time, error) {
@@ -399,7 +460,27 @@ func (s *Server) handleCreate(req *Request) Response {
 		}
 		// If error getting parent or parent has no source_repo, continue with default
 	}
-	
+
+	// Route wisps (ephemeral issues) to in-memory WispStore
+	if isWisp(issue) && s.wispStore != nil {
+		if err := s.wispStore.Create(ctx, issue); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to create wisp: %v", err),
+			}
+		}
+		// Emit mutation event for event-driven daemon
+		s.emitMutation(MutationCreate, issue.ID, issue.Title, issue.Assignee)
+
+		// Wisps don't support dependencies, labels, or other persistent relations
+		// They are purely in-memory ephemeral issues
+		data, _ := json.Marshal(issue)
+		return Response{
+			Success: true,
+			Data:    data,
+		}
+	}
+
 	if err := store.CreateIssue(ctx, issue, s.reqActor(req)); err != nil {
 		return Response{
 			Success: false,
@@ -575,6 +656,62 @@ func (s *Server) handleUpdate(req *Request) Response {
 		}
 	}
 
+	ctx := s.reqCtx(req)
+
+	// Check WispStore first for wisp IDs
+	if s.wispStore != nil && isWispID(updateArgs.ID) {
+		issue, err := s.wispStore.Get(ctx, updateArgs.ID)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get wisp: %v", err),
+			}
+		}
+		if issue != nil {
+			// Found in WispStore - apply updates to wisp
+			updates, err := updatesFromArgs(updateArgs)
+			if err != nil {
+				return Response{
+					Success: false,
+					Error:   err.Error(),
+				}
+			}
+
+			// Apply updates to the wisp issue
+			applyUpdatesToIssue(issue, updates)
+
+			// Handle label operations for wisps (stored directly on issue)
+			if len(updateArgs.SetLabels) > 0 {
+				issue.Labels = updateArgs.SetLabels
+			}
+			for _, label := range updateArgs.AddLabels {
+				if !containsLabel(issue.Labels, label) {
+					issue.Labels = append(issue.Labels, label)
+				}
+			}
+			for _, label := range updateArgs.RemoveLabels {
+				issue.Labels = removeLabel(issue.Labels, label)
+			}
+
+			if err := s.wispStore.Update(ctx, issue); err != nil {
+				return Response{
+					Success: false,
+					Error:   fmt.Sprintf("failed to update wisp: %v", err),
+				}
+			}
+
+			// Emit mutation event
+			s.emitMutation(MutationUpdate, issue.ID, issue.Title, issue.Assignee)
+
+			data, _ := json.Marshal(issue)
+			return Response{
+				Success: true,
+				Data:    data,
+			}
+		}
+		// Not found in WispStore, fall through to regular storage
+	}
+
 	store := s.storage
 	if store == nil {
 		return Response{
@@ -582,8 +719,6 @@ func (s *Server) handleUpdate(req *Request) Response {
 			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
 		}
 	}
-
-	ctx := s.reqCtx(req)
 
 	// Check if issue is a template (beads-1ra): templates are read-only
 	issue, err := store.GetIssue(ctx, updateArgs.ID)
@@ -952,14 +1087,6 @@ func (s *Server) handleDelete(req *Request) Response {
 		}
 	}
 
-	store := s.storage
-	if store == nil {
-		return Response{
-			Success: false,
-			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
-		}
-	}
-
 	// Validate that we have issue IDs to delete
 	if len(deleteArgs.IDs) == 0 {
 		return Response{
@@ -969,6 +1096,55 @@ func (s *Server) handleDelete(req *Request) Response {
 	}
 
 	ctx := s.reqCtx(req)
+
+	// Check WispStore for wisp IDs - handle them separately
+	if s.wispStore != nil {
+		var wispIDs, regularIDs []string
+		for _, id := range deleteArgs.IDs {
+			if isWispID(id) {
+				wispIDs = append(wispIDs, id)
+			} else {
+				regularIDs = append(regularIDs, id)
+			}
+		}
+
+		// Delete wisps from WispStore
+		for _, wispID := range wispIDs {
+			if err := s.wispStore.Delete(ctx, wispID); err != nil {
+				// Wisp not found is not an error - might already be deleted
+				if !strings.Contains(err.Error(), "not found") {
+					return Response{
+						Success: false,
+						Error:   fmt.Sprintf("failed to delete wisp %s: %v", wispID, err),
+					}
+				}
+			}
+			s.emitMutation(MutationDelete, wispID, "", "")
+		}
+
+		// If all IDs were wisps, return success
+		if len(regularIDs) == 0 {
+			data, _ := json.Marshal(map[string]interface{}{
+				"deleted_count": len(wispIDs),
+				"total_count":   len(deleteArgs.IDs),
+			})
+			return Response{
+				Success: true,
+				Data:    data,
+			}
+		}
+
+		// Continue with regular IDs
+		deleteArgs.IDs = regularIDs
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
 
 	// Use batch delete for cascade/multi-issue operations on SQLite storage
 	// This handles cascade delete properly by expanding dependents recursively
@@ -1335,6 +1511,34 @@ func (s *Server) handleList(req *Request) Response {
 	}
 
 	ctx := s.reqCtx(req)
+
+	// Collect wisps from WispStore if available and not explicitly filtering non-ephemeral
+	var wisps []*types.Issue
+	shouldIncludeWisps := filter.Ephemeral == nil || (filter.Ephemeral != nil && *filter.Ephemeral)
+	if s.wispStore != nil && shouldIncludeWisps {
+		wispList, err := s.wispStore.List(ctx, filter)
+		if err == nil {
+			wisps = wispList
+		}
+	}
+
+	// If explicitly filtering for ephemeral only, return just wisps
+	if filter.Ephemeral != nil && *filter.Ephemeral && s.wispStore != nil {
+		issuesWithCounts := make([]*types.IssueWithCounts, len(wisps))
+		for i, wisp := range wisps {
+			issuesWithCounts[i] = &types.IssueWithCounts{
+				Issue:           wisp,
+				DependencyCount: 0,
+				DependentCount:  0,
+			}
+		}
+		data, _ := json.Marshal(issuesWithCounts)
+		return Response{
+			Success: true,
+			Data:    data,
+		}
+	}
+
 	issues, err := store.SearchIssues(ctx, listArgs.Query, filter)
 	if err != nil {
 		return Response{
@@ -1373,8 +1577,20 @@ func (s *Server) handleList(req *Request) Response {
 	}
 
 	// Build response with counts
-	issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
-	for i, issue := range issues {
+	totalCount := len(issues) + len(wisps)
+	issuesWithCounts := make([]*types.IssueWithCounts, 0, totalCount)
+
+	// Add wisps first (they don't have dependency counts)
+	for _, wisp := range wisps {
+		issuesWithCounts = append(issuesWithCounts, &types.IssueWithCounts{
+			Issue:           wisp,
+			DependencyCount: 0,
+			DependentCount:  0,
+		})
+	}
+
+	// Add regular issues with counts
+	for _, issue := range issues {
 		counts := depCounts[issue.ID]
 		if counts == nil {
 			counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
@@ -1389,7 +1605,7 @@ func (s *Server) handleList(req *Request) Response {
 			iwc.EpicTotalChildren = progress.TotalChildren
 			iwc.EpicClosedChildren = progress.ClosedChildren
 		}
-		issuesWithCounts[i] = iwc
+		issuesWithCounts = append(issuesWithCounts, iwc)
 	}
 
 	data, _ := json.Marshal(issuesWithCounts)
@@ -1672,6 +1888,32 @@ func (s *Server) handleShow(req *Request) Response {
 		}
 	}
 
+	ctx := s.reqCtx(req)
+
+	// Check WispStore first for wisp IDs or if storage is not available
+	if s.wispStore != nil && isWispID(showArgs.ID) {
+		issue, err := s.wispStore.Get(ctx, showArgs.ID)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get wisp: %v", err),
+			}
+		}
+		if issue != nil {
+			// Found in WispStore - return simplified details (no deps/labels/comments)
+			details := &types.IssueDetails{
+				Issue:  *issue,
+				Labels: issue.Labels, // Labels are stored directly on wisp
+			}
+			data, _ := json.Marshal(details)
+			return Response{
+				Success: true,
+				Data:    data,
+			}
+		}
+		// Not found in WispStore, fall through to regular storage
+	}
+
 	store := s.storage
 	if store == nil {
 		return Response{
@@ -1680,7 +1922,6 @@ func (s *Server) handleShow(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
 	issue, err := store.GetIssue(ctx, showArgs.ID)
 	if err != nil {
 		return Response{

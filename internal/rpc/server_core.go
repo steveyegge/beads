@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +14,32 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// WispStore is the interface for in-memory wisp storage.
+// This interface is defined here to avoid circular imports with the daemon package.
+// The daemon.memoryWispStore implementation satisfies this interface.
+type WispStore interface {
+	// Create adds a new wisp to the store.
+	Create(ctx context.Context, issue *types.Issue) error
+
+	// Get retrieves a wisp by ID.
+	Get(ctx context.Context, id string) (*types.Issue, error)
+
+	// List returns wisps matching the filter.
+	List(ctx context.Context, filter types.IssueFilter) ([]*types.Issue, error)
+
+	// Update modifies an existing wisp.
+	Update(ctx context.Context, issue *types.Issue) error
+
+	// Delete removes a wisp by ID.
+	Delete(ctx context.Context, id string) error
+
+	// Count returns the number of wisps in the store.
+	Count() int
+
+	// Close releases any resources held by the store.
+	Close() error
+}
 
 // ServerVersion is the version of this RPC server
 // This should match the bd CLI version for proper compatibility checks
@@ -29,6 +56,7 @@ type Server struct {
 	workspacePath string          // Absolute path to workspace root
 	dbPath        string          // Absolute path to database file
 	storage       storage.Storage // Default storage (for backward compat)
+	wispStore     WispStore       // In-memory store for ephemeral wisps
 	listener      net.Listener
 	mu            sync.RWMutex
 	shutdown      bool
@@ -97,8 +125,34 @@ type MutationEvent struct {
 	StepCount int    `json:"step_count,omitempty"` // Number of steps (for bonded events)
 }
 
+// isWisp checks if an issue should be stored in the in-memory WispStore.
+// Returns true if the issue is ephemeral (Ephemeral=true) or has -wisp- in its ID.
+func isWisp(issue *types.Issue) bool {
+	if issue == nil {
+		return false
+	}
+	if issue.Ephemeral {
+		return true
+	}
+	// Check for -wisp- pattern in ID (legacy wisp ID format)
+	if strings.Contains(issue.ID, "-wisp-") {
+		return true
+	}
+	return false
+}
+
+// isWispID checks if an issue ID indicates it's a wisp.
+func isWispID(id string) bool {
+	return strings.Contains(id, "-wisp-")
+}
+
 // NewServer creates a new RPC server
 func NewServer(socketPath string, store storage.Storage, workspacePath string, dbPath string) *Server {
+	return NewServerWithWispStore(socketPath, store, nil, workspacePath, dbPath)
+}
+
+// NewServerWithWispStore creates a new RPC server with an optional WispStore for ephemeral issues.
+func NewServerWithWispStore(socketPath string, store storage.Storage, wispStore WispStore, workspacePath string, dbPath string) *Server {
 	// Parse config from env vars
 	maxConns := 100 // default
 	if env := os.Getenv("BEADS_DAEMON_MAX_CONNS"); env != "" {
@@ -153,6 +207,7 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		workspacePath:     workspacePath,
 		dbPath:            dbPath,
 		storage:           store,
+		wispStore:         wispStore,
 		shutdownChan:      make(chan struct{}),
 		doneChan:          make(chan struct{}),
 		startTime:         time.Now(),
