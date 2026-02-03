@@ -468,6 +468,11 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("failed to create blocked_issues view: %w", err)
 	}
 
+	// Run schema migrations for existing databases (bd-ijw)
+	if err := RunMigrations(db); err != nil {
+		return fmt.Errorf("failed to run dolt migrations: %w", err)
+	}
+
 	return nil
 }
 
