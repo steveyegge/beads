@@ -631,6 +631,21 @@ func (c *Client) MolBurn(args *MolBurnArgs) (*MolBurnResult, error) {
 	return &result, nil
 }
 
+// MolCurrent retrieves current molecule progress via the daemon
+func (c *Client) MolCurrent(args *MolCurrentArgs) (*MolCurrentResult, error) {
+	resp, err := c.Execute(OpMolCurrent, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result MolCurrentResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mol current response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

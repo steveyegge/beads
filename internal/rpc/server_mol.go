@@ -885,3 +885,281 @@ func (s *Server) burnMolecules(ctx context.Context, moleculeIDs []string, force 
 
 	return result, nil
 }
+
+// handleMolCurrent handles the mol current RPC operation (bd-fwsa)
+func (s *Server) handleMolCurrent(req *Request) Response {
+	var args MolCurrentArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Determine agent filter
+	agent := args.Agent
+	if agent == "" {
+		agent = s.reqActor(req)
+	}
+
+	var molecules []*MolCurrentProgress
+
+	if args.MoleculeID != "" {
+		// Explicit molecule ID given
+		moleculeID, err := s.resolvePartialID(ctx, args.MoleculeID)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("molecule '%s' not found", args.MoleculeID)}
+		}
+
+		progress, err := s.getMoleculeProgress(ctx, moleculeID, args.Limit, args.RangeStart, args.RangeEnd)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("loading molecule: %v", err)}
+		}
+
+		molecules = append(molecules, progress)
+	} else {
+		// Infer from in_progress issues
+		molecules = s.findInProgressMolecules(ctx, agent)
+
+		// Fallback: check for hooked issues with bonded molecules
+		if len(molecules) == 0 {
+			molecules = s.findHookedMolecules(ctx, agent)
+		}
+	}
+
+	result := &MolCurrentResult{
+		Molecules: molecules,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+// getMoleculeProgress loads a molecule and computes detailed progress
+func (s *Server) getMoleculeProgress(ctx context.Context, moleculeID string, limit, rangeStart, rangeEnd int) (*MolCurrentProgress, error) {
+	// Load the molecule root
+	root, err := s.storage.GetIssue(ctx, moleculeID)
+	if err != nil || root == nil {
+		return nil, fmt.Errorf("molecule not found: %s", moleculeID)
+	}
+
+	progress := &MolCurrentProgress{
+		MoleculeID:    root.ID,
+		MoleculeTitle: root.Title,
+		Assignee:      root.Assignee,
+	}
+
+	// Load all children (steps)
+	depMetas, err := s.storage.GetDependentsWithMetadata(ctx, moleculeID)
+	if err != nil {
+		return nil, fmt.Errorf("getting steps: %w", err)
+	}
+
+	// Get ready issues for determining step readiness
+	readyIssues, _ := s.storage.GetReadyWork(ctx, types.WorkFilter{IncludeMolSteps: true})
+	readyIDs := make(map[string]bool)
+	for _, issue := range readyIssues {
+		readyIDs[issue.ID] = true
+	}
+
+	// Build step status list
+	var steps []*MolCurrentStepStatus
+	for _, depMeta := range depMetas {
+		if depMeta.DependencyType != types.DepParentChild {
+			continue
+		}
+		issue := &depMeta.Issue
+		step := &MolCurrentStepStatus{
+			IssueID:   issue.ID,
+			Title:     issue.Title,
+			IssueType: string(issue.IssueType),
+			Priority:  issue.Priority,
+		}
+
+		switch issue.Status {
+		case types.StatusClosed:
+			step.Status = "done"
+			progress.Completed++
+		case types.StatusInProgress:
+			step.Status = "current"
+			step.IsCurrent = true
+			progress.CurrentStep = step
+		case types.StatusBlocked:
+			step.Status = "blocked"
+		default:
+			if readyIDs[issue.ID] {
+				step.Status = "ready"
+				if progress.NextStep == nil {
+					progress.NextStep = step
+				}
+			} else {
+				step.Status = "pending"
+			}
+		}
+
+		steps = append(steps, step)
+	}
+
+	progress.Total = len(steps)
+
+	// Apply range/limit filtering
+	if rangeStart > 0 && rangeEnd > 0 {
+		startIdx := rangeStart - 1
+		if startIdx >= len(steps) {
+			steps = nil
+		} else {
+			endIdx := rangeEnd
+			if endIdx > len(steps) {
+				endIdx = len(steps)
+			}
+			steps = steps[startIdx:endIdx]
+		}
+	} else if limit > 0 && len(steps) > limit {
+		steps = steps[:limit]
+	}
+
+	progress.Steps = steps
+
+	// If no current step but there's a ready step, set it as next
+	if progress.CurrentStep == nil && progress.NextStep == nil {
+		for _, step := range steps {
+			if step.Status == "ready" {
+				progress.NextStep = step
+				break
+			}
+		}
+	}
+
+	return progress, nil
+}
+
+// findInProgressMolecules finds molecules with in_progress steps for an agent
+func (s *Server) findInProgressMolecules(ctx context.Context, agent string) []*MolCurrentProgress {
+	// Query for in_progress issues
+	status := types.StatusInProgress
+	filter := types.IssueFilter{Status: &status}
+	if agent != "" {
+		filter.Assignee = &agent
+	}
+	inProgressIssues, err := s.storage.SearchIssues(ctx, "", filter)
+	if err != nil || len(inProgressIssues) == 0 {
+		return nil
+	}
+
+	// For each in_progress issue, find its parent molecule
+	moleculeMap := make(map[string]*MolCurrentProgress)
+	for _, issue := range inProgressIssues {
+		moleculeID := s.findParentMolecule(ctx, issue.ID)
+		if moleculeID == "" {
+			continue
+		}
+
+		if _, exists := moleculeMap[moleculeID]; !exists {
+			progress, err := s.getMoleculeProgress(ctx, moleculeID, 0, 0, 0)
+			if err == nil {
+				moleculeMap[moleculeID] = progress
+			}
+		}
+	}
+
+	// Convert to slice
+	var molecules []*MolCurrentProgress
+	for _, mol := range moleculeMap {
+		molecules = append(molecules, mol)
+	}
+
+	return molecules
+}
+
+// findHookedMolecules finds molecules bonded to hooked issues for an agent
+func (s *Server) findHookedMolecules(ctx context.Context, agent string) []*MolCurrentProgress {
+	// Query for hooked issues assigned to the agent
+	status := types.StatusHooked
+	filter := types.IssueFilter{Status: &status}
+	if agent != "" {
+		filter.Assignee = &agent
+	}
+	hookedIssues, err := s.storage.SearchIssues(ctx, "", filter)
+	if err != nil || len(hookedIssues) == 0 {
+		return nil
+	}
+
+	// For each hooked issue, check for blocks dependencies on molecules
+	moleculeMap := make(map[string]*MolCurrentProgress)
+	for _, issue := range hookedIssues {
+		deps, err := s.storage.GetDependencyRecords(ctx, issue.ID)
+		if err != nil {
+			continue
+		}
+
+		// Look for a blocks dependency pointing to a molecule
+		for _, dep := range deps {
+			if dep.Type != types.DepBlocks {
+				continue
+			}
+			candidate, err := s.storage.GetIssue(ctx, dep.DependsOnID)
+			if err != nil || candidate == nil {
+				continue
+			}
+
+			// Check if candidate is a molecule
+			isMolecule := candidate.IssueType == types.TypeEpic || s.isProto(candidate)
+			if isMolecule {
+				if _, exists := moleculeMap[candidate.ID]; !exists {
+					progress, err := s.getMoleculeProgress(ctx, candidate.ID, 0, 0, 0)
+					if err == nil {
+						moleculeMap[candidate.ID] = progress
+					}
+				}
+			}
+		}
+	}
+
+	// Convert to slice
+	var molecules []*MolCurrentProgress
+	for _, mol := range moleculeMap {
+		molecules = append(molecules, mol)
+	}
+
+	return molecules
+}
+
+// findParentMolecule walks up parent-child chain to find the root molecule
+func (s *Server) findParentMolecule(ctx context.Context, issueID string) string {
+	visited := make(map[string]bool)
+	currentID := issueID
+
+	for !visited[currentID] {
+		visited[currentID] = true
+
+		deps, err := s.storage.GetDependencyRecords(ctx, currentID)
+		if err != nil {
+			return ""
+		}
+
+		// Find parent-child dependency where current is the child
+		var parentID string
+		for _, dep := range deps {
+			if dep.Type == types.DepParentChild && dep.IssueID == currentID {
+				parentID = dep.DependsOnID
+				break
+			}
+		}
+
+		if parentID == "" {
+			// No parent - check if current issue is a molecule root
+			issue, err := s.storage.GetIssue(ctx, currentID)
+			if err != nil || issue == nil {
+				return ""
+			}
+			// Check if it's a proto (has template label) or epic
+			if s.isProto(issue) || issue.IssueType == types.TypeEpic {
+				return currentID
+			}
+			return ""
+		}
+
+		currentID = parentID
+	}
+
+	return ""
+}

@@ -72,14 +72,6 @@ Use --limit or --range to view specific steps:
 			agent = actor // Default to current user/agent
 		}
 
-		// mol current requires direct store access for subgraph loading
-		// TODO: Add daemon RPC support for mol current per gt-as9kdm
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: mol current requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: mol current does not yet support daemon mode\n")
-			os.Exit(1)
-		}
-
 		// Parse range flag if provided
 		var rangeStart, rangeEnd int
 		if rangeStr != "" {
@@ -89,6 +81,19 @@ Use --limit or --range to view specific steps:
 				fmt.Fprintf(os.Stderr, "Error: invalid range '%s': %v\n", rangeStr, err)
 				os.Exit(1)
 			}
+		}
+
+		// Use daemon RPC when available (bd-fwsa)
+		if daemonClient != nil {
+			runMolCurrentViaDaemon(args, agent, limit, rangeStart, rangeEnd)
+			return
+		}
+
+		// Fallback to direct store access
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
+			os.Exit(1)
 		}
 
 		// Determine if user explicitly requested steps
@@ -682,6 +687,91 @@ func printLargeMoleculeSummary(stats *types.MoleculeProgressStats) {
 	// Show hint about viewing step instructions
 	if stats.CurrentStepID != "" {
 		fmt.Printf("\n%s Run `bd show %s` to see detailed instructions.\n", ui.RenderAccent("💡"), stats.CurrentStepID)
+	}
+}
+
+// runMolCurrentViaDaemon executes mol current via daemon RPC (bd-fwsa)
+func runMolCurrentViaDaemon(args []string, agent string, limit, rangeStart, rangeEnd int) {
+	var moleculeID string
+	if len(args) == 1 {
+		moleculeID = args[0]
+	}
+
+	rpcArgs := &rpc.MolCurrentArgs{
+		MoleculeID: moleculeID,
+		Agent:      agent,
+		Limit:      limit,
+		RangeStart: rangeStart,
+		RangeEnd:   rangeEnd,
+	}
+
+	result, err := daemonClient.MolCurrent(rpcArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(result.Molecules)
+		return
+	}
+
+	if len(result.Molecules) == 0 {
+		fmt.Printf("No molecules in progress")
+		if agent != "" {
+			fmt.Printf(" for %s", agent)
+		}
+		fmt.Println(".")
+		fmt.Println("\nTo start work on a molecule:")
+		fmt.Println("  bd mol pour <proto-id>      # Instantiate a molecule from template")
+		fmt.Println("  bd update <step-id> --status in_progress  # Claim a step")
+		return
+	}
+
+	// Human-readable output
+	for i, mol := range result.Molecules {
+		if i > 0 {
+			fmt.Println()
+		}
+		printMoleculeProgressFromRPC(mol)
+	}
+}
+
+// printMoleculeProgressFromRPC prints molecule progress from RPC result
+func printMoleculeProgressFromRPC(mol *rpc.MolCurrentProgress) {
+	fmt.Printf("You're working on molecule %s\n", ui.RenderAccent(mol.MoleculeID))
+	fmt.Printf("  %s\n", mol.MoleculeTitle)
+	if mol.Assignee != "" {
+		fmt.Printf("  Assigned to: %s\n", mol.Assignee)
+	}
+	fmt.Println()
+
+	for _, step := range mol.Steps {
+		statusIcon := getStatusIcon(step.Status)
+		marker := ""
+		if step.IsCurrent {
+			marker = " <- YOU ARE HERE"
+		}
+		fmt.Printf("  %s %s: %s%s\n", statusIcon, step.IssueID, step.Title, marker)
+	}
+
+	fmt.Println()
+	fmt.Printf("Progress: %d/%d steps complete\n", mol.Completed, mol.Total)
+
+	if mol.NextStep != nil && mol.CurrentStep == nil {
+		fmt.Printf("\nNext ready: %s - %s\n", mol.NextStep.IssueID, mol.NextStep.Title)
+		fmt.Printf("  Start with: bd update %s --status in_progress\n", mol.NextStep.IssueID)
+	}
+
+	// Show hint about viewing step instructions
+	var hintStepID string
+	if mol.CurrentStep != nil {
+		hintStepID = mol.CurrentStep.IssueID
+	} else if mol.NextStep != nil {
+		hintStepID = mol.NextStep.IssueID
+	}
+	if hintStepID != "" {
+		fmt.Printf("\n%s Run `bd show %s` to see detailed instructions.\n", ui.RenderAccent("💡"), hintStepID)
 	}
 }
 

@@ -307,6 +307,8 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleMolSquash(req)
 	case OpMolBurn:
 		resp = s.handleMolBurn(req)
+	case OpMolCurrent:
+		resp = s.handleMolCurrent(req)
 	default:
 		return Response{
 			Success: false,

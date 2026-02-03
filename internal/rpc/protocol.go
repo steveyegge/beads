@@ -59,9 +59,10 @@ const (
 	OpDecisionList    = "decision_list"
 
 	// Mol operations (gt-as9kdm)
-	OpMolBond   = "mol_bond"
-	OpMolSquash = "mol_squash"
-	OpMolBurn   = "mol_burn"
+	OpMolBond    = "mol_bond"
+	OpMolSquash  = "mol_squash"
+	OpMolBurn    = "mol_burn"
+	OpMolCurrent = "mol_current"
 )
 
 // Request represents an RPC request from client to daemon
@@ -754,5 +755,41 @@ type MolBurnResult struct {
 	DeletedIDs   []string `json:"deleted_ids"`
 	DeletedCount int      `json:"deleted_count"`
 	FailedCount  int      `json:"failed_count"`
+}
+
+// MolCurrentArgs represents arguments for the mol current operation
+type MolCurrentArgs struct {
+	MoleculeID string `json:"molecule_id,omitempty"` // Explicit molecule ID (optional)
+	Agent      string `json:"agent,omitempty"`       // Agent/assignee filter
+	Limit      int    `json:"limit,omitempty"`       // Max steps to return
+	RangeStart int    `json:"range_start,omitempty"` // Step range start (1-indexed)
+	RangeEnd   int    `json:"range_end,omitempty"`   // Step range end (1-indexed)
+}
+
+// MolCurrentStepStatus represents the status of a step in a molecule for RPC
+type MolCurrentStepStatus struct {
+	IssueID   string `json:"issue_id"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`      // "done", "current", "ready", "blocked", "pending"
+	IsCurrent bool   `json:"is_current"`  // true if this is the in_progress step
+	IssueType string `json:"issue_type"`
+	Priority  int    `json:"priority"`
+}
+
+// MolCurrentProgress holds the progress information for a molecule (detailed for mol current)
+type MolCurrentProgress struct {
+	MoleculeID    string                  `json:"molecule_id"`
+	MoleculeTitle string                  `json:"molecule_title"`
+	Assignee      string                  `json:"assignee,omitempty"`
+	CurrentStep   *MolCurrentStepStatus   `json:"current_step,omitempty"`
+	NextStep      *MolCurrentStepStatus   `json:"next_step,omitempty"`
+	Steps         []*MolCurrentStepStatus `json:"steps"`
+	Completed     int                     `json:"completed"`
+	Total         int                     `json:"total"`
+}
+
+// MolCurrentResult represents the result of a mol current operation
+type MolCurrentResult struct {
+	Molecules []*MolCurrentProgress `json:"molecules"`
 }
 
