@@ -65,3 +65,26 @@ func TestWriteWobbleStore(t *testing.T) {
 		t.Fatalf("missing history file: %v", err)
 	}
 }
+
+func TestParseSkillDependentsFrontMatter(t *testing.T) {
+	tmpDir := t.TempDir()
+	skillDir := filepath.Join(tmpDir, "beads")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	content := "---\nname: beads\ndepends_on:\n  - spec-tracker\n  - pacman\n---\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+
+	deps, err := parseSkillDependents(tmpDir, "beads")
+	if err != nil {
+		t.Fatalf("parse dependents: %v", err)
+	}
+	if len(deps) != 2 {
+		t.Fatalf("expected 2 dependents, got %d", len(deps))
+	}
+	if deps[0] != "pacman" || deps[1] != "spec-tracker" {
+		t.Fatalf("unexpected dependents order: %v", deps)
+	}
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -196,6 +197,107 @@ func wobbleSkillsFromSummary(results []wobble.SkillSummary) []wobbleSkill {
 		})
 	}
 	return skills
+}
+
+func parseSkillDependents(skillsDir, skillName string) ([]string, error) {
+	path := filepath.Join(skillsDir, skillName)
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if info, err = os.Stat(path + ".md"); err != nil {
+				if os.IsNotExist(err) {
+					return nil, nil
+				}
+				return nil, err
+			}
+			path = path + ".md"
+		} else {
+			return nil, err
+		}
+	}
+	if info != nil && info.IsDir() {
+		path = filepath.Join(path, "SKILL.md")
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	if !scanner.Scan() {
+		return nil, scanner.Err()
+	}
+	if strings.TrimSpace(scanner.Text()) != "---" {
+		return nil, nil
+	}
+
+	var dependents []string
+	listMode := false
+	for scanner.Scan() {
+		line := strings.TrimRight(scanner.Text(), "\r\n")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "---" {
+			break
+		}
+		if strings.HasPrefix(trimmed, "depends_on:") {
+			listMode = false
+			value := strings.TrimSpace(strings.TrimPrefix(trimmed, "depends_on:"))
+			if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+				items := strings.Split(strings.Trim(value, "[]"), ",")
+				for _, item := range items {
+					if dep := normalizeDependent(item); dep != "" {
+						dependents = append(dependents, dep)
+					}
+				}
+			} else if value != "" {
+				if dep := normalizeDependent(value); dep != "" {
+					dependents = append(dependents, dep)
+				}
+			} else {
+				listMode = true
+			}
+			continue
+		}
+		if listMode {
+			if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "-\t") || trimmed == "-" {
+				dep := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+				if dep := normalizeDependent(dep); dep != "" {
+					dependents = append(dependents, dep)
+				}
+			} else if trimmed != "" {
+				listMode = false
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(dependents) == 0 {
+		return nil, nil
+	}
+	sort.Strings(dependents)
+	deduped := dependents[:0]
+	var last string
+	for _, dep := range dependents {
+		if dep == last {
+			continue
+		}
+		deduped = append(deduped, dep)
+		last = dep
+	}
+	return deduped, nil
+}
+
+func normalizeDependent(value string) string {
+	dep := strings.TrimSpace(value)
+	dep = strings.Trim(dep, "\"'")
+	return dep
 }
 
 func wobbleSkillsFromScanResult(result *wobble.ScanResult) []wobbleSkill {
