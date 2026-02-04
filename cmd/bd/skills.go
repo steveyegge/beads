@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -89,11 +90,38 @@ These skills may be candidates for archiving or removal.`,
 	Run: runSkillsCleanupCandidates,
 }
 
+type SkillCollision struct {
+	Name         string `json:"name"`
+	Source       string `json:"source"`
+	Path         string `json:"path"`
+	Reason       string `json:"reason"`
+	SupersededBy string `json:"superseded_by,omitempty"`
+}
+
+var skillsCollisionCmd = &cobra.Command{
+	Use:   "collisions",
+	Short: "Detect global vs project skill collisions",
+	Long: `Detect collisions between project-local and global skills.
+
+This surfaces:
+- name collisions (same skill name in multiple directories)
+- supersedes collisions (project skill declares supersedes:)
+
+Use --fix to archive superseded skills.`,
+	Run: runSkillsCollisions,
+}
+
 func init() {
 	skillsCmd.AddCommand(skillsAuditCmd)
 	skillsCmd.AddCommand(skillsSyncCmd)
 	skillsCmd.AddCommand(skillsCleanupCandidatesCmd)
+	skillsCmd.AddCommand(skillsCollisionCmd)
 	rootCmd.AddCommand(skillsCmd)
+
+	skillsCollisionCmd.Flags().Bool("fix", false, "Archive superseded skills")
+	skillsCollisionCmd.Flags().Bool("dry-run", false, "Preview changes without modifying files")
+	skillsCollisionCmd.Flags().Bool("quiet", false, "Print summary only")
+	skillsCollisionCmd.Flags().Bool("prefix-match", false, "Detect prefix-based collisions")
 }
 
 func runSkillsAudit(cmd *cobra.Command, args []string) {
@@ -447,6 +475,339 @@ func scanSkillDir(dir, source string) []SkillInfo {
 	}
 
 	return skills
+}
+
+func runSkillsCollisions(cmd *cobra.Command, _ []string) {
+	fix, _ := cmd.Flags().GetBool("fix")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	quiet, _ := cmd.Flags().GetBool("quiet")
+	prefixMatch, _ := cmd.Flags().GetBool("prefix-match")
+
+	projectDir := ".claude/skills"
+	globalClaudeDir := os.ExpandEnv("$HOME/.claude/skills")
+	globalCodexDir := os.ExpandEnv("$HOME/.codex/skills")
+
+	projectSkills := scanSkillDir(projectDir, "project")
+	globalClaudeSkills := scanSkillDir(globalClaudeDir, "global-claude")
+	globalCodexSkills := scanSkillDir(globalCodexDir, "global-codex")
+
+	projectByName := skillIndexByName(projectSkills)
+	globalByName := skillIndexByName(globalClaudeSkills)
+	codexByName := skillIndexByName(globalCodexSkills)
+
+	supersedes := collectSupersedes(projectDir, projectSkills)
+
+	collisions := []SkillCollision{}
+	archived := []SkillCollision{}
+
+	for name := range projectByName {
+		if global, ok := globalByName[name]; ok {
+			collisions = append(collisions, SkillCollision{
+				Name:   name,
+				Source: global.Source,
+				Path:   global.Path,
+				Reason: "name collision with project",
+			})
+		}
+		if codex, ok := codexByName[name]; ok {
+			collisions = append(collisions, SkillCollision{
+				Name:   name,
+				Source: codex.Source,
+				Path:   codex.Path,
+				Reason: "name collision with project",
+			})
+		}
+	}
+
+	for superseded, by := range supersedes {
+		if global, ok := globalByName[superseded]; ok {
+			collisions = append(collisions, SkillCollision{
+				Name:         superseded,
+				Source:       global.Source,
+				Path:         global.Path,
+				Reason:       "superseded",
+				SupersededBy: by,
+			})
+		}
+		if codex, ok := codexByName[superseded]; ok {
+			collisions = append(collisions, SkillCollision{
+				Name:         superseded,
+				Source:       codex.Source,
+				Path:         codex.Path,
+				Reason:       "superseded",
+				SupersededBy: by,
+			})
+		}
+		if project, ok := projectByName[superseded]; ok && project.Name != by {
+			collisions = append(collisions, SkillCollision{
+				Name:         superseded,
+				Source:       project.Source,
+				Path:         project.Path,
+				Reason:       "superseded",
+				SupersededBy: by,
+			})
+		}
+	}
+
+	if prefixMatch {
+		collisions = append(collisions, findPrefixCollisions(projectByName, globalByName, "global-claude")...)
+		collisions = append(collisions, findPrefixCollisions(projectByName, codexByName, "global-codex")...)
+	}
+
+	if fix && len(collisions) > 0 {
+		for _, collision := range collisions {
+			if collision.Reason != "superseded" {
+				continue
+			}
+			targetDir := archiveRootForSource(collision.Source, globalClaudeDir, globalCodexDir, projectDir)
+			if targetDir == "" {
+				continue
+			}
+			if dryRun {
+				archived = append(archived, collision)
+				continue
+			}
+			if err := archiveSkill(targetDir, collision.Name); err == nil {
+				archived = append(archived, collision)
+			}
+		}
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"collisions": collisions,
+			"archived":   archived,
+		})
+		return
+	}
+
+	if quiet {
+		fmt.Printf("Collisions: %d", len(collisions))
+		if fix {
+			fmt.Printf(" | Archived: %d", len(archived))
+		}
+		fmt.Println()
+		return
+	}
+
+	if len(collisions) == 0 {
+		fmt.Println("No skill collisions detected.")
+		return
+	}
+
+	fmt.Println("Skill Collision Report")
+	fmt.Println(strings.Repeat("-", 60))
+	for _, collision := range collisions {
+		if collision.Reason == "superseded" {
+			fmt.Printf("%s %s (%s) superseded by %s\n", ui.RenderWarn("◐"), collision.Name, collision.Source, collision.SupersededBy)
+		} else {
+			fmt.Printf("%s %s (%s) %s\n", ui.RenderWarn("◐"), collision.Name, collision.Source, collision.Reason)
+		}
+		fmt.Printf("  %s\n", collision.Path)
+	}
+
+	if fix {
+		fmt.Println()
+		fmt.Printf("Archived %d superseded skills\n", len(archived))
+	}
+}
+
+func skillIndexByName(skills []SkillInfo) map[string]SkillInfo {
+	index := make(map[string]SkillInfo, len(skills))
+	for _, skill := range skills {
+		index[skill.Name] = skill
+	}
+	return index
+}
+
+func collectSupersedes(projectDir string, skills []SkillInfo) map[string]string {
+	supersedes := make(map[string]string)
+	for _, skill := range skills {
+		list, err := parseSkillFrontmatterList(projectDir, skill.Name, "supersedes")
+		if err != nil {
+			continue
+		}
+		for _, target := range list {
+			if target == "" {
+				continue
+			}
+			supersedes[target] = skill.Name
+		}
+	}
+	return supersedes
+}
+
+func parseSkillFrontmatterList(skillsDir, skillName, key string) ([]string, error) {
+	path := resolveSkillPath(skillsDir, skillName)
+	if path == "" {
+		return nil, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	if !scanner.Scan() {
+		return nil, scanner.Err()
+	}
+	if strings.TrimSpace(scanner.Text()) != "---" {
+		return nil, nil
+	}
+
+	var items []string
+	listMode := false
+	for scanner.Scan() {
+		line := strings.TrimRight(scanner.Text(), "\r\n")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "---" {
+			break
+		}
+		if strings.HasPrefix(trimmed, key+":") {
+			listMode = false
+			value := strings.TrimSpace(strings.TrimPrefix(trimmed, key+":"))
+			if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+				entries := strings.Split(strings.Trim(value, "[]"), ",")
+				for _, entry := range entries {
+					if item := normalizeFrontmatterItem(entry); item != "" {
+						items = append(items, item)
+					}
+				}
+			} else if value != "" {
+				if item := normalizeFrontmatterItem(value); item != "" {
+					items = append(items, item)
+				}
+			} else {
+				listMode = true
+			}
+			continue
+		}
+		if listMode {
+			if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "-\t") || trimmed == "-" {
+				item := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+				if item := normalizeFrontmatterItem(item); item != "" {
+					items = append(items, item)
+				}
+			} else if trimmed != "" {
+				listMode = false
+			}
+		}
+	}
+
+	return dedupeStrings(items), nil
+}
+
+func normalizeFrontmatterItem(item string) string {
+	item = strings.TrimSpace(item)
+	item = strings.Trim(item, "\"'")
+	return strings.TrimSpace(item)
+}
+
+func resolveSkillPath(skillsDir, skillName string) string {
+	if skillsDir == "" || skillName == "" {
+		return ""
+	}
+	basePath := filepath.Join(skillsDir, skillName)
+	info, err := os.Stat(basePath)
+	if err == nil && info.IsDir() {
+		return resolveSkillFile(basePath)
+	}
+	if err == nil && !info.IsDir() {
+		return basePath
+	}
+	if _, err := os.Stat(basePath + ".md"); err == nil {
+		return basePath + ".md"
+	}
+	return ""
+}
+
+func resolveSkillFile(skillDir string) string {
+	candidates := []string{"SKILL.md", "skill.md", "README.md", "index.md"}
+	for _, candidate := range candidates {
+		path := filepath.Join(skillDir, candidate)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+func archiveRootForSource(source, globalClaudeDir, globalCodexDir, projectDir string) string {
+	switch source {
+	case "global-claude":
+		return globalClaudeDir
+	case "global-codex":
+		return globalCodexDir
+	case "project":
+		return projectDir
+	default:
+		return ""
+	}
+}
+
+func archiveSkill(rootDir, skillName string) error {
+	path := filepath.Join(rootDir, skillName)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := os.Stat(path + ".md"); err == nil {
+			path = path + ".md"
+		} else {
+			return nil
+		}
+	}
+
+	archiveDir := filepath.Join(rootDir, "_archived", time.Now().Format("2006-01"))
+	if err := os.MkdirAll(archiveDir, 0755); err != nil {
+		return err
+	}
+
+	target := filepath.Join(archiveDir, filepath.Base(path))
+	for i := 1; ; i++ {
+		if _, err := os.Stat(target); os.IsNotExist(err) {
+			break
+		}
+		target = filepath.Join(archiveDir, fmt.Sprintf("%s.%d", filepath.Base(path), i))
+	}
+	return os.Rename(path, target)
+}
+
+func findPrefixCollisions(project map[string]SkillInfo, globals map[string]SkillInfo, source string) []SkillCollision {
+	results := []SkillCollision{}
+	for name, info := range project {
+		for globalName, global := range globals {
+			if name == globalName {
+				continue
+			}
+			if strings.HasPrefix(name, globalName) || strings.HasPrefix(globalName, name) {
+				results = append(results, SkillCollision{
+					Name:   globalName,
+					Source: source,
+					Path:   global.Path,
+					Reason: fmt.Sprintf("prefix collision with %s", info.Name),
+				})
+			}
+		}
+	}
+	return results
+}
+
+func dedupeStrings(items []string) []string {
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	return out
 }
 
 func appendSkillsVolatilityRisk(ctx context.Context) {

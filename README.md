@@ -57,7 +57,7 @@ In Formula‑1 terms: Shadowbook is the difference between “full send” and a
 | Drift | Problem | Solution |
 |-------|---------|----------|
 | **Spec Drift** | Spec changes, code builds old version | `bd spec scan` |
-| **Skill Drift** | Claude has skills Codex lacks | `bd preflight --check` |
+| **Skill Drift** | Skills diverge or collide across environments | `bd preflight --check`, `bd skills collisions` |
 | **Visibility Drift** | Can't see what's active | `bd recent --all` |
 | **Stability Drift** | Specs churning while work in flight | `bd spec volatility` |
 | **Behavioral Drift** | Claude "helpfully" deviates from instructions | `bd wobble scan` |

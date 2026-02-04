@@ -84,6 +84,20 @@ You can override where session logs are read from with config keys:
 
 ---
 
+## Skill collisions
+
+Detect global vs project skill name collisions and superseded skills:
+
+```bash
+bd skills collisions
+bd skills collisions --fix
+```
+
+Use this when a project skill should override global behavior or when
+superseded skills are still being loaded.
+
+---
+
 ## Auto‑Linking (Preview‑First)
 
 ```bash
