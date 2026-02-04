@@ -3164,20 +3164,46 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 	}
 
 	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
 
-	// Validate issue exists
-	issue, err := store.GetIssue(ctx, args.IssueID)
-	if err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("failed to get issue: %v", err),
+	var issue *types.Issue
+
+	// If IssueID is provided, validate it exists; otherwise create a gate issue
+	if args.IssueID != "" {
+		var err error
+		issue, err = store.GetIssue(ctx, args.IssueID)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get issue: %v", err),
+			}
 		}
-	}
-	if issue == nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("issue %s not found", args.IssueID),
+		if issue == nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("issue %s not found", args.IssueID),
+			}
 		}
+	} else {
+		// Create a new gate issue for the decision (gt-w3u2o9)
+		gateIssue := &types.Issue{
+			Title:       fmt.Sprintf("[DECISION] %s", args.Prompt),
+			Description: fmt.Sprintf("Decision ID: pending\nQuestion: %s", args.Prompt),
+			Status:      "open",
+			Priority:    2,
+			IssueType:   "gate",
+			AwaitType:   "decision",
+			CreatedBy:   actor,
+			Labels:      []string{"gt:decision", "decision:pending"},
+		}
+		if err := store.CreateIssue(ctx, gateIssue, actor); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to create gate issue: %v", err),
+			}
+		}
+		issue = gateIssue
+		args.IssueID = gateIssue.ID
 	}
 
 	// Convert options to JSON

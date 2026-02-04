@@ -497,15 +497,21 @@ func TestDecisionErrorHandling(t *testing.T) {
 	defer cleanup()
 
 	t.Run("create_with_empty_issue_id", func(t *testing.T) {
+		// gt-w3u2o9: Empty issue ID now creates a gate issue automatically
 		args := &DecisionCreateArgs{
 			IssueID: "",
-			Prompt:  "Empty issue ID",
+			Prompt:  "Empty issue ID - should create gate",
 			Options: []string{"Yes"},
 		}
 
-		_, err := client.DecisionCreate(args)
-		if err == nil {
-			t.Error("Expected error for empty issue ID")
+		resp, err := client.DecisionCreate(args)
+		if err != nil {
+			t.Errorf("Expected success for empty issue ID (gate auto-created), got: %v", err)
+		}
+		if resp != nil && resp.Issue != nil {
+			if resp.Issue.IssueType != "gate" {
+				t.Errorf("Expected gate issue type, got: %s", resp.Issue.IssueType)
+			}
 		}
 	})
 
