@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -328,6 +329,15 @@ func TestDetectUserRole_DefaultContributor(t *testing.T) {
 // Before fix: walking up from ~/gt/olympus/.beads finds ~/gt/olympus (WRONG)
 // After fix: findTownRootFromCWD() walks up from CWD to find mayor/town.json at ~/gt
 func TestFindTownRoutes_SymlinkedBeadsDir(t *testing.T) {
+	// Ensure BD_DAEMON_HOST is not set for this test (we want file-based routing)
+	originalHost := os.Getenv("BD_DAEMON_HOST")
+	os.Unsetenv("BD_DAEMON_HOST")
+	defer func() {
+		if originalHost != "" {
+			os.Setenv("BD_DAEMON_HOST", originalHost)
+		}
+	}()
+
 	// Create temporary directory structure simulating Gas Town:
 	// tmpDir/
 	//   mayor/
@@ -430,6 +440,15 @@ func TestFindTownRoutes_SymlinkedBeadsDir(t *testing.T) {
 // Before fix: LookupRigForgiving returns false (not found)
 // After fix: LookupRigForgiving checks if gastown/.beads exists and returns a synthetic route
 func TestLookupRigForgiving_DirectoryBased(t *testing.T) {
+	// Ensure BD_DAEMON_HOST is not set for this test (we want file-based routing)
+	originalHost := os.Getenv("BD_DAEMON_HOST")
+	os.Unsetenv("BD_DAEMON_HOST")
+	defer func() {
+		if originalHost != "" {
+			os.Setenv("BD_DAEMON_HOST", originalHost)
+		}
+	}()
+
 	// Create temporary directory structure:
 	// tmpDir/
 	//   mayor/
@@ -567,6 +586,174 @@ storage-backend: sqlite`
 		got := readPrefixFromBeadsDir(beadsDir)
 		if got != "" {
 			t.Errorf("Expected empty string, got %s", got)
+		}
+	})
+}
+
+// TestLoadRoutes_RemoteDaemonNoFallback verifies that when BD_DAEMON_HOST is set,
+// LoadRoutes does not fall back to routes.jsonl when the daemon query fails.
+func TestLoadRoutes_RemoteDaemonNoFallback(t *testing.T) {
+	// Create a temp directory with routes.jsonl
+	tmpDir, err := os.MkdirTemp("", "routing-remote-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create routes.jsonl with a route
+	routesContent := `{"prefix": "gt-", "path": "gastown"}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "routes.jsonl"), []byte(routesContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test 1: Without BD_DAEMON_HOST, LoadRoutes should fall back to file
+	t.Run("without_remote_daemon", func(t *testing.T) {
+		// Ensure BD_DAEMON_HOST is not set
+		originalHost := os.Getenv("BD_DAEMON_HOST")
+		os.Unsetenv("BD_DAEMON_HOST")
+		defer func() {
+			if originalHost != "" {
+				os.Setenv("BD_DAEMON_HOST", originalHost)
+			}
+		}()
+
+		// Clear the route querier to simulate no daemon connection
+		originalQuerier := routeQuerier
+		SetRouteQuerier(nil)
+		defer SetRouteQuerier(originalQuerier)
+
+		routes, err := LoadRoutes(tmpDir)
+		if err != nil {
+			t.Fatalf("LoadRoutes should not error without BD_DAEMON_HOST: %v", err)
+		}
+		if len(routes) == 0 {
+			t.Fatal("LoadRoutes should fall back to routes.jsonl without BD_DAEMON_HOST")
+		}
+		if routes[0].Prefix != "gt-" {
+			t.Errorf("Expected prefix gt-, got %s", routes[0].Prefix)
+		}
+	})
+
+	// Test 2: With BD_DAEMON_HOST but no querier, should error
+	t.Run("with_remote_daemon_no_querier", func(t *testing.T) {
+		originalHost := os.Getenv("BD_DAEMON_HOST")
+		os.Setenv("BD_DAEMON_HOST", "192.168.1.100:9876")
+		defer func() {
+			if originalHost != "" {
+				os.Setenv("BD_DAEMON_HOST", originalHost)
+			} else {
+				os.Unsetenv("BD_DAEMON_HOST")
+			}
+		}()
+
+		// Clear the route querier
+		originalQuerier := routeQuerier
+		SetRouteQuerier(nil)
+		defer SetRouteQuerier(originalQuerier)
+
+		routes, err := LoadRoutes(tmpDir)
+		if err == nil {
+			t.Fatal("LoadRoutes should error with BD_DAEMON_HOST but no querier")
+		}
+		if routes != nil {
+			t.Errorf("Expected nil routes, got %v", routes)
+		}
+		expectedMsg := "BD_DAEMON_HOST is set but route querier not initialized"
+		if !strings.Contains(err.Error(), expectedMsg) {
+			t.Errorf("Expected error containing %q, got: %v", expectedMsg, err)
+		}
+	})
+
+	// Test 3: With BD_DAEMON_HOST and failing querier, should error (not fall back)
+	t.Run("with_remote_daemon_failing_querier", func(t *testing.T) {
+		originalHost := os.Getenv("BD_DAEMON_HOST")
+		os.Setenv("BD_DAEMON_HOST", "192.168.1.100:9876")
+		defer func() {
+			if originalHost != "" {
+				os.Setenv("BD_DAEMON_HOST", originalHost)
+			} else {
+				os.Unsetenv("BD_DAEMON_HOST")
+			}
+		}()
+
+		// Set a failing route querier
+		originalQuerier := routeQuerier
+		SetRouteQuerier(func(_ string) ([]Route, error) {
+			return nil, errors.New("daemon connection refused")
+		})
+		defer SetRouteQuerier(originalQuerier)
+
+		routes, err := LoadRoutes(tmpDir)
+		if err == nil {
+			t.Fatal("LoadRoutes should error when remote daemon fails")
+		}
+		if routes != nil {
+			t.Errorf("Expected nil routes, got %v", routes)
+		}
+		if !strings.Contains(err.Error(), "daemon connection refused") {
+			t.Errorf("Expected error containing daemon error, got: %v", err)
+		}
+	})
+
+	// Test 4: With BD_DAEMON_HOST and successful querier, should return routes
+	t.Run("with_remote_daemon_successful_querier", func(t *testing.T) {
+		originalHost := os.Getenv("BD_DAEMON_HOST")
+		os.Setenv("BD_DAEMON_HOST", "192.168.1.100:9876")
+		defer func() {
+			if originalHost != "" {
+				os.Setenv("BD_DAEMON_HOST", originalHost)
+			} else {
+				os.Unsetenv("BD_DAEMON_HOST")
+			}
+		}()
+
+		// Set a successful route querier returning different routes than the file
+		originalQuerier := routeQuerier
+		SetRouteQuerier(func(_ string) ([]Route, error) {
+			return []Route{{Prefix: "bd-", Path: "beads"}}, nil
+		})
+		defer SetRouteQuerier(originalQuerier)
+
+		routes, err := LoadRoutes(tmpDir)
+		if err != nil {
+			t.Fatalf("LoadRoutes should not error with successful querier: %v", err)
+		}
+		if len(routes) != 1 {
+			t.Fatalf("Expected 1 route, got %d", len(routes))
+		}
+		// Should return daemon routes, not file routes
+		if routes[0].Prefix != "bd-" {
+			t.Errorf("Expected prefix bd- from daemon, got %s", routes[0].Prefix)
+		}
+	})
+
+	// Test 5: With BD_DAEMON_HOST and querier returning empty (no error), should return empty
+	t.Run("with_remote_daemon_empty_querier", func(t *testing.T) {
+		originalHost := os.Getenv("BD_DAEMON_HOST")
+		os.Setenv("BD_DAEMON_HOST", "192.168.1.100:9876")
+		defer func() {
+			if originalHost != "" {
+				os.Setenv("BD_DAEMON_HOST", originalHost)
+			} else {
+				os.Unsetenv("BD_DAEMON_HOST")
+			}
+		}()
+
+		// Set a querier that returns empty routes (daemon reachable but no routes)
+		originalQuerier := routeQuerier
+		SetRouteQuerier(func(_ string) ([]Route, error) {
+			return nil, nil
+		})
+		defer SetRouteQuerier(originalQuerier)
+
+		routes, err := LoadRoutes(tmpDir)
+		if err != nil {
+			t.Fatalf("LoadRoutes should not error when daemon returns empty: %v", err)
+		}
+		// Should NOT fall back to file routes
+		if len(routes) != 0 {
+			t.Errorf("Expected 0 routes (not file fallback), got %d", len(routes))
 		}
 	})
 }

@@ -40,7 +40,13 @@ func SetRouteQuerier(q RouteQuerier) {
 
 // LoadRoutes loads routes, trying daemon RPC first (if querier set), falling back to routes.jsonl.
 // Returns an empty slice if no routes are found.
+//
+// When BD_DAEMON_HOST is set, routes.jsonl is completely ignored and routes are only
+// loaded from the remote daemon. If the daemon is unreachable, an error is returned
+// rather than silently falling back to the local file.
 func LoadRoutes(beadsDir string) ([]Route, error) {
+	remoteDaemon := os.Getenv("BD_DAEMON_HOST") != ""
+
 	// Try loading from beads first (via injected querier)
 	if routeQuerier != nil {
 		routes, err := routeQuerier(beadsDir)
@@ -50,12 +56,35 @@ func LoadRoutes(beadsDir string) ([]Route, error) {
 			}
 			return routes, nil
 		}
+
+		// When BD_DAEMON_HOST is set, don't fall back to routes.jsonl
+		if remoteDaemon {
+			if err != nil {
+				if os.Getenv("BD_DEBUG_ROUTING") != "" {
+					fmt.Fprintf(os.Stderr, "[routing] Remote daemon query failed: %v (not falling back to routes.jsonl)\n", err)
+				}
+				return nil, fmt.Errorf("failed to load routes from remote daemon: %w", err)
+			}
+			// No error but no routes returned - daemon is reachable but has no routes
+			if os.Getenv("BD_DEBUG_ROUTING") != "" {
+				fmt.Fprintf(os.Stderr, "[routing] Remote daemon returned no routes (routes.jsonl ignored)\n")
+			}
+			return nil, nil
+		}
+
 		if os.Getenv("BD_DEBUG_ROUTING") != "" && err != nil {
 			fmt.Fprintf(os.Stderr, "[routing] Route bead query failed: %v, falling back to file\n", err)
 		}
+	} else if remoteDaemon {
+		// BD_DAEMON_HOST is set but no route querier was initialized
+		// This shouldn't normally happen, but handle it gracefully
+		if os.Getenv("BD_DEBUG_ROUTING") != "" {
+			fmt.Fprintf(os.Stderr, "[routing] BD_DAEMON_HOST set but no route querier initialized (routes.jsonl ignored)\n")
+		}
+		return nil, fmt.Errorf("BD_DAEMON_HOST is set but route querier not initialized; cannot load routes")
 	}
 
-	// Fall back to routes.jsonl
+	// Fall back to routes.jsonl (only when BD_DAEMON_HOST is not set)
 	return LoadRoutesFromFile(beadsDir)
 }
 
