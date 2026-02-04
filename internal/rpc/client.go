@@ -39,7 +39,8 @@ type Client struct {
 	dbPath     string // Expected database path for validation
 	actor      string // Actor for audit trail (who is performing operations)
 	token      string // Authentication token for TCP connections
-	isRemote   bool   // True if connected via TCP to remote daemon
+	isRemote   bool   // True if connected via TCP or HTTP to remote daemon
+	httpClient *HTTPClient // If set, delegates to HTTP client instead of socket/TCP
 }
 
 // TryConnect attempts to connect to the daemon socket
@@ -219,8 +220,9 @@ func TryConnectTCPWithTimeout(addr string, token string, dialTimeout time.Durati
 }
 
 // TryConnectAuto attempts to connect to a daemon, automatically choosing
-// between TCP (if BD_DAEMON_HOST is set) or Unix socket (local).
-// For TCP connections, it uses BD_DAEMON_TOKEN for authentication if set.
+// between HTTP (if BD_DAEMON_HTTP_URL is set), TCP (if BD_DAEMON_HOST is set),
+// or Unix socket (local).
+// For remote connections, it uses BD_DAEMON_TOKEN for authentication if set.
 // Returns nil if no daemon is available.
 func TryConnectAuto(socketPath string) (*Client, error) {
 	return TryConnectAutoWithTimeout(socketPath, 0)
@@ -229,10 +231,48 @@ func TryConnectAuto(socketPath string) (*Client, error) {
 // TryConnectAutoWithTimeout is like TryConnectAuto but with a custom timeout.
 // For local connections, timeout defaults to 200ms if not specified.
 // For TCP connections, timeout defaults to 2s if not specified.
+// For HTTP connections, timeout defaults to 10s if not specified.
 func TryConnectAutoWithTimeout(socketPath string, timeout time.Duration) (*Client, error) {
-	// Check if remote daemon host is configured
+	// Check if HTTP URL is configured (highest priority)
+	httpURL := GetDaemonHTTPURL()
+	if httpURL != "" {
+		rpcDebugLog("BD_DAEMON_HTTP_URL is set, attempting HTTP connection to: %s", httpURL)
+		token := GetDaemonToken()
+		if timeout <= 0 {
+			timeout = 10 * time.Second
+		}
+		httpClient, err := TryConnectHTTPWithTimeout(httpURL, token, timeout)
+		if err != nil {
+			return nil, err
+		}
+		if httpClient == nil {
+			return nil, nil
+		}
+		// Wrap HTTPClient in a Client-compatible wrapper
+		return wrapHTTPClient(httpClient), nil
+	}
+
+	// Check if remote daemon host is configured (also check for HTTP URLs in BD_DAEMON_HOST)
 	remoteHost := GetDaemonHost()
 	if remoteHost != "" {
+		// Check if it's an HTTP URL
+		if IsHTTPURL(remoteHost) {
+			rpcDebugLog("BD_DAEMON_HOST contains HTTP URL, attempting HTTP connection to: %s", remoteHost)
+			token := GetDaemonToken()
+			if timeout <= 0 {
+				timeout = 10 * time.Second
+			}
+			httpClient, err := TryConnectHTTPWithTimeout(remoteHost, token, timeout)
+			if err != nil {
+				return nil, err
+			}
+			if httpClient == nil {
+				return nil, nil
+			}
+			// Wrap HTTPClient in a Client-compatible wrapper
+			return wrapHTTPClient(httpClient), nil
+		}
+
 		rpcDebugLog("BD_DAEMON_HOST is set, attempting TCP connection to: %s", remoteHost)
 		token := GetDaemonToken()
 		if timeout <= 0 {
@@ -249,8 +289,20 @@ func TryConnectAutoWithTimeout(socketPath string, timeout time.Duration) (*Clien
 	return TryConnectWithTimeout(socketPath, timeout)
 }
 
+// wrapHTTPClient wraps an HTTPClient in a Client struct that delegates to it.
+// This allows HTTPClient to be used wherever *Client is expected.
+func wrapHTTPClient(httpClient *HTTPClient) *Client {
+	return &Client{
+		httpClient: httpClient,
+		isRemote:   true,
+	}
+}
+
 // Close closes the connection to the daemon
 func (c *Client) Close() error {
+	if c.httpClient != nil {
+		return c.httpClient.Close()
+	}
 	if c.conn != nil {
 		return c.conn.Close()
 	}
@@ -260,21 +312,33 @@ func (c *Client) Close() error {
 // SetTimeout sets the request timeout duration
 func (c *Client) SetTimeout(timeout time.Duration) {
 	c.timeout = timeout
+	if c.httpClient != nil {
+		c.httpClient.SetTimeout(timeout)
+	}
 }
 
 // SetDatabasePath sets the expected database path for validation
 func (c *Client) SetDatabasePath(dbPath string) {
 	c.dbPath = dbPath
+	if c.httpClient != nil {
+		c.httpClient.SetDatabasePath(dbPath)
+	}
 }
 
 // SetActor sets the actor for audit trail (who is performing operations)
 func (c *Client) SetActor(actor string) {
 	c.actor = actor
+	if c.httpClient != nil {
+		c.httpClient.SetActor(actor)
+	}
 }
 
 // SetToken sets the authentication token for TCP connections
 func (c *Client) SetToken(token string) {
 	c.token = token
+	if c.httpClient != nil {
+		c.httpClient.SetToken(token)
+	}
 }
 
 // IsRemote returns true if this client is connected to a remote daemon via TCP
@@ -284,11 +348,17 @@ func (c *Client) IsRemote() bool {
 
 // Execute sends an RPC request and waits for a response
 func (c *Client) Execute(operation string, args interface{}) (*Response, error) {
+	if c.httpClient != nil {
+		return c.httpClient.Execute(operation, args)
+	}
 	return c.ExecuteWithCwd(operation, args, "")
 }
 
 // ExecuteWithCwd sends an RPC request with an explicit cwd (or current dir if empty string)
 func (c *Client) ExecuteWithCwd(operation string, args interface{}, cwd string) (*Response, error) {
+	if c.httpClient != nil {
+		return c.httpClient.ExecuteWithCwd(operation, args, cwd)
+	}
 	argsJSON, err := json.Marshal(args)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal args: %w", err)
