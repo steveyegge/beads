@@ -37,6 +37,11 @@ type Options struct {
 	ServerUser     string // MySQL user (default: root)
 	ServerPassword string // Server password (or use BEADS_DOLT_PASSWORD env)
 	Database       string // Database name for Dolt server mode (default: beads)
+
+	// Remote daemon guard bypass (gt-57wsnm)
+	// When BD_DAEMON_HOST is set, direct database access is normally blocked.
+	// Set this to true to allow direct access (e.g., for daemon process itself).
+	AllowWithRemoteDaemon bool
 }
 
 // New creates a storage backend based on the backend type.
@@ -88,6 +93,14 @@ func NewFromConfig(ctx context.Context, beadsDir string) (storage.Storage, error
 
 // NewFromConfigWithOptions creates a storage backend with options from metadata.json.
 func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options) (storage.Storage, error) {
+	// Guard: Block direct database access when using a remote daemon (gt-57wsnm)
+	// BD_DAEMON_HOST indicates the client is connecting to a remote daemon,
+	// so local filesystem database access would be incorrect (and may auto-start
+	// a local Dolt server). Callers should use daemon RPC instead.
+	if remoteHost := os.Getenv("BD_DAEMON_HOST"); remoteHost != "" && !opts.AllowWithRemoteDaemon {
+		return nil, fmt.Errorf("direct database access blocked: BD_DAEMON_HOST=%s is set (use daemon RPC instead); if local access is genuinely needed, set AllowWithRemoteDaemon option", remoteHost)
+	}
+
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)

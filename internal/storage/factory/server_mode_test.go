@@ -58,6 +58,9 @@ func TestServerModeConnection(t *testing.T) {
 	// This test requires a running dolt sql-server on 127.0.0.1:3306
 	// pointing to /home/ubuntu/gastown9/.beads/dolt
 
+	// Clear BD_DAEMON_HOST to ensure test uses local database (gt-57wsnm guard)
+	os.Unsetenv("BD_DAEMON_HOST")
+
 	// Check if server is likely running by trying to connect
 	ctx := context.Background()
 

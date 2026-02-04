@@ -381,6 +381,9 @@ func TestUnknownBackendError(t *testing.T) {
 func TestNewFromConfigDolt(t *testing.T) {
 	skipIfNoDolt(t)
 
+	// Clear BD_DAEMON_HOST to ensure test uses local database (gt-57wsnm guard)
+	os.Unsetenv("BD_DAEMON_HOST")
+
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
