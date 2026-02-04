@@ -138,17 +138,6 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// Wisp create requires direct store access - ensure store is active even when daemon connected
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-		os.Exit(1)
-	}
-
 	// Parse flags early so we can check dry-run before requiring store
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	varFlags, _ := cmd.Flags().GetStringArray("var")
@@ -275,19 +264,34 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Actual wisp creation requires direct store access for write operations
-	// TODO: Add daemon RPC support for wisp creation per gt-as9kdm
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: wisp creation requires direct database access\n")
-		fmt.Fprintf(os.Stderr, "Hint: stop daemon and retry, or start daemon in this workspace\n")
-		os.Exit(1)
+	// Clone options for wisp creation
+	cloneOpts := CloneOptions{
+		Vars:      vars,
+		Actor:     actor,
+		Ephemeral: true,
+		Prefix:    types.IDPrefixWisp,
 	}
 
-	// Spawn as ephemeral in main database (Ephemeral=true, skips JSONL export)
-	// Use wisp prefix for distinct visual recognition (see types.IDPrefixWisp)
-	result, err := spawnMolecule(ctx, store, subgraph, vars, "", actor, true, types.IDPrefixWisp)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating wisp: %v\n", err)
+	var result *InstantiateResult
+
+	// Prefer daemon RPC for wisp creation (gt-t8fv03 fix)
+	if daemonClient != nil {
+		var err error
+		result, err = cloneSubgraphViaDaemon(daemonClient, subgraph, cloneOpts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating wisp via daemon: %v\n", err)
+			os.Exit(1)
+		}
+	} else if store != nil {
+		// Fallback: direct store access (for local development without daemon)
+		var err error
+		result, err = spawnMolecule(ctx, store, subgraph, vars, "", actor, true, types.IDPrefixWisp)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating wisp: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "Error: no database connection (neither daemon nor local store available)\n")
 		os.Exit(1)
 	}
 
