@@ -1271,3 +1271,47 @@ type AtomicClosureChainResult struct {
 	MRCloseTime       string `json:"mr_close_time,omitempty"`     // ISO 8601 timestamp when MR was closed
 	SourceCloseTime   string `json:"source_close_time,omitempty"` // ISO 8601 timestamp when source was closed
 }
+
+// Init and Migrate operations (remote database management)
+
+// InitArgs represents arguments for the init operation (remote database initialization)
+type InitArgs struct {
+	Prefix    string `json:"prefix,omitempty"`     // Issue prefix (auto-detected if empty)
+	Backend   string `json:"backend,omitempty"`    // Storage backend: sqlite (default) or dolt
+	Branch    string `json:"branch,omitempty"`     // Git branch for beads commits
+	Force     bool   `json:"force,omitempty"`      // Force re-initialization even if database exists
+	FromJSONL bool   `json:"from_jsonl,omitempty"` // Import from local JSONL file instead of git history
+	Quiet     bool   `json:"quiet,omitempty"`      // Suppress output
+}
+
+// InitResult represents the result of an init operation
+type InitResult struct {
+	DatabasePath  string `json:"database_path"`            // Path to the created database
+	Prefix        string `json:"prefix"`                   // Issue prefix that was set
+	Backend       string `json:"backend"`                  // Storage backend used (sqlite or dolt)
+	ImportedCount int    `json:"imported_count,omitempty"` // Number of issues imported (if any)
+	Message       string `json:"message,omitempty"`        // Human-readable status message
+}
+
+// MigrateArgs represents arguments for the migrate operation (remote database migration)
+type MigrateArgs struct {
+	DryRun       bool `json:"dry_run,omitempty"`        // Show what would be done without making changes
+	Cleanup      bool `json:"cleanup,omitempty"`        // Remove old database files after migration
+	Yes          bool `json:"yes,omitempty"`            // Auto-confirm cleanup prompts
+	UpdateRepoID bool `json:"update_repo_id,omitempty"` // Update repository ID (use after changing git remote)
+	Inspect      bool `json:"inspect,omitempty"`        // Show migration plan and database state
+	ToDolt       bool `json:"to_dolt,omitempty"`        // Migrate from SQLite to Dolt backend
+	ToSQLite     bool `json:"to_sqlite,omitempty"`      // Migrate from Dolt to SQLite backend (escape hatch)
+}
+
+// MigrateResult represents the result of a migrate operation
+type MigrateResult struct {
+	Status          string   `json:"status"`                     // "success", "noop", "error"
+	CurrentDatabase string   `json:"current_database,omitempty"` // Current database name
+	Version         string   `json:"version,omitempty"`          // Schema version after migration
+	Migrated        bool     `json:"migrated,omitempty"`         // Whether migration was performed
+	VersionUpdated  bool     `json:"version_updated,omitempty"`  // Whether version was updated
+	CleanedUp       bool     `json:"cleaned_up,omitempty"`       // Whether cleanup was performed
+	OldDatabases    []string `json:"old_databases,omitempty"`    // List of old databases found
+	Message         string   `json:"message,omitempty"`          // Human-readable status message
+}

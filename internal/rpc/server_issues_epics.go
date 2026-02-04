@@ -3800,3 +3800,93 @@ func (s *Server) handleCreateConvoyWithTracking(req *Request) Response {
 		Data:    data,
 	}
 }
+
+// handleAtomicClosureChain closes multiple related issues and updates an agent atomically.
+// This is used for MR completion where we need to:
+// 1. Close the MR bead with a reason (e.g., "merged")
+// 2. Close the source issue with a reason
+// 3. Optionally update the agent bead (e.g., clear hook_bead)
+// All operations happen in a single transaction for consistency.
+func (s *Server) handleAtomicClosureChain(req *Request) Response {
+	var args AtomicClosureChainArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid atomic_closure_chain args: %v", err),
+		}
+	}
+
+	// Validate required fields
+	if args.MRID == "" {
+		return Response{
+			Success: false,
+			Error:   "mr_id is required",
+		}
+	}
+	if args.SourceIssueID == "" {
+		return Response{
+			Success: false,
+			Error:   "source_issue_id is required",
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	// Track results
+	result := AtomicClosureChainResult{}
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Step 1: Close the MR bead
+		if err := tx.CloseIssue(ctx, args.MRID, args.MRCloseReason, actor, ""); err != nil {
+			return fmt.Errorf("failed to close MR %s: %w", args.MRID, err)
+		}
+		result.MRClosed = true
+		result.MRCloseTime = time.Now().Format(time.RFC3339)
+
+		// Step 2: Close the source issue
+		if err := tx.CloseIssue(ctx, args.SourceIssueID, args.SourceCloseReason, actor, ""); err != nil {
+			return fmt.Errorf("failed to close source issue %s: %w", args.SourceIssueID, err)
+		}
+		result.SourceIssueClosed = true
+		result.SourceCloseTime = time.Now().Format(time.RFC3339)
+
+		// Step 3: Update agent bead if specified
+		if args.AgentBeadID != "" && len(args.AgentUpdates) > 0 {
+			if err := tx.UpdateIssue(ctx, args.AgentBeadID, args.AgentUpdates, actor); err != nil {
+				return fmt.Errorf("failed to update agent %s: %w", args.AgentBeadID, err)
+			}
+			result.AgentUpdated = true
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("transaction failed: %v", err),
+		}
+	}
+
+	// Emit mutation events for the closures
+	s.emitMutation(MutationStatus, args.MRID, "", "")
+	s.emitMutation(MutationStatus, args.SourceIssueID, "", "")
+	if result.AgentUpdated {
+		s.emitMutation(MutationUpdate, args.AgentBeadID, "", "")
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}

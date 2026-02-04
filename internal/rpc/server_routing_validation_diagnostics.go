@@ -358,6 +358,14 @@ func (s *Server) executeOperation(req *Request) Response {
 	// Convoy operations
 	case OpCreateConvoyWithTracking:
 		resp = s.handleCreateConvoyWithTracking(req)
+	// Init and Migrate operations (remote database management)
+	case OpInit:
+		resp = s.handleInit(req)
+	case OpMigrate:
+		resp = s.handleMigrate(req)
+	// Atomic closure chain operation (for MR completion)
+	case OpAtomicClosureChain:
+		resp = s.handleAtomicClosureChain(req)
 	default:
 		return Response{
 			Success: false,

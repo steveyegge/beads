@@ -996,6 +996,38 @@ func (c *Client) AtomicClosureChain(args *AtomicClosureChainArgs) (*AtomicClosur
 	return &result, nil
 }
 
+// Init initializes a beads database remotely via the daemon.
+// This creates a new database, sets the issue prefix, and optionally imports from JSONL.
+func (c *Client) Init(args *InitArgs) (*InitResult, error) {
+	resp, err := c.Execute(OpInit, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result InitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal init response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// Migrate runs database migrations remotely via the daemon.
+// This detects schema version, migrates old databases, and updates version metadata.
+func (c *Client) Migrate(args *MigrateArgs) (*MigrateResult, error) {
+	resp, err := c.Execute(OpMigrate, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result MigrateResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal migrate response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).
