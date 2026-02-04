@@ -98,6 +98,20 @@ const (
 
 	// Molecule operations (bd-jjbl)
 	OpCreateMolecule = "create_molecule"
+
+	// Batch operations
+	OpBatchAddDependencies = "batch_add_dependencies"
+	OpBatchQueryWorkers    = "batch_query_workers"
+
+	// Convoy operations (atomic convoy creation with tracking)
+	OpCreateConvoyWithTracking = "create_convoy_with_tracking"
+
+	// Atomic closure chain operation (for MR completion)
+	OpAtomicClosureChain = "atomic_closure_chain"
+
+	// Init and Migrate operations (remote database management)
+	OpInit    = "init"
+	OpMigrate = "migrate"
 )
 
 // Request represents an RPC request from client to daemon
@@ -1174,4 +1188,86 @@ type CreateMoleculeResult struct {
 	IDMapping map[string]string `json:"id_mapping"` // Template ID → new issue ID
 	RootID    string            `json:"root_id"`    // New ID of the root issue (if RootTemplate specified)
 	Created   int               `json:"created"`    // Number of issues created
+}
+
+// Batch operations
+
+// BatchDependency represents a single dependency to add in a batch
+type BatchDependency struct {
+	FromID  string `json:"from_id"`  // Issue ID that depends on another
+	ToID    string `json:"to_id"`    // Issue ID being depended on
+	Type    string `json:"type"`     // Dependency type (blocks, parent-child, etc.)
+}
+
+// BatchAddDependenciesArgs represents arguments for the batch_add_dependencies operation.
+// This adds multiple dependencies atomically in a single transaction.
+type BatchAddDependenciesArgs struct {
+	Dependencies []BatchDependency `json:"dependencies"` // Dependencies to add
+}
+
+// BatchAddDependenciesResult represents the result of a batch_add_dependencies operation.
+type BatchAddDependenciesResult struct {
+	Added  int      `json:"added"`            // Number of dependencies successfully added
+	Errors []string `json:"errors,omitempty"` // Any errors encountered (non-fatal)
+}
+
+// BatchQueryWorkersArgs represents arguments for the batch_query_workers operation.
+// This queries worker assignments for multiple issues at once.
+type BatchQueryWorkersArgs struct {
+	IssueIDs []string `json:"issue_ids"` // Issue IDs to query workers for
+}
+
+// WorkerInfo represents worker assignment information for a single issue
+type WorkerInfo struct {
+	IssueID  string `json:"issue_id"`            // Issue ID
+	Assignee string `json:"assignee,omitempty"`  // Assigned worker (if any)
+	Owner    string `json:"owner,omitempty"`     // Human owner (if any)
+	Status   string `json:"status,omitempty"`    // Issue status
+}
+
+// BatchQueryWorkersResult represents the result of a batch_query_workers operation.
+type BatchQueryWorkersResult struct {
+	Workers map[string]*WorkerInfo `json:"workers"` // Issue ID -> WorkerInfo mapping
+}
+
+// Convoy operations
+
+// CreateConvoyWithTrackingArgs represents arguments for atomic convoy creation with tracking relations.
+// This creates a convoy issue and adds tracking dependencies for all specified issues in a single transaction.
+type CreateConvoyWithTrackingArgs struct {
+	ConvoyID      string   `json:"convoy_id,omitempty"`      // Optional convoy ID (auto-generated if empty)
+	Name          string   `json:"name"`                     // Convoy name/title
+	TrackedIssues []string `json:"tracked_issues"`           // Issue IDs to track
+	Owner         string   `json:"owner,omitempty"`          // Human owner for CV attribution
+	NotifyAddress string   `json:"notify_address,omitempty"` // Mail address to notify on convoy events
+}
+
+// CreateConvoyWithTrackingResult represents the result of atomic convoy creation.
+type CreateConvoyWithTrackingResult struct {
+	ConvoyID     string   `json:"convoy_id"`     // The created convoy's issue ID
+	TrackedCount int      `json:"tracked_count"` // Number of tracking dependencies added
+	TrackedIDs   []string `json:"tracked_ids"`   // IDs of issues being tracked
+}
+
+// Atomic closure chain operation (for MR completion)
+
+// AtomicClosureChainArgs represents arguments for the atomic_closure_chain operation.
+// This closes multiple related issues and optionally updates an agent bead in a single transaction.
+// Used for MR completion where we need to atomically close the MR, its source issue, and update the agent.
+type AtomicClosureChainArgs struct {
+	MRID              string                 `json:"mr_id"`                   // MR bead ID to close
+	MRCloseReason     string                 `json:"mr_close_reason"`         // Close reason for MR (e.g., "merged")
+	SourceIssueID     string                 `json:"source_issue_id"`         // Source issue ID to close
+	SourceCloseReason string                 `json:"source_close_reason"`     // Close reason for source issue
+	AgentBeadID       string                 `json:"agent_bead_id,omitempty"` // Optional: Agent bead to update
+	AgentUpdates      map[string]interface{} `json:"agent_updates,omitempty"` // Optional: Fields to update on agent
+}
+
+// AtomicClosureChainResult represents the result of an atomic_closure_chain operation.
+type AtomicClosureChainResult struct {
+	MRClosed          bool   `json:"mr_closed"`                   // Whether MR was successfully closed
+	SourceIssueClosed bool   `json:"source_issue_closed"`         // Whether source issue was successfully closed
+	AgentUpdated      bool   `json:"agent_updated"`               // Whether agent bead was updated
+	MRCloseTime       string `json:"mr_close_time,omitempty"`     // ISO 8601 timestamp when MR was closed
+	SourceCloseTime   string `json:"source_close_time,omitempty"` // ISO 8601 timestamp when source was closed
 }

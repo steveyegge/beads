@@ -657,3 +657,149 @@ func (s *Server) handleSetState(req *Request) Response {
 	data, _ := json.Marshal(result)
 	return Response{Success: true, Data: data}
 }
+
+// handleBatchAddDependencies adds multiple dependencies atomically in a single transaction.
+// This is more efficient than making multiple AddDependency calls and ensures atomicity.
+func (s *Server) handleBatchAddDependencies(req *Request) Response {
+	var args BatchAddDependenciesArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid batch_add_dependencies args: %v", err),
+		}
+	}
+
+	// Validate input
+	if len(args.Dependencies) == 0 {
+		// Nothing to do, return success with 0 added
+		result := &BatchAddDependenciesResult{
+			Added: 0,
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	var addedCount int
+	var errors []string
+
+	// Add all dependencies in a single transaction
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		for _, dep := range args.Dependencies {
+			// Check for child->parent dependency anti-pattern
+			if isChildOf(dep.FromID, dep.ToID) {
+				errors = append(errors, fmt.Sprintf("skipped %s->%s: child cannot depend on parent (hierarchy already implies dependency)", dep.FromID, dep.ToID))
+				continue
+			}
+
+			dependency := &types.Dependency{
+				IssueID:     dep.FromID,
+				DependsOnID: dep.ToID,
+				Type:        types.DependencyType(dep.Type),
+			}
+
+			if err := tx.AddDependency(ctx, dependency, actor); err != nil {
+				errors = append(errors, fmt.Sprintf("failed to add %s->%s: %v", dep.FromID, dep.ToID, err))
+				continue
+			}
+			addedCount++
+		}
+		return nil
+	})
+
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("batch_add_dependencies transaction failed: %v", err),
+		}
+	}
+
+	// Emit mutation events for all affected issues
+	affectedIssues := make(map[string]bool)
+	for _, dep := range args.Dependencies {
+		affectedIssues[dep.FromID] = true
+	}
+	for issueID := range affectedIssues {
+		title, assignee := s.lookupIssueMeta(ctx, issueID)
+		s.emitMutation(MutationUpdate, issueID, title, assignee)
+	}
+
+	result := &BatchAddDependenciesResult{
+		Added:  addedCount,
+		Errors: errors,
+	}
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+// handleBatchQueryWorkers queries worker assignments for multiple issues at once.
+// This is more efficient than making multiple GetIssue calls.
+func (s *Server) handleBatchQueryWorkers(req *Request) Response {
+	var args BatchQueryWorkersArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid batch_query_workers args: %v", err),
+		}
+	}
+
+	// Handle empty input
+	if len(args.IssueIDs) == 0 {
+		result := &BatchQueryWorkersResult{
+			Workers: make(map[string]*WorkerInfo),
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	workers := make(map[string]*WorkerInfo)
+
+	// Query each issue efficiently
+	for _, issueID := range args.IssueIDs {
+		// Resolve partial ID to full ID
+		fullID, err := s.resolvePartialID(ctx, issueID)
+		if err != nil {
+			// Issue not found or error - skip with nil entry
+			workers[issueID] = nil
+			continue
+		}
+
+		issue, err := store.GetIssue(ctx, fullID)
+		if err != nil || issue == nil {
+			workers[issueID] = nil
+			continue
+		}
+
+		workers[issueID] = &WorkerInfo{
+			IssueID:  issue.ID,
+			Assignee: issue.Assignee,
+			Owner:    issue.Owner,
+			Status:   string(issue.Status),
+		}
+	}
+
+	result := &BatchQueryWorkersResult{
+		Workers: workers,
+	}
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}

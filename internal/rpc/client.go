@@ -931,6 +931,71 @@ func (c *Client) CreateWithDependencies(args *CreateWithDepsArgs) (*CreateWithDe
 	return &result, nil
 }
 
+// BatchAddDependencies adds multiple dependencies atomically in a single transaction via the daemon.
+// This is more efficient than making multiple AddDependency calls and ensures atomicity.
+func (c *Client) BatchAddDependencies(args *BatchAddDependenciesArgs) (*BatchAddDependenciesResult, error) {
+	resp, err := c.Execute(OpBatchAddDependencies, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result BatchAddDependenciesResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal batch_add_dependencies response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// BatchQueryWorkers queries worker assignments for multiple issues at once via the daemon.
+// This is more efficient than making multiple GetIssue calls when querying worker assignments.
+func (c *Client) BatchQueryWorkers(args *BatchQueryWorkersArgs) (*BatchQueryWorkersResult, error) {
+	resp, err := c.Execute(OpBatchQueryWorkers, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result BatchQueryWorkersResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal batch_query_workers response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// CreateConvoyWithTracking creates a convoy issue and tracking dependencies atomically via the daemon.
+// This ensures the convoy and all its tracking relations are created in a single transaction.
+func (c *Client) CreateConvoyWithTracking(args *CreateConvoyWithTrackingArgs) (*CreateConvoyWithTrackingResult, error) {
+	resp, err := c.Execute(OpCreateConvoyWithTracking, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result CreateConvoyWithTrackingResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal create_convoy_with_tracking response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// AtomicClosureChain closes multiple related issues and updates an agent atomically via the daemon.
+// This is used for MR completion where we need to close the MR, close its source issue,
+// and optionally update the agent bead (e.g., clear hook_bead) in a single transaction.
+func (c *Client) AtomicClosureChain(args *AtomicClosureChainArgs) (*AtomicClosureChainResult, error) {
+	resp, err := c.Execute(OpAtomicClosureChain, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result AtomicClosureChainResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal atomic_closure_chain response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

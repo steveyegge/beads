@@ -350,6 +350,14 @@ func (s *Server) executeOperation(req *Request) Response {
 	// Molecule operations (bd-jjbl)
 	case OpCreateMolecule:
 		resp = s.handleCreateMolecule(req)
+	// Batch operations
+	case OpBatchAddDependencies:
+		resp = s.handleBatchAddDependencies(req)
+	case OpBatchQueryWorkers:
+		resp = s.handleBatchQueryWorkers(req)
+	// Convoy operations
+	case OpCreateConvoyWithTracking:
+		resp = s.handleCreateConvoyWithTracking(req)
 	default:
 		return Response{
 			Success: false,

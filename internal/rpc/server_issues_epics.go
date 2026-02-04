@@ -3699,3 +3699,104 @@ func (s *Server) handleCreateMolecule(req *Request) Response {
 		Data:    data,
 	}
 }
+
+// handleCreateConvoyWithTracking creates a convoy issue and tracking dependencies atomically.
+// This ensures the convoy and all tracking relations are created in a single transaction,
+// preventing partial state where the convoy exists but some tracking deps failed.
+func (s *Server) handleCreateConvoyWithTracking(req *Request) Response {
+	var args CreateConvoyWithTrackingArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid create_convoy_with_tracking args: %v", err),
+		}
+	}
+
+	// Validate required fields
+	if args.Name == "" {
+		return Response{
+			Success: false,
+			Error:   "convoy name is required",
+		}
+	}
+
+	if len(args.TrackedIssues) == 0 {
+		return Response{
+			Success: false,
+			Error:   "at least one tracked issue is required",
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	var convoyID string
+	trackedIDs := make([]string, 0, len(args.TrackedIssues))
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Create the convoy issue
+		convoy := &types.Issue{
+			ID:        args.ConvoyID, // Will be auto-generated if empty
+			Title:     args.Name,
+			IssueType: types.IssueType("convoy"),
+			Status:    types.StatusOpen,
+			Owner:     args.Owner,
+		}
+
+		// Add notify address to description if provided
+		if args.NotifyAddress != "" {
+			convoy.Description = fmt.Sprintf("Notify: %s", args.NotifyAddress)
+		}
+
+		if err := tx.CreateIssue(ctx, convoy, actor); err != nil {
+			return fmt.Errorf("failed to create convoy issue: %w", err)
+		}
+		convoyID = convoy.ID
+
+		// Add tracking dependencies for each tracked issue
+		for _, trackedID := range args.TrackedIssues {
+			dep := &types.Dependency{
+				IssueID:     convoyID,
+				DependsOnID: trackedID,
+				Type:        types.DepTracks,
+			}
+
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("failed to add tracking dependency for %s: %w", trackedID, err)
+			}
+			trackedIDs = append(trackedIDs, trackedID)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("transaction failed: %v", err),
+		}
+	}
+
+	// Emit mutation event for convoy creation
+	s.emitMutation(MutationCreate, convoyID, "", "")
+
+	result := CreateConvoyWithTrackingResult{
+		ConvoyID:     convoyID,
+		TrackedCount: len(trackedIDs),
+		TrackedIDs:   trackedIDs,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
