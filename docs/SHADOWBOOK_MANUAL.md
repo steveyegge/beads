@@ -2,6 +2,8 @@
 
 Shadowbook keeps specs and implementation aligned by linking issues to spec files and detecting drift when specs change.
 
+Formula‑1 view: specs are the track, beads are the cars, skills are the pit crew. Wobble is tire degradation, volatility is track instability, drift is the car running a different line than the one you designed. Shadowbook is race control that flags instability, pauses risky runs, and shows a clean lap chart of what’s actually happening.
+
 ---
 
 ## Install

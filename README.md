@@ -34,6 +34,24 @@ Built on [beads](https://github.com/steveyegge/beads).
 
 ---
 
+## The Formula‑1 Story
+
+Shadowbook is race control for agentic engineering.
+
+Specs are the track. Beads are the cars. Skills are the pit crew.
+Wobble is tire degradation. Volatility is track instability.
+Drift is when the car runs a different line than the one you designed.
+
+Shadowbook keeps the race safe:
+- It flags when the track is changing while cars are already at speed.
+- It shows which cars are on worn tires (unstable skills) and which are safe to push.
+- It pauses risky runs when the track is breaking apart.
+- It gives you a clean lap chart of what’s actually happening, not what you hoped happened.
+
+In Formula‑1 terms: Shadowbook is the difference between “full send” and a DNF you didn’t see coming.
+
+---
+
 ## Five Drifts, One Tool
 
 | Drift | Problem | Solution |
