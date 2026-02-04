@@ -289,11 +289,12 @@ type CloseResult struct {
 
 // DeleteArgs represents arguments for the delete operation
 type DeleteArgs struct {
-	IDs     []string `json:"ids"`               // Issue IDs to delete
-	Force   bool     `json:"force,omitempty"`   // Force deletion without confirmation
-	DryRun  bool     `json:"dry_run,omitempty"` // Preview mode
-	Cascade bool     `json:"cascade,omitempty"` // Recursively delete dependents
-	Reason  string   `json:"reason,omitempty"`  // Reason for deletion
+	IDs        []string `json:"ids"`                  // Issue IDs to delete
+	Force      bool     `json:"force,omitempty"`      // Force deletion without confirmation
+	DryRun     bool     `json:"dry_run,omitempty"`    // Preview mode
+	Cascade    bool     `json:"cascade,omitempty"`    // Recursively delete dependents
+	Reason     string   `json:"reason,omitempty"`     // Reason for deletion
+	HardDelete bool     `json:"hard_delete,omitempty"` // Permanently delete (skip tombstones, cannot sync)
 }
 
 // ListArgs represents arguments for the list operation

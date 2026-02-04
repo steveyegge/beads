@@ -1474,25 +1474,34 @@ func (s *Server) handleDelete(req *Request) Response {
 			continue
 		}
 
-		// Create tombstone instead of hard delete
+		// Create tombstone instead of hard delete (unless HardDelete is requested)
 		// This preserves deletion history and prevents resurrection during sync
-		type tombstoner interface {
-			CreateTombstone(ctx context.Context, id string, actor string, reason string) error
-		}
-		if t, ok := store.(tombstoner); ok {
-			reason := deleteArgs.Reason
-			if reason == "" {
-				reason = "deleted via daemon"
-			}
-			if err := t.CreateTombstone(ctx, issueID, "daemon", reason); err != nil {
+		if deleteArgs.HardDelete {
+			// Hard delete requested - skip tombstones, do permanent delete
+			// WARNING: This bypasses sync safety. Use only when certain issues won't resurrect.
+			if err := store.DeleteIssue(ctx, issueID); err != nil {
 				errors = append(errors, fmt.Sprintf("%s: %v", issueID, err))
 				continue
 			}
 		} else {
-			// Fallback to hard delete if CreateTombstone not available
-			if err := store.DeleteIssue(ctx, issueID); err != nil {
-				errors = append(errors, fmt.Sprintf("%s: %v", issueID, err))
-				continue
+			type tombstoner interface {
+				CreateTombstone(ctx context.Context, id string, actor string, reason string) error
+			}
+			if t, ok := store.(tombstoner); ok {
+				reason := deleteArgs.Reason
+				if reason == "" {
+					reason = "deleted via daemon"
+				}
+				if err := t.CreateTombstone(ctx, issueID, "daemon", reason); err != nil {
+					errors = append(errors, fmt.Sprintf("%s: %v", issueID, err))
+					continue
+				}
+			} else {
+				// Fallback to hard delete if CreateTombstone not available
+				if err := store.DeleteIssue(ctx, issueID); err != nil {
+					errors = append(errors, fmt.Sprintf("%s: %v", issueID, err))
+					continue
+				}
 			}
 		}
 

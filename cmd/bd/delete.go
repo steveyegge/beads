@@ -17,17 +17,18 @@ import (
 )
 
 // deleteViaDaemon uses the RPC daemon to delete issues
-func deleteViaDaemon(issueIDs []string, force, dryRun, cascade bool, jsonOutput bool, reason string) {
+func deleteViaDaemon(issueIDs []string, force, dryRun, cascade, hardDelete bool, jsonOutput bool, reason string) {
 	// NOTE: The daemon's delete handler implements the core deletion logic.
 	// cascade and detailed dependency handling are not yet implemented in the RPC layer.
 	// For now, we pass force=true to the daemon and rely on its simpler deletion logic.
-	
+
 	deleteArgs := &rpc.DeleteArgs{
-		IDs:     issueIDs,
-		Force:   force,
-		DryRun:  dryRun,
-		Cascade: cascade,
-		Reason:  reason,
+		IDs:        issueIDs,
+		Force:      force,
+		DryRun:     dryRun,
+		Cascade:    cascade,
+		Reason:     reason,
+		HardDelete: hardDelete,
 	}
 	
 	resp, err := daemonClient.Delete(deleteArgs)
@@ -153,7 +154,7 @@ the issues will not resurrect from remote branches.`,
 		
 		// Use daemon if available, otherwise use direct mode
 		if daemonClient != nil {
-			deleteViaDaemon(issueIDs, force, dryRun, cascade, jsonOutput, reason)
+			deleteViaDaemon(issueIDs, force, dryRun, cascade, hardDelete, jsonOutput, reason)
 			return
 		}
 		
