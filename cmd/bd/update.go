@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/timeparsing"
@@ -123,6 +124,9 @@ create, update, show, or close operation).`,
 				if ct, err := store.GetCustomTypes(cmd.Context()); err == nil {
 					customTypes = ct
 				}
+			} else {
+				// Daemon mode: store is nil, fall back to config.yaml (GH#1499)
+				customTypes = config.GetCustomTypesFromYAML()
 			}
 			if !types.IssueType(issueType).IsValidWithCustom(customTypes) {
 				validTypes := "bug, feature, task, epic, chore"
