@@ -34,12 +34,15 @@ bd info --json
 ### Find Work
 
 ```bash
-# Find ready work (no blockers)
+# Find ready work (no blockers, not already claimed)
 bd ready --json
+
+# Atomically claim an issue from the ready queue
+bd update <id> --claim --json               # Fails if already claimed
 
 # Find stale issues (not updated recently)
 bd stale --days 30 --json                    # Default: 30 days
-bd stale --days 90 --status in_progress --json  # Filter by status
+bd stale --days 90 --status in_progress --json  # Find abandoned claims
 bd stale --limit 20 --json                   # Limit results
 ```
 
@@ -92,6 +95,11 @@ bd create "Found bug" -t bug -p 1 --deps discovered-from:<parent-id> --json
 bd update <id> [<id>...] --status in_progress --json
 bd update <id> [<id>...] --priority 1 --json
 bd update <id> [<id>...] --spec-id "docs/specs/auth.md" --json
+
+# Atomically claim an issue for work (prevents race conditions)
+# Sets assignee to you and status to in_progress in one atomic operation
+# Fails if already claimed (assignee is not empty)
+bd update <id> --claim --json
 
 # Edit issue fields in $EDITOR (HUMANS ONLY - not for agents)
 # NOTE: This command is intentionally NOT exposed via the MCP server
