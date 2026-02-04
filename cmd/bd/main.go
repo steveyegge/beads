@@ -659,8 +659,9 @@ var rootCmd = &cobra.Command{
 			// Attempt daemon connection (auto-selects TCP via BD_DAEMON_HOST or local Unix socket)
 			client, err := rpc.TryConnectAuto(socketPath)
 			if err == nil && client != nil {
-				// Set expected database path for validation
-				if dbPath != "" {
+				// Set expected database path for validation (skip for remote TCP connections
+				// where local path doesn't match remote daemon's database)
+				if dbPath != "" && rpc.GetDaemonHost() == "" {
 					absDBPath, _ := filepath.Abs(dbPath)
 					client.SetDatabasePath(absDBPath)
 				}
@@ -679,7 +680,7 @@ var rootCmd = &cobra.Command{
 							// Retry connection after restart
 							client, err = rpc.TryConnectAuto(socketPath)
 							if err == nil && client != nil {
-								if dbPath != "" {
+								if dbPath != "" && rpc.GetDaemonHost() == "" {
 									absDBPath, _ := filepath.Abs(dbPath)
 									client.SetDatabasePath(absDBPath)
 								}
@@ -754,8 +755,8 @@ var rootCmd = &cobra.Command{
 					// Retry connection after auto-start
 					client, err := rpc.TryConnectAuto(socketPath)
 					if err == nil && client != nil {
-						// Set expected database path for validation
-						if dbPath != "" {
+						// Set expected database path for validation (skip for remote TCP connections)
+						if dbPath != "" && rpc.GetDaemonHost() == "" {
 							absDBPath, _ := filepath.Abs(dbPath)
 							client.SetDatabasePath(absDBPath)
 						}
