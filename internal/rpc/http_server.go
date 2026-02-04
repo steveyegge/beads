@@ -370,6 +370,7 @@ func httpMethodToOperation(method string) string {
 		"BatchQueryWorkers":        OpBatchQueryWorkers,
 		"CreateConvoyWithTracking": OpCreateConvoyWithTracking,
 		"AtomicClosureChain":       OpAtomicClosureChain,
+		"UpdateWithComment":        OpUpdateWithComment,
 
 		// Remote database management
 		"Init":    OpInit,
