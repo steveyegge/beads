@@ -97,7 +97,7 @@ func TestDaemonStartupRaceWithClients(t *testing.T) {
 	}
 
 	// start server
-	server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", log)
+	server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start RPC server: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestDaemonShutdownWithPendingRequests(t *testing.T) {
 
 	log := newTestLogger()
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start RPC server: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestDaemonCrashRecoveryWithPanic(t *testing.T) {
 
 	log := newTestLogger()
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start RPC server: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestSocketCleanupOnCrash(t *testing.T) {
 	log := newTestLogger()
 
 	// new daemon should clean up stale socket and start
-	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start server with stale socket: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestConcurrentServerStartStop(t *testing.T) {
 		socketPath := filepath.Join(tmpDir, fmt.Sprintf("bd%d.sock", i))
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
-		server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", log)
+		server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
 		if err != nil {
 			cancel()
 			t.Logf("Cycle %d: failed to start server (may be expected): %v", i, err)
@@ -442,7 +442,7 @@ func TestDaemonContextCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", log)
+	server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start RPC server: %v", err)
 	}
@@ -499,7 +499,7 @@ func TestMultipleClientsDuringShutdown(t *testing.T) {
 
 	log := newTestLogger()
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start RPC server: %v", err)
 	}
@@ -608,7 +608,7 @@ func TestServerReadyChannelRace(t *testing.T) {
 
 	log := newTestLogger()
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start RPC server: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestEventLoopConcurrentAccess(t *testing.T) {
 
 	log := newTestLogger()
 
-	server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", log)
+	server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start RPC server: %v", err)
 	}
