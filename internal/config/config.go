@@ -176,6 +176,18 @@ func Initialize() error {
 
 	// Volatility configuration defaults
 	v.SetDefault("volatility.auto_pause", false)
+	v.SetDefault("volatility.window", "30d")
+	v.SetDefault("volatility.high_changes", 5)
+	v.SetDefault("volatility.high_mixed_changes", 3)
+	v.SetDefault("volatility.high_open_issues", 3)
+	v.SetDefault("volatility.medium_changes", 2)
+	v.SetDefault("volatility.low_changes", 1)
+	v.SetDefault("volatility.decay.half_life", "")
+
+	// Wobble configuration defaults
+	v.SetDefault("wobble.prefer_sessions", true)
+	v.SetDefault("wobble.sessions_dir", "")
+	v.SetDefault("wobble.projects_dir", "")
 
 	// Validation configuration defaults (bd-t7jq)
 	// Values: "warn" | "error" | "none"

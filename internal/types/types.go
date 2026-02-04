@@ -672,9 +672,10 @@ type IssueWithCounts struct {
 
 // SpecVolatility summarizes spec churn for JSON consumers.
 type SpecVolatility struct {
-	Level      string `json:"level"`
-	Changes    int    `json:"changes"`
-	OpenIssues int    `json:"open_issues"`
+	Level          string  `json:"level"`
+	Changes        int     `json:"changes"`
+	WeightedChange float64 `json:"weighted_change,omitempty"`
+	OpenIssues     int     `json:"open_issues"`
 }
 
 // IssueDetails extends Issue with labels, dependencies, dependents, and comments.

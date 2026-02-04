@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/spec"
@@ -32,6 +33,11 @@ var specVolatilityCmd = &cobra.Command{
 			specIDArg = args[0]
 		}
 		sinceInput, _ := cmd.Flags().GetString("since")
+		if !cmd.Flags().Changed("since") {
+			if window := config.GetString("volatility.window"); window != "" {
+				sinceInput = window
+			}
+		}
 		minChanges, _ := cmd.Flags().GetInt("min-changes")
 		limit, _ := cmd.Flags().GetInt("limit")
 		format, _ := cmd.Flags().GetString("format")
@@ -165,6 +171,9 @@ func computeSpecRisk(ctx context.Context, specStore spec.SpecRegistryStore, sinc
 		openIssues[issue.SpecID]++
 	}
 
+	halfLife := volatilityHalfLife()
+	now := time.Now().UTC()
+
 	results := make([]spec.SpecRiskEntry, 0)
 	for _, entry := range entries {
 		if entry.MissingAt != nil {
@@ -174,22 +183,33 @@ func computeSpecRisk(ctx context.Context, specStore spec.SpecRegistryStore, sinc
 		if err != nil {
 			return nil, err
 		}
-		changeCount, lastChangedAt := spec.SummarizeScanEvents(events, time.Time{})
-		if changeCount < minChanges {
+		rawChangeCount, lastChangedAt := spec.SummarizeScanEvents(events, time.Time{})
+		weighted := 0.0
+		if halfLife > 0 {
+			weighted, lastChangedAt = spec.SummarizeScanEventsWeighted(events, time.Time{}, now, halfLife)
+		}
+		effectiveChanges := rawChangeCount
+		if weighted > 0 {
+			effectiveChanges = int(weighted + 0.5)
+		}
+		if effectiveChanges < minChanges {
 			continue
 		}
 		results = append(results, spec.SpecRiskEntry{
-			SpecID:        entry.SpecID,
-			Title:         entry.Title,
-			ChangeCount:   changeCount,
-			LastChangedAt: lastChangedAt,
-			OpenIssues:    openIssues[entry.SpecID],
+			SpecID:              entry.SpecID,
+			Title:               entry.Title,
+			ChangeCount:         rawChangeCount,
+			WeightedChangeCount: weighted,
+			LastChangedAt:       lastChangedAt,
+			OpenIssues:          openIssues[entry.SpecID],
 		})
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		if results[i].ChangeCount != results[j].ChangeCount {
-			return results[i].ChangeCount > results[j].ChangeCount
+		iChanges := effectiveRiskChanges(results[i])
+		jChanges := effectiveRiskChanges(results[j])
+		if iChanges != jChanges {
+			return iChanges > jChanges
 		}
 		if results[i].OpenIssues != results[j].OpenIssues {
 			return results[i].OpenIssues > results[j].OpenIssues
@@ -256,7 +276,7 @@ func maybeFailOnVolatility(entries []spec.SpecRiskEntry, failOnHigh, failOnMediu
 
 	var offenders []spec.SpecRiskEntry
 	for _, entry := range entries {
-		level := classifySpecVolatility(entry.ChangeCount, entry.OpenIssues)
+		level := classifySpecVolatility(effectiveRiskChanges(entry), entry.OpenIssues)
 		if level == specVolatilityHigh || (threshold == specVolatilityMedium && level == specVolatilityMedium) {
 			offenders = append(offenders, entry)
 		}

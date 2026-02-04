@@ -493,11 +493,7 @@ func appendSkillsVolatilityRisk(ctx context.Context) {
 		return
 	}
 
-	window, err := parseDurationString("30d")
-	if err != nil {
-		return
-	}
-	since := time.Now().UTC().Add(-window).Truncate(time.Second)
+	since := time.Now().UTC().Add(-volatilityWindow()).Truncate(time.Second)
 
 	summaries := make(map[string]specVolatilitySummary)
 	for _, specID := range specIDs {
@@ -529,7 +525,7 @@ func appendSkillsVolatilityRisk(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
+		level := classifySpecVolatility(effectiveVolatilityChanges(summary), summary.OpenIssues)
 		if level == specVolatilityHigh || level == specVolatilityMedium {
 			risky = append(risky, fmt.Sprintf("%s → %s (%s)", skillID, specID, formatVolatilityLevel(level)))
 		}

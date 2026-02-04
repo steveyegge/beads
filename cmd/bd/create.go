@@ -160,11 +160,7 @@ var createCmd = &cobra.Command{
 		}
 
 		if specID != "" && rigOverride == "" && prefixOverride == "" && !dryRun && !forceCreate && !silent && !debug.IsQuiet() && !jsonOutput {
-			volatilityWindow, err := parseDurationString("30d")
-			if err != nil {
-				FatalError("invalid volatility window: %v", err)
-			}
-			since := time.Now().UTC().Add(-volatilityWindow).Truncate(time.Second)
+			since := time.Now().UTC().Add(-volatilityWindow()).Truncate(time.Second)
 			summary, err := getSpecVolatilitySummary(rootCtx, specID, since)
 			if err != nil {
 				FatalError("spec volatility check failed: %v", err)
@@ -174,8 +170,12 @@ var createCmd = &cobra.Command{
 				if summary.LastChangedAt != nil {
 					lastChanged = summary.LastChangedAt.Local().Format("2006-01-02")
 				}
+				windowLabel := config.GetString("volatility.window")
+				if windowLabel == "" {
+					windowLabel = "30d"
+				}
 				fmt.Fprintf(os.Stderr, "%s Spec %s is volatile (%d changes since %s, %d open issues; last change %s).\n",
-					ui.RenderWarn("◐"), specID, summary.ChangeCount, "30d", summary.OpenIssues, lastChanged)
+					ui.RenderWarn("◐"), specID, summary.ChangeCount, windowLabel, summary.OpenIssues, lastChanged)
 				fmt.Fprintf(os.Stderr, "  Recommendation: stabilize spec before starting new work.\n")
 				fmt.Fprintf(os.Stderr, "Create anyway? [y/N] ")
 				var response string

@@ -19,11 +19,7 @@ func maybeAutoPauseVolatileSpecs(ctx context.Context, specIDs []string) (int, er
 		return 0, nil
 	}
 
-	window, err := parseDurationString("30d")
-	if err != nil {
-		return 0, err
-	}
-	since := time.Now().UTC().Add(-window).Truncate(time.Second)
+	since := time.Now().UTC().Add(-volatilityWindow()).Truncate(time.Second)
 	summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since)
 	if err != nil {
 		return 0, err
@@ -31,7 +27,7 @@ func maybeAutoPauseVolatileSpecs(ctx context.Context, specIDs []string) (int, er
 
 	paused := 0
 	for specID, summary := range summaries {
-		level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
+		level := classifySpecVolatility(effectiveVolatilityChanges(summary), summary.OpenIssues)
 		if level != specVolatilityHigh {
 			continue
 		}

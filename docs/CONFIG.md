@@ -711,6 +711,17 @@ Some bd commands automatically use configuration:
 
 External integration scripts can read configuration to sync with Jira, Linear, GitHub, etc.
 
+## Volatility and Wobble
+
+Shadowbook uses a few config keys to tune drift signals:
+
+- `volatility.window` (default: `30d`) lookback window for spec change counting
+- `volatility.high_changes`, `volatility.high_mixed_changes`, `volatility.high_open_issues`
+- `volatility.medium_changes`, `volatility.low_changes`
+- `volatility.decay.half_life` (e.g., `7d`) enables time-decayed change weighting
+- `wobble.prefer_sessions` (default: `true`) prefers real session data if present
+- `wobble.sessions_dir`, `wobble.projects_dir` override session log locations
+
 ## See Also
 
 - [README.md](../README.md) - Main documentation

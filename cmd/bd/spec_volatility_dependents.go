@@ -62,7 +62,7 @@ func renderSpecDependents(ctx context.Context, specID string, since time.Time) e
 		return err
 	}
 
-	level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
+	level := classifySpecVolatility(effectiveVolatilityChanges(*summary), summary.OpenIssues)
 	cascade := specCascadeSummary{
 		SpecID:          specID,
 		ChangeCount:     summary.ChangeCount,
@@ -123,7 +123,7 @@ func renderSpecRecommendations(ctx context.Context, entries []spec.SpecRiskEntry
 		results := make([]rec, 0, len(entries))
 		for _, entry := range entries {
 			dependents, _ := countSpecDependents(ctx, issueStore, entry.SpecID)
-			level := classifySpecVolatility(entry.ChangeCount, entry.OpenIssues)
+			level := classifySpecVolatility(effectiveRiskChanges(entry), entry.OpenIssues)
 			results = append(results, rec{
 				SpecID:         entry.SpecID,
 				Volatility:     string(level),
@@ -141,7 +141,7 @@ func renderSpecRecommendations(ctx context.Context, entries []spec.SpecRiskEntry
 	fmt.Println()
 	for _, entry := range entries {
 		dependents, _ := countSpecDependents(ctx, issueStore, entry.SpecID)
-		level := classifySpecVolatility(entry.ChangeCount, entry.OpenIssues)
+		level := classifySpecVolatility(effectiveRiskChanges(entry), entry.OpenIssues)
 		action := recommendationForLevel(level, entry.OpenIssues, dependents)
 		fmt.Printf("%s (%s)\n", entry.SpecID, formatVolatilityLevel(level))
 		if action != "" {

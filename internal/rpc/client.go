@@ -435,6 +435,11 @@ func (c *Client) SpecRisk(args *SpecRiskArgs) (*Response, error) {
 	return c.Execute(OpSpecRisk, args)
 }
 
+// DriftSummary returns wobble/spec drift summary via the daemon.
+func (c *Client) DriftSummary() (*Response, error) {
+	return c.Execute(OpDriftSummary, nil)
+}
+
 // SpecAudit returns audit results for all specs via the daemon.
 func (c *Client) SpecAudit(args *SpecAuditArgs) (*Response, error) {
 	return c.Execute(OpSpecAudit, args)

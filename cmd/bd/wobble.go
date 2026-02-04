@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/wobble"
 )
@@ -93,17 +94,21 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 	actor := getPacmanAgentName()
 	generatedAt := time.Now().UTC()
 
+	applyWobbleSessionConfig()
+
 	skillsDir := wobble.DetectSkillsDir(projectPath)
 
+	preferSessions := config.GetBool("wobble.prefer_sessions")
+
 	// Real session data mode
-	if fromSessions {
+	if fromSessions || (preferSessions && wobble.HasSessionData(days)) {
 		var skillFilter string
 		if len(args) > 0 {
 			skillFilter = args[0]
 		}
 
 		if !jsonOutput {
-			fmt.Printf("🔍 Parsing Claude session transcripts (last %d days)...\n", days)
+			fmt.Printf("Parsing Claude session transcripts (last %d days)...\n", days)
 		}
 
 		results, err := wobble.ScanFromSessions(skillsDir, skillFilter, days)
@@ -114,14 +119,14 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 		if len(results) == 0 {
 			if !jsonOutput {
 				fmt.Println()
-				fmt.Println("⚠️  No skill invocations found in session transcripts.")
-				fmt.Println("   This could mean:")
-				fmt.Printf("   • No sessions in the last %d days\n", days)
-				fmt.Println("   • Session files are stored elsewhere")
-				fmt.Println("   • No skills were invoked")
-				fmt.Printf("\n   Checked: %s\n", wobble.SessionsDir)
-				fmt.Printf("            %s\n", wobble.ProjectsDir)
-				fmt.Println("\n   Falling back to structural analysis only...")
+				fmt.Println("No skill invocations found in session transcripts.")
+				fmt.Println("This could mean:")
+				fmt.Printf("- No sessions in the last %d days\n", days)
+				fmt.Println("- Session files are stored elsewhere")
+				fmt.Println("- No skills were invoked")
+				fmt.Printf("\nChecked: %s\n", wobble.SessionsDir)
+				fmt.Printf("        %s\n", wobble.ProjectsDir)
+				fmt.Println("\nFalling back to simulated analysis...")
 			}
 
 			// Fall back to structural-only scan
@@ -136,6 +141,7 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 				if jsonOutput {
 					outputJSON(result)
 				} else {
+					fmt.Println("Mode: simulated (no session data)")
 					renderWobbleScanSingle(result)
 				}
 			} else {
@@ -149,6 +155,7 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 				if jsonOutput {
 					outputJSON(results)
 				} else {
+					fmt.Println("Mode: simulated (no session data)")
 					renderWobbleScanAll(results, topN, skillsDir)
 				}
 			}
@@ -163,6 +170,7 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 			return
 		}
 
+		fmt.Println("Mode: real session data")
 		renderRealSessionResults(results)
 		return
 	}
@@ -181,6 +189,7 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 			return
 		}
 
+		fmt.Println("Mode: simulated")
 		renderWobbleScanAll(results, topN, skillsDir)
 		return
 	}
@@ -204,7 +213,20 @@ func runWobbleScan(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	fmt.Println("Mode: simulated")
 	renderWobbleScanSingle(result)
+}
+
+func applyWobbleSessionConfig() {
+	sessionsDir := config.GetString("wobble.sessions_dir")
+	projectsDir := config.GetString("wobble.projects_dir")
+	if env := os.Getenv("WOBBLE_SESSIONS_DIR"); env != "" {
+		sessionsDir = env
+	}
+	if env := os.Getenv("WOBBLE_PROJECTS_DIR"); env != "" {
+		projectsDir = env
+	}
+	wobble.ConfigureSessionDirs(sessionsDir, projectsDir)
 }
 
 func runWobbleInspect(cmd *cobra.Command, args []string) {

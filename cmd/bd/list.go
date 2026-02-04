@@ -510,7 +510,7 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string, 
 		buf.WriteString(fmt.Sprintf("  Spec changed: %s\n", issue.SpecChangedAt.Local().Format("2006-01-02 15:04")))
 	}
 	if volatilitySummary != nil {
-		level := classifySpecVolatility(volatilitySummary.ChangeCount, volatilitySummary.OpenIssues)
+		level := classifySpecVolatility(effectiveVolatilityChanges(*volatilitySummary), volatilitySummary.OpenIssues)
 		buf.WriteString(fmt.Sprintf("  Spec volatility: %s (changes: %d, open issues: %d)\n",
 			level, volatilitySummary.ChangeCount, volatilitySummary.OpenIssues))
 	}
@@ -575,11 +575,7 @@ func buildVolatilityBadges(ctx context.Context, issues []*types.Issue, showVolat
 		return nil, nil, nil
 	}
 
-	window, err := parseDurationString("30d")
-	if err != nil {
-		return nil, nil, err
-	}
-	since := time.Now().UTC().Add(-window).Truncate(time.Second)
+	since := time.Now().UTC().Add(-volatilityWindow()).Truncate(time.Second)
 	summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since)
 	if err != nil {
 		return nil, nil, err
@@ -587,7 +583,7 @@ func buildVolatilityBadges(ctx context.Context, issues []*types.Issue, showVolat
 
 	badges := make(map[string]string)
 	for specID, summary := range summaries {
-		level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
+		level := classifySpecVolatility(effectiveVolatilityChanges(summary), summary.OpenIssues)
 		switch level {
 		case specVolatilityHigh:
 			badges[specID] = ui.RenderWarn("🔥 volatile")
@@ -1196,24 +1192,22 @@ var listCmd = &cobra.Command{
 					specIDs = append(specIDs, item.Issue.SpecID)
 				}
 				if len(specIDs) > 0 {
-					window, err := parseDurationString("30d")
-					if err == nil {
-						since := time.Now().UTC().Add(-window).Truncate(time.Second)
-						if summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since); err == nil {
-							for _, item := range issuesWithCounts {
-								if item == nil || item.Issue == nil {
-									continue
-								}
-								summary, ok := summaries[item.Issue.SpecID]
-								if !ok {
-									continue
-								}
-								level := string(classifySpecVolatility(summary.ChangeCount, summary.OpenIssues))
-								item.Volatility = &types.SpecVolatility{
-									Level:      level,
-									Changes:    summary.ChangeCount,
-									OpenIssues: summary.OpenIssues,
-								}
+					since := time.Now().UTC().Add(-volatilityWindow()).Truncate(time.Second)
+					if summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since); err == nil {
+						for _, item := range issuesWithCounts {
+							if item == nil || item.Issue == nil {
+								continue
+							}
+							summary, ok := summaries[item.Issue.SpecID]
+							if !ok {
+								continue
+							}
+							level := string(classifySpecVolatility(effectiveVolatilityChanges(summary), summary.OpenIssues))
+							item.Volatility = &types.SpecVolatility{
+								Level:          level,
+								Changes:        summary.ChangeCount,
+								WeightedChange: summary.WeightedChangeCount,
+								OpenIssues:     summary.OpenIssues,
 							}
 						}
 					}
@@ -1457,12 +1451,9 @@ var listCmd = &cobra.Command{
 					specIDs = append(specIDs, issue.SpecID)
 				}
 				if len(specIDs) > 0 {
-					window, err := parseDurationString("30d")
-					if err == nil {
-						since := time.Now().UTC().Add(-window).Truncate(time.Second)
-						if summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since); err == nil {
-							volatilitySummaries = summaries
-						}
+					since := time.Now().UTC().Add(-volatilityWindow()).Truncate(time.Second)
+					if summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since); err == nil {
+						volatilitySummaries = summaries
 					}
 				}
 			}
@@ -1476,11 +1467,12 @@ var listCmd = &cobra.Command{
 				}
 				var volatility *types.SpecVolatility
 				if summary, ok := volatilitySummaries[issue.SpecID]; ok {
-					level := string(classifySpecVolatility(summary.ChangeCount, summary.OpenIssues))
+					level := string(classifySpecVolatility(effectiveVolatilityChanges(summary), summary.OpenIssues))
 					volatility = &types.SpecVolatility{
-						Level:      level,
-						Changes:    summary.ChangeCount,
-						OpenIssues: summary.OpenIssues,
+						Level:          level,
+						Changes:        summary.ChangeCount,
+						WeightedChange: summary.WeightedChangeCount,
+						OpenIssues:     summary.OpenIssues,
 					}
 				}
 				issuesWithCounts[i] = &types.IssueWithCounts{

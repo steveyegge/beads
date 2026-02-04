@@ -58,6 +58,7 @@ When you link a new issue to a volatile spec, `bd create --spec-id` prompts befo
 Use `bd list --show-volatility` to add volatility badges in list output.
 `bd list --json` includes a `volatility` object per issue when spec data is available.
 If `volatility.auto_pause` is enabled, HIGH volatility specs will auto-pause linked issues. Resume with `bd resume --spec <path>`.
+You can tune thresholds and enable time-decay with config keys like `volatility.high_changes` and `volatility.decay.half_life`.
 
 Flags:
 - `--since` controls the lookback window (default: 30d)
@@ -69,6 +70,15 @@ Flags:
 - `--with-dependents <spec>` shows dependent issue cascade for a spec
 - `--recommendations` prints stabilization recommendations per spec
 - `--trend <spec>` shows volatility trend history for a spec
+
+---
+
+## Wobble session sources
+
+Wobble prefers real session data when available and falls back to simulation otherwise.
+You can override where session logs are read from with config keys:
+`wobble.sessions_dir` and `wobble.projects_dir`, or environment variables
+`WOBBLE_SESSIONS_DIR` and `WOBBLE_PROJECTS_DIR`.
 
 ---
 

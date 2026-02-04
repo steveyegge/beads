@@ -2,6 +2,7 @@ package spec
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -43,6 +44,17 @@ func IsScannableSpecID(specID string) bool {
 
 // Scan walks a spec directory and returns discovered specs.
 func Scan(rootDir, specPath string) ([]ScannedSpec, error) {
+	return ScanWithOptions(rootDir, specPath, nil)
+}
+
+// ScanOptions controls how specs are scanned and hashed.
+type ScanOptions struct {
+	ExistingByID map[string]SpecRegistryEntry
+	GitStatusMap map[string]string
+}
+
+// ScanWithOptions walks a spec directory and returns discovered specs with caching.
+func ScanWithOptions(rootDir, specPath string, opts *ScanOptions) ([]ScannedSpec, error) {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve root dir: %w", err)
@@ -53,7 +65,27 @@ func Scan(rootDir, specPath string) ([]ScannedSpec, error) {
 		scanPath = filepath.Join(absRoot, scanPath)
 	}
 
-	var specs []ScannedSpec
+	var (
+		specs        []ScannedSpec
+		existingByID map[string]SpecRegistryEntry
+		gitStatusMap map[string]string
+		gitOK        bool
+	)
+
+	if opts != nil {
+		existingByID = opts.ExistingByID
+		gitStatusMap = opts.GitStatusMap
+	}
+	if existingByID == nil {
+		existingByID = make(map[string]SpecRegistryEntry)
+	}
+
+	if gitStatusMap == nil {
+		gitStatusMap, gitOK = buildGitStatusMap(absRoot)
+	} else {
+		gitOK = true
+	}
+
 	err = filepath.WalkDir(scanPath, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -80,19 +112,35 @@ func Scan(rootDir, specPath string) ([]ScannedSpec, error) {
 		}
 
 		title := ExtractTitle(path)
-		hash, err := hashFile(path)
-		if err != nil {
-			return err
+
+		mtime := info.ModTime().UTC().Truncate(time.Second)
+		gitStatus := "unknown"
+		if gitOK {
+			rel := filepath.ToSlash(specID)
+			if status, ok := gitStatusMap[rel]; ok {
+				gitStatus = status
+			} else {
+				gitStatus = "tracked"
+			}
 		}
 
-		gitStatus := getGitStatus(absRoot, path)
+		hash := ""
+		if existing, ok := existingByID[specID]; ok && existing.Mtime.Equal(mtime) && gitStatus == "tracked" {
+			hash = existing.SHA256
+		} else {
+			var err error
+			hash, err = hashFile(path)
+			if err != nil {
+				return err
+			}
+		}
 
 		specs = append(specs, ScannedSpec{
-			SpecID: specID,
-			Path:   path,
-			Title:  title,
-			SHA256: hash,
-			Mtime:  info.ModTime().UTC().Truncate(time.Second),
+			SpecID:    specID,
+			Path:      path,
+			Title:     title,
+			SHA256:    hash,
+			Mtime:     mtime,
 			GitStatus: gitStatus,
 		})
 		return nil
@@ -104,25 +152,46 @@ func Scan(rootDir, specPath string) ([]ScannedSpec, error) {
 	return specs, nil
 }
 
-func getGitStatus(repoRoot, absPath string) string {
-	rel, err := filepath.Rel(repoRoot, absPath)
-	if err != nil {
-		return "unknown"
-	}
-	cmd := exec.Command("git", "status", "--porcelain", "--", rel)
+func buildGitStatusMap(repoRoot string) (map[string]string, bool) {
+	cmd := exec.Command("git", "status", "--porcelain", "-z", "--untracked-files=normal")
 	cmd.Dir = repoRoot
 	out, err := cmd.Output()
 	if err != nil {
-		return "unknown"
+		return nil, false
 	}
-	line := strings.TrimSpace(string(out))
-	if line == "" {
-		return "tracked"
+
+	statusMap := make(map[string]string)
+	entries := bytes.Split(out, []byte{0})
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 3 {
+			continue
+		}
+		status := string(entry[:2])
+		path := strings.TrimSpace(string(entry[3:]))
+		if path == "" {
+			continue
+		}
+
+		if status[0] == 'R' || status[0] == 'C' {
+			if i+1 < len(entries) {
+				next := strings.TrimSpace(string(entries[i+1]))
+				if next != "" {
+					path = next
+				}
+				i++
+			}
+		}
+
+		rel := filepath.ToSlash(path)
+		if strings.HasPrefix(status, "??") {
+			statusMap[rel] = "untracked"
+		} else {
+			statusMap[rel] = "modified"
+		}
 	}
-	if strings.HasPrefix(line, "??") {
-		return "untracked"
-	}
-	return "modified"
+
+	return statusMap, true
 }
 
 // ExtractTitle reads the first H1 from a markdown file.

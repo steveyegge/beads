@@ -701,11 +701,7 @@ func annotateRecentVolatility(ctx context.Context, items []RecentItem) {
 	if len(specIDs) == 0 {
 		return
 	}
-	window, err := parseDurationString("30d")
-	if err != nil {
-		return
-	}
-	since := time.Now().UTC().Add(-window).Truncate(time.Second)
+	since := time.Now().UTC().Add(-volatilityWindow()).Truncate(time.Second)
 	summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since)
 	if err != nil {
 		return
@@ -721,7 +717,7 @@ func annotateRecentVolatility(ctx context.Context, items []RecentItem) {
 			continue
 		}
 		if summary, ok := summaries[specID]; ok {
-			level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
+			level := classifySpecVolatility(effectiveVolatilityChanges(summary), summary.OpenIssues)
 			items[i].VolatilityLevel = string(level)
 			items[i].VolatilityChanges = summary.ChangeCount
 			items[i].VolatilityOpenIssues = summary.OpenIssues

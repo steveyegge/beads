@@ -442,7 +442,11 @@ func renderReadyByVolatility(ctx context.Context, issues []*types.Issue) {
 		fmt.Printf("%s Caution (volatile specs):\n\n", ui.RenderWarn("🔥"))
 		for i, issue := range volatile {
 			summary := summaries[issue.SpecID]
-			suffix := fmt.Sprintf(" (🔥 volatile: %d changes/30d, %d open issues)", summary.ChangeCount, summary.OpenIssues)
+			windowLabel := config.GetString("volatility.window")
+			if windowLabel == "" {
+				windowLabel = "30d"
+			}
+			suffix := fmt.Sprintf(" (🔥 volatile: %d changes/%s, %d open issues)", summary.ChangeCount, windowLabel, summary.OpenIssues)
 			renderReadyIssueLine(i+1, issue, suffix)
 		}
 		fmt.Printf("\n%s Recommendation: stabilize volatile specs before starting new work.\n\n", ui.RenderWarn("🔥"))
@@ -478,15 +482,12 @@ func partitionReadyByVolatility(ctx context.Context, issues []*types.Issue) ([]*
 
 	summaries := make(map[string]specVolatilitySummary)
 	if len(specIDs) > 0 {
-		window, err := parseDurationString("30d")
-		if err != nil {
-			return nil, nil, nil, err
+		since := time.Now().UTC().Add(-volatilityWindow()).Truncate(time.Second)
+		loaded, loadErr := getSpecVolatilitySummaries(ctx, specIDs, since)
+		if loadErr != nil {
+			return nil, nil, nil, loadErr
 		}
-		since := time.Now().UTC().Add(-window).Truncate(time.Second)
-		summaries, err = getSpecVolatilitySummaries(ctx, specIDs, since)
-		if err != nil {
-			return nil, nil, nil, err
-		}
+		summaries = loaded
 	}
 
 	stable := make([]*types.Issue, 0, len(issues))
@@ -501,7 +502,7 @@ func partitionReadyByVolatility(ctx context.Context, issues []*types.Issue) ([]*
 			stable = append(stable, issue)
 			continue
 		}
-		level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
+		level := classifySpecVolatility(effectiveVolatilityChanges(summary), summary.OpenIssues)
 		if level == specVolatilityHigh || level == specVolatilityMedium {
 			volatile = append(volatile, issue)
 		} else {

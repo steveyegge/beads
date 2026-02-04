@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/spec"
 	"github.com/steveyegge/beads/internal/specarchive"
 	"github.com/steveyegge/beads/internal/types"
@@ -50,7 +53,18 @@ func (s *Server) handleSpecScan(req *Request) Response {
 		scanPath = "specs"
 	}
 
-	scanned, err := spec.Scan(root, scanPath)
+	existingEntries, err := store.ListSpecRegistry(ctx)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("list spec registry: %v", err)}
+	}
+	existingByID := make(map[string]spec.SpecRegistryEntry, len(existingEntries))
+	for _, entry := range existingEntries {
+		existingByID[entry.SpecID] = entry
+	}
+
+	scanned, err := spec.ScanWithOptions(root, scanPath, &spec.ScanOptions{
+		ExistingByID: existingByID,
+	})
 	if err != nil {
 		return Response{Success: false, Error: fmt.Sprintf("scan specs: %v", err)}
 	}
@@ -296,6 +310,15 @@ func (s *Server) handleSpecRisk(req *Request) Response {
 		openIssues[issue.SpecID]++
 	}
 
+	halfLife := config.GetString("volatility.decay.half_life")
+	halfLifeDuration := time.Duration(0)
+	if strings.TrimSpace(halfLife) != "" {
+		if parsed, err := parseDurationString(halfLife); err == nil {
+			halfLifeDuration = parsed
+		}
+	}
+	now := time.Now().UTC()
+
 	results := make([]spec.SpecRiskEntry, 0)
 	for _, entry := range entries {
 		if entry.MissingAt != nil {
@@ -305,16 +328,25 @@ func (s *Server) handleSpecRisk(req *Request) Response {
 		if err != nil {
 			return Response{Success: false, Error: fmt.Sprintf("list spec scan events: %v", err)}
 		}
-		changeCount, lastChangedAt := spec.SummarizeScanEvents(events, time.Time{})
-		if changeCount < minChanges {
+		rawChangeCount, lastChangedAt := spec.SummarizeScanEvents(events, time.Time{})
+		weighted := 0.0
+		if halfLifeDuration > 0 {
+			weighted, lastChangedAt = spec.SummarizeScanEventsWeighted(events, time.Time{}, now, halfLifeDuration)
+		}
+		effectiveChanges := rawChangeCount
+		if weighted > 0 {
+			effectiveChanges = int(weighted + 0.5)
+		}
+		if effectiveChanges < minChanges {
 			continue
 		}
 		results = append(results, spec.SpecRiskEntry{
-			SpecID:        entry.SpecID,
-			Title:         entry.Title,
-			ChangeCount:   changeCount,
-			LastChangedAt: lastChangedAt,
-			OpenIssues:    openIssues[entry.SpecID],
+			SpecID:              entry.SpecID,
+			Title:               entry.Title,
+			ChangeCount:         rawChangeCount,
+			WeightedChangeCount: weighted,
+			LastChangedAt:       lastChangedAt,
+			OpenIssues:          openIssues[entry.SpecID],
 		})
 	}
 
@@ -334,6 +366,31 @@ func (s *Server) handleSpecRisk(req *Request) Response {
 
 	data, _ := json.Marshal(results)
 	return Response{Success: true, Data: data}
+}
+
+func parseDurationString(input string) (time.Duration, error) {
+	if d, err := time.ParseDuration(input); err == nil {
+		return d, nil
+	}
+	re := regexp.MustCompile(`^(\d+)([dhms])$`)
+	matches := re.FindStringSubmatch(strings.ToLower(input))
+	if len(matches) != 3 {
+		return 0, fmt.Errorf("invalid duration format: %s", input)
+	}
+	value, _ := strconv.Atoi(matches[1])
+	unit := matches[2]
+	switch unit {
+	case "d":
+		return time.Duration(value) * 24 * time.Hour, nil
+	case "h":
+		return time.Duration(value) * time.Hour, nil
+	case "m":
+		return time.Duration(value) * time.Minute, nil
+	case "s":
+		return time.Duration(value) * time.Second, nil
+	default:
+		return 0, fmt.Errorf("unknown duration unit: %s", unit)
+	}
 }
 
 func (s *Server) handleSpecSuggest(req *Request) Response {

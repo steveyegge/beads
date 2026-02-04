@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestIsScannableSpecID(t *testing.T) {
@@ -124,11 +125,11 @@ func TestScan(t *testing.T) {
 
 	// Create test files
 	files := map[string]string{
-		filepath.Join(specsDir, "login.md"):        "# Login Feature\n\nLogin spec",
-		filepath.Join(specsDir, "signup.md"):       "# Signup Feature\n\nSignup spec",
-		filepath.Join(nestedDir, "oauth.md"):       "# OAuth Integration\n\nOAuth spec",
-		filepath.Join(specsDir, "notes.txt"):       "Not a markdown file",
-		filepath.Join(specsDir, ".hidden.md"):      "# Hidden\n\nShould be included",
+		filepath.Join(specsDir, "login.md"):   "# Login Feature\n\nLogin spec",
+		filepath.Join(specsDir, "signup.md"):  "# Signup Feature\n\nSignup spec",
+		filepath.Join(nestedDir, "oauth.md"):  "# OAuth Integration\n\nOAuth spec",
+		filepath.Join(specsDir, "notes.txt"):  "Not a markdown file",
+		filepath.Join(specsDir, ".hidden.md"): "# Hidden\n\nShould be included",
 	}
 
 	for path, content := range files {
@@ -172,5 +173,54 @@ func TestScan(t *testing.T) {
 		if s.SpecID == "specs/login.md" && s.Title != "Login Feature" {
 			t.Errorf("Expected title 'Login Feature', got %q", s.Title)
 		}
+	}
+}
+
+func TestScanWithOptionsUsesCachedHash(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "spec-scan-cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	specsDir := filepath.Join(tmpDir, "specs")
+	if err := os.MkdirAll(specsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	specPath := filepath.Join(specsDir, "cached.md")
+	if err := os.WriteFile(specPath, []byte("# Cached\n\nBody"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mtime := time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(specPath, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+
+	existing := map[string]SpecRegistryEntry{
+		"specs/cached.md": {
+			SpecID: "specs/cached.md",
+			Mtime:  mtime,
+			SHA256: "cached-hash",
+		},
+	}
+
+	gitStatus := map[string]string{
+		"specs/cached.md": "tracked",
+	}
+
+	specs, err := ScanWithOptions(tmpDir, "specs", &ScanOptions{
+		ExistingByID: existing,
+		GitStatusMap: gitStatus,
+	})
+	if err != nil {
+		t.Fatalf("ScanWithOptions() error: %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("ScanWithOptions() found %d specs, want 1", len(specs))
+	}
+	if specs[0].SHA256 != "cached-hash" {
+		t.Fatalf("ScanWithOptions() hash = %q, want cached-hash", specs[0].SHA256)
 	}
 }

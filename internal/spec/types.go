@@ -59,9 +59,10 @@ type SpecScanEvent struct {
 
 // SpecRiskEntry summarizes drift risk signals for a spec.
 type SpecRiskEntry struct {
-	SpecID        string
-	Title         string
-	ChangeCount   int
-	LastChangedAt *time.Time
-	OpenIssues    int
+	SpecID              string
+	Title               string
+	ChangeCount         int
+	WeightedChangeCount float64
+	LastChangedAt       *time.Time
+	OpenIssues          int
 }

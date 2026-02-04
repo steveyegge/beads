@@ -10,40 +10,41 @@ import (
 
 // Operation constants for all bd commands
 const (
-	OpPing         = "ping"
-	OpStatus       = "status"
-	OpHealth       = "health"
-	OpMetrics      = "metrics"
-	OpCreate       = "create"
-	OpUpdate       = "update"
-	OpClose        = "close"
-	OpList         = "list"
-	OpCount        = "count"
-	OpShow         = "show"
-	OpReady        = "ready"
-	OpBlocked      = "blocked"
-	OpStale        = "stale"
-	OpStats        = "stats"
-	OpDepAdd       = "dep_add"
-	OpDepRemove    = "dep_remove"
-	OpDepTree      = "dep_tree"
-	OpLabelAdd     = "label_add"
-	OpLabelRemove  = "label_remove"
-	OpCommentList  = "comment_list"
-	OpCommentAdd   = "comment_add"
-	OpBatch        = "batch"
-	OpResolveID    = "resolve_id"
-	OpSpecScan     = "spec_scan"
-	OpSpecList     = "spec_list"
-	OpSpecShow     = "spec_show"
-	OpSpecCoverage = "spec_coverage"
-	OpSpecCompact  = "spec_compact"
-	OpSpecSuggest  = "spec_suggest"
-	OpSpecLinkAuto = "spec_link_auto"
+	OpPing           = "ping"
+	OpStatus         = "status"
+	OpHealth         = "health"
+	OpMetrics        = "metrics"
+	OpCreate         = "create"
+	OpUpdate         = "update"
+	OpClose          = "close"
+	OpList           = "list"
+	OpCount          = "count"
+	OpShow           = "show"
+	OpReady          = "ready"
+	OpBlocked        = "blocked"
+	OpStale          = "stale"
+	OpStats          = "stats"
+	OpDepAdd         = "dep_add"
+	OpDepRemove      = "dep_remove"
+	OpDepTree        = "dep_tree"
+	OpLabelAdd       = "label_add"
+	OpLabelRemove    = "label_remove"
+	OpCommentList    = "comment_list"
+	OpCommentAdd     = "comment_add"
+	OpBatch          = "batch"
+	OpResolveID      = "resolve_id"
+	OpSpecScan       = "spec_scan"
+	OpSpecList       = "spec_list"
+	OpSpecShow       = "spec_show"
+	OpSpecCoverage   = "spec_coverage"
+	OpSpecCompact    = "spec_compact"
+	OpSpecSuggest    = "spec_suggest"
+	OpSpecLinkAuto   = "spec_link_auto"
 	OpSpecRisk       = "spec_risk"
 	OpSpecAudit      = "spec_audit"
 	OpSpecMarkDone   = "spec_mark_done"
 	OpSpecCandidates = "spec_candidates"
+	OpDriftSummary   = "drift_summary"
 
 	OpCompact             = "compact"
 	OpCompactStats        = "compact_stats"
@@ -478,8 +479,8 @@ type SpecAuditEntry struct {
 	OpenIssues   int     `json:"open_issues"`
 	ClosedIssues int     `json:"closed_issues"`
 	TotalIssues  int     `json:"total_issues"`
-	Completion   float64 `json:"completion"`  // 0-100 percentage
-	Status       string  `json:"status"`      // pending, in-progress, complete, stale
+	Completion   float64 `json:"completion"` // 0-100 percentage
+	Status       string  `json:"status"`     // pending, in-progress, complete, stale
 	LastModified string  `json:"last_modified,omitempty"`
 	Stale        bool    `json:"stale"`
 }
@@ -492,11 +493,11 @@ type SpecAuditResult struct {
 
 // SpecAuditSummary summarizes the audit.
 type SpecAuditSummary struct {
-	TotalSpecs     int `json:"total_specs"`
-	PendingSpecs   int `json:"pending_specs"`
+	TotalSpecs      int `json:"total_specs"`
+	PendingSpecs    int `json:"pending_specs"`
 	InProgressSpecs int `json:"in_progress_specs"`
-	CompleteSpecs  int `json:"complete_specs"`
-	StaleSpecs     int `json:"stale_specs"`
+	CompleteSpecs   int `json:"complete_specs"`
+	StaleSpecs      int `json:"stale_specs"`
 }
 
 // SpecMarkDoneArgs represents arguments for marking a spec as done.

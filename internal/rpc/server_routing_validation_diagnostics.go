@@ -230,6 +230,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleSpecMarkDone(req)
 	case OpSpecCandidates:
 		resp = s.handleSpecCandidates(req)
+	case OpDriftSummary:
+		resp = s.handleDriftSummary(req)
 
 	case OpCompact:
 		resp = s.handleCompact(req)

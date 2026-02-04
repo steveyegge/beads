@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/spec"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
@@ -13,9 +15,10 @@ import (
 )
 
 type specVolatilitySummary struct {
-	ChangeCount   int
-	LastChangedAt *time.Time
-	OpenIssues    int
+	ChangeCount         int
+	WeightedChangeCount float64
+	LastChangedAt       *time.Time
+	OpenIssues          int
 }
 
 type specVolatilityLevel string
@@ -28,16 +31,75 @@ const (
 )
 
 func classifySpecVolatility(changeCount, openIssues int) specVolatilityLevel {
-	if changeCount >= 5 || (changeCount >= 3 && openIssues >= 3) {
+	highChanges := config.GetInt("volatility.high_changes")
+	highMixedChanges := config.GetInt("volatility.high_mixed_changes")
+	highOpenIssues := config.GetInt("volatility.high_open_issues")
+	mediumChanges := config.GetInt("volatility.medium_changes")
+	lowChanges := config.GetInt("volatility.low_changes")
+	if highChanges == 0 {
+		highChanges = 5
+	}
+	if highMixedChanges == 0 {
+		highMixedChanges = 3
+	}
+	if highOpenIssues == 0 {
+		highOpenIssues = 3
+	}
+	if mediumChanges == 0 {
+		mediumChanges = 2
+	}
+	if lowChanges == 0 {
+		lowChanges = 1
+	}
+
+	if changeCount >= highChanges || (changeCount >= highMixedChanges && openIssues >= highOpenIssues) {
 		return specVolatilityHigh
 	}
-	if changeCount >= 2 && openIssues > 0 {
+	if changeCount >= mediumChanges && openIssues > 0 {
 		return specVolatilityMedium
 	}
-	if changeCount >= 1 || openIssues > 0 {
+	if changeCount >= lowChanges || openIssues > 0 {
 		return specVolatilityLow
 	}
 	return specVolatilityStable
+}
+
+func volatilityWindow() time.Duration {
+	window := config.GetString("volatility.window")
+	if window == "" {
+		window = "30d"
+	}
+	duration, err := parseDurationString(window)
+	if err != nil {
+		return 30 * 24 * time.Hour
+	}
+	return duration
+}
+
+func volatilityHalfLife() time.Duration {
+	halfLife := config.GetString("volatility.decay.half_life")
+	if strings.TrimSpace(halfLife) == "" {
+		return 0
+	}
+	duration, err := parseDurationString(halfLife)
+	if err != nil {
+		return 0
+	}
+	return duration
+}
+
+func effectiveVolatilityChanges(summary specVolatilitySummary) int {
+	if summary.WeightedChangeCount > 0 {
+		return int(summary.WeightedChangeCount + 0.5)
+	}
+	return summary.ChangeCount
+}
+
+func effectiveRiskChanges(entry spec.SpecRiskEntry) int {
+	if entry.WeightedChangeCount > 0 {
+		return int(entry.WeightedChangeCount + 0.5)
+	}
+	return entry.ChangeCount
 }
 
 func openVolatilityStores(ctx context.Context) (storage.Storage, spec.SpecRegistryStore, func(), error) {
@@ -128,6 +190,8 @@ func getSpecVolatilitySummaries(ctx context.Context, specIDs []string, since tim
 		openIssues[issue.SpecID]++
 	}
 
+	now := time.Now().UTC()
+	halfLife := volatilityHalfLife()
 	for specID := range specIDSet {
 		entry, err := specStore.GetSpecRegistry(ctx, specID)
 		if err != nil {
@@ -140,11 +204,16 @@ func getSpecVolatilitySummaries(ctx context.Context, specIDs []string, since tim
 		if err != nil {
 			return nil, err
 		}
-		changeCount, lastChangedAt := spec.SummarizeScanEvents(events, time.Time{})
+		rawChangeCount, lastChangedAt := spec.SummarizeScanEvents(events, time.Time{})
+		weighted := 0.0
+		if halfLife > 0 {
+			weighted, lastChangedAt = spec.SummarizeScanEventsWeighted(events, time.Time{}, now, halfLife)
+		}
 		results[specID] = specVolatilitySummary{
-			ChangeCount:   changeCount,
-			LastChangedAt: lastChangedAt,
-			OpenIssues:    openIssues[specID],
+			ChangeCount:         rawChangeCount,
+			WeightedChangeCount: weighted,
+			LastChangedAt:       lastChangedAt,
+			OpenIssues:          openIssues[specID],
 		}
 	}
 	return results, nil

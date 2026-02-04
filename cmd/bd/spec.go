@@ -79,7 +79,18 @@ var specScanCmd = &cobra.Command{
 		}
 		repoRoot := filepath.Dir(beadsDir)
 
-		scanned, err := spec.Scan(repoRoot, specPath)
+		existingEntries, err := store.ListSpecRegistry(rootCtx)
+		if err != nil {
+			FatalErrorRespectJSON("list spec registry: %v", err)
+		}
+		existingByID := make(map[string]spec.SpecRegistryEntry, len(existingEntries))
+		for _, entry := range existingEntries {
+			existingByID[entry.SpecID] = entry
+		}
+
+		scanned, err := spec.ScanWithOptions(repoRoot, specPath, &spec.ScanOptions{
+			ExistingByID: existingByID,
+		})
 		if err != nil {
 			FatalErrorRespectJSON("scan specs: %v", err)
 		}

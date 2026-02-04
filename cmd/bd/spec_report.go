@@ -14,13 +14,13 @@ import (
 )
 
 type specReportResult struct {
-	Summary     map[string]int        `json:"summary"`
-	Triage      []specTriageEntry      `json:"triage"`
-	Staleness   specStaleResult        `json:"staleness"`
-	Duplicates  []spec.DuplicatePair   `json:"duplicates"`
-	Delta       specDeltaResult        `json:"delta"`
-	Volatility  []spec.SpecRiskEntry   `json:"volatility"`
-	GeneratedAt string                `json:"generated_at"`
+	Summary     map[string]int       `json:"summary"`
+	Triage      []specTriageEntry    `json:"triage"`
+	Staleness   specStaleResult      `json:"staleness"`
+	Duplicates  []spec.DuplicatePair `json:"duplicates"`
+	Delta       specDeltaResult      `json:"delta"`
+	Volatility  []spec.SpecRiskEntry `json:"volatility"`
+	GeneratedAt string               `json:"generated_at"`
 }
 
 var specReportCmd = &cobra.Command{
@@ -61,7 +61,7 @@ var specReportCmd = &cobra.Command{
 		if err != nil {
 			FatalErrorRespectJSON("delta: %v", err)
 		}
-		volatility, _ := computeSpecRisk(rootCtx, store, now.Add(-30*24*time.Hour), 1, 5)
+		volatility, _ := computeSpecRisk(rootCtx, store, now.Add(-volatilityWindow()), 1, 5)
 
 		result := specReportResult{
 			Summary:     summary,

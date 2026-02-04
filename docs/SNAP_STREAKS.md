@@ -185,7 +185,12 @@ Unlike Snapchat, you want your streak to die.
 |--------|---------|-------------|
 | `volatility.auto_pause` | `false` | Auto-pause on HIGH volatility |
 | `volatility.window` | `30d` | Time window for change counting |
-| `volatility.high_threshold` | `5` | Changes to trigger HIGH |
+| `volatility.high_changes` | `5` | Changes to trigger HIGH |
+| `volatility.high_mixed_changes` | `3` | Changes required when open issues are high |
+| `volatility.high_open_issues` | `3` | Open issues required for mixed HIGH |
+| `volatility.medium_changes` | `2` | Changes to trigger MEDIUM (with open issues) |
+| `volatility.low_changes` | `1` | Changes to trigger LOW |
+| `volatility.decay.half_life` | `""` | Decay window for weighted changes (e.g., `7d`) |
 
 ---
 

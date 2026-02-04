@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -33,7 +34,20 @@ func init() {
 
 func runDrift(_ *cobra.Command, _ []string) {
 	if daemonClient != nil {
-		FatalErrorRespectJSON("drift requires direct access (run with --no-daemon)")
+		resp, err := daemonClient.DriftSummary()
+		if err != nil {
+			FatalErrorRespectJSON("drift failed: %v", err)
+		}
+		var summary wobbleDriftSummary
+		if err := json.Unmarshal(resp.Data, &summary); err != nil {
+			FatalErrorRespectJSON("invalid drift response: %v", err)
+		}
+		if jsonOutput {
+			outputJSON(summary)
+			return
+		}
+		renderWobbleDriftSummary(summary)
+		return
 	}
 	if err := ensureDatabaseFresh(rootCtx); err != nil {
 		FatalErrorRespectJSON("%v", err)
@@ -130,7 +144,7 @@ func skillsFixedFromHistory(history []wobbleHistoryEntry, actor string) int {
 	if len(entries) < 2 {
 		return 0
 	}
-	
+
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].CreatedAt.Before(entries[j].CreatedAt)
 	})

@@ -31,6 +31,24 @@ func TestClassifySpecVolatility(t *testing.T) {
 	}
 }
 
+func TestEffectiveVolatilityChanges(t *testing.T) {
+	summary := specVolatilitySummary{
+		ChangeCount:        2,
+		WeightedChangeCount: 3.6,
+	}
+	if got := effectiveVolatilityChanges(summary); got != 4 {
+		t.Fatalf("effectiveVolatilityChanges = %d, want 4", got)
+	}
+
+	summary = specVolatilitySummary{
+		ChangeCount:        2,
+		WeightedChangeCount: 0,
+	}
+	if got := effectiveVolatilityChanges(summary); got != 2 {
+		t.Fatalf("effectiveVolatilityChanges = %d, want 2", got)
+	}
+}
+
 func TestStartOfWeek(t *testing.T) {
 	input := time.Date(2026, 1, 29, 15, 30, 0, 0, time.UTC) // Thursday
 	start := startOfWeek(input)

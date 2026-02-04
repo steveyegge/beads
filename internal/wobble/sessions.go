@@ -30,6 +30,25 @@ type SessionData struct {
 	TotalMatches  int
 }
 
+// ConfigureSessionDirs overrides the default session locations.
+func ConfigureSessionDirs(sessionsDir, projectsDir string) {
+	if strings.TrimSpace(sessionsDir) != "" {
+		SessionsDir = sessionsDir
+	}
+	if strings.TrimSpace(projectsDir) != "" {
+		ProjectsDir = projectsDir
+	}
+}
+
+func init() {
+	if env := strings.TrimSpace(os.Getenv("WOBBLE_SESSIONS_DIR")); env != "" {
+		SessionsDir = env
+	}
+	if env := strings.TrimSpace(os.Getenv("WOBBLE_PROJECTS_DIR")); env != "" {
+		ProjectsDir = env
+	}
+}
+
 var (
 	// Pattern 1: "Launching skill: X" followed by bash block
 	launchingSkillPattern = regexp.MustCompile(`(?is)Launching skill:\s*(\S+).*?` + "```(?:bash|sh)?\n([^`]+)```")
@@ -54,14 +73,7 @@ func ParseSessionTranscripts(skillFilter string, days int) (*SessionData, error)
 
 	cutoff := time.Now().AddDate(0, 0, -days)
 
-	// Collect all session file patterns to check
-	patterns := []string{
-		filepath.Join(SessionsDir, "*.json"),
-		filepath.Join(SessionsDir, "*.jsonl"),
-		filepath.Join(ProjectsDir, "*", "*.json"),
-		filepath.Join(ProjectsDir, "*", "*.jsonl"),
-		filepath.Join(ProjectsDir, "**", "*.jsonl"),
-	}
+	patterns := sessionPatterns()
 
 	seen := make(map[string]bool)
 
@@ -104,6 +116,37 @@ func ParseSessionTranscripts(skillFilter string, days int) (*SessionData, error)
 	}
 
 	return data, nil
+}
+
+// HasSessionData checks if any session files exist within the given lookback window.
+func HasSessionData(days int) bool {
+	cutoff := time.Now().AddDate(0, 0, -days)
+	for _, pattern := range sessionPatterns() {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, sessionFile := range matches {
+			info, err := os.Stat(sessionFile)
+			if err != nil {
+				continue
+			}
+			if !info.ModTime().Before(cutoff) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sessionPatterns() []string {
+	return []string{
+		filepath.Join(SessionsDir, "*.json"),
+		filepath.Join(SessionsDir, "*.jsonl"),
+		filepath.Join(ProjectsDir, "*", "*.json"),
+		filepath.Join(ProjectsDir, "*", "*.jsonl"),
+		filepath.Join(ProjectsDir, "**", "*.jsonl"),
+	}
 }
 
 // extractSkillCommands extracts skill invocations and their executed commands from session content.
