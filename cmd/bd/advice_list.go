@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -66,44 +68,105 @@ func runAdviceList(cmd *cobra.Command, args []string) {
 	verbose, _ := cmd.Flags().GetBool("verbose")
 
 	// Convert --for to subscriptions (auto-subscribe to agent's context labels)
-	if forAgent != "" {
+	// Note: buildAgentSubscriptions may need store access for native fields,
+	// but we defer that to after we have issues (for filtering)
+	if forAgent != "" && daemonClient == nil {
+		// Only build subscriptions now if we have direct store access
+		// (buildAgentSubscriptions may query the store for agent bead)
 		subscriptions = buildAgentSubscriptions(forAgent, subscriptions)
-	}
-
-	// Ensure store is initialized
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
 	}
 
 	ctx := rootCtx
 
-	// Build filter for advice type
-	adviceType := types.IssueType("advice")
-	filter := types.IssueFilter{
-		IssueType: &adviceType,
-	}
+	var issues []*types.Issue
+	var labelsMap map[string][]string
 
-	// Add status filter unless --all
-	if !showAll {
-		openStatus := types.StatusOpen
-		filter.Status = &openStatus
-	}
+	// If daemon is running, use RPC (fixes gt-w1vin0)
+	if daemonClient != nil {
+		// Build list args for advice type
+		listArgs := &rpc.ListArgs{
+			IssueType: "advice",
+		}
 
-	// Search for advice issues
-	issues, err := store.SearchIssues(ctx, "", filter)
-	if err != nil {
-		FatalError("searching advice: %v", err)
-	}
+		// Add status filter unless --all
+		if !showAll {
+			listArgs.Status = "open"
+		}
 
-	// Get labels for all issues (always needed now for filtering)
-	issueIDs := make([]string, len(issues))
-	for i, issue := range issues {
-		issueIDs[i] = issue.ID
-	}
-	labelsMap, err := store.GetLabelsForIssues(ctx, issueIDs)
-	if err != nil {
-		FatalError("getting labels: %v", err)
+		// Add label filters if specified
+		if len(labels) > 0 {
+			listArgs.LabelsAny = labels // OR semantics for label filtering
+		}
+
+		resp, err := daemonClient.List(listArgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if !resp.Success {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
+			os.Exit(1)
+		}
+
+		// Parse response as IssueWithCounts (standard daemon response format)
+		var issuesWithCounts []*types.IssueWithCounts
+		if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
+			FatalError("parsing response: %v", err)
+		}
+
+		// Extract issues and build labels map from embedded labels
+		issues = make([]*types.Issue, len(issuesWithCounts))
+		labelsMap = make(map[string][]string)
+		for i, iwc := range issuesWithCounts {
+			issues[i] = iwc.Issue
+			// Labels are embedded in the issue from daemon response
+			if iwc.Issue != nil && len(iwc.Issue.Labels) > 0 {
+				labelsMap[iwc.Issue.ID] = iwc.Issue.Labels
+			}
+		}
+
+		// Build subscriptions now if --for was specified
+		// We need to do this after getting issues because buildAgentSubscriptions
+		// may need store access for native fields. With daemon, we skip that lookup.
+		if forAgent != "" {
+			subscriptions = buildAgentSubscriptionsWithoutStore(forAgent, subscriptions)
+		}
+	} else {
+		// Direct mode: ensure store is initialized
+		if err := ensureStoreActive(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Build filter for advice type
+		adviceType := types.IssueType("advice")
+		filter := types.IssueFilter{
+			IssueType: &adviceType,
+		}
+
+		// Add status filter unless --all
+		if !showAll {
+			openStatus := types.StatusOpen
+			filter.Status = &openStatus
+		}
+
+		// Search for advice issues
+		var err error
+		issues, err = store.SearchIssues(ctx, "", filter)
+		if err != nil {
+			FatalError("searching advice: %v", err)
+		}
+
+		// Get labels for all issues (always needed now for filtering)
+		issueIDs := make([]string, len(issues))
+		for i, issue := range issues {
+			issueIDs[i] = issue.ID
+		}
+		labelsMap, err = store.GetLabelsForIssues(ctx, issueIDs)
+		if err != nil {
+			FatalError("getting labels: %v", err)
+		}
 	}
 
 	// Apply filtering based on labels/subscriptions
@@ -111,6 +174,12 @@ func runAdviceList(cmd *cobra.Command, args []string) {
 
 	for _, issue := range issues {
 		// Label-based filtering (--label flag)
+		// Skip if daemon already filtered by labels
+		if len(labels) > 0 && daemonClient != nil {
+			// Daemon already applied LabelsAny filter, include all
+			filtered = append(filtered, issue)
+			continue
+		}
 		if len(labels) > 0 {
 			if matchesAnyLabel(labelsMap[issue.ID], labels) {
 				filtered = append(filtered, issue)
@@ -210,6 +279,33 @@ func buildAgentSubscriptions(agentID string, existing []string) []string {
 }
 
 // NOTE: matchesAgentScope removed - use matchesSubscriptions with buildAgentSubscriptions instead
+
+// buildAgentSubscriptionsWithoutStore creates the auto-subscription labels for an agent
+// without requiring store access. This is used in daemon mode where we can't query
+// the store directly. It provides the same basic subscriptions but skips the native
+// AdviceSubscriptions and AdviceSubscriptionsExclude fields from agent beads.
+func buildAgentSubscriptionsWithoutStore(agentID string, existing []string) []string {
+	subs := append([]string{}, existing...) // Copy existing
+	subs = append(subs, "global")           // All agents subscribe to global
+	subs = append(subs, "agent:"+agentID)   // Subscribe to own agent label
+
+	// Parse agent ID to extract rig and role
+	parts := strings.Split(agentID, "/")
+	if len(parts) >= 1 {
+		subs = append(subs, "rig:"+parts[0])
+	}
+	if len(parts) >= 2 {
+		// Role is typically plural (polecats) - subscribe to both forms
+		rolePlural := parts[1]
+		subs = append(subs, "role:"+rolePlural)
+		roleSingular := singularize(rolePlural)
+		if roleSingular != rolePlural {
+			subs = append(subs, "role:"+roleSingular)
+		}
+	}
+
+	return subs
+}
 
 // singularize converts a plural role name to singular
 func singularize(plural string) string {
