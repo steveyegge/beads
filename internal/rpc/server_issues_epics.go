@@ -10,6 +10,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/routing"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/util"
@@ -1043,6 +1044,164 @@ func (s *Server) handleUpdate(req *Request) Response {
 			Success: false,
 			Error:   fmt.Sprintf("failed to get updated issue: %v", getErr),
 		}
+	}
+
+	data, _ := json.Marshal(updatedIssue)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleUpdateWithComment handles atomic update + comment in a single transaction.
+// This ensures that either both the update and comment succeed, or neither does.
+func (s *Server) handleUpdateWithComment(req *Request) Response {
+	var args UpdateWithCommentArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid update_with_comment args: %v", err),
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	// Validate issue exists and is not a template
+	issue, err := store.GetIssue(ctx, args.ID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get issue: %v", err),
+		}
+	}
+	if issue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue %s not found", args.ID),
+		}
+	}
+	if issue.IsTemplate {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("cannot update template %s: templates are read-only", args.ID),
+		}
+	}
+
+	actor := s.reqActor(req)
+	commentAuthor := args.CommentAuthor
+	if commentAuthor == "" {
+		commentAuthor = actor
+	}
+
+	// Build updates map from args
+	updates, err := updatesFromArgs(args.UpdateArgs)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   err.Error(),
+		}
+	}
+
+	// Execute update and comment atomically in a transaction
+	var updatedIssue *types.Issue
+	err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Apply field updates if any
+		if len(updates) > 0 {
+			if err := tx.UpdateIssue(ctx, args.ID, updates, actor); err != nil {
+				return fmt.Errorf("failed to update issue: %w", err)
+			}
+		}
+
+		// Handle label operations within transaction
+		if len(args.SetLabels) > 0 {
+			currentLabels, err := tx.GetLabels(ctx, args.ID)
+			if err != nil {
+				return fmt.Errorf("failed to get current labels: %w", err)
+			}
+			for _, label := range currentLabels {
+				if err := tx.RemoveLabel(ctx, args.ID, label, actor); err != nil {
+					return fmt.Errorf("failed to remove label %s: %w", label, err)
+				}
+			}
+			for _, label := range args.SetLabels {
+				if err := tx.AddLabel(ctx, args.ID, label, actor); err != nil {
+					return fmt.Errorf("failed to set label %s: %w", label, err)
+				}
+			}
+		}
+
+		for _, label := range args.AddLabels {
+			if err := tx.AddLabel(ctx, args.ID, label, actor); err != nil {
+				return fmt.Errorf("failed to add label %s: %w", label, err)
+			}
+		}
+
+		for _, label := range args.RemoveLabels {
+			if err := tx.RemoveLabel(ctx, args.ID, label, actor); err != nil {
+				return fmt.Errorf("failed to remove label %s: %w", label, err)
+			}
+		}
+
+		// Add comment if provided
+		if args.CommentText != "" {
+			if err := tx.AddComment(ctx, args.ID, commentAuthor, args.CommentText); err != nil {
+				return fmt.Errorf("failed to add comment: %w", err)
+			}
+		}
+
+		// Get the updated issue for return
+		updatedIssue, err = tx.GetIssue(ctx, args.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get updated issue: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   err.Error(),
+		}
+	}
+
+	// Emit mutation events (outside transaction)
+	if len(updates) > 0 || len(args.SetLabels) > 0 || len(args.AddLabels) > 0 || len(args.RemoveLabels) > 0 {
+		effectiveAssignee := issue.Assignee
+		if args.Assignee != nil && *args.Assignee != "" {
+			effectiveAssignee = *args.Assignee
+		}
+
+		if args.Status != nil && *args.Status != string(issue.Status) {
+			s.emitRichMutation(MutationEvent{
+				Type:      MutationStatus,
+				IssueID:   args.ID,
+				Title:     issue.Title,
+				Assignee:  effectiveAssignee,
+				Actor:     actor,
+				OldStatus: string(issue.Status),
+				NewStatus: *args.Status,
+			})
+		} else {
+			s.emitRichMutation(MutationEvent{
+				Type:     MutationUpdate,
+				IssueID:  args.ID,
+				Title:    issue.Title,
+				Assignee: effectiveAssignee,
+				Actor:    actor,
+			})
+		}
+	}
+
+	if args.CommentText != "" {
+		s.emitMutation(MutationComment, args.ID, issue.Title, issue.Assignee)
 	}
 
 	data, _ := json.Marshal(updatedIssue)
@@ -3223,6 +3382,130 @@ func (s *Server) handleDecisionList(req *Request) Response {
 	}
 
 	data, _ := json.Marshal(resp)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleCreateWithDeps handles the create_with_deps operation for atomic issue creation.
+// This creates multiple issues with their labels and dependencies in a single transaction.
+func (s *Server) handleCreateWithDeps(req *Request) Response {
+	var args CreateWithDepsArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid create_with_deps args: %v", err),
+		}
+	}
+
+	if len(args.Issues) == 0 {
+		return Response{
+			Success: false,
+			Error:   "no issues to create",
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	// idMapping maps old IDs (from args) to new IDs (generated by storage)
+	idMapping := make(map[string]string)
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// First pass: create all issues and build ID mapping
+		for i, issueArg := range args.Issues {
+			issue := &types.Issue{
+				ID:                 issueArg.ID,
+				Title:              issueArg.Title,
+				Description:        issueArg.Description,
+				IssueType:          types.IssueType(issueArg.IssueType),
+				Priority:           issueArg.Priority,
+				Design:             issueArg.Design,
+				AcceptanceCriteria: issueArg.AcceptanceCriteria,
+				Assignee:           issueArg.Assignee,
+				EstimatedMinutes:   issueArg.EstimatedMinutes,
+				Ephemeral:          issueArg.Ephemeral,
+				IDPrefix:           issueArg.IDPrefix,
+				Status:             types.StatusOpen,
+			}
+
+			// Create the issue
+			if err := tx.CreateIssue(ctx, issue, actor); err != nil {
+				return fmt.Errorf("failed to create issue %d (%s): %w", i, issueArg.Title, err)
+			}
+
+			// Map old ID to new ID
+			// If issueArg.ID was provided, map that; otherwise use index as string
+			oldID := issueArg.ID
+			if oldID == "" {
+				oldID = fmt.Sprintf("%d", i)
+			}
+			idMapping[oldID] = issue.ID
+
+			// Add labels for this issue
+			for _, label := range issueArg.Labels {
+				if err := tx.AddLabel(ctx, issue.ID, label, actor); err != nil {
+					return fmt.Errorf("failed to add label %s to issue %s: %w", label, issue.ID, err)
+				}
+			}
+		}
+
+		// Second pass: create all dependencies using the ID mapping
+		for _, depArg := range args.Dependencies {
+			// Resolve FromID - might be an old ID that needs mapping
+			fromID := depArg.FromID
+			if mappedID, ok := idMapping[fromID]; ok {
+				fromID = mappedID
+			}
+
+			// Resolve ToID - might be an old ID that needs mapping, or an existing issue ID
+			toID := depArg.ToID
+			if mappedID, ok := idMapping[toID]; ok {
+				toID = mappedID
+			}
+
+			dep := &types.Dependency{
+				IssueID:     fromID,
+				DependsOnID: toID,
+				Type:        types.DependencyType(depArg.DepType),
+			}
+
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("failed to add dependency %s -> %s (%s): %w",
+					fromID, toID, depArg.DepType, err)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("transaction failed: %v", err),
+		}
+	}
+
+	// Emit mutation events for all created issues
+	for _, newID := range idMapping {
+		s.emitMutation(MutationCreate, newID, "", "")
+	}
+
+	result := CreateWithDepsResult{
+		IDMapping: idMapping,
+		Created:   len(args.Issues),
+	}
+
+	data, _ := json.Marshal(result)
 	return Response{
 		Success: true,
 		Data:    data,

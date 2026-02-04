@@ -724,12 +724,13 @@ func loadDescendantsViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, de
 	return nil
 }
 
-// cloneSubgraphViaDaemon creates new issues from the template using daemon RPC calls
+// cloneSubgraphViaDaemon creates new issues from the template using daemon RPC calls.
+// Uses the atomic CreateWithDependencies RPC to create all issues, labels, and dependencies
+// in a single transaction for consistency and performance.
 func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts CloneOptions) (*InstantiateResult, error) {
-	// Generate new IDs and create mapping
-	idMapping := make(map[string]string)
+	// Build the list of issues to create
+	issues := make([]rpc.CreateWithDepsIssue, 0, len(subgraph.Issues))
 
-	// First pass: create all issues with new IDs
 	for _, oldIssue := range subgraph.Issues {
 		// Determine assignee: use override for root epic, otherwise keep template's
 		issueAssignee := oldIssue.Assignee
@@ -737,8 +738,8 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 			issueAssignee = opts.Assignee
 		}
 
-		// Build create args
-		createArgs := &rpc.CreateArgs{
+		issue := rpc.CreateWithDepsIssue{
+			ID:                 oldIssue.ID, // Use old ID as reference for mapping
 			Title:              substituteVariables(oldIssue.Title, opts.Vars),
 			Description:        substituteVariables(oldIssue.Description, opts.Vars),
 			IssueType:          string(oldIssue.IssueType),
@@ -747,8 +748,9 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 			AcceptanceCriteria: substituteVariables(oldIssue.AcceptanceCriteria, opts.Vars),
 			Assignee:           issueAssignee,
 			EstimatedMinutes:   oldIssue.EstimatedMinutes,
-			Ephemeral:               opts.Ephemeral,
+			Ephemeral:          opts.Ephemeral,
 			IDPrefix:           opts.Prefix, // distinct prefixes for mols/wisps
+			Labels:             oldIssue.Labels,
 		}
 
 		// Generate custom ID for dynamic bonding if ParentID is set
@@ -757,43 +759,36 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate bonded ID for %s: %w", oldIssue.ID, err)
 			}
-			createArgs.ID = bondedID
+			issue.ID = bondedID
 		}
 
-		resp, err := client.Create(createArgs)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create issue from %s: %w", oldIssue.ID, err)
-		}
-
-		// Parse response to get the new issue ID
-		var newIssue types.Issue
-		if err := json.Unmarshal(resp.Data, &newIssue); err != nil {
-			return nil, fmt.Errorf("failed to parse created issue: %w", err)
-		}
-
-		idMapping[oldIssue.ID] = newIssue.ID
+		issues = append(issues, issue)
 	}
 
-	// Second pass: recreate dependencies with new IDs
+	// Build the list of dependencies to create
+	deps := make([]rpc.CreateWithDepsDependency, 0, len(subgraph.Dependencies))
+
+	// Collect old IDs for reference
+	oldIDs := make(map[string]bool)
+	for _, oldIssue := range subgraph.Issues {
+		oldIDs[oldIssue.ID] = true
+	}
+
+	// Add dependencies from the template
 	for _, dep := range subgraph.Dependencies {
-		newFromID, ok1 := idMapping[dep.IssueID]
-		newToID, ok2 := idMapping[dep.DependsOnID]
-		if !ok1 || !ok2 {
-			continue // Skip if either end is outside the subgraph
+		// Only include if both ends are in the subgraph
+		if !oldIDs[dep.IssueID] || !oldIDs[dep.DependsOnID] {
+			continue
 		}
 
-		_, err := client.AddDependency(&rpc.DepAddArgs{
-			FromID:  newFromID,
-			ToID:    newToID,
+		deps = append(deps, rpc.CreateWithDepsDependency{
+			FromID:  dep.IssueID,
+			ToID:    dep.DependsOnID,
 			DepType: string(dep.Type),
 		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create dependency: %w", err)
-		}
 	}
 
-	// Third pass: add requires-skill dependencies for all new issues
-	// This enables skill-based work routing via bd ready --with-skills
+	// Add requires-skill dependencies for all issues
 	if len(subgraph.RequiredSkills) > 0 {
 		for _, skillID := range subgraph.RequiredSkills {
 			// Normalize skill ID (add skill- prefix if needed)
@@ -802,11 +797,10 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 				normalizedSkillID = "skill-" + skillID
 			}
 
-			// Add requires-skill dependency for each new issue
-			for _, newID := range idMapping {
-				// Ignore errors - skill may not exist yet
-				_, _ = client.AddDependency(&rpc.DepAddArgs{
-					FromID:  newID,
+			// Add requires-skill dependency for each issue
+			for _, oldIssue := range subgraph.Issues {
+				deps = append(deps, rpc.CreateWithDepsDependency{
+					FromID:  oldIssue.ID,
 					ToID:    normalizedSkillID,
 					DepType: string(types.DepRequiresSkill),
 				})
@@ -814,10 +808,21 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 		}
 	}
 
+	// Execute the atomic creation
+	args := &rpc.CreateWithDepsArgs{
+		Issues:       issues,
+		Dependencies: deps,
+	}
+
+	result, err := client.CreateWithDependencies(args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create issues with dependencies: %w", err)
+	}
+
 	return &InstantiateResult{
-		NewEpicID: idMapping[subgraph.Root.ID],
-		IDMapping: idMapping,
-		Created:   len(subgraph.Issues),
+		NewEpicID: result.IDMapping[subgraph.Root.ID],
+		IDMapping: result.IDMapping,
+		Created:   result.Created,
 	}, nil
 }
 

@@ -14,8 +14,9 @@ const (
 	OpHealth          = "health"
 	OpMetrics         = "metrics"
 	OpCreate          = "create"
-	OpUpdate          = "update"
-	OpClose           = "close"
+	OpUpdate            = "update"
+	OpUpdateWithComment = "update_with_comment"
+	OpClose             = "close"
 	OpList            = "list"
 	OpCount           = "count"
 	OpShow            = "show"
@@ -26,6 +27,8 @@ const (
 	OpDepAdd          = "dep_add"
 	OpDepRemove       = "dep_remove"
 	OpDepTree         = "dep_tree"
+	OpDepAddBidirectional    = "dep_add_bidirectional"
+	OpDepRemoveBidirectional = "dep_remove_bidirectional"
 	OpLabelAdd        = "label_add"
 	OpLabelRemove     = "label_remove"
 	OpCommentList     = "comment_list"
@@ -83,6 +86,15 @@ const (
 	// Sync operations (bd-wn2g)
 	OpSyncExport = "sync_export"
 	OpSyncStatus = "sync_status"
+
+	// State operations (atomic set-state)
+	OpSetState = "set_state"
+
+	// Atomic creation with dependencies (for template cloning)
+	OpCreateWithDeps = "create_with_deps"
+
+	// Batch label operations (atomic multi-label add)
+	OpBatchAddLabels = "batch_add_labels"
 )
 
 // Request represents an RPC request from client to daemon
@@ -232,6 +244,14 @@ type UpdateArgs struct {
 	// Advice subscription fields (gt-w2mh8a.6)
 	AdviceSubscriptions        []string `json:"advice_subscriptions,omitempty"`         // Additional labels to subscribe to
 	AdviceSubscriptionsExclude []string `json:"advice_subscriptions_exclude,omitempty"` // Labels to exclude from receiving advice
+}
+
+// UpdateWithCommentArgs represents arguments for atomic update + comment operation.
+// This performs an issue update and optionally adds a comment in a single transaction.
+type UpdateWithCommentArgs struct {
+	UpdateArgs           // Embedded update fields
+	CommentText   string `json:"comment_text,omitempty"`   // Optional comment to add
+	CommentAuthor string `json:"comment_author,omitempty"` // Comment author (defaults to actor)
 }
 
 // CloseArgs represents arguments for the close operation
@@ -416,6 +436,20 @@ type DepRemoveArgs struct {
 	DepType string `json:"dep_type,omitempty"`
 }
 
+// DepAddBidirectionalArgs represents arguments for adding a bidirectional relation
+type DepAddBidirectionalArgs struct {
+	ID1     string `json:"id1"`
+	ID2     string `json:"id2"`
+	DepType string `json:"dep_type"`
+}
+
+// DepRemoveBidirectionalArgs represents arguments for removing a bidirectional relation
+type DepRemoveBidirectionalArgs struct {
+	ID1     string `json:"id1"`
+	ID2     string `json:"id2"`
+	DepType string `json:"dep_type,omitempty"`
+}
+
 // DepTreeArgs represents arguments for the dep tree operation
 type DepTreeArgs struct {
 	ID       string `json:"id"`
@@ -432,6 +466,18 @@ type LabelAddArgs struct {
 type LabelRemoveArgs struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+}
+
+// BatchAddLabelsArgs represents arguments for adding multiple labels atomically
+type BatchAddLabelsArgs struct {
+	IssueID string   `json:"issue_id"` // Issue ID to add labels to
+	Labels  []string `json:"labels"`   // Labels to add
+}
+
+// BatchAddLabelsResult represents the result of a batch add labels operation
+type BatchAddLabelsResult struct {
+	IssueID    string `json:"issue_id"`    // Issue ID that was modified
+	LabelsAdded int    `json:"labels_added"` // Number of labels actually added (excludes duplicates)
 }
 
 // CommentListArgs represents arguments for listing comments on an issue
@@ -1035,3 +1081,61 @@ type SyncStatusResult struct {
 	FederationRemote string `json:"federation_remote,omitempty"`  // Federation remote if configured
 }
 
+// SetState operations (atomic state change)
+
+// SetStateArgs represents arguments for the set_state operation
+type SetStateArgs struct {
+	IssueID   string `json:"issue_id"`             // Issue ID to set state on
+	Dimension string `json:"dimension"`            // State dimension (e.g., "patrol", "mode", "health")
+	NewValue  string `json:"new_value"`            // New value for the dimension
+	Reason    string `json:"reason,omitempty"`     // Optional reason for the state change
+}
+
+// SetStateResult represents the result of a set_state operation
+type SetStateResult struct {
+	IssueID   string  `json:"issue_id"`              // Full issue ID
+	Dimension string  `json:"dimension"`             // State dimension
+	OldValue  *string `json:"old_value"`             // Previous value (nil if none)
+	NewValue  string  `json:"new_value"`             // New value
+	EventID   string  `json:"event_id"`              // Created event bead ID
+	Changed   bool    `json:"changed"`               // Whether the state actually changed
+}
+
+
+// CreateWithDeps operation (atomic issue creation with labels and dependencies)
+
+// CreateWithDepsIssue represents a single issue to create with its labels and dependencies
+type CreateWithDepsIssue struct {
+	// Core issue fields (subset of CreateArgs)
+	ID                 string   `json:"id,omitempty"`
+	Title              string   `json:"title"`
+	Description        string   `json:"description,omitempty"`
+	IssueType          string   `json:"issue_type"`
+	Priority           int      `json:"priority"`
+	Design             string   `json:"design,omitempty"`
+	AcceptanceCriteria string   `json:"acceptance_criteria,omitempty"`
+	Assignee           string   `json:"assignee,omitempty"`
+	EstimatedMinutes   *int     `json:"estimated_minutes,omitempty"`
+	Ephemeral          bool     `json:"ephemeral,omitempty"`
+	IDPrefix           string   `json:"id_prefix,omitempty"`
+	Labels             []string `json:"labels,omitempty"`
+}
+
+// CreateWithDepsDependency represents a dependency to create between issues
+type CreateWithDepsDependency struct {
+	FromID  string `json:"from_id"`  // Issue ID (can reference issues being created by their old ID)
+	ToID    string `json:"to_id"`    // Dependency target ID (can reference issues being created or existing issues)
+	DepType string `json:"dep_type"` // Dependency type (blocks, parent-child, requires-skill, etc.)
+}
+
+// CreateWithDepsArgs represents arguments for the create_with_deps operation
+type CreateWithDepsArgs struct {
+	Issues       []CreateWithDepsIssue      `json:"issues"`       // Issues to create
+	Dependencies []CreateWithDepsDependency `json:"dependencies"` // Dependencies to create after all issues exist
+}
+
+// CreateWithDepsResult represents the result of a create_with_deps operation
+type CreateWithDepsResult struct {
+	IDMapping map[string]string `json:"id_mapping"` // Old ID (or index) -> new ID mapping
+	Created   int               `json:"created"`    // Number of issues created
+}

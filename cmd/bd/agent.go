@@ -236,6 +236,15 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 		}
 
 		if daemonClient != nil && (skipLocalRouting || !needsRouting(agentArg)) {
+			// Build labels list including gt:agent and identity labels
+			labels := []string{"gt:agent"}
+			if roleType != "" {
+				labels = append(labels, "role_type:"+roleType)
+			}
+			if rig != "" {
+				labels = append(labels, "rig:"+rig)
+			}
+
 			createArgs := &rpc.CreateArgs{
 				ID:        agentID,
 				Title:     agent.Title,
@@ -243,7 +252,7 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 				RoleType:  roleType,
 				Rig:       rig,
 				CreatedBy: actor,
-				Labels:    []string{"gt:agent"}, // Gas Town agent label
+				Labels:    labels,
 			}
 			resp, err := daemonClient.Create(createArgs)
 			if err != nil {
@@ -885,28 +894,30 @@ func runAgentBackfillLabels(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Add labels
+		// Add labels - use BatchAddLabels for atomicity when using daemon
+		var labelsToAdd []string
 		if needsRoleTypeLabel {
-			label := "role_type:" + roleType
-			if daemonClient != nil {
-				if _, err := daemonClient.AddLabel(&rpc.LabelAddArgs{ID: agent.ID, Label: label}); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, agent.ID, err)
-				}
-			} else {
-				if err := store.AddLabel(ctx, agent.ID, label, actor); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, agent.ID, err)
-				}
-			}
+			labelsToAdd = append(labelsToAdd, "role_type:"+roleType)
 		}
 		if needsRigLabel {
-			label := "rig:" + rig
+			labelsToAdd = append(labelsToAdd, "rig:"+rig)
+		}
+
+		if len(labelsToAdd) > 0 {
 			if daemonClient != nil {
-				if _, err := daemonClient.AddLabel(&rpc.LabelAddArgs{ID: agent.ID, Label: label}); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, agent.ID, err)
+				// Use BatchAddLabels for atomic multi-label add
+				if _, err := daemonClient.BatchAddLabels(&rpc.BatchAddLabelsArgs{
+					IssueID: agent.ID,
+					Labels:  labelsToAdd,
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to add labels to %s: %v\n", agent.ID, err)
 				}
 			} else {
-				if err := store.AddLabel(ctx, agent.ID, label, actor); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, agent.ID, err)
+				// Direct store access - add labels individually
+				for _, label := range labelsToAdd {
+					if err := store.AddLabel(ctx, agent.ID, label, actor); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, agent.ID, err)
+					}
 				}
 			}
 		}

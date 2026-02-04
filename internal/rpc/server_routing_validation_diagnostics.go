@@ -225,6 +225,8 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleCreate(req)
 	case OpUpdate:
 		resp = s.handleUpdate(req)
+	case OpUpdateWithComment:
+		resp = s.handleUpdateWithComment(req)
 	case OpClose:
 		resp = s.handleClose(req)
 	case OpDelete:
@@ -251,10 +253,16 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleDepAdd(req)
 	case OpDepRemove:
 		resp = s.handleDepRemove(req)
+	case OpDepAddBidirectional:
+		resp = s.handleDepAddBidirectional(req)
+	case OpDepRemoveBidirectional:
+		resp = s.handleDepRemoveBidirectional(req)
 	case OpLabelAdd:
 		resp = s.handleLabelAdd(req)
 	case OpLabelRemove:
 		resp = s.handleLabelRemove(req)
+	case OpBatchAddLabels:
+		resp = s.handleBatchAddLabels(req)
 	case OpCommentList:
 		resp = s.handleCommentList(req)
 	case OpCommentAdd:
@@ -333,6 +341,12 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleSyncExport(req)
 	case OpSyncStatus:
 		resp = s.handleSyncStatus(req)
+	// State operations (atomic set-state)
+	case OpSetState:
+		resp = s.handleSetState(req)
+	// Atomic creation with dependencies (for template cloning)
+	case OpCreateWithDeps:
+		resp = s.handleCreateWithDeps(req)
 	default:
 		return Response{
 			Success: false,

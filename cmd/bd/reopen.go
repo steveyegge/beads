@@ -51,25 +51,19 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 		if daemonClient != nil {
 			for _, id := range resolvedIDs {
 				openStatus := string(types.StatusOpen)
-				updateArgs := &rpc.UpdateArgs{
-					ID:     id,
-					Status: &openStatus,
+				// Use atomic UpdateWithComment to update status and add reason in a single transaction
+				updateArgs := &rpc.UpdateWithCommentArgs{
+					UpdateArgs: rpc.UpdateArgs{
+						ID:     id,
+						Status: &openStatus,
+					},
+					CommentText:   reason,
+					CommentAuthor: actor,
 				}
-				resp, err := daemonClient.Update(updateArgs)
+				resp, err := daemonClient.UpdateWithComment(updateArgs)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error reopening %s: %v\n", id, err)
 					continue
-				}
-				// Add reason as a comment if provided
-				if reason != "" {
-					commentArgs := &rpc.CommentAddArgs{
-						ID:     id,
-						Author: actor,
-						Text:   reason,
-					}
-					if _, err := daemonClient.AddComment(commentArgs); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to add comment to %s: %v\n", id, err)
-					}
 				}
 				if jsonOutput {
 					var issue types.Issue

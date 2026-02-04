@@ -145,6 +145,143 @@ func (s *Server) handleDepRemove(req *Request) Response {
 	)
 }
 
+// handleDepAddBidirectional adds a bidirectional relation atomically in a single transaction.
+// This is used for relates_to links where both directions must be added together.
+func (s *Server) handleDepAddBidirectional(req *Request) Response {
+	var args DepAddBidirectionalArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid bidirectional dep add args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	// Check for self-reference
+	if args.ID1 == args.ID2 {
+		return Response{
+			Success: false,
+			Error:   "cannot add bidirectional relation: id1 and id2 must be different",
+		}
+	}
+
+	// Add both directions atomically in a transaction
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Add id1 -> id2
+		dep1 := &types.Dependency{
+			IssueID:     args.ID1,
+			DependsOnID: args.ID2,
+			Type:        types.DependencyType(args.DepType),
+		}
+		if err := tx.AddDependency(ctx, dep1, actor); err != nil {
+			return fmt.Errorf("adding %s -> %s: %w", args.ID1, args.ID2, err)
+		}
+
+		// Add id2 -> id1
+		dep2 := &types.Dependency{
+			IssueID:     args.ID2,
+			DependsOnID: args.ID1,
+			Type:        types.DependencyType(args.DepType),
+		}
+		if err := tx.AddDependency(ctx, dep2, actor); err != nil {
+			return fmt.Errorf("adding %s -> %s: %w", args.ID2, args.ID1, err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to add bidirectional relation: %v", err),
+		}
+	}
+
+	// Emit mutation events for both issues
+	title1, assignee1 := s.lookupIssueMeta(ctx, args.ID1)
+	title2, assignee2 := s.lookupIssueMeta(ctx, args.ID2)
+	s.emitMutation(MutationUpdate, args.ID1, title1, assignee1)
+	s.emitMutation(MutationUpdate, args.ID2, title2, assignee2)
+
+	result := map[string]interface{}{
+		"status":  "added",
+		"id1":     args.ID1,
+		"id2":     args.ID2,
+		"type":    args.DepType,
+	}
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+// handleDepRemoveBidirectional removes a bidirectional relation atomically in a single transaction.
+// This is used for relates_to links where both directions must be removed together.
+func (s *Server) handleDepRemoveBidirectional(req *Request) Response {
+	var args DepRemoveBidirectionalArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid bidirectional dep remove args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	// Remove both directions atomically in a transaction
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Remove id1 -> id2
+		if err := tx.RemoveDependency(ctx, args.ID1, args.ID2, actor); err != nil {
+			return fmt.Errorf("removing %s -> %s: %w", args.ID1, args.ID2, err)
+		}
+
+		// Remove id2 -> id1
+		if err := tx.RemoveDependency(ctx, args.ID2, args.ID1, actor); err != nil {
+			return fmt.Errorf("removing %s -> %s: %w", args.ID2, args.ID1, err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to remove bidirectional relation: %v", err),
+		}
+	}
+
+	// Emit mutation events for both issues
+	title1, assignee1 := s.lookupIssueMeta(ctx, args.ID1)
+	title2, assignee2 := s.lookupIssueMeta(ctx, args.ID2)
+	s.emitMutation(MutationUpdate, args.ID1, title1, assignee1)
+	s.emitMutation(MutationUpdate, args.ID2, title2, assignee2)
+
+	result := map[string]interface{}{
+		"status": "removed",
+		"id1":    args.ID1,
+		"id2":    args.ID2,
+	}
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
 func (s *Server) handleLabelAdd(req *Request) Response {
 	var labelArgs LabelAddArgs
 	return s.handleSimpleStoreOp(req, &labelArgs, "label add", func(ctx context.Context, store storage.Storage, actor string) error {
@@ -157,6 +294,113 @@ func (s *Server) handleLabelRemove(req *Request) Response {
 	return s.handleSimpleStoreOp(req, &labelArgs, "label remove", func(ctx context.Context, store storage.Storage, actor string) error {
 		return store.RemoveLabel(ctx, labelArgs.ID, labelArgs.Label, actor)
 	}, labelArgs.ID, nil)
+}
+
+// handleBatchAddLabels adds multiple labels to an issue in a single atomic transaction.
+// This is more efficient than making multiple AddLabel calls and ensures atomicity.
+func (s *Server) handleBatchAddLabels(req *Request) Response {
+	var args BatchAddLabelsArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid batch_add_labels args: %v", err),
+		}
+	}
+
+	// Validate required fields
+	if args.IssueID == "" {
+		return Response{Success: false, Error: "issue_id is required"}
+	}
+	if len(args.Labels) == 0 {
+		// Nothing to do, return success with 0 labels added
+		result := &BatchAddLabelsResult{
+			IssueID:     args.IssueID,
+			LabelsAdded: 0,
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	// Resolve partial ID to full ID
+	fullID, err := s.resolvePartialID(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("resolving issue ID: %v", err),
+		}
+	}
+
+	// Get existing labels to check for duplicates
+	existingLabels, err := store.GetLabels(ctx, fullID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("getting existing labels: %v", err),
+		}
+	}
+
+	// Build set of existing labels for fast lookup
+	existingSet := make(map[string]bool)
+	for _, label := range existingLabels {
+		existingSet[label] = true
+	}
+
+	// Filter out labels that already exist
+	var labelsToAdd []string
+	for _, label := range args.Labels {
+		if !existingSet[label] {
+			labelsToAdd = append(labelsToAdd, label)
+		}
+	}
+
+	// If all labels already exist, return early
+	if len(labelsToAdd) == 0 {
+		result := &BatchAddLabelsResult{
+			IssueID:     fullID,
+			LabelsAdded: 0,
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	// Add all labels in a single transaction
+	err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		for _, label := range labelsToAdd {
+			if err := tx.AddLabel(ctx, fullID, label, actor); err != nil {
+				return fmt.Errorf("adding label %q: %w", label, err)
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("batch_add_labels transaction failed: %v", err),
+		}
+	}
+
+	// Emit mutation event for event-driven daemon
+	title, assignee := s.lookupIssueMeta(ctx, fullID)
+	s.emitMutation(MutationUpdate, fullID, title, assignee)
+
+	result := &BatchAddLabelsResult{
+		IssueID:     fullID,
+		LabelsAdded: len(labelsToAdd),
+	}
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
 }
 
 func (s *Server) handleCommentList(req *Request) Response {
@@ -254,4 +498,162 @@ func (s *Server) handleBatch(req *Request) Response {
 		Success: true,
 		Data:    data,
 	}
+}
+
+// handleSetState handles the set_state RPC operation.
+// This atomically creates an event bead and updates labels in a single transaction.
+func (s *Server) handleSetState(req *Request) Response {
+	var args SetStateArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid set_state args: %v", err),
+		}
+	}
+
+	// Validate required fields
+	if args.IssueID == "" {
+		return Response{Success: false, Error: "issue_id is required"}
+	}
+	if args.Dimension == "" {
+		return Response{Success: false, Error: "dimension is required"}
+	}
+	if args.NewValue == "" {
+		return Response{Success: false, Error: "new_value is required"}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	// Resolve partial ID to full ID
+	fullID, err := s.resolvePartialID(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("resolving issue ID: %v", err),
+		}
+	}
+
+	// Get current labels to find existing dimension value
+	labels, err := store.GetLabels(ctx, fullID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("getting labels: %v", err),
+		}
+	}
+
+	// Find existing label for this dimension
+	prefix := args.Dimension + ":"
+	var oldLabel string
+	var oldValue *string
+	for _, label := range labels {
+		if strings.HasPrefix(label, prefix) {
+			oldLabel = label
+			v := strings.TrimPrefix(label, prefix)
+			oldValue = &v
+			break
+		}
+	}
+
+	newLabel := args.Dimension + ":" + args.NewValue
+
+	// Check if no change needed
+	if oldLabel == newLabel {
+		result := &SetStateResult{
+			IssueID:   fullID,
+			Dimension: args.Dimension,
+			OldValue:  oldValue,
+			NewValue:  args.NewValue,
+			Changed:   false,
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	// Build event description
+	var eventDesc string
+	if oldValue != nil {
+		eventDesc = fmt.Sprintf("Changed %s from %s to %s", args.Dimension, *oldValue, args.NewValue)
+	} else {
+		eventDesc = fmt.Sprintf("Set %s to %s", args.Dimension, args.NewValue)
+	}
+	if args.Reason != "" {
+		eventDesc += "\n\nReason: " + args.Reason
+	}
+
+	eventTitle := fmt.Sprintf("State change: %s -> %s", args.Dimension, args.NewValue)
+
+	var eventID string
+
+	// Execute all operations in a single transaction
+	err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// 1. Create event bead recording the state change
+		event := &types.Issue{
+			Title:       eventTitle,
+			Description: eventDesc,
+			Status:      types.StatusClosed, // Events are immediately closed
+			Priority:    4,                  // Low priority for events
+			IssueType:   types.TypeEvent,
+			CreatedBy:   actor,
+		}
+		if err := tx.CreateIssue(ctx, event, actor); err != nil {
+			return fmt.Errorf("creating event: %w", err)
+		}
+		eventID = event.ID
+
+		// 2. Add parent-child dependency to link event to issue
+		dep := &types.Dependency{
+			IssueID:     eventID,
+			DependsOnID: fullID,
+			Type:        types.DepParentChild,
+		}
+		if err := tx.AddDependency(ctx, dep, actor); err != nil {
+			return fmt.Errorf("adding parent-child dependency: %w", err)
+		}
+
+		// 3. Remove old label if exists
+		if oldLabel != "" {
+			if err := tx.RemoveLabel(ctx, fullID, oldLabel, actor); err != nil {
+				return fmt.Errorf("removing old label: %w", err)
+			}
+		}
+
+		// 4. Add new label
+		if err := tx.AddLabel(ctx, fullID, newLabel, actor); err != nil {
+			return fmt.Errorf("adding new label: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("set_state transaction failed: %v", err),
+		}
+	}
+
+	// Emit mutation event for event-driven daemon
+	title, assignee := s.lookupIssueMeta(ctx, fullID)
+	s.emitMutation(MutationUpdate, fullID, title, assignee)
+
+	result := &SetStateResult{
+		IssueID:   fullID,
+		Dimension: args.Dimension,
+		OldValue:  oldValue,
+		NewValue:  args.NewValue,
+		EventID:   eventID,
+		Changed:   true,
+	}
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
 }

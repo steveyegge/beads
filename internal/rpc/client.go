@@ -425,6 +425,12 @@ func (c *Client) Update(args *UpdateArgs) (*Response, error) {
 	return c.Execute(OpUpdate, args)
 }
 
+// UpdateWithComment updates an issue and optionally adds a comment atomically via the daemon.
+// This performs both operations in a single transaction, ensuring consistency.
+func (c *Client) UpdateWithComment(args *UpdateWithCommentArgs) (*Response, error) {
+	return c.Execute(OpUpdateWithComment, args)
+}
+
 // CloseIssue marks an issue as closed via the daemon.
 func (c *Client) CloseIssue(args *CloseArgs) (*Response, error) {
 	return c.Execute(OpClose, args)
@@ -506,6 +512,18 @@ func (c *Client) RemoveDependency(args *DepRemoveArgs) (*Response, error) {
 	return c.Execute(OpDepRemove, args)
 }
 
+// AddBidirectionalRelation adds a bidirectional relation atomically via the daemon.
+// Both directions (id1->id2 and id2->id1) are added in a single transaction.
+func (c *Client) AddBidirectionalRelation(args *DepAddBidirectionalArgs) (*Response, error) {
+	return c.Execute(OpDepAddBidirectional, args)
+}
+
+// RemoveBidirectionalRelation removes a bidirectional relation atomically via the daemon.
+// Both directions (id1->id2 and id2->id1) are removed in a single transaction.
+func (c *Client) RemoveBidirectionalRelation(args *DepRemoveBidirectionalArgs) (*Response, error) {
+	return c.Execute(OpDepRemoveBidirectional, args)
+}
+
 // AddLabel adds a label via the daemon
 func (c *Client) AddLabel(args *LabelAddArgs) (*Response, error) {
 	return c.Execute(OpLabelAdd, args)
@@ -514,6 +532,22 @@ func (c *Client) AddLabel(args *LabelAddArgs) (*Response, error) {
 // RemoveLabel removes a label via the daemon
 func (c *Client) RemoveLabel(args *LabelRemoveArgs) (*Response, error) {
 	return c.Execute(OpLabelRemove, args)
+}
+
+// BatchAddLabels adds multiple labels to an issue atomically in a single transaction.
+// Returns the number of labels actually added (excludes duplicates).
+func (c *Client) BatchAddLabels(args *BatchAddLabelsArgs) (*BatchAddLabelsResult, error) {
+	resp, err := c.Execute(OpBatchAddLabels, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result BatchAddLabelsResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal batch_add_labels response: %w", err)
+	}
+
+	return &result, nil
 }
 
 // ListComments retrieves comments for an issue via the daemon
@@ -798,6 +832,38 @@ func (c *Client) SyncStatus(args *SyncStatusArgs) (*SyncStatusResult, error) {
 	var result SyncStatusResult
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal sync status response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// SetState atomically sets a state dimension on an issue via the daemon.
+// This creates an event bead and updates labels in a single transaction.
+func (c *Client) SetState(args *SetStateArgs) (*SetStateResult, error) {
+	resp, err := c.Execute(OpSetState, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result SetStateResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal set_state response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// CreateWithDependencies creates multiple issues with their labels and dependencies
+// in a single atomic transaction via the daemon.
+func (c *Client) CreateWithDependencies(args *CreateWithDepsArgs) (*CreateWithDepsResult, error) {
+	resp, err := c.Execute(OpCreateWithDeps, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result CreateWithDepsResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal create_with_deps response: %w", err)
 	}
 
 	return &result, nil

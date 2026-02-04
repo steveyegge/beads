@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -138,42 +139,38 @@ func runRelate(cmd *cobra.Command, args []string) error {
 	// Add relates-to dependency: id1 -> id2 (bidirectional, so also id2 -> id1)
 	// Per Decision 004, relates-to links are now stored in dependencies table
 	if daemonClient != nil {
-		// Add id1 -> id2
-		_, err := daemonClient.AddDependency(&rpc.DepAddArgs{
-			FromID:  id1,
-			ToID:    id2,
+		// Use atomic bidirectional relation add (both directions in single transaction)
+		_, err := daemonClient.AddBidirectionalRelation(&rpc.DepAddBidirectionalArgs{
+			ID1:     id1,
+			ID2:     id2,
 			DepType: string(types.DepRelatesTo),
 		})
 		if err != nil {
-			return fmt.Errorf("failed to add relates-to %s -> %s: %w", id1, id2, err)
-		}
-		// Add id2 -> id1 (bidirectional)
-		_, err = daemonClient.AddDependency(&rpc.DepAddArgs{
-			FromID:  id2,
-			ToID:    id1,
-			DepType: string(types.DepRelatesTo),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to add relates-to %s -> %s: %w", id2, id1, err)
+			return fmt.Errorf("failed to add relates-to %s <-> %s: %w", id1, id2, err)
 		}
 	} else {
-		// Add id1 -> id2
-		dep1 := &types.Dependency{
-			IssueID:     id1,
-			DependsOnID: id2,
-			Type:        types.DepRelatesTo,
-		}
-		if err := store.AddDependency(ctx, dep1, actor); err != nil {
-			return fmt.Errorf("failed to add relates-to %s -> %s: %w", id1, id2, err)
-		}
-		// Add id2 -> id1 (bidirectional)
-		dep2 := &types.Dependency{
-			IssueID:     id2,
-			DependsOnID: id1,
-			Type:        types.DepRelatesTo,
-		}
-		if err := store.AddDependency(ctx, dep2, actor); err != nil {
-			return fmt.Errorf("failed to add relates-to %s -> %s: %w", id2, id1, err)
+		// Add both directions atomically in a transaction
+		err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+			dep1 := &types.Dependency{
+				IssueID:     id1,
+				DependsOnID: id2,
+				Type:        types.DepRelatesTo,
+			}
+			if err := tx.AddDependency(ctx, dep1, actor); err != nil {
+				return fmt.Errorf("adding %s -> %s: %w", id1, id2, err)
+			}
+			dep2 := &types.Dependency{
+				IssueID:     id2,
+				DependsOnID: id1,
+				Type:        types.DepRelatesTo,
+			}
+			if err := tx.AddDependency(ctx, dep2, actor); err != nil {
+				return fmt.Errorf("adding %s -> %s: %w", id2, id1, err)
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("failed to add relates-to %s <-> %s: %w", id1, id2, err)
 		}
 	}
 
@@ -270,32 +267,28 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 	// Remove relates-to dependency in both directions
 	// Per Decision 004, relates-to links are now stored in dependencies table
 	if daemonClient != nil {
-		// Remove id1 -> id2
-		_, err := daemonClient.RemoveDependency(&rpc.DepRemoveArgs{
-			FromID:  id1,
-			ToID:    id2,
+		// Use atomic bidirectional relation remove (both directions in single transaction)
+		_, err := daemonClient.RemoveBidirectionalRelation(&rpc.DepRemoveBidirectionalArgs{
+			ID1:     id1,
+			ID2:     id2,
 			DepType: string(types.DepRelatesTo),
 		})
 		if err != nil {
-			return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id1, id2, err)
-		}
-		// Remove id2 -> id1 (bidirectional)
-		_, err = daemonClient.RemoveDependency(&rpc.DepRemoveArgs{
-			FromID:  id2,
-			ToID:    id1,
-			DepType: string(types.DepRelatesTo),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id2, id1, err)
+			return fmt.Errorf("failed to remove relates-to %s <-> %s: %w", id1, id2, err)
 		}
 	} else {
-		// Remove id1 -> id2
-		if err := store.RemoveDependency(ctx, id1, id2, actor); err != nil {
-			return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id1, id2, err)
-		}
-		// Remove id2 -> id1 (bidirectional)
-		if err := store.RemoveDependency(ctx, id2, id1, actor); err != nil {
-			return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id2, id1, err)
+		// Remove both directions atomically in a transaction
+		err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+			if err := tx.RemoveDependency(ctx, id1, id2, actor); err != nil {
+				return fmt.Errorf("removing %s -> %s: %w", id1, id2, err)
+			}
+			if err := tx.RemoveDependency(ctx, id2, id1, actor); err != nil {
+				return fmt.Errorf("removing %s -> %s: %w", id2, id1, err)
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("failed to remove relates-to %s <-> %s: %w", id1, id2, err)
 		}
 	}
 
