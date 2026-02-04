@@ -1,4 +1,4 @@
-//go:build cgo && !windows
+//go:build cgo
 package doctor
 
 import (
@@ -573,4 +573,5 @@ func CheckDoltServerModeMismatch(path string) DoctorCheck {
 		Category: CategoryFederation,
 	}
 }
+
 

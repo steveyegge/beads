@@ -1,4 +1,4 @@
-//go:build !cgo || windows
+//go:build !cgo
 package doctor
 
 // CheckFederationRemotesAPI returns N/A when CGO is not available.
@@ -50,4 +50,5 @@ func CheckDoltServerModeMismatch(path string) DoctorCheck {
 		Category: CategoryFederation,
 	}
 }
+
 

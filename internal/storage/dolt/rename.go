@@ -1,4 +1,4 @@
-//go:build cgo && !windows
+//go:build cgo
 package dolt
 
 import (
@@ -128,4 +128,5 @@ func (s *DoltStore) RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefi
 	// Hash-based IDs don't use counters
 	return nil
 }
+
 

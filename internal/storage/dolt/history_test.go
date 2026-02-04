@@ -1,4 +1,4 @@
-//go:build cgo && !windows
+//go:build cgo
 package dolt
 
 import (
@@ -407,4 +407,5 @@ func TestResolveConflicts_InvalidStrategy(t *testing.T) {
 }
 
 // Note: TestValidateRef and TestValidateTableName are already defined in dolt_test.go
+
 

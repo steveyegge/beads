@@ -1,4 +1,4 @@
-//go:build cgo && !windows
+//go:build cgo
 package factory
 
 import (
@@ -129,4 +129,5 @@ func isServerConnectionError(err error) bool {
 		strings.Contains(errLower, "connection reset") ||
 		strings.Contains(errLower, "network is unreachable")
 }
+
 

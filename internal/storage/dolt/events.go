@@ -1,4 +1,4 @@
-//go:build cgo && !windows
+//go:build cgo
 package dolt
 
 import (
@@ -260,4 +260,5 @@ func joinStrings(strs []string, sep string) string {
 	}
 	return result
 }
+
 

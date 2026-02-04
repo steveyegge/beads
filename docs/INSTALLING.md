@@ -175,7 +175,7 @@ irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
 
 The script installs a prebuilt Windows release if available. Go is only required for `go install` or building from source.
 
-**Dolt backend on Windows:** The Dolt backend is currently **not available** in Windows builds. Use SQLite on Windows or build/run on Linux/macOS (or WSL) if you need Dolt features.
+**Dolt backend on Windows:** Supported. Windows builds use a pure-Go regex backend to avoid ICU/CGO headers. If you need full ICU regex semantics, use Linux/macOS (or WSL) with ICU installed.
 
 **Via go install**:
 ```pwsh

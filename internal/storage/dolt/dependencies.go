@@ -1,4 +1,4 @@
-//go:build cgo && !windows
+//go:build cgo
 package dolt
 
 import (
@@ -821,4 +821,5 @@ func scanDependencyRow(rows *sql.Rows) (*types.Dependency, error) {
 
 	return &dep, nil
 }
+
 

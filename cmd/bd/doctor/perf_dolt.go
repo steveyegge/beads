@@ -1,4 +1,4 @@
-//go:build cgo && !windows
+//go:build cgo
 package doctor
 
 import (
@@ -515,4 +515,5 @@ func CompareDoltModes(path string) error {
 	fmt.Println()
 	return nil
 }
+
 

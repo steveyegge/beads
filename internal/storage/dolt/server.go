@@ -1,4 +1,4 @@
-//go:build cgo && !windows
+//go:build cgo
 // Package dolt implements the storage interface using Dolt (versioned MySQL-compatible database).
 //
 // This file implements the dolt sql-server management for federation mode.
@@ -340,4 +340,5 @@ func isServerListening(host string, port int) bool {
 	_ = conn.Close()
 	return true
 }
+
 

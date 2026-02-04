@@ -1,4 +1,4 @@
-//go:build cgo && !windows
+//go:build cgo
 package dolt
 
 import (
@@ -262,4 +262,5 @@ func TestAddLabel_Duplicate(t *testing.T) {
 		t.Errorf("expected exactly 1 instance of 'duplicate' label, got %d", count)
 	}
 }
+
 

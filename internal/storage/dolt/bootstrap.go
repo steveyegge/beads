@@ -1,4 +1,4 @@
-//go:build cgo && !windows
+//go:build cgo
 package dolt
 
 import (
@@ -586,4 +586,5 @@ func importInteractionsBootstrap(ctx context.Context, store *DoltStore, interact
 
 	return imported, nil
 }
+
 
