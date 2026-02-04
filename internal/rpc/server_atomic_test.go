@@ -1918,6 +1918,132 @@ func TestCreateWithDeps_EphemeralIssues(t *testing.T) {
 	}
 }
 
+// TestCreateWithDeps_TemplateIDsGenerateUniqueIDs tests that passing template IDs
+// (e.g., from mol-polecat-work) results in unique generated IDs, not duplicate key errors.
+// This is the fix for gt-yklx63: duplicate primary key error when creating wisp mol-polecat-work.
+func TestCreateWithDeps_TemplateIDsGenerateUniqueIDs(t *testing.T) {
+	server, store := setupAtomicTestServer(t)
+	ctx := context.Background()
+
+	// Simulate template IDs like those from mol-polecat-work proto
+	templateIssues := []CreateWithDepsIssue{
+		{
+			ID:        "proto-abc-step1", // Template ID - should NOT be used as final ID
+			Title:     "Template Step 1",
+			IssueType: "task",
+			Priority:  1,
+			IDPrefix:  "wisp",
+		},
+		{
+			ID:        "proto-abc-step2", // Template ID - should NOT be used as final ID
+			Title:     "Template Step 2",
+			IssueType: "task",
+			Priority:  2,
+			IDPrefix:  "wisp",
+		},
+	}
+	templateDeps := []CreateWithDepsDependency{
+		{
+			FromID:  "proto-abc-step2", // Reference using template ID
+			ToID:    "proto-abc-step1", // Reference using template ID
+			DepType: string(types.DepBlocks),
+		},
+	}
+
+	// First creation - should succeed
+	args1 := CreateWithDepsArgs{
+		Issues:       templateIssues,
+		Dependencies: templateDeps,
+	}
+	argsJSON1, _ := json.Marshal(args1)
+	req1 := &Request{
+		Operation: OpCreateWithDeps,
+		Args:      argsJSON1,
+		Actor:     "test",
+	}
+
+	resp1 := server.handleCreateWithDeps(req1)
+	if !resp1.Success {
+		t.Fatalf("first create_with_deps failed: %s", resp1.Error)
+	}
+
+	var result1 CreateWithDepsResult
+	if err := json.Unmarshal(resp1.Data, &result1); err != nil {
+		t.Fatalf("failed to parse first result: %v", err)
+	}
+
+	// Verify IDs were GENERATED (not the template IDs)
+	newID1 := result1.IDMapping["proto-abc-step1"]
+	newID2 := result1.IDMapping["proto-abc-step2"]
+	if newID1 == "proto-abc-step1" {
+		t.Errorf("expected generated ID, got template ID: %s", newID1)
+	}
+	if newID2 == "proto-abc-step2" {
+		t.Errorf("expected generated ID, got template ID: %s", newID2)
+	}
+
+	// Verify the dependency was created correctly
+	depsFor2, err := store.GetDependenciesWithMetadata(ctx, newID2)
+	if err != nil {
+		t.Fatalf("failed to get dependencies: %v", err)
+	}
+	if len(depsFor2) != 1 {
+		t.Fatalf("expected 1 dependency, got %d", len(depsFor2))
+	}
+	if depsFor2[0].ID != newID1 {
+		t.Errorf("expected dependency on %s, got %s", newID1, depsFor2[0].ID)
+	}
+
+	// Second creation with SAME template IDs - this was failing before the fix
+	// with "duplicate primary key" error
+	args2 := CreateWithDepsArgs{
+		Issues:       templateIssues, // Same template IDs
+		Dependencies: templateDeps,
+	}
+	argsJSON2, _ := json.Marshal(args2)
+	req2 := &Request{
+		Operation: OpCreateWithDeps,
+		Args:      argsJSON2,
+		Actor:     "test",
+	}
+
+	resp2 := server.handleCreateWithDeps(req2)
+	if !resp2.Success {
+		t.Fatalf("second create_with_deps failed (gt-yklx63 bug): %s", resp2.Error)
+	}
+
+	var result2 CreateWithDepsResult
+	if err := json.Unmarshal(resp2.Data, &result2); err != nil {
+		t.Fatalf("failed to parse second result: %v", err)
+	}
+
+	// Verify second creation produced DIFFERENT IDs
+	newID3 := result2.IDMapping["proto-abc-step1"]
+	newID4 := result2.IDMapping["proto-abc-step2"]
+	if newID3 == newID1 {
+		t.Errorf("second creation used same ID as first: %s", newID3)
+	}
+	if newID4 == newID2 {
+		t.Errorf("second creation used same ID as first: %s", newID4)
+	}
+
+	// Verify all 4 issues exist and are distinct
+	allIDs := map[string]bool{newID1: true, newID2: true, newID3: true, newID4: true}
+	if len(allIDs) != 4 {
+		t.Errorf("expected 4 distinct IDs, got: %v", allIDs)
+	}
+
+	for id := range allIDs {
+		issue, err := store.GetIssue(ctx, id)
+		if err != nil {
+			t.Errorf("failed to get issue %s: %v", id, err)
+		}
+		if issue == nil {
+			t.Errorf("issue %s not found", id)
+		}
+	}
+}
+
 // =============================================================================
 // CreateMolecule RPC Tests
 // =============================================================================

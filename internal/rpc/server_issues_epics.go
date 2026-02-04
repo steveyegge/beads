@@ -3423,8 +3423,16 @@ func (s *Server) handleCreateWithDeps(req *Request) Response {
 	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
 		// First pass: create all issues and build ID mapping
 		for i, issueArg := range args.Issues {
+			// Save the reference ID for mapping before creating issue
+			// The passed ID is used as a reference for dependency mapping,
+			// NOT as the actual issue ID (to avoid duplicate key errors)
+			refID := issueArg.ID
+			if refID == "" {
+				refID = fmt.Sprintf("%d", i)
+			}
+
 			issue := &types.Issue{
-				ID:                 issueArg.ID,
+				ID:                 "", // Let storage generate unique ID (gt-yklx63 fix)
 				Title:              issueArg.Title,
 				Description:        issueArg.Description,
 				IssueType:          types.IssueType(issueArg.IssueType),
@@ -3438,18 +3446,13 @@ func (s *Server) handleCreateWithDeps(req *Request) Response {
 				Status:             types.StatusOpen,
 			}
 
-			// Create the issue
+			// Create the issue (storage generates unique ID)
 			if err := tx.CreateIssue(ctx, issue, actor); err != nil {
 				return fmt.Errorf("failed to create issue %d (%s): %w", i, issueArg.Title, err)
 			}
 
-			// Map old ID to new ID
-			// If issueArg.ID was provided, map that; otherwise use index as string
-			oldID := issueArg.ID
-			if oldID == "" {
-				oldID = fmt.Sprintf("%d", i)
-			}
-			idMapping[oldID] = issue.ID
+			// Map reference ID to new generated ID
+			idMapping[refID] = issue.ID
 
 			// Add labels for this issue
 			for _, label := range issueArg.Labels {
