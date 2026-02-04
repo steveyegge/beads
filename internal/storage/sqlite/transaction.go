@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1317,6 +1318,15 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM labels WHERE label IN (%s))", strings.Join(placeholders, ", ")))
 	}
 
+	// Label pattern filtering (glob): issue must have at least one label matching the pattern
+	if filter.LabelPattern != "" {
+		whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM labels WHERE label GLOB ?)")
+		args = append(args, filter.LabelPattern)
+	}
+
+	// Label regex filtering: done at application level after query (see filterByLabelRegex)
+	// SQLite doesn't have built-in regex support without extensions
+
 	// ID filtering: match specific issue IDs
 	if len(filter.IDs) > 0 {
 		placeholders := make([]string, len(filter.IDs))
@@ -1395,7 +1405,21 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 	}
 	defer func() { _ = rows.Close() }()
 
-	return t.scanIssues(ctx, rows)
+	issues, err := t.scanIssues(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply label regex filtering at application level
+	// SQLite doesn't have built-in regex support without extensions
+	if filter.LabelRegex != "" {
+		issues, err = t.filterByLabelRegex(ctx, issues, filter.LabelRegex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to filter by label regex: %w", err)
+		}
+	}
+
+	return issues, nil
 }
 
 // scanner is an interface that both *sql.Row and *sql.Rows satisfy
@@ -1664,4 +1688,28 @@ func (t *sqliteTxStorage) getLabelsForIssues(ctx context.Context, issueIDs []str
 	}
 
 	return result, rows.Err()
+}
+
+// filterByLabelRegex filters issues to only include those with at least one label
+// matching the given regex pattern. This is done at the application level because
+// SQLite doesn't have built-in regex support without extensions.
+func (t *sqliteTxStorage) filterByLabelRegex(ctx context.Context, issues []*types.Issue, pattern string) ([]*types.Issue, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
+	}
+
+	// Filter issues that have at least one label matching the regex
+	// Note: Labels were already loaded by scanIssues
+	var filtered []*types.Issue
+	for _, issue := range issues {
+		for _, label := range issue.Labels {
+			if re.MatchString(label) {
+				filtered = append(filtered, issue)
+				break // Only need one match
+			}
+		}
+	}
+
+	return filtered, nil
 }
