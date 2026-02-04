@@ -333,6 +333,20 @@ func matchesFilter(issue *types.Issue, filter types.IssueFilter) bool {
 		return false
 	}
 
+	// Parent filter: check if issue has a parent-child dependency pointing to the specified parent
+	if filter.ParentID != nil {
+		hasParent := false
+		for _, dep := range issue.Dependencies {
+			if dep != nil && dep.Type == types.DepParentChild && dep.DependsOnID == *filter.ParentID {
+				hasParent = true
+				break
+			}
+		}
+		if !hasParent {
+			return false
+		}
+	}
+
 	return true
 }
 

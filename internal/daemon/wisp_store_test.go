@@ -245,6 +245,88 @@ func TestWispStore_List(t *testing.T) {
 			t.Errorf("List() returned %d issues, want 3", len(got))
 		}
 	})
+
+	t.Run("filters by ParentID", func(t *testing.T) {
+		// Create a new store for this test to avoid interference
+		parentStore := NewWispStore()
+		defer parentStore.Close()
+
+		// Create a wisp with a parent-child dependency
+		childWithParent := &types.Issue{
+			ID:    "wisp-child-1",
+			Title: "Child Wisp",
+			Dependencies: []*types.Dependency{
+				{
+					IssueID:     "wisp-child-1",
+					DependsOnID: "epic-123",
+					Type:        types.DepParentChild,
+				},
+			},
+		}
+		// Create a wisp without any parent
+		childWithoutParent := &types.Issue{
+			ID:    "wisp-orphan-1",
+			Title: "Orphan Wisp",
+		}
+		// Create a wisp with a different parent
+		childWithDifferentParent := &types.Issue{
+			ID:    "wisp-child-2",
+			Title: "Different Parent Wisp",
+			Dependencies: []*types.Dependency{
+				{
+					IssueID:     "wisp-child-2",
+					DependsOnID: "epic-456",
+					Type:        types.DepParentChild,
+				},
+			},
+		}
+
+		if err := parentStore.Create(ctx, childWithParent); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if err := parentStore.Create(ctx, childWithoutParent); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if err := parentStore.Create(ctx, childWithDifferentParent); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+
+		// Filter by parent epic-123 - should only return wisp-child-1
+		parentID := "epic-123"
+		got, err := parentStore.List(ctx, types.IssueFilter{ParentID: &parentID})
+		if err != nil {
+			t.Fatalf("List() error = %v", err)
+		}
+		if len(got) != 1 {
+			t.Errorf("List() returned %d issues, want 1", len(got))
+		}
+		if len(got) > 0 && got[0].ID != "wisp-child-1" {
+			t.Errorf("List() returned %s, want wisp-child-1", got[0].ID)
+		}
+
+		// Filter by parent epic-456 - should only return wisp-child-2
+		parentID2 := "epic-456"
+		got2, err := parentStore.List(ctx, types.IssueFilter{ParentID: &parentID2})
+		if err != nil {
+			t.Fatalf("List() error = %v", err)
+		}
+		if len(got2) != 1 {
+			t.Errorf("List() returned %d issues, want 1", len(got2))
+		}
+		if len(got2) > 0 && got2[0].ID != "wisp-child-2" {
+			t.Errorf("List() returned %s, want wisp-child-2", got2[0].ID)
+		}
+
+		// Filter by non-existent parent - should return empty
+		nonExistentParent := "epic-nonexistent"
+		got3, err := parentStore.List(ctx, types.IssueFilter{ParentID: &nonExistentParent})
+		if err != nil {
+			t.Fatalf("List() error = %v", err)
+		}
+		if len(got3) != 0 {
+			t.Errorf("List() returned %d issues, want 0", len(got3))
+		}
+	})
 }
 
 func TestWispStore_Update(t *testing.T) {
