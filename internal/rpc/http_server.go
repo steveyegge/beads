@@ -330,6 +330,19 @@ func httpMethodToOperation(method string) string {
 		"MolSquash": OpMolSquash,
 		"MolBurn":   OpMolBurn,
 
+		// Atomic operations
+		"CreateWithDeps":           OpCreateWithDeps,
+		"BatchAddLabels":           OpBatchAddLabels,
+		"CreateMolecule":           OpCreateMolecule,
+		"BatchAddDependencies":     OpBatchAddDependencies,
+		"BatchQueryWorkers":        OpBatchQueryWorkers,
+		"CreateConvoyWithTracking": OpCreateConvoyWithTracking,
+		"AtomicClosureChain":       OpAtomicClosureChain,
+
+		// Remote database management
+		"Init":    OpInit,
+		"Migrate": OpMigrate,
+
 		// Admin
 		"Shutdown": OpShutdown,
 	}
