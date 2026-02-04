@@ -305,7 +305,8 @@ func (s *Server) handleCreate(req *Request) Response {
 			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
 		}
 	}
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// If parent is specified, generate child ID
 	issueID := createArgs.ID
@@ -733,7 +734,8 @@ func (s *Server) handleUpdate(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Check WispStore first for wisp IDs
 	if s.wispStore != nil && isWispID(updateArgs.ID) {
@@ -1064,7 +1066,8 @@ func (s *Server) handleUpdateWithComment(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	store := s.storage
 	if store == nil {
 		return Response{
@@ -1228,7 +1231,8 @@ func (s *Server) handleClose(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Check if issue is a template (beads-1ra): templates are read-only
 	issue, err := store.GetIssue(ctx, closeArgs.ID)
@@ -1330,7 +1334,8 @@ func (s *Server) handleDelete(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Check WispStore for wisp IDs - handle them separately
 	if s.wispStore != nil {
@@ -1745,7 +1750,8 @@ func (s *Server) handleList(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Collect wisps from WispStore if available and not explicitly filtering non-ephemeral
 	var wisps []*types.Issue
@@ -2046,7 +2052,8 @@ func (s *Server) handleListWatch(req *Request) Response {
 	}
 	filter.Overdue = args.Overdue
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Query issues
 	issues, err := store.SearchIssues(ctx, args.Query, filter)
@@ -2213,7 +2220,8 @@ func (s *Server) handleCount(req *Request) Response {
 	filter.PriorityMin = countArgs.PriorityMin
 	filter.PriorityMax = countArgs.PriorityMax
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	issues, err := store.SearchIssues(ctx, countArgs.Query, filter)
 	if err != nil {
 		return Response{
@@ -2333,7 +2341,8 @@ func (s *Server) handleResolveID(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Check WispStore first for wisp IDs (bd-k59w)
 	if s.wispStore != nil && isWispID(args.ID) {
@@ -2372,7 +2381,8 @@ func (s *Server) handleShow(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Check WispStore first for wisp IDs or if storage is not available
 	if s.wispStore != nil && isWispID(showArgs.ID) {
@@ -2486,7 +2496,8 @@ func (s *Server) handleReady(req *Request) Response {
 		wf.MolType = &molType
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	issues, err := store.GetReadyWork(ctx, wf)
 	if err != nil {
 		return Response{
@@ -2524,7 +2535,8 @@ func (s *Server) handleBlocked(req *Request) Response {
 		wf.ParentID = &blockedArgs.ParentID
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	blocked, err := store.GetBlockedIssues(ctx, wf)
 	if err != nil {
 		return Response{
@@ -2563,7 +2575,8 @@ func (s *Server) handleStale(req *Request) Response {
 		Limit:  staleArgs.Limit,
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	issues, err := store.GetStaleIssues(ctx, filter)
 	if err != nil {
 		return Response{
@@ -2588,7 +2601,8 @@ func (s *Server) handleStats(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	stats, err := store.GetStatistics(ctx)
 	if err != nil {
 		return Response{
@@ -2621,7 +2635,8 @@ func (s *Server) handleEpicStatus(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	epics, err := store.GetEpicsEligibleForClosure(ctx)
 	if err != nil {
 		return Response{
@@ -2672,7 +2687,8 @@ func (s *Server) handleGetConfig(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Get config value from database
 	value, err := store.GetConfig(ctx, args.Key)
@@ -2713,7 +2729,8 @@ func (s *Server) handleConfigSet(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Set config value in database
 	if err := store.SetConfig(ctx, args.Key, args.Value); err != nil {
@@ -2745,7 +2762,8 @@ func (s *Server) handleConfigList(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Get all config values from database
 	config, err := store.GetAllConfig(ctx)
@@ -2785,7 +2803,8 @@ func (s *Server) handleConfigUnset(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Delete config value from database
 	if err := store.DeleteConfig(ctx, args.Key); err != nil {
@@ -2825,7 +2844,8 @@ func (s *Server) handleGateCreate(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	now := time.Now()
 
 	// Create gate issue
@@ -2879,7 +2899,8 @@ func (s *Server) handleGateList(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Build filter for gates
 	gateType := types.IssueType("gate")
@@ -2923,7 +2944,8 @@ func (s *Server) handleGateShow(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Resolve partial ID
 	gateID, err := utils.ResolvePartialID(ctx, store, args.ID)
@@ -2978,7 +3000,8 @@ func (s *Server) handleGateClose(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Resolve partial ID
 	gateID, err := utils.ResolvePartialID(ctx, store, args.ID)
@@ -3057,7 +3080,8 @@ func (s *Server) handleGateWait(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Resolve partial ID
 	gateID, err := utils.ResolvePartialID(ctx, store, args.ID)
@@ -3163,7 +3187,8 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	var issue *types.Issue
@@ -3269,7 +3294,8 @@ func (s *Server) handleDecisionGet(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	dp, err := store.GetDecisionPoint(ctx, args.IssueID)
 	if err != nil {
@@ -3317,7 +3343,8 @@ func (s *Server) handleDecisionResolve(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Get existing decision point
 	dp, err := store.GetDecisionPoint(ctx, args.IssueID)
@@ -3381,7 +3408,8 @@ func (s *Server) handleDecisionList(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Get pending decisions (storage method already filters to pending)
 	decisions, err := store.ListPendingDecisions(ctx)
@@ -3440,7 +3468,8 @@ func (s *Server) handleCreateWithDeps(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	// idMapping maps old IDs (from args) to new IDs (generated by storage)
@@ -3569,7 +3598,8 @@ func (s *Server) handleCreateMolecule(req *Request) Response {
 			Error:   "storage not available",
 		}
 	}
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	// Build ID mapping: template ID → new ID
@@ -3764,7 +3794,8 @@ func (s *Server) handleCreateConvoyWithTracking(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	var convoyID string
@@ -3867,7 +3898,8 @@ func (s *Server) handleAtomicClosureChain(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	// Track results

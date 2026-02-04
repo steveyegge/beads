@@ -165,6 +165,7 @@ func NewWithTimeout(ctx context.Context, path string, busyTimeout time.Duration)
 	if isInMemory {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
+		db.SetConnMaxIdleTime(20 * time.Minute) // Prevent stale idle connections
 	} else {
 		// For file-based databases in daemon mode, limit connection pool to prevent
 		// connection exhaustion under concurrent load. SQLite WAL mode supports
@@ -173,7 +174,8 @@ func NewWithTimeout(ctx context.Context, path string, busyTimeout time.Duration)
 		maxConns := runtime.NumCPU() + 1 // 1 writer + N readers
 		db.SetMaxOpenConns(maxConns)
 		db.SetMaxIdleConns(2)
-		db.SetConnMaxLifetime(0) // SQLite doesn't need connection recycling
+		db.SetConnMaxLifetime(0)              // SQLite doesn't need connection recycling
+		db.SetConnMaxIdleTime(20 * time.Minute) // Prevent stale idle connections
 	}
 
 	// For file-based databases, enable WAL mode once after opening the connection.
@@ -290,6 +292,7 @@ func NewReadOnlyWithTimeout(ctx context.Context, path string, busyTimeout time.D
 	db.SetMaxOpenConns(2)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(20 * time.Minute) // Prevent stale idle connections
 
 	// Test connection
 	if err := db.Ping(); err != nil {
@@ -342,12 +345,14 @@ func (s *SQLiteStorage) configureConnectionPool(db *sql.DB) {
 	if isInMemory {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
+		db.SetConnMaxIdleTime(20 * time.Minute) // Prevent stale idle connections
 	} else {
 		// SQLite WAL mode: 1 writer + N readers. Limit to prevent goroutine pile-up.
 		maxConns := runtime.NumCPU() + 1
 		db.SetMaxOpenConns(maxConns)
 		db.SetMaxIdleConns(2)
-		db.SetConnMaxLifetime(0) // SQLite doesn't need connection recycling
+		db.SetConnMaxLifetime(0)              // SQLite doesn't need connection recycling
+		db.SetConnMaxIdleTime(20 * time.Minute) // Prevent stale idle connections
 	}
 }
 

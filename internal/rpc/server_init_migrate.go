@@ -69,7 +69,8 @@ func (s *Server) handleMigrate(req *Request) Response {
 // handleMigrateInspect handles the migrate --inspect RPC operation.
 // This returns information about the current database state without making changes.
 func (s *Server) handleMigrateInspect(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	store := s.storage
 
 	if store == nil {

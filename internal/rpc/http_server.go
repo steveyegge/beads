@@ -99,7 +99,23 @@ func (h *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	var health HealthResponse
 	if resp.Success && len(resp.Data) > 0 {
-		_ = json.Unmarshal(resp.Data, &health)
+		if err := json.Unmarshal(resp.Data, &health); err != nil {
+			// Log error but don't fail - treat as degraded
+			health.Error = fmt.Sprintf("failed to parse health response: %v", err)
+		}
+	}
+
+	// Default empty status to "healthy" when response was successful
+	// This prevents 503 when the RPC handler returns success with empty/missing status
+	if health.Status == "" {
+		if resp.Success {
+			health.Status = "healthy"
+		} else {
+			health.Status = "unhealthy"
+			if health.Error == "" {
+				health.Error = resp.Error
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -132,7 +148,23 @@ func (h *HTTPServer) handleReadiness(w http.ResponseWriter, r *http.Request) {
 
 	var health HealthResponse
 	if resp.Success && len(resp.Data) > 0 {
-		_ = json.Unmarshal(resp.Data, &health)
+		if err := json.Unmarshal(resp.Data, &health); err != nil {
+			// Log error but don't fail - treat as degraded
+			health.Error = fmt.Sprintf("failed to parse health response: %v", err)
+		}
+	}
+
+	// Default empty status to "healthy" when response was successful
+	// This prevents 503 when the RPC handler returns success with empty/missing status
+	if health.Status == "" {
+		if resp.Success {
+			health.Status = "healthy"
+		} else {
+			health.Status = "unhealthy"
+			if health.Error == "" {
+				health.Error = resp.Error
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

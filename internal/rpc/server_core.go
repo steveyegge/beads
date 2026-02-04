@@ -169,7 +169,7 @@ func NewServerWithWispStore(socketPath string, store storage.Storage, wispStore 
 		}
 	}
 
-	requestTimeout := 30 * time.Second // default
+	requestTimeout := 60 * time.Second // default (increased from 30s to accommodate slow Dolt operations)
 	if env := os.Getenv("BEADS_DAEMON_REQUEST_TIMEOUT"); env != "" {
 		if timeout, err := time.ParseDuration(env); err == nil && timeout > 0 {
 			requestTimeout = timeout
@@ -438,7 +438,8 @@ func (s *Server) handleGetMoleculeProgress(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Get the molecule (parent issue)
 	molecule, err := store.GetIssue(ctx, args.MoleculeID)

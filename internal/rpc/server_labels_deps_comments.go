@@ -68,7 +68,8 @@ func (s *Server) handleDepAdd(req *Request) Response {
 		Type:        types.DependencyType(depArgs.DepType),
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	if err := store.AddDependency(ctx, dep, s.reqActor(req)); err != nil {
 		return Response{
 			Success: false,
@@ -109,7 +110,8 @@ func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc 
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	if err := opFunc(ctx, store, s.reqActor(req)); err != nil {
 		return Response{
 			Success: false,
@@ -164,7 +166,8 @@ func (s *Server) handleDepAddBidirectional(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	// Check for self-reference
@@ -242,7 +245,8 @@ func (s *Server) handleDepRemoveBidirectional(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	// Remove both directions atomically in a transaction
@@ -329,7 +333,8 @@ func (s *Server) handleBatchAddLabels(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	// Resolve partial ID to full ID
@@ -414,7 +419,8 @@ func (s *Server) handleCommentList(req *Request) Response {
 
 	store := s.storage
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	comments, err := store.GetIssueComments(ctx, commentArgs.ID)
 	if err != nil {
 		return Response{
@@ -441,7 +447,8 @@ func (s *Server) handleCommentAdd(req *Request) Response {
 
 	store := s.storage
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	comment, err := store.AddIssueComment(ctx, commentArgs.ID, commentArgs.Author, commentArgs.Text)
 	if err != nil {
 		return Response{
@@ -530,7 +537,8 @@ func (s *Server) handleSetState(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	// Resolve partial ID to full ID
@@ -687,7 +695,8 @@ func (s *Server) handleBatchAddDependencies(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	var addedCount int
@@ -770,7 +779,8 @@ func (s *Server) handleBatchQueryWorkers(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	workers := make(map[string]*WorkerInfo)
 
 	// Query each issue efficiently

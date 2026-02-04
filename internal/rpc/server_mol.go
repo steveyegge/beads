@@ -37,7 +37,8 @@ func (s *Server) handleMolBond(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	// Validate bond type
@@ -606,7 +607,8 @@ func (s *Server) handleMolSquash(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	// Resolve molecule ID
@@ -799,7 +801,8 @@ func (s *Server) handleMolBurn(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := s.reqActor(req)
 
 	if len(args.MoleculeIDs) == 0 {
@@ -893,7 +896,8 @@ func (s *Server) handleMolCurrent(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Determine agent filter
 	agent := args.Agent
@@ -951,7 +955,8 @@ func (s *Server) handleMolProgressStats(req *Request) Response {
 		return Response{Success: false, Error: "storage not available"}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Resolve partial ID to full ID
 	resolvedID, err := utils.ResolvePartialID(ctx, store, args.MoleculeID)
@@ -1225,7 +1230,8 @@ func (s *Server) handleCloseContinue(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	actor := args.Actor
 	if actor == "" {
 		actor = s.reqActor(req)
@@ -1315,7 +1321,8 @@ func (s *Server) handleMolReadyGated(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Find gate-ready molecules
 	molecules, err := s.findGateReadyMolecules(ctx, args.Limit)
@@ -1463,7 +1470,8 @@ func (s *Server) findGateReadyMolecules(ctx context.Context, limit int) ([]*MolR
 // handleTypes handles the types RPC operation (bd-s091)
 // Returns core work types and custom types from config
 func (s *Server) handleTypes(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Core work types (always available)
 	coreTypes := []TypeInfo{

@@ -381,9 +381,10 @@ func (s *Server) executeOperation(req *Request) Response {
 // reqCtx returns a context with the server's request timeout applied.
 // This prevents request handlers from hanging indefinitely if database
 // operations or other internal calls stall (GH#bd-p76kv).
-func (s *Server) reqCtx(_ *Request) context.Context {
-	ctx, _ := context.WithTimeout(context.Background(), s.requestTimeout)
-	return ctx
+// The caller MUST call the returned cancel function when done to release resources.
+// Example: ctx, cancel := s.reqCtx(req); defer cancel()
+func (s *Server) reqCtx(_ *Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), s.requestTimeout)
 }
 
 func (s *Server) reqActor(req *Request) string {
@@ -463,12 +464,22 @@ func (s *Server) handleHealth(req *Request) Response {
 	status := "healthy"
 	dbError := ""
 
-	// NOTE: We previously called store.GetStatistics() here, but it was removed because:
-	// 1. We don't use the statistics data
-	// 2. It causes nil pointer crashes when DB connection is lost
-	// 3. It adds unnecessary load to health checks
-	// See: gt-wc8pm4, gt-0pb10c
+	// Perform a safe database connectivity check with 2s timeout
+	// This replaces the removed GetStatistics() call (see gt-wc8pm4, gt-0pb10c)
 	dbResponseMs := 0.0
+	if s.storage != nil {
+		if db := s.storage.UnderlyingDB(); db != nil {
+			pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			pingStart := time.Now()
+			err := db.PingContext(pingCtx)
+			pingCancel() // Release resources immediately
+			dbResponseMs = float64(time.Since(pingStart).Milliseconds())
+			if err != nil {
+				status = "degraded"
+				dbError = fmt.Sprintf("database ping failed: %v", err)
+			}
+		}
+	}
 
 	// Check version compatibility
 	compatible := true
@@ -521,7 +532,8 @@ func (s *Server) handleMetrics(_ *Request) Response {
 }
 
 func (s *Server) handleGetWorkerStatus(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Parse optional args
 	var args GetWorkerStatusArgs

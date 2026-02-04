@@ -263,6 +263,7 @@ func openEmbeddedConnection(dsn string) (*sql.DB, string, *embedded.Connector, e
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(20 * time.Minute) // Prevent stale idle connections
 
 	// NOTE: connector must be closed by the caller to release filesystem locks.
 	// DoltStore.Close() will handle this.
@@ -271,14 +272,17 @@ func openEmbeddedConnection(dsn string) (*sql.DB, string, *embedded.Connector, e
 
 // openServerConnection opens a connection to a dolt sql-server via MySQL protocol
 func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, error) {
-	// DSN format: user:password@tcp(host:port)/database?parseTime=true
+	// DSN format: user:password@tcp(host:port)/database?parseTime=true&timeout=10s&readTimeout=30s&writeTimeout=30s
 	// parseTime=true tells the MySQL driver to parse DATETIME/TIMESTAMP to time.Time
+	// timeout=10s is the connection timeout
+	// readTimeout=30s is the I/O read timeout
+	// writeTimeout=30s is the I/O write timeout
 	var connStr string
 	if cfg.ServerPassword != "" {
-		connStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
+		connStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&timeout=10s&readTimeout=30s&writeTimeout=30s",
 			cfg.ServerUser, cfg.ServerPassword, cfg.ServerHost, cfg.ServerPort, cfg.Database)
 	} else {
-		connStr = fmt.Sprintf("%s@tcp(%s:%d)/%s?parseTime=true",
+		connStr = fmt.Sprintf("%s@tcp(%s:%d)/%s?parseTime=true&timeout=10s&readTimeout=30s&writeTimeout=30s",
 			cfg.ServerUser, cfg.ServerHost, cfg.ServerPort, cfg.Database)
 	}
 
@@ -291,15 +295,16 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	db.SetMaxOpenConns(1000)
 	db.SetMaxIdleConns(100)
 	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(20 * time.Minute) // Prevent stale idle connections
 
 	// Ensure database exists (may need to create it)
 	// First connect without database to create it
 	var initConnStr string
 	if cfg.ServerPassword != "" {
-		initConnStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true",
+		initConnStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&timeout=10s&readTimeout=30s&writeTimeout=30s",
 			cfg.ServerUser, cfg.ServerPassword, cfg.ServerHost, cfg.ServerPort)
 	} else {
-		initConnStr = fmt.Sprintf("%s@tcp(%s:%d)/?parseTime=true",
+		initConnStr = fmt.Sprintf("%s@tcp(%s:%d)/?parseTime=true&timeout=10s&readTimeout=30s&writeTimeout=30s",
 			cfg.ServerUser, cfg.ServerHost, cfg.ServerPort)
 	}
 	initDB, err := sql.Open("mysql", initConnStr)
@@ -493,6 +498,11 @@ func isSerializationError(err error) bool {
 func isTransientDoltError(err error) bool {
 	if err == nil {
 		return false
+	}
+
+	// Context deadline exceeded is always transient - operation timed out but can be retried
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
 	}
 
 	// First check if it's a serialization error

@@ -30,7 +30,8 @@ func (s *Server) handleSyncExport(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	store := s.storage
 
 	// Get sync mode configuration
@@ -126,7 +127,8 @@ func (s *Server) handleSyncExport(req *Request) Response {
 // handleSyncStatus handles the sync_status RPC operation (bd-wn2g).
 // This is the daemon-side implementation of `bd sync --status`.
 func (s *Server) handleSyncStatus(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	store := s.storage
 
 	// Find JSONL path for conflict check

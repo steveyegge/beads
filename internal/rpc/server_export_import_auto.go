@@ -32,7 +32,8 @@ func (s *Server) handleExport(req *Request) Response {
 	}
 
 	store := s.storage
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Load export configuration (user-initiated export, not auto)
 	cfg, err := export.LoadConfig(ctx, store, false)
@@ -267,7 +268,8 @@ func (s *Server) checkAndAutoImportIfStale(req *Request) error {
 	// Get storage for this request
 	store := s.storage
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Get database path from storage
 	// Staleness check only applies to SQLite storage; Dolt handles sync differently
