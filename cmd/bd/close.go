@@ -72,9 +72,12 @@ create, update, show, or close operation).`,
 		var resolvedIDs []string
 		var routedArgs []string // IDs that need cross-repo routing (bypass daemon)
 		if daemonClient != nil {
+			// Skip local routing for remote daemon - it handles all IDs centrally (gt-57wsnm)
+			skipLocalRouting := isRemoteDaemon()
 			for _, id := range args {
 				// Check if this ID needs routing to a different beads directory
-				if needsRouting(id) {
+				// But skip this check for remote daemons which have all data centrally
+				if !skipLocalRouting && needsRouting(id) {
 					routedArgs = append(routedArgs, id)
 					continue
 				}

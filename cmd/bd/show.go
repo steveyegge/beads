@@ -68,9 +68,12 @@ var showCmd = &cobra.Command{
 		var routedArgs []string // IDs that need cross-repo routing (bypass daemon)
 		if daemonClient != nil {
 			// In daemon mode, resolve via RPC - but check routing first
+			// Skip local routing for remote daemon - it handles all IDs centrally (gt-57wsnm)
+			skipLocalRouting := isRemoteDaemon()
 			for _, id := range args {
 				// Check if this ID needs routing to a different beads directory
-				if needsRouting(id) {
+				// But skip this check for remote daemons which have all data centrally
+				if !skipLocalRouting && needsRouting(id) {
 					routedArgs = append(routedArgs, id)
 					continue
 				}

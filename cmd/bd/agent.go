@@ -170,7 +170,9 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 	var routedResult *RoutedResult
 
 	// Check if routing is needed (bypass daemon for cross-repo lookups)
-	if needsRouting(agentArg) || daemonClient == nil {
+	// Skip local routing for remote daemon - it handles all IDs centrally (gt-57wsnm)
+	skipLocalRouting := isRemoteDaemon()
+	if (!skipLocalRouting && needsRouting(agentArg)) || daemonClient == nil {
 		// Use routed resolution for cross-repo lookups
 		var err error
 		routedResult, err = resolveAndGetIssueWithRouting(ctx, store, agentArg)
@@ -233,7 +235,7 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 			CreatedBy: actor,
 		}
 
-		if daemonClient != nil && !needsRouting(agentArg) {
+		if daemonClient != nil && (skipLocalRouting || !needsRouting(agentArg)) {
 			createArgs := &rpc.CreateArgs{
 				ID:        agentID,
 				Title:     agent.Title,
@@ -278,7 +280,7 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 			agent = routedResult.Issue
 			// Get labels from routed store
 			labels, _ = routedResult.Store.GetLabels(ctx, agentID)
-		} else if daemonClient != nil && !needsRouting(agentArg) {
+		} else if daemonClient != nil && (skipLocalRouting || !needsRouting(agentArg)) {
 			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
 			if err != nil {
 				return fmt.Errorf("agent bead not found: %s", agentID)
@@ -304,7 +306,7 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 
 	// Update state and last_activity
 	updateLastActivity := true
-	if daemonClient != nil && !needsRouting(agentArg) {
+	if daemonClient != nil && (skipLocalRouting || !needsRouting(agentArg)) {
 		_, err := daemonClient.Update(&rpc.UpdateArgs{
 			ID:           agentID,
 			AgentState:   &state,
@@ -355,7 +357,9 @@ func runAgentHeartbeat(cmd *cobra.Command, args []string) error {
 	var routedResult *RoutedResult
 
 	// Check if routing is needed (bypass daemon for cross-repo lookups)
-	if needsRouting(agentArg) || daemonClient == nil {
+	// Skip local routing for remote daemon - it handles all IDs centrally (gt-57wsnm)
+	skipLocalRouting := isRemoteDaemon()
+	if (!skipLocalRouting && needsRouting(agentArg)) || daemonClient == nil {
 		// Use routed resolution for cross-repo lookups
 		var err error
 		routedResult, err = resolveAndGetIssueWithRouting(ctx, store, agentArg)
@@ -396,7 +400,7 @@ func runAgentHeartbeat(cmd *cobra.Command, args []string) error {
 		// Already have the issue from routed resolution
 		agent = routedResult.Issue
 		labels, _ = routedResult.Store.GetLabels(ctx, agentID)
-	} else if daemonClient != nil && !needsRouting(agentArg) {
+	} else if daemonClient != nil && (skipLocalRouting || !needsRouting(agentArg)) {
 		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
 		if err != nil {
 			return fmt.Errorf("agent bead not found: %s", agentID)
@@ -421,7 +425,7 @@ func runAgentHeartbeat(cmd *cobra.Command, args []string) error {
 
 	// Update only last_activity
 	updateLastActivity := true
-	if daemonClient != nil && !needsRouting(agentArg) {
+	if daemonClient != nil && (skipLocalRouting || !needsRouting(agentArg)) {
 		_, err := daemonClient.Update(&rpc.UpdateArgs{
 			ID:           agentID,
 			LastActivity: &updateLastActivity,
@@ -467,7 +471,9 @@ func runAgentShow(cmd *cobra.Command, args []string) error {
 	var routedResult *RoutedResult
 
 	// Check if routing is needed (bypass daemon for cross-repo lookups)
-	if needsRouting(agentArg) || daemonClient == nil {
+	// Skip local routing for remote daemon - it handles all IDs centrally (gt-57wsnm)
+	skipLocalRouting := isRemoteDaemon()
+	if (!skipLocalRouting && needsRouting(agentArg)) || daemonClient == nil {
 		// Use routed resolution for cross-repo lookups
 		var err error
 		routedResult, err = resolveAndGetIssueWithRouting(ctx, store, agentArg)
@@ -502,7 +508,7 @@ func runAgentShow(cmd *cobra.Command, args []string) error {
 		// Already have the issue from routed resolution
 		agent = routedResult.Issue
 		labels, _ = routedResult.Store.GetLabels(ctx, agentID)
-	} else if daemonClient != nil && !needsRouting(agentArg) {
+	} else if daemonClient != nil && (skipLocalRouting || !needsRouting(agentArg)) {
 		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
 		if err != nil {
 			return fmt.Errorf("agent bead not found: %s", agentID)
@@ -596,7 +602,9 @@ func runAgentSubscriptions(cmd *cobra.Command, args []string) error {
 	var routedResult *RoutedResult
 
 	// Check if routing is needed (bypass daemon for cross-repo lookups)
-	if needsRouting(agentArg) || daemonClient == nil {
+	// Skip local routing for remote daemon - it handles all IDs centrally (gt-57wsnm)
+	skipLocalRouting := isRemoteDaemon()
+	if (!skipLocalRouting && needsRouting(agentArg)) || daemonClient == nil {
 		// Use routed resolution for cross-repo lookups
 		var err error
 		routedResult, err = resolveAndGetIssueWithRouting(ctx, store, agentArg)
@@ -631,7 +639,7 @@ func runAgentSubscriptions(cmd *cobra.Command, args []string) error {
 		// Already have the issue from routed resolution
 		agent = routedResult.Issue
 		labels, _ = routedResult.Store.GetLabels(ctx, agentID)
-	} else if daemonClient != nil && !needsRouting(agentArg) {
+	} else if daemonClient != nil && (skipLocalRouting || !needsRouting(agentArg)) {
 		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
 		if err != nil {
 			return fmt.Errorf("agent bead not found: %s", agentID)

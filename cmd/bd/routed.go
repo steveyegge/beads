@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/routing"
@@ -170,6 +171,13 @@ func getRoutedStoreForID(ctx context.Context, id string) (*routing.RoutedStorage
 
 	// Use GetRoutedStorageWithOpener with factory to respect backend configuration (bd-m2jr)
 	return routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
+}
+
+// isRemoteDaemon returns true if connected to a remote daemon via BD_DAEMON_HOST.
+// When connected to a remote daemon, skip local filesystem routing - the remote
+// daemon handles all IDs centrally. This fixes gt-57wsnm.
+func isRemoteDaemon() bool {
+	return os.Getenv("BD_DAEMON_HOST") != ""
 }
 
 // needsRouting checks if an ID would be routed to a different beads directory.

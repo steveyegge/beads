@@ -119,8 +119,10 @@ func runSlotSet(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve bead ID - use routing for cross-beads references (e.g., hq-* from rig beads)
+	// Skip local routing for remote daemon - it handles all IDs centrally (gt-57wsnm)
 	var beadID string
-	if needsRouting(beadArg) {
+	skipLocalRouting := isRemoteDaemon()
+	if !skipLocalRouting && needsRouting(beadArg) {
 		// Cross-beads reference - resolve via routing
 		result, err := resolveAndGetIssueWithRouting(ctx, store, beadArg)
 		if result != nil {
