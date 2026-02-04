@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/notification"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -72,12 +73,6 @@ func init() {
 
 func runDecisionCreate(cmd *cobra.Command, args []string) {
 	CheckReadonly("decision create")
-
-	// Ensure store is initialized (handles daemon disconnect, direct mode, etc.)
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
 
 	prompt, _ := cmd.Flags().GetString("prompt")
 	optionsJSON, _ := cmd.Flags().GetString("options")
@@ -161,104 +156,149 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		optionsJSON = string(optionsBytes)
 	}
 
-	// Generate decision point ID
-	decisionID, err := generateDecisionID(ctx, parent, prompt)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error generating ID: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Create the gate issue
-	// Note: We add gt:decision and decision:pending labels so that decisions
-	// show up in 'gt decision list' and 'gt decision watch' (hq-3q571)
+	var decisionID string
+	var decisionPoint *types.DecisionPoint
+	var gateIssue *types.Issue
 	now := time.Now()
-	gateIssue := &types.Issue{
-		ID:        decisionID, // May be empty - CreateIssue will generate
-		Title:     truncateTitle(prompt, 100),
-		IssueType: types.IssueType("gate"),
-		Status:    types.StatusOpen,
-		Priority:  2,
-		AwaitType: "decision",
-		Timeout:   timeout,
-		Labels:    []string{"gt:decision", "decision:pending", "urgency:" + urgency},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
 
-	// Create the decision point record (IssueID set after CreateIssue)
-	decisionPoint := &types.DecisionPoint{
-		Prompt:        prompt,
-		Context:       decisionContext,
-		Options:       optionsJSON,
-		DefaultOption: defaultOption,
-		Iteration:     1,
-		MaxIterations: maxIterations,
-		CreatedAt:     now,
-		RequestedBy:   requestedBy,
-		Urgency:       urgency,
-		PriorID:       predecessor,
-		ParentBeadID:  parent,
-	}
-
-	// Use transaction to create both atomically
-	err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
-		// Create the gate issue (generates ID if empty)
-		if err := tx.CreateIssue(ctx, gateIssue, actor); err != nil {
-			return fmt.Errorf("creating gate issue: %w", err)
+	// Prefer daemon RPC when available
+	if daemonClient != nil {
+		// Convert structured options to string array for RPC
+		// The daemon expects simple string labels for options
+		optionStrings := make([]string, len(options))
+		for i, opt := range options {
+			optionStrings[i] = opt.Label
 		}
 
-		// Now gateIssue.ID is populated (either provided or generated)
-		decisionID = gateIssue.ID
-		decisionPoint.IssueID = decisionID
-
-		// Add labels for gt decision integration (hq-3q571)
-		// Labels are stored in a separate table, so we must add them explicitly
-		for _, label := range gateIssue.Labels {
-			if err := tx.AddLabel(ctx, decisionID, label, actor); err != nil {
-				return fmt.Errorf("adding label %s: %w", label, err)
-			}
+		createArgs := &rpc.DecisionCreateArgs{
+			Prompt:        prompt,
+			Options:       optionStrings,
+			DefaultOption: defaultOption,
+			MaxIterations: maxIterations,
+			RequestedBy:   requestedBy,
 		}
 
-		// Create the decision point record
-		if err := tx.CreateDecisionPoint(ctx, decisionPoint); err != nil {
-			return fmt.Errorf("creating decision point: %w", err)
+		result, err := daemonClient.DecisionCreate(createArgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating decision via daemon: %v\n", err)
+			os.Exit(1)
 		}
 
-		// Add parent-child dependency if parent specified
-		if parent != "" {
-			dep := &types.Dependency{
-				IssueID:     decisionID,
-				DependsOnID: parent,
-				Type:        types.DepParentChild,
-				CreatedAt:   now,
-			}
-			if err := tx.AddDependency(ctx, dep, actor); err != nil {
-				return fmt.Errorf("adding parent dependency: %w", err)
-			}
+		decisionPoint = result.Decision
+		gateIssue = result.Issue
+		decisionID = decisionPoint.IssueID
+
+		// Note: Some advanced features like parent, blocks, predecessor, urgency, context
+		// may not be fully supported by the daemon RPC yet. They would need to be added
+		// to DecisionCreateArgs in the protocol.
+		if parent != "" || blocks != "" || predecessor != "" || decisionContext != "" {
+			fmt.Fprintf(os.Stderr, "Warning: --parent, --blocks, --predecessor, --context flags require direct database access\n")
+			fmt.Fprintf(os.Stderr, "These options were not applied via daemon RPC\n")
+		}
+	} else if store != nil {
+		// Fallback to direct storage access (full feature support)
+		var err error
+		// Generate decision point ID
+		decisionID, err = generateDecisionID(ctx, parent, prompt)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating ID: %v\n", err)
+			os.Exit(1)
 		}
 
-		// Add blocks dependency if specified
-		if blocks != "" {
-			dep := &types.Dependency{
-				IssueID:     blocks,
-				DependsOnID: decisionID,
-				Type:        types.DepBlocks,
-				CreatedAt:   now,
-			}
-			if err := tx.AddDependency(ctx, dep, actor); err != nil {
-				return fmt.Errorf("adding blocks dependency: %w", err)
-			}
+		// Create the gate issue
+		// Note: We add gt:decision and decision:pending labels so that decisions
+		// show up in 'gt decision list' and 'gt decision watch' (hq-3q571)
+		gateIssue = &types.Issue{
+			ID:        decisionID, // May be empty - CreateIssue will generate
+			Title:     truncateTitle(prompt, 100),
+			IssueType: types.IssueType("gate"),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			AwaitType: "decision",
+			Timeout:   timeout,
+			Labels:    []string{"gt:decision", "decision:pending", "urgency:" + urgency},
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
 
-		return nil
-	})
+		// Create the decision point record (IssueID set after CreateIssue)
+		decisionPoint = &types.DecisionPoint{
+			Prompt:        prompt,
+			Context:       decisionContext,
+			Options:       optionsJSON,
+			DefaultOption: defaultOption,
+			Iteration:     1,
+			MaxIterations: maxIterations,
+			CreatedAt:     now,
+			RequestedBy:   requestedBy,
+			Urgency:       urgency,
+			PriorID:       predecessor,
+			ParentBeadID:  parent,
+		}
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Use transaction to create both atomically
+		err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+			// Create the gate issue (generates ID if empty)
+			if err := tx.CreateIssue(ctx, gateIssue, actor); err != nil {
+				return fmt.Errorf("creating gate issue: %w", err)
+			}
+
+			// Now gateIssue.ID is populated (either provided or generated)
+			decisionID = gateIssue.ID
+			decisionPoint.IssueID = decisionID
+
+			// Add labels for gt decision integration (hq-3q571)
+			// Labels are stored in a separate table, so we must add them explicitly
+			for _, label := range gateIssue.Labels {
+				if err := tx.AddLabel(ctx, decisionID, label, actor); err != nil {
+					return fmt.Errorf("adding label %s: %w", label, err)
+				}
+			}
+
+			// Create the decision point record
+			if err := tx.CreateDecisionPoint(ctx, decisionPoint); err != nil {
+				return fmt.Errorf("creating decision point: %w", err)
+			}
+
+			// Add parent-child dependency if parent specified
+			if parent != "" {
+				dep := &types.Dependency{
+					IssueID:     decisionID,
+					DependsOnID: parent,
+					Type:        types.DepParentChild,
+					CreatedAt:   now,
+				}
+				if err := tx.AddDependency(ctx, dep, actor); err != nil {
+					return fmt.Errorf("adding parent dependency: %w", err)
+				}
+			}
+
+			// Add blocks dependency if specified
+			if blocks != "" {
+				dep := &types.Dependency{
+					IssueID:     blocks,
+					DependsOnID: decisionID,
+					Type:        types.DepBlocks,
+					CreatedAt:   now,
+				}
+				if err := tx.AddDependency(ctx, dep, actor); err != nil {
+					return fmt.Errorf("adding blocks dependency: %w", err)
+				}
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		markDirtyAndScheduleFlush()
+	} else {
+		fmt.Fprintf(os.Stderr, "Error: no database connection (neither daemon nor local store available)\n")
 		os.Exit(1)
 	}
-
-	markDirtyAndScheduleFlush()
 
 	// Trigger decision create hook (hq-e0adf6.4)
 	// Use RunDecisionSync to ensure hook completes before program exits

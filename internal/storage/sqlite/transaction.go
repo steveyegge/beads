@@ -344,7 +344,9 @@ func (t *sqliteTxStorage) GetIssue(ctx context.Context, id string) (*types.Issue
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until, metadata
+		       due_at, defer_until, metadata,
+		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
+		       advice_subscriptions, advice_subscriptions_exclude
 		FROM issues
 		WHERE id = ?
 	`, id)
@@ -427,7 +429,15 @@ func (t *sqliteTxStorage) UpdateIssue(ctx context.Context, id string, updates ma
 		}
 
 		setClauses = append(setClauses, fmt.Sprintf("%s = ?", key))
-		args = append(args, value)
+
+		// Handle JSON serialization for array fields stored as TEXT
+		switch key {
+		case "waiters", "advice_subscriptions", "advice_subscriptions_exclude":
+			jsonData, _ := json.Marshal(value)
+			args = append(args, string(jsonData))
+		default:
+			args = append(args, value)
+		}
 	}
 
 	// Auto-manage closed_at when status changes
@@ -1388,7 +1398,9 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until, metadata
+		       due_at, defer_until, metadata,
+		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
+		       advice_subscriptions, advice_subscriptions_exclude
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
@@ -1458,6 +1470,11 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	var deferUntil sql.NullTime
 	// Custom metadata field (GH#1406)
 	var metadata sql.NullString
+	// Advice hook fields
+	var adviceHookCommand, adviceHookTrigger, adviceHookOnFailure sql.NullString
+	var adviceHookTimeout sql.NullInt64
+	// Advice subscription fields
+	var adviceSubscriptions, adviceSubscriptionsExclude sql.NullString
 
 	err := row.Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -1470,6 +1487,8 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&dueAt, &deferUntil, &metadata,
+		&adviceHookCommand, &adviceHookTrigger, &adviceHookTimeout, &adviceHookOnFailure,
+		&adviceSubscriptions, &adviceSubscriptionsExclude,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1562,6 +1581,26 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	// Custom metadata field (GH#1406)
 	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
 		issue.Metadata = []byte(metadata.String)
+	}
+	// Advice hook fields
+	if adviceHookCommand.Valid {
+		issue.AdviceHookCommand = adviceHookCommand.String
+	}
+	if adviceHookTrigger.Valid {
+		issue.AdviceHookTrigger = adviceHookTrigger.String
+	}
+	if adviceHookTimeout.Valid {
+		issue.AdviceHookTimeout = int(adviceHookTimeout.Int64)
+	}
+	if adviceHookOnFailure.Valid {
+		issue.AdviceHookOnFailure = adviceHookOnFailure.String
+	}
+	// Advice subscription fields
+	if adviceSubscriptions.Valid && adviceSubscriptions.String != "" {
+		issue.AdviceSubscriptions = parseJSONStringArray(adviceSubscriptions.String)
+	}
+	if adviceSubscriptionsExclude.Valid && adviceSubscriptionsExclude.String != "" {
+		issue.AdviceSubscriptionsExclude = parseJSONStringArray(adviceSubscriptionsExclude.String)
 	}
 
 	return &issue, nil

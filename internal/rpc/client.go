@@ -604,6 +604,68 @@ func (c *Client) GateWait(args *GateWaitArgs) (*Response, error) {
 	return c.Execute(OpGateWait, args)
 }
 
+// Decision point operations
+
+// DecisionCreate creates a decision point via the daemon
+func (c *Client) DecisionCreate(args *DecisionCreateArgs) (*DecisionResponse, error) {
+	resp, err := c.Execute(OpDecisionCreate, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result DecisionResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal decision create response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// DecisionGet retrieves a decision point via the daemon
+func (c *Client) DecisionGet(args *DecisionGetArgs) (*DecisionResponse, error) {
+	resp, err := c.Execute(OpDecisionGet, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result DecisionResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal decision get response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// DecisionResolve resolves a decision point via the daemon
+func (c *Client) DecisionResolve(args *DecisionResolveArgs) (*DecisionResponse, error) {
+	resp, err := c.Execute(OpDecisionResolve, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result DecisionResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal decision resolve response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// DecisionList lists decision points via the daemon
+func (c *Client) DecisionList(args *DecisionListArgs) (*DecisionListResponse, error) {
+	resp, err := c.Execute(OpDecisionList, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result DecisionListResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal decision list response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // GetWorkerStatus retrieves worker status via the daemon
 func (c *Client) GetWorkerStatus(args *GetWorkerStatusArgs) (*GetWorkerStatusResponse, error) {
 	resp, err := c.Execute(OpGetWorkerStatus, args)

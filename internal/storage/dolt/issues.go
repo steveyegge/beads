@@ -720,7 +720,11 @@ func isAllowedUpdateField(key string) bool {
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
 		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
 		"metadata": true,
-		"advice_subscriptions": true, "advice_subscriptions_exclude": true, // gt-w2mh8a.6
+		// Advice hook fields
+		"advice_hook_command": true, "advice_hook_trigger": true,
+		"advice_hook_timeout": true, "advice_hook_on_failure": true,
+		// Advice subscription fields
+		"advice_subscriptions": true, "advice_subscriptions_exclude": true,
 	}
 	return allowed[key]
 }

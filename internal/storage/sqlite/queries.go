@@ -355,6 +355,11 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var deferUntil sql.NullTime
 	// Custom metadata field (GH#1406)
 	var metadata sql.NullString
+	// Advice hook fields
+	var adviceHookCommand, adviceHookTrigger, adviceHookOnFailure sql.NullString
+	var adviceHookTimeout sql.NullInt64
+	// Advice subscription fields
+	var adviceSubscriptions, adviceSubscriptionsExclude sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -369,7 +374,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
-		       due_at, defer_until, metadata
+		       due_at, defer_until, metadata,
+		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
+		       advice_subscriptions, advice_subscriptions_exclude
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -384,6 +391,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil, &metadata,
+		&adviceHookCommand, &adviceHookTrigger, &adviceHookTimeout, &adviceHookOnFailure,
+		&adviceSubscriptions, &adviceSubscriptionsExclude,
 	)
 
 	if err == sql.ErrNoRows {
@@ -523,6 +532,26 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	// Custom metadata field (GH#1406)
 	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
 		issue.Metadata = []byte(metadata.String)
+	}
+	// Advice hook fields
+	if adviceHookCommand.Valid {
+		issue.AdviceHookCommand = adviceHookCommand.String
+	}
+	if adviceHookTrigger.Valid {
+		issue.AdviceHookTrigger = adviceHookTrigger.String
+	}
+	if adviceHookTimeout.Valid {
+		issue.AdviceHookTimeout = int(adviceHookTimeout.Int64)
+	}
+	if adviceHookOnFailure.Valid {
+		issue.AdviceHookOnFailure = adviceHookOnFailure.String
+	}
+	// Advice subscription fields
+	if adviceSubscriptions.Valid && adviceSubscriptions.String != "" {
+		issue.AdviceSubscriptions = parseJSONStringArray(adviceSubscriptions.String)
+	}
+	if adviceSubscriptionsExclude.Valid && adviceSubscriptionsExclude.String != "" {
+		issue.AdviceSubscriptionsExclude = parseJSONStringArray(adviceSubscriptionsExclude.String)
 	}
 
 	// Fetch labels for this issue
@@ -819,6 +848,14 @@ var allowedUpdateFields = map[string]bool{
 	"waiters":  true,
 	// Custom metadata field (GH#1406)
 	"metadata": true,
+	// Advice hook fields
+	"advice_hook_command":    true,
+	"advice_hook_trigger":    true,
+	"advice_hook_timeout":    true,
+	"advice_hook_on_failure": true,
+	// Advice subscription fields
+	"advice_subscriptions":         true,
+	"advice_subscriptions_exclude": true,
 }
 
 // validatePriority validates a priority value
@@ -935,10 +972,11 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		setClauses = append(setClauses, fmt.Sprintf("%s = ?", columnName))
 
 		// Handle JSON serialization for array fields stored as TEXT
-		if key == "waiters" {
-			waitersJSON, _ := json.Marshal(value)
-			args = append(args, string(waitersJSON))
-		} else {
+		switch key {
+		case "waiters", "advice_subscriptions", "advice_subscriptions_exclude":
+			jsonData, _ := json.Marshal(value)
+			args = append(args, string(jsonData))
+		default:
 			args = append(args, value)
 		}
 	}

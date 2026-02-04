@@ -46,7 +46,7 @@ func TestTCPIntegration_StartServerWithTCP(t *testing.T) {
 	// Use port 0 for automatic port assignment
 	tcpAddr := "127.0.0.1:0"
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, tcpAddr, "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, tcpAddr, "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("startRPCServer failed: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestTCPIntegration_ConcurrentConnections(t *testing.T) {
 
 	tcpAddr := "127.0.0.1:0"
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, tcpAddr, "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, tcpAddr, "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("startRPCServer failed: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestTCPIntegration_ConnectionTimeout(t *testing.T) {
 
 	tcpAddr := "127.0.0.1:0"
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, tcpAddr, "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, tcpAddr, "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("startRPCServer failed: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestTCPIntegration_InvalidAddressHandling(t *testing.T) {
 	t.Run("invalid_tcp_address_fails", func(t *testing.T) {
 		// Use an invalid address format
 		invalidAddr := "invalid:address:format"
-		_, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, invalidAddr, "", "", "", log)
+		_, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, invalidAddr, "", "", "", "", log)
 		if err == nil {
 			t.Error("Expected error for invalid TCP address, got nil")
 		}
@@ -376,7 +376,7 @@ func TestTCPIntegration_InvalidAddressHandling(t *testing.T) {
 
 		// Try to start server on same port
 		socketPath2 := filepath.Join(tmpDir, "bd2.sock")
-		_, _, err = startRPCServer(ctx, socketPath2, testStore, workspacePath, dbPath, occupiedAddr, "", "", "", log)
+		_, _, err = startRPCServer(ctx, socketPath2, testStore, workspacePath, dbPath, occupiedAddr, "", "", "", "", log)
 		if err == nil {
 			t.Error("Expected error for occupied port, got nil")
 		}
@@ -409,7 +409,7 @@ func TestTCPIntegration_MultipleRequests(t *testing.T) {
 
 	tcpAddr := "127.0.0.1:0"
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, tcpAddr, "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, tcpAddr, "", "", "", "", log)
 	if err != nil {
 		t.Fatalf("startRPCServer failed: %v", err)
 	}

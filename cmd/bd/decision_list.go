@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -40,30 +41,10 @@ func init() {
 }
 
 func runDecisionList(cmd *cobra.Command, args []string) {
-	// Ensure store is initialized
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
 	showAll, _ := cmd.Flags().GetBool("all")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 
 	ctx := rootCtx
-
-	// Get pending decisions from storage
-	pendingDecisions, err := store.ListPendingDecisions(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing decisions: %v\n", err)
-		os.Exit(1)
-	}
-
-	// For now, we only have ListPendingDecisions
-	// TODO: Add ListAllDecisions when --all is needed (requires storage method)
-	if showAll {
-		// Warn user that --all is not yet fully implemented
-		fmt.Fprintf(os.Stderr, "Note: --all flag currently only shows pending decisions (full history not yet implemented)\n\n")
-	}
 
 	// Enrich with issue data
 	type enrichedDecision struct {
@@ -73,24 +54,72 @@ func runDecisionList(cmd *cobra.Command, args []string) {
 	}
 
 	var decisions []enrichedDecision
-	for _, dp := range pendingDecisions {
-		ed := enrichedDecision{DecisionPoint: dp}
 
-		// Get associated issue
-		issue, err := store.GetIssue(ctx, dp.IssueID)
-		if err == nil && issue != nil {
-			ed.Issue = issue
+	// Prefer daemon RPC when available
+	if daemonClient != nil {
+		listArgs := &rpc.DecisionListArgs{
+			All: showAll,
+		}
+		result, err := daemonClient.DecisionList(listArgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing decisions via daemon: %v\n", err)
+			os.Exit(1)
 		}
 
-		// Parse options
-		if dp.Options != "" {
-			var opts []types.DecisionOption
-			if err := json.Unmarshal([]byte(dp.Options), &opts); err == nil {
-				ed.Options = opts
+		// Convert from RPC response to enrichedDecision
+		for _, dr := range result.Decisions {
+			ed := enrichedDecision{
+				DecisionPoint: dr.Decision,
+				Issue:         dr.Issue,
 			}
+
+			// Parse options
+			if dr.Decision != nil && dr.Decision.Options != "" {
+				var opts []types.DecisionOption
+				if err := json.Unmarshal([]byte(dr.Decision.Options), &opts); err == nil {
+					ed.Options = opts
+				}
+			}
+
+			decisions = append(decisions, ed)
+		}
+	} else if store != nil {
+		// Fallback to direct storage access
+		pendingDecisions, err := store.ListPendingDecisions(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing decisions: %v\n", err)
+			os.Exit(1)
 		}
 
-		decisions = append(decisions, ed)
+		// For now, we only have ListPendingDecisions
+		// TODO: Add ListAllDecisions when --all is needed (requires storage method)
+		if showAll {
+			// Warn user that --all is not yet fully implemented
+			fmt.Fprintf(os.Stderr, "Note: --all flag currently only shows pending decisions (full history not yet implemented)\n\n")
+		}
+
+		for _, dp := range pendingDecisions {
+			ed := enrichedDecision{DecisionPoint: dp}
+
+			// Get associated issue
+			issue, err := store.GetIssue(ctx, dp.IssueID)
+			if err == nil && issue != nil {
+				ed.Issue = issue
+			}
+
+			// Parse options
+			if dp.Options != "" {
+				var opts []types.DecisionOption
+				if err := json.Unmarshal([]byte(dp.Options), &opts); err == nil {
+					ed.Options = opts
+				}
+			}
+
+			decisions = append(decisions, ed)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "Error: no database connection (neither daemon nor local store available)\n")
+		os.Exit(1)
 	}
 
 	// JSON output

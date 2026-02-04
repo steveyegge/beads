@@ -59,8 +59,10 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 			sender, ephemeral, pinned, is_template, crystallizes, auto_close,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
-			due_at, defer_until, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			due_at, defer_until, metadata,
+			advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
+			advice_subscriptions, advice_subscriptions_exclude
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 		issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -73,6 +75,8 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 		string(issue.MolType),
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 		issue.DueAt, issue.DeferUntil, string(issue.Metadata),
+		issue.AdviceHookCommand, issue.AdviceHookTrigger, issue.AdviceHookTimeout, issue.AdviceHookOnFailure,
+		formatJSONStringArray(issue.AdviceSubscriptions), formatJSONStringArray(issue.AdviceSubscriptionsExclude),
 	)
 	if err != nil {
 		// INSERT OR IGNORE should handle duplicates, but driver may still return error
@@ -125,8 +129,10 @@ func insertIssueStrict(ctx context.Context, conn *sql.Conn, issue *types.Issue) 
 			sender, ephemeral, pinned, is_template, crystallizes, auto_close,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
-			due_at, defer_until, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			due_at, defer_until, metadata,
+			advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
+			advice_subscriptions, advice_subscriptions_exclude
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 		issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -139,6 +145,8 @@ func insertIssueStrict(ctx context.Context, conn *sql.Conn, issue *types.Issue) 
 		string(issue.MolType),
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 		issue.DueAt, issue.DeferUntil, string(issue.Metadata),
+		issue.AdviceHookCommand, issue.AdviceHookTrigger, issue.AdviceHookTimeout, issue.AdviceHookOnFailure,
+		formatJSONStringArray(issue.AdviceSubscriptions), formatJSONStringArray(issue.AdviceSubscriptionsExclude),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert issue: %w", err)
@@ -157,8 +165,10 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			sender, ephemeral, pinned, is_template, crystallizes, auto_close,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
-			due_at, defer_until, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			due_at, defer_until, metadata,
+			advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
+			advice_subscriptions, advice_subscriptions_exclude
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -204,6 +214,8 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			string(issue.MolType),
 			issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 			issue.DueAt, issue.DeferUntil, string(issue.Metadata),
+			issue.AdviceHookCommand, issue.AdviceHookTrigger, issue.AdviceHookTimeout, issue.AdviceHookOnFailure,
+			formatJSONStringArray(issue.AdviceSubscriptions), formatJSONStringArray(issue.AdviceSubscriptionsExclude),
 		)
 		if err != nil {
 			// INSERT OR IGNORE should handle duplicates, but driver may still return error
@@ -231,8 +243,10 @@ func insertIssuesStrict(ctx context.Context, conn *sql.Conn, issues []*types.Iss
 			sender, ephemeral, pinned, is_template, crystallizes, auto_close,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
-			due_at, defer_until, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			due_at, defer_until, metadata,
+			advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
+			advice_subscriptions, advice_subscriptions_exclude
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -278,6 +292,8 @@ func insertIssuesStrict(ctx context.Context, conn *sql.Conn, issues []*types.Iss
 			string(issue.MolType),
 			issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 			issue.DueAt, issue.DeferUntil, string(issue.Metadata),
+			issue.AdviceHookCommand, issue.AdviceHookTrigger, issue.AdviceHookTimeout, issue.AdviceHookOnFailure,
+			formatJSONStringArray(issue.AdviceSubscriptions), formatJSONStringArray(issue.AdviceSubscriptionsExclude),
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
