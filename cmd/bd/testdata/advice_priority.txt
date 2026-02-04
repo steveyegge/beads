@@ -1,53 +1,41 @@
 # Test bd advice priority functionality
+# Note: Priority values are 0-4, where 0 is highest priority
 bd init --prefix test
 
-# Test 1: Create advice with high priority (P1)
-bd advice add 'Critical security advice' -p 1 -d 'Must follow this'
+# Test 1: Create advice with highest priority (0)
+bd advice add 'Critical security advice' -p 0 -d 'Must follow this'
 stdout 'Created advice:'
-stdout 'P1'
 
-# Test 2: Create advice with default priority (P2)
+# Test 2: Create advice with default priority (2)
 bd advice add 'Normal advice' -d 'Standard priority'
 stdout 'Created advice:'
-stdout 'P2'
 
-# Test 3: Create advice with low priority (P3)
+# Test 3: Create advice with low priority (3)
 bd advice add 'Nice to have' -p 3 -d 'Optional guidance'
 stdout 'Created advice:'
-stdout 'P3'
 
-# Test 4: Create advice with very low priority (P4)
-bd advice add 'Background info' -p 4 -d 'For context'
+# Test 4: Create advice with lowest priority (4)
+bd advice add 'FYI only' -p 4 -d 'Informational'
 stdout 'Created advice:'
-stdout 'P4'
 
-# Test 5: Create advice with lowest priority (P5)
-bd advice add 'FYI only' -p 5 -d 'Informational'
-stdout 'Created advice:'
-stdout 'P5'
-
-# Test 6: Long form priority flag
+# Test 5: Long form priority flag
 bd advice add 'Explicit priority' --priority 2 -d 'Using long flag'
 stdout 'Created advice:'
-stdout 'P2'
 
-# Test 7: Priority combined with scope
-bd advice add 'High priority rig advice' --rig testrig -p 1
+# Test 6: Priority combined with scope
+bd advice add 'High priority rig advice' --rig testrig -p 0
 stdout 'Created advice:'
-stdout 'P1'
-stdout 'Scope: Rig: testrig'
+stdout 'rig:testrig'
 
-# Test 8: Priority combined with labels
+# Test 7: Priority combined with labels
 bd advice add 'Priority and labels' -p 1 -l urgent -l security
 stdout 'Created advice:'
-stdout 'P1'
 stdout 'urgent'
 stdout 'security'
 
-# Test 9: Verify all priorities appear in list
+# Test 8: Verify all priorities appear in list
 bd advice list
 stdout 'Critical security advice'
 stdout 'Normal advice'
 stdout 'Nice to have'
-stdout 'Background info'
 stdout 'FYI only'

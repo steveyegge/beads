@@ -14,29 +14,33 @@ stdout 'Rig advice'
 stdout 'Role advice'
 stdout 'Agent advice'
 
-# Test 2: Filter by rig
-bd advice list --rig beads
+# Test 2: Filter by label (shows any matching rig:beads)
+bd advice list -l rig:beads
 stdout 'Rig advice'
+stdout 'Role advice'
 ! stdout 'Global advice'
+! stdout 'Agent advice'
 
-# Test 3: Filter by role
-bd advice list --rig beads --role polecat
+# Test 3: Filter by role label
+bd advice list -l role:polecat
 stdout 'Role advice'
 ! stdout 'Rig advice'
+! stdout 'Global advice'
 
-# Test 4: Filter by agent
-bd advice list --agent beads/polecats/quartz
+# Test 4: Filter by agent label
+bd advice list -l agent:beads/polecats/quartz
 stdout 'Agent advice'
 ! stdout 'Role advice'
+! stdout 'Global advice'
 
-# Test 5: Use --for flag (inheritance chain)
+# Test 5: Use --for flag (inheritance chain - agent sees all applicable advice)
 bd advice list --for beads/polecats/quartz
 stdout 'Global advice'
 stdout 'Rig advice'
 stdout 'Role advice'
 stdout 'Agent advice'
 
-# Test 6: Different agent sees different advice
+# Test 6: Different agent sees only global advice
 bd advice list --for gastown/polecats/alpha
 stdout 'Global advice'
 ! stdout 'Rig advice'

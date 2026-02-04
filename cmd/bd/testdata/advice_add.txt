@@ -4,22 +4,23 @@ bd init --prefix test
 # Test 1: Create global advice (no targeting)
 bd advice add 'Global test advice' -d 'Advice visible to all agents'
 stdout 'Created advice:'
-stdout 'Scope: Global'
+stdout 'Labels: global'
 
 # Test 2: Create rig-targeted advice
 bd advice add 'Rig test advice' --rig testrig -d 'Advice for testrig only'
 stdout 'Created advice:'
-stdout 'Scope: Rig: testrig'
+stdout 'rig:testrig'
 
 # Test 3: Create role-targeted advice (requires rig)
 bd advice add 'Role test advice' --rig testrig --role polecat -d 'Advice for polecats in testrig'
 stdout 'Created advice:'
-stdout 'Scope: Role: testrig/polecat'
+stdout 'role:polecat'
+stdout 'rig:testrig'
 
 # Test 4: Create agent-targeted advice
 bd advice add 'Agent test advice' --agent testrig/polecats/alpha -d 'Advice for specific agent'
 stdout 'Created advice:'
-stdout 'Scope: Agent: testrig/polecats/alpha'
+stdout 'agent:testrig/polecats/alpha'
 
 # Test 5: Verify all advice appears in list
 bd advice list

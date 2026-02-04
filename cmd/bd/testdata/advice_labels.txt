@@ -30,11 +30,12 @@ stdout 'Created advice:'
 # Test 6: Labels combined with scope targeting
 bd advice add 'Rig labeled advice' --rig testrig -l rig-specific -d 'For testrig only'
 stdout 'Created advice:'
-stdout 'Scope: Rig: testrig'
+stdout 'rig:testrig'
 stdout 'rig-specific'
 
 # Test 7: Labels combined with role targeting
 bd advice add 'Role labeled advice' --rig testrig --role polecat -l worker -l transient
 stdout 'Created advice:'
-stdout 'Scope: Role: testrig/polecat'
+stdout 'role:polecat'
+stdout 'rig:testrig'
 stdout 'worker'
