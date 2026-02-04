@@ -556,16 +556,26 @@ func maxTimePtr(t1, t2 *time.Time) *time.Time {
 	return t2
 }
 
+// isTimeAfter returns true if t1 is after t2 (or equal - left wins on tie).
+// Zero times are treated as "unset" - a set time beats an unset time.
+// Matches internal/merge.isTimeAfter semantics for consistency.
 func isTimeAfter(t1, t2 time.Time) bool {
+	if t1.IsZero() && t2.IsZero() {
+		return true // both unset, left wins
+	}
 	if t1.IsZero() {
-		return false
+		return false // t1 unset, t2 set - t2 wins
 	}
 	if t2.IsZero() {
-		return true
+		return true // t1 set, t2 unset - t1 wins
 	}
-	return t1.After(t2)
+	// Both set - left wins on tie (matches internal/merge)
+	return !t2.After(t1)
 }
 
+// isTimePtrAfter returns true if t1 is after t2 (or equal - left wins on tie) for pointer times.
+// Nil pointers are treated as "unset" - a set time beats an unset time.
+// Matches internal/merge.isTimePtrAfter semantics for consistency.
 func isTimePtrAfter(t1, t2 *time.Time) bool {
 	t1Set := t1 != nil && !t1.IsZero()
 	t2Set := t2 != nil && !t2.IsZero()
@@ -579,7 +589,8 @@ func isTimePtrAfter(t1, t2 *time.Time) bool {
 	if !t2Set {
 		return true // t1 set, t2 unset - t1 wins
 	}
-	return t1.After(*t2)
+	// Both set - left wins on tie (matches internal/merge)
+	return !t2.After(*t1)
 }
 
 func outputResolveError(filePath, errMsg string) {
