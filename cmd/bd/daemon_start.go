@@ -37,6 +37,14 @@ Examples:
   bd daemon start --federation       # Enable federation mode (dolt sql-server)`,
 	PreRunE: guardDaemonStartForDolt,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Check if BD_DAEMON_HOST is set - refuse to start local daemon when configured for remote
+		if remoteHost := os.Getenv("BD_DAEMON_HOST"); remoteHost != "" {
+			fmt.Fprintf(os.Stderr, "Error: BD_DAEMON_HOST is set (%s)\n", remoteHost)
+			fmt.Fprintf(os.Stderr, "Cannot start a local daemon when configured for remote daemon.\n")
+			fmt.Fprintf(os.Stderr, "Hint: Use 'bd daemon status' to check the remote daemon, or unset BD_DAEMON_HOST to use a local daemon.\n")
+			os.Exit(1)
+		}
+
 		interval, _ := cmd.Flags().GetDuration("interval")
 		autoCommit, _ := cmd.Flags().GetBool("auto-commit")
 		autoPush, _ := cmd.Flags().GetBool("auto-push")
