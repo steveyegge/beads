@@ -836,11 +836,12 @@ func TestStatistics_BlockedAndReadyCounts(t *testing.T) {
 		t.Fatalf("GetStatistics failed: %v", err)
 	}
 
-	// Expected:
-	// - BlockedIssues: 2 (blocked1 and blocked2)
+	// Expected (gt-w676pl.3: BlockedIssues counts literal status='blocked', not dependency-blocked):
+	// - BlockedIssues: 0 (no issues have status='blocked')
 	// - ReadyIssues: 3 (blocker, ready1, ready2 - all open with no open blockers)
-	if stats.BlockedIssues != 2 {
-		t.Errorf("Expected 2 blocked issues, got %d", stats.BlockedIssues)
+	// Note: blocked1 and blocked2 have open blockers but their status is 'open' and 'in_progress'
+	if stats.BlockedIssues != 0 {
+		t.Errorf("Expected 0 blocked issues (none have status='blocked'), got %d", stats.BlockedIssues)
 	}
 	if stats.ReadyIssues != 3 {
 		t.Errorf("Expected 3 ready issues, got %d", stats.ReadyIssues)

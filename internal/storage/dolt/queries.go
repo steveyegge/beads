@@ -557,12 +557,14 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 
 	// Get counts (mirror SQLite semantics: exclude tombstones from TotalIssues, report separately).
 	// Important: COALESCE to avoid NULL scans when the table is empty.
+	// (gt-w676pl.3: count blocked by literal status to match bd count --status blocked)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(SUM(CASE WHEN status != 'tombstone' THEN 1 ELSE 0 END), 0) as total,
 			COALESCE(SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END), 0) as open_count,
 			COALESCE(SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END), 0) as in_progress,
 			COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0) as closed,
+			COALESCE(SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END), 0) as blocked,
 			COALESCE(SUM(CASE WHEN status = 'deferred' THEN 1 ELSE 0 END), 0) as deferred,
 			COALESCE(SUM(CASE WHEN status = 'tombstone' THEN 1 ELSE 0 END), 0) as tombstone,
 			COALESCE(SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END), 0) as pinned
@@ -572,26 +574,13 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 		&stats.OpenIssues,
 		&stats.InProgressIssues,
 		&stats.ClosedIssues,
+		&stats.BlockedIssues,
 		&stats.DeferredIssues,
 		&stats.TombstoneIssues,
 		&stats.PinnedIssues,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get statistics: %w", err)
-	}
-
-	// Blocked count (same semantics as SQLite: blocked by open deps).
-	err = s.db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT i.id)
-		FROM issues i
-		JOIN dependencies d ON i.id = d.issue_id
-		JOIN issues blocker ON d.depends_on_id = blocker.id
-		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-		  AND d.type = 'blocks'
-		  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-	`).Scan(&stats.BlockedIssues)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get blocked count: %w", err)
 	}
 
 	// Ready count (use the ready_issues view).

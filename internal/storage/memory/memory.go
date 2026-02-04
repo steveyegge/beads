@@ -1553,13 +1553,15 @@ func (m *MemoryStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 
 	stats := &types.Statistics{}
 
-	// First pass: count by status
+	// First pass: count by status (gt-w676pl.3: include StatusBlocked to match bd count --status blocked)
 	for _, issue := range m.issues {
 		switch issue.Status {
 		case types.StatusOpen:
 			stats.OpenIssues++
 		case types.StatusInProgress:
 			stats.InProgressIssues++
+		case types.StatusBlocked:
+			stats.BlockedIssues++
 		case types.StatusClosed:
 			stats.ClosedIssues++
 		case types.StatusDeferred:
@@ -1572,22 +1574,16 @@ func (m *MemoryStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 	}
 
 	// TotalIssues excludes tombstones (matches SQLite behavior)
-	stats.TotalIssues = stats.OpenIssues + stats.InProgressIssues + stats.ClosedIssues + stats.DeferredIssues + stats.PinnedIssues
+	stats.TotalIssues = stats.OpenIssues + stats.InProgressIssues + stats.BlockedIssues + stats.ClosedIssues + stats.DeferredIssues + stats.PinnedIssues
 
-	// Second pass: calculate blocked and ready issues based on dependencies
-	// An issue is blocked if it has open blockers (uses same logic as GetBlockedIssues)
+	// Second pass: calculate ready issues based on dependencies
+	// Ready = open issues with no open blockers
 	for id, issue := range m.issues {
-		// Only consider non-closed, non-tombstone issues for blocking
-		if issue.Status == types.StatusClosed || issue.Status == types.StatusTombstone {
-			continue
-		}
-
-		blockers := m.getOpenBlockers(id)
-		if len(blockers) > 0 {
-			stats.BlockedIssues++
-		} else if issue.Status == types.StatusOpen {
-			// Ready = open issues with no open blockers
-			stats.ReadyIssues++
+		if issue.Status == types.StatusOpen {
+			blockers := m.getOpenBlockers(id)
+			if len(blockers) == 0 {
+				stats.ReadyIssues++
+			}
 		}
 	}
 

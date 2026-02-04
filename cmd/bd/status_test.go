@@ -103,10 +103,10 @@ func TestStatusCommand(t *testing.T) {
 	if stats.InProgressIssues != 1 {
 		t.Errorf("Expected 1 in-progress issue, got %d", stats.InProgressIssues)
 	}
-	if stats.BlockedIssues != 0 {
-		// Note: BlockedIssues counts issues that are blocked by dependencies
-		// Our test issue with status=blocked doesn't have dependencies, so count is 0
-		t.Logf("BlockedIssues: %d (expected 0, status=blocked without deps)", stats.BlockedIssues)
+	// gt-w676pl.3: BlockedIssues now counts issues with literal status='blocked'
+	// (matching bd count --status blocked behavior) rather than dependency-blocked issues
+	if stats.BlockedIssues != 1 {
+		t.Errorf("Expected 1 blocked issue (status='blocked'), got %d", stats.BlockedIssues)
 	}
 	if stats.ClosedIssues != 1 {
 		t.Errorf("Expected 1 closed issue, got %d", stats.ClosedIssues)
