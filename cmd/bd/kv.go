@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 )
 
 // kvPrefix is prepended to all user keys to separate them from internal config
@@ -68,17 +69,25 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("kv set")
 
-		if err := ensureDirectMode("kv set requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
 		key := args[0]
 		if err := validateKVKey(key); err != nil {
 			FatalErrorRespectJSON("invalid key: %v", err)
 		}
 		value := args[1]
 		storageKey := kvPrefix + key
+
+		// Use daemon RPC when available (bd-hdq5)
+		if daemonClient != nil {
+			runKVSetViaDaemon(key, storageKey, value)
+			return
+		}
+
+		// Fallback to direct store access
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
+			os.Exit(1)
+		}
 
 		ctx := rootCtx
 		if err := store.SetConfig(ctx, storageKey, value); err != nil {
@@ -96,6 +105,29 @@ Examples:
 	},
 }
 
+// runKVSetViaDaemon executes kv set via daemon RPC (bd-hdq5)
+func runKVSetViaDaemon(userKey, storageKey, value string) {
+	args := &rpc.ConfigSetArgs{
+		Key:   storageKey,
+		Value: value,
+	}
+
+	_, err := daemonClient.ConfigSet(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]string{
+			"key":   userKey,
+			"value": value,
+		})
+	} else {
+		fmt.Printf("Set %s = %s\n", userKey, value)
+	}
+}
+
 // kvGetCmd gets a value by key
 var kvGetCmd = &cobra.Command{
 	Use:   "get <key>",
@@ -107,13 +139,21 @@ Examples:
   bd kv get api_endpoint`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := ensureDirectMode("kv get requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
 		key := args[0]
 		storageKey := kvPrefix + key
+
+		// Use daemon RPC when available (bd-hdq5)
+		if daemonClient != nil {
+			runKVGetViaDaemon(key, storageKey)
+			return
+		}
+
+		// Fallback to direct store access
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
+			os.Exit(1)
+		}
 
 		ctx := rootCtx
 		value, err := store.GetConfig(ctx, storageKey)
@@ -142,6 +182,38 @@ Examples:
 	},
 }
 
+// runKVGetViaDaemon executes kv get via daemon RPC (bd-hdq5)
+func runKVGetViaDaemon(userKey, storageKey string) {
+	args := &rpc.GetConfigArgs{
+		Key: storageKey,
+	}
+
+	result, err := daemonClient.GetConfig(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		output := map[string]interface{}{
+			"key":   userKey,
+			"value": result.Value,
+			"found": result.Value != "",
+		}
+		outputJSON(output)
+		if result.Value == "" {
+			os.Exit(1)
+		}
+	} else {
+		if result.Value == "" {
+			fmt.Fprintf(os.Stderr, "%s (not set)\n", userKey)
+			os.Exit(1)
+		} else {
+			fmt.Printf("%s\n", result.Value)
+		}
+	}
+}
+
 // kvClearCmd deletes a key
 var kvClearCmd = &cobra.Command{
 	Use:   "clear <key>",
@@ -155,16 +227,24 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("kv clear")
 
-		if err := ensureDirectMode("kv clear requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
 		key := args[0]
 		if err := validateKVKey(key); err != nil {
 			FatalErrorRespectJSON("invalid key: %v", err)
 		}
 		storageKey := kvPrefix + key
+
+		// Use daemon RPC when available (bd-hdq5)
+		if daemonClient != nil {
+			runKVClearViaDaemon(key, storageKey)
+			return
+		}
+
+		// Fallback to direct store access
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
+			os.Exit(1)
+		}
 
 		ctx := rootCtx
 		if err := store.DeleteConfig(ctx, storageKey); err != nil {
@@ -182,6 +262,28 @@ Examples:
 	},
 }
 
+// runKVClearViaDaemon executes kv clear via daemon RPC (bd-hdq5)
+func runKVClearViaDaemon(userKey, storageKey string) {
+	args := &rpc.ConfigUnsetArgs{
+		Key: storageKey,
+	}
+
+	_, err := daemonClient.ConfigUnset(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]string{
+			"key":     userKey,
+			"deleted": "true",
+		})
+	} else {
+		fmt.Printf("Cleared %s\n", userKey)
+	}
+}
+
 // kvListCmd lists all key-value pairs
 var kvListCmd = &cobra.Command{
 	Use:   "list",
@@ -192,8 +294,16 @@ Examples:
   bd kv list
   bd kv list --json`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := ensureDirectMode("kv list requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Use daemon RPC when available (bd-hdq5)
+		if daemonClient != nil {
+			runKVListViaDaemon()
+			return
+		}
+
+		// Fallback to direct store access
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
 			os.Exit(1)
 		}
 
@@ -203,37 +313,53 @@ Examples:
 			FatalErrorRespectJSON("listing keys: %v", err)
 		}
 
-		// Filter for kv.* keys and strip prefix
-		kvPairs := make(map[string]string)
-		for k, v := range allConfig {
-			if strings.HasPrefix(k, kvPrefix) {
-				userKey := strings.TrimPrefix(k, kvPrefix)
-				kvPairs[userKey] = v
-			}
-		}
-
-		if jsonOutput {
-			outputJSON(kvPairs)
-			return
-		}
-
-		if len(kvPairs) == 0 {
-			fmt.Println("No key-value pairs set")
-			return
-		}
-
-		// Sort keys for consistent output
-		keys := make([]string, 0, len(kvPairs))
-		for k := range kvPairs {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		fmt.Println("\nKey-Value Store:")
-		for _, k := range keys {
-			fmt.Printf("  %s = %s\n", k, kvPairs[k])
-		}
+		printKVList(allConfig)
 	},
+}
+
+// runKVListViaDaemon executes kv list via daemon RPC (bd-hdq5)
+func runKVListViaDaemon() {
+	result, err := daemonClient.ConfigList()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	printKVList(result.Config)
+}
+
+// printKVList outputs the KV pairs in the appropriate format
+func printKVList(allConfig map[string]string) {
+	// Filter for kv.* keys and strip prefix
+	kvPairs := make(map[string]string)
+	for k, v := range allConfig {
+		if strings.HasPrefix(k, kvPrefix) {
+			userKey := strings.TrimPrefix(k, kvPrefix)
+			kvPairs[userKey] = v
+		}
+	}
+
+	if jsonOutput {
+		outputJSON(kvPairs)
+		return
+	}
+
+	if len(kvPairs) == 0 {
+		fmt.Println("No key-value pairs set")
+		return
+	}
+
+	// Sort keys for consistent output
+	keys := make([]string, 0, len(kvPairs))
+	for k := range kvPairs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	fmt.Println("\nKey-Value Store:")
+	for _, k := range keys {
+		fmt.Printf("  %s = %s\n", k, kvPairs[k])
+	}
 }
 
 func init() {
