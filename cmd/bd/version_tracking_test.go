@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
@@ -371,6 +372,9 @@ func TestAutoMigrateOnVersionBump_NoDatabase(t *testing.T) {
 func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 	// NOTE: Cannot use t.Parallel() because we modify global variables
 
+	// Clear BD_DAEMON_HOST - autoMigrateOnVersionBump is for direct mode only
+	t.Setenv("BD_DAEMON_HOST", "")
+
 	// Save original state FIRST - critical to avoid test pollution from previous tests
 	origUpgradeDetected := versionUpgradeDetected
 	origUpgradeAcknowledged := upgradeAcknowledged
@@ -400,6 +404,15 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Failed to close database: %v", err)
+	}
+
+	// Create metadata.json so factory.NewFromConfigWithOptions finds the database
+	cfg := &configfile.Config{
+		Backend:  configfile.BackendSQLite,
+		Database: "beads.db",
+	}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Failed to save config: %v", err)
 	}
 
 	// Simulate version upgrade (must be set to true for migration to run)
