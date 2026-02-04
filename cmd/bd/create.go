@@ -287,7 +287,7 @@ var createCmd = &cobra.Command{
 								// Found a matching route - auto-route to that rig
 								rigName := routing.ExtractProjectFromPath(route.Path)
 								if rigName != "" {
-									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
+									createInRig(cmd, rigName, explicitID, parentID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
 									return
 								}
 							}
@@ -307,7 +307,7 @@ var createCmd = &cobra.Command{
 			targetRig = prefixOverride
 		}
 		if targetRig != "" {
-			createInRig(cmd, targetRig, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
+			createInRig(cmd, targetRig, explicitID, parentID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
 			return
 		}
 
@@ -1006,13 +1006,13 @@ func init() {
 
 // createInRig creates an issue in a different rig using --rig flag or auto-routing.
 // This bypasses the normal daemon/direct flow and directly creates in the target rig.
-func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp, pinned, autoClose bool) {
+func createInRig(cmd *cobra.Command, rigName, explicitID, parentID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp, pinned, autoClose bool) {
 	ctx := rootCtx
 
 	// When daemon is available, use RPC with TargetRig (gt-oasyjm.1 - routes in beads)
 	// This enables cross-rig creation to work with remote daemon via HTTP
 	if daemonClient != nil {
-		createInRigViaDaemon(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
+		createInRigViaDaemon(cmd, rigName, explicitID, parentID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
 		return
 	}
 
@@ -1166,7 +1166,7 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 
 // createInRigViaDaemon creates an issue in a different rig using daemon RPC with TargetRig.
 // This enables cross-rig creation to work with remote daemon (gt-oasyjm.1).
-func createInRigViaDaemon(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp, pinned, autoClose bool) {
+func createInRigViaDaemon(cmd *cobra.Command, rigName, explicitID, parentID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp, pinned, autoClose bool) {
 	// Extract event-specific flags
 	eventCategory, _ := cmd.Flags().GetString("event-category")
 	eventActor, _ := cmd.Flags().GetString("event-actor")
@@ -1202,6 +1202,7 @@ func createInRigViaDaemon(cmd *cobra.Command, rigName, explicitID, title, descri
 	// Create args with TargetRig for cross-rig routing
 	createArgs := &rpc.CreateArgs{
 		ID:                 explicitID,
+		Parent:             parentID,
 		Title:              title,
 		Description:        description,
 		IssueType:          issueType,
