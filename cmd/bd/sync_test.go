@@ -1024,3 +1024,65 @@ func TestHasUncommittedChanges_FallbackToGetDirtyIssues(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// gt-kfoy7h: Tests for BD_DAEMON_HOST sync handling
+// =============================================================================
+
+// TestEnsureDirectModeForSync_RemoteDaemon tests that ensureDirectModeForSync
+// returns a helpful error when BD_DAEMON_HOST is set (remote daemon mode).
+// In remote daemon mode, sync operations requiring direct database access are
+// not available because the database is on the remote server.
+func TestEnsureDirectModeForSync_RemoteDaemon(t *testing.T) {
+	// Save and restore BD_DAEMON_HOST
+	origDaemonHost := os.Getenv("BD_DAEMON_HOST")
+	defer func() {
+		if origDaemonHost != "" {
+			os.Setenv("BD_DAEMON_HOST", origDaemonHost)
+		} else {
+			os.Unsetenv("BD_DAEMON_HOST")
+		}
+	}()
+
+	t.Run("returns error when BD_DAEMON_HOST is set", func(t *testing.T) {
+		// Set BD_DAEMON_HOST to simulate remote daemon mode
+		os.Setenv("BD_DAEMON_HOST", "192.168.1.100:9876")
+
+		err := ensureDirectModeForSync()
+
+		// Should return an error explaining that direct database access is not available
+		if err == nil {
+			t.Error("expected error when BD_DAEMON_HOST is set")
+			return
+		}
+
+		// Check that the error message is helpful
+		errMsg := err.Error()
+		if !strings.Contains(errMsg, "remote daemon mode") {
+			t.Errorf("error should mention 'remote daemon mode', got: %s", errMsg)
+		}
+		if !strings.Contains(errMsg, "BD_DAEMON_HOST") {
+			t.Errorf("error should mention 'BD_DAEMON_HOST', got: %s", errMsg)
+		}
+		if !strings.Contains(errMsg, "automatic") || !strings.Contains(errMsg, "daemon") {
+			t.Errorf("error should mention sync is automatic with daemon, got: %s", errMsg)
+		}
+	})
+
+	t.Run("succeeds when BD_DAEMON_HOST is not set", func(t *testing.T) {
+		// Unset BD_DAEMON_HOST
+		os.Unsetenv("BD_DAEMON_HOST")
+
+		// This test can't fully succeed because we don't have a store set up,
+		// but it should NOT return the remote daemon error message.
+		err := ensureDirectModeForSync()
+
+		// If it errors, it should be about missing beads database, not remote daemon
+		if err != nil {
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "remote daemon mode") {
+				t.Errorf("should not mention remote daemon when BD_DAEMON_HOST is not set, got: %s", errMsg)
+			}
+		}
+	})
+}

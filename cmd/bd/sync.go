@@ -1302,7 +1302,23 @@ func resolveSyncConflictsManually(ctx context.Context, jsonlPath, beadsDir strin
 
 // ensureDirectModeForSync initializes direct mode for sync operations that need it.
 // This is used for operations that involve git operations or interactive resolution.
+//
+// gt-kfoy7h: When BD_DAEMON_HOST is set (remote daemon mode), sync operations that
+// require direct database access are not supported. In remote daemon mode, sync is
+// handled automatically by the daemon, so manual sync operations are unnecessary.
 func ensureDirectModeForSync() error {
+	// gt-kfoy7h: Check if we're connected to a remote daemon via BD_DAEMON_HOST.
+	// Remote daemon mode doesn't support direct database access for sync operations.
+	if isRemoteDaemon() {
+		return fmt.Errorf("sync operations requiring direct database access are not available in remote daemon mode.\n" +
+			"When BD_DAEMON_HOST is set, sync is handled automatically by the remote daemon.\n\n" +
+			"Available options:\n" +
+			"  bd sync --status    Show sync status (works with remote daemon)\n" +
+			"  bd sync             Export changes (works with remote daemon)\n\n" +
+			"Operations like --full, --import, --resolve, and --set-mode require local database access.\n" +
+			"To use these operations, unset BD_DAEMON_HOST and run against a local database.")
+	}
+
 	if daemonClient != nil {
 		debug.Logf("sync: switching to direct mode for complex operation")
 		if err := fallbackToDirectMode("sync operation requires direct database access"); err != nil {
