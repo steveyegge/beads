@@ -98,6 +98,92 @@ function Install-WithGo {
     return $true
 }
 
+function Get-WindowsArch {
+    try {
+        $arch = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+    } catch {
+        $arch = $env:PROCESSOR_ARCHITECTURE
+    }
+
+    switch ($arch) {
+        "X64" { return "amd64" }
+        "AMD64" { return "amd64" }
+        "Arm64" { return "arm64" }
+        "ARM64" { return "arm64" }
+        default { return $null }
+    }
+}
+
+function Install-FromRelease {
+    Write-Info "Installing bd from GitHub releases..."
+
+    $arch = Get-WindowsArch
+    if (-not $arch) {
+        Write-WarningMsg "Unsupported Windows architecture. Falling back to source install."
+        return $false
+    }
+
+    $apiUrl = "https://api.github.com/repos/steveyegge/beads/releases/latest"
+    try {
+        $release = Invoke-RestMethod -Uri $apiUrl -Headers @{ "User-Agent" = "beads-install" }
+    } catch {
+        Write-WarningMsg "Failed to fetch latest release: $_"
+        return $false
+    }
+
+    $tag = $release.tag_name
+    if (-not $tag) {
+        Write-WarningMsg "Failed to parse latest release tag."
+        return $false
+    }
+
+    $version = $tag.TrimStart("v")
+    $assetName = "beads_${version}_windows_${arch}.zip"
+    $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+    if (-not $asset) {
+        Write-WarningMsg "No prebuilt asset found for $assetName. Falling back to source install."
+        return $false
+    }
+
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("beads-install-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $tempRoot | Out-Null
+    $zipPath = Join-Path $tempRoot $assetName
+
+    try {
+        Write-Info "Downloading $assetName..."
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath
+
+        Write-Info "Extracting archive..."
+        Expand-Archive -Path $zipPath -DestinationPath $tempRoot -Force
+
+        $bdPath = Join-Path $tempRoot "bd.exe"
+        if (-not (Test-Path $bdPath)) {
+            Write-WarningMsg "bd.exe not found in release archive. Falling back to source install."
+            return $false
+        }
+
+        $installDir = Join-Path $env:LOCALAPPDATA "Programs\bd"
+        New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+
+        Copy-Item -Path $bdPath -Destination (Join-Path $installDir "bd.exe") -Force
+        Write-Success "bd installed to $installDir\bd.exe"
+
+        $Script:LastInstallPath = Join-Path $installDir "bd.exe"
+
+        $pathEntries = [Environment]::GetEnvironmentVariable("PATH", "Process").Split([IO.Path]::PathSeparator) | ForEach-Object { $_.Trim() }
+        if (-not ($pathEntries -contains $installDir)) {
+            Write-WarningMsg "$installDir is not in your PATH. Add it with:`n  setx PATH `"$Env:PATH;$installDir`""
+        }
+    } catch {
+        Write-WarningMsg "Failed to install from releases: $_"
+        return $false
+    } finally {
+        Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    return $true
+}
+
 function Install-FromSource {
     Write-Info "Building bd from source..."
 
@@ -277,21 +363,24 @@ function Print-GoInstallInstructions {
 
 $installed = $false
 
-if ($goSupport.Present -and $goSupport.MeetsRequirement) {
-    $installed = Install-WithGo
-    if (-not $installed) {
-        Write-WarningMsg "go install failed; attempting to build from source..."
-        $installed = Install-FromSource
+$installed = Install-FromRelease
+if (-not $installed) {
+    if ($goSupport.Present -and $goSupport.MeetsRequirement) {
+        $installed = Install-WithGo
+        if (-not $installed) {
+            Write-WarningMsg "go install failed; attempting to build from source..."
+            $installed = Install-FromSource
+        }
+    } elseif ($goSupport.Present -and -not $goSupport.MeetsRequirement) {
+        Write-Err "Go 1.24 or newer is required (found: $($goSupport.RawVersion)). Please upgrade Go or use your package manager."
+        Print-GoInstallInstructions
+        exit 1
+    } else {
+        # No Go present - do not attempt to auto-download or auto-install Go.
+        Write-Err "Go is not installed. bd requires Go 1.24+ to build from source."
+        Print-GoInstallInstructions
+        exit 1
     }
-} elseif ($goSupport.Present -and -not $goSupport.MeetsRequirement) {
-    Write-Err "Go 1.24 or newer is required (found: $($goSupport.RawVersion)). Please upgrade Go or use your package manager."
-    Print-GoInstallInstructions
-    exit 1
-} else {
-    # No Go present - do not attempt to auto-download or auto-install Go.
-    Write-Err "Go is not installed. bd requires Go 1.24+ to build from source."
-    Print-GoInstallInstructions
-    exit 1
 }
 
 if ($installed) {

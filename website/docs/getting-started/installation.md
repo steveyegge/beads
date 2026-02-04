@@ -101,10 +101,14 @@ Beads ships with native Windows support—no MSYS or MinGW required.
 irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
 ```
 
+The script installs a prebuilt Windows release if available. Go is only required for `go install` or building from source.
+
 **Via go install**:
 ```pwsh
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
+
+If you see `unicode/uregex.h` missing while building, use the PowerShell install script instead.
 
 ## IDE and Editor Integrations
 
