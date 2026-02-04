@@ -216,13 +216,6 @@ func (s *memoryWispStore) Close() error {
 
 // matchesFilter checks if an issue matches the given filter.
 func matchesFilter(issue *types.Issue, filter types.IssueFilter) bool {
-	// ParentID filter: wisps are ephemeral and don't have parent-child relationships
-	// stored in the database, so they can never be children of a specified parent.
-	// Exclude all wisps when filtering by parent.
-	if filter.ParentID != nil {
-		return false
-	}
-
 	// Status filter
 	if filter.Status != nil && issue.Status != *filter.Status {
 		return false
