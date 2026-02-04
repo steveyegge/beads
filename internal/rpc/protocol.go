@@ -95,6 +95,9 @@ const (
 
 	// Batch label operations (atomic multi-label add)
 	OpBatchAddLabels = "batch_add_labels"
+
+	// Molecule operations (bd-jjbl)
+	OpCreateMolecule = "create_molecule"
 )
 
 // Request represents an RPC request from client to daemon
@@ -1137,5 +1140,38 @@ type CreateWithDepsArgs struct {
 // CreateWithDepsResult represents the result of a create_with_deps operation
 type CreateWithDepsResult struct {
 	IDMapping map[string]string `json:"id_mapping"` // Old ID (or index) -> new ID mapping
+	Created   int               `json:"created"`    // Number of issues created
+}
+
+// CreateMolecule operations (bd-jjbl)
+
+// IssueCreateSpec specifies an issue to create as part of a molecule.
+// Uses a template ID for cross-referencing in dependencies.
+type IssueCreateSpec struct {
+	TemplateID string     `json:"template_id"` // Local ID for dependency references
+	CreateArgs CreateArgs `json:"create_args"` // Issue creation arguments
+}
+
+// DepSpec specifies a dependency between issues using template IDs.
+type DepSpec struct {
+	FromTemplateID string `json:"from_template_id"` // Template ID of the dependent issue
+	ToTemplateID   string `json:"to_template_id"`   // Template ID of the dependency
+	DepType        string `json:"dep_type"`         // Dependency type (blocks, parent-child, etc.)
+}
+
+// CreateMoleculeArgs represents arguments for the create_molecule operation.
+// This creates multiple issues and their dependencies atomically in a single transaction.
+type CreateMoleculeArgs struct {
+	Issues       []IssueCreateSpec `json:"issues"`                  // Issues to create with template IDs
+	Dependencies []DepSpec         `json:"dependencies"`            // Dependencies using template IDs
+	Prefix       string            `json:"prefix,omitempty"`        // ID prefix for generated IDs (mol, wisp, etc.)
+	Ephemeral    bool              `json:"ephemeral,omitempty"`     // Whether issues are ephemeral/wisps
+	RootTemplate string            `json:"root_template,omitempty"` // Template ID of the root issue (for result)
+}
+
+// CreateMoleculeResult represents the result of a create_molecule operation.
+type CreateMoleculeResult struct {
+	IDMapping map[string]string `json:"id_mapping"` // Template ID → new issue ID
+	RootID    string            `json:"root_id"`    // New ID of the root issue (if RootTemplate specified)
 	Created   int               `json:"created"`    // Number of issues created
 }

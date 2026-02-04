@@ -347,6 +347,9 @@ func (s *Server) executeOperation(req *Request) Response {
 	// Atomic creation with dependencies (for template cloning)
 	case OpCreateWithDeps:
 		resp = s.handleCreateWithDeps(req)
+	// Molecule operations (bd-jjbl)
+	case OpCreateMolecule:
+		resp = s.handleCreateMolecule(req)
 	default:
 		return Response{
 			Success: false,

@@ -3511,3 +3511,191 @@ func (s *Server) handleCreateWithDeps(req *Request) Response {
 		Data:    data,
 	}
 }
+
+// handleCreateMolecule creates multiple issues and their dependencies atomically.
+// This fixes FK violations that occur when creating issues and dependencies
+// in separate operations, as dependencies may reference issues that don't exist yet.
+// (bd-jjbl)
+func (s *Server) handleCreateMolecule(req *Request) Response {
+	var args CreateMoleculeArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid create_molecule args: %v", err),
+		}
+	}
+
+	// Validate we have at least one issue
+	if len(args.Issues) == 0 {
+		return Response{
+			Success: false,
+			Error:   "at least one issue is required",
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+	ctx := s.reqCtx(req)
+	actor := s.reqActor(req)
+
+	// Build ID mapping: template ID → new ID
+	idMapping := make(map[string]string)
+
+	// Use transaction for atomicity - this ensures all issues and dependencies
+	// are created together, avoiding FK violations when dependencies reference
+	// issues that haven't been created yet
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// First pass: create all issues with new IDs
+		for _, spec := range args.Issues {
+			// Build the issue from CreateArgs
+			createArgs := spec.CreateArgs
+
+			// Apply molecule-level defaults
+			if args.Prefix != "" && createArgs.IDPrefix == "" {
+				createArgs.IDPrefix = args.Prefix
+			}
+			if args.Ephemeral {
+				createArgs.Ephemeral = true
+			}
+
+			// Parse optional fields
+			var design, acceptance, notes, assignee, externalRef *string
+			if createArgs.Design != "" {
+				design = &createArgs.Design
+			}
+			if createArgs.AcceptanceCriteria != "" {
+				acceptance = &createArgs.AcceptanceCriteria
+			}
+			if createArgs.Notes != "" {
+				notes = &createArgs.Notes
+			}
+			if createArgs.Assignee != "" {
+				assignee = &createArgs.Assignee
+			}
+			if createArgs.ExternalRef != "" {
+				externalRef = &createArgs.ExternalRef
+			}
+
+			// Parse DueAt if provided
+			var dueAt *time.Time
+			if createArgs.DueAt != "" {
+				if t, err := time.ParseInLocation("2006-01-02", createArgs.DueAt, time.Local); err == nil {
+					dueAt = &t
+				} else if t, err := time.Parse(time.RFC3339, createArgs.DueAt); err == nil {
+					dueAt = &t
+				} else {
+					return fmt.Errorf("invalid due_at format %q for template %s", createArgs.DueAt, spec.TemplateID)
+				}
+			}
+
+			// Parse DeferUntil if provided
+			var deferUntil *time.Time
+			if createArgs.DeferUntil != "" {
+				if t, err := time.ParseInLocation("2006-01-02", createArgs.DeferUntil, time.Local); err == nil {
+					deferUntil = &t
+				} else if t, err := time.Parse(time.RFC3339, createArgs.DeferUntil); err == nil {
+					deferUntil = &t
+				} else {
+					return fmt.Errorf("invalid defer_until format %q for template %s", createArgs.DeferUntil, spec.TemplateID)
+				}
+			}
+
+			issue := &types.Issue{
+				ID:                 createArgs.ID, // May be empty - storage will generate
+				Title:              createArgs.Title,
+				Description:        createArgs.Description,
+				IssueType:          types.IssueType(createArgs.IssueType),
+				Priority:           createArgs.Priority,
+				Design:             strValue(design),
+				AcceptanceCriteria: strValue(acceptance),
+				Notes:              strValue(notes),
+				Assignee:           strValue(assignee),
+				ExternalRef:        externalRef,
+				EstimatedMinutes:   createArgs.EstimatedMinutes,
+				Status:             types.StatusOpen,
+				Sender:             createArgs.Sender,
+				Ephemeral:          createArgs.Ephemeral,
+				Pinned:             createArgs.Pinned,
+				AutoClose:          createArgs.AutoClose,
+				IDPrefix:           createArgs.IDPrefix,
+				CreatedBy:          createArgs.CreatedBy,
+				Owner:              createArgs.Owner,
+				MolType:            types.MolType(createArgs.MolType),
+				RoleType:           createArgs.RoleType,
+				Rig:                createArgs.Rig,
+				EventKind:          createArgs.EventCategory,
+				Actor:              createArgs.EventActor,
+				Target:             createArgs.EventTarget,
+				Payload:            createArgs.EventPayload,
+				DueAt:              dueAt,
+				DeferUntil:         deferUntil,
+				AwaitType:          createArgs.AwaitType,
+				AwaitID:            createArgs.AwaitID,
+				Timeout:            createArgs.Timeout,
+				Waiters:            createArgs.Waiters,
+				CreatedAt:          time.Now(),
+				UpdatedAt:          time.Now(),
+			}
+
+			if err := tx.CreateIssue(ctx, issue, actor); err != nil {
+				return fmt.Errorf("failed to create issue for template %s: %w", spec.TemplateID, err)
+			}
+
+			// Store the mapping from template ID to the actual generated ID
+			idMapping[spec.TemplateID] = issue.ID
+		}
+
+		// Second pass: create all dependencies using mapped IDs
+		for _, dep := range args.Dependencies {
+			fromID, ok1 := idMapping[dep.FromTemplateID]
+			toID, ok2 := idMapping[dep.ToTemplateID]
+			if !ok1 {
+				return fmt.Errorf("unknown from_template_id: %s", dep.FromTemplateID)
+			}
+			if !ok2 {
+				return fmt.Errorf("unknown to_template_id: %s", dep.ToTemplateID)
+			}
+
+			newDep := &types.Dependency{
+				IssueID:     fromID,
+				DependsOnID: toID,
+				Type:        types.DependencyType(dep.DepType),
+			}
+			if err := tx.AddDependency(ctx, newDep, actor); err != nil {
+				return fmt.Errorf("failed to create dependency %s → %s: %w", fromID, toID, err)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create molecule: %v", err),
+		}
+	}
+
+	// Determine root ID if RootTemplate was specified
+	rootID := ""
+	if args.RootTemplate != "" {
+		rootID = idMapping[args.RootTemplate]
+	}
+
+	result := CreateMoleculeResult{
+		IDMapping: idMapping,
+		RootID:    rootID,
+		Created:   len(args.Issues),
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
