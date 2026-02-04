@@ -950,6 +950,13 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		if key == "waiters" {
 			waitersJSON, _ := json.Marshal(value)
 			args = append(args, string(waitersJSON))
+		} else if key == "metadata" {
+			// GH#1417: Normalize metadata to string, accepting string/[]byte/json.RawMessage
+			metadataStr, err := storage.NormalizeMetadataValue(value)
+			if err != nil {
+				return fmt.Errorf("invalid metadata: %w", err)
+			}
+			args = append(args, metadataStr)
 		} else {
 			args = append(args, value)
 		}
