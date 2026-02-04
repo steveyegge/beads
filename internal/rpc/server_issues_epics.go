@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/idgen"
+	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/util"
@@ -318,21 +319,63 @@ func (s *Server) handleCreate(req *Request) Response {
 		issueID = childID
 	}
 
+	// Resolve TargetRig to prefix via route beads (gt-oasyjm.1 - routes in beads)
+	// This enables --rig flag to work with remote daemon by looking up the prefix
+	// for the target rig from route beads in the single canonical Dolt database.
+	var prefixOverride string
+	if createArgs.TargetRig != "" && issueID == "" {
+		// Query route beads to find the prefix for this rig
+		// Route beads have type=route, status=open, title format "prefix → path"
+		routeType := types.IssueType("route")
+		openStatus := types.StatusOpen
+		routeBeads, err := store.SearchIssues(ctx, "", types.IssueFilter{
+			IssueType: &routeType,
+			Status:    &openStatus,
+		})
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to query route beads: %v", err),
+			}
+		}
+		for _, issue := range routeBeads {
+			route := routing.ParseRouteFromTitle(issue.Title)
+			// Match rig name (first component of path) or the path itself
+			project := routing.ExtractProjectFromPath(route.Path)
+			if project == createArgs.TargetRig || route.Path == createArgs.TargetRig {
+				// Found matching route - extract prefix (without trailing hyphen for PrefixOverride)
+				prefixOverride = strings.TrimSuffix(route.Prefix, "-")
+				break
+			}
+		}
+		if prefixOverride == "" {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("rig %q not found in route beads", createArgs.TargetRig),
+			}
+		}
+	}
+
 	// Generate wisp ID if not provided (gt-tlrw90)
 	// Wisps bypass the regular storage path which auto-generates IDs,
 	// so we need to generate one here when creating ephemeral issues without an ID
 	if issueID == "" && createArgs.Ephemeral {
 		// Get configured prefix for ID generation
-		configPrefix, err := store.GetConfig(ctx, "issue_prefix")
-		if err != nil || configPrefix == "" {
-			configPrefix = "bd" // fallback to default prefix
+		// Use prefixOverride from TargetRig if set, otherwise use config
+		basePrefix := prefixOverride
+		if basePrefix == "" {
+			configPrefix, err := store.GetConfig(ctx, "issue_prefix")
+			if err != nil || configPrefix == "" {
+				configPrefix = "bd" // fallback to default prefix
+			}
+			basePrefix = configPrefix
 		}
 		// Combine with IDPrefix if set (e.g., "hq" + "wisp" → "hq-wisp")
-		wispPrefix := configPrefix
+		wispPrefix := basePrefix
 		if createArgs.IDPrefix != "" {
-			wispPrefix = configPrefix + "-" + createArgs.IDPrefix
+			wispPrefix = basePrefix + "-" + createArgs.IDPrefix
 		} else {
-			wispPrefix = configPrefix + "-wisp"
+			wispPrefix = basePrefix + "-wisp"
 		}
 		// Generate hash-based ID using title, description, and timestamp
 		issueID = idgen.GenerateHashID(wispPrefix, createArgs.Title, createArgs.Description, s.reqActor(req), time.Now(), 6, 0)
@@ -409,8 +452,9 @@ func (s *Server) handleCreate(req *Request) Response {
 		AutoClose: createArgs.AutoClose,
 		// NOTE: RepliesTo now handled via replies-to dependency (Decision 004)
 		// ID generation
-		IDPrefix:  createArgs.IDPrefix,
-		CreatedBy: createArgs.CreatedBy,
+		IDPrefix:       createArgs.IDPrefix,
+		PrefixOverride: prefixOverride, // TargetRig resolution (gt-oasyjm.1)
+		CreatedBy:      createArgs.CreatedBy,
 		Owner:     createArgs.Owner,
 		// Molecule type
 		MolType: types.MolType(createArgs.MolType),

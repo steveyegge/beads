@@ -1009,6 +1009,16 @@ func init() {
 func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp, pinned, autoClose bool) {
 	ctx := rootCtx
 
+	// When daemon is available, use RPC with TargetRig (gt-oasyjm.1 - routes in beads)
+	// This enables cross-rig creation to work with remote daemon via HTTP
+	if daemonClient != nil {
+		createInRigViaDaemon(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
+		return
+	}
+
+	// Fallback: Direct storage access (for local development without daemon)
+	// Note: This will fail if BD_DAEMON_HOST is set due to factory guard (gt-57wsnm)
+
 	// Find the town-level beads directory (where routes.jsonl lives)
 	townBeadsDir, err := findTownBeadsDir()
 	if err != nil {
@@ -1152,6 +1162,105 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		fmt.Printf("  Priority: P%d\n", issue.Priority)
 		fmt.Printf("  Status: %s\n", issue.Status)
 	}
+}
+
+// createInRigViaDaemon creates an issue in a different rig using daemon RPC with TargetRig.
+// This enables cross-rig creation to work with remote daemon (gt-oasyjm.1).
+func createInRigViaDaemon(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp, pinned, autoClose bool) {
+	// Extract event-specific flags
+	eventCategory, _ := cmd.Flags().GetString("event-category")
+	eventActor, _ := cmd.Flags().GetString("event-actor")
+	eventTarget, _ := cmd.Flags().GetString("event-target")
+	eventPayload, _ := cmd.Flags().GetString("event-payload")
+
+	// Extract molecule/agent flags
+	molTypeStr, _ := cmd.Flags().GetString("mol-type")
+	roleType, _ := cmd.Flags().GetString("role-type")
+	agentRig, _ := cmd.Flags().GetString("agent-rig")
+
+	// Extract time-based scheduling flags
+	var dueAt *time.Time
+	dueStr, _ := cmd.Flags().GetString("due")
+	if dueStr != "" {
+		t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
+		if err != nil {
+			FatalError("invalid --due format %q", dueStr)
+		}
+		dueAt = &t
+	}
+
+	var deferUntil *time.Time
+	deferStr, _ := cmd.Flags().GetString("defer")
+	if deferStr != "" {
+		t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
+		if err != nil {
+			FatalError("invalid --defer format %q", deferStr)
+		}
+		deferUntil = &t
+	}
+
+	// Create args with TargetRig for cross-rig routing
+	createArgs := &rpc.CreateArgs{
+		ID:                 explicitID,
+		Title:              title,
+		Description:        description,
+		IssueType:          issueType,
+		Priority:           priority,
+		Design:             design,
+		AcceptanceCriteria: acceptance,
+		Notes:              notes,
+		Assignee:           assignee,
+		ExternalRef:        externalRef,
+		Labels:             labels,
+		Ephemeral:          wisp,
+		Pinned:             pinned,
+		AutoClose:          autoClose,
+		CreatedBy:          getActorWithGit(),
+		Owner:              getOwner(),
+		MolType:            molTypeStr,
+		RoleType:           roleType,
+		Rig:                agentRig,
+		EventCategory:      eventCategory,
+		EventActor:         eventActor,
+		EventTarget:        eventTarget,
+		EventPayload:       eventPayload,
+		DueAt:              formatTimeForRPC(dueAt),
+		DeferUntil:         formatTimeForRPC(deferUntil),
+		TargetRig:          rigName, // Key field for cross-rig routing (gt-oasyjm.1)
+	}
+
+	resp, err := daemonClient.Create(createArgs)
+	if err != nil {
+		FatalError("failed to create issue in rig %q: %v", rigName, err)
+	}
+
+	// Parse response to get created issue
+	var issue types.Issue
+	if err := json.Unmarshal(resp.Data, &issue); err != nil {
+		FatalError("parsing response: %v", err)
+	}
+
+	// Run create hook
+	if hookRunner != nil {
+		hookRunner.Run(hooks.EventCreate, &issue)
+	}
+
+	// Get output flags
+	silent, _ := cmd.Flags().GetBool("silent")
+
+	if jsonOutput {
+		fmt.Println(string(resp.Data))
+	} else if silent {
+		fmt.Println(issue.ID)
+	} else {
+		fmt.Printf("%s Created issue in rig %q: %s\n", ui.RenderPass("✓"), rigName, issue.ID)
+		fmt.Printf("  Title: %s\n", issue.Title)
+		fmt.Printf("  Priority: P%d\n", issue.Priority)
+		fmt.Printf("  Status: %s\n", issue.Status)
+	}
+
+	// Track as last touched issue
+	SetLastTouchedID(issue.ID)
 }
 
 // findTownBeadsDir finds the town-level .beads directory (where routes.jsonl lives).

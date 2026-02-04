@@ -131,6 +131,7 @@ type CreateArgs struct {
 	RepliesTo string `json:"replies_to,omitempty"` // Issue ID for conversation threading
 	// ID generation
 	IDPrefix  string `json:"id_prefix,omitempty"`  // Override prefix for ID generation (mol, eph, etc.)
+	TargetRig string `json:"target_rig,omitempty"` // Create in different rig (resolves prefix from route beads)
 	CreatedBy string `json:"created_by,omitempty"` // Who created the issue
 	Owner     string `json:"owner,omitempty"`      // Human owner for CV attribution (git author email)
 	// Molecule type (for swarm coordination)
