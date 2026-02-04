@@ -2722,3 +2722,376 @@ func TestMerge3Way_CloseReasonPreservation(t *testing.T) {
 		}
 	})
 }
+
+// TestMerge3Way_FieldPreservation tests that all issue fields are preserved through merge (GH#1480)
+func TestMerge3Way_FieldPreservation(t *testing.T) {
+	t.Run("metadata is preserved through merge", func(t *testing.T) {
+		metadata := json.RawMessage(`{"files":["foo.go","bar.go"],"tool":"linter@1.0"}`)
+		base := []Issue{
+			{
+				ID:        "bd-meta1",
+				Title:     "Issue with metadata",
+				Status:    "open",
+				CreatedAt: "2024-01-01T00:00:00Z",
+				CreatedBy: "user1",
+				Metadata:  metadata,
+			},
+		}
+		left := []Issue{
+			{
+				ID:        "bd-meta1",
+				Title:     "Issue with metadata",
+				Status:    "in_progress", // Changed status
+				CreatedAt: "2024-01-01T00:00:00Z",
+				UpdatedAt: "2024-01-02T00:00:00Z",
+				CreatedBy: "user1",
+				Metadata:  metadata,
+			},
+		}
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].Metadata == nil {
+			t.Error("metadata was lost during merge")
+		} else if string(result[0].Metadata) != string(metadata) {
+			t.Errorf("metadata mismatch: got %s, want %s", result[0].Metadata, metadata)
+		}
+	})
+
+	t.Run("labels are preserved through merge", func(t *testing.T) {
+		labels := []string{"bug", "high-priority", "backend"}
+		base := []Issue{
+			{
+				ID:        "bd-label1",
+				Title:     "Issue with labels",
+				Status:    "open",
+				CreatedAt: "2024-01-01T00:00:00Z",
+				CreatedBy: "user1",
+				Labels:    labels,
+			},
+		}
+		left := []Issue{
+			{
+				ID:        "bd-label1",
+				Title:     "Updated title", // Changed title
+				Status:    "open",
+				CreatedAt: "2024-01-01T00:00:00Z",
+				UpdatedAt: "2024-01-02T00:00:00Z",
+				CreatedBy: "user1",
+				Labels:    labels,
+			},
+		}
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if len(result[0].Labels) != len(labels) {
+			t.Errorf("labels count mismatch: got %d, want %d", len(result[0].Labels), len(labels))
+		}
+		for i, label := range labels {
+			if i >= len(result[0].Labels) || result[0].Labels[i] != label {
+				t.Errorf("label mismatch at index %d", i)
+			}
+		}
+	})
+
+	t.Run("assignee and owner are preserved through merge", func(t *testing.T) {
+		base := []Issue{
+			{
+				ID:        "bd-assign1",
+				Title:     "Assigned issue",
+				Status:    "open",
+				CreatedAt: "2024-01-01T00:00:00Z",
+				CreatedBy: "user1",
+				Assignee:  "dev@example.com",
+				Owner:     "owner@example.com",
+			},
+		}
+		left := []Issue{
+			{
+				ID:        "bd-assign1",
+				Title:     "Assigned issue",
+				Status:    "in_progress",
+				CreatedAt: "2024-01-01T00:00:00Z",
+				UpdatedAt: "2024-01-02T00:00:00Z",
+				CreatedBy: "user1",
+				Assignee:  "dev@example.com",
+				Owner:     "owner@example.com",
+			},
+		}
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].Assignee != "dev@example.com" {
+			t.Errorf("assignee lost: got %q, want %q", result[0].Assignee, "dev@example.com")
+		}
+		if result[0].Owner != "owner@example.com" {
+			t.Errorf("owner lost: got %q, want %q", result[0].Owner, "owner@example.com")
+		}
+	})
+
+	t.Run("content fields are preserved through merge", func(t *testing.T) {
+		base := []Issue{
+			{
+				ID:                 "bd-content1",
+				Title:              "Issue with content",
+				Description:        "Original description",
+				Design:             "# Design\n\nArchitecture details",
+				AcceptanceCriteria: "- [ ] Criterion 1\n- [ ] Criterion 2",
+				Notes:              "Some notes",
+				SpecID:             "SPEC-123",
+				Status:             "open",
+				CreatedAt:          "2024-01-01T00:00:00Z",
+				CreatedBy:          "user1",
+			},
+		}
+		left := []Issue{
+			{
+				ID:                 "bd-content1",
+				Title:              "Issue with content",
+				Description:        "Original description",
+				Design:             "# Design\n\nArchitecture details",
+				AcceptanceCriteria: "- [ ] Criterion 1\n- [ ] Criterion 2",
+				Notes:              "Some notes",
+				SpecID:             "SPEC-123",
+				Status:             "in_progress", // Changed status only
+				CreatedAt:          "2024-01-01T00:00:00Z",
+				UpdatedAt:          "2024-01-02T00:00:00Z",
+				CreatedBy:          "user1",
+			},
+		}
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].Design != "# Design\n\nArchitecture details" {
+			t.Errorf("design lost or corrupted")
+		}
+		if result[0].AcceptanceCriteria != "- [ ] Criterion 1\n- [ ] Criterion 2" {
+			t.Errorf("acceptance_criteria lost or corrupted")
+		}
+		if result[0].SpecID != "SPEC-123" {
+			t.Errorf("spec_id lost: got %q", result[0].SpecID)
+		}
+	})
+
+	t.Run("scheduling fields are preserved through merge", func(t *testing.T) {
+		base := []Issue{
+			{
+				ID:         "bd-sched1",
+				Title:      "Scheduled issue",
+				Status:     "open",
+				CreatedAt:  "2024-01-01T00:00:00Z",
+				CreatedBy:  "user1",
+				DueAt:      "2024-02-01T00:00:00Z",
+				DeferUntil: "2024-01-15T00:00:00Z",
+			},
+		}
+		left := base
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].DueAt != "2024-02-01T00:00:00Z" {
+			t.Errorf("due_at lost: got %q", result[0].DueAt)
+		}
+		if result[0].DeferUntil != "2024-01-15T00:00:00Z" {
+			t.Errorf("defer_until lost: got %q", result[0].DeferUntil)
+		}
+	})
+
+	t.Run("gate fields are preserved through merge", func(t *testing.T) {
+		base := []Issue{
+			{
+				ID:        "bd-gate1",
+				Title:     "Gate issue",
+				Status:    "open",
+				CreatedAt: "2024-01-01T00:00:00Z",
+				CreatedBy: "user1",
+				AwaitType: "gh:run",
+				AwaitID:   "12345",
+				Waiters:   []string{"user1@example.com", "user2@example.com"},
+			},
+		}
+		left := base
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].AwaitType != "gh:run" {
+			t.Errorf("await_type lost: got %q", result[0].AwaitType)
+		}
+		if result[0].AwaitID != "12345" {
+			t.Errorf("await_id lost: got %q", result[0].AwaitID)
+		}
+		if len(result[0].Waiters) != 2 {
+			t.Errorf("waiters lost: got %d, want 2", len(result[0].Waiters))
+		}
+	})
+
+	t.Run("flags are preserved through merge", func(t *testing.T) {
+		base := []Issue{
+			{
+				ID:         "bd-flags1",
+				Title:      "Flagged issue",
+				Status:     "open",
+				CreatedAt:  "2024-01-01T00:00:00Z",
+				CreatedBy:  "user1",
+				Pinned:     true,
+				IsTemplate: true,
+				Ephemeral:  false,
+			},
+		}
+		left := base
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if !result[0].Pinned {
+			t.Error("pinned flag lost")
+		}
+		if !result[0].IsTemplate {
+			t.Error("is_template flag lost")
+		}
+	})
+
+	t.Run("metadata survives JSONL round-trip", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create JSONL files with metadata
+		baseContent := `{"id":"bd-jsonl-meta","title":"Test","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"user1","metadata":{"key":"value","count":42}}`
+		leftContent := `{"id":"bd-jsonl-meta","title":"Test","status":"in_progress","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"user1","metadata":{"key":"value","count":42}}`
+		rightContent := baseContent
+
+		basePath := filepath.Join(tmpDir, "base.jsonl")
+		leftPath := filepath.Join(tmpDir, "left.jsonl")
+		rightPath := filepath.Join(tmpDir, "right.jsonl")
+		outputPath := filepath.Join(tmpDir, "output.jsonl")
+
+		if err := os.WriteFile(basePath, []byte(baseContent+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(leftPath, []byte(leftContent+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(rightPath, []byte(rightContent+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := Merge3Way(outputPath, basePath, leftPath, rightPath, false); err != nil {
+			t.Fatalf("Merge3Way failed: %v", err)
+		}
+
+		// Read output and verify metadata is preserved
+		outputData, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var outputIssue Issue
+		if err := json.Unmarshal(outputData[:len(outputData)-1], &outputIssue); err != nil {
+			t.Fatalf("failed to parse output: %v", err)
+		}
+
+		if outputIssue.Metadata == nil {
+			t.Error("metadata was lost during JSONL round-trip")
+		} else {
+			// Verify the metadata content
+			var meta map[string]interface{}
+			if err := json.Unmarshal(outputIssue.Metadata, &meta); err != nil {
+				t.Fatalf("failed to parse metadata: %v", err)
+			}
+			if meta["key"] != "value" {
+				t.Errorf("metadata key mismatch: got %v", meta["key"])
+			}
+			if meta["count"] != float64(42) { // JSON numbers are float64
+				t.Errorf("metadata count mismatch: got %v", meta["count"])
+			}
+		}
+	})
+
+	t.Run("labels survive JSONL round-trip", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		baseContent := `{"id":"bd-jsonl-labels","title":"Test","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"user1","labels":["bug","critical","backend"]}`
+		leftContent := `{"id":"bd-jsonl-labels","title":"Test Updated","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"user1","labels":["bug","critical","backend"]}`
+		rightContent := baseContent
+
+		basePath := filepath.Join(tmpDir, "base.jsonl")
+		leftPath := filepath.Join(tmpDir, "left.jsonl")
+		rightPath := filepath.Join(tmpDir, "right.jsonl")
+		outputPath := filepath.Join(tmpDir, "output.jsonl")
+
+		if err := os.WriteFile(basePath, []byte(baseContent+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(leftPath, []byte(leftContent+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(rightPath, []byte(rightContent+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := Merge3Way(outputPath, basePath, leftPath, rightPath, false); err != nil {
+			t.Fatalf("Merge3Way failed: %v", err)
+		}
+
+		outputData, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var outputIssue Issue
+		if err := json.Unmarshal(outputData[:len(outputData)-1], &outputIssue); err != nil {
+			t.Fatalf("failed to parse output: %v", err)
+		}
+
+		if len(outputIssue.Labels) != 3 {
+			t.Errorf("labels lost: got %d, want 3", len(outputIssue.Labels))
+		}
+		expectedLabels := []string{"bug", "critical", "backend"}
+		for i, label := range expectedLabels {
+			if i >= len(outputIssue.Labels) || outputIssue.Labels[i] != label {
+				t.Errorf("label mismatch at index %d: got %v", i, outputIssue.Labels)
+				break
+			}
+		}
+	})
+}
