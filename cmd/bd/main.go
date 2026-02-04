@@ -746,6 +746,17 @@ var rootCmd = &cobra.Command{
 				}
 			}
 
+			// If BD_DAEMON_HOST is set, fail hard instead of falling back to local mode.
+			// The user explicitly requested a remote daemon - silent fallback would be confusing.
+			if remoteHost := rpc.GetDaemonHost(); remoteHost != "" {
+				fmt.Fprintf(os.Stderr, "Error: failed to connect to remote daemon at %s\n", remoteHost)
+				if daemonStatus.Detail != "" {
+					fmt.Fprintf(os.Stderr, "Detail: %s\n", daemonStatus.Detail)
+				}
+				fmt.Fprintf(os.Stderr, "Hint: check that the daemon is running and BD_DAEMON_TOKEN is correct\n")
+				os.Exit(1)
+			}
+
 			// Daemon not running or unhealthy - try auto-start if enabled
 			if daemonStatus.AutoStartEnabled {
 				daemonStatus.AutoStartAttempted = true
