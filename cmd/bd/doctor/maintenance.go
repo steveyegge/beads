@@ -11,38 +11,58 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// DefaultCleanupAgeDays is the default age threshold for cleanup suggestions
-const DefaultCleanupAgeDays = 30
-
 // CheckStaleClosedIssues detects closed issues that could be cleaned up.
-// This consolidates the cleanup command into doctor checks.
+//
+// Design note: Time-based thresholds are a crude proxy for the real concern,
+// which is database size. A repo with 100 closed issues from 5 years ago
+// doesn't need cleanup, while 50,000 issues from yesterday might.
+// The actual threshold should be based on acceptable maximum database size.
+//
+// This check is DISABLED by default (stale_closed_issues_days=0). Users who
+// want time-based pruning must explicitly enable it in metadata.json.
+// Future: Consider adding max_database_size_mb for size-based thresholds.
+
+// largeClosedIssuesThreshold triggers a warning to enable stale cleanup
+const largeClosedIssuesThreshold = 10000
+
 func CheckStaleClosedIssues(path string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory
-	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	backend, beadsDir := getBackendAndBeadsDir(path)
 
-	// Check metadata.json first for custom database name
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	// Dolt backend: this check uses SQLite-specific queries, skip for now
+	if backend == configfile.BackendDolt {
 		return DoctorCheck{
 			Name:     "Stale Closed Issues",
 			Status:   StatusOK,
-			Message:  "N/A (no database)",
+			Message:  "N/A (dolt backend)",
 			Category: CategoryMaintenance,
 		}
 	}
 
+	// Load config and check if this check is enabled
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil {
+		return DoctorCheck{
+			Name:     "Stale Closed Issues",
+			Status:   StatusOK,
+			Message:  "N/A (config error)",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	// If config is nil, use defaults (check disabled)
+	var thresholdDays int
+	if cfg != nil {
+		thresholdDays = cfg.GetStaleClosedIssuesDays()
+	}
+
+	// Open database using factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Stale Closed Issues",
@@ -53,8 +73,32 @@ func CheckStaleClosedIssues(path string) DoctorCheck {
 	}
 	defer func() { _ = store.Close() }()
 
-	// Find closed issues older than threshold
-	cutoff := time.Now().AddDate(0, 0, -DefaultCleanupAgeDays)
+	// If disabled (0), check for large closed issue count and warn if appropriate
+	if thresholdDays == 0 {
+		statusClosed := types.StatusClosed
+		filter := types.IssueFilter{Status: &statusClosed}
+		issues, err := store.SearchIssues(ctx, "", filter)
+		if err != nil || len(issues) < largeClosedIssuesThreshold {
+			return DoctorCheck{
+				Name:     "Stale Closed Issues",
+				Status:   StatusOK,
+				Message:  "Disabled (set stale_closed_issues_days to enable)",
+				Category: CategoryMaintenance,
+			}
+		}
+		// Large number of closed issues - recommend enabling cleanup
+		return DoctorCheck{
+			Name:     "Stale Closed Issues",
+			Status:   StatusWarning,
+			Message:  fmt.Sprintf("Disabled but %d closed issues exist", len(issues)),
+			Detail:   "Consider enabling stale_closed_issues_days to manage database size",
+			Fix:      "Add \"stale_closed_issues_days\": 30 to .beads/metadata.json",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	// Find closed issues older than configured threshold
+	cutoff := time.Now().AddDate(0, 0, -thresholdDays)
 	statusClosed := types.StatusClosed
 	filter := types.IssueFilter{
 		Status:       &statusClosed,
@@ -91,7 +135,7 @@ func CheckStaleClosedIssues(path string) DoctorCheck {
 	return DoctorCheck{
 		Name:     "Stale Closed Issues",
 		Status:   StatusWarning,
-		Message:  fmt.Sprintf("%d closed issue(s) older than %d days", cleanable, DefaultCleanupAgeDays),
+		Message:  fmt.Sprintf("%d closed issue(s) older than %d days", cleanable, thresholdDays),
 		Detail:   "These issues can be cleaned up to reduce database size",
 		Fix:      "Run 'bd doctor --fix' to cleanup, or 'bd admin cleanup --force' for more options",
 		Category: CategoryMaintenance,
@@ -163,27 +207,21 @@ func CheckExpiredTombstones(path string) DoctorCheck {
 // CheckStaleMolecules detects complete-but-unclosed molecules.
 // A molecule is stale if all children are closed but the root is still open.
 func CheckStaleMolecules(path string) DoctorCheck {
-	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	backend, beadsDir := getBackendAndBeadsDir(path)
 
-	// Check metadata.json first for custom database name
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	// Dolt backend: this check uses SQLite-specific queries, skip for now
+	if backend == configfile.BackendDolt {
 		return DoctorCheck{
 			Name:     "Stale Molecules",
 			Status:   StatusOK,
-			Message:  "N/A (no database)",
+			Message:  "N/A (dolt backend)",
 			Category: CategoryMaintenance,
 		}
 	}
 
+	// Open database using factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Stale Molecules",
@@ -242,29 +280,35 @@ func CheckStaleMolecules(path string) DoctorCheck {
 }
 
 // CheckCompactionCandidates detects issues eligible for compaction.
+// Note: Compaction is a SQLite-specific optimization. Dolt backends don't need compaction
+// as Dolt handles data management differently.
 func CheckCompactionCandidates(path string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory
-	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	backend, beadsDir := getBackendAndBeadsDir(path)
 
-	// Check metadata.json first for custom database name
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	// Dolt backend: this check uses SQLite-specific queries, skip for now
+	if backend == configfile.BackendDolt {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",
 			Status:   StatusOK,
-			Message:  "N/A (no database)",
+			Message:  "N/A (dolt backend)",
 			Category: CategoryMaintenance,
 		}
 	}
 
+	// Check if backend is SQLite - compaction only applies to SQLite
+	cfg, _ := configfile.Load(beadsDir)
+	if cfg != nil && cfg.GetBackend() != configfile.BackendSQLite {
+		return DoctorCheck{
+			Name:     "Compaction Candidates",
+			Status:   StatusOK,
+			Message:  "N/A (compaction only applies to SQLite backend)",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	// Open database using factory
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",
@@ -275,7 +319,18 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 	}
 	defer func() { _ = store.Close() }()
 
-	tier1, err := store.GetTier1Candidates(ctx)
+	// Type assert to CompactableStorage for compaction methods
+	compactStore, ok := store.(storage.CompactableStorage)
+	if !ok {
+		return DoctorCheck{
+			Name:     "Compaction Candidates",
+			Status:   StatusOK,
+			Message:  "N/A (backend does not support compaction)",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	tier1, err := compactStore.GetTier1Candidates(ctx)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",

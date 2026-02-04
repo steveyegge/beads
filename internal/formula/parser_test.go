@@ -1307,3 +1307,176 @@ func TestParse_GateInChildStep(t *testing.T) {
 		t.Errorf("Child Gate.Type = %q, want 'gh:run'", child.Gate.Type)
 	}
 }
+
+// TestParseTOML_SnakeCaseFields verifies that snake_case fields like depends_on
+// are correctly parsed from TOML. This tests the fix for GitHub issue #1449.
+func TestParseTOML_SnakeCaseFields(t *testing.T) {
+	tomlData := `
+formula = "mol-snake-test"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "step1"
+title = "First Step"
+
+[[steps]]
+id = "step2"
+title = "Second Step"
+depends_on = ["step1"]
+
+[[steps]]
+id = "step3"
+title = "Third Step"
+needs = ["step2"]
+waits_for = "all-children"
+`
+	p := NewParser()
+	formula, err := p.ParseTOML([]byte(tomlData))
+	if err != nil {
+		t.Fatalf("ParseTOML failed: %v", err)
+	}
+
+	if len(formula.Steps) != 3 {
+		t.Fatalf("len(Steps) = %d, want 3", len(formula.Steps))
+	}
+
+	// Test depends_on (the field that was broken before the fix)
+	step2 := formula.Steps[1]
+	if len(step2.DependsOn) != 1 || step2.DependsOn[0] != "step1" {
+		t.Errorf("Steps[1].DependsOn = %v, want [step1]", step2.DependsOn)
+	}
+
+	// Test needs (worked before, should still work)
+	step3 := formula.Steps[2]
+	if len(step3.Needs) != 1 || step3.Needs[0] != "step2" {
+		t.Errorf("Steps[2].Needs = %v, want [step2]", step3.Needs)
+	}
+
+	// Test waits_for (another snake_case field)
+	if step3.WaitsFor != "all-children" {
+		t.Errorf("Steps[2].WaitsFor = %q, want 'all-children'", step3.WaitsFor)
+	}
+}
+
+// Tests for simple string vars in TOML [vars] section
+
+func TestParseTOML_SimpleStringVars(t *testing.T) {
+	// Test that simple string assignments work in [vars] section
+	tomlData := `
+formula = "mol-patrol"
+version = 1
+type = "workflow"
+
+[vars]
+wisp_type = "patrol"
+rig_name = "mayor"
+
+[[steps]]
+id = "start"
+title = "Start {{wisp_type}} on {{rig_name}}"
+`
+	p := NewParser()
+	formula, err := p.ParseTOML([]byte(tomlData))
+	if err != nil {
+		t.Fatalf("ParseTOML failed: %v", err)
+	}
+
+	// Validate parsed formula
+	if err := formula.Validate(); err != nil {
+		t.Errorf("Validate failed: %v", err)
+	}
+
+	// Check vars were parsed correctly
+	if len(formula.Vars) != 2 {
+		t.Fatalf("len(Vars) = %d, want 2", len(formula.Vars))
+	}
+
+	// Simple string should become Default
+	if v := formula.Vars["wisp_type"]; v == nil {
+		t.Error("wisp_type var not found")
+	} else if v.Default != "patrol" {
+		t.Errorf("wisp_type.Default = %q, want 'patrol'", v.Default)
+	}
+
+	if v := formula.Vars["rig_name"]; v == nil {
+		t.Error("rig_name var not found")
+	} else if v.Default != "mayor" {
+		t.Errorf("rig_name.Default = %q, want 'mayor'", v.Default)
+	}
+}
+
+func TestParseTOML_MixedVarFormats(t *testing.T) {
+	// Test mixing simple strings and full table definitions
+	tomlData := `
+formula = "mol-mixed"
+version = 1
+type = "workflow"
+
+[vars]
+simple_var = "simple_value"
+
+[vars.complex_var]
+description = "A complex variable"
+default = "complex_default"
+required = false
+enum = ["a", "b", "c"]
+
+[vars.required_var]
+description = "A required variable"
+required = true
+
+[[steps]]
+id = "step1"
+title = "Test"
+`
+	p := NewParser()
+	formula, err := p.ParseTOML([]byte(tomlData))
+	if err != nil {
+		t.Fatalf("ParseTOML failed: %v", err)
+	}
+
+	// Validate parsed formula
+	if err := formula.Validate(); err != nil {
+		t.Errorf("Validate failed: %v", err)
+	}
+
+	// Check vars count
+	if len(formula.Vars) != 3 {
+		t.Fatalf("len(Vars) = %d, want 3", len(formula.Vars))
+	}
+
+	// Check simple var
+	if v := formula.Vars["simple_var"]; v == nil {
+		t.Error("simple_var not found")
+	} else if v.Default != "simple_value" {
+		t.Errorf("simple_var.Default = %q, want 'simple_value'", v.Default)
+	}
+
+	// Check complex var
+	if v := formula.Vars["complex_var"]; v == nil {
+		t.Error("complex_var not found")
+	} else {
+		if v.Description != "A complex variable" {
+			t.Errorf("complex_var.Description = %q, want 'A complex variable'", v.Description)
+		}
+		if v.Default != "complex_default" {
+			t.Errorf("complex_var.Default = %q, want 'complex_default'", v.Default)
+		}
+		if len(v.Enum) != 3 {
+			t.Errorf("len(complex_var.Enum) = %d, want 3", len(v.Enum))
+		}
+	}
+
+	// Check required var
+	if v := formula.Vars["required_var"]; v == nil {
+		t.Error("required_var not found")
+	} else {
+		if !v.Required {
+			t.Error("required_var.Required should be true")
+		}
+		if v.Description != "A required variable" {
+			t.Errorf("required_var.Description = %q, want 'A required variable'", v.Description)
+		}
+	}
+}

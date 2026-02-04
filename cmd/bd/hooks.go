@@ -684,14 +684,30 @@ func runPrePushHook(args []string) int {
 		return 0 // Skip - changes synced to separate branch
 	}
 
+	// Get RepoContext for git operations (needed for flush and staging)
+	rc, rcErr := beads.GetRepoContext()
+	ctx := context.Background()
+
 	// Flush pending bd changes
 	// Use --no-daemon to ensure direct mode (inline import requires local store)
 	flushCmd := exec.Command("bd", "sync", "--flush-only", "--no-daemon")
 	_ = flushCmd.Run() // Ignore errors
 
-	// Get RepoContext for git operations
-	rc, rcErr := beads.GetRepoContext()
-	ctx := context.Background()
+	// Auto-stage JSONL files after flush to prevent race condition.
+	// Without this, flush creates uncommitted changes that the check below
+	// would detect, causing an infinite loop. See: GH#1208
+	for _, f := range jsonlFilePaths {
+		if _, err := os.Stat(f); err == nil {
+			var gitAdd *exec.Cmd
+			if rcErr == nil {
+				gitAdd = rc.GitCmdCWD(ctx, "add", f)
+			} else {
+				// #nosec G204 -- f comes from jsonlFilePaths (controlled, hardcoded paths)
+				gitAdd = exec.Command("git", "add", f)
+			}
+			_ = gitAdd.Run() // Ignore errors - file may not exist
+		}
+	}
 
 	// Check for uncommitted JSONL changes
 	files := []string{}
@@ -921,136 +937,37 @@ func detectAgentIdentity() *agentIdentity {
 }
 
 // parseAgentIdentity parses a GT_ROLE value into agent identity.
+// Only supports compound format (e.g., "beads/crew/dave").
+// Simple format role names are Gas Town concepts and should be
+// expanded to compound format by gastown before being set.
 func parseAgentIdentity(role string) *agentIdentity {
-	// GT_ROLE can be:
-	// - Simple: "crew", "polecat", "witness", "refinery", "mayor"
-	// - Compound: "beads/crew/dave", "gastown/polecat/Nux-123"
-
-	if strings.Contains(role, "/") {
-		// Compound format
-		parts := strings.Split(role, "/")
-		identity := &agentIdentity{FullIdentity: role}
-
-		if len(parts) >= 1 {
-			identity.Rig = parts[0]
-		}
-		if len(parts) >= 2 {
-			identity.Role = parts[1]
-		}
-
-		// Check for molecule
-		identity.Molecule = getPinnedMolecule()
-
-		return identity
-	}
-
-	// Simple format - need to combine with env vars
-	rig := os.Getenv("GT_RIG")
-	identity := &agentIdentity{Role: role, Rig: rig}
-
-	switch role {
-	case "crew":
-		crew := os.Getenv("GT_CREW")
-		if rig != "" && crew != "" {
-			identity.FullIdentity = fmt.Sprintf("%s/crew/%s", rig, crew)
-		}
-	case "polecat":
-		polecat := os.Getenv("GT_POLECAT")
-		if rig != "" && polecat != "" {
-			identity.FullIdentity = fmt.Sprintf("%s/%s", rig, polecat)
-		}
-	case "witness":
-		if rig != "" {
-			identity.FullIdentity = fmt.Sprintf("%s/witness", rig)
-		}
-	case "refinery":
-		if rig != "" {
-			identity.FullIdentity = fmt.Sprintf("%s/refinery", rig)
-		}
-	case "mayor":
-		identity.FullIdentity = "mayor"
-		identity.Rig = "" // Mayor is rig-agnostic
-	case "deacon":
-		identity.FullIdentity = "deacon"
-		identity.Rig = "" // Deacon is rig-agnostic
-	}
-
-	if identity.FullIdentity == "" {
+	// Only support compound format: "beads/crew/dave", "gastown/polecats/Nux-123"
+	// Simple formats like "crew" or "polecat" are Gas Town concepts -
+	// gastown should expand them to compound format before setting GT_ROLE.
+	if !strings.Contains(role, "/") {
 		return nil
 	}
 
+	parts := strings.Split(role, "/")
+	identity := &agentIdentity{FullIdentity: role}
+
+	if len(parts) >= 1 {
+		identity.Rig = parts[0]
+	}
+	if len(parts) >= 2 {
+		identity.Role = parts[1]
+	}
+
+	// Check for molecule
 	identity.Molecule = getPinnedMolecule()
+
 	return identity
 }
 
-// detectAgentFromPath detects agent identity from cwd path patterns.
+// detectAgentFromPath is deprecated - path-based agent detection is a
+// Gas Town concept and should be handled by gastown, not beads.
+// Returns nil - agents should set GT_ROLE in compound format instead.
 func detectAgentFromPath(cwd string) *agentIdentity {
-	// Match patterns like:
-	// - /Users/.../gt/<rig>/crew/<name>/...
-	// - /Users/.../gt/<rig>/polecats/<name>/...
-	// - /Users/.../gt/<rig>/witness/...
-	// - /Users/.../gt/<rig>/refinery/...
-
-	// Crew pattern
-	if strings.Contains(cwd, "/crew/") {
-		parts := strings.Split(cwd, "/crew/")
-		if len(parts) >= 2 {
-			rigPath := parts[0]
-			crewPath := parts[1]
-			rig := filepath.Base(rigPath)
-			crew := strings.Split(crewPath, "/")[0]
-			return &agentIdentity{
-				FullIdentity: fmt.Sprintf("%s/crew/%s", rig, crew),
-				Rig:          rig,
-				Role:         "crew",
-				Molecule:     getPinnedMolecule(),
-			}
-		}
-	}
-
-	// Polecat pattern
-	if strings.Contains(cwd, "/polecats/") {
-		parts := strings.Split(cwd, "/polecats/")
-		if len(parts) >= 2 {
-			rigPath := parts[0]
-			polecatPath := parts[1]
-			rig := filepath.Base(rigPath)
-			polecat := strings.Split(polecatPath, "/")[0]
-			return &agentIdentity{
-				FullIdentity: fmt.Sprintf("%s/%s", rig, polecat),
-				Rig:          rig,
-				Role:         "polecat",
-				Molecule:     getPinnedMolecule(),
-			}
-		}
-	}
-
-	// Witness pattern
-	if strings.Contains(cwd, "/witness/") || strings.HasSuffix(cwd, "/witness") {
-		parts := strings.Split(cwd, "/witness")
-		if len(parts) >= 1 {
-			rig := filepath.Base(parts[0])
-			return &agentIdentity{
-				FullIdentity: fmt.Sprintf("%s/witness", rig),
-				Rig:          rig,
-				Role:         "witness",
-			}
-		}
-	}
-
-	// Refinery pattern
-	if strings.Contains(cwd, "/refinery/") || strings.HasSuffix(cwd, "/refinery") {
-		parts := strings.Split(cwd, "/refinery")
-		if len(parts) >= 1 {
-			rig := filepath.Base(parts[0])
-			return &agentIdentity{
-				FullIdentity: fmt.Sprintf("%s/refinery", rig),
-				Rig:          rig,
-				Role:         "refinery",
-			}
-		}
-	}
-
 	return nil
 }
 

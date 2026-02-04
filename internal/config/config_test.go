@@ -182,6 +182,111 @@ flush-debounce: 15s
 	}
 }
 
+func TestLocalConfigOverride(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Create a temporary directory for config files
+	tmpDir := t.TempDir()
+
+	// Create .beads directory
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	// Create main config file with some settings
+	configContent := `
+json: false
+no-daemon: false
+actor: project-user
+flush-debounce: 15s
+`
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Create local config file that overrides some settings
+	localConfigContent := `
+no-daemon: true
+actor: local-user
+`
+	localConfigPath := filepath.Join(beadsDir, "config.local.yaml")
+	if err := os.WriteFile(localConfigPath, []byte(localConfigContent), 0600); err != nil {
+		t.Fatalf("failed to write local config file: %v", err)
+	}
+
+	// Change to tmp directory so config file is discovered
+	t.Chdir(tmpDir)
+
+	// Initialize viper
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test that local config values override project config values
+	if got := GetBool("no-daemon"); got != true {
+		t.Errorf("GetBool(no-daemon) = %v, want true (local override)", got)
+	}
+
+	if got := GetString("actor"); got != "local-user" {
+		t.Errorf("GetString(actor) = %q, want \"local-user\" (local override)", got)
+	}
+
+	// Test that non-overridden values from project config are preserved
+	if got := GetBool("json"); got != false {
+		t.Errorf("GetBool(json) = %v, want false (from project config)", got)
+	}
+
+	if got := GetDuration("flush-debounce"); got != 15*time.Second {
+		t.Errorf("GetDuration(flush-debounce) = %v, want 15s (from project config)", got)
+	}
+}
+
+func TestLocalConfigMissing(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Create a temporary directory for config file (no local config)
+	tmpDir := t.TempDir()
+
+	// Create .beads directory
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	// Create only main config file
+	configContent := `
+json: true
+actor: project-user
+`
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change to tmp directory so config file is discovered
+	t.Chdir(tmpDir)
+
+	// Initialize viper - should not error even without local config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test that project config values are loaded
+	if got := GetBool("json"); got != true {
+		t.Errorf("GetBool(json) = %v, want true", got)
+	}
+
+	if got := GetString("actor"); got != "project-user" {
+		t.Errorf("GetString(actor) = %q, want \"project-user\"", got)
+	}
+}
+
 func TestConfigPrecedence(t *testing.T) {
 	// Create a temporary directory for config file
 	tmpDir := t.TempDir()
@@ -1679,5 +1784,121 @@ func TestGetConflictConfigWithFields(t *testing.T) {
 	}
 	if result.Fields["labels"] != FieldStrategyUnion {
 		t.Errorf("GetConflictConfig().Fields[labels] = %s, want union", result.Fields["labels"])
+	}
+}
+
+func TestGetAgentRoles(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Create a temporary directory with a .beads/config.yaml
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	// Write a config file with agent_roles
+	configContent := `
+agent_roles:
+  town_level: "mayor,deacon"
+  rig_level: "witness,refinery"
+  named: "crew,polecat"
+`
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change to tmp directory so config is found
+	t.Chdir(tmpDir)
+
+	// Reset and initialize viper
+	ResetForTesting()
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	t.Run("town_level_roles", func(t *testing.T) {
+		got := GetTownLevelRoles()
+		expected := []string{"mayor", "deacon"}
+		if len(got) != len(expected) {
+			t.Errorf("GetTownLevelRoles() returned %d roles, want %d", len(got), len(expected))
+		}
+		for i, role := range expected {
+			if i >= len(got) || got[i] != role {
+				t.Errorf("GetTownLevelRoles()[%d] = %q, want %q", i, got[i], role)
+			}
+		}
+	})
+
+	t.Run("rig_level_roles", func(t *testing.T) {
+		got := GetRigLevelRoles()
+		expected := []string{"witness", "refinery"}
+		if len(got) != len(expected) {
+			t.Errorf("GetRigLevelRoles() returned %d roles, want %d", len(got), len(expected))
+		}
+		for i, role := range expected {
+			if i >= len(got) || got[i] != role {
+				t.Errorf("GetRigLevelRoles()[%d] = %q, want %q", i, got[i], role)
+			}
+		}
+	})
+
+	t.Run("named_roles", func(t *testing.T) {
+		got := GetNamedRoles()
+		expected := []string{"crew", "polecat"}
+		if len(got) != len(expected) {
+			t.Errorf("GetNamedRoles() returned %d roles, want %d", len(got), len(expected))
+		}
+		for i, role := range expected {
+			if i >= len(got) || got[i] != role {
+				t.Errorf("GetNamedRoles()[%d] = %q, want %q", i, got[i], role)
+			}
+		}
+	})
+}
+
+func TestGetAgentRoles_NotSet(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Create a temporary directory with a .beads/config.yaml WITHOUT agent_roles
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	// Write a config file without agent_roles
+	configContent := `
+sync:
+  mode: git-portable
+`
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change to tmp directory so config is found
+	t.Chdir(tmpDir)
+
+	// Reset and initialize viper
+	ResetForTesting()
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// All role functions should return nil when not configured
+	if got := GetTownLevelRoles(); got != nil {
+		t.Errorf("GetTownLevelRoles() = %v, want nil when not set", got)
+	}
+	if got := GetRigLevelRoles(); got != nil {
+		t.Errorf("GetRigLevelRoles() = %v, want nil when not set", got)
+	}
+	if got := GetNamedRoles(); got != nil {
+		t.Errorf("GetNamedRoles() = %v, want nil when not set", got)
 	}
 }

@@ -43,6 +43,10 @@ type ExportResult struct {
 
 	// ExportTime is when the export was performed (RFC3339Nano format)
 	ExportTime string
+
+	// IssueContentHashes maps issue IDs to their content hashes (GH#1278)
+	// Used to populate export_hashes table after successful export
+	IssueContentHashes map[string]string
 }
 
 // finalizeExport updates SQLite metadata after a successful git commit.
@@ -66,6 +70,18 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 		if err := store.ClearDirtyIssuesByID(ctx, result.ExportedIDs); err != nil {
 			// Non-fatal warning
 			fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty flags: %v\n", err)
+		}
+	}
+
+	// Update export_hashes for all exported issues (GH#1278)
+	// This ensures child issues created with --parent are properly registered
+	// for integrity tracking and incremental export detection.
+	if len(result.IssueContentHashes) > 0 {
+		for issueID, contentHash := range result.IssueContentHashes {
+			if err := store.SetExportHash(ctx, issueID, contentHash); err != nil {
+				// Non-fatal warning - continue with other issues
+				fmt.Fprintf(os.Stderr, "Warning: failed to set export hash for %s: %v\n", issueID, err)
+			}
 		}
 	}
 
@@ -100,10 +116,11 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 	// This prevents validatePreExport from incorrectly blocking on next export.
 	//
 	// Dolt backend does not use a SQLite DB file, so this check is SQLite-only.
+	// Use store.Path() to get the actual database location, not the JSONL directory,
+	// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
 	if result.JSONLPath != "" {
-		if _, ok := store.(*sqlite.SQLiteStorage); ok {
-			beadsDir := filepath.Dir(result.JSONLPath)
-			dbPath := filepath.Join(beadsDir, "beads.db")
+		if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+			dbPath := sqliteStore.Path()
 			if err := TouchDatabaseFile(dbPath, result.JSONLPath); err != nil {
 				// Non-fatal warning
 				fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)
@@ -233,14 +250,19 @@ func exportToJSONLDeferred(ctx context.Context, jsonlPath string) (*ExportResult
 		_ = os.Remove(tempPath)
 	}()
 
-	// Write JSONL
+	// Write JSONL and collect content hashes (GH#1278)
 	encoder := json.NewEncoder(tempFile)
 	exportedIDs := make([]string, 0, len(issues))
+	issueContentHashes := make(map[string]string, len(issues))
 	for _, issue := range issues {
 		if err := encoder.Encode(issue); err != nil {
 			return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
 		}
 		exportedIDs = append(exportedIDs, issue.ID)
+		// Collect content hash for export_hashes table
+		if issue.ContentHash != "" {
+			issueContentHashes[issue.ID] = issue.ContentHash
+		}
 	}
 
 	// Close temp file before rename (error checked implicitly by Rename success)
@@ -262,10 +284,11 @@ func exportToJSONLDeferred(ctx context.Context, jsonlPath string) (*ExportResult
 	exportTime := time.Now().Format(time.RFC3339Nano)
 
 	return &ExportResult{
-		JSONLPath:   jsonlPath,
-		ExportedIDs: exportedIDs,
-		ContentHash: contentHash,
-		ExportTime:  exportTime,
+		JSONLPath:          jsonlPath,
+		ExportedIDs:        exportedIDs,
+		ContentHash:        contentHash,
+		ExportTime:         exportTime,
+		IssueContentHashes: issueContentHashes,
 	}, nil
 }
 
@@ -366,8 +389,10 @@ func performIncrementalExport(ctx context.Context, jsonlPath string, dirtyIDs []
 	}
 
 	// Query dirty issues from database and track which IDs were found
+	// Also collect content hashes for export_hashes table (GH#1278)
 	dirtyIssues := make([]*types.Issue, 0, len(dirtyIDs))
 	issueByID := make(map[string]*types.Issue, len(dirtyIDs))
+	issueContentHashes := make(map[string]string, len(dirtyIDs))
 	for _, id := range dirtyIDs {
 		issue, err := store.GetIssue(ctx, id)
 		if err != nil {
@@ -376,6 +401,9 @@ func performIncrementalExport(ctx context.Context, jsonlPath string, dirtyIDs []
 		issueByID[id] = issue // Store result (may be nil for deleted issues)
 		if issue != nil {
 			dirtyIssues = append(dirtyIssues, issue)
+			if issue.ContentHash != "" {
+				issueContentHashes[issue.ID] = issue.ContentHash
+			}
 		}
 	}
 
@@ -502,10 +530,11 @@ func performIncrementalExport(ctx context.Context, jsonlPath string, dirtyIDs []
 	// Note: exportedIDs contains ALL IDs in the file, but we only need to clear
 	// dirty flags for the dirtyIDs (which we received as parameter)
 	return &ExportResult{
-		JSONLPath:   jsonlPath,
-		ExportedIDs: dirtyIDs, // Only clear dirty flags for actually dirty issues
-		ContentHash: contentHash,
-		ExportTime:  exportTime,
+		JSONLPath:          jsonlPath,
+		ExportedIDs:        dirtyIDs, // Only clear dirty flags for actually dirty issues
+		ContentHash:        contentHash,
+		ExportTime:         exportTime,
+		IssueContentHashes: issueContentHashes,
 	}, nil
 }
 

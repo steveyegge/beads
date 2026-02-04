@@ -755,7 +755,116 @@ func TestFormatIssueCompact(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf strings.Builder
-			formatIssueCompact(&buf, tt.issue, tt.labels)
+			formatIssueCompact(&buf, tt.issue, tt.labels, nil, nil)
+			result := buf.String()
+			if !strings.Contains(result, tt.want) {
+				t.Errorf("formatIssueCompact() = %q, want to contain %q", result, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildBlockingMaps(t *testing.T) {
+	// Create test dependency records
+	allDeps := map[string][]*types.Dependency{
+		"issue-A": {
+			{IssueID: "issue-A", DependsOnID: "issue-B", Type: types.DepBlocks},
+		},
+		"issue-C": {
+			{IssueID: "issue-C", DependsOnID: "issue-A", Type: types.DepBlocks},
+			{IssueID: "issue-C", DependsOnID: "issue-B", Type: types.DepRelated}, // Should be ignored (not blocking)
+		},
+	}
+
+	blockedByMap, blocksMap := buildBlockingMaps(allDeps)
+
+	// issue-A is blocked by issue-B
+	if len(blockedByMap["issue-A"]) != 1 || blockedByMap["issue-A"][0] != "issue-B" {
+		t.Errorf("issue-A blockedBy = %v, want [issue-B]", blockedByMap["issue-A"])
+	}
+
+	// issue-B blocks issue-A
+	if len(blocksMap["issue-B"]) != 1 || blocksMap["issue-B"][0] != "issue-A" {
+		t.Errorf("issue-B blocks = %v, want [issue-A]", blocksMap["issue-B"])
+	}
+
+	// issue-C is blocked by issue-A (related dep is ignored)
+	if len(blockedByMap["issue-C"]) != 1 || blockedByMap["issue-C"][0] != "issue-A" {
+		t.Errorf("issue-C blockedBy = %v, want [issue-A]", blockedByMap["issue-C"])
+	}
+
+	// issue-A also blocks issue-C
+	if len(blocksMap["issue-A"]) != 1 || blocksMap["issue-A"][0] != "issue-C" {
+		t.Errorf("issue-A blocks = %v, want [issue-C]", blocksMap["issue-A"])
+	}
+}
+
+func TestFormatIssueCompactWithDependencies(t *testing.T) {
+	tests := []struct {
+		name      string
+		issue     *types.Issue
+		blockedBy []string
+		blocks    []string
+		want      string
+	}{
+		{
+			name: "issue with blocked by",
+			issue: &types.Issue{
+				ID:        "test-123",
+				Title:     "Blocked Issue",
+				Priority:  1,
+				IssueType: types.TypeTask,
+				Status:    types.StatusOpen,
+			},
+			blockedBy: []string{"test-100"},
+			blocks:    nil,
+			want:      "(blocked by: test-100)",
+		},
+		{
+			name: "issue with blocks",
+			issue: &types.Issue{
+				ID:        "test-456",
+				Title:     "Blocking Issue",
+				Priority:  1,
+				IssueType: types.TypeTask,
+				Status:    types.StatusOpen,
+			},
+			blockedBy: nil,
+			blocks:    []string{"test-200", "test-300"},
+			want:      "(blocks: test-200, test-300)",
+		},
+		{
+			name: "issue with both",
+			issue: &types.Issue{
+				ID:        "test-789",
+				Title:     "Middle Issue",
+				Priority:  1,
+				IssueType: types.TypeTask,
+				Status:    types.StatusOpen,
+			},
+			blockedBy: []string{"test-100"},
+			blocks:    []string{"test-200"},
+			want:      "(blocked by: test-100, blocks: test-200)",
+		},
+		{
+			name: "issue with no dependencies",
+			issue: &types.Issue{
+				ID:        "test-abc",
+				Title:     "Independent Issue",
+				Priority:  1,
+				IssueType: types.TypeTask,
+				Status:    types.StatusOpen,
+			},
+			blockedBy: nil,
+			blocks:    nil,
+			want:      "Independent Issue",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			formatIssueCompact(&buf, tt.issue, nil, tt.blockedBy, tt.blocks)
 			result := buf.String()
 			if !strings.Contains(result, tt.want) {
 				t.Errorf("formatIssueCompact() = %q, want to contain %q", result, tt.want)

@@ -1,3 +1,5 @@
+//go:build cgo
+
 package dolt
 
 import (
@@ -8,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/idgen"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -115,6 +119,16 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 
 // CreateIssues creates multiple issues in a single transaction
 func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
+	return s.CreateIssuesWithFullOptions(ctx, issues, actor, storage.BatchCreateOptions{
+		OrphanHandling:       storage.OrphanAllow,
+		SkipPrefixValidation: false,
+	})
+}
+
+// CreateIssuesWithFullOptions creates multiple issues with full options control.
+// This is the backend-agnostic batch creation method that supports orphan handling
+// and prefix validation options.
+func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) error {
 	if len(issues) == 0 {
 		return nil
 	}
@@ -134,6 +148,15 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	// Get prefix from config for validation
+	var configPrefix string
+	err = tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
+	if err == sql.ErrNoRows || configPrefix == "" {
+		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
+	} else if err != nil {
+		return fmt.Errorf("failed to get config: %w", err)
+	}
 
 	for _, issue := range issues {
 		now := time.Now().UTC()
@@ -173,6 +196,35 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 			issue.ContentHash = issue.ComputeContentHash()
 		}
 
+		// Validate prefix if not skipped (for imports with different prefixes)
+		if !opts.SkipPrefixValidation && issue.ID != "" {
+			if err := validateIssueIDPrefix(issue.ID, configPrefix); err != nil {
+				return fmt.Errorf("prefix validation failed for %s: %w", issue.ID, err)
+			}
+		}
+
+		// Handle orphan checking for hierarchical IDs
+		if issue.ID != "" {
+			if parentID, _, ok := parseHierarchicalID(issue.ID); ok {
+				var parentCount int
+				err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&parentCount)
+				if err != nil {
+					return fmt.Errorf("failed to check parent existence: %w", err)
+				}
+				if parentCount == 0 {
+					switch opts.OrphanHandling {
+					case storage.OrphanStrict:
+						return fmt.Errorf("parent issue %s does not exist (strict mode)", parentID)
+					case storage.OrphanSkip:
+						// Skip this issue
+						continue
+					case storage.OrphanResurrect, storage.OrphanAllow:
+						// Allow orphan - continue with insert
+					}
+				}
+			}
+		}
+
 		if err := insertIssue(ctx, tx, issue); err != nil {
 			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
 		}
@@ -185,6 +237,35 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 	}
 
 	return tx.Commit()
+}
+
+// validateIssueIDPrefix validates that the issue ID has the correct prefix
+func validateIssueIDPrefix(id, prefix string) error {
+	if !strings.HasPrefix(id, prefix+"-") {
+		return fmt.Errorf("issue ID %s does not match configured prefix %s", id, prefix)
+	}
+	return nil
+}
+
+// parseHierarchicalID checks if an ID is hierarchical (e.g., "bd-abc.1") and returns the parent ID and child number
+func parseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
+	// Find the last dot that separates parent from child number
+	lastDot := strings.LastIndex(id, ".")
+	if lastDot == -1 {
+		return "", 0, false
+	}
+
+	parentID = id[:lastDot]
+	suffix := id[lastDot+1:]
+
+	// Parse child number
+	var num int
+	_, err := fmt.Sscanf(suffix, "%d", &num)
+	if err != nil {
+		return "", 0, false
+	}
+
+	return parentID, num, true
 }
 
 // GetIssue retrieves an issue by ID
@@ -251,7 +332,14 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 			columnName = "ephemeral"
 		}
 		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", columnName))
-		args = append(args, value)
+
+		// Handle JSON serialization for array fields stored as TEXT
+		if key == "waiters" {
+			waitersJSON, _ := json.Marshal(value)
+			args = append(args, string(waitersJSON))
+		} else {
+			args = append(args, value)
+		}
 	}
 
 	// Auto-manage closed_at
@@ -278,6 +366,72 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 
 	if err := recordEvent(ctx, tx, id, eventType, actor, string(oldData), string(newData)); err != nil {
 		return fmt.Errorf("failed to record event: %w", err)
+	}
+
+	if err := markDirty(ctx, tx, id); err != nil {
+		return fmt.Errorf("failed to mark dirty: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// ClaimIssue atomically claims an issue using compare-and-swap semantics.
+// It sets the assignee to actor and status to "in_progress" only if the issue
+// currently has no assignee. Returns storage.ErrAlreadyClaimed if already claimed.
+func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) error {
+	oldIssue, err := s.GetIssue(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get issue for claim: %w", err)
+	}
+	if oldIssue == nil {
+		return fmt.Errorf("issue %s not found", id)
+	}
+
+	now := time.Now().UTC()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Use conditional UPDATE with WHERE clause to ensure atomicity.
+	// The UPDATE only succeeds if assignee is currently empty.
+	result, err := tx.ExecContext(ctx, `
+		UPDATE issues
+		SET assignee = ?, status = 'in_progress', updated_at = ?
+		WHERE id = ? AND (assignee = '' OR assignee IS NULL)
+	`, actor, now, id)
+	if err != nil {
+		return fmt.Errorf("failed to claim issue: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		// The UPDATE didn't affect any rows, which means the assignee was not empty.
+		// Query to find out who has it claimed.
+		var currentAssignee string
+		err := s.db.QueryRowContext(ctx, `SELECT assignee FROM issues WHERE id = ?`, id).Scan(&currentAssignee)
+		if err != nil {
+			return fmt.Errorf("failed to get current assignee: %w", err)
+		}
+		return fmt.Errorf("%w by %s", storage.ErrAlreadyClaimed, currentAssignee)
+	}
+
+	// Record the claim event
+	oldData, _ := json.Marshal(oldIssue)
+	newUpdates := map[string]interface{}{
+		"assignee": actor,
+		"status":   "in_progress",
+	}
+	newData, _ := json.Marshal(newUpdates)
+
+	if err := recordEvent(ctx, tx, id, "claimed", actor, string(oldData), string(newData)); err != nil {
+		return fmt.Errorf("failed to record claim event: %w", err)
 	}
 
 	if err := markDirty(ctx, tx, id); err != nil {
@@ -370,40 +524,40 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		INSERT INTO issues (
 			id, content_hash, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, estimated_minutes,
-			created_at, created_by, owner, updated_at, closed_at, external_ref,
+			created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id,
 			compaction_level, compacted_at, compacted_at_commit, original_size,
 			deleted_at, deleted_by, delete_reason, original_type,
-			sender, ephemeral, pinned, is_template, crystallizes,
+			sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
 			mol_type, work_type, quality_score, source_system, source_repo, close_reason,
 			event_kind, actor, target, payload,
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
-			due_at, defer_until
+			due_at, defer_until, metadata
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?,
-			?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?,
+			?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?
 		)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
 		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
-		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt, nullStringPtr(issue.ExternalRef),
+		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt, nullStringPtr(issue.ExternalRef), issue.SpecID,
 		issue.CompactionLevel, issue.CompactedAt, nullStringPtr(issue.CompactedAtCommit), nullIntVal(issue.OriginalSize),
 		issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-		issue.Sender, issue.Ephemeral, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
+		issue.Sender, issue.Ephemeral, issue.WispType, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
 		issue.MolType, issue.WorkType, issue.QualityScore, issue.SourceSystem, issue.SourceRepo, issue.CloseReason,
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
-		issue.DueAt, issue.DeferUntil,
+		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
 	)
 	return err
 }
@@ -413,42 +567,43 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 	var closedAt, compactedAt, deletedAt, lastActivity, dueAt, deferUntil sql.NullTime
 	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
-	var assignee, externalRef, compactedAtCommit, owner sql.NullString
+	var assignee, externalRef, specID, compactedAtCommit, owner sql.NullString
 	var contentHash, sourceRepo, closeReason, deletedBy, deleteReason, originalType sql.NullString
 	var workType, sourceSystem sql.NullString
-	var sender, molType, eventKind, actor, target, payload sql.NullString
+	var sender, wispType, molType, eventKind, actor, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
 	var hookBead, roleBead, agentState, roleType, rig sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var qualityScore sql.NullFloat64
+	var metadata sql.NullString
 
 	err := db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at, external_ref,
+		       created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id,
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
-		       sender, ephemeral, pinned, is_template, crystallizes,
+		       sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
-		       quality_score, work_type, source_system
+		       quality_score, work_type, source_system, metadata
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
+		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &specID,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
-		&sender, &ephemeral, &pinned, &isTemplate, &crystallizes,
+		&sender, &ephemeral, &wispType, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
-		&qualityScore, &workType, &sourceSystem,
+		&qualityScore, &workType, &sourceSystem, &metadata,
 	)
 
 	if err == sql.ErrNoRows {
@@ -486,6 +641,9 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	if externalRef.Valid {
 		issue.ExternalRef = &externalRef.String
 	}
+	if specID.Valid {
+		issue.SpecID = specID.String
+	}
 	if compactedAt.Valid {
 		issue.CompactedAt = &compactedAt.Time
 	}
@@ -518,6 +676,9 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	}
 	if ephemeral.Valid && ephemeral.Int64 != 0 {
 		issue.Ephemeral = true
+	}
+	if wispType.Valid {
+		issue.WispType = types.WispType(wispType.String)
 	}
 	if pinned.Valid && pinned.Int64 != 0 {
 		issue.Pinned = true
@@ -589,6 +750,10 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	if sourceSystem.Valid {
 		issue.SourceSystem = sourceSystem.String
 	}
+	// Custom metadata field (GH#1406)
+	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+		issue.Metadata = []byte(metadata.String)
+	}
 
 	return &issue, nil
 }
@@ -610,28 +775,61 @@ func markDirty(ctx context.Context, tx *sql.Tx, issueID string) error {
 	return err
 }
 
-// nolint:unparam // error return kept for interface consistency
-func generateIssueID(_ context.Context, _ *sql.Tx, prefix string, issue *types.Issue, _ string) (string, error) {
-	// Simple hash-based ID generation
-	// Use first 6 chars of content hash
-	hash := issue.ComputeContentHash()
-	if len(hash) > 6 {
-		hash = hash[:6]
+// generateIssueID generates a unique hash-based ID for an issue
+// Uses adaptive length based on database size and tries multiple nonces on collision
+func generateIssueID(ctx context.Context, tx *sql.Tx, prefix string, issue *types.Issue, actor string) (string, error) {
+	// Get adaptive base length based on current database size
+	baseLength, err := GetAdaptiveIDLengthTx(ctx, tx, prefix)
+	if err != nil {
+		// Fallback to 6 on error
+		baseLength = 6
 	}
-	return fmt.Sprintf("%s-%s", prefix, hash), nil
+
+	// Try baseLength, baseLength+1, baseLength+2, up to max of 8
+	maxLength := 8
+	if baseLength > maxLength {
+		baseLength = maxLength
+	}
+
+	for length := baseLength; length <= maxLength; length++ {
+		// Try up to 10 nonces at each length
+		for nonce := 0; nonce < 10; nonce++ {
+			candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
+
+			// Check if this ID already exists
+			var count int
+			err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
+			if err != nil {
+				return "", fmt.Errorf("failed to check for ID collision: %w", err)
+			}
+
+			if count == 0 {
+				return candidate, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("failed to generate unique ID after trying lengths %d-%d with 10 nonces each", baseLength, maxLength)
+}
+
+// generateHashID creates a hash-based ID for a top-level issue.
+// Uses base36 encoding (0-9, a-z) for better information density than hex.
+func generateHashID(prefix, title, description, creator string, timestamp time.Time, length, nonce int) string {
+	return idgen.GenerateHashID(prefix, title, description, creator, timestamp, length, nonce)
 }
 
 func isAllowedUpdateField(key string) bool {
 	allowed := map[string]bool{
 		"status": true, "priority": true, "title": true, "assignee": true,
 		"description": true, "design": true, "acceptance_criteria": true, "notes": true,
-		"issue_type": true, "estimated_minutes": true, "external_ref": true,
+		"issue_type": true, "estimated_minutes": true, "external_ref": true, "spec_id": true,
 		"closed_at": true, "close_reason": true, "closed_by_session": true,
-		"sender": true, "wisp": true, "pinned": true,
+		"sender": true, "wisp": true, "wisp_type": true, "pinned": true,
 		"hook_bead": true, "role_bead": true, "agent_state": true, "last_activity": true,
 		"role_type": true, "rig": true, "mol_type": true,
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
-		"due_at": true, "defer_until": true, "await_id": true,
+		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
+		"metadata": true,
 	}
 	return allowed[key]
 }
@@ -712,6 +910,15 @@ func nullIntVal(i int) interface{} {
 		return nil
 	}
 	return i
+}
+
+// jsonMetadata returns the metadata as a string, or "{}" if empty.
+// Dolt's JSON column type requires valid JSON, so we can't insert empty strings.
+func jsonMetadata(m []byte) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+	return string(m)
 }
 
 func parseJSONStringArray(s string) []string {

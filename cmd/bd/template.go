@@ -766,18 +766,35 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 	}, nil
 }
 
-// extractVariables finds all {{variable}} patterns in text
+// extractVariables finds all {{variable}} patterns in text.
+// Handlebars control keywords like "else", "this" are excluded.
 func extractVariables(text string) []string {
 	matches := variablePattern.FindAllStringSubmatch(text, -1)
 	seen := make(map[string]bool)
 	var vars []string
 	for _, match := range matches {
 		if len(match) >= 2 && !seen[match[1]] {
-			vars = append(vars, match[1])
-			seen[match[1]] = true
+			name := match[1]
+			// Skip Handlebars control keywords
+			if isHandlebarsKeyword(name) {
+				continue
+			}
+			vars = append(vars, name)
+			seen[name] = true
 		}
 	}
 	return vars
+}
+
+// isHandlebarsKeyword returns true for Handlebars control keywords
+// that look like variables but aren't (e.g., "else", "this").
+func isHandlebarsKeyword(name string) bool {
+	switch name {
+	case "else", "this", "root", "index", "key", "first", "last":
+		return true
+	default:
+		return false
+	}
 }
 
 // extractAllVariables finds all variables across the entire subgraph
@@ -796,25 +813,25 @@ func extractAllVariables(subgraph *TemplateSubgraph) []string {
 func extractRequiredVariables(subgraph *TemplateSubgraph) []string {
 	allVars := extractAllVariables(subgraph)
 
-	// If no VarDefs, assume all variables are required
-	if subgraph.VarDefs == nil || len(subgraph.VarDefs) == 0 {
+	// If no VarDefs, assume all variables are required (legacy template behavior)
+	if subgraph.VarDefs == nil {
 		return allVars
 	}
 
-	// Filter to only required variables (no default and marked as required, or not defined in VarDefs)
+	// VarDefs exists (from a cooked formula) - only declared variables matter.
+	// Variables in text but NOT in VarDefs are ignored - they're documentation
+	// handlebars meant for LLM agents, not formula input variables (gt-ky9loa).
 	var required []string
 	for _, v := range allVars {
 		def, exists := subgraph.VarDefs[v]
-		// A variable is required if:
-		// 1. It's not defined in VarDefs at all, OR
-		// 2. It's defined with Required=true and no Default, OR
-		// 3. It's defined with no Default (even if Required is false)
 		if !exists {
-			required = append(required, v)
-		} else if def.Default == "" {
+			// Not a declared formula variable - skip (documentation handlebars)
+			continue
+		}
+		// A declared variable is required if it has no default
+		if def.Default == "" {
 			required = append(required, v)
 		}
-		// If exists and has default, it's not required
 	}
 	return required
 }

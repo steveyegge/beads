@@ -1,3 +1,5 @@
+//go:build cgo
+
 package dolt
 
 // schema defines the MySQL-compatible database schema for Dolt.
@@ -24,6 +26,7 @@ CREATE TABLE IF NOT EXISTS issues (
     closed_at DATETIME,
     closed_by_session VARCHAR(255) DEFAULT '',
     external_ref VARCHAR(255),
+    spec_id VARCHAR(1024),
     compaction_level INT DEFAULT 0,
     compacted_at DATETIME,
     compacted_at_commit VARCHAR(64),
@@ -35,6 +38,8 @@ CREATE TABLE IF NOT EXISTS issues (
     -- Messaging fields
     sender VARCHAR(255) DEFAULT '',
     ephemeral TINYINT(1) DEFAULT 0,
+    -- Wisp classification for TTL-based compaction (gt-9br)
+    wisp_type VARCHAR(32) DEFAULT '',
     -- Pinned field
     pinned TINYINT(1) DEFAULT 0,
     -- Template field
@@ -49,6 +54,8 @@ CREATE TABLE IF NOT EXISTS issues (
     quality_score DOUBLE,
     -- Federation source system field
     source_system VARCHAR(255) DEFAULT '',
+    -- Custom metadata field (GH#1406)
+    metadata JSON DEFAULT (JSON_OBJECT()),
     -- Source repo for multi-repo
     source_repo VARCHAR(512) DEFAULT '',
     -- Close reason
@@ -75,12 +82,16 @@ CREATE TABLE IF NOT EXISTS issues (
     defer_until DATETIME,
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
+    INDEX idx_issues_issue_type (issue_type),
     INDEX idx_issues_assignee (assignee),
     INDEX idx_issues_created_at (created_at),
+    INDEX idx_issues_spec_id (spec_id),
     INDEX idx_issues_external_ref (external_ref)
 );
 
 -- Dependencies table (edge schema)
+-- Note: No FK on depends_on_id to allow external references (external:<rig>:<id>).
+-- See SQLite migration 025_remove_depends_on_fk.go for design context.
 CREATE TABLE IF NOT EXISTS dependencies (
     issue_id VARCHAR(255) NOT NULL,
     depends_on_id VARCHAR(255) NOT NULL,
@@ -94,8 +105,7 @@ CREATE TABLE IF NOT EXISTS dependencies (
     INDEX idx_dependencies_depends_on (depends_on_id),
     INDEX idx_dependencies_depends_on_type (depends_on_id, type),
     INDEX idx_dependencies_thread (thread_id),
-    CONSTRAINT fk_dep_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
-    CONSTRAINT fk_dep_depends_on FOREIGN KEY (depends_on_id) REFERENCES issues(id) ON DELETE CASCADE
+    CONSTRAINT fk_dep_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
 );
 
 -- Labels table
@@ -266,16 +276,21 @@ INSERT IGNORE INTO config (` + "`key`" + `, value) VALUES
 `
 
 // readyIssuesView is a MySQL-compatible view for ready work
-// Note: Dolt supports recursive CTEs like SQLite
+// Note: Dolt supports recursive CTEs like SQLite.
+// Uses LEFT JOIN instead of NOT EXISTS to avoid Dolt mergeJoinIter panic.
+// See: https://github.com/dolthub/go-mysql-server/issues/3413
 const readyIssuesView = `
 CREATE OR REPLACE VIEW ready_issues AS
 WITH RECURSIVE
   blocked_directly AS (
     SELECT DISTINCT d.issue_id
     FROM dependencies d
-    JOIN issues blocker ON d.depends_on_id = blocker.id
     WHERE d.type = 'blocks'
-      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+      AND EXISTS (
+        SELECT 1 FROM issues blocker
+        WHERE blocker.id = d.depends_on_id
+          AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+      )
   ),
   blocked_transitively AS (
     SELECT issue_id, 0 as depth
@@ -289,24 +304,38 @@ WITH RECURSIVE
   )
 SELECT i.*
 FROM issues i
+LEFT JOIN blocked_transitively bt ON bt.issue_id = i.id
 WHERE i.status = 'open'
   AND (i.ephemeral = 0 OR i.ephemeral IS NULL)
-  AND NOT EXISTS (
-    SELECT 1 FROM blocked_transitively WHERE issue_id = i.id
-  );
+  AND bt.issue_id IS NULL;
 `
 
-// blockedIssuesView is a MySQL-compatible view for blocked issues
+// blockedIssuesView is a MySQL-compatible view for blocked issues.
+// Uses subquery instead of three-table join to avoid Dolt mergeJoinIter panic.
 const blockedIssuesView = `
 CREATE OR REPLACE VIEW blocked_issues AS
 SELECT
     i.*,
-    COUNT(d.depends_on_id) as blocked_by_count
+    (SELECT COUNT(*)
+     FROM dependencies d
+     WHERE d.issue_id = i.id
+       AND d.type = 'blocks'
+       AND EXISTS (
+         SELECT 1 FROM issues blocker
+         WHERE blocker.id = d.depends_on_id
+           AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+       )
+    ) as blocked_by_count
 FROM issues i
-JOIN dependencies d ON i.id = d.issue_id
-JOIN issues blocker ON d.depends_on_id = blocker.id
 WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-  AND d.type = 'blocks'
-  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-GROUP BY i.id;
+  AND EXISTS (
+    SELECT 1 FROM dependencies d
+    WHERE d.issue_id = i.id
+      AND d.type = 'blocks'
+      AND EXISTS (
+        SELECT 1 FROM issues blocker
+        WHERE blocker.id = d.depends_on_id
+          AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+      )
+  );
 `

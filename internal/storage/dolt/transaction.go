@@ -1,3 +1,5 @@
+//go:build cgo
+
 package dolt
 
 import (
@@ -60,6 +62,33 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
+	// Generate ID if not provided (critical for wisp creation)
+	if issue.ID == "" {
+		// Get prefix from config
+		var configPrefix string
+		err := t.tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
+		if err == sql.ErrNoRows || configPrefix == "" {
+			return fmt.Errorf("database not initialized: issue_prefix config is missing")
+		} else if err != nil {
+			return fmt.Errorf("failed to get config: %w", err)
+		}
+
+		// Determine effective prefix
+		prefix := configPrefix
+		if issue.PrefixOverride != "" {
+			prefix = issue.PrefixOverride
+		} else if issue.IDPrefix != "" {
+			prefix = configPrefix + "-" + issue.IDPrefix
+		}
+
+		// Generate ID
+		generatedID, err := generateIssueID(ctx, t.tx, prefix, issue, actor)
+		if err != nil {
+			return fmt.Errorf("failed to generate issue ID: %w", err)
+		}
+		issue.ID = generatedID
+	}
+
 	return insertIssueTx(ctx, t.tx, issue)
 }
 
@@ -94,6 +123,10 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		whereClauses = append(whereClauses, "status = ?")
 		args = append(args, *filter.Status)
 	}
+	if filter.SpecIDPrefix != "" {
+		whereClauses = append(whereClauses, "spec_id LIKE ?")
+		args = append(args, filter.SpecIDPrefix+"%")
+	}
 
 	whereSQL := ""
 	if len(whereClauses) > 0 {
@@ -106,14 +139,27 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var issues []*types.Issue
+	// Collect all IDs first, then close rows before fetching full issues.
+	// MySQL server mode can't handle multiple active result sets on one connection.
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	_ = rows.Close()
+
+	// Now fetch each issue (safe since rows is closed)
+	var issues []*types.Issue
+	for _, id := range ids {
 		issue, err := t.GetIssue(ctx, id)
 		if err != nil {
 			return nil, err
@@ -122,7 +168,7 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 			issues = append(issues, issue)
 		}
 	}
-	return issues, rows.Err()
+	return issues, nil
 }
 
 // UpdateIssue updates an issue within the transaction
@@ -358,18 +404,18 @@ func insertIssueTx(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			id, content_hash, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, created_by, owner, updated_at, closed_at,
-			sender, ephemeral, pinned, is_template, crystallizes
+			sender, ephemeral, wisp_type, pinned, is_template, crystallizes
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?
+			?, ?, ?, ?, ?, ?
 		)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
 		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
 		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt,
-		issue.Sender, issue.Ephemeral, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
+		issue.Sender, issue.Ephemeral, string(issue.WispType), issue.Pinned, issue.IsTemplate, issue.Crystallizes,
 	)
 	return err
 }

@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/util"
@@ -17,8 +18,11 @@ import (
 
 var readyCmd = &cobra.Command{
 	Use:   "ready",
-	Short: "Show ready work (no blockers, open or in_progress)",
-	Long: `Show ready work (issues with no blockers that are open or in_progress).
+	Short: "Show ready work (open, no blockers)",
+	Long: `Show ready work (open issues with no blockers).
+
+Excludes in_progress, blocked, deferred, and hooked issues. This matches the
+behavior of 'bd list --ready' and shows work that is truly available to claim.
 
 Use --mol to filter to a specific molecule's steps:
   bd ready --mol bd-patrol   # Show ready steps within molecule
@@ -77,7 +81,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		}
 
 		filter := types.WorkFilter{
-			// Leave Status empty to get both 'open' and 'in_progress'
+			Status:          "open", // Only show open issues, not in_progress (matches bd list --ready)
 			Type:            issueType,
 			Limit:           limit,
 			Unassigned:      unassigned,
@@ -108,6 +112,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			readyArgs := &rpc.ReadyArgs{
+				Status:          "open", // Only show open issues, not in_progress (matches bd list --ready)
 				Assignee:        assignee,
 				Unassigned:      unassigned,
 				Type:            issueType,
@@ -215,7 +220,19 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			if issues == nil {
 				issues = []*types.Issue{}
 			}
-			outputJSON(issues)
+			issueIDs := make([]string, len(issues))
+			for i, issue := range issues {
+				issueIDs[i] = issue.ID
+			}
+			commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
+			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
+			for i, issue := range issues {
+				issuesWithCounts[i] = &types.IssueWithCounts{
+					Issue:        issue,
+					CommentCount: commentCounts[issue.ID],
+				}
+			}
+			outputJSON(issuesWithCounts)
 			return
 		}
 		// Show upgrade notification if needed
@@ -266,10 +283,11 @@ var blockedCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
 		// If daemon is running but doesn't support this command, use direct storage
+		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 		ctx := rootCtx
 		if daemonClient != nil && store == nil {
 			var err error
-			store, err = sqlite.New(ctx, dbPath)
+			store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
 				os.Exit(1)

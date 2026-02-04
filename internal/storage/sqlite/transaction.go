@@ -339,12 +339,12 @@ func (t *sqliteTxStorage) GetIssue(ctx context.Context, id string) (*types.Issue
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       spec_id, compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       due_at, defer_until, metadata
 		FROM issues
 		WHERE id = ?
 	`, id)
@@ -400,10 +400,15 @@ func (t *sqliteTxStorage) UpdateIssue(ctx context.Context, id string, updates ma
 		return fmt.Errorf("issue %s not found", id)
 	}
 
-	// Fetch custom statuses for validation
+	// Fetch custom statuses and types for validation
 	customStatuses, err := t.GetCustomStatuses(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+
+	customTypes, err := t.GetCustomTypes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom types: %w", err)
 	}
 
 	// Build update query with validated field names
@@ -416,8 +421,8 @@ func (t *sqliteTxStorage) UpdateIssue(ctx context.Context, id string, updates ma
 			return fmt.Errorf("invalid field for update: %s", key)
 		}
 
-		// Validate field values (with custom status support)
-		if err := validateFieldUpdateWithCustomStatuses(key, value, customStatuses); err != nil {
+		// Validate field values (with custom status and type support)
+		if err := validateFieldUpdateWithCustom(key, value, customStatuses, customTypes); err != nil {
 			return fmt.Errorf("failed to validate field update: %w", err)
 		}
 
@@ -1327,6 +1332,10 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		whereClauses = append(whereClauses, "id LIKE ?")
 		args = append(args, filter.IDPrefix+"%")
 	}
+	if filter.SpecIDPrefix != "" {
+		whereClauses = append(whereClauses, "spec_id LIKE ?")
+		args = append(args, filter.SpecIDPrefix+"%")
+	}
 
 	// Wisp filtering
 	if filter.Ephemeral != nil {
@@ -1368,12 +1377,12 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       spec_id, compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       due_at, defer_until, metadata
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
@@ -1407,6 +1416,7 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	var assignee sql.NullString
 	var owner sql.NullString
 	var externalRef sql.NullString
+	var specID sql.NullString
 	var compactedAt sql.NullTime
 	var originalSize sql.NullInt64
 	var sourceRepo sql.NullString
@@ -1441,18 +1451,20 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	// Time-based scheduling fields
 	var dueAt sql.NullTime
 	var deferUntil sql.NullTime
+	// Custom metadata field (GH#1406)
+	var metadata sql.NullString
 
 	err := row.Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&specID, &issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
-		&dueAt, &deferUntil,
+		&dueAt, &deferUntil, &metadata,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1484,6 +1496,9 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	}
 	if externalRef.Valid {
 		issue.ExternalRef = &externalRef.String
+	}
+	if specID.Valid {
+		issue.SpecID = specID.String
 	}
 	if compactedAt.Valid {
 		issue.CompactedAt = &compactedAt.Time
@@ -1570,6 +1585,10 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	}
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
+	}
+	// Custom metadata field (GH#1406)
+	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+		issue.Metadata = []byte(metadata.String)
 	}
 
 	return &issue, nil

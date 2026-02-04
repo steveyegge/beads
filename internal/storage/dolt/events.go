@@ -1,3 +1,5 @@
+//go:build cgo
+
 package dolt
 
 import (
@@ -38,6 +40,41 @@ func (s *DoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*types.Event
+	for rows.Next() {
+		var event types.Event
+		var oldValue, newValue, comment sql.NullString
+		if err := rows.Scan(&event.ID, &event.IssueID, &event.EventType, &event.Actor,
+			&oldValue, &newValue, &comment, &event.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan event: %w", err)
+		}
+		if oldValue.Valid {
+			event.OldValue = &oldValue.String
+		}
+		if newValue.Valid {
+			event.NewValue = &newValue.String
+		}
+		if comment.Valid {
+			event.Comment = &comment.String
+		}
+		events = append(events, &event)
+	}
+	return events, rows.Err()
+}
+
+// GetAllEventsSince returns all events with ID greater than sinceID, ordered by ID ascending.
+func (s *DoltStore) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
+		FROM events
+		WHERE id > ?
+		ORDER BY id ASC
+	`, sinceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get events since %d: %w", sinceID, err)
 	}
 	defer rows.Close()
 
@@ -171,6 +208,46 @@ func (s *DoltStore) GetCommentsForIssues(ctx context.Context, issueIDs []string)
 		}
 		result[c.IssueID] = append(result[c.IssueID], &c)
 	}
+	return result, rows.Err()
+}
+
+// GetCommentCounts returns the number of comments for each issue in a single batch query.
+func (s *DoltStore) GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error) {
+	if len(issueIDs) == 0 {
+		return make(map[string]int), nil
+	}
+
+	placeholders := make([]string, len(issueIDs))
+	args := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
+	query := fmt.Sprintf(`
+		SELECT issue_id, COUNT(*) as comment_count
+		FROM comments
+		WHERE issue_id IN (%s)
+		GROUP BY issue_id
+	`, joinStrings(placeholders, ","))
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comment counts: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]int)
+	for rows.Next() {
+		var issueID string
+		var count int
+		if err := rows.Scan(&issueID, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan comment count: %w", err)
+		}
+		result[issueID] = count
+	}
+
 	return result, rows.Err()
 }
 

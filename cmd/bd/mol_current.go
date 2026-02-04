@@ -137,6 +137,12 @@ Use --limit or --range to view specific steps:
 		} else {
 			// Infer from in_progress issues
 			molecules = findInProgressMolecules(ctx, store, agent)
+
+			// Fallback: check for hooked issues with bonded molecules
+			if len(molecules) == 0 {
+				molecules = findHookedMolecules(ctx, store, agent)
+			}
+
 			if len(molecules) == 0 {
 				if jsonOutput {
 					outputJSON([]interface{}{})
@@ -308,6 +314,76 @@ func findInProgressMolecules(ctx context.Context, s storage.Storage, agent strin
 	return molecules
 }
 
+// findHookedMolecules finds molecules bonded to hooked issues for an agent.
+// This is a fallback when no in_progress steps exist but a molecule is attached
+// to the agent's hooked work via a "blocks" dependency.
+func findHookedMolecules(ctx context.Context, s storage.Storage, agent string) []*MoleculeProgress {
+	// Query for hooked issues assigned to the agent
+	status := types.StatusHooked
+	filter := types.IssueFilter{Status: &status}
+	if agent != "" {
+		filter.Assignee = &agent
+	}
+	hookedIssues, err := s.SearchIssues(ctx, "", filter)
+	if err != nil || len(hookedIssues) == 0 {
+		return nil
+	}
+
+	// For each hooked issue, check for blocks dependencies on molecules
+	moleculeMap := make(map[string]*MoleculeProgress)
+	for _, issue := range hookedIssues {
+		deps, err := s.GetDependencyRecords(ctx, issue.ID)
+		if err != nil {
+			continue
+		}
+
+		// Look for a blocks dependency pointing to a molecule (epic or template)
+		for _, dep := range deps {
+			if dep.Type != types.DepBlocks {
+				continue
+			}
+			// The issue depends on (is blocked by) dep.DependsOnID
+			candidate, err := s.GetIssue(ctx, dep.DependsOnID)
+			if err != nil || candidate == nil {
+				continue
+			}
+
+			// Check if candidate is a molecule (epic or has template label)
+			isMolecule := candidate.IssueType == types.TypeEpic
+			if !isMolecule {
+				for _, label := range candidate.Labels {
+					if label == BeadsTemplateLabel {
+						isMolecule = true
+						break
+					}
+				}
+			}
+
+			if isMolecule {
+				if _, exists := moleculeMap[candidate.ID]; !exists {
+					progress, err := getMoleculeProgress(ctx, s, candidate.ID)
+					if err == nil {
+						moleculeMap[candidate.ID] = progress
+					}
+				}
+			}
+		}
+	}
+
+	// Convert to slice
+	var molecules []*MoleculeProgress
+	for _, mol := range moleculeMap {
+		molecules = append(molecules, mol)
+	}
+
+	// Sort by molecule ID for consistent output
+	sort.Slice(molecules, func(i, j int) bool {
+		return molecules[i].MoleculeID < molecules[j].MoleculeID
+	})
+
+	return molecules
+}
+
 // findParentMolecule walks up parent-child chain to find the root molecule
 func findParentMolecule(ctx context.Context, s storage.Storage, issueID string) string {
 	visited := make(map[string]bool)
@@ -406,6 +482,17 @@ func printMoleculeProgress(mol *MoleculeProgress) {
 	if mol.NextStep != nil && mol.CurrentStep == nil {
 		fmt.Printf("\nNext ready: %s - %s\n", mol.NextStep.ID, mol.NextStep.Title)
 		fmt.Printf("  Start with: bd update %s --status in_progress\n", mol.NextStep.ID)
+	}
+
+	// Show hint about viewing step instructions
+	var hintStepID string
+	if mol.CurrentStep != nil {
+		hintStepID = mol.CurrentStep.ID
+	} else if mol.NextStep != nil {
+		hintStepID = mol.NextStep.ID
+	}
+	if hintStepID != "" {
+		fmt.Printf("\n%s Run `bd show %s` to see detailed instructions.\n", ui.RenderAccent("💡"), hintStepID)
 	}
 }
 
@@ -594,6 +681,11 @@ func printLargeMoleculeSummary(stats *types.MoleculeProgressStats) {
 	fmt.Printf("  bd mol current %s --limit 50        # First 50 steps\n", stats.MoleculeID)
 	fmt.Printf("  bd mol current %s --range 1-50     # Steps 1-50\n", stats.MoleculeID)
 	fmt.Printf("  bd mol progress %s                 # Efficient progress summary\n", stats.MoleculeID)
+
+	// Show hint about viewing step instructions
+	if stats.CurrentStepID != "" {
+		fmt.Printf("\n%s Run `bd show %s` to see detailed instructions.\n", ui.RenderAccent("💡"), stats.CurrentStepID)
+	}
 }
 
 func init() {

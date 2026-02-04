@@ -1,3 +1,5 @@
+//go:build cgo
+
 package dolt
 
 import (
@@ -5,12 +7,14 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/config"
 )
 
 // SetConfig sets a configuration value
 func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO config (` + "`key`" + `, value) VALUES (?, ?)
+		INSERT INTO config (`+"`key`"+`, value) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value)
 	`, key, value)
 	if err != nil {
@@ -22,8 +26,14 @@ func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
 // GetConfig retrieves a configuration value
 func (s *DoltStore) GetConfig(ctx context.Context, key string) (string, error) {
 	var value string
-	err := s.db.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", key).Scan(&value)
-	if err == sql.ErrNoRows {
+	var scanErr error
+
+	err := s.withRetry(ctx, func() error {
+		scanErr = s.db.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", key).Scan(&value)
+		return scanErr
+	})
+
+	if err == sql.ErrNoRows || scanErr == sql.ErrNoRows {
 		return "", nil
 	}
 	if err != nil {
@@ -63,7 +73,7 @@ func (s *DoltStore) DeleteConfig(ctx context.Context, key string) error {
 // SetMetadata sets a metadata value
 func (s *DoltStore) SetMetadata(ctx context.Context, key, value string) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO metadata (` + "`key`" + `, value) VALUES (?, ?)
+		INSERT INTO metadata (`+"`key`"+`, value) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value)
 	`, key, value)
 	if err != nil {
@@ -85,26 +95,71 @@ func (s *DoltStore) GetMetadata(ctx context.Context, key string) (string, error)
 	return value, nil
 }
 
-// GetCustomStatuses returns custom status values from config
+// GetCustomStatuses returns custom status values from config.
+// If the database doesn't have custom statuses configured, falls back to config.yaml.
+// Returns an empty slice if no custom statuses are configured.
 func (s *DoltStore) GetCustomStatuses(ctx context.Context) ([]string, error) {
 	value, err := s.GetConfig(ctx, "status.custom")
 	if err != nil {
+		// On database error, try fallback to config.yaml
+		if yamlStatuses := config.GetCustomStatusesFromYAML(); len(yamlStatuses) > 0 {
+			return yamlStatuses, nil
+		}
 		return nil, err
 	}
-	if value == "" {
-		return nil, nil
+	if value != "" {
+		return parseCommaSeparatedList(value), nil
 	}
-	return strings.Split(value, ","), nil
+
+	// Fallback to config.yaml when database doesn't have status.custom set.
+	if yamlStatuses := config.GetCustomStatusesFromYAML(); len(yamlStatuses) > 0 {
+		return yamlStatuses, nil
+	}
+
+	return nil, nil
 }
 
-// GetCustomTypes returns custom issue type values from config
+// GetCustomTypes returns custom issue type values from config.
+// If the database doesn't have custom types configured, falls back to config.yaml.
+// This fallback is essential during operations when the database connection is
+// temporarily unavailable or when types.custom hasn't been configured yet.
+// Returns an empty slice if no custom types are configured.
 func (s *DoltStore) GetCustomTypes(ctx context.Context) ([]string, error) {
 	value, err := s.GetConfig(ctx, "types.custom")
 	if err != nil {
+		// On database error, try fallback to config.yaml
+		if yamlTypes := config.GetCustomTypesFromYAML(); len(yamlTypes) > 0 {
+			return yamlTypes, nil
+		}
 		return nil, err
 	}
-	if value == "" {
-		return nil, nil
+	if value != "" {
+		return parseCommaSeparatedList(value), nil
 	}
-	return strings.Split(value, ","), nil
+
+	// Fallback to config.yaml when database doesn't have types.custom set.
+	// This allows operations to work with custom types defined in config.yaml
+	// before they're persisted to the database.
+	if yamlTypes := config.GetCustomTypesFromYAML(); len(yamlTypes) > 0 {
+		return yamlTypes, nil
+	}
+
+	return nil, nil
+}
+
+// parseCommaSeparatedList splits a comma-separated string into a slice of trimmed entries.
+// Empty entries are filtered out.
+func parseCommaSeparatedList(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

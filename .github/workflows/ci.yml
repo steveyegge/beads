@@ -64,9 +64,18 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
+
+      - name: Install ICU4C (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install icu4c
+          dir="$(brew --prefix icu4c)"
+          echo "CGO_CPPFLAGS=-I$dir/include" >> "$GITHUB_ENV"
+          echo "CGO_LDFLAGS=-L$dir/lib -Wl,-rpath,$dir/lib" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$dir/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Configure Git
         run: |
@@ -96,7 +105,7 @@ jobs:
           fi
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         if: matrix.coverage && success()
         with:
           file: ./coverage.out
@@ -111,9 +120,21 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
+
+      - name: Install ICU4C (Windows)
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          path-type: inherit
+          msystem: UCRT64
+          pacboy: icu:p toolchain:p pkg-config:p
+
+      - name: Add MSYS2 UCRT64 to PATH
+        run: |
+          echo "${{ steps.msys2.outputs.msys2-location }}\\ucrt64\\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Configure Git
         run: |
@@ -145,9 +166,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -158,6 +179,9 @@ jobs:
   test-nix:
     name: Test Nix Flake
     runs-on: ubuntu-latest
+    # Allow failure until nixpkgs updates Go to 1.25.6+
+    # (dolthub/driver requires go 1.25.6, nixpkgs-unstable has go 1.25.1)
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
       - uses: cachix/install-nix-action@v31

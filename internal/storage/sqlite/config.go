@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/storage"
 )
 
 // SetConfig sets a configuration value
@@ -74,14 +75,17 @@ func (s *SQLiteStorage) DeleteConfig(ctx context.Context, key string) error {
 	return wrapDBError("delete config", err)
 }
 
-// OrphanHandling defines how to handle orphan issues during import
-type OrphanHandling string
+// OrphanHandling is an alias for storage.OrphanHandling for backward compatibility.
+// Deprecated: Use storage.OrphanHandling directly.
+type OrphanHandling = storage.OrphanHandling
 
+// Orphan handling constants - aliases for storage package constants.
+// Deprecated: Use storage.OrphanStrict, etc. directly.
 const (
-	OrphanStrict    OrphanHandling = "strict"     // Reject imports with orphans
-	OrphanResurrect OrphanHandling = "resurrect"  // Auto-resurrect parents from JSONL
-	OrphanSkip      OrphanHandling = "skip"       // Skip orphans silently
-	OrphanAllow     OrphanHandling = "allow"      // Allow orphans (default)
+	OrphanStrict    = storage.OrphanStrict    // Reject imports with orphans
+	OrphanResurrect = storage.OrphanResurrect // Auto-resurrect parents from JSONL
+	OrphanSkip      = storage.OrphanSkip      // Skip orphans silently
+	OrphanAllow     = storage.OrphanAllow     // Allow orphans (default)
 )
 
 // GetOrphanHandling gets the import.orphan_handling config value

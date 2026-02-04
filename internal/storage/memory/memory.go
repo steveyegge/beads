@@ -322,6 +322,15 @@ func (m *MemoryStorage) CreateIssues(ctx context.Context, issues []*types.Issue,
 	return nil
 }
 
+// CreateIssuesWithFullOptions creates multiple issues with full options control.
+// For MemoryStorage, this delegates to CreateIssues as the options (orphan handling,
+// prefix validation) are primarily relevant for persistent storage backends.
+func (m *MemoryStorage) CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) error {
+	// MemoryStorage doesn't enforce prefix validation or orphan handling
+	// as it's primarily used for testing and no-db mode
+	return m.CreateIssues(ctx, issues, actor)
+}
+
 // GetIssue retrieves an issue by ID
 func (m *MemoryStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	m.mu.RLock()
@@ -507,6 +516,43 @@ func (m *MemoryStorage) CloseIssue(ctx context.Context, id string, reason string
 	return m.UpdateIssue(ctx, id, updates, actor)
 }
 
+// ClaimIssue atomically claims an issue using compare-and-swap semantics.
+// It sets the assignee to actor and status to "in_progress" only if the issue
+// currently has no assignee. Returns storage.ErrAlreadyClaimed if already claimed.
+func (m *MemoryStorage) ClaimIssue(ctx context.Context, id string, actor string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	issue, exists := m.issues[id]
+	if !exists {
+		return fmt.Errorf("issue %s not found", id)
+	}
+
+	// Compare-and-swap: only claim if currently unassigned
+	if issue.Assignee != "" {
+		return fmt.Errorf("%w by %s", storage.ErrAlreadyClaimed, issue.Assignee)
+	}
+
+	// Perform the claim
+	now := time.Now()
+	issue.Assignee = actor
+	issue.Status = types.StatusInProgress
+	issue.UpdatedAt = now
+
+	m.dirty[id] = true
+
+	// Record claim event
+	event := &types.Event{
+		IssueID:   id,
+		EventType: "claimed",
+		Actor:     actor,
+		CreatedAt: now,
+	}
+	m.events[id] = append(m.events[id], event)
+
+	return nil
+}
+
 // CreateTombstone converts an existing issue to a tombstone record.
 // This is a soft-delete that preserves the issue with status="tombstone".
 func (m *MemoryStorage) CreateTombstone(ctx context.Context, id string, actor string, reason string) error {
@@ -642,6 +688,11 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 		// ID prefix filtering (for shell completion)
 		if filter.IDPrefix != "" {
 			if !strings.HasPrefix(issue.ID, filter.IDPrefix) {
+				continue
+			}
+		}
+		if filter.SpecIDPrefix != "" {
+			if !strings.HasPrefix(issue.SpecID, filter.SpecIDPrefix) {
 				continue
 			}
 		}
@@ -872,6 +923,20 @@ func (m *MemoryStorage) GetAllDependencyRecords(ctx context.Context) (map[string
 		result[k] = v
 	}
 
+	return result, nil
+}
+
+// GetDependencyRecordsForIssues returns dependency records for specific issues
+func (m *MemoryStorage) GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string][]*types.Dependency)
+	for _, id := range issueIDs {
+		if deps, ok := m.dependencies[id]; ok {
+			result[id] = deps
+		}
+	}
 	return result, nil
 }
 
@@ -1440,6 +1505,28 @@ func (m *MemoryStorage) GetEvents(ctx context.Context, issueID string, limit int
 	return events, nil
 }
 
+// GetAllEventsSince returns all events with ID greater than sinceID, ordered by ID ascending.
+func (m *MemoryStorage) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*types.Event
+	for _, issueEvents := range m.events {
+		for _, event := range issueEvents {
+			if event.ID > sinceID {
+				result = append(result, event)
+			}
+		}
+	}
+
+	// Sort by ID ascending
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID
+	})
+
+	return result, nil
+}
+
 func (m *MemoryStorage) AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1491,6 +1578,20 @@ func (m *MemoryStorage) GetCommentsForIssues(ctx context.Context, issueIDs []str
 	for _, issueID := range issueIDs {
 		if comments, exists := m.comments[issueID]; exists {
 			result[issueID] = comments
+		}
+	}
+	return result, nil
+}
+
+// GetCommentCounts returns the number of comments for each issue in a single batch query.
+func (m *MemoryStorage) GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string]int)
+	for _, issueID := range issueIDs {
+		if comments, exists := m.comments[issueID]; exists {
+			result[issueID] = len(comments)
 		}
 	}
 	return result, nil

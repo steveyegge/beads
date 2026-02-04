@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
+	"golang.org/x/term"
 )
 
 var initCmd = &cobra.Command{
@@ -40,7 +42,13 @@ to prevent deleted issues from being resurrected during re-initialization.
 With --stealth: configures per-repository git settings for invisible beads usage:
   • .git/info/exclude to prevent beads files from being committed
   • Claude Code settings with bd onboard instruction
-  Perfect for personal use without affecting repo collaborators.`,
+  Perfect for personal use without affecting repo collaborators.
+
+With --backend dolt: uses Dolt as the storage backend. If a dolt sql-server is detected
+running on port 3307 or 3306, server mode is automatically enabled for multi-writer access.
+Use --server to explicitly enable server mode, or set connection details with --server-host,
+--server-port, and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment
+variable.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
@@ -54,6 +62,12 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		force, _ := cmd.Flags().GetBool("force")
 		fromJSONL, _ := cmd.Flags().GetBool("from-jsonl")
 
+		// Dolt server mode flags (bd-dolt.2.2)
+		serverMode, _ := cmd.Flags().GetBool("server")
+		serverHost, _ := cmd.Flags().GetString("server-host")
+		serverPort, _ := cmd.Flags().GetInt("server-port")
+		serverUser, _ := cmd.Flags().GetString("server-user")
+
 		// Validate backend flag
 		if backend != "" && backend != configfile.BackendSQLite && backend != configfile.BackendDolt {
 			fmt.Fprintf(os.Stderr, "Error: invalid backend '%s' (must be 'sqlite' or 'dolt')\n", backend)
@@ -61,6 +75,12 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		}
 		if backend == "" {
 			backend = configfile.BackendSQLite // Default to SQLite
+		}
+
+		// Validate server mode requires dolt backend
+		if serverMode && backend != configfile.BackendDolt {
+			fmt.Fprintf(os.Stderr, "Error: --server flag requires --backend dolt\n")
+			os.Exit(1)
 		}
 
 		// Initialize config (PersistentPreRun doesn't run for init command)
@@ -131,23 +151,34 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		// The hyphen is added automatically during ID generation
 		prefix = strings.TrimRight(prefix, "-")
 
+		// Determine beadsDir first (used for all storage path calculations).
+		// BEADS_DIR takes precedence, otherwise use CWD/.beads (with redirect support).
+		// This must be computed BEFORE initDBPath to ensure consistent path resolution
+		// (avoiding macOS /var -> /private/var symlink issues when directory creation
+		// happens between path computations).
+		var beadsDirForInit string
+		if envBeadsDir := os.Getenv("BEADS_DIR"); envBeadsDir != "" {
+			beadsDirForInit = utils.CanonicalizePath(envBeadsDir)
+		} else {
+			localBeadsDir := filepath.Join(".", ".beads")
+			beadsDirForInit = beads.FollowRedirect(localBeadsDir)
+		}
+
 		// Determine storage path.
 		//
 		// IMPORTANT: In Dolt mode, we must NOT create a SQLite database file.
 		// `initDBPath` is used for SQLite-specific tasks (migration, import helpers, etc),
 		// so in Dolt mode it should point to the Dolt directory instead.
 		//
-		// Use global dbPath if set via --db flag or BEADS_DB env var (SQLite-only),
-		// otherwise default to `.beads/beads.db` for SQLite.
+		// Precedence: --db > BEADS_DB > BEADS_DIR > default (.beads/beads.db)
 		// If there's a redirect file, use the redirect target (GH#bd-0qel)
 		initDBPath := dbPath
 		if backend == configfile.BackendDolt {
-			initDBPath = filepath.Join(".beads", "dolt")
+			// Dolt backend: use computed beadsDirForInit
+			initDBPath = filepath.Join(beadsDirForInit, "dolt")
 		} else if initDBPath == "" {
-			// Check for redirect in local .beads
-			localBeadsDir := filepath.Join(".", ".beads")
-			targetBeadsDir := beads.FollowRedirect(localBeadsDir)
-			initDBPath = filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName)
+			// SQLite backend: use computed beadsDirForInit
+			initDBPath = filepath.Join(beadsDirForInit, beads.CanonicalDatabaseName)
 		}
 
 		// Migrate old SQLite database files if they exist (SQLite backend only).
@@ -194,11 +225,9 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			os.Exit(1)
 		}
 
-		var beadsDir string
-		// For regular repos, use current directory
-		// But first check if there's a redirect file - if so, use the redirect target (GH#bd-0qel)
-		localBeadsDir := filepath.Join(cwd, ".beads")
-		beadsDir = beads.FollowRedirect(localBeadsDir)
+		// Use the beadsDir computed earlier (before any directory creation)
+		// to ensure consistent path representation.
+		beadsDir := beadsDirForInit
 
 		// Prevent nested .beads directories
 		// Check if current working directory is inside a .beads directory
@@ -413,6 +442,20 @@ With --stealth: configures per-repository git settings for invisible beads usage
 				if cfg.Database == "" || cfg.Database == beads.CanonicalDatabaseName {
 					cfg.Database = "dolt"
 				}
+
+				// Save server mode configuration (bd-dolt.2.2)
+				if serverMode {
+					cfg.DoltMode = configfile.DoltModeServer
+					if serverHost != "" {
+						cfg.DoltServerHost = serverHost
+					}
+					if serverPort != 0 {
+						cfg.DoltServerPort = serverPort
+					}
+					if serverUser != "" {
+						cfg.DoltServerUser = serverUser
+					}
+				}
 			}
 
 			if err := cfg.Save(beadsDir); err != nil {
@@ -498,7 +541,23 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			}
 		}
 
-		// Run contributor wizard if --contributor flag is set
+		// Prompt for contributor mode if:
+		// - In a git repo (needed to set beads.role config)
+		// - Interactive terminal (stdin is TTY)
+		// - No explicit --contributor or --team flag provided
+		if isGitRepo() && !contributor && !team && shouldPromptForRole() {
+			promptedContributor, err := promptContributorMode()
+			if err != nil {
+				// Non-fatal: warn but continue with default behavior
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "Warning: failed to prompt for role: %v\n", err)
+				}
+			} else if promptedContributor {
+				contributor = true // Triggers contributor wizard below
+			}
+		}
+
+		// Run contributor wizard if --contributor flag is set or user chose contributor
 		if contributor {
 			if err := runContributorWizard(ctx, store); err != nil {
 				fmt.Fprintf(os.Stderr, "Error running contributor wizard: %v\n", err)
@@ -625,6 +684,22 @@ With --stealth: configures per-repository git settings for invisible beads usage
 
 		fmt.Printf("\n%s bd initialized successfully!\n\n", ui.RenderPass("✓"))
 		fmt.Printf("  Backend: %s\n", ui.RenderAccent(backend))
+		if serverMode {
+			host := serverHost
+			if host == "" {
+				host = configfile.DefaultDoltServerHost
+			}
+			port := serverPort
+			if port == 0 {
+				port = configfile.DefaultDoltServerPort
+			}
+			user := serverUser
+			if user == "" {
+				user = configfile.DefaultDoltServerUser
+			}
+			fmt.Printf("  Mode: %s\n", ui.RenderAccent("server"))
+			fmt.Printf("  Server: %s\n", ui.RenderAccent(fmt.Sprintf("%s@%s:%d", user, host, port)))
+		}
 		fmt.Printf("  Database: %s\n", ui.RenderAccent(storagePath))
 		fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
 		fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
@@ -666,6 +741,13 @@ func init() {
 	initCmd.Flags().Bool("skip-merge-driver", false, "Skip git merge driver setup")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if JSONL already has issues (may cause data loss)")
 	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
+
+	// Dolt server mode flags (bd-dolt.2.2)
+	initCmd.Flags().Bool("server", false, "Explicitly configure Dolt in server mode for high-concurrency (default: embedded)")
+	initCmd.Flags().String("server-host", "", "Dolt server host (default: 127.0.0.1)")
+	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3306)")
+	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")
+
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -796,6 +878,78 @@ func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
 	return nil, nil
 }
 
+// checkExistingBeadsDataAt checks for existing database at a specific beadsDir path.
+// This is extracted to support both BEADS_DIR and CWD-based resolution.
+func checkExistingBeadsDataAt(beadsDir string, prefix string) error {
+	// Check if .beads directory exists
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return nil // No .beads directory, safe to init
+	}
+
+	// Check for existing database (SQLite or Dolt)
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
+		doltPath := filepath.Join(beadsDir, "dolt")
+		if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
+			return fmt.Errorf(`
+%s Found existing Dolt database: %s
+
+This workspace is already initialized.
+
+To use the existing database:
+  Just run bd commands normally (e.g., %s)
+
+To completely reinitialize (data loss warning):
+  rm -rf %s && bd init --backend dolt --prefix %s
+
+Aborting.`, ui.RenderWarn("⚠"), doltPath, ui.RenderAccent("bd list"), beadsDir, prefix)
+		}
+	}
+
+	// Check for redirect file - if present, check the redirect target
+	redirectTarget := beads.FollowRedirect(beadsDir)
+	if redirectTarget != beadsDir {
+		targetDBPath := filepath.Join(redirectTarget, beads.CanonicalDatabaseName)
+		if _, err := os.Stat(targetDBPath); err == nil {
+			return fmt.Errorf(`
+%s Cannot init: redirect target already has database
+
+Local .beads redirects to: %s
+That location already has: %s
+
+The redirect target is already initialized. Running init here would overwrite it.
+
+To use the existing database:
+  Just run bd commands normally (e.g., %s)
+  The redirect will route to the canonical database.
+
+To reinitialize the canonical location (data loss warning):
+  rm %s && bd init --prefix %s
+
+Aborting.`, ui.RenderWarn("⚠"), redirectTarget, targetDBPath, ui.RenderAccent("bd list"), targetDBPath, prefix)
+		}
+		return nil // Redirect target has no database - safe to init
+	}
+
+	// Check for existing database file (no redirect case)
+	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	if _, err := os.Stat(dbPath); err == nil {
+		return fmt.Errorf(`
+%s Found existing database: %s
+
+This workspace is already initialized.
+
+To use the existing database:
+  Just run bd commands normally (e.g., %s)
+
+To completely reinitialize (data loss warning):
+  rm -rf %s && bd init --prefix %s
+
+Aborting.`, ui.RenderWarn("⚠"), dbPath, ui.RenderAccent("bd list"), beadsDir, prefix)
+	}
+
+	return nil // No database found, safe to init
+}
+
 // checkExistingBeadsData checks for existing database files
 // and returns an error if found (safety guard for bd-emg)
 //
@@ -809,6 +963,13 @@ func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
 // For redirects, checks the redirect target and errors if it already has a database.
 // This prevents accidentally overwriting an existing canonical database (GH#bd-0qel).
 func checkExistingBeadsData(prefix string) error {
+	// Check BEADS_DIR environment variable first (matches FindBeadsDir pattern)
+	// When BEADS_DIR is set, it takes precedence over CWD and worktree checks
+	if envBeadsDir := os.Getenv("BEADS_DIR"); envBeadsDir != "" {
+		absBeadsDir := utils.CanonicalizePath(envBeadsDir)
+		return checkExistingBeadsDataAt(absBeadsDir, prefix)
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil // Can't determine CWD, allow init to proceed
@@ -830,82 +991,86 @@ func checkExistingBeadsData(prefix string) error {
 		beadsDir = filepath.Join(cwd, ".beads")
 	}
 
-	// Check if .beads directory exists
-	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		return nil // No .beads directory, safe to init
+	return checkExistingBeadsDataAt(beadsDir, prefix)
+}
+
+// shouldPromptForRole returns true if we should prompt the user for their role.
+// Skips prompt in non-interactive contexts (CI, scripts, piped input).
+func shouldPromptForRole() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// getBeadsRole reads the beads.role git config value.
+// Returns the role and true if configured, or empty string and false if not set.
+func getBeadsRole() (string, bool) {
+	cmd := exec.Command("git", "config", "--get", "beads.role")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", false
 	}
+	role := strings.TrimSpace(string(output))
+	if role == "" {
+		return "", false
+	}
+	return role, true
+}
 
-	// Check for existing database (SQLite or Dolt)
-	//
-	// NOTE: For Dolt backend, the "database" is a directory at `.beads/dolt/`.
-	// We prefer metadata.json as the single source of truth, but we also keep a
-	// conservative fallback for legacy SQLite setups.
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
-		doltPath := filepath.Join(beadsDir, "dolt")
-		if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
-			return fmt.Errorf(`
-%s Found existing Dolt database: %s
+// setBeadsRole writes the beads.role git config value.
+func setBeadsRole(role string) error {
+	cmd := exec.Command("git", "config", "beads.role", role)
+	return cmd.Run()
+}
 
-This workspace is already initialized.
+// promptContributorMode prompts the user to determine if they are a contributor.
+// Returns true if the user indicates they are a contributor, false otherwise.
+//
+// Behavior:
+// - If beads.role is already set: shows current role, offers to change
+// - If not set: prompts "Contributing to someone else's repo? [y/N]"
+// - Sets git config beads.role based on answer
+func promptContributorMode() (isContributor bool, err error) {
+	reader := bufio.NewReader(os.Stdin)
 
-To use the existing database:
-  Just run bd commands normally (e.g., %s)
+	// Check if role is already configured
+	existingRole, hasRole := getBeadsRole()
+	if hasRole {
+		fmt.Printf("\n%s Already configured as: %s\n", ui.RenderAccent("▶"), ui.RenderBold(existingRole))
+		fmt.Print("Change role? [y/N]: ")
 
-To completely reinitialize (data loss warning):
-  rm -rf .beads && bd init --backend dolt --prefix %s
-
-Aborting.`, ui.RenderWarn("⚠"), doltPath, ui.RenderAccent("bd list"), prefix)
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			return false, fmt.Errorf("failed to read input: %w", err)
 		}
-	}
+		response = strings.TrimSpace(strings.ToLower(response))
 
-	// Check for redirect file - if present, we need to check the redirect target (GH#bd-0qel)
-	redirectTarget := beads.FollowRedirect(beadsDir)
-	if redirectTarget != beadsDir {
-		// There's a redirect - check if the target already has a database
-		targetDBPath := filepath.Join(redirectTarget, beads.CanonicalDatabaseName)
-		if _, err := os.Stat(targetDBPath); err == nil {
-			return fmt.Errorf(`
-%s Cannot init: redirect target already has database
-
-Local .beads redirects to: %s
-That location already has: %s
-
-The redirect target is already initialized. Running init here would overwrite it.
-
-To use the existing database:
-  Just run bd commands normally (e.g., %s)
-  The redirect will route to the canonical database.
-
-To reinitialize the canonical location (data loss warning):
-  rm %s && bd init --prefix %s
-
-Aborting.`, ui.RenderWarn("⚠"), redirectTarget, targetDBPath, ui.RenderAccent("bd list"), targetDBPath, prefix)
+		if response != "y" && response != "yes" {
+			// Keep existing role
+			return existingRole == "contributor", nil
 		}
-		// Redirect target has no database - safe to init there
-		return nil
+		// Fall through to re-prompt
+		fmt.Println()
 	}
 
-	// Check for existing database file (no redirect case)
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	if _, err := os.Stat(dbPath); err == nil {
-		return fmt.Errorf(`
-%s Found existing database: %s
+	// Prompt for role
+	fmt.Print("Contributing to someone else's repo? [y/N]: ")
 
-This workspace is already initialized.
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false, fmt.Errorf("failed to read input: %w", err)
+	}
+	response = strings.TrimSpace(strings.ToLower(response))
 
-To use the existing database:
-  Just run bd commands normally (e.g., %s)
+	isContributor = response == "y" || response == "yes"
 
-To completely reinitialize (data loss warning):
-  rm -rf .beads && bd init --prefix %s
-
-Aborting.`, ui.RenderWarn("⚠"), dbPath, ui.RenderAccent("bd list"), prefix)
+	// Set the role in git config
+	role := "maintainer"
+	if isContributor {
+		role = "contributor"
 	}
 
-	// Fresh clones (JSONL exists but no database) are allowed - init will
-	// create the database and import from JSONL automatically.
-	// This fixes the circular dependency where init told users to run
-	// "bd doctor --fix" but doctor couldn't create a database (bd-4h9).
+	if err := setBeadsRole(role); err != nil {
+		return isContributor, fmt.Errorf("failed to set beads.role config: %w", err)
+	}
 
-	return nil // No database found, safe to init
+	return isContributor, nil
 }

@@ -297,6 +297,57 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.49.3",
+		Date:    "2026-01-31",
+		Changes: []string{
+			"FIX: Dolt split-brain eliminated - DatabasePath() always resolves to .beads/dolt/ for dolt backend; JSONL auto-import blocked in dolt-native mode",
+			"CHANGE: Embedded Dolt is now the default - server mode is opt-in via dolt_mode: server",
+			"FIX: Dolt mergeJoinIter panic on type-filtered queries eliminated",
+			"FIX: CGO/ICU build - Makefile and test.sh auto-detect Homebrew icu4c paths on macOS",
+		},
+	},
+	{
+		Version: "0.49.2",
+		Date:    "2026-01-31",
+		Changes: []string{
+			"NEW: GitLab backend - Bidirectional issue sync with GitLab (bd gitlab sync/status/projects)",
+			"NEW: Key-value store - bd kv get/set/delete/list for persistent key-value storage",
+			"NEW: Per-issue JSON metadata field for custom structured data (SQLite + Dolt)",
+			"NEW: Events JSONL export - Opt-in audit trail via events-export config",
+			"NEW: Role configuration - Explicit roles via git, interactive contributor prompt",
+			"NEW: bd backend and bd sync mode subcommands for storage inspection",
+			"NEW: Dolt auto-detect server mode during bd init",
+			"NEW: comment_count in JSON views, comment timestamps with --local-time",
+			"CHANGE: Removed Gas Town-specific code from beads core (hooks, validation, role types)",
+			"CHANGE: Storage layer refactored for backend-agnostic access",
+			"FIX: Worktree support - GIT_DIR/GIT_WORK_TREE in sync operations",
+			"FIX: Graceful Dolt server-to-embedded fallback",
+			"FIX: Multiple sync fixes for dolt-native mode and sync-branch",
+			"FIX: Formula handlebars, ephemeral sync exclusion, daemon idempotency",
+		},
+	},
+	{
+		Version: "0.49.1",
+		Date:    "2026-01-25",
+		Changes: []string{
+			"NEW: Dolt backend fully supported - Extensively tested and ready for community evaluation",
+			"NOTE: Dolt is not enabled by default - We encourage users to try it and report feedback!",
+			"NEW: bd activity --details/-d - Full issue information in activity feed (#1317)",
+			"NEW: bd export --id/--parent - Targeted exports with filters (#1292)",
+			"NEW: bd update --append-notes - Append to existing notes (#1304)",
+			"NEW: bd show --id - For IDs that look like flags",
+			"NEW: bd doctor --server - Dolt server mode health checks",
+			"NEW: Dolt server mode - Multi-client access for shared Dolt databases",
+			"NEW: Dolt auto-commit on writes with explicit commit authors (#1267)",
+			"FIX: Daemon stack overflow on empty database path (#1288, #1313)",
+			"FIX: bd list --json optimization - Fetch only needed dependencies (#1316)",
+			"FIX: Import custom issue types (#1322)",
+			"FIX: SQLite transaction improvements (#1272, #1276)",
+			"FIX: Multiple Dolt backend fixes for hooks, routing, and daemon compatibility",
+			"DOCS: Comprehensive docs/DOLT.md guide (#1310)",
+		},
+	},
+	{
 		Version: "0.49.0",
 		Date:    "2026-01-21",
 		Changes: []string{

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS issues (
     closed_at DATETIME,
     closed_by_session TEXT DEFAULT '',
     external_ref TEXT,
+    spec_id TEXT,
     compaction_level INTEGER DEFAULT 0,
     compacted_at DATETIME,
     compacted_at_commit TEXT,
@@ -33,6 +34,8 @@ CREATE TABLE IF NOT EXISTS issues (
     -- Messaging fields (bd-kwro)
     sender TEXT DEFAULT '',
     ephemeral INTEGER DEFAULT 0,
+    -- Wisp type for TTL-based compaction (gt-9br)
+    wisp_type TEXT DEFAULT '',
     -- Pinned field (bd-7h5)
     pinned INTEGER DEFAULT 0,
     -- Template field (beads-1ra)
@@ -47,6 +50,8 @@ CREATE TABLE IF NOT EXISTS issues (
     quality_score REAL,
     -- Federation source system field
     source_system TEXT DEFAULT '',
+    -- Custom metadata field (GH#1406)
+    metadata TEXT NOT NULL DEFAULT '{}',
     -- Event fields (bd-ecmd)
     event_kind TEXT DEFAULT '',
     actor TEXT DEFAULT '',
@@ -66,6 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status);
 CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority);
 CREATE INDEX IF NOT EXISTS idx_issues_assignee ON issues(assignee);
 CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
+CREATE INDEX IF NOT EXISTS idx_issues_spec_id ON issues(spec_id);
 -- Note: idx_issues_external_ref is created in migrations/002_external_ref_column.go
 
 -- Dependencies table (edge schema - Decision 004)

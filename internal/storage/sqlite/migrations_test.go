@@ -477,6 +477,7 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				closed_at DATETIME,
 				closed_by_session TEXT DEFAULT '',
 				external_ref TEXT,
+				spec_id TEXT DEFAULT '',
 				compaction_level INTEGER DEFAULT 0,
 				compacted_at DATETIME,
 				original_size INTEGER,
@@ -489,6 +490,7 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				original_type TEXT DEFAULT '',
 				sender TEXT DEFAULT '',
 				ephemeral INTEGER DEFAULT 0,
+				wisp_type TEXT DEFAULT '',
 				pinned INTEGER DEFAULT 0,
 				is_template INTEGER DEFAULT 0,
 				crystallizes INTEGER DEFAULT 0,
@@ -509,9 +511,10 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				payload TEXT DEFAULT '',
 				due_at DATETIME,
 				defer_until DATETIME,
+				metadata TEXT NOT NULL DEFAULT '{}',
 				CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 			);
-			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', '', updated_at, closed_at, '', external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, 0, '', '', 0, '', '', '', '', NULL, '', '', '', '', '', '', '', NULL, NULL FROM issues_backup;
+			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', '', updated_at, closed_at, '', external_ref, '', compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, '', 0, 0, 0, '', '', 0, '', '', '', '', NULL, '', '', '', '', '', '', '', NULL, NULL, '{}' FROM issues_backup;
 			DROP TABLE issues_backup;
 		`)
 		if err != nil {

@@ -11,9 +11,9 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// GetReadyWork returns issues with no open blockers
-// By default, shows both 'open' and 'in_progress' issues so epics/tasks
-// ready to close are visible.
+// GetReadyWork returns issues with no open blockers.
+// If filter.Status is empty, shows both 'open' and 'in_progress' issues.
+// If filter.Status is set (e.g., "open"), only shows that status.
 // Excludes pinned issues which are persistent anchors, not actionable work.
 func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
 	whereClauses := []string{
@@ -125,6 +125,12 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		args = append(args, string(*filter.MolType))
 	}
 
+	// Wisp type filtering (TTL-based compaction classification)
+	if filter.WispType != nil {
+		whereClauses = append(whereClauses, "i.wisp_type = ?")
+		args = append(args, string(*filter.WispType))
+	}
+
 	// Time-based deferral filtering (GH#820)
 	// By default, exclude issues where defer_until is in the future.
 	// If IncludeDeferred is true, skip this filter to show deferred issues.
@@ -164,12 +170,12 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 	query := fmt.Sprintf(`
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
+		i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.spec_id, i.source_repo, i.close_reason,
 		i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		i.await_type, i.await_id, i.timeout_ns, i.waiters,
 		i.hook_bead, i.role_bead, i.agent_state, i.last_activity, i.role_type, i.rig, i.mol_type,
-		i.due_at, i.defer_until
+		i.due_at, i.defer_until, i.metadata
 		FROM issues i
 		WHERE %s
 		AND NOT EXISTS (
@@ -778,12 +784,12 @@ func (s *SQLiteStorage) GetNewlyUnblockedByClose(ctx context.Context, closedIssu
 	query := `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
+		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.spec_id, i.source_repo, i.close_reason,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
 		       i.hook_bead, i.role_bead, i.agent_state, i.last_activity, i.role_type, i.rig, i.mol_type,
-		       i.due_at, i.defer_until
+		       i.due_at, i.defer_until, i.metadata
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		WHERE d.depends_on_id = ?

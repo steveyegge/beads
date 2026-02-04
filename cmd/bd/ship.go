@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -53,8 +54,10 @@ func runShip(cmd *cobra.Command, args []string) {
 	var err error
 
 	// Ship requires direct store access for label operations
+	// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 	if daemonClient != nil && store == nil {
-		store, err = sqlite.New(ctx, dbPath)
+		beadsDir := filepath.Dir(dbPath)
+		store, err = factory.NewFromConfig(ctx, beadsDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
 			os.Exit(1)

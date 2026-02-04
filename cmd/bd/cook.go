@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -783,12 +782,6 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula, pro
 		return nil, fmt.Errorf("no database connection")
 	}
 
-	// Check for SQLite store (needed for batch create with skip prefix)
-	sqliteStore, ok := s.(*sqlite.SQLiteStorage)
-	if !ok {
-		return nil, fmt.Errorf("cook requires SQLite storage")
-	}
-
 	// Map step ID -> created issue ID
 	idMapping := make(map[string]string)
 
@@ -838,10 +831,11 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula, pro
 	}
 
 	// Create all issues using batch with skip prefix validation
-	opts := sqlite.BatchCreateOptions{
+	opts := storage.BatchCreateOptions{
 		SkipPrefixValidation: true, // Molecules use mol-* prefix
+		OrphanHandling:       storage.OrphanAllow,
 	}
-	if err := sqliteStore.CreateIssuesWithFullOptions(ctx, issues, actor, opts); err != nil {
+	if err := s.CreateIssuesWithFullOptions(ctx, issues, actor, opts); err != nil {
 		return nil, fmt.Errorf("failed to create issues: %w", err)
 	}
 

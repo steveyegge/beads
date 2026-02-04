@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -61,6 +62,21 @@ func TestExtractVariables(t *testing.T) {
 			name:     "empty braces",
 			input:    "{{}}",
 			expected: nil,
+		},
+		{
+			name:     "handlebars else keyword ignored",
+			input:    "{{ready}} then {{else}} or {{other}}",
+			expected: []string{"ready", "other"},
+		},
+		{
+			name:     "handlebars this keyword ignored",
+			input:    "{{this}} and {{name}}",
+			expected: []string{"name"},
+		},
+		{
+			name:     "multiple handlebars keywords ignored",
+			input:    "{{else}} {{this}} {{root}} {{index}} {{key}} {{first}} {{last}} {{actual_var}}",
+			expected: []string{"actual_var"},
 		},
 	}
 
@@ -827,4 +843,103 @@ func TestLoadTemplateSubgraphWithManyChildren(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestExtractRequiredVariables_IgnoresUndeclaredVars tests that handlebars in
+// description text that are NOT defined in VarDefs are ignored (gt-ky9loa).
+func TestExtractRequiredVariables_IgnoresUndeclaredVars(t *testing.T) {
+	tests := []struct {
+		name         string
+		issues       []*types.Issue
+		varDefs      map[string]formula.VarDef
+		wantRequired []string
+	}{
+		{
+			name: "declared var without default is required",
+			issues: []*types.Issue{
+				{Title: "Deploy {{component}}", Description: "Deploy the component"},
+			},
+			varDefs: map[string]formula.VarDef{
+				"component": {Required: true},
+			},
+			wantRequired: []string{"component"},
+		},
+		{
+			name: "declared var with default is not required",
+			issues: []*types.Issue{
+				{Title: "Deploy {{component}}", Description: "Deploy the component"},
+			},
+			varDefs: map[string]formula.VarDef{
+				"component": {Default: "api"},
+			},
+			wantRequired: []string{},
+		},
+		{
+			name: "undeclared var in description is ignored when VarDefs exists",
+			issues: []*types.Issue{
+				{
+					Title:       "Generate report",
+					Description: "Output format:\n**Ready**: {{ready_count}}\n**Done**: {{done_count}}",
+				},
+			},
+			varDefs: map[string]formula.VarDef{
+				// VarDefs exists but doesn't include ready_count or done_count
+				// These are documentation handlebars, not formula variables
+			},
+			wantRequired: []string{},
+		},
+		{
+			name: "mix of declared and undeclared vars",
+			issues: []*types.Issue{
+				{
+					Title:       "Deploy {{component}} to {{env}}",
+					Description: "Shows: {{status_count}} items processed",
+				},
+			},
+			varDefs: map[string]formula.VarDef{
+				"component": {Required: true},
+				"env":       {Default: "prod"},
+				// status_count is NOT declared - it's documentation
+			},
+			wantRequired: []string{"component"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subgraph := &TemplateSubgraph{
+				Issues:  tt.issues,
+				VarDefs: tt.varDefs,
+			}
+
+			got := extractRequiredVariables(subgraph)
+
+			// Convert to map for easier comparison
+			gotMap := make(map[string]bool)
+			for _, v := range got {
+				gotMap[v] = true
+			}
+			wantMap := make(map[string]bool)
+			for _, v := range tt.wantRequired {
+				wantMap[v] = true
+			}
+
+			if len(got) != len(tt.wantRequired) {
+				t.Errorf("extractRequiredVariables() = %v, want %v", got, tt.wantRequired)
+				return
+			}
+
+			for _, v := range tt.wantRequired {
+				if !gotMap[v] {
+					t.Errorf("extractRequiredVariables() missing expected var %q, got %v", v, got)
+				}
+			}
+
+			for _, v := range got {
+				if !wantMap[v] {
+					t.Errorf("extractRequiredVariables() has unexpected var %q, want %v", v, tt.wantRequired)
+				}
+			}
+		})
+	}
 }

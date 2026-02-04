@@ -20,7 +20,7 @@ const (
 	// Provides immediate persistence but more git noise.
 	SyncModeRealtime = string(config.SyncModeRealtime)
 
-	// SyncModeDoltNative uses Dolt remotes for sync, skipping JSONL.
+	// SyncModeDoltNative uses Dolt remotes for sync, JSONL export-only (backup).
 	// Requires Dolt backend and configured Dolt remote.
 	SyncModeDoltNative = string(config.SyncModeDoltNative)
 
@@ -48,10 +48,17 @@ const (
 	TriggerChange = "change"
 )
 
-// GetSyncMode returns the configured sync mode from the database, defaulting to git-portable.
-// This reads from storage.Storage (database), not config.yaml.
-// For config.yaml access, use config.GetSyncMode() instead.
+// GetSyncMode returns the configured sync mode, checking config.yaml first (where bd config set writes),
+// then falling back to database. This fixes GH#1277 where yaml and database were inconsistent.
 func GetSyncMode(ctx context.Context, s storage.Storage) string {
+	// First check config.yaml (where bd config set writes for sync.* keys)
+	yamlMode := config.GetSyncMode()
+	if yamlMode != "" && yamlMode != config.SyncModeGitPortable {
+		// Non-default value in yaml takes precedence
+		return string(yamlMode)
+	}
+
+	// Fall back to database (legacy path)
 	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
 	if err != nil || mode == "" {
 		return SyncModeGitPortable
@@ -100,9 +107,21 @@ func GetImportTrigger(ctx context.Context, s storage.Storage) string {
 }
 
 // ShouldExportJSONL returns true if the current sync mode uses JSONL export.
+// All modes export JSONL — in dolt-native mode it serves as periodic backup.
 func ShouldExportJSONL(ctx context.Context, s storage.Storage) bool {
-	mode := GetSyncMode(ctx, s)
-	// All modes except dolt-native use JSONL
+	return true
+}
+
+// ShouldImportJSONL returns true if the current sync mode uses JSONL import.
+// In dolt-native mode, there is no JSONL to import — all sync is via Dolt remotes.
+// Unlike ShouldExportJSONL, this checks the database config directly rather than
+// going through GetSyncMode (which reads config.yaml via viper). This avoids false
+// negatives when config.yaml is loaded from the wrong directory context.
+func ShouldImportJSONL(ctx context.Context, s storage.Storage) bool {
+	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
+	if err != nil || mode == "" {
+		return true // default (git-portable) uses JSONL
+	}
 	return mode != SyncModeDoltNative
 }
 
@@ -120,7 +139,7 @@ func SyncModeDescription(mode string) string {
 	case SyncModeRealtime:
 		return "JSONL exported on every change"
 	case SyncModeDoltNative:
-		return "Dolt remotes only, no JSONL"
+		return "Dolt remotes for sync, JSONL export-only (backup)"
 	case SyncModeBeltAndSuspenders:
 		return "Both Dolt remotes and JSONL"
 	default:

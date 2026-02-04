@@ -27,6 +27,9 @@ func (m *mockStorage) CreateIssue(ctx context.Context, issue *types.Issue, actor
 func (m *mockStorage) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
 	return nil
 }
+func (m *mockStorage) CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts BatchCreateOptions) error {
+	return nil
+}
 func (m *mockStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	return nil, nil
 }
@@ -34,6 +37,9 @@ func (m *mockStorage) GetIssueByExternalRef(ctx context.Context, externalRef str
 	return nil, nil
 }
 func (m *mockStorage) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
+	return nil
+}
+func (m *mockStorage) ClaimIssue(ctx context.Context, id string, actor string) error {
 	return nil
 }
 func (m *mockStorage) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
@@ -67,6 +73,9 @@ func (m *mockStorage) GetDependencyRecords(ctx context.Context, issueID string) 
 	return nil, nil
 }
 func (m *mockStorage) GetAllDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error) {
+	return nil, nil
+}
+func (m *mockStorage) GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error) {
 	return nil, nil
 }
 func (m *mockStorage) GetDependencyCounts(ctx context.Context, issueIDs []string) (map[string]*types.DependencyCounts, error) {
@@ -117,6 +126,9 @@ func (m *mockStorage) AddComment(ctx context.Context, issueID, actor, comment st
 func (m *mockStorage) GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error) {
+	return nil, nil
+}
 func (m *mockStorage) AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
 	return nil, nil
 }
@@ -127,6 +139,9 @@ func (m *mockStorage) GetIssueComments(ctx context.Context, issueID string) ([]*
 	return nil, nil
 }
 func (m *mockStorage) GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error) {
+	return nil, nil
+}
+func (m *mockStorage) GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error) {
 	return nil, nil
 }
 func (m *mockStorage) GetStatistics(ctx context.Context) (*types.Statistics, error) {
@@ -318,9 +333,11 @@ func TestInterfaceDocumentation(t *testing.T) {
 		// Verify issue operations
 		_ = s.CreateIssue
 		_ = s.CreateIssues
+		_ = s.CreateIssuesWithFullOptions
 		_ = s.GetIssue
 		_ = s.GetIssueByExternalRef
 		_ = s.UpdateIssue
+		_ = s.ClaimIssue
 		_ = s.CloseIssue
 		_ = s.DeleteIssue
 		_ = s.SearchIssues
@@ -352,6 +369,7 @@ func TestInterfaceDocumentation(t *testing.T) {
 		// Verify event/comment operations
 		_ = s.AddComment
 		_ = s.GetEvents
+		_ = s.GetAllEventsSince
 		_ = s.AddIssueComment
 		_ = s.GetIssueComments
 		_ = s.GetCommentsForIssues

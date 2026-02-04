@@ -147,9 +147,11 @@ func getWorktreeJSONLPath(mainJSONLPath string) string {
 	}
 	worktreePath := filepath.Join(gitCommonDir, "beads-worktrees", syncBranch)
 
-	// Check if worktree exists (it should be created by sync branch operations)
-	// If it doesn't exist, fall back to main repo JSONL
+	// Check if worktree exists (should have been created by syncbranch.EnsureWorktree
+	// during initialization). If it doesn't exist, fall back to main repo JSONL.
+	// GH#1349: This fallback should now be rare since EnsureWorktree is called early.
 	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		debug.Logf("sync-branch configured but worktree doesn't exist at %s, falling back to main JSONL", worktreePath)
 		return ""
 	}
 
@@ -205,6 +207,14 @@ func autoImportIfNewer() {
 	// This ensures auto-import is disabled even if caller forgot to check autoImportEnabled
 	if noAutoImport {
 		debug.Logf("auto-import skipped (--no-auto-import flag)")
+		return
+	}
+
+	// Skip JSONL import in dolt-native mode — there is no JSONL to import.
+	// Without this guard, the store.GetMetadata call below can panic with a nil
+	// pointer when the Dolt backend connection is in a degraded state.
+	if store != nil && !ShouldImportJSONL(rootCtx, store) {
+		debug.Logf("auto-import skipped (dolt-native mode, no JSONL)")
 		return
 	}
 
@@ -828,6 +838,7 @@ type flushState struct {
 //   - Store already closed (storeActive=false)
 //   - Database not dirty (isDirty=false) AND forceDirty=false
 //   - No dirty issues found (incremental mode only)
+//   - Sync mode is dolt-native (bd-ixip: skip JSONL export)
 func flushToJSONLWithState(state flushState) {
 	// Check if store is still active (not closed) and not nil
 	storeMutex.Lock()
@@ -836,6 +847,13 @@ func flushToJSONLWithState(state flushState) {
 		return
 	}
 	storeMutex.Unlock()
+
+	// Check sync mode before JSONL export (bd-ixip: dolt-native mode should skip JSONL)
+	ctx := rootCtx
+	if !ShouldExportJSONL(ctx, store) {
+		debug.Logf("skipping autoflush (dolt-native mode)")
+		return
+	}
 
 	jsonlPath := findJSONLPath()
 
@@ -846,8 +864,6 @@ func flushToJSONLWithState(state flushState) {
 		return
 	}
 	storeMutex.Unlock()
-
-	ctx := rootCtx
 
 	// Validate JSONL integrity BEFORE checking isDirty
 	// This detects if JSONL and export_hashes are out of sync (e.g., after git operations)
@@ -920,6 +936,14 @@ func flushToJSONLWithState(state flushState) {
 
 	// Update metadata (hashes, timestamps)
 	updateFlushExportMetadata(ctx, store, jsonlPath)
+
+	// Export events to JSONL (non-fatal, opt-in via config)
+	if config.GetBool("events-export") {
+		eventsPath := filepath.Join(filepath.Dir(jsonlPath), "events.jsonl")
+		if err := exportEventsToJSONL(ctx, store, eventsPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: events export failed: %v\n", err)
+		}
+	}
 
 	recordFlushSuccess()
 }

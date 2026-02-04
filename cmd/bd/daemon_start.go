@@ -61,6 +61,12 @@ Examples:
 		// (the BD_DAEMON_FOREGROUND=1 child spawned by startDaemon).
 		if foreground {
 			autoCommit, autoPush, autoPull = loadDaemonAutoSettings(cmd, autoCommit, autoPush, autoPull)
+		} else {
+			// In background mode, load YAML/env settings for the startup message
+			// (full settings including database are loaded in the child process)
+			if yamlCommit, yamlPush, yamlPull, hasSettings := loadYAMLDaemonSettings(); hasSettings {
+				autoCommit, autoPush, autoPull = yamlCommit, yamlPush, yamlPull
+			}
 		}
 
 		if interval <= 0 {
@@ -84,11 +90,10 @@ Examples:
 					health, healthErr := client.Health()
 					_ = client.Close()
 
-					// If we can check version and it's compatible, exit
+					// If we can check version and it's compatible, exit successfully (idempotent)
 					if healthErr == nil && health.Compatible {
-						fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d, version %s)\n", pid, health.Version)
-						fmt.Fprintf(os.Stderr, "Use 'bd daemon stop' to stop it first\n")
-						os.Exit(1)
+						fmt.Printf("Daemon already running (PID %d, version %s)\n", pid, health.Version)
+						os.Exit(0)
 					}
 
 					// Version mismatch - auto-stop old daemon

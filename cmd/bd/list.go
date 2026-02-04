@@ -203,6 +203,7 @@ func buildIssueTreeWithDeps(issues []*types.Issue, allDeps map[string][]*types.D
 
 	// If we have dependency records, use them to find parent-child relationships
 	if allDeps != nil {
+		addedChild := make(map[string]bool) // tracks "parentID:childID" to prevent duplicates
 		for issueID, deps := range allDeps {
 			for _, dep := range deps {
 				parentID := dep.DependsOnID
@@ -217,7 +218,11 @@ func buildIssueTreeWithDeps(issues []*types.Issue, allDeps map[string][]*types.D
 				// 1. Explicit parent-child dependency type, OR
 				// 2. Any dependency where the target is an epic
 				if dep.Type == types.DepParentChild || epicIDs[parentID] {
-					childrenMap[parentID] = append(childrenMap[parentID], child)
+					key := parentID + ":" + issueID
+					if !addedChild[key] {
+						childrenMap[parentID] = append(childrenMap[parentID], child)
+						addedChild[key] = true
+					}
 					isChild[issueID] = true
 				}
 			}
@@ -494,15 +499,60 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string) 
 }
 
 // formatAgentIssue formats a single issue in ultra-compact agent mode format
-// Output: just "ID: Title" - no colors, no emojis, no brackets
-func formatAgentIssue(buf *strings.Builder, issue *types.Issue) {
-	buf.WriteString(fmt.Sprintf("%s: %s\n", issue.ID, issue.Title))
+// Output: "ID: Title" with optional dependency info "(blocked by: X, blocks: Y)"
+func formatAgentIssue(buf *strings.Builder, issue *types.Issue, blockedBy, blocks []string) {
+	depInfo := formatDependencyInfo(blockedBy, blocks)
+	if depInfo != "" {
+		buf.WriteString(fmt.Sprintf("%s: %s %s\n", issue.ID, issue.Title, depInfo))
+	} else {
+		buf.WriteString(fmt.Sprintf("%s: %s\n", issue.ID, issue.Title))
+	}
+}
+
+// formatDependencyInfo formats blocking dependency info for list output
+// Returns "(blocked by: X, Y, blocks: Z)" or "" if no blocking dependencies
+func formatDependencyInfo(blockedBy, blocks []string) string {
+	if len(blockedBy) == 0 && len(blocks) == 0 {
+		return ""
+	}
+
+	var parts []string
+	if len(blockedBy) > 0 {
+		parts = append(parts, fmt.Sprintf("blocked by: %s", strings.Join(blockedBy, ", ")))
+	}
+	if len(blocks) > 0 {
+		parts = append(parts, fmt.Sprintf("blocks: %s", strings.Join(blocks, ", ")))
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+// buildBlockingMaps builds maps of blocking dependencies from dependency records.
+// Returns two maps: blockedByMap[issueID] = []IDs that block this issue,
+// and blocksMap[issueID] = []IDs that this issue blocks.
+// Only includes dependencies where AffectsReadyWork() is true (blocks, parent-child, etc.)
+func buildBlockingMaps(allDeps map[string][]*types.Dependency) (blockedByMap, blocksMap map[string][]string) {
+	blockedByMap = make(map[string][]string)
+	blocksMap = make(map[string][]string)
+
+	for issueID, deps := range allDeps {
+		for _, dep := range deps {
+			// Only include blocking dependencies
+			if !dep.Type.AffectsReadyWork() {
+				continue
+			}
+			// issueID is blocked by dep.DependsOnID
+			blockedByMap[issueID] = append(blockedByMap[issueID], dep.DependsOnID)
+			// dep.DependsOnID blocks issueID
+			blocksMap[dep.DependsOnID] = append(blocksMap[dep.DependsOnID], issueID)
+		}
+	}
+	return blockedByMap, blocksMap
 }
 
 // formatIssueCompact formats a single issue in compact format to a buffer
 // Uses status icons for better scanability - consistent with bd graph
-// Format: [icon] [pin] ID [Priority] [Type] @assignee [labels] - Title
-func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string) {
+// Format: [icon] [pin] ID [Priority] [Type] @assignee [labels] - Title (blocked by: X, blocks: Y)
+func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string, blockedBy, blocks []string) {
 	labelsStr := ""
 	if len(labels) > 0 {
 		labelsStr = fmt.Sprintf(" %v", labels)
@@ -512,25 +562,31 @@ func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []strin
 		assigneeStr = fmt.Sprintf(" @%s", issue.Assignee)
 	}
 
+	// Format dependency info
+	depInfo := formatDependencyInfo(blockedBy, blocks)
+	if depInfo != "" {
+		depInfo = " " + depInfo
+	}
+
 	// Get styled status icon
 	statusIcon := renderStatusIcon(issue.Status)
 
 	if issue.Status == types.StatusClosed {
 		// Closed issues: entire line muted (fades visually)
-		line := fmt.Sprintf("%s %s%s [P%d] [%s]%s%s - %s",
+		line := fmt.Sprintf("%s %s%s [P%d] [%s]%s%s - %s%s",
 			statusIcon, pinIndicator(issue), issue.ID, issue.Priority,
-			issue.IssueType, assigneeStr, labelsStr, issue.Title)
+			issue.IssueType, assigneeStr, labelsStr, issue.Title, depInfo)
 		buf.WriteString(ui.RenderClosedLine(line))
 		buf.WriteString("\n")
 	} else {
 		// Active issues: status icon + semantic colors for priority/type
-		buf.WriteString(fmt.Sprintf("%s %s%s [%s] [%s]%s%s - %s\n",
+		buf.WriteString(fmt.Sprintf("%s %s%s [%s] [%s]%s%s - %s%s\n",
 			statusIcon,
 			pinIndicator(issue),
 			ui.RenderID(issue.ID),
 			ui.RenderPriority(issue.Priority),
 			ui.RenderType(string(issue.IssueType)),
-			assigneeStr, labelsStr, issue.Title))
+			assigneeStr, labelsStr, issue.Title, depInfo))
 	}
 }
 
@@ -549,6 +605,7 @@ var listCmd = &cobra.Command{
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		titleSearch, _ := cmd.Flags().GetString("title")
+		specPrefix, _ := cmd.Flags().GetString("spec")
 		idFilter, _ := cmd.Flags().GetString("id")
 		longFormat, _ := cmd.Flags().GetBool("long")
 		sortBy, _ := cmd.Flags().GetString("sort")
@@ -602,6 +659,18 @@ var listCmd = &cobra.Command{
 				os.Exit(1)
 			}
 			molType = &mt
+		}
+
+		// Wisp type filtering (TTL-based compaction classification)
+		wispTypeStr, _ := cmd.Flags().GetString("wisp-type")
+		var wispType *types.WispType
+		if wispTypeStr != "" {
+			wt := types.WispType(wispTypeStr)
+			if !wt.IsValid() {
+				fmt.Fprintf(os.Stderr, "Error: invalid wisp-type %q (must be heartbeat, ping, patrol, gc_report, recovery, error, or escalation)\n", wispTypeStr)
+				os.Exit(1)
+			}
+			wispType = &wt
 		}
 
 		// Time-based scheduling filters (GH#820)
@@ -700,6 +769,9 @@ var listCmd = &cobra.Command{
 			if len(ids) > 0 {
 				filter.IDs = ids
 			}
+		}
+		if specPrefix != "" {
+			filter.SpecIDPrefix = specPrefix
 		}
 
 		// Pattern matching
@@ -828,6 +900,11 @@ var listCmd = &cobra.Command{
 			filter.MolType = molType
 		}
 
+		// Wisp type filtering
+		if wispType != nil {
+			filter.WispType = wispType
+		}
+
 		// Time-based scheduling filters (GH#820)
 		if deferredFlag {
 			filter.Deferred = true
@@ -886,10 +963,11 @@ var listCmd = &cobra.Command{
 				effectiveStatus = "open"
 			}
 			listArgs := &rpc.ListArgs{
-				Status:    effectiveStatus,
-				IssueType: issueType,
-				Assignee:  assignee,
-				Limit:     effectiveLimit,
+				Status:       effectiveStatus,
+				IssueType:    issueType,
+				Assignee:     assignee,
+				Limit:        effectiveLimit,
+				SpecIDPrefix: specPrefix,
 			}
 			if cmd.Flags().Changed("priority") {
 				priorityStr, _ := cmd.Flags().GetString("priority")
@@ -1020,7 +1098,12 @@ var listCmd = &cobra.Command{
 			sortIssues(issues, sortBy, reverse)
 
 			// Handle watch mode (GH#654)
+			// Watch mode requires direct store access for file watching
 			if watchMode {
+				if err := ensureDirectMode("watch mode requires direct database access"); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
 				watchIssues(ctx, store, filter, sortBy, reverse)
 				return
 			}
@@ -1075,12 +1158,25 @@ var listCmd = &cobra.Command{
 				return
 			}
 
+			// Load dependencies for blocking info display
+			// In daemon mode, open a read-only store to get dependencies
+			var allDepsForList map[string][]*types.Dependency
+			if store != nil {
+				allDepsForList, _ = store.GetAllDependencyRecords(ctx)
+			} else if dbPath != "" {
+				if roStore, err := sqlite.NewReadOnlyWithTimeout(ctx, dbPath, lockTimeout); err == nil {
+					allDepsForList, _ = roStore.GetAllDependencyRecords(ctx)
+					_ = roStore.Close()
+				}
+			}
+			blockedByMap, blocksMap := buildBlockingMaps(allDepsForList)
+
 			// Build output in buffer for pager support (bd-jdz3)
 			var buf strings.Builder
 			if ui.IsAgentMode() {
 				// Agent mode: ultra-compact, no colors, no pager
 				for _, issue := range issues {
-					formatAgentIssue(&buf, issue)
+					formatAgentIssue(&buf, issue, blockedByMap[issue.ID], blocksMap[issue.ID])
 				}
 				fmt.Print(buf.String())
 				return
@@ -1093,7 +1189,7 @@ var listCmd = &cobra.Command{
 			} else {
 				// Compact format: one line per issue
 				for _, issue := range issues {
-					formatIssueCompact(&buf, issue, issue.Labels)
+					formatIssueCompact(&buf, issue, issue.Labels, blockedByMap[issue.ID], blocksMap[issue.ID])
 				}
 			}
 
@@ -1189,10 +1285,13 @@ var listCmd = &cobra.Command{
 			}
 			labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
 			depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+			allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
+			commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
 
-			// Populate labels for JSON output
+			// Populate labels and dependencies for JSON output
 			for _, issue := range issues {
 				issue.Labels = labelsMap[issue.ID]
+				issue.Dependencies = allDeps[issue.ID]
 			}
 
 			// Build response with counts
@@ -1206,6 +1305,7 @@ var listCmd = &cobra.Command{
 					Issue:           issue,
 					DependencyCount: counts.DependencyCount,
 					DependentCount:  counts.DependentCount,
+					CommentCount:    commentCounts[issue.ID],
 				}
 			}
 			outputJSON(issuesWithCounts)
@@ -1222,12 +1322,16 @@ var listCmd = &cobra.Command{
 		}
 		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
 
+		// Load dependencies for blocking info display
+		allDepsForList, _ := store.GetAllDependencyRecords(ctx)
+		blockedByMap, blocksMap := buildBlockingMaps(allDepsForList)
+
 		// Build output in buffer for pager support (bd-jdz3)
 		var buf strings.Builder
 		if ui.IsAgentMode() {
 			// Agent mode: ultra-compact, no colors, no pager
 			for _, issue := range issues {
-				formatAgentIssue(&buf, issue)
+				formatAgentIssue(&buf, issue, blockedByMap[issue.ID], blocksMap[issue.ID])
 			}
 			fmt.Print(buf.String())
 			return
@@ -1242,7 +1346,7 @@ var listCmd = &cobra.Command{
 			// Compact format: one line per issue
 			for _, issue := range issues {
 				labels := labelsMap[issue.ID]
-				formatIssueCompact(&buf, issue, labels)
+				formatIssueCompact(&buf, issue, labels, blockedByMap[issue.ID], blocksMap[issue.ID])
 			}
 		}
 
@@ -1271,6 +1375,7 @@ func init() {
 	listCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
 	listCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
 	listCmd.Flags().String("title", "", "Filter by title text (case-insensitive substring match)")
+	listCmd.Flags().String("spec", "", "Filter by spec_id prefix")
 	listCmd.Flags().String("id", "", "Filter by specific issue IDs (comma-separated, e.g., bd-1,bd-5,bd-10)")
 	listCmd.Flags().IntP("limit", "n", 50, "Limit results (default 50, use 0 for unlimited)")
 	listCmd.Flags().String("format", "", "Output format: 'digraph' (for golang.org/x/tools/cmd/digraph), 'dot' (Graphviz), or Go template")
@@ -1317,6 +1422,9 @@ func init() {
 
 	// Molecule type filtering
 	listCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
+
+	// Wisp type filtering (TTL-based compaction classification)
+	listCmd.Flags().String("wisp-type", "", "Filter by wisp type: heartbeat, ping, patrol, gc_report, recovery, error, escalation")
 
 	// Time-based scheduling filters (GH#820)
 	listCmd.Flags().Bool("deferred", false, "Show only issues with defer_until set")

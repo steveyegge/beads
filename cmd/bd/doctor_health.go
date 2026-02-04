@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/ui"
 )
 
 // runCheckHealth runs lightweight health checks for git hooks.
@@ -103,6 +105,92 @@ func runDeepValidation(path string) {
 
 	if !result.OverallOK {
 		os.Exit(1)
+	}
+}
+
+// runServerHealth runs Dolt server mode health checks
+func runServerHealth(path string) {
+	result := doctor.RunServerHealthChecks(path)
+
+	if jsonOutput {
+		jsonBytes, _ := json.Marshal(result)
+		fmt.Println(string(jsonBytes))
+	} else {
+		fmt.Println("Dolt Server Mode Health Check")
+		fmt.Println()
+		printServerHealthResult(result)
+	}
+
+	if !result.OverallOK {
+		os.Exit(1)
+	}
+}
+
+// printServerHealthResult prints the server health check results
+func printServerHealthResult(result doctor.ServerHealthResult) {
+	var passCount, warnCount, failCount int
+	var warnings []doctor.DoctorCheck
+
+	for _, check := range result.Checks {
+		var statusIcon string
+		switch check.Status {
+		case statusOK:
+			statusIcon = ui.RenderPassIcon()
+			passCount++
+		case statusWarning:
+			statusIcon = ui.RenderWarnIcon()
+			warnCount++
+			warnings = append(warnings, check)
+		case statusError:
+			statusIcon = ui.RenderFailIcon()
+			failCount++
+			warnings = append(warnings, check)
+		}
+
+		fmt.Printf("  %s  %s", statusIcon, check.Name)
+		if check.Message != "" {
+			fmt.Printf("%s", ui.RenderMuted(" "+check.Message))
+		}
+		fmt.Println()
+
+		if check.Detail != "" {
+			// Indent detail lines
+			for _, line := range strings.Split(check.Detail, "\n") {
+				fmt.Printf("     %s%s\n", ui.MutedStyle.Render(ui.TreeLast), ui.RenderMuted(line))
+			}
+		}
+	}
+
+	fmt.Println()
+
+	// Summary line
+	fmt.Println(ui.RenderSeparator())
+	summary := fmt.Sprintf("%s %d passed  %s %d warnings  %s %d failed",
+		ui.RenderPassIcon(), passCount,
+		ui.RenderWarnIcon(), warnCount,
+		ui.RenderFailIcon(), failCount,
+	)
+	fmt.Println(summary)
+
+	// Print fixes for any errors/warnings
+	if len(warnings) > 0 {
+		fmt.Println()
+		fmt.Println(ui.RenderWarn(ui.IconWarn + "  FIXES NEEDED"))
+		for i, check := range warnings {
+			if check.Fix == "" {
+				continue
+			}
+			line := fmt.Sprintf("%s: %s", check.Name, check.Message)
+			if check.Status == statusError {
+				fmt.Printf("  %s  %s %s\n", ui.RenderFailIcon(), ui.RenderFail(fmt.Sprintf("%d.", i+1)), ui.RenderFail(line))
+			} else {
+				fmt.Printf("  %s  %s %s\n", ui.RenderWarnIcon(), ui.RenderWarn(fmt.Sprintf("%d.", i+1)), line)
+			}
+			fmt.Printf("        %s%s\n", ui.MutedStyle.Render(ui.TreeLast), check.Fix)
+		}
+	} else if result.OverallOK {
+		fmt.Println()
+		fmt.Printf("%s\n", ui.RenderPass("✓ All server health checks passed"))
 	}
 }
 

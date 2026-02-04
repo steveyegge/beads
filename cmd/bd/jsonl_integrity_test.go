@@ -265,3 +265,96 @@ func TestImportClearsExportHashes(t *testing.T) {
 		t.Fatalf("expected export hash to be cleared after import, got %q", hash)
 	}
 }
+
+// TestExportPopulatesExportHashes tests that export populates export_hashes (GH#1278)
+// This ensures child issues created with --parent are properly registered after export.
+func TestExportPopulatesExportHashes(t *testing.T) {
+	// Create temp directory
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
+
+	// Ensure .beads directory exists
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	// Create database
+	testStore, err := sqlite.New(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer testStore.Close()
+
+	ctx := context.Background()
+
+	// Initialize database with prefix
+	if err := testStore.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue prefix: %v", err)
+	}
+
+	// Create test issues including one with a hierarchical ID (child issue)
+	parentIssue := &types.Issue{
+		ID:          "bd-parent",
+		Title:       "Parent epic",
+		Description: "Parent issue",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeEpic,
+	}
+	if err := testStore.CreateIssue(ctx, parentIssue, testActor); err != nil {
+		t.Fatalf("failed to create parent issue: %v", err)
+	}
+
+	childIssue := &types.Issue{
+		ID:          "bd-parent.1",
+		Title:       "Child task",
+		Description: "Child issue with hierarchical ID",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+	if err := testStore.CreateIssue(ctx, childIssue, testActor); err != nil {
+		t.Fatalf("failed to create child issue: %v", err)
+	}
+
+	// Verify export_hashes is empty before export
+	hash, err := testStore.GetExportHash(ctx, "bd-parent.1")
+	if err != nil {
+		t.Fatalf("failed to get export hash before export: %v", err)
+	}
+	if hash != "" {
+		t.Fatalf("expected no export hash before export, got %q", hash)
+	}
+
+	// Export to JSONL using the store-based function
+	if err := exportToJSONLWithStore(ctx, testStore, jsonlPath); err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+
+	// Verify export_hashes is now populated for both issues
+	parentHash, err := testStore.GetExportHash(ctx, "bd-parent")
+	if err != nil {
+		t.Fatalf("failed to get parent export hash after export: %v", err)
+	}
+	if parentHash == "" {
+		t.Errorf("expected parent export hash to be populated after export")
+	}
+
+	childHash, err := testStore.GetExportHash(ctx, "bd-parent.1")
+	if err != nil {
+		t.Fatalf("failed to get child export hash after export: %v", err)
+	}
+	if childHash == "" {
+		t.Errorf("expected child export hash to be populated after export (GH#1278 fix)")
+	}
+
+	// Verify the hashes match the content hashes
+	if parentHash != parentIssue.ContentHash && parentHash != "" {
+		// ContentHash might be computed differently, just verify it's not empty
+		t.Logf("parent export hash: %s, content hash: %s", parentHash, parentIssue.ContentHash)
+	}
+	if childHash != childIssue.ContentHash && childHash != "" {
+		t.Logf("child export hash: %s, content hash: %s", childHash, childIssue.ContentHash)
+	}
+}

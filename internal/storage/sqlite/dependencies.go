@@ -247,7 +247,7 @@ func (s *SQLiteStorage) GetDependenciesWithMetadata(ctx context.Context, issueID
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.spec_id, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
@@ -270,7 +270,7 @@ func (s *SQLiteStorage) GetDependentsWithMetadata(ctx context.Context, issueID s
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.spec_id, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
@@ -453,6 +453,64 @@ func (s *SQLiteStorage) GetAllDependencyRecords(ctx context.Context) (map[string
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all dependency records: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	// Group dependencies by issue ID
+	depsMap := make(map[string][]*types.Dependency)
+	for rows.Next() {
+		var dep types.Dependency
+		err := rows.Scan(
+			&dep.IssueID,
+			&dep.DependsOnID,
+			&dep.Type,
+			&dep.CreatedAt,
+			&dep.CreatedBy,
+			&dep.Metadata,
+			&dep.ThreadID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan dependency: %w", err)
+		}
+		depsMap[dep.IssueID] = append(depsMap[dep.IssueID], &dep)
+	}
+
+	return depsMap, nil
+}
+
+// GetDependencyRecordsForIssues returns dependency records for specific issues
+// This is optimized for operations that only need deps for a subset of issues
+func (s *SQLiteStorage) GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error) {
+	if len(issueIDs) == 0 {
+		return make(map[string][]*types.Dependency), nil
+	}
+
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	// Build parameterized IN clause
+	placeholders := make([]string, len(issueIDs))
+	args := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// nolint:gosec // G201: inClause contains only ? placeholders, actual values passed via args
+	query := fmt.Sprintf(`
+		SELECT issue_id, depends_on_id, type, created_at, created_by,
+		       COALESCE(metadata, '{}') as metadata, COALESCE(thread_id, '') as thread_id
+		FROM dependencies
+		WHERE issue_id IN (%s)
+		ORDER BY issue_id, created_at ASC
+	`, inClause)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dependency records for issues: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -893,6 +951,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var assignee sql.NullString
 		var owner sql.NullString
 		var externalRef sql.NullString
+		var specID sql.NullString
 		var sourceRepo sql.NullString
 		var closeReason sql.NullString
 		var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
@@ -924,17 +983,19 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		// Time-based scheduling fields
 		var dueAt sql.NullTime
 		var deferUntil sql.NullTime
+		// Custom metadata field (GH#1406)
+		var metadata sql.NullString
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &sourceRepo, &closeReason,
+			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &specID, &sourceRepo, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
 			&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
-			&dueAt, &deferUntil,
+			&dueAt, &deferUntil, &metadata,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -966,6 +1027,9 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		}
 		if externalRef.Valid {
 			issue.ExternalRef = &externalRef.String
+		}
+		if specID.Valid {
+			issue.SpecID = specID.String
 		}
 		if sourceRepo.Valid {
 			issue.SourceRepo = sourceRepo.String
@@ -1044,6 +1108,10 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		if deferUntil.Valid {
 			issue.DeferUntil = &deferUntil.Time
 		}
+		// Custom metadata field (GH#1406)
+		if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+			issue.Metadata = []byte(metadata.String)
+		}
 
 		issues = append(issues, &issue)
 		issueIDs = append(issueIDs, issue.ID)
@@ -1083,6 +1151,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		var assignee sql.NullString
 		var owner sql.NullString
 		var externalRef sql.NullString
+		var specID sql.NullString
 		var sourceRepo sql.NullString
 		var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
 		var deletedBy sql.NullString
@@ -1108,7 +1177,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &sourceRepo,
+			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &specID, &sourceRepo,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
@@ -1144,6 +1213,9 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		}
 		if externalRef.Valid {
 			issue.ExternalRef = &externalRef.String
+		}
+		if specID.Valid {
+			issue.SpecID = specID.String
 		}
 		if sourceRepo.Valid {
 			issue.SourceRepo = sourceRepo.String

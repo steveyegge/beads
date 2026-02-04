@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
@@ -63,6 +64,7 @@ Run 'bd daemon --help' to see all subcommands.`,
 		foreground, _ := cmd.Flags().GetBool("foreground")
 		logLevel, _ := cmd.Flags().GetString("log-level")
 		logJSON, _ := cmd.Flags().GetBool("log-json")
+		federation, _ := cmd.Flags().GetBool("federation")
 
 		// If no operation flags provided, show help
 		if !start && !stop && !stopAll && !status && !health && !metrics {
@@ -141,6 +143,15 @@ Run 'bd daemon --help' to see all subcommands.`,
 			os.Exit(1)
 		}
 
+		// Guard: refuse to start daemon with Dolt backend (unless --federation)
+		// This matches guardDaemonStartForDolt which guards the 'bd daemon start' subcommand.
+		if !federation {
+			if err := guardDaemonStartForDolt(cmd, args); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
 		// Skip daemon-running check if we're the forked child (BD_DAEMON_FOREGROUND=1)
 		// because the check happens in the parent process before forking
 		if os.Getenv("BD_DAEMON_FOREGROUND") != "1" {
@@ -152,11 +163,10 @@ Run 'bd daemon --help' to see all subcommands.`,
 					health, healthErr := client.Health()
 					_ = client.Close()
 
-					// If we can check version and it's compatible, exit
+					// If we can check version and it's compatible, exit successfully (idempotent)
 					if healthErr == nil && health.Compatible {
-						fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d, version %s)\n", pid, health.Version)
-						fmt.Fprintf(os.Stderr, "Use 'bd daemon stop' to stop it first\n")
-						os.Exit(1)
+						fmt.Printf("Daemon already running (PID %d, version %s)\n", pid, health.Version)
+						os.Exit(0)
 					}
 
 					// Version mismatch - auto-stop old daemon
@@ -237,7 +247,6 @@ Run 'bd daemon --help' to see all subcommands.`,
 			fmt.Printf("Logging to: %s\n", logFile)
 		}
 
-		federation, _ := cmd.Flags().GetBool("federation")
 		federationPort, _ := cmd.Flags().GetInt("federation-port")
 		remotesapiPort, _ := cmd.Flags().GetInt("remotesapi-port")
 		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort)
@@ -345,9 +354,9 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	defer func() { _ = os.Remove(pidFile) }()
 
 	if localMode {
-		log.log("Daemon started in LOCAL mode (interval: %v, no git sync)", interval)
+		log.Info("Daemon started in LOCAL mode", "interval", interval)
 	} else {
-		log.log("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)", interval, autoCommit, autoPush)
+		log.Info("Daemon started", "interval", interval, "auto_commit", autoCommit, "auto_push", autoPush)
 	}
 
 	// Check for multiple .db files (ambiguity error)
@@ -355,6 +364,27 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	backend := factory.GetBackendFromConfig(beadsDir)
 	if backend == "" {
 		backend = configfile.BackendSQLite
+	}
+
+	// Daemon is not supported with single-process backends (e.g., embedded Dolt)
+	// Note: Dolt server mode supports multi-process, so check capabilities not backend type
+	cfg, cfgErr := configfile.Load(beadsDir)
+	if cfgErr == nil && cfg != nil && cfg.GetCapabilities().SingleProcessOnly {
+		errMsg := fmt.Sprintf(`DAEMON NOT SUPPORTED WITH %s BACKEND
+
+The bd daemon is designed for multi-process backends only.
+With single-process backends, run commands in direct mode.
+
+The daemon will now exit.`, strings.ToUpper(backend))
+		log.Error(errMsg)
+
+		// Write error to file so user can see it without checking logs
+		errFile := filepath.Join(beadsDir, "daemon-error")
+		// nolint:gosec // G306: Error file needs to be readable for debugging
+		if err := os.WriteFile(errFile, []byte(errMsg), 0644); err != nil {
+			log.Warn("could not write daemon-error file", "error", err)
+		}
+		return
 	}
 
 	// Reset backoff on daemon start (fresh start, but preserve NeedsManualSync hint)
@@ -385,7 +415,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 				errMsg += "Run 'bd init' to migrate legacy databases or manually remove old databases\n"
 				errMsg += "Or run 'bd doctor' for more diagnostics"
 
-				log.log(errMsg)
+				log.Info(errMsg)
 
 				// Write error to file so user can see it without checking logs
 				errFile := filepath.Join(beadsDir, "daemon-error")
@@ -515,7 +545,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	// Validate database fingerprint (skip in local mode - no git available)
 	if localMode {
 		log.Info("skipping fingerprint validation (local mode)")
-	} else if err := validateDatabaseFingerprint(ctx, store, &log); err != nil {
+	} else if err := validateDatabaseFingerprint(ctx, store, log); err != nil {
 		if os.Getenv("BEADS_IGNORE_REPO_MISMATCH") != "1" {
 			log.Error("repository fingerprint validation failed", "error", err)
 			// Write error to daemon-error file so user sees it instead of just "daemon took too long"
@@ -527,6 +557,13 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 			return // Use return instead of os.Exit to allow defers to run
 		}
 		log.Warn("repository mismatch ignored (BEADS_IGNORE_REPO_MISMATCH=1)")
+	}
+
+	// GH#1258: Warn at startup if sync-branch == current-branch (misconfiguration)
+	// This is a one-time warning - per-operation skipping is handled by shouldSkipDueToSameBranch()
+	// Skip check in local mode (no sync-branch is used)
+	if !localMode {
+		warnIfSyncBranchMisconfigured(ctx, store, log)
 	}
 
 	// Validate schema version matches daemon version
@@ -567,7 +604,13 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	// Get actual workspace root (parent of .beads)
 	workspacePath := filepath.Dir(beadsDir)
 	// Use short socket path to avoid Unix socket path length limits (macOS: 104 chars)
-	socketPath, err := rpc.EnsureSocketDir(rpc.ShortSocketPath(workspacePath))
+	// Check BD_SOCKET env var first for custom socket path (e.g., test isolation,
+	// or filesystems that don't support sockets in .beads directory)
+	socketPath := os.Getenv("BD_SOCKET")
+	if socketPath == "" {
+		socketPath = rpc.ShortSocketPath(workspacePath)
+	}
+	socketPath, err = rpc.EnsureSocketDir(socketPath)
 	if err != nil {
 		log.Error("failed to create socket directory", "error", err)
 		return
@@ -691,6 +734,56 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 //
 // 4. Fallback: all default to true when sync-branch configured
 //
+// loadYAMLDaemonSettings loads daemon auto-settings from YAML config and env vars only (no database).
+// This is safe to call from the parent process since it doesn't require database access.
+// Returns (autoCommit, autoPush, autoPull, hasSettings) where hasSettings indicates
+// if any settings were found (env var or YAML).
+func loadYAMLDaemonSettings() (autoCommit, autoPush, autoPull, hasSettings bool) {
+	// Check unified auto-sync first (env var > YAML)
+	if envVal := os.Getenv("BEADS_AUTO_SYNC"); envVal == "true" || envVal == "1" {
+		return true, true, true, true
+	}
+	if yamlAutoSync := config.GetString("daemon.auto-sync"); yamlAutoSync == "true" {
+		return true, true, true, true
+	}
+
+	// Check individual settings (env var > YAML for each)
+	yamlAutoCommit := config.GetString("daemon.auto-commit")
+	yamlAutoPush := config.GetString("daemon.auto-push")
+	yamlAutoPull := config.GetString("daemon.auto-pull")
+	envAutoCommit := os.Getenv("BEADS_AUTO_COMMIT")
+	envAutoPush := os.Getenv("BEADS_AUTO_PUSH")
+	envAutoPull := os.Getenv("BEADS_AUTO_PULL")
+
+	hasSettings = yamlAutoCommit != "" || yamlAutoPush != "" || yamlAutoPull != "" ||
+		envAutoCommit != "" || envAutoPush != "" || envAutoPull != ""
+
+	if !hasSettings {
+		return false, false, false, false
+	}
+
+	// For each: env var > YAML
+	if envAutoCommit != "" {
+		autoCommit = envAutoCommit == "true" || envAutoCommit == "1"
+	} else if yamlAutoCommit != "" {
+		autoCommit = yamlAutoCommit == "true"
+	}
+
+	if envAutoPush != "" {
+		autoPush = envAutoPush == "true" || envAutoPush == "1"
+	} else if yamlAutoPush != "" {
+		autoPush = yamlAutoPush == "true"
+	}
+
+	if envAutoPull != "" {
+		autoPull = envAutoPull == "true" || envAutoPull == "1"
+	} else if yamlAutoPull != "" {
+		autoPull = yamlAutoPull == "true"
+	}
+
+	return autoCommit, autoPush, autoPull, true
+}
+
 // Note: The individual auto-commit/auto-push settings are deprecated.
 // Use auto-sync for read/write mode, auto-pull for read-only mode.
 func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull bool) (bool, bool, bool) {
@@ -711,9 +804,12 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 	hasSyncBranch := syncBranch != ""
 
 	// Check unified auto-sync setting first (controls auto-commit + auto-push)
+	// Priority: env var > YAML config > database config
 	unifiedAutoSync := ""
 	if envVal := os.Getenv("BEADS_AUTO_SYNC"); envVal != "" {
 		unifiedAutoSync = envVal
+	} else if configVal := config.GetString("daemon.auto-sync"); configVal != "" {
+		unifiedAutoSync = configVal
 	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-sync"); configVal != "" {
 		unifiedAutoSync = configVal
 	}
@@ -734,10 +830,13 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 		autoCommit = false
 		autoPush = false
 		// Auto-pull can still be enabled via CLI flag or individual config
+		// Priority: CLI flag > env var > YAML config > database config
 		if cmd.Flags().Changed("auto-pull") {
 			// Use the CLI flag value (already in autoPull)
 		} else if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
 			autoPull = envVal == "true" || envVal == "1"
+		} else if configVal := config.GetString("daemon.auto-pull"); configVal != "" {
+			autoPull = configVal == "true"
 		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-pull"); configVal != "" {
 			autoPull = configVal == "true"
 		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_pull"); configVal != "" {
@@ -751,19 +850,61 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 		return autoCommit, autoPush, autoPull
 	}
 
-	// No unified setting - check legacy individual settings for backward compat
-	// If either legacy auto-commit or auto-push is enabled, treat as auto-sync=true
+	// Check YAML config for individual daemon settings (allows fine-grained control)
+	// Priority for each setting: CLI flag > env var > YAML config > database config
+	yamlAutoCommit := config.GetString("daemon.auto-commit")
+	yamlAutoPush := config.GetString("daemon.auto-push")
+	yamlAutoPull := config.GetString("daemon.auto-pull")
+
+	// Check individual env vars (take precedence over YAML)
+	envAutoCommit := os.Getenv("BEADS_AUTO_COMMIT")
+	envAutoPush := os.Getenv("BEADS_AUTO_PUSH")
+	envAutoPull := os.Getenv("BEADS_AUTO_PULL")
+
+	// If any YAML individual settings OR individual env vars are set, use fine-grained control
+	// This allows users to set just auto-commit without forcing auto-push/auto-pull
+	hasIndividualSettings := yamlAutoCommit != "" || yamlAutoPush != "" || yamlAutoPull != "" ||
+		envAutoCommit != "" || envAutoPush != "" || envAutoPull != ""
+
+	if hasIndividualSettings {
+		// For each setting: CLI flag > env var > YAML config
+		if !cmd.Flags().Changed("auto-commit") {
+			if envAutoCommit != "" {
+				autoCommit = envAutoCommit == "true" || envAutoCommit == "1"
+			} else if yamlAutoCommit != "" {
+				autoCommit = yamlAutoCommit == "true"
+			}
+		}
+		if !cmd.Flags().Changed("auto-push") {
+			if envAutoPush != "" {
+				autoPush = envAutoPush == "true" || envAutoPush == "1"
+			} else if yamlAutoPush != "" {
+				autoPush = yamlAutoPush == "true"
+			}
+		}
+		if !cmd.Flags().Changed("auto-pull") {
+			if envAutoPull != "" {
+				autoPull = envAutoPull == "true" || envAutoPull == "1"
+			} else if yamlAutoPull != "" {
+				autoPull = yamlAutoPull == "true"
+			}
+		}
+		return autoCommit, autoPush, autoPull
+	}
+
+	// No YAML individual settings - check legacy env vars and database config
+	// Legacy behavior: if either auto-commit or auto-push is enabled, enable full auto-sync
 	legacyCommit := false
 	legacyPush := false
 
-	// Check legacy auto-commit (env var or config)
+	// Check legacy auto-commit (env var or database config)
 	if envVal := os.Getenv("BEADS_AUTO_COMMIT"); envVal != "" {
 		legacyCommit = envVal == "true" || envVal == "1"
 	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_commit"); configVal != "" {
 		legacyCommit = configVal == "true"
 	}
 
-	// Check legacy auto-push (env var or config)
+	// Check legacy auto-push (env var or database config)
 	if envVal := os.Getenv("BEADS_AUTO_PUSH"); envVal != "" {
 		legacyPush = envVal == "true" || envVal == "1"
 	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_push"); configVal != "" {
@@ -780,6 +921,7 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 	}
 
 	// Neither legacy write option enabled - check auto-pull for read-only mode
+	// Priority: CLI flag > env var > database config
 	if !cmd.Flags().Changed("auto-pull") {
 		if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
 			autoPull = envVal == "true" || envVal == "1"

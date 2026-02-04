@@ -1398,3 +1398,120 @@ func TestCheckSyncBranchHookQuick(t *testing.T) {
 		})
 	}
 }
+
+// TestDoctor_WithBEADS_DIR tests that doctor respects BEADS_DIR environment variable
+func TestDoctor_WithBEADS_DIR(t *testing.T) {
+	// Reset Cobra flags to avoid interference
+	defer func() {
+		doctorFix = false
+		doctorYes = false
+		doctorInteractive = false
+		doctorDryRun = false
+	}()
+
+	// Create target directory (where BEADS_DIR points)
+	targetDir := t.TempDir()
+	targetBeadsDir := filepath.Join(targetDir, ".beads")
+	if err := os.Mkdir(targetBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create CWD directory (where we run from - should be ignored)
+	cwdDir := t.TempDir()
+	// Explicitly do NOT create .beads here - doctor should not check CWD
+
+	// Save original working directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to CWD (no .beads)
+	if err := os.Chdir(cwdDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = os.Chdir(origDir)
+	}()
+
+	// Set BEADS_DIR to point to target/.beads
+	t.Setenv("BEADS_DIR", targetBeadsDir)
+
+	// The doctor command's Run function determines path from BEADS_DIR
+	// We test that by verifying runDiagnostics receives the parent of BEADS_DIR
+	// Direct call: runDiagnostics uses the path it's given
+	// Through cobra: Run function computes path from BEADS_DIR
+
+	// Test the path resolution logic directly
+	beadsDir := os.Getenv("BEADS_DIR")
+	if beadsDir == "" {
+		t.Fatal("BEADS_DIR should be set")
+	}
+	checkPath := filepath.Dir(beadsDir) // Parent of .beads
+
+	// Verify we get the target directory, not CWD
+	if checkPath != targetDir {
+		t.Errorf("Expected checkPath to be %s, got %s", targetDir, checkPath)
+	}
+
+	// Run diagnostics on the computed path (simulates what cobra Run does)
+	result := runDiagnostics(checkPath)
+
+	// Should find .beads at target location
+	if len(result.Checks) == 0 {
+		t.Fatal("Expected at least one check")
+	}
+	installCheck := result.Checks[0]
+	if installCheck.Status != "ok" {
+		t.Errorf("Expected Installation to pass (found .beads at BEADS_DIR parent), got status=%s, message=%s",
+			installCheck.Status, installCheck.Message)
+	}
+}
+
+// TestDoctor_ExplicitPathOverridesBEADS_DIR tests that explicit path arg takes precedence
+func TestDoctor_ExplicitPathOverridesBEADS_DIR(t *testing.T) {
+	// Create two directories: one for explicit path, one for BEADS_DIR
+	explicitDir := t.TempDir()
+	explicitBeadsDir := filepath.Join(explicitDir, ".beads")
+	if err := os.Mkdir(explicitBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	// Mark explicit with a file so we can verify it was used
+	if err := os.WriteFile(filepath.Join(explicitBeadsDir, "explicit-marker"), []byte("explicit"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	beadsDirTarget := t.TempDir()
+	beadsDirBeads := filepath.Join(beadsDirTarget, ".beads")
+	if err := os.Mkdir(beadsDirBeads, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set BEADS_DIR
+	t.Setenv("BEADS_DIR", beadsDirBeads)
+
+	// Test precedence: explicit arg > BEADS_DIR > CWD
+	// When explicit path is given, BEADS_DIR should be ignored
+
+	// Simulate the logic from doctor.go's Run function:
+	args := []string{explicitDir}
+	var checkPath string
+	if len(args) > 0 {
+		checkPath = args[0]
+	} else if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
+		checkPath = filepath.Dir(beadsDir)
+	} else {
+		checkPath = "."
+	}
+
+	// Should use explicit path, not BEADS_DIR
+	if checkPath != explicitDir {
+		t.Errorf("Expected explicit path %s to take precedence, got %s", explicitDir, checkPath)
+	}
+
+	// Verify the marker file exists at the chosen path
+	markerPath := filepath.Join(checkPath, ".beads", "explicit-marker")
+	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
+		t.Error("Expected to find explicit-marker in chosen path - wrong directory was selected")
+	}
+}

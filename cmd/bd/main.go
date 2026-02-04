@@ -123,6 +123,7 @@ var readOnlyCommands = map[string]bool{
 	"graph":      true,
 	"duplicates": true,
 	"comments":   true, // list comments (not add)
+	"current":    true, // bd sync mode current
 	// NOTE: "export" is NOT read-only - it writes to clear dirty issues and update jsonl_file_hash
 }
 
@@ -614,6 +615,12 @@ var rootCmd = &cobra.Command{
 			noDaemon = true
 		}
 
+		// Restore should always run in direct mode. It performs git checkouts to read
+		// historical issue data, which could conflict with daemon operations.
+		if cmd.Name() == "restore" {
+			noDaemon = true
+		}
+
 		// Wisp operations auto-bypass daemon
 		// Wisps are ephemeral (Ephemeral=true) and never exported to JSONL,
 		// so daemon can't help anyway. This reduces friction in wisp workflows.
@@ -623,13 +630,14 @@ var rootCmd = &cobra.Command{
 			debug.Logf("wisp operation detected, using direct mode")
 		}
 
-		// Dolt backend (embedded) is single-process-only; never use daemon/RPC.
+		// Embedded Dolt is single-process-only; never use daemon/RPC.
+		// (Dolt server mode supports multi-process and won't trigger this.)
 		// This must be checked after dbPath is resolved.
 		if !noDaemon && singleProcessOnlyBackend() {
 			noDaemon = true
 			daemonStatus.AutoStartEnabled = false
 			daemonStatus.FallbackReason = FallbackSingleProcessOnly
-			daemonStatus.Detail = "backend is single-process-only (dolt): daemon mode disabled; using direct mode"
+			daemonStatus.Detail = "backend is single-process-only (embedded dolt): daemon mode disabled; using direct mode"
 			debug.Logf("single-process backend detected, using direct mode")
 		}
 
@@ -835,8 +843,29 @@ var rootCmd = &cobra.Command{
 		}
 
 		if backend == configfile.BackendDolt {
+			// Set advisory lock timeout for dolt embedded mode.
+			// Reads get a shorter timeout (shared lock, less contention expected).
+			// Writes get a longer timeout (exclusive lock, may need to wait for readers).
+			if useReadOnly {
+				opts.OpenTimeout = 5 * time.Second
+			} else {
+				opts.OpenTimeout = 15 * time.Second
+			}
+
 			// For Dolt, use the dolt subdirectory
 			doltPath := filepath.Join(beadsDir, "dolt")
+
+			// Check if server mode is configured in metadata.json
+			cfg, cfgErr := configfile.Load(beadsDir)
+			if cfgErr == nil && cfg != nil && cfg.IsDoltServerMode() {
+				opts.ServerMode = true
+				opts.ServerHost = cfg.GetDoltServerHost()
+				opts.ServerPort = cfg.GetDoltServerPort()
+				if cfg.Database != "" {
+					opts.Database = cfg.GetDoltDatabase()
+				}
+			}
+
 			store, err = factory.NewWithOptions(rootCtx, backend, doltPath, opts)
 		} else {
 			// SQLite backend
@@ -1021,6 +1050,7 @@ var rootCmd = &cobra.Command{
 		if store != nil {
 			_ = store.Close()
 		}
+
 		if profileFile != nil {
 			pprof.StopCPUProfile()
 			_ = profileFile.Close()

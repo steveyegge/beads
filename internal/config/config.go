@@ -42,11 +42,36 @@ func Initialize() error {
 	//    This allows commands to work from subdirectories
 	cwd, err := os.Getwd()
 	if err == nil && !configFileSet {
+		// In the beads repo, `.beads/config.yaml` is tracked and may set sync.mode=dolt-native.
+		// In `go test` (especially for `cmd/bd`), we want to avoid unintentionally picking up
+		// the repo-local config, while still allowing tests to load config.yaml from temp repos.
+		//
+		// If BEADS_TEST_IGNORE_REPO_CONFIG is set, we will ignore the config at
+		// <module-root>/.beads/config.yaml (where module-root is the nearest parent containing go.mod).
+		ignoreRepoConfig := os.Getenv("BEADS_TEST_IGNORE_REPO_CONFIG") != ""
+		var moduleRoot string
+		if ignoreRepoConfig {
+			// Find module root by walking up to go.mod.
+			for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+				if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+					moduleRoot = dir
+					break
+				}
+			}
+		}
+
 		// Walk up parent directories to find .beads/config.yaml
 		for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
 			beadsDir := filepath.Join(dir, ".beads")
 			configPath := filepath.Join(beadsDir, "config.yaml")
 			if _, err := os.Stat(configPath); err == nil {
+				if ignoreRepoConfig && moduleRoot != "" {
+					// Only ignore the repo-local config (moduleRoot/.beads/config.yaml).
+					wantIgnore := filepath.Clean(configPath) == filepath.Clean(filepath.Join(moduleRoot, ".beads", "config.yaml"))
+					if wantIgnore {
+						continue
+					}
+				}
 				// Found .beads/config.yaml - set it explicitly
 				v.SetConfigFile(configPath)
 				configFileSet = true
@@ -92,6 +117,7 @@ func Initialize() error {
 	v.SetDefault("no-daemon", false)
 	v.SetDefault("no-auto-flush", false)
 	v.SetDefault("no-auto-import", false)
+	v.SetDefault("events-export", false)
 	v.SetDefault("no-db", false)
 	v.SetDefault("db", "")
 	v.SetDefault("actor", "")
@@ -175,6 +201,18 @@ func Initialize() error {
 			return fmt.Errorf("error reading config file: %w", err)
 		}
 		debug.Logf("Debug: loaded config from %s\n", v.ConfigFileUsed())
+
+		// Merge local config overrides if present (config.local.yaml)
+		// This allows machine-specific settings without polluting tracked config
+		configDir := filepath.Dir(v.ConfigFileUsed())
+		localConfigPath := filepath.Join(configDir, "config.local.yaml")
+		if _, err := os.Stat(localConfigPath); err == nil {
+			v.SetConfigFile(localConfigPath)
+			if err := v.MergeInConfig(); err != nil {
+				return fmt.Errorf("error merging local config file: %w", err)
+			}
+			debug.Logf("Debug: merged local config from %s\n", localConfigPath)
+		}
 	} else {
 		// No config.yaml found - use defaults and environment variables
 		debug.Logf("Debug: no config.yaml found; using defaults and environment variables\n")
@@ -700,17 +738,53 @@ func NeedsJSONL() bool {
 // (e.g., during bd init auto-import before the database is fully configured).
 // Returns nil if no custom types are configured in config.yaml.
 func GetCustomTypesFromYAML() []string {
+	return getConfigList("types.custom")
+}
+
+// GetCustomStatusesFromYAML retrieves custom statuses from config.yaml.
+// This is used as a fallback when the database doesn't have status.custom set yet
+// or when the database connection is temporarily unavailable.
+// Returns nil if no custom statuses are configured in config.yaml.
+func GetCustomStatusesFromYAML() []string {
+	return getConfigList("status.custom")
+}
+
+// ===== Agent Role Configuration =====
+// These functions return agent role types from config.yaml for agent ID parsing.
+// Each role category has different parsing semantics:
+//   - Town-level: <prefix>-<role> (singleton, no rig)
+//   - Rig-level: <prefix>-<rig>-<role> (singleton per rig)
+//   - Named: <prefix>-<rig>-<role>-<name> (multiple per rig)
+
+// GetTownLevelRoles returns roles that are town-level singletons.
+// These roles have no rig association and appear as: <prefix>-<role>
+func GetTownLevelRoles() []string {
+	return getConfigList("agent_roles.town_level")
+}
+
+// GetRigLevelRoles returns roles that are rig-level singletons.
+// These roles have one instance per rig: <prefix>-<rig>-<role>
+func GetRigLevelRoles() []string {
+	return getConfigList("agent_roles.rig_level")
+}
+
+// GetNamedRoles returns roles that can have multiple named instances per rig.
+// These roles include a name suffix: <prefix>-<rig>-<role>-<name>
+func GetNamedRoles() []string {
+	return getConfigList("agent_roles.named")
+}
+
+// getConfigList is a helper that retrieves a comma-separated list from config.yaml.
+func getConfigList(key string) []string {
 	if v == nil {
 		return nil
 	}
 
-	// Try to get types.custom from viper (config.yaml or env var)
-	value := v.GetString("types.custom")
+	value := v.GetString(key)
 	if value == "" {
 		return nil
 	}
 
-	// Parse comma-separated list
 	parts := strings.Split(value, ",")
 	result := make([]string, 0, len(parts))
 	for _, p := range parts {
