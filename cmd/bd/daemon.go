@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -568,6 +569,40 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "federation/server")
 	} else {
 		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "embedded")
+	}
+
+	// Checkout specified branch if BEADS_DOLT_BRANCH is set (Dolt only)
+	// Default is "main" if not specified. This enables isolated environments
+	// that share the same base data but write to their own branch.
+	if branch := os.Getenv("BEADS_DOLT_BRANCH"); branch != "" && branch != "main" {
+		if vs, ok := storage.AsVersioned(store); ok {
+			// Check if branch exists
+			branches, err := vs.ListBranches(ctx)
+			if err != nil {
+				log.Warn("failed to list branches", "error", err)
+			} else {
+				branchExists := false
+				for _, b := range branches {
+					if b == branch {
+						branchExists = true
+						break
+					}
+				}
+				if !branchExists {
+					log.Info("creating branch from main", "branch", branch)
+					if err := vs.Branch(ctx, branch); err != nil {
+						log.Error("failed to create branch", "branch", branch, "error", err)
+						return
+					}
+				}
+				log.Info("checking out branch", "branch", branch)
+				if err := vs.Checkout(ctx, branch); err != nil {
+					log.Error("failed to checkout branch", "branch", branch, "error", err)
+					return
+				}
+				log.Info("branch checkout complete", "branch", branch)
+			}
+		}
 	}
 
 	// Auto-upgrade .beads/.gitignore if outdated

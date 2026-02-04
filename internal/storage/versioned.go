@@ -36,6 +36,9 @@ type VersionedStorage interface {
 	// Branch creates a new branch from the current state.
 	Branch(ctx context.Context, name string) error
 
+	// Checkout switches to the specified branch.
+	Checkout(ctx context.Context, branch string) error
+
 	// Merge merges the specified branch into the current branch.
 	// Returns a list of conflicts if any exist.
 	Merge(ctx context.Context, branch string) ([]Conflict, error)
