@@ -326,7 +326,15 @@ func (s *Server) handleCreate(req *Request) Response {
 	// This enables --rig flag to work with remote daemon by looking up the prefix
 	// for the target rig from route beads in the single canonical Dolt database.
 	var prefixOverride string
-	if createArgs.TargetRig != "" && issueID == "" {
+
+	// Direct prefix override from client's local config.yaml (gt-wnbjj8.3).
+	// This allows each rig to use its own prefix when creating issues via the
+	// shared daemon, without needing to resolve via TargetRig/route beads.
+	if createArgs.Prefix != "" && issueID == "" {
+		prefixOverride = createArgs.Prefix
+	}
+
+	if createArgs.TargetRig != "" && issueID == "" && prefixOverride == "" {
 		// Query route beads to find the prefix for this rig
 		// Route beads have type=route, status=open, title format "prefix → path"
 		routeType := types.IssueType("route")

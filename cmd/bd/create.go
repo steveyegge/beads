@@ -515,6 +515,14 @@ var createCmd = &cobra.Command{
 				_ = prefix // Prefix fetched for future use when server supports semantic IDs
 			}
 
+			// Check local (pre-redirect) config.yaml for rig-specific issue-prefix.
+			// This takes priority over the daemon's global prefix because each rig
+			// has its own prefix (e.g., od- for oddjobs, bv- for beads_viewer).
+			// Without this, all rigs using the same daemon would get the daemon's
+			// default prefix (gt-). (gt-wnbjj8.3)
+			localPrefix := findLocalIssuePrefix()
+			debug.Logf("create: localPrefix=%q from findLocalIssuePrefix()\n", localPrefix)
+
 			createArgs := &rpc.CreateArgs{
 				ID:                 rpcID,
 				Parent:             parentID,
@@ -546,6 +554,7 @@ var createCmd = &cobra.Command{
 				EventPayload:       eventPayload,
 				DueAt:              formatTimeForRPC(dueAt),
 				DeferUntil:         formatTimeForRPC(deferUntil),
+				Prefix:             localPrefix,
 				// NOTE: Advice targeting now uses labels
 			}
 
@@ -1383,6 +1392,29 @@ func readIssuePrefixFromConfig(beadsDir string) string {
 			value = strings.Trim(value, `"'`)
 			return value
 		}
+	}
+	return ""
+}
+
+// findLocalIssuePrefix walks up from cwd to find the nearest .beads/config.yaml
+// and reads issue-prefix from it WITHOUT following redirects. This gives us the
+// rig-local prefix which takes priority over the daemon's global prefix.
+// Returns empty string if no local prefix is configured. (gt-wnbjj8.3)
+func findLocalIssuePrefix() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		beadsDir := filepath.Join(dir, ".beads")
+		if prefix := readIssuePrefixFromConfig(beadsDir); prefix != "" {
+			return prefix
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
 	}
 	return ""
 }
