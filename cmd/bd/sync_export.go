@@ -219,22 +219,26 @@ func exportToJSONLDeferred(ctx context.Context, jsonlPath string) (*ExportResult
 		issue.Dependencies = allDeps[issue.ID]
 	}
 
-	// Populate labels for all issues
+	// Populate labels for all issues (batch to avoid N+1 queries)
+	issueIDs := make([]string, len(issues))
+	for i, issue := range issues {
+		issueIDs[i] = issue.ID
+	}
+	allLabels, err := store.GetLabelsForIssues(ctx, issueIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get labels: %w", err)
+	}
 	for _, issue := range issues {
-		labels, err := store.GetLabels(ctx, issue.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get labels for %s: %w", issue.ID, err)
-		}
-		issue.Labels = labels
+		issue.Labels = allLabels[issue.ID]
 	}
 
-	// Populate comments for all issues
+	// Populate comments for all issues (batch to avoid N+1 queries)
+	allComments, err := store.GetCommentsForIssues(ctx, issueIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comments: %w", err)
+	}
 	for _, issue := range issues {
-		comments, err := store.GetIssueComments(ctx, issue.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get comments for %s: %w", issue.ID, err)
-		}
-		issue.Comments = comments
+		issue.Comments = allComments[issue.ID]
 	}
 
 	// Create temp file for atomic write
