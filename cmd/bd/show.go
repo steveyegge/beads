@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -812,19 +811,21 @@ func showIssueRefs(ctx context.Context, args []string, resolvedIDs []string, rou
 		result.Close()
 	}
 
-	// Handle resolved IDs (daemon mode)
+	// Handle resolved IDs (daemon mode) - use Show RPC which returns IssueDetails with Dependents
 	if daemonClient != nil {
 		for _, id := range resolvedIDs {
-			// Need to open direct connection for GetDependentsWithMetadata
-			dbStore, err := factory.NewFromConfig(ctx, getBeadsDir())
+			showArgs := &rpc.ShowArgs{ID: id}
+			resp, err := daemonClient.Show(showArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
 				continue
 			}
-			if err := processIssue(id, dbStore); err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting refs for %s: %v\n", id, err)
+			var details types.IssueDetails
+			if err := json.Unmarshal(resp.Data, &details); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing response for %s: %v\n", id, err)
+				continue
 			}
-			_ = dbStore.Close()
+			allRefs[id] = details.Dependents
 		}
 	} else {
 		// Direct mode - process each arg
@@ -1014,19 +1015,29 @@ func showIssueChildren(ctx context.Context, args []string, resolvedIDs []string,
 		result.Close()
 	}
 
-	// Handle resolved IDs (daemon mode)
+	// Handle resolved IDs (daemon mode) - use Show RPC which returns IssueDetails with Dependents
 	if daemonClient != nil {
 		for _, id := range resolvedIDs {
-			// Need to open direct connection for GetDependentsWithMetadata
-			dbStore, err := factory.NewFromConfig(ctx, getBeadsDir())
+			showArgs := &rpc.ShowArgs{ID: id}
+			resp, err := daemonClient.Show(showArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
 				continue
 			}
-			if err := processIssue(id, dbStore); err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting children for %s: %v\n", id, err)
+			var details types.IssueDetails
+			if err := json.Unmarshal(resp.Data, &details); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing response for %s: %v\n", id, err)
+				continue
 			}
-			_ = dbStore.Close()
+			// Filter dependents for parent-child relationships
+			if _, exists := allChildren[id]; !exists {
+				allChildren[id] = []*types.IssueWithDependencyMetadata{}
+			}
+			for _, dep := range details.Dependents {
+				if dep.DependencyType == types.DepParentChild {
+					allChildren[id] = append(allChildren[id], dep)
+				}
+			}
 		}
 	} else {
 		// Direct mode - process each arg

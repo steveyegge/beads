@@ -191,12 +191,6 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 		FatalError("--hook-command requires --hook-trigger")
 	}
 
-	// Ensure store is initialized
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
 	ctx := rootCtx
 
 	// If daemon is running, use RPC
@@ -237,6 +231,12 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 
 		SetLastTouchedID(issue.ID)
 		return
+	}
+
+	// Direct mode - ensure store is initialized before direct access
+	if err := ensureStoreActive(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Direct mode - generate ID and create issue
