@@ -188,7 +188,7 @@ func CheckDuplicateIssues(path string, gastownMode bool, gastownThreshold int) D
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	ctx := context.Background()
-	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Duplicate Issues",

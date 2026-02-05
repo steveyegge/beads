@@ -182,7 +182,7 @@ func CheckDaemonAutoSync(path string) DoctorCheck {
 
 	// Check if sync-branch is configured
 	ctx := context.Background()
-	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{ReadOnly: true})
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Daemon Auto-Sync",
@@ -252,7 +252,7 @@ func CheckLegacyDaemonConfig(path string) DoctorCheck {
 	_, beadsDir := getBackendAndBeadsDir(path)
 
 	ctx := context.Background()
-	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{ReadOnly: true})
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Daemon Config",
@@ -297,7 +297,8 @@ func CheckHydratedRepoDaemons(path string) DoctorCheck {
 
 	ctx := context.Background()
 	// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	// AllowWithRemoteDaemon: doctor checks inspect local state regardless of daemon config
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Hydrated Repo Daemons",

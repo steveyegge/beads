@@ -129,6 +129,9 @@ func TestCheckGitSyncSetup(t *testing.T) {
 }
 
 func TestCheckDaemonAutoSync(t *testing.T) {
+	// Clear BD_DAEMON_HOST so factory doesn't block local DB access in tests
+	t.Setenv("BD_DAEMON_HOST", "")
+
 	t.Run("no daemon socket", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		beadsDir := filepath.Join(tmpDir, ".beads")
@@ -211,6 +214,9 @@ func TestCheckDaemonAutoSync(t *testing.T) {
 }
 
 func TestCheckHydratedRepoDaemons(t *testing.T) {
+	// Clear BD_DAEMON_HOST so factory doesn't block local DB access in tests
+	t.Setenv("BD_DAEMON_HOST", "")
+
 	t.Run("no additional repos configured", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		beadsDir := filepath.Join(tmpDir, ".beads")

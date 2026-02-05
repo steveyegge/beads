@@ -113,6 +113,10 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 	// This handles cases where metadata.json has an incorrect backend value
 	// by falling back to filesystem detection (gt-q5jzx5, dolt_doctor fix).
 	backend := GetBackendFromConfig(beadsDir)
+	// Sync cfg.Backend with detected backend so cfg.DatabasePath() computes the
+	// correct path. Without this, DefaultConfig() leaves Backend="" which causes
+	// GetBackend() to default to "dolt", producing wrong paths for SQLite (gt-seal2b).
+	cfg.Backend = backend
 	switch backend {
 	case configfile.BackendSQLite:
 		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
