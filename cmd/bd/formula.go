@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -45,7 +47,7 @@ Commands:
 var formulaListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available formulas",
-	Long: `List all formulas from search paths.
+	Long: `List all formulas from search paths and/or database.
 
 Search paths (in order of priority):
   1. .beads/formulas/ (project - highest priority)
@@ -53,6 +55,11 @@ Search paths (in order of priority):
   3. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
 
 Formulas in earlier paths shadow those with the same name in later paths.
+
+Use --source to control where formulas are loaded from:
+  --source=all    List from both database and filesystem (default)
+  --source=db     List only formulas stored in database
+  --source=files  List only formulas from filesystem search paths
 
 Use --all to discover formulas across all rigs in a Gas Town workspace.
 This reads routes from $GT_ROOT/.beads/routes.jsonl and scans each rig's
@@ -62,16 +69,22 @@ Examples:
   bd formula list
   bd formula list --json
   bd formula list --type workflow
-  bd formula list --type aspect
+  bd formula list --source=db
+  bd formula list --source=files
   bd formula list --all`,
 	Run: runFormulaList,
 }
 
+var listSource string
+
 // formulaShowCmd shows details of a specific formula.
 var formulaShowCmd = &cobra.Command{
-	Use:   "show <formula-name>",
+	Use:   "show <formula-name|bead-id>",
 	Short: "Show formula details",
 	Long: `Show detailed information about a formula.
+
+When given a bead ID (e.g., gt-formula-mol-polecat-work), loads from database.
+When given a formula name, searches filesystem paths and database.
 
 Displays:
   - Formula metadata (name, type, description)
@@ -83,10 +96,13 @@ Displays:
 Examples:
   bd formula show shiny
   bd formula show rule-of-five
+  bd formula show gt-formula-mol-polecat-work
   bd formula show security-audit --json`,
 	Args: cobra.ExactArgs(1),
 	Run:  runFormulaShow,
 }
+
+var importDir string
 
 // FormulaListEntry represents a formula in the list output.
 type FormulaListEntry struct {
@@ -106,39 +122,55 @@ func runFormulaList(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Get all search paths
-	searchPaths := getFormulaSearchPaths()
-
 	// Track seen formulas (first occurrence wins)
 	seen := make(map[string]bool)
 	var entries []FormulaListEntry
 
-	// Scan each search path
-	for _, dir := range searchPaths {
-		formulas, err := scanFormulaDir(dir)
-		if err != nil {
-			continue // Skip inaccessible directories
+	source := listSource
+	if source == "" {
+		source = "all"
+	}
+
+	// Load from database if source includes db
+	if source == "all" || source == "db" {
+		dbEntries := listFormulasFromDB(typeFilter)
+		for _, e := range dbEntries {
+			if !seen[e.Name] {
+				seen[e.Name] = true
+				entries = append(entries, e)
+			}
 		}
+	}
 
-		for _, f := range formulas {
-			if seen[f.Formula] {
-				continue // Skip shadowed formulas
+	// Load from filesystem if source includes files
+	if source == "all" || source == "files" {
+		searchPaths := getFormulaSearchPaths()
+		for _, dir := range searchPaths {
+			formulas, err := scanFormulaDir(dir)
+			if err != nil {
+				continue // Skip inaccessible directories
 			}
-			seen[f.Formula] = true
 
-			// Apply type filter
-			if typeFilter != "" && string(f.Type) != typeFilter {
-				continue
+			for _, f := range formulas {
+				if seen[f.Formula] {
+					continue // Skip shadowed formulas
+				}
+				seen[f.Formula] = true
+
+				// Apply type filter
+				if typeFilter != "" && string(f.Type) != typeFilter {
+					continue
+				}
+
+				entries = append(entries, FormulaListEntry{
+					Name:        f.Formula,
+					Type:        string(f.Type),
+					Description: truncateDescription(f.Description, 60),
+					Source:      f.Source,
+					Steps:       countSteps(f.Steps),
+					Vars:        len(f.Vars),
+				})
 			}
-
-			entries = append(entries, FormulaListEntry{
-				Name:        f.Formula,
-				Type:        string(f.Type),
-				Description: truncateDescription(f.Description, 60),
-				Source:      f.Source,
-				Steps:       countSteps(f.Steps),
-				Vars:        len(f.Vars),
-			})
 		}
 	}
 
@@ -154,9 +186,11 @@ func runFormulaList(cmd *cobra.Command, args []string) {
 
 	if len(entries) == 0 {
 		fmt.Println("No formulas found.")
-		fmt.Println("\nSearch paths:")
-		for _, p := range searchPaths {
-			fmt.Printf("  %s\n", p)
+		if source == "all" || source == "files" {
+			fmt.Println("\nSearch paths:")
+			for _, p := range getFormulaSearchPaths() {
+				fmt.Printf("  %s\n", p)
+			}
 		}
 		return
 	}
@@ -189,6 +223,50 @@ func runFormulaList(cmd *cobra.Command, args []string) {
 		}
 		fmt.Println()
 	}
+}
+
+// listFormulasFromDB queries the database for formula-type issues.
+func listFormulasFromDB(typeFilter string) []FormulaListEntry {
+	s := getStore()
+	if s == nil {
+		return nil
+	}
+
+	ctx := context.Background()
+	filter := types.IssueFilter{
+		IssueType: func() *types.IssueType { t := types.TypeFormula; return &t }(),
+	}
+	issues, err := s.SearchIssues(ctx, "", filter)
+	if err != nil {
+		return nil
+	}
+
+	var entries []FormulaListEntry
+	for _, issue := range issues {
+		if issue.Status == types.StatusClosed {
+			continue
+		}
+
+		f, err := formula.IssueToFormula(issue)
+		if err != nil {
+			continue
+		}
+
+		if typeFilter != "" && string(f.Type) != typeFilter {
+			continue
+		}
+
+		entries = append(entries, FormulaListEntry{
+			Name:        f.Formula,
+			Type:        string(f.Type),
+			Description: truncateDescription(f.Description, 60),
+			Source:      f.Source,
+			Steps:       countSteps(f.Steps),
+			Vars:        len(f.Vars),
+		})
+	}
+
+	return entries
 }
 
 // RigFormulaGroup holds formulas for a single rig.
@@ -390,18 +468,30 @@ func printWrappedNames(names []string, indent string, maxWidth int) {
 func runFormulaShow(cmd *cobra.Command, args []string) {
 	name := args[0]
 
-	// Create parser with default search paths
-	parser := formula.NewParser()
+	// Try to load from database first if it looks like a bead ID or if store is available
+	f := loadFormulaFromDBForShow(name)
 
-	// Try to load the formula
-	f, err := parser.LoadByName(name)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintf(os.Stderr, "\nSearch paths:\n")
-		for _, p := range getFormulaSearchPaths() {
-			fmt.Fprintf(os.Stderr, "  %s\n", p)
+	// Fall back to filesystem
+	if f == nil {
+		// Create parser with storage backend for dual-read
+		s := getStore()
+		var parser *formula.Parser
+		if s != nil {
+			parser = formula.NewParserWithStorage(s, getFormulaSearchPaths()...)
+		} else {
+			parser = formula.NewParser(getFormulaSearchPaths()...)
 		}
-		os.Exit(1)
+
+		var err error
+		f, err = parser.LoadByName(name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "\nSearch paths:\n")
+			for _, p := range getFormulaSearchPaths() {
+				fmt.Fprintf(os.Stderr, "  %s\n", p)
+			}
+			os.Exit(1)
+		}
 	}
 
 	if jsonOutput {
@@ -553,6 +643,49 @@ func runFormulaShow(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println()
+}
+
+// loadFormulaFromDBForShow tries to load a formula from the database.
+// Returns nil if the formula is not found in DB or DB is not available.
+// When the name looks like a bead ID (contains a hyphen prefix pattern),
+// it does a direct ID lookup. Otherwise it searches by title.
+func loadFormulaFromDBForShow(nameOrID string) *formula.Formula {
+	s := getStore()
+	if s == nil {
+		return nil
+	}
+
+	ctx := context.Background()
+
+	// Try direct ID lookup first (for bead IDs like gt-formula-xxx)
+	if strings.Contains(nameOrID, "-formula-") || strings.Contains(nameOrID, "-") {
+		issue, err := s.GetIssue(ctx, nameOrID)
+		if err == nil && issue != nil && issue.IssueType == types.TypeFormula {
+			f, err := formula.IssueToFormula(issue)
+			if err == nil {
+				return f
+			}
+		}
+	}
+
+	// Try searching by name (title match)
+	filter := types.IssueFilter{
+		IssueType: func() *types.IssueType { t := types.TypeFormula; return &t }(),
+	}
+	issues, err := s.SearchIssues(ctx, nameOrID, filter)
+	if err != nil {
+		return nil
+	}
+	for _, issue := range issues {
+		if issue.Title == nameOrID && issue.Status != types.StatusClosed {
+			f, err := formula.IssueToFormula(issue)
+			if err == nil {
+				return f
+			}
+		}
+	}
+
+	return nil
 }
 
 // getFormulaSearchPaths returns the formula search paths in priority order.
@@ -1050,6 +1183,9 @@ func runFormulaImport(cmd *cobra.Command, args []string) {
 
 func importAllFormulas() {
 	searchPaths := getFormulaSearchPaths()
+	if importDir != "" {
+		searchPaths = []string{importDir}
+	}
 	seen := make(map[string]bool)
 	imported := 0
 	skipped := 0
@@ -1177,15 +1313,19 @@ func saveFormulaToDB(f *formula.Formula) (*rpc.FormulaSaveResult, error) {
 func init() {
 	formulaListCmd.Flags().String("type", "", "Filter by type (workflow, expansion, aspect)")
 	formulaListCmd.Flags().BoolVar(&listAllRigs, "all", false, "Discover formulas across all rigs (requires GT_ROOT)")
+	formulaListCmd.Flags().StringVar(&listSource, "source", "all", "Source to list from: db, files, or all (default)")
+
+	formulaImportCmd.Flags().BoolVar(&importAll, "all", false, "Import all formulas from search paths")
+	formulaImportCmd.Flags().BoolVar(&importForce, "force", false, "Overwrite existing formulas in database")
+	formulaImportCmd.Flags().StringVar(&importDir, "dir", "", "Import from specific directory")
+
 	formulaConvertCmd.Flags().BoolVar(&convertAll, "all", false, "Convert all JSON formulas")
 	formulaConvertCmd.Flags().BoolVar(&convertDelete, "delete", false, "Delete JSON file after conversion")
 	formulaConvertCmd.Flags().BoolVar(&convertStdout, "stdout", false, "Print TOML to stdout instead of file")
-	formulaImportCmd.Flags().BoolVar(&importAll, "all", false, "Import all formulas from search paths")
-	formulaImportCmd.Flags().BoolVar(&importForce, "force", false, "Overwrite existing formulas in database")
 
 	formulaCmd.AddCommand(formulaListCmd)
 	formulaCmd.AddCommand(formulaShowCmd)
-	formulaCmd.AddCommand(formulaConvertCmd)
 	formulaCmd.AddCommand(formulaImportCmd)
+	formulaCmd.AddCommand(formulaConvertCmd)
 	rootCmd.AddCommand(formulaCmd)
 }
