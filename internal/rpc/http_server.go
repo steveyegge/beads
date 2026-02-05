@@ -392,6 +392,10 @@ func httpMethodToOperation(method string) string {
 		"FormulaSave":   OpFormulaSave,
 		"FormulaDelete": OpFormulaDelete,
 
+		// Config
+		"ConfigSet":  OpConfigSet,
+		"ConfigList": OpConfigList,
+
 		// Admin
 		"Shutdown": OpShutdown,
 	}
