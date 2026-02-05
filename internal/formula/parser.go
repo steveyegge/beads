@@ -1,6 +1,7 @@
 package formula
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/steveyegge/beads/internal/routing"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // Formula file extensions. TOML is preferred, JSON is legacy fallback.
@@ -27,6 +30,10 @@ const (
 type Parser struct {
 	// searchPaths are directories to search for formulas (in order).
 	searchPaths []string
+
+	// store is an optional database backend for loading formulas stored as issues.
+	// When set, database is checked first before falling back to filesystem.
+	store storage.Storage
 
 	// cache stores loaded formulas by name.
 	cache map[string]*Formula
@@ -52,6 +59,17 @@ func NewParser(searchPaths ...string) *Parser {
 		resolvingSet:   make(map[string]bool),
 		resolvingChain: nil,
 	}
+}
+
+// NewParserWithStorage creates a formula parser with a database storage backend.
+// When a storage backend is provided, loadFormula tries the database first
+// (querying for issues with type=formula matching the name), then falls back
+// to filesystem search paths. This enables dual-read mode where formulas can
+// live in either the database or on disk.
+func NewParserWithStorage(store storage.Storage, searchPaths ...string) *Parser {
+	p := NewParser(searchPaths...)
+	p.store = store
+	return p
 }
 
 // defaultSearchPaths returns the default formula search paths.
@@ -251,12 +269,23 @@ func (p *Parser) Resolve(formula *Formula) (*Formula, error) {
 	return merged, nil
 }
 
-// loadFormula loads a formula by name from search paths.
-// Tries TOML first (.formula.toml), then falls back to JSON (.formula.json).
+// loadFormula loads a formula by name, trying database first then filesystem.
+// When a storage backend is configured, queries for issues with type=formula
+// matching the given name. Falls back to filesystem search paths (trying TOML
+// first, then JSON). Formulas from either source are cached identically.
 func (p *Parser) loadFormula(name string) (*Formula, error) {
 	// Check cache first
 	if cached, ok := p.cache[name]; ok {
 		return cached, nil
+	}
+
+	// Try database first when storage backend is configured
+	if p.store != nil {
+		formula, err := p.loadFormulaFromDB(name)
+		if err == nil {
+			return formula, nil
+		}
+		// Database miss or error — fall through to filesystem
 	}
 
 	// Search for the formula file - try TOML first, then JSON
@@ -270,7 +299,41 @@ func (p *Parser) loadFormula(name string) (*Formula, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("formula %q not found in search paths", name)
+	return nil, fmt.Errorf("formula %q not found in search paths or database", name)
+}
+
+// loadFormulaFromDB loads a formula from the database storage backend.
+// Searches for issues with type=formula where the title matches the formula name.
+func (p *Parser) loadFormulaFromDB(name string) (*Formula, error) {
+	formulaType := types.TypeFormula
+	issues, err := p.store.SearchIssues(context.Background(), "", types.IssueFilter{
+		IssueType:   &formulaType,
+		TitleSearch: name,
+		Limit:       10,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search database for formula %q: %w", name, err)
+	}
+
+	// Find exact title match (TitleSearch may be a substring match)
+	for _, issue := range issues {
+		if issue.Title == name {
+			formula, err := IssueToFormula(issue)
+			if err != nil {
+				return nil, fmt.Errorf("deserialize formula %q from database: %w", name, err)
+			}
+
+			// Set source tracing info on all steps
+			SetSourceInfo(formula)
+
+			// Cache by name, same as filesystem-loaded formulas
+			p.cache[name] = formula
+
+			return formula, nil
+		}
+	}
+
+	return nil, fmt.Errorf("formula %q not found in database", name)
 }
 
 // LoadByName loads a formula by name from search paths.

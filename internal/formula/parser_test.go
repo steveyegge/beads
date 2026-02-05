@@ -1,11 +1,15 @@
 package formula
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestParse_BasicFormula(t *testing.T) {
@@ -1305,5 +1309,359 @@ func TestParse_GateInChildStep(t *testing.T) {
 	}
 	if child.Gate.Type != "gh:run" {
 		t.Errorf("Child Gate.Type = %q, want 'gh:run'", child.Gate.Type)
+	}
+}
+
+// --- Database backend tests (gt-pozvwr.24.4) ---
+
+// storeFormula is a test helper that stores a formula in a MemoryStorage backend.
+func storeFormula(t *testing.T, store *memory.MemoryStorage, f *Formula) {
+	t.Helper()
+	issue, labels, err := FormulaToIssue(f, "test-")
+	if err != nil {
+		t.Fatalf("FormulaToIssue: %v", err)
+	}
+	issue.Status = types.StatusOpen
+	if err := store.CreateIssue(context.Background(), issue, "test"); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	for _, label := range labels {
+		if err := store.AddLabel(context.Background(), issue.ID, label, "test"); err != nil {
+			t.Fatalf("AddLabel: %v", err)
+		}
+	}
+}
+
+func TestLoadByName_FromDatabase(t *testing.T) {
+	store := memory.New("")
+	f := &Formula{
+		Formula:     "db-workflow",
+		Description: "A formula stored in the database",
+		Version:     1,
+		Type:        TypeWorkflow,
+		Steps: []*Step{
+			{ID: "step1", Title: "Database step 1"},
+			{ID: "step2", Title: "Database step 2", DependsOn: []string{"step1"}},
+		},
+	}
+	storeFormula(t, store, f)
+
+	p := NewParserWithStorage(store)
+	loaded, err := p.LoadByName("db-workflow")
+	if err != nil {
+		t.Fatalf("LoadByName: %v", err)
+	}
+
+	if loaded.Formula != "db-workflow" {
+		t.Errorf("Formula = %q, want 'db-workflow'", loaded.Formula)
+	}
+	if loaded.Description != "A formula stored in the database" {
+		t.Errorf("Description = %q, want 'A formula stored in the database'", loaded.Description)
+	}
+	if len(loaded.Steps) != 2 {
+		t.Errorf("len(Steps) = %d, want 2", len(loaded.Steps))
+	}
+	// Verify source indicates DB origin
+	if !strings.HasPrefix(loaded.Source, "bead:") {
+		t.Errorf("Source = %q, want prefix 'bead:'", loaded.Source)
+	}
+}
+
+func TestLoadByName_DatabaseCaching(t *testing.T) {
+	store := memory.New("")
+	f := &Formula{
+		Formula: "cached-formula",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps:   []*Step{{ID: "s1", Title: "Step 1"}},
+	}
+	storeFormula(t, store, f)
+
+	p := NewParserWithStorage(store)
+
+	// First load
+	first, err := p.LoadByName("cached-formula")
+	if err != nil {
+		t.Fatalf("first LoadByName: %v", err)
+	}
+
+	// Second load should return cached version (same pointer)
+	second, err := p.LoadByName("cached-formula")
+	if err != nil {
+		t.Fatalf("second LoadByName: %v", err)
+	}
+
+	if first != second {
+		t.Error("expected cached formula to return same pointer")
+	}
+}
+
+func TestLoadByName_DatabaseFallsBackToFilesystem(t *testing.T) {
+	store := memory.New("")
+	// Store a different formula in DB, but NOT the one we'll look up
+	storeFormula(t, store, &Formula{
+		Formula: "other-formula",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps:   []*Step{{ID: "s1", Title: "Other"}},
+	})
+
+	// Write a formula to the filesystem
+	dir := t.TempDir()
+	formulaDir := filepath.Join(dir, "formulas")
+	if err := os.MkdirAll(formulaDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	fsFormula := `{
+  "formula": "fs-only-formula",
+  "version": 1,
+  "type": "workflow",
+  "steps": [{"id": "fs1", "title": "Filesystem step"}]
+}`
+	if err := os.WriteFile(filepath.Join(formulaDir, "fs-only-formula.formula.json"), []byte(fsFormula), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	p := NewParserWithStorage(store, formulaDir)
+	loaded, err := p.LoadByName("fs-only-formula")
+	if err != nil {
+		t.Fatalf("LoadByName: %v", err)
+	}
+
+	if loaded.Formula != "fs-only-formula" {
+		t.Errorf("Formula = %q, want 'fs-only-formula'", loaded.Formula)
+	}
+	if loaded.Steps[0].ID != "fs1" {
+		t.Errorf("Steps[0].ID = %q, want 'fs1'", loaded.Steps[0].ID)
+	}
+}
+
+func TestLoadByName_DatabaseTakesPrecedence(t *testing.T) {
+	store := memory.New("")
+	// Store formula in DB
+	storeFormula(t, store, &Formula{
+		Formula: "dual-formula",
+		Version: 2,
+		Type:    TypeWorkflow,
+		Steps:   []*Step{{ID: "db1", Title: "DB version"}},
+	})
+
+	// Also write the same formula name to filesystem
+	dir := t.TempDir()
+	formulaDir := filepath.Join(dir, "formulas")
+	if err := os.MkdirAll(formulaDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	fsFormula := `{
+  "formula": "dual-formula",
+  "version": 1,
+  "type": "workflow",
+  "steps": [{"id": "fs1", "title": "FS version"}]
+}`
+	if err := os.WriteFile(filepath.Join(formulaDir, "dual-formula.formula.json"), []byte(fsFormula), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	p := NewParserWithStorage(store, formulaDir)
+	loaded, err := p.LoadByName("dual-formula")
+	if err != nil {
+		t.Fatalf("LoadByName: %v", err)
+	}
+
+	// DB version should win
+	if loaded.Version != 2 {
+		t.Errorf("Version = %d, want 2 (DB version should take precedence)", loaded.Version)
+	}
+	if loaded.Steps[0].ID != "db1" {
+		t.Errorf("Steps[0].ID = %q, want 'db1' (DB version)", loaded.Steps[0].ID)
+	}
+}
+
+func TestLoadByName_NoStoragePreservesFilesystemBehavior(t *testing.T) {
+	// Parser without storage should behave exactly as before
+	dir := t.TempDir()
+	formulaDir := filepath.Join(dir, "formulas")
+	if err := os.MkdirAll(formulaDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	fsFormula := `{
+  "formula": "fs-formula",
+  "version": 1,
+  "type": "workflow",
+  "steps": [{"id": "s1", "title": "Step 1"}]
+}`
+	if err := os.WriteFile(filepath.Join(formulaDir, "fs-formula.formula.json"), []byte(fsFormula), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	p := NewParser(formulaDir)
+	loaded, err := p.LoadByName("fs-formula")
+	if err != nil {
+		t.Fatalf("LoadByName: %v", err)
+	}
+
+	if loaded.Formula != "fs-formula" {
+		t.Errorf("Formula = %q, want 'fs-formula'", loaded.Formula)
+	}
+}
+
+func TestResolve_MixedSources(t *testing.T) {
+	store := memory.New("")
+
+	// Store parent formula in DB
+	storeFormula(t, store, &Formula{
+		Formula:     "db-parent",
+		Description: "Parent from database",
+		Version:     1,
+		Type:        TypeWorkflow,
+		Vars: map[string]*VarDef{
+			"project": {Description: "Project name", Required: true},
+		},
+		Steps: []*Step{{ID: "init", Title: "Initialize {{project}}"}},
+	})
+
+	// Write child formula to filesystem that extends DB parent
+	dir := t.TempDir()
+	formulaDir := filepath.Join(dir, "formulas")
+	if err := os.MkdirAll(formulaDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	child := `{
+  "formula": "fs-child",
+  "version": 1,
+  "type": "workflow",
+  "extends": ["db-parent"],
+  "vars": {
+    "env": {"default": "dev"}
+  },
+  "steps": [
+    {"id": "deploy", "title": "Deploy {{project}} to {{env}}", "depends_on": ["init"]}
+  ]
+}`
+	childPath := filepath.Join(formulaDir, "fs-child.formula.json")
+	if err := os.WriteFile(childPath, []byte(child), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	p := NewParserWithStorage(store, formulaDir)
+	formula, err := p.ParseFile(childPath)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+
+	resolved, err := p.Resolve(formula)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	// Should have both parent (DB) and child (FS) vars
+	if len(resolved.Vars) != 2 {
+		t.Errorf("len(Vars) = %d, want 2", len(resolved.Vars))
+	}
+	if resolved.Vars["project"] == nil {
+		t.Error("inherited var 'project' (from DB parent) not found")
+	}
+	if resolved.Vars["env"] == nil {
+		t.Error("child var 'env' (from FS) not found")
+	}
+
+	// Should have steps from both sources
+	if len(resolved.Steps) != 2 {
+		t.Errorf("len(Steps) = %d, want 2", len(resolved.Steps))
+	}
+	if resolved.Steps[0].ID != "init" {
+		t.Errorf("Steps[0].ID = %q, want 'init' (from DB parent)", resolved.Steps[0].ID)
+	}
+	if resolved.Steps[1].ID != "deploy" {
+		t.Errorf("Steps[1].ID = %q, want 'deploy' (from FS child)", resolved.Steps[1].ID)
+	}
+}
+
+func TestResolve_CycleDetection_WithDB(t *testing.T) {
+	store := memory.New("")
+
+	// Store two formulas in DB that form a cycle
+	storeFormula(t, store, &Formula{
+		Formula: "db-cycle-a",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Extends: []string{"db-cycle-b"},
+		Steps:   []*Step{{ID: "a", Title: "A"}},
+	})
+	storeFormula(t, store, &Formula{
+		Formula: "db-cycle-b",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Extends: []string{"db-cycle-a"},
+		Steps:   []*Step{{ID: "b", Title: "B"}},
+	})
+
+	p := NewParserWithStorage(store)
+	formula, err := p.LoadByName("db-cycle-a")
+	if err != nil {
+		t.Fatalf("LoadByName: %v", err)
+	}
+
+	_, err = p.Resolve(formula)
+	if err == nil {
+		t.Error("Resolve should fail for circular extends in DB formulas")
+	}
+	if !strings.Contains(err.Error(), "circular") {
+		t.Errorf("error should mention circular: %v", err)
+	}
+}
+
+func TestLoadByName_NotFoundAnywhere(t *testing.T) {
+	store := memory.New("")
+	p := NewParserWithStorage(store)
+
+	_, err := p.LoadByName("nonexistent-formula")
+	if err == nil {
+		t.Error("LoadByName should fail for formula not in DB or filesystem")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error should mention 'not found': %v", err)
+	}
+}
+
+func TestNewParserWithStorage_NilStorage(t *testing.T) {
+	// nil storage should work like regular NewParser
+	p := NewParserWithStorage(nil)
+	if p.store != nil {
+		t.Error("store should be nil")
+	}
+}
+
+func TestLoadByName_DBFormulaSourceTracing(t *testing.T) {
+	store := memory.New("")
+	f := &Formula{
+		Formula: "traced-formula",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{ID: "s1", Title: "Step 1"},
+			{
+				ID:    "s2",
+				Title: "Step 2",
+				Children: []*Step{
+					{ID: "s2c1", Title: "Child 1"},
+				},
+			},
+		},
+	}
+	storeFormula(t, store, f)
+
+	p := NewParserWithStorage(store)
+	loaded, err := p.LoadByName("traced-formula")
+	if err != nil {
+		t.Fatalf("LoadByName: %v", err)
+	}
+
+	// SetSourceInfo should have been called — verify SourceFormula is set
+	if loaded.Steps[0].SourceFormula != "traced-formula" {
+		t.Errorf("Steps[0].SourceFormula = %q, want 'traced-formula'", loaded.Steps[0].SourceFormula)
+	}
+	if loaded.Steps[1].Children[0].SourceFormula != "traced-formula" {
+		t.Errorf("Steps[1].Children[0].SourceFormula = %q, want 'traced-formula'", loaded.Steps[1].Children[0].SourceFormula)
 	}
 }
