@@ -45,6 +45,7 @@ const (
 	OpGetMoleculeProgress = "get_molecule_progress"
 	OpShutdown            = "shutdown"
 	OpDelete              = "delete"
+	OpRename              = "rename"
 	OpGetWorkerStatus     = "get_worker_status"
 	OpGetConfig           = "get_config"
 
@@ -295,6 +296,19 @@ type DeleteArgs struct {
 	Cascade    bool     `json:"cascade,omitempty"`    // Recursively delete dependents
 	Reason     string   `json:"reason,omitempty"`     // Reason for deletion
 	HardDelete bool     `json:"hard_delete,omitempty"` // Permanently delete (skip tombstones, cannot sync)
+}
+
+// RenameArgs represents arguments for the rename operation
+type RenameArgs struct {
+	OldID string `json:"old_id"` // Current issue ID
+	NewID string `json:"new_id"` // New issue ID
+}
+
+// RenameResult represents the result of a rename operation
+type RenameResult struct {
+	OldID            string `json:"old_id"`             // Original issue ID
+	NewID            string `json:"new_id"`             // New issue ID
+	ReferencesUpdated int    `json:"references_updated"` // Number of text references updated in other issues
 }
 
 // ListArgs represents arguments for the list operation

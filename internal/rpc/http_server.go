@@ -297,6 +297,7 @@ func httpMethodToOperation(method string) string {
 		"Create":    OpCreate,
 		"Update":    OpUpdate,
 		"Delete":    OpDelete,
+		"Rename":    OpRename,
 		"Close":     OpClose,
 		"Count":     OpCount,
 		"ResolveID": OpResolveID,

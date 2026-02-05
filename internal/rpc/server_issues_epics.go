@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1534,6 +1535,155 @@ func (s *Server) handleDelete(req *Request) Response {
 		Success: true,
 		Data:    data,
 	}
+}
+
+func (s *Server) handleRename(req *Request) Response {
+	var renameArgs RenameArgs
+	if err := json.Unmarshal(req.Args, &renameArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid rename args: %v", err),
+		}
+	}
+
+	// Validate IDs
+	if renameArgs.OldID == "" || renameArgs.NewID == "" {
+		return Response{
+			Success: false,
+			Error:   "old_id and new_id are required",
+		}
+	}
+	if renameArgs.OldID == renameArgs.NewID {
+		return Response{
+			Success: false,
+			Error:   "old and new IDs are the same",
+		}
+	}
+
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	// Check if old issue exists
+	oldIssue, err := store.GetIssue(ctx, renameArgs.OldID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get issue %s: %v", renameArgs.OldID, err),
+		}
+	}
+	if oldIssue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue %s not found", renameArgs.OldID),
+		}
+	}
+
+	// Check if new ID already exists
+	existing, err := store.GetIssue(ctx, renameArgs.NewID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to check for existing issue: %v", err),
+		}
+	}
+	if existing != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue %s already exists", renameArgs.NewID),
+		}
+	}
+
+	// Update the issue ID
+	oldIssue.ID = renameArgs.NewID
+	actor := req.Actor
+	if actor == "" {
+		actor = "daemon"
+	}
+	if err := store.UpdateIssueID(ctx, renameArgs.OldID, renameArgs.NewID, oldIssue, actor); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to rename issue: %v", err),
+		}
+	}
+
+	// Update text references in other issues
+	referencesUpdated := s.updateReferencesInAllIssues(ctx, store, renameArgs.OldID, renameArgs.NewID, actor)
+
+	// Emit mutation event
+	s.emitMutation(MutationUpdate, renameArgs.NewID, oldIssue.Title, oldIssue.Assignee)
+
+	result := RenameResult{
+		OldID:            renameArgs.OldID,
+		NewID:            renameArgs.NewID,
+		ReferencesUpdated: referencesUpdated,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// updateReferencesInAllIssues updates text references to the old ID in all issues
+// Returns the number of issues that were updated
+func (s *Server) updateReferencesInAllIssues(ctx context.Context, store storage.Storage, oldID, newID, actor string) int {
+	// Get all issues
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return 0
+	}
+
+	// Pattern to match the old ID as a word boundary
+	oldPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(oldID) + `\b`)
+	updatedCount := 0
+
+	for _, issue := range issues {
+		if issue.ID == newID {
+			continue // Skip the renamed issue itself
+		}
+
+		updated := false
+		updates := make(map[string]interface{})
+
+		// Check and update each text field
+		if oldPattern.MatchString(issue.Title) {
+			updates["title"] = oldPattern.ReplaceAllString(issue.Title, newID)
+			updated = true
+		}
+		if oldPattern.MatchString(issue.Description) {
+			updates["description"] = oldPattern.ReplaceAllString(issue.Description, newID)
+			updated = true
+		}
+		if oldPattern.MatchString(issue.Design) {
+			updates["design"] = oldPattern.ReplaceAllString(issue.Design, newID)
+			updated = true
+		}
+		if oldPattern.MatchString(issue.Notes) {
+			updates["notes"] = oldPattern.ReplaceAllString(issue.Notes, newID)
+			updated = true
+		}
+		if oldPattern.MatchString(issue.AcceptanceCriteria) {
+			updates["acceptance_criteria"] = oldPattern.ReplaceAllString(issue.AcceptanceCriteria, newID)
+			updated = true
+		}
+
+		if updated {
+			if err := store.UpdateIssue(ctx, issue.ID, updates, actor); err == nil {
+				updatedCount++
+			}
+		}
+	}
+
+	return updatedCount
 }
 
 func (s *Server) handleList(req *Request) Response {

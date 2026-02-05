@@ -250,6 +250,7 @@ func operationToHTTPMethod(operation string) string {
 		OpCreate:    "Create",
 		OpUpdate:    "Update",
 		OpDelete:    "Delete",
+		OpRename:    "Rename",
 		OpClose:     "Close",
 		OpCount:     "Count",
 		OpResolveID: "ResolveID",

@@ -511,6 +511,22 @@ func (c *Client) Delete(args *DeleteArgs) (*Response, error) {
 	return c.Execute(OpDelete, args)
 }
 
+// Rename renames an issue ID via the daemon.
+func (c *Client) Rename(args *RenameArgs) (*RenameResult, error) {
+	resp, err := c.Execute(OpRename, args)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	var result RenameResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse rename result: %w", err)
+	}
+	return &result, nil
+}
+
 // List lists issues via the daemon
 func (c *Client) List(args *ListArgs) (*Response, error) {
 	return c.Execute(OpList, args)

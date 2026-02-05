@@ -6,6 +6,7 @@ import (
 	"regexp"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -50,6 +51,12 @@ func runRename(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid new ID format %q: must be prefix-suffix (e.g., bd-dolt)", newID)
 	}
 
+	// Use daemon if available
+	if daemonClient != nil {
+		return renameViaDaemon(oldID, newID)
+	}
+
+	// Direct mode
 	ctx := context.Background()
 	if err := ensureStoreActive(); err != nil {
 		return fmt.Errorf("failed to get storage: %w", err)
@@ -90,6 +97,26 @@ func runRename(cmd *cobra.Command, args []string) error {
 
 	// Schedule auto-flush
 	markDirtyAndScheduleFlush()
+
+	return nil
+}
+
+// renameViaDaemon renames an issue via the RPC daemon
+func renameViaDaemon(oldID, newID string) error {
+	renameArgs := &rpc.RenameArgs{
+		OldID: oldID,
+		NewID: newID,
+	}
+
+	result, err := daemonClient.Rename(renameArgs)
+	if err != nil {
+		return fmt.Errorf("rename failed: %w", err)
+	}
+
+	fmt.Printf("Renamed %s -> %s\n", ui.RenderWarn(result.OldID), ui.RenderAccent(result.NewID))
+	if result.ReferencesUpdated > 0 {
+		fmt.Printf("  Updated references in %d issue(s)\n", result.ReferencesUpdated)
+	}
 
 	return nil
 }

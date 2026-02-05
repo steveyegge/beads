@@ -231,6 +231,8 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleClose(req)
 	case OpDelete:
 		resp = s.handleDelete(req)
+	case OpRename:
+		resp = s.handleRename(req)
 	case OpList:
 		resp = s.handleList(req)
 	case OpListWatch:
