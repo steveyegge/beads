@@ -39,30 +39,110 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// Issue represents a beads issue with all possible fields
+// Issue represents a beads issue with all possible fields.
+// IMPORTANT: This struct must stay in sync with types.Issue to prevent data loss during merge.
+// See GH#1480 for the bug this caused and GH#1481 for the long-term refactor plan.
 type Issue struct {
-	ID           string       `json:"id"`
-	Title        string       `json:"title,omitempty"`
-	Description  string       `json:"description,omitempty"`
-	Notes        string       `json:"notes,omitempty"`
-	Status       string       `json:"status,omitempty"`
-	Priority     int          `json:"priority"` // No omitempty: 0 is valid (P0/critical)
-	IssueType    string       `json:"issue_type,omitempty"`
-	CreatedAt       string       `json:"created_at,omitempty"`
-	UpdatedAt       string       `json:"updated_at,omitempty"`
-	ClosedAt        string       `json:"closed_at,omitempty"`
-	CloseReason     string       `json:"close_reason,omitempty"`     // Reason provided when closing (GH#891)
-	ClosedBySession string       `json:"closed_by_session,omitempty"` // Session that closed this issue (GH#891)
-	CreatedBy       string       `json:"created_by,omitempty"`
+	ID          string `json:"id"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Notes       string `json:"notes,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Priority    int    `json:"priority"` // No omitempty: 0 is valid (P0/critical)
+	IssueType   string `json:"issue_type,omitempty"`
+
+	// Timestamps (kept as strings for merge logic compatibility)
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+	ClosedAt  string `json:"closed_at,omitempty"`
+
+	// Close metadata (GH#891)
+	CloseReason     string `json:"close_reason,omitempty"`
+	ClosedBySession string `json:"closed_by_session,omitempty"`
+
+	CreatedBy    string       `json:"created_by,omitempty"`
 	Dependencies []Dependency `json:"dependencies,omitempty"`
 	RawLine      string       `json:"-"` // Store original line for conflict output
+
 	// Tombstone fields: inline soft-delete support for merge
-	DeletedAt    string `json:"deleted_at,omitempty"`    // When the issue was deleted
-	DeletedBy    string `json:"deleted_by,omitempty"`    // Who deleted the issue
-	DeleteReason string `json:"delete_reason,omitempty"` // Why the issue was deleted
-	OriginalType string `json:"original_type,omitempty"` // Issue type before deletion
+	DeletedAt    string `json:"deleted_at,omitempty"`
+	DeletedBy    string `json:"deleted_by,omitempty"`
+	DeleteReason string `json:"delete_reason,omitempty"`
+	OriginalType string `json:"original_type,omitempty"`
+
 	// HOP quality field
-	QualityScore *float32 `json:"quality_score,omitempty"` // Aggregate quality (0.0-1.0)
+	QualityScore *float32 `json:"quality_score,omitempty"`
+
+	// === Fields added in GH#1480 to prevent data loss ===
+
+	// Content fields
+	Design             string `json:"design,omitempty"`
+	AcceptanceCriteria string `json:"acceptance_criteria,omitempty"`
+	SpecID             string `json:"spec_id,omitempty"`
+
+	// Assignment
+	Assignee string `json:"assignee,omitempty"`
+	Owner    string `json:"owner,omitempty"`
+
+	// Scheduling (kept as strings for merge compatibility)
+	DueAt      string `json:"due_at,omitempty"`
+	DeferUntil string `json:"defer_until,omitempty"`
+
+	// External references
+	ExternalRef  string `json:"external_ref,omitempty"`
+	SourceSystem string `json:"source_system,omitempty"`
+
+	// Labels
+	Labels []string `json:"labels,omitempty"`
+
+	// Comments
+	Comments []Comment `json:"comments,omitempty"`
+
+	// Custom metadata (GH#1406)
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+
+	// Gate fields
+	AwaitType string   `json:"await_type,omitempty"`
+	AwaitID   string   `json:"await_id,omitempty"`
+	Timeout   int64    `json:"timeout,omitempty"` // nanoseconds (kept as int64 for simplicity)
+	Waiters   []string `json:"waiters,omitempty"`
+
+	// Flags
+	Pinned       bool `json:"pinned,omitempty"`
+	IsTemplate   bool `json:"is_template,omitempty"`
+	Ephemeral    bool `json:"ephemeral,omitempty"`
+	Crystallizes bool `json:"crystallizes,omitempty"`
+
+	// Wisp/messaging
+	Sender   string `json:"sender,omitempty"`
+	WispType string `json:"wisp_type,omitempty"`
+
+	// Agent fields
+	HookBead     string `json:"hook_bead,omitempty"`
+	RoleBead     string `json:"role_bead,omitempty"`
+	AgentState   string `json:"agent_state,omitempty"`
+	LastActivity string `json:"last_activity,omitempty"` // kept as string
+	RoleType     string `json:"role_type,omitempty"`
+	Rig          string `json:"rig,omitempty"`
+
+	// Molecule type
+	MolType string `json:"mol_type,omitempty"`
+
+	// Compaction fields
+	CompactionLevel   int    `json:"compaction_level,omitempty"`
+	CompactedAt       string `json:"compacted_at,omitempty"` // kept as string
+	CompactedAtCommit string `json:"compacted_at_commit,omitempty"`
+	OriginalSize      int    `json:"original_size,omitempty"`
+
+	// Slot holder
+	Holder string `json:"holder,omitempty"`
+
+	// Formula tracking
+	SourceFormula  string `json:"source_formula,omitempty"`
+	SourceLocation string `json:"source_location,omitempty"`
+
+	// Estimated minutes
+	EstimatedMinutes *int `json:"estimated_minutes,omitempty"`
 }
 
 // Dependency represents an issue dependency
@@ -72,6 +152,15 @@ type Dependency struct {
 	Type        string `json:"type"`
 	CreatedAt   string `json:"created_at"`
 	CreatedBy   string `json:"created_by"`
+}
+
+// Comment represents an issue comment
+type Comment struct {
+	ID        string `json:"id,omitempty"`
+	IssueID   string `json:"issue_id,omitempty"`
+	Author    string `json:"author,omitempty"`
+	Text      string `json:"text,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // IssueKey uniquely identifies an issue for matching
@@ -622,6 +711,93 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 	// Merge dependencies - proper 3-way merge where removals win
 	result.Dependencies = mergeDependencies(base.Dependencies, left.Dependencies, right.Dependencies)
 
+	// === Merge new fields added in GH#1480 ===
+	// For most fields, use standard 3-way merge (left wins on conflict)
+
+	// Content fields
+	result.Design = mergeField(base.Design, left.Design, right.Design)
+	result.AcceptanceCriteria = mergeField(base.AcceptanceCriteria, left.AcceptanceCriteria, right.AcceptanceCriteria)
+	result.SpecID = mergeField(base.SpecID, left.SpecID, right.SpecID)
+
+	// Assignment - use standard merge (left wins on conflict)
+	result.Assignee = mergeField(base.Assignee, left.Assignee, right.Assignee)
+	result.Owner = mergeField(base.Owner, left.Owner, right.Owner)
+
+	// Scheduling - use maxTime for time fields (latest wins)
+	result.DueAt = maxTime(left.DueAt, right.DueAt)
+	result.DeferUntil = maxTime(left.DeferUntil, right.DeferUntil)
+
+	// External references
+	result.ExternalRef = mergeField(base.ExternalRef, left.ExternalRef, right.ExternalRef)
+	result.SourceSystem = mergeField(base.SourceSystem, left.SourceSystem, right.SourceSystem)
+
+	// Labels - prefer left's version on conflict (no sophisticated merge for now)
+	result.Labels = mergeLabels(base.Labels, left.Labels, right.Labels)
+
+	// Comments - prefer left's version on conflict
+	result.Comments = mergeComments(base.Comments, left.Comments, right.Comments)
+
+	// Metadata - prefer the version from the side with latest updated_at
+	result.Metadata = mergeMetadata(base.Metadata, left.Metadata, right.Metadata, left.UpdatedAt, right.UpdatedAt)
+
+	// Gate fields
+	result.AwaitType = mergeField(base.AwaitType, left.AwaitType, right.AwaitType)
+	result.AwaitID = mergeField(base.AwaitID, left.AwaitID, right.AwaitID)
+	result.Timeout = mergeInt64(base.Timeout, left.Timeout, right.Timeout)
+	result.Waiters = mergeStringSlice(base.Waiters, left.Waiters, right.Waiters)
+
+	// Flags - any true value wins (union semantics)
+	result.Pinned = base.Pinned || left.Pinned || right.Pinned
+	result.IsTemplate = base.IsTemplate || left.IsTemplate || right.IsTemplate
+	result.Ephemeral = base.Ephemeral || left.Ephemeral || right.Ephemeral
+	result.Crystallizes = base.Crystallizes || left.Crystallizes || right.Crystallizes
+
+	// Wisp/messaging
+	result.Sender = mergeField(base.Sender, left.Sender, right.Sender)
+	result.WispType = mergeField(base.WispType, left.WispType, right.WispType)
+
+	// Agent fields
+	result.HookBead = mergeField(base.HookBead, left.HookBead, right.HookBead)
+	result.RoleBead = mergeField(base.RoleBead, left.RoleBead, right.RoleBead)
+	result.AgentState = mergeField(base.AgentState, left.AgentState, right.AgentState)
+	result.LastActivity = maxTime(left.LastActivity, right.LastActivity)
+	result.RoleType = mergeField(base.RoleType, left.RoleType, right.RoleType)
+	result.Rig = mergeField(base.Rig, left.Rig, right.Rig)
+
+	// Molecule type
+	result.MolType = mergeField(base.MolType, left.MolType, right.MolType)
+
+	// Compaction fields - prefer newer compaction
+	if isTimeAfter(left.CompactedAt, right.CompactedAt) {
+		result.CompactionLevel = left.CompactionLevel
+		result.CompactedAt = left.CompactedAt
+		result.CompactedAtCommit = left.CompactedAtCommit
+		result.OriginalSize = left.OriginalSize
+	} else if right.CompactedAt != "" {
+		result.CompactionLevel = right.CompactionLevel
+		result.CompactedAt = right.CompactedAt
+		result.CompactedAtCommit = right.CompactedAtCommit
+		result.OriginalSize = right.OriginalSize
+	} else {
+		result.CompactionLevel = left.CompactionLevel
+		result.CompactedAt = left.CompactedAt
+		result.CompactedAtCommit = left.CompactedAtCommit
+		result.OriginalSize = left.OriginalSize
+	}
+
+	// Slot holder
+	result.Holder = mergeField(base.Holder, left.Holder, right.Holder)
+
+	// Formula tracking
+	result.SourceFormula = mergeField(base.SourceFormula, left.SourceFormula, right.SourceFormula)
+	result.SourceLocation = mergeField(base.SourceLocation, left.SourceLocation, right.SourceLocation)
+
+	// Estimated minutes - prefer non-nil, then left
+	result.EstimatedMinutes = mergeIntPtr(base.EstimatedMinutes, left.EstimatedMinutes, right.EstimatedMinutes)
+
+	// Quality score - prefer non-nil, then left
+	result.QualityScore = mergeFloatPtr(base.QualityScore, left.QualityScore, right.QualityScore)
+
 	// If status became tombstone via mergeStatus safety fallback,
 	// copy tombstone fields from whichever side has them
 	if result.Status == StatusTombstone {
@@ -923,3 +1099,182 @@ func mergeDependencies(base, left, right []Dependency) []Dependency {
 	return result
 }
 
+
+// === Helper functions for new field merging (GH#1480) ===
+
+// mergeLabels performs a 3-way merge of labels.
+// For simplicity, uses set union semantics: all unique labels are kept.
+func mergeLabels(base, left, right []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+
+	// Add all labels from all sides (union)
+	for _, labels := range [][]string{base, left, right} {
+		for _, label := range labels {
+			if !seen[label] {
+				seen[label] = true
+				result = append(result, label)
+			}
+		}
+	}
+	return result
+}
+
+// mergeComments performs a 3-way merge of comments.
+// For simplicity, uses set union semantics based on comment ID.
+func mergeComments(base, left, right []Comment) []Comment {
+	seen := make(map[string]bool)
+	var result []Comment
+
+	for _, comments := range [][]Comment{base, left, right} {
+		for _, comment := range comments {
+			key := comment.ID
+			if key == "" {
+				// No ID - use content hash as fallback
+				key = comment.Author + ":" + comment.CreatedAt + ":" + comment.Text
+			}
+			if !seen[key] {
+				seen[key] = true
+				result = append(result, comment)
+			}
+		}
+	}
+	return result
+}
+
+// mergeMetadata performs a 3-way merge of JSON metadata.
+// Prefers the version from the side with the latest updated_at.
+func mergeMetadata(base, left, right json.RawMessage, leftUpdatedAt, rightUpdatedAt string) json.RawMessage {
+	// If both sides have the same metadata as base, keep base
+	if jsonEqual(base, left) && jsonEqual(base, right) {
+		return base
+	}
+
+	// If only left changed
+	if jsonEqual(base, right) && !jsonEqual(base, left) {
+		return left
+	}
+
+	// If only right changed
+	if jsonEqual(base, left) && !jsonEqual(base, right) {
+		return right
+	}
+
+	// Both changed - prefer the one with latest updated_at
+	if isTimeAfter(leftUpdatedAt, rightUpdatedAt) {
+		return left
+	}
+	return right
+}
+
+// jsonEqual compares two JSON values for equality
+func jsonEqual(a, b json.RawMessage) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	// Simple byte comparison (works for our use case)
+	return string(a) == string(b)
+}
+
+// mergeInt64 performs a 3-way merge of int64 values.
+// Uses standard merge semantics (left wins on conflict).
+func mergeInt64(base, left, right int64) int64 {
+	if base == left && base != right {
+		return right
+	}
+	if base == right && base != left {
+		return left
+	}
+	// Both changed to same value or no change - left wins
+	return left
+}
+
+// mergeStringSlice performs a 3-way merge of string slices.
+// Uses set union semantics: all unique values are kept.
+func mergeStringSlice(base, left, right []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+
+	for _, slice := range [][]string{base, left, right} {
+		for _, s := range slice {
+			if !seen[s] {
+				seen[s] = true
+				result = append(result, s)
+			}
+		}
+	}
+	return result
+}
+
+// mergeIntPtr performs a 3-way merge of *int values.
+// Prefers non-nil values, then left on conflict.
+func mergeIntPtr(base, left, right *int) *int {
+	// If both sides have the same value as base, keep base
+	if intPtrEqual(base, left) && intPtrEqual(base, right) {
+		return base
+	}
+
+	// If only left changed
+	if intPtrEqual(base, right) && !intPtrEqual(base, left) {
+		return left
+	}
+
+	// If only right changed
+	if intPtrEqual(base, left) && !intPtrEqual(base, right) {
+		return right
+	}
+
+	// Both changed - prefer non-nil, then left
+	if left != nil {
+		return left
+	}
+	return right
+}
+
+func intPtrEqual(a, b *int) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// mergeFloatPtr performs a 3-way merge of *float32 values.
+// Prefers non-nil values, then left on conflict.
+func mergeFloatPtr(base, left, right *float32) *float32 {
+	// If both sides have the same value as base, keep base
+	if floatPtrEqual(base, left) && floatPtrEqual(base, right) {
+		return base
+	}
+
+	// If only left changed
+	if floatPtrEqual(base, right) && !floatPtrEqual(base, left) {
+		return left
+	}
+
+	// If only right changed
+	if floatPtrEqual(base, left) && !floatPtrEqual(base, right) {
+		return right
+	}
+
+	// Both changed - prefer non-nil, then left
+	if left != nil {
+		return left
+	}
+	return right
+}
+
+func floatPtrEqual(a, b *float32) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
