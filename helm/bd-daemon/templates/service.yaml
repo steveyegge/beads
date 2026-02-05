@@ -1,0 +1,35 @@
+{{- if .Values.service.tcp.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bd-daemon.fullname" . }}-tcp
+  labels:
+    {{- include "bd-daemon.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.tcp.type }}
+  ports:
+    - port: {{ .Values.service.tcp.port }}
+      targetPort: tcp
+      protocol: TCP
+      name: tcp
+  selector:
+    {{- include "bd-daemon.selectorLabels" . | nindent 4 }}
+{{- end }}
+---
+{{- if .Values.service.http.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bd-daemon.fullname" . }}-http
+  labels:
+    {{- include "bd-daemon.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.http.type }}
+  ports:
+    - port: {{ .Values.service.http.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "bd-daemon.selectorLabels" . | nindent 4 }}
+{{- end }}

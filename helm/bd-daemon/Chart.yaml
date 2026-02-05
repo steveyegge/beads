@@ -1,0 +1,12 @@
+apiVersion: v2
+name: bd-daemon
+description: Helm chart for the bd (beads) daemon with optional Redis backend
+type: application
+version: 0.1.0
+appVersion: "0.21.0"
+
+dependencies:
+  - name: redis
+    version: "~20.x"
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: redis.enabled

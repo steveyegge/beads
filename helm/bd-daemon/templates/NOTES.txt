@@ -1,0 +1,27 @@
+bd-daemon has been deployed.
+
+TCP endpoint (bd RPC):
+  kubectl port-forward svc/{{ include "bd-daemon.fullname" . }}-tcp {{ .Values.service.tcp.port }}:{{ .Values.service.tcp.port }}
+
+HTTP endpoint (Connect-RPC):
+  kubectl port-forward svc/{{ include "bd-daemon.fullname" . }}-http {{ .Values.service.http.port }}:{{ .Values.service.http.port }}
+
+{{- if .Values.redis.enabled }}
+
+Redis WispStore: ENABLED
+  Namespace: {{ .Values.redis.namespace }}
+  TTL: {{ .Values.redis.wispTTL }}
+{{- else }}
+
+Redis WispStore: DISABLED (using in-memory store)
+  Note: In-memory mode does not support multi-replica state sharing.
+  Enable Redis with: --set redis.enabled=true
+{{- end }}
+
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- if not .Values.redis.enabled }}
+
+WARNING: Multiple replicas ({{ .Values.replicaCount }}) without Redis will result in
+isolated wisp state per pod. Enable Redis for shared ephemeral state.
+{{- end }}
+{{- end }}

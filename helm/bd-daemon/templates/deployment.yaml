@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bd-daemon.fullname" . }}
+  labels:
+    {{- include "bd-daemon.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bd-daemon.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "bd-daemon.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "bd-daemon.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - daemon
+            - start
+            - --foreground
+            - --tcp-addr=:9876
+            - --http-addr=:9877
+            - --log-json
+            - --log-level={{ .Values.daemon.logLevel }}
+            - --local
+          ports:
+            - name: tcp
+              containerPort: 9876
+              protocol: TCP
+            - name: http
+              containerPort: 9877
+              protocol: TCP
+          env:
+            {{- if .Values.redis.enabled }}
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-redis
+                  key: redis-password
+            {{- end }}
+            - name: BD_REDIS_URL
+              value: {{ include "bd-daemon.redisURL" . | quote }}
+            - name: BD_REDIS_NAMESPACE
+              value: {{ .Values.redis.namespace | quote }}
+            - name: BD_REDIS_WISP_TTL
+              value: {{ .Values.redis.wispTTL | quote }}
+            {{- end }}
+            {{- if .Values.daemon.token }}
+            - name: BD_DAEMON_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bd-daemon.fullname" . }}
+                  key: daemon-token
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
