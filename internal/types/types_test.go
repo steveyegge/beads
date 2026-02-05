@@ -358,6 +358,17 @@ func TestValidateWithCustomStatuses(t *testing.T) {
 			wantErr:        false,
 		},
 		{
+			name: "valid formula type issue",
+			issue: Issue{
+				Title:     "Test Issue",
+				Status:    StatusOpen,
+				Priority:  1,
+				IssueType: TypeFormula,
+			},
+			customStatuses: nil,
+			wantErr:        false,
+		},
+		{
 			name: "invalid custom status without config",
 			issue: Issue{
 				Title:     "Test Issue",
@@ -418,6 +429,16 @@ func TestValidateForImport(t *testing.T) {
 				Status:    StatusOpen,
 				Priority:  1,
 				IssueType: TypeBug,
+			},
+			wantErr: false,
+		},
+		{
+			name: "built-in type formula passes",
+			issue: Issue{
+				Title:     "Test Issue",
+				Status:    StatusOpen,
+				Priority:  1,
+				IssueType: TypeFormula,
 			},
 			wantErr: false,
 		},
@@ -546,6 +567,7 @@ func TestIssueTypeIsValid(t *testing.T) {
 		{TypeEpic, true},
 		{TypeChore, true},
 		{TypeAdvice, true},
+		{TypeFormula, true},
 		// Gas Town types are now custom types (not built-in)
 		{IssueType("message"), false},
 		{IssueType("merge-request"), false},
@@ -621,6 +643,30 @@ func TestEventTypeValidation(t *testing.T) {
 	// Normalize must not map event to a core type
 	if TypeEvent.Normalize() != TypeEvent {
 		t.Errorf("TypeEvent.Normalize() = %q, want %q", TypeEvent.Normalize(), TypeEvent)
+	}
+}
+
+// TestFormulaTypeValidation verifies that formula type is accepted as a
+// core work type by all validation paths.
+func TestFormulaTypeValidation(t *testing.T) {
+	// formula is a core work type
+	if !TypeFormula.IsValid() {
+		t.Error("TypeFormula.IsValid() = false, want true")
+	}
+
+	// formula is a built-in type (all core work types are built-in)
+	if !TypeFormula.IsBuiltIn() {
+		t.Error("TypeFormula.IsBuiltIn() = false, want true")
+	}
+
+	// formula should be accepted by IsValidWithCustom without explicit config
+	if !TypeFormula.IsValidWithCustom(nil) {
+		t.Error("TypeFormula.IsValidWithCustom(nil) = false, want true")
+	}
+
+	// Normalize must return formula unchanged
+	if TypeFormula.Normalize() != TypeFormula {
+		t.Errorf("TypeFormula.Normalize() = %q, want %q", TypeFormula.Normalize(), TypeFormula)
 	}
 }
 

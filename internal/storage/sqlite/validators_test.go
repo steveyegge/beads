@@ -67,6 +67,7 @@ func TestValidateIssueType(t *testing.T) {
 		{"valid task", string(types.TypeTask), false},
 		{"valid epic", string(types.TypeEpic), false},
 		{"valid chore", string(types.TypeChore), false},
+		{"valid formula", string(types.TypeFormula), false},
 		{"invalid type", "invalid", true},
 		{"non-string ignored", 123, false},
 	}
