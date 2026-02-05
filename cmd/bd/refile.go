@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/routing"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -37,6 +38,12 @@ Examples:
 		targetRig := args[1]
 
 		keepOpen, _ := cmd.Flags().GetBool("keep-open")
+
+		// Use daemon if available (bd-wj80)
+		if daemonClient != nil {
+			refileViaDaemon(sourceID, targetRig, keepOpen)
+			return
+		}
 
 		ctx := rootCtx
 
@@ -154,6 +161,34 @@ targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
 			}
 		}
 	},
+}
+
+// refileViaDaemon refiles an issue via the RPC daemon (bd-wj80).
+func refileViaDaemon(sourceID, targetRig string, keepOpen bool) {
+	args := &rpc.RefileArgs{
+		IssueID:   sourceID,
+		TargetRig: targetRig,
+		KeepOpen:  keepOpen,
+	}
+
+	result, err := daemonClient.Refile(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"source": result.SourceID,
+			"target": result.TargetID,
+			"closed": result.Closed,
+		})
+	} else {
+		fmt.Printf("%s Refiled %s → %s\n", ui.RenderPass("✓"), result.SourceID, result.TargetID)
+		if result.Closed {
+			fmt.Printf("  Source issue closed\n")
+		}
+	}
 }
 
 func init() {

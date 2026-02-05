@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -66,11 +67,16 @@ NOTE: This is a rare operation. Most users never need this command.`,
 
 		ctx := rootCtx
 
-		// rename-prefix requires direct mode (not supported by daemon)
+		// Use daemon if available (simple rename only; repair requires direct mode)
 		if daemonClient != nil {
-			if err := ensureDirectMode("daemon does not support rename-prefix command"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+			if repair {
+				if err := ensureDirectMode("rename-prefix --repair requires direct mode"); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+			} else {
+				renamePrefixViaDaemon(newPrefix, dryRun)
+				return
 			}
 		} else if store == nil {
 			if err := ensureStoreActive(); err != nil {
@@ -253,6 +259,33 @@ NOTE: This is a rare operation. Most users never need this command.`,
 			_ = enc.Encode(result)
 		}
 	},
+}
+
+// renamePrefixViaDaemon renames the issue prefix via the RPC daemon (bd-wj80).
+func renamePrefixViaDaemon(newPrefix string, dryRun bool) {
+	args := &rpc.RenamePrefixArgs{
+		NewPrefix: newPrefix,
+		DryRun:    dryRun,
+	}
+
+	result, err := daemonClient.RenamePrefix(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if dryRun {
+		fmt.Printf("DRY RUN: Would rename %d issues from prefix '%s' to '%s'\n",
+			result.IssuesRenamed, result.OldPrefix, result.NewPrefix)
+		return
+	}
+
+	fmt.Printf("%s Successfully renamed prefix from %s to %s (%d issues)\n",
+		ui.RenderPass("✓"), ui.RenderAccent(result.OldPrefix), ui.RenderAccent(result.NewPrefix), result.IssuesRenamed)
+
+	if jsonOutput {
+		outputJSON(result)
+	}
 }
 
 func validatePrefix(prefix string) error {

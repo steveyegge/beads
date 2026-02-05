@@ -115,6 +115,13 @@ const (
 	// Init and Migrate operations (remote database management)
 	OpInit    = "init"
 	OpMigrate = "migrate"
+
+	// Additional write operations (bd-wj80)
+	OpRenamePrefix = "rename_prefix"
+	OpMove         = "move"
+	OpRefile       = "refile"
+	OpCook         = "cook"
+	OpPour         = "pour"
 )
 
 // Request represents an RPC request from client to daemon
@@ -862,6 +869,90 @@ type DecisionCancelResult struct {
 	Reason     string `json:"reason,omitempty"`
 	CanceledBy string `json:"canceled_by,omitempty"`
 	Prompt     string `json:"prompt"`
+}
+
+// Additional write operations (bd-wj80)
+
+// RenamePrefixArgs represents arguments for the rename-prefix operation
+type RenamePrefixArgs struct {
+	NewPrefix string `json:"new_prefix"`           // New prefix (e.g., "bd-")
+	DryRun    bool   `json:"dry_run,omitempty"`    // Preview changes only
+	Repair    bool   `json:"repair,omitempty"`     // Consolidate multiple prefixes
+}
+
+// RenamePrefixResult represents the result of a rename-prefix operation
+type RenamePrefixResult struct {
+	OldPrefix     string `json:"old_prefix"`
+	NewPrefix     string `json:"new_prefix"`
+	IssuesRenamed int    `json:"issues_renamed"`
+	DryRun        bool   `json:"dry_run"`
+}
+
+// MoveArgs represents arguments for the move operation
+type MoveArgs struct {
+	IssueID   string `json:"issue_id"`             // Source issue ID
+	TargetRig string `json:"target_rig"`           // Target rig name or prefix
+	KeepOpen  bool   `json:"keep_open,omitempty"`  // Don't close source issue
+	SkipDeps  bool   `json:"skip_deps,omitempty"`  // Skip dependency remapping
+}
+
+// MoveResult represents the result of a move operation
+type MoveResult struct {
+	SourceID     string `json:"source_id"`
+	TargetID     string `json:"target_id"`
+	Closed       bool   `json:"closed"`
+	DepsRemapped int    `json:"deps_remapped"`
+}
+
+// RefileArgs represents arguments for the refile operation
+type RefileArgs struct {
+	IssueID   string `json:"issue_id"`             // Source issue ID
+	TargetRig string `json:"target_rig"`           // Target rig name or prefix
+	KeepOpen  bool   `json:"keep_open,omitempty"`  // Don't close source issue
+}
+
+// RefileResult represents the result of a refile operation
+type RefileResult struct {
+	SourceID string `json:"source_id"`
+	TargetID string `json:"target_id"`
+	Closed   bool   `json:"closed"`
+}
+
+// CookArgs represents arguments for the cook operation
+type CookArgs struct {
+	FormulaName string            `json:"formula_name"`          // Formula file name or path
+	DryRun      bool              `json:"dry_run,omitempty"`     // Preview only
+	Persist     bool              `json:"persist,omitempty"`     // Write proto to database
+	Force       bool              `json:"force,omitempty"`       // Overwrite existing proto
+	Prefix      string            `json:"prefix,omitempty"`      // Proto ID prefix
+	Vars        map[string]string `json:"vars,omitempty"`        // Variable substitutions
+	Mode        string            `json:"mode,omitempty"`        // "compile" or "runtime"
+}
+
+// CookResult represents the result of a cook operation
+type CookResult struct {
+	ProtoID   string   `json:"proto_id"`
+	Created   int      `json:"created"`
+	Variables []string `json:"variables,omitempty"`
+	DryRun    bool     `json:"dry_run"`
+}
+
+// PourArgs represents arguments for the pour operation
+type PourArgs struct {
+	ProtoID     string            `json:"proto_id"`              // Proto bead ID or formula name
+	Vars        map[string]string `json:"vars,omitempty"`        // Variable substitutions
+	DryRun      bool              `json:"dry_run,omitempty"`     // Preview only
+	Assignee    string            `json:"assignee,omitempty"`    // Assign root issue
+	Attachments []string          `json:"attachments,omitempty"` // Proto IDs to attach
+	AttachType  string            `json:"attach_type,omitempty"` // Attachment bonding type
+}
+
+// PourResult represents the result of a pour operation
+type PourResult struct {
+	RootID   string `json:"root_id"`
+	Created  int    `json:"created"`
+	Attached int    `json:"attached"`
+	Phase    string `json:"phase"` // "liquid"
 }
 
 // Mol operations (gt-as9kdm)

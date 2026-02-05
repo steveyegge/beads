@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/formula"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -373,9 +374,12 @@ func runCook(cmd *cobra.Command, args []string) {
 	}
 
 	// Validate store access for persist mode
-	// TODO: Add daemon RPC support for cook --persist per gt-as9kdm
 	if flags.persist {
 		CheckReadonly("cook --persist")
+		if daemonClient != nil {
+			cookViaDaemon(flags)
+			return
+		}
 		if store == nil {
 			fmt.Fprintf(os.Stderr, "Error: cook --persist requires direct database access\n")
 			fmt.Fprintf(os.Stderr, "Hint: cook --persist does not yet support daemon mode\n")
@@ -424,6 +428,33 @@ func runCook(cmd *cobra.Command, args []string) {
 	if err := persistCookFormula(rootCtx, resolved, protoID, flags.force, vars, bondPoints); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// cookViaDaemon sends a cook request to the RPC daemon (bd-wj80).
+func cookViaDaemon(flags *cookFlags) {
+	args := &rpc.CookArgs{
+		FormulaName: flags.formulaPath,
+		DryRun:      flags.dryRun,
+		Persist:     flags.persist,
+		Force:       flags.force,
+		Prefix:      flags.prefix,
+		Vars:        flags.inputVars,
+	}
+	if flags.runtimeMode {
+		args.Mode = "runtime"
+	}
+
+	result, err := daemonClient.Cook(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(result)
+	} else {
+		fmt.Printf("%s Cooked proto: %s (%d issues created)\n", ui.RenderPass("✓"), result.ProtoID, result.Created)
 	}
 }
 

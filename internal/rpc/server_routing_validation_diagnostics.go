@@ -372,6 +372,17 @@ func (s *Server) executeOperation(req *Request) Response {
 	// Atomic closure chain operation (for MR completion)
 	case OpAtomicClosureChain:
 		resp = s.handleAtomicClosureChain(req)
+	// Additional write operations (bd-wj80)
+	case OpRenamePrefix:
+		resp = s.handleRenamePrefix(req)
+	case OpMove:
+		resp = s.handleMove(req)
+	case OpRefile:
+		resp = s.handleRefile(req)
+	case OpCook:
+		resp = s.handleCook(req)
+	case OpPour:
+		resp = s.handlePour(req)
 	default:
 		return Response{
 			Success: false,

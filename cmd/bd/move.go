@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/routing"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
@@ -51,6 +52,12 @@ Examples:
 
 		keepOpen, _ := cmd.Flags().GetBool("keep-open")
 		skipDeps, _ := cmd.Flags().GetBool("skip-deps")
+
+		// Use daemon if available (bd-wj80)
+		if daemonClient != nil {
+			moveViaDaemon(sourceID, targetRig, keepOpen, skipDeps)
+			return
+		}
 
 		ctx := rootCtx
 
@@ -194,6 +201,39 @@ Examples:
 			}
 		}
 	},
+}
+
+// moveViaDaemon moves an issue via the RPC daemon (bd-wj80).
+func moveViaDaemon(sourceID, targetRig string, keepOpen, skipDeps bool) {
+	args := &rpc.MoveArgs{
+		IssueID:   sourceID,
+		TargetRig: targetRig,
+		KeepOpen:  keepOpen,
+		SkipDeps:  skipDeps,
+	}
+
+	result, err := daemonClient.Move(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"source":        result.SourceID,
+			"target":        result.TargetID,
+			"closed":        result.Closed,
+			"deps_remapped": result.DepsRemapped,
+		})
+	} else {
+		fmt.Printf("%s Moved %s → %s\n", ui.RenderPass("✓"), result.SourceID, result.TargetID)
+		if result.DepsRemapped > 0 {
+			fmt.Printf("  Remapped %d dependencies\n", result.DepsRemapped)
+		}
+		if result.Closed {
+			fmt.Printf("  Source issue closed\n")
+		}
+	}
 }
 
 // remapDependencies updates all dependencies in the store that reference oldID to use newID.

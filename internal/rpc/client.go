@@ -527,6 +527,86 @@ func (c *Client) Rename(args *RenameArgs) (*RenameResult, error) {
 	return &result, nil
 }
 
+// RenamePrefix renames the issue prefix for all issues via the daemon.
+func (c *Client) RenamePrefix(args *RenamePrefixArgs) (*RenamePrefixResult, error) {
+	resp, err := c.Execute(OpRenamePrefix, args)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	var result RenamePrefixResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse rename-prefix result: %w", err)
+	}
+	return &result, nil
+}
+
+// Move moves an issue to a different rig via the daemon.
+func (c *Client) Move(args *MoveArgs) (*MoveResult, error) {
+	resp, err := c.Execute(OpMove, args)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	var result MoveResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse move result: %w", err)
+	}
+	return &result, nil
+}
+
+// Refile refiles an issue to a different rig via the daemon.
+func (c *Client) Refile(args *RefileArgs) (*RefileResult, error) {
+	resp, err := c.Execute(OpRefile, args)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	var result RefileResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse refile result: %w", err)
+	}
+	return &result, nil
+}
+
+// Cook creates a protomolecule from a formula via the daemon.
+func (c *Client) Cook(args *CookArgs) (*CookResult, error) {
+	resp, err := c.Execute(OpCook, args)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	var result CookResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse cook result: %w", err)
+	}
+	return &result, nil
+}
+
+// Pour instantiates a proto as a persistent mol via the daemon.
+func (c *Client) Pour(args *PourArgs) (*PourResult, error) {
+	resp, err := c.Execute(OpPour, args)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	var result PourResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse pour result: %w", err)
+	}
+	return &result, nil
+}
+
 // List lists issues via the daemon
 func (c *Client) List(args *ListArgs) (*Response, error) {
 	return c.Execute(OpList, args)

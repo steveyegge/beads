@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -53,8 +54,12 @@ func runPour(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// Pour requires direct store access for cloning
-	// TODO: Add daemon RPC support for pour per gt-as9kdm
+	// Use daemon if available (bd-wj80)
+	if daemonClient != nil {
+		pourViaDaemon(cmd, args)
+		return
+	}
+
 	if store == nil {
 		fmt.Fprintf(os.Stderr, "Error: pour requires direct database access\n")
 		fmt.Fprintf(os.Stderr, "Hint: pour does not yet support daemon mode\n")
@@ -268,6 +273,51 @@ func runPour(cmd *cobra.Command, args []string) {
 	fmt.Printf("  Phase: liquid (persistent in .beads/)\n")
 	if totalAttached > 0 {
 		fmt.Printf("  Attached: %d issues from %d protos\n", totalAttached, len(attachments))
+	}
+}
+
+// pourViaDaemon sends a pour request to the RPC daemon (bd-wj80).
+func pourViaDaemon(cmd *cobra.Command, args []string) {
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	varFlags, _ := cmd.Flags().GetStringArray("var")
+	assignee, _ := cmd.Flags().GetString("assignee")
+	attachFlags, _ := cmd.Flags().GetStringSlice("attach")
+	attachType, _ := cmd.Flags().GetString("attach-type")
+
+	vars := make(map[string]string)
+	for _, v := range varFlags {
+		parts := strings.SplitN(v, "=", 2)
+		if len(parts) != 2 {
+			fmt.Fprintf(os.Stderr, "Error: invalid variable format '%s', expected 'key=value'\n", v)
+			os.Exit(1)
+		}
+		vars[parts[0]] = parts[1]
+	}
+
+	pourArgs := &rpc.PourArgs{
+		ProtoID:     args[0],
+		Vars:        vars,
+		DryRun:      dryRun,
+		Assignee:    assignee,
+		Attachments: attachFlags,
+		AttachType:  attachType,
+	}
+
+	result, err := daemonClient.Pour(pourArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(result)
+	} else {
+		fmt.Printf("%s Poured mol: created %d issues\n", ui.RenderPass("✓"), result.Created)
+		fmt.Printf("  Root issue: %s\n", result.RootID)
+		fmt.Printf("  Phase: %s\n", result.Phase)
+		if result.Attached > 0 {
+			fmt.Printf("  Attached: %d issues\n", result.Attached)
+		}
 	}
 }
 

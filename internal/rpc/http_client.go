@@ -331,6 +331,13 @@ func operationToHTTPMethod(operation string) string {
 		OpInit:    "Init",
 		OpMigrate: "Migrate",
 
+		// Additional write operations (bd-wj80)
+		OpRenamePrefix: "RenamePrefix",
+		OpMove:         "Move",
+		OpRefile:       "Refile",
+		OpCook:         "Cook",
+		OpPour:         "Pour",
+
 		// Admin
 		OpShutdown: "Shutdown",
 	}
