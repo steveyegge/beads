@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -63,25 +64,15 @@ Use "bd formula list" to list available formulas.`,
 // =============================================================================
 
 // spawnMolecule creates new issues from the proto with variable substitution.
-// This instantiates a proto (template) into a molecule (real issues).
-// Wraps cloneSubgraph from template.go and returns InstantiateResult.
-// If ephemeral is true, spawned issues are marked for bulk deletion when closed.
-// The prefix parameter overrides the default issue prefix (bd-hobo: distinct prefixes).
+// Delegates to formula.SpawnMolecule.
 func spawnMolecule(ctx context.Context, s storage.Storage, subgraph *MoleculeSubgraph, vars map[string]string, assignee string, actorName string, ephemeral bool, prefix string) (*InstantiateResult, error) {
-	opts := CloneOptions{
-		Vars:     vars,
-		Assignee: assignee,
-		Actor:    actorName,
-		Ephemeral:     ephemeral,
-		Prefix:   prefix,
-	}
-	return cloneSubgraph(ctx, s, subgraph, opts)
+	return formula.SpawnMolecule(ctx, s, subgraph, vars, assignee, actorName, ephemeral, prefix)
 }
 
 // spawnMoleculeWithOptions creates new issues from the proto using CloneOptions.
-// This allows full control over dynamic bonding, variable substitution, and wisp phase.
+// Delegates to formula.SpawnMoleculeWithOptions.
 func spawnMoleculeWithOptions(ctx context.Context, s storage.Storage, subgraph *MoleculeSubgraph, opts CloneOptions) (*InstantiateResult, error) {
-	return cloneSubgraph(ctx, s, subgraph, opts)
+	return formula.SpawnMoleculeWithOptions(ctx, s, subgraph, opts)
 }
 
 // printMoleculeTree prints the molecule structure as a tree

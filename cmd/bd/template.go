@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/formula"
@@ -21,42 +19,11 @@ import (
 // BeadsTemplateLabel is the label used to identify Beads-based templates
 const BeadsTemplateLabel = "template"
 
-// variablePattern matches {{variable}} placeholders
-var variablePattern = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
-
-// TemplateSubgraph holds a template epic and all its descendants
-type TemplateSubgraph struct {
-	Root           *types.Issue                // The template epic
-	Issues         []*types.Issue              // All issues in the subgraph (including root)
-	Dependencies   []*types.Dependency         // All dependencies within the subgraph
-	IssueMap       map[string]*types.Issue     // ID -> Issue for quick lookup
-	VarDefs        map[string]formula.VarDef   // Variable definitions from formula (for defaults)
-	Phase          string                      // Recommended phase: "liquid" (pour) or "vapor" (wisp)
-	RequiredSkills []string                    // Skill IDs required by the formula (creates requires-skill deps on instantiation)
-}
-
-// InstantiateResult holds the result of template instantiation
-type InstantiateResult struct {
-	NewEpicID string            `json:"new_epic_id"`
-	IDMapping map[string]string `json:"id_mapping"` // old ID -> new ID
-	Created   int               `json:"created"`    // number of issues created
-}
-
-// CloneOptions controls how the subgraph is cloned during spawn/bond
-type CloneOptions struct {
-	Vars      map[string]string // Variable substitutions for {{key}} placeholders
-	Assignee  string            // Assign the root epic to this agent/user
-	Actor     string            // Actor performing the operation
-	Ephemeral bool              // If true, spawned issues are marked for bulk deletion
-	Prefix   string            // Override prefix for ID generation (bd-hobo: distinct prefixes)
-
-	// Dynamic bonding fields (for Christmas Ornament pattern)
-	ParentID string // Parent molecule ID to bond under (e.g., "patrol-x7k")
-	ChildRef string // Child reference with variables (e.g., "arm-{{polecat_name}}")
-}
-
-// bondedIDPattern validates bonded IDs (alphanumeric, dash, underscore, dot)
-var bondedIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+// Type aliases for types now defined in internal/formula.
+// These keep backward compatibility for cmd/bd/ code.
+type TemplateSubgraph = formula.TemplateSubgraph
+type InstantiateResult = formula.InstantiateResult
+type CloneOptions = formula.CloneOptions
 
 var templateCmd = &cobra.Command{
 	Use:        "template",
@@ -826,288 +793,58 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 	}, nil
 }
 
-// extractVariables finds all {{variable}} patterns in text
+// extractVariables finds all {{variable}} patterns in text.
+// Delegates to formula.ExtractVariablesFromText.
 func extractVariables(text string) []string {
-	matches := variablePattern.FindAllStringSubmatch(text, -1)
-	seen := make(map[string]bool)
-	var vars []string
-	for _, match := range matches {
-		if len(match) >= 2 && !seen[match[1]] {
-			vars = append(vars, match[1])
-			seen[match[1]] = true
-		}
-	}
-	return vars
+	return formula.ExtractVariablesFromText(text)
 }
 
-// extractAllVariables finds all variables across the entire subgraph
+// extractAllVariables finds all variables across the entire subgraph.
+// Delegates to formula.ExtractAllSubgraphVariables.
 func extractAllVariables(subgraph *TemplateSubgraph) []string {
-	allText := ""
-	for _, issue := range subgraph.Issues {
-		allText += issue.Title + " " + issue.Description + " "
-		allText += issue.Design + " " + issue.AcceptanceCriteria + " " + issue.Notes + " "
-	}
-	return extractVariables(allText)
+	return formula.ExtractAllSubgraphVariables(subgraph.Issues)
 }
 
 // extractRequiredVariables returns only variables that are defined in VarDefs and don't have defaults.
-// If VarDefs is available (from a cooked formula), uses it to identify input variables.
-// Variables used as {{placeholder}} but NOT defined in VarDefs are output placeholders
-// (e.g., {{timestamp}}, {{total_count}}) and should not require input values.
-// (gt-ink2c fix)
+// Delegates to formula.ExtractRequiredSubgraphVariables.
 func extractRequiredVariables(subgraph *TemplateSubgraph) []string {
-	allVars := extractAllVariables(subgraph)
-
-	// If no VarDefs, assume all variables are required (legacy template behavior)
-	if subgraph.VarDefs == nil {
-		return allVars
-	}
-
-	// VarDefs exists (from a cooked formula) - only declared variables matter.
-	// Variables in text but NOT in VarDefs are ignored - they're documentation
-	// handlebars meant for LLM agents, not formula input variables (gt-ky9loa).
-	var required []string
-	for _, v := range allVars {
-		def, exists := subgraph.VarDefs[v]
-		if !exists {
-			// Not a declared formula variable - skip (documentation handlebars)
-			continue
-		}
-		// A declared variable is required if it has no default
-		if def.Default == "" {
-			required = append(required, v)
-		}
-	}
-	return required
+	return formula.ExtractRequiredSubgraphVariables(subgraph.Issues, subgraph.VarDefs)
 }
 
 // applyVariableDefaults merges formula default values with provided variables.
-// Returns a new map with defaults applied for any missing variables.
+// Delegates to formula.ApplyVariableDefaults.
 func applyVariableDefaults(vars map[string]string, subgraph *TemplateSubgraph) map[string]string {
-	if subgraph.VarDefs == nil {
-		return vars
-	}
-
-	result := make(map[string]string)
-	for k, v := range vars {
-		result[k] = v
-	}
-
-	// Apply defaults for missing variables
-	for name, def := range subgraph.VarDefs {
-		if _, exists := result[name]; !exists && def.Default != "" {
-			result[name] = def.Default
-		}
-	}
-
-	return result
+	return formula.ApplyVariableDefaults(vars, subgraph.VarDefs)
 }
 
-// substituteVariables replaces {{variable}} with values
+// substituteVariables replaces {{variable}} with values.
+// Delegates to formula.SubstituteVariables.
 func substituteVariables(text string, vars map[string]string) string {
-	return variablePattern.ReplaceAllStringFunc(text, func(match string) string {
-		// Extract variable name from {{name}}
-		name := match[2 : len(match)-2]
-		if val, ok := vars[name]; ok {
-			return val
-		}
-		return match // Leave unchanged if not found
-	})
-}
-
-// generateBondedID creates a custom ID for dynamically bonded molecules.
-// When bonding a proto to a parent molecule, this generates IDs like:
-//   - Root: parent.childref (e.g., "patrol-x7k.arm-ace")
-//   - Children: parent.childref.step (e.g., "patrol-x7k.arm-ace.capture")
-//
-// The childRef is variable-substituted before use.
-// Returns empty string if not a bonded operation (opts.ParentID empty).
-func generateBondedID(oldID string, rootID string, opts CloneOptions) (string, error) {
-	if opts.ParentID == "" {
-		return "", nil // Not a bonded operation
-	}
-
-	// Substitute variables in childRef
-	childRef := substituteVariables(opts.ChildRef, opts.Vars)
-
-	// Validate childRef after substitution
-	if childRef == "" {
-		return "", fmt.Errorf("childRef is empty after variable substitution")
-	}
-	if !bondedIDPattern.MatchString(childRef) {
-		return "", fmt.Errorf("invalid childRef '%s': must be alphanumeric, dash, underscore, or dot only", childRef)
-	}
-
-	if oldID == rootID {
-		// Root issue: parent.childref
-		newID := fmt.Sprintf("%s.%s", opts.ParentID, childRef)
-		return newID, nil
-	}
-
-	// Child issue: parent.childref.relative
-	// Extract the relative portion of the old ID (part after root)
-	relativeID := getRelativeID(oldID, rootID)
-	if relativeID == "" {
-		// No hierarchical relationship - use a suffix from the old ID to ensure uniqueness.
-		// Extract the last part of the old ID (after any prefix or dash)
-		suffix := extractIDSuffix(oldID)
-		newID := fmt.Sprintf("%s.%s.%s", opts.ParentID, childRef, suffix)
-		return newID, nil
-	}
-
-	newID := fmt.Sprintf("%s.%s.%s", opts.ParentID, childRef, relativeID)
-	return newID, nil
-}
-
-// extractIDSuffix extracts a suffix from an ID for use when IDs aren't hierarchical.
-// For "patrol-abc123", returns "abc123".
-// For "bd-xyz.1", returns "1".
-// This ensures child IDs remain unique when bonding.
-func extractIDSuffix(id string) string {
-	// First try to get the part after the last dot (for hierarchical IDs)
-	if lastDot := strings.LastIndex(id, "."); lastDot >= 0 {
-		return id[lastDot+1:]
-	}
-	// Otherwise, get the part after the last dash (for prefix-hash IDs)
-	if lastDash := strings.LastIndex(id, "-"); lastDash >= 0 {
-		return id[lastDash+1:]
-	}
-	// Fallback: use the whole ID
-	return id
+	return formula.SubstituteVariables(text, vars)
 }
 
 // getRelativeID extracts the relative portion of a child ID from its parent.
-// For example: getRelativeID("bd-abc.step1.sub", "bd-abc") returns "step1.sub"
-// Returns empty string if oldID equals rootID or doesn't start with rootID.
+// Delegates to formula.GetRelativeID.
 func getRelativeID(oldID, rootID string) string {
-	if oldID == rootID {
-		return ""
-	}
-	// Check if oldID starts with rootID followed by a dot
-	prefix := rootID + "."
-	if strings.HasPrefix(oldID, prefix) {
-		return oldID[len(prefix):]
-	}
-	return ""
+	return formula.GetRelativeID(oldID, rootID)
+}
+
+// extractIDSuffix extracts a suffix from an ID for use when IDs aren't hierarchical.
+// Delegates to formula.ExtractIDSuffix.
+func extractIDSuffix(id string) string {
+	return formula.ExtractIDSuffix(id)
+}
+
+// generateBondedID creates a custom ID for dynamically bonded molecules.
+// Delegates to formula.GenerateBondedID.
+func generateBondedID(oldID string, rootID string, opts CloneOptions) (string, error) {
+	return formula.GenerateBondedID(oldID, rootID, opts)
 }
 
 // cloneSubgraph creates new issues from the template with variable substitution.
-// Uses CloneOptions to control all spawn/bond behavior including dynamic bonding.
+// Delegates to formula.CloneSubgraph.
 func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSubgraph, opts CloneOptions) (*InstantiateResult, error) {
-	if s == nil {
-		return nil, fmt.Errorf("no database connection")
-	}
-
-	// Generate new IDs and create mapping
-	idMapping := make(map[string]string)
-
-	// Use transaction for atomicity
-	err := s.RunInTransaction(ctx, func(tx storage.Transaction) error {
-		// First pass: create all issues with new IDs
-		for _, oldIssue := range subgraph.Issues {
-			// Determine assignee: use override for root epic, otherwise keep template's
-			issueAssignee := oldIssue.Assignee
-			if oldIssue.ID == subgraph.Root.ID && opts.Assignee != "" {
-				issueAssignee = opts.Assignee
-			}
-
-			// Determine issue type: wisps (ephemeral) get their own type to avoid cluttering epic listings
-			issueType := oldIssue.IssueType
-			if opts.Ephemeral && oldIssue.IssueType == types.TypeEpic {
-				issueType = types.IssueType("wisp")
-			}
-
-			newIssue := &types.Issue{
-				// ID will be set below based on bonding options
-				Title:              substituteVariables(oldIssue.Title, opts.Vars),
-				Description:        substituteVariables(oldIssue.Description, opts.Vars),
-				Design:             substituteVariables(oldIssue.Design, opts.Vars),
-				AcceptanceCriteria: substituteVariables(oldIssue.AcceptanceCriteria, opts.Vars),
-				Notes:              substituteVariables(oldIssue.Notes, opts.Vars),
-				Status:             types.StatusOpen, // Always start fresh
-				Priority:           oldIssue.Priority,
-				IssueType:          issueType,
-				Assignee:           issueAssignee,
-				EstimatedMinutes:   oldIssue.EstimatedMinutes,
-				Ephemeral:          opts.Ephemeral, // mark for cleanup when closed
-				IDPrefix:           opts.Prefix,   // distinct prefixes for mols/wisps
-				// Gate fields (for async coordination)
-				AwaitType: oldIssue.AwaitType,
-				AwaitID:   substituteVariables(oldIssue.AwaitID, opts.Vars),
-				Timeout:   oldIssue.Timeout,
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
-			}
-
-			// Generate custom ID for dynamic bonding if ParentID is set
-			if opts.ParentID != "" {
-				bondedID, err := generateBondedID(oldIssue.ID, subgraph.Root.ID, opts)
-				if err != nil {
-					return fmt.Errorf("failed to generate bonded ID for %s: %w", oldIssue.ID, err)
-				}
-				newIssue.ID = bondedID
-			}
-
-			if err := tx.CreateIssue(ctx, newIssue, opts.Actor); err != nil {
-				return fmt.Errorf("failed to create issue from %s: %w", oldIssue.ID, err)
-			}
-
-			idMapping[oldIssue.ID] = newIssue.ID
-		}
-
-		// Second pass: recreate dependencies with new IDs
-		for _, dep := range subgraph.Dependencies {
-			newFromID, ok1 := idMapping[dep.IssueID]
-			newToID, ok2 := idMapping[dep.DependsOnID]
-			if !ok1 || !ok2 {
-				continue // Skip if either end is outside the subgraph
-			}
-
-			newDep := &types.Dependency{
-				IssueID:     newFromID,
-				DependsOnID: newToID,
-				Type:        dep.Type,
-			}
-			if err := tx.AddDependency(ctx, newDep, opts.Actor); err != nil {
-				return fmt.Errorf("failed to create dependency: %w", err)
-			}
-		}
-
-		// Third pass: add requires-skill dependencies for all new issues
-		// This enables skill-based work routing via bd ready --with-skills
-		if len(subgraph.RequiredSkills) > 0 {
-			for _, skillID := range subgraph.RequiredSkills {
-				// Normalize skill ID (add skill- prefix if needed)
-				normalizedSkillID := skillID
-				if !strings.HasPrefix(skillID, "skill-") {
-					normalizedSkillID = "skill-" + skillID
-				}
-
-				// Add requires-skill dependency for each new issue
-				for _, newID := range idMapping {
-					skillDep := &types.Dependency{
-						IssueID:     newID,
-						DependsOnID: normalizedSkillID,
-						Type:        types.DepRequiresSkill,
-					}
-					// Ignore errors - skill may not exist yet
-					_ = tx.AddDependency(ctx, skillDep, opts.Actor)
-				}
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &InstantiateResult{
-		NewEpicID: idMapping[subgraph.Root.ID],
-		IDMapping: idMapping,
-		Created:   len(subgraph.Issues),
-	}, nil
+	return formula.CloneSubgraph(ctx, s, subgraph, opts)
 }
 
 // printTemplateTree prints the template structure as a tree
