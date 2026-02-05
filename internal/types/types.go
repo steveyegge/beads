@@ -676,6 +676,7 @@ const (
 	TypeEpic    IssueType = "epic"
 	TypeChore   IssueType = "chore"
 	TypeAdvice  IssueType = "advice"
+	TypeFormula IssueType = "formula"
 )
 
 // TypeEvent is a system-internal type used by set-state for audit trail beads.
@@ -698,7 +699,7 @@ const TypeEvent IssueType = "event"
 func (t IssueType) IsValid() bool {
 	switch t {
 	// Core work types
-	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeAdvice:
+	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeAdvice, TypeFormula:
 		return true
 	}
 	return false
