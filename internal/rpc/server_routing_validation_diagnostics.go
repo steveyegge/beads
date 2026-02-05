@@ -383,6 +383,15 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleCook(req)
 	case OpPour:
 		resp = s.handlePour(req)
+	// Formula CRUD operations (gt-pozvwr.24.9)
+	case OpFormulaList:
+		resp = s.handleFormulaList(req)
+	case OpFormulaGet:
+		resp = s.handleFormulaGet(req)
+	case OpFormulaSave:
+		resp = s.handleFormulaSave(req)
+	case OpFormulaDelete:
+		resp = s.handleFormulaDelete(req)
 	default:
 		return Response{
 			Success: false,

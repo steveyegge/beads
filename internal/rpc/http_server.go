@@ -386,6 +386,12 @@ func httpMethodToOperation(method string) string {
 		"Cook":         OpCook,
 		"Pour":         OpPour,
 
+		// Formula CRUD operations (gt-pozvwr.24.9)
+		"FormulaList":   OpFormulaList,
+		"FormulaGet":    OpFormulaGet,
+		"FormulaSave":   OpFormulaSave,
+		"FormulaDelete": OpFormulaDelete,
+
 		// Admin
 		"Shutdown": OpShutdown,
 	}

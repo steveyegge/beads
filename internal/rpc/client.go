@@ -1226,6 +1226,68 @@ func (c *Client) Migrate(args *MigrateArgs) (*MigrateResult, error) {
 	return &result, nil
 }
 
+// Formula CRUD operations (gt-pozvwr.24.9)
+
+// FormulaList lists available formulas via the daemon.
+func (c *Client) FormulaList(args *FormulaListArgs) (*FormulaListResult, error) {
+	resp, err := c.Execute(OpFormulaList, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FormulaListResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal formula list response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FormulaGet retrieves a formula by ID or name via the daemon.
+func (c *Client) FormulaGet(args *FormulaGetArgs) (*FormulaGetResult, error) {
+	resp, err := c.Execute(OpFormulaGet, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FormulaGetResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal formula get response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FormulaSave creates or updates a formula via the daemon.
+func (c *Client) FormulaSave(args *FormulaSaveArgs) (*FormulaSaveResult, error) {
+	resp, err := c.Execute(OpFormulaSave, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FormulaSaveResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal formula save response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FormulaDelete soft-deletes a formula via the daemon.
+func (c *Client) FormulaDelete(args *FormulaDeleteArgs) (*FormulaDeleteResult, error) {
+	resp, err := c.Execute(OpFormulaDelete, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FormulaDeleteResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal formula delete response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

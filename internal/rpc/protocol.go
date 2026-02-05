@@ -122,6 +122,12 @@ const (
 	OpRefile       = "refile"
 	OpCook         = "cook"
 	OpPour         = "pour"
+
+	// Formula CRUD operations (gt-pozvwr.24.9)
+	OpFormulaList   = "formula_list"
+	OpFormulaGet    = "formula_get"
+	OpFormulaSave   = "formula_save"
+	OpFormulaDelete = "formula_delete"
 )
 
 // Request represents an RPC request from client to daemon
@@ -1452,4 +1458,71 @@ type MigrateResult struct {
 	CleanedUp       bool     `json:"cleaned_up,omitempty"`       // Whether cleanup was performed
 	OldDatabases    []string `json:"old_databases,omitempty"`    // List of old databases found
 	Message         string   `json:"message,omitempty"`          // Human-readable status message
+}
+
+// Formula CRUD operations (gt-pozvwr.24.9)
+
+// FormulaListArgs represents arguments for the formula_list operation
+type FormulaListArgs struct {
+	Type   string `json:"type,omitempty"`   // Filter by formula type (workflow, expansion, aspect)
+	Phase  string `json:"phase,omitempty"`  // Filter by phase (liquid, vapor)
+	Limit  int    `json:"limit,omitempty"`  // Max results to return
+}
+
+// FormulaSummary is a compact representation of a formula for list results
+type FormulaSummary struct {
+	ID          string `json:"id"`                    // Issue ID in database
+	Name        string `json:"name"`                  // Formula name
+	Description string `json:"description,omitempty"` // Formula description
+	Type        string `json:"type,omitempty"`        // Formula type (workflow, expansion, aspect)
+	Phase       string `json:"phase,omitempty"`       // Recommended phase (liquid, vapor)
+	Version     int    `json:"version,omitempty"`     // Formula schema version
+	Source      string `json:"source,omitempty"`      // Where formula was loaded from
+}
+
+// FormulaListResult represents the result of a formula_list operation
+type FormulaListResult struct {
+	Formulas []FormulaSummary `json:"formulas"`
+	Count    int              `json:"count"`
+}
+
+// FormulaGetArgs represents arguments for the formula_get operation
+type FormulaGetArgs struct {
+	ID   string `json:"id,omitempty"`   // Issue ID (exact match)
+	Name string `json:"name,omitempty"` // Formula name (searches by title)
+}
+
+// FormulaGetResult represents the result of a formula_get operation
+type FormulaGetResult struct {
+	ID       string          `json:"id"`                 // Issue ID
+	Name     string          `json:"name"`               // Formula name
+	Formula  json.RawMessage `json:"formula"`             // Full formula JSON content
+	Source   string          `json:"source,omitempty"`    // Where formula was loaded from
+}
+
+// FormulaSaveArgs represents arguments for the formula_save operation
+type FormulaSaveArgs struct {
+	Formula  json.RawMessage `json:"formula"`            // Full formula JSON content
+	IDPrefix string          `json:"id_prefix,omitempty"` // Override prefix for formula ID
+	Force    bool            `json:"force,omitempty"`     // Overwrite existing formula
+}
+
+// FormulaSaveResult represents the result of a formula_save operation
+type FormulaSaveResult struct {
+	ID      string `json:"id"`                // Issue ID assigned to formula
+	Name    string `json:"name"`              // Formula name
+	Created bool   `json:"created"`           // True if new, false if updated
+}
+
+// FormulaDeleteArgs represents arguments for the formula_delete operation
+type FormulaDeleteArgs struct {
+	ID     string `json:"id,omitempty"`     // Issue ID (exact match)
+	Name   string `json:"name,omitempty"`   // Formula name (searches by title)
+	Reason string `json:"reason,omitempty"` // Reason for deletion
+}
+
+// FormulaDeleteResult represents the result of a formula_delete operation
+type FormulaDeleteResult struct {
+	ID      string `json:"id"`              // Issue ID that was deleted
+	Name    string `json:"name"`            // Formula name
 }
