@@ -240,12 +240,14 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			c.BackOff = newEmbeddedOpenBackoff()
 		}
 
-		// UOW 1: ensure database exists.
-		if err := withEmbeddedDolt(ctx, initDSN, configureRetries, func(ctx context.Context, db *sql.DB) error {
-			_, err := db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
-			return err
-		}); err != nil {
-			return nil, fmt.Errorf("failed to create dolt database: %w", err)
+		// UOW 1: ensure database exists. Skip in read-only mode.
+		if !cfg.ReadOnly {
+			if err := withEmbeddedDolt(ctx, initDSN, configureRetries, func(ctx context.Context, db *sql.DB) error {
+				_, err := db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
+				return err
+			}); err != nil {
+				return nil, fmt.Errorf("failed to create dolt database: %w", err)
+			}
 		}
 
 		// UOW 2: initialize schema (idempotent). Skip in read-only mode.
