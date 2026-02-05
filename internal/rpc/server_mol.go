@@ -172,23 +172,24 @@ func (s *Server) isProto(issue *types.Issue) bool {
 	return false
 }
 
-// looksLikeFormulaName checks if an operand looks like a formula name
+// looksLikeFormulaName checks if an operand looks like a formula name.
+// With DB-stored formulas (gt-pozvwr.24), any non-ID string could be a formula,
+// so we always try formula lookup as a fallback after ID resolution fails.
 func (s *Server) looksLikeFormulaName(operand string) bool {
-	if strings.HasPrefix(operand, "mol-") {
+	// Explicit formula indicators
+	if strings.HasPrefix(operand, "mol-") ||
+		strings.Contains(operand, ".formula") ||
+		strings.Contains(operand, "/") || strings.Contains(operand, "\\") {
 		return true
 	}
-	if strings.Contains(operand, ".formula") {
-		return true
-	}
-	if strings.Contains(operand, "/") || strings.Contains(operand, "\\") {
-		return true
-	}
-	return false
+	// With DB-stored formulas, any name could be a formula.
+	// Since this is only called after ID resolution fails, always try.
+	return true
 }
 
 // cookFormula cooks a formula to an in-memory subgraph
 func (s *Server) cookFormula(ctx context.Context, formulaName string, vars map[string]string) (*ServerTemplateSubgraph, error) {
-	parser := formula.NewParser()
+	parser := formula.NewParserWithStorage(s.storage)
 	f, err := parser.LoadByName(formulaName)
 	if err != nil {
 		return nil, fmt.Errorf("loading formula: %w", err)

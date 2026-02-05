@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
@@ -336,8 +337,9 @@ func (s *Server) handleRefile(req *Request) Response {
 	return Response{Success: true, Data: data}
 }
 
-// handleCook handles the cook RPC operation (bd-wj80).
-// Cook --persist requires the daemon to have local filesystem access to formula files.
+// handleCook handles the cook RPC operation (gt-pozvwr.24.6).
+// Loads a formula from DB or filesystem, applies the full transformation pipeline,
+// and returns (or persists) the cooked proto.
 func (s *Server) handleCook(req *Request) Response {
 	var args CookArgs
 	if err := json.Unmarshal(req.Args, &args); err != nil {
@@ -348,16 +350,88 @@ func (s *Server) handleCook(req *Request) Response {
 		return Response{Success: false, Error: "formula_name is required"}
 	}
 
-	// Cook --persist requires local daemon with filesystem access
-	// Remote daemons don't have access to formula files
-	return Response{
-		Success: false,
-		Error:   "cook is not yet supported via daemon RPC; use direct mode (unset BD_DAEMON_HOST)",
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
+
+	store := s.storage
+	if store == nil {
+		return Response{Success: false, Error: "storage not available"}
 	}
+
+	// Cook formula through the full pipeline
+	subgraph, err := s.cookFormulaFull(ctx, args.FormulaName, args.Vars)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("cook failed: %v", err)}
+	}
+
+	// Apply runtime variable substitution if mode=runtime and vars provided
+	if args.Mode == "runtime" && len(args.Vars) > 0 {
+		// Re-load to get the resolved formula for substitution
+		parser := formula.NewParserWithStorage(store)
+		resolved, loadErr := parser.LoadByName(args.FormulaName)
+		if loadErr == nil {
+			resolved, _ = parser.Resolve(resolved)
+			formula.SubstituteFormulaVars(resolved, args.Vars)
+		}
+	}
+
+	// Determine proto ID
+	protoID := subgraph.Root.ID
+	if args.Prefix != "" {
+		protoID = args.Prefix + subgraph.Root.ID
+	}
+
+	// Extract variables for reporting
+	variables := formula.ExtractAllSubgraphVariables(subgraph.Issues)
+
+	if args.DryRun {
+		result := CookResult{
+			ProtoID:   protoID,
+			Created:   len(subgraph.Issues),
+			Variables: variables,
+			DryRun:    true,
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	if args.Persist {
+		// Persist: create proto issues in database
+		actor := s.reqActor(req)
+		instantResult, err := formula.CloneSubgraph(ctx, store, subgraph, formula.CloneOptions{
+			Vars:  args.Vars,
+			Actor: actor,
+		})
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("persist cook failed: %v", err)}
+		}
+
+		// Add "template" label to root
+		_ = store.AddLabel(ctx, instantResult.NewEpicID, "template", actor)
+
+		result := CookResult{
+			ProtoID:   instantResult.NewEpicID,
+			Created:   instantResult.Created,
+			Variables: variables,
+			DryRun:    false,
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	// Ephemeral: return subgraph info as JSON
+	result := CookResult{
+		ProtoID:   protoID,
+		Created:   len(subgraph.Issues),
+		Variables: variables,
+		DryRun:    false,
+	}
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
 }
 
-// handlePour handles the pour RPC operation (bd-wj80).
-// Pour requires formula resolution and database writes.
+// handlePour handles the pour RPC operation (gt-pozvwr.24.7).
+// Instantiates a proto (formula or DB proto) into persistent mol issues.
 func (s *Server) handlePour(req *Request) Response {
 	var args PourArgs
 	if err := json.Unmarshal(req.Args, &args); err != nil {
@@ -368,12 +442,210 @@ func (s *Server) handlePour(req *Request) Response {
 		return Response{Success: false, Error: "proto_id is required"}
 	}
 
-	// Pour requires formula resolution from the filesystem + complex subgraph cloning
-	// that is deeply embedded in cmd/bd/. Not yet available server-side.
-	return Response{
-		Success: false,
-		Error:   "pour is not yet supported via daemon RPC; use direct mode (unset BD_DAEMON_HOST)",
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
+
+	store := s.storage
+	if store == nil {
+		return Response{Success: false, Error: "storage not available"}
 	}
+
+	actor := s.reqActor(req)
+
+	// Get configured prefix for mol IDs
+	prefix := types.IDPrefixMol
+	if p, err := store.GetConfig(ctx, "issue_prefix"); err == nil && p != "" {
+		prefix = p
+	}
+
+	vars := args.Vars
+	if vars == nil {
+		vars = make(map[string]string)
+	}
+
+	// Try to resolve proto_id: first as DB issue, then as formula name
+	var fSubgraph *formula.TemplateSubgraph
+	var sSubgraph *ServerTemplateSubgraph
+
+	// Try loading as existing DB proto
+	id, err := s.resolvePartialID(ctx, args.ProtoID)
+	if err == nil {
+		issue, err := store.GetIssue(ctx, id)
+		if err == nil && issue != nil && s.isProto(issue) {
+			sSubgraph, err = s.loadTemplateSubgraph(ctx, id)
+			if err != nil {
+				return Response{Success: false, Error: fmt.Sprintf("loading proto subgraph: %v", err)}
+			}
+		}
+	}
+
+	// If not a DB proto, try as formula name (cook inline then pour)
+	if sSubgraph == nil {
+		cooked, err := s.cookFormulaFull(ctx, args.ProtoID, vars)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("'%s' not found as proto ID or formula: %v", args.ProtoID, err)}
+		}
+		fSubgraph = cooked
+	}
+
+	// Apply variable defaults and validate required vars (formula path only)
+	if fSubgraph != nil {
+		vars = formula.ApplyVariableDefaults(vars, fSubgraph.VarDefs)
+		requiredVars := formula.ExtractRequiredSubgraphVariables(fSubgraph.Issues, fSubgraph.VarDefs)
+		var missing []string
+		for _, v := range requiredVars {
+			if _, ok := vars[v]; !ok {
+				missing = append(missing, v)
+			}
+		}
+		if len(missing) > 0 {
+			return Response{Success: false, Error: fmt.Sprintf("missing required variables: %s", strings.Join(missing, ", "))}
+		}
+	}
+
+	if args.DryRun {
+		issueCount := 0
+		if fSubgraph != nil {
+			issueCount = len(fSubgraph.Issues)
+		} else {
+			issueCount = len(sSubgraph.Issues)
+		}
+		result := PourResult{
+			RootID:  args.ProtoID,
+			Created: issueCount,
+			Phase:   "liquid",
+		}
+		data, _ := json.Marshal(result)
+		return Response{Success: true, Data: data}
+	}
+
+	// Spawn as persistent mol (ephemeral=false)
+	var rootID string
+	var created int
+
+	if fSubgraph != nil {
+		// Formula path: use formula.SpawnMolecule for full variable handling
+		spawnResult, err := formula.SpawnMolecule(ctx, store, fSubgraph, vars, args.Assignee, actor, false, prefix)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("pour failed: %v", err)}
+		}
+		rootID = spawnResult.NewEpicID
+		created = spawnResult.Created
+	} else {
+		// DB proto path: use server-side spawnSubgraph
+		spawnResult, err := s.spawnSubgraph(ctx, sSubgraph, vars, actor, false, "", "")
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("pour failed: %v", err)}
+		}
+		rootID = spawnResult.NewRootID
+		created = spawnResult.Created
+
+		// Set assignee on root if specified
+		if args.Assignee != "" {
+			_ = store.UpdateIssue(ctx, rootID, map[string]interface{}{
+				"assignee": args.Assignee,
+			}, actor)
+		}
+	}
+
+	// Handle attachments
+	attached := 0
+	attachType := args.AttachType
+	if attachType == "" {
+		attachType = types.BondTypeSequential
+	}
+	for _, attachProtoID := range args.Attachments {
+		aID, err := s.resolvePartialID(ctx, attachProtoID)
+		if err != nil {
+			continue
+		}
+		attachIssue, err := store.GetIssue(ctx, aID)
+		if err != nil || attachIssue == nil {
+			continue
+		}
+		attachSg, err := s.loadTemplateSubgraph(ctx, aID)
+		if err != nil {
+			continue
+		}
+		molIssue, err := store.GetIssue(ctx, rootID)
+		if err != nil {
+			continue
+		}
+		bondResult, err := s.bondProtoMol(ctx, attachSg, attachIssue, molIssue,
+			attachType, vars, "", actor, false, true)
+		if err != nil {
+			continue
+		}
+		attached += bondResult.Spawned
+	}
+
+	s.emitMutation(MutationCreate, rootID, "", "")
+
+	result := PourResult{
+		RootID:   rootID,
+		Created:  created,
+		Attached: attached,
+		Phase:    "liquid",
+	}
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+// cookFormulaFull loads a formula by name, applies the full transformation pipeline,
+// and returns a cooked TemplateSubgraph. Shared by handleCook and handlePour.
+func (s *Server) cookFormulaFull(ctx context.Context, formulaName string, conditionVars map[string]string) (*formula.TemplateSubgraph, error) {
+	store := s.storage
+	parser := formula.NewParserWithStorage(store)
+
+	resolved, err := parser.LoadByName(formulaName)
+	if err != nil {
+		return nil, fmt.Errorf("loading formula: %w", err)
+	}
+
+	resolved, err = parser.Resolve(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("resolving formula: %w", err)
+	}
+
+	// Full transformation pipeline
+	if controlFlowSteps, err := formula.ApplyControlFlow(resolved.Steps, resolved.Compose); err == nil {
+		resolved.Steps = controlFlowSteps
+	} else {
+		return nil, fmt.Errorf("applying control flow: %w", err)
+	}
+
+	if len(resolved.Advice) > 0 {
+		resolved.Steps = formula.ApplyAdvice(resolved.Steps, resolved.Advice)
+	}
+
+	if inlineSteps, err := formula.ApplyInlineExpansions(resolved.Steps, parser); err == nil {
+		resolved.Steps = inlineSteps
+	} else {
+		return nil, fmt.Errorf("applying inline expansions: %w", err)
+	}
+
+	if resolved.Compose != nil && (len(resolved.Compose.Expand) > 0 || len(resolved.Compose.Map) > 0) {
+		if expandedSteps, err := formula.ApplyExpansions(resolved.Steps, resolved.Compose, parser); err == nil {
+			resolved.Steps = expandedSteps
+		} else {
+			return nil, fmt.Errorf("applying expansions: %w", err)
+		}
+	}
+
+	if resolved.Compose != nil {
+		for _, aspectName := range resolved.Compose.Aspects {
+			aspectFormula, err := parser.LoadByName(aspectName)
+			if err != nil {
+				return nil, fmt.Errorf("loading aspect %q: %w", aspectName, err)
+			}
+			if len(aspectFormula.Advice) > 0 {
+				resolved.Steps = formula.ApplyAdvice(resolved.Steps, aspectFormula.Advice)
+			}
+		}
+	}
+
+	protoID := resolved.Formula
+	return formula.CookToSubgraphWithVars(resolved, protoID, resolved.Vars)
 }
 
 // --- helpers ---

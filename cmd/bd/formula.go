@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/routing"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -985,15 +986,206 @@ func fixIntegerFields(m map[string]interface{}) {
 	}
 }
 
+// formulaImportCmd imports formulas from filesystem into beads database.
+var formulaImportCmd = &cobra.Command{
+	Use:   "import [formula-name|path]",
+	Short: "Import formulas from filesystem into beads database",
+	Long: `Import workflow formulas from filesystem (.formula.toml/.formula.json)
+into the beads database as TypeFormula issues.
+
+This is the migration path from filesystem-based formulas to the
+"Everything Is Beads" model where formulas are stored as first-class beads.
+
+Once imported, formulas can be:
+  - Listed with 'bd formula list --db'
+  - Resolved by cook/pour without filesystem access
+  - Synced across rigs via standard beads JSONL federation
+
+Examples:
+  bd formula import shiny              # Import a specific formula by name
+  bd formula import ./my.formula.toml  # Import from explicit path
+  bd formula import --all              # Import all formulas from search paths
+  bd formula import --all --force      # Re-import all (overwrite existing)`,
+	Run: runFormulaImport,
+}
+
+var (
+	importAll   bool
+	importForce bool
+)
+
+func runFormulaImport(cmd *cobra.Command, args []string) {
+	CheckReadonly("formula import")
+
+	if !importAll && len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: formula name/path required (or use --all)\n")
+		os.Exit(1)
+	}
+
+	if importAll {
+		importAllFormulas()
+		return
+	}
+
+	// Import single formula
+	name := args[0]
+	f, err := loadFormulaByNameOrPath(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading formula %q: %v\n", name, err)
+		os.Exit(1)
+	}
+
+	result, err := saveFormulaToDB(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error importing %q: %v\n", f.Formula, err)
+		os.Exit(1)
+	}
+
+	action := "Created"
+	if !result.Created {
+		action = "Updated"
+	}
+	fmt.Printf("%s %s formula %q as %s\n", ui.RenderPass("✓"), action, result.Name, result.ID)
+}
+
+func importAllFormulas() {
+	searchPaths := getFormulaSearchPaths()
+	seen := make(map[string]bool)
+	imported := 0
+	skipped := 0
+	errors := 0
+
+	for _, dir := range searchPaths {
+		formulas, err := scanFormulaDir(dir)
+		if err != nil {
+			continue
+		}
+
+		for _, f := range formulas {
+			if seen[f.Formula] {
+				continue
+			}
+			seen[f.Formula] = true
+
+			result, err := saveFormulaToDB(f)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  %s %s: %v\n", ui.RenderFail("✗"), f.Formula, err)
+				errors++
+				continue
+			}
+
+			if result.Created {
+				fmt.Printf("  %s Imported %s → %s\n", ui.RenderPass("✓"), f.Formula, result.ID)
+				imported++
+			} else {
+				fmt.Printf("  %s Updated %s → %s\n", ui.RenderPass("✓"), f.Formula, result.ID)
+				imported++
+			}
+		}
+	}
+
+	fmt.Printf("\nImported: %d, Skipped: %d, Errors: %d\n", imported, skipped, errors)
+}
+
+// loadFormulaByNameOrPath loads a formula from an explicit path or by searching.
+func loadFormulaByNameOrPath(nameOrPath string) (*formula.Formula, error) {
+	// If it looks like a path (has extension or separator), try direct parse
+	if strings.HasSuffix(nameOrPath, formula.FormulaExtTOML) ||
+		strings.HasSuffix(nameOrPath, formula.FormulaExtJSON) ||
+		strings.Contains(nameOrPath, string(os.PathSeparator)) {
+		parser := formula.NewParser()
+		return parser.ParseFile(nameOrPath)
+	}
+
+	// Search by name in search paths
+	searchPaths := getFormulaSearchPaths()
+	parser := formula.NewParser(searchPaths...)
+	return parser.LoadByName(nameOrPath)
+}
+
+// saveFormulaToDB saves a formula to the database via daemon or direct storage.
+func saveFormulaToDB(f *formula.Formula) (*rpc.FormulaSaveResult, error) {
+	formulaJSON, err := json.Marshal(f)
+	if err != nil {
+		return nil, fmt.Errorf("serializing formula: %w", err)
+	}
+
+	saveArgs := &rpc.FormulaSaveArgs{
+		Formula: formulaJSON,
+		Force:   importForce,
+	}
+
+	if daemonClient != nil {
+		return daemonClient.FormulaSave(saveArgs)
+	}
+
+	// Direct mode: use storage directly
+	if store == nil {
+		return nil, fmt.Errorf("no database connection (set BD_DAEMON_HOST or run in a beads directory)")
+	}
+
+	ctx := rootCtx
+
+	// Get prefix
+	idPrefix := ""
+	if p, err := store.GetConfig(ctx, "issue_prefix"); err == nil && p != "" {
+		idPrefix = p + "-"
+	}
+
+	issue, labels, err := formula.FormulaToIssue(f, idPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("converting formula to issue: %w", err)
+	}
+
+	if issue.Status == "" {
+		issue.Status = "open"
+	}
+
+	// Check if exists
+	existing, _ := store.GetIssue(ctx, issue.ID)
+	created := existing == nil
+
+	if existing != nil {
+		if !importForce {
+			return nil, fmt.Errorf("formula %q already exists as %s (use --force to overwrite)", f.Formula, issue.ID)
+		}
+		updates := map[string]interface{}{
+			"title":       issue.Title,
+			"description": issue.Description,
+			"metadata":    issue.Metadata,
+		}
+		if err := store.UpdateIssue(ctx, existing.ID, updates, actor); err != nil {
+			return nil, fmt.Errorf("updating formula: %w", err)
+		}
+	} else {
+		if err := store.CreateIssue(ctx, issue, actor); err != nil {
+			return nil, fmt.Errorf("creating formula: %w", err)
+		}
+	}
+
+	for _, label := range labels {
+		_ = store.AddLabel(ctx, issue.ID, label, actor)
+	}
+
+	return &rpc.FormulaSaveResult{
+		ID:      issue.ID,
+		Name:    f.Formula,
+		Created: created,
+	}, nil
+}
+
 func init() {
 	formulaListCmd.Flags().String("type", "", "Filter by type (workflow, expansion, aspect)")
 	formulaListCmd.Flags().BoolVar(&listAllRigs, "all", false, "Discover formulas across all rigs (requires GT_ROOT)")
 	formulaConvertCmd.Flags().BoolVar(&convertAll, "all", false, "Convert all JSON formulas")
 	formulaConvertCmd.Flags().BoolVar(&convertDelete, "delete", false, "Delete JSON file after conversion")
 	formulaConvertCmd.Flags().BoolVar(&convertStdout, "stdout", false, "Print TOML to stdout instead of file")
+	formulaImportCmd.Flags().BoolVar(&importAll, "all", false, "Import all formulas from search paths")
+	formulaImportCmd.Flags().BoolVar(&importForce, "force", false, "Overwrite existing formulas in database")
 
 	formulaCmd.AddCommand(formulaListCmd)
 	formulaCmd.AddCommand(formulaShowCmd)
 	formulaCmd.AddCommand(formulaConvertCmd)
+	formulaCmd.AddCommand(formulaImportCmd)
 	rootCmd.AddCommand(formulaCmd)
 }
