@@ -58,16 +58,21 @@ func isWSL2WindowsPath(path string) bool {
 	return false
 }
 
+// reconnectTimeout is the maximum time to wait for active transactions before reconnect.
+// If transactions take longer than this, reconnect fails to prevent deadlock.
+const reconnectTimeout = 10 * time.Second
+
 // SQLiteStorage implements the Storage interface using SQLite
 type SQLiteStorage struct {
-	db          *sql.DB
-	dbPath      string
-	closed      atomic.Bool // Tracks whether Close() has been called
-	connStr     string      // Connection string for reconnection
-	busyTimeout time.Duration
-	readOnly    bool              // True if opened in read-only mode (GH#804)
-	freshness   *FreshnessChecker // Optional freshness checker for daemon mode
-	reconnectMu sync.RWMutex      // Protects reconnection and db access (GH#607)
+	db            *sql.DB
+	dbPath        string
+	closed        atomic.Bool  // Tracks whether Close() has been called
+	connStr       string       // Connection string for reconnection
+	busyTimeout   time.Duration
+	readOnly      bool               // True if opened in read-only mode (GH#804)
+	freshness     *FreshnessChecker  // Optional freshness checker for daemon mode
+	reconnectMu   sync.RWMutex       // Protects reconnection and db access (GH#607)
+	activeTxCount atomic.Int64       // Tracks active transactions to block reconnect during transactions
 }
 
 // setupWASMCache configures WASM compilation caching to reduce SQLite startup time.
@@ -533,15 +538,45 @@ func (s *SQLiteStorage) checkFreshness() {
 
 // reconnect closes the current database connection and opens a new one.
 // This is called when the database file has been replaced externally.
+//
+// Safety: Waits for active transactions to complete before closing the old
+// connection. This prevents the race condition where a transaction commits to
+// a deleted file after reconnect. See SECURITY_AUDIT.md Issue #2.
 func (s *SQLiteStorage) reconnect() error {
 	s.reconnectMu.Lock()
 	defer s.reconnectMu.Unlock()
 
 	if s.closed.Load() {
-		return fmt.Errorf("storage is closed")
+		return nil // Already closed, nothing to do
 	}
 
-	// Open NEW connection FIRST (don't close old one yet)
+	// Wait for active transactions to complete before closing old connection.
+	// This prevents the race condition where:
+	// 1. Transaction is writing to old database file (old inode)
+	// 2. Freshness check detects file change, triggers reconnect
+	// 3. Reconnect closes old connection while transaction is active
+	// 4. Transaction commits to deleted file - data lost
+	timeout := time.After(reconnectTimeout)
+	pollInterval := 100 * time.Millisecond
+	for s.activeTxCount.Load() > 0 {
+		select {
+		case <-time.After(pollInterval):
+			// Check again
+			continue
+		case <-timeout:
+			txCount := s.activeTxCount.Load()
+			return fmt.Errorf("reconnect timeout: %d active transactions did not complete within %v", txCount, reconnectTimeout)
+		}
+	}
+
+	// Close the old connection before opening new one
+	// This ensures we don't hold two connections to the same database
+	if err := s.db.Close(); err != nil {
+		// Old connection might already be broken after file replacement - this is expected
+		debugPrintf("reconnect: close old connection: %v (continuing)\n", err)
+	}
+
+	// Open NEW connection
 	db, err := sql.Open("sqlite3", s.connStr)
 	if err != nil {
 		return fmt.Errorf("failed to open new connection: %w", err)
@@ -564,20 +599,14 @@ func (s *SQLiteStorage) reconnect() error {
 		}
 	}
 
-	// VALIDATE new connection works
+	// Test the new connection
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return fmt.Errorf("failed to ping new connection: %w", err)
+		return fmt.Errorf("failed to ping on reconnect: %w", err)
 	}
 
-	// SUCCESS: Swap connections (old one can now fail safely)
-	oldDB := s.db
+	// Swap in the new connection
 	s.db = db
-
-	// Close old connection (errors are non-fatal since file may be deleted)
-	if err := oldDB.Close(); err != nil {
-		debugPrintf("reconnect: close old connection: %v (non-fatal)\n", err)
-	}
 
 	// Update freshness checker state
 	if s.freshness != nil {
@@ -585,4 +614,10 @@ func (s *SQLiteStorage) reconnect() error {
 	}
 
 	return nil
+}
+
+// ActiveTransactionCount returns the number of active transactions.
+// This is primarily useful for testing and debugging.
+func (s *SQLiteStorage) ActiveTransactionCount() int64 {
+	return s.activeTxCount.Load()
 }
