@@ -326,6 +326,7 @@ func operationToHTTPMethod(operation string) string {
 		OpBatchQueryWorkers:        "BatchQueryWorkers",
 		OpCreateConvoyWithTracking: "CreateConvoyWithTracking",
 		OpAtomicClosureChain:       "AtomicClosureChain",
+		OpUpdateWithComment:        "UpdateWithComment",
 
 		// Remote database management
 		OpInit:    "Init",
