@@ -96,7 +96,7 @@ func (s *memoryWispStore) Create(ctx context.Context, issue *types.Issue) error 
 	}
 
 	// Store a copy to prevent external mutation
-	s.wisps[issue.ID] = cloneIssue(issue)
+	s.wisps[issue.ID] = CloneIssue(issue)
 
 	return nil
 }
@@ -115,7 +115,7 @@ func (s *memoryWispStore) Get(ctx context.Context, id string) (*types.Issue, err
 		return nil, nil // Not found is not an error
 	}
 
-	return cloneIssue(issue), nil
+	return CloneIssue(issue), nil
 }
 
 // List returns wisps matching the filter.
@@ -130,8 +130,8 @@ func (s *memoryWispStore) List(ctx context.Context, filter types.IssueFilter) ([
 	var results []*types.Issue
 
 	for _, issue := range s.wisps {
-		if matchesFilter(issue, filter) {
-			results = append(results, cloneIssue(issue))
+		if MatchesFilter(issue, filter) {
+			results = append(results, CloneIssue(issue))
 		}
 	}
 
@@ -171,7 +171,7 @@ func (s *memoryWispStore) Update(ctx context.Context, issue *types.Issue) error 
 	issue.UpdatedAt = time.Now()
 
 	// Store a copy
-	s.wisps[issue.ID] = cloneIssue(issue)
+	s.wisps[issue.ID] = CloneIssue(issue)
 
 	return nil
 }
@@ -214,8 +214,9 @@ func (s *memoryWispStore) Close() error {
 	return nil
 }
 
-// matchesFilter checks if an issue matches the given filter.
-func matchesFilter(issue *types.Issue, filter types.IssueFilter) bool {
+// MatchesFilter checks if an issue matches the given filter.
+// Exported for use by alternative WispStore implementations (e.g., Redis).
+func MatchesFilter(issue *types.Issue, filter types.IssueFilter) bool {
 	// Status filter
 	if filter.Status != nil && issue.Status != *filter.Status {
 		return false
@@ -350,8 +351,9 @@ func matchesFilter(issue *types.Issue, filter types.IssueFilter) bool {
 	return true
 }
 
-// cloneIssue creates a deep copy of an issue to prevent external mutation.
-func cloneIssue(issue *types.Issue) *types.Issue {
+// CloneIssue creates a deep copy of an issue to prevent external mutation.
+// Exported for use by alternative WispStore implementations (e.g., Redis).
+func CloneIssue(issue *types.Issue) *types.Issue {
 	if issue == nil {
 		return nil
 	}

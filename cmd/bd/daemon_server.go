@@ -17,8 +17,34 @@ func startRPCServer(ctx context.Context, socketPath string, store storage.Storag
 	// Sync daemon version with CLI version
 	rpc.ServerVersion = Version
 
-	// Create in-memory wisp store for ephemeral issues
-	wispStore := daemon.NewWispStore()
+	// Create wisp store for ephemeral issues.
+	// Use Redis when BD_REDIS_URL is configured (enables multi-replica sharing),
+	// otherwise fall back to in-memory store.
+	var wispStore daemon.WispStore
+	if redisURL := os.Getenv("BD_REDIS_URL"); redisURL != "" {
+		var redisOpts []daemon.RedisWispOption
+		if ns := os.Getenv("BD_REDIS_NAMESPACE"); ns != "" {
+			redisOpts = append(redisOpts, daemon.WithNamespace(ns))
+		}
+		if ttlStr := os.Getenv("BD_REDIS_WISP_TTL"); ttlStr != "" {
+			if ttl, err := time.ParseDuration(ttlStr); err == nil {
+				redisOpts = append(redisOpts, daemon.WithTTL(ttl))
+			} else {
+				log.Warn("invalid BD_REDIS_WISP_TTL, using default", "value", ttlStr, "error", err)
+			}
+		}
+		var err error
+		wispStore, err = daemon.NewRedisWispStore(redisURL, redisOpts...)
+		if err != nil {
+			log.Warn("Redis unavailable, falling back to in-memory wisp store", "error", err)
+			wispStore = daemon.NewWispStore()
+		} else {
+			log.Info("using Redis wisp store", "url", redactRedisURL(redisURL))
+		}
+	} else {
+		wispStore = daemon.NewWispStore()
+		log.Info("using in-memory wisp store")
+	}
 
 	server := rpc.NewServerWithWispStore(socketPath, store, wispStore, workspacePath, dbPath)
 
@@ -137,4 +163,28 @@ func runEventLoop(ctx context.Context, cancel context.CancelFunc, ticker *time.T
 			return
 		}
 	}
+}
+
+// redactRedisURL replaces the password portion of a Redis URL for safe logging.
+func redactRedisURL(rawURL string) string {
+	// Redis URLs: redis://[:password@]host:port/db
+	// Simple approach: mask anything between :// and @
+	const prefix = "://"
+	idx := len("redis") // position after scheme
+	start := idx + len(prefix)
+	if start >= len(rawURL) {
+		return rawURL
+	}
+	rest := rawURL[start:]
+	atIdx := -1
+	for i, c := range rest {
+		if c == '@' {
+			atIdx = i
+			break
+		}
+	}
+	if atIdx < 0 {
+		return rawURL // no credentials
+	}
+	return rawURL[:start] + "***@" + rest[atIdx+1:]
 }
