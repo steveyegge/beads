@@ -462,7 +462,7 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula, pro
 	// Use labelHandler to extract labels for separate DB storage
 	formula.CollectSteps(f.Steps, protoID, idMapping, nil, &issues, &deps, func(issueID, label string) {
 		labels = append(labels, struct{ issueID, label string }{issueID, label})
-	})
+	}, nil)
 
 	// Collect dependencies from depends_on
 	for _, step := range f.Steps {
@@ -596,6 +596,24 @@ func printFormulaSteps(steps []*formula.Step, indent string) {
 // Delegates to formula.SubstituteFormulaVars.
 func substituteFormulaVars(f *formula.Formula, vars map[string]string) {
 	formula.SubstituteFormulaVars(f, vars)
+}
+
+// substituteStepVars substitutes {{variable}} placeholders in steps recursively.
+// Delegates to formula.SubstituteStepVars.
+func substituteStepVars(steps []*formula.Step, vars map[string]string) {
+	formula.SubstituteStepVars(steps, vars)
+}
+
+// createGateIssue creates a gate issue for a step with a Gate field.
+// Delegates to formula.CreateGateIssue.
+func createGateIssue(step *formula.Step, parentID string) *types.Issue {
+	return formula.CreateGateIssue(step, parentID)
+}
+
+// createDecisionIssue creates a decision issue for a step with a Decision field.
+// Delegates to formula.CreateDecisionIssue.
+func createDecisionIssue(step *formula.Step, parentID string) (*types.Issue, *types.DecisionPoint) {
+	return formula.CreateDecisionIssue(step, parentID)
 }
 
 func init() {
