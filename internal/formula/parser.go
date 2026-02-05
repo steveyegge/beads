@@ -43,6 +43,10 @@ type Parser struct {
 
 	// resolvingChain tracks the order of formulas being resolved (for error messages).
 	resolvingChain []string
+
+	// warnedFS tracks whether the filesystem deprecation warning has been emitted.
+	// Only warns once per parser instance to avoid noise.
+	warnedFS bool
 }
 
 // NewParser creates a new formula parser.
@@ -294,6 +298,12 @@ func (p *Parser) loadFormula(name string) (*Formula, error) {
 		for _, ext := range extensions {
 			path := filepath.Join(dir, name+ext)
 			if _, err := os.Stat(path); err == nil {
+				// Emit deprecation warning once per session when DB backend is available
+				if p.store != nil && !p.warnedFS {
+					p.warnedFS = true
+					fmt.Fprintf(os.Stderr, "Warning: loading formula %q from filesystem (deprecated). "+
+						"Run 'bd formula import --all' to migrate to database storage.\n", name)
+				}
 				return p.ParseFile(path)
 			}
 		}
