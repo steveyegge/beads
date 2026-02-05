@@ -3,9 +3,12 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // SetConfig sets a configuration value
@@ -173,6 +176,34 @@ func (s *SQLiteStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
 	}
 
 	return nil, nil
+}
+
+// GetTypeSchema retrieves the type schema for the given type name.
+// Returns nil (not an error) if no schema is defined for the type.
+func (s *SQLiteStorage) GetTypeSchema(ctx context.Context, typeName string) (*types.TypeSchema, error) {
+	key := types.TypeSchemaConfigPrefix + typeName
+	value, err := s.GetConfig(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("get type schema %s: %w", typeName, err)
+	}
+	if value == "" {
+		return nil, nil
+	}
+	var schema types.TypeSchema
+	if err := json.Unmarshal([]byte(value), &schema); err != nil {
+		return nil, fmt.Errorf("parse type schema %s: %w", typeName, err)
+	}
+	return &schema, nil
+}
+
+// SetTypeSchema stores the type schema for the given type name.
+func (s *SQLiteStorage) SetTypeSchema(ctx context.Context, typeName string, schema *types.TypeSchema) error {
+	key := types.TypeSchemaConfigPrefix + typeName
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("serialize type schema %s: %w", typeName, err)
+	}
+	return s.SetConfig(ctx, key, string(data))
 }
 
 // parseCommaSeparatedList splits a comma-separated string into a slice of trimmed entries.

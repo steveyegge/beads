@@ -631,6 +631,16 @@ func (s *Server) handleCreate(req *Request) Response {
 		}
 	}
 
+	// Validate type schema if one exists for this issue type (gt-pozvwr.6)
+	if schema, err := store.GetTypeSchema(ctx, string(issue.IssueType)); err == nil && schema != nil {
+		if err := issue.ValidateAgainstSchema(schema, createArgs.Labels); err != nil {
+			return Response{
+				Success: false,
+				Error:   err.Error(),
+			}
+		}
+	}
+
 	// Add dependencies if specified
 	for _, depSpec := range createArgs.Dependencies {
 		depSpec = strings.TrimSpace(depSpec)
@@ -949,6 +959,22 @@ func (s *Server) handleUpdate(req *Request) Response {
 				return Response{
 					Success: false,
 					Error:   fmt.Sprintf("failed to add rig label: %v", err),
+				}
+			}
+		}
+	}
+
+	// Re-validate type schema after updates if type-relevant fields changed (gt-pozvwr.6)
+	if len(updates) > 0 || len(updateArgs.SetLabels) > 0 || len(updateArgs.AddLabels) > 0 || len(updateArgs.RemoveLabels) > 0 {
+		updatedIssue, err := store.GetIssue(ctx, updateArgs.ID)
+		if err == nil && updatedIssue != nil {
+			if schema, err := store.GetTypeSchema(ctx, string(updatedIssue.IssueType)); err == nil && schema != nil {
+				currentLabels, _ := store.GetLabels(ctx, updateArgs.ID)
+				if err := updatedIssue.ValidateAgainstSchema(schema, currentLabels); err != nil {
+					return Response{
+						Success: false,
+						Error:   err.Error(),
+					}
 				}
 			}
 		}

@@ -706,6 +706,13 @@ var createCmd = &cobra.Command{
 			}
 		}
 
+		// Validate type schema if one exists for this issue type (gt-pozvwr.6)
+		if schema, err := store.GetTypeSchema(ctx, string(issue.IssueType)); err == nil && schema != nil {
+			if err := issue.ValidateAgainstSchema(schema, labels); err != nil {
+				FatalError("%v", err)
+			}
+		}
+
 		// Add dependencies if specified (format: type:id or just id for default "blocks" type)
 		for _, depSpec := range deps {
 			// Skip empty specs (e.g., from trailing commas)

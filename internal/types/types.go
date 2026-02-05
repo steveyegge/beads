@@ -453,6 +453,101 @@ func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
 	return nil
 }
 
+// TypeSchema defines mandatory fields and labels for a given issue type.
+// Schemas are stored in the config table with key pattern "schema.type.<typename>".
+type TypeSchema struct {
+	RequiredFields []string `json:"required_fields"` // Fields that must be non-empty
+	RequiredLabels []string `json:"required_labels"` // Label patterns that must be present (supports wildcards like "config:*")
+	Description    string   `json:"description"`     // Human-readable description of this type's requirements
+}
+
+// ValidateAgainstSchema checks if the issue satisfies the given type schema.
+// It verifies that all required fields are non-empty and that all required label
+// patterns are matched by at least one label on the issue.
+// The labels parameter should contain the issue's current labels.
+func (i *Issue) ValidateAgainstSchema(schema *TypeSchema, labels []string) error {
+	if schema == nil {
+		return nil
+	}
+
+	// Validate required fields
+	for _, field := range schema.RequiredFields {
+		val := i.getFieldValue(field)
+		if val == "" {
+			return fmt.Errorf("type %q requires field %q to be non-empty (schema: %s)", i.IssueType, field, schema.Description)
+		}
+	}
+
+	// Validate required labels
+	for _, pattern := range schema.RequiredLabels {
+		if !matchesLabelPattern(pattern, labels) {
+			return fmt.Errorf("type %q requires a label matching %q (schema: %s)", i.IssueType, pattern, schema.Description)
+		}
+	}
+
+	return nil
+}
+
+// getFieldValue returns the string value of a named field on the issue.
+// Supports: title, description, design, acceptance_criteria, notes, rig, metadata,
+// assignee, owner, external_ref.
+func (i *Issue) getFieldValue(field string) string {
+	switch strings.ToLower(field) {
+	case "title":
+		return i.Title
+	case "description":
+		return i.Description
+	case "design":
+		return i.Design
+	case "acceptance_criteria":
+		return i.AcceptanceCriteria
+	case "notes":
+		return i.Notes
+	case "rig":
+		return i.Rig
+	case "metadata":
+		if len(i.Metadata) > 0 {
+			return string(i.Metadata)
+		}
+		return ""
+	case "assignee":
+		return i.Assignee
+	case "owner":
+		return i.Owner
+	case "external_ref":
+		if i.ExternalRef != nil {
+			return *i.ExternalRef
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+// matchesLabelPattern checks if any label matches the given pattern.
+// Supports wildcards: "config:*" matches any label starting with "config:".
+func matchesLabelPattern(pattern string, labels []string) bool {
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		for _, label := range labels {
+			if strings.HasPrefix(label, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+	// Exact match
+	for _, label := range labels {
+		if label == pattern {
+			return true
+		}
+	}
+	return false
+}
+
+// TypeSchemaConfigPrefix is the config key prefix for type schemas.
+const TypeSchemaConfigPrefix = "schema.type."
+
 // ValidateForImport validates the issue for multi-repo import (federation trust model).
 // Built-in types are validated (to catch typos). Non-built-in types are trusted
 // since the source repo already validated them when the issue was created.

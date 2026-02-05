@@ -181,6 +181,10 @@ type Storage interface {
 	GetCustomStatuses(ctx context.Context) ([]string, error) // Custom status states from status.custom config
 	GetCustomTypes(ctx context.Context) ([]string, error)    // Custom issue types from types.custom config
 
+	// Type schemas (per-type field/label enforcement)
+	GetTypeSchema(ctx context.Context, typeName string) (*types.TypeSchema, error)
+	SetTypeSchema(ctx context.Context, typeName string, schema *types.TypeSchema) error
+
 	// Metadata (for internal state like import hashes)
 	SetMetadata(ctx context.Context, key, value string) error
 	GetMetadata(ctx context.Context, key string) (string, error)

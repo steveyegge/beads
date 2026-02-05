@@ -189,6 +189,12 @@ func (m *mockStorage) GetCustomStatuses(ctx context.Context) ([]string, error) {
 func (m *mockStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetTypeSchema(ctx context.Context, typeName string) (*types.TypeSchema, error) {
+	return nil, nil
+}
+func (m *mockStorage) SetTypeSchema(ctx context.Context, typeName string, schema *types.TypeSchema) error {
+	return nil
+}
 func (m *mockStorage) SetMetadata(ctx context.Context, key, value string) error {
 	return nil
 }
@@ -421,6 +427,10 @@ func TestInterfaceDocumentation(t *testing.T) {
 		_ = s.DeleteConfig
 		_ = s.GetCustomStatuses
 		_ = s.GetCustomTypes
+
+		// Verify type schema operations
+		_ = s.GetTypeSchema
+		_ = s.SetTypeSchema
 
 		// Verify metadata operations
 		_ = s.SetMetadata
