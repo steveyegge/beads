@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -338,8 +339,8 @@ func (s *Server) handleRefile(req *Request) Response {
 }
 
 // handleCook handles the cook RPC operation (gt-pozvwr.24.6).
-// Loads a formula from DB or filesystem, applies the full transformation pipeline,
-// and returns (or persists) the cooked proto.
+// Loads formulas from DB (via Parser with storage backend), applies the full
+// transformation pipeline, and returns a TemplateSubgraph or persists to DB.
 func (s *Server) handleCook(req *Request) Response {
 	var args CookArgs
 	if err := json.Unmarshal(req.Args, &args); err != nil {
@@ -350,84 +351,221 @@ func (s *Server) handleCook(req *Request) Response {
 		return Response{Success: false, Error: "formula_name is required"}
 	}
 
-	ctx, cancel := s.reqCtx(req)
-	defer cancel()
-
 	store := s.storage
 	if store == nil {
 		return Response{Success: false, Error: "storage not available"}
 	}
 
-	// Cook formula through the full pipeline
-	subgraph, err := s.cookFormulaFull(ctx, args.FormulaName, args.Vars)
-	if err != nil {
-		return Response{Success: false, Error: fmt.Sprintf("cook failed: %v", err)}
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
+
+	actor := req.Actor
+	if actor == "" {
+		actor = "daemon"
 	}
 
-	// Apply runtime variable substitution if mode=runtime and vars provided
-	if args.Mode == "runtime" && len(args.Vars) > 0 {
-		// Re-load to get the resolved formula for substitution
-		parser := formula.NewParserWithStorage(store)
-		resolved, loadErr := parser.LoadByName(args.FormulaName)
-		if loadErr == nil {
-			resolved, _ = parser.Resolve(resolved)
-			formula.SubstituteFormulaVars(resolved, args.Vars)
+	// Load and resolve formula using DB-backed parser (checks DB first, then filesystem)
+	resolved, err := formula.LoadAndResolveWithStorage(args.FormulaName, nil, store)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("loading formula %q: %v", args.FormulaName, err)}
+	}
+
+	// Apply prefix to proto ID if specified
+	protoID := resolved.Formula
+	if args.Prefix != "" {
+		protoID = args.Prefix + resolved.Formula
+	}
+
+	// Extract variables and bond points
+	vars := formula.ExtractVariables(resolved)
+	var bondPoints []string
+	if resolved.Compose != nil {
+		for _, bp := range resolved.Compose.BondPoints {
+			bondPoints = append(bondPoints, bp.ID)
 		}
 	}
 
-	// Determine proto ID
-	protoID := subgraph.Root.ID
-	if args.Prefix != "" {
-		protoID = args.Prefix + subgraph.Root.ID
-	}
-
-	// Extract variables for reporting
-	variables := formula.ExtractAllSubgraphVariables(subgraph.Issues)
-
+	// Dry-run mode: return preview info
 	if args.DryRun {
 		result := CookResult{
-			ProtoID:   protoID,
-			Created:   len(subgraph.Issues),
-			Variables: variables,
-			DryRun:    true,
+			ProtoID:    protoID,
+			Variables:  vars,
+			BondPoints: bondPoints,
+			DryRun:     true,
 		}
 		data, _ := json.Marshal(result)
 		return Response{Success: true, Data: data}
 	}
 
+	// Determine runtime mode
+	runtimeMode := args.Mode == "runtime" || len(args.Vars) > 0
+
+	// Apply variable substitutions for runtime mode
+	if runtimeMode {
+		// Apply defaults from formula variable definitions
+		for name, def := range resolved.Vars {
+			if _, provided := args.Vars[name]; !provided && def.Default != "" {
+				if args.Vars == nil {
+					args.Vars = make(map[string]string)
+				}
+				args.Vars[name] = def.Default
+			}
+		}
+
+		// Check for missing required variables
+		var missingVars []string
+		for name, def := range resolved.Vars {
+			if _, ok := args.Vars[name]; !ok && def.Default == "" {
+				missingVars = append(missingVars, name)
+			}
+		}
+		if len(missingVars) > 0 {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("runtime mode requires all defined variables to have values; missing: %s", strings.Join(missingVars, ", ")),
+			}
+		}
+
+		// Substitute variables in the formula
+		formula.SubstituteFormulaVars(resolved, args.Vars)
+	}
+
+	// Persist mode: cook and store proto in database
 	if args.Persist {
-		// Persist: create proto issues in database
-		actor := s.reqActor(req)
-		instantResult, err := formula.CloneSubgraph(ctx, store, subgraph, formula.CloneOptions{
-			Vars:  args.Vars,
-			Actor: actor,
-		})
-		if err != nil {
-			return Response{Success: false, Error: fmt.Sprintf("persist cook failed: %v", err)}
-		}
-
-		// Add "template" label to root
-		_ = store.AddLabel(ctx, instantResult.NewEpicID, "template", actor)
-
-		result := CookResult{
-			ProtoID:   instantResult.NewEpicID,
-			Created:   instantResult.Created,
-			Variables: variables,
-			DryRun:    false,
-		}
-		data, _ := json.Marshal(result)
-		return Response{Success: true, Data: data}
+		return s.handleCookPersist(ctx, resolved, protoID, args.Force, vars, bondPoints, actor)
 	}
 
-	// Ephemeral: return subgraph info as JSON
+	// Ephemeral mode (default): return TemplateSubgraph as JSON
+	subgraph, err := formula.CookToSubgraphWithVars(resolved, protoID, resolved.Vars)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("cooking formula: %v", err)}
+	}
+
+	subgraphJSON, err := json.Marshal(subgraph)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("serializing subgraph: %v", err)}
+	}
+
 	result := CookResult{
-		ProtoID:   protoID,
-		Created:   len(subgraph.Issues),
-		Variables: variables,
-		DryRun:    false,
+		ProtoID:    protoID,
+		Created:    len(subgraph.Issues),
+		Variables:  vars,
+		BondPoints: bondPoints,
+		Subgraph:   subgraphJSON,
 	}
 	data, _ := json.Marshal(result)
 	return Response{Success: true, Data: data}
+}
+
+// handleCookPersist creates a proto bead from a resolved formula and stores it in the DB.
+func (s *Server) handleCookPersist(ctx context.Context, resolved *formula.Formula, protoID string, force bool, vars, bondPoints []string, actor string) Response {
+	store := s.storage
+
+	// Check if proto already exists
+	existingProto, err := store.GetIssue(ctx, protoID)
+	if err == nil && existingProto != nil {
+		if !force {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("proto %s already exists (use force to replace)", protoID),
+			}
+		}
+		// Delete existing proto and its children
+		if err := deleteProtoSubgraphFromDB(ctx, store, protoID); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("deleting existing proto: %v", err),
+			}
+		}
+	}
+
+	// Build the subgraph in memory
+	subgraph, err := formula.CookToSubgraphWithVars(resolved, protoID, resolved.Vars)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("cooking formula: %v", err)}
+	}
+
+	// Extract labels from issues (DB stores labels separately)
+	type labelEntry struct {
+		issueID string
+		label   string
+	}
+	var labels []labelEntry
+	labels = append(labels, labelEntry{protoID, MoleculeLabel})
+	for _, issue := range subgraph.Issues {
+		for _, label := range issue.Labels {
+			labels = append(labels, labelEntry{issue.ID, label})
+		}
+		issue.Labels = nil // DB stores labels separately
+	}
+
+	// Create all issues using batch with skip prefix validation (mol-* IDs
+	// don't match the configured prefix).
+	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+	if !ok {
+		return Response{Success: false, Error: "cook --persist requires SQLite storage"}
+	}
+	opts := sqlite.BatchCreateOptions{SkipPrefixValidation: true}
+	if err := sqliteStore.CreateIssuesWithFullOptions(ctx, subgraph.Issues, actor, opts); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("creating issues: %v", err)}
+	}
+
+	// Add labels and dependencies in a transaction
+	err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		for _, l := range labels {
+			if err := tx.AddLabel(ctx, l.issueID, l.label, actor); err != nil {
+				return fmt.Errorf("adding label %s to %s: %w", l.label, l.issueID, err)
+			}
+		}
+		for _, dep := range subgraph.Dependencies {
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("creating dependency: %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		// Best-effort cleanup: delete the issues we batch-created
+		_ = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+			for i := len(subgraph.Issues) - 1; i >= 0; i-- {
+				_ = tx.DeleteIssue(ctx, subgraph.Issues[i].ID)
+			}
+			return nil
+		})
+		return Response{Success: false, Error: fmt.Sprintf("persisting labels/deps: %v", err)}
+	}
+
+	s.emitMutation(MutationCreate, protoID, resolved.Formula, "")
+
+	result := CookResult{
+		ProtoID:    protoID,
+		Created:    len(subgraph.Issues),
+		Variables:  vars,
+		BondPoints: bondPoints,
+	}
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+// deleteProtoSubgraphFromDB deletes a proto and all its child issues from the database.
+func deleteProtoSubgraphFromDB(ctx context.Context, store storage.Storage, protoID string) error {
+	// Find all children by searching for issues with parent-child dependency
+	children, err := store.GetDependents(ctx, protoID)
+	if err != nil {
+		return fmt.Errorf("finding proto children: %w", err)
+	}
+
+	// Recursively delete children first
+	for _, child := range children {
+		if err := deleteProtoSubgraphFromDB(ctx, store, child.ID); err != nil {
+			return err
+		}
+	}
+
+	// Delete the proto itself
+	return store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.DeleteIssue(ctx, protoID)
+	})
 }
 
 // handlePour handles the pour RPC operation (gt-pozvwr.24.7).

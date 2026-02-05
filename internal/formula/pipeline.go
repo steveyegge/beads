@@ -2,6 +2,8 @@ package formula
 
 import (
 	"fmt"
+
+	"github.com/steveyegge/beads/internal/storage"
 )
 
 // LoadAndResolve parses a formula file and applies all transformations.
@@ -9,8 +11,22 @@ import (
 // and falls back to parsing as a file path if that fails.
 func LoadAndResolve(formulaPath string, searchPaths []string) (*Formula, error) {
 	parser := NewParser(searchPaths...)
+	return loadAndResolveWithParser(formulaPath, parser)
+}
 
-	// Try to load by name first (from .beads/formulas/ registry)
+// LoadAndResolveWithStorage parses a formula and applies all transformations,
+// using a database storage backend for formula resolution. The parser checks
+// the database first for formulas stored as issues, then falls back to
+// filesystem search paths.
+func LoadAndResolveWithStorage(formulaPath string, searchPaths []string, store storage.Storage) (*Formula, error) {
+	parser := NewParserWithStorage(store, searchPaths...)
+	return loadAndResolveWithParser(formulaPath, parser)
+}
+
+// loadAndResolveWithParser implements the full formula resolution pipeline
+// using the provided parser (which may or may not have a storage backend).
+func loadAndResolveWithParser(formulaPath string, parser *Parser) (*Formula, error) {
+	// Try to load by name first (from .beads/formulas/ registry or DB)
 	f, err := parser.LoadByName(formulaPath)
 	if err != nil {
 		// Fall back to parsing as a file path
@@ -84,8 +100,18 @@ func ResolveAndCook(formulaName string, searchPaths []string) (*TemplateSubgraph
 // If conditionVars is provided, steps with conditions that evaluate to false are excluded.
 // Pass nil for conditionVars to include all steps (condition filtering skipped).
 func ResolveAndCookWithVars(formulaName string, searchPaths []string, conditionVars map[string]string) (*TemplateSubgraph, error) {
-	// Create parser with search paths
-	parser := NewParser(searchPaths...)
+	return resolveAndCookWithParser(formulaName, NewParser(searchPaths...), conditionVars)
+}
+
+// ResolveAndCookWithStorage loads a formula from DB or filesystem, applies all
+// transformations, and returns an in-memory TemplateSubgraph. The storage backend
+// is checked first before falling back to filesystem search paths.
+func ResolveAndCookWithStorage(formulaName string, searchPaths []string, store storage.Storage, conditionVars map[string]string) (*TemplateSubgraph, error) {
+	return resolveAndCookWithParser(formulaName, NewParserWithStorage(store, searchPaths...), conditionVars)
+}
+
+// resolveAndCookWithParser implements the full resolve-and-cook pipeline.
+func resolveAndCookWithParser(formulaName string, parser *Parser, conditionVars map[string]string) (*TemplateSubgraph, error) {
 
 	// Load formula by name
 	f, err := parser.LoadByName(formulaName)

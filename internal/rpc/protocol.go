@@ -937,10 +937,12 @@ type CookArgs struct {
 
 // CookResult represents the result of a cook operation
 type CookResult struct {
-	ProtoID   string   `json:"proto_id"`
-	Created   int      `json:"created"`
-	Variables []string `json:"variables,omitempty"`
-	DryRun    bool     `json:"dry_run"`
+	ProtoID    string          `json:"proto_id"`
+	Created    int             `json:"created"`
+	Variables  []string        `json:"variables,omitempty"`
+	BondPoints []string        `json:"bond_points,omitempty"`
+	DryRun     bool            `json:"dry_run"`
+	Subgraph   json.RawMessage `json:"subgraph,omitempty"` // Ephemeral mode: TemplateSubgraph as JSON
 }
 
 // PourArgs represents arguments for the pour operation
