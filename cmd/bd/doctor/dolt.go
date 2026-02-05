@@ -1,5 +1,4 @@
 //go:build cgo
-
 package doctor
 
 import (
@@ -356,3 +355,5 @@ func CheckDoltStatus(path string) DoctorCheck {
 		Category: CategoryData,
 	}
 }
+
+

@@ -1,5 +1,4 @@
 //go:build cgo
-
 package migrations
 
 import (
@@ -152,3 +151,5 @@ func TestTableExists(t *testing.T) {
 		t.Fatal("nonexistent table should not exist")
 	}
 }
+
+

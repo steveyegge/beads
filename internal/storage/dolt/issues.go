@@ -1,5 +1,4 @@
 //go:build cgo
-
 package dolt
 
 import (
@@ -942,3 +941,5 @@ func formatJSONStringArray(arr []string) string {
 	}
 	return string(data)
 }
+
+
