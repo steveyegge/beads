@@ -338,7 +338,7 @@ func testDoltConnection() {
 func testServerConnection(cfg *configfile.Config) bool {
 	host := cfg.GetDoltServerHost()
 	port := cfg.GetDoltServerPort()
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
