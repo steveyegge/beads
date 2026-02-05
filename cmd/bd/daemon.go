@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
@@ -733,6 +734,35 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	// Log HTTP address if configured
 	if httpAddr != "" {
 		log.Info("HTTP listener enabled (Connect-RPC style API)", "addr", httpAddr)
+	}
+
+	// Start embedded NATS server if BD_NATS_ENABLED=true (event bus rollout)
+	if os.Getenv("BD_NATS_ENABLED") == "true" {
+		natsCfg := daemon.NATSConfigFromEnv(filepath.Join(beadsDir, ".runtime"))
+		natsServer, err := daemon.StartNATSServer(natsCfg)
+		if err != nil {
+			log.Error("failed to start embedded NATS server", "error", err)
+			// Non-fatal: daemon continues without NATS (existing behavior preserved)
+			log.Warn("continuing without NATS - event bus features disabled")
+		} else {
+			defer natsServer.Shutdown()
+			log.Info("embedded NATS server started", "port", natsServer.Port())
+
+			// Ensure JetStream streams exist
+			js, err := natsServer.Conn().JetStream()
+			if err != nil {
+				log.Error("failed to get JetStream context", "error", err)
+			} else {
+				if err := eventbus.EnsureStreams(js); err != nil {
+					log.Error("failed to create JetStream streams", "error", err)
+				} else {
+					log.Info("JetStream streams initialized")
+				}
+			}
+
+			health := natsServer.Health()
+			log.Info("NATS health", "status", health.Status, "jetstream", health.JetStream, "streams", health.Streams)
+		}
 	}
 
 	// Choose event loop based on BEADS_DAEMON_MODE (need to determine early for SetConfig)

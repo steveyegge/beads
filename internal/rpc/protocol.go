@@ -128,6 +128,11 @@ const (
 	OpFormulaGet    = "formula_get"
 	OpFormulaSave   = "formula_save"
 	OpFormulaDelete = "formula_delete"
+
+	// Event bus operations (gt-wfaq5n)
+	OpBusEmit     = "bus_emit"
+	OpBusStatus   = "bus_status"
+	OpBusHandlers = "bus_handlers"
 )
 
 // Request represents an RPC request from client to daemon
@@ -1527,4 +1532,42 @@ type FormulaDeleteArgs struct {
 type FormulaDeleteResult struct {
 	ID      string `json:"id"`              // Issue ID that was deleted
 	Name    string `json:"name"`            // Formula name
+}
+
+// BusEmitArgs represents arguments for the bus_emit operation
+type BusEmitArgs struct {
+	HookType  string          `json:"hook_type"`            // Event type (SessionStart, Stop, etc.)
+	EventJSON json.RawMessage `json:"event_json"`           // Raw stdin JSON from Claude Code
+	SessionID string          `json:"session_id,omitempty"` // Session ID (extracted from event)
+}
+
+// BusEmitResult represents the result of a bus_emit operation
+type BusEmitResult struct {
+	Block    bool     `json:"block,omitempty"`
+	Reason   string   `json:"reason,omitempty"`
+	Inject   []string `json:"inject,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// BusStatusResult represents the result of a bus_status operation
+type BusStatusResult struct {
+	NATSEnabled  bool   `json:"nats_enabled"`
+	NATSStatus   string `json:"nats_status,omitempty"`   // "running", "stopped", "error"
+	NATSPort     int    `json:"nats_port,omitempty"`
+	Connections  int    `json:"connections,omitempty"`
+	JetStream    bool   `json:"jetstream,omitempty"`
+	Streams      int    `json:"streams,omitempty"`
+	HandlerCount int    `json:"handler_count"`
+}
+
+// BusHandlersResult represents the result of a bus_handlers operation
+type BusHandlersResult struct {
+	Handlers []BusHandlerInfo `json:"handlers"`
+}
+
+// BusHandlerInfo describes a registered event bus handler.
+type BusHandlerInfo struct {
+	ID       string   `json:"id"`
+	Priority int      `json:"priority"`
+	Handles  []string `json:"handles"`
 }
