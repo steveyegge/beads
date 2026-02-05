@@ -14,10 +14,18 @@ permissions:
   contents: write
 
 jobs:
-  goreleaser:
-    # Guard: only run goreleaser in the canonical repository (not in forks)
+  # Build binaries on native runners using GoReleaser Pro split/merge
+  # macOS runs natively to enable CGO for Dolt backend support
+  prepare:
     if: ${{ github.repository == 'steveyegge/beads' }}
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+          - os: macos-13
+            goos: darwin
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -29,28 +37,93 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Install cross-compilation toolchains and signing tools
+      # Linux: Install cross-compilation toolchains
+      - name: Install cross-compilation toolchains (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-aarch64-linux-gnu osslsigncode
 
-      - name: Run GoReleaser
+      # macOS: Install ICU4C for CGO (Dolt backend)
+      - name: Install ICU4C (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          brew install icu4c
+          ICU_PREFIX="$(brew --prefix icu4c)"
+          echo "CGO_CFLAGS=-I${ICU_PREFIX}/include" >> $GITHUB_ENV
+          echo "CGO_CPPFLAGS=-I${ICU_PREFIX}/include" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L${ICU_PREFIX}/lib" >> $GITHUB_ENV
+
+      - name: Get short SHA
+        shell: bash
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      # Cache dist directory for merge step
+      - name: Cache dist
+        uses: actions/cache@v5
+        with:
+          path: dist/${{ matrix.goos }}
+          key: ${{ matrix.goos }}-${{ env.sha_short }}
+
+      - name: Run GoReleaser (split)
         uses: goreleaser/goreleaser-action@v6
         with:
-          distribution: goreleaser
+          distribution: goreleaser-pro
           version: '~> v2'
-          args: >
-            release --clean
-            ${{ github.repository != 'steveyegge/beads' && '--skip=publish --skip=announce' || '' }}
+          args: release --clean --split
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           # Windows code signing (optional - signing is skipped if not set)
           WINDOWS_SIGNING_CERT_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_PFX_BASE64 }}
           WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
 
+  # Merge all platform builds and publish the release
+  release:
+    if: ${{ github.repository == 'steveyegge/beads' }}
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Get short SHA
+        shell: bash
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      # Restore caches from prepare jobs
+      - name: Restore Linux dist
+        uses: actions/cache@v5
+        with:
+          path: dist/linux
+          key: linux-${{ env.sha_short }}
+
+      - name: Restore Darwin dist
+        uses: actions/cache@v5
+        with:
+          path: dist/darwin
+          key: darwin-${{ env.sha_short }}
+
+      - name: Run GoReleaser (merge)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser-pro
+          version: '~> v2'
+          args: continue --merge
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+
   publish-pypi:
     runs-on: ubuntu-latest
-    needs: goreleaser
+    needs: release
     if: ${{ always() && github.repository == 'steveyegge/beads' }}
     steps:
       - name: Checkout
@@ -79,7 +152,7 @@ jobs:
 
   publish-npm:
     runs-on: ubuntu-latest
-    needs: goreleaser
+    needs: release
     if: ${{ github.repository == 'steveyegge/beads' }}
     permissions:
       contents: read
@@ -106,7 +179,7 @@ jobs:
 
   update-homebrew:
     runs-on: ubuntu-latest
-    needs: goreleaser
+    needs: release
     if: ${{ github.repository == 'steveyegge/beads' }}
     steps:
       - name: Checkout
@@ -172,4 +245,3 @@ jobs:
             end
           end
           EOF
-

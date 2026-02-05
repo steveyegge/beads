@@ -57,11 +57,13 @@ builds:
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
 
+  # macOS builds with CGO enabled for Dolt backend support
+  # These builds run on native macOS runners via GoReleaser Pro split/merge
   - id: bd-darwin-amd64
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     goos:
       - darwin
     goarch:
@@ -72,12 +74,15 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - codesign -s - -f "{{ .Path }}"
 
   - id: bd-darwin-arm64
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     goos:
       - darwin
     goarch:
@@ -88,6 +93,9 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - codesign -s - -f "{{ .Path }}"
 
   - id: bd-windows-amd64
     main: ./cmd/bd
