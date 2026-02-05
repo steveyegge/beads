@@ -16,6 +16,13 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Disable foreign key checks to allow renaming the primary key
+	// without violating FK constraints on child tables (bd-wj80.1)
+	_, err = tx.ExecContext(ctx, `SET FOREIGN_KEY_CHECKS = 0`)
+	if err != nil {
+		return fmt.Errorf("failed to disable foreign key checks: %w", err)
+	}
+
 	// Update the issue itself
 	result, err := tx.ExecContext(ctx, `
 		UPDATE issues
@@ -64,6 +71,47 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 	}
 
 	// Update dirty_issues
+	_, err = tx.ExecContext(ctx, `UPDATE dirty_issues SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update dirty_issues: %w", err)
+	}
+
+	// Update export_hashes
+	_, err = tx.ExecContext(ctx, `UPDATE export_hashes SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update export_hashes: %w", err)
+	}
+
+	// Update child_counters
+	_, err = tx.ExecContext(ctx, `UPDATE child_counters SET parent_id = ? WHERE parent_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update child_counters: %w", err)
+	}
+
+	// Update issue_snapshots
+	_, err = tx.ExecContext(ctx, `UPDATE issue_snapshots SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update issue_snapshots: %w", err)
+	}
+
+	// Update compaction_snapshots
+	_, err = tx.ExecContext(ctx, `UPDATE compaction_snapshots SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update compaction_snapshots: %w", err)
+	}
+
+	// Update decision_points
+	_, err = tx.ExecContext(ctx, `UPDATE decision_points SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update decision_points issue_id: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `UPDATE decision_points SET prior_id = ? WHERE prior_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update decision_points prior_id: %w", err)
+	}
+
+	// Mark new ID as dirty for incremental export
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO dirty_issues (issue_id, marked_at)
 		VALUES (?, ?)
@@ -73,12 +121,6 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
-	// Delete old dirty entry
-	_, err = tx.ExecContext(ctx, `DELETE FROM dirty_issues WHERE issue_id = ?`, oldID)
-	if err != nil {
-		return fmt.Errorf("failed to delete old dirty entry: %w", err)
-	}
-
 	// Record rename event
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, old_value, new_value)
@@ -86,6 +128,12 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 	`, newID, actor, oldID, newID)
 	if err != nil {
 		return fmt.Errorf("failed to record rename event: %w", err)
+	}
+
+	// Re-enable foreign key checks before commit
+	_, err = tx.ExecContext(ctx, `SET FOREIGN_KEY_CHECKS = 1`)
+	if err != nil {
+		return fmt.Errorf("failed to re-enable foreign key checks: %w", err)
 	}
 
 	return tx.Commit()
