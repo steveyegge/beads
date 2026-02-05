@@ -3601,6 +3601,231 @@ func (s *Server) handleDecisionList(req *Request) Response {
 	}
 }
 
+func (s *Server) handleDecisionRemind(req *Request) Response {
+	var args DecisionRemindArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid decision remind args: %v", err),
+		}
+	}
+
+	if args.IssueID == "" {
+		return Response{
+			Success: false,
+			Error:   "issue_id is required",
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
+
+	// Verify issue is a decision gate
+	issue, err := store.GetIssue(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get issue: %v", err),
+		}
+	}
+	if issue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue %s not found", args.IssueID),
+		}
+	}
+	if issue.IssueType != "gate" || issue.AwaitType != "decision" {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("%s is not a decision point", args.IssueID),
+		}
+	}
+
+	// Get decision point
+	dp, err := store.GetDecisionPoint(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get decision point: %v", err),
+		}
+	}
+	if dp == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("no decision point data for %s", args.IssueID),
+		}
+	}
+
+	// Check if already responded
+	if dp.RespondedAt != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("decision %s already responded", args.IssueID),
+		}
+	}
+
+	// Check reminder limit
+	maxReminders := 3
+	if dp.ReminderCount >= maxReminders && !args.Force {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("decision %s has reached max reminders (%d/%d)", args.IssueID, dp.ReminderCount, maxReminders),
+		}
+	}
+
+	// Increment reminder count
+	dp.ReminderCount++
+	if err := store.UpdateDecisionPoint(ctx, dp); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to update decision point: %v", err),
+		}
+	}
+
+	s.emitMutation(MutationUpdate, args.IssueID, issue.Title, issue.Assignee)
+
+	result := DecisionRemindResult{
+		IssueID:       args.IssueID,
+		ReminderCount: dp.ReminderCount,
+		MaxReminders:  maxReminders,
+		Prompt:        dp.Prompt,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleDecisionCancel(req *Request) Response {
+	var args DecisionCancelArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid decision cancel args: %v", err),
+		}
+	}
+
+	if args.IssueID == "" {
+		return Response{
+			Success: false,
+			Error:   "issue_id is required",
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
+
+	// Verify issue is a decision gate
+	issue, err := store.GetIssue(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get issue: %v", err),
+		}
+	}
+	if issue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue %s not found", args.IssueID),
+		}
+	}
+	if issue.IssueType != "gate" || issue.AwaitType != "decision" {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("%s is not a decision point", args.IssueID),
+		}
+	}
+
+	// Get decision point
+	dp, err := store.GetDecisionPoint(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get decision point: %v", err),
+		}
+	}
+	if dp == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("no decision point data for %s", args.IssueID),
+		}
+	}
+
+	// Check if already responded
+	if dp.RespondedAt != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("decision %s already responded", args.IssueID),
+		}
+	}
+
+	// Mark as canceled
+	now := time.Now()
+	dp.RespondedAt = &now
+	dp.RespondedBy = args.CanceledBy
+	dp.SelectedOption = "_canceled"
+	if args.Reason != "" {
+		dp.ResponseText = args.Reason
+	}
+
+	if err := store.UpdateDecisionPoint(ctx, dp); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to update decision point: %v", err),
+		}
+	}
+
+	// Close the gate issue
+	closeReason := "Decision canceled"
+	if args.Reason != "" {
+		closeReason = fmt.Sprintf("Decision canceled: %s", args.Reason)
+	}
+	actor := req.Actor
+	if actor == "" {
+		actor = "daemon"
+	}
+	if err := store.CloseIssue(ctx, args.IssueID, closeReason, actor, ""); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to close gate: %v", err),
+		}
+	}
+
+	s.emitMutation(MutationUpdate, args.IssueID, issue.Title, issue.Assignee)
+
+	result := DecisionCancelResult{
+		IssueID:    args.IssueID,
+		CanceledAt: now.Format(time.RFC3339),
+		Reason:     args.Reason,
+		CanceledBy: args.CanceledBy,
+		Prompt:     dp.Prompt,
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
 // handleCreateWithDeps handles the create_with_deps operation for atomic issue creation.
 // This creates multiple issues with their labels and dependencies in a single transaction.
 func (s *Server) handleCreateWithDeps(req *Request) Response {

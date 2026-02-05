@@ -312,6 +312,10 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleDecisionResolve(req)
 	case OpDecisionList:
 		resp = s.handleDecisionList(req)
+	case OpDecisionRemind:
+		resp = s.handleDecisionRemind(req)
+	case OpDecisionCancel:
+		resp = s.handleDecisionCancel(req)
 	// Mol operations (gt-as9kdm)
 	case OpMolBond:
 		resp = s.handleMolBond(req)

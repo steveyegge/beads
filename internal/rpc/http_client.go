@@ -310,6 +310,8 @@ func operationToHTTPMethod(operation string) string {
 		OpDecisionGet:     "DecisionGet",
 		OpDecisionResolve: "DecisionResolve",
 		OpDecisionList:    "DecisionList",
+		OpDecisionRemind:  "DecisionRemind",
+		OpDecisionCancel:  "DecisionCancel",
 
 		// Mol operations
 		OpMolBond:   "MolBond",

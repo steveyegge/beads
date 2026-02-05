@@ -357,6 +357,8 @@ func httpMethodToOperation(method string) string {
 		"DecisionGet":     OpDecisionGet,
 		"DecisionResolve": OpDecisionResolve,
 		"DecisionList":    OpDecisionList,
+		"DecisionRemind":  OpDecisionRemind,
+		"DecisionCancel":  OpDecisionCancel,
 
 		// Mol operations
 		"MolBond":   OpMolBond,

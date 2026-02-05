@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -47,15 +49,21 @@ func init() {
 func runDecisionCancel(cmd *cobra.Command, args []string) {
 	CheckReadonly("decision cancel")
 
-	// Ensure store is initialized
+	decisionID := args[0]
+	reason, _ := cmd.Flags().GetString("reason")
+	canceledBy, _ := cmd.Flags().GetString("by")
+
+	// Use daemon if available
+	if daemonClient != nil {
+		cancelViaDaemon(decisionID, reason, canceledBy)
+		return
+	}
+
+	// Direct mode
 	if err := ensureStoreActive(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-
-	decisionID := args[0]
-	reason, _ := cmd.Flags().GetString("reason")
-	canceledBy, _ := cmd.Flags().GetString("by")
 
 	ctx := rootCtx
 
@@ -109,7 +117,7 @@ func runDecisionCancel(cmd *cobra.Command, args []string) {
 	now := time.Now()
 	dp.RespondedAt = &now
 	dp.RespondedBy = canceledBy
-	dp.SelectedOption = "_canceled" // Special marker for canceled decisions
+	dp.SelectedOption = "_canceled"
 	if reason != "" {
 		dp.ResponseText = reason
 	}
@@ -132,23 +140,54 @@ func runDecisionCancel(cmd *cobra.Command, args []string) {
 
 	markDirtyAndScheduleFlush()
 
-	// Output
+	printCancelResult(resolvedID, reason, canceledBy, now.Format(time.RFC3339), dp.Prompt)
+}
+
+// cancelViaDaemon cancels a decision via the RPC daemon
+func cancelViaDaemon(decisionID, reason, canceledBy string) {
+	// Resolve ID via daemon
+	resolveResp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: decisionID})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	var resolvedID string
+	if resolveResp != nil && resolveResp.Data != nil {
+		_ = json.Unmarshal(resolveResp.Data, &resolvedID)
+	}
+	if resolvedID == "" {
+		resolvedID = decisionID
+	}
+
+	result, err := daemonClient.DecisionCancel(&rpc.DecisionCancelArgs{
+		IssueID:    resolvedID,
+		Reason:     reason,
+		CanceledBy: canceledBy,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	printCancelResult(result.IssueID, result.Reason, result.CanceledBy, result.CanceledAt, result.Prompt)
+}
+
+func printCancelResult(id, reason, canceledBy, canceledAt, prompt string) {
 	if jsonOutput {
 		result := map[string]interface{}{
-			"id":           resolvedID,
-			"status":       "canceled",
-			"reason":       reason,
+			"id":          id,
+			"status":      "canceled",
+			"reason":      reason,
 			"canceled_by": canceledBy,
-			"canceled_at": now.Format(time.RFC3339),
-			"prompt":       dp.Prompt,
+			"canceled_at": canceledAt,
+			"prompt":      prompt,
 		}
 		outputJSON(result)
 		return
 	}
 
-	// Human-readable output
-	fmt.Printf("%s Decision canceled: %s\n\n", ui.RenderPass("✓"), ui.RenderID(resolvedID))
-	fmt.Printf("  Prompt: %s\n", dp.Prompt)
+	fmt.Printf("%s Decision canceled: %s\n\n", ui.RenderPass("✓"), ui.RenderID(id))
+	fmt.Printf("  Prompt: %s\n", prompt)
 
 	if reason != "" {
 		fmt.Printf("  Reason: %s\n", reason)

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -41,14 +43,20 @@ func init() {
 func runDecisionRemind(cmd *cobra.Command, args []string) {
 	CheckReadonly("decision remind")
 
-	// Ensure store is initialized
+	decisionID := args[0]
+	force, _ := cmd.Flags().GetBool("force")
+
+	// Use daemon if available
+	if daemonClient != nil {
+		remindViaDaemon(decisionID, force)
+		return
+	}
+
+	// Direct mode
 	if err := ensureStoreActive(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-
-	decisionID := args[0]
-	force, _ := cmd.Flags().GetBool("force")
 
 	ctx := rootCtx
 
@@ -117,24 +125,55 @@ func runDecisionRemind(cmd *cobra.Command, args []string) {
 
 	markDirtyAndScheduleFlush()
 
-	// Output
+	printRemindResult(resolvedID, dp.ReminderCount, maxReminders, dp.Prompt)
+}
+
+// remindViaDaemon sends a decision reminder via the RPC daemon
+func remindViaDaemon(decisionID string, force bool) {
+	// Resolve ID via daemon
+	resolveResp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: decisionID})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	var resolvedID string
+	if resolveResp != nil && resolveResp.Data != nil {
+		// ResolveID returns the resolved ID as a JSON string
+		_ = json.Unmarshal(resolveResp.Data, &resolvedID)
+	}
+	if resolvedID == "" {
+		resolvedID = decisionID
+	}
+
+	result, err := daemonClient.DecisionRemind(&rpc.DecisionRemindArgs{
+		IssueID: resolvedID,
+		Force:   force,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	printRemindResult(result.IssueID, result.ReminderCount, result.MaxReminders, result.Prompt)
+}
+
+func printRemindResult(id string, reminderCount, maxReminders int, prompt string) {
 	if jsonOutput {
 		result := map[string]interface{}{
-			"id":             resolvedID,
-			"reminder_count": dp.ReminderCount,
+			"id":             id,
+			"reminder_count": reminderCount,
 			"max_reminders":  maxReminders,
-			"prompt":         dp.Prompt,
+			"prompt":         prompt,
 		}
 		outputJSON(result)
 		return
 	}
 
-	// Human-readable output
-	fmt.Printf("%s Reminder sent for decision: %s\n\n", ui.RenderPass("✓"), ui.RenderID(resolvedID))
-	fmt.Printf("  Prompt: %s\n", dp.Prompt)
-	fmt.Printf("  Reminders: %d/%d\n", dp.ReminderCount, maxReminders)
+	fmt.Printf("%s Reminder sent for decision: %s\n\n", ui.RenderPass("✓"), ui.RenderID(id))
+	fmt.Printf("  Prompt: %s\n", prompt)
+	fmt.Printf("  Reminders: %d/%d\n", reminderCount, maxReminders)
 
-	if dp.ReminderCount >= maxReminders {
+	if reminderCount >= maxReminders {
 		fmt.Printf("\n  %s Max reminders reached\n", ui.RenderWarn("⚠"))
 	}
 

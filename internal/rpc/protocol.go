@@ -61,6 +61,8 @@ const (
 	OpDecisionGet     = "decision_get"
 	OpDecisionResolve = "decision_resolve"
 	OpDecisionList    = "decision_list"
+	OpDecisionRemind  = "decision_remind"
+	OpDecisionCancel  = "decision_cancel"
 
 	// Mol operations (gt-as9kdm)
 	OpMolBond          = "mol_bond"
@@ -830,6 +832,36 @@ type DecisionResponse struct {
 type DecisionListResponse struct {
 	Decisions []*DecisionResponse `json:"decisions"`
 	Count     int                 `json:"count"`
+}
+
+// DecisionRemindArgs represents arguments for the decision remind operation
+type DecisionRemindArgs struct {
+	IssueID string `json:"issue_id"` // Decision gate issue ID
+	Force   bool   `json:"force,omitempty"` // Force reminder even if at max
+}
+
+// DecisionRemindResult represents the result of a decision remind operation
+type DecisionRemindResult struct {
+	IssueID       string `json:"issue_id"`
+	ReminderCount int    `json:"reminder_count"`
+	MaxReminders  int    `json:"max_reminders"`
+	Prompt        string `json:"prompt"`
+}
+
+// DecisionCancelArgs represents arguments for the decision cancel operation
+type DecisionCancelArgs struct {
+	IssueID    string `json:"issue_id"`              // Decision gate issue ID
+	Reason     string `json:"reason,omitempty"`      // Cancellation reason
+	CanceledBy string `json:"canceled_by,omitempty"` // Who canceled
+}
+
+// DecisionCancelResult represents the result of a decision cancel operation
+type DecisionCancelResult struct {
+	IssueID    string `json:"issue_id"`
+	CanceledAt string `json:"canceled_at"` // ISO 8601 timestamp
+	Reason     string `json:"reason,omitempty"`
+	CanceledBy string `json:"canceled_by,omitempty"`
+	Prompt     string `json:"prompt"`
 }
 
 // Mol operations (gt-as9kdm)

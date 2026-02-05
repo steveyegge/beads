@@ -752,6 +752,38 @@ func (c *Client) DecisionList(args *DecisionListArgs) (*DecisionListResponse, er
 	return &result, nil
 }
 
+// DecisionRemind sends a reminder for a pending decision via the daemon
+func (c *Client) DecisionRemind(args *DecisionRemindArgs) (*DecisionRemindResult, error) {
+	resp, err := c.Execute(OpDecisionRemind, args)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	var result DecisionRemindResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse decision remind result: %w", err)
+	}
+	return &result, nil
+}
+
+// DecisionCancel cancels a pending decision via the daemon
+func (c *Client) DecisionCancel(args *DecisionCancelArgs) (*DecisionCancelResult, error) {
+	resp, err := c.Execute(OpDecisionCancel, args)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	var result DecisionCancelResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse decision cancel result: %w", err)
+	}
+	return &result, nil
+}
+
 // GetWorkerStatus retrieves worker status via the daemon
 func (c *Client) GetWorkerStatus(args *GetWorkerStatusArgs) (*GetWorkerStatusResponse, error) {
 	resp, err := c.Execute(OpGetWorkerStatus, args)
