@@ -116,6 +116,17 @@ func installClaude(env claudeEnv, project bool, stealth bool) error {
 		_, _ = fmt.Fprintln(env.stdout, "✓ Registered PreCompact hook")
 	}
 
+	// Session gate checks for Claude Code hook types
+	if addHookCommand(hooks, "Stop", "bd gate session-check --hook Stop --json") {
+		_, _ = fmt.Fprintln(env.stdout, "✓ Registered Stop gate check hook")
+	}
+	if addHookCommand(hooks, "PreToolUse", "bd gate session-check --hook PreToolUse --json") {
+		_, _ = fmt.Fprintln(env.stdout, "✓ Registered PreToolUse gate check hook")
+	}
+	if addHookCommand(hooks, "PreCompact", "bd gate session-check --hook PreCompact --json") {
+		_, _ = fmt.Fprintln(env.stdout, "✓ Registered PreCompact gate check hook")
+	}
+
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		_, _ = fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
@@ -215,6 +226,10 @@ func removeClaude(env claudeEnv, project bool) error {
 	removeHookCommand(hooks, "PreCompact", "bd prime && bd decision check --inject")
 	removeHookCommand(hooks, "SessionStart", "bd prime --stealth && bd decision check --inject")
 	removeHookCommand(hooks, "PreCompact", "bd prime --stealth && bd decision check --inject")
+	// Session gate check hooks
+	removeHookCommand(hooks, "Stop", "bd gate session-check --hook Stop --json")
+	removeHookCommand(hooks, "PreToolUse", "bd gate session-check --hook PreToolUse --json")
+	removeHookCommand(hooks, "PreCompact", "bd gate session-check --hook PreCompact --json")
 
 	data, err = json.MarshalIndent(settings, "", "  ")
 	if err != nil {

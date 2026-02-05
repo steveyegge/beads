@@ -129,8 +129,11 @@ var readOnlyCommands = map[string]bool{
 // This handles cases where the leaf command name alone is ambiguous.
 // Format: "parent child" (space-separated).
 var readOnlySubcommands = map[string]bool{
-	"decision check":   true, // bd decision check: only reads decision status
-	"merge-slot check": true, // bd merge-slot check: only reads slot availability
+	"decision check":       true, // bd decision check: only reads decision status
+	"merge-slot check":     true, // bd merge-slot check: only reads slot availability
+	"gate session-check":   true, // bd gate session-check: only reads marker files
+	"gate session-list":    true, // bd gate session-list: only reads registry
+	"gate status":          true, // bd gate status: only reads marker files
 	// NOTE: "gate check" is NOT read-only - it closes resolved gates
 }
 
