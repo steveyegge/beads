@@ -27,8 +27,7 @@ Dolt can run in two modes:
   - server:   Connect to external dolt sql-server (multi-process, high-concurrency)
 
 Commands:
-  bd dolt              Show current Dolt configuration
-  bd dolt show         Same as above, with connection test for server mode
+  bd dolt show         Show current Dolt configuration with connection test
   bd dolt set <k> <v>  Set a configuration value
   bd dolt test         Test server connection
 
@@ -39,14 +38,14 @@ Configuration keys for 'bd dolt set':
   port      Server port (default: 3307)
   user      MySQL user (default: root)
 
+Flags for 'bd dolt set':
+  --update-config  Also write to config.yaml for team-wide defaults
+
 Examples:
   bd dolt set mode server
   bd dolt set database myproject
   bd dolt set host 192.168.1.100 --update-config
   bd dolt test`,
-	Run: func(cmd *cobra.Command, args []string) {
-		showDoltConfig(false)
-	},
 }
 
 var doltShowCmd = &cobra.Command{
