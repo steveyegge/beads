@@ -119,6 +119,18 @@ func runEventDrivenLoop(
 	healthTicker := time.NewTicker(60 * time.Second)
 	defer healthTicker.Stop()
 
+	// Periodic dirty flush (every 5 minutes) to prevent dirty_issues table bloat (bd-13lq)
+	// Clears orphaned entries and already-exported entries that accumulate between restarts.
+	// Configurable via BEADS_DIRTY_FLUSH_INTERVAL env var.
+	dirtyFlushInterval := 5 * time.Minute
+	if env := os.Getenv("BEADS_DIRTY_FLUSH_INTERVAL"); env != "" {
+		if interval, err := time.ParseDuration(env); err == nil && interval > 0 {
+			dirtyFlushInterval = interval
+		}
+	}
+	dirtyFlushTicker := time.NewTicker(dirtyFlushInterval)
+	defer dirtyFlushTicker.Stop()
+
 	// Periodic stats logging (every 5 minutes)
 	// Configurable via BEADS_STATS_LOG_INTERVAL env var
 	statsInterval := 5 * time.Minute
@@ -170,6 +182,10 @@ func runEventDrivenLoop(
 		case <-healthTicker.C:
 			// Periodic health validation (not sync)
 			checkDaemonHealth(ctx, store, log)
+
+		case <-dirtyFlushTicker.C:
+			// Periodic cleanup of stale dirty_issues entries (bd-13lq)
+			flushStaleDirtyIssues(ctx, store, log)
 
 		case <-statsTicker.C:
 			// Periodic stats logging
