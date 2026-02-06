@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/decision"
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
@@ -273,6 +274,29 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 			IsTimeout:   false,
 		}
 		_ = hookRunner.RunDecisionSync(hooks.EventDecisionRespond, dp, response, dp.RequestedBy)
+	}
+
+	// Emit decision event to bus (od-k3o.15.1).
+	{
+		chosenLabel := ""
+		chosenIndex := -1
+		for i, opt := range options {
+			if opt.ID == selectOpt {
+				chosenLabel = opt.Label
+				chosenIndex = i
+				break
+			}
+		}
+		emitDecisionEvent(eventbus.EventDecisionResponded, eventbus.DecisionEventPayload{
+			DecisionID:  resolvedID,
+			Question:    dp.Prompt,
+			RequestedBy: dp.RequestedBy,
+			Options:     len(options),
+			ChosenIndex: chosenIndex,
+			ChosenLabel: chosenLabel,
+			ResolvedBy:  respondedBy,
+			Rationale:   textResponse,
+		})
 	}
 
 	// Output

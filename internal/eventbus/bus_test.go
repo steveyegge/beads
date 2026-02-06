@@ -294,8 +294,8 @@ func startTestNATS(t *testing.T) (*natsserver.Server, nats.JetStreamContext, fun
 	opts := &natsserver.Options{
 		Port:               -1, // random available port
 		JetStream:          true,
-		JetStreamMaxMemory: 128 << 20,
-		JetStreamMaxStore:  128 << 20,
+		JetStreamMaxMemory: 256 << 20,
+		JetStreamMaxStore:  256 << 20,
 		StoreDir:           dir,
 		NoLog:              true,
 		NoSigs:             true,
@@ -517,6 +517,26 @@ func TestDispatchConcurrentSafety(t *testing.T) {
 	}
 }
 
+// Decision event tests (od-k3o.15.1)
+
+func TestDecisionEventTypes(t *testing.T) {
+	// Verify all decision event type constants have expected string values.
+	tests := []struct {
+		et   EventType
+		want string
+	}{
+		{EventDecisionCreated, "DecisionCreated"},
+		{EventDecisionResponded, "DecisionResponded"},
+		{EventDecisionEscalated, "DecisionEscalated"},
+		{EventDecisionExpired, "DecisionExpired"},
+	}
+	for _, tt := range tests {
+		if string(tt.et) != tt.want {
+			t.Errorf("expected %q, got %q", tt.want, string(tt.et))
+		}
+	}
+}
+
 func TestDispatchConcurrentRegisterAndDispatch(t *testing.T) {
 	bus := New()
 
@@ -565,7 +585,157 @@ func TestDispatchConcurrentRegisterAndDispatch(t *testing.T) {
 	}
 }
 
-func TestJetStreamMultipleEventTypes(t *testing.T) {
+func TestIsDecisionEvent(t *testing.T) {
+	decisionEvents := []EventType{
+		EventDecisionCreated, EventDecisionResponded,
+		EventDecisionEscalated, EventDecisionExpired,
+	}
+	for _, et := range decisionEvents {
+		if !et.IsDecisionEvent() {
+			t.Errorf("expected %s to be a decision event", et)
+		}
+	}
+
+	hookEvents := []EventType{
+		EventSessionStart, EventStop, EventPreToolUse, EventNotification,
+	}
+	for _, et := range hookEvents {
+		if et.IsDecisionEvent() {
+			t.Errorf("expected %s to NOT be a decision event", et)
+		}
+	}
+}
+
+func TestDecisionEventPayloadSerialization(t *testing.T) {
+	payload := DecisionEventPayload{
+		DecisionID:  "od-test.decision-1",
+		Question:    "Which approach?",
+		Urgency:     "high",
+		RequestedBy: "agent-1",
+		Options:     3,
+		ChosenIndex: 1,
+		ChosenLabel: "Option B",
+		ResolvedBy:  "user@example.com",
+		Rationale:   "Better for performance",
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded DecisionEventPayload
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if decoded.DecisionID != payload.DecisionID {
+		t.Errorf("DecisionID: got %q, want %q", decoded.DecisionID, payload.DecisionID)
+	}
+	if decoded.Question != payload.Question {
+		t.Errorf("Question: got %q, want %q", decoded.Question, payload.Question)
+	}
+	if decoded.ChosenIndex != payload.ChosenIndex {
+		t.Errorf("ChosenIndex: got %d, want %d", decoded.ChosenIndex, payload.ChosenIndex)
+	}
+	if decoded.ChosenLabel != payload.ChosenLabel {
+		t.Errorf("ChosenLabel: got %q, want %q", decoded.ChosenLabel, payload.ChosenLabel)
+	}
+}
+
+func TestDecisionEventPayloadOmitEmpty(t *testing.T) {
+	// Verify omitempty fields are absent when zero.
+	payload := DecisionEventPayload{
+		DecisionID: "test-id",
+		Question:   "Test?",
+		Options:    2,
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// These omitempty fields should be absent.
+	for _, key := range []string{"chosen_index", "chosen_label", "resolved_by", "rationale"} {
+		if _, ok := raw[key]; ok {
+			t.Errorf("expected %q to be omitted when zero", key)
+		}
+	}
+
+	// These required fields should be present.
+	for _, key := range []string{"decision_id", "question", "option_count"} {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("expected %q to be present", key)
+		}
+	}
+}
+
+func TestDispatchDecisionEvent(t *testing.T) {
+	bus := New()
+	var handledEvent *Event
+	bus.Register(&testHandler{
+		id:       "decision-handler",
+		handles:  []EventType{EventDecisionCreated},
+		priority: 1,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			handledEvent = event
+			return nil
+		},
+	})
+
+	payload := DecisionEventPayload{
+		DecisionID: "test-decision",
+		Question:   "Which approach?",
+		Options:    3,
+	}
+	payloadJSON, _ := json.Marshal(payload)
+
+	_, err := bus.Dispatch(context.Background(), &Event{
+		Type: EventDecisionCreated,
+		Raw:  payloadJSON,
+	})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if handledEvent == nil {
+		t.Fatal("decision handler was not called")
+	}
+	if handledEvent.Type != EventDecisionCreated {
+		t.Errorf("expected type %s, got %s", EventDecisionCreated, handledEvent.Type)
+	}
+}
+
+func TestDecisionEventDoesNotMatchHookHandlers(t *testing.T) {
+	bus := New()
+	hookCalled := false
+	bus.Register(&testHandler{
+		id:       "hook-only-handler",
+		handles:  []EventType{EventSessionStart, EventStop},
+		priority: 1,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			hookCalled = true
+			return nil
+		},
+	})
+
+	_, err := bus.Dispatch(context.Background(), &Event{
+		Type: EventDecisionCreated,
+	})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if hookCalled {
+		t.Error("hook handler should not be called for decision events")
+	}
+}
+
+func TestDecisionEventPublishesToJetStream(t *testing.T) {
 	_, js, cleanup := startTestNATS(t)
 	defer cleanup()
 
@@ -625,6 +795,46 @@ func TestJetStreamMultipleEventTypes(t *testing.T) {
 	checkMessages(subStart, 2, "SessionStart")
 	checkMessages(subStop, 1, "Stop")
 	checkMessages(subTool, 1, "PreToolUse")
+
+	// Also verify decision events publish to JetStream.
+	subDecision, err := js.SubscribeSync(SubjectDecisionPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe decision: %v", err)
+	}
+	defer subDecision.Unsubscribe()
+
+	payload := DecisionEventPayload{
+		DecisionID: "js-test-decision",
+		Question:   "Which DB?",
+		Options:    2,
+	}
+	payloadJSON, _ := json.Marshal(payload)
+
+	_, err = bus.Dispatch(context.Background(), &Event{
+		Type: EventDecisionCreated,
+		Raw:  payloadJSON,
+	})
+	if err != nil {
+		t.Fatalf("dispatch decision: %v", err)
+	}
+
+	msg, err := subDecision.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected JetStream decision message: %v", err)
+	}
+
+	expectedSubject := SubjectForEvent(EventDecisionCreated)
+	if msg.Subject != expectedSubject {
+		t.Errorf("expected subject %q, got %q", expectedSubject, msg.Subject)
+	}
+
+	var decoded DecisionEventPayload
+	if err := json.Unmarshal(msg.Data, &decoded); err != nil {
+		t.Fatalf("unmarshal decision: %v", err)
+	}
+	if decoded.DecisionID != "js-test-decision" {
+		t.Errorf("expected decision_id %q, got %q", "js-test-decision", decoded.DecisionID)
+	}
 }
 
 func TestJetStreamPublishErrorDoesNotAffectResult(t *testing.T) {

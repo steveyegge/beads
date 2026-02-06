@@ -14,11 +14,14 @@ import (
 
 var busEmitCmd = &cobra.Command{
 	Use:   "emit",
-	Short: "Dispatch a hook event through the event bus",
-	Long: `Dispatch a Claude Code hook event through the event bus.
+	Short: "Dispatch an event through the event bus",
+	Long: `Dispatch an event through the event bus.
 
-Reads the hook event JSON from stdin (as provided by Claude Code hooks)
-and dispatches it through registered handlers.
+For Claude Code hook events, reads the hook event JSON from stdin:
+  bd bus emit --hook=Stop
+
+For non-hook events (e.g. decision events), use --event and --payload:
+  bd bus emit --event=DecisionCreated --payload='{"decision_id":"x",...}'
 
 Dispatch priority:
   1. If bd daemon is running (RPC): send to daemon
@@ -29,38 +32,57 @@ Exit codes:
   2 - Event blocked by a handler (gate check failed)
 
 Examples:
-  # In Claude Code settings.json hook commands:
+  # Claude Code hook (reads stdin):
   bd bus emit --hook=Stop
   bd bus emit --hook=PreToolUse
-  bd bus emit --hook=SessionStart`,
+
+  # Decision event (inline payload):
+  bd bus emit --event=DecisionCreated --payload='{"decision_id":"od-xyz","question":"Which approach?"}'`,
 	RunE: runBusEmit,
 }
 
 func runBusEmit(cmd *cobra.Command, args []string) error {
 	hookType, _ := cmd.Flags().GetString("hook")
-	if hookType == "" {
-		return fmt.Errorf("--hook flag is required")
-	}
+	eventType, _ := cmd.Flags().GetString("event")
+	payloadFlag, _ := cmd.Flags().GetString("payload")
 
-	// Read stdin (Claude Code sends hook event JSON on stdin).
-	stdinData, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		return fmt.Errorf("read stdin: %w", err)
+	// Determine the event type from either --hook or --event.
+	var resolvedType string
+	var eventData []byte
+
+	switch {
+	case hookType != "" && eventType != "":
+		return fmt.Errorf("--hook and --event are mutually exclusive")
+	case hookType != "":
+		resolvedType = hookType
+		// Read stdin (Claude Code sends hook event JSON on stdin).
+		var err error
+		eventData, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+	case eventType != "":
+		resolvedType = eventType
+		if payloadFlag != "" {
+			eventData = []byte(payloadFlag)
+		}
+	default:
+		return fmt.Errorf("either --hook or --event is required")
 	}
 
 	// Extract session_id from the event JSON if present.
 	var eventMeta struct {
 		SessionID string `json:"session_id"`
 	}
-	if len(stdinData) > 0 {
-		_ = json.Unmarshal(stdinData, &eventMeta)
+	if len(eventData) > 0 {
+		_ = json.Unmarshal(eventData, &eventMeta)
 	}
 
 	// Try daemon RPC first.
 	if daemonClient != nil {
 		emitArgs := &rpc.BusEmitArgs{
-			HookType:  hookType,
-			EventJSON: stdinData,
+			HookType:  resolvedType,
+			EventJSON: eventData,
 			SessionID: eventMeta.SessionID,
 		}
 
@@ -82,14 +104,16 @@ func runBusEmit(cmd *cobra.Command, args []string) error {
 	// Local dispatch: create a bus with no handlers (passthrough).
 	bus := eventbus.New()
 	event := &eventbus.Event{
-		Type:      eventbus.EventType(hookType),
+		Type:      eventbus.EventType(resolvedType),
 		SessionID: eventMeta.SessionID,
-		Raw:       stdinData,
+		Raw:       eventData,
 	}
 
-	// Parse remaining fields from stdin JSON.
-	if len(stdinData) > 0 {
-		_ = json.Unmarshal(stdinData, event)
+	// Parse remaining fields from stdin/payload JSON into the event.
+	if len(eventData) > 0 {
+		_ = json.Unmarshal(eventData, event)
+		// Ensure Type is not overwritten by JSON field.
+		event.Type = eventbus.EventType(resolvedType)
 	}
 
 	result, err := bus.Dispatch(context.Background(), event)
@@ -136,6 +160,7 @@ func outputEmitResult(result *rpc.BusEmitResult) error {
 
 func init() {
 	busEmitCmd.Flags().String("hook", "", "Hook event type (e.g., Stop, PreToolUse, SessionStart)")
-	_ = busEmitCmd.MarkFlagRequired("hook")
+	busEmitCmd.Flags().String("event", "", "Non-hook event type (e.g., DecisionCreated, DecisionResponded)")
+	busEmitCmd.Flags().String("payload", "", "JSON payload for --event (alternative to stdin)")
 	busCmd.AddCommand(busEmitCmd)
 }

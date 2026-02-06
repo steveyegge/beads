@@ -2,10 +2,13 @@ package eventbus
 
 import "encoding/json"
 
-// EventType maps 1:1 to Claude Code hook events.
+// EventType identifies an event flowing through the bus.
+// Hook events map 1:1 to Claude Code hook events; decision events are the
+// first non-hook event category.
 type EventType string
 
 const (
+	// Claude Code hook events.
 	EventSessionStart       EventType = "SessionStart"
 	EventUserPromptSubmit   EventType = "UserPromptSubmit"
 	EventPreToolUse         EventType = "PreToolUse"
@@ -22,6 +25,12 @@ const (
 	EventAdviceCreated EventType = "advice.created"
 	EventAdviceUpdated EventType = "advice.updated"
 	EventAdviceDeleted EventType = "advice.deleted"
+
+	// Decision events (od-k3o.15.1).
+	EventDecisionCreated   EventType = "DecisionCreated"
+	EventDecisionResponded EventType = "DecisionResponded"
+	EventDecisionEscalated EventType = "DecisionEscalated"
+	EventDecisionExpired   EventType = "DecisionExpired"
 )
 
 // Event represents a single hook event flowing through the bus.
@@ -43,6 +52,31 @@ type Event struct {
 	AgentID      string                 `json:"agent_id,omitempty"`
 	AgentType    string                 `json:"agent_type,omitempty"`
 	Error        string                 `json:"error,omitempty"`
+}
+
+// IsDecisionEvent returns true if the event type belongs to the decision
+// event category (as opposed to Claude Code hook events).
+func (t EventType) IsDecisionEvent() bool {
+	switch t {
+	case EventDecisionCreated, EventDecisionResponded,
+		EventDecisionEscalated, EventDecisionExpired:
+		return true
+	}
+	return false
+}
+
+// DecisionEventPayload carries data for decision events in Event.Raw.
+type DecisionEventPayload struct {
+	DecisionID  string `json:"decision_id"`
+	Question    string `json:"question"`
+	Urgency     string `json:"urgency,omitempty"`
+	RequestedBy string `json:"requested_by,omitempty"`
+	Options     int    `json:"option_count"`
+	// Populated for responded/escalated events.
+	ChosenIndex int    `json:"chosen_index,omitempty"`
+	ChosenLabel string `json:"chosen_label,omitempty"`
+	ResolvedBy  string `json:"resolved_by,omitempty"`
+	Rationale   string `json:"rationale,omitempty"`
 }
 
 // Result aggregates handler responses for an event.

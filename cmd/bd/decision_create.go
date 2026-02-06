@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/notification"
@@ -305,6 +306,15 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	if hookRunner != nil {
 		_ = hookRunner.RunDecisionSync(hooks.EventDecisionCreate, decisionPoint, nil, requestedBy)
 	}
+
+	// Emit decision event to bus (od-k3o.15.1).
+	emitDecisionEvent(eventbus.EventDecisionCreated, eventbus.DecisionEventPayload{
+		DecisionID:  decisionID,
+		Question:    prompt,
+		Urgency:     urgency,
+		RequestedBy: requestedBy,
+		Options:     len(options),
+	})
 
 	// Output
 	if jsonOutput {
