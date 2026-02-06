@@ -379,6 +379,22 @@ func operationToHTTPMethod(operation string) string {
 		OpAgentPodDeregister: "AgentPodDeregister",
 		OpAgentPodStatus:     "AgentPodStatus",
 		OpAgentPodList:       "AgentPodList",
+
+		// VCS operations (bd-ma0s.2)
+		OpVcsCommit:        "VcsCommit",
+		OpVcsPush:          "VcsPush",
+		OpVcsPull:          "VcsPull",
+		OpVcsMerge:         "VcsMerge",
+		OpVcsBranchCreate:  "VcsBranchCreate",
+		OpVcsBranchDelete:  "VcsBranchDelete",
+		OpVcsCheckout:      "VcsCheckout",
+		OpVcsActiveBranch:  "VcsActiveBranch",
+		OpVcsStatus:        "VcsStatus",
+		OpVcsHasUncommitted: "VcsHasUncommitted",
+		OpVcsBranches:      "VcsBranches",
+		OpVcsCurrentCommit: "VcsCurrentCommit",
+		OpVcsCommitExists:  "VcsCommitExists",
+		OpVcsLog:           "VcsLog",
 	}
 
 	return methodMap[operation]

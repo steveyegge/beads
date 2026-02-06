@@ -139,6 +139,22 @@ const (
 	OpAgentPodDeregister = "agent_pod_deregister"
 	OpAgentPodStatus     = "agent_pod_status"
 	OpAgentPodList       = "agent_pod_list"
+
+	// VCS operations (bd-ma0s.2)
+	OpVcsCommit        = "vcs_commit"
+	OpVcsPush          = "vcs_push"
+	OpVcsPull          = "vcs_pull"
+	OpVcsMerge         = "vcs_merge"
+	OpVcsBranchCreate  = "vcs_branch_create"
+	OpVcsBranchDelete  = "vcs_branch_delete"
+	OpVcsCheckout      = "vcs_checkout"
+	OpVcsActiveBranch  = "vcs_active_branch"
+	OpVcsStatus        = "vcs_status"
+	OpVcsHasUncommitted = "vcs_has_uncommitted"
+	OpVcsBranches      = "vcs_branches"
+	OpVcsCurrentCommit = "vcs_current_commit"
+	OpVcsCommitExists  = "vcs_commit_exists"
+	OpVcsLog           = "vcs_log"
 )
 
 // Request represents an RPC request from client to daemon
@@ -1650,4 +1666,136 @@ type AgentPodInfo struct {
 // AgentPodListResult is returned from pod list queries.
 type AgentPodListResult struct {
 	Agents []AgentPodInfo `json:"agents"`
+}
+
+// ===== VCS Operations (bd-ma0s.2) =====
+
+// VcsCommitArgs represents arguments for the vcs_commit operation.
+type VcsCommitArgs struct {
+	Message string `json:"message"` // Commit message
+}
+
+// VcsCommitResult represents the result of a vcs_commit operation.
+type VcsCommitResult struct {
+	Success bool `json:"success"`
+}
+
+// VcsPushResult represents the result of a vcs_push operation.
+type VcsPushResult struct {
+	Success bool `json:"success"`
+}
+
+// VcsPullResult represents the result of a vcs_pull operation.
+type VcsPullResult struct {
+	Success bool `json:"success"`
+}
+
+// VcsMergeArgs represents arguments for the vcs_merge operation.
+type VcsMergeArgs struct {
+	Branch string `json:"branch"` // Branch to merge into current branch
+}
+
+// VcsConflict represents a single merge conflict.
+type VcsConflict struct {
+	IssueID     string `json:"issue_id,omitempty"`
+	Field       string `json:"field,omitempty"`
+	OursValue   string `json:"ours_value,omitempty"`
+	TheirsValue string `json:"theirs_value,omitempty"`
+}
+
+// VcsMergeResult represents the result of a vcs_merge operation.
+type VcsMergeResult struct {
+	Success   bool          `json:"success"`
+	Conflicts []VcsConflict `json:"conflicts,omitempty"`
+}
+
+// VcsBranchCreateArgs represents arguments for the vcs_branch_create operation.
+type VcsBranchCreateArgs struct {
+	Name string `json:"name"` // Branch name to create
+}
+
+// VcsBranchCreateResult represents the result of a vcs_branch_create operation.
+type VcsBranchCreateResult struct {
+	Name string `json:"name"`
+}
+
+// VcsBranchDeleteArgs represents arguments for the vcs_branch_delete operation.
+type VcsBranchDeleteArgs struct {
+	Name string `json:"name"` // Branch name to delete
+}
+
+// VcsBranchDeleteResult represents the result of a vcs_branch_delete operation.
+type VcsBranchDeleteResult struct {
+	Name string `json:"name"`
+}
+
+// VcsCheckoutArgs represents arguments for the vcs_checkout operation.
+type VcsCheckoutArgs struct {
+	Branch string `json:"branch"` // Branch to check out
+}
+
+// VcsCheckoutResult represents the result of a vcs_checkout operation.
+type VcsCheckoutResult struct {
+	Branch string `json:"branch"`
+}
+
+// VcsActiveBranchResult represents the result of a vcs_active_branch operation.
+type VcsActiveBranchResult struct {
+	Branch string `json:"branch"`
+}
+
+// VcsStatusEntry represents a changed table in Dolt status.
+type VcsStatusEntry struct {
+	Table  string `json:"table"`
+	Status string `json:"status"` // "new", "modified", "deleted"
+}
+
+// VcsStatusResult represents the result of a vcs_status operation.
+type VcsStatusResult struct {
+	Staged   []VcsStatusEntry `json:"staged"`
+	Unstaged []VcsStatusEntry `json:"unstaged"`
+}
+
+// VcsHasUncommittedResult represents the result of a vcs_has_uncommitted operation.
+type VcsHasUncommittedResult struct {
+	HasUncommitted bool `json:"has_uncommitted"`
+}
+
+// VcsBranchesResult represents the result of a vcs_branches operation.
+type VcsBranchesResult struct {
+	Branches []string `json:"branches"`
+}
+
+// VcsCurrentCommitResult represents the result of a vcs_current_commit operation.
+type VcsCurrentCommitResult struct {
+	Hash string `json:"hash"`
+}
+
+// VcsCommitExistsArgs represents arguments for the vcs_commit_exists operation.
+type VcsCommitExistsArgs struct {
+	Hash string `json:"hash"` // Commit hash to check
+}
+
+// VcsCommitExistsResult represents the result of a vcs_commit_exists operation.
+type VcsCommitExistsResult struct {
+	Exists bool `json:"exists"`
+}
+
+// VcsLogArgs represents arguments for the vcs_log operation.
+type VcsLogArgs struct {
+	Limit int `json:"limit,omitempty"` // Max entries to return (default 10)
+}
+
+// VcsLogEntry represents a single commit log entry.
+type VcsLogEntry struct {
+	Hash    string    `json:"hash"`
+	Author  string    `json:"author"`
+	Email   string    `json:"email"`
+	Date    time.Time `json:"date"`
+	Message string    `json:"message"`
+}
+
+// VcsLogResult represents the result of a vcs_log operation.
+type VcsLogResult struct {
+	Commits []VcsLogEntry `json:"commits"`
 }

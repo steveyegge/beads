@@ -1350,6 +1350,190 @@ func (c *Client) AgentPodList(args *AgentPodListArgs) (*AgentPodListResult, erro
 	return &result, nil
 }
 
+// VCS operations (bd-ma0s.2)
+
+// VcsCommit creates a Dolt commit with the given message.
+func (c *Client) VcsCommit(args *VcsCommitArgs) (*VcsCommitResult, error) {
+	resp, err := c.Execute(OpVcsCommit, args)
+	if err != nil {
+		return nil, err
+	}
+	var result VcsCommitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_commit response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsPush pushes commits to the configured remote.
+func (c *Client) VcsPush() (*VcsPushResult, error) {
+	resp, err := c.Execute(OpVcsPush, struct{}{})
+	if err != nil {
+		return nil, err
+	}
+	var result VcsPushResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_push response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsPull pulls changes from the configured remote.
+func (c *Client) VcsPull() (*VcsPullResult, error) {
+	resp, err := c.Execute(OpVcsPull, struct{}{})
+	if err != nil {
+		return nil, err
+	}
+	var result VcsPullResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_pull response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsMerge merges a branch into the current branch.
+func (c *Client) VcsMerge(args *VcsMergeArgs) (*VcsMergeResult, error) {
+	resp, err := c.Execute(OpVcsMerge, args)
+	if err != nil {
+		return nil, err
+	}
+	var result VcsMergeResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_merge response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsBranchCreate creates a new branch.
+func (c *Client) VcsBranchCreate(args *VcsBranchCreateArgs) (*VcsBranchCreateResult, error) {
+	resp, err := c.Execute(OpVcsBranchCreate, args)
+	if err != nil {
+		return nil, err
+	}
+	var result VcsBranchCreateResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_branch_create response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsBranchDelete deletes a branch.
+func (c *Client) VcsBranchDelete(args *VcsBranchDeleteArgs) (*VcsBranchDeleteResult, error) {
+	resp, err := c.Execute(OpVcsBranchDelete, args)
+	if err != nil {
+		return nil, err
+	}
+	var result VcsBranchDeleteResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_branch_delete response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsCheckout switches to the specified branch.
+func (c *Client) VcsCheckout(args *VcsCheckoutArgs) (*VcsCheckoutResult, error) {
+	resp, err := c.Execute(OpVcsCheckout, args)
+	if err != nil {
+		return nil, err
+	}
+	var result VcsCheckoutResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_checkout response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsActiveBranch returns the current branch name.
+func (c *Client) VcsActiveBranch() (*VcsActiveBranchResult, error) {
+	resp, err := c.Execute(OpVcsActiveBranch, struct{}{})
+	if err != nil {
+		return nil, err
+	}
+	var result VcsActiveBranchResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_active_branch response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsStatus returns the current Dolt status (staged/unstaged changes).
+func (c *Client) VcsStatus() (*VcsStatusResult, error) {
+	resp, err := c.Execute(OpVcsStatus, struct{}{})
+	if err != nil {
+		return nil, err
+	}
+	var result VcsStatusResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_status response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsHasUncommitted checks if there are any uncommitted changes.
+func (c *Client) VcsHasUncommitted() (*VcsHasUncommittedResult, error) {
+	resp, err := c.Execute(OpVcsHasUncommitted, struct{}{})
+	if err != nil {
+		return nil, err
+	}
+	var result VcsHasUncommittedResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_has_uncommitted response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsBranches returns the names of all branches.
+func (c *Client) VcsBranches() (*VcsBranchesResult, error) {
+	resp, err := c.Execute(OpVcsBranches, struct{}{})
+	if err != nil {
+		return nil, err
+	}
+	var result VcsBranchesResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_branches response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsCurrentCommit returns the hash of the current HEAD commit.
+func (c *Client) VcsCurrentCommit() (*VcsCurrentCommitResult, error) {
+	resp, err := c.Execute(OpVcsCurrentCommit, struct{}{})
+	if err != nil {
+		return nil, err
+	}
+	var result VcsCurrentCommitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_current_commit response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsCommitExists checks if a commit hash exists in the repository.
+func (c *Client) VcsCommitExists(args *VcsCommitExistsArgs) (*VcsCommitExistsResult, error) {
+	resp, err := c.Execute(OpVcsCommitExists, args)
+	if err != nil {
+		return nil, err
+	}
+	var result VcsCommitExistsResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_commit_exists response: %w", err)
+	}
+	return &result, nil
+}
+
+// VcsLog returns recent commit history.
+func (c *Client) VcsLog(args *VcsLogArgs) (*VcsLogResult, error) {
+	resp, err := c.Execute(OpVcsLog, args)
+	if err != nil {
+		return nil, err
+	}
+	var result VcsLogResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vcs_log response: %w", err)
+	}
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

@@ -408,6 +408,35 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleAgentPodStatus(req)
 	case OpAgentPodList:
 		resp = s.handleAgentPodList(req)
+	// VCS operations (bd-ma0s.2)
+	case OpVcsCommit:
+		resp = s.handleVcsCommit(req)
+	case OpVcsPush:
+		resp = s.handleVcsPush(req)
+	case OpVcsPull:
+		resp = s.handleVcsPull(req)
+	case OpVcsMerge:
+		resp = s.handleVcsMerge(req)
+	case OpVcsBranchCreate:
+		resp = s.handleVcsBranchCreate(req)
+	case OpVcsBranchDelete:
+		resp = s.handleVcsBranchDelete(req)
+	case OpVcsCheckout:
+		resp = s.handleVcsCheckout(req)
+	case OpVcsActiveBranch:
+		resp = s.handleVcsActiveBranch(req)
+	case OpVcsStatus:
+		resp = s.handleVcsStatus(req)
+	case OpVcsHasUncommitted:
+		resp = s.handleVcsHasUncommitted(req)
+	case OpVcsBranches:
+		resp = s.handleVcsBranches(req)
+	case OpVcsCurrentCommit:
+		resp = s.handleVcsCurrentCommit(req)
+	case OpVcsCommitExists:
+		resp = s.handleVcsCommitExists(req)
+	case OpVcsLog:
+		resp = s.handleVcsLog(req)
 	default:
 		return Response{
 			Success: false,
