@@ -158,7 +158,7 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 	if issue.ID == "" {
 		// Get configured prefix
 		var prefix string
-		err := t.tx.QueryRowContext(ctx, `SELECT value FROM config WHERE key = 'issue_prefix'`).Scan(&prefix)
+		err := t.tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = 'issue_prefix'").Scan(&prefix)
 		if err != nil || prefix == "" {
 			prefix = "hq-" // fallback default
 		}

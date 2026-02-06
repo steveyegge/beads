@@ -21,8 +21,19 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
-// handleExport handles the export operation
+// handleExport handles the export operation.
+// Uses single-flight guard to prevent concurrent exports from piling up
+// slow IN-clause queries that crush Dolt CPU.
 func (s *Server) handleExport(req *Request) Response {
+	// Single-flight guard: only one export at a time (mirrors import guard)
+	if !s.exportInProgress.CompareAndSwap(false, true) {
+		return Response{
+			Success: true,
+			Data:    []byte(`{"skipped":true,"message":"export already in progress"}`),
+		}
+	}
+	defer s.exportInProgress.Store(false)
+
 	cycleStart := time.Now()
 
 	var exportArgs ExportArgs

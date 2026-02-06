@@ -85,6 +85,8 @@ type Server struct {
 	readyChan chan struct{}
 	// Auto-import single-flight guard
 	importInProgress atomic.Bool
+	// Auto-export single-flight guard (prevents concurrent exports piling up stuck queries)
+	exportInProgress atomic.Bool
 	// Mutation events for event-driven daemon
 	mutationChan    chan MutationEvent
 	droppedEvents   atomic.Int64 // Counter for dropped mutation events

@@ -23,7 +23,19 @@ import (
 
 // handleSyncExport handles the sync_export RPC operation (bd-wn2g).
 // This is the daemon-side implementation of `bd sync` default behavior (export to JSONL).
+// Uses single-flight guard to prevent concurrent exports from piling up
+// slow IN-clause queries that crush Dolt CPU.
 func (s *Server) handleSyncExport(req *Request) Response {
+	// Single-flight guard: only one export at a time
+	if !s.exportInProgress.CompareAndSwap(false, true) {
+		data, _ := json.Marshal(SyncExportResult{
+			Skipped: true,
+			Message: "export already in progress",
+		})
+		return Response{Success: true, Data: data}
+	}
+	defer s.exportInProgress.Store(false)
+
 	var args SyncExportArgs
 	if len(req.Args) > 0 {
 		if err := json.Unmarshal(req.Args, &args); err != nil {

@@ -226,113 +226,68 @@ func (s *DoltStore) GetAllDependencyRecords(ctx context.Context) (map[string][]*
 	return result, rows.Err()
 }
 
-// GetDependencyRecordsForIssues returns dependency records for specific issues
+// GetDependencyRecordsForIssues returns dependency records for specific issues.
+// Uses batched IN clauses to avoid oversized queries that crush Dolt CPU.
 func (s *DoltStore) GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error) {
-	if len(issueIDs) == 0 {
-		return make(map[string][]*types.Dependency), nil
-	}
-
-	placeholders := make([]string, len(issueIDs))
-	args := make([]interface{}, len(issueIDs))
-	for i, id := range issueIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	inClause := strings.Join(placeholders, ",")
-
-	// nolint:gosec // G201: inClause contains only ? placeholders, actual values passed via args
-	query := fmt.Sprintf(`
-		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
-		FROM dependencies
-		WHERE issue_id IN (%s)
-		ORDER BY issue_id
-	`, inClause)
-
-	rows, err := s.queryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get dependency records for issues: %w", err)
-	}
-	defer rows.Close()
-
-	result := make(map[string][]*types.Dependency)
-	for rows.Next() {
-		dep, err := scanDependencyRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		result[dep.IssueID] = append(result[dep.IssueID], dep)
-	}
-	return result, rows.Err()
+	return BatchIN(ctx, s.db, issueIDs, DefaultBatchSize,
+		`SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id FROM dependencies WHERE issue_id IN (%s) ORDER BY issue_id`,
+		func(rows *sql.Rows) (string, *types.Dependency, error) {
+			dep, err := scanDependencyRow(rows)
+			if err != nil {
+				return "", nil, err
+			}
+			return dep.IssueID, dep, nil
+		},
+	)
 }
 
-// GetDependencyCounts returns dependency counts for multiple issues
+// GetDependencyCounts returns dependency counts for multiple issues.
+// Uses batched IN clauses to avoid oversized queries that crush Dolt CPU.
 func (s *DoltStore) GetDependencyCounts(ctx context.Context, issueIDs []string) (map[string]*types.DependencyCounts, error) {
 	if len(issueIDs) == 0 {
 		return make(map[string]*types.DependencyCounts), nil
 	}
-
-	placeholders := make([]string, len(issueIDs))
-	args := make([]interface{}, len(issueIDs))
-	for i, id := range issueIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	inClause := strings.Join(placeholders, ",")
-
-	// Query for dependencies (blockers)
-	// nolint:gosec // G201: inClause contains only ? placeholders, actual values passed via args
-	depQuery := fmt.Sprintf(`
-		SELECT issue_id, COUNT(*) as cnt
-		FROM dependencies
-		WHERE issue_id IN (%s) AND type = 'blocks'
-		GROUP BY issue_id
-	`, inClause)
-
-	depRows, err := s.queryContext(ctx, depQuery, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get dependency counts: %w", err)
-	}
-	defer depRows.Close()
 
 	result := make(map[string]*types.DependencyCounts)
 	for _, id := range issueIDs {
 		result[id] = &types.DependencyCounts{}
 	}
 
-	for depRows.Next() {
-		var id string
-		var cnt int
-		if err := depRows.Scan(&id, &cnt); err != nil {
-			return nil, fmt.Errorf("failed to scan dep count: %w", err)
-		}
-		if c, ok := result[id]; ok {
-			c.DependencyCount = cnt
+	// Query for dependencies (blockers) in batches
+	depCounts, err := BatchIN(ctx, s.db, issueIDs, DefaultBatchSize,
+		`SELECT issue_id, COUNT(*) as cnt FROM dependencies WHERE issue_id IN (%s) AND type = 'blocks' GROUP BY issue_id`,
+		func(rows *sql.Rows) (string, int, error) {
+			var id string
+			var cnt int
+			err := rows.Scan(&id, &cnt)
+			return id, cnt, err
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dependency counts: %w", err)
+	}
+	for id, counts := range depCounts {
+		if c, ok := result[id]; ok && len(counts) > 0 {
+			c.DependencyCount = counts[0]
 		}
 	}
 
-	// Query for dependents (blocking)
-	// nolint:gosec // G201: inClause contains only ? placeholders, actual values passed via args
-	blockingQuery := fmt.Sprintf(`
-		SELECT depends_on_id, COUNT(*) as cnt
-		FROM dependencies
-		WHERE depends_on_id IN (%s) AND type = 'blocks'
-		GROUP BY depends_on_id
-	`, inClause)
-
-	blockingRows, err := s.queryContext(ctx, blockingQuery, args...)
+	// Query for dependents (blocking) in batches
+	blockingCounts, err := BatchIN(ctx, s.db, issueIDs, DefaultBatchSize,
+		`SELECT depends_on_id, COUNT(*) as cnt FROM dependencies WHERE depends_on_id IN (%s) AND type = 'blocks' GROUP BY depends_on_id`,
+		func(rows *sql.Rows) (string, int, error) {
+			var id string
+			var cnt int
+			err := rows.Scan(&id, &cnt)
+			return id, cnt, err
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get blocking counts: %w", err)
 	}
-	defer blockingRows.Close()
-
-	for blockingRows.Next() {
-		var id string
-		var cnt int
-		if err := blockingRows.Scan(&id, &cnt); err != nil {
-			return nil, fmt.Errorf("failed to scan blocking count: %w", err)
-		}
-		if c, ok := result[id]; ok {
-			c.DependentCount = cnt
+	for id, counts := range blockingCounts {
+		if c, ok := result[id]; ok && len(counts) > 0 {
+			c.DependentCount = counts[0]
 		}
 	}
 

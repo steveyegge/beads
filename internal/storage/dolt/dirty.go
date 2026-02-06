@@ -42,32 +42,35 @@ func (s *DoltStore) GetDirtyIssueHash(ctx context.Context, issueID string) (stri
 	return hash, nil
 }
 
-// ClearDirtyIssuesByID removes specific issues from the dirty list
+// ClearDirtyIssuesByID removes specific issues from the dirty list.
+// Uses batched deletes to avoid oversized IN clauses that crush Dolt CPU.
 func (s *DoltStore) ClearDirtyIssuesByID(ctx context.Context, issueIDs []string) error {
 	if len(issueIDs) == 0 {
 		return nil
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	for i := 0; i < len(issueIDs); i += DefaultBatchSize {
+		end := i + DefaultBatchSize
+		if end > len(issueIDs) {
+			end = len(issueIDs)
+		}
+		batch := issueIDs[i:end]
 
-	placeholders := make([]string, len(issueIDs))
-	args := make([]interface{}, len(issueIDs))
-	for i, id := range issueIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
+		placeholders := make([]string, len(batch))
+		args := make([]interface{}, len(batch))
+		for j, id := range batch {
+			placeholders[j] = "?"
+			args[j] = id
+		}
 
-	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
-	query := fmt.Sprintf("DELETE FROM dirty_issues WHERE issue_id IN (%s)", strings.Join(placeholders, ","))
-	_, err = tx.ExecContext(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to clear dirty issues: %w", err)
+		// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
+		query := fmt.Sprintf("DELETE FROM dirty_issues WHERE issue_id IN (%s)", strings.Join(placeholders, ","))
+		_, err := s.db.ExecContext(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("failed to clear dirty issues: %w", err)
+		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // GetExportHash returns the last export hash for an issue
