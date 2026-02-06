@@ -3,8 +3,10 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -884,5 +886,332 @@ func TestAdvice_ValidOnFailureModes(t *testing.T) {
 				t.Errorf("Expected type 'advice', got %q", issue.IssueType)
 			}
 		})
+	}
+}
+
+// ============================================================================
+// Advice Bus Event Tests (bd-z4cu.2)
+// ============================================================================
+
+// adviceEventRecorder is a test handler that records dispatched advice events.
+type adviceEventRecorder struct {
+	mu     sync.Mutex
+	events []recordedAdviceEvent
+}
+
+type recordedAdviceEvent struct {
+	Type    eventbus.EventType
+	Payload AdviceEventPayload
+}
+
+func (r *adviceEventRecorder) ID() string { return "advice-event-recorder" }
+func (r *adviceEventRecorder) Handles() []eventbus.EventType {
+	return []eventbus.EventType{
+		eventbus.EventAdviceCreated,
+		eventbus.EventAdviceUpdated,
+		eventbus.EventAdviceDeleted,
+	}
+}
+func (r *adviceEventRecorder) Priority() int { return 1 }
+func (r *adviceEventRecorder) Handle(_ context.Context, event *eventbus.Event, _ *eventbus.Result) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var payload AdviceEventPayload
+	if len(event.Raw) > 0 {
+		json.Unmarshal(event.Raw, &payload)
+	}
+	r.events = append(r.events, recordedAdviceEvent{
+		Type:    event.Type,
+		Payload: payload,
+	})
+	return nil
+}
+func (r *adviceEventRecorder) getEvents() []recordedAdviceEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]recordedAdviceEvent, len(r.events))
+	copy(out, r.events)
+	return out
+}
+
+func TestAdvice_BusEvent_CreateEmitsAdviceCreated(t *testing.T) {
+	server, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+
+	recorder := &adviceEventRecorder{}
+	bus := eventbus.New()
+	bus.Register(recorder)
+	server.SetBus(bus)
+
+	createArgs := &CreateArgs{
+		Title:               "Run linter before commit",
+		Description:         "Ensures code passes lint checks",
+		IssueType:           "advice",
+		Priority:            2,
+		Labels:              []string{"rig:gastown", "role:polecat"},
+		AdviceHookCommand:   "make lint",
+		AdviceHookTrigger:   "before-commit",
+		AdviceHookTimeout:   45,
+		AdviceHookOnFailure: "block",
+	}
+	resp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("Create failed: %s", resp.Error)
+	}
+
+	var issue types.Issue
+	if err := json.Unmarshal(resp.Data, &issue); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	events := recorder.getEvents()
+	if len(events) != 1 {
+		t.Fatalf("Expected 1 advice event, got %d", len(events))
+	}
+
+	ev := events[0]
+	if ev.Type != eventbus.EventAdviceCreated {
+		t.Errorf("Expected event type %q, got %q", eventbus.EventAdviceCreated, ev.Type)
+	}
+	if ev.Payload.ID != issue.ID {
+		t.Errorf("Expected payload ID %q, got %q", issue.ID, ev.Payload.ID)
+	}
+	if ev.Payload.Title != "Run linter before commit" {
+		t.Errorf("Expected payload title %q, got %q", "Run linter before commit", ev.Payload.Title)
+	}
+	if ev.Payload.AdviceHookCommand != "make lint" {
+		t.Errorf("Expected hook command %q, got %q", "make lint", ev.Payload.AdviceHookCommand)
+	}
+	if ev.Payload.AdviceHookTrigger != "before-commit" {
+		t.Errorf("Expected hook trigger %q, got %q", "before-commit", ev.Payload.AdviceHookTrigger)
+	}
+	if len(ev.Payload.Labels) != 2 {
+		t.Errorf("Expected 2 labels, got %d: %v", len(ev.Payload.Labels), ev.Payload.Labels)
+	}
+}
+
+func TestAdvice_BusEvent_UpdateEmitsAdviceUpdated(t *testing.T) {
+	server, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+
+	recorder := &adviceEventRecorder{}
+	bus := eventbus.New()
+	bus.Register(recorder)
+	server.SetBus(bus)
+
+	// Create advice first
+	createArgs := &CreateArgs{
+		Title:       "Original advice title",
+		Description: "Test advice",
+		IssueType:   "advice",
+		Priority:    2,
+	}
+	createResp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if !createResp.Success {
+		t.Fatalf("Create failed: %s", createResp.Error)
+	}
+
+	var issue types.Issue
+	if err := json.Unmarshal(createResp.Data, &issue); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	// Update the advice
+	newTitle := "Updated advice title"
+	updateArgs := &UpdateArgs{
+		ID:    issue.ID,
+		Title: &newTitle,
+	}
+	updateResp, err := client.Update(updateArgs)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if !updateResp.Success {
+		t.Fatalf("Update failed: %s", updateResp.Error)
+	}
+
+	events := recorder.getEvents()
+	// Should have 2 events: 1 created + 1 updated
+	if len(events) != 2 {
+		t.Fatalf("Expected 2 advice events, got %d", len(events))
+	}
+
+	ev := events[1]
+	if ev.Type != eventbus.EventAdviceUpdated {
+		t.Errorf("Expected event type %q, got %q", eventbus.EventAdviceUpdated, ev.Type)
+	}
+	if ev.Payload.ID != issue.ID {
+		t.Errorf("Expected payload ID %q, got %q", issue.ID, ev.Payload.ID)
+	}
+	if ev.Payload.Title != "Updated advice title" {
+		t.Errorf("Expected payload title %q, got %q", "Updated advice title", ev.Payload.Title)
+	}
+}
+
+func TestAdvice_BusEvent_CloseEmitsAdviceDeleted(t *testing.T) {
+	server, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+
+	recorder := &adviceEventRecorder{}
+	bus := eventbus.New()
+	bus.Register(recorder)
+	server.SetBus(bus)
+
+	// Create advice
+	createArgs := &CreateArgs{
+		Title:       "Advice to close",
+		Description: "Test advice",
+		IssueType:   "advice",
+		Priority:    2,
+	}
+	createResp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if !createResp.Success {
+		t.Fatalf("Create failed: %s", createResp.Error)
+	}
+
+	var issue types.Issue
+	if err := json.Unmarshal(createResp.Data, &issue); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	// Close the advice
+	closeResp, err := client.CloseIssue(&CloseArgs{
+		ID:     issue.ID,
+		Reason: "No longer needed",
+	})
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	if !closeResp.Success {
+		t.Fatalf("Close failed: %s", closeResp.Error)
+	}
+
+	events := recorder.getEvents()
+	// Should have 2 events: 1 created + 1 deleted
+	if len(events) != 2 {
+		t.Fatalf("Expected 2 advice events, got %d", len(events))
+	}
+
+	ev := events[1]
+	if ev.Type != eventbus.EventAdviceDeleted {
+		t.Errorf("Expected event type %q, got %q", eventbus.EventAdviceDeleted, ev.Type)
+	}
+	if ev.Payload.ID != issue.ID {
+		t.Errorf("Expected payload ID %q, got %q", issue.ID, ev.Payload.ID)
+	}
+}
+
+func TestAdvice_BusEvent_DeleteEmitsAdviceDeleted(t *testing.T) {
+	server, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+
+	recorder := &adviceEventRecorder{}
+	bus := eventbus.New()
+	bus.Register(recorder)
+	server.SetBus(bus)
+
+	// Create advice
+	createArgs := &CreateArgs{
+		Title:       "Advice to delete",
+		Description: "Test advice",
+		IssueType:   "advice",
+		Priority:    2,
+	}
+	createResp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if !createResp.Success {
+		t.Fatalf("Create failed: %s", createResp.Error)
+	}
+
+	var issue types.Issue
+	if err := json.Unmarshal(createResp.Data, &issue); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	// Delete the advice
+	deleteResp, err := client.Execute(OpDelete, DeleteArgs{
+		IDs:        []string{issue.ID},
+		HardDelete: true,
+	})
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+	if !deleteResp.Success {
+		t.Fatalf("Delete failed: %s", deleteResp.Error)
+	}
+
+	events := recorder.getEvents()
+	// Should have 2 events: 1 created + 1 deleted
+	if len(events) != 2 {
+		t.Fatalf("Expected 2 advice events, got %d", len(events))
+	}
+
+	ev := events[1]
+	if ev.Type != eventbus.EventAdviceDeleted {
+		t.Errorf("Expected event type %q, got %q", eventbus.EventAdviceDeleted, ev.Type)
+	}
+	if ev.Payload.ID != issue.ID {
+		t.Errorf("Expected payload ID %q, got %q", issue.ID, ev.Payload.ID)
+	}
+}
+
+func TestAdvice_BusEvent_NonAdviceDoesNotEmit(t *testing.T) {
+	server, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+
+	recorder := &adviceEventRecorder{}
+	bus := eventbus.New()
+	bus.Register(recorder)
+	server.SetBus(bus)
+
+	// Create a regular task (not advice)
+	createArgs := &CreateArgs{
+		Title:       "Regular task",
+		Description: "Not an advice bead",
+		IssueType:   "task",
+		Priority:    2,
+	}
+	resp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("Create failed: %s", resp.Error)
+	}
+
+	events := recorder.getEvents()
+	if len(events) != 0 {
+		t.Errorf("Expected 0 advice events for non-advice issue, got %d", len(events))
+	}
+}
+
+func TestAdvice_BusEvent_NilBusDoesNotPanic(t *testing.T) {
+	_, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+	// No bus configured - should still succeed
+
+	createArgs := &CreateArgs{
+		Title:       "Advice without bus",
+		Description: "Test advice",
+		IssueType:   "advice",
+		Priority:    2,
+	}
+	resp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("Create should succeed even without bus: %s", resp.Error)
 	}
 }

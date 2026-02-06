@@ -17,6 +17,11 @@ const (
 	EventSubagentStop       EventType = "SubagentStop"
 	EventNotification       EventType = "Notification"
 	EventSessionEnd         EventType = "SessionEnd"
+
+	// Advice CRUD events (bd-z4cu.2)
+	EventAdviceCreated EventType = "advice.created"
+	EventAdviceUpdated EventType = "advice.updated"
+	EventAdviceDeleted EventType = "advice.deleted"
 )
 
 // Event represents a single hook event flowing through the bus.

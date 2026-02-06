@@ -122,3 +122,41 @@ func (s *Server) handleBusHandlers(_ *Request) Response {
 	data, _ := json.Marshal(BusHandlersResult{Handlers: handlers})
 	return Response{Success: true, Data: data}
 }
+
+// AdviceEventPayload is the payload for advice CRUD bus events. (bd-z4cu.2)
+type AdviceEventPayload struct {
+	ID                  string   `json:"id"`
+	Title               string   `json:"title"`
+	Labels              []string `json:"labels,omitempty"`
+	AdviceHookCommand   string   `json:"advice_hook_command,omitempty"`
+	AdviceHookTrigger   string   `json:"advice_hook_trigger,omitempty"`
+	AdviceHookTimeout   int      `json:"advice_hook_timeout,omitempty"`
+	AdviceHookOnFailure string   `json:"advice_hook_on_failure,omitempty"`
+}
+
+// emitAdviceEvent dispatches an advice bus event if the bus is configured. (bd-z4cu.2)
+// No-op if bus is nil — CRUD operations still succeed without a bus.
+func (s *Server) emitAdviceEvent(eventType eventbus.EventType, payload AdviceEventPayload) {
+	s.mu.RLock()
+	bus := s.bus
+	s.mu.RUnlock()
+
+	if bus == nil {
+		return
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	event := &eventbus.Event{
+		Type: eventType,
+		Raw:  raw,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), s.requestTimeout)
+	defer cancel()
+
+	bus.Dispatch(ctx, event)
+}

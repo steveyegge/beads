@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
@@ -751,6 +752,19 @@ func (s *Server) handleCreate(req *Request) Response {
 	// Emit mutation event for event-driven daemon (after transaction commits)
 	s.emitMutation(MutationCreate, issue.ID, issue.Title, issue.Assignee)
 
+	// Emit advice bus event if this is an advice bead (bd-z4cu.2)
+	if issue.IssueType == types.TypeAdvice {
+		s.emitAdviceEvent(eventbus.EventAdviceCreated, AdviceEventPayload{
+			ID:                  issue.ID,
+			Title:               issue.Title,
+			Labels:              createArgs.Labels,
+			AdviceHookCommand:   issue.AdviceHookCommand,
+			AdviceHookTrigger:   issue.AdviceHookTrigger,
+			AdviceHookTimeout:   issue.AdviceHookTimeout,
+			AdviceHookOnFailure: issue.AdviceHookOnFailure,
+		})
+	}
+
 	// Update label cache for the new issue
 	if s.labelCache != nil && len(createArgs.Labels) > 0 {
 		s.labelCache.SetLabels(issue.ID, issue.Labels)
@@ -1063,6 +1077,20 @@ func (s *Server) handleUpdate(req *Request) Response {
 		s.labelCache.InvalidateIssue(updateArgs.ID)
 	}
 
+	// Emit advice bus event if this is an advice bead (bd-z4cu.2)
+	if updatedIssue != nil && updatedIssue.IssueType == types.TypeAdvice {
+		labels, _ := store.GetLabels(ctx, updatedIssue.ID)
+		s.emitAdviceEvent(eventbus.EventAdviceUpdated, AdviceEventPayload{
+			ID:                  updatedIssue.ID,
+			Title:               updatedIssue.Title,
+			Labels:              labels,
+			AdviceHookCommand:   updatedIssue.AdviceHookCommand,
+			AdviceHookTrigger:   updatedIssue.AdviceHookTrigger,
+			AdviceHookTimeout:   updatedIssue.AdviceHookTimeout,
+			AdviceHookOnFailure: updatedIssue.AdviceHookOnFailure,
+		})
+	}
+
 	data, _ := json.Marshal(updatedIssue)
 	return Response{
 		Success: true,
@@ -1309,6 +1337,20 @@ func (s *Server) handleClose(req *Request) Response {
 		NewStatus: "closed",
 	})
 
+	// Emit advice.deleted bus event when closing an advice bead (bd-z4cu.2)
+	if issue != nil && issue.IssueType == types.TypeAdvice {
+		labels, _ := store.GetLabels(ctx, issue.ID)
+		s.emitAdviceEvent(eventbus.EventAdviceDeleted, AdviceEventPayload{
+			ID:                  issue.ID,
+			Title:               issue.Title,
+			Labels:              labels,
+			AdviceHookCommand:   issue.AdviceHookCommand,
+			AdviceHookTrigger:   issue.AdviceHookTrigger,
+			AdviceHookTimeout:   issue.AdviceHookTimeout,
+			AdviceHookOnFailure: issue.AdviceHookOnFailure,
+		})
+	}
+
 	closedIssue, _ := store.GetIssue(ctx, closeArgs.ID)
 
 	// If SuggestNext is requested, find newly unblocked issues (GH#679)
@@ -1413,6 +1455,23 @@ func (s *Server) handleDelete(req *Request) Response {
 		// Use batch delete if: cascade enabled, force enabled, multiple IDs, or dry-run
 		useBatchDelete := deleteArgs.Cascade || deleteArgs.Force || len(deleteArgs.IDs) > 1 || deleteArgs.DryRun
 		if useBatchDelete {
+			// Pre-fetch advice issues for bus events before deletion (bd-z4cu.2)
+			var advicePayloads []AdviceEventPayload
+			for _, id := range deleteArgs.IDs {
+				if iss, err := store.GetIssue(ctx, id); err == nil && iss != nil && iss.IssueType == types.TypeAdvice {
+					labels, _ := store.GetLabels(ctx, id)
+					advicePayloads = append(advicePayloads, AdviceEventPayload{
+						ID:                  iss.ID,
+						Title:               iss.Title,
+						Labels:              labels,
+						AdviceHookCommand:   iss.AdviceHookCommand,
+						AdviceHookTrigger:   iss.AdviceHookTrigger,
+						AdviceHookTimeout:   iss.AdviceHookTimeout,
+						AdviceHookOnFailure: iss.AdviceHookOnFailure,
+					})
+				}
+			}
+
 			result, err := sqlStore.DeleteIssues(ctx, deleteArgs.IDs, deleteArgs.Cascade, deleteArgs.Force, deleteArgs.DryRun)
 			if err != nil {
 				return Response{
@@ -1425,6 +1484,10 @@ func (s *Server) handleDelete(req *Request) Response {
 			if !deleteArgs.DryRun {
 				for _, issueID := range deleteArgs.IDs {
 					s.emitMutation(MutationDelete, issueID, "", "")
+				}
+				// Emit advice.deleted bus events for advice beads (bd-z4cu.2)
+				for _, payload := range advicePayloads {
+					s.emitAdviceEvent(eventbus.EventAdviceDeleted, payload)
 				}
 			}
 
@@ -1527,6 +1590,21 @@ func (s *Server) handleDelete(req *Request) Response {
 
 		// Emit mutation event for event-driven daemon
 		s.emitMutation(MutationDelete, issueID, issue.Title, issue.Assignee)
+
+		// Emit advice.deleted bus event if this is an advice bead (bd-z4cu.2)
+		if issue.IssueType == types.TypeAdvice {
+			labels, _ := store.GetLabels(ctx, issueID)
+			s.emitAdviceEvent(eventbus.EventAdviceDeleted, AdviceEventPayload{
+				ID:                  issue.ID,
+				Title:               issue.Title,
+				Labels:              labels,
+				AdviceHookCommand:   issue.AdviceHookCommand,
+				AdviceHookTrigger:   issue.AdviceHookTrigger,
+				AdviceHookTimeout:   issue.AdviceHookTimeout,
+				AdviceHookOnFailure: issue.AdviceHookOnFailure,
+			})
+		}
+
 		deletedCount++
 	}
 
