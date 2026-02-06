@@ -729,3 +729,85 @@ func TestMigrateOrphanDetection(t *testing.T) {
 		}
 	})
 }
+
+// TestSchemaInitOnPreExistingDB verifies that schema initialization succeeds
+// when the issues table already exists from an older version (without spec_id).
+// Regression test for: "bd init --force fails with no such column: spec_id"
+func TestSchemaInitOnPreExistingDB(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a pre-spec_id issues table (simulates older schema version)
+	_, err = db.Exec(`
+		CREATE TABLE issues (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL CHECK(length(title) <= 500),
+			description TEXT NOT NULL DEFAULT '',
+			design TEXT NOT NULL DEFAULT '',
+			acceptance_criteria TEXT NOT NULL DEFAULT '',
+			notes TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'open',
+			priority INTEGER NOT NULL DEFAULT 2 CHECK(priority >= 0 AND priority <= 4),
+			issue_type TEXT NOT NULL DEFAULT 'task',
+			assignee TEXT,
+			estimated_minutes INTEGER,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			created_by TEXT DEFAULT '',
+			owner TEXT DEFAULT '',
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			closed_at DATETIME,
+			external_ref TEXT,
+			compaction_level INTEGER DEFAULT 0,
+			compacted_at DATETIME,
+			compacted_at_commit TEXT,
+			original_size INTEGER
+		)
+	`)
+	if err != nil {
+		t.Fatalf("failed to create pre-spec_id issues table: %v", err)
+	}
+
+	// Running the schema constant should NOT fail even though the existing
+	// table lacks spec_id. The index for spec_id is created by migration 041,
+	// not by the schema constant.
+	_, err = db.Exec(schema)
+	if err != nil {
+		t.Fatalf("schema init failed on pre-existing DB (the spec_id index bug): %v", err)
+	}
+
+	// Migrations should add the spec_id column and index
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("migrations failed: %v", err)
+	}
+
+	// Verify spec_id column now exists
+	var colExists bool
+	err = db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('issues')
+		WHERE name = 'spec_id'
+	`).Scan(&colExists)
+	if err != nil {
+		t.Fatalf("failed to check spec_id column: %v", err)
+	}
+	if !colExists {
+		t.Error("spec_id column should exist after migrations")
+	}
+
+	// Verify index exists
+	var idxExists bool
+	err = db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_issues_spec_id'
+	`).Scan(&idxExists)
+	if err != nil {
+		t.Fatalf("failed to check spec_id index: %v", err)
+	}
+	if !idxExists {
+		t.Error("idx_issues_spec_id index should exist after migrations")
+	}
+}
