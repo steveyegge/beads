@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -81,6 +82,31 @@ var configSetCmd = &cobra.Command{
 			return
 		}
 
+		// beads.role is stored in git config, not SQLite (GH#1531).
+		// bd doctor reads it from git config, so we write there for consistency.
+		if key == "beads.role" {
+			validRoles := map[string]bool{"maintainer": true, "contributor": true}
+			if !validRoles[value] {
+				fmt.Fprintf(os.Stderr, "Error: invalid role %q (valid values: maintainer, contributor)\n", value)
+				os.Exit(1)
+			}
+			cmd := exec.Command("git", "config", "beads.role", value)
+			if err := cmd.Run(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error setting beads.role in git config: %v\n", err)
+				os.Exit(1)
+			}
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"key":      key,
+					"value":    value,
+					"location": "git config",
+				})
+			} else {
+				fmt.Printf("Set %s = %s (in git config)\n", key, value)
+			}
+			return
+		}
+
 		// Database-stored config requires direct mode
 		if err := ensureDirectMode("config set requires direct database access"); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -134,6 +160,30 @@ var configGetCmd = &cobra.Command{
 			} else {
 				if value == "" {
 					fmt.Printf("%s (not set in config.yaml)\n", key)
+				} else {
+					fmt.Printf("%s\n", value)
+				}
+			}
+			return
+		}
+
+		// beads.role is stored in git config, not SQLite (GH#1531).
+		if key == "beads.role" {
+			cmd := exec.Command("git", "config", "--get", "beads.role")
+			output, err := cmd.Output()
+			value := strings.TrimSpace(string(output))
+			if err != nil {
+				value = ""
+			}
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"key":      key,
+					"value":    value,
+					"location": "git config",
+				})
+			} else {
+				if value == "" {
+					fmt.Printf("%s (not set in git config)\n", key)
 				} else {
 					fmt.Printf("%s\n", value)
 				}
