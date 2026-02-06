@@ -10,6 +10,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // DefaultRemoteSyncInterval is the default interval for periodic remote sync.
@@ -66,6 +67,15 @@ func runEventDrivenLoop(
 	})
 	defer importDebouncer.Cancel()
 
+	// Debounced blocked cache rebuild (bd-b2ts optimization)
+	// Coalesces rapid mutations into a single rebuild instead of running the
+	// expensive recursive CTE on every write. 1s window handles burst mutations
+	// (e.g., molecule creation with 10+ child issues).
+	cacheRebuildDebouncer := NewDebouncer(1*time.Second, func() {
+		rebuildBlockedCacheIfDolt(ctx, store, log)
+	})
+	defer cacheRebuildDebouncer.Cancel()
+
 	// Start file watcher for JSONL changes
 	watcher, err := NewFileWatcher(jsonlPath, func() {
 		importDebouncer.Trigger()
@@ -95,8 +105,9 @@ func runEventDrivenLoop(
 				}
 				log.log("Mutation detected: %s %s", event.Type, event.IssueID)
 				exportDebouncer.Trigger()
-				// Rebuild blocked cache after mutations (bd-b2ts)
-				rebuildBlockedCacheIfDolt(ctx, store, log)
+				// Debounced blocked cache rebuild (bd-b2ts)
+				// Coalesces rapid mutations - rebuilds once after 1s quiet period
+				cacheRebuildDebouncer.Trigger()
 
 			case <-ctx.Done():
 				return
@@ -294,117 +305,17 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 }
 
 // rebuildBlockedCacheIfDolt rebuilds the blocked_issues_cache table for Dolt backends.
-// SQLite manages its cache inline during write transactions, but Dolt needs
-// periodic rebuilds since its write operations don't include cache invalidation
-// in the same transaction. Called at startup, after mutations, and as safety net. (bd-b2ts)
+// Delegates to DoltStore.RebuildBlockedCache() to avoid duplicating the recursive CTE.
+// Called at startup and via debounced trigger after mutations. (bd-b2ts)
 func rebuildBlockedCacheIfDolt(ctx context.Context, store storage.Storage, log daemonLogger) {
 	if store.BackendName() != "dolt" {
 		return
 	}
 
-	db := store.UnderlyingDB()
-	if db == nil {
-		return
-	}
-
-	// Check if the table exists (may not exist on older schemas)
-	var tableExists int
-	err := db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM information_schema.tables
-		WHERE table_name = 'blocked_issues_cache'
-	`).Scan(&tableExists)
-	if err != nil || tableExists == 0 {
-		return
-	}
-
-	if _, err := db.ExecContext(ctx, "DELETE FROM blocked_issues_cache"); err != nil {
-		log.log("Blocked cache rebuild: failed to clear: %v", err)
-		return
-	}
-
-	// Rebuild using recursive CTE (same logic as dolt/blocked_cache.go)
-	query := `
-		INSERT INTO blocked_issues_cache (issue_id)
-		WITH RECURSIVE
-		  blocked_directly AS (
-		    SELECT DISTINCT d.issue_id
-		    FROM dependencies d
-		    JOIN issues blocker ON d.depends_on_id = blocker.id
-		    WHERE d.type = 'blocks'
-		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-
-		    UNION
-
-		    SELECT DISTINCT d.issue_id
-		    FROM dependencies d
-		    JOIN issues blocker ON d.depends_on_id = blocker.id
-		    WHERE d.type = 'conditional-blocks'
-		      AND (
-		        blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
-		        OR
-		        (blocker.status = 'closed' AND NOT (
-		          LOWER(COALESCE(blocker.close_reason, '')) LIKE '%failed%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%rejected%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%wontfix%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%canceled%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%cancelled%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%abandoned%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%blocked%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%error%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%timeout%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%aborted%'
-		        ))
-		      )
-
-		    UNION
-
-		    SELECT DISTINCT d.issue_id
-		    FROM dependencies d
-		    WHERE d.type = 'waits-for'
-		      AND (
-		        COALESCE(JSON_EXTRACT(d.metadata, '$.gate'), 'all-children') = 'all-children'
-		        AND EXISTS (
-		          SELECT 1 FROM dependencies child_dep
-		          JOIN issues child ON child_dep.issue_id = child.id
-		          WHERE child_dep.type = 'parent-child'
-		            AND child_dep.depends_on_id = COALESCE(
-		              JSON_EXTRACT(d.metadata, '$.spawner_id'),
-		              d.depends_on_id
-		            )
-		            AND child.status NOT IN ('closed', 'tombstone')
-		        )
-		        OR
-		        COALESCE(JSON_EXTRACT(d.metadata, '$.gate'), 'all-children') = 'any-children'
-		        AND NOT EXISTS (
-		          SELECT 1 FROM dependencies child_dep
-		          JOIN issues child ON child_dep.issue_id = child.id
-		          WHERE child_dep.type = 'parent-child'
-		            AND child_dep.depends_on_id = COALESCE(
-		              JSON_EXTRACT(d.metadata, '$.spawner_id'),
-		              d.depends_on_id
-		            )
-		            AND child.status IN ('closed', 'tombstone')
-		        )
-		      )
-		  ),
-
-		  blocked_transitively AS (
-		    SELECT issue_id, 0 as depth
-		    FROM blocked_directly
-
-		    UNION ALL
-
-		    SELECT d.issue_id, bt.depth + 1
-		    FROM blocked_transitively bt
-		    JOIN dependencies d ON d.depends_on_id = bt.issue_id
-		    WHERE d.type = 'parent-child'
-		      AND bt.depth < 50
-		  )
-		SELECT DISTINCT issue_id FROM blocked_transitively
-	`
-
-	if _, err := db.ExecContext(ctx, query); err != nil {
-		log.log("Blocked cache rebuild: failed to populate: %v", err)
+	if ds, ok := store.(*dolt.DoltStore); ok {
+		if err := ds.RebuildBlockedCache(ctx); err != nil {
+			log.log("Blocked cache rebuild failed: %v", err)
+		}
 	}
 }
 

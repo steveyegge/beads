@@ -95,10 +95,10 @@ func (s *DoltStore) runTransactionOnce(ctx context.Context, fn func(tx storage.T
 		return err
 	}
 
-	// Rebuild blocked_issues_cache after successful commit (bd-b2ts)
-	// This ensures the cache stays consistent with dependency/status changes.
-	// The rebuild is fast (<50ms) and only fires on write transactions.
-	_ = s.RebuildBlockedCache(ctx)
+	// Note: blocked_issues_cache rebuild is handled by the daemon event loop
+	// with debouncing (bd-b2ts). Rebuilding here caused double-fire on every
+	// write transaction. The daemon's mutation channel triggers a debounced
+	// rebuild that coalesces rapid mutations into a single cache refresh.
 
 	return nil
 }
