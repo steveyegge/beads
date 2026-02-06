@@ -1033,7 +1033,11 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, parentID, title, descr
 	}
 
 	// Fallback: Direct storage access (for local development without daemon)
-	// Note: This will fail if BD_DAEMON_HOST is set due to factory guard (gt-57wsnm)
+	// When BD_DAEMON_HOST is set, direct storage access to target rig is blocked (bd-ma0s.1).
+	if rpc.GetDaemonHost() != "" {
+		FatalError("--rig flag requires direct database access, which is not available when BD_DAEMON_HOST is set.\n" +
+			"Hint: run bd create from the target rig's directory, or unset BD_DAEMON_HOST for local access")
+	}
 
 	// Find the town-level beads directory (where routes.jsonl lives)
 	townBeadsDir, err := findTownBeadsDir()

@@ -52,7 +52,7 @@ func CheckStaleClosedIssues(path string) DoctorCheck {
 	}
 
 	ctx := context.Background()
-	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Stale Closed Issues",
@@ -210,7 +210,7 @@ func CheckStaleMolecules(path string) DoctorCheck {
 	}
 
 	ctx := context.Background()
-	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Stale Molecules",
@@ -288,7 +288,7 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 	// SQLite backend - need SQLite-specific store for GetTier1Candidates
 	// Open database using factory
 	ctx := context.Background()
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",

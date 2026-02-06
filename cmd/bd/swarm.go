@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -158,9 +159,12 @@ Examples:
 		ctx := rootCtx
 		verbose, _ := cmd.Flags().GetBool("verbose")
 
-		// Swarm commands require direct store access
+		// Swarm commands require direct store access.
+		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
 		if store == nil {
-			if daemonClient != nil {
+			if rpc.GetDaemonHost() != "" {
+				FatalErrorRespectJSON("swarm commands require direct database access, which is not available when BD_DAEMON_HOST is set")
+			} else if daemonClient != nil {
 				var err error
 				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
@@ -624,9 +628,12 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
 
-		// Swarm commands require direct store access
+		// Swarm commands require direct store access.
+		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
 		if store == nil {
-			if daemonClient != nil {
+			if rpc.GetDaemonHost() != "" {
+				FatalErrorRespectJSON("swarm commands require direct database access, which is not available when BD_DAEMON_HOST is set")
+			} else if daemonClient != nil {
 				var err error
 				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
@@ -918,9 +925,12 @@ Examples:
 		coordinator, _ := cmd.Flags().GetString("coordinator")
 		force, _ := cmd.Flags().GetBool("force")
 
-		// Swarm commands require direct store access
+		// Swarm commands require direct store access.
+		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
 		if store == nil {
-			if daemonClient != nil {
+			if rpc.GetDaemonHost() != "" {
+				FatalErrorRespectJSON("swarm commands require direct database access, which is not available when BD_DAEMON_HOST is set")
+			} else if daemonClient != nil {
 				var err error
 				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
@@ -1100,9 +1110,12 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
 
-		// Swarm commands require direct store access
+		// Swarm commands require direct store access.
+		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
 		if store == nil {
-			if daemonClient != nil {
+			if rpc.GetDaemonHost() != "" {
+				FatalErrorRespectJSON("swarm commands require direct database access, which is not available when BD_DAEMON_HOST is set")
+			} else if daemonClient != nil {
 				var err error
 				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {

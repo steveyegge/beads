@@ -8,13 +8,22 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // ensureDirectMode makes sure the CLI is operating in direct-storage mode.
 // If the daemon is active, it is cleanly disconnected and the shared store is opened.
+// When BD_DAEMON_HOST is set (remote daemon), direct storage access is blocked,
+// so this returns an error explaining the limitation (bd-ma0s.1).
 func ensureDirectMode(reason string) error {
+	// When BD_DAEMON_HOST is set, direct storage is blocked by the factory guard.
+	// Don't attempt fallback - the remote daemon should handle operations.
+	if rpc.GetDaemonHost() != "" {
+		return fmt.Errorf("this operation requires direct database access, which is not available when BD_DAEMON_HOST is set (%s)",
+			reason)
+	}
 	if getDaemonClient() != nil {
 		if err := fallbackToDirectMode(reason); err != nil {
 			return err
@@ -56,7 +65,17 @@ func disableDaemonForFallback(reason string) {
 
 // ensureStoreActive guarantees that a storage backend is initialized and tracked.
 // Uses the factory to respect metadata.json backend configuration (SQLite, Dolt embedded, or Dolt server).
+//
+// When a daemon is connected, the store is not needed (daemon handles operations via RPC),
+// so this returns nil without opening direct storage. This prevents "direct database access
+// blocked" errors when BD_DAEMON_HOST is set (bd-ma0s.1).
 func ensureStoreActive() error {
+	// If daemon is connected, commands should use daemon RPC, not direct storage.
+	// Return nil to allow callers to proceed to their daemon code paths.
+	if getDaemonClient() != nil {
+		return nil
+	}
+
 	lockStore()
 	active := isStoreActive() && getStore() != nil
 	unlockStore()

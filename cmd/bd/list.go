@@ -33,13 +33,16 @@ import (
 // storageExecutor handles operations that need to work with both direct store and daemon mode
 type storageExecutor func(store storage.Storage) error
 
-// withStorage executes an operation with either the direct store or a read-only store in daemon mode
+// withStorage executes an operation with either the direct store or a read-only store in daemon mode.
+// When BD_DAEMON_HOST is set (remote daemon), direct storage access is blocked, so this
+// returns "no storage available" - callers should handle this gracefully (bd-ma0s.1).
 func withStorage(ctx context.Context, store storage.Storage, dbPath string, lockTimeout time.Duration, fn storageExecutor) error {
 	if store != nil {
 		return fn(store)
-	} else if dbPath != "" {
-		// Daemon mode: open read-only connection based on configured backend
-		// (supports both SQLite and Dolt backends)
+	} else if dbPath != "" && rpc.GetDaemonHost() == "" {
+		// Local daemon mode: open read-only connection based on configured backend
+		// (supports both SQLite and Dolt backends).
+		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
 		beadsDir := filepath.Dir(dbPath)
 		roStore, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
 			ReadOnly:    true,
@@ -1300,8 +1303,9 @@ var listCmd = &cobra.Command{
 				var allDeps map[string][]*types.Dependency
 				if store != nil {
 					allDeps, _ = store.GetAllDependencyRecords(ctx)
-				} else if dbPath != "" {
-					// Daemon mode: open read-only connection for tree deps (supports Dolt)
+				} else if dbPath != "" && rpc.GetDaemonHost() == "" {
+					// Local daemon mode: open read-only connection for tree deps (supports Dolt).
+					// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
 					beadsDir := filepath.Dir(dbPath)
 					if roStore, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
 						ReadOnly:    true,
@@ -1630,6 +1634,14 @@ func listInRig(cmd *cobra.Command, rigName string, filter types.IssueFilter, sor
 	// Fallback: Direct storage access (for local development without daemon)
 	// Note: This will fail if BD_DAEMON_HOST is set due to factory guard (gt-57wsnm)
 	ctx := rootCtx
+
+	// When BD_DAEMON_HOST is set, direct storage access to target rig is blocked.
+	// The --rig flag requires opening the target rig's database directly, which is
+	// not supported with remote daemon mode (bd-ma0s.1).
+	if rpc.GetDaemonHost() != "" {
+		FatalError("--rig flag is not supported when BD_DAEMON_HOST is set (remote daemon mode).\n"+
+			"Hint: run bd list from the target rig's directory, or unset BD_DAEMON_HOST for local access")
+	}
 
 	// Find the town-level beads directory (where routes.jsonl lives)
 	townBeadsDir, err := findTownBeadsDir()

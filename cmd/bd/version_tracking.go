@@ -10,6 +10,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/factory"
 )
 
@@ -220,6 +221,12 @@ func autoMigrateOnVersionBump(beadsDir string) {
 	if ctx == nil || ctx.Err() != nil {
 		// rootCtx is nil or canceled - use fresh background context
 		ctx = context.Background()
+	}
+
+	// Skip auto-migration when BD_DAEMON_HOST is set - the daemon handles the database (bd-ma0s.1).
+	if rpc.GetDaemonHost() != "" {
+		debug.Logf("auto-migrate: skipping (BD_DAEMON_HOST is set)")
+		return
 	}
 
 	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})

@@ -438,8 +438,12 @@ Examples:
 			}
 		}
 
-		// If daemon is running but doesn't support this command, use direct storage
+		// If daemon is running but doesn't support this command, use direct storage.
+		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
 		if daemonClient != nil && store == nil {
+			if rpc.GetDaemonHost() != "" {
+				FatalErrorRespectJSON("dep list requires direct database access, which is not available when BD_DAEMON_HOST is set")
+			}
 			var err error
 			store, err = factory.NewFromConfig(rootCtx, getBeadsDir())
 			if err != nil {
@@ -667,8 +671,12 @@ Examples:
 			}
 		}
 
-		// If daemon is running but doesn't support this command, use direct storage
+		// If daemon is running but doesn't support this command, use direct storage.
+		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
 		if daemonClient != nil && store == nil {
+			if rpc.GetDaemonHost() != "" {
+				FatalErrorRespectJSON("dep tree requires direct database access, which is not available when BD_DAEMON_HOST is set")
+			}
 			var err error
 			store, err = factory.NewFromConfig(rootCtx, getBeadsDir())
 			if err != nil {
@@ -779,8 +787,12 @@ var depCyclesCmd = &cobra.Command{
 	Use:   "cycles",
 	Short: "Detect dependency cycles",
 	Run: func(cmd *cobra.Command, args []string) {
-		// If daemon is running but doesn't support this command, use direct storage
+		// If daemon is running but doesn't support this command, use direct storage.
+		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
 		if daemonClient != nil && store == nil {
+			if rpc.GetDaemonHost() != "" {
+				FatalErrorRespectJSON("dep cycles requires direct database access, which is not available when BD_DAEMON_HOST is set")
+			}
 			var err error
 			store, err = factory.NewFromConfig(rootCtx, getBeadsDir())
 			if err != nil {
@@ -1227,7 +1239,14 @@ func resolveExternalDependencies(ctx context.Context, issueID string, typeFilter
 			fmt.Fprintf(os.Stderr, "[external-deps] resolved beads dir: %s\n", targetBeadsDir)
 		}
 
-		// Open storage for the target rig using factory (respects backend config)
+		// Open storage for the target rig using factory (respects backend config).
+		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
+		if rpc.GetDaemonHost() != "" {
+			if isVerbose() {
+				fmt.Fprintf(os.Stderr, "[external-deps] skipping %s: BD_DAEMON_HOST is set\n", project)
+			}
+			continue
+		}
 		targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
 		if err != nil {
 			if isVerbose() {

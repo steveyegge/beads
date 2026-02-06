@@ -52,7 +52,7 @@ func StaleClosedIssues(path string) error {
 
 	// Open database using factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 	ctx := context.Background()
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -202,7 +202,7 @@ func PatrolPollution(path string) error {
 
 	// Open database using factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 	ctx := context.Background()
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}

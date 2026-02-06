@@ -39,6 +39,12 @@ func (r *RoutedResult) Close() {
 // Returns a RoutedResult containing the issue, resolved ID, and the store to use.
 // The caller MUST call result.Close() when done to release any routed storage.
 func resolveAndGetIssueWithRouting(ctx context.Context, localStore storage.Storage, id string) (*RoutedResult, error) {
+	// When BD_DAEMON_HOST is set, the remote daemon handles all IDs centrally.
+	// Skip local routing to avoid "direct database access blocked" errors (bd-ma0s.1).
+	if isRemoteDaemon() {
+		return resolveAndGetFromStore(ctx, localStore, id, false)
+	}
+
 	// Step 1: Check if routing is needed based on ID prefix
 	// Find the .beads metadata directory (not the database path, which may be external with Dolt)
 	beadsDir := beads.FindBeadsDir()
@@ -114,6 +120,16 @@ func getIssueWithRouting(ctx context.Context, localStore storage.Storage, id str
 		}, nil
 	}
 
+	// When BD_DAEMON_HOST is set, skip local routing - remote daemon handles all IDs (bd-ma0s.1).
+	if isRemoteDaemon() {
+		return &RoutedResult{
+			Issue:      issue,
+			Store:      localStore,
+			Routed:     false,
+			ResolvedID: id,
+		}, err
+	}
+
 	// Step 2: Check routes.jsonl for prefix-based routing
 	// Find the .beads metadata directory (not the database path, which may be external with Dolt)
 	beadsDir := beads.FindBeadsDir()
@@ -166,6 +182,11 @@ func getIssueWithRouting(ctx context.Context, localStore storage.Storage, id str
 // Returns nil if no routing is needed (issue should be in local store).
 // The caller is responsible for closing the returned storage.
 func getRoutedStoreForID(ctx context.Context, id string) (*routing.RoutedStorage, error) {
+	// When BD_DAEMON_HOST is set, skip local routing - remote daemon handles all IDs (bd-ma0s.1).
+	if isRemoteDaemon() {
+		return nil, nil
+	}
+
 	// Find the .beads metadata directory (not the database path, which may be external with Dolt)
 	beadsDir := beads.FindBeadsDir()
 	if beadsDir == "" {

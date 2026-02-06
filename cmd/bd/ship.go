@@ -53,8 +53,9 @@ func runShip(cmd *cobra.Command, args []string) {
 	var err error
 
 	// Ship requires direct store access for label operations
-	// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
-	if daemonClient != nil && store == nil {
+	// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix).
+	// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
+	if daemonClient != nil && store == nil && rpc.GetDaemonHost() == "" {
 store, err = factory.NewFromConfig(ctx, getBeadsDir())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)

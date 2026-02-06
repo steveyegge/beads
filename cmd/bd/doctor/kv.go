@@ -18,7 +18,7 @@ func CheckKVSyncStatus(path string) DoctorCheck {
 	_, beadsDir := getBackendAndBeadsDir(path)
 
 	ctx := context.Background()
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:     "KV Store Sync",

@@ -84,6 +84,10 @@ Examples:
 		}
 
 		// Step 4: Open storage for the target rig
+		// Guard: direct storage is blocked when BD_DAEMON_HOST is set (bd-ma0s.1)
+		if rpc.GetDaemonHost() != "" {
+			FatalError("refile requires direct database access to target rig, which is not available when BD_DAEMON_HOST is set")
+		}
 targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
 		if err != nil {
 			FatalError("failed to open target rig database: %v", err)

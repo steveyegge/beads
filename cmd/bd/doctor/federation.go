@@ -50,7 +50,7 @@ func CheckFederationRemotesAPI(path string) DoctorCheck {
 	if serverPID == 0 {
 		// No server running - check if we have remotes configured
 		ctx := context.Background()
-		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 		if err != nil {
 			return DoctorCheck{
 				Name:     "Federation remotesapi",
@@ -145,7 +145,7 @@ func CheckFederationPeerConnectivity(path string) DoctorCheck {
 	}
 
 	ctx := context.Background()
-	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Peer Connectivity",
@@ -272,7 +272,7 @@ func CheckFederationSyncStaleness(path string) DoctorCheck {
 	}
 
 	ctx := context.Background()
-	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Sync Staleness",
@@ -375,7 +375,7 @@ func CheckFederationConflicts(path string) DoctorCheck {
 	}
 
 	ctx := context.Background()
-	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Federation Conflicts",
@@ -481,7 +481,7 @@ func CheckDoltServerModeMismatch(path string) DoctorCheck {
 
 	// Open storage to check for remotes
 	ctx := context.Background()
-	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 	if err != nil {
 		// If we can't open the store, check if there's a lock file indicating embedded mode
 		lockFile := filepath.Join(doltPath, ".dolt", "lock")

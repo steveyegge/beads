@@ -75,9 +75,10 @@ Status icons: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred`,
 			os.Exit(1)
 		}
 
-		// If daemon is running but doesn't support this command, use direct storage
-		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
-		if daemonClient != nil && store == nil {
+		// If daemon is running but doesn't support this command, use direct storage.
+		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix).
+		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
+		if daemonClient != nil && store == nil && rpc.GetDaemonHost() == "" {
 			var err error
 			store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 			if err != nil {

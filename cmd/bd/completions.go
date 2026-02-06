@@ -37,7 +37,7 @@ func issueIDCompletion(cmd *cobra.Command, args []string, toComplete string) ([]
 	currentStore := store
 	if currentStore == nil {
 		var err error
-		currentStore, err = storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+		currentStore, err = storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 		if err != nil {
 			// If we can't open database, return empty completion
 			return nil, cobra.ShellCompDirectiveNoFileComp

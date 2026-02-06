@@ -52,7 +52,7 @@ func CheckIDFormat(path string) DoctorCheck {
 	// Open the configured backend in read-only mode.
 	// This must work for both SQLite and Dolt.
 	ctx := context.Background()
-	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Issue IDs",
@@ -446,7 +446,7 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 	// For Dolt, read fingerprint from storage metadata (no sqlite assumptions).
 	if backend == configfile.BackendDolt {
 		ctx := context.Background()
-		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 		if err != nil {
 			return DoctorCheck{
 				Name:    "Repo Fingerprint",

@@ -59,7 +59,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 		}
 
 		ctx := context.Background()
-		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 		if err != nil {
 			return DoctorCheck{
 				Name:    "Database",
@@ -240,7 +240,7 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 		}
 
 		ctx := context.Background()
-		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 		if err != nil {
 			return DoctorCheck{
 				Name:    "Schema Compatibility",
@@ -381,7 +381,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 		}
 
 		ctx := context.Background()
-		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true, AllowWithRemoteDaemon: true})
 		if err != nil {
 			return DoctorCheck{
 				Name:    "Database Integrity",
