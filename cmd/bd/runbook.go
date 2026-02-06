@@ -112,6 +112,24 @@ Examples:
 	Run: runRunbookImport,
 }
 
+// runbookMaterializeCmd writes runbook beads to the filesystem.
+var runbookMaterializeCmd = &cobra.Command{
+	Use:   "materialize [name|bead-id]",
+	Short: "Write runbook beads to filesystem as .oj/runbooks/ files",
+	Long: `Materialize runbook beads from the database to the filesystem.
+
+This is the reverse of 'bd runbook import': it reads runbook content from
+beads and writes them as files to .oj/runbooks/ for the OJ daemon to use.
+
+Examples:
+  bd runbook materialize base            # Write single runbook
+  bd runbook materialize --all           # Write all runbook beads
+  bd runbook materialize --all --dry-run # Preview without writing
+  bd runbook materialize base --dir=/tmp # Write to custom directory
+  bd runbook materialize --all --force   # Overwrite existing files`,
+	Run: runRunbookMaterialize,
+}
+
 // RunbookListEntry represents a runbook in list output.
 type RunbookListEntry struct {
 	Name     string `json:"name"`
@@ -123,14 +141,18 @@ type RunbookListEntry struct {
 }
 
 var (
-	rbListSource  string
-	rbListAllRigs bool
-	rbShowContent bool
-	rbCreateFile  string
-	rbCreateForce bool
-	rbImportAll   bool
-	rbImportForce bool
-	rbImportDir   string
+	rbListSource       string
+	rbListAllRigs      bool
+	rbShowContent      bool
+	rbCreateFile       string
+	rbCreateForce      bool
+	rbImportAll        bool
+	rbImportForce      bool
+	rbImportDir        string
+	rbMaterializeAll   bool
+	rbMaterializeForce bool
+	rbMaterializeDry   bool
+	rbMaterializeDir   string
 )
 
 func runRunbookList(cmd *cobra.Command, args []string) {
@@ -468,6 +490,129 @@ func importAllRunbooks() {
 	fmt.Printf("\nImported: %d, Skipped: %d, Errors: %d\n", imported, skipped, errors)
 }
 
+func runRunbookMaterialize(cmd *cobra.Command, args []string) {
+	CheckReadonly("runbook materialize")
+
+	if !rbMaterializeAll && len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: runbook name/id required (or use --all)\n")
+		os.Exit(1)
+	}
+
+	// Determine output directory
+	outDir := rbMaterializeDir
+	if outDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot determine working directory: %v\n", err)
+			os.Exit(1)
+		}
+		outDir = filepath.Join(cwd, ".oj", "runbooks")
+	}
+
+	if rbMaterializeAll {
+		materializeAll(outDir)
+		return
+	}
+
+	// Single runbook
+	nameOrID := args[0]
+	rb := loadRunbookFromDB(nameOrID)
+	if rb == nil {
+		fmt.Fprintf(os.Stderr, "Error: runbook %q not found in database\n", nameOrID)
+		os.Exit(1)
+	}
+
+	err := materializeOne(rb, outDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func materializeAll(outDir string) {
+	s := getStore()
+	if s == nil {
+		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	filter := types.IssueFilter{
+		IssueType: func() *types.IssueType { t := types.TypeRunbook; return &t }(),
+	}
+	issues, err := s.SearchIssues(ctx, "", filter)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error querying runbooks: %v\n", err)
+		os.Exit(1)
+	}
+
+	written := 0
+	skipped := 0
+	errors := 0
+
+	for _, issue := range issues {
+		if issue.Status == types.StatusClosed {
+			continue
+		}
+		rb, err := runbook.IssueToRunbook(issue)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  %s %s: %v\n", ui.RenderFail("✗"), issue.ID, err)
+			errors++
+			continue
+		}
+
+		err = materializeOne(rb, outDir)
+		if err != nil {
+			if strings.Contains(err.Error(), "already exists") {
+				skipped++
+				if !rbMaterializeDry {
+					fmt.Fprintf(os.Stderr, "  skipped %s (exists, use --force)\n", rb.Name)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "  %s %s: %v\n", ui.RenderFail("✗"), rb.Name, err)
+				errors++
+			}
+			continue
+		}
+		written++
+	}
+
+	fmt.Printf("\nMaterialized: %d, Skipped: %d, Errors: %d\n", written, skipped, errors)
+}
+
+func materializeOne(rb *runbook.RunbookContent, outDir string) error {
+	ext := "." + rb.Format
+	if rb.Format == "" {
+		ext = ".hcl"
+	}
+	filename := rb.Name + ext
+	outPath := filepath.Join(outDir, filename)
+
+	if rbMaterializeDry {
+		fmt.Printf("  [dry-run] Would write %s (%d bytes)\n", outPath, len(rb.Content))
+		return nil
+	}
+
+	// Check if file exists
+	if !rbMaterializeForce {
+		if _, err := os.Stat(outPath); err == nil {
+			return fmt.Errorf("%s already exists (use --force to overwrite)", outPath)
+		}
+	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return fmt.Errorf("creating directory %s: %w", outDir, err)
+	}
+
+	if err := os.WriteFile(outPath, []byte(rb.Content), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", outPath, err)
+	}
+
+	fmt.Printf("  %s %s → %s\n", ui.RenderPass("✓"), rb.Name, outPath)
+	return nil
+}
+
 // --- Helper functions ---
 
 // listRunbooksFromDB queries the database for runbook-type issues.
@@ -734,9 +879,15 @@ func init() {
 	runbookImportCmd.Flags().BoolVar(&rbImportForce, "force", false, "Overwrite existing runbooks in database")
 	runbookImportCmd.Flags().StringVar(&rbImportDir, "dir", "", "Import from specific directory")
 
+	runbookMaterializeCmd.Flags().BoolVar(&rbMaterializeAll, "all", false, "Materialize all runbook beads")
+	runbookMaterializeCmd.Flags().BoolVar(&rbMaterializeForce, "force", false, "Overwrite existing files")
+	runbookMaterializeCmd.Flags().BoolVar(&rbMaterializeDry, "dry-run", false, "Preview without writing files")
+	runbookMaterializeCmd.Flags().StringVar(&rbMaterializeDir, "dir", "", "Output directory (default: .oj/runbooks/)")
+
 	runbookCmd.AddCommand(runbookListCmd)
 	runbookCmd.AddCommand(runbookShowCmd)
 	runbookCmd.AddCommand(runbookCreateCmd)
 	runbookCmd.AddCommand(runbookImportCmd)
+	runbookCmd.AddCommand(runbookMaterializeCmd)
 	rootCmd.AddCommand(runbookCmd)
 }
