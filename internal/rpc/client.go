@@ -1548,6 +1548,150 @@ func (c *Client) AdminGC(args *AdminGCArgs) (*AdminGCResult, error) {
 	return &result, nil
 }
 
+// ===== Federation Client Methods (bd-ma0s.4) =====
+
+// FedListRemotes lists configured federation remotes.
+func (c *Client) FedListRemotes(args *FedListRemotesArgs) (*FedListRemotesResult, error) {
+	resp, err := c.Execute(OpFedListRemotes, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FedListRemotesResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fed_list_remotes response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FedSync syncs with a federation peer (fetch + merge + push).
+func (c *Client) FedSync(args *FedSyncArgs) (*FedSyncResult, error) {
+	resp, err := c.Execute(OpFedSync, args)
+	if err != nil {
+		// Try to extract partial result from error response
+		if resp != nil && len(resp.Data) > 0 {
+			var result FedSyncResult
+			if unmarshalErr := json.Unmarshal(resp.Data, &result); unmarshalErr == nil {
+				return &result, err
+			}
+		}
+		return nil, err
+	}
+
+	var result FedSyncResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fed_sync response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FedSyncStatus returns the sync status with a federation peer.
+func (c *Client) FedSyncStatus(args *FedSyncStatusArgs) (*FedSyncStatusResult, error) {
+	resp, err := c.Execute(OpFedSyncStatus, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FedSyncStatusResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fed_sync_status response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FedFetch fetches refs from a peer without merging.
+func (c *Client) FedFetch(args *FedFetchArgs) (*FedFetchResult, error) {
+	resp, err := c.Execute(OpFedFetch, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FedFetchResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fed_fetch response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FedPushTo pushes to a specific peer.
+func (c *Client) FedPushTo(args *FedPushToArgs) (*FedPushToResult, error) {
+	resp, err := c.Execute(OpFedPushTo, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FedPushToResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fed_push_to response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FedPullFrom pulls from a specific peer.
+func (c *Client) FedPullFrom(args *FedPullFromArgs) (*FedPullFromResult, error) {
+	resp, err := c.Execute(OpFedPullFrom, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FedPullFromResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fed_pull_from response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FedAddRemote adds a federation remote.
+func (c *Client) FedAddRemote(args *FedAddRemoteArgs) (*FedAddRemoteResult, error) {
+	resp, err := c.Execute(OpFedAddRemote, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FedAddRemoteResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fed_add_remote response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FedRemoveRemote removes a federation remote.
+func (c *Client) FedRemoveRemote(args *FedRemoveRemoteArgs) (*FedRemoveRemoteResult, error) {
+	resp, err := c.Execute(OpFedRemoveRemote, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FedRemoveRemoteResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fed_remove_remote response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// FedAddPeer adds an authenticated federation peer with credentials.
+func (c *Client) FedAddPeer(args *FedAddPeerArgs) (*FedAddPeerResult, error) {
+	resp, err := c.Execute(OpFedAddPeer, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result FedAddPeerResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal fed_add_peer response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

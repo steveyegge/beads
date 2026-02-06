@@ -158,6 +158,17 @@ const (
 
 	// Admin operations (bd-ma0s.5)
 	OpAdminGC = "admin_gc"
+
+	// Federation operations (bd-ma0s.4)
+	OpFedListRemotes  = "fed_list_remotes"
+	OpFedSync         = "fed_sync"
+	OpFedSyncStatus   = "fed_sync_status"
+	OpFedFetch        = "fed_fetch"
+	OpFedPushTo       = "fed_push_to"
+	OpFedPullFrom     = "fed_pull_from"
+	OpFedAddRemote    = "fed_add_remote"
+	OpFedRemoveRemote = "fed_remove_remote"
+	OpFedAddPeer      = "fed_add_peer"
 )
 
 // Request represents an RPC request from client to daemon
@@ -1706,6 +1717,38 @@ type VcsConflict struct {
 	TheirsValue string `json:"theirs_value,omitempty"`
 }
 
+// ===== Federation Operations (bd-ma0s.4) =====
+
+// FedListRemotesArgs represents arguments for the fed_list_remotes operation.
+type FedListRemotesArgs struct {
+	// No arguments needed
+}
+
+// FedRemoteInfo represents a single remote in the response.
+type FedRemoteInfo struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// FedListRemotesResult represents the result of a fed_list_remotes operation.
+type FedListRemotesResult struct {
+	Remotes []FedRemoteInfo `json:"remotes"`
+}
+
+// FedSyncArgs represents arguments for the fed_sync operation.
+type FedSyncArgs struct {
+	Peer     string `json:"peer"`               // Peer name to sync with
+	Strategy string `json:"strategy,omitempty"`  // Conflict resolution strategy: "ours" or "theirs"
+}
+
+// FedConflictInfo represents a single merge conflict in the response.
+type FedConflictInfo struct {
+	IssueID     string `json:"issue_id,omitempty"`
+	Field       string `json:"field"`
+	OursValue   string `json:"ours_value,omitempty"`
+	TheirsValue string `json:"theirs_value,omitempty"`
+}
+
 // VcsMergeResult represents the result of a vcs_merge operation.
 type VcsMergeResult struct {
 	Success   bool          `json:"success"`
@@ -1816,4 +1859,101 @@ type AdminGCResult struct {
 	SpaceFreed  int64  `json:"space_freed"`
 	DryRun      bool   `json:"dry_run,omitempty"`
 	ElapsedMs   int64  `json:"elapsed_ms"`
+}
+
+// FedSyncResult represents the result of a fed_sync operation.
+type FedSyncResult struct {
+	Peer              string            `json:"peer"`
+	Fetched           bool              `json:"fetched"`
+	Merged            bool              `json:"merged"`
+	Pushed            bool              `json:"pushed"`
+	PulledCommits     int               `json:"pulled_commits"`
+	Conflicts         []FedConflictInfo `json:"conflicts,omitempty"`
+	ConflictsResolved bool              `json:"conflicts_resolved"`
+	PushError         string            `json:"push_error,omitempty"`
+	DurationMs        int64             `json:"duration_ms"`
+}
+
+// FedSyncStatusArgs represents arguments for the fed_sync_status operation.
+type FedSyncStatusArgs struct {
+	Peer string `json:"peer"` // Peer name to check
+}
+
+// FedSyncStatusResult represents the result of a fed_sync_status operation.
+type FedSyncStatusResult struct {
+	Peer         string `json:"peer"`
+	LocalAhead   int    `json:"local_ahead"`
+	LocalBehind  int    `json:"local_behind"`
+	HasConflicts bool   `json:"has_conflicts"`
+	LastSync     string `json:"last_sync,omitempty"` // ISO 8601 timestamp
+}
+
+// FedFetchArgs represents arguments for the fed_fetch operation.
+type FedFetchArgs struct {
+	Peer string `json:"peer"` // Peer name to fetch from
+}
+
+// FedFetchResult represents the result of a fed_fetch operation.
+type FedFetchResult struct {
+	Peer string `json:"peer"`
+}
+
+// FedPushToArgs represents arguments for the fed_push_to operation.
+type FedPushToArgs struct {
+	Peer string `json:"peer"` // Peer name to push to
+}
+
+// FedPushToResult represents the result of a fed_push_to operation.
+type FedPushToResult struct {
+	Peer string `json:"peer"`
+}
+
+// FedPullFromArgs represents arguments for the fed_pull_from operation.
+type FedPullFromArgs struct {
+	Peer string `json:"peer"` // Peer name to pull from
+}
+
+// FedPullFromResult represents the result of a fed_pull_from operation.
+type FedPullFromResult struct {
+	Peer      string            `json:"peer"`
+	Conflicts []FedConflictInfo `json:"conflicts,omitempty"`
+}
+
+// FedAddRemoteArgs represents arguments for the fed_add_remote operation.
+type FedAddRemoteArgs struct {
+	Name string `json:"name"` // Remote name
+	URL  string `json:"url"`  // Remote URL
+}
+
+// FedAddRemoteResult represents the result of a fed_add_remote operation.
+type FedAddRemoteResult struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// FedRemoveRemoteArgs represents arguments for the fed_remove_remote operation.
+type FedRemoveRemoteArgs struct {
+	Name string `json:"name"` // Remote name to remove
+}
+
+// FedRemoveRemoteResult represents the result of a fed_remove_remote operation.
+type FedRemoveRemoteResult struct {
+	Name string `json:"name"`
+}
+
+// FedAddPeerArgs represents arguments for the fed_add_peer operation.
+type FedAddPeerArgs struct {
+	Name        string `json:"name"`                  // Peer name
+	URL         string `json:"url"`                   // Remote URL
+	Username    string `json:"username,omitempty"`     // SQL username
+	Password    string `json:"password,omitempty"`     // SQL password
+	Sovereignty string `json:"sovereignty,omitempty"`  // Sovereignty tier: T1, T2, T3, T4
+}
+
+// FedAddPeerResult represents the result of a fed_add_peer operation.
+type FedAddPeerResult struct {
+	Name        string `json:"name"`
+	URL         string `json:"url"`
+	HasAuth     bool   `json:"has_auth"`
+	Sovereignty string `json:"sovereignty,omitempty"`
 }

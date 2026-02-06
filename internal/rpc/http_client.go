@@ -398,6 +398,17 @@ func operationToHTTPMethod(operation string) string {
 
 		// Admin operations (bd-ma0s.5)
 		OpAdminGC: "AdminGC",
+
+		// Federation operations (bd-ma0s.4)
+		OpFedListRemotes:  "FedListRemotes",
+		OpFedSync:         "FedSync",
+		OpFedSyncStatus:   "FedSyncStatus",
+		OpFedFetch:        "FedFetch",
+		OpFedPushTo:       "FedPushTo",
+		OpFedPullFrom:     "FedPullFrom",
+		OpFedAddRemote:    "FedAddRemote",
+		OpFedRemoveRemote: "FedRemoveRemote",
+		OpFedAddPeer:      "FedAddPeer",
 	}
 
 	return methodMap[operation]

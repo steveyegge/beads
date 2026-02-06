@@ -440,6 +440,25 @@ func (s *Server) executeOperation(req *Request) Response {
 	// Admin operations (bd-ma0s.5)
 	case OpAdminGC:
 		resp = s.handleAdminGC(req)
+	// Federation operations (bd-ma0s.4)
+	case OpFedListRemotes:
+		resp = s.handleFedListRemotes(req)
+	case OpFedSync:
+		resp = s.handleFedSync(req)
+	case OpFedSyncStatus:
+		resp = s.handleFedSyncStatus(req)
+	case OpFedFetch:
+		resp = s.handleFedFetch(req)
+	case OpFedPushTo:
+		resp = s.handleFedPushTo(req)
+	case OpFedPullFrom:
+		resp = s.handleFedPullFrom(req)
+	case OpFedAddRemote:
+		resp = s.handleFedAddRemote(req)
+	case OpFedRemoveRemote:
+		resp = s.handleFedRemoveRemote(req)
+	case OpFedAddPeer:
+		resp = s.handleFedAddPeer(req)
 	default:
 		return Response{
 			Success: false,
