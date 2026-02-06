@@ -46,41 +46,59 @@ func (s *DoltStore) GetLabels(ctx context.Context, issueID string) ([]string, er
 	return labels, rows.Err()
 }
 
-// GetLabelsForIssues retrieves labels for multiple issues
+// getLabelsForIssuesBatchSize is the maximum number of issue IDs per IN clause.
+// Large IN clauses (e.g. 29k params) create queries that Dolt cannot execute efficiently.
+const getLabelsForIssuesBatchSize = 500
+
+// GetLabelsForIssues retrieves labels for multiple issues, batching the query
+// into chunks to avoid oversized IN clauses that crash Dolt.
 func (s *DoltStore) GetLabelsForIssues(ctx context.Context, issueIDs []string) (map[string][]string, error) {
 	if len(issueIDs) == 0 {
 		return make(map[string][]string), nil
 	}
 
-	placeholders := make([]string, len(issueIDs))
-	args := make([]interface{}, len(issueIDs))
-	for i, id := range issueIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-
-	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
-	query := fmt.Sprintf(`
-		SELECT issue_id, label FROM labels
-		WHERE issue_id IN (%s)
-		ORDER BY issue_id, label
-	`, strings.Join(placeholders, ","))
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get labels for issues: %w", err)
-	}
-	defer rows.Close()
-
 	result := make(map[string][]string)
-	for rows.Next() {
-		var issueID, label string
-		if err := rows.Scan(&issueID, &label); err != nil {
-			return nil, fmt.Errorf("failed to scan label: %w", err)
+	for i := 0; i < len(issueIDs); i += getLabelsForIssuesBatchSize {
+		end := i + getLabelsForIssuesBatchSize
+		if end > len(issueIDs) {
+			end = len(issueIDs)
 		}
-		result[issueID] = append(result[issueID], label)
+		batch := issueIDs[i:end]
+
+		placeholders := make([]string, len(batch))
+		args := make([]interface{}, len(batch))
+		for j, id := range batch {
+			placeholders[j] = "?"
+			args[j] = id
+		}
+
+		// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
+		query := fmt.Sprintf(`
+			SELECT issue_id, label FROM labels
+			WHERE issue_id IN (%s)
+			ORDER BY issue_id, label
+		`, strings.Join(placeholders, ","))
+
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get labels for issues: %w", err)
+		}
+
+		for rows.Next() {
+			var issueID, label string
+			if err := rows.Scan(&issueID, &label); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("failed to scan label: %w", err)
+			}
+			result[issueID] = append(result[issueID], label)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // GetAllLabels retrieves all labels for all issues.
