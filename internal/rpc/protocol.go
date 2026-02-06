@@ -36,7 +36,6 @@ const (
 	OpCompact             = "compact"
 	OpCompactStats        = "compact_stats"
 	OpExport              = "export"
-	OpImport              = "import"
 	OpEpicStatus          = "epic_status"
 	OpGetMutations        = "get_mutations"
 	OpGetMoleculeProgress = "get_molecule_progress"
@@ -515,11 +514,6 @@ type CompactStatsData struct {
 // ExportArgs represents arguments for the export operation
 type ExportArgs struct {
 	JSONLPath string `json:"jsonl_path"` // Path to export JSONL file
-}
-
-// ImportArgs represents arguments for the import operation
-type ImportArgs struct {
-	JSONLPath string `json:"jsonl_path"` // Path to import JSONL file
 }
 
 // GetMutationsArgs represents arguments for retrieving recent mutations

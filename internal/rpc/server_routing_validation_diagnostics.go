@@ -150,7 +150,7 @@ func (s *Server) handleRequest(req *Request) Response {
 	// Skip for write operations that will trigger export anyway
 	// Skip for import operation itself to avoid recursion
 	if req.Operation != OpPing && req.Operation != OpHealth && req.Operation != OpMetrics && 
-	   req.Operation != OpImport && req.Operation != OpExport {
+	   req.Operation != OpExport {
 		if err := s.checkAndAutoImportIfStale(req); err != nil {
 			// Log warning but continue - don't fail the request
 			fmt.Fprintf(os.Stderr, "Warning: staleness check failed: %v\n", err)
@@ -215,8 +215,6 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleCompactStats(req)
 	case OpExport:
 		resp = s.handleExport(req)
-	case OpImport:
-		resp = s.handleImport(req)
 	case OpEpicStatus:
 		resp = s.handleEpicStatus(req)
 	case OpGetMutations:

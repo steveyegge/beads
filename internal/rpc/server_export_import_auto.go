@@ -242,25 +242,6 @@ func (s *Server) handleExport(req *Request) Response {
 	}
 }
 
-// handleImport handles the import operation
-func (s *Server) handleImport(req *Request) Response {
-	var importArgs ImportArgs
-	if err := json.Unmarshal(req.Args, &importArgs); err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("invalid import args: %v", err),
-		}
-	}
-
-	// Note: The actual import logic is complex and lives in cmd/bd/import.go
-	// For now, we'll return an error suggesting to use direct mode
-	// In the future, we can refactor the import logic into a shared package
-	return Response{
-		Success: false,
-		Error:   "import via daemon not yet implemented, use --no-daemon flag",
-	}
-}
-
 // checkAndAutoImportIfStale checks if JSONL is newer than last import and triggers auto-import
 // This fixes bd-132: daemon shows stale data after git pull
 // This fixes bd-8931: daemon gets stuck when auto-import blocked by git conflicts
