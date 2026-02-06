@@ -30,13 +30,15 @@ Shadowbook is race control for agentic engineering. Here's the mapping:
 
 **Drift is running a different line.** The spec says "turn left at the auth module." The agent turns right. The code diverges from the spec's intent — not because the spec changed (that's volatility), but because the agent went its own way. Drift measures the gap between designed intent and actual output.
 
+**Comment drift is track signage that nobody updates.** The marshal post says "braking zone at 100m" but the corner was reprofiled and braking is now at 80m. In code, this is `// See auth.go:validateToken` pointing at a function that was renamed to `verifyJWT` three months ago. Comments rot silently — nobody checks whether the signs still match the track. `bd cc scan` surveys every sign on the circuit. `bd cc drift` flags the ones that are wrong.
+
 **Agent teams are the pit wall.** The pit wall in F1 coordinates strategy across all cars on the team. It decides who pits when, who attacks, who defends. `bd team` is the pit wall — it sees all agents, all beads, all specs, and coordinates the whole operation.
 
 **File disjointness is the cardinal rule: no two cars on the same piece of track at the same time.** Shadowbook enforces that agents work on disjoint file sets. Two agents touching the same file is a collision waiting to happen.
 
-## The `bd team` Commands
+## The `bd team` Commands (and the Track Survey)
 
-Six commands. Each maps to a phase of race operations.
+Seven commands. Six map to race operations, one surveys the track itself.
 
 ```
 bd team plan <epic>        # Race strategy briefing
@@ -68,17 +70,26 @@ bd team report             # Full race post-mortem
 ```
 Complete metrics: drift per agent, volatility per spec, file collision near-misses, overall team efficiency. The Monday debrief where you figure out what to change for the next race.
 
+```
+bd cc scan                 # Track survey: every sign, every marker
+bd cc drift                # Which signs are wrong?
+bd cc links --broken       # Which signs point to walls that moved?
+```
+The track survey nobody else does. Scans every code comment — 15,000+ in a typical codebase — using AST parsing. Finds broken cross-references (the sign says "See auth.go:validateToken" but the function was renamed), stale comments (the code around them changed 76 days ago, the comment didn't), and expired TODOs (that "temporary" workaround from 104 days ago). Uses batched `git blame` per-file, not per-line, so it runs in under 300ms on a 500-file codebase.
+
+In a team context, this matters most: agents produce comment drift *faster* than solo developers because they rename, refactor, and restructure more aggressively. The agent that renames `validateToken` to `verifyJWT` won't update the comment in `sync_branch.go` that says "See auth.go:validateToken" — it's not in its context window. `bd cc drift --ci` catches it before merge.
+
 ## Why This Matters
 
 The difference between a coordinated agent team and an uncoordinated one is the difference between a podium finish and a DNF you didn't see coming.
 
-Without coordination, multi-agent coding is a bet: maybe the agents' work will compose cleanly, maybe you'll spend two hours untangling merge conflicts that erased the productivity gains. With coordination — file disjointness, spec gating, wobble monitoring, live telemetry — you get the actual promise of parallel autonomous work.
+Without coordination, multi-agent coding is a bet: maybe the agents' work will compose cleanly, maybe you'll spend two hours untangling merge conflicts that erased the productivity gains. With coordination — file disjointness, spec gating, wobble monitoring, live telemetry, and comment drift detection — you get the actual promise of parallel autonomous work.
 
 Full send, not full crash.
 
 ## Built on Beads
 
-Shadowbook is a layer on top of [steveyegge/beads](https://github.com/steveyegge/beads), the open-source task-tracking format designed for agentic workflows. Beads are JSON. They work with any orchestrator — Claude Code, Codex, Aider, your custom harness. Shadowbook adds the coordination layer: specs, skills, drift, volatility, wobble, and now team operations.
+Shadowbook is a layer on top of [steveyegge/beads](https://github.com/steveyegge/beads), the open-source task-tracking format designed for agentic workflows. Beads are JSON. They work with any orchestrator — Claude Code, Codex, Aider, your custom harness. Shadowbook adds the coordination layer: specs, skills, drift, volatility, wobble, comment tracking, and team operations.
 
 The data is portable. The format is open. The race control is what Shadowbook brings.
 
