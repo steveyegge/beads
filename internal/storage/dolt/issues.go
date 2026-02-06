@@ -5,187 +5,29 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/steveyegge/beads/internal/idgen"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// CreateIssue creates a new issue
+// CreateIssue creates a new issue.
+// Delegates to the transaction method for single-source-of-truth logic.
 func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
-	// Fetch custom statuses and types for validation
-	customStatuses, err := s.GetCustomStatuses(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get custom statuses: %w", err)
-	}
-	customTypes, err := s.GetCustomTypes(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get custom types: %w", err)
-	}
-
-	// Set timestamps
-	now := time.Now().UTC()
-	if issue.CreatedAt.IsZero() {
-		issue.CreatedAt = now
-	}
-	if issue.UpdatedAt.IsZero() {
-		issue.UpdatedAt = now
-	}
-
-	// Defensive fix for closed_at invariant
-	if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
-		maxTime := issue.CreatedAt
-		if issue.UpdatedAt.After(maxTime) {
-			maxTime = issue.UpdatedAt
-		}
-		closedAt := maxTime.Add(time.Second)
-		issue.ClosedAt = &closedAt
-	}
-
-	// Defensive fix for deleted_at invariant
-	if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
-		maxTime := issue.CreatedAt
-		if issue.UpdatedAt.After(maxTime) {
-			maxTime = issue.UpdatedAt
-		}
-		deletedAt := maxTime.Add(time.Second)
-		issue.DeletedAt = &deletedAt
-	}
-
-	// Validate issue
-	if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
-		return fmt.Errorf("validation failed: %w", err)
-	}
-
-	// Compute content hash
-	if issue.ContentHash == "" {
-		issue.ContentHash = issue.ComputeContentHash()
-	}
-
-	// Start transaction
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Get prefix from config
-	var configPrefix string
-	err = tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
-	if err == sql.ErrNoRows || configPrefix == "" {
-		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
-	} else if err != nil {
-		return fmt.Errorf("failed to get config: %w", err)
-	}
-
-	// Determine prefix for ID generation
-	prefix := configPrefix
-	if issue.PrefixOverride != "" {
-		prefix = issue.PrefixOverride
-	} else if issue.IDPrefix != "" {
-		prefix = configPrefix + "-" + issue.IDPrefix
-	}
-
-	// Generate or validate ID
-	if issue.ID == "" {
-		generatedID, err := generateIssueID(ctx, tx, prefix, issue, actor)
-		if err != nil {
-			return fmt.Errorf("failed to generate issue ID: %w", err)
-		}
-		issue.ID = generatedID
-	}
-
-	// Insert issue
-	if err := insertIssue(ctx, tx, issue); err != nil {
-		return fmt.Errorf("failed to insert issue: %w", err)
-	}
-
-	// Record creation event
-	if err := recordEvent(ctx, tx, issue.ID, types.EventCreated, actor, "", ""); err != nil {
-		return fmt.Errorf("failed to record creation event: %w", err)
-	}
-
-	// Mark issue as dirty
-	if err := markDirty(ctx, tx, issue.ID); err != nil {
-		return fmt.Errorf("failed to mark issue dirty: %w", err)
-	}
-
-	return tx.Commit()
+	return s.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.CreateIssue(ctx, issue, actor)
+	})
 }
 
-// CreateIssues creates multiple issues in a single transaction
+// CreateIssues creates multiple issues in a single transaction.
+// Delegates to the transaction method for single-source-of-truth logic.
 func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
 	if len(issues) == 0 {
 		return nil
 	}
-
-	// Fetch custom statuses and types for validation
-	customStatuses, err := s.GetCustomStatuses(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get custom statuses: %w", err)
-	}
-	customTypes, err := s.GetCustomTypes(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get custom types: %w", err)
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	for _, issue := range issues {
-		now := time.Now().UTC()
-		if issue.CreatedAt.IsZero() {
-			issue.CreatedAt = now
-		}
-		if issue.UpdatedAt.IsZero() {
-			issue.UpdatedAt = now
-		}
-
-		// Defensive fix for closed_at invariant
-		if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
-			maxTime := issue.CreatedAt
-			if issue.UpdatedAt.After(maxTime) {
-				maxTime = issue.UpdatedAt
-			}
-			closedAt := maxTime.Add(time.Second)
-			issue.ClosedAt = &closedAt
-		}
-
-		// Defensive fix for deleted_at invariant
-		if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
-			maxTime := issue.CreatedAt
-			if issue.UpdatedAt.After(maxTime) {
-				maxTime = issue.UpdatedAt
-			}
-			deletedAt := maxTime.Add(time.Second)
-			issue.DeletedAt = &deletedAt
-		}
-
-		// Validate issue
-		if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
-			return fmt.Errorf("validation failed for issue %s: %w", issue.ID, err)
-		}
-
-		if issue.ContentHash == "" {
-			issue.ContentHash = issue.ComputeContentHash()
-		}
-
-		if err := insertIssue(ctx, tx, issue); err != nil {
-			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
-		}
-		if err := recordEvent(ctx, tx, issue.ID, types.EventCreated, actor, "", ""); err != nil {
-			return fmt.Errorf("failed to record event for %s: %w", issue.ID, err)
-		}
-		if err := markDirty(ctx, tx, issue.ID); err != nil {
-			return fmt.Errorf("failed to mark dirty %s: %w", issue.ID, err)
-		}
-	}
-
-	return tx.Commit()
+	return s.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.CreateIssues(ctx, issues, actor)
+	})
 }
 
 // GetIssue retrieves an issue by ID
@@ -228,146 +70,28 @@ func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef strin
 	return s.GetIssue(ctx, id)
 }
 
-// UpdateIssue updates fields on an issue
+// UpdateIssue updates fields on an issue.
+// Delegates to the transaction method for single-source-of-truth logic.
 func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
-	oldIssue, err := s.GetIssue(ctx, id)
-	if err != nil {
-		return fmt.Errorf("failed to get issue for update: %w", err)
-	}
-	if oldIssue == nil {
-		return fmt.Errorf("issue %s not found", id)
-	}
-
-	// Build update query
-	setClauses := []string{"updated_at = ?"}
-	args := []interface{}{time.Now().UTC()}
-
-	for key, value := range updates {
-		if !isAllowedUpdateField(key) {
-			return fmt.Errorf("invalid field for update: %s", key)
-		}
-
-		columnName := key
-		if key == "wisp" {
-			columnName = "ephemeral"
-		}
-		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", columnName))
-
-		// Handle JSON serialization for array fields stored as TEXT
-		switch key {
-		case "waiters", "advice_subscriptions", "advice_subscriptions_exclude":
-			jsonData, _ := json.Marshal(value)
-			args = append(args, string(jsonData))
-		default:
-			args = append(args, value)
-		}
-	}
-
-	// Auto-manage closed_at
-	setClauses, args = manageClosedAt(oldIssue, updates, setClauses, args)
-
-	args = append(args, id)
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// nolint:gosec // G201: setClauses contains only column names (e.g. "status = ?"), actual values passed via args
-	query := fmt.Sprintf("UPDATE issues SET %s WHERE id = ?", strings.Join(setClauses, ", "))
-	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-		return fmt.Errorf("failed to update issue: %w", err)
-	}
-
-	// Record event
-	oldData, _ := json.Marshal(oldIssue)
-	newData, _ := json.Marshal(updates)
-	eventType := determineEventType(oldIssue, updates)
-
-	if err := recordEvent(ctx, tx, id, eventType, actor, string(oldData), string(newData)); err != nil {
-		return fmt.Errorf("failed to record event: %w", err)
-	}
-
-	if err := markDirty(ctx, tx, id); err != nil {
-		return fmt.Errorf("failed to mark dirty: %w", err)
-	}
-
-	return tx.Commit()
+	return s.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.UpdateIssue(ctx, id, updates, actor)
+	})
 }
 
-// CloseIssue closes an issue with a reason
+// CloseIssue closes an issue with a reason.
+// Delegates to the transaction method for single-source-of-truth logic.
 func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
-	now := time.Now().UTC()
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	result, err := tx.ExecContext(ctx, `
-		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
-		WHERE id = ?
-	`, types.StatusClosed, now, now, reason, session, id)
-	if err != nil {
-		return fmt.Errorf("failed to close issue: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("issue not found: %s", id)
-	}
-
-	if err := recordEvent(ctx, tx, id, types.EventClosed, actor, "", reason); err != nil {
-		return fmt.Errorf("failed to record event: %w", err)
-	}
-
-	if err := markDirty(ctx, tx, id); err != nil {
-		return fmt.Errorf("failed to mark dirty: %w", err)
-	}
-
-	return tx.Commit()
+	return s.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.CloseIssue(ctx, id, reason, actor, session)
+	})
 }
 
-// DeleteIssue permanently removes an issue
+// DeleteIssue permanently removes an issue.
+// Delegates to the transaction method for single-source-of-truth logic.
 func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Delete related data (foreign keys will cascade, but be explicit)
-	tables := []string{"dependencies", "events", "comments", "labels", "dirty_issues"}
-	for _, table := range tables {
-		if table == "dependencies" {
-			_, err = tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE issue_id = ? OR depends_on_id = ?", table), id, id)
-		} else {
-			_, err = tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE issue_id = ?", table), id)
-		}
-		if err != nil {
-			return fmt.Errorf("failed to delete from %s: %w", table, err)
-		}
-	}
-
-	result, err := tx.ExecContext(ctx, "DELETE FROM issues WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("failed to delete issue: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("issue not found: %s", id)
-	}
-
-	return tx.Commit()
+	return s.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.DeleteIssue(ctx, id)
+	})
 }
 
 // =============================================================================
@@ -663,49 +387,6 @@ func markDirty(ctx context.Context, tx *sql.Tx, issueID string) error {
 		ON DUPLICATE KEY UPDATE marked_at = VALUES(marked_at)
 	`, issueID, time.Now().UTC())
 	return err
-}
-
-// generateIssueID generates a unique hash-based ID for an issue
-// Uses adaptive length based on database size and tries multiple nonces on collision
-func generateIssueID(ctx context.Context, tx *sql.Tx, prefix string, issue *types.Issue, actor string) (string, error) {
-	// Get adaptive base length based on current database size
-	baseLength, err := GetAdaptiveIDLengthTx(ctx, tx, prefix)
-	if err != nil {
-		// Fallback to 6 on error
-		baseLength = 6
-	}
-
-	// Try baseLength, baseLength+1, baseLength+2, up to max of 8
-	maxLength := 8
-	if baseLength > maxLength {
-		baseLength = maxLength
-	}
-
-	for length := baseLength; length <= maxLength; length++ {
-		// Try up to 10 nonces at each length
-		for nonce := 0; nonce < 10; nonce++ {
-			candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
-
-			// Check if this ID already exists
-			var count int
-			err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
-			if err != nil {
-				return "", fmt.Errorf("failed to check for ID collision: %w", err)
-			}
-
-			if count == 0 {
-				return candidate, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("failed to generate unique ID after trying lengths %d-%d with 10 nonces each", baseLength, maxLength)
-}
-
-// generateHashID creates a hash-based ID for a top-level issue.
-// Uses base36 encoding (0-9, a-z) for better information density than hex.
-func generateHashID(prefix, title, description, creator string, timestamp time.Time, length, nonce int) string {
-	return idgen.GenerateHashID(prefix, title, description, creator, timestamp, length, nonce)
 }
 
 func isAllowedUpdateField(key string) bool {

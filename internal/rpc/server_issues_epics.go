@@ -568,88 +568,13 @@ func (s *Server) handleCreate(req *Request) Response {
 		}
 	}
 
-	if err := store.CreateIssue(ctx, issue, s.reqActor(req)); err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("failed to create issue: %v", err),
-		}
+	// Pre-validate dependency specs and waits-for gate before starting the transaction
+	// so we can return errors without rolling back
+	type parsedDep struct {
+		depType     types.DependencyType
+		dependsOnID string
 	}
-
-	// If parent was specified, add parent-child dependency
-	if createArgs.Parent != "" {
-		dep := &types.Dependency{
-			IssueID:     issue.ID,
-			DependsOnID: createArgs.Parent,
-			Type:        types.DepParentChild,
-		}
-		if err := store.AddDependency(ctx, dep, s.reqActor(req)); err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to add parent-child dependency %s -> %s: %v", issue.ID, createArgs.Parent, err),
-			}
-		}
-	}
-
-	// If RepliesTo was specified, add replies-to dependency (Decision 004)
-	if createArgs.RepliesTo != "" {
-		dep := &types.Dependency{
-			IssueID:     issue.ID,
-			DependsOnID: createArgs.RepliesTo,
-			Type:        types.DepRepliesTo,
-			ThreadID:    createArgs.RepliesTo, // Use parent ID as thread root
-		}
-		if err := store.AddDependency(ctx, dep, s.reqActor(req)); err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to add replies-to dependency %s -> %s: %v", issue.ID, createArgs.RepliesTo, err),
-			}
-		}
-	}
-
-	// Add labels if specified
-	for _, label := range createArgs.Labels {
-		if err := store.AddLabel(ctx, issue.ID, label, s.reqActor(req)); err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to add label %s: %v", label, err),
-			}
-		}
-	}
-
-	// Auto-add role_type/rig labels for agent beads (enables filtering queries)
-	// Check for gt:agent label to identify agent beads (Gas Town separation)
-	if containsLabel(createArgs.Labels, "gt:agent") {
-		if issue.RoleType != "" {
-			label := "role_type:" + issue.RoleType
-			if err := store.AddLabel(ctx, issue.ID, label, s.reqActor(req)); err != nil {
-				return Response{
-					Success: false,
-					Error:   fmt.Sprintf("failed to add role_type label: %v", err),
-				}
-			}
-		}
-		if issue.Rig != "" {
-			label := "rig:" + issue.Rig
-			if err := store.AddLabel(ctx, issue.ID, label, s.reqActor(req)); err != nil {
-				return Response{
-					Success: false,
-					Error:   fmt.Sprintf("failed to add rig label: %v", err),
-				}
-			}
-		}
-	}
-
-	// Validate type schema if one exists for this issue type (gt-pozvwr.6)
-	if schema, err := store.GetTypeSchema(ctx, string(issue.IssueType)); err == nil && schema != nil {
-		if err := issue.ValidateAgainstSchema(schema, createArgs.Labels); err != nil {
-			return Response{
-				Success: false,
-				Error:   err.Error(),
-			}
-		}
-	}
-
-	// Add dependencies if specified
+	var parsedDeps []parsedDep
 	for _, depSpec := range createArgs.Dependencies {
 		depSpec = strings.TrimSpace(depSpec)
 		if depSpec == "" {
@@ -680,23 +605,12 @@ func (s *Server) handleCreate(req *Request) Response {
 				Error:   fmt.Sprintf("invalid dependency type '%s' (valid: blocks, related, parent-child, discovered-from)", depType),
 			}
 		}
-
-		dep := &types.Dependency{
-			IssueID:     issue.ID,
-			DependsOnID: dependsOnID,
-			Type:        depType,
-		}
-		if err := store.AddDependency(ctx, dep, s.reqActor(req)); err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to add dependency %s -> %s: %v", issue.ID, dependsOnID, err),
-			}
-		}
+		parsedDeps = append(parsedDeps, parsedDep{depType: depType, dependsOnID: dependsOnID})
 	}
 
-	// Add waits-for dependency if specified
+	// Pre-validate waits-for gate
+	var waitsForMeta string
 	if createArgs.WaitsFor != "" {
-		// Validate gate type
 		gate := createArgs.WaitsForGate
 		if gate == "" {
 			gate = types.WaitsForAllChildren
@@ -707,11 +621,7 @@ func (s *Server) handleCreate(req *Request) Response {
 				Error:   fmt.Sprintf("invalid waits_for_gate value '%s' (valid: all-children, any-children)", gate),
 			}
 		}
-
-		// Create metadata JSON
-		meta := types.WaitsForMeta{
-			Gate: gate,
-		}
+		meta := types.WaitsForMeta{Gate: gate}
 		metaJSON, err := json.Marshal(meta)
 		if err != nil {
 			return Response{
@@ -719,22 +629,109 @@ func (s *Server) handleCreate(req *Request) Response {
 				Error:   fmt.Sprintf("failed to serialize waits-for metadata: %v", err),
 			}
 		}
+		waitsForMeta = string(metaJSON)
+	}
 
-		dep := &types.Dependency{
-			IssueID:     issue.ID,
-			DependsOnID: createArgs.WaitsFor,
-			Type:        types.DepWaitsFor,
-			Metadata:    string(metaJSON),
+	// Wrap all writes in a single transaction to prevent FK constraint violations
+	// when creating issues with dependencies and labels (hq-7yh6lz)
+	actor := s.reqActor(req)
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		if err := tx.CreateIssue(ctx, issue, actor); err != nil {
+			return fmt.Errorf("failed to create issue: %w", err)
 		}
-		if err := store.AddDependency(ctx, dep, s.reqActor(req)); err != nil {
+
+		// Parent-child dependency
+		if createArgs.Parent != "" {
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: createArgs.Parent,
+				Type:        types.DepParentChild,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("failed to add parent-child dependency %s -> %s: %w", issue.ID, createArgs.Parent, err)
+			}
+		}
+
+		// Replies-to dependency (Decision 004)
+		if createArgs.RepliesTo != "" {
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: createArgs.RepliesTo,
+				Type:        types.DepRepliesTo,
+				ThreadID:    createArgs.RepliesTo,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("failed to add replies-to dependency %s -> %s: %w", issue.ID, createArgs.RepliesTo, err)
+			}
+		}
+
+		// Labels
+		for _, label := range createArgs.Labels {
+			if err := tx.AddLabel(ctx, issue.ID, label, actor); err != nil {
+				return fmt.Errorf("failed to add label %s: %w", label, err)
+			}
+		}
+
+		// Auto-add role_type/rig labels for agent beads
+		if containsLabel(createArgs.Labels, "gt:agent") {
+			if issue.RoleType != "" {
+				if err := tx.AddLabel(ctx, issue.ID, "role_type:"+issue.RoleType, actor); err != nil {
+					return fmt.Errorf("failed to add role_type label: %w", err)
+				}
+			}
+			if issue.Rig != "" {
+				if err := tx.AddLabel(ctx, issue.ID, "rig:"+issue.Rig, actor); err != nil {
+					return fmt.Errorf("failed to add rig label: %w", err)
+				}
+			}
+		}
+
+		// Dependencies
+		for _, pd := range parsedDeps {
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: pd.dependsOnID,
+				Type:        pd.depType,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("failed to add dependency %s -> %s: %w", issue.ID, pd.dependsOnID, err)
+			}
+		}
+
+		// Waits-for dependency
+		if createArgs.WaitsFor != "" {
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: createArgs.WaitsFor,
+				Type:        types.DepWaitsFor,
+				Metadata:    waitsForMeta,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				return fmt.Errorf("failed to add waits-for dependency %s -> %s: %w", issue.ID, createArgs.WaitsFor, err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   err.Error(),
+		}
+	}
+
+	// Validate type schema after transaction commits (gt-pozvwr.6)
+	// GetTypeSchema is a read-only operation not on the Transaction interface
+	if schema, schemaErr := store.GetTypeSchema(ctx, string(issue.IssueType)); schemaErr == nil && schema != nil {
+		if err := issue.ValidateAgainstSchema(schema, createArgs.Labels); err != nil {
 			return Response{
 				Success: false,
-				Error:   fmt.Sprintf("failed to add waits-for dependency %s -> %s: %v", issue.ID, createArgs.WaitsFor, err),
+				Error:   err.Error(),
 			}
 		}
 	}
 
-	// Emit mutation event for event-driven daemon
+	// Emit mutation event for event-driven daemon (after transaction commits)
 	s.emitMutation(MutationCreate, issue.ID, issue.Title, issue.Assignee)
 
 	data, _ := json.Marshal(issue)
@@ -841,28 +838,15 @@ func (s *Server) handleUpdate(req *Request) Response {
 
 	actor := s.reqActor(req)
 
-	// Handle claim operation atomically
-	if updateArgs.Claim {
-		// Check if already claimed (has non-empty assignee)
-		if issue.Assignee != "" {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("already claimed by %s", issue.Assignee),
-			}
-		}
-		// Atomically set assignee and status
-		claimUpdates := map[string]interface{}{
-			"assignee": actor,
-			"status":   "in_progress",
-		}
-		if err := store.UpdateIssue(ctx, updateArgs.ID, claimUpdates, actor); err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to claim issue: %v", err),
-			}
+	// Pre-validate claim before transaction (pure check against pre-fetched issue)
+	if updateArgs.Claim && issue.Assignee != "" {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("already claimed by %s", issue.Assignee),
 		}
 	}
 
+	// Parse updates before transaction (pure validation, no DB)
 	updates, err := updatesFromArgs(updateArgs)
 	if err != nil {
 		return Response{
@@ -871,108 +855,136 @@ func (s *Server) handleUpdate(req *Request) Response {
 		}
 	}
 
-	// Apply regular field updates if any
-	if len(updates) > 0 {
-		if err := store.UpdateIssue(ctx, updateArgs.ID, updates, actor); err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to update issue: %v", err),
+	// Wrap all writes in a single transaction to prevent FK constraint violations (hq-7yh6lz)
+	err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Claim operation
+		if updateArgs.Claim {
+			claimUpdates := map[string]interface{}{
+				"assignee": actor,
+				"status":   "in_progress",
 			}
+			if err := tx.UpdateIssue(ctx, updateArgs.ID, claimUpdates, actor); err != nil {
+				return fmt.Errorf("failed to claim issue: %w", err)
+			}
+		}
+
+		// Regular field updates
+		if len(updates) > 0 {
+			if err := tx.UpdateIssue(ctx, updateArgs.ID, updates, actor); err != nil {
+				return fmt.Errorf("failed to update issue: %w", err)
+			}
+		}
+
+		// Set labels (replaces all existing labels)
+		if len(updateArgs.SetLabels) > 0 {
+			currentLabels, err := tx.GetLabels(ctx, updateArgs.ID)
+			if err != nil {
+				return fmt.Errorf("failed to get current labels: %w", err)
+			}
+			for _, label := range currentLabels {
+				if err := tx.RemoveLabel(ctx, updateArgs.ID, label, actor); err != nil {
+					return fmt.Errorf("failed to remove label %s: %w", label, err)
+				}
+			}
+			for _, label := range updateArgs.SetLabels {
+				if err := tx.AddLabel(ctx, updateArgs.ID, label, actor); err != nil {
+					return fmt.Errorf("failed to set label %s: %w", label, err)
+				}
+			}
+		}
+
+		// Add labels
+		for _, label := range updateArgs.AddLabels {
+			if err := tx.AddLabel(ctx, updateArgs.ID, label, actor); err != nil {
+				return fmt.Errorf("failed to add label %s: %w", label, err)
+			}
+		}
+
+		// Remove labels
+		for _, label := range updateArgs.RemoveLabels {
+			if err := tx.RemoveLabel(ctx, updateArgs.ID, label, actor); err != nil {
+				return fmt.Errorf("failed to remove label %s: %w", label, err)
+			}
+		}
+
+		// Auto-add role_type/rig labels for agent beads
+		issueLabels, _ := tx.GetLabels(ctx, updateArgs.ID)
+		if containsLabel(issueLabels, "gt:agent") {
+			if updateArgs.RoleType != nil && *updateArgs.RoleType != "" {
+				for _, l := range issueLabels {
+					if strings.HasPrefix(l, "role_type:") {
+						_ = tx.RemoveLabel(ctx, updateArgs.ID, l, actor)
+					}
+				}
+				if err := tx.AddLabel(ctx, updateArgs.ID, "role_type:"+*updateArgs.RoleType, actor); err != nil {
+					return fmt.Errorf("failed to add role_type label: %w", err)
+				}
+			}
+			if updateArgs.Rig != nil && *updateArgs.Rig != "" {
+				for _, l := range issueLabels {
+					if strings.HasPrefix(l, "rig:") {
+						_ = tx.RemoveLabel(ctx, updateArgs.ID, l, actor)
+					}
+				}
+				if err := tx.AddLabel(ctx, updateArgs.ID, "rig:"+*updateArgs.Rig, actor); err != nil {
+					return fmt.Errorf("failed to add rig label: %w", err)
+				}
+			}
+		}
+
+		// Reparenting
+		if updateArgs.Parent != nil {
+			newParentID := *updateArgs.Parent
+
+			// Validate new parent exists (unless empty string to remove parent)
+			if newParentID != "" {
+				newParent, err := tx.GetIssue(ctx, newParentID)
+				if err != nil {
+					return fmt.Errorf("failed to get new parent: %w", err)
+				}
+				if newParent == nil {
+					return fmt.Errorf("parent issue %s not found", newParentID)
+				}
+			}
+
+			// Find and remove existing parent-child dependency
+			deps, err := tx.GetDependencyRecords(ctx, updateArgs.ID)
+			if err != nil {
+				return fmt.Errorf("failed to get dependencies: %w", err)
+			}
+			for _, dep := range deps {
+				if dep.Type == types.DepParentChild {
+					if err := tx.RemoveDependency(ctx, updateArgs.ID, dep.DependsOnID, actor); err != nil {
+						return fmt.Errorf("failed to remove old parent dependency: %w", err)
+					}
+					break
+				}
+			}
+
+			// Add new parent-child dependency (if not removing parent)
+			if newParentID != "" {
+				newDep := &types.Dependency{
+					IssueID:     updateArgs.ID,
+					DependsOnID: newParentID,
+					Type:        types.DepParentChild,
+				}
+				if err := tx.AddDependency(ctx, newDep, actor); err != nil {
+					return fmt.Errorf("failed to add parent dependency: %w", err)
+				}
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   err.Error(),
 		}
 	}
 
-	// Handle label operations
-	// Set labels (replaces all existing labels)
-	if len(updateArgs.SetLabels) > 0 {
-		// Get current labels
-		currentLabels, err := store.GetLabels(ctx, updateArgs.ID)
-		if err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to get current labels: %v", err),
-			}
-		}
-		// Remove all current labels
-		for _, label := range currentLabels {
-			if err := store.RemoveLabel(ctx, updateArgs.ID, label, actor); err != nil {
-				return Response{
-					Success: false,
-					Error:   fmt.Sprintf("failed to remove label %s: %v", label, err),
-				}
-			}
-		}
-		// Add new labels
-		for _, label := range updateArgs.SetLabels {
-			if err := store.AddLabel(ctx, updateArgs.ID, label, actor); err != nil {
-				return Response{
-					Success: false,
-					Error:   fmt.Sprintf("failed to set label %s: %v", label, err),
-				}
-			}
-		}
-	}
-
-	// Add labels
-	for _, label := range updateArgs.AddLabels {
-		if err := store.AddLabel(ctx, updateArgs.ID, label, actor); err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to add label %s: %v", label, err),
-			}
-		}
-	}
-
-	// Remove labels
-	for _, label := range updateArgs.RemoveLabels {
-		if err := store.RemoveLabel(ctx, updateArgs.ID, label, actor); err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to remove label %s: %v", label, err),
-			}
-		}
-	}
-
-	// Auto-add role_type/rig labels for agent beads when these fields are set
-	// This enables filtering queries like: bd list --label=gt:agent --label=role_type:witness
-	// Note: We remove old role_type/rig labels first to prevent accumulation
-	// Check for gt:agent label to identify agent beads (Gas Town separation)
-	issueLabels, _ := store.GetLabels(ctx, updateArgs.ID)
-	if containsLabel(issueLabels, "gt:agent") {
-		if updateArgs.RoleType != nil && *updateArgs.RoleType != "" {
-			// Remove any existing role_type:* labels first
-			for _, l := range issueLabels {
-				if strings.HasPrefix(l, "role_type:") {
-					_ = store.RemoveLabel(ctx, updateArgs.ID, l, actor)
-				}
-			}
-			// Add new label
-			label := "role_type:" + *updateArgs.RoleType
-			if err := store.AddLabel(ctx, updateArgs.ID, label, actor); err != nil {
-				return Response{
-					Success: false,
-					Error:   fmt.Sprintf("failed to add role_type label: %v", err),
-				}
-			}
-		}
-		if updateArgs.Rig != nil && *updateArgs.Rig != "" {
-			// Remove any existing rig:* labels first
-			for _, l := range issueLabels {
-				if strings.HasPrefix(l, "rig:") {
-					_ = store.RemoveLabel(ctx, updateArgs.ID, l, actor)
-				}
-			}
-			// Add new label
-			label := "rig:" + *updateArgs.Rig
-			if err := store.AddLabel(ctx, updateArgs.ID, label, actor); err != nil {
-				return Response{
-					Success: false,
-					Error:   fmt.Sprintf("failed to add rig label: %v", err),
-				}
-			}
-		}
-	}
-
-	// Re-validate type schema after updates if type-relevant fields changed (gt-pozvwr.6)
+	// Re-validate type schema after transaction commits (gt-pozvwr.6)
+	// GetTypeSchema is a read-only operation not on the Transaction interface
 	if len(updates) > 0 || len(updateArgs.SetLabels) > 0 || len(updateArgs.AddLabels) > 0 || len(updateArgs.RemoveLabels) > 0 {
 		updatedIssue, err := store.GetIssue(ctx, updateArgs.ID)
 		if err == nil && updatedIssue != nil {
@@ -988,72 +1000,13 @@ func (s *Server) handleUpdate(req *Request) Response {
 		}
 	}
 
-	// Handle reparenting
-	if updateArgs.Parent != nil {
-		newParentID := *updateArgs.Parent
-
-		// Validate new parent exists (unless empty string to remove parent)
-		if newParentID != "" {
-			newParent, err := store.GetIssue(ctx, newParentID)
-			if err != nil {
-				return Response{
-					Success: false,
-					Error:   fmt.Sprintf("failed to get new parent: %v", err),
-				}
-			}
-			if newParent == nil {
-				return Response{
-					Success: false,
-					Error:   fmt.Sprintf("parent issue %s not found", newParentID),
-				}
-			}
-		}
-
-		// Find and remove existing parent-child dependency
-		deps, err := store.GetDependencyRecords(ctx, updateArgs.ID)
-		if err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to get dependencies: %v", err),
-			}
-		}
-		for _, dep := range deps {
-			if dep.Type == types.DepParentChild {
-				if err := store.RemoveDependency(ctx, updateArgs.ID, dep.DependsOnID, actor); err != nil {
-					return Response{
-						Success: false,
-						Error:   fmt.Sprintf("failed to remove old parent dependency: %v", err),
-					}
-				}
-				break // Only one parent-child dependency expected
-			}
-		}
-
-		// Add new parent-child dependency (if not removing parent)
-		if newParentID != "" {
-			newDep := &types.Dependency{
-				IssueID:     updateArgs.ID,
-				DependsOnID: newParentID,
-				Type:        types.DepParentChild,
-			}
-			if err := store.AddDependency(ctx, newDep, actor); err != nil {
-				return Response{
-					Success: false,
-					Error:   fmt.Sprintf("failed to add parent dependency: %v", err),
-				}
-			}
-		}
-	}
-
-	// Emit mutation event for event-driven daemon (only if any updates or label/parent operations were performed)
+	// Emit mutation event for event-driven daemon (after transaction commits)
 	if len(updates) > 0 || len(updateArgs.SetLabels) > 0 || len(updateArgs.AddLabels) > 0 || len(updateArgs.RemoveLabels) > 0 || updateArgs.Parent != nil {
-		// Determine effective assignee: use new assignee from update if provided, otherwise use existing
 		effectiveAssignee := issue.Assignee
 		if updateArgs.Assignee != nil && *updateArgs.Assignee != "" {
 			effectiveAssignee = *updateArgs.Assignee
 		}
 
-		// Check if this was a status change - emit rich MutationStatus event
 		if updateArgs.Status != nil && *updateArgs.Status != string(issue.Status) {
 			s.emitRichMutation(MutationEvent{
 				Type:      MutationStatus,

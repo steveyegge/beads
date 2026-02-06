@@ -1911,13 +1911,92 @@ func (m *MemoryStorage) UnderlyingConn(ctx context.Context) (*sql.Conn, error) {
 }
 
 // RunInTransaction executes a function within a transaction context.
-// For MemoryStorage, this provides basic atomicity via mutex locking.
-// If the function returns an error, changes are NOT automatically rolled back
-// since MemoryStorage doesn't support true transaction rollback.
-//
-// Note: For full rollback support, callers should use SQLite storage.
+// For MemoryStorage, this delegates all operations to the underlying storage.
+// There is no true rollback support — changes are applied immediately.
+// This is sufficient for tests and --no-db mode where atomicity guarantees
+// are not required, but the Transaction interface must be satisfied.
 func (m *MemoryStorage) RunInTransaction(ctx context.Context, fn func(tx storage.Transaction) error) error {
-	return fmt.Errorf("RunInTransaction not supported in --no-db mode: use SQLite storage for transaction support")
+	tx := &memoryTransaction{store: m}
+	return fn(tx)
+}
+
+// memoryTransaction implements storage.Transaction by delegating to MemoryStorage.
+// No rollback support — changes are applied directly to the in-memory store.
+type memoryTransaction struct {
+	store *MemoryStorage
+}
+
+func (t *memoryTransaction) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
+	return t.store.CreateIssue(ctx, issue, actor)
+}
+func (t *memoryTransaction) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
+	return t.store.CreateIssues(ctx, issues, actor)
+}
+func (t *memoryTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
+	return t.store.UpdateIssue(ctx, id, updates, actor)
+}
+func (t *memoryTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
+	return t.store.CloseIssue(ctx, id, reason, actor, session)
+}
+func (t *memoryTransaction) DeleteIssue(ctx context.Context, id string) error {
+	return t.store.DeleteIssue(ctx, id)
+}
+func (t *memoryTransaction) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
+	return t.store.GetIssue(ctx, id)
+}
+func (t *memoryTransaction) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	return t.store.SearchIssues(ctx, query, filter)
+}
+func (t *memoryTransaction) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+	return t.store.AddDependency(ctx, dep, actor)
+}
+func (t *memoryTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
+	return t.store.RemoveDependency(ctx, issueID, dependsOnID, actor)
+}
+func (t *memoryTransaction) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
+	return t.store.GetDependencyRecords(ctx, issueID)
+}
+func (t *memoryTransaction) AddLabel(ctx context.Context, issueID, label, actor string) error {
+	return t.store.AddLabel(ctx, issueID, label, actor)
+}
+func (t *memoryTransaction) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
+	return t.store.RemoveLabel(ctx, issueID, label, actor)
+}
+func (t *memoryTransaction) GetLabels(ctx context.Context, issueID string) ([]string, error) {
+	return t.store.GetLabels(ctx, issueID)
+}
+func (t *memoryTransaction) SetConfig(ctx context.Context, key, value string) error {
+	return t.store.SetConfig(ctx, key, value)
+}
+func (t *memoryTransaction) GetConfig(ctx context.Context, key string) (string, error) {
+	return t.store.GetConfig(ctx, key)
+}
+func (t *memoryTransaction) SetMetadata(ctx context.Context, key, value string) error {
+	return t.store.SetMetadata(ctx, key, value)
+}
+func (t *memoryTransaction) GetMetadata(ctx context.Context, key string) (string, error) {
+	return t.store.GetMetadata(ctx, key)
+}
+func (t *memoryTransaction) AddComment(ctx context.Context, issueID, actor, comment string) error {
+	return t.store.AddComment(ctx, issueID, actor, comment)
+}
+func (t *memoryTransaction) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
+	return t.store.ImportIssueComment(ctx, issueID, author, text, createdAt)
+}
+func (t *memoryTransaction) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
+	return t.store.GetIssueComments(ctx, issueID)
+}
+func (t *memoryTransaction) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return t.store.CreateDecisionPoint(ctx, dp)
+}
+func (t *memoryTransaction) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+	return t.store.GetDecisionPoint(ctx, issueID)
+}
+func (t *memoryTransaction) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return t.store.UpdateDecisionPoint(ctx, dp)
+}
+func (t *memoryTransaction) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+	return t.store.ListPendingDecisions(ctx)
 }
 
 // REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs

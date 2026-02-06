@@ -5,65 +5,24 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// AddLabel adds a label to an issue
+// AddLabel adds a label to an issue.
+// Delegates to the transaction method for single-source-of-truth logic.
 func (s *DoltStore) AddLabel(ctx context.Context, issueID, label, actor string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	result, err := tx.ExecContext(ctx, `
-		INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)
-	`, issueID, label)
-	if err != nil {
-		return fmt.Errorf("failed to add label: %w", err)
-	}
-
-	// Only record event if label was actually added
-	rows, _ := result.RowsAffected()
-	if rows > 0 {
-		if err := recordEvent(ctx, tx, issueID, types.EventLabelAdded, actor, "", fmt.Sprintf("Added label: %s", label)); err != nil {
-			return fmt.Errorf("failed to record event: %w", err)
-		}
-		if err := markDirty(ctx, tx, issueID); err != nil {
-			return fmt.Errorf("failed to mark dirty: %w", err)
-		}
-	}
-
-	return tx.Commit()
+	return s.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.AddLabel(ctx, issueID, label, actor)
+	})
 }
 
-// RemoveLabel removes a label from an issue
+// RemoveLabel removes a label from an issue.
+// Delegates to the transaction method for single-source-of-truth logic.
 func (s *DoltStore) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	result, err := tx.ExecContext(ctx, `
-		DELETE FROM labels WHERE issue_id = ? AND label = ?
-	`, issueID, label)
-	if err != nil {
-		return fmt.Errorf("failed to remove label: %w", err)
-	}
-
-	// Only record event if label was actually removed
-	rows, _ := result.RowsAffected()
-	if rows > 0 {
-		if err := recordEvent(ctx, tx, issueID, types.EventLabelRemoved, actor, "", fmt.Sprintf("Removed label: %s", label)); err != nil {
-			return fmt.Errorf("failed to record event: %w", err)
-		}
-		if err := markDirty(ctx, tx, issueID); err != nil {
-			return fmt.Errorf("failed to mark dirty: %w", err)
-		}
-	}
-
-	return tx.Commit()
+	return s.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.RemoveLabel(ctx, issueID, label, actor)
+	})
 }
 
 // GetLabels retrieves all labels for an issue

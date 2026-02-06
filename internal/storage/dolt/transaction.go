@@ -3,11 +3,13 @@ package dolt
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -92,8 +94,19 @@ func (s *DoltStore) runTransactionOnce(ctx context.Context, fn func(tx storage.T
 	return sqlTx.Commit()
 }
 
-// CreateIssue creates an issue within the transaction
+// CreateIssue creates an issue within the transaction (full fidelity: matches DoltStore.CreateIssue)
 func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
+	// Fetch custom statuses and types for validation
+	customStatuses, err := t.getCustomStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+	customTypes, err := t.getCustomTypes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom types: %w", err)
+	}
+
+	// Set timestamps
 	now := time.Now().UTC()
 	if issue.CreatedAt.IsZero() {
 		issue.CreatedAt = now
@@ -101,6 +114,33 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 	if issue.UpdatedAt.IsZero() {
 		issue.UpdatedAt = now
 	}
+
+	// Defensive fix for closed_at invariant
+	if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
+		maxTime := issue.CreatedAt
+		if issue.UpdatedAt.After(maxTime) {
+			maxTime = issue.UpdatedAt
+		}
+		closedAt := maxTime.Add(time.Second)
+		issue.ClosedAt = &closedAt
+	}
+
+	// Defensive fix for deleted_at invariant
+	if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
+		maxTime := issue.CreatedAt
+		if issue.UpdatedAt.After(maxTime) {
+			maxTime = issue.UpdatedAt
+		}
+		deletedAt := maxTime.Add(time.Second)
+		issue.DeletedAt = &deletedAt
+	}
+
+	// Validate issue
+	if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Compute content hash
 	if issue.ContentHash == "" {
 		issue.ContentHash = issue.ComputeContentHash()
 	}
@@ -122,7 +162,7 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 			prefix = strings.TrimSuffix(prefix, "-") + "-" + issue.IDPrefix + "-"
 		}
 
-		// Generate hash-based ID with collision avoidance
+		// Generate hash-based ID with collision avoidance (adaptive length)
 		generated, err := generateIssueIDInTx(ctx, t.tx, prefix, issue, actor)
 		if err != nil {
 			return fmt.Errorf("failed to generate issue ID: %w", err)
@@ -130,13 +170,39 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ID = generated
 	}
 
-	return insertIssueTx(ctx, t.tx, issue)
+	// Insert issue (full column set)
+	if err := insertIssue(ctx, t.tx, issue); err != nil {
+		return fmt.Errorf("failed to insert issue: %w", err)
+	}
+
+	// Record creation event
+	if err := recordEvent(ctx, t.tx, issue.ID, types.EventCreated, actor, "", ""); err != nil {
+		return fmt.Errorf("failed to record creation event: %w", err)
+	}
+
+	// Mark issue as dirty
+	if err := markDirty(ctx, t.tx, issue.ID); err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
+	return nil
 }
 
-// generateIssueIDInTx generates a unique hash-based ID within a transaction
+// generateIssueIDInTx generates a unique hash-based ID within a transaction (adaptive length)
 func generateIssueIDInTx(ctx context.Context, tx *sql.Tx, prefix string, issue *types.Issue, actor string) (string, error) {
-	// Use adaptive length starting at 6, up to 8
-	for length := 6; length <= 8; length++ {
+	// Get adaptive base length based on current database size
+	baseLength, err := GetAdaptiveIDLengthTx(ctx, tx, prefix)
+	if err != nil {
+		// Fallback to 6 on error
+		baseLength = 6
+	}
+
+	maxLength := 8
+	if baseLength > maxLength {
+		baseLength = maxLength
+	}
+
+	for length := baseLength; length <= maxLength; length++ {
 		// Try up to 10 nonces at each length
 		for nonce := 0; nonce < 10; nonce++ {
 			candidate := idgen.GenerateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
@@ -154,7 +220,7 @@ func generateIssueIDInTx(ctx context.Context, tx *sql.Tx, prefix string, issue *
 		}
 	}
 
-	return "", fmt.Errorf("failed to generate unique ID after trying lengths 6-8 with 10 nonces each")
+	return "", fmt.Errorf("failed to generate unique ID after trying lengths %d-%d with 10 nonces each", baseLength, maxLength)
 }
 
 // CreateIssues creates multiple issues within the transaction
@@ -219,8 +285,17 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	return issues, rows.Err()
 }
 
-// UpdateIssue updates an issue within the transaction
+// UpdateIssue updates an issue within the transaction (full fidelity: matches DoltStore.UpdateIssue)
 func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
+	oldIssue, err := scanIssueTx(ctx, t.tx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get issue for update: %w", err)
+	}
+	if oldIssue == nil {
+		return fmt.Errorf("issue %s not found", id)
+	}
+
+	// Build update query
 	setClauses := []string{"updated_at = ?"}
 	args := []interface{}{time.Now().UTC()}
 
@@ -233,40 +308,135 @@ func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates ma
 			columnName = "ephemeral"
 		}
 		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", columnName))
-		args = append(args, value)
+
+		// Handle JSON serialization for array fields stored as TEXT
+		switch key {
+		case "waiters", "advice_subscriptions", "advice_subscriptions_exclude":
+			jsonData, _ := json.Marshal(value)
+			args = append(args, string(jsonData))
+		default:
+			args = append(args, value)
+		}
 	}
 
+	// Auto-manage closed_at
+	setClauses, args = manageClosedAt(oldIssue, updates, setClauses, args)
+
 	args = append(args, id)
+
 	// nolint:gosec // G201: setClauses contains only column names (e.g. "status = ?"), actual values passed via args
 	query := fmt.Sprintf("UPDATE issues SET %s WHERE id = ?", strings.Join(setClauses, ", "))
-	_, err := t.tx.ExecContext(ctx, query, args...)
-	return err
+	if _, err := t.tx.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("failed to update issue: %w", err)
+	}
+
+	// Record event
+	oldData, _ := json.Marshal(oldIssue)
+	newData, _ := json.Marshal(updates)
+	eventType := determineEventType(oldIssue, updates)
+
+	if err := recordEvent(ctx, t.tx, id, eventType, actor, string(oldData), string(newData)); err != nil {
+		return fmt.Errorf("failed to record event: %w", err)
+	}
+
+	if err := markDirty(ctx, t.tx, id); err != nil {
+		return fmt.Errorf("failed to mark dirty: %w", err)
+	}
+
+	return nil
 }
 
-// CloseIssue closes an issue within the transaction
+// CloseIssue closes an issue within the transaction (full fidelity: matches DoltStore.CloseIssue)
 func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	now := time.Now().UTC()
-	_, err := t.tx.ExecContext(ctx, `
+	result, err := t.tx.ExecContext(ctx, `
 		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
 		WHERE id = ?
 	`, types.StatusClosed, now, now, reason, session, id)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to close issue: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("issue not found: %s", id)
+	}
+
+	if err := recordEvent(ctx, t.tx, id, types.EventClosed, actor, "", reason); err != nil {
+		return fmt.Errorf("failed to record event: %w", err)
+	}
+
+	if err := markDirty(ctx, t.tx, id); err != nil {
+		return fmt.Errorf("failed to mark dirty: %w", err)
+	}
+
+	return nil
 }
 
-// DeleteIssue deletes an issue within the transaction
+// DeleteIssue deletes an issue within the transaction (full fidelity: matches DoltStore.DeleteIssue)
 func (t *doltTransaction) DeleteIssue(ctx context.Context, id string) error {
-	_, err := t.tx.ExecContext(ctx, "DELETE FROM issues WHERE id = ?", id)
-	return err
+	// Delete related data (foreign keys will cascade, but be explicit)
+	tables := []string{"dependencies", "events", "comments", "labels", "dirty_issues"}
+	for _, table := range tables {
+		var err error
+		if table == "dependencies" {
+			_, err = t.tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE issue_id = ? OR depends_on_id = ?", table), id, id)
+		} else {
+			_, err = t.tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE issue_id = ?", table), id)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to delete from %s: %w", table, err)
+		}
+	}
+
+	result, err := t.tx.ExecContext(ctx, "DELETE FROM issues WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete issue: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("issue not found: %s", id)
+	}
+
+	return nil
 }
 
-// AddDependency adds a dependency within the transaction
+// AddDependency adds a dependency within the transaction (full fidelity: matches DoltStore.AddDependency)
 func (t *doltTransaction) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+	metadata := dep.Metadata
+	if metadata == "" {
+		metadata = "{}"
+	}
+
 	_, err := t.tx.ExecContext(ctx, `
-		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, thread_id)
-		VALUES (?, ?, ?, NOW(), ?, ?)
-		ON DUPLICATE KEY UPDATE type = VALUES(type)
-	`, dep.IssueID, dep.DependsOnID, dep.Type, actor, dep.ThreadID)
-	return err
+		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
+		VALUES (?, ?, ?, NOW(), ?, ?, ?)
+		ON DUPLICATE KEY UPDATE type = VALUES(type), metadata = VALUES(metadata)
+	`, dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID)
+	if err != nil {
+		return fmt.Errorf("failed to add dependency: %w", err)
+	}
+
+	// Mark source issue as dirty for incremental export
+	if err := markDirty(ctx, t.tx, dep.IssueID); err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
+	// Only mark depends_on as dirty if it's a local issue (not an external reference)
+	if !strings.HasPrefix(dep.DependsOnID, "external:") {
+		if err := markDirty(ctx, t.tx, dep.DependsOnID); err != nil {
+			return fmt.Errorf("failed to mark depends_on issue dirty: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (t *doltTransaction) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
@@ -299,20 +469,50 @@ func (t *doltTransaction) GetDependencyRecords(ctx context.Context, issueID stri
 	return deps, rows.Err()
 }
 
-// RemoveDependency removes a dependency within the transaction
+// RemoveDependency removes a dependency within the transaction (full fidelity: matches DoltStore.RemoveDependency)
 func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
-	_, err := t.tx.ExecContext(ctx, `
+	result, err := t.tx.ExecContext(ctx, `
 		DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
 	`, issueID, dependsOnID)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to remove dependency: %w", err)
+	}
+
+	// Only mark dirty if something was actually deleted
+	rows, _ := result.RowsAffected()
+	if rows > 0 {
+		if err := markDirty(ctx, t.tx, issueID); err != nil {
+			return fmt.Errorf("failed to mark issue dirty: %w", err)
+		}
+		if err := markDirty(ctx, t.tx, dependsOnID); err != nil {
+			return fmt.Errorf("failed to mark depends_on issue dirty: %w", err)
+		}
+	}
+
+	return nil
 }
 
-// AddLabel adds a label within the transaction
+// AddLabel adds a label within the transaction (full fidelity: matches DoltStore.AddLabel)
 func (t *doltTransaction) AddLabel(ctx context.Context, issueID, label, actor string) error {
-	_, err := t.tx.ExecContext(ctx, `
+	result, err := t.tx.ExecContext(ctx, `
 		INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)
 	`, issueID, label)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to add label: %w", err)
+	}
+
+	// Only record event if label was actually added
+	rows, _ := result.RowsAffected()
+	if rows > 0 {
+		if err := recordEvent(ctx, t.tx, issueID, types.EventLabelAdded, actor, "", fmt.Sprintf("Added label: %s", label)); err != nil {
+			return fmt.Errorf("failed to record event: %w", err)
+		}
+		if err := markDirty(ctx, t.tx, issueID); err != nil {
+			return fmt.Errorf("failed to mark dirty: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (t *doltTransaction) GetLabels(ctx context.Context, issueID string) ([]string, error) {
@@ -332,12 +532,27 @@ func (t *doltTransaction) GetLabels(ctx context.Context, issueID string) ([]stri
 	return labels, rows.Err()
 }
 
-// RemoveLabel removes a label within the transaction
+// RemoveLabel removes a label within the transaction (full fidelity: matches DoltStore.RemoveLabel)
 func (t *doltTransaction) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
-	_, err := t.tx.ExecContext(ctx, `
+	result, err := t.tx.ExecContext(ctx, `
 		DELETE FROM labels WHERE issue_id = ? AND label = ?
 	`, issueID, label)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to remove label: %w", err)
+	}
+
+	// Only record event if label was actually removed
+	rows, _ := result.RowsAffected()
+	if rows > 0 {
+		if err := recordEvent(ctx, t.tx, issueID, types.EventLabelRemoved, actor, "", fmt.Sprintf("Removed label: %s", label)); err != nil {
+			return fmt.Errorf("failed to record event: %w", err)
+		}
+		if err := markDirty(ctx, t.tx, issueID); err != nil {
+			return fmt.Errorf("failed to mark dirty: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // SetConfig sets a config value within the transaction
@@ -446,63 +661,99 @@ func (t *doltTransaction) AddComment(ctx context.Context, issueID, actor, commen
 
 // Helper functions for transaction context
 
-func insertIssueTx(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO issues (
-			id, content_hash, title, description, design, acceptance_criteria, notes,
-			status, priority, issue_type, assignee, estimated_minutes,
-			created_at, created_by, owner, updated_at, closed_at,
-			sender, ephemeral, pinned, is_template, crystallizes,
-			await_type, await_id, timeout_ns, waiters
-		) VALUES (
-			?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?
-		)
-	`,
-		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
-		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
-		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt,
-		issue.Sender, issue.Ephemeral, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
-		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
-	)
-	return err
+// getCustomStatuses retrieves custom statuses within the transaction
+func (t *doltTransaction) getCustomStatuses(ctx context.Context) ([]string, error) {
+	value, err := t.GetConfig(ctx, "status.custom")
+	if err != nil {
+		if yamlStatuses := config.GetCustomStatusesFromYAML(); len(yamlStatuses) > 0 {
+			return yamlStatuses, nil
+		}
+		return nil, err
+	}
+	if value != "" {
+		return parseCommaSeparatedList(value), nil
+	}
+	if yamlStatuses := config.GetCustomStatusesFromYAML(); len(yamlStatuses) > 0 {
+		return yamlStatuses, nil
+	}
+	return nil, nil
 }
 
+// getCustomTypes retrieves custom types within the transaction
+func (t *doltTransaction) getCustomTypes(ctx context.Context) ([]string, error) {
+	value, err := t.GetConfig(ctx, "types.custom")
+	if err != nil {
+		if yamlTypes := config.GetCustomTypesFromYAML(); len(yamlTypes) > 0 {
+			return yamlTypes, nil
+		}
+		return nil, err
+	}
+	if value != "" {
+		return parseCommaSeparatedList(value), nil
+	}
+	if yamlTypes := config.GetCustomTypesFromYAML(); len(yamlTypes) > 0 {
+		return yamlTypes, nil
+	}
+	return nil, nil
+}
+
+// scanIssueTx retrieves a full-fidelity issue within a transaction (matches scanIssue column set)
 func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, error) {
 	var issue types.Issue
 	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
-	var closedAt sql.NullTime
-	var estimatedMinutes sql.NullInt64
-	var assignee, owner, contentHash, createdBy sql.NullString
-	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
+	var closedAt, compactedAt, deletedAt, lastActivity, dueAt, deferUntil sql.NullTime
+	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
+	var assignee, externalRef, compactedAtCommit, owner, createdBy sql.NullString
+	var contentHash, sourceRepo, closeReason, deletedBy, deleteReason, originalType sql.NullString
+	var workType, sourceSystem sql.NullString
+	var sender, molType, eventKind, actor, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
-	var timeoutNs sql.NullInt64
+	var hookBead, roleBead, agentState, roleType, rig sql.NullString
+	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
+	var qualityScore sql.NullFloat64
+	var metadata sql.NullString
+	var adviceHookCommand, adviceHookTrigger, adviceHookOnFailure sql.NullString
+	var adviceHookTimeout sql.NullInt64
+	var adviceSubscriptions, adviceSubscriptionsExclude sql.NullString
 
 	err := tx.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at,
-		       ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters
+		       created_at, created_by, owner, updated_at, closed_at, external_ref,
+		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type,
+		       sender, ephemeral, pinned, is_template, crystallizes,
+		       await_type, await_id, timeout_ns, waiters,
+		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+		       event_kind, actor, target, payload,
+		       due_at, defer_until,
+		       quality_score, work_type, source_system, metadata,
+		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
+		       advice_subscriptions, advice_subscriptions_exclude
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &createdBy, &owner, &updatedAtStr, &closedAt,
-		&ephemeral, &pinned, &isTemplate, &crystallizes,
+		&createdAtStr, &createdBy, &owner, &updatedAtStr, &closedAt, &externalRef,
+		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&deletedAt, &deletedBy, &deleteReason, &originalType,
+		&sender, &ephemeral, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
+		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
+		&eventKind, &actor, &target, &payload,
+		&dueAt, &deferUntil,
+		&qualityScore, &workType, &sourceSystem, &metadata,
+		&adviceHookCommand, &adviceHookTrigger, &adviceHookTimeout, &adviceHookOnFailure,
+		&adviceSubscriptions, &adviceSubscriptionsExclude,
 	)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get issue: %w", err)
 	}
 
 	// Parse timestamp strings (TEXT columns require manual parsing)
@@ -513,6 +764,7 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 	}
 
+	// Map nullable fields
 	if contentHash.Valid {
 		issue.ContentHash = contentHash.String
 	}
@@ -532,6 +784,39 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	if createdBy.Valid {
 		issue.CreatedBy = createdBy.String
 	}
+	if externalRef.Valid {
+		issue.ExternalRef = &externalRef.String
+	}
+	if compactedAt.Valid {
+		issue.CompactedAt = &compactedAt.Time
+	}
+	if compactedAtCommit.Valid {
+		issue.CompactedAtCommit = &compactedAtCommit.String
+	}
+	if originalSize.Valid {
+		issue.OriginalSize = int(originalSize.Int64)
+	}
+	if sourceRepo.Valid {
+		issue.SourceRepo = sourceRepo.String
+	}
+	if closeReason.Valid {
+		issue.CloseReason = closeReason.String
+	}
+	if deletedAt.Valid {
+		issue.DeletedAt = &deletedAt.Time
+	}
+	if deletedBy.Valid {
+		issue.DeletedBy = deletedBy.String
+	}
+	if deleteReason.Valid {
+		issue.DeleteReason = deleteReason.String
+	}
+	if originalType.Valid {
+		issue.OriginalType = originalType.String
+	}
+	if sender.Valid {
+		issue.Sender = sender.String
+	}
 	if ephemeral.Valid && ephemeral.Int64 != 0 {
 		issue.Ephemeral = true
 	}
@@ -544,7 +829,6 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	if crystallizes.Valid && crystallizes.Int64 != 0 {
 		issue.Crystallizes = true
 	}
-	// Gate fields
 	if awaitType.Valid {
 		issue.AwaitType = awaitType.String
 	}
@@ -556,6 +840,76 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	}
 	if waiters.Valid && waiters.String != "" {
 		issue.Waiters = parseJSONStringArray(waiters.String)
+	}
+	if hookBead.Valid {
+		issue.HookBead = hookBead.String
+	}
+	if roleBead.Valid {
+		issue.RoleBead = roleBead.String
+	}
+	if agentState.Valid {
+		issue.AgentState = types.AgentState(agentState.String)
+	}
+	if lastActivity.Valid {
+		issue.LastActivity = &lastActivity.Time
+	}
+	if roleType.Valid {
+		issue.RoleType = roleType.String
+	}
+	if rig.Valid {
+		issue.Rig = rig.String
+	}
+	if molType.Valid {
+		issue.MolType = types.MolType(molType.String)
+	}
+	if eventKind.Valid {
+		issue.EventKind = eventKind.String
+	}
+	if actor.Valid {
+		issue.Actor = actor.String
+	}
+	if target.Valid {
+		issue.Target = target.String
+	}
+	if payload.Valid {
+		issue.Payload = payload.String
+	}
+	if dueAt.Valid {
+		issue.DueAt = &dueAt.Time
+	}
+	if deferUntil.Valid {
+		issue.DeferUntil = &deferUntil.Time
+	}
+	if qualityScore.Valid {
+		qs := float32(qualityScore.Float64)
+		issue.QualityScore = &qs
+	}
+	if workType.Valid {
+		issue.WorkType = types.WorkType(workType.String)
+	}
+	if sourceSystem.Valid {
+		issue.SourceSystem = sourceSystem.String
+	}
+	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+		issue.Metadata = []byte(metadata.String)
+	}
+	if adviceHookCommand.Valid {
+		issue.AdviceHookCommand = adviceHookCommand.String
+	}
+	if adviceHookTrigger.Valid {
+		issue.AdviceHookTrigger = adviceHookTrigger.String
+	}
+	if adviceHookTimeout.Valid {
+		issue.AdviceHookTimeout = int(adviceHookTimeout.Int64)
+	}
+	if adviceHookOnFailure.Valid {
+		issue.AdviceHookOnFailure = adviceHookOnFailure.String
+	}
+	if adviceSubscriptions.Valid && adviceSubscriptions.String != "" {
+		issue.AdviceSubscriptions = parseJSONStringArray(adviceSubscriptions.String)
+	}
+	if adviceSubscriptionsExclude.Valid && adviceSubscriptionsExclude.String != "" {
+		issue.AdviceSubscriptionsExclude = parseJSONStringArray(adviceSubscriptionsExclude.String)
 	}
 
 	return &issue, nil

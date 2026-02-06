@@ -331,8 +331,8 @@ func TestMemoryStorage_StaleEventsCustomStatusAndLifecycleHelpers(t *testing.T) 
 	if _, err := store.UnderlyingConn(ctx); err == nil {
 		t.Fatalf("expected UnderlyingConn error")
 	}
-	if err := store.RunInTransaction(ctx, func(tx storage.Transaction) error { return nil }); err == nil {
-		t.Fatalf("expected RunInTransaction error")
+	if err := store.RunInTransaction(ctx, func(tx storage.Transaction) error { return nil }); err != nil {
+		t.Fatalf("unexpected RunInTransaction error: %v", err)
 	}
 
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {

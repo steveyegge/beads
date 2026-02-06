@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -37,71 +38,20 @@ func prefixColumns(prefix, columns string) string {
 	return strings.Join(cols, ", ")
 }
 
-// AddDependency adds a dependency between two issues
+// AddDependency adds a dependency between two issues.
+// Delegates to the transaction method for single-source-of-truth logic.
 func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	metadata := dep.Metadata
-	if metadata == "" {
-		metadata = "{}"
-	}
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
-		VALUES (?, ?, ?, NOW(), ?, ?, ?)
-		ON DUPLICATE KEY UPDATE type = VALUES(type), metadata = VALUES(metadata)
-	`, dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID)
-	if err != nil {
-		return fmt.Errorf("failed to add dependency: %w", err)
-	}
-
-	// Mark source issue as dirty for incremental export
-	if err := markDirty(ctx, tx, dep.IssueID); err != nil {
-		return fmt.Errorf("failed to mark issue dirty: %w", err)
-	}
-
-	// Only mark depends_on as dirty if it's a local issue (not an external reference)
-	// External refs like "external:project:capability" don't exist in the issues table
-	if !strings.HasPrefix(dep.DependsOnID, "external:") {
-		if err := markDirty(ctx, tx, dep.DependsOnID); err != nil {
-			return fmt.Errorf("failed to mark depends_on issue dirty: %w", err)
-		}
-	}
-
-	return tx.Commit()
+	return s.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.AddDependency(ctx, dep, actor)
+	})
 }
 
-// RemoveDependency removes a dependency between two issues
+// RemoveDependency removes a dependency between two issues.
+// Delegates to the transaction method for single-source-of-truth logic.
 func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	result, err := tx.ExecContext(ctx, `
-		DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
-	`, issueID, dependsOnID)
-	if err != nil {
-		return fmt.Errorf("failed to remove dependency: %w", err)
-	}
-
-	// Only mark dirty if something was actually deleted
-	rows, _ := result.RowsAffected()
-	if rows > 0 {
-		if err := markDirty(ctx, tx, issueID); err != nil {
-			return fmt.Errorf("failed to mark issue dirty: %w", err)
-		}
-		if err := markDirty(ctx, tx, dependsOnID); err != nil {
-			return fmt.Errorf("failed to mark depends_on issue dirty: %w", err)
-		}
-	}
-
-	return tx.Commit()
+	return s.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.RemoveDependency(ctx, issueID, dependsOnID, actor)
+	})
 }
 
 // GetDependencies retrieves issues that this issue depends on
