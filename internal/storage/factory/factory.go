@@ -164,6 +164,13 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 // Safety net (gt-q5jzx5): If neither config specifies a backend, detect from
 // filesystem - a directory indicates Dolt, a file indicates SQLite.
 func GetBackendFromConfig(beadsDir string) string {
+	// Server mode env var takes priority: BEADS_DOLT_SERVER_MODE=1 implies Dolt
+	// backend. This enables K8s deployments configured entirely via env vars,
+	// where no metadata.json or config.yaml may exist.
+	if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" {
+		return configfile.BackendDolt
+	}
+
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil || cfg == nil {
 		// No metadata.json - fall back to config.yaml

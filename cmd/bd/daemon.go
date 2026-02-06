@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -375,6 +376,21 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	if daemonDBPath == "" {
 		if foundDB := beads.FindDatabasePath(); foundDB != "" {
 			daemonDBPath = foundDB
+		} else if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" {
+			// Server mode: database lives on remote Dolt sql-server, not locally.
+			// Create a minimal .beads/dolt directory as a placeholder for path resolution.
+			beadsDirEnv := os.Getenv("BEADS_DIR")
+			if beadsDirEnv == "" {
+				log.Error("BEADS_DOLT_SERVER_MODE=1 requires BEADS_DIR to be set")
+				return
+			}
+			doltDir := filepath.Join(beadsDirEnv, "dolt")
+			if err := os.MkdirAll(doltDir, 0755); err != nil {
+				log.Error("failed to create server-mode dolt directory", "path", doltDir, "error", err)
+				return
+			}
+			daemonDBPath = doltDir
+			log.Info("server mode: using placeholder database path", "path", doltDir)
 		} else {
 			log.Error("no beads database found")
 			log.Info("hint: run 'bd init' to create a database or set BEADS_DB environment variable")
@@ -408,6 +424,39 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	// dbDir is the parent of the database file/directory - used for database-relative
 	// paths like Dolt server logs. Distinct from beadsDir which has config files.
 	dbDir := filepath.Dir(daemonDBPath)
+
+	// Server mode bootstrap: generate metadata.json from env vars if missing.
+	// In K8s with env-var-only config, no metadata.json exists yet. Generate
+	// one so the config loading chain (IsDoltServerMode, GetCapabilities, etc.)
+	// works correctly.
+	if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" {
+		if existingCfg, _ := configfile.Load(beadsDir); existingCfg == nil {
+			serverCfg := &configfile.Config{
+				Backend:  configfile.BackendDolt,
+				Database: "dolt",
+				DoltMode: configfile.DoltModeServer,
+			}
+			if h := os.Getenv("BEADS_DOLT_SERVER_HOST"); h != "" {
+				serverCfg.DoltServerHost = h
+			}
+			if p := os.Getenv("BEADS_DOLT_SERVER_PORT"); p != "" {
+				if port, err := strconv.Atoi(p); err == nil {
+					serverCfg.DoltServerPort = port
+				}
+			}
+			if u := os.Getenv("BEADS_DOLT_SERVER_USER"); u != "" {
+				serverCfg.DoltServerUser = u
+			}
+			if d := os.Getenv("BEADS_DOLT_SERVER_DATABASE"); d != "" {
+				serverCfg.DoltDatabase = d
+			}
+			if err := serverCfg.Save(beadsDir); err != nil {
+				log.Warn("failed to generate server-mode metadata.json", "error", err)
+			} else {
+				log.Info("generated metadata.json from env vars", "mode", "server")
+			}
+		}
+	}
 
 	backend := factory.GetBackendFromConfig(beadsDir)
 	if backend == "" {

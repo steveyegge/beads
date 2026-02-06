@@ -48,6 +48,8 @@ spec:
               containerPort: 9877
               protocol: TCP
           env:
+            - name: BEADS_DIR
+              value: /data/.beads
             {{- if .Values.redis.enabled }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
@@ -70,15 +72,40 @@ spec:
                   name: {{ include "bd-daemon.fullname" . }}
                   key: daemon-token
             {{- end }}
+            {{- if .Values.dolt.serverMode.enabled }}
+            - name: BEADS_DOLT_SERVER_MODE
+              value: "1"
+            - name: BEADS_DOLT_SERVER_HOST
+              value: {{ .Values.dolt.serverMode.host | quote }}
+            - name: BEADS_DOLT_SERVER_PORT
+              value: {{ .Values.dolt.serverMode.port | quote }}
+            - name: BEADS_DOLT_SERVER_USER
+              value: {{ .Values.dolt.serverMode.user | quote }}
+            - name: BEADS_DOLT_SERVER_DATABASE
+              value: {{ .Values.dolt.serverMode.database | quote }}
+            {{- if .Values.dolt.serverMode.existingSecret }}
+            - name: BEADS_DOLT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.dolt.serverMode.existingSecret }}
+                  key: {{ .Values.dolt.serverMode.existingSecretKey | default "dolt-password" }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          emptyDir: {}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

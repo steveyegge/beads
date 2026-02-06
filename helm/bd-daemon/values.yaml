@@ -29,6 +29,20 @@ daemon:
   # Logging
   logLevel: "info"
 
+# Dolt server mode configuration
+# When enabled, daemon connects to an external Dolt sql-server via TCP
+# instead of using embedded Dolt. Required for multi-replica deployments.
+dolt:
+  serverMode:
+    enabled: false
+    host: "dolt-sql-server"  # Dolt sql-server Service hostname
+    port: 3307               # Dolt sql-server port
+    user: "root"             # MySQL user
+    database: "beads"        # Database name
+    # password: ""           # Set via --set or existingSecret
+    # existingSecret: ""     # Name of existing Secret with password
+    # existingSecretKey: "dolt-password"  # Key in existing Secret
+
 # Redis WispStore configuration
 # When redis.enabled is true, BD_REDIS_URL is automatically set from the subchart.
 redis:

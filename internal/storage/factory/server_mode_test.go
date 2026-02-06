@@ -53,6 +53,32 @@ func TestServerModeConfig(t *testing.T) {
 	}
 }
 
+// TestGetBackendFromConfigServerModeEnvVar verifies that GetBackendFromConfig
+// returns "dolt" when BEADS_DOLT_SERVER_MODE=1 is set, even without metadata.json.
+// This enables K8s deployments configured entirely via environment variables.
+func TestGetBackendFromConfigServerModeEnvVar(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// No metadata.json written - simulates fresh K8s container
+
+	// Without env var, should return empty (falls through to yaml config / empty)
+	os.Unsetenv("BEADS_DOLT_SERVER_MODE")
+	backend := GetBackendFromConfig(beadsDir)
+	if backend == "dolt" {
+		t.Error("Expected non-dolt backend without env var set, got 'dolt'")
+	}
+
+	// With BEADS_DOLT_SERVER_MODE=1, should return "dolt"
+	t.Setenv("BEADS_DOLT_SERVER_MODE", "1")
+	backend = GetBackendFromConfig(beadsDir)
+	if backend != "dolt" {
+		t.Errorf("Expected backend 'dolt' with BEADS_DOLT_SERVER_MODE=1, got %q", backend)
+	}
+}
+
 func TestServerModeConnection(t *testing.T) {
 	// Skip if no server running
 	// This test requires a running dolt sql-server on 127.0.0.1:3306
