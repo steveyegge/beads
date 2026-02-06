@@ -523,7 +523,10 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 		repoKey := getRepoKeyForPath(jsonlPath)
 		isMutationTriggered := (mode == "export") // Mutation exports use mode="export"
 		
-		if !isMutationTriggered && hasJSONLChanged(exportCtx, store, jsonlPath, repoKey) {
+		if isMutationTriggered {
+			// ALWAYS skip pre-export import for mutations
+			log.Info("Skipping pre-export import (mutation-triggered export)", "mode", mode)
+		} else if hasJSONLChanged(exportCtx, store, jsonlPath, repoKey) {
 			log.Info("JSONL changed externally, importing before export")
 
 			// Count issues before import for validation
@@ -564,8 +567,6 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 			}
 
 			log.Info("Auto-import complete, proceeding with export")
-		} else if isMutationTriggered {
-			log.Info("Skipping pre-export import (mutation-triggered export)")
 		}
 
 		// Pre-export validation
