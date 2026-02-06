@@ -1534,6 +1534,20 @@ func (c *Client) VcsLog(args *VcsLogArgs) (*VcsLogResult, error) {
 	return &result, nil
 }
 
+// AdminGC runs dolt garbage collection on the server-side Dolt repository.
+func (c *Client) AdminGC(args *AdminGCArgs) (*AdminGCResult, error) {
+	resp, err := c.Execute(OpAdminGC, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result AdminGCResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal admin_gc response: %w", err)
+	}
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

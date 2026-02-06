@@ -155,6 +155,9 @@ const (
 	OpVcsCurrentCommit = "vcs_current_commit"
 	OpVcsCommitExists  = "vcs_commit_exists"
 	OpVcsLog           = "vcs_log"
+
+	// Admin operations (bd-ma0s.5)
+	OpAdminGC = "admin_gc"
 )
 
 // Request represents an RPC request from client to daemon
@@ -1798,4 +1801,19 @@ type VcsLogEntry struct {
 // VcsLogResult represents the result of a vcs_log operation.
 type VcsLogResult struct {
 	Commits []VcsLogEntry `json:"commits"`
+}
+
+// AdminGCArgs represents arguments for the admin_gc operation (bd-ma0s.5).
+type AdminGCArgs struct {
+	DryRun bool `json:"dry_run,omitempty"` // If true, report sizes without running GC
+}
+
+// AdminGCResult represents the result of a dolt gc operation.
+type AdminGCResult struct {
+	DoltPath    string `json:"dolt_path"`
+	BytesBefore int64  `json:"bytes_before"`
+	BytesAfter  int64  `json:"bytes_after"`
+	SpaceFreed  int64  `json:"space_freed"`
+	DryRun      bool   `json:"dry_run,omitempty"`
+	ElapsedMs   int64  `json:"elapsed_ms"`
 }

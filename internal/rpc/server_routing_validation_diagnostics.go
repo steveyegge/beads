@@ -437,6 +437,9 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleVcsCommitExists(req)
 	case OpVcsLog:
 		resp = s.handleVcsLog(req)
+	// Admin operations (bd-ma0s.5)
+	case OpAdminGC:
+		resp = s.handleAdminGC(req)
 	default:
 		return Response{
 			Success: false,

@@ -444,6 +444,9 @@ func httpMethodToOperation(method string) string {
 		"VcsCurrentCommit": OpVcsCurrentCommit,
 		"VcsCommitExists":  OpVcsCommitExists,
 		"VcsLog":           OpVcsLog,
+
+		// Admin operations (bd-ma0s.5)
+		"AdminGC": OpAdminGC,
 	}
 
 	return methodMap[method]
