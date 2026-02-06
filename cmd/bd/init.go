@@ -101,7 +101,9 @@ variable.`,
 
 		// Auto-detect dolt server if backend is dolt and --server wasn't explicitly specified
 		// This enables server mode by default when a dolt sql-server is already running
-		if backend == configfile.BackendDolt && !serverMode {
+		// Skip auto-detection when BD_DAEMON_HOST is set (K8s mode) - local dolt should
+		// not be used. (gt-c9esrg)
+		if backend == configfile.BackendDolt && !serverMode && os.Getenv("BD_DAEMON_HOST") == "" {
 			if host, port, detected := dolt.DetectRunningServer(); detected {
 				serverMode = true
 				if serverHost == "" {

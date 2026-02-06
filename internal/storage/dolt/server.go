@@ -295,6 +295,13 @@ func GetRunningServerPID(dataDir string) int {
 // If not running, it starts one as a background process.
 // This enables auto-start when dolt_server_enabled is configured in metadata.json.
 func EnsureServerRunning(ctx context.Context, dataDir string, host string, port int) error {
+	// Defense-in-depth: refuse to auto-start a local dolt sql-server when a remote
+	// daemon is configured (K8s mode). BD_DAEMON_HOST indicates all beads operations
+	// should go through the remote daemon, not a local database. (gt-c9esrg)
+	if remoteHost := os.Getenv("BD_DAEMON_HOST"); remoteHost != "" {
+		return fmt.Errorf("refusing to auto-start local dolt sql-server: BD_DAEMON_HOST=%s is set (K8s mode); local Dolt should not run", remoteHost)
+	}
+
 	if host == "" {
 		host = "127.0.0.1"
 	}
