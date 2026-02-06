@@ -105,6 +105,8 @@ Export Mode (--output):
 Specific Check Mode (--check):
   Run a specific check in detail. Available checks:
   - pollution: Detect and optionally clean test issues from database
+  - validate: Run focused data-integrity checks (duplicates, orphaned
+    deps, test pollution, git conflicts). Use with --fix to auto-repair.
 
 Deep Validation Mode (--deep):
   Validate full graph integrity. May be slow on large databases.
@@ -152,6 +154,8 @@ Examples:
   bd doctor --output diagnostics.json  # Export diagnostics to file
   bd doctor --check=pollution          # Show potential test issues
   bd doctor --check=pollution --clean  # Delete test issues (with confirmation)
+  bd doctor --check=validate         # Data-integrity checks only
+  bd doctor --check=validate --fix   # Auto-fix data-integrity issues
   bd doctor --deep             # Full graph integrity validation
   bd doctor --server           # Dolt server mode health checks
   bd doctor --migration=pre    # Validate readiness for Dolt migration
@@ -197,9 +201,12 @@ Examples:
 			case "pollution":
 				runPollutionCheck(absPath, doctorClean, doctorYes)
 				return
+			case "validate":
+				runValidateCheck(absPath)
+				return
 			default:
 				fmt.Fprintf(os.Stderr, "Error: unknown check %q\n", doctorCheckFlag)
-				fmt.Fprintf(os.Stderr, "Available checks: pollution\n")
+				fmt.Fprintf(os.Stderr, "Available checks: pollution, validate\n")
 				os.Exit(1)
 			}
 		}
