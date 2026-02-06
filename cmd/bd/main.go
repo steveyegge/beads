@@ -492,8 +492,11 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Force direct mode for human-only interactive commands
-		// edit: can take minutes in $EDITOR, daemon connection times out (GH #227)
-		if cmd.Name() == "edit" {
+		// edit: can take minutes in $EDITOR, local daemon connection may time out (GH #227)
+		// Exception: when BD_DAEMON_HOST is set (remote daemon), we must use daemon RPC
+		// since direct database access is blocked. The edit command's RPC calls (Show + Update)
+		// are short-lived; only the local $EDITOR session is long-running. (bd-bdbt)
+		if cmd.Name() == "edit" && rpc.GetDaemonHost() == "" {
 			forceDirectMode = true
 		}
 
