@@ -1615,10 +1615,20 @@ func init() {
 }
 
 // listInRig lists issues from a different rig using --rig flag.
-// This bypasses the normal daemon/direct flow and directly queries the target rig.
+// When daemon is available, routes through RPC with TargetRig (bd-rl6y).
+// Falls back to direct storage access when no daemon is running.
 //
 //nolint:unparam // cmd reserved for future flag access
 func listInRig(cmd *cobra.Command, rigName string, filter types.IssueFilter, sortBy string, reverse bool, prettyFormat, longFormat, noPager bool) {
+	// When daemon is available, use RPC with TargetRig (bd-rl6y)
+	// This enables cross-rig listing to work when BD_DAEMON_HOST is set
+	if daemonClient != nil {
+		listInRigViaDaemon(rigName, filter, sortBy, reverse, prettyFormat, longFormat, noPager)
+		return
+	}
+
+	// Fallback: Direct storage access (for local development without daemon)
+	// Note: This will fail if BD_DAEMON_HOST is set due to factory guard (gt-57wsnm)
 	ctx := rootCtx
 
 	// Find the town-level beads directory (where routes.jsonl lives)
@@ -1733,6 +1743,176 @@ func listInRig(cmd *cobra.Command, rigName string, filter types.IssueFilter, sor
 		for _, issue := range issues {
 			labels := labelsMap[issue.ID]
 			formatIssueCompact(&buf, issue, labels, progressMap, blockedByMap[issue.ID], blocksMap[issue.ID])
+		}
+	}
+
+	// Output with pager support
+	if err := ui.ToPager(buf.String(), ui.PagerOptions{NoPager: noPager}); err != nil {
+		if _, writeErr := fmt.Fprint(os.Stdout, buf.String()); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error writing output: %v\n", writeErr)
+		}
+	}
+
+	// Show truncation hint if we hit the limit
+	if filter.Limit > 0 && len(issues) == filter.Limit {
+		fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", filter.Limit)
+	}
+}
+
+// listInRigViaDaemon lists issues from a different rig using daemon RPC with TargetRig.
+// This enables cross-rig listing to work with remote daemon (bd-rl6y).
+func listInRigViaDaemon(rigName string, filter types.IssueFilter, sortBy string, reverse bool, prettyFormat, longFormat, noPager bool) {
+	// Build ListArgs from filter with TargetRig for cross-rig routing
+	listArgs := &rpc.ListArgs{
+		TargetRig: rigName,
+		Limit:     filter.Limit,
+	}
+	if filter.Status != nil {
+		listArgs.Status = string(*filter.Status)
+	}
+	if filter.IssueType != nil {
+		listArgs.IssueType = string(*filter.IssueType)
+	}
+	if filter.Assignee != nil {
+		listArgs.Assignee = *filter.Assignee
+	}
+	if filter.Priority != nil {
+		listArgs.Priority = filter.Priority
+	}
+	if len(filter.Labels) > 0 {
+		listArgs.Labels = filter.Labels
+	}
+	if len(filter.LabelsAny) > 0 {
+		listArgs.LabelsAny = filter.LabelsAny
+	}
+	if len(filter.IDs) > 0 {
+		listArgs.IDs = filter.IDs
+	}
+	listArgs.TitleContains = filter.TitleContains
+	listArgs.DescriptionContains = filter.DescriptionContains
+	listArgs.NotesContains = filter.NotesContains
+	if filter.CreatedAfter != nil {
+		listArgs.CreatedAfter = filter.CreatedAfter.Format(time.RFC3339)
+	}
+	if filter.CreatedBefore != nil {
+		listArgs.CreatedBefore = filter.CreatedBefore.Format(time.RFC3339)
+	}
+	if filter.UpdatedAfter != nil {
+		listArgs.UpdatedAfter = filter.UpdatedAfter.Format(time.RFC3339)
+	}
+	if filter.UpdatedBefore != nil {
+		listArgs.UpdatedBefore = filter.UpdatedBefore.Format(time.RFC3339)
+	}
+	if filter.ClosedAfter != nil {
+		listArgs.ClosedAfter = filter.ClosedAfter.Format(time.RFC3339)
+	}
+	if filter.ClosedBefore != nil {
+		listArgs.ClosedBefore = filter.ClosedBefore.Format(time.RFC3339)
+	}
+	listArgs.EmptyDescription = filter.EmptyDescription
+	listArgs.NoAssignee = filter.NoAssignee
+	listArgs.NoLabels = filter.NoLabels
+	listArgs.PriorityMin = filter.PriorityMin
+	listArgs.PriorityMax = filter.PriorityMax
+	listArgs.Pinned = filter.Pinned
+	if filter.ParentID != nil {
+		listArgs.ParentID = *filter.ParentID
+	}
+	listArgs.Ephemeral = filter.Ephemeral
+	if filter.MolType != nil {
+		listArgs.MolType = string(*filter.MolType)
+	}
+	if len(filter.ExcludeStatus) > 0 {
+		for _, s := range filter.ExcludeStatus {
+			listArgs.ExcludeStatus = append(listArgs.ExcludeStatus, string(s))
+		}
+	}
+	if len(filter.ExcludeTypes) > 0 {
+		for _, t := range filter.ExcludeTypes {
+			listArgs.ExcludeTypes = append(listArgs.ExcludeTypes, string(t))
+		}
+	}
+	listArgs.Deferred = filter.Deferred
+	if filter.DeferAfter != nil {
+		listArgs.DeferAfter = filter.DeferAfter.Format(time.RFC3339)
+	}
+	if filter.DeferBefore != nil {
+		listArgs.DeferBefore = filter.DeferBefore.Format(time.RFC3339)
+	}
+	if filter.DueAfter != nil {
+		listArgs.DueAfter = filter.DueAfter.Format(time.RFC3339)
+	}
+	if filter.DueBefore != nil {
+		listArgs.DueBefore = filter.DueBefore.Format(time.RFC3339)
+	}
+	listArgs.Overdue = filter.Overdue
+
+	resp, err := daemonClient.List(listArgs)
+	if err != nil {
+		FatalError("failed to list issues from rig %q: %v", rigName, err)
+	}
+
+	// Parse as IssueWithCounts
+	var issuesWithCounts []*types.IssueWithCounts
+	if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
+		FatalError("parsing response: %v", err)
+	}
+
+	if jsonOutput {
+		outputJSON(issuesWithCounts)
+		return
+	}
+
+	// Extract issues and build progress map from response
+	issues := make([]*types.Issue, len(issuesWithCounts))
+	progressMap := make(map[string]*types.EpicProgress)
+	for i, iwc := range issuesWithCounts {
+		issues[i] = iwc.Issue
+		if iwc.Issue.IssueType == types.TypeEpic && (iwc.EpicTotalChildren > 0 || iwc.EpicClosedChildren > 0) {
+			progressMap[iwc.Issue.ID] = &types.EpicProgress{
+				TotalChildren:  iwc.EpicTotalChildren,
+				ClosedChildren: iwc.EpicClosedChildren,
+			}
+		}
+	}
+
+	// Apply sorting
+	sortIssues(issues, sortBy, reverse)
+
+	// Build blocking maps from issue dependencies
+	allDeps := make(map[string][]*types.Dependency)
+	for _, issue := range issues {
+		if len(issue.Dependencies) > 0 {
+			allDeps[issue.ID] = issue.Dependencies
+		}
+	}
+	blockedByMap, blocksMap := buildBlockingMaps(allDeps)
+
+	// Handle pretty format
+	if prettyFormat {
+		displayPrettyListWithDeps(issues, false, allDeps, progressMap)
+		if filter.Limit > 0 && len(issues) == filter.Limit {
+			fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", filter.Limit)
+		}
+		return
+	}
+
+	// Build output in buffer for pager support
+	var buf strings.Builder
+	if ui.IsAgentMode() {
+		for _, issue := range issues {
+			formatAgentIssue(&buf, issue, blockedByMap[issue.ID], blocksMap[issue.ID])
+		}
+		fmt.Print(buf.String())
+		return
+	} else if longFormat {
+		buf.WriteString(fmt.Sprintf("\n[%s] Found %d issues:\n\n", rigName, len(issues)))
+		for _, issue := range issues {
+			formatIssueLong(&buf, issue, issue.Labels)
+		}
+	} else {
+		for _, issue := range issues {
+			formatIssueCompact(&buf, issue, issue.Labels, progressMap, blockedByMap[issue.ID], blocksMap[issue.ID])
 		}
 	}
 

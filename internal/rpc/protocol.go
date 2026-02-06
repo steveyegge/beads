@@ -398,6 +398,9 @@ type ListArgs struct {
 
 	// Staleness control (bd-dpkdm)
 	AllowStale bool `json:"allow_stale,omitempty"` // Skip staleness check, return potentially stale data
+
+	// Cross-rig listing (bd-rl6y)
+	TargetRig string `json:"target_rig,omitempty"` // List from different rig (resolves via route beads)
 }
 
 // CountArgs represents arguments for the count operation

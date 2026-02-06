@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/util"
@@ -1705,6 +1706,28 @@ func (s *Server) handleList(req *Request) Response {
 		}
 	}
 
+	// Cross-rig listing: open target rig's storage (bd-rl6y)
+	var useTargetStore bool
+	if listArgs.TargetRig != "" {
+		targetBeadsDir, _, err := resolveTargetRig(req, listArgs.TargetRig)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to resolve target rig: %v", err),
+			}
+		}
+		targetStore, err := factory.NewFromConfig(context.Background(), targetBeadsDir)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to open rig %q database: %v", listArgs.TargetRig, err),
+			}
+		}
+		defer targetStore.Close()
+		store = targetStore
+		useTargetStore = true
+	}
+
 	filter := types.IssueFilter{
 		Limit: listArgs.Limit,
 	}
@@ -1915,8 +1938,9 @@ func (s *Server) handleList(req *Request) Response {
 	defer cancel()
 
 	// Collect wisps from WispStore if available and not explicitly filtering non-ephemeral
+	// Skip wisps for cross-rig queries (wisps are rig-local) (bd-rl6y)
 	var wisps []*types.Issue
-	shouldIncludeWisps := filter.Ephemeral == nil || (filter.Ephemeral != nil && *filter.Ephemeral)
+	shouldIncludeWisps := !useTargetStore && (filter.Ephemeral == nil || (filter.Ephemeral != nil && *filter.Ephemeral))
 	if s.wispStore != nil && shouldIncludeWisps {
 		wispList, err := s.wispStore.List(ctx, filter)
 		if err == nil {
@@ -1958,7 +1982,13 @@ func (s *Server) handleList(req *Request) Response {
 			epicIDs = append(epicIDs, issue.ID)
 		}
 	}
-	labelsMap, _ := s.labelCache.GetLabelsForIssues(ctx, issueIDs)
+	// For cross-rig queries, use target store directly instead of label cache (bd-rl6y)
+	var labelsMap map[string][]string
+	if useTargetStore {
+		labelsMap, _ = store.GetLabelsForIssues(ctx, issueIDs)
+	} else {
+		labelsMap, _ = s.labelCache.GetLabelsForIssues(ctx, issueIDs)
+	}
 	for _, issue := range issues {
 		issue.Labels = labelsMap[issue.ID]
 	}
