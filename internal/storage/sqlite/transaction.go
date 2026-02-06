@@ -58,7 +58,7 @@ func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 
 	// Start IMMEDIATE transaction to acquire write lock early.
 	// Use retry logic with exponential backoff to handle SQLITE_BUSY
-	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
+	if err := beginImmediateWithRetry(ctx, conn); err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
@@ -105,7 +105,9 @@ func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 // 1. Some BUSY errors aren't retryable by the busy handler (SQLITE_BUSY_SNAPSHOT)
 // 2. Explicit retries give us control over backoff timing
 // 3. We can log retry attempts for debugging
-func beginImmediateWithRetry(ctx context.Context, conn *sql.Conn, maxRetries int, initialBackoff time.Duration) error {
+func beginImmediateWithRetry(ctx context.Context, conn *sql.Conn) error {
+	const maxRetries = 5
+	const initialBackoff = 10 * time.Millisecond
 	backoff := initialBackoff
 	var lastErr error
 

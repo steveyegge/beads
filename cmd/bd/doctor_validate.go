@@ -142,7 +142,7 @@ func applyValidateFixes(path string, checks []validateCheckResult) {
 		}
 		fmt.Print("\nContinue? (Y/n): ")
 		var response string
-		fmt.Scanln(&response)
+		_, _ = fmt.Scanln(&response)
 		response = strings.TrimSpace(strings.ToLower(response))
 		if response != "" && response != "y" && response != "yes" {
 			fmt.Println("Fix canceled.")

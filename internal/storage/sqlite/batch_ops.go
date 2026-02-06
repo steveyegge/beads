@@ -276,7 +276,7 @@ func (s *SQLiteStorage) CreateIssuesWithFullOptions(ctx context.Context, issues 
 	// Start IMMEDIATE transaction with retry logic for SQLITE_BUSY.
 	// Retries with exponential backoff handle cases where busy_timeout alone
 	// is insufficient (e.g., SQLITE_BUSY_SNAPSHOT).
-	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
+	if err := beginImmediateWithRetry(ctx, conn); err != nil {
 		return fmt.Errorf("failed to begin immediate transaction: %w", err)
 	}
 
