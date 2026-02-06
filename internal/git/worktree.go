@@ -189,14 +189,15 @@ func (wm *WorktreeManager) SyncJSONLToWorktree(worktreePath, jsonlRelPath string
 // If ForceOverwrite is false (default), the function uses merge logic to prevent
 // data loss when a fresh clone syncs with fewer issues than the remote.
 func (wm *WorktreeManager) SyncJSONLToWorktreeWithOptions(worktreePath, jsonlRelPath string, opts SyncOptions) error {
-	// Source: main repo JSONL (use the full path as provided)
-	srcPath := filepath.Join(wm.repoPath, jsonlRelPath)
+	// GH#785, GH#810, GH#1298: Normalize path FIRST to handle cases where jsonlRelPath
+	// includes worktree path components (e.g., ".git/beads-worktrees/beads-sync/.beads/issues.jsonl").
+	// This prevents srcPath from pointing to a non-existent nested .git location.
+	normalizedRelPath := NormalizeBeadsRelPath(jsonlRelPath)
+	
+	// Source: main repo JSONL (use normalized path to ensure correct location)
+	srcPath := filepath.Join(wm.repoPath, normalizedRelPath)
 
 	// Destination: worktree JSONL
-	// GH#785, GH#810: Handle bare repo worktrees where jsonlRelPath might include the
-	// worktree name (e.g., "main/.beads/issues.jsonl"). The sync branch uses
-	// sparse checkout for .beads/* so we normalize to strip leading components.
-	normalizedRelPath := NormalizeBeadsRelPath(jsonlRelPath)
 	dstPath := filepath.Join(worktreePath, normalizedRelPath)
 
 	// GH#1298: When sync-branch is configured, findJSONLPath() returns the worktree
