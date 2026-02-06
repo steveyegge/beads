@@ -774,6 +774,14 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	// Set daemon configuration for status reporting
 	server.SetConfig(autoCommit, autoPush, autoPull, localMode, interval.String(), daemonMode)
 
+	// Create event bus and register built-in handlers (bd-66fp)
+	bus := eventbus.New()
+	for _, h := range eventbus.DefaultHandlers() {
+		bus.Register(h)
+	}
+	server.SetBus(bus)
+	log.Info("event bus initialized", "handlers", len(eventbus.DefaultHandlers()))
+
 	// Register daemon in global registry
 	registry, err := daemon.NewRegistry()
 	if err != nil {

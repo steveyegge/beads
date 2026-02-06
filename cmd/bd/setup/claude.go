@@ -104,28 +104,26 @@ func installClaude(env claudeEnv, project bool, stealth bool) error {
 		}
 	}
 
-	command := "bd prime && bd decision check --inject"
-	if stealth {
-		command = "bd prime --stealth && bd decision check --inject"
+	// Event bus rollout (bd-66fp): unified hook dispatch replaces individual commands.
+	// Remove legacy hook commands before installing new ones.
+	for _, legacy := range legacyHookCommands() {
+		removeHookCommand(hooks, legacy.event, legacy.command)
 	}
 
-	if addHookCommand(hooks, "SessionStart", command) {
-		_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
+	// Install unified bus emit hooks.
+	busHooks := []struct{ event, hookType string }{
+		{"SessionStart", "SessionStart"},
+		{"PreCompact", "PreCompact"},
+		{"Stop", "Stop"},
+		{"PreToolUse", "PreToolUse"},
 	}
-	if addHookCommand(hooks, "PreCompact", command) {
-		_, _ = fmt.Fprintln(env.stdout, "✓ Registered PreCompact hook")
+	for _, bh := range busHooks {
+		cmd := fmt.Sprintf("bd bus emit --hook=%s", bh.hookType)
+		if addHookCommand(hooks, bh.event, cmd) {
+			_, _ = fmt.Fprintf(env.stdout, "✓ Registered %s hook (bus emit)\n", bh.event)
+		}
 	}
-
-	// Session gate checks for Claude Code hook types
-	if addHookCommand(hooks, "Stop", "bd gate session-check --hook Stop --json") {
-		_, _ = fmt.Fprintln(env.stdout, "✓ Registered Stop gate check hook")
-	}
-	if addHookCommand(hooks, "PreToolUse", "bd gate session-check --hook PreToolUse --json") {
-		_, _ = fmt.Fprintln(env.stdout, "✓ Registered PreToolUse gate check hook")
-	}
-	if addHookCommand(hooks, "PreCompact", "bd gate session-check --hook PreCompact --json") {
-		_, _ = fmt.Fprintln(env.stdout, "✓ Registered PreCompact gate check hook")
-	}
+	_ = stealth // stealth is handled by handler configuration, not hook command
 
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -216,20 +214,13 @@ func removeClaude(env claudeEnv, project bool) error {
 		return nil
 	}
 
-	// Remove old and new hook variants
-	removeHookCommand(hooks, "SessionStart", "bd prime")
-	removeHookCommand(hooks, "PreCompact", "bd prime")
-	removeHookCommand(hooks, "SessionStart", "bd prime --stealth")
-	removeHookCommand(hooks, "PreCompact", "bd prime --stealth")
-	// New chained command variants
-	removeHookCommand(hooks, "SessionStart", "bd prime && bd decision check --inject")
-	removeHookCommand(hooks, "PreCompact", "bd prime && bd decision check --inject")
-	removeHookCommand(hooks, "SessionStart", "bd prime --stealth && bd decision check --inject")
-	removeHookCommand(hooks, "PreCompact", "bd prime --stealth && bd decision check --inject")
-	// Session gate check hooks
-	removeHookCommand(hooks, "Stop", "bd gate session-check --hook Stop --json")
-	removeHookCommand(hooks, "PreToolUse", "bd gate session-check --hook PreToolUse --json")
-	removeHookCommand(hooks, "PreCompact", "bd gate session-check --hook PreCompact --json")
+	// Remove all known hook variants (legacy + bus emit)
+	for _, legacy := range legacyHookCommands() {
+		removeHookCommand(hooks, legacy.event, legacy.command)
+	}
+	for _, busHook := range busEmitHookCommands() {
+		removeHookCommand(hooks, busHook.event, busHook.command)
+	}
 
 	data, err = json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -361,7 +352,16 @@ func hasBeadsHooks(settingsPath string) bool {
 		return false
 	}
 
-	// Check SessionStart and PreCompact for "bd prime"
+	// Build set of all known beads hook commands (legacy + bus emit)
+	knownCommands := make(map[string]bool)
+	for _, lh := range legacyHookCommands() {
+		knownCommands[lh.command] = true
+	}
+	for _, bh := range busEmitHookCommands() {
+		knownCommands[bh.command] = true
+	}
+
+	// Check SessionStart and PreCompact for any known beads hook
 	for _, event := range []string{"SessionStart", "PreCompact"} {
 		eventHooks, ok := hooks[event].([]interface{})
 		if !ok {
@@ -382,11 +382,7 @@ func hasBeadsHooks(settingsPath string) bool {
 				if !ok {
 					continue
 				}
-				// Check for any bd prime variant (old or new)
-				cmd := cmdMap["command"]
-				if cmd == "bd prime" || cmd == "bd prime --stealth" ||
-					cmd == "bd prime && bd decision check --inject" ||
-					cmd == "bd prime --stealth && bd decision check --inject" {
+				if cmdStr, ok := cmdMap["command"].(string); ok && knownCommands[cmdStr] {
 					return true
 				}
 			}
@@ -394,4 +390,37 @@ func hasBeadsHooks(settingsPath string) bool {
 	}
 
 	return false
+}
+
+// hookEntry pairs a Claude Code event with the hook command string.
+type hookEntry struct {
+	event   string
+	command string
+}
+
+// legacyHookCommands returns all legacy (pre-bus) hook commands for cleanup.
+func legacyHookCommands() []hookEntry {
+	return []hookEntry{
+		{"SessionStart", "bd prime"},
+		{"PreCompact", "bd prime"},
+		{"SessionStart", "bd prime --stealth"},
+		{"PreCompact", "bd prime --stealth"},
+		{"SessionStart", "bd prime && bd decision check --inject"},
+		{"PreCompact", "bd prime && bd decision check --inject"},
+		{"SessionStart", "bd prime --stealth && bd decision check --inject"},
+		{"PreCompact", "bd prime --stealth && bd decision check --inject"},
+		{"Stop", "bd gate session-check --hook Stop --json"},
+		{"PreToolUse", "bd gate session-check --hook PreToolUse --json"},
+		{"PreCompact", "bd gate session-check --hook PreCompact --json"},
+	}
+}
+
+// busEmitHookCommands returns the new event bus hook commands.
+func busEmitHookCommands() []hookEntry {
+	return []hookEntry{
+		{"SessionStart", "bd bus emit --hook=SessionStart"},
+		{"PreCompact", "bd bus emit --hook=PreCompact"},
+		{"Stop", "bd bus emit --hook=Stop"},
+		{"PreToolUse", "bd bus emit --hook=PreToolUse"},
+	}
 }

@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -104,6 +105,8 @@ type Server struct {
 	queryDedup *QueryDeduplicator
 	// In-memory label cache (eliminates expensive batch label queries to Dolt)
 	labelCache *LabelCache
+	// Event bus for hook dispatch (bd-66fp)
+	bus *eventbus.Bus
 }
 
 // Mutation event types
@@ -319,6 +322,14 @@ func (s *Server) SetConfig(autoCommit, autoPush, autoPull, localMode bool, syncI
 	s.localMode = localMode
 	s.syncInterval = syncInterval
 	s.daemonMode = daemonMode
+}
+
+// SetBus sets the event bus for hook dispatch.
+// Must be called before Start() or after server creation.
+func (s *Server) SetBus(bus *eventbus.Bus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bus = bus
 }
 
 // SetTCPAddr sets the TCP address to listen on (e.g., ":9876" or "0.0.0.0:9876").

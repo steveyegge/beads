@@ -56,6 +56,15 @@ func (b *Bus) Dispatch(ctx context.Context, event *Event) (*Result, error) {
 	return result, nil
 }
 
+// Handlers returns all registered handlers (for introspection/status reporting).
+func (b *Bus) Handlers() []Handler {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	out := make([]Handler, len(b.handlers))
+	copy(out, b.handlers)
+	return out
+}
+
 // matchingHandlers returns handlers that handle the given event type, sorted
 // by priority (lowest first). Must be called with at least a read lock held.
 func (b *Bus) matchingHandlers(eventType EventType) []Handler {

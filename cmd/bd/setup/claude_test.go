@@ -584,8 +584,10 @@ func TestInstallClaudeGlobalStealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read global settings: %v", err)
 	}
-	if !strings.Contains(string(data), "bd prime --stealth") {
-		t.Error("expected stealth command in settings")
+	// With event bus rollout, stealth mode is handled by handler configuration,
+	// not the hook command. Both stealth and non-stealth use bus emit.
+	if !strings.Contains(string(data), "bd bus emit --hook=SessionStart") {
+		t.Error("expected bus emit SessionStart command in settings")
 	}
 	if !strings.Contains(stdout.String(), "globally") {
 		t.Error("expected global installation message")

@@ -392,6 +392,13 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleFormulaSave(req)
 	case OpFormulaDelete:
 		resp = s.handleFormulaDelete(req)
+	// Event bus operations (bd-66fp)
+	case OpBusEmit:
+		resp = s.handleBusEmit(req)
+	case OpBusStatus:
+		resp = s.handleBusStatus(req)
+	case OpBusHandlers:
+		resp = s.handleBusHandlers(req)
 	default:
 		return Response{
 			Success: false,
