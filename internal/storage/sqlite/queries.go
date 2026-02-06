@@ -162,7 +162,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	// modes in BeginTx, and modernc.org/sqlite's BeginTx always uses DEFERRED mode.
 	//
 	// Retries with exponential backoff handle cases where busy_timeout alone is insufficient.
-	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
+	if err := beginImmediateWithRetry(ctx, conn); err != nil {
 		return fmt.Errorf("failed to begin immediate transaction: %w", err)
 	}
 

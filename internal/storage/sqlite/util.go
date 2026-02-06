@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"strings"
-	"time"
 )
 
 // QueryContext exposes the underlying database QueryContext method for advanced queries
@@ -41,7 +40,7 @@ func (s *SQLiteStorage) withTx(ctx context.Context, fn func(*sql.Conn) error) er
 	// rather than upgrading from a read lock later. Retries with exponential
 	// backoff handle cases where busy_timeout alone is insufficient
 	// (e.g., SQLITE_BUSY_SNAPSHOT).
-	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
+	if err := beginImmediateWithRetry(ctx, conn); err != nil {
 		return wrapDBError("begin transaction", err)
 	}
 
