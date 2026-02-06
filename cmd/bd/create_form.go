@@ -230,6 +230,7 @@ func runCreateForm(cmd *cobra.Command) {
 		huh.NewOption("Feature", "feature"),
 		huh.NewOption("Epic", "epic"),
 		huh.NewOption("Chore", "chore"),
+		huh.NewOption("Runbook", "runbook"),
 	}
 
 	// Priority options

@@ -568,6 +568,7 @@ func TestIssueTypeIsValid(t *testing.T) {
 		{TypeChore, true},
 		{TypeAdvice, true},
 		{TypeFormula, true},
+		{TypeRunbook, true},
 		// Gas Town types are now custom types (not built-in)
 		{IssueType("message"), false},
 		{IssueType("merge-request"), false},
@@ -667,6 +668,35 @@ func TestFormulaTypeValidation(t *testing.T) {
 	// Normalize must return formula unchanged
 	if TypeFormula.Normalize() != TypeFormula {
 		t.Errorf("TypeFormula.Normalize() = %q, want %q", TypeFormula.Normalize(), TypeFormula)
+	}
+}
+
+// TestRunbookTypeValidation verifies that runbook type is accepted as a
+// core work type by all validation paths.
+func TestRunbookTypeValidation(t *testing.T) {
+	// runbook is a core work type
+	if !TypeRunbook.IsValid() {
+		t.Error("TypeRunbook.IsValid() = false, want true")
+	}
+
+	// runbook is a built-in type (all core work types are built-in)
+	if !TypeRunbook.IsBuiltIn() {
+		t.Error("TypeRunbook.IsBuiltIn() = false, want true")
+	}
+
+	// runbook should be accepted by IsValidWithCustom without explicit config
+	if !TypeRunbook.IsValidWithCustom(nil) {
+		t.Error("TypeRunbook.IsValidWithCustom(nil) = false, want true")
+	}
+
+	// Normalize must return runbook unchanged
+	if TypeRunbook.Normalize() != TypeRunbook {
+		t.Errorf("TypeRunbook.Normalize() = %q, want %q", TypeRunbook.Normalize(), TypeRunbook)
+	}
+
+	// "rb" alias must normalize to runbook
+	if IssueType("rb").Normalize() != TypeRunbook {
+		t.Errorf("IssueType(rb).Normalize() = %q, want %q", IssueType("rb").Normalize(), TypeRunbook)
 	}
 }
 

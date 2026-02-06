@@ -23,6 +23,7 @@ var coreWorkTypes = []struct {
 	{types.TypeChore, "Maintenance or housekeeping"},
 	{types.TypeEpic, "Large body of work spanning multiple issues"},
 	{types.TypeFormula, "Reusable workflow template (molecule blueprint)"},
+	{types.TypeRunbook, "OJ runbook definition (jobs, commands, workers, crons)"},
 }
 
 var typesCmd = &cobra.Command{
