@@ -101,12 +101,23 @@ var specScanCmd = &cobra.Command{
 
 		markDirtyAndScheduleFlush()
 
+		purged := 0
+		keepMissing, _ := cmd.Flags().GetBool("keep-missing")
+		if !keepMissing {
+			p, err := spec.PurgeMissing(rootCtx, store)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: purge missing failed: %v\n", err)
+			} else {
+				purged = p
+			}
+		}
+
 		if jsonOutput {
 			outputJSON(result)
 			return
 		}
-		fmt.Printf("%s Scanned %d specs (added=%d updated=%d missing=%d marked=%d)\n",
-			ui.RenderPass("✓"), result.Scanned, result.Added, result.Updated, result.Missing, result.MarkedBeads)
+		fmt.Printf("%s Scanned %d specs (added=%d updated=%d missing=%d purged=%d marked=%d)\n",
+			ui.RenderPass("✓"), result.Scanned, result.Added, result.Updated, result.Missing, purged, result.MarkedBeads)
 		fmt.Println("● Note: Spec registry is local-only (not synced via git)")
 		if config.GetBool("volatility.auto_pause") && len(result.ChangedSpecIDs) > 0 {
 			if _, err := maybeAutoPauseVolatileSpecs(rootCtx, result.ChangedSpecIDs); err != nil {
@@ -598,6 +609,7 @@ func runSpecMarkDone(cmd *cobra.Command, args []string) {
 
 func init() {
 	specScanCmd.Flags().String("path", "", "Directory to scan (default: specs/)")
+	specScanCmd.Flags().Bool("keep-missing", false, "Keep ghost entries for deleted files (default: purge)")
 	specListCmd.Flags().String("prefix", "", "Filter by spec ID prefix")
 	specListCmd.Flags().Bool("include-missing", false, "Include missing specs")
 	specCoverageCmd.Flags().String("prefix", "", "Filter by spec ID prefix")

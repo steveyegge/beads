@@ -16,6 +16,7 @@ type SpecRegistryStore interface {
 	MarkSpecChangedBySpecIDs(ctx context.Context, specIDs []string, changedAt time.Time) (int, error)
 	UpdateSpecRegistry(ctx context.Context, specID string, updates SpecRegistryUpdate) error
 	MoveSpecRegistry(ctx context.Context, fromSpecID, toSpecID, toPath string) error
+	DeleteSpecRegistryByIDs(ctx context.Context, specIDs []string) (int, error)
 	AddSpecScanEvents(ctx context.Context, events []SpecScanEvent) error
 	ListSpecScanEvents(ctx context.Context, specID string, since time.Time) ([]SpecScanEvent, error)
 }

@@ -155,6 +155,24 @@ func (m *MemoryStorage) MoveSpecRegistry(_ context.Context, fromSpecID, toSpecID
 	return nil
 }
 
+func (m *MemoryStorage) DeleteSpecRegistryByIDs(_ context.Context, specIDs []string) (int, error) {
+	if len(specIDs) == 0 {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	deleted := 0
+	for _, id := range specIDs {
+		if _, ok := m.specRegistry[id]; ok {
+			delete(m.specRegistry, id)
+			delete(m.specScanEvents, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 func (m *MemoryStorage) MarkSpecChangedBySpecIDs(_ context.Context, specIDs []string, changedAt time.Time) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

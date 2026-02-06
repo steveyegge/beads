@@ -229,6 +229,45 @@ func (s *DoltStore) MoveSpecRegistry(ctx context.Context, fromSpecID, toSpecID, 
 	return nil
 }
 
+// DeleteSpecRegistryByIDs removes spec_registry rows and their scan events by spec IDs.
+func (s *DoltStore) DeleteSpecRegistryByIDs(ctx context.Context, specIDs []string) (int, error) {
+	if len(specIDs) == 0 {
+		return 0, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin purge tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	placeholders := strings.Repeat("?,", len(specIDs))
+	placeholders = strings.TrimSuffix(placeholders, ",")
+	args := make([]interface{}, len(specIDs))
+	for i, id := range specIDs {
+		args[i] = id
+	}
+
+	eventsQuery := fmt.Sprintf("DELETE FROM spec_scan_events WHERE spec_id IN (%s)", placeholders) // #nosec G201
+	if _, err := tx.ExecContext(ctx, eventsQuery, args...); err != nil {
+		return 0, fmt.Errorf("delete scan events: %w", err)
+	}
+
+	regQuery := fmt.Sprintf("DELETE FROM spec_registry WHERE spec_id IN (%s)", placeholders) // #nosec G201
+	res, err := tx.ExecContext(ctx, regQuery, args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete spec registry: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit purge: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	return int(affected), nil
+}
+
 // ListSpecRegistryWithCounts returns registry entries with bead counts.
 func (s *DoltStore) ListSpecRegistryWithCounts(ctx context.Context) ([]spec.SpecRegistryCount, error) {
 	s.mu.RLock()

@@ -94,6 +94,24 @@ func (m *mockStore) ListSpecScanEvents(ctx context.Context, specID string, since
 	return results, nil
 }
 
+func (m *mockStore) DeleteSpecRegistryByIDs(ctx context.Context, specIDs []string) (int, error) {
+	idSet := make(map[string]struct{}, len(specIDs))
+	for _, id := range specIDs {
+		idSet[id] = struct{}{}
+	}
+	var kept []SpecRegistryEntry
+	deleted := 0
+	for _, e := range m.entries {
+		if _, ok := idSet[e.SpecID]; ok {
+			deleted++
+		} else {
+			kept = append(kept, e)
+		}
+	}
+	m.entries = kept
+	return deleted, nil
+}
+
 func TestUpdateRegistry_Add(t *testing.T) {
 	store := &mockStore{}
 	now := time.Now().UTC().Truncate(time.Second)

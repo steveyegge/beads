@@ -116,3 +116,21 @@ func UpdateRegistry(ctx context.Context, store SpecRegistryStore, scanned []Scan
 
 	return result, nil
 }
+
+// PurgeMissing removes registry entries for specs whose files are no longer on disk.
+func PurgeMissing(ctx context.Context, store SpecRegistryStore) (int, error) {
+	entries, err := store.ListSpecRegistry(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list for purge: %w", err)
+	}
+	var missingIDs []string
+	for _, e := range entries {
+		if e.MissingAt != nil {
+			missingIDs = append(missingIDs, e.SpecID)
+		}
+	}
+	if len(missingIDs) == 0 {
+		return 0, nil
+	}
+	return store.DeleteSpecRegistryByIDs(ctx, missingIDs)
+}
