@@ -432,6 +432,37 @@ func TestExtractIssuePrefix(t *testing.T) {
 			issueID:  "test-proj-abc",
 			expected: "test-proj", // 3-char all-letter now accepted as hash (GH #446)
 		},
+		// GH#405: multi-hyphen prefixes with hash suffixes
+		{
+			name:     "hacker-news prefix with hash (GH#405)",
+			issueID:  "hacker-news-ko4",
+			expected: "hacker-news", // Not "hacker" - 3-char hash uses last hyphen
+		},
+		{
+			name:     "hacker-news prefix with numeric suffix (GH#405)",
+			issueID:  "hacker-news-42",
+			expected: "hacker-news", // Numeric suffix uses last hyphen
+		},
+		{
+			name:     "me-py-toolkit prefix with hash (GH#405)",
+			issueID:  "me-py-toolkit-a1b",
+			expected: "me-py-toolkit", // 3-part prefix, 3-char hash
+		},
+		{
+			name:     "me-py-toolkit prefix with 4-char hash (GH#405)",
+			issueID:  "me-py-toolkit-1a2b",
+			expected: "me-py-toolkit", // 3-part prefix, 4-char hash with digits
+		},
+		{
+			name:     "me-py-toolkit prefix with numeric suffix (GH#405)",
+			issueID:  "me-py-toolkit-7",
+			expected: "me-py-toolkit", // 3-part prefix, numeric suffix
+		},
+		{
+			name:     "three-hyphen prefix with 3-char all-letter hash",
+			issueID:  "my-cool-web-app-bat",
+			expected: "my-cool-web-app", // 4-part prefix, 3-char all-letter hash
+		},
 	}
 
 	for _, tt := range tests {
