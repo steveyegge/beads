@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS issues (
     last_activity DATETIME,
     role_type VARCHAR(32) DEFAULT '',
     rig VARCHAR(255) DEFAULT '',
+    -- Pod fields (K8s agent pod controller - gt-el7sxq.7)
+    pod_name VARCHAR(255) DEFAULT '',
+    pod_ip VARCHAR(255) DEFAULT '',
+    pod_node VARCHAR(255) DEFAULT '',
+    pod_status VARCHAR(32) DEFAULT '',
+    screen_session VARCHAR(255) DEFAULT '',
     -- Time-based scheduling fields
     due_at DATETIME,
     defer_until DATETIME,

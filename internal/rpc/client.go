@@ -1288,6 +1288,68 @@ func (c *Client) FormulaDelete(args *FormulaDeleteArgs) (*FormulaDeleteResult, e
 	return &result, nil
 }
 
+// Agent pod operations (gt-el7sxq.7)
+
+// AgentPodRegister sets pod fields on an agent bead.
+func (c *Client) AgentPodRegister(args *AgentPodRegisterArgs) (*AgentPodRegisterResult, error) {
+	resp, err := c.Execute(OpAgentPodRegister, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result AgentPodRegisterResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal agent_pod_register response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// AgentPodDeregister clears all pod fields on an agent bead.
+func (c *Client) AgentPodDeregister(args *AgentPodDeregisterArgs) (*AgentPodDeregisterResult, error) {
+	resp, err := c.Execute(OpAgentPodDeregister, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result AgentPodDeregisterResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal agent_pod_deregister response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// AgentPodStatus updates the pod_status field on an agent bead.
+func (c *Client) AgentPodStatus(args *AgentPodStatusArgs) (*AgentPodStatusResult, error) {
+	resp, err := c.Execute(OpAgentPodStatus, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result AgentPodStatusResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal agent_pod_status response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// AgentPodList returns agents with active pods.
+func (c *Client) AgentPodList(args *AgentPodListArgs) (*AgentPodListResult, error) {
+	resp, err := c.Execute(OpAgentPodList, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result AgentPodListResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal agent_pod_list response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

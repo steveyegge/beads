@@ -411,6 +411,8 @@ func TestHTTPMappingCompleteness(t *testing.T) {
 		OpFormulaList, OpFormulaGet, OpFormulaSave, OpFormulaDelete,
 		// Admin
 		OpShutdown,
+		// Agent pod operations (gt-el7sxq.7)
+		OpAgentPodRegister, OpAgentPodDeregister, OpAgentPodStatus, OpAgentPodList,
 	}
 
 	t.Run("client_operationToHTTPMethod_covers_all_handled_ops", func(t *testing.T) {

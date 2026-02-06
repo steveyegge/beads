@@ -111,6 +111,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			event_kind, actor, target, payload,
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
+			pod_name, pod_ip, pod_node, pod_status, screen_session,
 			due_at, defer_until, metadata,
 			advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
 			advice_subscriptions, advice_subscriptions_exclude
@@ -125,6 +126,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
 			?, ?, ?,
 			?, ?, ?, ?,
 			?, ?
@@ -140,6 +142,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
+		issue.PodName, issue.PodIP, issue.PodNode, issue.PodStatus, issue.ScreenSession,
 		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
 		// NOTE: advice_target_* columns removed - advice uses labels now
 		issue.AdviceHookCommand, issue.AdviceHookTrigger, issue.AdviceHookTimeout, issue.AdviceHookOnFailure,
@@ -159,6 +162,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	var sender, molType, eventKind, actor, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
 	var hookBead, roleBead, agentState, roleType, rig sql.NullString
+	var podName, podIP, podNode, podStatus, screenSession sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var qualityScore sql.NullFloat64
 	var metadata sql.NullString
@@ -177,7 +181,9 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+		       hook_bead, role_bead, agent_state, last_activity, role_type, rig,
+		       pod_name, pod_ip, pod_node, pod_status, screen_session,
+		       mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
 		       quality_score, work_type, source_system, metadata,
@@ -194,7 +200,9 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &ephemeral, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
-		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
+		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig,
+		&podName, &podIP, &podNode, &podStatus, &screenSession,
+		&molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem, &metadata,
@@ -312,6 +320,21 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	if rig.Valid {
 		issue.Rig = rig.String
 	}
+	if podName.Valid {
+		issue.PodName = podName.String
+	}
+	if podIP.Valid {
+		issue.PodIP = podIP.String
+	}
+	if podNode.Valid {
+		issue.PodNode = podNode.String
+	}
+	if podStatus.Valid {
+		issue.PodStatus = podStatus.String
+	}
+	if screenSession.Valid {
+		issue.ScreenSession = screenSession.String
+	}
 	if molType.Valid {
 		issue.MolType = types.MolType(molType.String)
 	}
@@ -398,6 +421,7 @@ func isAllowedUpdateField(key string) bool {
 		"sender": true, "wisp": true, "pinned": true,
 		"hook_bead": true, "role_bead": true, "agent_state": true, "last_activity": true,
 		"role_type": true, "rig": true, "mol_type": true,
+		"pod_name": true, "pod_ip": true, "pod_node": true, "pod_status": true, "screen_session": true,
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
 		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
 		"metadata": true,

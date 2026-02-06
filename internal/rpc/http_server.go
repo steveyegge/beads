@@ -422,6 +422,12 @@ func httpMethodToOperation(method string) string {
 
 		// Admin
 		"Shutdown": OpShutdown,
+
+		// Agent pod operations (gt-el7sxq.7)
+		"AgentPodRegister":   OpAgentPodRegister,
+		"AgentPodDeregister": OpAgentPodDeregister,
+		"AgentPodStatus":     OpAgentPodStatus,
+		"AgentPodList":       OpAgentPodList,
 	}
 
 	return methodMap[method]

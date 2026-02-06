@@ -133,6 +133,12 @@ const (
 	OpBusEmit     = "bus_emit"
 	OpBusStatus   = "bus_status"
 	OpBusHandlers = "bus_handlers"
+
+	// Agent pod operations (gt-el7sxq.7)
+	OpAgentPodRegister   = "agent_pod_register"
+	OpAgentPodDeregister = "agent_pod_deregister"
+	OpAgentPodStatus     = "agent_pod_status"
+	OpAgentPodList       = "agent_pod_list"
 )
 
 // Request represents an RPC request from client to daemon
@@ -259,6 +265,12 @@ type UpdateArgs struct {
 	// Agent identity fields
 	RoleType *string `json:"role_type,omitempty"` // polecat|crew|witness|refinery|mayor|deacon
 	Rig      *string `json:"rig,omitempty"`       // Rig name (empty for town-level agents)
+	// Agent pod fields (gt-el7sxq.7)
+	PodName       *string `json:"pod_name,omitempty"`       // K8s pod name
+	PodIP         *string `json:"pod_ip,omitempty"`         // Pod IP address
+	PodNode       *string `json:"pod_node,omitempty"`       // K8s node name
+	PodStatus     *string `json:"pod_status,omitempty"`     // Pod status: pending|running|terminating|terminated
+	ScreenSession *string `json:"screen_session,omitempty"` // Screen/tmux session name
 	// Event fields (only valid when IssueType == "event")
 	EventCategory *string `json:"event_category,omitempty"` // Namespaced category (e.g., patrol.muted, agent.started)
 	EventActor    *string `json:"event_actor,omitempty"`    // Entity URI who caused this event
@@ -1574,4 +1586,68 @@ type BusHandlerInfo struct {
 	ID       string   `json:"id"`
 	Priority int      `json:"priority"`
 	Handles  []string `json:"handles"`
+}
+
+// ===== Agent Pod Operations (gt-el7sxq.7) =====
+
+// AgentPodRegisterArgs registers pod fields on an agent bead.
+type AgentPodRegisterArgs struct {
+	AgentID       string `json:"agent_id"`                 // Agent bead ID
+	PodName       string `json:"pod_name"`                 // K8s pod name
+	PodIP         string `json:"pod_ip,omitempty"`         // Pod IP address
+	PodNode       string `json:"pod_node,omitempty"`       // K8s node name
+	PodStatus     string `json:"pod_status,omitempty"`     // Pod status (default: "running")
+	ScreenSession string `json:"screen_session,omitempty"` // Screen/tmux session name
+}
+
+// AgentPodRegisterResult is returned after pod registration.
+type AgentPodRegisterResult struct {
+	AgentID   string `json:"agent_id"`
+	PodName   string `json:"pod_name"`
+	PodStatus string `json:"pod_status"`
+}
+
+// AgentPodDeregisterArgs clears all pod fields on an agent bead.
+type AgentPodDeregisterArgs struct {
+	AgentID string `json:"agent_id"` // Agent bead ID
+}
+
+// AgentPodDeregisterResult is returned after pod deregistration.
+type AgentPodDeregisterResult struct {
+	AgentID string `json:"agent_id"`
+}
+
+// AgentPodStatusArgs updates the pod_status field on an agent bead.
+type AgentPodStatusArgs struct {
+	AgentID   string `json:"agent_id"`   // Agent bead ID
+	PodStatus string `json:"pod_status"` // New pod status
+}
+
+// AgentPodStatusResult is returned after pod status update.
+type AgentPodStatusResult struct {
+	AgentID   string `json:"agent_id"`
+	PodStatus string `json:"pod_status"`
+}
+
+// AgentPodListArgs queries agents with active pods.
+type AgentPodListArgs struct {
+	Rig string `json:"rig,omitempty"` // Filter by rig (optional)
+}
+
+// AgentPodInfo represents an agent with pod information.
+type AgentPodInfo struct {
+	AgentID       string `json:"agent_id"`
+	PodName       string `json:"pod_name"`
+	PodIP         string `json:"pod_ip,omitempty"`
+	PodNode       string `json:"pod_node,omitempty"`
+	PodStatus     string `json:"pod_status"`
+	ScreenSession string `json:"screen_session,omitempty"`
+	AgentState    string `json:"agent_state,omitempty"`
+	Rig           string `json:"rig,omitempty"`
+	RoleType      string `json:"role_type,omitempty"`
+}
+
+// AgentPodListResult is returned from pod list queries.
+type AgentPodListResult struct {
+	Agents []AgentPodInfo `json:"agents"`
 }

@@ -989,6 +989,8 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var lastActivity sql.NullTime
 		var roleType sql.NullString
 		var rig sql.NullString
+		// Pod fields (gt-el7sxq.7)
+		var podName, podIP, podNode, podStatus, screenSession sql.NullString
 		var molType sql.NullString
 		// Time-based scheduling fields
 		var dueAt sql.NullTime
@@ -1004,7 +1006,9 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
-			&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
+			&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig,
+			&podName, &podIP, &podNode, &podStatus, &screenSession,
+			&molType,
 			&dueAt, &deferUntil, &metadata,
 		)
 		if err != nil {
@@ -1089,6 +1093,44 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		// Custom metadata field (GH#1406)
 		if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
 			issue.Metadata = []byte(metadata.String)
+		}
+		// Agent fields
+		if hookBead.Valid {
+			issue.HookBead = hookBead.String
+		}
+		if roleBead.Valid {
+			issue.RoleBead = roleBead.String
+		}
+		if agentState.Valid {
+			issue.AgentState = types.AgentState(agentState.String)
+		}
+		if lastActivity.Valid {
+			issue.LastActivity = &lastActivity.Time
+		}
+		if roleType.Valid {
+			issue.RoleType = roleType.String
+		}
+		if rig.Valid {
+			issue.Rig = rig.String
+		}
+		// Pod fields (gt-el7sxq.7)
+		if podName.Valid {
+			issue.PodName = podName.String
+		}
+		if podIP.Valid {
+			issue.PodIP = podIP.String
+		}
+		if podNode.Valid {
+			issue.PodNode = podNode.String
+		}
+		if podStatus.Valid {
+			issue.PodStatus = podStatus.String
+		}
+		if screenSession.Valid {
+			issue.ScreenSession = screenSession.String
+		}
+		if molType.Valid {
+			issue.MolType = types.MolType(molType.String)
 		}
 
 		issues = append(issues, &issue)

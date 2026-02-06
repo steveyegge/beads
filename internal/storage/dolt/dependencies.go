@@ -21,7 +21,9 @@ const issueColumns = `id, content_hash, title, description, design, acceptance_c
        deleted_at, deleted_by, delete_reason, original_type,
        sender, ephemeral, pinned, is_template, crystallizes,
        await_type, await_id, timeout_ns, waiters,
-       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+       hook_bead, role_bead, agent_state, last_activity, role_type, rig,
+       pod_name, pod_ip, pod_node, pod_status, screen_session,
+       mol_type,
        event_kind, actor, target, payload,
        due_at, defer_until,
        quality_score, work_type, source_system,
@@ -587,6 +589,7 @@ func scanIssueRow(rows rowScanner) (*types.Issue, error) {
 	var sender, molType, eventKind, actor, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
 	var hookBead, roleBead, agentState, roleType, rig sql.NullString
+	var podName, podIP, podNode, podStatus, screenSession sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var qualityScore sql.NullFloat64
 	// NOTE: advice_target_* fields removed - advice uses labels now
@@ -603,7 +606,9 @@ func scanIssueRow(rows rowScanner) (*types.Issue, error) {
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &ephemeral, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
-		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
+		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig,
+		&podName, &podIP, &podNode, &podStatus, &screenSession,
+		&molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem,
@@ -714,6 +719,21 @@ func scanIssueRow(rows rowScanner) (*types.Issue, error) {
 	}
 	if rig.Valid {
 		issue.Rig = rig.String
+	}
+	if podName.Valid {
+		issue.PodName = podName.String
+	}
+	if podIP.Valid {
+		issue.PodIP = podIP.String
+	}
+	if podNode.Valid {
+		issue.PodNode = podNode.String
+	}
+	if podStatus.Valid {
+		issue.PodStatus = podStatus.String
+	}
+	if screenSession.Valid {
+		issue.ScreenSession = screenSession.String
 	}
 	if molType.Valid {
 		issue.MolType = types.MolType(molType.String)

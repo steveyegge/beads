@@ -399,6 +399,15 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleBusStatus(req)
 	case OpBusHandlers:
 		resp = s.handleBusHandlers(req)
+	// Agent pod operations (gt-el7sxq.7)
+	case OpAgentPodRegister:
+		resp = s.handleAgentPodRegister(req)
+	case OpAgentPodDeregister:
+		resp = s.handleAgentPodDeregister(req)
+	case OpAgentPodStatus:
+		resp = s.handleAgentPodStatus(req)
+	case OpAgentPodList:
+		resp = s.handleAgentPodList(req)
 	default:
 		return Response{
 			Success: false,

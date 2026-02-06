@@ -343,6 +343,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var lastActivity sql.NullTime
 	var roleType sql.NullString
 	var rig sql.NullString
+	// Pod fields (gt-el7sxq.7)
+	var podName, podIP, podNode, podStatus, screenSession sql.NullString
 	// Molecule type field
 	var molType sql.NullString
 	// Event fields
@@ -372,7 +374,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+		       hook_bead, role_bead, agent_state, last_activity, role_type, rig,
+		       pod_name, pod_ip, pod_node, pod_status, screen_session,
+		       mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until, metadata,
 		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
@@ -388,7 +392,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
-		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
+		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig,
+		&podName, &podIP, &podNode, &podStatus, &screenSession,
+		&molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil, &metadata,
 		&adviceHookCommand, &adviceHookTrigger, &adviceHookTimeout, &adviceHookOnFailure,
@@ -504,6 +510,22 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if rig.Valid {
 		issue.Rig = rig.String
+	}
+	// Pod fields (gt-el7sxq.7)
+	if podName.Valid {
+		issue.PodName = podName.String
+	}
+	if podIP.Valid {
+		issue.PodIP = podIP.String
+	}
+	if podNode.Valid {
+		issue.PodNode = podNode.String
+	}
+	if podStatus.Valid {
+		issue.PodStatus = podStatus.String
+	}
+	if screenSession.Valid {
+		issue.ScreenSession = screenSession.String
 	}
 	// Molecule type field
 	if molType.Valid {
@@ -833,6 +855,12 @@ var allowedUpdateFields = map[string]bool{
 	"last_activity": true,
 	"role_type":     true,
 	"rig":           true,
+	// Pod fields (gt-el7sxq.7)
+	"pod_name":       true,
+	"pod_ip":         true,
+	"pod_node":       true,
+	"pod_status":     true,
+	"screen_session": true,
 	// Molecule type field
 	"mol_type": true,
 	// Event fields
@@ -2092,7 +2120,9 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+		       hook_bead, role_bead, agent_state, last_activity, role_type, rig,
+		       pod_name, pod_ip, pod_node, pod_status, screen_session,
+		       mol_type,
 		       due_at, defer_until, metadata
 		FROM issues
 		%s

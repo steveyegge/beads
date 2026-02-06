@@ -343,7 +343,9 @@ func (t *sqliteTxStorage) GetIssue(ctx context.Context, id string) (*types.Issue
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+		       hook_bead, role_bead, agent_state, last_activity, role_type, rig,
+		       pod_name, pod_ip, pod_node, pod_status, screen_session,
+		       mol_type,
 		       due_at, defer_until, metadata,
 		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
 		       advice_subscriptions, advice_subscriptions_exclude
@@ -1397,7 +1399,9 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+		       hook_bead, role_bead, agent_state, last_activity, role_type, rig,
+		       pod_name, pod_ip, pod_node, pod_status, screen_session,
+		       mol_type,
 		       due_at, defer_until, metadata,
 		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
 		       advice_subscriptions, advice_subscriptions_exclude
@@ -1464,6 +1468,8 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	var lastActivity sql.NullTime
 	var roleType sql.NullString
 	var rig sql.NullString
+	// Pod fields (gt-el7sxq.7)
+	var podName, podIP, podNode, podStatus, screenSession sql.NullString
 	var molType sql.NullString
 	// Time-based scheduling fields
 	var dueAt sql.NullTime
@@ -1485,7 +1491,9 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
-		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
+		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig,
+		&podName, &podIP, &podNode, &podStatus, &screenSession,
+		&molType,
 		&dueAt, &deferUntil, &metadata,
 		&adviceHookCommand, &adviceHookTrigger, &adviceHookTimeout, &adviceHookOnFailure,
 		&adviceSubscriptions, &adviceSubscriptionsExclude,
@@ -1581,6 +1589,45 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	// Custom metadata field (GH#1406)
 	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
 		issue.Metadata = []byte(metadata.String)
+	}
+	// Agent fields
+	if hookBead.Valid {
+		issue.HookBead = hookBead.String
+	}
+	if roleBead.Valid {
+		issue.RoleBead = roleBead.String
+	}
+	if agentState.Valid {
+		issue.AgentState = types.AgentState(agentState.String)
+	}
+	if lastActivity.Valid {
+		issue.LastActivity = &lastActivity.Time
+	}
+	if roleType.Valid {
+		issue.RoleType = roleType.String
+	}
+	if rig.Valid {
+		issue.Rig = rig.String
+	}
+	// Pod fields (gt-el7sxq.7)
+	if podName.Valid {
+		issue.PodName = podName.String
+	}
+	if podIP.Valid {
+		issue.PodIP = podIP.String
+	}
+	if podNode.Valid {
+		issue.PodNode = podNode.String
+	}
+	if podStatus.Valid {
+		issue.PodStatus = podStatus.String
+	}
+	if screenSession.Valid {
+		issue.ScreenSession = screenSession.String
+	}
+	// Molecule type
+	if molType.Valid {
+		issue.MolType = types.MolType(molType.String)
 	}
 	// Advice hook fields
 	if adviceHookCommand.Valid {

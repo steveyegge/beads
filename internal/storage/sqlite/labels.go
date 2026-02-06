@@ -198,7 +198,9 @@ func (s *SQLiteStorage) GetIssuesByLabel(ctx context.Context, label string) ([]*
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
-		       i.hook_bead, i.role_bead, i.agent_state, i.last_activity, i.role_type, i.rig, i.mol_type,
+		       i.hook_bead, i.role_bead, i.agent_state, i.last_activity, i.role_type, i.rig,
+		       i.pod_name, i.pod_ip, i.pod_node, i.pod_status, i.screen_session,
+		       i.mol_type,
 		       i.due_at, i.defer_until, i.metadata
 		FROM issues i
 		JOIN labels l ON i.id = l.issue_id

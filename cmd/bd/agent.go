@@ -119,6 +119,78 @@ Examples:
 
 var backfillDryRun bool
 
+var agentPodRegisterCmd = &cobra.Command{
+	Use:   "pod-register <agent>",
+	Short: "Register a K8s pod for an agent",
+	Long: `Register a Kubernetes pod for an agent bead.
+
+Sets the pod fields (pod_name, pod_ip, pod_node, screen_session) and
+updates last_activity. If pod_status is not specified, defaults to "running".
+
+This command requires the daemon (BD_DAEMON_HOST).
+
+Examples:
+  bd agent pod-register gt-emma --pod-name=emma-pod-abc --pod-ip=10.0.1.5
+  bd agent pod-register gt-emma --pod-name=emma-pod-abc --pod-node=node-1 --screen=emma-screen`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAgentPodRegister,
+}
+
+var agentPodDeregisterCmd = &cobra.Command{
+	Use:   "pod-deregister <agent>",
+	Short: "Deregister a K8s pod from an agent",
+	Long: `Deregister (clear) pod fields from an agent bead.
+
+Clears all pod fields (pod_name, pod_ip, pod_node, pod_status, screen_session)
+and updates last_activity.
+
+This command requires the daemon (BD_DAEMON_HOST).
+
+Examples:
+  bd agent pod-deregister gt-emma`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAgentPodDeregister,
+}
+
+var agentPodStatusCmd = &cobra.Command{
+	Use:   "pod-status <agent> --status=<status>",
+	Short: "Update pod status for an agent",
+	Long: `Update the pod_status field on an agent bead.
+
+Updates only the pod_status field and last_activity timestamp.
+
+This command requires the daemon (BD_DAEMON_HOST).
+
+Examples:
+  bd agent pod-status gt-emma --status=running
+  bd agent pod-status gt-emma --status=terminating`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAgentPodStatus,
+}
+
+var agentPodListCmd = &cobra.Command{
+	Use:   "pod-list",
+	Short: "List agents with active pods",
+	Long: `List all agent beads that have active pods registered.
+
+Optionally filter by rig name.
+
+This command requires the daemon (BD_DAEMON_HOST).
+
+Examples:
+  bd agent pod-list
+  bd agent pod-list --rig=beads`,
+	RunE: runAgentPodList,
+}
+
+var podRegisterName string
+var podRegisterIP string
+var podRegisterNode string
+var podRegisterStatus string
+var podRegisterScreen string
+var podStatusValue string
+var podListRig string
+
 var agentSubscriptionsCmd = &cobra.Command{
 	Use:   "subscriptions <agent>",
 	Short: "Show agent's effective advice subscriptions",
@@ -139,11 +211,28 @@ Examples:
 
 func init() {
 	agentBackfillLabelsCmd.Flags().BoolVar(&backfillDryRun, "dry-run", false, "Preview changes without applying them")
+
+	agentPodRegisterCmd.Flags().StringVar(&podRegisterName, "pod-name", "", "K8s pod name (required)")
+	agentPodRegisterCmd.Flags().StringVar(&podRegisterIP, "pod-ip", "", "Pod IP address")
+	agentPodRegisterCmd.Flags().StringVar(&podRegisterNode, "pod-node", "", "K8s node name")
+	agentPodRegisterCmd.Flags().StringVar(&podRegisterStatus, "status", "", "Pod status (default: running)")
+	agentPodRegisterCmd.Flags().StringVar(&podRegisterScreen, "screen", "", "Screen/tmux session name")
+	_ = agentPodRegisterCmd.MarkFlagRequired("pod-name")
+
+	agentPodStatusCmd.Flags().StringVar(&podStatusValue, "status", "", "Pod status value (required)")
+	_ = agentPodStatusCmd.MarkFlagRequired("status")
+
+	agentPodListCmd.Flags().StringVar(&podListRig, "rig", "", "Filter by rig name")
+
 	agentCmd.AddCommand(agentStateCmd)
 	agentCmd.AddCommand(agentHeartbeatCmd)
 	agentCmd.AddCommand(agentShowCmd)
 	agentCmd.AddCommand(agentBackfillLabelsCmd)
 	agentCmd.AddCommand(agentSubscriptionsCmd)
+	agentCmd.AddCommand(agentPodRegisterCmd)
+	agentCmd.AddCommand(agentPodDeregisterCmd)
+	agentCmd.AddCommand(agentPodStatusCmd)
+	agentCmd.AddCommand(agentPodListCmd)
 	rootCmd.AddCommand(agentCmd)
 }
 
@@ -748,6 +837,160 @@ func formatTimeOrNil(t *time.Time) interface{} {
 		return nil
 	}
 	return t.Format(time.RFC3339)
+}
+
+func runAgentPodRegister(cmd *cobra.Command, args []string) error {
+	CheckReadonly("agent pod-register")
+
+	if daemonClient == nil {
+		return fmt.Errorf("agent pod-register requires the daemon (set BD_DAEMON_HOST)")
+	}
+
+	agentArg := args[0]
+
+	// Resolve agent ID
+	resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: agentArg})
+	if err != nil {
+		return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
+	}
+	var agentID string
+	if err := json.Unmarshal(resp.Data, &agentID); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
+	}
+
+	result, err := daemonClient.AgentPodRegister(&rpc.AgentPodRegisterArgs{
+		AgentID:       agentID,
+		PodName:       podRegisterName,
+		PodIP:         podRegisterIP,
+		PodNode:       podRegisterNode,
+		PodStatus:     podRegisterStatus,
+		ScreenSession: podRegisterScreen,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to register pod: %w", err)
+	}
+
+	if jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+
+	fmt.Printf("%s %s pod=%s status=%s\n", ui.RenderPass("✓"), result.AgentID, result.PodName, result.PodStatus)
+	return nil
+}
+
+func runAgentPodDeregister(cmd *cobra.Command, args []string) error {
+	CheckReadonly("agent pod-deregister")
+
+	if daemonClient == nil {
+		return fmt.Errorf("agent pod-deregister requires the daemon (set BD_DAEMON_HOST)")
+	}
+
+	agentArg := args[0]
+
+	// Resolve agent ID
+	resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: agentArg})
+	if err != nil {
+		return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
+	}
+	var agentID string
+	if err := json.Unmarshal(resp.Data, &agentID); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
+	}
+
+	result, err := daemonClient.AgentPodDeregister(&rpc.AgentPodDeregisterArgs{
+		AgentID: agentID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to deregister pod: %w", err)
+	}
+
+	if jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+
+	fmt.Printf("%s %s pod deregistered\n", ui.RenderPass("✓"), result.AgentID)
+	return nil
+}
+
+func runAgentPodStatus(cmd *cobra.Command, args []string) error {
+	CheckReadonly("agent pod-status")
+
+	if daemonClient == nil {
+		return fmt.Errorf("agent pod-status requires the daemon (set BD_DAEMON_HOST)")
+	}
+
+	agentArg := args[0]
+
+	// Resolve agent ID
+	resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: agentArg})
+	if err != nil {
+		return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
+	}
+	var agentID string
+	if err := json.Unmarshal(resp.Data, &agentID); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
+	}
+
+	result, err := daemonClient.AgentPodStatus(&rpc.AgentPodStatusArgs{
+		AgentID:   agentID,
+		PodStatus: podStatusValue,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update pod status: %w", err)
+	}
+
+	if jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+
+	fmt.Printf("%s %s pod_status=%s\n", ui.RenderPass("✓"), result.AgentID, result.PodStatus)
+	return nil
+}
+
+func runAgentPodList(cmd *cobra.Command, args []string) error {
+	if daemonClient == nil {
+		return fmt.Errorf("agent pod-list requires the daemon (set BD_DAEMON_HOST)")
+	}
+
+	result, err := daemonClient.AgentPodList(&rpc.AgentPodListArgs{
+		Rig: podListRig,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list agent pods: %w", err)
+	}
+
+	if jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+
+	if len(result.Agents) == 0 {
+		fmt.Println("No agents with active pods")
+		return nil
+	}
+
+	for _, a := range result.Agents {
+		line := fmt.Sprintf("%-30s pod=%-30s status=%-12s", a.AgentID, a.PodName, a.PodStatus)
+		if a.PodIP != "" {
+			line += fmt.Sprintf(" ip=%s", a.PodIP)
+		}
+		if a.PodNode != "" {
+			line += fmt.Sprintf(" node=%s", a.PodNode)
+		}
+		if a.Rig != "" {
+			line += fmt.Sprintf(" rig=%s", a.Rig)
+		}
+		fmt.Println(line)
+	}
+
+	return nil
 }
 
 // runAgentBackfillLabels scans all agent beads and adds role_type/rig labels

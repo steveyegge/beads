@@ -198,6 +198,22 @@ func updatesFromArgs(a UpdateArgs) (map[string]interface{}, error) {
 	if a.Rig != nil {
 		u["rig"] = *a.Rig
 	}
+	// Agent pod fields (gt-el7sxq.7)
+	if a.PodName != nil {
+		u["pod_name"] = *a.PodName
+	}
+	if a.PodIP != nil {
+		u["pod_ip"] = *a.PodIP
+	}
+	if a.PodNode != nil {
+		u["pod_node"] = *a.PodNode
+	}
+	if a.PodStatus != nil {
+		u["pod_status"] = *a.PodStatus
+	}
+	if a.ScreenSession != nil {
+		u["screen_session"] = *a.ScreenSession
+	}
 	// Event fields
 	if a.EventCategory != nil {
 		u["event_category"] = *a.EventCategory
