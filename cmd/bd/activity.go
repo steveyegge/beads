@@ -757,6 +757,11 @@ func runTownActivityOnce(sinceTime time.Time) {
 
 // runTownActivityFollow streams events from all rigs in real-time
 func runTownActivityFollow(sinceTime time.Time) {
+	// Use a longer default interval for town-wide polling to reduce load on the
+	// K8s daemon. Each poll hits ALL rig daemons, so 500ms is excessive. (bd-8csx.1)
+	if activityInterval == 500*time.Millisecond {
+		activityInterval = 2 * time.Second
+	}
 	daemons := discoverRigDaemons()
 	defer closeDaemons(daemons)
 
