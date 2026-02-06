@@ -55,7 +55,7 @@ func TestFederatedMessageTypeIsResponse(t *testing.T) {
 
 func TestFederatedMessageTypeRequiresRecipient(t *testing.T) {
 	tests := []struct {
-		msgType          FederatedMessageType
+		msgType           FederatedMessageType
 		requiresRecipient bool
 	}{
 		{MsgWorkHandoff, true},
@@ -350,4 +350,3 @@ func TestRejectCodeString(t *testing.T) {
 		})
 	}
 }
-

@@ -947,5 +947,3 @@ func formatJSONStringArray(arr []string) string {
 	}
 	return string(data)
 }
-
-

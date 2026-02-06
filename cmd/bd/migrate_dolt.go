@@ -844,5 +844,3 @@ func formatJSONArray(arr []string) string {
 	}
 	return string(data)
 }
-
-

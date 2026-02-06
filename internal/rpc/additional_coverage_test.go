@@ -781,7 +781,6 @@ func intPtr(i int) *int {
 	return &i
 }
 
-
 // GetMutations and Export tests
 
 // TestGetMutations tests the GetMutations operation via RPC

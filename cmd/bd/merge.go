@@ -82,8 +82,8 @@ Vendored into bd with permission.`,
 		if err != nil {
 			// Check if error is due to conflicts
 			if err.Error() == fmt.Sprintf("merge completed with %d conflicts", 1) ||
-			   err.Error() == fmt.Sprintf("merge completed with %d conflicts", 2) ||
-			   err.Error()[:len("merge completed with")] == "merge completed with" {
+				err.Error() == fmt.Sprintf("merge completed with %d conflicts", 2) ||
+				err.Error()[:len("merge completed with")] == "merge completed with" {
 				// Conflicts present - exit with 1 (standard for merge drivers)
 				os.Exit(1)
 			}

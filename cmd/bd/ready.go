@@ -201,20 +201,20 @@ This is useful for agents executing molecules to see which steps can run next.`,
 
 		issues, err := store.GetReadyWork(ctx, filter)
 		if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
-	// If no ready work found, check if git has issues and auto-import
-	if len(issues) == 0 {
-		if checkAndAutoImport(ctx, store) {
-			// Re-run the query after import
-			issues, err = store.GetReadyWork(ctx, filter)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+		// If no ready work found, check if git has issues and auto-import
+		if len(issues) == 0 {
+			if checkAndAutoImport(ctx, store) {
+				// Re-run the query after import
+				issues, err = store.GetReadyWork(ctx, filter)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		}
-	}
 		if jsonOutput {
 			// Always output array, even if empty
 			if issues == nil {
@@ -455,12 +455,12 @@ type MoleculeReadyStep struct {
 
 // MoleculeReadyOutput is the JSON output for bd ready --mol
 type MoleculeReadyOutput struct {
-	MoleculeID     string                  `json:"molecule_id"`
-	MoleculeTitle  string                  `json:"molecule_title"`
-	TotalSteps     int                     `json:"total_steps"`
-	ReadySteps     int                     `json:"ready_steps"`
-	Steps          []*MoleculeReadyStep    `json:"steps"`
-	ParallelGroups map[string][]string     `json:"parallel_groups"`
+	MoleculeID     string               `json:"molecule_id"`
+	MoleculeTitle  string               `json:"molecule_title"`
+	TotalSteps     int                  `json:"total_steps"`
+	ReadySteps     int                  `json:"ready_steps"`
+	Steps          []*MoleculeReadyStep `json:"steps"`
+	ParallelGroups map[string][]string  `json:"parallel_groups"`
 }
 
 func init() {

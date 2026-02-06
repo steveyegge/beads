@@ -112,4 +112,3 @@ func (t *sqliteTxStorage) CreateIssueImport(ctx context.Context, issue *types.Is
 	}
 	return nil
 }
-

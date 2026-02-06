@@ -50,8 +50,8 @@ type Server struct {
 	// Auto-import single-flight guard
 	importInProgress atomic.Bool
 	// Mutation events for event-driven daemon
-	mutationChan    chan MutationEvent
-	droppedEvents   atomic.Int64 // Counter for dropped mutation events
+	mutationChan  chan MutationEvent
+	droppedEvents atomic.Int64 // Counter for dropped mutation events
 	// Recent mutations buffer for polling (circular buffer, max 100 events)
 	recentMutations   []MutationEvent
 	recentMutationsMu sync.RWMutex
@@ -80,11 +80,11 @@ const (
 
 // MutationEvent represents a database mutation for event-driven sync
 type MutationEvent struct {
-	Type      string    // One of the Mutation* constants
-	IssueID   string    // e.g., "bd-42"
-	Title     string    // Issue title for display context (may be empty for some operations)
-	Assignee  string    // Issue assignee for display context (may be empty)
-	Actor     string    // Who performed the action (may differ from assignee)
+	Type      string // One of the Mutation* constants
+	IssueID   string // e.g., "bd-42"
+	Title     string // Issue title for display context (may be empty for some operations)
+	Assignee  string // Issue assignee for display context (may be empty)
+	Actor     string // Who performed the action (may differ from assignee)
 	Timestamp time.Time
 	// Optional metadata for richer events (used by status, bonded, etc.)
 	OldStatus string `json:"old_status,omitempty"` // Previous status (for status events)
