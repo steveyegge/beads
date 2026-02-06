@@ -272,9 +272,10 @@ func (s *SQLiteStorage) CreateIssuesWithFullOptions(ctx context.Context, issues 
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Start IMMEDIATE transaction to acquire write lock early.
-	// The connection's busy_timeout pragma (30s) handles retries if locked.
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	// Start IMMEDIATE transaction with retry logic for SQLITE_BUSY.
+	// Retries with exponential backoff handle cases where busy_timeout alone
+	// is insufficient (e.g., SQLITE_BUSY_SNAPSHOT).
+	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
 		return fmt.Errorf("failed to begin immediate transaction: %w", err)
 	}
 

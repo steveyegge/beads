@@ -153,15 +153,15 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Start IMMEDIATE transaction to acquire write lock early and prevent race conditions.
+	// Start IMMEDIATE transaction with retry logic for SQLITE_BUSY.
 	// IMMEDIATE acquires a RESERVED lock immediately, preventing other IMMEDIATE or EXCLUSIVE
 	// transactions from starting. This serializes ID generation across concurrent writers.
 	//
 	// We use raw Exec instead of BeginTx because database/sql doesn't support transaction
 	// modes in BeginTx, and modernc.org/sqlite's BeginTx always uses DEFERRED mode.
 	//
-	// The connection's busy_timeout pragma (30s) handles retries if locked.
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	// Retries with exponential backoff handle cases where busy_timeout alone is insufficient.
+	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
 		return fmt.Errorf("failed to begin immediate transaction: %w", err)
 	}
 
