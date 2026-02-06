@@ -1014,7 +1014,7 @@ func (s *Server) getMoleculeProgress(ctx context.Context, moleculeID string, lim
 	}
 
 	// Get ready issues for determining step readiness
-	readyIssues, _ := s.storage.GetReadyWork(ctx, types.WorkFilter{IncludeMolSteps: true})
+	readyIssues, _ := s.storage.GetReadyWork(ctx, types.WorkFilter{IncludeMolSteps: true, Limit: 500})
 	readyIDs := make(map[string]bool)
 	for _, issue := range readyIssues {
 		readyIDs[issue.ID] = true
@@ -1095,7 +1095,7 @@ func (s *Server) getMoleculeProgress(ctx context.Context, moleculeID string, lim
 func (s *Server) findInProgressMolecules(ctx context.Context, agent string) []*MolCurrentProgress {
 	// Query for in_progress issues
 	status := types.StatusInProgress
-	filter := types.IssueFilter{Status: &status}
+	filter := types.IssueFilter{Status: &status, Limit: 500}
 	if agent != "" {
 		filter.Assignee = &agent
 	}
@@ -1133,7 +1133,7 @@ func (s *Server) findInProgressMolecules(ctx context.Context, agent string) []*M
 func (s *Server) findHookedMolecules(ctx context.Context, agent string) []*MolCurrentProgress {
 	// Query for hooked issues assigned to the agent
 	status := types.StatusHooked
-	filter := types.IssueFilter{Status: &status}
+	filter := types.IssueFilter{Status: &status, Limit: 500}
 	if agent != "" {
 		filter.Assignee = &agent
 	}

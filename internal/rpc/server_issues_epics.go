@@ -1934,13 +1934,7 @@ func (s *Server) handleList(req *Request) Response {
 		}
 	}
 
-	// Populate labels for each issue
-	for _, issue := range issues {
-		labels, _ := store.GetLabels(ctx, issue.ID)
-		issue.Labels = labels
-	}
-
-	// Get dependency counts in bulk (single query instead of N queries)
+	// Populate labels for each issue (batch query instead of N+1)
 	issueIDs := make([]string, len(issues))
 	var epicIDs []string
 	for i, issue := range issues {
@@ -1949,10 +1943,14 @@ func (s *Server) handleList(req *Request) Response {
 			epicIDs = append(epicIDs, issue.ID)
 		}
 	}
+	labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
+	for _, issue := range issues {
+		issue.Labels = labelsMap[issue.ID]
+	}
 	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
 
-	// Populate dependencies for JSON output
-	allDeps, _ := store.GetAllDependencyRecords(ctx)
+	// Populate dependencies for listed issues only (targeted query instead of full table scan)
+	allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
 	for _, issue := range issues {
 		issue.Dependencies = allDeps[issue.ID]
 	}
@@ -2210,10 +2208,16 @@ func (s *Server) handleListWatch(req *Request) Response {
 		}
 	}
 
-	// Populate labels for each issue
-	for _, issue := range issues {
-		labels, _ := store.GetLabels(ctx, issue.ID)
-		issue.Labels = labels
+	// Populate labels for each issue (batch query instead of N+1)
+	if len(issues) > 0 {
+		watchIssueIDs := make([]string, len(issues))
+		for i, issue := range issues {
+			watchIssueIDs[i] = issue.ID
+		}
+		labelsMap, _ := store.GetLabelsForIssues(ctx, watchIssueIDs)
+		for _, issue := range issues {
+			issue.Labels = labelsMap[issue.ID]
+		}
 	}
 
 	// Get current timestamp for LastMutationMs
