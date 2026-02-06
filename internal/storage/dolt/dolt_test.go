@@ -889,6 +889,11 @@ func TestDoltStoreGetReadyWork(t *testing.T) {
 		t.Fatalf("failed to add dependency: %v", err)
 	}
 
+	// Rebuild blocked cache so GetReadyWork sees the dependency (bd-b2ts)
+	if err := store.RebuildBlockedCache(ctx); err != nil {
+		t.Fatalf("failed to rebuild blocked cache: %v", err)
+	}
+
 	// Get ready work
 	readyWork, err := store.GetReadyWork(ctx, types.WorkFilter{})
 	if err != nil {
