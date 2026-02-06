@@ -105,6 +105,48 @@ func jaccard(a, b map[string]struct{}) float64 {
 	return float64(intersection) / float64(union)
 }
 
+// ResolveCanonical determines which spec to keep and which to delete for a duplicate pair.
+// Returns (keep, delete, skip). If skip is true, keep and delete are empty.
+// Priority: archive(4) > active(3) > reference(2) > root/ideas(1).
+// Same priority or unknown directories result in skip.
+func ResolveCanonical(pair DuplicatePair) (keep, del string, skip bool) {
+	dirA := canonicalDir(pair.SpecA)
+	dirB := canonicalDir(pair.SpecB)
+
+	// Unknown = ambiguous, skip
+	if dirA == "unknown" || dirB == "unknown" {
+		return "", "", true
+	}
+
+	// Same priority = ambiguous, skip
+	priority := map[string]int{"archive": 4, "active": 3, "reference": 2, "root": 1, "ideas": 1}
+	if priority[dirA] == priority[dirB] {
+		return "", "", true
+	}
+
+	if priority[dirA] > priority[dirB] {
+		return pair.SpecA, pair.SpecB, false
+	}
+	return pair.SpecB, pair.SpecA, false
+}
+
+// canonicalDir extracts the canonical directory from a spec path.
+// Returns "root" for specs directly in specs/ with no subdirectory.
+func canonicalDir(specID string) string {
+	parts := strings.Split(specID, "/")
+	for _, p := range parts {
+		switch p {
+		case "active", "archive", "reference", "ideas":
+			return p
+		}
+	}
+	// If path starts with "specs/" and has exactly 2 parts (specs/FILE.md), it's root
+	if len(parts) == 2 && parts[0] == "specs" {
+		return "root"
+	}
+	return "unknown"
+}
+
 func commonKey(a, b map[string]struct{}) string {
 	common := make([]string, 0)
 	for k := range a {

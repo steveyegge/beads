@@ -121,7 +121,7 @@ var readOnlyCommands = map[string]bool{
 	"count":      true,
 	"search":     true,
 	"graph":      true,
-	"duplicates": true,
+	// NOTE: "duplicates" removed from read-only -- --fix --apply writes to DB
 	"comments":   true, // list comments (not add)
 	"current":    true, // bd sync mode current
 	"recent":     true, // bd recent (activity dashboard)
