@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -106,6 +107,108 @@ func TestMigrateExternalRefColumn(t *testing.T) {
 
 	if !found {
 		t.Error("external_ref column was not added")
+	}
+}
+
+func TestNew_LegacyDBMissingSpecID(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "legacy.db")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open legacy db: %v", err)
+	}
+
+	legacyIssuesSchema := `
+CREATE TABLE issues (
+    id TEXT PRIMARY KEY,
+    content_hash TEXT,
+    title TEXT NOT NULL CHECK(length(title) <= 500),
+    description TEXT NOT NULL DEFAULT '',
+    design TEXT NOT NULL DEFAULT '',
+    acceptance_criteria TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    priority INTEGER NOT NULL DEFAULT 2 CHECK(priority >= 0 AND priority <= 4),
+    issue_type TEXT NOT NULL DEFAULT 'task',
+    assignee TEXT,
+    estimated_minutes INTEGER,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by TEXT DEFAULT '',
+    owner TEXT DEFAULT '',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at DATETIME,
+    closed_by_session TEXT DEFAULT '',
+    external_ref TEXT,
+    compaction_level INTEGER DEFAULT 0,
+    compacted_at DATETIME,
+    compacted_at_commit TEXT,
+    original_size INTEGER,
+    deleted_at DATETIME,
+    deleted_by TEXT DEFAULT '',
+    delete_reason TEXT DEFAULT '',
+    original_type TEXT DEFAULT '',
+    sender TEXT DEFAULT '',
+    ephemeral INTEGER DEFAULT 0,
+    wisp_type TEXT DEFAULT '',
+    pinned INTEGER DEFAULT 0,
+    is_template INTEGER DEFAULT 0,
+    crystallizes INTEGER DEFAULT 0,
+    mol_type TEXT DEFAULT '',
+    work_type TEXT DEFAULT 'mutex',
+    quality_score REAL,
+    source_system TEXT DEFAULT '',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    event_kind TEXT DEFAULT '',
+    actor TEXT DEFAULT '',
+    target TEXT DEFAULT '',
+    payload TEXT DEFAULT '',
+    CHECK (
+        (status = 'closed' AND closed_at IS NOT NULL) OR
+        (status = 'tombstone') OR
+        (status NOT IN ('closed', 'tombstone') AND closed_at IS NULL)
+    )
+);
+`
+
+	if _, err := db.Exec(legacyIssuesSchema); err != nil {
+		db.Close()
+		t.Fatalf("failed to create legacy issues table: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("failed to close legacy db: %v", err)
+	}
+
+	store, err := New(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("New failed to migrate legacy db: %v", err)
+	}
+	defer store.Close()
+
+	var specIDCount int
+	err = store.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM pragma_table_info('issues')
+		WHERE name = 'spec_id'
+	`).Scan(&specIDCount)
+	if err != nil {
+		t.Fatalf("failed to check spec_id column: %v", err)
+	}
+	if specIDCount < 1 {
+		t.Fatal("spec_id column was not added")
+	}
+
+	var indexCount int
+	err = store.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM sqlite_master
+		WHERE type='index' AND name='idx_issues_spec_id'
+	`).Scan(&indexCount)
+	if err != nil {
+		t.Fatalf("failed to check spec_id index: %v", err)
+	}
+	if indexCount < 1 {
+		t.Fatal("spec_id index was not created")
 	}
 }
 
