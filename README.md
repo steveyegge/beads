@@ -60,7 +60,7 @@ In Formula‑1 terms: Shadowbook is the difference between "full send" and a DNF
 
 ---
 
-## Five Drifts, One Tool
+## Six Drifts, One Tool
 
 | Drift | Problem | Solution |
 |-------|---------|----------|
@@ -69,6 +69,7 @@ In Formula‑1 terms: Shadowbook is the difference between "full send" and a DNF
 | **Visibility Drift** | Can't see what's active | `bd recent --all` |
 | **Stability Drift** | Specs churning while work in flight | `bd spec volatility` |
 | **Behavioral Drift** | Claude "helpfully" deviates from instructions | `bd wobble scan` |
+| **Comment Drift** | Comments rot while code evolves | `bd cc scan`, `bd cc drift` |
 
 ---
 
@@ -293,6 +294,44 @@ bd spec candidates        # Score specs for archival
 bd spec compact specs/old.md --summary "Done. 3 endpoints."
 bd close bd-xyz --compact-spec --compact-skills
 ```
+
+---
+
+## Comment Drift Detection
+
+Comments break silently. `bd codecomment` (alias: `bd cc`) treats them as tracked entities.
+
+```bash
+$ bd cc scan
+
+Scanning comments...
+  ├─ 15,816 comments found (3,389 doc, 35 todo, 9 invariant, 46 reference, 12,337 inline)
+  ├─ 50 cross-references detected
+  ├─ 22 broken references found
+  ├─ 538 files scanned
+  └─ Completed in 226ms
+```
+
+```bash
+$ bd cc drift
+
+┌─ COMMENT DRIFT REPORT ─────────────────────────────────────┐
+│ BROKEN REFERENCES (8):                                      │
+│   🔴 sync_branch.go:178 → autoflush.go:findJSONLPath       │
+│ STALE COMMENTS (189):                                       │
+│   ⚠️  types.go:873 → code changed 76 days after comment     │
+│ EXPIRED TODOs (5):                                          │
+│   ⏰ beads.go:310 → TODO is 104 days old                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+```bash
+$ bd cc links --broken    # Show only broken cross-references
+$ bd cc links --file auth.go  # Reference graph for one file
+$ bd cc scan --json       # JSON output for CI
+```
+
+Uses `go/ast` for parsing, `git blame --porcelain` (per-file, batched) for staleness, and stores the comment graph in `.beads/comments.db`.
 
 ---
 
