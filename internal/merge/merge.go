@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"sort"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -617,7 +618,7 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 	result.ExternalRef = mergeStringPtr(base.ExternalRef, left.ExternalRef, right.ExternalRef)
 	result.SourceSystem = mergeField(base.SourceSystem, left.SourceSystem, right.SourceSystem)
 
-	// Labels - prefer left's version on conflict (no sophisticated merge for now)
+	// Labels - 3-way merge with authoritative removals (GH#1485)
 	result.Labels = mergeLabels(base.Labels, left.Labels, right.Labels)
 
 	// Comments - prefer left's version on conflict
@@ -1094,18 +1095,13 @@ func mergeDependencies(base, left, right []*types.Dependency) []*types.Dependenc
 
 // === Helper functions for new field merging (GH#1480) ===
 
-// mergeLabels performs a 3-way merge of labels using standard 3-way merge semantics.
-// On conflict, left wins (consistent with other field merge behavior).
+// mergeLabels performs a 3-way merge of labels with authoritative removals (GH#1485).
+// Key principle: REMOVALS ARE AUTHORITATIVE (matches dependency merge semantics)
+// - If label was in base and removed by left OR right → exclude (removal wins)
+// - If label wasn't in base and added by left OR right → include
+// - If label was in base and both still have it → include
 func mergeLabels(base, left, right []string) []string {
-	// Standard 3-way merge logic
-	if slicesEqual(base, left) && !slicesEqual(base, right) {
-		return right // Only right changed
-	}
-	if slicesEqual(base, right) && !slicesEqual(base, left) {
-		return left // Only left changed
-	}
-	// Both changed or neither changed - left wins
-	return left
+	return mergeStringSlice3Way(base, left, right)
 }
 
 // slicesEqual checks if two string slices are equal
@@ -1204,18 +1200,67 @@ func mergeInt64(base, left, right int64) int64 {
 	return left
 }
 
-// mergeStringSlice performs a 3-way merge of string slices using standard 3-way merge semantics.
-// On conflict, left wins (consistent with other field merge behavior).
+// mergeStringSlice performs a 3-way merge of string slices with authoritative removals (GH#1485).
+// Used for Waiters. Same semantics as mergeLabels.
 func mergeStringSlice(base, left, right []string) []string {
-	// Standard 3-way merge logic
-	if slicesEqual(base, left) && !slicesEqual(base, right) {
-		return right // Only right changed
+	return mergeStringSlice3Way(base, left, right)
+}
+
+// mergeStringSlice3Way performs a true 3-way set merge with authoritative removals.
+// - Items in base removed by either side → removed (removal wins)
+// - Items not in base added by either side → included
+// - Items in base kept by both sides → included
+// Deterministic output: sorted.
+func mergeStringSlice3Way(base, left, right []string) []string {
+	baseSet := toStringSet(base)
+	leftSet := toStringSet(left)
+	rightSet := toStringSet(right)
+
+	result := make(map[string]bool)
+
+	// Items present in base: keep only if BOTH sides still have them
+	for item := range baseSet {
+		if leftSet[item] && rightSet[item] {
+			result[item] = true
+		}
+		// If either side removed it, it stays removed (authoritative removal)
 	}
-	if slicesEqual(base, right) && !slicesEqual(base, left) {
-		return left // Only left changed
+
+	// Items added by left (not in base)
+	for item := range leftSet {
+		if !baseSet[item] {
+			result[item] = true
+		}
 	}
-	// Both changed or neither changed - left wins
-	return left
+
+	// Items added by right (not in base)
+	for item := range rightSet {
+		if !baseSet[item] {
+			result[item] = true
+		}
+	}
+
+	// Convert to sorted slice for deterministic output
+	out := make([]string, 0, len(result))
+	for item := range result {
+		out = append(out, item)
+	}
+	sort.Strings(out)
+
+	// Return nil for empty to match Go conventions
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// toStringSet converts a string slice to a set (map)
+func toStringSet(s []string) map[string]bool {
+	m := make(map[string]bool, len(s))
+	for _, v := range s {
+		m[v] = true
+	}
+	return m
 }
 
 // mergeIntPtr performs a 3-way merge of *int values.

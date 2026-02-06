@@ -2205,7 +2205,7 @@ func TestMerge3Way_FieldPreservation(t *testing.T) {
 	})
 
 	t.Run("labels are preserved through merge", func(t *testing.T) {
-		labels := []string{"bug", "high-priority", "backend"}
+		expectedLabels := map[string]bool{"bug": true, "high-priority": true, "backend": true}
 		base := []Issue{testIssue(`{"id":"bd-label1","title":"Issue with labels","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"user1","labels":["bug","high-priority","backend"]}`)}
 		left := []Issue{testIssue(`{"id":"bd-label1","title":"Updated title","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"user1","labels":["bug","high-priority","backend"]}`)}
 		right := base
@@ -2217,12 +2217,12 @@ func TestMerge3Way_FieldPreservation(t *testing.T) {
 		if len(result) != 1 {
 			t.Fatalf("expected 1 issue, got %d", len(result))
 		}
-		if len(result[0].Labels) != len(labels) {
-			t.Errorf("labels count mismatch: got %d, want %d", len(result[0].Labels), len(labels))
+		if len(result[0].Labels) != len(expectedLabels) {
+			t.Errorf("labels count mismatch: got %d, want %d", len(result[0].Labels), len(expectedLabels))
 		}
-		for i, label := range labels {
-			if i >= len(result[0].Labels) || result[0].Labels[i] != label {
-				t.Errorf("label mismatch at index %d", i)
+		for _, label := range result[0].Labels {
+			if !expectedLabels[label] {
+				t.Errorf("unexpected label: %q", label)
 			}
 		}
 	})
@@ -2429,11 +2429,10 @@ func TestMerge3Way_FieldPreservation(t *testing.T) {
 		if len(outputIssue.Labels) != 3 {
 			t.Errorf("labels lost: got %d, want 3", len(outputIssue.Labels))
 		}
-		expectedLabels := []string{"bug", "critical", "backend"}
-		for i, label := range expectedLabels {
-			if i >= len(outputIssue.Labels) || outputIssue.Labels[i] != label {
-				t.Errorf("label mismatch at index %d: got %v", i, outputIssue.Labels)
-				break
+		expectedLabels := map[string]bool{"bug": true, "critical": true, "backend": true}
+		for _, label := range outputIssue.Labels {
+			if !expectedLabels[label] {
+				t.Errorf("unexpected label in round-trip: %q, got %v", label, outputIssue.Labels)
 			}
 		}
 	})
@@ -2633,4 +2632,163 @@ func getJSONFieldNames(t reflect.Type) []string {
 	}
 
 	return fields
+}
+
+// TestMerge3Way_Labels3Way tests 3-way merge with authoritative removals for labels (GH#1485)
+func TestMerge3Way_Labels3Way(t *testing.T) {
+	t.Run("left removes label, right unchanged", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","labels":["needs-review","backend"]}`)}
+		left := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","labels":["backend"]}`)}
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Labels, []string{"backend"})
+	})
+
+	t.Run("right removes label, left unchanged", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","labels":["needs-review","backend"]}`)}
+		left := base
+		right := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","labels":["backend"]}`)}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Labels, []string{"backend"})
+	})
+
+	t.Run("left removes label, right adds new label", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","labels":["needs-review","backend"]}`)}
+		left := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","labels":["backend"]}`)}
+		right := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","labels":["needs-review","backend","urgent"]}`)}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Labels, []string{"backend", "urgent"})
+	})
+
+	t.Run("left adds label, right unchanged", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","labels":[]}`)}
+		left := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","labels":["new-label"]}`)}
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Labels, []string{"new-label"})
+	})
+
+	t.Run("both add different labels", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","labels":[]}`)}
+		left := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","labels":["alpha"]}`)}
+		right := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","labels":["beta"]}`)}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Labels, []string{"alpha", "beta"})
+	})
+
+	t.Run("both remove same label", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","labels":["old","keep"]}`)}
+		left := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","labels":["keep"]}`)}
+		right := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","labels":["keep"]}`)}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Labels, []string{"keep"})
+	})
+}
+
+// TestMerge3Way_Waiters3Way tests 3-way merge with authoritative removals for waiters (GH#1485)
+func TestMerge3Way_Waiters3Way(t *testing.T) {
+	t.Run("left removes waiter, right unchanged", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","waiters":["alice","bob"]}`)}
+		left := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","waiters":["bob"]}`)}
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Waiters, []string{"bob"})
+	})
+
+	t.Run("right removes waiter, left unchanged", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","waiters":["alice","bob"]}`)}
+		left := base
+		right := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","waiters":["bob"]}`)}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Waiters, []string{"bob"})
+	})
+
+	t.Run("left removes waiter, right adds new waiter", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","waiters":["alice","bob"]}`)}
+		left := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","waiters":["bob"]}`)}
+		right := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","waiters":["alice","bob","charlie"]}`)}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Waiters, []string{"bob", "charlie"})
+	})
+
+	t.Run("left adds waiter, right unchanged", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","waiters":[]}`)}
+		left := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","waiters":["new-waiter"]}`)}
+		right := base
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Waiters, []string{"new-waiter"})
+	})
+
+	t.Run("both add different waiters", func(t *testing.T) {
+		base := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"u","waiters":[]}`)}
+		left := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","waiters":["alice"]}`)}
+		right := []Issue{testIssue(`{"id":"bd-1","title":"T","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"u","waiters":["bob"]}`)}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		assertLabelSet(t, result[0].Waiters, []string{"alice", "bob"})
+	})
+}
+
+// assertLabelSet asserts that got and want contain the same set of strings (order-independent)
+func assertLabelSet(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("length mismatch: got %v, want %v", got, want)
+		return
+	}
+	gotSorted := make([]string, len(got))
+	copy(gotSorted, got)
+	sort.Strings(gotSorted)
+	wantSorted := make([]string, len(want))
+	copy(wantSorted, want)
+	sort.Strings(wantSorted)
+	for i := range gotSorted {
+		if gotSorted[i] != wantSorted[i] {
+			t.Errorf("set mismatch: got %v, want %v", got, want)
+			return
+		}
+	}
 }
