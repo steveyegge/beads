@@ -169,6 +169,14 @@ const (
 	OpFedAddRemote    = "fed_add_remote"
 	OpFedRemoveRemote = "fed_remove_remote"
 	OpFedAddPeer      = "fed_add_peer"
+
+	// History query operations (bd-ma0s.3)
+	OpHistoryIssue            = "history_issue"
+	OpHistoryDiff             = "history_diff"
+	OpHistoryIssueDiff        = "history_issue_diff"
+	OpHistoryConflicts        = "history_conflicts"
+	OpHistoryResolveConflicts = "history_resolve_conflicts"
+	OpVersionedDiff           = "versioned_diff"
 )
 
 // Request represents an RPC request from client to daemon
@@ -1956,4 +1964,113 @@ type FedAddPeerResult struct {
 	URL         string `json:"url"`
 	HasAuth     bool   `json:"has_auth"`
 	Sovereignty string `json:"sovereignty,omitempty"`
+}
+
+// ===== History Query Operations (bd-ma0s.3) =====
+
+// HistoryIssueArgs represents arguments for the history_issue operation.
+type HistoryIssueArgs struct {
+	IssueID string `json:"issue_id"` // Issue ID to get history for
+}
+
+// HistoryEntryRPC represents a single history entry for RPC transport.
+type HistoryEntryRPC struct {
+	CommitHash string       `json:"commit_hash"`
+	Committer  string       `json:"committer"`
+	CommitDate time.Time    `json:"commit_date"`
+	Issue      *types.Issue `json:"issue"`
+}
+
+// HistoryIssueResult represents the result of a history_issue operation.
+type HistoryIssueResult struct {
+	Entries []HistoryEntryRPC `json:"entries"`
+}
+
+// HistoryDiffArgs represents arguments for the history_diff operation.
+// Returns low-level table-level diffs between two commits.
+type HistoryDiffArgs struct {
+	FromRef string `json:"from_ref"` // Source commit/branch ref
+	ToRef   string `json:"to_ref"`   // Target commit/branch ref
+}
+
+// HistoryDiffEntryRPC represents a low-level diff entry for RPC transport.
+type HistoryDiffEntryRPC struct {
+	TableName  string `json:"table_name"`
+	DiffType   string `json:"diff_type"`   // "added", "modified", "removed"
+	FromCommit string `json:"from_commit"`
+	ToCommit   string `json:"to_commit"`
+}
+
+// HistoryDiffResult represents the result of a history_diff operation.
+type HistoryDiffResult struct {
+	Entries []HistoryDiffEntryRPC `json:"entries"`
+}
+
+// HistoryIssueDiffArgs represents arguments for the history_issue_diff operation.
+// Returns detailed changes to a specific issue between two commits.
+type HistoryIssueDiffArgs struct {
+	IssueID string `json:"issue_id"` // Issue ID to get diff for
+	FromRef string `json:"from_ref"` // Source commit/branch ref
+	ToRef   string `json:"to_ref"`   // Target commit/branch ref
+}
+
+// HistoryIssueDiffResult represents the result of a history_issue_diff operation.
+type HistoryIssueDiffResult struct {
+	DiffType        string `json:"diff_type"` // "added", "modified", "removed"
+	FromID          string `json:"from_id,omitempty"`
+	ToID            string `json:"to_id,omitempty"`
+	FromTitle       string `json:"from_title,omitempty"`
+	ToTitle         string `json:"to_title,omitempty"`
+	FromStatus      string `json:"from_status,omitempty"`
+	ToStatus        string `json:"to_status,omitempty"`
+	FromDescription string `json:"from_description,omitempty"`
+	ToDescription   string `json:"to_description,omitempty"`
+	Found           bool   `json:"found"` // Whether the issue was found in the diff
+}
+
+// HistoryConflictsArgs represents arguments for the history_conflicts operation.
+type HistoryConflictsArgs struct {
+	// No arguments needed
+}
+
+// HistoryConflictRPC represents a table-level merge conflict for RPC transport.
+type HistoryConflictRPC struct {
+	TableName    string `json:"table_name"`
+	NumConflicts int    `json:"num_conflicts"`
+}
+
+// HistoryConflictsResult represents the result of a history_conflicts operation.
+type HistoryConflictsResult struct {
+	Conflicts []HistoryConflictRPC `json:"conflicts"`
+}
+
+// HistoryResolveConflictsArgs represents arguments for the history_resolve_conflicts operation.
+type HistoryResolveConflictsArgs struct {
+	Table    string `json:"table"`    // Table name to resolve conflicts for
+	Strategy string `json:"strategy"` // "ours" or "theirs"
+}
+
+// HistoryResolveConflictsResult represents the result of a history_resolve_conflicts operation.
+type HistoryResolveConflictsResult struct {
+	Resolved bool `json:"resolved"`
+}
+
+// VersionedDiffArgs represents arguments for the versioned_diff operation.
+// Returns issue-level diffs with full Issue data between two commits.
+type VersionedDiffArgs struct {
+	FromRef string `json:"from_ref"` // Source commit/branch ref
+	ToRef   string `json:"to_ref"`   // Target commit/branch ref
+}
+
+// VersionedDiffEntryRPC represents an issue-level diff entry for RPC transport.
+type VersionedDiffEntryRPC struct {
+	IssueID  string       `json:"issue_id"`
+	DiffType string       `json:"diff_type"` // "added", "modified", "removed"
+	OldValue *types.Issue `json:"old_value,omitempty"`
+	NewValue *types.Issue `json:"new_value,omitempty"`
+}
+
+// VersionedDiffResult represents the result of a versioned_diff operation.
+type VersionedDiffResult struct {
+	Entries []VersionedDiffEntryRPC `json:"entries"`
 }

@@ -459,6 +459,19 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleFedRemoveRemote(req)
 	case OpFedAddPeer:
 		resp = s.handleFedAddPeer(req)
+	// History query operations (bd-ma0s.3)
+	case OpHistoryIssue:
+		resp = s.handleHistoryIssue(req)
+	case OpHistoryDiff:
+		resp = s.handleHistoryDiff(req)
+	case OpHistoryIssueDiff:
+		resp = s.handleHistoryIssueDiff(req)
+	case OpHistoryConflicts:
+		resp = s.handleHistoryConflicts(req)
+	case OpHistoryResolveConflicts:
+		resp = s.handleHistoryResolveConflicts(req)
+	case OpVersionedDiff:
+		resp = s.handleVersionedDiff(req)
 	default:
 		return Response{
 			Success: false,

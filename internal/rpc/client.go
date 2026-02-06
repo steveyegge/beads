@@ -1692,6 +1692,98 @@ func (c *Client) FedAddPeer(args *FedAddPeerArgs) (*FedAddPeerResult, error) {
 	return &result, nil
 }
 
+// History query operations (bd-ma0s.3)
+
+// HistoryIssue returns the complete version history for an issue.
+func (c *Client) HistoryIssue(args *HistoryIssueArgs) (*HistoryIssueResult, error) {
+	resp, err := c.Execute(OpHistoryIssue, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result HistoryIssueResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal history_issue response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// HistoryDiff returns low-level table-level diffs between two commits.
+func (c *Client) HistoryDiff(args *HistoryDiffArgs) (*HistoryDiffResult, error) {
+	resp, err := c.Execute(OpHistoryDiff, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result HistoryDiffResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal history_diff response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// HistoryIssueDiff returns detailed changes to a specific issue between two commits.
+func (c *Client) HistoryIssueDiff(args *HistoryIssueDiffArgs) (*HistoryIssueDiffResult, error) {
+	resp, err := c.Execute(OpHistoryIssueDiff, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result HistoryIssueDiffResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal history_issue_diff response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// HistoryConflicts returns merge conflicts in the current state.
+func (c *Client) HistoryConflicts(args *HistoryConflictsArgs) (*HistoryConflictsResult, error) {
+	resp, err := c.Execute(OpHistoryConflicts, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result HistoryConflictsResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal history_conflicts response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// HistoryResolveConflicts resolves merge conflicts using the specified strategy.
+func (c *Client) HistoryResolveConflicts(args *HistoryResolveConflictsArgs) (*HistoryResolveConflictsResult, error) {
+	resp, err := c.Execute(OpHistoryResolveConflicts, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result HistoryResolveConflictsResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal history_resolve_conflicts response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// VersionedDiff returns issue-level diffs with full Issue data between two commits.
+func (c *Client) VersionedDiff(args *VersionedDiffArgs) (*VersionedDiffResult, error) {
+	resp, err := c.Execute(OpVersionedDiff, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result VersionedDiffResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal versioned_diff response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

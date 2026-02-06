@@ -447,6 +447,14 @@ func httpMethodToOperation(method string) string {
 
 		// Admin operations (bd-ma0s.5)
 		"AdminGC": OpAdminGC,
+
+		// History query operations (bd-ma0s.3)
+		"HistoryIssue":            OpHistoryIssue,
+		"HistoryDiff":             OpHistoryDiff,
+		"HistoryIssueDiff":        OpHistoryIssueDiff,
+		"HistoryConflicts":        OpHistoryConflicts,
+		"HistoryResolveConflicts": OpHistoryResolveConflicts,
+		"VersionedDiff":           OpVersionedDiff,
 	}
 
 	return methodMap[method]
