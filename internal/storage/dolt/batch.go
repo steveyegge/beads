@@ -11,6 +11,59 @@ import (
 // Large IN clauses (e.g. 29k params) create queries that Dolt cannot execute efficiently.
 const DefaultBatchSize = 500
 
+// BatchExec executes a batched DML statement (DELETE, UPDATE) with an IN clause,
+// splitting the input IDs into chunks of batchSize. Each batch runs in its own
+// transaction to keep individual queries small for Dolt.
+//
+// queryTemplate must contain exactly one %s placeholder for the IN clause (e.g.
+// "DELETE FROM dirty_issues WHERE issue_id IN (%s)").
+//
+// nolint:gosec // G201: queryTemplate %s is filled with ? placeholders only
+func BatchExec(
+	ctx context.Context,
+	db *sql.DB,
+	ids []string,
+	batchSize int,
+	queryTemplate string,
+) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	for i := 0; i < len(ids); i += batchSize {
+		end := i + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[i:end]
+
+		placeholders := make([]string, len(batch))
+		args := make([]interface{}, len(batch))
+		for j, id := range batch {
+			placeholders[j] = "?"
+			args[j] = id
+		}
+
+		// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
+		query := fmt.Sprintf(queryTemplate, strings.Join(placeholders, ","))
+
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
+		}
+
+		_, execErr := tx.ExecContext(ctx, query, args...)
+		if execErr != nil {
+			_ = tx.Rollback()
+			return execErr
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit batch: %w", err)
+		}
+	}
+	return nil
+}
+
 // BatchIN executes a batched SELECT query with an IN clause, splitting the input IDs
 // into chunks of batchSize to avoid oversized queries that crush Dolt CPU.
 //

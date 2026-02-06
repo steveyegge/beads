@@ -65,6 +65,70 @@ func TestBatchIN_Integration(t *testing.T) {
 	}
 }
 
+func TestBatchExec_EmptyIDs(t *testing.T) {
+	// BatchExec with empty input should be a no-op without touching the DB
+	err := BatchExec(context.Background(), nil, nil, DefaultBatchSize,
+		"DELETE FROM dirty_issues WHERE issue_id IN (%s)")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBatchExec_ClearDirtyIssues(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create issues and mark them dirty
+	issueIDs := make([]string, 7)
+	for i := 0; i < 7; i++ {
+		id := fmt.Sprintf("dirty-%d", i)
+		issueIDs[i] = id
+		issue := &types.Issue{
+			ID:        id,
+			Title:     fmt.Sprintf("Dirty test %d", i),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+		// CreateIssue marks dirty automatically via markDirty
+	}
+
+	// Verify all are dirty
+	dirtyBefore, err := store.GetDirtyIssues(ctx)
+	if err != nil {
+		t.Fatalf("failed to get dirty issues: %v", err)
+	}
+	if len(dirtyBefore) < 7 {
+		t.Fatalf("expected at least 7 dirty issues, got %d", len(dirtyBefore))
+	}
+
+	// Clear with batch size 3 to force 3 batches (3+3+1)
+	err = BatchExec(ctx, store.db, issueIDs, 3,
+		"DELETE FROM dirty_issues WHERE issue_id IN (%s)")
+	if err != nil {
+		t.Fatalf("BatchExec failed: %v", err)
+	}
+
+	// Verify all are cleared
+	dirtyAfter, err := store.GetDirtyIssues(ctx)
+	if err != nil {
+		t.Fatalf("failed to get dirty issues after clear: %v", err)
+	}
+	for _, id := range issueIDs {
+		for _, dirtyID := range dirtyAfter {
+			if dirtyID == id {
+				t.Errorf("issue %s should have been cleared from dirty list", id)
+			}
+		}
+	}
+}
+
 func TestBatchIN_BatchSizeBoundary(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -111,5 +175,104 @@ func TestBatchIN_BatchSizeBoundary(t *testing.T) {
 		if len(result[id]) != 1 || result[id][0] != "test-label" {
 			t.Errorf("expected [test-label] for %s, got %v", id, result[id])
 		}
+	}
+}
+
+func TestGetDependencyRecordsForIssues_Batched(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create 4 issues, add dependencies between them
+	for i := 0; i < 4; i++ {
+		issue := &types.Issue{
+			ID:        fmt.Sprintf("dep-%d", i),
+			Title:     fmt.Sprintf("Dep test %d", i),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+	}
+	// dep-0 blocks dep-1, dep-2 blocks dep-3
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: "dep-1", DependsOnID: "dep-0", Type: types.DepBlocks,
+	}, "tester"); err != nil {
+		t.Fatalf("failed to add dependency: %v", err)
+	}
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: "dep-3", DependsOnID: "dep-2", Type: types.DepBlocks,
+	}, "tester"); err != nil {
+		t.Fatalf("failed to add dependency: %v", err)
+	}
+
+	records, err := store.GetDependencyRecordsForIssues(ctx, []string{"dep-1", "dep-3", "dep-0"})
+	if err != nil {
+		t.Fatalf("GetDependencyRecordsForIssues failed: %v", err)
+	}
+	if len(records["dep-1"]) != 1 || records["dep-1"][0].DependsOnID != "dep-0" {
+		t.Errorf("expected dep-1 to depend on dep-0, got %v", records["dep-1"])
+	}
+	if len(records["dep-3"]) != 1 || records["dep-3"][0].DependsOnID != "dep-2" {
+		t.Errorf("expected dep-3 to depend on dep-2, got %v", records["dep-3"])
+	}
+	if len(records["dep-0"]) != 0 {
+		t.Errorf("expected dep-0 to have no dependencies, got %v", records["dep-0"])
+	}
+}
+
+func TestGetDependencyCounts_Batched(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create 3 issues, dep-1 and dep-2 both block dep-0
+	for i := 0; i < 3; i++ {
+		issue := &types.Issue{
+			ID:        fmt.Sprintf("cnt-%d", i),
+			Title:     fmt.Sprintf("Count test %d", i),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+	}
+	// cnt-0 depends on cnt-1 and cnt-2 (both block cnt-0)
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: "cnt-0", DependsOnID: "cnt-1", Type: types.DepBlocks,
+	}, "tester"); err != nil {
+		t.Fatalf("failed to add dependency: %v", err)
+	}
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: "cnt-0", DependsOnID: "cnt-2", Type: types.DepBlocks,
+	}, "tester"); err != nil {
+		t.Fatalf("failed to add dependency: %v", err)
+	}
+
+	counts, err := store.GetDependencyCounts(ctx, []string{"cnt-0", "cnt-1", "cnt-2"})
+	if err != nil {
+		t.Fatalf("GetDependencyCounts failed: %v", err)
+	}
+	// cnt-0 has 2 dependencies (blockers), 0 dependents
+	if counts["cnt-0"].DependencyCount != 2 {
+		t.Errorf("expected cnt-0 DependencyCount=2, got %d", counts["cnt-0"].DependencyCount)
+	}
+	if counts["cnt-0"].DependentCount != 0 {
+		t.Errorf("expected cnt-0 DependentCount=0, got %d", counts["cnt-0"].DependentCount)
+	}
+	// cnt-1 has 0 dependencies, 1 dependent (cnt-0)
+	if counts["cnt-1"].DependencyCount != 0 {
+		t.Errorf("expected cnt-1 DependencyCount=0, got %d", counts["cnt-1"].DependencyCount)
+	}
+	if counts["cnt-1"].DependentCount != 1 {
+		t.Errorf("expected cnt-1 DependentCount=1, got %d", counts["cnt-1"].DependentCount)
 	}
 }

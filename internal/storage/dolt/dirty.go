@@ -3,7 +3,6 @@ package dolt
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -42,35 +41,11 @@ func (s *DoltStore) GetDirtyIssueHash(ctx context.Context, issueID string) (stri
 	return hash, nil
 }
 
-// ClearDirtyIssuesByID removes specific issues from the dirty list.
-// Uses batched deletes to avoid oversized IN clauses that crush Dolt CPU.
+// ClearDirtyIssuesByID removes specific issues from the dirty list, batching the
+// DELETE into chunks to avoid oversized IN clauses that crush Dolt CPU.
 func (s *DoltStore) ClearDirtyIssuesByID(ctx context.Context, issueIDs []string) error {
-	if len(issueIDs) == 0 {
-		return nil
-	}
-
-	for i := 0; i < len(issueIDs); i += DefaultBatchSize {
-		end := i + DefaultBatchSize
-		if end > len(issueIDs) {
-			end = len(issueIDs)
-		}
-		batch := issueIDs[i:end]
-
-		placeholders := make([]string, len(batch))
-		args := make([]interface{}, len(batch))
-		for j, id := range batch {
-			placeholders[j] = "?"
-			args[j] = id
-		}
-
-		// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
-		query := fmt.Sprintf("DELETE FROM dirty_issues WHERE issue_id IN (%s)", strings.Join(placeholders, ","))
-		_, err := s.db.ExecContext(ctx, query, args...)
-		if err != nil {
-			return fmt.Errorf("failed to clear dirty issues: %w", err)
-		}
-	}
-	return nil
+	return BatchExec(ctx, s.db, issueIDs, DefaultBatchSize,
+		"DELETE FROM dirty_issues WHERE issue_id IN (%s)")
 }
 
 // GetExportHash returns the last export hash for an issue
