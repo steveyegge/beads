@@ -455,6 +455,11 @@ func httpMethodToOperation(method string) string {
 		"HistoryConflicts":        OpHistoryConflicts,
 		"HistoryResolveConflicts": OpHistoryResolveConflicts,
 		"VersionedDiff":           OpVersionedDiff,
+
+		// Bus operations (bd-z4cu.3)
+		"BusEmit":     OpBusEmit,
+		"BusStatus":   OpBusStatus,
+		"BusHandlers": OpBusHandlers,
 	}
 
 	return methodMap[method]

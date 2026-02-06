@@ -409,6 +409,11 @@ func operationToHTTPMethod(operation string) string {
 		OpFedAddRemote:    "FedAddRemote",
 		OpFedRemoveRemote: "FedRemoveRemote",
 		OpFedAddPeer:      "FedAddPeer",
+
+		// Bus operations (bd-z4cu.3)
+		OpBusEmit:     "BusEmit",
+		OpBusStatus:   "BusStatus",
+		OpBusHandlers: "BusHandlers",
 	}
 
 	return methodMap[operation]
