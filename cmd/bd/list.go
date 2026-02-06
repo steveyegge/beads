@@ -716,9 +716,12 @@ var listCmd = &cobra.Command{
 		// Handle limit: --limit 0 means unlimited (explicit override)
 		// Otherwise use the value (default 50 or user-specified)
 		// Agent mode uses lower default (20) for context efficiency
+		// --all without explicit --limit sets unlimited (bd-u0l9f)
 		effectiveLimit := limit
 		if cmd.Flags().Changed("limit") && limit == 0 {
 			effectiveLimit = 0 // Explicit unlimited
+		} else if !cmd.Flags().Changed("limit") && allFlag {
+			effectiveLimit = 0 // --all implies unlimited
 		} else if !cmd.Flags().Changed("limit") && ui.IsAgentMode() {
 			effectiveLimit = 20 // Agent mode default
 		}
