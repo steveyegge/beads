@@ -111,6 +111,44 @@ func findJSONLPath() string {
 	return utils.CanonicalizeIfRelative(jsonlPath)
 }
 
+// findMainRepoJSONLPath returns the JSONL path in the main repository,
+// without redirecting to the worktree even when sync-branch is configured.
+// This is used by export operations which should write to the main repo first,
+// then let the sync branch logic copy to the worktree.
+// GH#1298: Fixes daemon export "No changes to commit" bug where exports
+// were writing directly to worktree, causing self-copy no-ops.
+func findMainRepoJSONLPath() string {
+	// Allow explicit override (useful in no-db mode or non-standard layouts)
+	if jsonlEnv := os.Getenv("BEADS_JSONL"); jsonlEnv != "" {
+		return utils.CanonicalizePath(jsonlEnv)
+	}
+
+	// Use public API for path discovery
+	jsonlPath := beads.FindJSONLPath(dbPath)
+
+	// In --no-db mode, dbPath may be empty. Fall back to locating the .beads directory.
+	if jsonlPath == "" {
+		beadsDir := beads.FindBeadsDir()
+		if beadsDir == "" {
+			return ""
+		}
+		jsonlPath = utils.FindJSONLInDir(beadsDir)
+	}
+
+	// DO NOT redirect to worktree - return the main repo path
+	// The sync branch logic handles copying from main repo to worktree
+
+	// Ensure the directory exists (important for new databases)
+	dbDir := filepath.Dir(jsonlPath)
+	if err := os.MkdirAll(dbDir, 0750); err != nil {
+		// If we can't create the directory, return discovered path anyway
+		// (the subsequent write will fail with a clearer error)
+		return utils.CanonicalizeIfRelative(jsonlPath)
+	}
+
+	return utils.CanonicalizeIfRelative(jsonlPath)
+}
+
 // getWorktreeJSONLPath converts a main repo JSONL path to its worktree equivalent.
 // Returns empty string if worktree path cannot be determined or worktree doesn't exist.
 // GH#1103: Used by findJSONLPath to redirect writes to the worktree when sync-branch configured.

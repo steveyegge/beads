@@ -489,7 +489,10 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 
 		log.Info("Starting", "mode", mode)
 
-		jsonlPath := findJSONLPath()
+		// For exports, always use the main repo JSONL path, not the worktree path.
+		// The sync branch logic will copy from main repo to worktree after export.
+		// Using the worktree path directly causes self-copy which is skipped as a no-op.
+		jsonlPath := findMainRepoJSONLPath()
 		if jsonlPath == "" {
 			log.Info("Error: beads storage file not found")
 			return
