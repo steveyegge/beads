@@ -2,8 +2,13 @@ package eventbus
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
+
+	natsserver "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
 )
 
 // testHandler is a configurable handler for testing.
@@ -277,5 +282,221 @@ func TestRegisterMultipleEventTypes(t *testing.T) {
 	// Should be called 3 times (SessionStart, SessionEnd, Stop) but not PreToolUse.
 	if callCount != 3 {
 		t.Errorf("expected 3 calls, got %d", callCount)
+	}
+}
+
+// startTestNATS starts an embedded NATS server with JetStream for testing.
+// Returns the server, JetStream context, and a cleanup function.
+func startTestNATS(t *testing.T) (*natsserver.Server, nats.JetStreamContext, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	opts := &natsserver.Options{
+		Port:               -1, // random available port
+		JetStream:          true,
+		JetStreamMaxMemory: 128 << 20,
+		JetStreamMaxStore:  128 << 20,
+		StoreDir:           dir,
+		NoLog:              true,
+		NoSigs:             true,
+	}
+	ns, err := natsserver.NewServer(opts)
+	if err != nil {
+		t.Fatalf("create test NATS server: %v", err)
+	}
+	go ns.Start()
+	if !ns.ReadyForConnections(5 * time.Second) {
+		t.Fatal("test NATS server failed to start")
+	}
+
+	nc, err := nats.Connect(ns.ClientURL())
+	if err != nil {
+		ns.Shutdown()
+		t.Fatalf("connect to test NATS: %v", err)
+	}
+
+	js, err := nc.JetStream()
+	if err != nil {
+		nc.Close()
+		ns.Shutdown()
+		t.Fatalf("get JetStream context: %v", err)
+	}
+
+	if err := EnsureStreams(js); err != nil {
+		nc.Close()
+		ns.Shutdown()
+		t.Fatalf("create streams: %v", err)
+	}
+
+	cleanup := func() {
+		nc.Drain()
+		nc.Close()
+		ns.Shutdown()
+	}
+	return ns, js, cleanup
+}
+
+func TestJetStreamEnabled(t *testing.T) {
+	bus := New()
+	if bus.JetStreamEnabled() {
+		t.Error("expected JetStreamEnabled=false before SetJetStream")
+	}
+
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus.SetJetStream(js)
+	if !bus.JetStreamEnabled() {
+		t.Error("expected JetStreamEnabled=true after SetJetStream")
+	}
+
+	bus.SetJetStream(nil)
+	if bus.JetStreamEnabled() {
+		t.Error("expected JetStreamEnabled=false after SetJetStream(nil)")
+	}
+}
+
+func TestDispatchPublishesToJetStream(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	// Subscribe to the stream to verify messages arrive.
+	sub, err := js.SubscribeSync(SubjectHookPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	// Dispatch an event — should be published to JetStream.
+	event := &Event{
+		Type:      EventSessionStart,
+		SessionID: "test-js-publish",
+	}
+	result, err := bus.Dispatch(context.Background(), event)
+	if err != nil {
+		t.Fatalf("dispatch error: %v", err)
+	}
+	if result.Block {
+		t.Error("unexpected block")
+	}
+
+	// Read from JetStream.
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected JetStream message, got error: %v", err)
+	}
+
+	// Verify the subject.
+	expectedSubject := SubjectForEvent(EventSessionStart)
+	if msg.Subject != expectedSubject {
+		t.Errorf("expected subject %q, got %q", expectedSubject, msg.Subject)
+	}
+
+	// Verify the payload is valid JSON with the session ID.
+	var received Event
+	if err := json.Unmarshal(msg.Data, &received); err != nil {
+		t.Fatalf("unmarshal JetStream message: %v", err)
+	}
+	if received.SessionID != "test-js-publish" {
+		t.Errorf("expected session_id %q, got %q", "test-js-publish", received.SessionID)
+	}
+}
+
+func TestDispatchWithRawJSON(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	sub, err := js.SubscribeSync(SubjectHookPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	// Dispatch with Raw JSON — should use Raw bytes instead of marshaling.
+	rawJSON := json.RawMessage(`{"custom_field":"test_value","session_id":"raw-session"}`)
+	event := &Event{
+		Type:      EventPreToolUse,
+		SessionID: "raw-session",
+		Raw:       rawJSON,
+	}
+	_, err = bus.Dispatch(context.Background(), event)
+	if err != nil {
+		t.Fatalf("dispatch error: %v", err)
+	}
+
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected message: %v", err)
+	}
+
+	// Raw bytes should be published as-is.
+	if string(msg.Data) != string(rawJSON) {
+		t.Errorf("expected raw JSON %q, got %q", string(rawJSON), string(msg.Data))
+	}
+}
+
+func TestDispatchWithoutJetStreamStillWorks(t *testing.T) {
+	bus := New()
+	// No SetJetStream — JetStream is nil.
+	var handlerCalled bool
+	bus.Register(&testHandler{
+		id:       "test-handler",
+		handles:  []EventType{EventStop},
+		priority: 1,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			handlerCalled = true
+			return nil
+		},
+	})
+
+	result, err := bus.Dispatch(context.Background(), &Event{
+		Type:      EventStop,
+		SessionID: "no-nats",
+	})
+	if err != nil {
+		t.Fatalf("dispatch error: %v", err)
+	}
+	if !handlerCalled {
+		t.Error("handler should have been called")
+	}
+	if result.Block {
+		t.Error("unexpected block")
+	}
+}
+
+func TestJetStreamPublishErrorDoesNotAffectResult(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	// Register a handler that injects content.
+	bus.Register(&testHandler{
+		id:       "injector",
+		handles:  []EventType{EventSessionStart},
+		priority: 1,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			result.Inject = append(result.Inject, "injected content")
+			return nil
+		},
+	})
+
+	// Shut down NATS before dispatch — publish will fail but dispatch should succeed.
+	cleanup()
+
+	result, err := bus.Dispatch(context.Background(), &Event{
+		Type:      EventSessionStart,
+		SessionID: "nats-down",
+	})
+	if err != nil {
+		t.Fatalf("dispatch should succeed even with NATS down: %v", err)
+	}
+	if len(result.Inject) != 1 || result.Inject[0] != "injected content" {
+		t.Errorf("expected injected content, got %v", result.Inject)
 	}
 }

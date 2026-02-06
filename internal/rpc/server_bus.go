@@ -74,14 +74,24 @@ func (s *Server) handleBusEmit(req *Request) Response {
 func (s *Server) handleBusStatus(_ *Request) Response {
 	s.mu.RLock()
 	bus := s.bus
+	natsHealthFn := s.natsHealthFn
 	s.mu.RUnlock()
 
-	result := BusStatusResult{
-		NATSEnabled: false, // NATS status is set separately if enabled
-	}
+	result := BusStatusResult{}
 
 	if bus != nil {
 		result.HandlerCount = len(bus.Handlers())
+		result.NATSEnabled = bus.JetStreamEnabled()
+	}
+
+	if natsHealthFn != nil {
+		health := natsHealthFn()
+		result.NATSEnabled = health.Enabled
+		result.NATSStatus = health.Status
+		result.NATSPort = health.Port
+		result.Connections = health.Connections
+		result.JetStream = health.JetStream
+		result.Streams = health.Streams
 	}
 
 	data, _ := json.Marshal(result)

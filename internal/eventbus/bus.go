@@ -2,23 +2,43 @@ package eventbus
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
 	"sync"
+
+	"github.com/nats-io/nats.go"
 )
 
-// Bus dispatches events to registered handlers. It uses a local channel-based
-// approach — no NATS dependency. The NATS integration wraps this for
-// distributed dispatch.
+// Bus dispatches events to registered handlers and optionally publishes
+// events to NATS JetStream for persistence and distributed consumption.
 type Bus struct {
 	handlers []Handler
+	js       nats.JetStreamContext
 	mu       sync.RWMutex
 }
 
 // New creates a new event bus.
 func New() *Bus {
 	return &Bus{}
+}
+
+// SetJetStream attaches a JetStream context for event publishing.
+// When set, Dispatch will publish events to JetStream after running
+// local handlers. Publishing is async — errors are logged but do not
+// affect handler results.
+func (b *Bus) SetJetStream(js nats.JetStreamContext) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.js = js
+}
+
+// JetStreamEnabled returns true if JetStream publishing is configured.
+func (b *Bus) JetStreamEnabled() bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.js != nil
 }
 
 // Register adds a handler to the bus. Handlers are sorted by priority on
@@ -32,6 +52,7 @@ func (b *Bus) Register(h Handler) {
 // Dispatch sends an event to all registered handlers that handle its type.
 // Handlers are called sequentially in priority order (lowest first).
 // Handler errors are logged but do not stop the chain — the bus is resilient.
+// If JetStream is configured, the event is published after handler dispatch.
 func (b *Bus) Dispatch(ctx context.Context, event *Event) (*Result, error) {
 	if event == nil {
 		return nil, fmt.Errorf("eventbus: nil event")
@@ -39,6 +60,7 @@ func (b *Bus) Dispatch(ctx context.Context, event *Event) (*Result, error) {
 
 	b.mu.RLock()
 	matching := b.matchingHandlers(event.Type)
+	js := b.js
 	b.mu.RUnlock()
 
 	result := &Result{}
@@ -53,7 +75,36 @@ func (b *Bus) Dispatch(ctx context.Context, event *Event) (*Result, error) {
 		}
 	}
 
+	// Publish to JetStream for persistence (fire-and-forget).
+	if js != nil {
+		b.publishToJetStream(js, event)
+	}
+
 	return result, nil
+}
+
+// publishToJetStream publishes an event to the HOOK_EVENTS JetStream stream.
+// Errors are logged but never propagated — JetStream is supplementary to
+// local dispatch, not a prerequisite.
+func (b *Bus) publishToJetStream(js nats.JetStreamContext, event *Event) {
+	subject := SubjectForEvent(event.Type)
+
+	// Use the raw JSON if available, otherwise marshal the event.
+	var data []byte
+	if len(event.Raw) > 0 {
+		data = event.Raw
+	} else {
+		var err error
+		data, err = json.Marshal(event)
+		if err != nil {
+			log.Printf("eventbus: failed to marshal event for JetStream: %v", err)
+			return
+		}
+	}
+
+	if _, err := js.Publish(subject, data); err != nil {
+		log.Printf("eventbus: JetStream publish to %s failed: %v", subject, err)
+	}
 }
 
 // Handlers returns all registered handlers (for introspection/status reporting).

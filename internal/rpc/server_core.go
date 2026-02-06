@@ -107,6 +107,8 @@ type Server struct {
 	labelCache *LabelCache
 	// Event bus for hook dispatch (bd-66fp)
 	bus *eventbus.Bus
+	// NATS health provider (returns status for bus_status RPC)
+	natsHealthFn func() NATSHealthInfo
 }
 
 // Mutation event types
@@ -330,6 +332,25 @@ func (s *Server) SetBus(bus *eventbus.Bus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bus = bus
+}
+
+// NATSHealthInfo contains NATS health data for bus_status reporting.
+// This avoids importing the daemon package from rpc (no circular deps).
+type NATSHealthInfo struct {
+	Enabled     bool
+	Status      string
+	Port        int
+	Connections int
+	JetStream   bool
+	Streams     int
+}
+
+// SetNATSHealthFn sets a callback that provides NATS health information.
+// The callback is invoked on each bus_status request.
+func (s *Server) SetNATSHealthFn(fn func() NATSHealthInfo) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.natsHealthFn = fn
 }
 
 // SetTCPAddr sets the TCP address to listen on (e.g., ":9876" or "0.0.0.0:9876").

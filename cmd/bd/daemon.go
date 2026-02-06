@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
@@ -736,25 +737,30 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		log.Info("HTTP listener enabled (Connect-RPC style API)", "addr", httpAddr)
 	}
 
-	// Start embedded NATS server if BD_NATS_ENABLED=true (event bus rollout)
-	if os.Getenv("BD_NATS_ENABLED") == "true" {
+	// Start embedded NATS server by default (opt out with BD_NATS_DISABLED=true)
+	var natsServer *daemon.NATSServer
+	var jsCtx nats.JetStreamContext
+	if os.Getenv("BD_NATS_DISABLED") != "true" {
 		natsCfg := daemon.NATSConfigFromEnv(filepath.Join(beadsDir, ".runtime"))
-		natsServer, err := daemon.StartNATSServer(natsCfg)
+		var err error
+		natsServer, err = daemon.StartNATSServer(natsCfg)
 		if err != nil {
 			log.Error("failed to start embedded NATS server", "error", err)
-			// Non-fatal: daemon continues without NATS (existing behavior preserved)
-			log.Warn("continuing without NATS - event bus features disabled")
+			// Non-fatal: daemon continues without NATS
+			log.Warn("continuing without NATS - JetStream event persistence disabled")
 		} else {
 			defer natsServer.Shutdown()
 			log.Info("embedded NATS server started", "port", natsServer.Port())
 
 			// Ensure JetStream streams exist
-			js, err := natsServer.Conn().JetStream()
+			jsCtx, err = natsServer.Conn().JetStream()
 			if err != nil {
 				log.Error("failed to get JetStream context", "error", err)
+				jsCtx = nil
 			} else {
-				if err := eventbus.EnsureStreams(js); err != nil {
+				if err := eventbus.EnsureStreams(jsCtx); err != nil {
 					log.Error("failed to create JetStream streams", "error", err)
+					jsCtx = nil
 				} else {
 					log.Info("JetStream streams initialized")
 				}
@@ -763,6 +769,8 @@ The daemon will now exit.`, strings.ToUpper(backend))
 			health := natsServer.Health()
 			log.Info("NATS health", "status", health.Status, "jetstream", health.JetStream, "streams", health.Streams)
 		}
+	} else {
+		log.Info("NATS disabled via BD_NATS_DISABLED=true")
 	}
 
 	// Choose event loop based on BEADS_DAEMON_MODE (need to determine early for SetConfig)
@@ -779,8 +787,31 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	for _, h := range eventbus.DefaultHandlers() {
 		bus.Register(h)
 	}
+
+	// Connect JetStream to bus for event persistence
+	if jsCtx != nil {
+		bus.SetJetStream(jsCtx)
+		log.Info("JetStream connected to event bus - events will be persisted")
+	}
+
 	server.SetBus(bus)
-	log.Info("event bus initialized", "handlers", len(eventbus.DefaultHandlers()))
+
+	// Wire NATS health into RPC status reporting
+	if natsServer != nil {
+		server.SetNATSHealthFn(func() rpc.NATSHealthInfo {
+			h := natsServer.Health()
+			return rpc.NATSHealthInfo{
+				Enabled:     true,
+				Status:      h.Status,
+				Port:        h.Port,
+				Connections: h.Connections,
+				JetStream:   h.JetStream,
+				Streams:     h.Streams,
+			}
+		})
+	}
+
+	log.Info("event bus initialized", "handlers", len(eventbus.DefaultHandlers()), "jetstream", jsCtx != nil)
 
 	// Register daemon in global registry
 	registry, err := daemon.NewRegistry()
