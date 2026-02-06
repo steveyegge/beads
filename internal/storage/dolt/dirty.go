@@ -104,6 +104,34 @@ func (s *DoltStore) SetExportHash(ctx context.Context, issueID, contentHash stri
 	return tx.Commit()
 }
 
+// BatchSetExportHashes stores export hashes for multiple issues in a single transaction.
+// This is much more efficient than calling SetExportHash individually because each
+// Dolt commit is expensive (content-addressed store write). (bd-8csx.1)
+func (s *DoltStore) BatchSetExportHashes(ctx context.Context, hashes map[string]string) error {
+	if len(hashes) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC()
+	for issueID, contentHash := range hashes {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO export_hashes (issue_id, content_hash, exported_at)
+			VALUES (?, ?, ?)
+			ON DUPLICATE KEY UPDATE content_hash = VALUES(content_hash), exported_at = VALUES(exported_at)
+		`, issueID, contentHash, now)
+		if err != nil {
+			return fmt.Errorf("failed to set export hash for %s: %w", issueID, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // ClearAllExportHashes removes all export hashes (for full re-export)
 func (s *DoltStore) ClearAllExportHashes(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)

@@ -51,6 +51,37 @@ func (s *SQLiteStorage) SetExportHash(ctx context.Context, issueID, contentHash 
 	return nil
 }
 
+// BatchSetExportHashes stores export hashes for multiple issues in a single transaction.
+// More efficient than individual SetExportHash calls. (bd-8csx.1)
+func (s *SQLiteStorage) BatchSetExportHashes(ctx context.Context, hashes map[string]string) error {
+	if len(hashes) == 0 {
+		return nil
+	}
+
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for issueID, contentHash := range hashes {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO export_hashes (issue_id, content_hash, exported_at)
+			VALUES (?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(issue_id) DO UPDATE SET
+				content_hash = excluded.content_hash,
+				exported_at = CURRENT_TIMESTAMP
+		`, issueID, contentHash)
+		if err != nil {
+			return fmt.Errorf("failed to set export hash for %s: %w", issueID, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // ClearAllExportHashes removes all export hashes from the database.
 // This is primarily used for test isolation to force re-export of issues.
 func (s *SQLiteStorage) ClearAllExportHashes(ctx context.Context) error {

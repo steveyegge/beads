@@ -162,6 +162,9 @@ func (m *mockStorage) GetExportHash(ctx context.Context, issueID string) (string
 func (m *mockStorage) SetExportHash(ctx context.Context, issueID, contentHash string) error {
 	return nil
 }
+func (m *mockStorage) BatchSetExportHashes(ctx context.Context, hashes map[string]string) error {
+	return nil
+}
 func (m *mockStorage) ClearAllExportHashes(ctx context.Context) error {
 	return nil
 }

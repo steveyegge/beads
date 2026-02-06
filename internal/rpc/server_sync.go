@@ -344,12 +344,16 @@ func (s *Server) performSyncExport(ctx context.Context, store storage.Storage, j
 		fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty flags: %v\n", err)
 	}
 
-	// Update export hashes
+	// Update export hashes in a single transaction (bd-8csx.1: reduces N Dolt commits to 1)
+	exportHashes := make(map[string]string, len(issues))
 	for _, issue := range issues {
 		if issue.ContentHash != "" {
-			if err := store.SetExportHash(ctx, issue.ID, issue.ContentHash); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to set export hash for %s: %v\n", issue.ID, err)
-			}
+			exportHashes[issue.ID] = issue.ContentHash
+		}
+	}
+	if len(exportHashes) > 0 {
+		if err := store.BatchSetExportHashes(ctx, exportHashes); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to batch set export hashes: %v\n", err)
 		}
 	}
 

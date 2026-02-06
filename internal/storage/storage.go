@@ -165,6 +165,7 @@ type Storage interface {
 	// Export hash tracking (for timestamp-only dedup, bd-164)
 	GetExportHash(ctx context.Context, issueID string) (string, error)
 	SetExportHash(ctx context.Context, issueID, contentHash string) error
+	BatchSetExportHashes(ctx context.Context, hashes map[string]string) error
 	ClearAllExportHashes(ctx context.Context) error
 	
 	// JSONL file integrity (bd-160)

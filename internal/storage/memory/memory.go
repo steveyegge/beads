@@ -918,6 +918,11 @@ func (m *MemoryStorage) SetExportHash(ctx context.Context, issueID, hash string)
 	return nil
 }
 
+// BatchSetExportHashes batch sets export hashes (no-op for memory storage)
+func (m *MemoryStorage) BatchSetExportHashes(ctx context.Context, hashes map[string]string) error {
+	return nil
+}
+
 // ClearAllExportHashes clears all export hashes
 func (m *MemoryStorage) ClearAllExportHashes(ctx context.Context) error {
 	// Memory storage doesn't track export hashes, no-op

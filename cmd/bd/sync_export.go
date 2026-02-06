@@ -73,15 +73,12 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 		}
 	}
 
-	// Update export_hashes for all exported issues (GH#1278)
+	// Update export_hashes in a single transaction (bd-8csx.1: reduces N Dolt commits to 1)
 	// This ensures child issues created with --parent are properly registered
 	// for integrity tracking and incremental export detection.
 	if len(result.IssueContentHashes) > 0 {
-		for issueID, contentHash := range result.IssueContentHashes {
-			if err := store.SetExportHash(ctx, issueID, contentHash); err != nil {
-				// Non-fatal warning - continue with other issues
-				fmt.Fprintf(os.Stderr, "Warning: failed to set export hash for %s: %v\n", issueID, err)
-			}
+		if err := store.BatchSetExportHashes(ctx, result.IssueContentHashes); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to batch set export hashes: %v\n", err)
 		}
 	}
 
