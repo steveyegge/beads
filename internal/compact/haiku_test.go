@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -227,6 +229,16 @@ func TestSummarizeTier1_CancelledContext(t *testing.T) {
 
 func TestSummarizeTier1_WithAuditEnabled(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	// Isolate audit logging from the repo .beads directory.
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create beads dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("database: beads.db\n"), 0644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+	t.Setenv("BEADS_DIR", beadsDir)
+
 	client, err := NewHaikuClient("test-key-fake")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
