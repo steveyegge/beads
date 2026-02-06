@@ -362,8 +362,10 @@ func TestCompositeIndexExists(t *testing.T) {
 	}
 }
 
-// TestReadyIssuesViewMatchesGetReadyWork verifies the ready_issues VIEW produces same results as GetReadyWork
-func TestReadyIssuesViewMatchesGetReadyWork(t *testing.T) {
+// TestBlockedCacheMatchesGetReadyWork verifies the blocked_issues_cache is consistent
+// with GetReadyWork results. The cache is the materialized replacement for the former
+// ready_issues VIEW (bd-b2ts).
+func TestBlockedCacheMatchesGetReadyWork(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -382,67 +384,65 @@ func TestReadyIssuesViewMatchesGetReadyWork(t *testing.T) {
 
 	// epic1 blocked by blocker
 	store.AddDependency(ctx, &types.Dependency{IssueID: epic1.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}, "test-user")
-	// task1 is child of epic1 (should be blocked)
+	// task1 is child of epic1 (should be blocked transitively)
 	store.AddDependency(ctx, &types.Dependency{IssueID: task1.ID, DependsOnID: epic1.ID, Type: types.DepParentChild}, "test-user")
 	// task2 has no dependencies (should be ready)
 
-	// Get ready work via GetReadyWork function
+	// Get ready work via GetReadyWork function (uses blocked_issues_cache)
 	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
 	if err != nil {
 		t.Fatalf("GetReadyWork failed: %v", err)
 	}
 
-	readyIDsFromFunc := make(map[string]bool)
+	readyIDs := make(map[string]bool)
 	for _, issue := range ready {
-		readyIDsFromFunc[issue.ID] = true
+		readyIDs[issue.ID] = true
 	}
 
-	// Get ready work via VIEW
-	rows, err := store.db.QueryContext(ctx, `SELECT id FROM ready_issues ORDER BY id`)
+	// Get blocked issues from cache directly
+	blockedIDs, err := store.GetBlockedIssueIDs(ctx)
 	if err != nil {
-		t.Fatalf("Query ready_issues VIEW failed: %v", err)
-	}
-	defer rows.Close()
-
-	readyIDsFromView := make(map[string]bool)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			t.Fatalf("Scan failed: %v", err)
-		}
-		readyIDsFromView[id] = true
+		t.Fatalf("GetBlockedIssueIDs failed: %v", err)
 	}
 
-	// Verify they match
-	if len(readyIDsFromFunc) != len(readyIDsFromView) {
-		t.Errorf("Mismatch: GetReadyWork returned %d issues, VIEW returned %d", 
-			len(readyIDsFromFunc), len(readyIDsFromView))
+	blockedSet := make(map[string]bool)
+	for _, id := range blockedIDs {
+		blockedSet[id] = true
 	}
 
-	for id := range readyIDsFromFunc {
-		if !readyIDsFromView[id] {
-			t.Errorf("Issue %s in GetReadyWork but NOT in VIEW", id)
-		}
-	}
-
-	for id := range readyIDsFromView {
-		if !readyIDsFromFunc[id] {
-			t.Errorf("Issue %s in VIEW but NOT in GetReadyWork", id)
+	// Verify: ready issues should NOT be in blocked cache
+	for id := range readyIDs {
+		if blockedSet[id] {
+			t.Errorf("Issue %s is in GetReadyWork but also in blocked_issues_cache", id)
 		}
 	}
 
 	// Verify specific expectations
-	if !readyIDsFromView[blocker.ID] {
-		t.Errorf("Expected blocker to be ready in VIEW")
+	if !readyIDs[blocker.ID] {
+		t.Errorf("Expected blocker to be ready (no dependencies on it)")
 	}
-	if !readyIDsFromView[task2.ID] {
-		t.Errorf("Expected task2 to be ready in VIEW")
+	if !readyIDs[task2.ID] {
+		t.Errorf("Expected task2 to be ready (no dependencies)")
 	}
-	if readyIDsFromView[epic1.ID] {
-		t.Errorf("Expected epic1 to be blocked in VIEW (has blocker)")
+	if readyIDs[epic1.ID] {
+		t.Errorf("Expected epic1 to NOT be ready (has blocker)")
 	}
-	if readyIDsFromView[task1.ID] {
-		t.Errorf("Expected task1 to be blocked in VIEW (parent is blocked)")
+	if readyIDs[task1.ID] {
+		t.Errorf("Expected task1 to NOT be ready (parent is blocked)")
+	}
+
+	// Verify blocked cache contains the blocked issues
+	if !blockedSet[epic1.ID] {
+		t.Errorf("Expected epic1 to be in blocked_issues_cache")
+	}
+	if !blockedSet[task1.ID] {
+		t.Errorf("Expected task1 to be in blocked_issues_cache (parent blocked)")
+	}
+	if blockedSet[blocker.ID] {
+		t.Errorf("Expected blocker to NOT be in blocked_issues_cache")
+	}
+	if blockedSet[task2.ID] {
+		t.Errorf("Expected task2 to NOT be in blocked_issues_cache")
 	}
 }
 

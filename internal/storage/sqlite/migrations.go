@@ -61,6 +61,7 @@ var migrationsList = []Migration{
 	{"advice_fields", migrations.MigrateAdviceFields},
 	{"advice_hook_fields", migrations.MigrateAdviceHookFields},
 	{"advice_subscription_fields", migrations.MigrateAdviceSubscriptionFields},
+	{"drop_ready_issues_view", migrations.MigrateDropReadyIssuesView},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -129,6 +130,7 @@ func getMigrationDescription(name string) string {
 		"advice_fields":                "No-op: advice targeting columns removed, now uses subscription-based filtering",
 		"advice_hook_fields":           "Adds advice hook columns (advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure) for executable advice per hq--uaim",
 		"advice_subscription_fields":   "Adds advice subscription columns (advice_subscriptions, advice_subscriptions_exclude) for agent-customized advice filtering per gt-w2mh8a.4",
+		"drop_ready_issues_view":       "Drops ready_issues VIEW - replaced by blocked_issues_cache table for 25x faster GetReadyWork queries (bd-b2ts)",
 	}
 
 	if desc, ok := descriptions[name]; ok {

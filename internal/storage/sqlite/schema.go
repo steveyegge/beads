@@ -263,38 +263,9 @@ CREATE TABLE IF NOT EXISTS repo_mtimes (
 
 CREATE INDEX IF NOT EXISTS idx_repo_mtimes_checked ON repo_mtimes(last_checked);
 
--- Ready work view (with hierarchical blocking)
--- Uses recursive CTE to propagate blocking through parent-child hierarchy
-CREATE VIEW IF NOT EXISTS ready_issues AS
-WITH RECURSIVE
-  -- Find issues blocked directly by dependencies
-  blocked_directly AS (
-    SELECT DISTINCT d.issue_id
-    FROM dependencies d
-    JOIN issues blocker ON d.depends_on_id = blocker.id
-    WHERE d.type = 'blocks'
-      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-  ),
-  -- Propagate blockage to all descendants via parent-child
-  blocked_transitively AS (
-    -- Base case: directly blocked issues
-    SELECT issue_id, 0 as depth
-    FROM blocked_directly
-    UNION ALL
-    -- Recursive case: children of blocked issues inherit blockage
-    SELECT d.issue_id, bt.depth + 1
-    FROM blocked_transitively bt
-    JOIN dependencies d ON d.depends_on_id = bt.issue_id
-    WHERE d.type = 'parent-child'
-      AND bt.depth < 50
-  )
-SELECT i.*
-FROM issues i
-WHERE i.status = 'open'
-  AND (i.ephemeral = 0 OR i.ephemeral IS NULL)
-  AND NOT EXISTS (
-    SELECT 1 FROM blocked_transitively WHERE issue_id = i.id
-  );
+-- NOTE: ready_issues VIEW removed (bd-b2ts). GetReadyWork now uses blocked_issues_cache
+-- table for O(1) lookups instead of the expensive recursive CTE. The view is dropped
+-- by migration "drop_ready_issues_view" for existing databases.
 
 -- Blocked issues view
 CREATE VIEW IF NOT EXISTS blocked_issues AS

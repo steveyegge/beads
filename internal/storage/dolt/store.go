@@ -366,11 +366,14 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 	}
 
 	// Create views
-	if _, err := db.ExecContext(ctx, readyIssuesView); err != nil {
-		return fmt.Errorf("failed to create ready_issues view: %w", err)
-	}
+	// NOTE: ready_issues view removed (bd-b2ts) - GetReadyWork uses blocked_issues_cache
 	if _, err := db.ExecContext(ctx, blockedIssuesView); err != nil {
 		return fmt.Errorf("failed to create blocked_issues view: %w", err)
+	}
+	// Drop stale ready_issues view if it exists from older schemas
+	if _, err := db.ExecContext(ctx, "DROP VIEW IF EXISTS ready_issues"); err != nil {
+		// Non-fatal: view may not exist on fresh databases
+		_ = err
 	}
 
 	// Run migrations to add any columns missing from existing databases.

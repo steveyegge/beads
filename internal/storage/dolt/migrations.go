@@ -23,6 +23,7 @@ var migrations = []Migration{
 	{"advice_hook_fields", migrateAdviceHookFields},
 	{"advice_subscription_fields", migrateAdviceSubscriptionFields},
 	{"blocked_issues_cache", migrateBlockedIssuesCache},
+	{"drop_ready_issues_view", migrateDropReadyIssuesView},
 }
 
 // RunMigrations executes all registered migrations in order.
@@ -150,6 +151,15 @@ func migrateBlockedIssuesCache(ctx context.Context, db *sql.DB) error {
 	}
 
 	return nil
+}
+
+// migrateDropReadyIssuesView drops the ready_issues VIEW which is no longer needed.
+// GetReadyWork now uses the blocked_issues_cache table for O(1) lookups instead of
+// the expensive recursive CTE that the VIEW executed on every query. (bd-b2ts)
+func migrateDropReadyIssuesView(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, "DROP VIEW IF EXISTS ready_issues")
+	// DROP VIEW IF EXISTS is idempotent - no error if view doesn't exist
+	return err
 }
 
 // migrateAdviceSubscriptionFields adds advice subscription columns to the issues table.

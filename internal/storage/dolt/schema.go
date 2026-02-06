@@ -325,36 +325,9 @@ INSERT IGNORE INTO config (` + "`key`" + `, value) VALUES
     ('auto_compact_enabled', 'false');
 `
 
-// readyIssuesView is a MySQL-compatible view for ready work
-// Note: Dolt supports recursive CTEs like SQLite
-const readyIssuesView = `
-CREATE OR REPLACE VIEW ready_issues AS
-WITH RECURSIVE
-  blocked_directly AS (
-    SELECT DISTINCT d.issue_id
-    FROM dependencies d
-    JOIN issues blocker ON d.depends_on_id = blocker.id
-    WHERE d.type = 'blocks'
-      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-  ),
-  blocked_transitively AS (
-    SELECT issue_id, 0 as depth
-    FROM blocked_directly
-    UNION ALL
-    SELECT d.issue_id, bt.depth + 1
-    FROM blocked_transitively bt
-    JOIN dependencies d ON d.depends_on_id = bt.issue_id
-    WHERE d.type = 'parent-child'
-      AND bt.depth < 50
-  )
-SELECT i.*
-FROM issues i
-WHERE i.status = 'open'
-  AND (i.ephemeral = 0 OR i.ephemeral IS NULL)
-  AND NOT EXISTS (
-    SELECT 1 FROM blocked_transitively WHERE issue_id = i.id
-  );
-`
+// NOTE: readyIssuesView removed (bd-b2ts). GetReadyWork now uses blocked_issues_cache
+// table for O(1) lookups instead of the expensive recursive CTE. The view is dropped
+// by migration "drop_ready_issues_view" for existing databases.
 
 // blockedIssuesView is a MySQL-compatible view for blocked issues
 const blockedIssuesView = `
