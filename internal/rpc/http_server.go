@@ -315,9 +315,11 @@ func httpMethodToOperation(method string) string {
 		"Stats":   OpStats,
 
 		// Dependencies
-		"DepAdd":    OpDepAdd,
-		"DepRemove": OpDepRemove,
-		"DepTree":   OpDepTree,
+		"DepAdd":                 OpDepAdd,
+		"DepRemove":              OpDepRemove,
+		"DepTree":                OpDepTree,
+		"DepAddBidirectional":    OpDepAddBidirectional,
+		"DepRemoveBidirectional": OpDepRemoveBidirectional,
 
 		// Labels
 		"LabelAdd":    OpLabelAdd,
@@ -361,9 +363,15 @@ func httpMethodToOperation(method string) string {
 		"DecisionCancel":  OpDecisionCancel,
 
 		// Mol operations
-		"MolBond":   OpMolBond,
-		"MolSquash": OpMolSquash,
-		"MolBurn":   OpMolBurn,
+		"MolBond":          OpMolBond,
+		"MolSquash":        OpMolSquash,
+		"MolBurn":          OpMolBurn,
+		"MolCurrent":       OpMolCurrent,
+		"MolProgressStats": OpMolProgressStats,
+		"MolReadyGated":    OpMolReadyGated,
+
+		// Close operations
+		"CloseContinue": OpCloseContinue,
 
 		// Atomic operations
 		"CreateWithDeps":           OpCreateWithDeps,
@@ -395,6 +403,22 @@ func httpMethodToOperation(method string) string {
 		// Config
 		"ConfigSet":  OpConfigSet,
 		"ConfigList": OpConfigList,
+
+		// Watch operations
+		"ListWatch": OpListWatch,
+
+		// Types
+		"Types": OpTypes,
+
+		// Sync operations
+		"SyncExport": OpSyncExport,
+		"SyncStatus": OpSyncStatus,
+
+		// State operations
+		"SetState": OpSetState,
+
+		// Config (additional)
+		"ConfigUnset": OpConfigUnset,
 
 		// Admin
 		"Shutdown": OpShutdown,

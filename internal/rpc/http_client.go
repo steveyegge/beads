@@ -268,9 +268,11 @@ func operationToHTTPMethod(operation string) string {
 		OpStats:   "Stats",
 
 		// Dependencies
-		OpDepAdd:    "DepAdd",
-		OpDepRemove: "DepRemove",
-		OpDepTree:   "DepTree",
+		OpDepAdd:                 "DepAdd",
+		OpDepRemove:              "DepRemove",
+		OpDepTree:                "DepTree",
+		OpDepAddBidirectional:    "DepAddBidirectional",
+		OpDepRemoveBidirectional: "DepRemoveBidirectional",
 
 		// Labels
 		OpLabelAdd:    "LabelAdd",
@@ -314,9 +316,15 @@ func operationToHTTPMethod(operation string) string {
 		OpDecisionCancel:  "DecisionCancel",
 
 		// Mol operations
-		OpMolBond:   "MolBond",
-		OpMolSquash: "MolSquash",
-		OpMolBurn:   "MolBurn",
+		OpMolBond:          "MolBond",
+		OpMolSquash:        "MolSquash",
+		OpMolBurn:          "MolBurn",
+		OpMolCurrent:       "MolCurrent",
+		OpMolProgressStats: "MolProgressStats",
+		OpMolReadyGated:    "MolReadyGated",
+
+		// Close operations
+		OpCloseContinue: "CloseContinue",
 
 		// Atomic operations
 		OpCreateWithDeps:           "CreateWithDeps",
@@ -338,6 +346,30 @@ func operationToHTTPMethod(operation string) string {
 		OpRefile:       "Refile",
 		OpCook:         "Cook",
 		OpPour:         "Pour",
+
+		// Watch operations
+		OpListWatch: "ListWatch",
+
+		// Types
+		OpTypes: "Types",
+
+		// Sync operations
+		OpSyncExport: "SyncExport",
+		OpSyncStatus: "SyncStatus",
+
+		// State operations
+		OpSetState: "SetState",
+
+		// Config
+		OpConfigSet:   "ConfigSet",
+		OpConfigList:  "ConfigList",
+		OpConfigUnset: "ConfigUnset",
+
+		// Formula CRUD operations
+		OpFormulaList:   "FormulaList",
+		OpFormulaGet:    "FormulaGet",
+		OpFormulaSave:   "FormulaSave",
+		OpFormulaDelete: "FormulaDelete",
 
 		// Admin
 		OpShutdown: "Shutdown",

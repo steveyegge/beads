@@ -351,3 +351,114 @@ func TestHTTPMethodMapping(t *testing.T) {
 		})
 	}
 }
+
+// TestHTTPMappingCompleteness verifies that every RPC operation with a server-side
+// handler has corresponding entries in BOTH the client (operationToHTTPMethod) and
+// server (httpMethodToOperation) maps. This prevents "unsupported operation for HTTP"
+// errors when new operations are added to the server but not to the HTTP transport.
+func TestHTTPMappingCompleteness(t *testing.T) {
+	// All operations that have server-side handlers in the dispatch switch.
+	// When you add a new operation handler, add its Op constant here too.
+	// Bus operations are excluded: they have no server handlers (handled externally).
+	handledOperations := []string{
+		// Core CRUD
+		OpPing, OpStatus, OpHealth, OpMetrics,
+		OpCreate, OpUpdate, OpUpdateWithComment, OpClose, OpDelete, OpRename,
+		OpList, OpListWatch, OpCount, OpShow, OpResolveID,
+		// Queries
+		OpReady, OpBlocked, OpStale, OpStats,
+		// Dependencies
+		OpDepAdd, OpDepRemove, OpDepTree,
+		OpDepAddBidirectional, OpDepRemoveBidirectional,
+		// Labels
+		OpLabelAdd, OpLabelRemove, OpBatchAddLabels,
+		// Comments
+		OpCommentList, OpCommentAdd,
+		// Batch
+		OpBatch,
+		// Sync/Export/Import
+		OpCompact, OpCompactStats, OpExport, OpImport,
+		OpSyncExport, OpSyncStatus,
+		// Epic
+		OpEpicStatus,
+		// Mutations/Status
+		OpGetMutations, OpGetMoleculeProgress, OpGetWorkerStatus, OpGetConfig,
+		// Gates
+		OpGateCreate, OpGateList, OpGateShow, OpGateClose, OpGateWait,
+		// Decisions
+		OpDecisionCreate, OpDecisionGet, OpDecisionResolve,
+		OpDecisionList, OpDecisionRemind, OpDecisionCancel,
+		// Mol operations
+		OpMolBond, OpMolSquash, OpMolBurn,
+		OpMolCurrent, OpMolProgressStats, OpMolReadyGated,
+		// Close operations
+		OpCloseContinue,
+		// Config
+		OpConfigSet, OpConfigList, OpConfigUnset,
+		// Types
+		OpTypes,
+		// State
+		OpSetState,
+		// Atomic operations
+		OpCreateWithDeps, OpCreateMolecule,
+		OpBatchAddDependencies, OpBatchQueryWorkers,
+		OpCreateConvoyWithTracking, OpAtomicClosureChain,
+		// Database management
+		OpInit, OpMigrate,
+		// Write operations
+		OpRenamePrefix, OpMove, OpRefile, OpCook, OpPour,
+		// Formula CRUD
+		OpFormulaList, OpFormulaGet, OpFormulaSave, OpFormulaDelete,
+		// Admin
+		OpShutdown,
+	}
+
+	t.Run("client_operationToHTTPMethod_covers_all_handled_ops", func(t *testing.T) {
+		var missing []string
+		for _, op := range handledOperations {
+			method := operationToHTTPMethod(op)
+			if method == "" {
+				missing = append(missing, op)
+			}
+		}
+		if len(missing) > 0 {
+			t.Errorf("operationToHTTPMethod() missing entries for %d operations: %v\n"+
+				"Add these to operationToHTTPMethod() in http_client.go", len(missing), missing)
+		}
+	})
+
+	t.Run("server_httpMethodToOperation_covers_all_handled_ops", func(t *testing.T) {
+		var missing []string
+		for _, op := range handledOperations {
+			// First get the HTTP method name from the client map
+			method := operationToHTTPMethod(op)
+			if method == "" {
+				continue // Already caught by the client test above
+			}
+			// Then verify the server can map it back
+			roundTripped := httpMethodToOperation(method)
+			if roundTripped == "" {
+				missing = append(missing, op+" (method: "+method+")")
+			}
+		}
+		if len(missing) > 0 {
+			t.Errorf("httpMethodToOperation() missing entries for %d operations: %v\n"+
+				"Add these to httpMethodToOperation() in http_server.go", len(missing), missing)
+		}
+	})
+
+	t.Run("round_trip_consistency", func(t *testing.T) {
+		// Every operation should round-trip: op -> method -> op
+		for _, op := range handledOperations {
+			method := operationToHTTPMethod(op)
+			if method == "" {
+				continue
+			}
+			roundTripped := httpMethodToOperation(method)
+			if roundTripped != op {
+				t.Errorf("round-trip failed for %q: op->method=%q->op=%q (expected %q)",
+					op, method, roundTripped, op)
+			}
+		}
+	})
+}
