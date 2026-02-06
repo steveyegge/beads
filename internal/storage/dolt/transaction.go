@@ -190,7 +190,7 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 	}
 
 	// Mark issue as dirty
-	if err := markDirty(ctx, t.tx, issue.ID); err != nil {
+	if err := t.store.markDirty(ctx, t.tx, issue.ID); err != nil {
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
@@ -348,7 +348,7 @@ func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates ma
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
-	if err := markDirty(ctx, t.tx, id); err != nil {
+	if err := t.store.markDirty(ctx, t.tx, id); err != nil {
 		return fmt.Errorf("failed to mark dirty: %w", err)
 	}
 
@@ -378,7 +378,7 @@ func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason stri
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
-	if err := markDirty(ctx, t.tx, id); err != nil {
+	if err := t.store.markDirty(ctx, t.tx, id); err != nil {
 		return fmt.Errorf("failed to mark dirty: %w", err)
 	}
 
@@ -434,13 +434,13 @@ func (t *doltTransaction) AddDependency(ctx context.Context, dep *types.Dependen
 	}
 
 	// Mark source issue as dirty for incremental export
-	if err := markDirty(ctx, t.tx, dep.IssueID); err != nil {
+	if err := t.store.markDirty(ctx, t.tx, dep.IssueID); err != nil {
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
 	// Only mark depends_on as dirty if it's a local issue (not an external reference)
 	if !strings.HasPrefix(dep.DependsOnID, "external:") {
-		if err := markDirty(ctx, t.tx, dep.DependsOnID); err != nil {
+		if err := t.store.markDirty(ctx, t.tx, dep.DependsOnID); err != nil {
 			return fmt.Errorf("failed to mark depends_on issue dirty: %w", err)
 		}
 	}
@@ -490,10 +490,10 @@ func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, depends
 	// Only mark dirty if something was actually deleted
 	rows, _ := result.RowsAffected()
 	if rows > 0 {
-		if err := markDirty(ctx, t.tx, issueID); err != nil {
+		if err := t.store.markDirty(ctx, t.tx, issueID); err != nil {
 			return fmt.Errorf("failed to mark issue dirty: %w", err)
 		}
-		if err := markDirty(ctx, t.tx, dependsOnID); err != nil {
+		if err := t.store.markDirty(ctx, t.tx, dependsOnID); err != nil {
 			return fmt.Errorf("failed to mark depends_on issue dirty: %w", err)
 		}
 	}
@@ -516,7 +516,7 @@ func (t *doltTransaction) AddLabel(ctx context.Context, issueID, label, actor st
 		if err := recordEvent(ctx, t.tx, issueID, types.EventLabelAdded, actor, "", fmt.Sprintf("Added label: %s", label)); err != nil {
 			return fmt.Errorf("failed to record event: %w", err)
 		}
-		if err := markDirty(ctx, t.tx, issueID); err != nil {
+		if err := t.store.markDirty(ctx, t.tx, issueID); err != nil {
 			return fmt.Errorf("failed to mark dirty: %w", err)
 		}
 	}
@@ -556,7 +556,7 @@ func (t *doltTransaction) RemoveLabel(ctx context.Context, issueID, label, actor
 		if err := recordEvent(ctx, t.tx, issueID, types.EventLabelRemoved, actor, "", fmt.Sprintf("Removed label: %s", label)); err != nil {
 			return fmt.Errorf("failed to record event: %w", err)
 		}
-		if err := markDirty(ctx, t.tx, issueID); err != nil {
+		if err := t.store.markDirty(ctx, t.tx, issueID); err != nil {
 			return fmt.Errorf("failed to mark dirty: %w", err)
 		}
 	}

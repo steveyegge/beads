@@ -61,6 +61,10 @@ type DoltStore struct {
 	// Query watchdog config (KILL QUERY on timeout)
 	serverMode   bool          // True when connected to dolt sql-server (not embedded)
 	queryTimeout time.Duration // Max query duration before KILL QUERY fires (0 = disabled)
+
+	// skipDirtyTracking disables dirty_issues and export_hashes writes.
+	// Set to true in dolt-native sync mode where JSONL export is not used.
+	skipDirtyTracking bool
 }
 
 // Config holds Dolt database configuration
@@ -89,6 +93,11 @@ type Config struct {
 	// stop the server-side query. Override with BEADS_QUERY_TIMEOUT env var.
 	// Default: 30s. Set to 0 to disable.
 	QueryTimeout time.Duration
+
+	// SkipDirtyTracking disables dirty_issues and export_hashes writes.
+	// Set to true in dolt-native sync mode where JSONL export is not used,
+	// eliminating write amplification on every mutation.
+	SkipDirtyTracking bool
 }
 
 const embeddedOpenMaxElapsed = 30 * time.Second
@@ -251,6 +260,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		readOnly:          cfg.ReadOnly,
 		serverMode:        cfg.ServerMode,
 		queryTimeout:      qt,
+		skipDirtyTracking: cfg.SkipDirtyTracking,
 	}
 
 	// Schema initialization:
@@ -263,6 +273,14 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	}
 
 	return store, nil
+}
+
+// SetSkipDirtyTracking enables or disables dirty issue tracking.
+// When skip is true, mutations will not mark issues in the dirty_issues table
+// and export hash operations become no-ops. Use in dolt-native sync mode
+// where JSONL export is not used.
+func (s *DoltStore) SetSkipDirtyTracking(skip bool) {
+	s.skipDirtyTracking = skip
 }
 
 // openEmbeddedConnection opens a connection using the embedded Dolt driver

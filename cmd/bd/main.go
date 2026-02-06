@@ -936,6 +936,13 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Skip dirty tracking in dolt-native mode to eliminate write amplification (bd-8csx)
+		if !ShouldExportJSONL(rootCtx, store) {
+			if s, ok := store.(interface{ SetSkipDirtyTracking(bool) }); ok {
+				s.SetSkipDirtyTracking(true)
+			}
+		}
+
 		// Mark store as active for flush goroutine safety
 		storeMutex.Lock()
 		storeActive = true

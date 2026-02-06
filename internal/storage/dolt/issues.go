@@ -403,7 +403,10 @@ func recordEvent(ctx context.Context, tx *sql.Tx, issueID string, eventType type
 	return err
 }
 
-func markDirty(ctx context.Context, tx *sql.Tx, issueID string) error {
+func (s *DoltStore) markDirty(ctx context.Context, tx *sql.Tx, issueID string) error {
+	if s.skipDirtyTracking {
+		return nil
+	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO dirty_issues (issue_id, marked_at)
 		VALUES (?, ?)

@@ -896,6 +896,14 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	syncMode := GetSyncMode(ctx, store)
 	isDoltNative := syncMode == SyncModeDoltNative
 
+	// Skip dirty tracking in dolt-native mode to eliminate write amplification (bd-8csx)
+	if isDoltNative {
+		if s, ok := store.(interface{ SetSkipDirtyTracking(bool) }); ok {
+			s.SetSkipDirtyTracking(true)
+			log.Info("dirty tracking disabled (dolt-native mode)")
+		}
+	}
+
 	// Create sync function based on mode
 	var doSync func()
 	if isDoltNative {

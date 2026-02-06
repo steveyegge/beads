@@ -25,7 +25,7 @@ func (s *DoltStore) AddComment(ctx context.Context, issueID, actor, comment stri
 		return fmt.Errorf("failed to add comment: %w", err)
 	}
 
-	if err := markDirty(ctx, tx, issueID); err != nil {
+	if err := s.markDirty(ctx, tx, issueID); err != nil {
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
@@ -147,7 +147,7 @@ func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, tex
 	}
 
 	// Mark issue dirty for incremental JSONL export
-	if err := markDirty(ctx, tx, issueID); err != nil {
+	if err := s.markDirty(ctx, tx, issueID); err != nil {
 		return nil, fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 

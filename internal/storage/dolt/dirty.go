@@ -7,8 +7,12 @@ import (
 	"time"
 )
 
-// GetDirtyIssues returns IDs of issues that have been modified since last export
+// GetDirtyIssues returns IDs of issues that have been modified since last export.
+// Returns empty when dirty tracking is disabled (dolt-native mode).
 func (s *DoltStore) GetDirtyIssues(ctx context.Context) ([]string, error) {
+	if s.skipDirtyTracking {
+		return nil, nil
+	}
 	rows, err := s.queryContext(ctx, `
 		SELECT issue_id FROM dirty_issues ORDER BY marked_at ASC
 	`)
@@ -85,8 +89,12 @@ func (s *DoltStore) GetExportHash(ctx context.Context, issueID string) (string, 
 	return hash, nil
 }
 
-// SetExportHash stores the export hash for an issue
+// SetExportHash stores the export hash for an issue.
+// No-op when dirty tracking is disabled (dolt-native mode).
 func (s *DoltStore) SetExportHash(ctx context.Context, issueID, contentHash string) error {
+	if s.skipDirtyTracking {
+		return nil
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -107,8 +115,9 @@ func (s *DoltStore) SetExportHash(ctx context.Context, issueID, contentHash stri
 // BatchSetExportHashes stores export hashes for multiple issues in a single transaction.
 // This is much more efficient than calling SetExportHash individually because each
 // Dolt commit is expensive (content-addressed store write). (bd-8csx.1)
+// No-op when dirty tracking is disabled (dolt-native mode).
 func (s *DoltStore) BatchSetExportHashes(ctx context.Context, hashes map[string]string) error {
-	if len(hashes) == 0 {
+	if s.skipDirtyTracking || len(hashes) == 0 {
 		return nil
 	}
 
@@ -132,8 +141,12 @@ func (s *DoltStore) BatchSetExportHashes(ctx context.Context, hashes map[string]
 	return tx.Commit()
 }
 
-// ClearAllExportHashes removes all export hashes (for full re-export)
+// ClearAllExportHashes removes all export hashes (for full re-export).
+// No-op when dirty tracking is disabled (dolt-native mode).
 func (s *DoltStore) ClearAllExportHashes(ctx context.Context) error {
+	if s.skipDirtyTracking {
+		return nil
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
