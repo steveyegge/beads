@@ -786,6 +786,7 @@ func GetNamedRoles() []string {
 // getConfigList is a helper that retrieves a comma-separated list from config.yaml.
 func getConfigList(key string) []string {
 	if v == nil {
+		debug.Logf("config: viper not initialized, returning nil for key %q", key)
 		return nil
 	}
 
