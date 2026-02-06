@@ -195,7 +195,11 @@ func applyValidationFixes(path string, result validateResult) {
 		fmt.Print("\nContinue? (Y/n): ")
 
 		var response string
-		fmt.Scanln(&response)
+		if _, err := fmt.Scanln(&response); err != nil {
+			fmt.Printf("\nFailed to read response: %v\n", err)
+			fmt.Println("Fix canceled.")
+			return
+		}
 		if response != "" && response != "y" && response != "Y" && response != "yes" {
 			fmt.Println("Fix canceled.")
 			return
