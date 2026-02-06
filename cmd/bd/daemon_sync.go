@@ -514,8 +514,16 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 		// This prevents "refusing to export: JSONL content has changed" errors
 		// when external changes (git pull, other clones) modify JSONL between imports.
 		// Check JSONL content hash to detect external changes
+		//
+		// CRITICAL: Skip this import if we're in a mutation-triggered export.
+		// Mutations are detected AFTER the database changes, so importing would overwrite
+		// the mutation we're trying to export. The mutation is already in the database -
+		// we just need to export it. The JSONL hash check will be stale but that's expected
+		// and safe for mutation-triggered exports.
 		repoKey := getRepoKeyForPath(jsonlPath)
-		if hasJSONLChanged(exportCtx, store, jsonlPath, repoKey) {
+		isMutationTriggered := (mode == "export") // Mutation exports use mode="export"
+		
+		if !isMutationTriggered && hasJSONLChanged(exportCtx, store, jsonlPath, repoKey) {
 			log.Info("JSONL changed externally, importing before export")
 
 			// Count issues before import for validation
@@ -556,6 +564,8 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 			}
 
 			log.Info("Auto-import complete, proceeding with export")
+		} else if isMutationTriggered {
+			log.Info("Skipping pre-export import (mutation-triggered export)")
 		}
 
 		// Pre-export validation
