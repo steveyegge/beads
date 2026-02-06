@@ -82,14 +82,14 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 		return issues[0].ID, nil
 	}
 	
-	// If exact match failed, try substring search
-	filter := types.IssueFilter{}
-	
+	// If exact match failed, try prefix-filtered search first (fast path using index),
+	// then fall back to limited full scan for cross-prefix matching
+	filter := types.IssueFilter{IDPrefix: prefixWithHyphen, Limit: 500}
 	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
 		return "", fmt.Errorf("failed to search issues: %w", err)
 	}
-	
+
 	// Extract the hash part for substring matching
 	hashPart := strings.TrimPrefix(normalizedID, prefixWithHyphen)
 
@@ -130,6 +130,32 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 	}
 	
 	if len(matches) == 0 {
+		// Cross-prefix fallback: the hash might belong to a different prefix.
+		// Use a limited full scan to avoid 5+ second queries on large databases.
+		fallbackFilter := types.IssueFilter{Limit: 2000}
+		fallbackIssues, fallbackErr := store.SearchIssues(ctx, "", fallbackFilter)
+		if fallbackErr == nil {
+			for _, issue := range fallbackIssues {
+				var issueHash string
+				if idx := strings.Index(issue.ID, "-"); idx >= 0 {
+					issueHash = issue.ID[idx+1:]
+				} else {
+					issueHash = issue.ID
+				}
+				if issueHash == hashPart {
+					return issue.ID, nil
+				}
+				if strings.Contains(issueHash, hashPart) {
+					matches = append(matches, issue.ID)
+				}
+			}
+			if len(matches) == 1 {
+				return matches[0], nil
+			}
+			if len(matches) > 1 {
+				return "", fmt.Errorf("ambiguous ID %q matches %d issues: %v\nUse more characters to disambiguate", input, len(matches), matches)
+			}
+		}
 		return "", fmt.Errorf("no issue found matching %q", input)
 	}
 	
