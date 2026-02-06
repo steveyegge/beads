@@ -140,7 +140,9 @@ func Initialize() error {
 	// Dolt configuration defaults
 	// Controls whether beads should automatically create Dolt commits after write commands.
 	// Values: off | on
-	v.SetDefault("dolt.auto-commit", "on")
+	// Default is "off" - per-write commits are extremely expensive on Dolt (each creates a
+	// full Merkle DAG snapshot). Use periodic batch commits via daemon sync instead.
+	v.SetDefault("dolt.auto-commit", "off")
 
 	// Routing configuration defaults
 	v.SetDefault("routing.mode", "")
