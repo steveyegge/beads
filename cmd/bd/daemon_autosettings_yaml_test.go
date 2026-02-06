@@ -37,6 +37,11 @@ func TestDaemonAutoSyncFromYAML(t *testing.T) {
 	}
 	defer testStore.Close()
 
+	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
+	// and clear BD_DAEMON_HOST so the factory guard doesn't block direct DB access.
+	t.Setenv("BEADS_DIR", beadsDir)
+	t.Setenv("BD_DAEMON_HOST", "")
+
 	// Change to temp directory and reinitialize config
 	t.Chdir(tmpDir)
 	if err := config.Initialize(); err != nil {
@@ -90,6 +95,11 @@ func TestDaemonAutoCommitOnlyFromYAML(t *testing.T) {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 	defer testStore.Close()
+
+	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
+	// and clear BD_DAEMON_HOST so the factory guard doesn't block direct DB access.
+	t.Setenv("BEADS_DIR", beadsDir)
+	t.Setenv("BD_DAEMON_HOST", "")
 
 	// Change to temp directory and reinitialize config
 	t.Chdir(tmpDir)
@@ -147,6 +157,11 @@ func TestDaemonIndividualSettingsFromYAML(t *testing.T) {
 	}
 	defer testStore.Close()
 
+	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
+	// and clear BD_DAEMON_HOST so the factory guard doesn't block direct DB access.
+	t.Setenv("BEADS_DIR", beadsDir)
+	t.Setenv("BD_DAEMON_HOST", "")
+
 	// Change to temp directory and reinitialize config
 	t.Chdir(tmpDir)
 	if err := config.Initialize(); err != nil {
@@ -198,6 +213,11 @@ func TestDaemonEnvVarOverridesYAML(t *testing.T) {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 	defer testStore.Close()
+
+	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
+	// and clear BD_DAEMON_HOST so the factory guard doesn't block direct DB access.
+	t.Setenv("BEADS_DIR", beadsDir)
+	t.Setenv("BD_DAEMON_HOST", "")
 
 	// Change to temp directory and reinitialize config
 	t.Chdir(tmpDir)
@@ -253,6 +273,11 @@ func TestDaemonCLIFlagOverridesYAML(t *testing.T) {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 	defer testStore.Close()
+
+	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
+	// and clear BD_DAEMON_HOST so the factory guard doesn't block direct DB access.
+	t.Setenv("BEADS_DIR", beadsDir)
+	t.Setenv("BD_DAEMON_HOST", "")
 
 	// Change to temp directory and reinitialize config
 	t.Chdir(tmpDir)
@@ -312,6 +337,11 @@ func TestDaemonIndividualEnvVarOverridesYAML(t *testing.T) {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 	defer testStore.Close()
+
+	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
+	// and clear BD_DAEMON_HOST so the factory guard doesn't block direct DB access.
+	t.Setenv("BEADS_DIR", beadsDir)
+	t.Setenv("BD_DAEMON_HOST", "")
 
 	// Change to temp directory and reinitialize config
 	t.Chdir(tmpDir)

@@ -517,8 +517,8 @@ func TestCookRPC_Variables(t *testing.T) {
 	}
 }
 
-// TestPourRPC_NotSupported tests that pour returns a not-supported error via RPC (bd-wj80).
-func TestPourRPC_NotSupported(t *testing.T) {
+// TestPourRPC_NonexistentProto tests that pour returns an error for a nonexistent proto/formula (bd-wj80).
+func TestPourRPC_NonexistentProto(t *testing.T) {
 	_, client, cleanup := setupTestServer(t)
 	defer cleanup()
 
@@ -528,11 +528,11 @@ func TestPourRPC_NotSupported(t *testing.T) {
 	}
 	_, err := client.Pour(args)
 	if err == nil {
-		t.Fatal("Expected error for unsupported pour operation")
+		t.Fatal("Expected error for nonexistent proto")
 	}
-	// Verify the error message indicates it's not supported
-	if !strings.Contains(err.Error(), "pour is not yet supported via daemon RPC") {
-		t.Errorf("Unexpected error message: %v", err)
+	// Verify the error message indicates the proto/formula was not found
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("Expected 'not found' in error message, got: %v", err)
 	}
 }
 

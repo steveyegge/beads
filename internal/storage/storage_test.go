@@ -93,6 +93,9 @@ func (m *mockStorage) GetLabels(ctx context.Context, issueID string) ([]string, 
 func (m *mockStorage) GetLabelsForIssues(ctx context.Context, issueIDs []string) (map[string][]string, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetAllLabels(ctx context.Context) (map[string][]string, error) {
+	return nil, nil
+}
 func (m *mockStorage) GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error) {
 	return nil, nil
 }
@@ -386,6 +389,7 @@ func TestInterfaceDocumentation(t *testing.T) {
 		_ = s.RemoveLabel
 		_ = s.GetLabels
 		_ = s.GetLabelsForIssues
+		_ = s.GetAllLabels
 		_ = s.GetIssuesByLabel
 
 		// Verify ready work operations

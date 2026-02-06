@@ -66,6 +66,9 @@ func (m *mockStatusCheckerStore) Diff(ctx context.Context, fromRef, toRef string
 func (m *mockStatusCheckerStore) Branch(ctx context.Context, name string) error {
 	return nil
 }
+func (m *mockStatusCheckerStore) Checkout(ctx context.Context, branch string) error {
+	return nil
+}
 func (m *mockStatusCheckerStore) Merge(ctx context.Context, branch string) ([]storage.Conflict, error) {
 	return nil, nil
 }

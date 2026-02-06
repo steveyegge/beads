@@ -17,6 +17,12 @@ import (
 func TestAgentStateWithRouting(t *testing.T) {
 	ctx := context.Background()
 
+	// Clear BD_DAEMON_HOST to test local file-based routing (not remote daemon)
+	if oldHost := os.Getenv("BD_DAEMON_HOST"); oldHost != "" {
+		os.Unsetenv("BD_DAEMON_HOST")
+		t.Cleanup(func() { os.Setenv("BD_DAEMON_HOST", oldHost) })
+	}
+
 	// Create temp directory structure:
 	// tmpDir/
 	//   mayor/
@@ -93,6 +99,17 @@ func TestAgentStateWithRouting(t *testing.T) {
 	dbPath = townDBPath
 	t.Cleanup(func() { dbPath = oldDbPath })
 
+	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree
+	oldBeadsDir := os.Getenv("BEADS_DIR")
+	os.Setenv("BEADS_DIR", townBeadsDir)
+	t.Cleanup(func() {
+		if oldBeadsDir == "" {
+			os.Unsetenv("BEADS_DIR")
+		} else {
+			os.Setenv("BEADS_DIR", oldBeadsDir)
+		}
+	})
+
 	// Change to tmpDir so routing can find town root via CWD
 	oldWd, err := os.Getwd()
 	if err != nil {
@@ -149,6 +166,12 @@ func TestNeedsRoutingFunction(t *testing.T) {
 // NOTE: This test uses os.Chdir and cannot run in parallel with other tests.
 func TestAgentHeartbeatWithRouting(t *testing.T) {
 	ctx := context.Background()
+
+	// Clear BD_DAEMON_HOST to test local file-based routing (not remote daemon)
+	if oldHost := os.Getenv("BD_DAEMON_HOST"); oldHost != "" {
+		os.Unsetenv("BD_DAEMON_HOST")
+		t.Cleanup(func() { os.Setenv("BD_DAEMON_HOST", oldHost) })
+	}
 
 	tmpDir := t.TempDir()
 
@@ -215,6 +238,17 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 	dbPath = townDBPath
 	t.Cleanup(func() { dbPath = oldDbPath })
 
+	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree
+	oldBeadsDir := os.Getenv("BEADS_DIR")
+	os.Setenv("BEADS_DIR", townBeadsDir)
+	t.Cleanup(func() {
+		if oldBeadsDir == "" {
+			os.Unsetenv("BEADS_DIR")
+		} else {
+			os.Setenv("BEADS_DIR", oldBeadsDir)
+		}
+	})
+
 	// Change to tmpDir so routing can find town root via CWD
 	oldWd, err := os.Getwd()
 	if err != nil {
@@ -251,6 +285,12 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 // NOTE: This test uses os.Chdir and cannot run in parallel with other tests.
 func TestAgentShowWithRouting(t *testing.T) {
 	ctx := context.Background()
+
+	// Clear BD_DAEMON_HOST to test local file-based routing (not remote daemon)
+	if oldHost := os.Getenv("BD_DAEMON_HOST"); oldHost != "" {
+		os.Unsetenv("BD_DAEMON_HOST")
+		t.Cleanup(func() { os.Setenv("BD_DAEMON_HOST", oldHost) })
+	}
 
 	tmpDir := t.TempDir()
 
@@ -316,6 +356,17 @@ func TestAgentShowWithRouting(t *testing.T) {
 	oldDbPath := dbPath
 	dbPath = townDBPath
 	t.Cleanup(func() { dbPath = oldDbPath })
+
+	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree
+	oldBeadsDir := os.Getenv("BEADS_DIR")
+	os.Setenv("BEADS_DIR", townBeadsDir)
+	t.Cleanup(func() {
+		if oldBeadsDir == "" {
+			os.Unsetenv("BEADS_DIR")
+		} else {
+			os.Setenv("BEADS_DIR", oldBeadsDir)
+		}
+	})
 
 	// Change to tmpDir so routing can find town root via CWD
 	oldWd, err := os.Getwd()
