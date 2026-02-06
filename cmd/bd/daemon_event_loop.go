@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
@@ -16,6 +17,17 @@ import (
 // DefaultRemoteSyncInterval is the default interval for periodic remote sync.
 // Can be overridden via BEADS_REMOTE_SYNC_INTERVAL environment variable.
 const DefaultRemoteSyncInterval = 30 * time.Second
+
+// mutationExportCooldown is the duration to suppress auto-imports after mutation-triggered export.
+// This prevents file watcher from triggering imports that overwrite database changes during export.
+const mutationExportCooldown = 10 * time.Second
+
+var (
+	// lastMutationExportTime tracks when the last mutation-triggered export completed.
+	// Protected by lastMutationExportMutex.
+	lastMutationExportTime time.Time
+	lastMutationExportMutex sync.RWMutex
+)
 
 // runEventDrivenLoop implements event-driven daemon architecture.
 // Replaces polling ticker with reactive event handlers for:
@@ -49,6 +61,11 @@ func runEventDrivenLoop(
 	exportDebouncer := NewDebouncer(500*time.Millisecond, func() {
 		log.Info("Export triggered by mutation events")
 		doExport()
+		// Record export completion time to suppress auto-imports during cooldown
+		lastMutationExportMutex.Lock()
+		lastMutationExportTime = time.Now()
+		lastMutationExportMutex.Unlock()
+		log.Info("Mutation export complete, auto-import suppressed for cooldown period", "cooldown", mutationExportCooldown)
 	})
 	defer exportDebouncer.CancelAndWait()
 
@@ -60,6 +77,18 @@ func runEventDrivenLoop(
 
 	// Start file watcher for JSONL changes
 	watcher, err := NewFileWatcher(jsonlPath, func() {
+		// Check if we're in cooldown period after mutation export
+		lastMutationExportMutex.RLock()
+		lastExport := lastMutationExportTime
+		lastMutationExportMutex.RUnlock()
+
+		if !lastExport.IsZero() && time.Since(lastExport) < mutationExportCooldown {
+			log.Info("Suppressing auto-import during mutation export cooldown",
+				"time_since_export", time.Since(lastExport),
+				"cooldown", mutationExportCooldown)
+			return
+		}
+
 		importDebouncer.Trigger()
 	})
 	var fallbackTicker *time.Ticker
@@ -155,6 +184,19 @@ func runEventDrivenLoop(
 			// Periodic remote sync to pull updates from other clones
 			// This ensures the daemon sees changes pushed by other clones
 			// even when the local file watcher doesn't trigger
+			
+			// Check if we're in cooldown period after mutation export
+			lastMutationExportMutex.RLock()
+			lastExport := lastMutationExportTime
+			lastMutationExportMutex.RUnlock()
+
+			if !lastExport.IsZero() && time.Since(lastExport) < mutationExportCooldown {
+				log.Info("Suppressing periodic remote sync during mutation export cooldown",
+					"time_since_export", time.Since(lastExport),
+					"cooldown", mutationExportCooldown)
+				continue
+			}
+
 			log.Info("Periodic remote sync: checking for updates")
 			doAutoImport()
 
