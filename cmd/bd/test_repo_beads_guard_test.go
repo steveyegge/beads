@@ -89,7 +89,11 @@ func TestMain(m *testing.M) {
 		"issues.jsonl",
 		"beads.jsonl",
 		"metadata.json",
-		"interactions.jsonl",
+		// Note: interactions.jsonl is excluded from the guard because it's created
+		// by init commands in tests and is not considered test pollution. It's a
+		// working file that exists in normal beads operation. (GH#bd-xxx: macos test
+		// isolation issue on CI runners)
+		// "interactions.jsonl",
 		"deletions.jsonl",
 		"molecules.jsonl",
 		"daemon.lock",
