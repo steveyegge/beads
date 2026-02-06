@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -405,37 +406,189 @@ func matchesSubscriptions(issue *types.Issue, issueLabels []string, subscription
 	return false
 }
 
-// printAdviceListWithLabels prints advice with their labels (for subscription mode)
-func printAdviceListWithLabels(issues []*types.Issue, labelsMap map[string][]string, verbose bool) {
-	for _, issue := range issues {
-		issueLabels := labelsMap[issue.ID]
-
-		// Status indicator
-		status := ""
-		if issue.Status == types.StatusClosed {
-			status = " (closed)"
-		}
-
-		// Labels display
-		labelStr := ""
-		if len(issueLabels) > 0 {
-			labelStr = fmt.Sprintf(" [%s]", strings.Join(issueLabels, ", "))
-		}
-
-		if verbose {
-			fmt.Printf("  %s %s%s%s\n", ui.RenderID(issue.ID), issue.Title, labelStr, status)
-			if issue.Description != "" && issue.Description != issue.Title {
-				desc := issue.Description
-				if len(desc) > 200 {
-					desc = desc[:197] + "..."
-				}
-				fmt.Printf("    %s\n", desc)
+// stripGroupPrefix removes the gN: prefix from a single label if present.
+func stripGroupPrefix(label string) string {
+	if len(label) >= 3 && label[0] == 'g' {
+		for i := 1; i < len(label); i++ {
+			if label[i] == ':' && i > 1 {
+				return label[i+1:]
 			}
-		} else {
-			fmt.Printf("  %s%s%s\n", issue.Title, labelStr, status)
+			if label[i] < '0' || label[i] > '9' {
+				break
+			}
 		}
 	}
-	fmt.Println()
+	return label
+}
+
+// categorizeAdviceScope determines the primary scope of advice based on its labels.
+// Labels may have group prefixes like "g0:" which are stripped before checking scope.
+// Priority order: agent > role > rig > global.
+func categorizeAdviceScope(labels []string) (scope string, target string) {
+	stripped := stripGroupPrefixes(labels)
+
+	for _, l := range stripped {
+		if strings.HasPrefix(l, "agent:") {
+			return "agent", strings.TrimPrefix(l, "agent:")
+		}
+	}
+	for _, l := range stripped {
+		if strings.HasPrefix(l, "role:") {
+			return "role", strings.TrimPrefix(l, "role:")
+		}
+	}
+	for _, l := range stripped {
+		if strings.HasPrefix(l, "rig:") {
+			return "rig", strings.TrimPrefix(l, "rig:")
+		}
+	}
+	return "global", ""
+}
+
+// renderLabel renders a single label with color coding based on its type
+func renderLabel(label string) string {
+	// Strip group prefix
+	clean := stripGroupPrefix(label)
+
+	switch {
+	case clean == "global":
+		return ui.RenderMuted(clean)
+	case strings.HasPrefix(clean, "rig:"):
+		return ui.RenderAccent(clean)
+	case strings.HasPrefix(clean, "role:"):
+		return ui.RenderPass(clean)
+	case strings.HasPrefix(clean, "agent:"):
+		return ui.RenderWarn(clean)
+	default:
+		return clean
+	}
+}
+
+// adviceSectionKey is used for ordering and grouping advice sections
+type adviceSectionKey struct {
+	scope  string // "global", "rig", "role", "agent"
+	target string // e.g., "beads", "crew", "beads/polecats/quartz"
+}
+
+// sectionTitle returns the display title for a section
+func (k adviceSectionKey) sectionTitle() string {
+	switch k.scope {
+	case "global":
+		return "Global"
+	case "rig":
+		return "Rig: " + k.target
+	case "role":
+		return "Role: " + k.target
+	case "agent":
+		return "Agent: " + k.target
+	default:
+		return k.scope
+	}
+}
+
+// sectionOrder returns a numeric order for sorting scope groups
+func sectionOrder(scope string) int {
+	switch scope {
+	case "global":
+		return 0
+	case "rig":
+		return 1
+	case "role":
+		return 2
+	case "agent":
+		return 3
+	default:
+		return 4
+	}
+}
+
+// printAdviceListWithLabels prints advice grouped by scope with colorized labels
+func printAdviceListWithLabels(issues []*types.Issue, labelsMap map[string][]string, verbose bool) {
+	// Group issues by scope
+	sectionMap := make(map[adviceSectionKey][]*types.Issue)
+
+	for _, issue := range issues {
+		issueLabels := labelsMap[issue.ID]
+		scope, target := categorizeAdviceScope(issueLabels)
+		key := adviceSectionKey{scope: scope, target: target}
+		sectionMap[key] = append(sectionMap[key], issue)
+	}
+
+	// Collect and sort section keys: global -> rig (alpha) -> role (alpha) -> agent (alpha)
+	keys := make([]adviceSectionKey, 0, len(sectionMap))
+	for k := range sectionMap {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		oi, oj := sectionOrder(keys[i].scope), sectionOrder(keys[j].scope)
+		if oi != oj {
+			return oi < oj
+		}
+		return keys[i].target < keys[j].target
+	})
+
+	// Print each section
+	for _, key := range keys {
+		sectionIssues := sectionMap[key]
+		title := key.sectionTitle()
+		// Style the section header based on scope
+		var styledTitle string
+		switch key.scope {
+		case "global":
+			styledTitle = ui.RenderMuted(title)
+		case "rig":
+			styledTitle = ui.RenderAccent(title)
+		case "role":
+			styledTitle = ui.RenderPass(title)
+		case "agent":
+			styledTitle = ui.RenderWarn(title)
+		default:
+			styledTitle = title
+		}
+		fmt.Printf("### %s (%d)\n", styledTitle, len(sectionIssues))
+
+		for _, issue := range sectionIssues {
+			issueLabels := labelsMap[issue.ID]
+
+			// Status indicator
+			status := ""
+			if issue.Status == types.StatusClosed {
+				status = " (closed)"
+			}
+
+			// Build colorized label list
+			var renderedLabels []string
+			for _, l := range issueLabels {
+				renderedLabels = append(renderedLabels, renderLabel(l))
+			}
+
+			// Hook badge
+			hookBadge := ""
+			if issue.AdviceHookCommand != "" {
+				hookBadge = " " + ui.RenderFail("[hook]")
+			}
+
+			// Labels display
+			labelStr := ""
+			if len(renderedLabels) > 0 {
+				labelStr = fmt.Sprintf(" [%s]", strings.Join(renderedLabels, ", "))
+			}
+
+			if verbose {
+				fmt.Printf("  %s %s%s%s%s\n", ui.RenderID(issue.ID), issue.Title, labelStr, hookBadge, status)
+				if issue.Description != "" && issue.Description != issue.Title {
+					desc := issue.Description
+					if len(desc) > 200 {
+						desc = desc[:197] + "..."
+					}
+					fmt.Printf("    %s\n", desc)
+				}
+			} else {
+				fmt.Printf("  %s%s%s%s\n", issue.Title, labelStr, hookBadge, status)
+			}
+		}
+		fmt.Println()
+	}
 }
 
 // NOTE: printAdviceList removed - all display now uses printAdviceListWithLabels
