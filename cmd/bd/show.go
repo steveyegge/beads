@@ -125,8 +125,60 @@ var showCmd = &cobra.Command{
 			allDetails := []interface{}{}
 			displayIdx := 0
 
-			// First, handle routed IDs via direct mode
+			// First, handle routed IDs - try daemon at target rig, fall back to direct mode (bd-6lp0)
 			for _, id := range routedArgs {
+				// Try daemon at the routed rig first to avoid direct Dolt access conflicts
+				resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+				if routedClient != nil {
+					// Use daemon RPC at the target rig (same as local daemon path below)
+					showResp, showErr := routedClient.Show(&rpc.ShowArgs{ID: resolvedID})
+					routedClient.Close()
+					if showErr != nil {
+						fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, showErr)
+						continue
+					}
+					if string(showResp.Data) == "null" || len(showResp.Data) == 0 {
+						fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+						continue
+					}
+					var details types.IssueDetails
+					if err := json.Unmarshal(showResp.Data, &details); err != nil {
+						fmt.Fprintf(os.Stderr, "Error parsing response for %s: %v\n", id, err)
+						continue
+					}
+					issue := &details.Issue
+					if shortMode {
+						fmt.Println(formatShortIssue(issue))
+						continue
+					}
+					if jsonOutput {
+						for _, dep := range details.Dependencies {
+							if dep.DependencyType == types.DepParentChild {
+								details.Parent = &dep.ID
+								break
+							}
+						}
+						allDetails = append(allDetails, details)
+					} else {
+						if displayIdx > 0 {
+							fmt.Println("\n" + ui.RenderMuted(strings.Repeat("─", 60)))
+						}
+						fmt.Printf("\n%s\n", formatIssueHeader(issue))
+						fmt.Println(formatIssueMetadata(issue))
+						if issue.Description != "" {
+							fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
+						}
+						fmt.Println()
+						displayIdx++
+					}
+					continue
+				}
+				if routeErr != nil {
+					fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
+					continue
+				}
+
+				// Fall back to direct storage (no daemon at target rig)
 				result, err := resolveAndGetIssueWithRouting(ctx, store, id)
 				if err != nil {
 					if result != nil {
@@ -150,13 +202,11 @@ var showCmd = &cobra.Command{
 					continue
 				}
 				if jsonOutput {
-					// Get labels and deps for JSON output
 					details := &types.IssueDetails{Issue: *issue}
 					details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
 					details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
 					details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)
 					details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID)
-					// Compute parent from dependencies
 					for _, dep := range details.Dependencies {
 						if dep.DependencyType == types.DepParentChild {
 							details.Parent = &dep.ID
@@ -168,9 +218,7 @@ var showCmd = &cobra.Command{
 					if displayIdx > 0 {
 						fmt.Println("\n" + ui.RenderMuted(strings.Repeat("─", 60)))
 					}
-					// Tufte-aligned header: STATUS_ICON ID · Title   [Priority · STATUS]
 					fmt.Printf("\n%s\n", formatIssueHeader(issue))
-					// Metadata: Owner · Type | Created · Updated
 					fmt.Println(formatIssueMetadata(issue))
 					if issue.Description != "" {
 						fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
@@ -178,7 +226,7 @@ var showCmd = &cobra.Command{
 					fmt.Println()
 					displayIdx++
 				}
-				result.Close() // Close immediately after processing each routed ID
+				result.Close()
 			}
 
 			// Then, handle local IDs via daemon
@@ -791,8 +839,29 @@ func showIssueRefs(ctx context.Context, args []string, resolvedIDs []string, rou
 		return nil
 	}
 
-	// Handle routed IDs via direct mode
+	// Handle routed IDs - try daemon at target rig, fall back to direct mode (bd-6lp0)
 	for _, id := range routedArgs {
+		// Try daemon at the routed rig first
+		resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+		if routedClient != nil {
+			showResp, showErr := routedClient.Show(&rpc.ShowArgs{ID: resolvedID})
+			routedClient.Close()
+			if showErr == nil {
+				var details types.IssueDetails
+				if json.Unmarshal(showResp.Data, &details) == nil {
+					allRefs[resolvedID] = details.Dependents
+					continue
+				}
+			}
+			fmt.Fprintf(os.Stderr, "Error fetching refs for %s via daemon: %v\n", id, showErr)
+			continue
+		}
+		if routeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
+			continue
+		}
+
+		// Fall back to direct storage
 		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
@@ -995,8 +1064,36 @@ func showIssueChildren(ctx context.Context, args []string, resolvedIDs []string,
 		return nil
 	}
 
-	// Handle routed IDs via direct mode
+	// Handle routed IDs - try daemon at target rig, fall back to direct mode (bd-6lp0)
 	for _, id := range routedArgs {
+		// Try daemon at the routed rig first
+		resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+		if routedClient != nil {
+			showResp, showErr := routedClient.Show(&rpc.ShowArgs{ID: resolvedID})
+			routedClient.Close()
+			if showErr == nil {
+				var details types.IssueDetails
+				if json.Unmarshal(showResp.Data, &details) == nil {
+					if _, exists := allChildren[resolvedID]; !exists {
+						allChildren[resolvedID] = []*types.IssueWithDependencyMetadata{}
+					}
+					for _, dep := range details.Dependents {
+						if dep.DependencyType == types.DepParentChild {
+							allChildren[resolvedID] = append(allChildren[resolvedID], dep)
+						}
+					}
+					continue
+				}
+			}
+			fmt.Fprintf(os.Stderr, "Error fetching children for %s via daemon: %v\n", id, showErr)
+			continue
+		}
+		if routeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
+			continue
+		}
+
+		// Fall back to direct storage
 		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)

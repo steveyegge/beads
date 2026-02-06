@@ -178,8 +178,45 @@ create, update, show, or close operation).`,
 				}
 			}
 
-			// Handle routed IDs via direct mode (cross-rig)
+			// Handle routed IDs - try daemon at target rig, fall back to direct mode (bd-6lp0)
 			for _, id := range routedArgs {
+				// Try daemon at the routed rig first
+				resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+				if routedClient != nil {
+					// Close via routed daemon RPC
+					routedClient.SetActor(actor)
+					closeArgs := &rpc.CloseArgs{
+						ID:      resolvedID,
+						Reason:  reason,
+						Session: session,
+						Force:   force,
+					}
+					resp, closeErr := routedClient.CloseIssue(closeArgs)
+					routedClient.Close()
+					if closeErr != nil {
+						fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, closeErr)
+						continue
+					}
+					var issue types.Issue
+					if json.Unmarshal(resp.Data, &issue) == nil {
+						if hookRunner != nil {
+							hookRunner.Run(hooks.EventClose, &issue)
+						}
+						if jsonOutput {
+							closedIssues = append(closedIssues, &issue)
+						}
+					}
+					if !jsonOutput {
+						fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), resolvedID, reason)
+					}
+					continue
+				}
+				if routeErr != nil {
+					fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
+					continue
+				}
+
+				// Fall back to direct storage (no daemon at target rig)
 				result, err := resolveAndGetIssueWithRouting(ctx, store, id)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
@@ -199,7 +236,6 @@ create, update, show, or close operation).`,
 					continue
 				}
 
-				// Check if issue has open blockers (GH#962)
 				if !force {
 					blocked, blockers, err := result.Store.IsBlocked(ctx, result.ResolvedID)
 					if err != nil {
@@ -220,7 +256,6 @@ create, update, show, or close operation).`,
 					continue
 				}
 
-				// Get updated issue for hook
 				closedIssue, _ := result.Store.GetIssue(ctx, result.ResolvedID)
 				if closedIssue != nil && hookRunner != nil {
 					hookRunner.Run(hooks.EventClose, closedIssue)

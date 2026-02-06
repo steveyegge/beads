@@ -386,8 +386,101 @@ create, update, show, or close operation).`,
 				}
 			}
 
-			// Handle routed IDs via direct mode (bypass daemon)
+			// Handle routed IDs - try daemon at target rig, fall back to direct mode (bd-6lp0)
 			for _, id := range routedArgs {
+				// Try daemon at the routed rig first
+				resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+				if routedClient != nil {
+					// Build UpdateArgs and send to routed daemon (same fields as local daemon path)
+					routedClient.SetActor(actor)
+					updateArgs := &rpc.UpdateArgs{ID: resolvedID}
+					if status, ok := updates["status"].(string); ok {
+						updateArgs.Status = &status
+					}
+					if priority, ok := updates["priority"].(int); ok {
+						updateArgs.Priority = &priority
+					}
+					if title, ok := updates["title"].(string); ok {
+						updateArgs.Title = &title
+					}
+					if assignee, ok := updates["assignee"].(string); ok {
+						updateArgs.Assignee = &assignee
+					}
+					if description, ok := updates["description"].(string); ok {
+						updateArgs.Description = &description
+					}
+					if design, ok := updates["design"].(string); ok {
+						updateArgs.Design = &design
+					}
+					if notes, ok := updates["notes"].(string); ok {
+						updateArgs.Notes = &notes
+					}
+					if appendNotes, ok := updates["append_notes"].(string); ok {
+						showResp, err := routedClient.Show(&rpc.ShowArgs{ID: resolvedID})
+						if err == nil {
+							var existingIssue types.Issue
+							if json.Unmarshal(showResp.Data, &existingIssue) == nil {
+								combined := existingIssue.Notes
+								if combined != "" {
+									combined += "\n"
+								}
+								combined += appendNotes
+								updateArgs.Notes = &combined
+							}
+						}
+					}
+					if acceptanceCriteria, ok := updates["acceptance_criteria"].(string); ok {
+						updateArgs.AcceptanceCriteria = &acceptanceCriteria
+					}
+					if externalRef, ok := updates["external_ref"].(string); ok {
+						updateArgs.ExternalRef = &externalRef
+					}
+					if issueType, ok := updates["issue_type"].(string); ok {
+						updateArgs.IssueType = &issueType
+					}
+					if addLabelsVal, ok := updates["add_labels"].([]string); ok {
+						updateArgs.AddLabels = addLabelsVal
+					}
+					if removeLabelsVal, ok := updates["remove_labels"].([]string); ok {
+						updateArgs.RemoveLabels = removeLabelsVal
+					}
+					if setLabelsVal, ok := updates["set_labels"].([]string); ok {
+						updateArgs.SetLabels = setLabelsVal
+					}
+					if parent, ok := updates["parent"].(string); ok {
+						updateArgs.Parent = &parent
+					}
+					updateArgs.Claim = claimFlag
+
+					resp, updateErr := routedClient.Update(updateArgs)
+					routedClient.Close()
+					if updateErr != nil {
+						fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, updateErr)
+						continue
+					}
+					var issue types.Issue
+					if json.Unmarshal(resp.Data, &issue) == nil {
+						if hookRunner != nil {
+							hookRunner.Run(hooks.EventUpdate, &issue)
+						}
+						if jsonOutput {
+							updatedIssues = append(updatedIssues, &issue)
+						}
+					}
+					if !jsonOutput {
+						fmt.Printf("%s Updated issue: %s\n", ui.RenderPass("✓"), resolvedID)
+					}
+					if firstUpdatedID == "" {
+						firstUpdatedID = resolvedID
+					}
+					continue
+				}
+				if routeErr != nil {
+					fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
+					continue
+				}
+
+				// Fall back to direct storage (no daemon at target rig)
 				result, err := resolveAndGetIssueWithRouting(ctx, store, id)
 				if err != nil {
 					if result != nil {
@@ -412,7 +505,6 @@ create, update, show, or close operation).`,
 					continue
 				}
 
-				// Handle claim operation atomically
 				if claimFlag {
 					if issue.Assignee != "" {
 						fmt.Fprintf(os.Stderr, "Error claiming %s: already claimed by %s\n", id, issue.Assignee)
@@ -430,14 +522,12 @@ create, update, show, or close operation).`,
 					}
 				}
 
-				// Apply regular field updates if any
 				regularUpdates := make(map[string]interface{})
 				for k, v := range updates {
 					if k != "add_labels" && k != "remove_labels" && k != "set_labels" && k != "parent" && k != "append_notes" {
 						regularUpdates[k] = v
 					}
 				}
-				// Handle append_notes: combine existing notes with new content
 				if appendNotes, ok := updates["append_notes"].(string); ok {
 					combined := issue.Notes
 					if combined != "" {
@@ -454,7 +544,6 @@ create, update, show, or close operation).`,
 					}
 				}
 
-				// Handle label operations
 				var setLabels, addLabels, removeLabels []string
 				if v, ok := updates["set_labels"].([]string); ok {
 					setLabels = v
@@ -473,7 +562,6 @@ create, update, show, or close operation).`,
 					}
 				}
 
-				// Run update hook
 				updatedIssue, _ := issueStore.GetIssue(ctx, result.ResolvedID)
 				if updatedIssue != nil && hookRunner != nil {
 					hookRunner.Run(hooks.EventUpdate, updatedIssue)

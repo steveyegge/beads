@@ -123,18 +123,27 @@ func runSlotSet(cmd *cobra.Command, args []string) error {
 	var beadID string
 	skipLocalRouting := isRemoteDaemon()
 	if !skipLocalRouting && needsRouting(beadArg) {
-		// Cross-beads reference - resolve via routing
-		result, err := resolveAndGetIssueWithRouting(ctx, store, beadArg)
-		if result != nil {
-			defer result.Close()
+		// Cross-beads reference - try daemon at target rig first (bd-6lp0)
+		resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(beadArg)
+		if routedClient != nil {
+			routedClient.Close()
+			beadID = resolvedID
+		} else if routeErr != nil {
+			return fmt.Errorf("failed to resolve bead %s: %w", beadArg, routeErr)
+		} else {
+			// Fall back to direct storage
+			result, err := resolveAndGetIssueWithRouting(ctx, store, beadArg)
+			if result != nil {
+				defer result.Close()
+			}
+			if err != nil {
+				return fmt.Errorf("failed to resolve bead %s: %w", beadArg, err)
+			}
+			if result == nil || result.Issue == nil {
+				return fmt.Errorf("failed to resolve bead %s: no issue found matching %q", beadArg, beadArg)
+			}
+			beadID = result.ResolvedID
 		}
-		if err != nil {
-			return fmt.Errorf("failed to resolve bead %s: %w", beadArg, err)
-		}
-		if result == nil || result.Issue == nil {
-			return fmt.Errorf("failed to resolve bead %s: no issue found matching %q", beadArg, beadArg)
-		}
-		beadID = result.ResolvedID
 	} else if daemonClient != nil {
 		resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: beadArg})
 		if err != nil {

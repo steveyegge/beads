@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/routing"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
@@ -196,4 +199,69 @@ func needsRouting(id string) bool {
 
 	// Check if the routed directory is different from the current one
 	return targetDir != beadsDir
+}
+
+// connectToRoutedDaemon connects to the daemon serving a routed issue ID (bd-6lp0).
+// It resolves the route for the given ID, finds the target beads directory,
+// and connects to the daemon running there via its Unix socket.
+//
+// Returns (client, nil) if a daemon is available at the routed target.
+// Returns (nil, nil) if no routing is needed or no daemon is available.
+// Returns (nil, error) on routing resolution failure.
+//
+// The caller is responsible for closing the returned client.
+func connectToRoutedDaemon(id string) (*rpc.Client, error) {
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return nil, nil
+	}
+
+	targetDir, routed, err := routing.ResolveBeadsDirForID(context.Background(), id, beadsDir)
+	if err != nil {
+		return nil, err
+	}
+	if !routed || targetDir == beadsDir {
+		return nil, nil // No routing needed
+	}
+
+	// Connect to daemon at target beads dir
+	// The socket path is determined by the workspace (parent of .beads)
+	workspacePath := filepath.Dir(targetDir)
+	socketPath := rpc.ShortSocketPath(workspacePath)
+	client, err := rpc.TryConnect(socketPath)
+	if err != nil || client == nil {
+		return nil, nil // No daemon available at target - not an error
+	}
+
+	return client, nil
+}
+
+// resolveIDViaRoutedDaemon resolves a partial issue ID via a daemon at the routed
+// target rig (bd-6lp0). This avoids opening direct Dolt storage connections that
+// conflict with running daemons.
+//
+// Returns (resolvedID, client, nil) if a daemon is available and ID resolves.
+// The caller is responsible for closing the returned client.
+// Returns ("", nil, nil) if no daemon is available (caller should fall back).
+// Returns ("", nil, error) on failure.
+func resolveIDViaRoutedDaemon(id string) (string, *rpc.Client, error) {
+	client, err := connectToRoutedDaemon(id)
+	if err != nil || client == nil {
+		return "", nil, err
+	}
+
+	// Resolve the partial ID via the routed daemon
+	resp, err := client.ResolveID(&rpc.ResolveIDArgs{ID: id})
+	if err != nil {
+		client.Close()
+		return "", nil, err
+	}
+
+	var resolvedID string
+	if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
+		client.Close()
+		return "", nil, err
+	}
+
+	return resolvedID, client, nil
 }
