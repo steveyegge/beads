@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -189,59 +188,16 @@ func (s *DoltStore) GetIssueComments(ctx context.Context, issueID string) ([]*ty
 	return comments, rows.Err()
 }
 
-// getCommentsForIssuesBatchSize is the maximum number of issue IDs per IN clause.
-// Large IN clauses (e.g. 29k params) create queries that Dolt cannot execute efficiently.
-const getCommentsForIssuesBatchSize = 500
-
 // GetCommentsForIssues retrieves comments for multiple issues, batching the query
 // into chunks to avoid oversized IN clauses that crush Dolt CPU.
 func (s *DoltStore) GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error) {
-	if len(issueIDs) == 0 {
-		return make(map[string][]*types.Comment), nil
-	}
-
-	result := make(map[string][]*types.Comment)
-	for i := 0; i < len(issueIDs); i += getCommentsForIssuesBatchSize {
-		end := i + getCommentsForIssuesBatchSize
-		if end > len(issueIDs) {
-			end = len(issueIDs)
-		}
-		batch := issueIDs[i:end]
-
-		placeholders := make([]string, len(batch))
-		args := make([]interface{}, len(batch))
-		for j, id := range batch {
-			placeholders[j] = "?"
-			args[j] = id
-		}
-
-		// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
-		query := fmt.Sprintf(`
-			SELECT id, issue_id, author, text, created_at
-			FROM comments
-			WHERE issue_id IN (%s)
-			ORDER BY issue_id, created_at ASC
-		`, strings.Join(placeholders, ","))
-
-		rows, err := s.db.QueryContext(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get comments: %w", err)
-		}
-
-		for rows.Next() {
+	return BatchIN(ctx, s.db, issueIDs, DefaultBatchSize,
+		`SELECT id, issue_id, author, text, created_at FROM comments WHERE issue_id IN (%s) ORDER BY issue_id, created_at ASC`,
+		func(rows *sql.Rows) (string, *types.Comment, error) {
 			var c types.Comment
-			if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.CreatedAt); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("failed to scan comment: %w", err)
-			}
-			result[c.IssueID] = append(result[c.IssueID], &c)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rows.Close()
-	}
-	return result, nil
+			err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.CreatedAt)
+			return c.IssueID, &c, err
+		},
+	)
 }
 
