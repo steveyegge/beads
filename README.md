@@ -46,9 +46,17 @@ Shadowbook keeps the race safe:
 - It flags when the track is changing while cars are already at speed.
 - It shows which cars are on worn tires (unstable skills) and which are safe to push.
 - It pauses risky runs when the track is breaking apart.
-- It gives you a clean lap chart of what’s actually happening, not what you hoped happened.
+- It gives you a clean lap chart of what's actually happening, not what you hoped happened.
 
-In Formula‑1 terms: Shadowbook is the difference between “full send” and a DNF you didn’t see coming.
+Agent teams are the pit wall — coordinating multiple cars from a single screen.
+`bd team plan` is race strategy: which car runs which stint, in what order, on which tires.
+`bd team watch` is live telemetry: speed, gaps, tire wear — updated every few seconds.
+`bd team score` is championship points: pacman dots awarded per completed stint.
+`bd team wobble` is the post-race debrief: did drivers follow the strategy or freelance?
+`bd team gate` is track inspection: is the circuit safe to race, or is the surface breaking up?
+File disjointness is the rule that two cars can't occupy the same piece of track at the same time.
+
+In Formula‑1 terms: Shadowbook is the difference between "full send" and a DNF you didn't see coming.
 
 ---
 
@@ -325,6 +333,12 @@ bd close bd-xyz --compact-spec --compact-skills
 | `bd pacman --eat <id>` | Close task + increment score (hidden flag) |
 | `bd pacman --global` | Workspace-wide view across all projects |
 | `bd pacman --badge` | Generate GitHub profile badge |
+| `bd team plan <epic>` | Epic DAG → team execution plan (JSON or human-readable) |
+| `bd team watch` | Live dashboard of agent team progress |
+| `bd team score` | Pacman leaderboard for team session |
+| `bd team wobble` | Post-session drift check: did agents follow briefs? |
+| `bd team gate <spec>` | Spec volatility check before team assignment |
+| `bd team report` | Full post-mortem with per-agent metrics |
 
 ---
 
@@ -439,6 +453,76 @@ PROJECTS:
 | Agent dies | Inbox stuck | Files persist |
 | 10 projects | 10 registrations | 0 registrations |
 | Sync | MCP calls | Git pull/push |
+
+---
+
+## Agent Teams Bridge
+
+`bd team` bridges beads (where work is tracked) to agent teams (where work is executed). Orchestrator-agnostic — outputs JSON that Claude Code, Codex, or any orchestrator can consume.
+
+### Plan: Epic DAG → Team Execution Plan
+
+```bash
+$ bd team plan beads-abc
+
+╭─ Team Plan: IST Normalization + Security Hardening ─────────╮
+│                                                              │
+│  Wave 1 (parallel):                                          │
+│    ○ beads-123  Create time_utils.py          [2 files]      │
+│    ○ beads-456  Security audit                [2 files]      │
+│    ○ beads-789  Infra health check            [0 files]      │
+│                                                              │
+│  Wave 2 (parallel, after wave 1):                            │
+│    ○ beads-012  Apply IST to resim            [1 file]       │
+│      └─ blocked by: beads-123                                │
+│                                                              │
+│  Validation:                                                 │
+│    ✓ File-disjoint (no conflicts)                            │
+│    ✓ Max parallelism: 3 agents                               │
+│    ✓ Spec volatility: LOW (all specs stable)                 │
+│                                                              │
+╰──────────────────────────────────────────────────────────────╯
+```
+
+Add `--format json` for machine-readable output that any orchestrator can pipe directly into team creation.
+
+### Watch: Live Agent Dashboard
+
+```bash
+$ bd team watch
+
+╭─ Team: plan-execution-feb06 ────────────── 03:05:12 IST ───╮
+│                                                              │
+│  Agents:                                                     │
+│    ist-engineer      ● working   Task #1 (IST utility)       │
+│    hardening-eng     ● working   Task #3 (Security)          │
+│    watchlist-eng     ● working   Task #4 (Snapshot)          │
+│    infra-eng         ○ idle      (completed #5, #6)          │
+│                                                              │
+│  Tasks:                                                      │
+│    #1 [████████░░] in_progress  IST utility + resim          │
+│    #2 [░░░░░░░░░░] blocked     IST paper daemon (→ #1)      │
+│    #3 [██████░░░░] in_progress  Security + async             │
+│    #4 [████░░░░░░] in_progress  Watchlist snapshot           │
+│    #5 [██████████] completed   Resim runner + board          │
+│    #6 [██████████] completed   Health check                  │
+│                                                              │
+│  Progress: 2/6 done │ 3 active │ 1 blocked                  │
+│  Pacman:  infra-eng 2 🟡  others 0 🟡                       │
+╰──────────────────────────────────────────────────────────────╯
+```
+
+Reads from `~/.claude/teams/` and `~/.claude/tasks/`. Refreshes automatically.
+
+### Why It Matters
+
+| Before | After |
+|--------|-------|
+| ~5 min manual `TaskCreate × N` | `bd team plan` in 2 seconds |
+| No visibility from bd | Real-time dashboard with `bd team watch` |
+| Manual bead closure | Auto-close when team tasks complete |
+| No quality check | `bd team wobble` scores agent fidelity |
+| No post-mortem | `bd team report` — one command |
 
 ---
 
