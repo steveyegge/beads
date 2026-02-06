@@ -83,6 +83,29 @@ func (s *DoltStore) GetLabelsForIssues(ctx context.Context, issueIDs []string) (
 	return result, rows.Err()
 }
 
+// GetAllLabels retrieves all labels for all issues.
+// Used by the label cache to do a single full-table scan at startup
+// instead of many IN-clause queries.
+func (s *DoltStore) GetAllLabels(ctx context.Context) (map[string][]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT issue_id, label FROM labels ORDER BY issue_id, label
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all labels: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string][]string)
+	for rows.Next() {
+		var issueID, label string
+		if err := rows.Scan(&issueID, &label); err != nil {
+			return nil, fmt.Errorf("failed to scan label: %w", err)
+		}
+		result[issueID] = append(result[issueID], label)
+	}
+	return result, rows.Err()
+}
+
 // GetIssuesByLabel retrieves all issues with a specific label
 func (s *DoltStore) GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error) {
 	rows, err := s.db.QueryContext(ctx, `

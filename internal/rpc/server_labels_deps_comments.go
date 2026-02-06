@@ -288,16 +288,24 @@ func (s *Server) handleDepRemoveBidirectional(req *Request) Response {
 
 func (s *Server) handleLabelAdd(req *Request) Response {
 	var labelArgs LabelAddArgs
-	return s.handleSimpleStoreOp(req, &labelArgs, "label add", func(ctx context.Context, store storage.Storage, actor string) error {
+	resp := s.handleSimpleStoreOp(req, &labelArgs, "label add", func(ctx context.Context, store storage.Storage, actor string) error {
 		return store.AddLabel(ctx, labelArgs.ID, labelArgs.Label, actor)
 	}, labelArgs.ID, nil)
+	if resp.Success && s.labelCache != nil {
+		s.labelCache.AddLabel(labelArgs.ID, labelArgs.Label)
+	}
+	return resp
 }
 
 func (s *Server) handleLabelRemove(req *Request) Response {
 	var labelArgs LabelRemoveArgs
-	return s.handleSimpleStoreOp(req, &labelArgs, "label remove", func(ctx context.Context, store storage.Storage, actor string) error {
+	resp := s.handleSimpleStoreOp(req, &labelArgs, "label remove", func(ctx context.Context, store storage.Storage, actor string) error {
 		return store.RemoveLabel(ctx, labelArgs.ID, labelArgs.Label, actor)
 	}, labelArgs.ID, nil)
+	if resp.Success && s.labelCache != nil {
+		s.labelCache.RemoveLabel(labelArgs.ID, labelArgs.Label)
+	}
+	return resp
 }
 
 // handleBatchAddLabels adds multiple labels to an issue in a single atomic transaction.
@@ -399,6 +407,11 @@ func (s *Server) handleBatchAddLabels(req *Request) Response {
 	// Emit mutation event for event-driven daemon
 	title, assignee := s.lookupIssueMeta(ctx, fullID)
 	s.emitMutation(MutationUpdate, fullID, title, assignee)
+
+	// Invalidate label cache
+	if s.labelCache != nil {
+		s.labelCache.InvalidateIssue(fullID)
+	}
 
 	result := &BatchAddLabelsResult{
 		IssueID:     fullID,
@@ -653,6 +666,11 @@ func (s *Server) handleSetState(req *Request) Response {
 	// Emit mutation event for event-driven daemon
 	title, assignee := s.lookupIssueMeta(ctx, fullID)
 	s.emitMutation(MutationUpdate, fullID, title, assignee)
+
+	// Invalidate label cache (label was renamed)
+	if s.labelCache != nil {
+		s.labelCache.InvalidateIssue(fullID)
+	}
 
 	result := &SetStateResult{
 		IssueID:   fullID,

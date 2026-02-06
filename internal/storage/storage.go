@@ -117,6 +117,7 @@ type Storage interface {
 	RemoveLabel(ctx context.Context, issueID, label, actor string) error
 	GetLabels(ctx context.Context, issueID string) ([]string, error)
 	GetLabelsForIssues(ctx context.Context, issueIDs []string) (map[string][]string, error)
+	GetAllLabels(ctx context.Context) (map[string][]string, error)
 	GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error)
 
 	// Ready Work & Blocking

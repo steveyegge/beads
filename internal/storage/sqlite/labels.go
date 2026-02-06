@@ -148,6 +148,30 @@ func (s *SQLiteStorage) GetLabelsForIssues(ctx context.Context, issueIDs []strin
 	return result, nil
 }
 
+// GetAllLabels retrieves all labels for all issues.
+func (s *SQLiteStorage) GetAllLabels(ctx context.Context) (map[string][]string, error) {
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT issue_id, label FROM labels ORDER BY issue_id, label
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all labels: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[string][]string)
+	for rows.Next() {
+		var issueID, label string
+		if err := rows.Scan(&issueID, &label); err != nil {
+			return nil, err
+		}
+		result[issueID] = append(result[issueID], label)
+	}
+	return result, nil
+}
+
 // buildPlaceholders creates a comma-separated list of SQL placeholders
 func buildPlaceholders(count int) string {
 	if count == 0 {

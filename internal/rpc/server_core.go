@@ -102,6 +102,8 @@ type Server struct {
 	daemonMode   string
 	// Query deduplication for coalescing identical in-flight queries
 	queryDedup *QueryDeduplicator
+	// In-memory label cache (eliminates expensive batch label queries to Dolt)
+	labelCache *LabelCache
 }
 
 // Mutation event types
@@ -228,6 +230,7 @@ func NewServerWithWispStore(socketPath string, store storage.Storage, wispStore 
 		maxMutationBuffer: 100,
 		queryCache:        NewQueryCache(cacheTTL, cacheMaxSize),
 		queryDedup:        NewQueryDeduplicator(500 * time.Millisecond), // 500ms dedup window
+		labelCache:        NewLabelCache(store),
 	}
 	s.lastActivityTime.Store(time.Now())
 

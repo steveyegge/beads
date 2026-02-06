@@ -1055,6 +1055,19 @@ func (m *MemoryStorage) GetLabelsForIssues(ctx context.Context, issueIDs []strin
 	return result, nil
 }
 
+func (m *MemoryStorage) GetAllLabels(ctx context.Context) (map[string][]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string][]string, len(m.labels))
+	for issueID, labels := range m.labels {
+		copied := make([]string, len(labels))
+		copy(copied, labels)
+		result[issueID] = copied
+	}
+	return result, nil
+}
+
 func (m *MemoryStorage) GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

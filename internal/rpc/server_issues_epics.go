@@ -734,6 +734,11 @@ func (s *Server) handleCreate(req *Request) Response {
 	// Emit mutation event for event-driven daemon (after transaction commits)
 	s.emitMutation(MutationCreate, issue.ID, issue.Title, issue.Assignee)
 
+	// Update label cache for the new issue
+	if s.labelCache != nil && len(createArgs.Labels) > 0 {
+		s.labelCache.SetLabels(issue.ID, issue.Labels)
+	}
+
 	data, _ := json.Marshal(issue)
 	return Response{
 		Success: true,
@@ -1036,6 +1041,11 @@ func (s *Server) handleUpdate(req *Request) Response {
 		}
 	}
 
+	// Invalidate label cache if labels were modified
+	if s.labelCache != nil && (len(updateArgs.SetLabels) > 0 || len(updateArgs.AddLabels) > 0 || len(updateArgs.RemoveLabels) > 0) {
+		s.labelCache.InvalidateIssue(updateArgs.ID)
+	}
+
 	data, _ := json.Marshal(updatedIssue)
 	return Response{
 		Success: true,
@@ -1193,6 +1203,11 @@ func (s *Server) handleUpdateWithComment(req *Request) Response {
 
 	if args.CommentText != "" {
 		s.emitMutation(MutationComment, args.ID, issue.Title, issue.Assignee)
+	}
+
+	// Invalidate label cache if labels were modified
+	if s.labelCache != nil && (len(args.SetLabels) > 0 || len(args.AddLabels) > 0 || len(args.RemoveLabels) > 0) {
+		s.labelCache.InvalidateIssue(args.ID)
 	}
 
 	data, _ := json.Marshal(updatedIssue)
@@ -1943,7 +1958,7 @@ func (s *Server) handleList(req *Request) Response {
 			epicIDs = append(epicIDs, issue.ID)
 		}
 	}
-	labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
+	labelsMap, _ := s.labelCache.GetLabelsForIssues(ctx, issueIDs)
 	for _, issue := range issues {
 		issue.Labels = labelsMap[issue.ID]
 	}
@@ -2214,7 +2229,7 @@ func (s *Server) handleListWatch(req *Request) Response {
 		for i, issue := range issues {
 			watchIssueIDs[i] = issue.ID
 		}
-		labelsMap, _ := store.GetLabelsForIssues(ctx, watchIssueIDs)
+		labelsMap, _ := s.labelCache.GetLabelsForIssues(ctx, watchIssueIDs)
 		for _, issue := range issues {
 			issue.Labels = labelsMap[issue.ID]
 		}
@@ -2408,7 +2423,7 @@ func (s *Server) handleCount(req *Request) Response {
 			issueIDs[i] = issue.ID
 		}
 		var err error
-		labelsMap, err = store.GetLabelsForIssues(ctx, issueIDs)
+		labelsMap, err = s.labelCache.GetLabelsForIssues(ctx, issueIDs)
 		if err != nil {
 			return Response{
 				Success: false,
