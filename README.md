@@ -1,6 +1,6 @@
 # Shadowbook
 
-![Pacman Score](https://img.shields.io/badge/pacman%20score-3%20dots-yellow)
+![Pacman Score](https://img.shields.io/badge/pacman%20score-6%20dots-yellow)
 
 ### `bd` — keep the story straight, even when the work isn't
 
@@ -80,6 +80,26 @@ curl -fsSL https://raw.githubusercontent.com/anupamchugh/shadowbook/main/scripts
 cd your-project && bd init && mkdir -p specs
 bd recent --all
 ```
+
+---
+
+## Dogfooding: Real Numbers
+
+Ran on a 683-spec production codebase (trading platform, 14 months of specs):
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Total specs | 683 | 365 |
+| Exact duplicates | 75 | 0 |
+| Ghost registry entries | 393 | 0 |
+| Lines removed | — | 110,326 |
+| Specs linked to beads | 13 | 13 (preserved) |
+| Time to clean | — | ~5 minutes |
+
+What sbd found that manual review missed:
+- 75 files duplicated between `specs/active/` and `specs/reference/` (1.00 similarity)
+- 243 specs older than 7 days with no linked beads (pure noise)
+- 393 stale registry entries pointing to already-deleted files
 
 ---
 
@@ -365,6 +385,14 @@ Uses `go/ast` for parsing, `git blame --porcelain` (per-file, batched) for stale
 | `bd wobble inspect .` | Project skill health audit |
 | `bd drift` | Wobble + spec/bead drift summary |
 | `bd cascade <skill>` | Wobble cascade impact from stored dependents |
+| `bd agent state <id> <state>` | Set agent state (idle/running/stuck/done) |
+| `bd agent heartbeat <id>` | Update agent alive timestamp |
+| `bd agent show <id>` | Show agent bead details |
+| `bd slot set <id> hook <bead>` | Attach work to agent's hook |
+| `bd slot show <id>` | Show agent's current work |
+| `bd slot clear <id> hook` | Detach work from agent |
+| `bd reflect` | Session-end retrospective (close beads, capture lessons, flag debt) |
+| `bd reflect --non-interactive` | Summary only, no prompts |
 | `bd pacman` | Pacman mode: dots (ready work), blockers, leaderboard |
 | `bd pacman --pause "reason"` | Pause signal for other agents (file-based) |
 | `bd pacman --resume` | Clear pause signal |
@@ -495,6 +523,8 @@ PROJECTS:
 
 ---
 
+> **Status: Designed, not yet shipped.** The primitives exist (`bd agent`, `bd slot`, `bd gate`, `bd assign`), but the `bd team` orchestration layer is planned for a future release. The design below shows the intended UX.
+
 ## Agent Teams Bridge
 
 `bd team` bridges beads (where work is tracked) to agent teams (where work is executed). Orchestrator-agnostic — outputs JSON that Claude Code, Codex, or any orchestrator can consume.
@@ -581,12 +611,3 @@ Every spec casts a shadow over code. When the spec moves, the shadow should move
 ---
 
 MIT License · Built on [beads](https://github.com/steveyegge/beads)
-
-### Wobble Drift
-
-```bash
-bd drift
-bd cascade <skill>
-```
-
-Drift shows the last wobble scan summary plus spec/bead drift counts. Cascade prints the dependents recorded in `.beads/wobble/skills.json`.
