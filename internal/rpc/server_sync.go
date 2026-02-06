@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/export"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -215,6 +216,8 @@ func (s *Server) findJSONLPath() string {
 
 // performSyncExport exports issues to JSONL and returns the count.
 func (s *Server) performSyncExport(ctx context.Context, store storage.Storage, jsonlPath string) (int, error) {
+	cycleStart := time.Now()
+
 	// Load export configuration
 	cfg, err := export.LoadConfig(ctx, store, false)
 	if err != nil {
@@ -222,10 +225,12 @@ func (s *Server) performSyncExport(ctx context.Context, store storage.Storage, j
 	}
 
 	// Get all issues including tombstones
+	fetchStart := time.Now()
 	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 	if err != nil {
 		return 0, fmt.Errorf("failed to get issues: %w", err)
 	}
+	debug.Logf("sync-export: fetched %d issues in %v", len(issues), time.Since(fetchStart))
 
 	// Sort by ID for consistent output
 	sort.Slice(issues, func(i, j int) bool {
@@ -234,6 +239,7 @@ func (s *Server) performSyncExport(ctx context.Context, store storage.Storage, j
 
 	// Populate dependencies
 	var allDeps map[string][]*types.Dependency
+	depsStart := time.Now()
 	result := export.FetchWithPolicy(ctx, cfg, export.DataTypeCore, "get dependencies", func() error {
 		var err error
 		allDeps, err = store.GetAllDependencyRecords(ctx)
@@ -242,24 +248,27 @@ func (s *Server) performSyncExport(ctx context.Context, store storage.Storage, j
 	if result.Err != nil {
 		return 0, fmt.Errorf("failed to get dependencies: %w", result.Err)
 	}
+	debug.Logf("sync-export: fetched dependencies in %v", time.Since(depsStart))
 	for _, issue := range issues {
 		issue.Dependencies = allDeps[issue.ID]
 	}
 
-	// Populate labels
+	// Populate labels (from in-memory cache)
 	issueIDs := make([]string, len(issues))
 	for i, issue := range issues {
 		issueIDs[i] = issue.ID
 	}
 	var allLabels map[string][]string
+	labelsStart := time.Now()
 	result = export.FetchWithPolicy(ctx, cfg, export.DataTypeLabels, "get labels", func() error {
 		var err error
-		allLabels, err = store.GetLabelsForIssues(ctx, issueIDs)
+		allLabels, err = s.labelCache.GetLabelsForIssues(ctx, issueIDs)
 		return err
 	})
 	if result.Err != nil {
 		return 0, fmt.Errorf("failed to get labels: %w", result.Err)
 	}
+	debug.Logf("sync-export: fetched labels for %d issues in %v (cache=%v)", len(issueIDs), time.Since(labelsStart), s.labelCache.IsPopulated())
 	if !result.Success {
 		allLabels = make(map[string][]string)
 	}
@@ -269,6 +278,7 @@ func (s *Server) performSyncExport(ctx context.Context, store storage.Storage, j
 
 	// Populate comments
 	var allComments map[string][]*types.Comment
+	commentsStart := time.Now()
 	result = export.FetchWithPolicy(ctx, cfg, export.DataTypeComments, "get comments", func() error {
 		var err error
 		allComments, err = store.GetCommentsForIssues(ctx, issueIDs)
@@ -277,6 +287,7 @@ func (s *Server) performSyncExport(ctx context.Context, store storage.Storage, j
 	if result.Err != nil {
 		return 0, fmt.Errorf("failed to get comments: %w", result.Err)
 	}
+	debug.Logf("sync-export: fetched comments in %v", time.Since(commentsStart))
 	if !result.Success {
 		allComments = make(map[string][]*types.Comment)
 	}
@@ -330,6 +341,7 @@ func (s *Server) performSyncExport(ctx context.Context, store storage.Storage, j
 		}
 	}
 
+	debug.Logf("sync-export: complete cycle=%v issues=%d", time.Since(cycleStart), len(exportedIDs))
 	return len(exportedIDs), nil
 }
 

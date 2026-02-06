@@ -23,6 +23,8 @@ import (
 
 // handleExport handles the export operation
 func (s *Server) handleExport(req *Request) Response {
+	cycleStart := time.Now()
+
 	var exportArgs ExportArgs
 	if err := json.Unmarshal(req.Args, &exportArgs); err != nil {
 		return Response{
@@ -52,6 +54,7 @@ func (s *Server) handleExport(req *Request) Response {
 
 	// Get all issues including tombstones for sync propagation (bd-rp4o fix)
 	// Tombstones must be exported so they propagate to other clones and prevent resurrection
+	fetchStart := time.Now()
 	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 	if err != nil {
 		return Response{
@@ -59,6 +62,7 @@ func (s *Server) handleExport(req *Request) Response {
 			Error:   fmt.Sprintf("failed to get issues: %v", err),
 		}
 	}
+	debug.Logf("export: fetched %d issues in %v", len(issues), time.Since(fetchStart))
 
 	// Sort by ID for consistent output
 	sort.Slice(issues, func(i, j int) bool {
@@ -67,6 +71,7 @@ func (s *Server) handleExport(req *Request) Response {
 
 	// Populate dependencies for all issues (core data)
 	var allDeps map[string][]*types.Dependency
+	depsStart := time.Now()
 	result := export.FetchWithPolicy(ctx, cfg, export.DataTypeCore, "get dependencies", func() error {
 		var err error
 		allDeps, err = store.GetAllDependencyRecords(ctx)
@@ -78,19 +83,21 @@ func (s *Server) handleExport(req *Request) Response {
 			Error:   fmt.Sprintf("failed to get dependencies: %v", result.Err),
 		}
 	}
+	debug.Logf("export: fetched dependencies in %v", time.Since(depsStart))
 	for _, issue := range issues {
 		issue.Dependencies = allDeps[issue.ID]
 	}
 
-	// Populate labels for all issues (enrichment data)
+	// Populate labels for all issues (from in-memory cache)
 	issueIDs := make([]string, len(issues))
 	for i, issue := range issues {
 		issueIDs[i] = issue.ID
 	}
 	var allLabels map[string][]string
+	labelsStart := time.Now()
 	result = export.FetchWithPolicy(ctx, cfg, export.DataTypeLabels, "get labels", func() error {
 		var err error
-		allLabels, err = store.GetLabelsForIssues(ctx, issueIDs)
+		allLabels, err = s.labelCache.GetLabelsForIssues(ctx, issueIDs)
 		return err
 	})
 	if result.Err != nil {
@@ -99,6 +106,7 @@ func (s *Server) handleExport(req *Request) Response {
 			Error:   fmt.Sprintf("failed to get labels: %v", result.Err),
 		}
 	}
+	debug.Logf("export: fetched labels for %d issues in %v (cache=%v)", len(issueIDs), time.Since(labelsStart), s.labelCache.IsPopulated())
 	if !result.Success {
 		// Labels fetch failed but policy allows continuing
 		allLabels = make(map[string][]string) // Empty map
@@ -114,6 +122,7 @@ func (s *Server) handleExport(req *Request) Response {
 
 	// Populate comments for all issues (enrichment data)
 	var allComments map[string][]*types.Comment
+	commentsStart := time.Now()
 	result = export.FetchWithPolicy(ctx, cfg, export.DataTypeComments, "get comments", func() error {
 		var err error
 		allComments, err = store.GetCommentsForIssues(ctx, issueIDs)
@@ -125,6 +134,7 @@ func (s *Server) handleExport(req *Request) Response {
 			Error:   fmt.Sprintf("failed to get comments: %v", result.Err),
 		}
 	}
+	debug.Logf("export: fetched comments in %v", time.Since(commentsStart))
 	if !result.Success {
 		// Comments fetch failed but policy allows continuing
 		allComments = make(map[string][]*types.Comment) // Empty map
@@ -226,6 +236,8 @@ func (s *Server) handleExport(req *Request) Response {
 			fmt.Fprintf(os.Stderr, "Warning: failed to write manifest: %v\n", err)
 		}
 	}
+
+	debug.Logf("export: complete cycle=%v issues=%d", time.Since(cycleStart), len(exportedIDs))
 
 	responseData := map[string]interface{}{
 		"exported_count": len(exportedIDs),
@@ -457,6 +469,8 @@ func hasUncommittedBeadsFiles(workspacePath string) bool {
 // triggerExport exports all issues to JSONL after auto-import remaps IDs
 // CRITICAL: Must populate all issue data (deps, labels, comments) to prevent data loss
 func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPath string) error {
+	cycleStart := time.Now()
+
 	// Find JSONL path using database directory
 	// Use FindJSONLInDir to prefer issues.jsonl over other .jsonl files (bd-tqo fix)
 	dbDir := filepath.Dir(dbPath)
@@ -481,10 +495,12 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 	}
 
 	// Export to JSONL including tombstones for sync propagation (bd-rp4o fix)
+	fetchStart := time.Now()
 	allIssues, err := sqliteStore.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 	if err != nil {
 		return fmt.Errorf("failed to fetch issues for export: %w", err)
 	}
+	debug.Logf("trigger-export: fetched %d issues in %v", len(allIssues), time.Since(fetchStart))
 
 	// Sort by ID for consistent output (same as handleExport)
 	sort.Slice(allIssues, func(i, j int) bool {
@@ -496,6 +512,7 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 
 	// Populate dependencies for all issues (core data)
 	var allDeps map[string][]*types.Dependency
+	depsStart := time.Now()
 	result := export.FetchWithPolicy(ctx, cfg, export.DataTypeCore, "get dependencies", func() error {
 		var err error
 		allDeps, err = store.GetAllDependencyRecords(ctx)
@@ -504,24 +521,27 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 	if result.Err != nil {
 		return fmt.Errorf("failed to get dependencies: %w", result.Err)
 	}
+	debug.Logf("trigger-export: fetched dependencies in %v", time.Since(depsStart))
 	for _, issue := range allIssues {
 		issue.Dependencies = allDeps[issue.ID]
 	}
 
-	// Populate labels for all issues (enrichment data)
+	// Populate labels for all issues (from in-memory cache)
 	issueIDs := make([]string, len(allIssues))
 	for i, issue := range allIssues {
 		issueIDs[i] = issue.ID
 	}
 	var allLabels map[string][]string
+	labelsStart := time.Now()
 	result = export.FetchWithPolicy(ctx, cfg, export.DataTypeLabels, "get labels", func() error {
 		var err error
-		allLabels, err = store.GetLabelsForIssues(ctx, issueIDs)
+		allLabels, err = s.labelCache.GetLabelsForIssues(ctx, issueIDs)
 		return err
 	})
 	if result.Err != nil {
 		return fmt.Errorf("failed to get labels: %w", result.Err)
 	}
+	debug.Logf("trigger-export: fetched labels for %d issues in %v (cache=%v)", len(issueIDs), time.Since(labelsStart), s.labelCache.IsPopulated())
 	if !result.Success {
 		// Labels fetch failed but policy allows continuing
 		allLabels = make(map[string][]string) // Empty map
@@ -532,6 +552,7 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 
 	// Populate comments for all issues (enrichment data)
 	var allComments map[string][]*types.Comment
+	commentsStart := time.Now()
 	result = export.FetchWithPolicy(ctx, cfg, export.DataTypeComments, "get comments", func() error {
 		var err error
 		allComments, err = store.GetCommentsForIssues(ctx, issueIDs)
@@ -540,6 +561,7 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 	if result.Err != nil {
 		return fmt.Errorf("failed to get comments: %w", result.Err)
 	}
+	debug.Logf("trigger-export: fetched comments in %v", time.Since(commentsStart))
 	if !result.Success {
 		// Comments fetch failed but policy allows continuing
 		allComments = make(map[string][]*types.Comment) // Empty map
@@ -576,5 +598,6 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 		return fmt.Errorf("failed to replace JSONL file: %w", err)
 	}
 
+	debug.Logf("trigger-export: complete cycle=%v issues=%d", time.Since(cycleStart), len(allIssues))
 	return nil
 }
