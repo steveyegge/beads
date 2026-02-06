@@ -40,6 +40,15 @@ func runEventDrivenLoop(
 	parentPID int,
 	log daemonLogger,
 ) {
+	// Startup: flush stale dirty_issues entries to reduce query overhead (bd-13lq)
+	flushStaleDirtyIssues(ctx, store, log)
+
+	// Startup: purge old tombstones to reduce table sizes (bd-t8b0)
+	gcDeadIssues(ctx, store, log)
+
+	// Startup: rebuild blocked_issues_cache for Dolt backend (bd-b2ts)
+	rebuildBlockedCacheIfDolt(ctx, store, log)
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, daemonSignals...)
 	defer signal.Stop(sigChan)
@@ -86,6 +95,8 @@ func runEventDrivenLoop(
 				}
 				log.log("Mutation detected: %s %s", event.Type, event.IssueID)
 				exportDebouncer.Trigger()
+				// Rebuild blocked cache after mutations (bd-b2ts)
+				rebuildBlockedCacheIfDolt(ctx, store, log)
 
 			case <-ctx.Done():
 				return
@@ -241,18 +252,20 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 	// Health check 2: Database integrity check
 	// Verify the database is accessible and structurally sound
 	if db := store.UnderlyingDB(); db != nil {
-		// Quick integrity check - just verify we can query
-		// Try SQLite PRAGMA first, fall back to simple SELECT for Dolt/MySQL
-		var result string
-		if err := db.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&result); err != nil {
-			// PRAGMA not supported (likely Dolt/MySQL) - try simple connectivity check
+		if store.BackendName() == "sqlite" {
+			// SQLite: use PRAGMA quick_check for integrity validation
+			var result string
+			if err := db.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&result); err != nil {
+				log.log("Health check: database integrity check failed: %v", err)
+			} else if result != "ok" {
+				log.log("Health check: database integrity issue: %s", result)
+			}
+		} else {
+			// Dolt/MySQL: use simple connectivity check (PRAGMA is invalid SQL)
 			var one int
 			if err := db.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
 				log.log("Health check: database connectivity check failed: %v", err)
 			}
-			// If SELECT 1 succeeds, database is accessible (skip PRAGMA-specific checks)
-		} else if result != "ok" {
-			log.log("Health check: database integrity issue: %s", result)
 		}
 	}
 
@@ -277,6 +290,215 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 	// Warn if heap exceeds 500MB (daemon should be lightweight)
 	if heapMB > 500 {
 		log.log("Health check: high memory usage warning: %dMB heap allocated", heapMB)
+	}
+}
+
+// rebuildBlockedCacheIfDolt rebuilds the blocked_issues_cache table for Dolt backends.
+// SQLite manages its cache inline during write transactions, but Dolt needs
+// periodic rebuilds since its write operations don't include cache invalidation
+// in the same transaction. Called at startup, after mutations, and as safety net. (bd-b2ts)
+func rebuildBlockedCacheIfDolt(ctx context.Context, store storage.Storage, log daemonLogger) {
+	if store.BackendName() != "dolt" {
+		return
+	}
+
+	db := store.UnderlyingDB()
+	if db == nil {
+		return
+	}
+
+	// Check if the table exists (may not exist on older schemas)
+	var tableExists int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_name = 'blocked_issues_cache'
+	`).Scan(&tableExists)
+	if err != nil || tableExists == 0 {
+		return
+	}
+
+	if _, err := db.ExecContext(ctx, "DELETE FROM blocked_issues_cache"); err != nil {
+		log.log("Blocked cache rebuild: failed to clear: %v", err)
+		return
+	}
+
+	// Rebuild using recursive CTE (same logic as dolt/blocked_cache.go)
+	query := `
+		INSERT INTO blocked_issues_cache (issue_id)
+		WITH RECURSIVE
+		  blocked_directly AS (
+		    SELECT DISTINCT d.issue_id
+		    FROM dependencies d
+		    JOIN issues blocker ON d.depends_on_id = blocker.id
+		    WHERE d.type = 'blocks'
+		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+
+		    UNION
+
+		    SELECT DISTINCT d.issue_id
+		    FROM dependencies d
+		    JOIN issues blocker ON d.depends_on_id = blocker.id
+		    WHERE d.type = 'conditional-blocks'
+		      AND (
+		        blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		        OR
+		        (blocker.status = 'closed' AND NOT (
+		          LOWER(COALESCE(blocker.close_reason, '')) LIKE '%failed%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%rejected%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%wontfix%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%canceled%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%cancelled%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%abandoned%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%blocked%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%error%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%timeout%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%aborted%'
+		        ))
+		      )
+
+		    UNION
+
+		    SELECT DISTINCT d.issue_id
+		    FROM dependencies d
+		    WHERE d.type = 'waits-for'
+		      AND (
+		        COALESCE(JSON_EXTRACT(d.metadata, '$.gate'), 'all-children') = 'all-children'
+		        AND EXISTS (
+		          SELECT 1 FROM dependencies child_dep
+		          JOIN issues child ON child_dep.issue_id = child.id
+		          WHERE child_dep.type = 'parent-child'
+		            AND child_dep.depends_on_id = COALESCE(
+		              JSON_EXTRACT(d.metadata, '$.spawner_id'),
+		              d.depends_on_id
+		            )
+		            AND child.status NOT IN ('closed', 'tombstone')
+		        )
+		        OR
+		        COALESCE(JSON_EXTRACT(d.metadata, '$.gate'), 'all-children') = 'any-children'
+		        AND NOT EXISTS (
+		          SELECT 1 FROM dependencies child_dep
+		          JOIN issues child ON child_dep.issue_id = child.id
+		          WHERE child_dep.type = 'parent-child'
+		            AND child_dep.depends_on_id = COALESCE(
+		              JSON_EXTRACT(d.metadata, '$.spawner_id'),
+		              d.depends_on_id
+		            )
+		            AND child.status IN ('closed', 'tombstone')
+		        )
+		      )
+		  ),
+
+		  blocked_transitively AS (
+		    SELECT issue_id, 0 as depth
+		    FROM blocked_directly
+
+		    UNION ALL
+
+		    SELECT d.issue_id, bt.depth + 1
+		    FROM blocked_transitively bt
+		    JOIN dependencies d ON d.depends_on_id = bt.issue_id
+		    WHERE d.type = 'parent-child'
+		      AND bt.depth < 50
+		  )
+		SELECT DISTINCT issue_id FROM blocked_transitively
+	`
+
+	if _, err := db.ExecContext(ctx, query); err != nil {
+		log.log("Blocked cache rebuild: failed to populate: %v", err)
+	}
+}
+
+// gcDeadIssues purges old tombstone issues and cleans up stale data.
+// Tombstoned issues older than 7 days are hard-deleted since they've been
+// soft-deleted and exported already. This reduces the active dataset size
+// and speeds up joins. (bd-t8b0)
+func gcDeadIssues(ctx context.Context, store storage.Storage, log daemonLogger) {
+	db := store.UnderlyingDB()
+	if db == nil {
+		return
+	}
+
+	backend := store.BackendName()
+
+	// Step 1: Hard-delete tombstoned issues older than 7 days
+	// FK CASCADE will clean up dependencies, events, labels, dirty_issues, etc.
+	var purgeQuery string
+	if backend == "sqlite" {
+		purgeQuery = `DELETE FROM issues WHERE status = 'tombstone' AND deleted_at < datetime('now', '-7 days')`
+	} else {
+		// MySQL/Dolt
+		purgeQuery = `DELETE FROM issues WHERE status = 'tombstone' AND deleted_at < DATE_SUB(NOW(), INTERVAL 7 DAY)`
+	}
+	result, err := db.ExecContext(ctx, purgeQuery)
+	if err != nil {
+		log.log("GC: failed to purge old tombstones: %v", err)
+	} else if n, _ := result.RowsAffected(); n > 0 {
+		log.log("GC: purged %d tombstoned issues older than 7 days", n)
+	}
+
+	// Step 2: Clean up orphaned dependencies (both sides deleted)
+	// Dependencies where either issue_id or depends_on_id no longer exists
+	orphanDepQuery := `
+		DELETE FROM dependencies WHERE
+			issue_id NOT IN (SELECT id FROM issues)
+			OR depends_on_id NOT IN (SELECT id FROM issues)
+	`
+	result, err = db.ExecContext(ctx, orphanDepQuery)
+	if err != nil {
+		log.log("GC: failed to clean orphaned dependencies: %v", err)
+	} else if n, _ := result.RowsAffected(); n > 0 {
+		log.log("GC: removed %d orphaned dependency records", n)
+	}
+}
+
+// flushStaleDirtyIssues removes dirty_issues entries that are stale:
+// 1) Entries referencing issues that no longer exist (orphaned)
+// 2) Entries for issues already exported with matching content hash
+// This is called once at daemon startup to prevent large dirty_issues tables
+// from inflating query scan times. (bd-13lq)
+func flushStaleDirtyIssues(ctx context.Context, store storage.Storage, log daemonLogger) {
+	db := store.UnderlyingDB()
+	if db == nil {
+		return
+	}
+
+	backend := store.BackendName()
+
+	// Step 1: Remove orphaned dirty entries (issue no longer exists)
+	orphanQuery := `DELETE FROM dirty_issues WHERE issue_id NOT IN (SELECT id FROM issues)`
+	result, err := db.ExecContext(ctx, orphanQuery)
+	if err != nil {
+		log.log("Dirty flush: failed to remove orphaned entries: %v", err)
+	} else if n, _ := result.RowsAffected(); n > 0 {
+		log.log("Dirty flush: removed %d orphaned dirty_issues entries", n)
+	}
+
+	// Step 2: Remove dirty entries for issues already exported with current content
+	// Only applies when export_hashes table is populated
+	var exportFlushQuery string
+	if backend == "sqlite" {
+		exportFlushQuery = `
+			DELETE FROM dirty_issues WHERE issue_id IN (
+				SELECT d.issue_id FROM dirty_issues d
+				JOIN issues i ON d.issue_id = i.id
+				JOIN export_hashes e ON e.issue_id = i.id
+				WHERE i.content_hash = e.content_hash
+			)
+		`
+	} else {
+		// MySQL/Dolt: can't reference target table in subquery DELETE
+		exportFlushQuery = `
+			DELETE d FROM dirty_issues d
+			JOIN issues i ON d.issue_id = i.id
+			JOIN export_hashes e ON e.issue_id = i.id
+			WHERE i.content_hash = e.content_hash
+		`
+	}
+	result, err = db.ExecContext(ctx, exportFlushQuery)
+	if err != nil {
+		log.log("Dirty flush: failed to remove already-exported entries: %v", err)
+	} else if n, _ := result.RowsAffected(); n > 0 {
+		log.log("Dirty flush: removed %d already-exported dirty_issues entries", n)
 	}
 }
 

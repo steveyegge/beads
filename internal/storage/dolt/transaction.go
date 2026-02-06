@@ -91,7 +91,16 @@ func (s *DoltStore) runTransactionOnce(ctx context.Context, fn func(tx storage.T
 		return err
 	}
 
-	return sqlTx.Commit()
+	if err := sqlTx.Commit(); err != nil {
+		return err
+	}
+
+	// Rebuild blocked_issues_cache after successful commit (bd-b2ts)
+	// This ensures the cache stays consistent with dependency/status changes.
+	// The rebuild is fast (<50ms) and only fires on write transactions.
+	_ = s.RebuildBlockedCache(ctx)
+
+	return nil
 }
 
 // CreateIssue creates an issue within the transaction (full fidelity: matches DoltStore.CreateIssue)

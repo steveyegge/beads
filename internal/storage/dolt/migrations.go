@@ -22,6 +22,7 @@ type Migration struct {
 var migrations = []Migration{
 	{"advice_hook_fields", migrateAdviceHookFields},
 	{"advice_subscription_fields", migrateAdviceSubscriptionFields},
+	{"blocked_issues_cache", migrateBlockedIssuesCache},
 }
 
 // RunMigrations executes all registered migrations in order.
@@ -112,6 +113,40 @@ func migrateAdviceHookFields(ctx context.Context, db *sql.DB) error {
 			!strings.Contains(err.Error(), "already exists") {
 			return fmt.Errorf("failed to create advice hooks index: %w", err)
 		}
+	}
+
+	return nil
+}
+
+// migrateBlockedIssuesCache creates the blocked_issues_cache table for performance (bd-b2ts).
+// This materializes the recursive CTE from the ready_issues view, converting
+// expensive recursive joins on every read into a simple NOT EXISTS check.
+func migrateBlockedIssuesCache(ctx context.Context, db *sql.DB) error {
+	// Check if table already exists
+	var count int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = DATABASE()
+		  AND table_name = 'blocked_issues_cache'
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check for blocked_issues_cache: %w", err)
+	}
+	if count > 0 {
+		return nil // Already exists
+	}
+
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE blocked_issues_cache (
+			issue_id VARCHAR(255) PRIMARY KEY,
+			CONSTRAINT fk_blocked_cache FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			return nil
+		}
+		return fmt.Errorf("failed to create blocked_issues_cache: %w", err)
 	}
 
 	return nil

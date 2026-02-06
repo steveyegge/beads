@@ -266,15 +266,10 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		}
 	}
 
-	// Exclude blocked issues using subquery
+	// Exclude blocked issues using materialized cache (bd-b2ts)
+	// Falls back to inline subquery if cache table doesn't exist yet
 	whereClauses = append(whereClauses, `
-		id NOT IN (
-			SELECT DISTINCT d.issue_id
-			FROM dependencies d
-			JOIN issues blocker ON d.depends_on_id = blocker.id
-			WHERE d.type = 'blocks'
-			  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-		)
+		id NOT IN (SELECT issue_id FROM blocked_issues_cache)
 	`)
 
 	whereSQL := "WHERE " + strings.Join(whereClauses, " AND ")
@@ -583,9 +578,13 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 		return nil, fmt.Errorf("failed to get statistics: %w", err)
 	}
 
-	// Ready count (use the ready_issues view).
-	// Note: view already excludes ephemeral issues and blocked transitive deps.
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ready_issues`).Scan(&stats.ReadyIssues)
+	// Ready count: use blocked_issues_cache instead of the expensive recursive CTE view (bd-b2ts)
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM issues
+		WHERE status = 'open'
+		  AND (ephemeral = 0 OR ephemeral IS NULL)
+		  AND id NOT IN (SELECT issue_id FROM blocked_issues_cache)
+	`).Scan(&stats.ReadyIssues)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ready count: %w", err)
 	}

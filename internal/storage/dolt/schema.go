@@ -300,6 +300,14 @@ CREATE TABLE IF NOT EXISTS decision_points (
     CONSTRAINT fk_decision_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
     CONSTRAINT fk_decision_prior FOREIGN KEY (prior_id) REFERENCES issues(id) ON DELETE SET NULL
 );
+
+-- Blocked issues cache (materialized view for GetReadyWork performance, bd-b2ts)
+-- Stores issue_id values for all issues that are currently blocked.
+-- Rebuilt on dependency/status changes instead of computing recursive CTE on every read.
+CREATE TABLE IF NOT EXISTS blocked_issues_cache (
+    issue_id VARCHAR(255) PRIMARY KEY,
+    CONSTRAINT fk_blocked_cache FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
 `
 
 // defaultConfig contains the default configuration values
