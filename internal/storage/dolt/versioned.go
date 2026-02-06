@@ -65,7 +65,7 @@ func (s *DoltStore) Diff(ctx context.Context, fromRef, toRef string) ([]*storage
 		FROM dolt_diff('%s', '%s', 'issues')
 	`, fromRef, toRef)
 
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.queryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get diff: %w", err)
 	}
@@ -143,7 +143,7 @@ func (s *DoltStore) Diff(ctx context.Context, fromRef, toRef string) ([]*storage
 // ListBranches returns the names of all branches.
 // Implements storage.VersionedStorage.
 func (s *DoltStore) ListBranches(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT name FROM dolt_branches ORDER BY name")
+	rows, err := s.queryContext(ctx, "SELECT name FROM dolt_branches ORDER BY name")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list branches: %w", err)
 	}

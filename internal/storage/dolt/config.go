@@ -44,7 +44,7 @@ func (s *DoltStore) GetConfig(ctx context.Context, key string) (string, error) {
 
 // GetAllConfig retrieves all configuration values
 func (s *DoltStore) GetAllConfig(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT `key`, value FROM config")
+	rows, err := s.queryContext(ctx, "SELECT `key`, value FROM config")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all config: %w", err)
 	}

@@ -64,7 +64,7 @@ func (s *DoltStore) GetDependencies(ctx context.Context, issueID string) ([]*typ
 		ORDER BY i.priority ASC, i.created_at DESC
 	`, prefixColumns("i.", issueColumns))
 
-	rows, err := s.db.QueryContext(ctx, query, issueID)
+	rows, err := s.queryContext(ctx, query, issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependencies: %w", err)
 	}
@@ -91,7 +91,7 @@ func (s *DoltStore) GetDependents(ctx context.Context, issueID string) ([]*types
 		ORDER BY i.priority ASC, i.created_at DESC
 	`, prefixColumns("i.", issueColumns))
 
-	rows, err := s.db.QueryContext(ctx, query, issueID)
+	rows, err := s.queryContext(ctx, query, issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependents: %w", err)
 	}
@@ -110,7 +110,7 @@ func (s *DoltStore) GetDependents(ctx context.Context, issueID string) ([]*types
 
 // GetDependenciesWithMetadata returns dependencies with metadata
 func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT d.depends_on_id, d.type, d.created_at, d.created_by, d.metadata, d.thread_id
 		FROM dependencies d
 		WHERE d.issue_id = ?
@@ -149,7 +149,7 @@ func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID str
 
 // GetDependentsWithMetadata returns dependents with metadata
 func (s *DoltStore) GetDependentsWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT d.issue_id, d.type, d.created_at, d.created_by, d.metadata, d.thread_id
 		FROM dependencies d
 		WHERE d.depends_on_id = ?
@@ -188,7 +188,7 @@ func (s *DoltStore) GetDependentsWithMetadata(ctx context.Context, issueID strin
 
 // GetDependencyRecords returns raw dependency records for an issue
 func (s *DoltStore) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
 		FROM dependencies
 		WHERE issue_id = ?
@@ -203,7 +203,7 @@ func (s *DoltStore) GetDependencyRecords(ctx context.Context, issueID string) ([
 
 // GetAllDependencyRecords returns all dependency records
 func (s *DoltStore) GetAllDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
 		FROM dependencies
 		ORDER BY issue_id
@@ -246,7 +246,7 @@ func (s *DoltStore) GetDependencyRecordsForIssues(ctx context.Context, issueIDs 
 		ORDER BY issue_id
 	`, inClause)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependency records for issues: %w", err)
 	}
@@ -286,7 +286,7 @@ func (s *DoltStore) GetDependencyCounts(ctx context.Context, issueIDs []string) 
 		GROUP BY issue_id
 	`, inClause)
 
-	depRows, err := s.db.QueryContext(ctx, depQuery, args...)
+	depRows, err := s.queryContext(ctx, depQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependency counts: %w", err)
 	}
@@ -317,7 +317,7 @@ func (s *DoltStore) GetDependencyCounts(ctx context.Context, issueIDs []string) 
 		GROUP BY depends_on_id
 	`, inClause)
 
-	blockingRows, err := s.db.QueryContext(ctx, blockingQuery, args...)
+	blockingRows, err := s.queryContext(ctx, blockingQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get blocking counts: %w", err)
 	}
@@ -363,7 +363,7 @@ func (s *DoltStore) buildDependencyTree(ctx context.Context, issueID string, dep
 		query = "SELECT depends_on_id FROM dependencies WHERE issue_id = ?"
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, issueID)
+	rows, err := s.queryContext(ctx, query, issueID)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +471,7 @@ func (s *DoltStore) DetectCycles(ctx context.Context) ([][]*types.Issue, error) 
 
 // IsBlocked checks if an issue has open blockers
 func (s *DoltStore) IsBlocked(ctx context.Context, issueID string) (bool, []string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT d.depends_on_id
 		FROM dependencies d
 		JOIN issues i ON d.depends_on_id = i.id
@@ -517,7 +517,7 @@ func (s *DoltStore) GetNewlyUnblockedByClose(ctx context.Context, closedIssueID 
 		  )
 	`, prefixColumns("i.", issueColumns))
 
-	rows, err := s.db.QueryContext(ctx, query, closedIssueID, closedIssueID)
+	rows, err := s.queryContext(ctx, query, closedIssueID, closedIssueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find newly unblocked: %w", err)
 	}
@@ -557,7 +557,7 @@ func (s *DoltStore) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.
 		WHERE id IN (%s)
 	`, issueColumns, strings.Join(placeholders, ","))
 
-	queryRows, err := s.db.QueryContext(ctx, query, args...)
+	queryRows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issues by IDs: %w", err)
 	}
@@ -576,7 +576,7 @@ func (s *DoltStore) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.
 }
 
 // scanIssueRow scans a single issue from a rows result
-func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
+func scanIssueRow(rows rowScanner) (*types.Issue, error) {
 	var issue types.Issue
 	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 	var closedAt, compactedAt, deletedAt, lastActivity, dueAt, deferUntil sql.NullTime
@@ -764,7 +764,7 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 	return &issue, nil
 }
 
-func scanDependencyRows(rows *sql.Rows) ([]*types.Dependency, error) {
+func scanDependencyRows(rows rowIterator) ([]*types.Dependency, error) {
 	var deps []*types.Dependency
 	for rows.Next() {
 		dep, err := scanDependencyRow(rows)
@@ -776,7 +776,7 @@ func scanDependencyRows(rows *sql.Rows) ([]*types.Dependency, error) {
 	return deps, rows.Err()
 }
 
-func scanDependencyRow(rows *sql.Rows) (*types.Dependency, error) {
+func scanDependencyRow(rows rowScanner) (*types.Dependency, error) {
 	var dep types.Dependency
 	var createdAt sql.NullTime
 	var metadata, threadID sql.NullString

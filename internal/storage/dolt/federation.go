@@ -16,7 +16,7 @@ import (
 func (s *DoltStore) PushTo(ctx context.Context, peer string) error {
 	return s.withPeerCredentials(ctx, peer, func() error {
 		// DOLT_PUSH(remote, branch)
-		_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", peer, s.branch)
+		_, err := s.execContext(ctx, "CALL DOLT_PUSH(?, ?)", peer, s.branch)
 		if err != nil {
 			return fmt.Errorf("failed to push to peer %s: %w", peer, err)
 		}
@@ -31,7 +31,7 @@ func (s *DoltStore) PullFrom(ctx context.Context, peer string) ([]storage.Confli
 	var conflicts []storage.Conflict
 	err := s.withPeerCredentials(ctx, peer, func() error {
 		// DOLT_PULL(remote) - pulls and merges
-		_, pullErr := s.db.ExecContext(ctx, "CALL DOLT_PULL(?)", peer)
+		_, pullErr := s.execContext(ctx, "CALL DOLT_PULL(?)", peer)
 		if pullErr != nil {
 			// Check if the error is due to merge conflicts
 			c, conflictErr := s.GetConflicts(ctx)
@@ -51,7 +51,7 @@ func (s *DoltStore) PullFrom(ctx context.Context, peer string) ([]storage.Confli
 func (s *DoltStore) Fetch(ctx context.Context, peer string) error {
 	return s.withPeerCredentials(ctx, peer, func() error {
 		// DOLT_FETCH(remote)
-		_, err := s.db.ExecContext(ctx, "CALL DOLT_FETCH(?)", peer)
+		_, err := s.execContext(ctx, "CALL DOLT_FETCH(?)", peer)
 		if err != nil {
 			return fmt.Errorf("failed to fetch from peer %s: %w", peer, err)
 		}
@@ -61,7 +61,7 @@ func (s *DoltStore) Fetch(ctx context.Context, peer string) error {
 
 // ListRemotes returns configured remote names and URLs.
 func (s *DoltStore) ListRemotes(ctx context.Context) ([]storage.RemoteInfo, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT name, url FROM dolt_remotes")
+	rows, err := s.queryContext(ctx, "SELECT name, url FROM dolt_remotes")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list remotes: %w", err)
 	}
@@ -80,7 +80,7 @@ func (s *DoltStore) ListRemotes(ctx context.Context) ([]storage.RemoteInfo, erro
 
 // RemoveRemote removes a configured remote.
 func (s *DoltStore) RemoveRemote(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_REMOTE('remove', ?)", name)
+	_, err := s.execContext(ctx, "CALL DOLT_REMOTE('remove', ?)", name)
 	if err != nil {
 		return fmt.Errorf("failed to remove remote %s: %w", name, err)
 	}

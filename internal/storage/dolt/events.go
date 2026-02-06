@@ -46,7 +46,7 @@ func (s *DoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events: %w", err)
 	}
@@ -76,7 +76,7 @@ func (s *DoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([
 
 // GetAllEventsSince returns all events with ID greater than sinceID, ordered by ID ascending.
 func (s *DoltStore) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
 		FROM events
 		WHERE id > ?
@@ -166,7 +166,7 @@ func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, tex
 
 // GetIssueComments retrieves all comments for an issue
 func (s *DoltStore) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT id, issue_id, author, text, created_at
 		FROM comments
 		WHERE issue_id = ?

@@ -57,6 +57,10 @@ type DoltStore struct {
 	// Retry config for operations (commit, push, etc.)
 	lockRetries    int
 	lockRetryDelay time.Duration
+
+	// Query watchdog config (KILL QUERY on timeout)
+	serverMode   bool          // True when connected to dolt sql-server (not embedded)
+	queryTimeout time.Duration // Max query duration before KILL QUERY fires (0 = disabled)
 }
 
 // Config holds Dolt database configuration
@@ -79,6 +83,12 @@ type Config struct {
 	LockRetries    int           // Number of retries for lock/serialization errors (default: 5)
 	LockRetryDelay time.Duration // Delay between retries (default: 100ms)
 	IdleTimeout    time.Duration // Connection idle timeout (default: 0 = no timeout)
+
+	// Query timeout for KILL QUERY watchdog (server mode only).
+	// When a query exceeds this duration, the watchdog fires KILL QUERY to
+	// stop the server-side query. Override with BEADS_QUERY_TIMEOUT env var.
+	// Default: 30s. Set to 0 to disable.
+	QueryTimeout time.Duration
 }
 
 const embeddedOpenMaxElapsed = 30 * time.Second
@@ -220,6 +230,15 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		return nil, fmt.Errorf("failed to ping Dolt database: %w", err)
 	}
 
+	// Determine query timeout for the KILL QUERY watchdog.
+	// Only effective in server mode (embedded mode uses a single connection
+	// so KILL QUERY from a separate connection is not possible).
+	qt := cfg.QueryTimeout
+	if qt == 0 {
+		qt = defaultQueryTimeout
+	}
+	qt = parseQueryTimeout(qt) // Allow env var override
+
 	store := &DoltStore{
 		db:                db,
 		dbPath:            absPath,
@@ -230,6 +249,8 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		remote:            cfg.Remote,
 		branch:            "main",
 		readOnly:          cfg.ReadOnly,
+		serverMode:        cfg.ServerMode,
+		queryTimeout:      qt,
 	}
 
 	// Schema initialization:
@@ -634,7 +655,7 @@ func (s *DoltStore) Commit(ctx context.Context, message string) error {
 			}
 		}
 
-		_, lastErr = s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)", message, s.commitAuthorString())
+		_, lastErr = s.execContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)", message, s.commitAuthorString())
 		if lastErr == nil {
 			return nil
 		}
@@ -651,7 +672,7 @@ func (s *DoltStore) Commit(ctx context.Context, message string) error {
 
 // Push pushes commits to the remote
 func (s *DoltStore) Push(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch)
+	_, err := s.execContext(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch)
 	if err != nil {
 		return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
 	}
@@ -660,7 +681,7 @@ func (s *DoltStore) Push(ctx context.Context) error {
 
 // Pull pulls changes from the remote
 func (s *DoltStore) Pull(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?)", s.remote)
+	_, err := s.execContext(ctx, "CALL DOLT_PULL(?)", s.remote)
 	if err != nil {
 		return fmt.Errorf("failed to pull from %s: %w", s.remote, err)
 	}
@@ -669,7 +690,7 @@ func (s *DoltStore) Pull(ctx context.Context) error {
 
 // Branch creates a new branch
 func (s *DoltStore) Branch(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_BRANCH(?)", name)
+	_, err := s.execContext(ctx, "CALL DOLT_BRANCH(?)", name)
 	if err != nil {
 		return fmt.Errorf("failed to create branch %s: %w", name, err)
 	}
@@ -678,7 +699,7 @@ func (s *DoltStore) Branch(ctx context.Context, name string) error {
 
 // Checkout switches to the specified branch
 func (s *DoltStore) Checkout(ctx context.Context, branch string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", branch)
+	_, err := s.execContext(ctx, "CALL DOLT_CHECKOUT(?)", branch)
 	if err != nil {
 		return fmt.Errorf("failed to checkout branch %s: %w", branch, err)
 	}
@@ -690,7 +711,7 @@ func (s *DoltStore) Checkout(ctx context.Context, branch string) error {
 // Returns any merge conflicts if present. Implements storage.VersionedStorage.
 func (s *DoltStore) Merge(ctx context.Context, branch string) ([]storage.Conflict, error) {
 	// DOLT_MERGE may create a merge commit; pass explicit author for determinism.
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE('--author', ?, ?)", s.commitAuthorString(), branch)
+	_, err := s.execContext(ctx, "CALL DOLT_MERGE('--author', ?, ?)", s.commitAuthorString(), branch)
 	if err != nil {
 		// Check if the error is due to conflicts
 		conflicts, conflictErr := s.GetConflicts(ctx)
@@ -707,7 +728,7 @@ func (s *DoltStore) Merge(ctx context.Context, branch string) ([]storage.Conflic
 // Returns any merge conflicts if present.
 func (s *DoltStore) MergeAllowUnrelated(ctx context.Context, branch string) ([]storage.Conflict, error) {
 	// DOLT_MERGE may create a merge commit; pass explicit author for determinism.
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE('--allow-unrelated-histories', '--author', ?, ?)", s.commitAuthorString(), branch)
+	_, err := s.execContext(ctx, "CALL DOLT_MERGE('--allow-unrelated-histories', '--author', ?, ?)", s.commitAuthorString(), branch)
 	if err != nil {
 		// Check if the error is due to conflicts
 		conflicts, conflictErr := s.GetConflicts(ctx)
@@ -731,7 +752,7 @@ func (s *DoltStore) CurrentBranch(ctx context.Context) (string, error) {
 
 // DeleteBranch deletes a branch (used to clean up import branches)
 func (s *DoltStore) DeleteBranch(ctx context.Context, branch string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_BRANCH('-D', ?)", branch)
+	_, err := s.execContext(ctx, "CALL DOLT_BRANCH('-D', ?)", branch)
 	if err != nil {
 		return fmt.Errorf("failed to delete branch %s: %w", branch, err)
 	}
@@ -740,7 +761,7 @@ func (s *DoltStore) DeleteBranch(ctx context.Context, branch string) error {
 
 // Log returns recent commit history
 func (s *DoltStore) Log(ctx context.Context, limit int) ([]CommitInfo, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT commit_hash, committer, email, date, message
 		FROM dolt_log
 		LIMIT ?
@@ -781,7 +802,7 @@ type HistoryEntry struct {
 
 // AddRemote adds a Dolt remote
 func (s *DoltStore) AddRemote(ctx context.Context, name, url string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_REMOTE('add', ?, ?)", name, url)
+	_, err := s.execContext(ctx, "CALL DOLT_REMOTE('add', ?, ?)", name, url)
 	if err != nil {
 		return fmt.Errorf("failed to add remote %s: %w", name, err)
 	}
@@ -790,7 +811,7 @@ func (s *DoltStore) AddRemote(ctx context.Context, name, url string) error {
 
 // Status returns the current Dolt status (staged/unstaged changes)
 func (s *DoltStore) Status(ctx context.Context) (*DoltStatus, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT table_name, staged, status FROM dolt_status")
+	rows, err := s.queryContext(ctx, "SELECT table_name, staged, status FROM dolt_status")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get status: %w", err)
 	}

@@ -9,7 +9,7 @@ import (
 
 // GetDirtyIssues returns IDs of issues that have been modified since last export
 func (s *DoltStore) GetDirtyIssues(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT issue_id FROM dirty_issues ORDER BY marked_at ASC
 	`)
 	if err != nil {

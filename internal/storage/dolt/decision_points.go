@@ -140,7 +140,7 @@ func (s *DoltStore) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionP
 
 // ListPendingDecisions returns all decision points that haven't been responded to.
 func (s *DoltStore) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT issue_id, prompt, COALESCE(context, ''), options,
 			COALESCE(default_option, ''), COALESCE(selected_option, ''),
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
@@ -183,11 +183,11 @@ func (s *DoltStore) ListPendingDecisions(ctx context.Context) ([]*types.Decision
 // ListRecentlyRespondedDecisions returns decisions that were responded to
 // within the given time window, optionally filtered by requesting agent.
 func (s *DoltStore) ListRecentlyRespondedDecisions(ctx context.Context, since time.Time, requestedBy string) ([]*types.DecisionPoint, error) {
-	var rows *sql.Rows
+	var rows *Rows
 	var err error
 
 	if requestedBy != "" {
-		rows, err = s.db.QueryContext(ctx, `
+		rows, err = s.queryContext(ctx, `
 			SELECT issue_id, prompt, COALESCE(context, ''), options,
 				COALESCE(default_option, ''), COALESCE(selected_option, ''),
 				COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
@@ -201,7 +201,7 @@ func (s *DoltStore) ListRecentlyRespondedDecisions(ctx context.Context, since ti
 			ORDER BY responded_at DESC
 		`, since, requestedBy)
 	} else {
-		rows, err = s.db.QueryContext(ctx, `
+		rows, err = s.queryContext(ctx, `
 			SELECT issue_id, prompt, COALESCE(context, ''), options,
 				COALESCE(default_option, ''), COALESCE(selected_option, ''),
 				COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),

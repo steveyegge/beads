@@ -202,7 +202,7 @@ func (s *DoltStore) GetFederationPeer(ctx context.Context, name string) (*storag
 
 // ListFederationPeers returns all configured federation peers.
 func (s *DoltStore) ListFederationPeers(ctx context.Context) ([]*storage.FederationPeer, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT name, remote_url, username, password_encrypted, sovereignty, last_sync, created_at, updated_at
 		FROM federation_peers ORDER BY name
 	`)
