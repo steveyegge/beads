@@ -53,6 +53,12 @@ func (s *Server) handleAgentPodRegister(req *Request) Response {
 		}
 	}
 
+	s.emitRichMutation(MutationEvent{
+		Type:    MutationUpdate,
+		IssueID: args.AgentID,
+		Actor:   req.Actor,
+	})
+
 	result := AgentPodRegisterResult{
 		AgentID:   args.AgentID,
 		PodName:   args.PodName,
@@ -100,6 +106,12 @@ func (s *Server) handleAgentPodDeregister(req *Request) Response {
 		}
 	}
 
+	s.emitRichMutation(MutationEvent{
+		Type:    MutationUpdate,
+		IssueID: args.AgentID,
+		Actor:   req.Actor,
+	})
+
 	result := AgentPodDeregisterResult{
 		AgentID: args.AgentID,
 	}
@@ -143,6 +155,12 @@ func (s *Server) handleAgentPodStatus(req *Request) Response {
 			Error:   fmt.Sprintf("failed to update pod status for agent %s: %v", args.AgentID, err),
 		}
 	}
+
+	s.emitRichMutation(MutationEvent{
+		Type:    MutationUpdate,
+		IssueID: args.AgentID,
+		Actor:   req.Actor,
+	})
 
 	result := AgentPodStatusResult{
 		AgentID:   args.AgentID,

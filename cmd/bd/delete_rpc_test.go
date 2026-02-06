@@ -673,7 +673,7 @@ func TestDeleteViaDaemon_DirectCall(t *testing.T) {
 	os.Stdout = w
 
 	// Call deleteViaDaemon directly (should not exit since it succeeds)
-	deleteViaDaemon([]string{issue.ID}, true, false, false, true, "direct test")
+	deleteViaDaemon([]string{issue.ID}, true, false, false, true, true, "direct test")
 
 	// Restore stdout
 	w.Close()
@@ -734,7 +734,7 @@ func TestDeleteViaDaemon_DirectDryRun(t *testing.T) {
 	os.Stdout = w
 
 	// Call deleteViaDaemon with dry-run
-	deleteViaDaemon([]string{issue.ID}, true, true, false, false, "dry run test")
+	deleteViaDaemon([]string{issue.ID}, true, true, false, false, true, "dry run test")
 
 	// Restore stdout
 	w.Close()
@@ -798,7 +798,7 @@ func TestDeleteViaDaemon_DirectHumanOutput(t *testing.T) {
 	os.Stdout = w
 
 	// Call deleteViaDaemon with human output
-	deleteViaDaemon([]string{issue.ID}, true, false, false, false, "human output test")
+	deleteViaDaemon([]string{issue.ID}, true, false, false, false, false, "human output test")
 
 	// Restore stdout
 	w.Close()
@@ -857,7 +857,7 @@ func TestDeleteViaDaemon_DirectBatch(t *testing.T) {
 	os.Stdout = w
 
 	// Call deleteViaDaemon with multiple issues
-	deleteViaDaemon(issueIDs, true, false, false, true, "batch direct test")
+	deleteViaDaemon(issueIDs, true, false, false, true, true, "batch direct test")
 
 	// Restore stdout
 	w.Close()
