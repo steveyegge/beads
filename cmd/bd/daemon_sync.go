@@ -570,9 +570,16 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 		}
 
 		// Pre-export validation
-		if err := validatePreExport(exportCtx, store, jsonlPath); err != nil {
-			log.Info("Pre-export validation failed", "error", err)
-			return
+		// Skip JSONL content hash validation for mutation-triggered exports since
+		// we intentionally skipped the pre-export import. The mutation is already
+		// in the database, so the JSONL being stale is expected and safe.
+		if !isMutationTriggered {
+			if err := validatePreExport(exportCtx, store, jsonlPath); err != nil {
+				log.Info("Pre-export validation failed", "error", err)
+				return
+			}
+		} else {
+			log.Info("Skipping pre-export validation (mutation-triggered export)")
 		}
 
 		// Export to JSONL
