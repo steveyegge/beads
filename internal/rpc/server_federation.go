@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // getFederatedStorage attempts to cast the server's storage to FederatedStorage.
@@ -25,23 +24,6 @@ func (s *Server) getFederatedStorage() (storage.FederatedStorage, *Response) {
 	return fs, nil
 }
 
-// getFederationDoltStore attempts to get the concrete DoltStore from storage via federation interface.
-// Some operations (like Sync) require the concrete type for complex orchestration.
-func (s *Server) getFederationDoltStore() (*dolt.DoltStore, *Response) {
-	fs, errResp := s.getFederatedStorage()
-	if errResp != nil {
-		return nil, errResp
-	}
-	ds, ok := fs.(*dolt.DoltStore)
-	if !ok {
-		resp := Response{
-			Success: false,
-			Error:   "internal error: federated storage is not DoltStore",
-		}
-		return nil, &resp
-	}
-	return ds, nil
-}
 
 // handleFedListRemotes handles the fed_list_remotes RPC operation.
 func (s *Server) handleFedListRemotes(req *Request) Response {
@@ -85,7 +67,7 @@ func (s *Server) handleFedSync(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("invalid strategy %q: must be 'ours' or 'theirs'", args.Strategy)}
 	}
 
-	ds, errResp := s.getFederationDoltStore()
+	fs, errResp := s.getFederatedStorage()
 	if errResp != nil {
 		return *errResp
 	}
@@ -94,7 +76,7 @@ func (s *Server) handleFedSync(req *Request) Response {
 	defer cancel()
 
 	start := time.Now()
-	syncResult, err := ds.Sync(ctx, args.Peer, args.Strategy)
+	syncResult, err := fs.Sync(ctx, args.Peer, args.Strategy)
 
 	result := FedSyncResult{
 		Peer:       args.Peer,

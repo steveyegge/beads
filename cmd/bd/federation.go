@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/ui"
 	"golang.org/x/term"
 )
@@ -140,17 +139,12 @@ func init() {
 	rootCmd.AddCommand(federationCmd)
 }
 
-func getFederatedStore() (*dolt.DoltStore, error) {
+func getFederatedStore() (storage.FederatedStorage, error) {
 	fs, ok := storage.AsFederated(store)
 	if !ok {
 		return nil, fmt.Errorf("federation requires Dolt backend (current backend does not support federation)")
 	}
-	// Type assert to get the concrete DoltStore for Sync method
-	ds, ok := fs.(*dolt.DoltStore)
-	if !ok {
-		return nil, fmt.Errorf("internal error: federated storage is not DoltStore")
-	}
-	return ds, nil
+	return fs, nil
 }
 
 func runFederationSync(cmd *cobra.Command, args []string) {
@@ -194,7 +188,7 @@ func runFederationSync(cmd *cobra.Command, args []string) {
 	}
 
 	// Sync with each peer
-	var results []*dolt.SyncResult
+	var results []*storage.SyncResult
 	for _, peer := range peers {
 		if !jsonOutput {
 			fmt.Printf("%s Syncing with %s...\n", ui.RenderAccent("🔄"), peer)
@@ -279,8 +273,8 @@ func runFederationSyncRPC() {
 	}
 }
 
-// printSyncResultDirect renders sync output from direct dolt.SyncResult.
-func printSyncResultDirect(result *dolt.SyncResult) {
+// printSyncResultDirect renders sync output from direct storage.SyncResult.
+func printSyncResultDirect(result *storage.SyncResult) {
 	if result.Fetched {
 		fmt.Printf("  %s Fetched\n", ui.RenderPass("✓"))
 	}
@@ -387,10 +381,11 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 	}
 
 	// Get pending local changes
-	doltStatus, _ := ds.Status(ctx)
 	pendingChanges := 0
-	if doltStatus != nil {
-		pendingChanges = len(doltStatus.Staged) + len(doltStatus.Unstaged)
+	if sc, ok := storage.AsStatusChecker(store); ok {
+		if hasChanges, err := sc.HasUncommittedChanges(ctx); err == nil && hasChanges {
+			pendingChanges = 1
+		}
 	}
 
 	// Collect status for each peer
@@ -533,7 +528,11 @@ func printFederationStatus(pendingChanges int, peerStatuses []fedPeerStatus) {
 
 	// Show local pending changes
 	if pendingChanges > 0 {
-		fmt.Printf("  %s %d pending local changes\n\n", ui.RenderWarn("⚠"), pendingChanges)
+		if pendingChanges == 1 {
+			fmt.Printf("  %s pending local changes\n\n", ui.RenderWarn("⚠"))
+		} else {
+			fmt.Printf("  %s %d pending local changes\n\n", ui.RenderWarn("⚠"), pendingChanges)
+		}
 	}
 
 	for _, ps := range peerStatuses {

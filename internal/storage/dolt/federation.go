@@ -163,8 +163,8 @@ func (s *DoltStore) setLastSyncTime(ctx context.Context, peer string) error {
 // 3. Push local changes to peer
 //
 // Returns the sync result including any conflicts encountered.
-func (s *DoltStore) Sync(ctx context.Context, peer string, strategy string) (*SyncResult, error) {
-	result := &SyncResult{
+func (s *DoltStore) Sync(ctx context.Context, peer string, strategy string) (*storage.SyncResult, error) {
+	result := &storage.SyncResult{
 		Peer:      peer,
 		StartTime: time.Now(),
 	}
@@ -235,18 +235,3 @@ func (s *DoltStore) Sync(ctx context.Context, peer string, strategy string) (*Sy
 	return result, nil
 }
 
-// SyncResult contains the outcome of a Sync operation.
-type SyncResult struct {
-	Peer              string
-	StartTime         time.Time
-	EndTime           time.Time
-	Fetched           bool
-	Merged            bool
-	Pushed            bool
-	PulledCommits     int
-	PushedCommits     int
-	Conflicts         []storage.Conflict
-	ConflictsResolved bool
-	Error             error
-	PushError         error // Non-fatal push error
-}

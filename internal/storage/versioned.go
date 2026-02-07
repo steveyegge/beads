@@ -195,6 +195,10 @@ type FederatedStorage interface {
 
 	// PullWithCredentials pulls from a remote using stored credentials.
 	PullWithCredentials(ctx context.Context, remoteName string) ([]Conflict, error)
+
+	// Sync performs a full bidirectional sync with a peer (fetch, merge, push).
+	// Returns the sync result including any conflicts encountered.
+	Sync(ctx context.Context, peer string, strategy string) (*SyncResult, error)
 }
 
 // RemoteInfo describes a configured remote.
@@ -210,6 +214,22 @@ type SyncStatus struct {
 	LocalAhead   int       // Commits ahead of peer
 	LocalBehind  int       // Commits behind peer
 	HasConflicts bool      // Whether there are unresolved conflicts
+}
+
+// SyncResult contains the outcome of a federation Sync operation.
+type SyncResult struct {
+	Peer              string
+	StartTime         time.Time
+	EndTime           time.Time
+	Fetched           bool
+	Merged            bool
+	Pushed            bool
+	PulledCommits     int
+	PushedCommits     int
+	Conflicts         []Conflict
+	ConflictsResolved bool
+	Error             error
+	PushError         error // Non-fatal push error
 }
 
 // FederationPeer represents a remote peer with authentication credentials.
