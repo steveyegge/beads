@@ -113,6 +113,8 @@ var (
 	workerPattern  = regexp.MustCompile(`(?m)^\s*worker\s+"([^"]+)"`)
 	cronPattern    = regexp.MustCompile(`(?m)^\s*cron\s+"([^"]+)"`)
 	queuePattern   = regexp.MustCompile(`(?m)^\s*queue\s+"([^"]+)"`)
+	importPattern  = regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"`)
+	constPattern   = regexp.MustCompile(`(?m)^\s*const\s+"([^"]+)"`)
 )
 
 // ParseRunbookFile reads a runbook file and extracts metadata.
@@ -152,6 +154,21 @@ func extractNames(pattern *regexp.Regexp, content string) []string {
 		}
 	}
 	return names
+}
+
+// ExtractImports returns import paths from HCL content.
+func ExtractImports(content string) []string {
+	return extractNames(importPattern, content)
+}
+
+// ExtractConsts returns const names from HCL content.
+func ExtractConsts(content string) []string {
+	return extractNames(constPattern, content)
+}
+
+// NameToSlug is the exported version of nameToSlug for use by migrate command.
+func NameToSlug(name string) string {
+	return nameToSlug(name)
 }
 
 // nameToSlug converts a name to an ID-safe slug.

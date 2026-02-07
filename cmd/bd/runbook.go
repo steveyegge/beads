@@ -31,10 +31,12 @@ Search paths for filesystem runbooks:
   2. library/ (project libraries)
 
 Commands:
-  list     List runbook beads from database and/or filesystem
-  show     Show runbook details
-  create   Create a runbook bead from a file
-  import   Batch import runbooks from filesystem into database`,
+  list         List runbook beads from database and/or filesystem
+  show         Show runbook details
+  create       Create a runbook bead from a file
+  import       Batch import runbooks from filesystem into database
+  materialize  Write runbook beads to filesystem
+  migrate      Migrate existing HCL runbooks across town to beads`,
 }
 
 // runbookListCmd lists all runbook beads.
@@ -131,6 +133,31 @@ Examples:
 	Run: runRunbookMaterialize,
 }
 
+// runbookMigrateCmd batch-migrates HCL runbooks from across the town.
+var runbookMigrateCmd = &cobra.Command{
+	Use:   "migrate",
+	Short: "Migrate existing HCL runbooks to beads",
+	Long: `Scan existing .oj/runbooks/ and library/ directories across the town,
+converting each HCL file into a runbook bead.
+
+Requires GT_ROOT to be set for cross-town discovery, or use --dir to
+migrate from a specific directory.
+
+Labels applied:
+  source:migration     All migrated beads
+  scope:<rig>          The rig the file was found in
+  lib:true             Library template files
+  imports:<path>       Import references found in the file
+
+Examples:
+  bd runbook migrate                    # Migrate all runbooks across town
+  bd runbook migrate --dry-run          # Preview without creating beads
+  bd runbook migrate --scope=oddjobs    # Only migrate from oddjobs rig
+  bd runbook migrate --dir=./library    # Migrate from specific directory
+  bd runbook migrate --force            # Overwrite existing beads`,
+	Run: runRunbookMigrate,
+}
+
 // RunbookListEntry represents a runbook in list output.
 type RunbookListEntry struct {
 	Name     string `json:"name"`
@@ -154,6 +181,10 @@ var (
 	rbMaterializeForce bool
 	rbMaterializeDry   bool
 	rbMaterializeDir   string
+	rbMigrateDir       string
+	rbMigrateDry       bool
+	rbMigrateScope     string
+	rbMigrateForce     bool
 )
 
 func runRunbookList(cmd *cobra.Command, args []string) {
@@ -920,7 +951,7 @@ func saveRunbookToDB(rb *runbook.RunbookContent) (*runbookSaveResult, error) {
 	created := existing == nil
 
 	if existing != nil {
-		if !rbCreateForce && !rbImportForce {
+		if !rbCreateForce && !rbImportForce && !rbMigrateForce {
 			return nil, fmt.Errorf("runbook %q already exists as %s (use --force to overwrite)", rb.Name, issue.ID)
 		}
 		// Re-serialize metadata in case content changed
@@ -952,6 +983,255 @@ func saveRunbookToDB(rb *runbook.RunbookContent) (*runbookSaveResult, error) {
 	}, nil
 }
 
+// --- Migrate implementation ---
+
+// migrateEntry tracks a discovered runbook file for migration.
+type migrateEntry struct {
+	rb      *runbook.RunbookContent
+	rig     string // rig name (e.g., "oddjobs")
+	isLib   bool   // true if from library/ directory
+	libNS   string // library namespace (e.g., "wok", "gastown")
+	imports []string
+	consts  []string
+}
+
+func runRunbookMigrate(cmd *cobra.Command, args []string) {
+	CheckReadonly("runbook migrate")
+
+	var entries []migrateEntry
+
+	if rbMigrateDir != "" {
+		// Scan a specific directory
+		entries = discoverFromDir(rbMigrateDir, "local")
+	} else {
+		// Cross-town discovery
+		gtRoot := os.Getenv("GT_ROOT")
+		if gtRoot == "" {
+			fmt.Fprintf(os.Stderr, "Error: GT_ROOT must be set for cross-town migration (or use --dir)\n")
+			os.Exit(1)
+		}
+		entries = discoverAcrossTown(gtRoot)
+	}
+
+	if len(entries) == 0 {
+		fmt.Println("No runbook files found to migrate.")
+		return
+	}
+
+	// Deduplicate by bead name
+	seen := make(map[string]bool)
+	migrated := 0
+	skipped := 0
+	errors := 0
+	dupes := 0
+
+	for _, entry := range entries {
+		if seen[entry.rb.Name] {
+			dupes++
+			continue
+		}
+		seen[entry.rb.Name] = true
+
+		if rbMigrateDry {
+			label := "runbook"
+			if entry.isLib {
+				label = "library"
+			}
+			fmt.Printf("  [dry-run] %s (%s, scope:%s", entry.rb.Name, label, entry.rig)
+			if len(entry.imports) > 0 {
+				fmt.Printf(", imports:%s", strings.Join(entry.imports, ","))
+			}
+			fmt.Printf(") ← %s\n", entry.rb.Source)
+			migrated++
+			continue
+		}
+
+		result, err := saveRunbookToDB(entry.rb)
+		if err != nil {
+			if strings.Contains(err.Error(), "already exists") {
+				skipped++
+				fmt.Fprintf(os.Stderr, "  skipped %s (exists, use --force)\n", entry.rb.Name)
+			} else {
+				fmt.Fprintf(os.Stderr, "  %s %s: %v\n", ui.RenderFail("✗"), entry.rb.Name, err)
+				errors++
+			}
+			continue
+		}
+
+		// Add migration-specific labels
+		addMigrateLabels(result.id, entry)
+
+		action := "Created"
+		if !result.created {
+			action = "Updated"
+		}
+		fmt.Printf("  %s %s %s → %s\n", ui.RenderPass("✓"), action, entry.rb.Name, result.id)
+		migrated++
+	}
+
+	fmt.Printf("\nMigrated: %d, Skipped: %d, Duplicates: %d, Errors: %d\n",
+		migrated, skipped, dupes, errors)
+}
+
+// addMigrateLabels adds migration-specific labels to a runbook bead.
+func addMigrateLabels(issueID string, entry migrateEntry) {
+	s := getStore()
+	if s == nil {
+		return
+	}
+	ctx := rootCtx
+
+	_ = s.AddLabel(ctx, issueID, "source:migration", actor)
+	_ = s.AddLabel(ctx, issueID, "scope:"+entry.rig, actor)
+
+	if entry.isLib {
+		_ = s.AddLabel(ctx, issueID, "lib:true", actor)
+		if entry.libNS != "" {
+			_ = s.AddLabel(ctx, issueID, "lib-ns:"+entry.libNS, actor)
+		}
+	}
+
+	for _, imp := range entry.imports {
+		_ = s.AddLabel(ctx, issueID, "imports:"+imp, actor)
+	}
+
+	for _, c := range entry.consts {
+		_ = s.AddLabel(ctx, issueID, "const:"+c, actor)
+	}
+}
+
+// discoverAcrossTown scans all rigs in GT_ROOT for runbook files.
+func discoverAcrossTown(gtRoot string) []migrateEntry {
+	townBeadsDir := filepath.Join(gtRoot, ".beads")
+	routes, err := routing.LoadRoutes(townBeadsDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not load routes: %v\n", err)
+		return nil
+	}
+
+	var allEntries []migrateEntry
+
+	for _, route := range routes {
+		if route.Path == "." {
+			continue
+		}
+
+		rigName := routing.ExtractProjectFromPath(route.Path)
+		if rigName == "" {
+			rigName = route.Prefix
+		}
+
+		// Apply scope filter
+		if rbMigrateScope != "" && rigName != rbMigrateScope {
+			continue
+		}
+
+		rigPath := filepath.Join(gtRoot, route.Path)
+		entries := discoverFromDir(rigPath, rigName)
+		allEntries = append(allEntries, entries...)
+	}
+
+	return allEntries
+}
+
+// discoverFromDir scans a directory for .oj/runbooks/ and library/ HCL files.
+func discoverFromDir(dir string, rigName string) []migrateEntry {
+	var entries []migrateEntry
+
+	// 1. Scan .oj/runbooks/
+	runbooksDir := filepath.Join(dir, ".oj", "runbooks")
+	for _, rb := range scanRunbookDir(runbooksDir) {
+		entry := migrateEntry{
+			rb:  rb,
+			rig: rigName,
+		}
+		if rb.Format == "hcl" {
+			entry.imports = runbook.ExtractImports(rb.Content)
+			entry.consts = runbook.ExtractConsts(rb.Content)
+		}
+		entries = append(entries, entry)
+	}
+
+	// 2. Walk library/ recursively
+	libDir := filepath.Join(dir, "library")
+	libEntries := scanLibraryDir(libDir, rigName)
+	entries = append(entries, libEntries...)
+
+	return entries
+}
+
+// scanLibraryDir recursively scans a library directory for HCL files.
+func scanLibraryDir(libDir string, rigName string) []migrateEntry {
+	var entries []migrateEntry
+
+	err := filepath.Walk(libDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // skip errors
+		}
+		if info.IsDir() {
+			if strings.HasPrefix(info.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		ext := filepath.Ext(path)
+		if ext != ".hcl" && ext != ".toml" && ext != ".json" {
+			return nil
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+
+		// Compute library-namespaced name from relative path
+		relPath, _ := filepath.Rel(libDir, path)
+		name := libraryFileName(relPath)
+		format := strings.TrimPrefix(ext, ".")
+
+		rb := runbook.ParseRunbookFile(name, string(content), format)
+		rb.Source = path
+
+		// Extract namespace (first dir component under library/)
+		ns := ""
+		parts := strings.Split(relPath, string(filepath.Separator))
+		if len(parts) > 1 {
+			ns = parts[0]
+		}
+
+		entry := migrateEntry{
+			rb:    rb,
+			rig:   rigName,
+			isLib: true,
+			libNS: ns,
+		}
+		if format == "hcl" {
+			entry.imports = runbook.ExtractImports(rb.Content)
+			entry.consts = runbook.ExtractConsts(rb.Content)
+		}
+		entries = append(entries, entry)
+		return nil
+	})
+	if err != nil {
+		// library dir doesn't exist - that's fine
+		return nil
+	}
+
+	return entries
+}
+
+// libraryFileName converts a relative library path to a bead name.
+// E.g., "wok/bug.hcl" → "wok-bug", "gastown/formulas/code-review.hcl" → "gastown-formulas-code-review"
+func libraryFileName(relPath string) string {
+	// Remove extension
+	ext := filepath.Ext(relPath)
+	name := strings.TrimSuffix(relPath, ext)
+	// Replace path separators with hyphens
+	name = strings.ReplaceAll(name, string(filepath.Separator), "-")
+	return name
+}
+
 func init() {
 	runbookListCmd.Flags().StringVar(&rbListSource, "source", "all", "Source to list from: db, files, or all (default)")
 	runbookListCmd.Flags().BoolVar(&rbListAllRigs, "all", false, "Discover runbooks across all rigs (requires GT_ROOT)")
@@ -970,10 +1250,16 @@ func init() {
 	runbookMaterializeCmd.Flags().BoolVar(&rbMaterializeDry, "dry-run", false, "Preview without writing files")
 	runbookMaterializeCmd.Flags().StringVar(&rbMaterializeDir, "dir", "", "Output directory (default: .oj/runbooks/)")
 
+	runbookMigrateCmd.Flags().StringVar(&rbMigrateDir, "dir", "", "Migrate from specific directory instead of cross-town discovery")
+	runbookMigrateCmd.Flags().BoolVar(&rbMigrateDry, "dry-run", false, "Preview migration without creating beads")
+	runbookMigrateCmd.Flags().StringVar(&rbMigrateScope, "scope", "", "Only migrate from a specific rig (e.g., oddjobs)")
+	runbookMigrateCmd.Flags().BoolVar(&rbMigrateForce, "force", false, "Overwrite existing runbook beads")
+
 	runbookCmd.AddCommand(runbookListCmd)
 	runbookCmd.AddCommand(runbookShowCmd)
 	runbookCmd.AddCommand(runbookCreateCmd)
 	runbookCmd.AddCommand(runbookImportCmd)
 	runbookCmd.AddCommand(runbookMaterializeCmd)
+	runbookCmd.AddCommand(runbookMigrateCmd)
 	rootCmd.AddCommand(runbookCmd)
 }

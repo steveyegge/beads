@@ -164,6 +164,66 @@ queue "bugs" {
 	}
 }
 
+func TestExtractImports(t *testing.T) {
+	content := `
+import "oj/wok" {
+  const "prefix" { value = "oj" }
+  const "check"  { value = "make check" }
+}
+
+import "oj/git" {
+  const "check" { value = "make check" }
+}
+`
+	imports := ExtractImports(content)
+	if len(imports) != 2 {
+		t.Errorf("ExtractImports count = %d, want 2, got %v", len(imports), imports)
+	}
+	if len(imports) >= 2 {
+		if imports[0] != "oj/wok" {
+			t.Errorf("imports[0] = %q, want %q", imports[0], "oj/wok")
+		}
+		if imports[1] != "oj/git" {
+			t.Errorf("imports[1] = %q, want %q", imports[1], "oj/git")
+		}
+	}
+}
+
+func TestExtractImportsNone(t *testing.T) {
+	content := `job "build" { run = "make" }`
+	imports := ExtractImports(content)
+	if len(imports) != 0 {
+		t.Errorf("ExtractImports count = %d, want 0", len(imports))
+	}
+}
+
+func TestExtractConsts(t *testing.T) {
+	content := `
+const "prefix" {}
+const "check"  { default = "true" }
+const "submit" { default = "" }
+
+command "fix" {
+  args = "<description>"
+}
+`
+	consts := ExtractConsts(content)
+	if len(consts) != 3 {
+		t.Errorf("ExtractConsts count = %d, want 3, got %v", len(consts), consts)
+	}
+	if len(consts) >= 3 {
+		if consts[0] != "prefix" {
+			t.Errorf("consts[0] = %q, want %q", consts[0], "prefix")
+		}
+		if consts[1] != "check" {
+			t.Errorf("consts[1] = %q, want %q", consts[1], "check")
+		}
+		if consts[2] != "submit" {
+			t.Errorf("consts[2] = %q, want %q", consts[2], "submit")
+		}
+	}
+}
+
 func TestNameToSlug(t *testing.T) {
 	tests := []struct {
 		input string
