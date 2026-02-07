@@ -607,6 +607,7 @@ func TestFormulaRoundTrip_KitchenSink(t *testing.T) {
 		Phase:          "liquid",
 		Extends:        []string{"base-workflow", "mixin-logging"},
 		RequiresSkills: []string{"go", "docker", "k8s"},
+		Runbooks:       []string{"deploy-worker", "monitoring-setup"},
 		Vars: map[string]*VarDef{
 			"component": {Description: "Component", Required: true, Type: "string"},
 			"env":       {Default: "staging", Enum: []string{"dev", "staging", "prod"}, Pattern: "^[a-z]+$"},
@@ -708,6 +709,7 @@ func TestFormulaRoundTrip_KitchenSink(t *testing.T) {
 	}
 	jsonEqual(t, "Extends", restored.Extends, original.Extends)
 	jsonEqual(t, "RequiresSkills", restored.RequiresSkills, original.RequiresSkills)
+	jsonEqual(t, "Runbooks", restored.Runbooks, original.Runbooks)
 	jsonEqual(t, "Vars", restored.Vars, original.Vars)
 	jsonEqual(t, "Steps", restored.Steps, original.Steps)
 	jsonEqual(t, "Compose", restored.Compose, original.Compose)
@@ -879,6 +881,118 @@ func TestFormulaRoundTrip_OnCompleteSequential(t *testing.T) {
 		t.Error("OnComplete.Parallel should be false")
 	}
 	jsonEqual(t, "OnComplete.Vars", oc.Vars, original.Steps[0].OnComplete.Vars)
+}
+
+// --- Formula-Runbook Composition Tests (od-dv0.6) ---
+
+func TestFormulaToIssue_WithRunbooks(t *testing.T) {
+	f := &Formula{
+		Formula:  "mol-deploy-worker",
+		Version:  1,
+		Type:     TypeWorkflow,
+		Runbooks: []string{"deploy-worker", "monitoring-setup"},
+		Steps: []*Step{
+			{ID: "deploy", Title: "Deploy worker"},
+		},
+	}
+
+	_, labels, err := FormulaToIssue(f, "bd-")
+	if err != nil {
+		t.Fatalf("FormulaToIssue failed: %v", err)
+	}
+
+	// Check runbook labels
+	runbookLabels := 0
+	for _, l := range labels {
+		if l == "runbook:deploy-worker" || l == "runbook:monitoring-setup" {
+			runbookLabels++
+		}
+	}
+	if runbookLabels != 2 {
+		t.Errorf("expected 2 runbook labels, got %d (labels: %v)", runbookLabels, labels)
+	}
+}
+
+func TestFormulaRoundTrip_Runbooks(t *testing.T) {
+	original := &Formula{
+		Formula:  "mol-with-runbooks",
+		Version:  1,
+		Type:     TypeWorkflow,
+		Runbooks: []string{"deploy-worker", "od-runbook-monitoring"},
+		Steps: []*Step{
+			{ID: "s1", Title: "Deploy"},
+		},
+	}
+	restored := roundTrip(t, original)
+
+	if len(restored.Runbooks) != 2 {
+		t.Fatalf("Runbooks count = %d, want 2", len(restored.Runbooks))
+	}
+	if restored.Runbooks[0] != "deploy-worker" {
+		t.Errorf("Runbooks[0] = %q, want %q", restored.Runbooks[0], "deploy-worker")
+	}
+	if restored.Runbooks[1] != "od-runbook-monitoring" {
+		t.Errorf("Runbooks[1] = %q, want %q", restored.Runbooks[1], "od-runbook-monitoring")
+	}
+}
+
+func TestFormulaRoundTrip_EmptyRunbooks(t *testing.T) {
+	original := &Formula{
+		Formula: "mol-no-runbooks",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps:   []*Step{{ID: "s1", Title: "Step"}},
+	}
+	restored := roundTrip(t, original)
+
+	if len(restored.Runbooks) != 0 {
+		t.Errorf("Runbooks count = %d, want 0", len(restored.Runbooks))
+	}
+}
+
+func TestCookToSubgraph_PropagatesRunbooks(t *testing.T) {
+	f := &Formula{
+		Formula:  "mol-runbook-test",
+		Version:  1,
+		Type:     TypeWorkflow,
+		Runbooks: []string{"rb-deploy", "rb-monitor"},
+		Steps: []*Step{
+			{ID: "s1", Title: "Step 1"},
+		},
+	}
+
+	subgraph, err := CookToSubgraphWithVars(f, "test-proto", f.Vars)
+	if err != nil {
+		t.Fatalf("CookToSubgraphWithVars failed: %v", err)
+	}
+
+	if len(subgraph.Runbooks) != 2 {
+		t.Fatalf("Subgraph.Runbooks count = %d, want 2", len(subgraph.Runbooks))
+	}
+	if subgraph.Runbooks[0] != "rb-deploy" {
+		t.Errorf("Subgraph.Runbooks[0] = %q, want %q", subgraph.Runbooks[0], "rb-deploy")
+	}
+	if subgraph.Runbooks[1] != "rb-monitor" {
+		t.Errorf("Subgraph.Runbooks[1] = %q, want %q", subgraph.Runbooks[1], "rb-monitor")
+	}
+}
+
+func TestCookToSubgraph_NilRunbooks(t *testing.T) {
+	f := &Formula{
+		Formula: "mol-no-rb",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps:   []*Step{{ID: "s1", Title: "Step"}},
+	}
+
+	subgraph, err := CookToSubgraphWithVars(f, "test-proto", f.Vars)
+	if err != nil {
+		t.Fatalf("CookToSubgraphWithVars failed: %v", err)
+	}
+
+	if len(subgraph.Runbooks) != 0 {
+		t.Errorf("Subgraph.Runbooks count = %d, want 0", len(subgraph.Runbooks))
+	}
 }
 
 func TestFormulaToIssuePreservesNestedStructures(t *testing.T) {

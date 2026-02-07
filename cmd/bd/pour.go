@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -218,6 +219,12 @@ func runPour(cmd *cobra.Command, args []string) {
 			}
 			fmt.Printf("  - %s (from %s)%s\n", newTitle, issue.ID, suffix)
 		}
+		if len(subgraph.Runbooks) > 0 {
+			fmt.Printf("\nRunbook dependencies (auto-materialize):\n")
+			for _, rb := range subgraph.Runbooks {
+				fmt.Printf("  ~ %s\n", rb)
+			}
+		}
 		if len(attachments) > 0 {
 			fmt.Printf("\nAttachments (%s bonding):\n", attachType)
 			for _, attach := range attachments {
@@ -233,6 +240,11 @@ func runPour(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error pouring proto: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Auto-materialize referenced runbooks (od-dv0.6)
+	if len(subgraph.Runbooks) > 0 {
+		materializeFormulaRunbooks(subgraph.Runbooks)
 	}
 
 	// Attach bonded protos
@@ -271,6 +283,9 @@ func runPour(cmd *cobra.Command, args []string) {
 	fmt.Printf("%s Poured mol: created %d issues\n", ui.RenderPass("✓"), result.Created)
 	fmt.Printf("  Root issue: %s\n", result.NewEpicID)
 	fmt.Printf("  Phase: liquid (persistent in .beads/)\n")
+	if len(subgraph.Runbooks) > 0 {
+		fmt.Printf("  Runbooks: %d auto-materialized\n", len(subgraph.Runbooks))
+	}
 	if totalAttached > 0 {
 		fmt.Printf("  Attached: %d issues from %d protos\n", totalAttached, len(attachments))
 	}
@@ -309,14 +324,52 @@ func pourViaDaemon(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Auto-materialize referenced runbooks on client side (od-dv0.6)
+	if len(result.Runbooks) > 0 {
+		materializeFormulaRunbooks(result.Runbooks)
+	}
+
 	if jsonOutput {
 		outputJSON(result)
 	} else {
 		fmt.Printf("%s Poured mol: created %d issues\n", ui.RenderPass("✓"), result.Created)
 		fmt.Printf("  Root issue: %s\n", result.RootID)
 		fmt.Printf("  Phase: %s\n", result.Phase)
+		if len(result.Runbooks) > 0 {
+			fmt.Printf("  Runbooks: %d auto-materialized\n", len(result.Runbooks))
+		}
 		if result.Attached > 0 {
 			fmt.Printf("  Attached: %d issues\n", result.Attached)
+		}
+	}
+}
+
+// materializeFormulaRunbooks auto-materializes runbook beads referenced by a formula (od-dv0.6).
+// Each runbook reference is resolved from the database and written to .oj/runbooks/.
+// Errors are logged but do not block the pour operation.
+func materializeFormulaRunbooks(runbookRefs []string) {
+	for _, rbRef := range runbookRefs {
+		rb := loadRunbookFromDB(rbRef)
+		if rb == nil {
+			fmt.Fprintf(os.Stderr, "%s Runbook %q not found in database, skipping materialize\n", ui.RenderWarn("⚠"), rbRef)
+			continue
+		}
+
+		// Determine output directory
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s Cannot determine working directory: %v\n", ui.RenderWarn("⚠"), err)
+			continue
+		}
+		outDir := filepath.Join(cwd, ".oj", "runbooks")
+
+		err = materializeOne(rb, outDir)
+		if err != nil {
+			if strings.Contains(err.Error(), "already exists") {
+				// Runbook already on disk - this is fine
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "%s Materialize runbook %q: %v\n", ui.RenderWarn("⚠"), rbRef, err)
 		}
 	}
 }

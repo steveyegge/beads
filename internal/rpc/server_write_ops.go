@@ -719,11 +719,18 @@ func (s *Server) handlePour(req *Request) Response {
 
 	s.emitMutation(MutationCreate, rootID, "", "")
 
+	// Collect runbook refs from formula subgraph (od-dv0.6)
+	var runbooks []string
+	if fSubgraph != nil && len(fSubgraph.Runbooks) > 0 {
+		runbooks = fSubgraph.Runbooks
+	}
+
 	result := PourResult{
 		RootID:   rootID,
 		Created:  created,
 		Attached: attached,
 		Phase:    "liquid",
+		Runbooks: runbooks,
 	}
 	data, _ := json.Marshal(result)
 	return Response{Success: true, Data: data}

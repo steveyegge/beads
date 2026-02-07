@@ -18,6 +18,7 @@ type TemplateSubgraph struct {
 	Phase          string                    // Recommended phase: "liquid" (pour) or "vapor" (wisp)
 	RequiredSkills []string                  // Skill IDs required by the formula (creates requires-skill deps on instantiation)
 	DecisionPoints []*types.DecisionPoint    // Decision points from steps with Decision configs
+	Runbooks       []string                  // Runbook bead references to auto-materialize on pour (od-dv0.6)
 }
 
 // InstantiateResult holds the result of template instantiation.
@@ -140,6 +141,8 @@ func CookToSubgraphWithVars(f *Formula, protoID string, vars map[string]*VarDef)
 	}
 	// Attach recommended phase from formula (warn on pour of vapor formulas)
 	subgraph.Phase = f.Phase
+	// Attach runbook references for auto-materialization on pour (od-dv0.6)
+	subgraph.Runbooks = f.Runbooks
 	return subgraph, nil
 }
 

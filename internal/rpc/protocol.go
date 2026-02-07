@@ -1021,10 +1021,11 @@ type PourArgs struct {
 
 // PourResult represents the result of a pour operation
 type PourResult struct {
-	RootID   string `json:"root_id"`
-	Created  int    `json:"created"`
-	Attached int    `json:"attached"`
-	Phase    string `json:"phase"` // "liquid"
+	RootID   string   `json:"root_id"`
+	Created  int      `json:"created"`
+	Attached int      `json:"attached"`
+	Phase    string   `json:"phase"`               // "liquid"
+	Runbooks []string `json:"runbooks,omitempty"`   // Runbook refs to auto-materialize (od-dv0.6)
 }
 
 // Mol operations (gt-as9kdm)

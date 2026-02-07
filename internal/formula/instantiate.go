@@ -115,6 +115,22 @@ func CloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSub
 			}
 		}
 
+		// Fourth pass: add formula->runbook dependency edges (od-dv0.6)
+		// Links the root issue to each referenced runbook bead
+		if len(subgraph.Runbooks) > 0 {
+			rootNewID := idMapping[subgraph.Root.ID]
+			for _, rbRef := range subgraph.Runbooks {
+				rbDep := &types.Dependency{
+					IssueID:     rootNewID,
+					DependsOnID: rbRef,
+					Type:        types.DepRelated,
+					Metadata:    `{"source":"formula-runbook"}`,
+				}
+				// Ignore errors - runbook bead may not exist in this DB yet
+				_ = tx.AddDependency(ctx, rbDep, opts.Actor)
+			}
+		}
+
 		return nil
 	})
 

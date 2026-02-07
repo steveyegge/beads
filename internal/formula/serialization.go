@@ -50,6 +50,9 @@ func FormulaToIssue(f *Formula, idPrefix string) (*types.Issue, []string, error)
 	for _, skill := range f.RequiresSkills {
 		labels = append(labels, "skill:"+skill)
 	}
+	for _, rb := range f.Runbooks {
+		labels = append(labels, "runbook:"+rb)
+	}
 
 	return issue, labels, nil
 }

@@ -112,6 +112,13 @@ type Formula struct {
 	// When cooking, these skills are propagated to all generated issues.
 	// Enables skill-based work routing: agents without required skills won't see this work.
 	RequiresSkills []string `json:"requires_skills,omitempty"`
+
+	// Runbooks lists runbook bead references that this formula depends on.
+	// Each entry is either a runbook name (e.g., "deploy-worker") or a bead ID
+	// (e.g., "od-runbook-deploy-worker"). When poured, referenced runbooks are
+	// auto-materialized to the filesystem and dependency edges are created from
+	// the formula's root issue to each runbook bead.
+	Runbooks []string `json:"runbooks,omitempty"`
 }
 
 // VarDef defines a template variable with optional validation.
