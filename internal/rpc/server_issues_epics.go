@@ -2059,6 +2059,15 @@ func (s *Server) handleList(req *Request) Response {
 		}
 	}
 
+	// Reduce database limit to account for wisps already collected (gt-w676pl.4)
+	if filter.Limit > 0 && len(wisps) > 0 {
+		remaining := filter.Limit - len(wisps)
+		if remaining <= 0 {
+			remaining = 0
+		}
+		filter.Limit = remaining
+	}
+
 	issues, err := store.SearchIssues(ctx, listArgs.Query, filter)
 	if err != nil {
 		return Response{
@@ -2130,6 +2139,11 @@ func (s *Server) handleList(req *Request) Response {
 			iwc.EpicClosedChildren = progress.ClosedChildren
 		}
 		issuesWithCounts = append(issuesWithCounts, iwc)
+	}
+
+	// Enforce overall limit on combined results (gt-w676pl.4)
+	if listArgs.Limit > 0 && len(issuesWithCounts) > listArgs.Limit {
+		issuesWithCounts = issuesWithCounts[:listArgs.Limit]
 	}
 
 	data, _ := json.Marshal(issuesWithCounts)
