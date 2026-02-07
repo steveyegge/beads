@@ -31,6 +31,60 @@ func (h *PrimeHandler) Handle(ctx context.Context, event *Event, result *Result)
 	return nil
 }
 
+// StopDecisionHandler creates a decision point when Claude tries to stop,
+// blocking until the human responds. Priority 15 (after prime, before gate).
+type StopDecisionHandler struct{}
+
+func (h *StopDecisionHandler) ID() string          { return "stop-decision" }
+func (h *StopDecisionHandler) Handles() []EventType { return []EventType{EventStop} }
+func (h *StopDecisionHandler) Priority() int        { return 15 }
+
+func (h *StopDecisionHandler) Handle(ctx context.Context, event *Event, result *Result) error {
+	// Check stop_hook_active from event JSON to prevent infinite loop.
+	// When this handler blocks the stop, Claude resumes and may stop again;
+	// the bus emit sets stop_hook_active=true to avoid re-entering.
+	if len(event.Raw) > 0 {
+		var raw map[string]interface{}
+		if err := json.Unmarshal(event.Raw, &raw); err == nil {
+			if active, ok := raw["stop_hook_active"]; ok {
+				if boolVal, isBool := active.(bool); isBool && boolVal {
+					return nil // already inside a stop hook — skip
+				}
+			}
+		}
+	}
+
+	stdout, _, err := runBDCommand(ctx, event.CWD, "decision", "stop-check", "--json")
+	if err != nil {
+		// Exit code 1 means block (human said "continue").
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			var resp stopCheckResponse
+			if jsonErr := json.Unmarshal([]byte(stdout), &resp); jsonErr == nil {
+				if resp.Decision == "block" {
+					result.Block = true
+					result.Reason = resp.Reason
+					return nil
+				}
+			}
+			// Couldn't parse — treat as block with raw reason.
+			result.Block = true
+			result.Reason = strings.TrimSpace(stdout)
+			return nil
+		}
+		// Other errors — log and allow stop (fail-open).
+		return fmt.Errorf("stop-decision: %w", err)
+	}
+
+	// Exit 0 = allow stop.
+	return nil
+}
+
+// stopCheckResponse mirrors the JSON output from `bd decision stop-check`.
+type stopCheckResponse struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 // GateHandler evaluates session gates on Stop and PreToolUse hooks.
 // Priority 20 (runs after context injection).
 type GateHandler struct{}
@@ -140,6 +194,7 @@ func findBDBinary() (string, error) {
 func DefaultHandlers() []Handler {
 	return []Handler{
 		&PrimeHandler{},
+		&StopDecisionHandler{},
 		&GateHandler{},
 		&DecisionHandler{},
 	}
