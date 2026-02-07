@@ -21,6 +21,67 @@ type RunbookContent struct {
 	Crons    []string `json:"crons,omitempty"`    // Extracted cron names
 	Queues   []string `json:"queues,omitempty"`   // Extracted queue names
 	Source   string   `json:"source,omitempty"`   // Where loaded from (file path or bead:ID)
+	Scope    string   `json:"scope,omitempty"`    // Scope level: "global", "town:X", "rig:X", "role:X", "agent:X"
+}
+
+// Scope hierarchy levels for specificity scoring.
+// Higher values win when multiple runbooks share the same name.
+const (
+	ScopeGlobal = 0 // scope:global - available everywhere
+	ScopeTown   = 1 // scope:town:X - available within a town
+	ScopeRig    = 2 // scope:rig:X - available within a rig
+	ScopeRole   = 3 // scope:role:X - available to a specific role
+	ScopeAgent  = 4 // scope:agent:X - available to a specific agent
+)
+
+// ScopeSpecificity returns the specificity score (0-4) for a scope string.
+// Higher values are more specific and win in most-specific-wins resolution.
+func ScopeSpecificity(scope string) int {
+	switch {
+	case scope == "" || scope == "global":
+		return ScopeGlobal
+	case strings.HasPrefix(scope, "town:"):
+		return ScopeTown
+	case strings.HasPrefix(scope, "rig:"):
+		return ScopeRig
+	case strings.HasPrefix(scope, "role:"):
+		return ScopeRole
+	case strings.HasPrefix(scope, "agent:"):
+		return ScopeAgent
+	default:
+		return ScopeGlobal
+	}
+}
+
+// ScopeLabel returns the label string for a scope (e.g., "scope:rig:beads").
+// Empty or "global" scope returns "scope:global".
+func ScopeLabel(scope string) string {
+	if scope == "" || scope == "global" {
+		return "scope:global"
+	}
+	return "scope:" + scope
+}
+
+// ParseScopeFromLabels extracts the scope from a set of labels.
+// Returns the most specific scope label found (highest specificity).
+func ParseScopeFromLabels(labels []string) string {
+	bestScope := ""
+	bestSpec := -1
+	for _, l := range labels {
+		if !strings.HasPrefix(l, "scope:") {
+			continue
+		}
+		scopeVal := strings.TrimPrefix(l, "scope:")
+		spec := ScopeSpecificity(scopeVal)
+		if spec > bestSpec {
+			bestSpec = spec
+			bestScope = scopeVal
+		}
+	}
+	if bestScope == "" {
+		return "global"
+	}
+	return bestScope
 }
 
 // RunbookToIssue converts a RunbookContent to an Issue for database storage.
@@ -72,6 +133,7 @@ func RunbookToIssue(rb *RunbookContent, idPrefix string) (*types.Issue, []string
 	// Build labels for queryable facets
 	var labels []string
 	labels = append(labels, "format:"+rb.Format)
+	labels = append(labels, ScopeLabel(rb.Scope))
 	for _, j := range rb.Jobs {
 		labels = append(labels, "job:"+j)
 	}
