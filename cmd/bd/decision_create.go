@@ -177,6 +177,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 			DefaultOption: defaultOption,
 			MaxIterations: maxIterations,
 			RequestedBy:   requestedBy,
+			Context:       decisionContext,
 		}
 
 		result, err := daemonClient.DecisionCreate(createArgs)
@@ -189,11 +190,10 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		gateIssue = result.Issue
 		decisionID = decisionPoint.IssueID
 
-		// Note: Some advanced features like parent, blocks, predecessor, urgency, context
-		// may not be fully supported by the daemon RPC yet. They would need to be added
-		// to DecisionCreateArgs in the protocol.
-		if parent != "" || blocks != "" || predecessor != "" || decisionContext != "" {
-			fmt.Fprintf(os.Stderr, "Warning: --parent, --blocks, --predecessor, --context flags require direct database access\n")
+		// Note: Some advanced features like parent, blocks, predecessor
+		// may not be fully supported by the daemon RPC yet.
+		if parent != "" || blocks != "" || predecessor != "" {
+			fmt.Fprintf(os.Stderr, "Warning: --parent, --blocks, --predecessor flags require direct database access\n")
 			fmt.Fprintf(os.Stderr, "These options were not applied via daemon RPC\n")
 		}
 	} else if store != nil {
