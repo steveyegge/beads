@@ -746,6 +746,12 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		}
 	}
 
+	// Hydrate deploy.* config from database into environment variables.
+	// Priority: env vars already set > deploy.* config values > defaults.
+	// This allows the database config table to drive daemon behavior without
+	// duplicating settings in Helm values.yaml and env vars.
+	hydrateDeployConfig(ctx, store, log)
+
 	// Get workspace path (.beads directory) - beadsDir already defined above
 	// Get actual workspace root (parent of .beads)
 	workspacePath := filepath.Dir(beadsDir)
@@ -1209,4 +1215,51 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 	}
 
 	return autoCommit, autoPush, autoPull
+}
+
+// hydrateDeployConfig reads deploy.* keys from the database config table and
+// sets the corresponding environment variables if they are not already set.
+// This is the core of config materialization: the database drives runtime
+// behavior, and env vars that are already set take precedence (e.g., from
+// Helm values or K8s env overrides).
+func hydrateDeployConfig(ctx context.Context, store storage.Storage, log daemonLogger) {
+	allConfig, err := store.GetAllConfig(ctx)
+	if err != nil {
+		log.Warn("failed to read config for deploy hydration", "error", err)
+		return
+	}
+
+	envMap := config.DeployKeyEnvMap()
+	hydrated := 0
+
+	for key, value := range allConfig {
+		if !config.IsDeployKey(key) {
+			continue
+		}
+
+		envVar, ok := envMap[key]
+		if !ok || envVar == "" {
+			// Deploy key with no env var mapping (e.g., deploy.ingress_host)
+			log.Debug("deploy key has no env mapping, skipping", "key", key)
+			continue
+		}
+
+		// Env vars already set take precedence
+		if existing := os.Getenv(envVar); existing != "" {
+			log.Debug("env var already set, skipping hydration", "key", key, "env", envVar)
+			continue
+		}
+
+		if err := os.Setenv(envVar, value); err != nil {
+			log.Warn("failed to set env var from deploy config", "key", key, "env", envVar, "error", err)
+			continue
+		}
+
+		hydrated++
+		log.Debug("hydrated deploy config", "key", key, "env", envVar, "value", value)
+	}
+
+	if hydrated > 0 {
+		log.Info("deploy config hydrated from database", "count", hydrated)
+	}
 }

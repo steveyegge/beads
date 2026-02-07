@@ -612,7 +612,7 @@ Examples:
 		}
 
 		fmt.Println("\nDeploy Configuration Keys:")
-		fmt.Println("==========================\n")
+		fmt.Println("==========================")
 		for _, dk := range config.DeployKeys {
 			fmt.Printf("  %-28s %s\n", dk.Key, dk.Description)
 			details := []string{}
