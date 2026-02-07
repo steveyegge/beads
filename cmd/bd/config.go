@@ -90,7 +90,7 @@ var configSetCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: invalid role %q (valid values: maintainer, contributor)\n", value)
 				os.Exit(1)
 			}
-			cmd := exec.Command("git", "config", "beads.role", value)
+			cmd := exec.Command("git", "config", "beads.role", value) //nolint:gosec // value is validated against allowlist above
 			if err := cmd.Run(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error setting beads.role in git config: %v\n", err)
 				os.Exit(1)

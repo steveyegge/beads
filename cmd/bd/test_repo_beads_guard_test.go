@@ -89,7 +89,7 @@ func TestMain(m *testing.M) {
 		"issues.jsonl",
 		"beads.jsonl",
 		"metadata.json",
-		"interactions.jsonl",
+		// interactions.jsonl excluded: legitimately created by init during tests
 		"deletions.jsonl",
 		"molecules.jsonl",
 		"daemon.lock",
