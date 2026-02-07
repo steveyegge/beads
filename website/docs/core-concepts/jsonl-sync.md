@@ -6,6 +6,10 @@ sidebar_position: 4
 
 # JSONL Sync
 
+:::warning DEPRECATED
+The `bd sync` command is deprecated. Dolt now handles synchronization automatically. The JSONL export/import commands (`bd export`, `bd import`) remain available for manual data transfer. This page is retained for reference.
+:::
+
 How beads synchronizes issues across git.
 
 ## The Magic
@@ -32,14 +36,14 @@ Remote JSONL (shared across machines)
 Triggers:
 - Any database change
 - After 5 second debounce (batches multiple changes)
-- Manual `bd sync`
+- Dolt handles sync automatically (no manual `bd sync` needed)
 
 ```bash
-# Force immediate export
-bd sync
-
 # Check what would be exported
 bd export --dry-run
+
+# Manual export if needed
+bd export
 ```
 
 ### Import (JSONL → SQLite)
@@ -70,16 +74,15 @@ Hooks installed:
 - **post-merge** - Imports from JSONL after pull
 - **pre-push** - Ensures sync before push
 
-## Manual Sync
+## Manual Data Transfer
 
 ```bash
-# Full sync cycle: export + commit + push
-bd sync
+# bd sync is DEPRECATED - Dolt handles sync automatically
 
-# Just export
+# Manual export
 bd export
 
-# Just import
+# Manual import
 bd import -i .beads/issues.jsonl
 ```
 
@@ -109,7 +112,7 @@ Manual resolution:
 # After merge conflict
 git checkout --ours .beads/issues.jsonl   # or --theirs
 bd import -i .beads/issues.jsonl
-bd sync
+bd export  # Re-export after resolving conflicts
 ```
 
 ## Orphan Handling
@@ -151,8 +154,10 @@ git pull  # Imports deletions from remote
 ### JSONL out of sync
 
 ```bash
-# Force full sync
-bd sync
+# Dolt handles sync automatically - manual bd sync is deprecated
+# Use export/import for manual data transfer:
+bd export
+bd import -i .beads/issues.jsonl
 
 # Check sync status
 bd info

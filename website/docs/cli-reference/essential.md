@@ -160,22 +160,16 @@ bd blocked --json
 
 ## bd sync
 
-Force immediate sync to git.
+:::warning DEPRECATED
+`bd sync` is deprecated. Dolt now handles synchronization automatically. Use `bd export` or `bd import` for manual data transfer when needed.
+:::
+
+~~Force immediate sync to git.~~
 
 ```bash
-bd sync [flags]
-```
-
-Performs:
-1. Export database to JSONL
-2. Git add `.beads/issues.jsonl`
-3. Git commit
-4. Git push
-
-**Examples:**
-```bash
-bd sync
-bd sync --json
+# DEPRECATED - use bd export or bd import instead
+bd export
+bd import -i .beads/issues.jsonl
 ```
 
 ## bd info

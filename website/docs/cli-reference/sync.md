@@ -10,6 +10,10 @@ Commands for synchronizing with git.
 
 ## bd sync
 
+:::warning DEPRECATED
+`bd sync` is deprecated. Dolt now handles synchronization automatically. Use `bd export` or `bd import` for manual data transfer when needed. The `bd sync` command will be removed in a future release.
+:::
+
 Full sync cycle: export, commit, push.
 
 ```bash
@@ -30,14 +34,16 @@ bd sync [flags]
 
 **Examples:**
 ```bash
-bd sync
-bd sync --json
+# DEPRECATED - Dolt handles sync automatically
+# Use bd export or bd import instead
+bd export
+bd import -i .beads/issues.jsonl
 ```
 
 **When to use:**
-- End of work session
-- Before switching branches
-- After significant changes
+- ~~End of work session~~ No longer needed -- Dolt syncs automatically
+- ~~Before switching branches~~ No longer needed -- Dolt syncs automatically
+- ~~After significant changes~~ No longer needed -- Dolt syncs automatically
 
 ## bd export
 
@@ -143,21 +149,27 @@ bd hooks uninstall
 
 ## Auto-Sync Behavior
 
-### With Daemon (Default)
+### Dolt-Native Sync (Current)
 
-The daemon handles sync automatically:
+Dolt now handles synchronization automatically. There is no need to run `bd sync` manually. Data is synchronized natively through Dolt's built-in replication and merge capabilities.
+
+### Legacy Daemon Mode
+
+Previously, the daemon handled sync automatically:
 - Exports to JSONL after changes (5s debounce)
 - Imports from JSONL when newer
+
+This is no longer required. Dolt manages sync natively.
 
 ### Without Daemon
 
 Use `--no-daemon` flag:
 - Changes only written to SQLite
-- Must manually export/sync
+- Use `bd export` or `bd import` for manual data transfer
 
 ```bash
 bd --no-daemon create "Task"
-bd export  # Manual export needed
+bd export  # Manual export if needed
 ```
 
 ## Conflict Resolution
@@ -181,7 +193,7 @@ The driver automatically:
 # After merge conflict
 git checkout --ours .beads/issues.jsonl
 bd import -i .beads/issues.jsonl
-bd sync
+bd export  # Re-export after resolving conflicts
 ```
 
 ## Deletion Tracking
@@ -202,7 +214,8 @@ git pull  # Imports deletions from remote
 
 ## Best Practices
 
-1. **Always sync at session end** - `bd sync`
+1. **Dolt handles sync automatically** -- manual `bd sync` is no longer needed
 2. **Install git hooks** - `bd hooks install`
 3. **Use merge driver** - Avoids manual conflict resolution
 4. **Check sync status** - `bd info` shows daemon/sync state
+5. **Use `bd export` / `bd import`** for manual data transfer when needed

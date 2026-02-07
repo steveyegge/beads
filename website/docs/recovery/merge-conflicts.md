@@ -11,7 +11,7 @@ This runbook helps you resolve JSONL merge conflicts that occur during Git opera
 ## Symptoms
 
 - Git merge conflicts in `.beads/*.jsonl` files
-- `bd sync` fails with conflict errors
+- Sync fails with conflict errors
 - Different issue states between clones
 
 ## Diagnosis
@@ -60,6 +60,6 @@ git commit -m "Resolved beads merge conflicts"
 
 ## Prevention
 
-- Sync before and after Git operations
-- Use `bd sync` regularly
+- Dolt handles sync automatically (`bd sync` is deprecated)
+- Use `bd export` / `bd import` for manual data transfer if needed
 - Avoid concurrent modifications from multiple clones

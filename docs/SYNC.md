@@ -1,4 +1,8 @@
-# Sync Architecture
+# Sync Architecture (DEPRECATED)
+
+> **DEPRECATED:** `bd sync` has been deprecated. Dolt backend now handles
+> synchronization automatically. Use `bd export` or `bd import` for manual
+> JSONL operations. This document is retained for historical reference.
 
 This document explains the design decisions behind `bd sync` - why it works the way it does, and the problems each design choice solves.
 

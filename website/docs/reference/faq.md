@@ -54,10 +54,13 @@ Use `--no-daemon` when not needed (CI, worktrees).
 
 ### How do I sync issues to git?
 
+Dolt now handles synchronization automatically. The `bd sync` command is deprecated.
+
 ```bash
-# Auto-sync via daemon (default)
-# Or manual sync:
-bd sync
+# Dolt syncs automatically - no manual sync needed
+# For manual data transfer, use:
+bd export              # Export database to JSONL
+bd import -i file.jsonl  # Import from JSONL
 ```
 
 ### How do I handle merge conflicts?
@@ -145,12 +148,15 @@ bd info
 
 ### Why aren't my changes syncing?
 
+Dolt handles sync automatically. If data is not appearing, check the following:
+
 ```bash
 # Check daemon status
 bd info
 
-# Force sync
-bd sync
+# bd sync is deprecated - use export/import for manual data transfer
+bd export
+bd import -i .beads/issues.jsonl
 
 # Check hooks
 bd hooks status

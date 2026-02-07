@@ -31,7 +31,7 @@ bd setup junie --check
 1. **Session starts** → Junie reads `.junie/guidelines.md` for workflow context
 2. **MCP tools available** → Junie can use beads MCP tools directly
 3. **You work** → Use `bd` CLI commands or MCP tools
-4. **Session ends** → Run `bd sync` to save work to git
+4. **Session ends** → Dolt handles sync automatically (`bd sync` is deprecated)
 
 ## Configuration Files
 
@@ -121,8 +121,9 @@ bd blocked --json
 ### Syncing
 
 ```bash
-# ALWAYS run at session end
-bd sync
+# Dolt handles sync automatically - bd sync is deprecated
+# Manual export if needed:
+bd export
 ```
 
 ## Best Practices
@@ -158,8 +159,9 @@ bd create "Found related bug" \
 ### Sync Before Session End
 
 ```bash
-# ALWAYS run before ending
-bd sync
+# Dolt handles sync automatically - bd sync is deprecated
+# Manual export if needed:
+bd export
 ```
 
 ## Troubleshooting
@@ -187,8 +189,10 @@ bd mcp --help
 ### Changes not syncing
 
 ```bash
-# Force sync
-bd sync
+# bd sync is deprecated - Dolt handles sync automatically
+# For manual data transfer:
+bd export
+bd import -i .beads/issues.jsonl
 
 # Check daemon
 bd info

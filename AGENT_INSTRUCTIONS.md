@@ -114,9 +114,6 @@ The 30-second debounce provides a **transaction window** for batch operations - 
    #   - bd import -i .beads/issues.jsonl (re-import)
    #   - Or manual merge, then import
 
-   # Sync the database (exports to JSONL, commits)
-   bd sync
-
    # MANDATORY: Push everything to remote
    # DO NOT STOP BEFORE THIS COMMAND COMPLETES
    git push
@@ -163,7 +160,6 @@ git pull --rebase
 #   - git checkout --theirs .beads/issues.jsonl (accept remote)
 #   - bd import -i .beads/issues.jsonl (re-import)
 #   - Or manual merge, then import
-bd sync        # Export/import/commit
 git push       # MANDATORY - THE PLANE IS STILL IN THE AIR UNTIL THIS SUCCEEDS
 git status     # MUST verify "up to date with origin/main"
 
@@ -200,40 +196,19 @@ bd update <id> --notes "additional notes"
 bd update <id> --acceptance "acceptance criteria"
 ```
 
-**IMPORTANT for AI agents:** When you finish making issue changes, always run:
-
-```bash
-bd sync
-```
-
-This immediately:
-
-1. Exports pending changes to JSONL (no 30s wait)
-2. Commits to git
-3. Pulls from remote
-4. Imports any updates
-5. Pushes to remote
+**Note for AI agents:** Dolt handles sync automatically. You do not need to run any manual sync command. Just make your issue changes and they will be synced.
 
 **Example agent session:**
 
 ```bash
-# Make multiple changes (batched in 30-second window)
+# Make multiple changes
 bd create "Fix bug" -p 1
 bd create "Add tests" -p 1
 bd update bd-42 --status in_progress
 bd close bd-40 --reason "Completed"
 
-# Force immediate sync at end of session
-bd sync
-
-# Now safe to end session - everything is committed and pushed
+# No manual sync needed - Dolt handles sync automatically
 ```
-
-**Why this matters:**
-
-- Without `bd sync`, changes sit in 30-second debounce window
-- User might think you pushed but JSONL is still dirty
-- `bd sync` forces immediate flush/commit/push
 
 **STRONGLY RECOMMENDED: Install git hooks for automatic sync** (prevents stale JSONL problems):
 

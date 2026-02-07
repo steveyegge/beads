@@ -63,13 +63,15 @@ bd ready
 ### End Session
 
 ```bash
-bd sync
+# Dolt handles sync automatically - bd sync is deprecated
+# Manual export if needed:
+bd export
 ```
 
 ## Best Practices
 
 1. **Keep issues visible** - Aider reads `.beads/issues.jsonl`
-2. **Sync regularly** - Run `bd sync` after significant changes
+2. **Dolt syncs automatically** -- manual `bd sync` is deprecated; use `bd export` if you need a manual export
 3. **Use discovered-from** - Track issues found during work
 4. **Document context** - Include descriptions in issues
 
@@ -87,9 +89,9 @@ aider --message "Working on bd-42: Fix auth bug"
 # 4. Create discovered issues
 bd create "Found related bug" --deps discovered-from:bd-42 --json
 
-# 5. Complete and sync
+# 5. Complete work (Dolt syncs automatically)
 bd close bd-42 --reason "Fixed"
-bd sync
+bd export  # Optional manual export
 ```
 
 ## Troubleshooting

@@ -6,6 +6,10 @@ description: Recover from bd sync failures
 
 # Sync Failures Recovery
 
+:::warning DEPRECATED
+`bd sync` is deprecated. Dolt now handles synchronization automatically. Most sync failures described on this page should no longer occur. If you experience data transfer issues, use `bd export` and `bd import` instead. This page is retained for reference for users still on older versions.
+:::
+
 This runbook helps you recover from `bd sync` failures.
 
 ## Symptoms
@@ -52,10 +56,11 @@ bd doctor --fix
 bd daemon start
 ```
 
-**Step 5:** Verify sync works
+**Step 5:** Verify data transfer works
 ```bash
-bd sync
-bd status
+# bd sync is deprecated - use export/import instead
+bd export
+bd info
 ```
 
 ## Common Causes

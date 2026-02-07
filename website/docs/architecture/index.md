@@ -26,7 +26,7 @@ flowchart TD
         D[("beads.db<br/><i>Fast Queries / Derived State</i>")]
     end
 
-    G <-->|"bd sync"| J
+    G <-->|"Dolt sync"| J
     J -->|"rebuild"| D
     D -->|"append"| J
 
@@ -43,7 +43,7 @@ flowchart TD
 
 **JSONL** is the *operational* source of truth—when recovering from database corruption, Beads rebuilds SQLite from JSONL files, not directly from Git commits.
 
-This layered model enables recovery: if SQLite is corrupted but JSONL is intact, run `bd sync --import-only` to rebuild. If JSONL is corrupted, recover it from Git history first.
+This layered model enables recovery: if SQLite is corrupted but JSONL is intact, run `bd import -i .beads/issues.jsonl` to rebuild. If JSONL is corrupted, recover it from Git history first. Note: `bd sync` is deprecated; Dolt handles synchronization automatically.
 :::
 
 ### Layer 1: Git Repository
@@ -68,7 +68,7 @@ JSONL (JSON Lines) files store issue data in an append-only format. This is the 
 - Git-mergeable (append-only reduces conflicts)
 - Portable across systems
 - Can be recovered from Git history
-- **Recovery source**: `bd sync --import-only` rebuilds SQLite from JSONL
+- **Recovery source**: `bd import -i .beads/issues.jsonl` rebuilds SQLite from JSONL (previously `bd sync --import-only`, now deprecated)
 
 ### Layer 3: SQLite Database
 
@@ -80,7 +80,7 @@ SQLite provides fast local queries without network latency. This is *derived sta
 - Instant queries (no network)
 - Complex filtering and sorting
 - Derived from JSONL (always rebuildable)
-- Safe to delete and rebuild: `rm .beads/beads.db* && bd sync --import-only`
+- Safe to delete and rebuild: `rm .beads/beads.db* && bd import -i .beads/issues.jsonl`
 
 ## Data Flow
 
@@ -101,59 +101,50 @@ User runs bd list
 
 ### Sync Path
 ```text
-User runs bd sync
-    → Git pull
+Dolt handles sync automatically (bd sync is deprecated)
     → JSONL merged
     → SQLite rebuilt if needed
-    → Git push
 ```
 
 ### Sync Modes
 
-Beads provides specialized sync modes for different recovery scenarios:
+:::info
+`bd sync` is deprecated. Dolt now handles synchronization automatically. The import/export commands remain available for manual data transfer and recovery.
+:::
 
-#### Standard Sync
-```bash
-bd sync
-```
-Normal bidirectional sync: pulls remote changes, merges JSONL, rebuilds SQLite if needed, pushes local changes.
+#### Dolt-Native Sync (Current)
+Dolt handles bidirectional synchronization automatically. No manual sync command is needed.
 
-#### Import-Only Mode
+#### Manual Import (Recovery)
 ```bash
-bd sync --import-only
+bd import -i .beads/issues.jsonl
 ```
-Rebuilds the SQLite database from JSONL without pushing changes. Use this when:
+Rebuilds the SQLite database from JSONL. Use this when:
 - SQLite is corrupted or missing
 - Recovering from a fresh clone
 - Rebuilding after database migration issues
 
 This is the safest recovery option when JSONL is intact.
 
-#### Force Rebuild Mode
+#### Manual Export
 ```bash
-bd sync --force-rebuild
+bd export
 ```
-Forces complete SQLite rebuild from JSONL, discarding any SQLite-only state. Use with caution:
-- More aggressive than `--import-only`
-- May lose any uncommitted database state
-- Recommended when standard sync fails repeatedly
+Exports the SQLite database to JSONL. Use this for manual data transfer or backups.
 
 ### Multi-Machine Sync Considerations
 
-When working across multiple machines or clones:
+When working across multiple machines or clones, Dolt handles synchronization automatically. However:
 
-1. **Always sync before switching machines**
-   ```bash
-   bd sync  # Push changes before leaving
-   ```
+1. **Dolt syncs automatically** -- no manual `bd sync` needed when switching machines
 
 2. **Pull before creating new issues**
    ```bash
-   bd sync  # Pull changes first on new machine
+   git pull  # Get latest changes
    bd create "New issue"
    ```
 
-3. **Avoid parallel edits** - If two machines create issues simultaneously without syncing, conflicts may occur
+3. **Avoid parallel edits** - If two machines create issues simultaneously, conflicts may occur
 
 See [Sync Failures Recovery](/recovery/sync-failures) for data loss prevention in multi-machine workflows (Pattern A5/C3).
 
@@ -176,7 +167,7 @@ For CI/CD pipelines, containers, and single-use scenarios, run commands without 
 
 ```bash
 bd --no-daemon create "CI-generated issue"
-bd --no-daemon sync
+bd --no-daemon export  # Manual export if needed (bd sync is deprecated)
 ```
 
 **When to use `--no-daemon`:**
@@ -206,7 +197,7 @@ See [Sync Failures Recovery](/recovery/sync-failures) for daemon race condition 
 
 The three-layer architecture makes recovery straightforward because each layer can rebuild from the one above it:
 
-1. **Lost SQLite?** → Rebuild from JSONL: `bd sync --import-only`
+1. **Lost SQLite?** → Rebuild from JSONL: `bd import -i .beads/issues.jsonl`
 2. **Lost JSONL?** → Recover from Git history: `git checkout HEAD~1 -- .beads/issues.jsonl`
 3. **Conflicts?** → Git merge, then rebuild
 
@@ -220,7 +211,7 @@ This sequence resolves the majority of reported issues:
 bd daemons killall           # Stop daemons (prevents race conditions)
 git worktree prune           # Clean orphaned worktrees
 rm .beads/beads.db*          # Remove potentially corrupted database
-bd sync --import-only        # Rebuild from JSONL source of truth
+bd import -i .beads/issues.jsonl  # Rebuild from JSONL source of truth
 ```
 
 :::danger Never Use `bd doctor --fix`

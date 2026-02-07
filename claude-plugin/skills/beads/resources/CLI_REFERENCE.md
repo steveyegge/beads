@@ -487,7 +487,7 @@ bd import -i issues.jsonl --orphan-handling strict     # Fail if parent is missi
 
 # Configure default orphan handling behavior
 bd config set import.orphan_handling "resurrect"
-bd sync  # Now uses resurrect mode by default
+bd import  # Now uses resurrect mode by default
 ```
 
 **Orphan handling modes:**
@@ -560,17 +560,10 @@ bd daemons killall --force --json  # Force kill if graceful fails
 
 ### Sync Operations
 
+**Note:** `bd sync` is deprecated. Dolt handles sync automatically now.
+For manual operations, use `bd export` and `bd import` directly.
+
 ```bash
-# Manual sync (force immediate export/import/commit/push)
-bd sync
-
-# What it does:
-# 1. Export pending changes to JSONL
-# 2. Commit to git
-# 3. Pull from remote
-# 4. Import any updates
-# 5. Push to remote
-
 # Resolve JSONL merge conflict markers (v0.47.0+)
 bd resolve-conflicts                          # Resolve in mechanical mode
 bd resolve-conflicts --dry-run --json         # Preview resolution
@@ -687,11 +680,8 @@ bd create "..." -p 1 --json
 bd update bd-42 --status in_progress --json
 # ... work ...
 
-# End of session (IMPORTANT!)
-bd sync  # Force immediate sync, bypass debounce
+# End of session - Dolt handles sync automatically
 ```
-
-**ALWAYS run `bd sync` at end of agent sessions** to ensure changes are committed/pushed immediately.
 
 ## See Also
 

@@ -103,11 +103,17 @@ bd daemons killall
 
 ## Sync Issues
 
+:::info
+`bd sync` is deprecated. Dolt now handles synchronization automatically. Use `bd export` or `bd import` for manual data transfer.
+:::
+
 ### Changes not syncing
 
 ```bash
-# Force sync
-bd sync
+# bd sync is deprecated - Dolt handles sync automatically
+# For manual data transfer, use:
+bd export
+bd import -i .beads/issues.jsonl
 
 # Check daemon
 bd info | grep daemon
@@ -135,7 +141,7 @@ bd init  # Setup merge driver
 # Or manual resolution
 git checkout --ours .beads/issues.jsonl
 bd import -i .beads/issues.jsonl
-bd sync
+bd export  # Re-export after resolving conflicts
 ```
 
 ## Git Hook Issues

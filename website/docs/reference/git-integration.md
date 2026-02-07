@@ -115,7 +115,8 @@ Why: Daemon uses `.beads/bd.sock` which conflicts across worktrees.
 git checkout -b feature-x
 bd create "Feature X" -t feature
 # Work...
-bd sync
+# bd sync is DEPRECATED - Dolt handles sync automatically
+bd export  # Manual export if needed
 git push
 ```
 
@@ -125,7 +126,8 @@ git push
 # In fork
 bd init --contributor
 # Work in separate planning repo...
-bd sync
+# bd sync is DEPRECATED - Dolt handles sync automatically
+bd export  # Manual export if needed
 ```
 
 ### Team Workflow
@@ -148,7 +150,7 @@ Automatic - driver handles most conflicts.
 # After conflict
 git checkout --ours .beads/issues.jsonl
 bd import -i .beads/issues.jsonl
-bd sync
+bd export  # Re-export after resolving conflicts
 git add .beads/
 git commit
 ```
@@ -165,6 +167,6 @@ bd duplicates --auto-merge
 
 1. **Install hooks** - `bd hooks install`
 2. **Use merge driver** - Avoid manual conflict resolution
-3. **Sync regularly** - `bd sync` at session end
+3. **Dolt syncs automatically** -- manual `bd sync` is deprecated
 4. **Pull before work** - Get latest issues
 5. **Use `--no-daemon` in worktrees**

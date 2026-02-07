@@ -84,11 +84,15 @@ mode = "poll"                 # poll|events (experimental)
 
 ### Git
 
+:::info
+The `[git]` sync settings below are largely obsolete now that Dolt handles synchronization automatically. They are retained for backward compatibility.
+:::
+
 ```toml
 [git]
-auto_commit = true            # Auto-commit on sync
-auto_push = true              # Auto-push on sync
-commit_message = "bd sync"    # Default commit message
+auto_commit = true            # DEPRECATED: Auto-commit on sync (Dolt handles this)
+auto_push = true              # DEPRECATED: Auto-push on sync (Dolt handles this)
+commit_message = "bd sync"    # DEPRECATED: Default commit message
 ```
 
 ### Hooks
@@ -105,7 +109,7 @@ pre_push = true               # Enable pre-push hook
 ```toml
 [deletions]
 retention_days = 30           # Keep deletion records for N days
-prune_on_sync = true          # Auto-prune old records
+prune_on_sync = true          # DEPRECATED: Auto-prune old records (Dolt handles sync)
 ```
 
 ## Environment Variables

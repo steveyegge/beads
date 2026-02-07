@@ -61,6 +61,6 @@ bd daemon start
 
 ## Prevention
 
-- Avoid interrupting `bd sync` operations
+- Avoid interrupting sync operations (`bd sync` is deprecated; Dolt handles sync automatically)
 - Let the daemon handle synchronization
 - Use `bd daemon stop` before system shutdown

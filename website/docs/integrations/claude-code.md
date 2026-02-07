@@ -18,7 +18,7 @@ bd setup claude
 
 This installs:
 - **SessionStart hook** - Runs `bd prime` on session start
-- **PreCompact hook** - Runs `bd sync` before context compaction
+- **PreCompact hook** - Runs `bd export` before context compaction (previously `bd sync`, which is now deprecated)
 
 ### Manual Setup
 
@@ -28,7 +28,7 @@ Add to your Claude Code hooks configuration:
 {
   "hooks": {
     "SessionStart": ["bd prime"],
-    "PreCompact": ["bd sync"]
+    "PreCompact": ["bd export"]
   }
 }
 ```
@@ -43,8 +43,8 @@ bd setup claude --check
 
 1. **Session starts** → `bd prime` injects ~1-2k tokens of context
 2. **You work** → Use `bd` CLI commands directly
-3. **Session compacts** → `bd sync` saves work to git
-4. **Session ends** → Changes synced via git
+3. **Session compacts** → `bd export` saves data (Dolt handles sync automatically)
+4. **Session ends** → Changes synced automatically via Dolt
 
 ## Essential Commands for Agents
 
@@ -91,8 +91,9 @@ bd blocked --json
 ### Syncing
 
 ```bash
-# ALWAYS run at session end
-bd sync
+# Dolt handles sync automatically - bd sync is deprecated
+# Manual export if needed:
+bd export
 ```
 
 ## Best Practices
@@ -128,8 +129,9 @@ bd create "Found related bug" \
 ### Sync Before Session End
 
 ```bash
-# ALWAYS run before ending
-bd sync
+# Dolt handles sync automatically - bd sync is deprecated
+# Manual export if needed:
+bd export
 ```
 
 ## Plugin (Optional)
@@ -165,8 +167,10 @@ bd prime
 ### Changes not syncing
 
 ```bash
-# Force sync
-bd sync
+# bd sync is deprecated - Dolt handles sync automatically
+# For manual data transfer:
+bd export
+bd import -i .beads/issues.jsonl
 
 # Check daemon
 bd info
