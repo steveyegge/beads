@@ -18,7 +18,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
+
+	// Import the jira tracker plugin to register it
+	_ "github.com/steveyegge/beads/internal/tracker/jira"
 )
 
 // JiraSyncStats tracks statistics for a Jira sync operation.
@@ -52,9 +56,6 @@ Configuration:
   bd config set jira.project "PROJ"
   bd config set jira.api_token "YOUR_TOKEN"
   bd config set jira.username "your_email@company.com"  # For Jira Cloud
-  bd config set jira.pull_prefix "hippo"       # Imported issues get hippo-1, hippo-2, etc.
-  bd config set jira.push_prefix "hippo"       # Only push hippo-* issues to Jira
-  bd config set jira.push_prefix "proj1,proj2" # Multiple prefixes (comma-separated)
 
 Environment variables (alternative to config):
   JIRA_API_TOKEN - Jira API token
@@ -89,7 +90,7 @@ Examples:
   bd jira sync --dry-run             # Preview without changes
   bd jira sync --prefer-local        # Bidirectional, local wins`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Flag errors are unlikely but check one to ensure cobra is working
+		// Parse flags
 		pull, _ := cmd.Flags().GetBool("pull")
 		push, _ := cmd.Flags().GetBool("push")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -98,6 +99,7 @@ Examples:
 		createOnly, _ := cmd.Flags().GetBool("create-only")
 		updateRefs, _ := cmd.Flags().GetBool("update-refs")
 		state, _ := cmd.Flags().GetString("state")
+		usePython, _ := cmd.Flags().GetBool("use-python")
 
 		// Block writes in readonly mode (sync modifies data)
 		if !dryRun {
@@ -122,127 +124,189 @@ Examples:
 			os.Exit(1)
 		}
 
-		// Default mode: bidirectional (pull then push)
-		if !pull && !push {
-			pull = true
-			push = true
-		}
-
 		ctx := rootCtx
-		result := &JiraSyncResult{Success: true}
 
-		// Step 1: Pull from Jira
-		if pull {
-			if dryRun {
-				fmt.Println("→ [DRY RUN] Would pull issues from Jira")
-			} else {
-				fmt.Println("→ Pulling issues from Jira...")
-			}
-
-			pullStats, err := doPullFromJira(ctx, dryRun, state)
-			if err != nil {
-				result.Success = false
-				result.Error = err.Error()
-				if jsonOutput {
-					outputJSON(result)
-				} else {
-					fmt.Fprintf(os.Stderr, "Error pulling from Jira: %v\n", err)
-				}
-				os.Exit(1)
-			}
-
-			result.Stats.Pulled = pullStats.Created + pullStats.Updated
-			result.Stats.Created += pullStats.Created
-			result.Stats.Updated += pullStats.Updated
-			result.Stats.Skipped += pullStats.Skipped
-
-			if !dryRun {
-				fmt.Printf("✓ Pulled %d issues (%d created, %d updated)\n",
-					result.Stats.Pulled, pullStats.Created, pullStats.Updated)
-			}
-		}
-
-		// Step 2: Handle conflicts (if bidirectional)
-		if pull && push && !dryRun {
-			conflicts, err := detectJiraConflicts(ctx)
-			if err != nil {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("conflict detection failed: %v", err))
-			} else if len(conflicts) > 0 {
-				result.Stats.Conflicts = len(conflicts)
-				if preferLocal {
-					fmt.Printf("→ Resolving %d conflicts (preferring local)\n", len(conflicts))
-					// Local wins - no action needed, push will overwrite
-				} else if preferJira {
-					fmt.Printf("→ Resolving %d conflicts (preferring Jira)\n", len(conflicts))
-					// Jira wins - re-import conflicting issues
-					if err := reimportConflicts(ctx, conflicts); err != nil {
-						result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
-					}
-				} else {
-					// Default: timestamp-based (newer wins)
-					fmt.Printf("→ Resolving %d conflicts (newer wins)\n", len(conflicts))
-					if err := resolveConflictsByTimestamp(ctx, conflicts); err != nil {
-						result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
-					}
-				}
-			}
-		}
-
-		// Step 3: Push to Jira
-		if push {
-			if dryRun {
-				fmt.Println("→ [DRY RUN] Would push issues to Jira")
-			} else {
-				fmt.Println("→ Pushing issues to Jira...")
-			}
-
-			pushStats, err := doPushToJira(ctx, dryRun, createOnly, updateRefs)
-			if err != nil {
-				result.Success = false
-				result.Error = err.Error()
-				if jsonOutput {
-					outputJSON(result)
-				} else {
-					fmt.Fprintf(os.Stderr, "Error pushing to Jira: %v\n", err)
-				}
-				os.Exit(1)
-			}
-
-			result.Stats.Pushed = pushStats.Created + pushStats.Updated
-			result.Stats.Created += pushStats.Created
-			result.Stats.Updated += pushStats.Updated
-			result.Stats.Skipped += pushStats.Skipped
-			result.Stats.Errors += pushStats.Errors
-
-			if !dryRun {
-				fmt.Printf("✓ Pushed %d issues (%d created, %d updated)\n",
-					result.Stats.Pushed, pushStats.Created, pushStats.Updated)
-			}
-		}
-
-		// Update last sync timestamp
-		if !dryRun && result.Success {
-			result.LastSync = time.Now().Format(time.RFC3339)
-			if err := store.SetConfig(ctx, "jira.last_sync", result.LastSync); err != nil {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("failed to update last_sync: %v", err))
-			}
-		}
-
-		// Output result
-		if jsonOutput {
-			outputJSON(result)
-		} else if dryRun {
-			fmt.Println("\n✓ Dry run complete (no changes made)")
+		if usePython {
+			// Legacy Python script sync
+			runJiraSyncPython(ctx, pull, push, dryRun, preferLocal, preferJira, createOnly, updateRefs, state)
 		} else {
-			fmt.Println("\n✓ Jira sync complete")
-			if len(result.Warnings) > 0 {
-				fmt.Println("\nWarnings:")
-				for _, w := range result.Warnings {
-					fmt.Printf("  - %s\n", w)
-				}
-			}
+			// Go-native sync using SyncEngine
+			runJiraSyncNative(ctx, pull, push, dryRun, preferLocal, preferJira, createOnly, updateRefs, state)
 		}
 	},
+}
+
+// runJiraSyncNative performs Jira sync using the Go-native SyncEngine.
+func runJiraSyncNative(ctx context.Context, pull, push, dryRun, preferLocal, preferJira, createOnly, updateRefs bool, state string) {
+	// Create tracker and engine using the plugin framework
+	jiraTracker, err := tracker.NewTracker("jira")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to create Jira tracker: %v\n", err)
+		os.Exit(1)
+	}
+
+	cfg := tracker.NewConfig(ctx, "jira", newConfigStoreAdapter(store))
+	if err := jiraTracker.Init(ctx, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to initialize Jira tracker: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = jiraTracker.Close() }()
+
+	engine := tracker.NewSyncEngine(jiraTracker, cfg, newSyncStoreAdapter(store), actor)
+	engine.OnMessage = func(msg string) { fmt.Println("->", msg) }
+	engine.OnWarning = func(msg string) { fmt.Fprintln(os.Stderr, "Warning:", msg) }
+
+	// Build SyncOptions from flags
+	opts := tracker.SyncOptions{
+		Pull:       pull,
+		Push:       push,
+		DryRun:     dryRun,
+		CreateOnly: createOnly,
+		UpdateRefs: updateRefs,
+		State:      state,
+	}
+	if preferLocal {
+		opts.ConflictResolution = tracker.ConflictResolutionLocal
+	} else if preferJira {
+		opts.ConflictResolution = tracker.ConflictResolutionExternal
+	}
+
+	// Execute sync
+	result, err := engine.Sync(ctx, opts)
+	if err != nil {
+		if jsonOutput {
+			outputJSON(result)
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: sync failed: %v\n", err)
+		}
+		os.Exit(1)
+	}
+
+	// Output results
+	printSyncResult(result, dryRun, "Jira")
+}
+
+// runJiraSyncPython performs Jira sync using legacy Python scripts.
+func runJiraSyncPython(ctx context.Context, pull, push, dryRun, preferLocal, preferJira, createOnly, updateRefs bool, state string) {
+	// Default mode: bidirectional (pull then push)
+	if !pull && !push {
+		pull = true
+		push = true
+	}
+
+	result := &JiraSyncResult{Success: true}
+
+	// Step 1: Pull from Jira
+	if pull {
+		if dryRun {
+			fmt.Println("-> [DRY RUN] Would pull issues from Jira")
+		} else {
+			fmt.Println("-> Pulling issues from Jira...")
+		}
+
+		pullStats, err := doPullFromJira(ctx, dryRun, state)
+		if err != nil {
+			result.Success = false
+			result.Error = err.Error()
+			if jsonOutput {
+				outputJSON(result)
+			} else {
+				fmt.Fprintf(os.Stderr, "Error pulling from Jira: %v\n", err)
+			}
+			os.Exit(1)
+		}
+
+		result.Stats.Pulled = pullStats.Created + pullStats.Updated
+		result.Stats.Created += pullStats.Created
+		result.Stats.Updated += pullStats.Updated
+		result.Stats.Skipped += pullStats.Skipped
+
+		if !dryRun {
+			fmt.Printf("Pulled %d issues (%d created, %d updated)\n",
+				result.Stats.Pulled, pullStats.Created, pullStats.Updated)
+		}
+	}
+
+	// Step 2: Handle conflicts (if bidirectional)
+	if pull && push && !dryRun {
+		conflicts, err := detectJiraConflicts(ctx)
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("conflict detection failed: %v", err))
+		} else if len(conflicts) > 0 {
+			result.Stats.Conflicts = len(conflicts)
+			if preferLocal {
+				fmt.Printf("-> Resolving %d conflicts (preferring local)\n", len(conflicts))
+				// Local wins - no action needed, push will overwrite
+			} else if preferJira {
+				fmt.Printf("-> Resolving %d conflicts (preferring Jira)\n", len(conflicts))
+				// Jira wins - re-import conflicting issues
+				if err := reimportConflicts(ctx, conflicts); err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
+				}
+			} else {
+				// Default: timestamp-based (newer wins)
+				fmt.Printf("-> Resolving %d conflicts (newer wins)\n", len(conflicts))
+				if err := resolveConflictsByTimestamp(ctx, conflicts); err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
+				}
+			}
+		}
+	}
+
+	// Step 3: Push to Jira
+	if push {
+		if dryRun {
+			fmt.Println("-> [DRY RUN] Would push issues to Jira")
+		} else {
+			fmt.Println("-> Pushing issues to Jira...")
+		}
+
+		pushStats, err := doPushToJira(ctx, dryRun, createOnly, updateRefs)
+		if err != nil {
+			result.Success = false
+			result.Error = err.Error()
+			if jsonOutput {
+				outputJSON(result)
+			} else {
+				fmt.Fprintf(os.Stderr, "Error pushing to Jira: %v\n", err)
+			}
+			os.Exit(1)
+		}
+
+		result.Stats.Pushed = pushStats.Created + pushStats.Updated
+		result.Stats.Created += pushStats.Created
+		result.Stats.Updated += pushStats.Updated
+		result.Stats.Skipped += pushStats.Skipped
+		result.Stats.Errors += pushStats.Errors
+
+		if !dryRun {
+			fmt.Printf("Pushed %d issues (%d created, %d updated)\n",
+				result.Stats.Pushed, pushStats.Created, pushStats.Updated)
+		}
+	}
+
+	// Update last sync timestamp
+	if !dryRun && result.Success {
+		result.LastSync = time.Now().Format(time.RFC3339)
+		if err := store.SetConfig(ctx, "jira.last_sync", result.LastSync); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("failed to update last_sync: %v", err))
+		}
+	}
+
+	// Output result
+	if jsonOutput {
+		outputJSON(result)
+	} else if dryRun {
+		fmt.Println("\nDry run complete (no changes made)")
+	} else {
+		fmt.Println("\nJira sync complete")
+		if len(result.Warnings) > 0 {
+			fmt.Println("\nWarnings:")
+			for _, w := range result.Warnings {
+				fmt.Printf("  - %s\n", w)
+			}
+		}
+	}
 }
 
 var jiraStatusCmd = &cobra.Command{
@@ -346,6 +410,7 @@ func init() {
 	jiraSyncCmd.Flags().Bool("create-only", false, "Only create new issues, don't update existing")
 	jiraSyncCmd.Flags().Bool("update-refs", true, "Update external_ref after creating Jira issues")
 	jiraSyncCmd.Flags().String("state", "all", "Issue state to sync: open, closed, all")
+	jiraSyncCmd.Flags().Bool("use-python", false, "Use legacy Python scripts instead of Go-native sync")
 
 	jiraCmd.AddCommand(jiraSyncCmd)
 	jiraCmd.AddCommand(jiraStatusCmd)
@@ -399,12 +464,6 @@ func doPullFromJira(ctx context.Context, dryRun bool, state string) (*PullStats,
 	args := []string{scriptPath, "--from-config"}
 	if state != "" && state != "all" {
 		args = append(args, "--state", state)
-	}
-
-	// Add pull prefix if configured
-	pullPrefix, _ := store.GetConfig(ctx, "jira.pull_prefix")
-	if pullPrefix != "" {
-		args = append(args, "--prefix", pullPrefix)
 	}
 
 	// Run Python script to get JSONL output
