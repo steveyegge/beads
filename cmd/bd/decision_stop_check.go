@@ -559,6 +559,13 @@ func waitForDecisionViaEventBus(ctx context.Context, decisionID string, timeout 
 		return "", "", fmt.Errorf("JetStream context: %w", err)
 	}
 
+	return awaitDecisionOnJetStream(ctx, js, decisionID, timeout)
+}
+
+// awaitDecisionOnJetStream subscribes to DecisionResponded events on the given
+// JetStream context and waits for the specific decision ID. This is the core
+// NATS wake logic, extracted for testability.
+func awaitDecisionOnJetStream(ctx context.Context, js nats.JetStreamContext, decisionID string, timeout time.Duration) (string, string, error) {
 	// Subscribe to DecisionResponded events.
 	subject := eventbus.SubjectForEvent(eventbus.EventDecisionResponded)
 	sub, err := js.SubscribeSync(subject, nats.DeliverNew())
