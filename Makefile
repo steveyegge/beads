@@ -9,6 +9,16 @@ BINARY := bd
 BUILD_DIR := .
 INSTALL_DIR := $(HOME)/.local/bin
 
+# On macOS, set CGO flags for Homebrew's keg-only icu4c
+ifeq ($(shell uname),Darwin)
+  ICU_PREFIX := $(shell brew --prefix icu4c 2>/dev/null)
+  ifneq ($(ICU_PREFIX),)
+    export CGO_CFLAGS   += -I$(ICU_PREFIX)/include
+    export CGO_CXXFLAGS += -I$(ICU_PREFIX)/include
+    export CGO_LDFLAGS  += -L$(ICU_PREFIX)/lib
+  endif
+endif
+
 # Build the bd binary
 build:
 	@echo "Building bd..."
