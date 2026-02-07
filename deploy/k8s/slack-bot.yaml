@@ -18,9 +18,12 @@ spec:
         app: beads
         component: slack-bot
     spec:
+      imagePullSecrets:
+        - name: ghcr-credentials
       containers:
         - name: bd-daemon
-          image: beads:latest
+          image: ghcr.io/groblegark/beads:latest
+          imagePullPolicy: Always
           command: ["bd", "daemon", "start", "--foreground", "--tcp-addr=:9876", "--http-addr=:9877", "--log-json"]
           ports:
             - containerPort: 9876
@@ -54,7 +57,8 @@ spec:
               memory: "1Gi"
 
         - name: slack-bot
-          image: beads:latest
+          image: ghcr.io/groblegark/beads:latest
+          imagePullPolicy: Always
           command: ["bd", "slack", "start"]
           ports:
             - containerPort: 8080

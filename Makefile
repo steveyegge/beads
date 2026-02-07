@@ -1,6 +1,7 @@
 # Makefile for beads project
 
-.PHONY: all build test bench bench-quick bench-dolt bench-dolt-quick bench-compare clean install help
+.PHONY: all build test bench bench-quick bench-dolt bench-dolt-quick bench-compare clean install help \
+       docker-build docker-push docker-test
 
 # Default target
 all: build
@@ -105,6 +106,49 @@ clean:
 	rm -f internal/storage/sqlite/bench-cpu-*.prof
 	rm -f beads-perf-*.prof
 
+# Docker image settings
+DOCKER_REGISTRY ?= ghcr.io
+DOCKER_REPO     ?= groblegark/beads
+DOCKER_TAG      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+DOCKER_IMAGE    := $(DOCKER_REGISTRY)/$(DOCKER_REPO):$(DOCKER_TAG)
+DOCKER_LATEST   := $(DOCKER_REGISTRY)/$(DOCKER_REPO):latest
+
+# Build Docker image
+docker-build:
+	@echo "Building Docker image $(DOCKER_IMAGE)..."
+	docker build \
+		--build-arg VERSION=$(DOCKER_TAG) \
+		--build-arg BUILD_COMMIT=$$(git rev-parse --short HEAD) \
+		-t $(DOCKER_IMAGE) \
+		-t $(DOCKER_LATEST) \
+		.
+	@echo "Built $(DOCKER_IMAGE)"
+
+# Push Docker image to registry
+docker-push: docker-build
+	@echo "Pushing $(DOCKER_IMAGE)..."
+	docker push $(DOCKER_IMAGE)
+	docker push $(DOCKER_LATEST)
+	@echo "Pushed $(DOCKER_IMAGE) and $(DOCKER_LATEST)"
+
+# Test Docker image (build and run health check)
+docker-test: docker-build
+	@echo "Testing Docker image..."
+	@CONTAINER=$$(docker run -d --name bd-test-$$$$ $(DOCKER_IMAGE)); \
+	echo "Started container $$CONTAINER"; \
+	sleep 5; \
+	if docker exec $$CONTAINER nc -z localhost 9877; then \
+		echo "Health check passed"; \
+		docker stop $$CONTAINER >/dev/null; \
+		docker rm $$CONTAINER >/dev/null; \
+	else \
+		echo "Health check failed"; \
+		docker logs $$CONTAINER; \
+		docker stop $$CONTAINER >/dev/null; \
+		docker rm $$CONTAINER >/dev/null; \
+		exit 1; \
+	fi
+
 # Show help
 help:
 	@echo "Beads Makefile targets:"
@@ -117,4 +161,12 @@ help:
 	@echo "  make bench-compare   - Compare SQLite vs Dolt performance"
 	@echo "  make install         - Install bd to ~/.local/bin (with codesign on macOS)"
 	@echo "  make clean           - Remove build artifacts and profile files"
+	@echo "  make docker-build    - Build Docker image"
+	@echo "  make docker-push     - Build and push Docker image to registry"
+	@echo "  make docker-test     - Build and test Docker image health check"
 	@echo "  make help            - Show this help message"
+	@echo ""
+	@echo "Docker variables:"
+	@echo "  DOCKER_REGISTRY=$(DOCKER_REGISTRY)"
+	@echo "  DOCKER_REPO=$(DOCKER_REPO)"
+	@echo "  DOCKER_TAG=$(DOCKER_TAG)"
