@@ -25,6 +25,7 @@ var configCmd = &cobra.Command{
 Configuration is stored per-project in .beads/*.db and is version-control-friendly.
 
 Common namespaces:
+  - deploy.*     K8s deployment settings (validated, see 'bd config deploy-keys')
   - jira.*       Jira integration settings
   - linear.*     Linear integration settings
   - github.*     GitHub integration settings
@@ -57,6 +58,14 @@ var configSetCmd = &cobra.Command{
 	Run: func(_ *cobra.Command, args []string) {
 		key := args[0]
 		value := args[1]
+
+		// Validate deploy.* keys before storing
+		if config.IsDeployKey(key) {
+			if err := config.ValidateDeployKey(key, value); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
 
 		// Check if this is a yaml-only key (startup settings like no-db, no-daemon, etc.)
 		// These must be written to config.yaml, not SQLite, because they're read
@@ -582,11 +591,247 @@ func findBeadsRepoRoot(startPath string) string {
 	}
 }
 
+var configDeployKeysCmd = &cobra.Command{
+	Use:   "deploy-keys",
+	Short: "List all valid deploy.* configuration keys",
+	Long: `Lists all valid deploy.* configuration keys with descriptions and defaults.
+
+Deploy keys control K8s deployment settings. They are stored in the Dolt
+config table and can be read by the daemon after connecting to the database.
+
+Secrets (passwords, tokens) are NOT stored as deploy keys — they must
+remain in K8s Secrets or ExternalSecrets.
+
+Examples:
+  bd config deploy-keys
+  bd config deploy-keys --json`,
+	Run: func(cmd *cobra.Command, args []string) {
+		if jsonOutput {
+			outputJSON(config.DeployKeys)
+			return
+		}
+
+		fmt.Println("\nDeploy Configuration Keys:")
+		fmt.Println("==========================\n")
+		for _, dk := range config.DeployKeys {
+			fmt.Printf("  %-28s %s\n", dk.Key, dk.Description)
+			details := []string{}
+			if dk.EnvVar != "" {
+				details = append(details, "env: "+dk.EnvVar)
+			}
+			if dk.Default != "" {
+				details = append(details, "default: "+dk.Default)
+			}
+			if dk.Required {
+				details = append(details, "required")
+			}
+			if len(details) > 0 {
+				fmt.Printf("  %-28s (%s)\n", "", strings.Join(details, ", "))
+			}
+		}
+		fmt.Println("\nSet with: bd config set <key> <value>")
+		fmt.Println("Secrets (passwords, tokens) must use K8s Secrets, not deploy keys.")
+	},
+}
+
+var configDumpFormat string
+
+var configDumpCmd = &cobra.Command{
+	Use:   "dump",
+	Short: "Export deploy config as environment variables or ConfigMap",
+	Long: `Exports deploy.* config values from the database as environment variables
+or Kubernetes ConfigMap YAML.
+
+Formats:
+  env            Shell export statements (default)
+  docker-env     Docker --env flags
+  configmap-yaml Kubernetes ConfigMap YAML
+
+Only deploy.* keys with an associated env var mapping are included.
+Secrets are never exported.
+
+Examples:
+  bd config dump                         # Shell export format
+  bd config dump --format=env            # Same as above
+  bd config dump --format=docker-env     # Docker --env flags
+  bd config dump --format=configmap-yaml # K8s ConfigMap YAML`,
+	Run: func(cmd *cobra.Command, args []string) {
+		// Get all config values
+		var cfg map[string]string
+		if daemonClient != nil {
+			result, err := daemonClient.ConfigList()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			cfg = result.Config
+		} else if store != nil {
+			ctx := rootCtx
+			var err error
+			cfg, err = store.GetAllConfig(ctx)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error listing config: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+			os.Exit(1)
+		}
+
+		// Filter to deploy.* keys and map to env vars
+		envMap := config.DeployKeyEnvMap()
+		type envEntry struct {
+			Key    string `json:"key"`
+			EnvVar string `json:"env_var"`
+			Value  string `json:"value"`
+		}
+		var entries []envEntry
+
+		for _, dk := range config.DeployKeys {
+			value, ok := cfg[dk.Key]
+			if !ok || value == "" {
+				// Use default if available and no value set
+				if dk.Default != "" {
+					value = dk.Default
+				} else {
+					continue
+				}
+			}
+			envVar := envMap[dk.Key]
+			if envVar == "" {
+				continue // No env var mapping
+			}
+			entries = append(entries, envEntry{Key: dk.Key, EnvVar: envVar, Value: value})
+		}
+
+		if jsonOutput {
+			outputJSON(entries)
+			return
+		}
+
+		if len(entries) == 0 {
+			fmt.Println("No deploy.* config values set. Use 'bd config set deploy.<key> <value>' to configure.")
+			return
+		}
+
+		switch configDumpFormat {
+		case "env", "":
+			for _, e := range entries {
+				fmt.Printf("export %s=%q\n", e.EnvVar, e.Value)
+			}
+		case "docker-env":
+			for _, e := range entries {
+				fmt.Printf("--env %s=%s \\\n", e.EnvVar, e.Value)
+			}
+		case "configmap-yaml":
+			fmt.Println("apiVersion: v1")
+			fmt.Println("kind: ConfigMap")
+			fmt.Println("metadata:")
+			fmt.Println("  name: beads-deploy-config")
+			fmt.Println("data:")
+			for _, e := range entries {
+				fmt.Printf("  %s: %q\n", e.EnvVar, e.Value)
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown format %q (valid: env, docker-env, configmap-yaml)\n", configDumpFormat)
+			os.Exit(1)
+		}
+	},
+}
+
+var configSeedDryRun bool
+
+var configSeedCmd = &cobra.Command{
+	Use:   "seed deploy",
+	Short: "Populate deploy.* config from current environment variables",
+	Long: `Reads current environment variables and writes matching deploy.* config keys
+to the database. This captures the running environment as persistent config.
+
+Only writes keys that have a corresponding env var set and non-empty.
+Existing values are overwritten. Use --dry-run to preview without writing.
+
+Examples:
+  bd config seed deploy              # Capture env vars into deploy.* config
+  bd config seed deploy --dry-run    # Preview what would be written`,
+	Run: func(cmd *cobra.Command, args []string) {
+		envMap := config.DeployKeyEnvMap()
+
+		type seedEntry struct {
+			Key    string `json:"key"`
+			EnvVar string `json:"env_var"`
+			Value  string `json:"value"`
+		}
+		var entries []seedEntry
+
+		for _, dk := range config.DeployKeys {
+			if dk.EnvVar == "" || dk.Secret {
+				continue
+			}
+			value := os.Getenv(dk.EnvVar)
+			if value == "" {
+				continue
+			}
+			entries = append(entries, seedEntry{
+				Key:    dk.Key,
+				EnvVar: dk.EnvVar,
+				Value:  value,
+			})
+		}
+
+		_ = envMap // used via DeployKeys iteration
+
+		if jsonOutput {
+			outputJSON(entries)
+			return
+		}
+
+		if len(entries) == 0 {
+			fmt.Println("No deploy-related environment variables found.")
+			fmt.Println("Set env vars like BEADS_DOLT_SERVER_HOST, BD_REDIS_URL, etc. and retry.")
+			return
+		}
+
+		if configSeedDryRun {
+			fmt.Println("Dry run — would write:")
+			for _, e := range entries {
+				fmt.Printf("  bd config set %s %q  (from %s)\n", e.Key, e.Value, e.EnvVar)
+			}
+			return
+		}
+
+		// Write each value
+		for _, e := range entries {
+			if daemonClient != nil {
+				setArgs := &rpc.ConfigSetArgs{Key: e.Key, Value: e.Value}
+				if _, err := daemonClient.ConfigSet(setArgs); err != nil {
+					fmt.Fprintf(os.Stderr, "Error setting %s: %v\n", e.Key, err)
+					continue
+				}
+			} else if store != nil {
+				if err := store.SetConfig(rootCtx, e.Key, e.Value); err != nil {
+					fmt.Fprintf(os.Stderr, "Error setting %s: %v\n", e.Key, err)
+					continue
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
+				os.Exit(1)
+			}
+			fmt.Printf("Set %s = %q (from %s)\n", e.Key, e.Value, e.EnvVar)
+		}
+	},
+}
+
 func init() {
+	configDumpCmd.Flags().StringVar(&configDumpFormat, "format", "env", "Output format (env, docker-env, configmap-yaml)")
+	configSeedCmd.Flags().BoolVar(&configSeedDryRun, "dry-run", false, "Preview what would be written without making changes")
+
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configListCmd)
 	configCmd.AddCommand(configUnsetCmd)
 	configCmd.AddCommand(configValidateCmd)
+	configCmd.AddCommand(configDeployKeysCmd)
+	configCmd.AddCommand(configDumpCmd)
+	configCmd.AddCommand(configSeedCmd)
 	rootCmd.AddCommand(configCmd)
 }
