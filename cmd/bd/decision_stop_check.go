@@ -519,7 +519,7 @@ func checkDecisionResponse(ctx context.Context, decisionID string) (*types.Decis
 				return nil, "", "", false, err
 			}
 			if dp != nil && dp.RespondedAt != nil {
-				return dp, dp.SelectedOption, dp.ResponseText, true, nil
+				return dp, dp.SelectedOption, decisionResponseText(dp), true, nil
 			}
 		}
 
@@ -552,7 +552,7 @@ func checkDecisionResponse(ctx context.Context, decisionID string) (*types.Decis
 		return nil, "", "", false, err
 	}
 	if dp != nil && dp.RespondedAt != nil {
-		return dp, dp.SelectedOption, dp.ResponseText, true, nil
+		return dp, dp.SelectedOption, decisionResponseText(dp), true, nil
 	}
 
 	// Then check if issue was closed without a response (canceled).
@@ -696,4 +696,16 @@ func findUnclosedStopDecisions(ctx context.Context) ([]*types.DecisionPoint, err
 // joinIDs joins a slice of IDs into a comma-separated string.
 func joinIDs(ids []string) string {
 	return strings.Join(ids, ", ")
+}
+
+// decisionResponseText returns the best available text from a decision response,
+// checking ResponseText first, then Rationale, then Guidance.
+func decisionResponseText(dp *types.DecisionPoint) string {
+	if dp.ResponseText != "" {
+		return dp.ResponseText
+	}
+	if dp.Rationale != "" {
+		return dp.Rationale
+	}
+	return dp.Guidance
 }
