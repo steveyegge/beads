@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/ui"
@@ -21,6 +23,14 @@ var (
 	federationPassword string
 	federationSov      string
 )
+
+// fedPeerStatus holds per-peer status info used by both direct and RPC paths.
+type fedPeerStatus struct {
+	Status     *storage.SyncStatus
+	URL        string
+	Reachable  bool
+	ReachError string
+}
 
 var federationCmd = &cobra.Command{
 	Use:     "federation",
@@ -144,16 +154,21 @@ func getFederatedStore() (*dolt.DoltStore, error) {
 }
 
 func runFederationSync(cmd *cobra.Command, args []string) {
+	// Validate strategy if provided (common to both paths)
+	if federationStrategy != "" && federationStrategy != "ours" && federationStrategy != "theirs" {
+		FatalErrorRespectJSON("invalid strategy %q: must be 'ours' or 'theirs'", federationStrategy)
+	}
+
+	if daemonClient != nil {
+		runFederationSyncRPC()
+		return
+	}
+
 	ctx := rootCtx
 
 	ds, err := getFederatedStore()
 	if err != nil {
 		FatalErrorRespectJSON("%v", err)
-	}
-
-	// Validate strategy if provided
-	if federationStrategy != "" && federationStrategy != "ours" && federationStrategy != "theirs" {
-		FatalErrorRespectJSON("invalid strategy %q: must be 'ours' or 'theirs'", federationStrategy)
 	}
 
 	// Get peers to sync with
@@ -196,33 +211,7 @@ func runFederationSync(cmd *cobra.Command, args []string) {
 		}
 
 		if !jsonOutput {
-			if result.Fetched {
-				fmt.Printf("  %s Fetched\n", ui.RenderPass("✓"))
-			}
-			if result.Merged {
-				fmt.Printf("  %s Merged", ui.RenderPass("✓"))
-				if result.PulledCommits > 0 {
-					fmt.Printf(" (%d commits)", result.PulledCommits)
-				}
-				fmt.Println()
-			}
-			if len(result.Conflicts) > 0 {
-				if result.ConflictsResolved {
-					fmt.Printf("  %s Resolved %d conflicts using %s strategy\n",
-						ui.RenderPass("✓"), len(result.Conflicts), federationStrategy)
-				} else {
-					fmt.Printf("  %s %d conflicts need resolution\n",
-						ui.RenderWarn("⚠"), len(result.Conflicts))
-					for _, c := range result.Conflicts {
-						fmt.Printf("    - %s\n", c.Field)
-					}
-				}
-			}
-			if result.Pushed {
-				fmt.Printf("  %s Pushed\n", ui.RenderPass("✓"))
-			} else if result.PushError != nil {
-				fmt.Printf("  %s Push skipped: %v\n", ui.RenderMuted("○"), result.PushError)
-			}
+			printSyncResultDirect(result)
 		}
 	}
 
@@ -234,7 +223,130 @@ func runFederationSync(cmd *cobra.Command, args []string) {
 	}
 }
 
+func runFederationSyncRPC() {
+	// Get peers to sync with
+	var peers []string
+	if federationPeer != "" {
+		peers = []string{federationPeer}
+	} else {
+		listResult, err := daemonClient.FedListRemotes(&rpc.FedListRemotesArgs{})
+		if err != nil {
+			FatalErrorRespectJSON("failed to list peers: %v", err)
+		}
+		for _, r := range listResult.Remotes {
+			if r.Name != "origin" {
+				peers = append(peers, r.Name)
+			}
+		}
+	}
+
+	if len(peers) == 0 {
+		FatalErrorRespectJSON("no federation peers configured (use 'bd federation add-peer' to add peers)")
+	}
+
+	var results []*rpc.FedSyncResult
+	for _, peer := range peers {
+		if !jsonOutput {
+			fmt.Printf("%s Syncing with %s...\n", ui.RenderAccent("🔄"), peer)
+		}
+
+		result, err := daemonClient.FedSync(&rpc.FedSyncArgs{
+			Peer:     peer,
+			Strategy: federationStrategy,
+		})
+
+		if result != nil {
+			results = append(results, result)
+		}
+
+		if err != nil {
+			if !jsonOutput {
+				fmt.Printf("  %s %v\n", ui.RenderFail("✗"), err)
+			}
+			continue
+		}
+
+		if !jsonOutput {
+			printSyncResultRPC(result)
+		}
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"peers":   peers,
+			"results": results,
+		})
+	}
+}
+
+// printSyncResultDirect renders sync output from direct dolt.SyncResult.
+func printSyncResultDirect(result *dolt.SyncResult) {
+	if result.Fetched {
+		fmt.Printf("  %s Fetched\n", ui.RenderPass("✓"))
+	}
+	if result.Merged {
+		fmt.Printf("  %s Merged", ui.RenderPass("✓"))
+		if result.PulledCommits > 0 {
+			fmt.Printf(" (%d commits)", result.PulledCommits)
+		}
+		fmt.Println()
+	}
+	if len(result.Conflicts) > 0 {
+		if result.ConflictsResolved {
+			fmt.Printf("  %s Resolved %d conflicts using %s strategy\n",
+				ui.RenderPass("✓"), len(result.Conflicts), federationStrategy)
+		} else {
+			fmt.Printf("  %s %d conflicts need resolution\n",
+				ui.RenderWarn("⚠"), len(result.Conflicts))
+			for _, c := range result.Conflicts {
+				fmt.Printf("    - %s\n", c.Field)
+			}
+		}
+	}
+	if result.Pushed {
+		fmt.Printf("  %s Pushed\n", ui.RenderPass("✓"))
+	} else if result.PushError != nil {
+		fmt.Printf("  %s Push skipped: %v\n", ui.RenderMuted("○"), result.PushError)
+	}
+}
+
+// printSyncResultRPC renders sync output from RPC FedSyncResult.
+func printSyncResultRPC(result *rpc.FedSyncResult) {
+	if result.Fetched {
+		fmt.Printf("  %s Fetched\n", ui.RenderPass("✓"))
+	}
+	if result.Merged {
+		fmt.Printf("  %s Merged", ui.RenderPass("✓"))
+		if result.PulledCommits > 0 {
+			fmt.Printf(" (%d commits)", result.PulledCommits)
+		}
+		fmt.Println()
+	}
+	if len(result.Conflicts) > 0 {
+		if result.ConflictsResolved {
+			fmt.Printf("  %s Resolved %d conflicts using %s strategy\n",
+				ui.RenderPass("✓"), len(result.Conflicts), federationStrategy)
+		} else {
+			fmt.Printf("  %s %d conflicts need resolution\n",
+				ui.RenderWarn("⚠"), len(result.Conflicts))
+			for _, c := range result.Conflicts {
+				fmt.Printf("    - %s\n", c.Field)
+			}
+		}
+	}
+	if result.Pushed {
+		fmt.Printf("  %s Pushed\n", ui.RenderPass("✓"))
+	} else if result.PushError != "" {
+		fmt.Printf("  %s Push skipped: %s\n", ui.RenderMuted("○"), result.PushError)
+	}
+}
+
 func runFederationStatus(cmd *cobra.Command, args []string) {
+	if daemonClient != nil {
+		runFederationStatusRPC()
+		return
+	}
+
 	ctx := rootCtx
 
 	ds, err := getFederatedStore()
@@ -282,16 +394,10 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 	}
 
 	// Collect status for each peer
-	type peerStatus struct {
-		Status     *storage.SyncStatus
-		URL        string
-		Reachable  bool
-		ReachError string
-	}
-	var peerStatuses []peerStatus
+	var peerStatuses []fedPeerStatus
 
 	for _, peer := range peers {
-		ps := peerStatus{
+		ps := fedPeerStatus{
 			URL: remoteURLs[peer],
 		}
 
@@ -321,6 +427,108 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	printFederationStatus(pendingChanges, peerStatuses)
+}
+
+func runFederationStatusRPC() {
+	// Get all remotes for URL lookup
+	listResult, err := daemonClient.FedListRemotes(&rpc.FedListRemotesArgs{})
+	if err != nil {
+		FatalErrorRespectJSON("failed to list remotes: %v", err)
+	}
+	remoteURLs := make(map[string]string)
+	for _, r := range listResult.Remotes {
+		remoteURLs[r.Name] = r.URL
+	}
+
+	// Get peers to check
+	var peers []string
+	if federationPeer != "" {
+		peers = []string{federationPeer}
+	} else {
+		for _, r := range listResult.Remotes {
+			peers = append(peers, r.Name)
+		}
+	}
+
+	if len(peers) == 0 {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"peers":          []string{},
+				"pendingChanges": 0,
+			})
+		} else {
+			fmt.Println("No federation peers configured.")
+		}
+		return
+	}
+
+	// Get pending local changes via VCS status RPC
+	pendingChanges := 0
+	vcsStatus, err := daemonClient.VcsStatus()
+	if err == nil && vcsStatus != nil {
+		pendingChanges = len(vcsStatus.Staged) + len(vcsStatus.Unstaged)
+	}
+
+	// Collect status for each peer
+	var peerStatuses []fedPeerStatus
+
+	for _, peer := range peers {
+		ps := fedPeerStatus{
+			URL: remoteURLs[peer],
+		}
+
+		// Get sync status
+		syncStatus, _ := daemonClient.FedSyncStatus(&rpc.FedSyncStatusArgs{Peer: peer})
+		if syncStatus != nil {
+			ps.Status = fedSyncStatusToStorage(syncStatus)
+		}
+
+		// Test connectivity by attempting a fetch
+		_, fetchErr := daemonClient.FedFetch(&rpc.FedFetchArgs{Peer: peer})
+		if fetchErr == nil {
+			ps.Reachable = true
+			// Re-get status after successful fetch for accurate ahead/behind
+			syncStatus, _ = daemonClient.FedSyncStatus(&rpc.FedSyncStatusArgs{Peer: peer})
+			if syncStatus != nil {
+				ps.Status = fedSyncStatusToStorage(syncStatus)
+			}
+		} else {
+			ps.ReachError = fetchErr.Error()
+		}
+
+		peerStatuses = append(peerStatuses, ps)
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"peers":          peerStatuses,
+			"pendingChanges": pendingChanges,
+		})
+		return
+	}
+
+	printFederationStatus(pendingChanges, peerStatuses)
+}
+
+// fedSyncStatusToStorage converts an RPC FedSyncStatusResult to storage.SyncStatus.
+func fedSyncStatusToStorage(r *rpc.FedSyncStatusResult) *storage.SyncStatus {
+	s := &storage.SyncStatus{
+		Peer:         r.Peer,
+		LocalAhead:   r.LocalAhead,
+		LocalBehind:  r.LocalBehind,
+		HasConflicts: r.HasConflicts,
+	}
+	if r.LastSync != "" {
+		if t, err := time.Parse(time.RFC3339, r.LastSync); err == nil {
+			s.LastSync = t
+		}
+	}
+	return s
+}
+
+// printFederationStatus renders the federation status output (shared by direct and RPC paths).
+func printFederationStatus(pendingChanges int, peerStatuses []fedPeerStatus) {
 	fmt.Printf("\n%s Federation Status:\n\n", ui.RenderAccent("🌐"))
 
 	// Show local pending changes
@@ -361,17 +569,10 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 }
 
 func runFederationAddPeer(cmd *cobra.Command, args []string) {
-	ctx := rootCtx
-
 	name := args[0]
 	url := args[1]
 
-	fs, ok := storage.AsFederated(store)
-	if !ok {
-		FatalErrorRespectJSON("federation requires Dolt backend")
-	}
-
-	// If user is provided but password is not, prompt for it
+	// If user is provided but password is not, prompt for it (local I/O, before RPC)
 	password := federationPassword
 	if federationUser != "" && password == "" {
 		fmt.Fprint(os.Stderr, "Password: ")
@@ -383,7 +584,7 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) {
 		password = string(pwBytes)
 	}
 
-	// Validate sovereignty tier if provided
+	// Validate sovereignty tier if provided (common to both paths)
 	sov := federationSov
 	if sov != "" {
 		sov = strings.ToUpper(sov)
@@ -392,22 +593,50 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// If credentials provided, use AddFederationPeer to store them
-	if federationUser != "" {
-		peer := &storage.FederationPeer{
-			Name:        name,
-			RemoteURL:   url,
-			Username:    federationUser,
-			Password:    password,
-			Sovereignty: sov,
-		}
-		if err := fs.AddFederationPeer(ctx, peer); err != nil {
-			FatalErrorRespectJSON("failed to add peer: %v", err)
+	if daemonClient != nil {
+		if federationUser != "" {
+			_, err := daemonClient.FedAddPeer(&rpc.FedAddPeerArgs{
+				Name:        name,
+				URL:         url,
+				Username:    federationUser,
+				Password:    password,
+				Sovereignty: sov,
+			})
+			if err != nil {
+				FatalErrorRespectJSON("failed to add peer: %v", err)
+			}
+		} else {
+			_, err := daemonClient.FedAddRemote(&rpc.FedAddRemoteArgs{
+				Name: name,
+				URL:  url,
+			})
+			if err != nil {
+				FatalErrorRespectJSON("failed to add peer: %v", err)
+			}
 		}
 	} else {
-		// No credentials, just add the remote
-		if err := fs.AddRemote(ctx, name, url); err != nil {
-			FatalErrorRespectJSON("failed to add peer: %v", err)
+		ctx := rootCtx
+
+		fs, ok := storage.AsFederated(store)
+		if !ok {
+			FatalErrorRespectJSON("federation requires Dolt backend")
+		}
+
+		if federationUser != "" {
+			peer := &storage.FederationPeer{
+				Name:        name,
+				RemoteURL:   url,
+				Username:    federationUser,
+				Password:    password,
+				Sovereignty: sov,
+			}
+			if err := fs.AddFederationPeer(ctx, peer); err != nil {
+				FatalErrorRespectJSON("failed to add peer: %v", err)
+			}
+		} else {
+			if err := fs.AddRemote(ctx, name, url); err != nil {
+				FatalErrorRespectJSON("failed to add peer: %v", err)
+			}
 		}
 	}
 
@@ -431,17 +660,24 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) {
 }
 
 func runFederationRemovePeer(cmd *cobra.Command, args []string) {
-	ctx := rootCtx
-
 	name := args[0]
 
-	fs, ok := storage.AsFederated(store)
-	if !ok {
-		FatalErrorRespectJSON("federation requires Dolt backend")
-	}
+	if daemonClient != nil {
+		_, err := daemonClient.FedRemoveRemote(&rpc.FedRemoveRemoteArgs{Name: name})
+		if err != nil {
+			FatalErrorRespectJSON("failed to remove peer: %v", err)
+		}
+	} else {
+		ctx := rootCtx
 
-	if err := fs.RemoveRemote(ctx, name); err != nil {
-		FatalErrorRespectJSON("failed to remove peer: %v", err)
+		fs, ok := storage.AsFederated(store)
+		if !ok {
+			FatalErrorRespectJSON("federation requires Dolt backend")
+		}
+
+		if err := fs.RemoveRemote(ctx, name); err != nil {
+			FatalErrorRespectJSON("failed to remove peer: %v", err)
+		}
 	}
 
 	if jsonOutput {
@@ -455,6 +691,30 @@ func runFederationRemovePeer(cmd *cobra.Command, args []string) {
 }
 
 func runFederationListPeers(cmd *cobra.Command, args []string) {
+	if daemonClient != nil {
+		result, err := daemonClient.FedListRemotes(&rpc.FedListRemotesArgs{})
+		if err != nil {
+			FatalErrorRespectJSON("failed to list peers: %v", err)
+		}
+
+		if jsonOutput {
+			outputJSON(result.Remotes)
+			return
+		}
+
+		if len(result.Remotes) == 0 {
+			fmt.Println("No federation peers configured.")
+			return
+		}
+
+		fmt.Printf("\n%s Federation Peers:\n\n", ui.RenderAccent("🌐"))
+		for _, r := range result.Remotes {
+			fmt.Printf("  %s  %s\n", ui.RenderAccent(r.Name), ui.RenderMuted(r.URL))
+		}
+		fmt.Println()
+		return
+	}
+
 	ctx := rootCtx
 
 	fs, ok := storage.AsFederated(store)
