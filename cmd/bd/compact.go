@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/compact"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
@@ -790,8 +791,15 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 	markDirtyAndScheduleFlush()
 }
 
-// runCompactDolt runs Dolt garbage collection on the .beads/dolt directory
+// runCompactDolt runs Dolt garbage collection on the .beads/dolt directory.
+// bd-ma0s.6: Routes through AdminGC RPC when daemon is available.
 func runCompactDolt() {
+	// bd-ma0s.6: Route through daemon RPC when available
+	if daemonClient != nil {
+		runCompactDoltRPC()
+		return
+	}
+
 	start := time.Now()
 
 	// Find beads directory
@@ -887,6 +895,52 @@ func runCompactDolt() {
 	fmt.Printf("✓ Dolt garbage collection complete\n")
 	fmt.Printf("  %s → %s (freed %s)\n", formatBytes(sizeBefore), formatBytes(sizeAfter), formatBytes(freed))
 	fmt.Printf("  Time: %v\n", elapsed)
+}
+
+// runCompactDoltRPC runs Dolt garbage collection via daemon AdminGC RPC.
+// bd-ma0s.6: Added for daemon RPC routing.
+func runCompactDoltRPC() {
+	result, err := daemonClient.AdminGC(&rpc.AdminGCArgs{DryRun: compactDryRun})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: AdminGC RPC failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	if compactDryRun {
+		if jsonOutput {
+			output := map[string]interface{}{
+				"dry_run":      true,
+				"dolt_path":    result.DoltPath,
+				"size_before":  result.BytesBefore,
+				"size_display": formatBytes(result.BytesBefore),
+			}
+			outputJSON(output)
+			return
+		}
+		fmt.Printf("DRY RUN - Dolt garbage collection (via daemon)\n\n")
+		fmt.Printf("Dolt directory: %s\n", result.DoltPath)
+		fmt.Printf("Current size: %s\n", formatBytes(result.BytesBefore))
+		fmt.Printf("\nRun without --dry-run to perform garbage collection.\n")
+		return
+	}
+
+	if jsonOutput {
+		output := map[string]interface{}{
+			"success":       true,
+			"dolt_path":     result.DoltPath,
+			"size_before":   result.BytesBefore,
+			"size_after":    result.BytesAfter,
+			"freed_bytes":   result.SpaceFreed,
+			"freed_display": formatBytes(result.SpaceFreed),
+			"elapsed_ms":    result.ElapsedMs,
+		}
+		outputJSON(output)
+		return
+	}
+
+	fmt.Printf("✓ Dolt garbage collection complete (via daemon)\n")
+	fmt.Printf("  %s → %s (freed %s)\n", formatBytes(result.BytesBefore), formatBytes(result.BytesAfter), formatBytes(result.SpaceFreed))
+	fmt.Printf("  Time: %dms\n", result.ElapsedMs)
 }
 
 // getDirSize calculates the total size of a directory recursively
