@@ -171,7 +171,7 @@ type enrichedIssue struct {
 // fetchDecisions fetches pending decisions via the bd CLI.
 func (m *Model) fetchDecisions() tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
 		cmd := exec.CommandContext(ctx, "bd", "decision", "list", "--json")
@@ -180,13 +180,15 @@ func (m *Model) fetchDecisions() tea.Cmd {
 		cmd.Stderr = &stderr
 
 		if err := cmd.Run(); err != nil {
+			stderrStr := stderr.String()
+			stdoutStr := stdout.String()
 			// Check if it's just "no decisions"
-			if strings.Contains(stderr.String(), "No pending") ||
-				strings.Contains(stdout.String(), "[]") ||
-				strings.Contains(stdout.String(), "null") {
+			if strings.Contains(stderrStr, "No pending") ||
+				strings.Contains(stdoutStr, "[]") ||
+				strings.Contains(stdoutStr, "null") {
 				return fetchDecisionsMsg{decisions: []DecisionItem{}}
 			}
-			return fetchDecisionsMsg{err: fmt.Errorf("failed to fetch decisions: %w", err)}
+			return fetchDecisionsMsg{err: fmt.Errorf("fetch decisions: %v (stderr: %s)", err, stderrStr)}
 		}
 
 		raw := stdout.Bytes()
@@ -196,7 +198,7 @@ func (m *Model) fetchDecisions() tea.Cmd {
 
 		var enriched []enrichedDecision
 		if err := json.Unmarshal(raw, &enriched); err != nil {
-			return fetchDecisionsMsg{decisions: []DecisionItem{}}
+			return fetchDecisionsMsg{err: fmt.Errorf("parse decisions JSON: %w", err)}
 		}
 
 		var decisions []DecisionItem
