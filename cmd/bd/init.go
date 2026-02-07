@@ -345,7 +345,12 @@ variable.`,
 		if backend == configfile.BackendDolt {
 			// Dolt uses a directory, not a file
 			storagePath = filepath.Join(beadsDir, "dolt")
-			store, err = factory.New(ctx, backend, storagePath)
+			// Use prefix-based database name to avoid cross-rig contamination (bd-u8rda)
+			dbName := "beads"
+			if prefix != "" {
+				dbName = "beads_" + prefix
+			}
+			store, err = factory.NewWithOptions(ctx, backend, storagePath, factory.Options{Database: dbName})
 		} else {
 			storagePath = initDBPath
 			store, err = sqlite.New(ctx, storagePath)
@@ -441,6 +446,12 @@ variable.`,
 			if backend == configfile.BackendDolt {
 				if cfg.Database == "" || cfg.Database == beads.CanonicalDatabaseName {
 					cfg.Database = "dolt"
+				}
+
+				// Set prefix-based SQL database name to avoid cross-rig contamination (bd-u8rda).
+				// E.g., prefix "gt" → database "beads_gt", prefix "bd" → database "beads_bd".
+				if prefix != "" {
+					cfg.DoltDatabase = "beads_" + prefix
 				}
 
 				// Save server mode configuration (bd-dolt.2.2)

@@ -110,7 +110,13 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 	// Create Dolt database
 	printProgress("Creating Dolt database...")
 
-	doltStore, err := dolt.New(ctx, &dolt.Config{Path: doltPath})
+	// Use prefix-based database name to avoid cross-rig contamination (bd-u8rda).
+	// E.g., prefix "gt" → database "beads_gt", prefix "bd" → database "beads_bd".
+	dbName := "beads"
+	if data.prefix != "" {
+		dbName = "beads_" + data.prefix
+	}
+	doltStore, err := dolt.New(ctx, &dolt.Config{Path: doltPath, Database: dbName})
 	if err != nil {
 		exitWithError("dolt_create_failed", err.Error(), "")
 	}
@@ -137,6 +143,7 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 	// Update metadata.json
 	cfg.Backend = configfile.BackendDolt
 	cfg.Database = "dolt"
+	cfg.DoltDatabase = dbName
 	cfg.DoltServerPort = configfile.DefaultDoltServerPort
 	if err := cfg.Save(beadsDir); err != nil {
 		exitWithError("config_save_failed", err.Error(),
