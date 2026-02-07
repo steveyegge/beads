@@ -194,6 +194,7 @@ type Request struct {
 	ClientVersion string          `json:"client_version,omitempty"` // Client version for compatibility checks
 	ExpectedDB    string          `json:"expected_db,omitempty"`    // Expected database path for validation (absolute)
 	Token         string          `json:"token,omitempty"`          // Authentication token for TCP connections
+	TimeoutMs     int             `json:"timeout_ms,omitempty"`     // Per-request timeout (ms). 0 = server default. Max 3600000 (1h).
 }
 
 // Response represents an RPC response from daemon to client

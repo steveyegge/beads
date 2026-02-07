@@ -191,13 +191,11 @@ func findBDBinary() (string, error) {
 }
 
 // DefaultHandlers returns the standard set of event bus handlers for daemon registration.
-// Note: StopDecisionHandler is NOT included here because it needs to poll for
-// up to 30 minutes, which exceeds daemon request timeouts. Instead, stop-decision
-// logic runs directly in the `bd bus emit` process (see bus_emit.go).
 func DefaultHandlers() []Handler {
 	return []Handler{
-		&PrimeHandler{},
-		&GateHandler{},
-		&DecisionHandler{},
+		&PrimeHandler{},          // 10
+		&StopDecisionHandler{},   // 15
+		&GateHandler{},           // 20
+		&DecisionHandler{},       // 30
 	}
 }

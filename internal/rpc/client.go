@@ -39,8 +39,9 @@ type Client struct {
 	dbPath     string // Expected database path for validation
 	actor      string // Actor for audit trail (who is performing operations)
 	token      string // Authentication token for TCP connections
-	isRemote   bool   // True if connected via TCP or HTTP to remote daemon
-	httpClient *HTTPClient // If set, delegates to HTTP client instead of socket/TCP
+	isRemote         bool   // True if connected via TCP or HTTP to remote daemon
+	httpClient       *HTTPClient // If set, delegates to HTTP client instead of socket/TCP
+	requestTimeoutMs int    // Per-request timeout in ms (0 = server default)
 }
 
 // TryConnect attempts to connect to the daemon socket
@@ -341,6 +342,13 @@ func (c *Client) SetToken(token string) {
 	}
 }
 
+// SetRequestTimeout sets a per-request timeout in milliseconds.
+// This is sent to the server in the Request and also extends the client socket deadline.
+// Use 0 to revert to the server/client default.
+func (c *Client) SetRequestTimeout(ms int) {
+	c.requestTimeoutMs = ms
+}
+
 // IsRemote returns true if this client is connected to a remote daemon via TCP
 func (c *Client) IsRemote() bool {
 	return c.isRemote
@@ -377,6 +385,7 @@ func (c *Client) ExecuteWithCwd(operation string, args interface{}, cwd string) 
 		Cwd:           cwd,
 		ExpectedDB:    c.dbPath, // Send expected database path for validation
 		Token:         c.token,  // Authentication token for TCP connections
+		TimeoutMs:     c.requestTimeoutMs,
 	}
 
 	reqJSON, err := json.Marshal(req)
@@ -384,8 +393,16 @@ func (c *Client) ExecuteWithCwd(operation string, args interface{}, cwd string) 
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	if c.timeout > 0 {
-		deadline := time.Now().Add(c.timeout)
+	// Use the longer of c.timeout and requestTimeoutMs for the socket deadline.
+	socketDeadline := c.timeout
+	if c.requestTimeoutMs > 0 {
+		requested := time.Duration(c.requestTimeoutMs) * time.Millisecond
+		if requested > socketDeadline {
+			socketDeadline = requested
+		}
+	}
+	if socketDeadline > 0 {
+		deadline := time.Now().Add(socketDeadline)
 		if err := c.conn.SetDeadline(deadline); err != nil {
 			return nil, fmt.Errorf("failed to set deadline: %w", err)
 		}

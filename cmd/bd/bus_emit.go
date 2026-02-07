@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/eventbus"
@@ -27,7 +25,7 @@ For non-hook events (e.g. decision events), use --event and --payload:
 
 Dispatch priority:
   1. If bd daemon is running (RPC): send to daemon
-  2. Otherwise: create local bus and dispatch (no handlers = passthrough)
+  2. Otherwise: create local bus with default handlers and dispatch
 
 Exit codes:
   0 - Event processed, no blocking
@@ -84,6 +82,12 @@ func runBusEmit(cmd *cobra.Command, args []string) error {
 
 	// Try daemon RPC first.
 	if daemonClient != nil {
+		// For Stop hooks, extend the request timeout so the stop-decision
+		// handler can poll for up to 1 hour without hitting daemon timeouts.
+		if resolvedType == "Stop" {
+			daemonClient.SetRequestTimeout(3600 * 1000) // 1 hour
+		}
+
 		emitArgs := &rpc.BusEmitArgs{
 			HookType:  resolvedType,
 			EventJSON: eventData,
@@ -91,6 +95,12 @@ func runBusEmit(cmd *cobra.Command, args []string) error {
 		}
 
 		resp, err := daemonClient.Execute(rpc.OpBusEmit, emitArgs)
+
+		// Reset request timeout after the call.
+		if resolvedType == "Stop" {
+			daemonClient.SetRequestTimeout(0)
+		}
+
 		if err != nil {
 			// Daemon unreachable — fall through to local dispatch.
 			fmt.Fprintf(os.Stderr, "bus: daemon RPC failed, falling back to local: %v\n", err)
@@ -106,19 +116,26 @@ func runBusEmit(cmd *cobra.Command, args []string) error {
 	}
 
 	if emitResult == nil {
-		// Local dispatch: create a bus with no handlers (passthrough).
+		// Local dispatch: create a bus with default handlers.
 		bus := eventbus.New()
+		for _, h := range eventbus.DefaultHandlers() {
+			bus.Register(h)
+		}
+
+		cwd, _ := os.Getwd()
 		event := &eventbus.Event{
 			Type:      eventbus.EventType(resolvedType),
 			SessionID: eventMeta.SessionID,
 			Raw:       eventData,
+			CWD:       cwd,
 		}
 
 		// Parse remaining fields from stdin/payload JSON into the event.
 		if len(eventData) > 0 {
 			_ = json.Unmarshal(eventData, event)
-			// Ensure Type is not overwritten by JSON field.
+			// Ensure Type and CWD are not overwritten by JSON field.
 			event.Type = eventbus.EventType(resolvedType)
+			event.CWD = cwd
 		}
 
 		result, err := bus.Dispatch(context.Background(), event)
@@ -131,15 +148,6 @@ func runBusEmit(cmd *cobra.Command, args []string) error {
 			Reason:   result.Reason,
 			Inject:   result.Inject,
 			Warnings: result.Warnings,
-		}
-	}
-
-	// Stop decision check: runs directly in this process (not in the event bus)
-	// because it needs to poll for up to 30 minutes, which exceeds daemon timeouts.
-	if resolvedType == "Stop" && !emitResult.Block {
-		if block, reason := runStopDecisionCheck(eventData); block {
-			emitResult.Block = true
-			emitResult.Reason = reason
 		}
 	}
 
@@ -173,52 +181,6 @@ func outputEmitResult(result *rpc.BusEmitResult) error {
 	}
 
 	return nil
-}
-
-// runStopDecisionCheck runs `bd decision stop-check --json` as a subprocess.
-// This runs directly in the bus emit process (not in the event bus handler)
-// because it needs to poll for up to 30 minutes, exceeding daemon RPC timeouts.
-// Returns (block, reason).
-func runStopDecisionCheck(eventData []byte) (bool, string) {
-	// Check stop_hook_active to prevent infinite loop.
-	if len(eventData) > 0 {
-		var raw map[string]interface{}
-		if err := json.Unmarshal(eventData, &raw); err == nil {
-			if active, ok := raw["stop_hook_active"]; ok {
-				if boolVal, isBool := active.(bool); isBool && boolVal {
-					return false, ""
-				}
-			}
-		}
-	}
-
-	// Find bd binary (use our own executable path).
-	bdPath, err := os.Executable()
-	if err != nil {
-		bdPath = "bd" // fallback to PATH lookup
-	}
-
-	cmd := exec.Command(bdPath, "decision", "stop-check", "--json")
-	cmd.Stderr = os.Stderr // pass through stderr for progress messages
-	stdout, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			// Exit 1 = block (human said "continue").
-			var resp struct {
-				Decision string `json:"decision"`
-				Reason   string `json:"reason"`
-			}
-			if jsonErr := json.Unmarshal(stdout, &resp); jsonErr == nil && resp.Decision == "block" {
-				return true, resp.Reason
-			}
-			return true, strings.TrimSpace(string(stdout))
-		}
-		// Other errors — allow stop (fail-open).
-		return false, ""
-	}
-
-	// Exit 0 = allow stop.
-	return false, ""
 }
 
 func init() {

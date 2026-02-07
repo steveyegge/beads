@@ -359,8 +359,21 @@ func (s *Server) handleConnectionWithAuth(conn net.Conn, requiresAuth bool) {
 			}
 		}
 
+		// Compute effective timeout: use per-request timeout if larger than default.
+		effectiveTimeout := s.requestTimeout
+		if req.TimeoutMs > 0 {
+			requested := time.Duration(req.TimeoutMs) * time.Millisecond
+			const maxTimeout = time.Hour
+			if requested > maxTimeout {
+				requested = maxTimeout
+			}
+			if requested > effectiveTimeout {
+				effectiveTimeout = requested
+			}
+		}
+
 		// Set write deadline for the response
-		if err := conn.SetWriteDeadline(time.Now().Add(s.requestTimeout)); err != nil {
+		if err := conn.SetWriteDeadline(time.Now().Add(effectiveTimeout)); err != nil {
 			return
 		}
 

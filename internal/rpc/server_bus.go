@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/steveyegge/beads/internal/eventbus"
 )
@@ -49,7 +50,17 @@ func (s *Server) handleBusEmit(req *Request) Response {
 		event.Type = eventbus.EventType(args.HookType)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), s.requestTimeout)
+	timeout := s.requestTimeout
+	if req.TimeoutMs > 0 {
+		requested := time.Duration(req.TimeoutMs) * time.Millisecond
+		if requested > time.Hour {
+			requested = time.Hour
+		}
+		if requested > timeout {
+			timeout = requested
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	result, err := bus.Dispatch(ctx, event)
