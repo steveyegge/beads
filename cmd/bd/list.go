@@ -1182,17 +1182,51 @@ var listCmd = &cobra.Command{
 			// Pass through --allow-stale flag for resilient queries (bd-dpkdm)
 			listArgs.AllowStale = allowStale
 
-			resp, err := daemonClient.List(listArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Parse as IssueWithCounts to get epic progress data
 			var issuesWithCounts []*types.IssueWithCounts
-			if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
+
+			if readyFlag {
+				// Use Ready RPC for consistent results with bd ready (gt-w676pl.2)
+				readyArgs := &rpc.ReadyArgs{
+					Assignee:  assignee,
+					Type:      issueType,
+					Limit:     effectiveLimit,
+					Labels:    labels,
+					LabelsAny: labelsAny,
+					ParentID:  parentID,
+				}
+				if cmd.Flags().Changed("priority") {
+					priorityStr, _ := cmd.Flags().GetString("priority")
+					priority, err := validation.ValidatePriority(priorityStr)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+						os.Exit(1)
+					}
+					readyArgs.Priority = &priority
+				}
+				resp, err := daemonClient.Ready(readyArgs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				var issues []*types.Issue
+				if err := json.Unmarshal(resp.Data, &issues); err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
+					os.Exit(1)
+				}
+				issuesWithCounts = make([]*types.IssueWithCounts, len(issues))
+				for i, issue := range issues {
+					issuesWithCounts[i] = &types.IssueWithCounts{Issue: issue}
+				}
+			} else {
+				resp, err := daemonClient.List(listArgs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
+					os.Exit(1)
+				}
 			}
 
 			if jsonOutput {
@@ -1374,7 +1408,35 @@ var listCmd = &cobra.Command{
 
 		// Direct mode
 		// ctx already created above for staleness check
-		issues, err := store.SearchIssues(ctx, "", filter)
+		var issues []*types.Issue
+		var err error
+		if readyFlag {
+			// Use GetReadyWork for consistent results with bd ready (gt-w676pl.2)
+			workFilter := types.WorkFilter{
+				Type:       issueType,
+				Limit:      effectiveLimit,
+				Labels:     labels,
+				LabelsAny:  labelsAny,
+			}
+			if cmd.Flags().Changed("priority") {
+				priorityStr, _ := cmd.Flags().GetString("priority")
+				priority, parseErr := validation.ValidatePriority(priorityStr)
+				if parseErr != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", parseErr)
+					os.Exit(1)
+				}
+				workFilter.Priority = &priority
+			}
+			if assignee != "" {
+				workFilter.Assignee = &assignee
+			}
+			if parentID != "" {
+				workFilter.ParentID = &parentID
+			}
+			issues, err = store.GetReadyWork(ctx, workFilter)
+		} else {
+			issues, err = store.SearchIssues(ctx, "", filter)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -1384,7 +1446,17 @@ var listCmd = &cobra.Command{
 		if len(issues) == 0 {
 			if checkAndAutoImport(ctx, store) {
 				// Re-run the query after import
-				issues, err = store.SearchIssues(ctx, "", filter)
+				if readyFlag {
+					workFilter := types.WorkFilter{
+						Type:      issueType,
+						Limit:     effectiveLimit,
+						Labels:    labels,
+						LabelsAny: labelsAny,
+					}
+					issues, err = store.GetReadyWork(ctx, workFilter)
+				} else {
+					issues, err = store.SearchIssues(ctx, "", filter)
+				}
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)

@@ -2509,6 +2509,26 @@ func (s *Server) handleCount(req *Request) Response {
 	filter.PriorityMin = countArgs.PriorityMin
 	filter.PriorityMax = countArgs.PriorityMax
 
+	// Status exclusion (gt-w676pl.1)
+	if len(countArgs.ExcludeStatus) > 0 {
+		for _, s := range countArgs.ExcludeStatus {
+			filter.ExcludeStatus = append(filter.ExcludeStatus, types.Status(s))
+		}
+	}
+
+	// Type exclusion (gt-w676pl.1)
+	if len(countArgs.ExcludeTypes) > 0 {
+		for _, t := range countArgs.ExcludeTypes {
+			filter.ExcludeTypes = append(filter.ExcludeTypes, types.IssueType(t))
+		}
+	}
+
+	// Template filtering (gt-w676pl.1)
+	if !countArgs.IncludeTemplates {
+		isTemplate := false
+		filter.IsTemplate = &isTemplate
+	}
+
 	ctx, cancel := s.reqCtx(req)
 	defer cancel()
 	issues, err := store.SearchIssues(ctx, countArgs.Query, filter)

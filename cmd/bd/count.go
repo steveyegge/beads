@@ -41,6 +41,9 @@ Examples:
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		titleSearch, _ := cmd.Flags().GetString("title")
 		idFilter, _ := cmd.Flags().GetString("id")
+		allFlag, _ := cmd.Flags().GetBool("all")
+		includeGates, _ := cmd.Flags().GetBool("include-gates")
+		includeTemplates, _ := cmd.Flags().GetBool("include-templates")
 
 		// Pattern matching flags
 		titleContains, _ := cmd.Flags().GetString("title-contains")
@@ -104,6 +107,18 @@ Examples:
 		labels = util.NormalizeLabels(labels)
 		labelsAny = util.NormalizeLabels(labelsAny)
 
+		// Default filters to match bd list behavior (gt-w676pl.1)
+		// Exclude closed issues by default unless explicit --status or --all
+		var defaultExcludeStatus []string
+		if status == "" && !allFlag {
+			defaultExcludeStatus = []string{"closed"}
+		}
+		// Exclude gate issues by default unless --include-gates or --type gate
+		var defaultExcludeTypes []string
+		if !includeGates && issueType != "gate" {
+			defaultExcludeTypes = []string{"gate"}
+		}
+
 		// Check database freshness before reading
 		ctx := rootCtx
 		if daemonClient == nil {
@@ -166,6 +181,11 @@ Examples:
 			if cmd.Flags().Changed("priority-max") {
 				countArgs.PriorityMax = &priorityMax
 			}
+
+			// Default exclusions to match bd list behavior (gt-w676pl.1)
+			countArgs.ExcludeStatus = defaultExcludeStatus
+			countArgs.ExcludeTypes = defaultExcludeTypes
+			countArgs.IncludeTemplates = includeTemplates
 
 			resp, err := daemonClient.Count(countArgs)
 			if err != nil {
@@ -323,6 +343,18 @@ Examples:
 			filter.PriorityMax = &priorityMax
 		}
 
+		// Default exclusions to match bd list behavior (gt-w676pl.1)
+		for _, s := range defaultExcludeStatus {
+			filter.ExcludeStatus = append(filter.ExcludeStatus, types.Status(s))
+		}
+		for _, t := range defaultExcludeTypes {
+			filter.ExcludeTypes = append(filter.ExcludeTypes, types.IssueType(t))
+		}
+		if !includeTemplates {
+			isTemplate := false
+			filter.IsTemplate = &isTemplate
+		}
+
 		issues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -462,6 +494,11 @@ func init() {
 	countCmd.Flags().Bool("by-type", false, "Group count by issue type")
 	countCmd.Flags().Bool("by-assignee", false, "Group count by assignee")
 	countCmd.Flags().Bool("by-label", false, "Group count by label")
+
+	// Scope control (gt-w676pl.1: match bd list defaults)
+	countCmd.Flags().Bool("all", false, "Include all statuses (including closed)")
+	countCmd.Flags().Bool("include-gates", false, "Include gate issues in count")
+	countCmd.Flags().Bool("include-templates", false, "Include template issues in count")
 
 	rootCmd.AddCommand(countCmd)
 }

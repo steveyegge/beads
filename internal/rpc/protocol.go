@@ -492,6 +492,15 @@ type CountArgs struct {
 	PriorityMin *int `json:"priority_min,omitempty"`
 	PriorityMax *int `json:"priority_max,omitempty"`
 
+	// Status exclusion (for default non-closed behavior, gt-w676pl.1)
+	ExcludeStatus []string `json:"exclude_status,omitempty"`
+
+	// Type exclusion (for hiding internal types like gates, gt-w676pl.1)
+	ExcludeTypes []string `json:"exclude_types,omitempty"`
+
+	// Template filtering (gt-w676pl.1)
+	IncludeTemplates bool `json:"include_templates,omitempty"`
+
 	// Grouping option (only one can be specified)
 	GroupBy string `json:"group_by,omitempty"` // "status", "priority", "type", "assignee", "label"
 }
