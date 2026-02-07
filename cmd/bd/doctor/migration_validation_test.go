@@ -1,10 +1,38 @@
 package doctor
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/types"
 )
+
+func newTestIssue(id string) *types.Issue {
+	return &types.Issue{
+		ID:        id,
+		Title:     "Test issue " + id,
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+}
+
+// insertIssueDirectly inserts an issue via raw SQL, bypassing prefix validation.
+// This simulates cross-rig contamination where foreign-prefix issues end up in the DB.
+func insertIssueDirectly(t *testing.T, store *sqlite.SQLiteStorage, id string) {
+	t.Helper()
+	db := store.UnderlyingDB()
+	_, err := db.Exec(
+		"INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at) VALUES (?, ?, 'open', 2, 'task', datetime('now'), datetime('now'))",
+		id, "Test issue "+id,
+	)
+	if err != nil {
+		t.Fatalf("failed to insert issue %s: %v", id, err)
+	}
+}
 
 func TestValidateJSONLForMigration(t *testing.T) {
 	tests := []struct {
@@ -305,5 +333,188 @@ func TestMigrationValidationResult_JSONSerialization(t *testing.T) {
 
 	if len(result.Warnings) != 1 {
 		t.Errorf("len(Warnings) = %d, want 1", len(result.Warnings))
+	}
+}
+
+func TestCategorizeDoltExtras_AllForeign(t *testing.T) {
+	ctx := context.Background()
+	tmpDir, err := os.MkdirTemp("", "bd-categorize-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Set local prefix to "bd"
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set prefix: %v", err)
+	}
+
+	// Create local issues via store
+	for _, id := range []string{"bd-001", "bd-002"} {
+		if err := store.CreateIssue(ctx, newTestIssue(id), "test"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", id, err)
+		}
+	}
+	// Insert foreign-prefix issues directly (bypassing prefix validation)
+	for _, id := range []string{"gt-abc", "gt-def", "hq-xyz"} {
+		insertIssueDirectly(t, store, id)
+	}
+
+	// JSONL contains only the bd-* issues
+	jsonlIDs := map[string]bool{"bd-001": true, "bd-002": true}
+
+	foreignCount, foreignPrefixes, ephemeralCount := categorizeDoltExtras(ctx, store, jsonlIDs)
+
+	if foreignCount != 3 {
+		t.Errorf("foreignCount = %d, want 3", foreignCount)
+	}
+	if foreignPrefixes["gt"] != 2 {
+		t.Errorf("foreignPrefixes[gt] = %d, want 2", foreignPrefixes["gt"])
+	}
+	if foreignPrefixes["hq"] != 1 {
+		t.Errorf("foreignPrefixes[hq] = %d, want 1", foreignPrefixes["hq"])
+	}
+	if ephemeralCount != 0 {
+		t.Errorf("ephemeralCount = %d, want 0", ephemeralCount)
+	}
+}
+
+func TestCategorizeDoltExtras_MixedEphemeralAndForeign(t *testing.T) {
+	ctx := context.Background()
+	tmpDir, err := os.MkdirTemp("", "bd-categorize-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set prefix: %v", err)
+	}
+
+	// Create local issues via store
+	for _, id := range []string{"bd-001", "bd-003"} {
+		if err := store.CreateIssue(ctx, newTestIssue(id), "test"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", id, err)
+		}
+	}
+	// Insert foreign-prefix issue directly
+	insertIssueDirectly(t, store, "gt-abc")
+
+	jsonlIDs := map[string]bool{"bd-001": true}
+
+	foreignCount, foreignPrefixes, ephemeralCount := categorizeDoltExtras(ctx, store, jsonlIDs)
+
+	if foreignCount != 1 {
+		t.Errorf("foreignCount = %d, want 1", foreignCount)
+	}
+	if foreignPrefixes["gt"] != 1 {
+		t.Errorf("foreignPrefixes[gt] = %d, want 1", foreignPrefixes["gt"])
+	}
+	if ephemeralCount != 1 {
+		t.Errorf("ephemeralCount = %d, want 1", ephemeralCount)
+	}
+}
+
+func TestCategorizeDoltExtras_AllEphemeral(t *testing.T) {
+	ctx := context.Background()
+	tmpDir, err := os.MkdirTemp("", "bd-categorize-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set prefix: %v", err)
+	}
+
+	// All extras are same-prefix (ephemeral)
+	for _, id := range []string{"bd-001", "bd-002", "bd-003"} {
+		if err := store.CreateIssue(ctx, newTestIssue(id), "test"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", id, err)
+		}
+	}
+
+	jsonlIDs := map[string]bool{"bd-001": true}
+
+	foreignCount, _, ephemeralCount := categorizeDoltExtras(ctx, store, jsonlIDs)
+
+	if foreignCount != 0 {
+		t.Errorf("foreignCount = %d, want 0", foreignCount)
+	}
+	if ephemeralCount != 2 {
+		t.Errorf("ephemeralCount = %d, want 2", ephemeralCount)
+	}
+}
+
+func TestCategorizeDoltExtras_NoExtras(t *testing.T) {
+	ctx := context.Background()
+	tmpDir, err := os.MkdirTemp("", "bd-categorize-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set prefix: %v", err)
+	}
+
+	for _, id := range []string{"bd-001", "bd-002"} {
+		if err := store.CreateIssue(ctx, newTestIssue(id), "test"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", id, err)
+		}
+	}
+
+	// All Dolt issues are in JSONL
+	jsonlIDs := map[string]bool{"bd-001": true, "bd-002": true}
+
+	foreignCount, _, ephemeralCount := categorizeDoltExtras(ctx, store, jsonlIDs)
+
+	if foreignCount != 0 {
+		t.Errorf("foreignCount = %d, want 0", foreignCount)
+	}
+	if ephemeralCount != 0 {
+		t.Errorf("ephemeralCount = %d, want 0", ephemeralCount)
+	}
+}
+
+func TestFormatPrefixCounts(t *testing.T) {
+	// Single prefix
+	result := formatPrefixCounts(map[string]int{"gt": 5})
+	if result != "gt (5)" {
+		t.Errorf("formatPrefixCounts = %q, want %q", result, "gt (5)")
+	}
+
+	// Empty map
+	result = formatPrefixCounts(map[string]int{})
+	if result != "" {
+		t.Errorf("formatPrefixCounts(empty) = %q, want %q", result, "")
 	}
 }
