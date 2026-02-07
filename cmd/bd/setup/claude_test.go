@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -784,4 +785,528 @@ func TestClaudeWrappersExit(t *testing.T) {
 			t.Fatal("RemoveClaude should exit on parse error")
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Legacy hook migration to bus emit tests
+// ---------------------------------------------------------------------------
+
+// makeHookEntry builds the Claude Code hook JSON structure for a single command
+// on a given event.
+func makeHookEntry(command string) map[string]interface{} {
+	return map[string]interface{}{
+		"matcher": "",
+		"hooks": []interface{}{
+			map[string]interface{}{
+				"type":    "command",
+				"command": command,
+			},
+		},
+	}
+}
+
+// settingsWithHooks is a small helper that returns a settings map
+// with the given hooks section.
+func settingsWithHooks(hooks map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"hooks": hooks,
+	}
+}
+
+// readSettingsFile reads and parses a settings JSON file.
+func readSettingsFile(t *testing.T, path string) map[string]interface{} {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read settings file: %v", err)
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("unmarshal settings: %v", err)
+	}
+	return settings
+}
+
+// assertNoLegacyHooks verifies that no legacy hook commands exist in the
+// settings file at the given path.
+func assertNoLegacyHooks(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	raw := string(data)
+	for _, lh := range legacyHookCommands() {
+		if strings.Contains(raw, lh.command) {
+			t.Errorf("legacy hook command still present in settings: %q (event %s)", lh.command, lh.event)
+		}
+	}
+}
+
+// assertBusEmitHooksPresent verifies that all bus emit hook commands exist
+// in the hooks map.
+func assertBusEmitHooksPresent(t *testing.T, hooks map[string]interface{}) {
+	t.Helper()
+	for _, bh := range busEmitHookCommands() {
+		eventHooks, ok := hooks[bh.event].([]interface{})
+		if !ok {
+			t.Errorf("bus emit hook event %q missing from hooks", bh.event)
+			continue
+		}
+		found := false
+		for _, hook := range eventHooks {
+			hookMap, ok := hook.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			commands, ok := hookMap["hooks"].([]interface{})
+			if !ok {
+				continue
+			}
+			for _, cmd := range commands {
+				cmdMap, ok := cmd.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if cmdMap["command"] == bh.command {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Errorf("bus emit hook %q not found in event %q", bh.command, bh.event)
+		}
+	}
+}
+
+// TestInstallClaudeMigratesLegacyHooks verifies that installClaude removes all
+// legacy hook variants and replaces them with bus emit hooks.
+func TestInstallClaudeMigratesLegacyHooks(t *testing.T) {
+	env, stdout, _ := newClaudeTestEnv(t)
+	settingsPath := globalSettingsPath(env.homeDir)
+
+	// Build hooks map with ALL legacy hook variants.
+	hooks := make(map[string]interface{})
+	for _, lh := range legacyHookCommands() {
+		eventHooks, _ := hooks[lh.event].([]interface{})
+		eventHooks = append(eventHooks, makeHookEntry(lh.command))
+		hooks[lh.event] = eventHooks
+	}
+
+	writeSettings(t, settingsPath, settingsWithHooks(hooks))
+
+	// Run install - should migrate.
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+
+	// 1. All legacy hooks must be removed from the file.
+	assertNoLegacyHooks(t, settingsPath)
+
+	// 2. Bus emit hooks must be present.
+	settings := readSettingsFile(t, settingsPath)
+	hooksResult, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		t.Fatal("hooks section missing after install")
+	}
+	assertBusEmitHooksPresent(t, hooksResult)
+
+	// 3. Output mentions "Registered" for each bus emit hook.
+	out := stdout.String()
+	for _, bh := range busEmitHookCommands() {
+		expected := fmt.Sprintf("Registered %s hook", bh.event)
+		if !strings.Contains(out, expected) {
+			t.Errorf("expected output to contain %q, got:\n%s", expected, out)
+		}
+	}
+
+	// 4. Double-check: raw file has no legacy commands at all.
+	data, _ := os.ReadFile(settingsPath)
+	for _, lh := range legacyHookCommands() {
+		if strings.Contains(string(data), lh.command) {
+			t.Errorf("raw settings still contains legacy command %q", lh.command)
+		}
+	}
+}
+
+// TestInstallClaudeMigratesPartialLegacy verifies that a partial set of legacy
+// hooks is correctly migrated (some events have legacy hooks, others do not).
+func TestInstallClaudeMigratesPartialLegacy(t *testing.T) {
+	env, stdout, _ := newClaudeTestEnv(t)
+	settingsPath := globalSettingsPath(env.homeDir)
+
+	// Only install a subset of legacy hooks: SessionStart and Stop.
+	hooks := map[string]interface{}{
+		"SessionStart": []interface{}{
+			makeHookEntry("bd prime"),
+		},
+		"Stop": []interface{}{
+			makeHookEntry("bd gate session-check --hook Stop --json"),
+		},
+	}
+
+	writeSettings(t, settingsPath, settingsWithHooks(hooks))
+
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+
+	// Legacy hooks should be removed.
+	assertNoLegacyHooks(t, settingsPath)
+
+	// All four bus emit hooks should be present.
+	settings := readSettingsFile(t, settingsPath)
+	hooksResult, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		t.Fatal("hooks section missing")
+	}
+	assertBusEmitHooksPresent(t, hooksResult)
+
+	// Output should mention "Registered" for all four events since none existed before.
+	out := stdout.String()
+	for _, bh := range busEmitHookCommands() {
+		expected := fmt.Sprintf("Registered %s hook", bh.event)
+		if !strings.Contains(out, expected) {
+			t.Errorf("expected output to contain %q, got:\n%s", expected, out)
+		}
+	}
+}
+
+// TestHasBeadsHooksDetectsBusEmit verifies that hasBeadsHooks detects bus emit
+// hooks (not only legacy ones). It only checks SessionStart and PreCompact.
+func TestHasBeadsHooksDetectsBusEmit(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name     string
+		settings map[string]interface{}
+		want     bool
+	}{
+		{
+			name: "bus emit SessionStart",
+			settings: settingsWithHooks(map[string]interface{}{
+				"SessionStart": []interface{}{
+					makeHookEntry("bd bus emit --hook=SessionStart"),
+				},
+			}),
+			want: true,
+		},
+		{
+			name: "bus emit PreCompact",
+			settings: settingsWithHooks(map[string]interface{}{
+				"PreCompact": []interface{}{
+					makeHookEntry("bd bus emit --hook=PreCompact"),
+				},
+			}),
+			want: true,
+		},
+		{
+			name: "bus emit Stop and PreToolUse only - not checked events",
+			settings: settingsWithHooks(map[string]interface{}{
+				"Stop": []interface{}{
+					makeHookEntry("bd bus emit --hook=Stop"),
+				},
+				"PreToolUse": []interface{}{
+					makeHookEntry("bd bus emit --hook=PreToolUse"),
+				},
+			}),
+			want: false,
+		},
+		{
+			name:     "empty hooks",
+			settings: settingsWithHooks(map[string]interface{}{}),
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(tmpDir, tt.name+".json")
+			data, err := json.Marshal(tt.settings)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			got := hasBeadsHooks(path)
+			if got != tt.want {
+				t.Errorf("hasBeadsHooks() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRemoveClaudeRemovesBusEmitHooks installs bus emit hooks, then verifies
+// that removeClaude removes them all.
+func TestRemoveClaudeRemovesBusEmitHooks(t *testing.T) {
+	env, _, _ := newClaudeTestEnv(t)
+	settingsPath := globalSettingsPath(env.homeDir)
+
+	// Install hooks first.
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+
+	// Verify bus emit hooks are present before removal.
+	settings := readSettingsFile(t, settingsPath)
+	hooksBeforeRemove, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		t.Fatal("hooks missing after install")
+	}
+	assertBusEmitHooksPresent(t, hooksBeforeRemove)
+
+	// Reset stdout/stderr buffers for removeClaude.
+	env2, stdout2, _ := newClaudeTestEnv(t)
+	env2.homeDir = env.homeDir
+	env2.projectDir = env.projectDir
+
+	// Remove hooks.
+	if err := removeClaude(env2, false); err != nil {
+		t.Fatalf("removeClaude: %v", err)
+	}
+
+	// Verify all bus emit hooks are gone.
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	raw := string(data)
+	for _, bh := range busEmitHookCommands() {
+		if strings.Contains(raw, bh.command) {
+			t.Errorf("bus emit hook %q still present after removeClaude", bh.command)
+		}
+	}
+
+	// Output should mention removal.
+	if !strings.Contains(stdout2.String(), "hooks removed") {
+		t.Error("expected 'hooks removed' in output")
+	}
+}
+
+// TestInstallClaudeIdempotentBusEmit verifies that running installClaude twice
+// does not duplicate bus emit hooks.
+func TestInstallClaudeIdempotentBusEmit(t *testing.T) {
+	env, _, _ := newClaudeTestEnv(t)
+	settingsPath := globalSettingsPath(env.homeDir)
+
+	// First install.
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("first installClaude: %v", err)
+	}
+
+	// Second install (use fresh buffers to avoid mixing output).
+	env2, stdout2, _ := newClaudeTestEnv(t)
+	env2.homeDir = env.homeDir
+	env2.projectDir = env.projectDir
+
+	if err := installClaude(env2, false, false); err != nil {
+		t.Fatalf("second installClaude: %v", err)
+	}
+
+	// The second call should NOT print "Registered" since hooks already exist.
+	out := stdout2.String()
+	for _, bh := range busEmitHookCommands() {
+		expected := fmt.Sprintf("Registered %s hook", bh.event)
+		if strings.Contains(out, expected) {
+			t.Errorf("second install should not re-register %s hook", bh.event)
+		}
+	}
+
+	// Verify no duplicate hooks in the settings file.
+	settings := readSettingsFile(t, settingsPath)
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		t.Fatal("hooks section missing")
+	}
+
+	for _, bh := range busEmitHookCommands() {
+		eventHooks, ok := hooks[bh.event].([]interface{})
+		if !ok {
+			t.Errorf("event %q missing", bh.event)
+			continue
+		}
+		count := 0
+		for _, hook := range eventHooks {
+			hookMap, ok := hook.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			commands, ok := hookMap["hooks"].([]interface{})
+			if !ok {
+				continue
+			}
+			for _, cmd := range commands {
+				cmdMap, ok := cmd.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if cmdMap["command"] == bh.command {
+					count++
+				}
+			}
+		}
+		if count != 1 {
+			t.Errorf("expected exactly 1 instance of %q in event %q, got %d", bh.command, bh.event, count)
+		}
+	}
+}
+
+// TestInstallClaudePreservesThirdPartyHooks verifies that third-party hooks
+// are preserved through install and remove cycles.
+func TestInstallClaudePreservesThirdPartyHooks(t *testing.T) {
+	env, _, _ := newClaudeTestEnv(t)
+	settingsPath := globalSettingsPath(env.homeDir)
+
+	// Pre-populate with third-party hooks on events that beads also uses.
+	thirdPartyCmd := "custom-linter --check"
+	hooks := map[string]interface{}{
+		"SessionStart": []interface{}{
+			makeHookEntry(thirdPartyCmd),
+		},
+		"PreToolUse": []interface{}{
+			makeHookEntry("security-scanner run"),
+		},
+	}
+	writeSettings(t, settingsPath, settingsWithHooks(hooks))
+
+	// Install beads hooks.
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+
+	// Third-party hooks should still be present.
+	settings := readSettingsFile(t, settingsPath)
+	hooksResult := settings["hooks"].(map[string]interface{})
+
+	assertCommandPresent := func(event, command string) {
+		t.Helper()
+		eventHooks, ok := hooksResult[event].([]interface{})
+		if !ok {
+			t.Fatalf("event %q missing", event)
+		}
+		for _, hook := range eventHooks {
+			hookMap, ok := hook.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			commands, ok := hookMap["hooks"].([]interface{})
+			if !ok {
+				continue
+			}
+			for _, cmd := range commands {
+				cmdMap, ok := cmd.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if cmdMap["command"] == command {
+					return
+				}
+			}
+		}
+		t.Errorf("third-party command %q not found in event %q after install", command, event)
+	}
+
+	assertCommandPresent("SessionStart", thirdPartyCmd)
+	assertCommandPresent("PreToolUse", "security-scanner run")
+
+	// Bus emit hooks should also be present.
+	assertBusEmitHooksPresent(t, hooksResult)
+
+	// Now remove beads hooks.
+	env2, _, _ := newClaudeTestEnv(t)
+	env2.homeDir = env.homeDir
+	env2.projectDir = env.projectDir
+
+	if err := removeClaude(env2, false); err != nil {
+		t.Fatalf("removeClaude: %v", err)
+	}
+
+	// Third-party hooks should survive removal.
+	settings2 := readSettingsFile(t, settingsPath)
+	hooksAfterRemove := settings2["hooks"].(map[string]interface{})
+
+	// Check third-party hooks are still there.
+	for _, tc := range []struct {
+		event, command string
+	}{
+		{"SessionStart", thirdPartyCmd},
+		{"PreToolUse", "security-scanner run"},
+	} {
+		eventHooks, ok := hooksAfterRemove[tc.event].([]interface{})
+		if !ok {
+			t.Fatalf("event %q missing after remove", tc.event)
+		}
+		found := false
+		for _, hook := range eventHooks {
+			hookMap, ok := hook.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			commands, ok := hookMap["hooks"].([]interface{})
+			if !ok {
+				continue
+			}
+			for _, cmd := range commands {
+				cmdMap, ok := cmd.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if cmdMap["command"] == tc.command {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Errorf("third-party command %q not found in event %q after remove", tc.command, tc.event)
+		}
+	}
+
+	// Bus emit hooks should be gone.
+	data, _ := os.ReadFile(settingsPath)
+	raw := string(data)
+	for _, bh := range busEmitHookCommands() {
+		if strings.Contains(raw, bh.command) {
+			t.Errorf("bus emit hook %q still present after remove", bh.command)
+		}
+	}
+}
+
+// TestBusEmitHookCommandsComplete verifies that busEmitHookCommands returns
+// entries for all 4 expected events.
+func TestBusEmitHookCommandsComplete(t *testing.T) {
+	cmds := busEmitHookCommands()
+
+	expectedEvents := map[string]string{
+		"SessionStart": "bd bus emit --hook=SessionStart",
+		"PreCompact":   "bd bus emit --hook=PreCompact",
+		"Stop":         "bd bus emit --hook=Stop",
+		"PreToolUse":   "bd bus emit --hook=PreToolUse",
+	}
+
+	if len(cmds) != len(expectedEvents) {
+		t.Fatalf("busEmitHookCommands() returned %d entries, want %d", len(cmds), len(expectedEvents))
+	}
+
+	found := make(map[string]bool)
+	for _, cmd := range cmds {
+		wantCmd, ok := expectedEvents[cmd.event]
+		if !ok {
+			t.Errorf("unexpected event %q in busEmitHookCommands()", cmd.event)
+			continue
+		}
+		if cmd.command != wantCmd {
+			t.Errorf("event %q: command = %q, want %q", cmd.event, cmd.command, wantCmd)
+		}
+		if found[cmd.event] {
+			t.Errorf("duplicate event %q in busEmitHookCommands()", cmd.event)
+		}
+		found[cmd.event] = true
+	}
+
+	for event := range expectedEvents {
+		if !found[event] {
+			t.Errorf("missing event %q in busEmitHookCommands()", event)
+		}
+	}
 }

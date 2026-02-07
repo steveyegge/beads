@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -938,4 +941,425 @@ func (h *testBusHandler) Handle(ctx context.Context, event *eventbus.Event, resu
 		return h.fn(ctx, event, result)
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Helper: setupMockBDForRPC creates a mock bd shell script for RPC tests.
+// ---------------------------------------------------------------------------
+
+func setupMockBDForRPC(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	bdPath := filepath.Join(dir, "bd")
+	if err := os.WriteFile(bdPath, []byte("#!/bin/sh\n"+script), 0755); err != nil {
+		t.Fatalf("failed to write mock bd script: %v", err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests: default handler chain (prime/gate/decision) via RPC
+// ---------------------------------------------------------------------------
+
+func TestDefaultHandlerChainSessionStart(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	setupMockBDForRPC(t, `
+case "$1" in
+  prime)
+    printf "# Workflow Context\nReady to work"
+    exit 0
+    ;;
+  decision)
+    printf "Decision: deploy approved"
+    exit 0
+    ;;
+  gate)
+    # gate should NOT be called for SessionStart
+    printf "UNEXPECTED GATE CALL"
+    exit 1
+    ;;
+esac
+exit 1
+`)
+
+	bus := eventbus.New()
+	for _, h := range eventbus.DefaultHandlers() {
+		bus.Register(h)
+	}
+	server.SetBus(bus)
+
+	cwd := t.TempDir()
+	eventJSON := fmt.Sprintf(`{"session_id":"sess-start-1","cwd":%q}`, cwd)
+	args := BusEmitArgs{
+		HookType:  "SessionStart",
+		EventJSON: json.RawMessage(eventJSON),
+		SessionID: "sess-start-1",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusEmitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Prime (priority 10) and Decision (priority 30) both handle SessionStart.
+	if len(result.Inject) != 2 {
+		t.Fatalf("expected 2 inject entries, got %d: %v", len(result.Inject), result.Inject)
+	}
+
+	// Prime output should come before decision output (priority 10 < 30).
+	if !strings.Contains(result.Inject[0], "Workflow Context") {
+		t.Errorf("expected first inject to contain prime output, got: %q", result.Inject[0])
+	}
+	if !strings.Contains(result.Inject[1], "Decision: deploy approved") {
+		t.Errorf("expected second inject to contain decision output, got: %q", result.Inject[1])
+	}
+
+	if result.Block {
+		t.Error("expected Block=false for SessionStart")
+	}
+}
+
+func TestDefaultHandlerChainPreToolUseAllow(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	setupMockBDForRPC(t, `
+case "$1" in
+  gate)
+    printf '{"decision":"allow","warnings":["review pending"]}'
+    exit 0
+    ;;
+  prime)
+    printf "UNEXPECTED PRIME CALL"
+    exit 0
+    ;;
+  decision)
+    printf "UNEXPECTED DECISION CALL"
+    exit 0
+    ;;
+esac
+exit 1
+`)
+
+	bus := eventbus.New()
+	for _, h := range eventbus.DefaultHandlers() {
+		bus.Register(h)
+	}
+	server.SetBus(bus)
+
+	cwd := t.TempDir()
+	eventJSON := fmt.Sprintf(`{"session_id":"sess-ptu-1","cwd":%q,"tool_name":"Bash"}`, cwd)
+	args := BusEmitArgs{
+		HookType:  "PreToolUse",
+		EventJSON: json.RawMessage(eventJSON),
+		SessionID: "sess-ptu-1",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusEmitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if result.Block {
+		t.Error("expected Block=false for allow decision")
+	}
+
+	if len(result.Warnings) != 1 || result.Warnings[0] != "review pending" {
+		t.Errorf("expected warnings [\"review pending\"], got %v", result.Warnings)
+	}
+
+	// Prime and decision do NOT handle PreToolUse, so no inject.
+	if len(result.Inject) != 0 {
+		t.Errorf("expected no inject entries for PreToolUse, got %d: %v", len(result.Inject), result.Inject)
+	}
+}
+
+func TestDefaultHandlerChainPreToolUseBlock(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	setupMockBDForRPC(t, `
+case "$1" in
+  gate)
+    printf '{"decision":"block","reason":"gate XYZ not satisfied"}'
+    exit 1
+    ;;
+esac
+exit 1
+`)
+
+	bus := eventbus.New()
+	for _, h := range eventbus.DefaultHandlers() {
+		bus.Register(h)
+	}
+	server.SetBus(bus)
+
+	cwd := t.TempDir()
+	eventJSON := fmt.Sprintf(`{"session_id":"sess-ptu-block","cwd":%q,"tool_name":"Write"}`, cwd)
+	args := BusEmitArgs{
+		HookType:  "PreToolUse",
+		EventJSON: json.RawMessage(eventJSON),
+		SessionID: "sess-ptu-block",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusEmitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if !result.Block {
+		t.Error("expected Block=true for block decision")
+	}
+	if !strings.Contains(result.Reason, "gate XYZ not satisfied") {
+		t.Errorf("expected reason to contain 'gate XYZ not satisfied', got %q", result.Reason)
+	}
+}
+
+func TestDefaultHandlerChainStopBlock(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	setupMockBDForRPC(t, `
+case "$1" in
+  gate)
+    printf '{"decision":"block","reason":"session gate not met"}'
+    exit 1
+    ;;
+esac
+exit 1
+`)
+
+	bus := eventbus.New()
+	for _, h := range eventbus.DefaultHandlers() {
+		bus.Register(h)
+	}
+	server.SetBus(bus)
+
+	cwd := t.TempDir()
+	eventJSON := fmt.Sprintf(`{"session_id":"sess-stop-block","cwd":%q}`, cwd)
+	args := BusEmitArgs{
+		HookType:  "Stop",
+		EventJSON: json.RawMessage(eventJSON),
+		SessionID: "sess-stop-block",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusEmitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if !result.Block {
+		t.Error("expected Block=true for Stop block decision")
+	}
+	if !strings.Contains(result.Reason, "session gate not met") {
+		t.Errorf("expected reason to contain 'session gate not met', got %q", result.Reason)
+	}
+}
+
+func TestDefaultHandlerChainPreCompact(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	setupMockBDForRPC(t, `
+case "$1" in
+  prime)
+    printf "Compact workflow context refreshed"
+    exit 0
+    ;;
+  decision)
+    # decision outputs nothing — no pending decisions
+    exit 0
+    ;;
+  gate)
+    printf "UNEXPECTED GATE CALL"
+    exit 1
+    ;;
+esac
+exit 1
+`)
+
+	bus := eventbus.New()
+	for _, h := range eventbus.DefaultHandlers() {
+		bus.Register(h)
+	}
+	server.SetBus(bus)
+
+	cwd := t.TempDir()
+	eventJSON := fmt.Sprintf(`{"session_id":"sess-compact","cwd":%q}`, cwd)
+	args := BusEmitArgs{
+		HookType:  "PreCompact",
+		EventJSON: json.RawMessage(eventJSON),
+		SessionID: "sess-compact",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusEmitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Only prime should inject (decision had no output).
+	if len(result.Inject) != 1 {
+		t.Fatalf("expected 1 inject entry, got %d: %v", len(result.Inject), result.Inject)
+	}
+	if !strings.Contains(result.Inject[0], "Compact workflow context refreshed") {
+		t.Errorf("expected inject to contain prime output, got: %q", result.Inject[0])
+	}
+	if result.Block {
+		t.Error("expected Block=false for PreCompact")
+	}
+}
+
+func TestDefaultHandlerChainBDNotInPath(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Set PATH to an empty directory so bd binary is not found.
+	emptyDir := t.TempDir()
+	t.Setenv("PATH", emptyDir)
+
+	bus := eventbus.New()
+	for _, h := range eventbus.DefaultHandlers() {
+		bus.Register(h)
+	}
+	server.SetBus(bus)
+
+	cwd := t.TempDir()
+	eventJSON := fmt.Sprintf(`{"session_id":"sess-nobd","cwd":%q}`, cwd)
+	args := BusEmitArgs{
+		HookType:  "SessionStart",
+		EventJSON: json.RawMessage(eventJSON),
+		SessionID: "sess-nobd",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	// Handler errors are logged, not fatal — dispatch still succeeds.
+	if !resp.Success {
+		t.Fatalf("expected success (handler errors are logged, not fatal), got error: %s", resp.Error)
+	}
+
+	var result BusEmitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// No inject because all handlers failed to find bd.
+	if len(result.Inject) != 0 {
+		t.Errorf("expected no inject entries when bd is missing, got %d: %v", len(result.Inject), result.Inject)
+	}
+	if result.Block {
+		t.Error("expected Block=false even when handlers error")
+	}
+}
+
+func TestDefaultHandlerChainEventFieldPassthrough(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Mock bd that writes its arguments to a file for inspection.
+	argsFile := filepath.Join(t.TempDir(), "bd-args.txt")
+	setupMockBDForRPC(t, fmt.Sprintf(`
+# Write all arguments to file for inspection.
+printf "%%s\n" "$@" >> %s
+case "$1" in
+  gate)
+    printf '{"decision":"allow"}'
+    exit 0
+    ;;
+esac
+exit 0
+`, argsFile))
+
+	bus := eventbus.New()
+	for _, h := range eventbus.DefaultHandlers() {
+		bus.Register(h)
+	}
+	server.SetBus(bus)
+
+	cwd := t.TempDir()
+	eventJSON := fmt.Sprintf(`{"session_id":"sess-fields","cwd":%q,"tool_name":"Bash"}`, cwd)
+	args := BusEmitArgs{
+		HookType:  "PreToolUse",
+		EventJSON: json.RawMessage(eventJSON),
+		SessionID: "sess-fields",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	// Read the captured arguments file to verify gate handler was called
+	// with the correct subcommand and --hook flag.
+	argsContent, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("failed to read args file: %v", err)
+	}
+
+	argsStr := string(argsContent)
+
+	// Gate handler calls: bd gate session-check --hook PreToolUse --json
+	if !strings.Contains(argsStr, "gate") {
+		t.Errorf("expected 'gate' in captured args, got:\n%s", argsStr)
+	}
+	if !strings.Contains(argsStr, "session-check") {
+		t.Errorf("expected 'session-check' in captured args, got:\n%s", argsStr)
+	}
+	if !strings.Contains(argsStr, "--hook") {
+		t.Errorf("expected '--hook' in captured args, got:\n%s", argsStr)
+	}
+	if !strings.Contains(argsStr, "PreToolUse") {
+		t.Errorf("expected 'PreToolUse' in captured args, got:\n%s", argsStr)
+	}
+	if !strings.Contains(argsStr, "--json") {
+		t.Errorf("expected '--json' in captured args, got:\n%s", argsStr)
+	}
 }
