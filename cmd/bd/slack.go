@@ -162,8 +162,9 @@ func runSlackStart(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Start NATS watcher
-	watcher := slackbot.NewNATSWatcher(natsURL, bot, decisions)
+	// Start NATS watcher (pass daemon token for NATS auth)
+	natsToken := rpc.GetDaemonToken()
+	watcher := slackbot.NewNATSWatcher(natsURL, natsToken, bot, decisions)
 	go func() {
 		if err := watcher.Run(ctx); err != nil {
 			log.Printf("slackbot: NATS watcher error: %v", err)

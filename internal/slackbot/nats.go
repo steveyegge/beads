@@ -17,6 +17,7 @@ import (
 // when decisions are created, resolved, or cancelled.
 type NATSWatcher struct {
 	natsURL   string
+	natsToken string
 	bot       *Bot
 	decisions *DecisionClient
 	conn      *nats.Conn
@@ -26,10 +27,12 @@ type NATSWatcher struct {
 }
 
 // NewNATSWatcher creates a watcher that subscribes to decision events on the
-// given NATS server and forwards them to the Bot.
-func NewNATSWatcher(natsURL string, bot *Bot, decisions *DecisionClient) *NATSWatcher {
+// given NATS server and forwards them to the Bot. The token is used for NATS
+// auth when the embedded server requires it (BD_DAEMON_TOKEN).
+func NewNATSWatcher(natsURL, natsToken string, bot *Bot, decisions *DecisionClient) *NATSWatcher {
 	return &NATSWatcher{
 		natsURL:   natsURL,
+		natsToken: natsToken,
 		bot:       bot,
 		decisions: decisions,
 		seen:      make(map[string]bool),
@@ -83,10 +86,15 @@ func (w *NATSWatcher) Run(ctx context.Context) error {
 
 // connect establishes the NATS connection and JetStream subscription.
 func (w *NATSWatcher) connect(ctx context.Context) error {
-	nc, err := nats.Connect(w.natsURL,
+	connectOpts := []nats.Option{
 		nats.Name("beads-slack-bot"),
 		nats.RetryOnFailedConnect(false),
-	)
+	}
+	if w.natsToken != "" {
+		connectOpts = append(connectOpts, nats.Token(w.natsToken))
+	}
+
+	nc, err := nats.Connect(w.natsURL, connectOpts...)
 	if err != nil {
 		return fmt.Errorf("nats connect: %w", err)
 	}
