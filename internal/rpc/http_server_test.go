@@ -359,7 +359,6 @@ func TestHTTPMethodMapping(t *testing.T) {
 func TestHTTPMappingCompleteness(t *testing.T) {
 	// All operations that have server-side handlers in the dispatch switch.
 	// When you add a new operation handler, add its Op constant here too.
-	// Bus operations are excluded: they have no server handlers (handled externally).
 	handledOperations := []string{
 		// Core CRUD
 		OpPing, OpStatus, OpHealth, OpMetrics,
@@ -413,6 +412,8 @@ func TestHTTPMappingCompleteness(t *testing.T) {
 		OpShutdown,
 		// Agent pod operations (gt-el7sxq.7)
 		OpAgentPodRegister, OpAgentPodDeregister, OpAgentPodStatus, OpAgentPodList,
+		// Bus operations
+		OpBusEmit, OpBusStatus, OpBusHandlers,
 	}
 
 	t.Run("client_operationToHTTPMethod_covers_all_handled_ops", func(t *testing.T) {

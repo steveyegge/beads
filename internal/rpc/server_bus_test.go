@@ -265,6 +265,234 @@ func TestHandleBusHandlersWithRegistered(t *testing.T) {
 	}
 }
 
+func TestHandleBusStatusWithNATSHealthFn(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	bus.Register(&testBusHandler{id: "h1", handles: []eventbus.EventType{eventbus.EventStop}, priority: 1})
+	server.SetBus(bus)
+
+	// Set a NATS health callback that returns synthetic health data.
+	server.SetNATSHealthFn(func() NATSHealthInfo {
+		return NATSHealthInfo{
+			Enabled:     true,
+			Status:      "running",
+			Port:        4222,
+			Connections: 3,
+			JetStream:   true,
+			Streams:     2,
+		}
+	})
+
+	resp, err := client.Execute(OpBusStatus, nil)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusStatusResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Handler count comes from the bus.
+	if result.HandlerCount != 1 {
+		t.Errorf("expected 1 handler, got %d", result.HandlerCount)
+	}
+
+	// NATS fields come from the health callback.
+	if !result.NATSEnabled {
+		t.Error("expected NATSEnabled=true")
+	}
+	if result.NATSStatus != "running" {
+		t.Errorf("expected NATSStatus 'running', got %q", result.NATSStatus)
+	}
+	if result.NATSPort != 4222 {
+		t.Errorf("expected NATSPort 4222, got %d", result.NATSPort)
+	}
+	if result.Connections != 3 {
+		t.Errorf("expected Connections 3, got %d", result.Connections)
+	}
+	if !result.JetStream {
+		t.Error("expected JetStream=true")
+	}
+	if result.Streams != 2 {
+		t.Errorf("expected Streams 2, got %d", result.Streams)
+	}
+}
+
+func TestHandleBusEmitEventJSONParsing(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Register a handler that captures the event to verify field parsing.
+	var capturedEvent *eventbus.Event
+	bus := eventbus.New()
+	bus.Register(&testBusHandler{
+		id:       "field-checker",
+		handles:  []eventbus.EventType{eventbus.EventPreToolUse},
+		priority: 1,
+		fn: func(ctx context.Context, event *eventbus.Event, result *eventbus.Result) error {
+			capturedEvent = event
+			return nil
+		},
+	})
+	server.SetBus(bus)
+
+	// EventJSON includes fields that should be parsed into Event struct.
+	eventJSON := `{
+		"hook_event_name": "PreToolUse",
+		"session_id": "sess-abc",
+		"cwd": "/home/user/project",
+		"tool_name": "Bash",
+		"permission_mode": "auto",
+		"model": "claude-opus-4-6"
+	}`
+
+	args := BusEmitArgs{
+		HookType:  "PreToolUse",
+		EventJSON: json.RawMessage(eventJSON),
+		SessionID: "sess-abc",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	if capturedEvent == nil {
+		t.Fatal("handler was not called")
+	}
+
+	// Type should come from args.HookType, not from the JSON hook_event_name.
+	if string(capturedEvent.Type) != "PreToolUse" {
+		t.Errorf("expected Type 'PreToolUse', got %q", capturedEvent.Type)
+	}
+	if capturedEvent.CWD != "/home/user/project" {
+		t.Errorf("expected CWD '/home/user/project', got %q", capturedEvent.CWD)
+	}
+	if capturedEvent.ToolName != "Bash" {
+		t.Errorf("expected ToolName 'Bash', got %q", capturedEvent.ToolName)
+	}
+	if capturedEvent.PermissionMode != "auto" {
+		t.Errorf("expected PermissionMode 'auto', got %q", capturedEvent.PermissionMode)
+	}
+	if capturedEvent.Model != "claude-opus-4-6" {
+		t.Errorf("expected Model 'claude-opus-4-6', got %q", capturedEvent.Model)
+	}
+	// Raw should be preserved.
+	if len(capturedEvent.Raw) == 0 {
+		t.Error("expected Raw to be preserved")
+	}
+}
+
+func TestHandleBusEmitEventJSONTypeOverride(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Verify that args.HookType takes precedence even when EventJSON has a different hook_event_name.
+	var capturedType eventbus.EventType
+	bus := eventbus.New()
+	bus.Register(&testBusHandler{
+		id:       "type-checker",
+		handles:  []eventbus.EventType{eventbus.EventSessionStart},
+		priority: 1,
+		fn: func(ctx context.Context, event *eventbus.Event, result *eventbus.Result) error {
+			capturedType = event.Type
+			return nil
+		},
+	})
+	server.SetBus(bus)
+
+	// EventJSON has a DIFFERENT hook_event_name than args.HookType.
+	args := BusEmitArgs{
+		HookType:  "SessionStart",
+		EventJSON: json.RawMessage(`{"hook_event_name":"Stop","session_id":"test"}`),
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	if string(capturedType) != "SessionStart" {
+		t.Errorf("expected Type 'SessionStart' (from args), got %q", capturedType)
+	}
+}
+
+func TestExportMutexSingleFlight(t *testing.T) {
+	server, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Manually set exportInProgress to simulate a concurrent export.
+	if !server.exportInProgress.CompareAndSwap(false, true) {
+		t.Fatal("expected exportInProgress to be false initially")
+	}
+
+	// Now call handleSyncExport directly — it should see the guard and return skipped.
+	req := &Request{Operation: OpSyncExport}
+	resp := server.handleSyncExport(req)
+
+	if !resp.Success {
+		t.Fatalf("expected success (skipped), got error: %s", resp.Error)
+	}
+
+	var result SyncExportResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if !result.Skipped {
+		t.Error("expected Skipped=true when export is already in progress")
+	}
+	if result.Message != "export already in progress" {
+		t.Errorf("expected 'export already in progress', got %q", result.Message)
+	}
+
+	// Clean up: release the guard.
+	server.exportInProgress.Store(false)
+}
+
+func TestExportMutexHandleExportSingleFlight(t *testing.T) {
+	server, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Set the guard.
+	server.exportInProgress.Store(true)
+
+	// Call handleExport — it should return the skipped JSON.
+	req := &Request{
+		Operation: OpExport,
+		Args:      json.RawMessage(`{"output_path":"/tmp/test.jsonl"}`),
+	}
+	resp := server.handleExport(req)
+
+	if !resp.Success {
+		t.Fatalf("expected success (skipped), got error: %s", resp.Error)
+	}
+
+	// The handleExport returns raw JSON for the skip case.
+	var raw map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if raw["skipped"] != true {
+		t.Errorf("expected skipped=true, got %v", raw["skipped"])
+	}
+
+	server.exportInProgress.Store(false)
+}
+
 // testBusHandler implements eventbus.Handler for RPC tests.
 type testBusHandler struct {
 	id       string
