@@ -489,7 +489,8 @@ func TestInitNoDbMode(t *testing.T) {
 	// Set BEADS_DIR to prevent git repo detection from finding project's .beads
 	origBeadsDir := os.Getenv("BEADS_DIR")
 	os.Setenv("BEADS_DIR", filepath.Join(tmpDir, ".beads"))
-	// Set test mode to allow --no-daemon flag (hq--5vj3)
+	// Clear BD_DAEMON_HOST to prevent remote daemon interference (bd-srr1)
+	t.Setenv("BD_DAEMON_HOST", "")
 	os.Setenv("BEADS_TEST_MODE", "1")
 	// Reset caches so RepoContext picks up new BEADS_DIR and CWD
 	beads.ResetCaches()
@@ -500,13 +501,14 @@ func TestInitNoDbMode(t *testing.T) {
 		} else {
 			os.Unsetenv("BEADS_DIR")
 		}
+		os.Unsetenv("BEADS_TEST_MODE")
 		// Reset caches on cleanup too
 		beads.ResetCaches()
 		git.ResetCaches()
 	}()
 
-	// Initialize with --no-db flag
-	rootCmd.SetArgs([]string{"init", "--no-db", "--no-daemon", "--prefix", "test", "--quiet"})
+	// Initialize with --no-db flag (use --sandbox to force direct mode; --no-daemon was removed in bd-e5e5)
+	rootCmd.SetArgs([]string{"init", "--no-db", "--sandbox", "--prefix", "test", "--quiet"})
 
 	t.Logf("DEBUG: noDb before Execute=%v", noDb)
 

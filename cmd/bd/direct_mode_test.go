@@ -189,6 +189,9 @@ func TestFallbackToDirectModeEnablesFlush(t *testing.T) {
 //
 // The fix: call ensureStoreActive() after closing daemon in sync.go
 func TestImportFromJSONLInlineAfterDaemonDisconnect(t *testing.T) {
+	// Clear BD_DAEMON_HOST to prevent remote daemon from blocking direct access (bd-srr1)
+	t.Setenv("BD_DAEMON_HOST", "")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
