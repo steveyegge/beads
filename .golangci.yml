@@ -65,7 +65,7 @@ linters:
           - gosec
         text: "G306.*0700"
       # G204: Safe subprocess launches with validated arguments
-      - path: 'cmd/bd/daemon_autostart\.go|cmd/bd/daemon_sync_branch\.go|cmd/bd/doctor\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/gate\.go|cmd/bd/gate_discover\.go|cmd/bd/jira\.go|cmd/bd/migrate_sync\.go|cmd/bd/show\.go|cmd/bd/sync\.go|internal/git/worktree\.go|internal/syncbranch/worktree\.go'
+      - path: 'cmd/bd/daemon_autostart\.go|cmd/bd/daemon_sync_branch\.go|cmd/bd/doctor\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/gate\.go|cmd/bd/gate_discover\.go|cmd/bd/jira\.go|cmd/bd/migrate_sync\.go|cmd/bd/show\.go|cmd/bd/sync\.go|cmd/bd/web\.go|internal/git/worktree\.go|internal/syncbranch/worktree\.go'
         linters:
           - gosec
         text: 'G204'

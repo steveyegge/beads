@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>bd — issue dashboard</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <h1 class="logo">bd<span class="logo-dot">.</span></h1>
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-view="kanban">Kanban</button>
+        <button class="tab" data-view="table">Table</button>
+        <button class="tab" data-view="graph">Graph</button>
+      </nav>
+    </div>
+    <div class="header-right">
+      <div class="stats-bar" id="stats-bar"></div>
+      <span class="sse-status" id="sse-status" title="SSE connection status"></span>
+    </div>
+  </header>
+
+  <div class="filter-bar" id="filter-bar">
+    <input type="text" id="filter-search" class="filter-input" placeholder="Search issues...">
+    <div id="filter-status" class="status-toggles"></div>
+    <select id="filter-priority" class="filter-select">
+      <option value="">all priorities</option>
+      <option value="0">P0 critical</option>
+      <option value="1">P1 high</option>
+      <option value="2">P2 medium</option>
+      <option value="3">P3 low</option>
+      <option value="4">P4 backlog</option>
+    </select>
+    <select id="filter-type" class="filter-select">
+      <option value="">all types</option>
+      <option value="task">task</option>
+      <option value="bug">bug</option>
+      <option value="feature">feature</option>
+      <option value="epic">epic</option>
+    </select>
+  </div>
+
+  <main class="content" id="content">
+    <div id="view-kanban" class="view active"></div>
+    <div id="view-table" class="view"></div>
+    <div id="view-graph" class="view"></div>
+  </main>
+
+  <!-- detail slide-out panel -->
+  <div class="detail-overlay" id="detail-overlay"></div>
+  <aside class="detail-panel" id="detail-panel">
+    <button class="detail-close" id="detail-close">&times;</button>
+    <div class="detail-content" id="detail-content"></div>
+  </aside>
+
+  <script src="/static/vendor/dagre.min.js"></script>
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/kanban.js"></script>
+  <script src="/static/js/table.js"></script>
+  <script src="/static/js/graph.js"></script>
+  <script src="/static/js/detail.js"></script>
+</body>
+</html>

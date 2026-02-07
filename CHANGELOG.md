@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`bd web` interactive dashboard** - Launch an interactive web dashboard with `bd web`. Three switchable views: kanban board (columns by status), sortable/filterable table, and SVG dependency graph with dagre layout. Real-time updates via SSE when issues change. Requires daemon (`bd daemon start`). Flags: `--port`, `--host`, `--dev`, `--open`
+
 ## [0.49.4] - 2026-02-05
 
 ### Added
