@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -469,6 +470,163 @@ func TestDispatchWithoutJetStreamStillWorks(t *testing.T) {
 	}
 }
 
+func TestDispatchConcurrentSafety(t *testing.T) {
+	bus := New()
+
+	var callCount [3]atomic.Int64
+	for i := 0; i < 3; i++ {
+		idx := i
+		bus.Register(&testHandler{
+			id:       fmt.Sprintf("handler-%d", idx),
+			handles:  []EventType{EventSessionStart, EventStop, EventPreToolUse},
+			priority: idx * 10,
+			fn: func(ctx context.Context, event *Event, result *Result) error {
+				callCount[idx].Add(1)
+				return nil
+			},
+		})
+	}
+
+	// Dispatch 50 events concurrently across different types.
+	const goroutines = 50
+	done := make(chan struct{}, goroutines)
+	eventTypes := []EventType{EventSessionStart, EventStop, EventPreToolUse}
+
+	for i := 0; i < goroutines; i++ {
+		go func(i int) {
+			defer func() { done <- struct{}{} }()
+			_, err := bus.Dispatch(context.Background(), &Event{
+				Type:      eventTypes[i%len(eventTypes)],
+				SessionID: fmt.Sprintf("session-%d", i),
+			})
+			if err != nil {
+				t.Errorf("goroutine %d: dispatch error: %v", i, err)
+			}
+		}(i)
+	}
+
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+
+	// Each handler should have been called exactly 50 times (all 3 handle all 3 event types).
+	for i := range callCount {
+		if count := callCount[i].Load(); count != goroutines {
+			t.Errorf("handler-%d: expected %d calls, got %d", i, goroutines, count)
+		}
+	}
+}
+
+func TestDispatchConcurrentRegisterAndDispatch(t *testing.T) {
+	bus := New()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Concurrently register handlers and dispatch events.
+	const workers = 20
+	done := make(chan struct{}, workers*2)
+
+	// Half the workers register handlers.
+	for i := 0; i < workers; i++ {
+		go func(i int) {
+			defer func() { done <- struct{}{} }()
+			bus.Register(&testHandler{
+				id:       fmt.Sprintf("concurrent-%d", i),
+				handles:  []EventType{EventStop},
+				priority: i,
+			})
+		}(i)
+	}
+
+	// Half the workers dispatch events.
+	for i := 0; i < workers; i++ {
+		go func(i int) {
+			defer func() { done <- struct{}{} }()
+			// This may or may not see all registered handlers — that's fine.
+			// The test verifies no races/panics.
+			_, err := bus.Dispatch(ctx, &Event{
+				Type:      EventStop,
+				SessionID: fmt.Sprintf("race-%d", i),
+			})
+			if err != nil {
+				t.Errorf("dispatch %d: %v", i, err)
+			}
+		}(i)
+	}
+
+	for i := 0; i < workers*2; i++ {
+		<-done
+	}
+
+	// After all registrations, verify we have the right count.
+	if len(bus.Handlers()) != workers {
+		t.Errorf("expected %d handlers, got %d", workers, len(bus.Handlers()))
+	}
+}
+
+func TestJetStreamMultipleEventTypes(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	// Subscribe to specific event type subjects.
+	subStart, err := js.SubscribeSync(SubjectForEvent(EventSessionStart), nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe SessionStart: %v", err)
+	}
+	defer subStart.Unsubscribe()
+
+	subStop, err := js.SubscribeSync(SubjectForEvent(EventStop), nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe Stop: %v", err)
+	}
+	defer subStop.Unsubscribe()
+
+	subTool, err := js.SubscribeSync(SubjectForEvent(EventPreToolUse), nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe PreToolUse: %v", err)
+	}
+	defer subTool.Unsubscribe()
+
+	// Dispatch different event types.
+	events := []struct {
+		eventType EventType
+		sessionID string
+	}{
+		{EventSessionStart, "start-1"},
+		{EventStop, "stop-1"},
+		{EventPreToolUse, "tool-1"},
+		{EventSessionStart, "start-2"},
+	}
+
+	for _, e := range events {
+		_, err := bus.Dispatch(context.Background(), &Event{
+			Type:      e.eventType,
+			SessionID: e.sessionID,
+		})
+		if err != nil {
+			t.Fatalf("dispatch %s: %v", e.eventType, err)
+		}
+	}
+
+	// Verify each subscription got the right messages.
+	checkMessages := func(sub *nats.Subscription, expected int, label string) {
+		for i := 0; i < expected; i++ {
+			_, err := sub.NextMsg(2 * time.Second)
+			if err != nil {
+				t.Errorf("%s: expected message %d, got error: %v", label, i+1, err)
+			}
+		}
+	}
+
+	checkMessages(subStart, 2, "SessionStart")
+	checkMessages(subStop, 1, "Stop")
+	checkMessages(subTool, 1, "PreToolUse")
+}
+
 func TestJetStreamPublishErrorDoesNotAffectResult(t *testing.T) {
 	_, js, cleanup := startTestNATS(t)
 
@@ -498,5 +656,377 @@ func TestJetStreamPublishErrorDoesNotAffectResult(t *testing.T) {
 	}
 	if len(result.Inject) != 1 || result.Inject[0] != "injected content" {
 		t.Errorf("expected injected content, got %v", result.Inject)
+	}
+}
+
+func TestJetStreamConcurrentPublish(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	sub, err := js.SubscribeSync(SubjectHookPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	const numGoroutines = 20
+	done := make(chan struct{}, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(i int) {
+			defer func() { done <- struct{}{} }()
+			_, err := bus.Dispatch(context.Background(), &Event{
+				Type:      EventSessionStart,
+				SessionID: fmt.Sprintf("concurrent-%d", i),
+			})
+			if err != nil {
+				t.Errorf("goroutine %d: dispatch error: %v", i, err)
+			}
+		}(i)
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		<-done
+	}
+
+	// Read all messages and verify each has a valid JSON payload with a unique session_id.
+	seen := make(map[string]bool)
+	for i := 0; i < numGoroutines; i++ {
+		msg, err := sub.NextMsg(5 * time.Second)
+		if err != nil {
+			t.Fatalf("expected message %d, got error: %v", i+1, err)
+		}
+
+		var received Event
+		if err := json.Unmarshal(msg.Data, &received); err != nil {
+			t.Fatalf("message %d: unmarshal error: %v", i+1, err)
+		}
+		if received.SessionID == "" {
+			t.Errorf("message %d: empty session_id", i+1)
+		}
+		if seen[received.SessionID] {
+			t.Errorf("message %d: duplicate session_id %q", i+1, received.SessionID)
+		}
+		seen[received.SessionID] = true
+	}
+
+	if len(seen) != numGoroutines {
+		t.Errorf("expected %d unique session IDs, got %d", numGoroutines, len(seen))
+	}
+}
+
+func TestJetStreamHandlersAndPublishBothWork(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	// Register a handler that injects a message.
+	bus.Register(&testHandler{
+		id:       "marker",
+		handles:  []EventType{EventPreToolUse},
+		priority: 1,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			result.Inject = append(result.Inject, "handler was here")
+			return nil
+		},
+	})
+
+	sub, err := js.SubscribeSync(SubjectForEvent(EventPreToolUse), nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	result, err := bus.Dispatch(context.Background(), &Event{
+		Type:      EventPreToolUse,
+		SessionID: "both-work",
+		ToolName:  "Write",
+	})
+	if err != nil {
+		t.Fatalf("dispatch error: %v", err)
+	}
+
+	// Verify handler result.
+	if len(result.Inject) != 1 || result.Inject[0] != "handler was here" {
+		t.Errorf("expected inject [\"handler was here\"], got %v", result.Inject)
+	}
+
+	// Verify JetStream received the event.
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected JetStream message, got error: %v", err)
+	}
+
+	var received Event
+	if err := json.Unmarshal(msg.Data, &received); err != nil {
+		t.Fatalf("unmarshal JetStream message: %v", err)
+	}
+	if received.SessionID != "both-work" {
+		t.Errorf("expected session_id %q, got %q", "both-work", received.SessionID)
+	}
+	if received.ToolName != "Write" {
+		t.Errorf("expected tool_name %q, got %q", "Write", received.ToolName)
+	}
+}
+
+func TestJetStreamEventPayloadPreservesAllFields(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	sub, err := js.SubscribeSync(SubjectHookPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	original := &Event{
+		Type:           EventPreToolUse,
+		SessionID:      "preserve-fields",
+		TranscriptPath: "/tmp/transcript.jsonl",
+		CWD:            "/home/user/project",
+		PermissionMode: "auto-accept",
+		ToolName:       "Bash",
+		ToolInput:      map[string]interface{}{"command": "ls -la", "timeout": float64(5000)},
+		Model:          "claude-opus-4-6",
+		AgentID:        "agent-abc-123",
+	}
+
+	_, err = bus.Dispatch(context.Background(), original)
+	if err != nil {
+		t.Fatalf("dispatch error: %v", err)
+	}
+
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected JetStream message, got error: %v", err)
+	}
+
+	var received Event
+	if err := json.Unmarshal(msg.Data, &received); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if received.Type != original.Type {
+		t.Errorf("Type: expected %q, got %q", original.Type, received.Type)
+	}
+	if received.SessionID != original.SessionID {
+		t.Errorf("SessionID: expected %q, got %q", original.SessionID, received.SessionID)
+	}
+	if received.TranscriptPath != original.TranscriptPath {
+		t.Errorf("TranscriptPath: expected %q, got %q", original.TranscriptPath, received.TranscriptPath)
+	}
+	if received.CWD != original.CWD {
+		t.Errorf("CWD: expected %q, got %q", original.CWD, received.CWD)
+	}
+	if received.PermissionMode != original.PermissionMode {
+		t.Errorf("PermissionMode: expected %q, got %q", original.PermissionMode, received.PermissionMode)
+	}
+	if received.ToolName != original.ToolName {
+		t.Errorf("ToolName: expected %q, got %q", original.ToolName, received.ToolName)
+	}
+	if received.Model != original.Model {
+		t.Errorf("Model: expected %q, got %q", original.Model, received.Model)
+	}
+	if received.AgentID != original.AgentID {
+		t.Errorf("AgentID: expected %q, got %q", original.AgentID, received.AgentID)
+	}
+
+	// Verify ToolInput round-trips correctly.
+	if received.ToolInput == nil {
+		t.Fatal("ToolInput: expected non-nil map")
+	}
+	if cmd, ok := received.ToolInput["command"].(string); !ok || cmd != "ls -la" {
+		t.Errorf("ToolInput[command]: expected %q, got %v", "ls -la", received.ToolInput["command"])
+	}
+	if timeout, ok := received.ToolInput["timeout"].(float64); !ok || timeout != 5000 {
+		t.Errorf("ToolInput[timeout]: expected %v, got %v", 5000, received.ToolInput["timeout"])
+	}
+}
+
+func TestJetStreamSubjectRouting(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	// Subscribe to 4 specific subjects.
+	eventTypes := []EventType{EventSessionStart, EventStop, EventPreToolUse, EventPostToolUse}
+	subs := make(map[EventType]*nats.Subscription)
+
+	for _, et := range eventTypes {
+		sub, err := js.SubscribeSync(SubjectForEvent(et), nats.DeliverAll())
+		if err != nil {
+			t.Fatalf("subscribe %s: %v", et, err)
+		}
+		defer sub.Unsubscribe()
+		subs[et] = sub
+	}
+
+	// Dispatch events: 2 SessionStart, 1 Stop, 3 PreToolUse, 1 PostToolUse.
+	dispatches := []struct {
+		eventType EventType
+		sessionID string
+	}{
+		{EventSessionStart, "start-a"},
+		{EventSessionStart, "start-b"},
+		{EventStop, "stop-a"},
+		{EventPreToolUse, "tool-a"},
+		{EventPreToolUse, "tool-b"},
+		{EventPreToolUse, "tool-c"},
+		{EventPostToolUse, "post-a"},
+	}
+
+	for _, d := range dispatches {
+		_, err := bus.Dispatch(context.Background(), &Event{
+			Type:      d.eventType,
+			SessionID: d.sessionID,
+		})
+		if err != nil {
+			t.Fatalf("dispatch %s/%s: %v", d.eventType, d.sessionID, err)
+		}
+	}
+
+	// Verify each subscription received the correct number of messages with correct session IDs.
+	expectedCounts := map[EventType]int{
+		EventSessionStart: 2,
+		EventStop:         1,
+		EventPreToolUse:   3,
+		EventPostToolUse:  1,
+	}
+
+	for et, expectedCount := range expectedCounts {
+		sub := subs[et]
+		for i := 0; i < expectedCount; i++ {
+			msg, err := sub.NextMsg(2 * time.Second)
+			if err != nil {
+				t.Errorf("%s: expected message %d, got error: %v", et, i+1, err)
+				continue
+			}
+			// Verify the message subject matches.
+			if msg.Subject != SubjectForEvent(et) {
+				t.Errorf("%s: expected subject %q, got %q", et, SubjectForEvent(et), msg.Subject)
+			}
+		}
+
+		// Verify no extra messages on this subscription.
+		extra, err := sub.NextMsg(200 * time.Millisecond)
+		if err == nil {
+			t.Errorf("%s: unexpected extra message: %s", et, string(extra.Data))
+		}
+	}
+}
+
+func TestDispatchConcurrentWithJetStream(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	// Register handlers that count calls using atomic-safe channel writes.
+	const numHandlers = 3
+	handlerCalls := make([]chan struct{}, numHandlers)
+	for i := 0; i < numHandlers; i++ {
+		handlerCalls[i] = make(chan struct{}, 100) // buffered to avoid blocking
+		ch := handlerCalls[i]
+		bus.Register(&testHandler{
+			id:       fmt.Sprintf("concurrent-handler-%d", i),
+			handles:  []EventType{EventSessionStart, EventStop},
+			priority: i * 10,
+			fn: func(ctx context.Context, event *Event, result *Result) error {
+				ch <- struct{}{}
+				return nil
+			},
+		})
+	}
+
+	sub, err := js.SubscribeSync(SubjectHookPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	const numGoroutines = 30
+	done := make(chan struct{}, numGoroutines)
+	eventTypes := []EventType{EventSessionStart, EventStop}
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(i int) {
+			defer func() { done <- struct{}{} }()
+			_, err := bus.Dispatch(context.Background(), &Event{
+				Type:      eventTypes[i%len(eventTypes)],
+				SessionID: fmt.Sprintf("concurrent-js-%d", i),
+			})
+			if err != nil {
+				t.Errorf("goroutine %d: dispatch error: %v", i, err)
+			}
+		}(i)
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		<-done
+	}
+
+	// Verify each handler was called exactly numGoroutines times (all handle both event types).
+	for i, ch := range handlerCalls {
+		count := len(ch)
+		if count != numGoroutines {
+			t.Errorf("handler-%d: expected %d calls, got %d", i, numGoroutines, count)
+		}
+	}
+
+	// Verify all JetStream messages arrived.
+	seen := make(map[string]bool)
+	for i := 0; i < numGoroutines; i++ {
+		msg, err := sub.NextMsg(5 * time.Second)
+		if err != nil {
+			t.Fatalf("expected JetStream message %d, got error: %v", i+1, err)
+		}
+		var received Event
+		if err := json.Unmarshal(msg.Data, &received); err != nil {
+			t.Fatalf("message %d: unmarshal error: %v", i+1, err)
+		}
+		if seen[received.SessionID] {
+			t.Errorf("message %d: duplicate session_id %q", i+1, received.SessionID)
+		}
+		seen[received.SessionID] = true
+	}
+
+	if len(seen) != numGoroutines {
+		t.Errorf("expected %d unique JetStream messages, got %d", numGoroutines, len(seen))
+	}
+}
+
+func TestEnsureStreamsIdempotent(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	// EnsureStreams was already called once in startTestNATS.
+	// Call it again — should not fail on "stream already exists".
+	if err := EnsureStreams(js); err != nil {
+		t.Fatalf("second EnsureStreams call failed: %v", err)
+	}
+
+	// Call it a third time for good measure.
+	if err := EnsureStreams(js); err != nil {
+		t.Fatalf("third EnsureStreams call failed: %v", err)
+	}
+
+	// Verify the stream still exists and is functional.
+	info, err := js.StreamInfo(StreamHookEvents)
+	if err != nil {
+		t.Fatalf("stream info: %v", err)
+	}
+	if info.Config.Name != StreamHookEvents {
+		t.Errorf("expected stream name %q, got %q", StreamHookEvents, info.Config.Name)
 	}
 }

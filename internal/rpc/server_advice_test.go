@@ -1215,3 +1215,420 @@ func TestAdvice_BusEvent_NilBusDoesNotPanic(t *testing.T) {
 		t.Fatalf("Create should succeed even without bus: %s", resp.Error)
 	}
 }
+
+// ============================================================================
+// Additional Advice Bus Event Tests
+// ============================================================================
+
+// TestAdviceCreateEventPayloadCompleteness creates an advice with ALL fields
+// populated and verifies that the bus event payload contains every field.
+func TestAdviceCreateEventPayloadCompleteness(t *testing.T) {
+	server, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	recorder := &adviceEventRecorder{}
+	bus.Register(recorder)
+	server.SetBus(bus)
+
+	createArgs := &CreateArgs{
+		Title:               "Complete advice with all fields",
+		Description:         "Full description for completeness test",
+		IssueType:           "advice",
+		Priority:            3,
+		Labels:              []string{"rig:gastown", "role:polecat", "team:backend"},
+		AdviceHookCommand:   "make test && make lint",
+		AdviceHookTrigger:   "before-push",
+		AdviceHookTimeout:   120,
+		AdviceHookOnFailure: "block",
+	}
+	resp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("Create failed: %s", resp.Error)
+	}
+
+	var issue types.Issue
+	if err := json.Unmarshal(resp.Data, &issue); err != nil {
+		t.Fatalf("Failed to unmarshal issue: %v", err)
+	}
+
+	events := recorder.getEvents()
+	if len(events) != 1 {
+		t.Fatalf("Expected 1 event, got %d", len(events))
+	}
+
+	ev := events[0]
+	if ev.Type != eventbus.EventAdviceCreated {
+		t.Errorf("Expected event type %q, got %q", eventbus.EventAdviceCreated, ev.Type)
+	}
+
+	// Verify ID is non-empty and matches the created issue
+	if ev.Payload.ID == "" {
+		t.Error("Expected non-empty payload ID")
+	}
+	if ev.Payload.ID != issue.ID {
+		t.Errorf("Payload ID %q does not match created issue ID %q", ev.Payload.ID, issue.ID)
+	}
+
+	// Verify title
+	if ev.Payload.Title != "Complete advice with all fields" {
+		t.Errorf("Expected title %q, got %q", "Complete advice with all fields", ev.Payload.Title)
+	}
+
+	// Verify labels
+	if len(ev.Payload.Labels) != 3 {
+		t.Errorf("Expected 3 labels, got %d: %v", len(ev.Payload.Labels), ev.Payload.Labels)
+	} else {
+		labelSet := make(map[string]bool)
+		for _, l := range ev.Payload.Labels {
+			labelSet[l] = true
+		}
+		for _, expected := range []string{"rig:gastown", "role:polecat", "team:backend"} {
+			if !labelSet[expected] {
+				t.Errorf("Expected label %q not found in payload labels %v", expected, ev.Payload.Labels)
+			}
+		}
+	}
+
+	// Verify hook fields
+	if ev.Payload.AdviceHookCommand != "make test && make lint" {
+		t.Errorf("Expected advice_hook_command %q, got %q", "make test && make lint", ev.Payload.AdviceHookCommand)
+	}
+	if ev.Payload.AdviceHookTrigger != "before-push" {
+		t.Errorf("Expected advice_hook_trigger %q, got %q", "before-push", ev.Payload.AdviceHookTrigger)
+	}
+	if ev.Payload.AdviceHookTimeout != 120 {
+		t.Errorf("Expected advice_hook_timeout %d, got %d", 120, ev.Payload.AdviceHookTimeout)
+	}
+	if ev.Payload.AdviceHookOnFailure != "block" {
+		t.Errorf("Expected advice_hook_on_failure %q, got %q", "block", ev.Payload.AdviceHookOnFailure)
+	}
+}
+
+// TestAdviceUpdateEventPayloadReflectsChanges creates an advice, updates its
+// title and labels, and verifies the advice.updated event carries the NEW values.
+func TestAdviceUpdateEventPayloadReflectsChanges(t *testing.T) {
+	server, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	recorder := &adviceEventRecorder{}
+	bus.Register(recorder)
+	server.SetBus(bus)
+
+	// Create initial advice
+	createArgs := &CreateArgs{
+		Title:       "Original title",
+		Description: "Advice to be updated",
+		IssueType:   "advice",
+		Priority:    2,
+		Labels:      []string{"team:frontend"},
+	}
+	createResp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if !createResp.Success {
+		t.Fatalf("Create failed: %s", createResp.Error)
+	}
+
+	var issue types.Issue
+	if err := json.Unmarshal(createResp.Data, &issue); err != nil {
+		t.Fatalf("Failed to unmarshal issue: %v", err)
+	}
+
+	// Update title and labels
+	newTitle := "Updated title after change"
+	updateArgs := &UpdateArgs{
+		ID:        issue.ID,
+		Title:     &newTitle,
+		SetLabels: []string{"team:backend", "priority:high"},
+	}
+	updateResp, err := client.Update(updateArgs)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if !updateResp.Success {
+		t.Fatalf("Update failed: %s", updateResp.Error)
+	}
+
+	events := recorder.getEvents()
+	// Expect 2 events: created + updated
+	if len(events) != 2 {
+		t.Fatalf("Expected 2 events, got %d", len(events))
+	}
+
+	ev := events[1]
+	if ev.Type != eventbus.EventAdviceUpdated {
+		t.Errorf("Expected event type %q, got %q", eventbus.EventAdviceUpdated, ev.Type)
+	}
+	if ev.Payload.ID != issue.ID {
+		t.Errorf("Expected payload ID %q, got %q", issue.ID, ev.Payload.ID)
+	}
+
+	// Verify the updated event has the NEW title, not the old one
+	if ev.Payload.Title != "Updated title after change" {
+		t.Errorf("Expected updated title %q, got %q", "Updated title after change", ev.Payload.Title)
+	}
+	if ev.Payload.Title == "Original title" {
+		t.Error("Update event payload still has the OLD title — should reflect new values")
+	}
+
+	// Verify the updated event has the NEW labels
+	labelSet := make(map[string]bool)
+	for _, l := range ev.Payload.Labels {
+		labelSet[l] = true
+	}
+	if !labelSet["team:backend"] {
+		t.Errorf("Expected label 'team:backend' in updated payload, got %v", ev.Payload.Labels)
+	}
+	if !labelSet["priority:high"] {
+		t.Errorf("Expected label 'priority:high' in updated payload, got %v", ev.Payload.Labels)
+	}
+	if labelSet["team:frontend"] {
+		t.Error("Updated event payload still has old label 'team:frontend' — should only have new labels")
+	}
+}
+
+// TestAdviceDeleteEventPayload creates an advice, deletes it, and verifies the
+// advice.deleted event has the correct ID and title.
+func TestAdviceDeleteEventPayload(t *testing.T) {
+	server, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	recorder := &adviceEventRecorder{}
+	bus.Register(recorder)
+	server.SetBus(bus)
+
+	// Create advice
+	createArgs := &CreateArgs{
+		Title:       "Advice to be deleted",
+		Description: "This advice will be deleted to test event payload",
+		IssueType:   "advice",
+		Priority:    2,
+	}
+	createResp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if !createResp.Success {
+		t.Fatalf("Create failed: %s", createResp.Error)
+	}
+
+	var issue types.Issue
+	if err := json.Unmarshal(createResp.Data, &issue); err != nil {
+		t.Fatalf("Failed to unmarshal issue: %v", err)
+	}
+
+	// Delete the advice
+	deleteResp, err := client.Execute(OpDelete, DeleteArgs{
+		IDs:        []string{issue.ID},
+		HardDelete: true,
+	})
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+	if !deleteResp.Success {
+		t.Fatalf("Delete failed: %s", deleteResp.Error)
+	}
+
+	events := recorder.getEvents()
+	// Expect 2 events: created + deleted
+	if len(events) != 2 {
+		t.Fatalf("Expected 2 events, got %d", len(events))
+	}
+
+	ev := events[1]
+	if ev.Type != eventbus.EventAdviceDeleted {
+		t.Errorf("Expected event type %q, got %q", eventbus.EventAdviceDeleted, ev.Type)
+	}
+	if ev.Payload.ID != issue.ID {
+		t.Errorf("Expected payload ID %q, got %q", issue.ID, ev.Payload.ID)
+	}
+	if ev.Payload.Title != "Advice to be deleted" {
+		t.Errorf("Expected payload title %q, got %q", "Advice to be deleted", ev.Payload.Title)
+	}
+}
+
+// TestAdviceBusNilIsNoOp verifies that CRUD operations succeed when no bus is
+// configured on the server. This tests the nil-bus guard in emitAdviceEvent.
+func TestAdviceBusNilIsNoOp(t *testing.T) {
+	_, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+
+	// Intentionally do NOT set a bus on the server.
+
+	// Create advice — should succeed without bus
+	createArgs := &CreateArgs{
+		Title:               "Advice without bus",
+		Description:         "Should work fine",
+		IssueType:           "advice",
+		Priority:            2,
+		Labels:              []string{"team:backend"},
+		AdviceHookCommand:   "make test",
+		AdviceHookTrigger:   "before-commit",
+		AdviceHookTimeout:   30,
+		AdviceHookOnFailure: "warn",
+	}
+	createResp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create without bus failed: %v", err)
+	}
+	if !createResp.Success {
+		t.Fatalf("Create without bus failed: %s", createResp.Error)
+	}
+
+	var issue types.Issue
+	if err := json.Unmarshal(createResp.Data, &issue); err != nil {
+		t.Fatalf("Failed to unmarshal issue: %v", err)
+	}
+
+	// Update advice — should succeed without bus
+	newTitle := "Updated advice without bus"
+	updateArgs := &UpdateArgs{
+		ID:    issue.ID,
+		Title: &newTitle,
+	}
+	updateResp, err := client.Update(updateArgs)
+	if err != nil {
+		t.Fatalf("Update without bus failed: %v", err)
+	}
+	if !updateResp.Success {
+		t.Fatalf("Update without bus failed: %s", updateResp.Error)
+	}
+
+	// Close (delete) advice — should succeed without bus
+	closeResp, err := client.CloseIssue(&CloseArgs{
+		ID:     issue.ID,
+		Reason: "No longer needed",
+	})
+	if err != nil {
+		t.Fatalf("Close without bus failed: %v", err)
+	}
+	if !closeResp.Success {
+		t.Fatalf("Close without bus failed: %s", closeResp.Error)
+	}
+}
+
+// TestAdviceMultipleEventsInSequence creates 3 advice items, updates one, and
+// deletes one. It verifies the event recorder captured exactly 5 events in the
+// correct order: created, created, created, updated, deleted.
+func TestAdviceMultipleEventsInSequence(t *testing.T) {
+	server, client, _, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	recorder := &adviceEventRecorder{}
+	bus.Register(recorder)
+	server.SetBus(bus)
+
+	// Create 3 advice items
+	titles := []string{"Advice Alpha", "Advice Beta", "Advice Gamma"}
+	ids := make([]string, 3)
+
+	for i, title := range titles {
+		createArgs := &CreateArgs{
+			Title:       title,
+			Description: "Multi-event sequence test",
+			IssueType:   "advice",
+			Priority:    2,
+		}
+		resp, err := client.Create(createArgs)
+		if err != nil {
+			t.Fatalf("Create %q failed: %v", title, err)
+		}
+		if !resp.Success {
+			t.Fatalf("Create %q failed: %s", title, resp.Error)
+		}
+
+		var issue types.Issue
+		if err := json.Unmarshal(resp.Data, &issue); err != nil {
+			t.Fatalf("Failed to unmarshal issue: %v", err)
+		}
+		ids[i] = issue.ID
+	}
+
+	// Update the second advice item (Advice Beta)
+	newTitle := "Advice Beta Updated"
+	updateArgs := &UpdateArgs{
+		ID:    ids[1],
+		Title: &newTitle,
+	}
+	updateResp, err := client.Update(updateArgs)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if !updateResp.Success {
+		t.Fatalf("Update failed: %s", updateResp.Error)
+	}
+
+	// Delete the third advice item (Advice Gamma)
+	deleteResp, err := client.Execute(OpDelete, DeleteArgs{
+		IDs:        []string{ids[2]},
+		HardDelete: true,
+	})
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+	if !deleteResp.Success {
+		t.Fatalf("Delete failed: %s", deleteResp.Error)
+	}
+
+	// Verify exactly 5 events were recorded
+	events := recorder.getEvents()
+	if len(events) != 5 {
+		t.Fatalf("Expected 5 events, got %d", len(events))
+	}
+
+	// Verify event types in order
+	expectedTypes := []eventbus.EventType{
+		eventbus.EventAdviceCreated,
+		eventbus.EventAdviceCreated,
+		eventbus.EventAdviceCreated,
+		eventbus.EventAdviceUpdated,
+		eventbus.EventAdviceDeleted,
+	}
+	for i, expected := range expectedTypes {
+		if events[i].Type != expected {
+			t.Errorf("Event[%d]: expected type %q, got %q", i, expected, events[i].Type)
+		}
+	}
+
+	// Verify each created event has the correct ID
+	for i := 0; i < 3; i++ {
+		if events[i].Payload.ID != ids[i] {
+			t.Errorf("Event[%d]: expected ID %q, got %q", i, ids[i], events[i].Payload.ID)
+		}
+	}
+
+	// Verify created events have correct titles
+	if events[0].Payload.Title != "Advice Alpha" {
+		t.Errorf("Event[0]: expected title %q, got %q", "Advice Alpha", events[0].Payload.Title)
+	}
+	if events[1].Payload.Title != "Advice Beta" {
+		t.Errorf("Event[1]: expected title %q, got %q", "Advice Beta", events[1].Payload.Title)
+	}
+	if events[2].Payload.Title != "Advice Gamma" {
+		t.Errorf("Event[2]: expected title %q, got %q", "Advice Gamma", events[2].Payload.Title)
+	}
+
+	// Verify updated event targets Advice Beta with new title
+	if events[3].Payload.ID != ids[1] {
+		t.Errorf("Event[3] (updated): expected ID %q, got %q", ids[1], events[3].Payload.ID)
+	}
+	if events[3].Payload.Title != "Advice Beta Updated" {
+		t.Errorf("Event[3] (updated): expected title %q, got %q", "Advice Beta Updated", events[3].Payload.Title)
+	}
+
+	// Verify deleted event targets Advice Gamma
+	if events[4].Payload.ID != ids[2] {
+		t.Errorf("Event[4] (deleted): expected ID %q, got %q", ids[2], events[4].Payload.ID)
+	}
+	if events[4].Payload.Title != "Advice Gamma" {
+		t.Errorf("Event[4] (deleted): expected title %q, got %q", "Advice Gamma", events[4].Payload.Title)
+	}
+}

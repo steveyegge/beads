@@ -1,6 +1,10 @@
 package eventbus
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -125,5 +129,235 @@ func TestFindBDBinary(t *testing.T) {
 	}
 	if path == "" {
 		t.Error("findBDBinary returned empty path")
+	}
+}
+
+// setupMockBD creates a temporary directory with a mock bd shell script,
+// prepends it to PATH so handlers find it via exec.LookPath, and returns
+// a cleanup function that restores the original PATH.
+func setupMockBD(t *testing.T, script string) func() {
+	t.Helper()
+	dir := t.TempDir()
+	bdPath := filepath.Join(dir, "bd")
+	if err := os.WriteFile(bdPath, []byte("#!/bin/sh\n"+script), 0755); err != nil {
+		t.Fatalf("failed to write mock bd script: %v", err)
+	}
+	oldPath := os.Getenv("PATH")
+	os.Setenv("PATH", dir+":"+oldPath)
+	return func() { os.Setenv("PATH", oldPath) }
+}
+
+// ---------------------------------------------------------------------------
+// PrimeHandler.Handle integration tests
+// ---------------------------------------------------------------------------
+
+func TestPrimeHandlerHandle(t *testing.T) {
+	cleanup := setupMockBD(t, `
+case "$1" in
+  prime) printf "# Beads Workflow Context\n\nSome context here"; exit 0;;
+esac
+exit 1
+`)
+	defer cleanup()
+
+	h := &PrimeHandler{}
+	event := &Event{
+		Type: EventSessionStart,
+		CWD:  t.TempDir(),
+	}
+	result := &Result{}
+
+	err := h.Handle(context.Background(), event, result)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(result.Inject) != 1 {
+		t.Fatalf("expected 1 inject entry, got %d", len(result.Inject))
+	}
+	if !strings.Contains(result.Inject[0], "Beads Workflow Context") {
+		t.Errorf("expected inject to contain workflow context, got: %q", result.Inject[0])
+	}
+	if !strings.Contains(result.Inject[0], "Some context here") {
+		t.Errorf("expected inject to contain 'Some context here', got: %q", result.Inject[0])
+	}
+}
+
+func TestPrimeHandlerHandleBDNotFound(t *testing.T) {
+	// Point PATH to an empty directory so bd is not found.
+	emptyDir := t.TempDir()
+	oldPath := os.Getenv("PATH")
+	os.Setenv("PATH", emptyDir)
+	defer os.Setenv("PATH", oldPath)
+
+	h := &PrimeHandler{}
+	event := &Event{
+		Type: EventSessionStart,
+		CWD:  t.TempDir(),
+	}
+	result := &Result{}
+
+	err := h.Handle(context.Background(), event, result)
+	if err == nil {
+		t.Fatal("expected error when bd is not in PATH, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' in error message, got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GateHandler.Handle integration tests
+// ---------------------------------------------------------------------------
+
+func TestGateHandlerHandle_Allow(t *testing.T) {
+	cleanup := setupMockBD(t, `
+case "$1" in
+  gate) printf '{"decision":"allow","warnings":["test warning"]}'; exit 0;;
+esac
+exit 1
+`)
+	defer cleanup()
+
+	h := &GateHandler{}
+	event := &Event{
+		Type: EventPreToolUse,
+		CWD:  t.TempDir(),
+	}
+	result := &Result{}
+
+	err := h.Handle(context.Background(), event, result)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if result.Block {
+		t.Error("expected Block=false for allow decision")
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(result.Warnings))
+	}
+	if result.Warnings[0] != "test warning" {
+		t.Errorf("expected warning 'test warning', got %q", result.Warnings[0])
+	}
+}
+
+func TestGateHandlerHandle_Block(t *testing.T) {
+	cleanup := setupMockBD(t, `
+case "$1" in
+  gate) printf '{"decision":"block","reason":"gate failed","warnings":["blocked warning"]}'; exit 1;;
+esac
+exit 1
+`)
+	defer cleanup()
+
+	h := &GateHandler{}
+	event := &Event{
+		Type: EventStop,
+		CWD:  t.TempDir(),
+	}
+	result := &Result{}
+
+	err := h.Handle(context.Background(), event, result)
+	if err != nil {
+		t.Fatalf("expected no error (block is not an error), got: %v", err)
+	}
+	if !result.Block {
+		t.Error("expected Block=true for block decision")
+	}
+	if result.Reason != "gate failed" {
+		t.Errorf("expected reason 'gate failed', got %q", result.Reason)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(result.Warnings))
+	}
+	if result.Warnings[0] != "blocked warning" {
+		t.Errorf("expected warning 'blocked warning', got %q", result.Warnings[0])
+	}
+}
+
+func TestGateHandlerHandle_BlockRawOutput(t *testing.T) {
+	// When bd exits 1 with non-JSON output, the handler should treat
+	// the raw stdout as the block reason.
+	cleanup := setupMockBD(t, `
+case "$1" in
+  gate) printf "raw gate failure message"; exit 1;;
+esac
+exit 1
+`)
+	defer cleanup()
+
+	h := &GateHandler{}
+	event := &Event{
+		Type: EventPreToolUse,
+		CWD:  t.TempDir(),
+	}
+	result := &Result{}
+
+	err := h.Handle(context.Background(), event, result)
+	if err != nil {
+		t.Fatalf("expected no error (block is not an error), got: %v", err)
+	}
+	if !result.Block {
+		t.Error("expected Block=true for non-JSON exit-1 output")
+	}
+	if result.Reason != "raw gate failure message" {
+		t.Errorf("expected reason 'raw gate failure message', got %q", result.Reason)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DecisionHandler.Handle integration tests
+// ---------------------------------------------------------------------------
+
+func TestDecisionHandlerHandle(t *testing.T) {
+	cleanup := setupMockBD(t, `
+case "$1" in
+  decision) printf "Decision response injected"; exit 0;;
+esac
+exit 1
+`)
+	defer cleanup()
+
+	h := &DecisionHandler{}
+	event := &Event{
+		Type: EventSessionStart,
+		CWD:  t.TempDir(),
+	}
+	result := &Result{}
+
+	err := h.Handle(context.Background(), event, result)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(result.Inject) != 1 {
+		t.Fatalf("expected 1 inject entry, got %d", len(result.Inject))
+	}
+	if result.Inject[0] != "Decision response injected" {
+		t.Errorf("expected inject 'Decision response injected', got %q", result.Inject[0])
+	}
+}
+
+func TestDecisionHandlerHandle_Empty(t *testing.T) {
+	// When bd outputs nothing, result.Inject should remain empty.
+	cleanup := setupMockBD(t, `
+case "$1" in
+  decision) exit 0;;
+esac
+exit 1
+`)
+	defer cleanup()
+
+	h := &DecisionHandler{}
+	event := &Event{
+		Type: EventPreCompact,
+		CWD:  t.TempDir(),
+	}
+	result := &Result{}
+
+	err := h.Handle(context.Background(), event, result)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(result.Inject) != 0 {
+		t.Errorf("expected 0 inject entries for empty output, got %d: %v", len(result.Inject), result.Inject)
 	}
 }
