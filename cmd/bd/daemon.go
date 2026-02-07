@@ -611,7 +611,15 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		factoryOpts.ServerPort = doltServer.SQLPort()
 	}
 
-	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factoryOpts)
+	var store storage.Storage
+	if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" {
+		// In server mode, wait for the Dolt server to become reachable.
+		// This replaces the init container's nc -z retry loop and allows the
+		// daemon to handle startup ordering without a separate init container.
+		store, err = waitForStore(ctx, beadsDir, factoryOpts, log)
+	} else {
+		store, err = factory.NewFromConfigWithOptions(ctx, beadsDir, factoryOpts)
+	}
 	if err != nil {
 		log.Error("cannot open database", "error", err)
 		return // Use return instead of os.Exit to allow defers to run
@@ -1262,4 +1270,39 @@ func hydrateDeployConfig(ctx context.Context, store storage.Storage, log daemonL
 	if hydrated > 0 {
 		log.Info("deploy config hydrated from database", "count", hydrated)
 	}
+}
+
+// waitForStore retries opening the database store with exponential backoff.
+// In K8s server mode, the Dolt server may not be ready when the daemon starts
+// (e.g., Dolt pod still initializing). This replaces the init container's
+// nc -z retry loop with in-process retries.
+func waitForStore(ctx context.Context, beadsDir string, opts factory.Options, log daemonLogger) (storage.Storage, error) {
+	maxAttempts := getEnvInt("BEADS_DOLT_CONNECT_RETRIES", 30)
+	retryInterval := 2 * time.Second
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, opts)
+		if err == nil {
+			if attempt > 1 {
+				log.Info("database connected after retry", "attempts", attempt)
+			}
+			return store, nil
+		}
+		lastErr = err
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		log.Info("waiting for database", "attempt", attempt, "max", maxAttempts, "error", err)
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context canceled while waiting for database: %w", ctx.Err())
+		case <-time.After(retryInterval):
+		}
+	}
+
+	return nil, fmt.Errorf("database not reachable after %d attempts: %w", maxAttempts, lastErr)
 }

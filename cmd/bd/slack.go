@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/slackbot"
 )
@@ -91,12 +92,26 @@ func init() {
 }
 
 func runSlackStart(cmd *cobra.Command, args []string) error {
-	// Resolve config from flags, then env vars
+	// Daemon host must come from flag/env (chicken-and-egg: can't read from DB without connection)
+	daemonHost := firstNonEmpty(slackDaemonHost, os.Getenv("BD_DAEMON_HOST"), "localhost:9876")
+
+	// Connect to daemon RPC via TCP
+	rpcClient, err := rpc.TryConnectTCP(daemonHost, rpc.GetDaemonToken())
+	if err != nil {
+		return fmt.Errorf("connect to daemon at %s: %w", daemonHost, err)
+	}
+	defer rpcClient.Close()
+
+	// Hydrate deploy.* config from daemon DB into env vars.
+	// This allows the slack bot to pick up SLACK_CHANNEL, BD_NATS_URL, etc.
+	// from the database without requiring explicit Helm env vars.
+	hydrateSlackConfigFromDaemon(rpcClient)
+
+	// Resolve config: flags > env vars (now hydrated from DB) > defaults
 	botToken := firstNonEmpty(slackBotToken, os.Getenv("SLACK_BOT_TOKEN"))
 	appToken := firstNonEmpty(slackAppToken, os.Getenv("SLACK_APP_TOKEN"))
 	channelID := firstNonEmpty(slackChannel, os.Getenv("SLACK_CHANNEL"))
 	natsURL := firstNonEmpty(slackNatsURL, os.Getenv("BD_NATS_URL"), "nats://localhost:4222")
-	daemonHost := firstNonEmpty(slackDaemonHost, os.Getenv("BD_DAEMON_HOST"), "localhost:9876")
 
 	if botToken == "" {
 		return fmt.Errorf("Slack bot token required (--bot-token or SLACK_BOT_TOKEN env)")
@@ -112,13 +127,6 @@ func runSlackStart(cmd *cobra.Command, args []string) error {
 	if hp := os.Getenv("HEALTH_PORT"); hp != "" && slackHealthPort == 8080 {
 		fmt.Sscanf(hp, "%d", &slackHealthPort)
 	}
-
-	// Connect to daemon RPC via TCP
-	rpcClient, err := rpc.TryConnectTCP(daemonHost, rpc.GetDaemonToken())
-	if err != nil {
-		return fmt.Errorf("connect to daemon at %s: %w", daemonHost, err)
-	}
-	defer rpcClient.Close()
 
 	decisions := slackbot.NewDecisionClient(rpcClient)
 
@@ -242,4 +250,42 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// hydrateSlackConfigFromDaemon reads deploy.* config from the daemon's database
+// via RPC and sets corresponding environment variables that aren't already set.
+// This allows the slack bot sidecar to pick up SLACK_CHANNEL, BD_NATS_URL, etc.
+// from the database without requiring explicit Helm env vars for each setting.
+func hydrateSlackConfigFromDaemon(client *rpc.Client) {
+	result, err := client.ConfigList()
+	if err != nil {
+		log.Printf("slackbot: could not read deploy config from daemon: %v", err)
+		return
+	}
+
+	envMap := config.DeployKeyEnvMap()
+	hydrated := 0
+
+	for key, value := range result.Config {
+		if !config.IsDeployKey(key) {
+			continue
+		}
+		envVar, ok := envMap[key]
+		if !ok || envVar == "" {
+			continue
+		}
+		if existing := os.Getenv(envVar); existing != "" {
+			continue
+		}
+		if err := os.Setenv(envVar, value); err != nil {
+			log.Printf("slackbot: failed to set %s from %s: %v", envVar, key, err)
+			continue
+		}
+		hydrated++
+		log.Printf("slackbot: hydrated %s=%s (from %s)", envVar, value, key)
+	}
+
+	if hydrated > 0 {
+		log.Printf("slackbot: hydrated %d deploy config values from daemon", hydrated)
+	}
 }

@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/memory"
 )
 
@@ -94,4 +97,63 @@ func TestHydrateDeployConfig(t *testing.T) {
 		// No deploy config set — should be a no-op
 		hydrateDeployConfig(ctx, store, log)
 	})
+}
+
+func TestWaitForStore_ImmediateSuccess(t *testing.T) {
+	// Set up a SQLite store in a temp directory — should connect immediately
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write metadata.json for SQLite backend
+	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendSQLite
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	log := newTestLogger()
+	store, err := waitForStore(ctx, beadsDir, factory.Options{}, log)
+	if err != nil {
+		t.Fatalf("waitForStore failed: %v", err)
+	}
+	defer store.Close()
+}
+
+func TestWaitForStore_ContextCanceled(t *testing.T) {
+	// Use a canceled context — should fail immediately
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write metadata.json pointing to unreachable Dolt server
+	cfg := &configfile.Config{
+		Backend:        configfile.BackendDolt,
+		Database:       "dolt",
+		DoltMode:       configfile.DoltModeServer,
+		DoltServerHost: "unreachable-host",
+		DoltServerPort: 39999,
+	}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatal(err)
+	}
+
+	log := newTestLogger()
+
+	// Set retries to 1 via env to speed up the test
+	os.Setenv("BEADS_DOLT_CONNECT_RETRIES", "1")
+	defer os.Unsetenv("BEADS_DOLT_CONNECT_RETRIES")
+
+	_, err := waitForStore(ctx, beadsDir, factory.Options{}, log)
+	if err == nil {
+		t.Fatal("expected error from waitForStore with canceled context")
+	}
 }
