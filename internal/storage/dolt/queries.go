@@ -241,24 +241,67 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 
 // GetReadyWork returns issues that are ready to work on (not blocked)
 func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
+	// Ensure blocked_issues_cache is populated (gt-w676pl.7).
+	// In direct mode (no daemon), the cache is never rebuilt by the event loop.
+	// We rebuild once per process lifetime on first access.
+	if !s.blockedCacheBuilt.Load() {
+		s.mu.Lock()
+		if !s.blockedCacheBuilt.Load() {
+			_ = s.rebuildBlockedCacheInternal(ctx, s.db)
+			s.blockedCacheBuilt.Store(true)
+		}
+		s.mu.Unlock()
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	whereClauses := []string{"status = 'open'", "(ephemeral = 0 OR ephemeral IS NULL)"}
+	// Align filters with SQLite GetReadyWork (gt-w676pl.7)
+	whereClauses := []string{
+		"pinned = 0",                          // Exclude pinned issues
+		"(ephemeral = 0 OR ephemeral IS NULL)", // Exclude wisps
+	}
 	args := []interface{}{}
+
+	// Default to open OR in_progress if not specified
+	if filter.Status == "" {
+		whereClauses = append(whereClauses, "status IN ('open', 'in_progress')")
+	} else {
+		whereClauses = append(whereClauses, "status = ?")
+		args = append(args, filter.Status)
+	}
+
+	// Filter by issue type
+	if filter.Type != "" {
+		whereClauses = append(whereClauses, "issue_type = ?")
+		args = append(args, filter.Type)
+	} else {
+		// Exclude workflow types from ready work by default (matches SQLite)
+		whereClauses = append(whereClauses, "issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent', 'role', 'rig')")
+		// Exclude IDs matching configured patterns (default: -mol-, -wisp-)
+		if !filter.IncludeMolSteps {
+			patterns := s.getExcludeIDPatterns(ctx)
+			for _, pattern := range patterns {
+				whereClauses = append(whereClauses, "id NOT LIKE ?")
+				args = append(args, "%"+pattern+"%")
+			}
+		}
+	}
 
 	if filter.Priority != nil {
 		whereClauses = append(whereClauses, "priority = ?")
 		args = append(args, *filter.Priority)
 	}
-	if filter.Type != "" {
-		whereClauses = append(whereClauses, "issue_type = ?")
-		args = append(args, filter.Type)
-	}
-	if filter.Assignee != nil {
+
+	// Unassigned takes precedence over Assignee filter
+	if filter.Unassigned {
+		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
+	} else if filter.Assignee != nil {
 		whereClauses = append(whereClauses, "assignee = ?")
 		args = append(args, *filter.Assignee)
 	}
+
+	// Label filtering (AND semantics)
 	if len(filter.Labels) > 0 {
 		for _, label := range filter.Labels {
 			whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM labels WHERE label = ?)")
@@ -266,8 +309,50 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		}
 	}
 
+	// Label filtering (OR semantics)
+	if len(filter.LabelsAny) > 0 {
+		placeholders := make([]string, len(filter.LabelsAny))
+		for i := range filter.LabelsAny {
+			placeholders[i] = "?"
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf(
+			"id IN (SELECT issue_id FROM labels WHERE label IN (%s))",
+			strings.Join(placeholders, ",")))
+		for _, label := range filter.LabelsAny {
+			args = append(args, label)
+		}
+	}
+
+	// Parent filtering: filter to all descendants of a root issue
+	if filter.ParentID != nil {
+		whereClauses = append(whereClauses, `
+			id IN (
+				WITH RECURSIVE descendants AS (
+					SELECT issue_id FROM dependencies
+					WHERE type = 'parent-child' AND depends_on_id = ?
+					UNION ALL
+					SELECT d.issue_id FROM dependencies d
+					JOIN descendants dt ON d.depends_on_id = dt.issue_id
+					WHERE d.type = 'parent-child'
+				)
+				SELECT issue_id FROM descendants
+			)
+		`)
+		args = append(args, *filter.ParentID)
+	}
+
+	// Molecule type filtering
+	if filter.MolType != nil {
+		whereClauses = append(whereClauses, "mol_type = ?")
+		args = append(args, string(*filter.MolType))
+	}
+
+	// Time-based deferral filtering
+	if !filter.IncludeDeferred {
+		whereClauses = append(whereClauses, "(defer_until IS NULL OR defer_until <= NOW())")
+	}
+
 	// Exclude blocked issues using materialized cache (bd-b2ts)
-	// Falls back to inline subquery if cache table doesn't exist yet
 	whereClauses = append(whereClauses, `
 		id NOT IN (SELECT issue_id FROM blocked_issues_cache)
 	`)
@@ -279,14 +364,30 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
-	// Direct SELECT * query - avoids the two-query anti-pattern
+	// Build ORDER BY based on sort policy (matches SQLite)
+	orderBySQL := "ORDER BY priority ASC, created_at DESC"
+	if filter.SortPolicy != "" {
+		switch filter.SortPolicy {
+		case types.SortPolicyPriority:
+			orderBySQL = "ORDER BY priority ASC, created_at ASC"
+		case types.SortPolicyOldest:
+			orderBySQL = "ORDER BY created_at ASC"
+		case types.SortPolicyHybrid:
+			orderBySQL = `ORDER BY
+				CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR) THEN 0 ELSE 1 END ASC,
+				CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR) THEN priority ELSE NULL END ASC,
+				CASE WHEN created_at < DATE_SUB(NOW(), INTERVAL 48 HOUR) THEN created_at ELSE NULL END ASC,
+				created_at ASC`
+		}
+	}
+
 	// nolint:gosec // G201: whereSQL contains column comparisons with ?, limitSQL is a safe integer
 	query := fmt.Sprintf(`
 		SELECT %s FROM issues
 		%s
-		ORDER BY priority ASC, created_at DESC
 		%s
-	`, issueColumns, whereSQL, limitSQL)
+		%s
+	`, issueColumns, whereSQL, orderBySQL, limitSQL)
 
 	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
@@ -304,6 +405,27 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 	}
 
 	return issues, rows.Err()
+}
+
+// getExcludeIDPatterns returns ID patterns to exclude from GetReadyWork.
+// Reads from ready.exclude_id_patterns config, defaults to -mol- and -wisp-.
+func (s *DoltStore) getExcludeIDPatterns(ctx context.Context) []string {
+	value, err := s.GetConfig(ctx, "ready.exclude_id_patterns")
+	if err != nil || value == "" {
+		return []string{"-mol-", "-wisp-"}
+	}
+	parts := strings.Split(value, ",")
+	patterns := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			patterns = append(patterns, p)
+		}
+	}
+	if len(patterns) == 0 {
+		return []string{"-mol-", "-wisp-"}
+	}
+	return patterns
 }
 
 // GetBlockedIssues returns issues that are blocked by other issues

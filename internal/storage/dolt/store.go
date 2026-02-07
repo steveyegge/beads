@@ -65,6 +65,11 @@ type DoltStore struct {
 	// skipDirtyTracking disables dirty_issues and export_hashes writes.
 	// Set to true in dolt-native sync mode where JSONL export is not used.
 	skipDirtyTracking bool
+
+	// blockedCacheBuilt tracks whether blocked_issues_cache has been populated
+	// in this process. In direct mode (no daemon), the cache is never rebuilt
+	// by the event loop, so GetReadyWork ensures it on first access (gt-w676pl.7).
+	blockedCacheBuilt atomic.Bool
 }
 
 // Config holds Dolt database configuration

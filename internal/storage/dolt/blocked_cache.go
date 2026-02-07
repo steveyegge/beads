@@ -27,7 +27,11 @@ func (s *DoltStore) RebuildBlockedCache(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.rebuildBlockedCacheInternal(ctx, s.db)
+	err := s.rebuildBlockedCacheInternal(ctx, s.db)
+	if err == nil {
+		s.blockedCacheBuilt.Store(true)
+	}
+	return err
 }
 
 // rebuildBlockedCacheTx rebuilds the cache within an existing transaction.
