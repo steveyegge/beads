@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -173,6 +174,48 @@ func (n *NATSServer) Health() NATSHealth {
 	}
 
 	return h
+}
+
+// NATSConnectionInfo is written to .runtime/nats-info.json for sidecar discovery.
+// External processes (e.g., Coop) read this file to find the NATS server.
+type NATSConnectionInfo struct {
+	URL       string `json:"url"`                 // e.g., "nats://127.0.0.1:4222"
+	Port      int    `json:"port"`                // TCP port
+	Token     string `json:"token,omitempty"`     // Auth token (if set)
+	JetStream bool   `json:"jetstream"`           // Always true for bd daemon
+	Stream    string `json:"stream"`              // Primary stream name
+	Subjects  string `json:"subjects"`            // Subject wildcard pattern
+}
+
+// ConnectionInfoPath returns the path where nats-info.json is written.
+const ConnectionInfoFile = "nats-info.json"
+
+// WriteConnectionInfo writes NATS connection details to a JSON file in the
+// runtime directory so sidecar processes can discover the server.
+func (n *NATSServer) WriteConnectionInfo(token string) error {
+	info := NATSConnectionInfo{
+		URL:       fmt.Sprintf("nats://127.0.0.1:%d", n.port),
+		Port:      n.port,
+		Token:     token,
+		JetStream: true,
+		Stream:    "HOOK_EVENTS",
+		Subjects:  "hooks.>",
+	}
+	data, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal connection info: %w", err)
+	}
+	infoPath := filepath.Join(n.storeDir, "..", ConnectionInfoFile)
+	if err := os.WriteFile(infoPath, data, 0600); err != nil {
+		return fmt.Errorf("write %s: %w", infoPath, err)
+	}
+	return nil
+}
+
+// RemoveConnectionInfo removes the nats-info.json file (called on shutdown).
+func (n *NATSServer) RemoveConnectionInfo() {
+	infoPath := filepath.Join(n.storeDir, "..", ConnectionInfoFile)
+	os.Remove(infoPath)
 }
 
 // NATSHealth represents a point-in-time health snapshot of the NATS server.

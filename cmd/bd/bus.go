@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 )
 
@@ -117,6 +118,59 @@ var busHandlersCmd = &cobra.Command{
 	},
 }
 
+var busNATSInfoCmd = &cobra.Command{
+	Use:   "nats-info",
+	Short: "Show NATS connection details for sidecar processes",
+	Long: `Print NATS connection info for external consumers (e.g., Coop sidecar).
+
+Reads the nats-info.json file written by the daemon at startup.
+Output includes the NATS URL, port, auth token, stream name, and subject pattern.
+
+Use --json for machine-readable output.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Try daemon RPC first for live info.
+		if daemonClient != nil {
+			resp, err := daemonClient.Execute(rpc.OpBusStatus, nil)
+			if err == nil && resp.Success {
+				var result rpc.BusStatusResult
+				if err := json.Unmarshal(resp.Data, &result); err == nil && result.NATSEnabled {
+					info := daemon.NATSConnectionInfo{
+						URL:       fmt.Sprintf("nats://127.0.0.1:%d", result.NATSPort),
+						Port:      result.NATSPort,
+						JetStream: result.JetStream,
+						Stream:    "HOOK_EVENTS",
+						Subjects:  "hooks.>",
+					}
+					if jsonOutput {
+						enc := json.NewEncoder(os.Stdout)
+						enc.SetIndent("", "  ")
+						return enc.Encode(info)
+					}
+					fmt.Printf("NATS Connection Info\n")
+					fmt.Printf("  URL:      %s\n", info.URL)
+					fmt.Printf("  Port:     %d\n", info.Port)
+					fmt.Printf("  Stream:   %s\n", info.Stream)
+					fmt.Printf("  Subjects: %s\n", info.Subjects)
+					fmt.Printf("  Auth:     %s\n", tokenHint(info.Token))
+					return nil
+				}
+			}
+		}
+
+		return fmt.Errorf("NATS not available (daemon not running or NATS disabled)")
+	},
+}
+
+func tokenHint(token string) string {
+	if token == "" {
+		return "none (no auth required)"
+	}
+	if len(token) > 8 {
+		return token[:4] + "..." + token[len(token)-4:]
+	}
+	return "***"
+}
+
 func busStatusLabel(enabled bool, status string) string {
 	if !enabled {
 		return "disabled"
@@ -130,5 +184,6 @@ func busStatusLabel(enabled bool, status string) string {
 func init() {
 	busCmd.AddCommand(busStatusCmd)
 	busCmd.AddCommand(busHandlersCmd)
+	busCmd.AddCommand(busNATSInfoCmd)
 	rootCmd.AddCommand(busCmd)
 }

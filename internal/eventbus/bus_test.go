@@ -1240,3 +1240,130 @@ func TestEnsureStreamsIdempotent(t *testing.T) {
 		t.Errorf("expected stream name %q, got %q", StreamHookEvents, info.Config.Name)
 	}
 }
+
+// TestCoopFieldsInRawJSON verifies that when Claude Code JSON (Raw) is published,
+// it preserves all fields Coop needs for Tier 2 detection.
+func TestCoopFieldsInRawJSON(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	sub, err := js.SubscribeSync(SubjectHookPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	// Simulate Claude Code JSON with all fields Coop needs.
+	rawJSON := json.RawMessage(`{
+		"hook_event_name": "PreToolUse",
+		"session_id": "sess-abc123",
+		"transcript_path": "/home/user/.claude/sessions/sess-abc123.jsonl",
+		"cwd": "/home/user/project",
+		"permission_mode": "default",
+		"tool_name": "Bash",
+		"tool_input": {"command": "npm install express"},
+		"model": "claude-sonnet-4-5-20250929"
+	}`)
+
+	event := &Event{
+		Type: EventPreToolUse,
+		Raw:  rawJSON,
+	}
+	_ = json.Unmarshal(rawJSON, event)
+
+	_, err = bus.Dispatch(context.Background(), event)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected message: %v", err)
+	}
+
+	// Parse published payload and verify Coop-required fields.
+	var published map[string]interface{}
+	if err := json.Unmarshal(msg.Data, &published); err != nil {
+		t.Fatalf("unmarshal published: %v", err)
+	}
+
+	coopFields := []string{
+		"hook_event_name",
+		"session_id",
+		"transcript_path",
+		"cwd",
+		"tool_name",
+		"tool_input",
+		"model",
+	}
+	for _, field := range coopFields {
+		if _, ok := published[field]; !ok {
+			t.Errorf("published JSON missing Coop-required field %q", field)
+		}
+	}
+
+	// Verify specific values.
+	if published["tool_name"] != "Bash" {
+		t.Errorf("expected tool_name=Bash, got %v", published["tool_name"])
+	}
+	if published["session_id"] != "sess-abc123" {
+		t.Errorf("expected session_id=sess-abc123, got %v", published["session_id"])
+	}
+}
+
+// TestCoopFieldsInStructJSON verifies that when Raw is absent (programmatic events),
+// the marshaled Event struct includes all fields Coop needs plus a timestamp.
+func TestCoopFieldsInStructJSON(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	sub, err := js.SubscribeSync(SubjectHookPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	// Dispatch without Raw — forces Event struct marshal.
+	event := &Event{
+		Type:           EventPreToolUse,
+		SessionID:      "sess-struct",
+		TranscriptPath: "/tmp/sessions/sess-struct.jsonl",
+		CWD:            "/workspace",
+		ToolName:       "Write",
+		ToolInput:      map[string]interface{}{"file_path": "/tmp/out.txt"},
+		Model:          "claude-opus-4-6",
+	}
+
+	_, err = bus.Dispatch(context.Background(), event)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected message: %v", err)
+	}
+
+	var published map[string]interface{}
+	if err := json.Unmarshal(msg.Data, &published); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Verify Coop fields present.
+	for _, field := range []string{"hook_event_name", "session_id", "transcript_path", "cwd", "tool_name", "tool_input", "model"} {
+		if _, ok := published[field]; !ok {
+			t.Errorf("missing field %q in struct-marshaled payload", field)
+		}
+	}
+
+	// Verify published_at timestamp is present (only in struct marshal path).
+	if _, ok := published["published_at"]; !ok {
+		t.Error("missing published_at timestamp in struct-marshaled payload")
+	}
+}

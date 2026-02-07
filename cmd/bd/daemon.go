@@ -798,7 +798,10 @@ The daemon will now exit.`, strings.ToUpper(backend))
 			// Non-fatal: daemon continues without NATS
 			log.Warn("continuing without NATS - JetStream event persistence disabled")
 		} else {
-			defer natsServer.Shutdown()
+			defer func() {
+				natsServer.RemoveConnectionInfo()
+				natsServer.Shutdown()
+			}()
 			log.Info("embedded NATS server started", "port", natsServer.Port())
 
 			// Ensure JetStream streams exist
@@ -813,6 +816,13 @@ The daemon will now exit.`, strings.ToUpper(backend))
 				} else {
 					log.Info("JetStream streams initialized")
 				}
+			}
+
+			// Write connection info for sidecar discovery (e.g., Coop)
+			if err := natsServer.WriteConnectionInfo(natsCfg.Token); err != nil {
+				log.Warn("failed to write NATS connection info", "error", err)
+			} else {
+				log.Info("NATS connection info written for sidecar discovery")
 			}
 
 			health := natsServer.Health()

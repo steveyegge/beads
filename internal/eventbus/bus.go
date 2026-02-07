@@ -7,6 +7,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go"
 )
@@ -86,6 +87,11 @@ func (b *Bus) Dispatch(ctx context.Context, event *Event) (*Result, error) {
 // publishToJetStream publishes an event to the HOOK_EVENTS JetStream stream.
 // Errors are logged but never propagated — JetStream is supplementary to
 // local dispatch, not a prerequisite.
+//
+// When Raw is set (normal daemon RPC path), the original Claude Code JSON is
+// published as-is — this preserves maximum fidelity for external consumers
+// like Coop. When Raw is empty (programmatic events), the Event struct is
+// marshaled with a published_at timestamp.
 func (b *Bus) publishToJetStream(js nats.JetStreamContext, event *Event) {
 	subject := SubjectForEvent(event.Type)
 
@@ -94,6 +100,8 @@ func (b *Bus) publishToJetStream(js nats.JetStreamContext, event *Event) {
 	if len(event.Raw) > 0 {
 		data = event.Raw
 	} else {
+		now := time.Now().UTC()
+		event.PublishedAt = &now
 		var err error
 		data, err = json.Marshal(event)
 		if err != nil {

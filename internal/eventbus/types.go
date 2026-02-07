@@ -1,6 +1,9 @@
 package eventbus
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // EventType identifies an event flowing through the bus.
 // Hook events map 1:1 to Claude Code hook events; decision events are the
@@ -52,6 +55,10 @@ type Event struct {
 	AgentID      string                 `json:"agent_id,omitempty"`
 	AgentType    string                 `json:"agent_type,omitempty"`
 	Error        string                 `json:"error,omitempty"`
+
+	// PublishedAt is set by the bus when publishing to JetStream (not from Claude Code).
+	// Only populated when Raw is empty and the Event struct is marshaled.
+	PublishedAt *time.Time `json:"published_at,omitempty"`
 }
 
 // IsDecisionEvent returns true if the event type belongs to the decision
