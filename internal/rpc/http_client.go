@@ -371,6 +371,11 @@ func operationToHTTPMethod(operation string) string {
 		OpFormulaSave:   "FormulaSave",
 		OpFormulaDelete: "FormulaDelete",
 
+		// Runbook CRUD operations (od-dv0.4.1)
+		OpRunbookList: "RunbookList",
+		OpRunbookGet:  "RunbookGet",
+		OpRunbookSave: "RunbookSave",
+
 		// Admin
 		OpShutdown: "Shutdown",
 

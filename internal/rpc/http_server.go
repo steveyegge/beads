@@ -400,6 +400,11 @@ func httpMethodToOperation(method string) string {
 		"FormulaSave":   OpFormulaSave,
 		"FormulaDelete": OpFormulaDelete,
 
+		// Runbook CRUD operations (od-dv0.4.1)
+		"RunbookList": OpRunbookList,
+		"RunbookGet":  OpRunbookGet,
+		"RunbookSave": OpRunbookSave,
+
 		// Config
 		"ConfigSet":  OpConfigSet,
 		"ConfigList": OpConfigList,

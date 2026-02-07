@@ -414,6 +414,8 @@ func TestHTTPMappingCompleteness(t *testing.T) {
 		OpAgentPodRegister, OpAgentPodDeregister, OpAgentPodStatus, OpAgentPodList,
 		// Bus operations
 		OpBusEmit, OpBusStatus, OpBusHandlers,
+		// Runbook CRUD (od-dv0.4.1)
+		OpRunbookList, OpRunbookGet, OpRunbookSave,
 	}
 
 	t.Run("client_operationToHTTPMethod_covers_all_handled_ops", func(t *testing.T) {
