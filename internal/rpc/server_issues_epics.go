@@ -3516,6 +3516,21 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 
 	var issue *types.Issue
 
+	// Validate urgency if provided.
+	urgency := strings.ToLower(args.Urgency)
+	if urgency == "" {
+		urgency = "medium"
+	}
+	switch urgency {
+	case "high", "medium", "low":
+		// Valid
+	default:
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid urgency '%s': must be high, medium, or low", args.Urgency),
+		}
+	}
+
 	// If IssueID is provided, validate it exists; otherwise create a gate issue
 	if args.IssueID != "" {
 		var err error
@@ -3542,7 +3557,7 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 			IssueType:   "gate",
 			AwaitType:   "decision",
 			CreatedBy:   actor,
-			Labels:      []string{"gt:decision", "decision:pending"},
+			Labels:      []string{"gt:decision", "decision:pending", "urgency:" + urgency},
 		}
 		if err := store.CreateIssue(ctx, gateIssue, actor); err != nil {
 			return Response{
@@ -3569,6 +3584,7 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 		maxIterations = 3
 	}
 
+	now := time.Now()
 	dp := &types.DecisionPoint{
 		IssueID:       args.IssueID,
 		Prompt:        args.Prompt,
@@ -3578,13 +3594,43 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 		MaxIterations: maxIterations,
 		Iteration:     1,
 		RequestedBy:   args.RequestedBy,
-		CreatedAt:     time.Now(),
+		Urgency:       urgency,
+		PriorID:       args.Predecessor,
+		ParentBeadID:  args.Parent,
+		CreatedAt:     now,
 	}
 
 	if err := store.CreateDecisionPoint(ctx, dp); err != nil {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to create decision point: %v", err),
+		}
+	}
+
+	// Add parent-child dependency if parent specified.
+	if args.Parent != "" {
+		dep := &types.Dependency{
+			IssueID:     args.IssueID,
+			DependsOnID: args.Parent,
+			Type:        types.DepParentChild,
+			CreatedAt:   now,
+		}
+		if err := store.AddDependency(ctx, dep, actor); err != nil {
+			// Non-fatal: decision was created, dependency just failed.
+			fmt.Fprintf(os.Stderr, "warning: failed to add parent dependency: %v\n", err)
+		}
+	}
+
+	// Add blocks dependency if specified.
+	if args.Blocks != "" {
+		dep := &types.Dependency{
+			IssueID:     args.Blocks,
+			DependsOnID: args.IssueID,
+			Type:        types.DepBlocks,
+			CreatedAt:   now,
+		}
+		if err := store.AddDependency(ctx, dep, actor); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to add blocks dependency: %v\n", err)
 		}
 	}
 

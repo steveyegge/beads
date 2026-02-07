@@ -178,6 +178,10 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 			MaxIterations: maxIterations,
 			RequestedBy:   requestedBy,
 			Context:       decisionContext,
+			Parent:        parent,
+			Blocks:        blocks,
+			Predecessor:   predecessor,
+			Urgency:       urgency,
 		}
 
 		result, err := daemonClient.DecisionCreate(createArgs)
@@ -189,13 +193,6 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		decisionPoint = result.Decision
 		gateIssue = result.Issue
 		decisionID = decisionPoint.IssueID
-
-		// Note: Some advanced features like parent, blocks, predecessor
-		// may not be fully supported by the daemon RPC yet.
-		if parent != "" || blocks != "" || predecessor != "" {
-			fmt.Fprintf(os.Stderr, "Warning: --parent, --blocks, --predecessor flags require direct database access\n")
-			fmt.Fprintf(os.Stderr, "These options were not applied via daemon RPC\n")
-		}
 	} else if store != nil {
 		// Fallback to direct storage access (full feature support)
 		var err error

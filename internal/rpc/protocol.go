@@ -889,6 +889,10 @@ type DecisionCreateArgs struct {
 	MaxIterations int      `json:"max_iterations,omitempty"` // Max follow-up iterations (default 3)
 	RequestedBy   string   `json:"requested_by,omitempty"`   // Who requested this decision
 	Context       string   `json:"context,omitempty"`        // Background/analysis for the decision
+	Parent        string   `json:"parent,omitempty"`         // Parent issue (molecule) for parent-child dependency
+	Blocks        string   `json:"blocks,omitempty"`         // Issue ID this decision blocks
+	Predecessor   string   `json:"predecessor,omitempty"`    // Previous decision in chain
+	Urgency       string   `json:"urgency,omitempty"`        // Urgency level: high, medium, low
 }
 
 // DecisionGetArgs represents arguments for getting a decision point
