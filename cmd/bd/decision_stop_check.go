@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/rpc"
@@ -469,9 +471,21 @@ func createStopDecision(ctx context.Context, prompt string, options []types.Deci
 	return decisionID, nil
 }
 
-// pollStopDecision polls the decision point until it gets a response, timeout, or cancellation.
-// Returns (selectedOption, responseText, error).
+// pollStopDecision waits for a decision response using NATS event bus if available,
+// falling back to polling. Returns (selectedOption, responseText, error).
 func pollStopDecision(ctx context.Context, decisionID string, timeout, pollInterval time.Duration) (string, string, error) {
+	// Try event bus wake first — sub-second latency vs 2s polling.
+	selected, text, err := waitForDecisionViaEventBus(ctx, decisionID, timeout)
+	if err == nil {
+		return selected, text, nil
+	}
+	// NATS unavailable — fall back to polling.
+	fmt.Fprintf(os.Stderr, "NATS unavailable (%v), falling back to polling\n", err)
+	return pollStopDecisionLoop(ctx, decisionID, timeout, pollInterval)
+}
+
+// pollStopDecisionLoop is the polling fallback when NATS is unavailable.
+func pollStopDecisionLoop(ctx context.Context, decisionID string, timeout, pollInterval time.Duration) (string, string, error) {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -496,6 +510,117 @@ func pollStopDecision(ctx context.Context, decisionID string, timeout, pollInter
 		case <-ctx.Done():
 			return "", "", nil // context canceled — allow stop
 		}
+	}
+}
+
+// waitForDecisionViaEventBus subscribes to NATS JetStream for DecisionResponded
+// events and waits for the specific decision ID. Returns an error if NATS is
+// unavailable (caller should fall back to polling).
+func waitForDecisionViaEventBus(ctx context.Context, decisionID string, timeout time.Duration) (string, string, error) {
+	// Discover NATS port from daemon via BusStatus RPC.
+	if daemonClient == nil {
+		return "", "", fmt.Errorf("no daemon client")
+	}
+
+	resp, err := daemonClient.Execute(rpc.OpBusStatus, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("bus status RPC: %w", err)
+	}
+	if !resp.Success {
+		return "", "", fmt.Errorf("bus status error: %s", resp.Error)
+	}
+
+	var status rpc.BusStatusResult
+	if err := json.Unmarshal(resp.Data, &status); err != nil {
+		return "", "", fmt.Errorf("parse bus status: %w", err)
+	}
+	if !status.NATSEnabled || status.NATSPort == 0 {
+		return "", "", fmt.Errorf("NATS not enabled")
+	}
+
+	// Connect to NATS.
+	connectURL := fmt.Sprintf("nats://127.0.0.1:%d", status.NATSPort)
+	connectOpts := []nats.Option{
+		nats.Name("bd-stop-check"),
+		nats.Timeout(5 * time.Second),
+	}
+	if token := os.Getenv("BD_DAEMON_TOKEN"); token != "" {
+		connectOpts = append(connectOpts, nats.Token(token))
+	}
+
+	nc, err := nats.Connect(connectURL, connectOpts...)
+	if err != nil {
+		return "", "", fmt.Errorf("NATS connect: %w", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		return "", "", fmt.Errorf("JetStream context: %w", err)
+	}
+
+	// Subscribe to DecisionResponded events.
+	subject := eventbus.SubjectForEvent(eventbus.EventDecisionResponded)
+	sub, err := js.SubscribeSync(subject, nats.DeliverNew())
+	if err != nil {
+		return "", "", fmt.Errorf("subscribe %s: %w", subject, err)
+	}
+	defer sub.Unsubscribe()
+
+	fmt.Fprintf(os.Stderr, "Listening on NATS %s for decision %s\n", subject, decisionID)
+
+	// Check if already responded (race: response arrived before we subscribed).
+	_, selected, text, done, err := checkDecisionResponse(ctx, decisionID)
+	if err == nil && done {
+		return selected, text, nil
+	}
+
+	// Wait for matching event.
+	deadline := time.Now().Add(timeout)
+	for {
+		timeLeft := time.Until(deadline)
+		if timeLeft <= 0 {
+			return "", "", nil // timeout
+		}
+
+		msg, err := sub.NextMsg(timeLeft)
+		if err != nil {
+			if err == nats.ErrTimeout {
+				return "", "", nil // timeout
+			}
+			// Transient error — check DB as fallback.
+			_, selected, text, done, dbErr := checkDecisionResponse(ctx, decisionID)
+			if dbErr == nil && done {
+				return selected, text, nil
+			}
+			return "", "", fmt.Errorf("NATS NextMsg: %w", err)
+		}
+
+		// Parse the event payload.
+		var payload eventbus.DecisionEventPayload
+		if err := json.Unmarshal(msg.Data, &payload); err != nil {
+			_ = msg.Ack()
+			continue
+		}
+
+		_ = msg.Ack()
+
+		// Check if this is the decision we're waiting for.
+		if payload.DecisionID == decisionID {
+			// Read the full response from DB to get all fields.
+			_, selected, text, done, err := checkDecisionResponse(ctx, decisionID)
+			if err == nil && done {
+				return selected, text, nil
+			}
+			// Event arrived but DB not yet updated — brief retry.
+			time.Sleep(100 * time.Millisecond)
+			_, selected, text, done, err = checkDecisionResponse(ctx, decisionID)
+			if err == nil && done {
+				return selected, text, nil
+			}
+			return payload.ChosenLabel, payload.Rationale, nil
+		}
+		// Not our decision — continue waiting.
 	}
 }
 

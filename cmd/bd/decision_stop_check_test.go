@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -509,6 +510,61 @@ func TestStopDecisionConfig_JSONRoundTrip(t *testing.T) {
 	}
 	if cfg.AgentCloseOldPrompt != "Close old ones" {
 		t.Fatalf("expected AgentCloseOldPrompt, got %q", cfg.AgentCloseOldPrompt)
+	}
+}
+
+func TestWaitForDecisionViaEventBus_NoDaemon(t *testing.T) {
+	// When daemonClient is nil, should return error (triggering polling fallback).
+	oldDaemon := daemonClient
+	daemonClient = nil
+	defer func() { daemonClient = oldDaemon }()
+
+	_, _, err := waitForDecisionViaEventBus(context.Background(), "test-123", 1*time.Second)
+	if err == nil {
+		t.Fatal("expected error when daemonClient is nil")
+	}
+	if !strings.Contains(err.Error(), "no daemon client") {
+		t.Fatalf("expected 'no daemon client' error, got: %v", err)
+	}
+}
+
+func TestPollStopDecisionLoop_FindsResponse(t *testing.T) {
+	// Verify that pollStopDecisionLoop picks up a responded decision.
+	s, cleanup := setupStopCheckTestDB(t)
+	defer cleanup()
+
+	oldStore := store
+	store = s
+	oldDaemon := daemonClient
+	daemonClient = nil
+	defer func() { store = oldStore; daemonClient = oldDaemon }()
+
+	ctx := context.Background()
+	createTestDecision(t, s, "test-poll1", "What next?", "agent-1", "some context")
+
+	// Respond to the decision
+	dp, err := s.GetDecisionPoint(ctx, "test-poll1")
+	if err != nil {
+		t.Fatalf("get decision: %v", err)
+	}
+	now := time.Now()
+	dp.RespondedAt = &now
+	dp.SelectedOption = "approve"
+	dp.ResponseText = "looks good"
+	if err := s.UpdateDecisionPoint(ctx, dp); err != nil {
+		t.Fatalf("update decision: %v", err)
+	}
+
+	// Poll should find it immediately
+	selected, text, err := pollStopDecisionLoop(ctx, "test-poll1", 5*time.Second, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if selected != "approve" {
+		t.Fatalf("expected selected='approve', got %q", selected)
+	}
+	if text != "looks good" {
+		t.Fatalf("expected text='looks good', got %q", text)
 	}
 }
 
