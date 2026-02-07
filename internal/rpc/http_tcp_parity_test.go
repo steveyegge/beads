@@ -48,8 +48,6 @@ func TestHTTPTCPParity(t *testing.T) {
 		t.Fatal("timeout waiting for server to start")
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
 	// Get addresses
 	tcpListener := server.TCPListener()
 	if tcpListener == nil {
@@ -278,8 +276,6 @@ func TestHTTPAndTCPConcurrent(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for server to start")
 	}
-
-	time.Sleep(100 * time.Millisecond)
 
 	tcpAddr := server.TCPListener().Addr().String()
 	httpAddr := server.HTTPServer().Addr()

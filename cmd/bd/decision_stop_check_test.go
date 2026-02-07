@@ -54,7 +54,7 @@ func createTestDecisionAt(t *testing.T, s *sqlite.SQLiteStorage, id, prompt, req
 	issue := &types.Issue{
 		ID:        id,
 		Title:     prompt,
-		IssueType: "gate",
+		IssueType: "task",
 		Status:    types.StatusOpen,
 		Priority:  2,
 		AwaitType: "decision",
@@ -94,7 +94,7 @@ func createTestDecision(t *testing.T, s *sqlite.SQLiteStorage, id, prompt, reque
 	issue := &types.Issue{
 		ID:        id,
 		Title:     prompt,
-		IssueType: "gate",
+		IssueType: "task",
 		Status:    types.StatusOpen,
 		Priority:  2,
 		AwaitType: "decision",

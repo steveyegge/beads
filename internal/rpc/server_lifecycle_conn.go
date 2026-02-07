@@ -120,6 +120,9 @@ func (s *Server) Start(_ context.Context) error {
 				fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
 			}
 		}()
+
+		// Wait for HTTP listener to be bound before signaling ready
+		<-httpServer.WaitReady()
 	}
 
 	// Store listener under lock

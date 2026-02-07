@@ -22,6 +22,7 @@ type HTTPServer struct {
 	addr       string
 	token      string // Bearer token for authentication
 	mu         sync.RWMutex
+	readyChan  chan struct{} // closed when listener is bound
 }
 
 // NewHTTPServer creates a new HTTP wrapper around an RPC server
@@ -30,6 +31,7 @@ func NewHTTPServer(rpcServer *Server, addr string, token string) *HTTPServer {
 		rpcServer: rpcServer,
 		addr:      addr,
 		token:     token,
+		readyChan: make(chan struct{}),
 	}
 }
 
@@ -53,11 +55,15 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	var err error
-	h.listener, err = net.Listen("tcp", h.addr)
+	listener, err := net.Listen("tcp", h.addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", h.addr, err)
 	}
+
+	h.mu.Lock()
+	h.listener = listener
+	h.mu.Unlock()
+	close(h.readyChan)
 
 	go func() {
 		<-ctx.Done()
@@ -67,6 +73,11 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	}()
 
 	return h.httpServer.Serve(h.listener)
+}
+
+// WaitReady returns a channel that is closed when the HTTP listener is bound.
+func (h *HTTPServer) WaitReady() <-chan struct{} {
+	return h.readyChan
 }
 
 // Addr returns the address the HTTP server is listening on

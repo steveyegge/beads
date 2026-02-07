@@ -204,8 +204,8 @@ func TestRunBusEmit_MissingHookFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing --hook flag, got nil")
 	}
-	if !strings.Contains(err.Error(), "--hook flag is required") {
-		t.Errorf("error = %q, want it to contain %q", err.Error(), "--hook flag is required")
+	if !strings.Contains(err.Error(), "either --hook or --event is required") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "either --hook or --event is required")
 	}
 }
 

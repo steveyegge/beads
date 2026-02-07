@@ -48,9 +48,6 @@ func TestHTTPServerHealth(t *testing.T) {
 		t.Fatal("timeout waiting for server to start")
 	}
 
-	// Wait a bit for HTTP server to be ready
-	time.Sleep(100 * time.Millisecond)
-
 	httpServer := server.HTTPServer()
 	if httpServer == nil {
 		t.Fatal("HTTP server should be active")
@@ -113,8 +110,6 @@ func TestHTTPServerReadiness(t *testing.T) {
 		t.Fatal("timeout waiting for server to start")
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
 	httpServer := server.HTTPServer()
 	if httpServer == nil {
 		t.Fatal("HTTP server should be active")
@@ -175,8 +170,6 @@ func TestHTTPServerRPCEndpoint(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for server to start")
 	}
-
-	time.Sleep(100 * time.Millisecond)
 
 	httpServer := server.HTTPServer()
 	if httpServer == nil {
@@ -249,8 +242,6 @@ func TestHTTPServerAuth(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for server to start")
 	}
-
-	time.Sleep(100 * time.Millisecond)
 
 	httpServer := server.HTTPServer()
 	if httpServer == nil {
