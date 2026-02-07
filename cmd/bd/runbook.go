@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/routing"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/runbook"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -530,38 +531,65 @@ func runRunbookMaterialize(cmd *cobra.Command, args []string) {
 }
 
 func materializeAll(outDir string) {
-	s := getStore()
-	if s == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		os.Exit(1)
-	}
+	// Collect runbooks either from daemon or direct store access
+	var runbooks []*runbook.RunbookContent
 
-	ctx := context.Background()
-	filter := types.IssueFilter{
-		IssueType: func() *types.IssueType { t := types.TypeRunbook; return &t }(),
-	}
-	issues, err := s.SearchIssues(ctx, "", filter)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error querying runbooks: %v\n", err)
-		os.Exit(1)
+	if daemonClient != nil {
+		result, err := daemonClient.RunbookList(&rpc.RunbookListArgs{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error querying runbooks: %v\n", err)
+			os.Exit(1)
+		}
+		for _, summary := range result.Runbooks {
+			// Load full content for each runbook
+			rbResult, err := daemonClient.RunbookGet(&rpc.RunbookGetArgs{Name: summary.Name})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  %s %s: %v\n", ui.RenderFail("✗"), summary.Name, err)
+				continue
+			}
+			var rb runbook.RunbookContent
+			if err := json.Unmarshal(rbResult.Content, &rb); err != nil {
+				fmt.Fprintf(os.Stderr, "  %s %s: %v\n", ui.RenderFail("✗"), summary.Name, err)
+				continue
+			}
+			runbooks = append(runbooks, &rb)
+		}
+	} else {
+		s := getStore()
+		if s == nil {
+			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+			os.Exit(1)
+		}
+
+		ctx := context.Background()
+		filter := types.IssueFilter{
+			IssueType: func() *types.IssueType { t := types.TypeRunbook; return &t }(),
+		}
+		issues, err := s.SearchIssues(ctx, "", filter)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error querying runbooks: %v\n", err)
+			os.Exit(1)
+		}
+
+		for _, issue := range issues {
+			if issue.Status == types.StatusClosed {
+				continue
+			}
+			rb, err := runbook.IssueToRunbook(issue)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  %s %s: %v\n", ui.RenderFail("✗"), issue.ID, err)
+				continue
+			}
+			runbooks = append(runbooks, rb)
+		}
 	}
 
 	written := 0
 	skipped := 0
 	errors := 0
 
-	for _, issue := range issues {
-		if issue.Status == types.StatusClosed {
-			continue
-		}
-		rb, err := runbook.IssueToRunbook(issue)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  %s %s: %v\n", ui.RenderFail("✗"), issue.ID, err)
-			errors++
-			continue
-		}
-
-		err = materializeOne(rb, outDir)
+	for _, rb := range runbooks {
+		err := materializeOne(rb, outDir)
 		if err != nil {
 			if strings.Contains(err.Error(), "already exists") {
 				skipped++
@@ -617,6 +645,26 @@ func materializeOne(rb *runbook.RunbookContent, outDir string) error {
 
 // listRunbooksFromDB queries the database for runbook-type issues.
 func listRunbooksFromDB() []RunbookListEntry {
+	// Use daemon if available
+	if daemonClient != nil {
+		result, err := daemonClient.RunbookList(&rpc.RunbookListArgs{})
+		if err != nil {
+			return nil
+		}
+		var entries []RunbookListEntry
+		for _, rb := range result.Runbooks {
+			entries = append(entries, RunbookListEntry{
+				Name:     rb.Name,
+				Format:   rb.Format,
+				Source:   rb.Source,
+				Jobs:     rb.Jobs,
+				Commands: rb.Commands,
+				Workers:  rb.Workers,
+			})
+		}
+		return entries
+	}
+
 	s := getStore()
 	if s == nil {
 		return nil
@@ -657,6 +705,25 @@ func listRunbooksFromDB() []RunbookListEntry {
 
 // loadRunbookFromDB loads a runbook from the database by ID or name.
 func loadRunbookFromDB(nameOrID string) *runbook.RunbookContent {
+	// Use daemon if available
+	if daemonClient != nil {
+		// Try by ID first, then by name
+		result, err := daemonClient.RunbookGet(&rpc.RunbookGetArgs{ID: nameOrID})
+		if err != nil {
+			// Try by name
+			result, err = daemonClient.RunbookGet(&rpc.RunbookGetArgs{Name: nameOrID})
+		}
+		if err != nil || result == nil {
+			return nil
+		}
+		var rb runbook.RunbookContent
+		if err := json.Unmarshal(result.Content, &rb); err != nil {
+			return nil
+		}
+		rb.Source = "bead:" + result.ID
+		return &rb
+	}
+
 	s := getStore()
 	if s == nil {
 		return nil
@@ -808,6 +875,25 @@ type runbookSaveResult struct {
 
 // saveRunbookToDB saves a runbook to the database.
 func saveRunbookToDB(rb *runbook.RunbookContent) (*runbookSaveResult, error) {
+	// Use daemon if available
+	if daemonClient != nil {
+		contentBytes, err := json.Marshal(rb)
+		if err != nil {
+			return nil, fmt.Errorf("serializing runbook: %w", err)
+		}
+		result, err := daemonClient.RunbookSave(&rpc.RunbookSaveArgs{
+			Content: json.RawMessage(contentBytes),
+			Force:   rbCreateForce || rbImportForce,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &runbookSaveResult{
+			id:      result.ID,
+			created: result.Created,
+		}, nil
+	}
+
 	s := getStore()
 	if s == nil {
 		return nil, fmt.Errorf("no database connection (set BD_DAEMON_HOST or run in a beads directory)")

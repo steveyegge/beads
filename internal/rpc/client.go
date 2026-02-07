@@ -1288,6 +1288,53 @@ func (c *Client) FormulaDelete(args *FormulaDeleteArgs) (*FormulaDeleteResult, e
 	return &result, nil
 }
 
+// Runbook CRUD operations
+
+// RunbookList lists available runbooks via the daemon.
+func (c *Client) RunbookList(args *RunbookListArgs) (*RunbookListResult, error) {
+	resp, err := c.Execute(OpRunbookList, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result RunbookListResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal runbook list response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// RunbookGet retrieves a runbook by ID or name via the daemon.
+func (c *Client) RunbookGet(args *RunbookGetArgs) (*RunbookGetResult, error) {
+	resp, err := c.Execute(OpRunbookGet, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result RunbookGetResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal runbook get response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// RunbookSave creates or updates a runbook via the daemon.
+func (c *Client) RunbookSave(args *RunbookSaveArgs) (*RunbookSaveResult, error) {
+	resp, err := c.Execute(OpRunbookSave, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result RunbookSaveResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal runbook save response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // Agent pod operations (gt-el7sxq.7)
 
 // AgentPodRegister sets pod fields on an agent bead.

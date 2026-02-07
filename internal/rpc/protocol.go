@@ -129,6 +129,11 @@ const (
 	OpFormulaSave   = "formula_save"
 	OpFormulaDelete = "formula_delete"
 
+	// Runbook CRUD operations
+	OpRunbookList = "runbook_list"
+	OpRunbookGet  = "runbook_get"
+	OpRunbookSave = "runbook_save"
+
 	// Event bus operations (gt-wfaq5n)
 	OpBusEmit     = "bus_emit"
 	OpBusStatus   = "bus_status"
@@ -1586,6 +1591,54 @@ type FormulaDeleteArgs struct {
 type FormulaDeleteResult struct {
 	ID      string `json:"id"`              // Issue ID that was deleted
 	Name    string `json:"name"`            // Formula name
+}
+
+// RunbookListArgs represents arguments for the runbook_list operation
+type RunbookListArgs struct {
+	// No filters needed for now
+}
+
+// RunbookSummary is a compact representation of a runbook for list results
+type RunbookSummary struct {
+	Name     string `json:"name"`               // Runbook name
+	Format   string `json:"format"`             // File format (hcl, toml, json)
+	Source   string `json:"source,omitempty"`   // Where loaded from
+	Jobs     int    `json:"jobs"`               // Number of jobs
+	Commands int    `json:"commands"`           // Number of commands
+	Workers  int    `json:"workers"`            // Number of workers
+}
+
+// RunbookListResult represents the result of a runbook_list operation
+type RunbookListResult struct {
+	Runbooks []RunbookSummary `json:"runbooks"`
+	Count    int              `json:"count"`
+}
+
+// RunbookGetArgs represents arguments for the runbook_get operation
+type RunbookGetArgs struct {
+	ID   string `json:"id,omitempty"`   // Issue ID (exact match)
+	Name string `json:"name,omitempty"` // Runbook name (searches by title/slug)
+}
+
+// RunbookGetResult represents the result of a runbook_get operation
+type RunbookGetResult struct {
+	ID      string          `json:"id"`              // Issue ID
+	Name    string          `json:"name"`            // Runbook name
+	Content json.RawMessage `json:"content"`         // Full runbook metadata JSON
+}
+
+// RunbookSaveArgs represents arguments for the runbook_save operation
+type RunbookSaveArgs struct {
+	Content  json.RawMessage `json:"content"`             // Full RunbookContent JSON
+	IDPrefix string          `json:"id_prefix,omitempty"` // Override prefix for runbook ID
+	Force    bool            `json:"force,omitempty"`     // Overwrite existing runbook
+}
+
+// RunbookSaveResult represents the result of a runbook_save operation
+type RunbookSaveResult struct {
+	ID      string `json:"id"`      // Issue ID assigned to runbook
+	Name    string `json:"name"`    // Runbook name
+	Created bool   `json:"created"` // True if new, false if updated
 }
 
 // BusEmitArgs represents arguments for the bus_emit operation

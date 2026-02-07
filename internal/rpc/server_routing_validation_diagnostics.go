@@ -392,6 +392,13 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleFormulaSave(req)
 	case OpFormulaDelete:
 		resp = s.handleFormulaDelete(req)
+	// Runbook CRUD operations
+	case OpRunbookList:
+		resp = s.handleRunbookList(req)
+	case OpRunbookGet:
+		resp = s.handleRunbookGet(req)
+	case OpRunbookSave:
+		resp = s.handleRunbookSave(req)
 	// Event bus operations (bd-66fp)
 	case OpBusEmit:
 		resp = s.handleBusEmit(req)
