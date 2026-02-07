@@ -384,8 +384,22 @@ func pollStopDecision(ctx context.Context, decisionID string, timeout, pollInter
 
 // checkDecisionResponse checks if a decision point has been responded to.
 // Returns (decisionPoint, selectedOption, responseText, done, error).
+// Important: checks decision point response BEFORE issue status, because
+// bd decision respond both records the response AND closes the gate issue.
 func checkDecisionResponse(ctx context.Context, decisionID string) (*types.DecisionPoint, string, string, bool, error) {
 	if daemonClient != nil {
+		// Check decision point response first (via store fallback).
+		if store != nil {
+			dp, err := store.GetDecisionPoint(ctx, decisionID)
+			if err != nil {
+				return nil, "", "", false, err
+			}
+			if dp != nil && dp.RespondedAt != nil {
+				return dp, dp.SelectedOption, dp.ResponseText, true, nil
+			}
+		}
+
+		// Then check if issue is closed/canceled (without a response = canceled).
 		showArgs := &rpc.ShowArgs{ID: decisionID}
 		resp, err := daemonClient.Show(showArgs)
 		if err != nil {
@@ -397,21 +411,8 @@ func checkDecisionResponse(ctx context.Context, decisionID string) (*types.Decis
 			return nil, "", "", false, err
 		}
 
-		// Check if closed/canceled
 		if issue.Status == types.StatusClosed {
-			return nil, "", "", true, nil
-		}
-
-		// For daemon, we need to check the decision point status.
-		// Since daemon may not expose GetDecisionPoint directly, fall back to store.
-		if store != nil {
-			dp, err := store.GetDecisionPoint(ctx, decisionID)
-			if err != nil {
-				return nil, "", "", false, err
-			}
-			if dp != nil && dp.RespondedAt != nil {
-				return dp, dp.SelectedOption, dp.ResponseText, true, nil
-			}
+			return nil, "", "", true, nil // closed without response = canceled
 		}
 
 		return nil, "", "", false, nil
@@ -421,22 +422,22 @@ func checkDecisionResponse(ctx context.Context, decisionID string) (*types.Decis
 		return nil, "", "", false, fmt.Errorf("no database connection")
 	}
 
-	// Check issue status
-	issue, err := store.GetIssue(ctx, decisionID)
-	if err != nil {
-		return nil, "", "", false, err
-	}
-	if issue != nil && issue.Status == types.StatusClosed {
-		return nil, "", "", true, nil
-	}
-
-	// Check decision point
+	// Check decision point response first.
 	dp, err := store.GetDecisionPoint(ctx, decisionID)
 	if err != nil {
 		return nil, "", "", false, err
 	}
 	if dp != nil && dp.RespondedAt != nil {
 		return dp, dp.SelectedOption, dp.ResponseText, true, nil
+	}
+
+	// Then check if issue was closed without a response (canceled).
+	issue, err := store.GetIssue(ctx, decisionID)
+	if err != nil {
+		return nil, "", "", false, err
+	}
+	if issue != nil && issue.Status == types.StatusClosed {
+		return nil, "", "", true, nil
 	}
 
 	return nil, "", "", false, nil
