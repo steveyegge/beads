@@ -25,9 +25,9 @@ type messageInfo struct {
 
 // Bot is a Slack bot for managing beads decisions.
 type Bot struct {
-	client     *slack.Client
+	client     SlackAPI
 	socketMode *socketmode.Client
-	decisions  *DecisionClient
+	decisions  DecisionProvider
 	channelID  string  // Default channel to post decision notifications
 	router     *Router // Channel router for per-agent routing
 	debug      bool
@@ -145,6 +145,19 @@ func NewBot(cfg BotConfig, decisions *DecisionClient) (*Bot, error) {
 		preferenceManager: NewPreferenceManager(beadsDir),
 	}
 	return bot, nil
+}
+
+// newBotForTest creates a Bot with injectable mock dependencies for testing.
+// No Slack connection or token validation is performed.
+func newBotForTest(slackAPI SlackAPI, decisions DecisionProvider, channelID string) *Bot {
+	return &Bot{
+		client:            slackAPI,
+		decisions:         decisions,
+		channelID:         channelID,
+		channelCache:      make(map[string]string),
+		decisionMessages:  make(map[string]messageInfo),
+		preferenceManager: NewPreferenceManager(""),
+	}
 }
 
 // Run starts the bot event loop. Blocks until context is canceled.
