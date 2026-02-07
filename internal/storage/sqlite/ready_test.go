@@ -1042,7 +1042,7 @@ func TestGetReadyWorkExternalDeps(t *testing.T) {
 	}
 
 	// Re-verify: manually check the external dep
-	status := CheckExternalDep(ctx, "external:external-test:test-capability")
+	status := checkExternalDep(ctx, "external:external-test:test-capability")
 	t.Logf("External dep check: satisfied=%v, reason=%s", status.Satisfied, status.Reason)
 
 	// Now the external dep should be satisfied
@@ -1254,7 +1254,7 @@ func TestGetBlockedIssuesFiltersExternalDeps(t *testing.T) {
 	externalStore.Close()
 
 	// Verify external dep is now satisfied
-	status := CheckExternalDep(ctx, "external:external-test:test-capability")
+	status := checkExternalDep(ctx, "external:external-test:test-capability")
 	if !status.Satisfied {
 		t.Fatalf("Expected external dep to be satisfied, got: %s", status.Reason)
 	}
@@ -1401,7 +1401,7 @@ func TestGetBlockedIssuesPartialExternalDeps(t *testing.T) {
 	}
 }
 
-// TestCheckExternalDepNoBeadsDirectory verifies that CheckExternalDep
+// TestcheckExternalDepNoBeadsDirectory verifies that checkExternalDep
 // correctly reports "no beads database" when the target project exists
 // but has no .beads directory (bd-mv6h).
 func TestCheckExternalDepNoBeadsDirectory(t *testing.T) {
@@ -1434,7 +1434,7 @@ func TestCheckExternalDepNoBeadsDirectory(t *testing.T) {
 	})
 
 	// Check the external dep - should report "no beads database"
-	status := CheckExternalDep(ctx, "external:no-beads-project:some-capability")
+	status := checkExternalDep(ctx, "external:no-beads-project:some-capability")
 
 	if status.Satisfied {
 		t.Error("Expected external dep to be unsatisfied when target has no .beads directory")
@@ -1444,7 +1444,7 @@ func TestCheckExternalDepNoBeadsDirectory(t *testing.T) {
 	}
 }
 
-// TestCheckExternalDepInvalidFormats verifies that CheckExternalDep
+// TestcheckExternalDepInvalidFormats verifies that checkExternalDep
 // correctly handles various invalid external ref formats (bd-mv6h).
 func TestCheckExternalDepInvalidFormats(t *testing.T) {
 	ctx := context.Background()
@@ -1502,7 +1502,7 @@ func TestCheckExternalDepInvalidFormats(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status := CheckExternalDep(ctx, tt.ref)
+			status := checkExternalDep(ctx, tt.ref)
 			if status.Satisfied {
 				t.Errorf("Expected unsatisfied for %q", tt.ref)
 			}
@@ -1513,7 +1513,7 @@ func TestCheckExternalDepInvalidFormats(t *testing.T) {
 	}
 }
 
-// TestCheckExternalDepsBatching verifies that CheckExternalDeps correctly
+// TestcheckExternalDepsBatching verifies that checkExternalDeps correctly
 // batches multiple refs to the same project and deduplicates refs (bd-687v).
 func TestCheckExternalDepsBatching(t *testing.T) {
 	ctx := context.Background()
@@ -1613,7 +1613,7 @@ func TestCheckExternalDepsBatching(t *testing.T) {
 		"invalid-ref",                        // invalid format
 	}
 
-	statuses := CheckExternalDeps(ctx, refs)
+	statuses := checkExternalDeps(ctx, refs)
 
 	// Verify we got results for all unique refs (5 unique, since cap1 appears twice)
 	expectedUnique := 5
@@ -1989,7 +1989,7 @@ func TestGetReadyWorkExcludeIDPatternsConfig(t *testing.T) {
 	}
 
 	// Configure custom patterns to also exclude -role-
-	if err := env.Store.SetConfig(ctx, ExcludeIDPatternsConfigKey, "-mol-,-wisp-,-role-"); err != nil {
+	if err := env.Store.SetConfig(ctx, excludeIDPatternsConfigKey, "-mol-,-wisp-,-role-"); err != nil {
 		t.Fatalf("SetConfig failed: %v", err)
 	}
 

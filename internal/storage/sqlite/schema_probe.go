@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// ErrSchemaIncompatible is returned when the database schema is incompatible with the current version
-var ErrSchemaIncompatible = fmt.Errorf("database schema is incompatible")
+// errSchemaIncompatible is returned when the database schema is incompatible with the current version
+var errSchemaIncompatible = fmt.Errorf("database schema is incompatible")
 
 // expectedSchema defines all expected tables and their required columns
 // This is used to verify migrations completed successfully
@@ -36,8 +36,8 @@ var expectedSchema = map[string][]string{
 	"repo_mtimes":          {"repo_path", "jsonl_path", "mtime_ns", "last_checked"},
 }
 
-// SchemaProbeResult contains the results of a schema compatibility check
-type SchemaProbeResult struct {
+// schemaProbeResult contains the results of a schema compatibility check
+type schemaProbeResult struct {
 	Compatible     bool
 	MissingTables  []string
 	MissingColumns map[string][]string // table -> missing columns
@@ -45,9 +45,9 @@ type SchemaProbeResult struct {
 }
 
 // probeSchema verifies all expected tables and columns exist
-// Returns SchemaProbeResult with details about any missing schema elements
-func probeSchema(db *sql.DB) SchemaProbeResult {
-	result := SchemaProbeResult{
+// Returns schemaProbeResult with details about any missing schema elements
+func probeSchema(db *sql.DB) schemaProbeResult {
+	result := schemaProbeResult{
 		Compatible:     true,
 		MissingTables:  []string{},
 		MissingColumns: make(map[string][]string),
@@ -117,7 +117,7 @@ func verifySchemaCompatibility(db *sql.DB) error {
 	result := probeSchema(db)
 
 	if !result.Compatible {
-		return fmt.Errorf("%w: %s", ErrSchemaIncompatible, result.ErrorMessage)
+		return fmt.Errorf("%w: %s", errSchemaIncompatible, result.ErrorMessage)
 	}
 
 	return nil

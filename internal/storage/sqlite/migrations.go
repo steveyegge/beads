@@ -62,18 +62,18 @@ var migrationsList = []Migration{
 	{"spec_id_column", migrations.MigrateSpecIDColumn},
 }
 
-// MigrationInfo contains metadata about a migration for inspection
-type MigrationInfo struct {
+// migrationInfo contains metadata about a migration for inspection
+type migrationInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
 // ListMigrations returns list of all registered migrations with descriptions
 // Note: This returns ALL registered migrations, not just pending ones (all are idempotent)
-func ListMigrations() []MigrationInfo {
-	result := make([]MigrationInfo, len(migrationsList))
+func ListMigrations() []migrationInfo {
+	result := make([]migrationInfo, len(migrationsList))
 	for i, m := range migrationsList {
-		result[i] = MigrationInfo{
+		result[i] = migrationInfo{
 			Name:        m.Name,
 			Description: getMigrationDescription(m.Name),
 		}
@@ -168,7 +168,7 @@ func RunMigrations(db *sql.DB) error {
 	// Pre-migration cleanup: remove orphaned refs that would fail invariant checks.
 	// This prevents the chicken-and-egg problem where the database can't open
 	// due to orphans left behind by tombstone deletion (see bd-eko4).
-	if _, _, err := CleanOrphanedRefs(db); err != nil {
+	if _, _, err := cleanOrphanedRefs(db); err != nil {
 		return fmt.Errorf("pre-migration orphan cleanup failed: %w", err)
 	}
 

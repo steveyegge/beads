@@ -69,7 +69,7 @@ func TestOrphanHandling_Resurrect(t *testing.T) {
 		ClosedAt:  &now,
 	}
 
-	// Import both together - resurrect logic is in EnsureIDs
+	// Import both together - resurrect logic is in ensureIDs
 	err := store.CreateIssuesWithOptions(ctx, []*types.Issue{parent, child}, "test", OrphanResurrect)
 	if err != nil {
 		t.Fatalf("Resurrect mode should succeed: %v", err)

@@ -297,7 +297,7 @@ func (s *SQLiteStorage) filterByExternalDeps(ctx context.Context, issues []*type
 	for ref := range uniqueRefs {
 		refList = append(refList, ref)
 	}
-	statuses := CheckExternalDeps(ctx, refList)
+	statuses := checkExternalDeps(ctx, refList)
 
 	// Build set of blocked issue IDs using batch results
 	blockedIssues := make(map[string]bool)
@@ -727,7 +727,7 @@ func filterBlockedByExternalDeps(ctx context.Context, blocked []*types.BlockedIs
 	for ref := range externalRefs {
 		refList = append(refList, ref)
 	}
-	statuses := CheckExternalDeps(ctx, refList)
+	statuses := checkExternalDeps(ctx, refList)
 
 	// Build set of satisfied refs
 	satisfiedRefs := make(map[string]bool)
@@ -887,20 +887,20 @@ func buildOrderByClause(policy types.SortPolicy) string {
 	}
 }
 
-// ExcludeIDPatternsConfigKey is the config key for ID exclusion patterns in GetReadyWork
-const ExcludeIDPatternsConfigKey = "ready.exclude_id_patterns"
+// excludeIDPatternsConfigKey is the config key for ID exclusion patterns in GetReadyWork
+const excludeIDPatternsConfigKey = "ready.exclude_id_patterns"
 
-// DefaultExcludeIDPatterns are the default patterns to exclude from GetReadyWork
+// defaultExcludeIDPatterns are the default patterns to exclude from GetReadyWork
 // These exclude molecule steps (-mol-) and wisps (-wisp-) which are internal workflow items
-var DefaultExcludeIDPatterns = []string{"-mol-", "-wisp-"}
+var defaultExcludeIDPatterns = []string{"-mol-", "-wisp-"}
 
 // getExcludeIDPatterns returns the ID patterns to exclude from GetReadyWork.
-// Reads from ready.exclude_id_patterns config, defaults to DefaultExcludeIDPatterns.
+// Reads from ready.exclude_id_patterns config, defaults to defaultExcludeIDPatterns.
 // Config format: comma-separated patterns, e.g., "-mol-,-wisp-"
 func (s *SQLiteStorage) getExcludeIDPatterns(ctx context.Context) []string {
-	value, err := s.GetConfig(ctx, ExcludeIDPatternsConfigKey)
+	value, err := s.GetConfig(ctx, excludeIDPatternsConfigKey)
 	if err != nil || value == "" {
-		return DefaultExcludeIDPatterns
+		return defaultExcludeIDPatterns
 	}
 
 	// Parse comma-separated patterns
@@ -914,7 +914,7 @@ func (s *SQLiteStorage) getExcludeIDPatterns(ctx context.Context) []string {
 	}
 
 	if len(patterns) == 0 {
-		return DefaultExcludeIDPatterns
+		return defaultExcludeIDPatterns
 	}
 	return patterns
 }

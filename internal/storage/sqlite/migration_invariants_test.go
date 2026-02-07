@@ -311,9 +311,9 @@ func TestCleanOrphanedRefs(t *testing.T) {
 	}
 
 	// Run cleanup
-	deps, labels, err := CleanOrphanedRefs(db)
+	deps, labels, err := cleanOrphanedRefs(db)
 	if err != nil {
-		t.Fatalf("CleanOrphanedRefs failed: %v", err)
+		t.Fatalf("cleanOrphanedRefs failed: %v", err)
 	}
 
 	// Should have cleaned 2 orphaned deps (orphan-1 and orphan-2, not external)

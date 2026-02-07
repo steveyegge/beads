@@ -34,7 +34,7 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 	}
 
 	// External refs (external:<project>:<capability>) don't need target validation
-	// They are resolved lazily at query time by CheckExternalDep
+	// They are resolved lazily at query time by checkExternalDep
 	isExternalRef := strings.HasPrefix(dep.DependsOnID, "external:")
 
 	var dependsOnExists *types.Issue
@@ -743,7 +743,7 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 					}
 
 					// Check resolution status
-					status := CheckExternalDep(ctx, ref)
+					status := checkExternalDep(ctx, ref)
 					var nodeStatus types.Status
 					var title string
 					if status.Satisfied {

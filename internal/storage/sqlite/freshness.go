@@ -8,13 +8,13 @@ import (
 	"time"
 )
 
-// FreshnessChecker monitors the database file for external modifications.
+// freshnessChecker monitors the database file for external modifications.
 // It detects when the database file has been replaced (e.g., by git merge)
 // and triggers a reconnection to ensure fresh data is visible.
 //
 // This addresses the issue where the daemon's long-lived SQLite connection
 // becomes stale after external file replacement (not just in-place writes).
-type FreshnessChecker struct {
+type freshnessChecker struct {
 	dbPath       string
 	lastInode    uint64    // File inode (changes when file is replaced)
 	lastMtime    time.Time // File modification time
@@ -24,10 +24,10 @@ type FreshnessChecker struct {
 	onStale      func() error // Callback to reconnect when staleness detected
 }
 
-// NewFreshnessChecker creates a new freshness checker for the given database path.
+// newFreshnessChecker creates a new freshness checker for the given database path.
 // The onStale callback is called when file replacement is detected.
-func NewFreshnessChecker(dbPath string, onStale func() error) *FreshnessChecker {
-	fc := &FreshnessChecker{
+func newFreshnessChecker(dbPath string, onStale func() error) *freshnessChecker {
+	fc := &freshnessChecker{
 		dbPath:  dbPath,
 		enabled: true,
 		onStale: onStale,
@@ -40,7 +40,7 @@ func NewFreshnessChecker(dbPath string, onStale func() error) *FreshnessChecker 
 }
 
 // captureFileState records the current file's inode, mtime, and size.
-func (fc *FreshnessChecker) captureFileState() {
+func (fc *freshnessChecker) captureFileState() {
 	info, err := os.Stat(fc.dbPath)
 	if err != nil {
 		return
@@ -56,7 +56,7 @@ func (fc *FreshnessChecker) captureFileState() {
 // Check examines the database file for changes and triggers reconnection if needed.
 // Returns true if the file was replaced and reconnection was triggered.
 // This method is safe for concurrent use.
-func (fc *FreshnessChecker) Check() bool {
+func (fc *freshnessChecker) Check() bool {
 	if !fc.enabled || fc.dbPath == "" || fc.dbPath == ":memory:" {
 		return false
 	}
@@ -82,12 +82,12 @@ func (fc *FreshnessChecker) Check() bool {
 	if currentInode != 0 && fc.lastInode != 0 && currentInode != fc.lastInode {
 		// Inode changed - file was definitely replaced
 		fileReplaced = true
-		debugPrintf("FreshnessChecker: inode changed %d -> %d\n", fc.lastInode, currentInode)
+		debugPrintf("freshnessChecker: inode changed %d -> %d\n", fc.lastInode, currentInode)
 	} else if !info.ModTime().Equal(fc.lastMtime) {
 		// Mtime changed - file was modified or replaced
 		// This catches cases where inode isn't available (Windows, some filesystems)
 		fileReplaced = true
-		debugPrintf("FreshnessChecker: mtime changed %v -> %v\n", fc.lastMtime, info.ModTime())
+		debugPrintf("freshnessChecker: mtime changed %v -> %v\n", fc.lastMtime, info.ModTime())
 	}
 
 	if fileReplaced {
@@ -103,7 +103,7 @@ func (fc *FreshnessChecker) Check() bool {
 
 		// Trigger reconnection outside the lock
 		if callback != nil {
-			debugPrintf("FreshnessChecker: triggering reconnection\n")
+			debugPrintf("freshnessChecker: triggering reconnection\n")
 			_ = callback()
 		}
 		return true
@@ -121,14 +121,14 @@ var debugPrintf = func(format string, args ...interface{}) {
 }
 
 // DebugState returns the current tracked state for testing/debugging.
-func (fc *FreshnessChecker) DebugState() (inode uint64, mtime time.Time, size int64) {
+func (fc *freshnessChecker) DebugState() (inode uint64, mtime time.Time, size int64) {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 	return fc.lastInode, fc.lastMtime, fc.lastSize
 }
 
 // Enable enables freshness checking.
-func (fc *FreshnessChecker) Enable() {
+func (fc *freshnessChecker) Enable() {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 	fc.enabled = true
@@ -136,14 +136,14 @@ func (fc *FreshnessChecker) Enable() {
 }
 
 // Disable disables freshness checking.
-func (fc *FreshnessChecker) Disable() {
+func (fc *freshnessChecker) Disable() {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 	fc.enabled = false
 }
 
 // IsEnabled returns whether freshness checking is enabled.
-func (fc *FreshnessChecker) IsEnabled() bool {
+func (fc *freshnessChecker) IsEnabled() bool {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 	return fc.enabled
@@ -151,7 +151,7 @@ func (fc *FreshnessChecker) IsEnabled() bool {
 
 // UpdateState updates the tracked file state after a successful reconnection.
 // Call this after reopening the database to establish a new baseline.
-func (fc *FreshnessChecker) UpdateState() {
+func (fc *freshnessChecker) UpdateState() {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 	fc.captureFileState()

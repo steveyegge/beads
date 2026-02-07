@@ -109,8 +109,8 @@ func countTopLevelIssues(ctx context.Context, conn *sql.Conn, prefix string) (in
 	return count, nil
 }
 
-// GetAdaptiveIDLength returns the appropriate hash length based on database size
-func GetAdaptiveIDLength(ctx context.Context, conn *sql.Conn, prefix string) (int, error) {
+// getAdaptiveIDLength returns the appropriate hash length based on database size
+func getAdaptiveIDLength(ctx context.Context, conn *sql.Conn, prefix string) (int, error) {
 	// Get current issue count
 	numIssues, err := countTopLevelIssues(ctx, conn, prefix)
 	if err != nil {

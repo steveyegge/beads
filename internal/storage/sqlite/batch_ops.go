@@ -76,7 +76,7 @@ func (s *SQLiteStorage) generateBatchIDs(ctx context.Context, conn *sql.Conn, is
 	}
 
 	// Generate or validate IDs for all issues
-	if err := EnsureIDs(ctx, conn, prefix, issues, actor, orphanHandling, skipPrefixValidation); err != nil {
+	if err := ensureIDs(ctx, conn, prefix, issues, actor, orphanHandling, skipPrefixValidation); err != nil {
 		return wrapDBError("ensure IDs", err)
 	}
 	

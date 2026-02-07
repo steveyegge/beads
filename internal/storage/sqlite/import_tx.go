@@ -83,13 +83,13 @@ func (t *sqliteTxStorage) CreateIssueImport(ctx context.Context, issue *types.Is
 		}
 		issue.ID = generatedID
 	} else if !skipPrefixValidation {
-		if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+		if err := validateIssueIDPrefix(issue.ID, prefix); err != nil {
 			return fmt.Errorf("failed to validate issue ID prefix: %w", err)
 		}
 	}
 
 	// Ensure parent exists for hierarchical IDs (importer should have ensured / resurrected).
-	if isHierarchical, parentID := IsHierarchicalID(issue.ID); isHierarchical {
+	if isHierarchical, parentID := isHierarchicalID(issue.ID); isHierarchical {
 		var parentCount int
 		if err := t.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&parentCount); err != nil {
 			return fmt.Errorf("failed to check parent existence: %w", err)

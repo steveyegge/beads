@@ -8,23 +8,23 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// CollisionResult categorizes incoming issues by their relationship to existing DB state
-type CollisionResult struct {
+// collisionResult categorizes incoming issues by their relationship to existing DB state
+type collisionResult struct {
 	ExactMatches []string           // IDs that match exactly (idempotent import)
-	Collisions   []*CollisionDetail // Issues with same ID but different content
+	Collisions   []*collisionDetail // Issues with same ID but different content
 	NewIssues    []string           // IDs that don't exist in DB yet
-	Renames      []*RenameDetail    // Issues with same content but different ID (renames)
+	Renames      []*renameDetail    // Issues with same content but different ID (renames)
 }
 
-// RenameDetail captures a rename/remap detected during collision detection
-type RenameDetail struct {
+// renameDetail captures a rename/remap detected during collision detection
+type renameDetail struct {
 	OldID string        // ID in database (to be deleted)
 	NewID string        // ID in incoming (to be created)
 	Issue *types.Issue  // The issue with new ID
 }
 
-// CollisionDetail provides detailed information about a collision
-type CollisionDetail struct {
+// collisionDetail provides detailed information about a collision
+type collisionDetail struct {
 	ID                string        // The issue ID that collided
 	IncomingIssue     *types.Issue  // The issue from the import file
 	ExistingIssue     *types.Issue  // The issue currently in the database
@@ -42,11 +42,11 @@ type CollisionDetail struct {
 // When an incoming issue has an external_ref, we match by external_ref first,
 // then by ID. This enables re-syncing from external systems (Jira, GitHub, Linear).
 //
-// Returns a CollisionResult categorizing all incoming issues.
-func DetectCollisions(ctx context.Context, s *SQLiteStorage, incomingIssues []*types.Issue) (*CollisionResult, error) {
-	result := &CollisionResult{
+// Returns a collisionResult categorizing all incoming issues.
+func DetectCollisions(ctx context.Context, s *SQLiteStorage, incomingIssues []*types.Issue) (*collisionResult, error) {
+	result := &collisionResult{
 		ExactMatches: make([]string, 0),
-		Collisions:   make([]*CollisionDetail, 0),
+		Collisions:   make([]*collisionDetail, 0),
 		NewIssues:    make([]string, 0),
 	}
 
@@ -91,7 +91,7 @@ func DetectCollisions(ctx context.Context, s *SQLiteStorage, incomingIssues []*t
 			result.ExactMatches = append(result.ExactMatches, incoming.ID)
 		} else {
 			// Same ID/external_ref, different content - collision (needs update)
-			result.Collisions = append(result.Collisions, &CollisionDetail{
+			result.Collisions = append(result.Collisions, &collisionDetail{
 				ID:                incoming.ID,
 				IncomingIssue:     incoming,
 				ExistingIssue:     existing,

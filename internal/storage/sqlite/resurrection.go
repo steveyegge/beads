@@ -226,7 +226,7 @@ func (s *SQLiteStorage) tryResurrectParentChainWithConn(ctx context.Context, con
 // Example: "bd-abc.1.2" → ["bd-abc", "bd-abc.1"]
 // Example: "test.example-abc.1" → ["test.example-abc"] (prefix with dot is preserved)
 //
-// This function uses IsHierarchicalID to correctly handle prefixes containing dots (GH#664).
+// This function uses isHierarchicalID to correctly handle prefixes containing dots (GH#664).
 // It only splits on dots followed by numeric suffixes (the hierarchy delimiter).
 func extractParentChain(id string) []string {
 	var parents []string
@@ -234,7 +234,7 @@ func extractParentChain(id string) []string {
 
 	// Walk up the hierarchy by repeatedly finding the parent
 	for {
-		isHierarchical, parentID := IsHierarchicalID(current)
+		isHierarchical, parentID := isHierarchicalID(current)
 		if !isHierarchical {
 			break // No more parents
 		}

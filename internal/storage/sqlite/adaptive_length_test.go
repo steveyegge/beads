@@ -160,9 +160,9 @@ func TestGetAdaptiveIDLength_Integration(t *testing.T) {
 	
 	// Test default config (should use 3 chars for empty database)
 
-	length, err := GetAdaptiveIDLength(ctx, conn, "test")
+	length, err := getAdaptiveIDLength(ctx, conn, "test")
 	if err != nil {
-		t.Fatalf("GetAdaptiveIDLength failed: %v", err)
+		t.Fatalf("getAdaptiveIDLength failed: %v", err)
 	}
 
 	if length != 3 {
@@ -178,9 +178,9 @@ func TestGetAdaptiveIDLength_Integration(t *testing.T) {
 		t.Fatalf("Failed to set min_hash_length: %v", err)
 	}
 	
-	length, err = GetAdaptiveIDLength(ctx, conn, "test")
+	length, err = getAdaptiveIDLength(ctx, conn, "test")
 	if err != nil {
-		t.Fatalf("GetAdaptiveIDLength with custom config failed: %v", err)
+		t.Fatalf("getAdaptiveIDLength with custom config failed: %v", err)
 	}
 	
 	if length < 5 {

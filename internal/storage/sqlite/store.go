@@ -70,7 +70,7 @@ type SQLiteStorage struct {
 	connStr       string       // Connection string for reconnection
 	busyTimeout   time.Duration
 	readOnly      bool               // True if opened in read-only mode (GH#804)
-	freshness     *FreshnessChecker  // Optional freshness checker for daemon mode
+	freshness     *freshnessChecker  // Optional freshness checker for daemon mode
 	reconnectMu   sync.RWMutex       // Protects reconnection and db access (GH#607)
 	activeTxCount atomic.Int64       // Tracks active transactions to block reconnect during transactions
 }
@@ -519,7 +519,7 @@ func (s *SQLiteStorage) EnableFreshnessChecking() {
 		return
 	}
 
-	s.freshness = NewFreshnessChecker(s.dbPath, s.reconnect)
+	s.freshness = newFreshnessChecker(s.dbPath, s.reconnect)
 }
 
 // DisableFreshnessChecking disables external modification detection.

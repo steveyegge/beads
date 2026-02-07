@@ -80,17 +80,9 @@ type dbExecutor interface {
 	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
 }
 
-// IsUniqueConstraintError checks if an error is a UNIQUE constraint violation
-func IsUniqueConstraintError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "UNIQUE constraint failed")
-}
-
-// IsForeignKeyConstraintError checks if an error is a FOREIGN KEY constraint violation
+// isForeignKeyConstraintError checks if an error is a FOREIGN KEY constraint violation
 // This can occur when importing issues that reference deleted issues (e.g., after merge)
-func IsForeignKeyConstraintError(err error) bool {
+func isForeignKeyConstraintError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -99,8 +91,8 @@ func IsForeignKeyConstraintError(err error) bool {
 		strings.Contains(errStr, "foreign key constraint failed")
 }
 
-// IsBusyError checks if an error is a database busy/locked error
-func IsBusyError(err error) bool {
+// isBusyError checks if an error is a database busy/locked error
+func isBusyError(err error) bool {
 	if err == nil {
 		return false
 	}

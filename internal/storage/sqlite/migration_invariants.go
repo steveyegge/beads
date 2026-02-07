@@ -17,15 +17,15 @@ type snapshot struct {
 	LabelCount      int
 }
 
-// MigrationInvariant represents a database invariant that must hold after migrations
-type MigrationInvariant struct {
+// migrationInvariant represents a database invariant that must hold after migrations
+type migrationInvariant struct {
 	Name        string
 	Description string
 	Check       func(*sql.DB, *snapshot) error
 }
 
 // invariants is the list of all invariants checked after migrations
-var invariants = []MigrationInvariant{
+var invariants = []migrationInvariant{
 	{
 		Name:        "required_config_present",
 		Description: "Required config keys must exist",
@@ -207,7 +207,7 @@ func GetInvariantNames() []string {
 	return names
 }
 
-// CleanOrphanedRefs removes orphaned dependencies and labels that reference non-existent issues.
+// cleanOrphanedRefs removes orphaned dependencies and labels that reference non-existent issues.
 // This runs BEFORE migrations to prevent the chicken-and-egg problem where:
 // 1. bd doctor --fix tries to open the database
 // 2. Opening triggers migrations with invariant checks
@@ -215,7 +215,7 @@ func GetInvariantNames() []string {
 // 4. Fix never runs because database won't open
 //
 // Returns counts of cleaned items for logging.
-func CleanOrphanedRefs(db *sql.DB) (deps int, labels int, err error) {
+func cleanOrphanedRefs(db *sql.DB) (deps int, labels int, err error) {
 	// Clean orphaned dependencies (issue_id not in issues)
 	result, err := db.Exec(`
 		DELETE FROM dependencies

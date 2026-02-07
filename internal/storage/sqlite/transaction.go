@@ -228,14 +228,14 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 		// Validate that explicitly provided ID matches the configured prefix
 		// Skip validation when PrefixOverride is set (cross-rig creation)
 		if !skipPrefixValidation {
-			if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+			if err := validateIssueIDPrefix(issue.ID, prefix); err != nil {
 				return fmt.Errorf("failed to validate issue ID prefix: %w", err)
 			}
 		}
 
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
-		// Use IsHierarchicalID to correctly handle prefixes with dots (GH#508)
-		if isHierarchical, parentID := IsHierarchicalID(issue.ID); isHierarchical {
+		// Use isHierarchicalID to correctly handle prefixes with dots (GH#508)
+		if isHierarchical, parentID := isHierarchicalID(issue.ID); isHierarchical {
 			// Try to resurrect entire parent chain if any parents are missing
 			resurrected, err := t.parent.tryResurrectParentChainWithConn(ctx, t.conn, issue.ID)
 			if err != nil {
@@ -342,7 +342,7 @@ func (t *sqliteTxStorage) CreateIssues(ctx context.Context, issues []*types.Issu
 			}
 			issue.ID = generatedID
 		} else {
-			if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+			if err := validateIssueIDPrefix(issue.ID, prefix); err != nil {
 				return fmt.Errorf("failed to validate issue ID prefix: %w", err)
 			}
 		}
@@ -778,7 +778,7 @@ func (t *sqliteTxStorage) AddDependency(ctx context.Context, dep *types.Dependen
 	}
 
 	// External refs (external:<project>:<capability>) don't need target validation
-	// They are resolved lazily at query time by CheckExternalDep
+	// They are resolved lazily at query time by checkExternalDep
 	isExternalRef := strings.HasPrefix(dep.DependsOnID, "external:")
 
 	var dependsOnExists *types.Issue
@@ -1081,7 +1081,7 @@ func (t *sqliteTxStorage) GetConfig(ctx context.Context, key string) (string, er
 
 // GetCustomStatuses retrieves the list of custom status states from config within the transaction.
 func (t *sqliteTxStorage) GetCustomStatuses(ctx context.Context) ([]string, error) {
-	value, err := t.GetConfig(ctx, CustomStatusConfigKey)
+	value, err := t.GetConfig(ctx, customStatusConfigKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1093,7 +1093,7 @@ func (t *sqliteTxStorage) GetCustomStatuses(ctx context.Context) ([]string, erro
 
 // GetCustomTypes retrieves the list of custom issue types from config within the transaction.
 func (t *sqliteTxStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
-	value, err := t.GetConfig(ctx, CustomTypeConfigKey)
+	value, err := t.GetConfig(ctx, customTypeConfigKey)
 	if err != nil {
 		return nil, err
 	}

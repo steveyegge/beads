@@ -207,13 +207,13 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		issue.ID = generatedID
 	} else {
 		// Validate that explicitly provided ID matches the configured prefix
-		if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+		if err := validateIssueIDPrefix(issue.ID, prefix); err != nil {
 			return wrapDBError("validate issue ID prefix", err)
 		}
 
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
-		// Use IsHierarchicalID to correctly handle prefixes with dots (GH#508)
-		if isHierarchical, parentID := IsHierarchicalID(issue.ID); isHierarchical {
+		// Use isHierarchicalID to correctly handle prefixes with dots (GH#508)
+		if isHierarchical, parentID := isHierarchicalID(issue.ID); isHierarchical {
 			// Try to resurrect entire parent chain if any parents are missing
 			// Use the conn-based version to participate in the same transaction
 			resurrected, err := s.tryResurrectParentChainWithConn(ctx, conn, issue.ID)
