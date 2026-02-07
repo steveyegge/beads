@@ -53,6 +53,9 @@ type stopDecisionConfig struct {
 	RequireAgentDecision bool                   `json:"require_agent_decision"` // Agent must create decision before stopping
 	RequireCloseOld      bool                   `json:"require_close_old"`      // Agent must close previous stop decisions before new
 	RequireContext       bool                   `json:"require_context"`        // Decision must have non-empty Context field
+	AgentDecisionPrompt  string                 `json:"agent_decision_prompt"`  // Custom instructions when agent must create decision
+	AgentContextPrompt   string                 `json:"agent_context_prompt"`   // Custom instructions when context is missing
+	AgentCloseOldPrompt  string                 `json:"agent_close_old_prompt"` // Custom instructions when old decisions need closing
 }
 
 func init() {
@@ -98,6 +101,9 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 				ids[i] = dp.IssueID
 			}
 			reason := fmt.Sprintf("Close previous stop decisions before stopping: %s", joinIDs(ids))
+			if cfg.AgentCloseOldPrompt != "" {
+				reason = fmt.Sprintf("%s\n\nDecisions to close: %s", cfg.AgentCloseOldPrompt, joinIDs(ids))
+			}
 			if jsonOutput {
 				outputJSON(map[string]string{"decision": "block", "reason": reason})
 			} else {
@@ -116,6 +122,9 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 		} else if agentDecision == nil {
 			// No agent decision found — block and tell agent to create one
 			reason := "Create a decision with 'bd decision create' before stopping"
+			if cfg.AgentDecisionPrompt != "" {
+				reason = cfg.AgentDecisionPrompt
+			}
 			if jsonOutput {
 				outputJSON(map[string]string{"decision": "block", "reason": reason})
 			} else {
@@ -126,6 +135,9 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 			// Agent decision found — validate context if required
 			if cfg.RequireContext && agentDecision.Context == "" {
 				reason := fmt.Sprintf("Decision %s is missing context. Close it and create a new one with --context", agentDecision.IssueID)
+				if cfg.AgentContextPrompt != "" {
+					reason = fmt.Sprintf("%s\n\nDecision to close: %s", cfg.AgentContextPrompt, agentDecision.IssueID)
+				}
 				if jsonOutput {
 					outputJSON(map[string]string{"decision": "block", "reason": reason})
 				} else {
