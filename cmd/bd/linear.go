@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
