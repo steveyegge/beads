@@ -888,6 +888,7 @@ type DecisionCreateArgs struct {
 	DefaultOption string   `json:"default_option,omitempty"` // Default option if no response
 	MaxIterations int      `json:"max_iterations,omitempty"` // Max follow-up iterations (default 3)
 	RequestedBy   string   `json:"requested_by,omitempty"`   // Who requested this decision
+	Context       string   `json:"context,omitempty"`        // Background/analysis for the decision
 }
 
 // DecisionGetArgs represents arguments for getting a decision point

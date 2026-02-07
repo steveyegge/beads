@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -42,13 +43,16 @@ Examples:
 
 // stopDecisionConfig holds settings from the config bead.
 type stopDecisionConfig struct {
-	Enabled       bool                   `json:"enabled"`
-	Timeout       string                 `json:"timeout"`
-	PollInterval  string                 `json:"poll_interval"`
-	Prompt        string                 `json:"prompt"`
-	Options       []types.DecisionOption `json:"options"`
-	DefaultAction string                 `json:"default_action"`
-	Urgency       string                 `json:"urgency"`
+	Enabled              bool                   `json:"enabled"`
+	Timeout              string                 `json:"timeout"`
+	PollInterval         string                 `json:"poll_interval"`
+	Prompt               string                 `json:"prompt"`
+	Options              []types.DecisionOption `json:"options"`
+	DefaultAction        string                 `json:"default_action"`
+	Urgency              string                 `json:"urgency"`
+	RequireAgentDecision bool                   `json:"require_agent_decision"` // Agent must create decision before stopping
+	RequireCloseOld      bool                   `json:"require_close_old"`      // Agent must close previous stop decisions before new
+	RequireContext       bool                   `json:"require_context"`        // Decision must have non-empty Context field
 }
 
 func init() {
@@ -83,6 +87,94 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 		pollInterval, _ = cmd.Flags().GetDuration("poll-interval")
 	}
 
+	// Step 1: If require_close_old, check for unclosed old stop decisions
+	if cfg.RequireCloseOld {
+		unclosed, err := findUnclosedStopDecisions(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: error checking unclosed stop decisions: %v\n", err)
+		} else if len(unclosed) > 0 {
+			ids := make([]string, len(unclosed))
+			for i, dp := range unclosed {
+				ids[i] = dp.IssueID
+			}
+			reason := fmt.Sprintf("Close previous stop decisions before stopping: %s", joinIDs(ids))
+			if jsonOutput {
+				outputJSON(map[string]string{"decision": "block", "reason": reason})
+			} else {
+				fmt.Printf("Block: %s\n", reason)
+			}
+			os.Exit(1)
+		}
+	}
+
+	// Step 2: If require_agent_decision, look for an existing agent decision
+	if cfg.RequireAgentDecision {
+		agentDecision, err := findPendingAgentDecision(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: error finding agent decision: %v\n", err)
+			// Fall through to generic decision creation
+		} else if agentDecision == nil {
+			// No agent decision found — block and tell agent to create one
+			reason := "Create a decision with 'bd decision create' before stopping"
+			if jsonOutput {
+				outputJSON(map[string]string{"decision": "block", "reason": reason})
+			} else {
+				fmt.Printf("Block: %s\n", reason)
+			}
+			os.Exit(1)
+		} else {
+			// Agent decision found — validate context if required
+			if cfg.RequireContext && agentDecision.Context == "" {
+				reason := fmt.Sprintf("Decision %s is missing context. Close it and create a new one with --context", agentDecision.IssueID)
+				if jsonOutput {
+					outputJSON(map[string]string{"decision": "block", "reason": reason})
+				} else {
+					fmt.Printf("Block: %s\n", reason)
+				}
+				os.Exit(1)
+			}
+
+			// Await the agent's decision
+			fmt.Fprintf(os.Stderr, "Found agent decision: %s (timeout: %s)\n", agentDecision.IssueID, timeout)
+			fmt.Fprintf(os.Stderr, "Waiting for human response...\n")
+
+			selected, responseText, err := pollStopDecision(ctx, agentDecision.IssueID, timeout, pollInterval)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error polling agent decision: %v\n", err)
+				if jsonOutput {
+					outputJSON(map[string]string{"decision": "allow", "reason": fmt.Sprintf("poll error: %v", err)})
+				}
+				os.Exit(0)
+			}
+
+			// Any human response to an agent decision blocks the stop so Claude can process it
+			if selected != "" {
+				reason := responseText
+				if reason == "" {
+					reason = fmt.Sprintf("Human responded to decision %s: selected '%s'", agentDecision.IssueID, selected)
+				}
+				if jsonOutput {
+					outputJSON(map[string]string{
+						"decision":  "block",
+						"reason":    reason,
+						"selected":  selected,
+						"source_id": agentDecision.IssueID,
+					})
+				} else {
+					fmt.Printf("Block: %s\n", reason)
+				}
+				os.Exit(1)
+			}
+
+			// Timeout or canceled — allow stop
+			if jsonOutput {
+				outputJSON(map[string]string{"decision": "allow", "reason": "timeout or canceled"})
+			}
+			os.Exit(0)
+		}
+	}
+
+	// Default behavior: create a generic stop decision (same as before)
 	prompt := cfg.Prompt
 	if prompt == "" {
 		prompt = "Claude is ready to stop. Review and decide:"
@@ -453,4 +545,96 @@ func parseDurationOrDefault(s string, defaultVal time.Duration) time.Duration {
 		return defaultVal
 	}
 	return d
+}
+
+// findPendingAgentDecision finds the most recent pending decision created by an agent
+// (i.e., not by stop-hook). Returns nil if none found.
+func findPendingAgentDecision(ctx context.Context) (*types.DecisionPoint, error) {
+	var decisions []*types.DecisionPoint
+
+	if daemonClient != nil {
+		listArgs := &rpc.DecisionListArgs{All: false} // pending only
+		resp, err := daemonClient.DecisionList(listArgs)
+		if err != nil {
+			return nil, fmt.Errorf("daemon decision list: %w", err)
+		}
+		for _, dr := range resp.Decisions {
+			decisions = append(decisions, dr.Decision)
+		}
+	} else if store != nil {
+		var err error
+		decisions, err = store.ListPendingDecisions(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list pending decisions: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("no database connection")
+	}
+
+	// Filter: not created by stop-hook, and has a RequestedBy value
+	// Return the most recent one (last in list, or by CreatedAt)
+	var best *types.DecisionPoint
+	for _, dp := range decisions {
+		if dp.RequestedBy == "stop-hook" || dp.RequestedBy == "" {
+			continue
+		}
+		if best == nil || dp.CreatedAt.After(best.CreatedAt) {
+			best = dp
+		}
+	}
+
+	return best, nil
+}
+
+// findUnclosedStopDecisions finds old stop decisions (created by stop-hook) whose
+// gate issues are still open (not closed by the agent).
+func findUnclosedStopDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+	var decisions []*types.DecisionPoint
+
+	if daemonClient != nil {
+		// List all decisions (including resolved) to find stop-hook ones
+		listArgs := &rpc.DecisionListArgs{All: true}
+		resp, err := daemonClient.DecisionList(listArgs)
+		if err != nil {
+			return nil, fmt.Errorf("daemon decision list: %w", err)
+		}
+		for _, dr := range resp.Decisions {
+			dp := dr.Decision
+			if dp.RequestedBy != "stop-hook" {
+				continue
+			}
+			// Only include if the gate issue is still open
+			if dr.Issue != nil && dr.Issue.Status != types.StatusClosed {
+				decisions = append(decisions, dp)
+			}
+		}
+	} else if store != nil {
+		// Get all pending decisions first, then check for resolved stop-hook ones
+		pending, err := store.ListPendingDecisions(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list pending decisions: %w", err)
+		}
+		for _, dp := range pending {
+			if dp.RequestedBy != "stop-hook" {
+				continue
+			}
+			// Check if the gate issue is still open
+			issue, err := store.GetIssue(ctx, dp.IssueID)
+			if err != nil {
+				continue
+			}
+			if issue != nil && issue.Status != types.StatusClosed {
+				decisions = append(decisions, dp)
+			}
+		}
+	} else {
+		return nil, fmt.Errorf("no database connection")
+	}
+
+	return decisions, nil
+}
+
+// joinIDs joins a slice of IDs into a comma-separated string.
+func joinIDs(ids []string) string {
+	return strings.Join(ids, ", ")
 }

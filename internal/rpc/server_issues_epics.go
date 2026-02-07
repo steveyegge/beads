@@ -3572,6 +3572,7 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 	dp := &types.DecisionPoint{
 		IssueID:       args.IssueID,
 		Prompt:        args.Prompt,
+		Context:       args.Context,
 		Options:       string(optionsJSON),
 		DefaultOption: args.DefaultOption,
 		MaxIterations: maxIterations,
