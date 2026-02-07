@@ -29,13 +29,13 @@ type Config struct {
 // with actual state (K8s pods).
 type Controller struct {
 	k8s    *K8sClient
-	beads  *BeadsClient
+	beads  BeadsClientInterface
 	config Config
 	logger *log.Logger
 }
 
 // New creates a new Controller.
-func New(k8s *K8sClient, beads *BeadsClient, config Config, logger *log.Logger) *Controller {
+func New(k8s *K8sClient, beads BeadsClientInterface, config Config, logger *log.Logger) *Controller {
 	if config.ReconcileInterval == 0 {
 		config.ReconcileInterval = DefaultReconcileInterval
 	}
