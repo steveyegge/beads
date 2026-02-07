@@ -40,21 +40,23 @@ func (h *StopDecisionHandler) Handles() []EventType { return []EventType{EventSt
 func (h *StopDecisionHandler) Priority() int        { return 15 }
 
 func (h *StopDecisionHandler) Handle(ctx context.Context, event *Event, result *Result) error {
-	// Check stop_hook_active from event JSON to prevent infinite loop.
-	// When this handler blocks the stop, Claude resumes and may stop again;
-	// the bus emit sets stop_hook_active=true to avoid re-entering.
+	// Pass stop_hook_active flag through to the stop-check command so it can
+	// decide how to handle re-entry (e.g., skip polling, check for agent decision).
+	// We no longer skip the handler entirely on re-entry because the agent may
+	// have created a decision that needs to be awaited.
+	args := []string{"decision", "stop-check", "--json"}
 	if len(event.Raw) > 0 {
 		var raw map[string]interface{}
 		if err := json.Unmarshal(event.Raw, &raw); err == nil {
 			if active, ok := raw["stop_hook_active"]; ok {
 				if boolVal, isBool := active.(bool); isBool && boolVal {
-					return nil // already inside a stop hook — skip
+					args = append(args, "--reentry")
 				}
 			}
 		}
 	}
 
-	stdout, _, err := runBDCommand(ctx, event.CWD, "decision", "stop-check", "--json")
+	stdout, _, err := runBDCommand(ctx, event.CWD, args...)
 	if err != nil {
 		// Exit code 1 means block (human said "continue").
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {

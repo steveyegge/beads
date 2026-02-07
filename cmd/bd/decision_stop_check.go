@@ -61,6 +61,7 @@ type stopDecisionConfig struct {
 func init() {
 	decisionStopCheckCmd.Flags().Duration("timeout", 30*time.Minute, "Override timeout from config")
 	decisionStopCheckCmd.Flags().Duration("poll-interval", 2*time.Second, "Override poll interval from config")
+	decisionStopCheckCmd.Flags().Bool("reentry", false, "Indicates this is a re-entry (Claude tried to stop again after being blocked)")
 
 	decisionCmd.AddCommand(decisionStopCheckCmd)
 }
@@ -113,43 +114,33 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Step 2: If require_agent_decision, look for (or wait for) an agent decision
+	// Step 2: If require_agent_decision, look for an agent decision.
+	// IMPORTANT: This must NOT poll/block when no decision exists, because
+	// the agent (Claude) is blocked waiting for this hook to return. If we
+	// poll here, it's a deadlock — the agent can't create a decision while
+	// blocked. Instead, return immediately with block + instructions so the
+	// agent can create the decision, then on re-entry we'll find and await it.
 	if cfg.RequireAgentDecision {
-		// First emit the prompt so the agent knows what to do
 		agentDecision, err := findPendingAgentDecision(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: error finding agent decision: %v\n", err)
 			// Fall through to generic decision creation
 		} else {
 			if agentDecision == nil {
-				// No agent decision yet — tell the agent to create one, then poll for it
+				// No agent decision yet — block immediately with instructions.
+				// The agent will resume, create a decision, and stop again.
+				// On re-entry (--reentry flag), we'll find and await it.
 				reason := "Create a decision with 'bd decision create' before stopping"
 				if cfg.AgentDecisionPrompt != "" {
 					reason = cfg.AgentDecisionPrompt
 				}
-				fmt.Fprintf(os.Stderr, "No agent decision found. Waiting for agent to create one (timeout: %s)...\n", timeout)
-				// Emit the prompt as a preliminary block so the agent sees it
+				fmt.Fprintf(os.Stderr, "No agent decision found. Blocking so agent can create one.\n")
 				if jsonOutput {
 					outputJSON(map[string]string{"decision": "block", "reason": reason})
+				} else {
+					fmt.Printf("Block: %s\n", reason)
 				}
-
-				// Poll for an agent decision to appear
-				agentDecision, err = pollForAgentDecision(ctx, timeout, pollInterval)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error waiting for agent decision: %v\n", err)
-					if jsonOutput {
-						outputJSON(map[string]string{"decision": "allow", "reason": fmt.Sprintf("error waiting for agent decision: %v", err)})
-					}
-					os.Exit(0)
-				}
-				if agentDecision == nil {
-					// Timeout — no agent decision appeared, allow stop
-					fmt.Fprintf(os.Stderr, "Timeout waiting for agent decision\n")
-					if jsonOutput {
-						outputJSON(map[string]string{"decision": "allow", "reason": "timeout waiting for agent decision"})
-					}
-					os.Exit(0)
-				}
+				os.Exit(1)
 			}
 
 			// Agent decision found — validate context if required
@@ -166,7 +157,9 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 				os.Exit(1)
 			}
 
-			// Await the human's response to the agent's decision
+			// Await the human's response to the agent's decision.
+			// This is the only place we poll — and it's safe because the agent
+			// already created the decision before trying to stop.
 			fmt.Fprintf(os.Stderr, "Found agent decision: %s (timeout: %s)\n", agentDecision.IssueID, timeout)
 			fmt.Fprintf(os.Stderr, "Waiting for human response...\n")
 
