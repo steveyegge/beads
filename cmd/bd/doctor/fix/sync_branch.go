@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// SyncBranchConfig fixes missing sync.branch configuration by auto-setting it to the current branch
-func SyncBranchConfig(path string) error {
+// syncBranchConfig fixes missing sync.branch configuration by auto-setting it to the current branch
+func syncBranchConfig(path string) error {
 	if err := validateBeadsWorkspace(path); err != nil {
 		return err
 	}
@@ -239,9 +239,9 @@ func setGitIndexFlags(repoPath, filePath, excludePattern string) (bool, error) {
 	return true, nil
 }
 
-// ClearSyncBranchGitignore removes git index flags from .beads/*.jsonl files.
+// clearSyncBranchGitignore removes git index flags from .beads/*.jsonl files.
 // Called when sync.branch is disabled to restore normal git tracking.
-func ClearSyncBranchGitignore(path string) error {
+func clearSyncBranchGitignore(path string) error {
 	beadsDir := filepath.Join(path, ".beads")
 	filesToClear := []string{"issues.jsonl", "interactions.jsonl"}
 

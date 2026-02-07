@@ -496,7 +496,7 @@ func TestGetBdBinary_Errors(t *testing.T) {
 
 // TestGitCommandFailures tests handling of git command failures
 func TestGitCommandFailures(t *testing.T) {
-	t.Run("SyncBranchConfig fails without git", func(t *testing.T) {
+	t.Run("syncBranchConfig fails without git", func(t *testing.T) {
 		dir := t.TempDir()
 		beadsDir := filepath.Join(dir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
@@ -504,7 +504,7 @@ func TestGitCommandFailures(t *testing.T) {
 		}
 
 		// Not a git repo - should fail
-		err := SyncBranchConfig(dir)
+		err := syncBranchConfig(dir)
 		if err == nil {
 			t.Error("expected error for non-git directory")
 		}

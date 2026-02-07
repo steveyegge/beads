@@ -838,18 +838,18 @@ func CheckGitHooksDoltCompatibility(path string) DoctorCheck {
 	}
 }
 
-// FixGitHooks fixes missing or broken git hooks by calling bd hooks install.
-func FixGitHooks(path string) error {
+// fixGitHooks fixes missing or broken git hooks by calling bd hooks install.
+func fixGitHooks(path string) error {
 	return fix.GitHooks(path)
 }
 
-// FixMergeDriver fixes the git merge driver configuration to use correct placeholders.
-func FixMergeDriver(path string) error {
+// fixMergeDriver fixes the git merge driver configuration to use correct placeholders.
+func fixMergeDriver(path string) error {
 	return fix.MergeDriver(path)
 }
 
-// FixSyncBranchHealth fixes database-JSONL sync issues.
-func FixSyncBranchHealth(path string) error {
+// fixSyncBranchHealth fixes database-JSONL sync issues.
+func fixSyncBranchHealth(path string) error {
 	return fix.DBJSONLSync(path)
 }
 
@@ -948,10 +948,10 @@ func FindOrphanedIssues(gitPath string, provider types.IssueProvider) ([]OrphanI
 	return orphanedIssues, nil
 }
 
-// FindOrphanedIssuesFromPath is a convenience function for callers that don't have a provider.
+// findOrphanedIssuesFromPath is a convenience function for callers that don't have a provider.
 // It creates a local provider from the given path's .beads/ directory.
 // This preserves backward compatibility for CheckOrphanedIssues and similar callers.
-func FindOrphanedIssuesFromPath(path string) ([]OrphanIssue, error) {
+func findOrphanedIssuesFromPath(path string) ([]OrphanIssue, error) {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
@@ -1016,8 +1016,8 @@ func CheckOrphanedIssues(path string) DoctorCheck {
 		}
 	}
 
-	// Use the shared FindOrphanedIssuesFromPath function (creates its own provider)
-	orphans, err := FindOrphanedIssuesFromPath(path)
+	// Use the shared findOrphanedIssuesFromPath function (creates its own provider)
+	orphans, err := findOrphanedIssuesFromPath(path)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Orphaned Issues",
