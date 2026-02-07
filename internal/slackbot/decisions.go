@@ -1,0 +1,199 @@
+// Package slackbot provides a Slack bot integration for beads issue tracking.
+package slackbot
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/types"
+)
+
+// Decision is a unified decision struct used internally by the Slack bot.
+// It bridges the beads DecisionPoint/Issue pair into a single view.
+type Decision struct {
+	ID              string
+	Question        string
+	Context         string
+	Options         []DecisionOption
+	ChosenIndex     int // 1-indexed; 0 means unresolved
+	Rationale       string
+	RequestedBy     string
+	RequestedAt     time.Time
+	ResolvedBy      string
+	Urgency         string // "high", "medium", "low"
+	Resolved        bool
+	PredecessorID   string
+	ParentBeadID    string
+	ParentBeadTitle string
+	Blockers        []string
+	SemanticSlug    string
+}
+
+// DecisionOption represents a single choice within a decision.
+type DecisionOption struct {
+	ID          string
+	Label       string
+	Description string
+	Recommended bool // Not natively stored in beads; kept for interface compat.
+}
+
+// DecisionClient adapts beads' rpc.Client to provide a higher-level
+// decision-oriented API for the Slack bot.
+type DecisionClient struct {
+	client *rpc.Client
+}
+
+// NewDecisionClient wraps an existing RPC client for decision operations.
+func NewDecisionClient(c *rpc.Client) *DecisionClient {
+	return &DecisionClient{client: c}
+}
+
+// ListPending returns all unresolved decisions.
+func (dc *DecisionClient) ListPending(ctx context.Context) ([]Decision, error) {
+	resp, err := dc.client.DecisionList(&rpc.DecisionListArgs{All: false})
+	if err != nil {
+		return nil, fmt.Errorf("decision list: %w", err)
+	}
+
+	out := make([]Decision, 0, len(resp.Decisions))
+	for _, dr := range resp.Decisions {
+		d := convertDecisionResponse(dr)
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+// GetDecision retrieves a single decision by its issue ID.
+func (dc *DecisionClient) GetDecision(ctx context.Context, issueID string) (*Decision, error) {
+	resp, err := dc.client.DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
+	if err != nil {
+		return nil, fmt.Errorf("decision get %s: %w", issueID, err)
+	}
+
+	d := convertDecisionResponse(resp)
+	return &d, nil
+}
+
+// Resolve picks one of the predefined options by 1-based index.
+// It fetches the decision first to map the index to the option ID that beads expects.
+func (dc *DecisionClient) Resolve(ctx context.Context, issueID string, chosenIndex int, rationale, resolvedBy string) (*Decision, error) {
+	// Fetch the decision to get the option IDs.
+	current, err := dc.client.DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
+	if err != nil {
+		return nil, fmt.Errorf("decision get for resolve %s: %w", issueID, err)
+	}
+
+	var opts []types.DecisionOption
+	if current.Decision != nil && current.Decision.Options != "" {
+		if err := json.Unmarshal([]byte(current.Decision.Options), &opts); err != nil {
+			return nil, fmt.Errorf("parse decision options for %s: %w", issueID, err)
+		}
+	}
+
+	if chosenIndex < 1 || chosenIndex > len(opts) {
+		return nil, fmt.Errorf("chosen index %d out of range [1..%d]", chosenIndex, len(opts))
+	}
+	optionID := opts[chosenIndex-1].ID
+
+	resp, err := dc.client.DecisionResolve(&rpc.DecisionResolveArgs{
+		IssueID:        issueID,
+		SelectedOption: optionID,
+		RespondedBy:    resolvedBy,
+		Guidance:       rationale,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("decision resolve %s: %w", issueID, err)
+	}
+
+	d := convertDecisionResponse(resp)
+	return &d, nil
+}
+
+// ResolveWithText resolves a decision with free-form text instead of a predefined option.
+func (dc *DecisionClient) ResolveWithText(ctx context.Context, issueID, text, resolvedBy string) (*Decision, error) {
+	resp, err := dc.client.DecisionResolve(&rpc.DecisionResolveArgs{
+		IssueID:      issueID,
+		ResponseText: text,
+		RespondedBy:  resolvedBy,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("decision resolve with text %s: %w", issueID, err)
+	}
+
+	d := convertDecisionResponse(resp)
+	return &d, nil
+}
+
+// Cancel cancels a pending decision.
+func (dc *DecisionClient) Cancel(ctx context.Context, issueID string) error {
+	_, err := dc.client.DecisionCancel(&rpc.DecisionCancelArgs{IssueID: issueID})
+	if err != nil {
+		return fmt.Errorf("decision cancel %s: %w", issueID, err)
+	}
+	return nil
+}
+
+// convertDecisionResponse maps an rpc.DecisionResponse to the unified Decision type.
+func convertDecisionResponse(resp *rpc.DecisionResponse) Decision {
+	d := Decision{}
+	if resp == nil {
+		return d
+	}
+
+	if resp.Issue != nil {
+		d.ID = resp.Issue.ID
+		d.SemanticSlug = resp.Issue.SemanticSlug
+		d.RequestedAt = resp.Issue.CreatedAt
+	}
+
+	dp := resp.Decision
+	if dp == nil {
+		return d
+	}
+
+	d.Question = dp.Prompt
+	d.Context = dp.Context
+	d.RequestedBy = dp.RequestedBy
+	d.Urgency = dp.Urgency
+	d.PredecessorID = dp.PriorID
+	d.ParentBeadID = dp.ParentBeadID
+	d.Resolved = dp.RespondedAt != nil
+	d.ResolvedBy = dp.RespondedBy
+	d.Rationale = dp.Guidance
+
+	// Parse options JSON into our DecisionOption slice.
+	var beadsOpts []types.DecisionOption
+	if dp.Options != "" {
+		_ = json.Unmarshal([]byte(dp.Options), &beadsOpts)
+	}
+
+	d.Options = make([]DecisionOption, len(beadsOpts))
+	for i, o := range beadsOpts {
+		d.Options[i] = DecisionOption{
+			ID:          o.ID,
+			Label:       o.Label,
+			Description: o.Description,
+		}
+	}
+
+	// Map SelectedOption back to a 1-indexed ChosenIndex.
+	if dp.SelectedOption != "" {
+		for i, o := range beadsOpts {
+			if o.ID == dp.SelectedOption {
+				d.ChosenIndex = i + 1
+				break
+			}
+		}
+	}
+
+	// Populate parent bead title from the issue if available and the decision
+	// references a parent.
+	if dp.ParentBeadID != "" && resp.Issue != nil {
+		d.ParentBeadTitle = resp.Issue.Title
+	}
+
+	return d
+}

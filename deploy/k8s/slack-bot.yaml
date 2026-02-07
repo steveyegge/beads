@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bd-slack-bot
+  namespace: gastown
+  labels:
+    app: beads
+    component: slack-bot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: beads
+      component: slack-bot
+  template:
+    metadata:
+      labels:
+        app: beads
+        component: slack-bot
+    spec:
+      containers:
+        - name: bd-daemon
+          image: beads:latest
+          command: ["bd", "daemon", "start", "--foreground", "--tcp-addr=:9876", "--http-addr=:9877", "--log-json"]
+          ports:
+            - containerPort: 9876
+              name: rpc
+            - containerPort: 9877
+              name: http
+            - containerPort: 4222
+              name: nats
+          env:
+            - name: BD_NATS_PORT
+              value: "4222"
+          volumeMounts:
+            - name: beads-data
+              mountPath: /home/beads/.beads
+          livenessProbe:
+            tcpSocket:
+              port: 9877
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: 9877
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+
+        - name: slack-bot
+          image: beads:latest
+          command: ["bd", "slack", "start"]
+          ports:
+            - containerPort: 8080
+              name: health
+          env:
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: slack-credentials
+                  key: bot-token
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: slack-credentials
+                  key: app-token
+            - name: BD_DAEMON_HOST
+              value: "localhost:9876"
+            - name: BD_NATS_URL
+              value: "nats://localhost:4222"
+            - name: SLACK_CHANNEL
+              valueFrom:
+                configMapKeyRef:
+                  name: slack-config
+                  key: default-channel
+            - name: HEALTH_PORT
+              value: "8080"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: beads-data
+              mountPath: /home/beads/.beads
+
+      volumes:
+        - name: beads-data
+          persistentVolumeClaim:
+            claimName: beads-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bd-slack-bot
+  namespace: gastown
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9876
+      targetPort: 9876
+      name: rpc
+    - port: 9877
+      targetPort: 9877
+      name: http
+    - port: 8080
+      targetPort: 8080
+      name: health
+  selector:
+    app: beads
+    component: slack-bot

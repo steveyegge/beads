@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: slack-credentials
+  namespace: gastown
+type: Opaque
+stringData:
+  bot-token: "REPLACE_WITH_BOT_TOKEN"
+  app-token: "REPLACE_WITH_APP_TOKEN"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: slack-config
+  namespace: gastown
+data:
+  default-channel: "REPLACE_WITH_CHANNEL_ID"
