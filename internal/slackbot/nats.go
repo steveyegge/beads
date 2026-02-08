@@ -197,10 +197,17 @@ func (w *NATSWatcher) notifyNewDecision(payload eventbus.DecisionEventPayload) {
 
 	// Skip if already resolved by the time we fetched it.
 	if decision.Resolved {
+		log.Printf("slackbot/nats: decision %s already resolved, skipping", payload.DecisionID)
 		return
 	}
 
-	w.bot.NotifyNewDecision(decision)
+	log.Printf("slackbot/nats: notifying new decision %s question=%q options=%d",
+		decision.ID, decision.Question, len(decision.Options))
+	if err := w.bot.NotifyNewDecision(decision); err != nil {
+		log.Printf("slackbot/nats: notify decision %s failed: %v", payload.DecisionID, err)
+	} else {
+		log.Printf("slackbot/nats: notify decision %s posted to Slack", payload.DecisionID)
+	}
 }
 
 // notifyResolvedDecision fetches the full decision and notifies the Bot
