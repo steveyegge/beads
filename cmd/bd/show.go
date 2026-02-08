@@ -56,7 +56,7 @@ var showCmd = &cobra.Command{
 
 		// Handle --as-of flag: show issue at a specific point in history
 		if asOfRef != "" {
-			store.GetIssue(ctx, asOfRef)
+			showIssueAsOf(ctx, args, asOfRef, shortMode)
 			return
 		}
 
@@ -1159,28 +1159,51 @@ func showIssueAsOf(ctx context.Context, args []string, ref string, shortMode boo
 
 // displayShowIssue displays a single issue (reusable for watch mode)
 func displayShowIssue(ctx context.Context, issueID string) {
-	issue, err := store.GetIssue(ctx, issueID)
+	// Use proper ID resolution (handles partial IDs and routed IDs)
+	result, err := resolveAndGetIssueWithRouting(ctx, store, issueID)
+	if result != nil {
+		defer result.Close()
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error fetching issue: %v\n", err)
 		return
 	}
-
-	if issue == nil {
+	if result == nil || result.Issue == nil {
 		fmt.Printf("Issue not found: %s\n", issueID)
 		return
 	}
+	issue := result.Issue
 
-	// Display the issue
+	// Display the issue header and metadata
 	fmt.Println(formatIssueHeader(issue))
 	fmt.Println(formatIssueMetadata(issue))
-	if issue.Description != "" {
-		fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
+
+	// Extended sections to match standard `bd show` output
+	if issue.Design != "" {
+		fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESIGN"), ui.RenderMarkdown(issue.Design))
 	}
+
+	if issue.Notes != "" {
+		fmt.Printf("\n%s\n%s\n", ui.RenderBold("NOTES"), ui.RenderMarkdown(issue.Notes))
+	}
+
+	if issue.AcceptanceCriteria != "" {
+		fmt.Printf("\n%s\n%s\n", ui.RenderBold("ACCEPTANCE CRITERIA"), ui.RenderMarkdown(issue.AcceptanceCriteria))
+	}
+
+	if len(issue.Labels) > 0 {
+		fmt.Printf("\n%s\n", ui.RenderBold("LABELS"))
+		fmt.Println(strings.Join(issue.Labels, ", "))
+	}
+
 	fmt.Println()
 }
 
 // watchIssue watches for changes to an issue and auto-refreshes the display (GH#654)
 func watchIssue(ctx context.Context, issueID string) {
+	// Ensure we have a fresh database for watching (matches non-watch path)
+	requireFreshDB(ctx)
+
 	// Find .beads directory
 	beadsDir := ".beads"
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
