@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -529,9 +530,9 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		}
 	}
 
-	// Hydrate from multi-repo if configured (SQLite only)
-	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-		if results, err := sqliteStore.HydrateFromMultiRepo(ctx); err != nil {
+	// Hydrate from multi-repo if configured
+	if mrStore, ok := store.(storage.MultiRepoStorage); ok {
+		if results, err := mrStore.HydrateFromMultiRepo(ctx); err != nil {
 			log.Error("multi-repo hydration failed", "error", err)
 			return // Use return instead of os.Exit to allow defers to run
 		} else if results != nil {

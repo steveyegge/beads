@@ -273,6 +273,24 @@ type CompactableStorage interface {
 	MarkIssueDirty(ctx context.Context, issueID string) error
 }
 
+// MultiRepoStorage extends Storage with multi-repo sync capabilities.
+// Multi-repo mode allows a single database to aggregate issues from multiple
+// git repositories via their JSONL files. Not all backends support this;
+// backends that don't (e.g., Dolt with native sync) should return nil, nil.
+type MultiRepoStorage interface {
+	Storage
+
+	// ExportToMultiRepo writes issues to their respective JSONL files based on source_repo.
+	// Returns a map of repo path -> exported issue count.
+	// Returns nil, nil if not in multi-repo mode or if the backend doesn't support it.
+	ExportToMultiRepo(ctx context.Context) (map[string]int, error)
+
+	// HydrateFromMultiRepo loads issues from all configured repositories into the database.
+	// Returns a map of repo path -> imported issue count.
+	// Returns nil, nil if not in multi-repo mode or if the backend doesn't support it.
+	HydrateFromMultiRepo(ctx context.Context) (map[string]int, error)
+}
+
 // BatchDeleter extends Storage with batch delete capabilities.
 // Supports cascade deletion and dry-run mode for safe bulk operations.
 type BatchDeleter interface {

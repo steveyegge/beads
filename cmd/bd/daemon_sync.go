@@ -65,9 +65,8 @@ func shouldSkipDueToSameBranch(ctx context.Context, store storage.Storage, opera
 // Always writes local JSONL as a safety net (even in dolt-native mode).
 func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
 	// Try multi-repo export first
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-	if ok {
-		results, err := sqliteStore.ExportToMultiRepo(ctx)
+	if mrStore, ok := store.(storage.MultiRepoStorage); ok {
+		results, err := mrStore.ExportToMultiRepo(ctx)
 		if err != nil {
 			return fmt.Errorf("multi-repo export failed: %w", err)
 		}
@@ -196,9 +195,8 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 // importToJSONLWithStore imports issues from JSONL using the provided store
 func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
 	// Try multi-repo import first
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-	if ok {
-		results, err := sqliteStore.HydrateFromMultiRepo(ctx)
+	if mrStore, ok := store.(storage.MultiRepoStorage); ok {
+		results, err := mrStore.HydrateFromMultiRepo(ctx)
 		if err != nil {
 			return fmt.Errorf("multi-repo import failed: %w", err)
 		}
