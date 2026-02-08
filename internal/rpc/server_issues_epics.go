@@ -3636,6 +3636,21 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 		}
 	}
 
+	// Emit mutation event so the daemon event-driven sync picks it up.
+	s.emitMutation(MutationCreate, args.IssueID, issue.Title, issue.Assignee)
+
+	// Emit decision event to NATS JetStream so the Slack bot (and other
+	// consumers) are notified immediately.  Previously the CLI client was
+	// responsible for sending BusEmit after DecisionCreate, but that is
+	// fragile and doesn't work for decisions created via HTTP API.
+	s.emitDecisionEvent(eventbus.EventDecisionCreated, eventbus.DecisionEventPayload{
+		DecisionID:  args.IssueID,
+		Question:    args.Prompt,
+		Urgency:     urgency,
+		RequestedBy: args.RequestedBy,
+		Options:     len(args.Options),
+	})
+
 	// Return the decision with its associated issue
 	resp := DecisionResponse{
 		Decision: dp,
@@ -3747,6 +3762,15 @@ func (s *Server) handleDecisionResolve(req *Request) Response {
 			Error:   fmt.Sprintf("failed to update decision point: %v", err),
 		}
 	}
+
+	// Emit mutation + decision event for resolve
+	s.emitMutation(MutationUpdate, args.IssueID, "", "")
+	s.emitDecisionEvent(eventbus.EventDecisionResponded, eventbus.DecisionEventPayload{
+		DecisionID:  args.IssueID,
+		ChosenLabel: args.SelectedOption,
+		ResolvedBy:  args.RespondedBy,
+		Rationale:   args.Guidance,
+	})
 
 	// Get associated issue
 	issue, _ := store.GetIssue(ctx, args.IssueID)

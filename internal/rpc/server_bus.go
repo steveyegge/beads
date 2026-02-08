@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/steveyegge/beads/internal/eventbus"
@@ -26,11 +27,14 @@ func (s *Server) handleBusEmit(req *Request) Response {
 		}
 	}
 
+	fmt.Fprintf(os.Stderr, "bus_emit: type=%s payload=%d bytes\n", args.HookType, len(args.EventJSON))
+
 	s.mu.RLock()
 	bus := s.bus
 	s.mu.RUnlock()
 
 	if bus == nil {
+		fmt.Fprintf(os.Stderr, "bus_emit: no bus configured, returning no-op\n")
 		// No bus configured — passthrough (no handlers = no-op).
 		data, _ := json.Marshal(BusEmitResult{})
 		return Response{Success: true, Data: data}
@@ -65,11 +69,15 @@ func (s *Server) handleBusEmit(req *Request) Response {
 
 	result, err := bus.Dispatch(ctx, event)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "bus_emit: dispatch error for %s: %v\n", args.HookType, err)
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("dispatch error: %v", err),
 		}
 	}
+
+	fmt.Fprintf(os.Stderr, "bus_emit: dispatched %s (jetstream=%v block=%v)\n",
+		args.HookType, bus.JetStreamEnabled(), result.Block)
 
 	data, _ := json.Marshal(BusEmitResult{
 		Block:    result.Block,
@@ -143,6 +151,37 @@ type AdviceEventPayload struct {
 	AdviceHookTrigger   string   `json:"advice_hook_trigger,omitempty"`
 	AdviceHookTimeout   int      `json:"advice_hook_timeout,omitempty"`
 	AdviceHookOnFailure string   `json:"advice_hook_on_failure,omitempty"`
+}
+
+// emitDecisionEvent dispatches a decision event to the event bus (and NATS
+// JetStream) so that the Slack bot and other consumers are notified of
+// decision lifecycle events.  No-op if the bus is nil.
+func (s *Server) emitDecisionEvent(eventType eventbus.EventType, payload eventbus.DecisionEventPayload) {
+	s.mu.RLock()
+	bus := s.bus
+	s.mu.RUnlock()
+
+	if bus == nil {
+		return
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "emitDecisionEvent: marshal failed: %v\n", err)
+		return
+	}
+
+	event := &eventbus.Event{
+		Type: eventType,
+		Raw:  raw,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), s.requestTimeout)
+	defer cancel()
+
+	if _, err := bus.Dispatch(ctx, event); err != nil {
+		fmt.Fprintf(os.Stderr, "emitDecisionEvent: dispatch %s failed: %v\n", eventType, err)
+	}
 }
 
 // emitAdviceEvent dispatches an advice bus event if the bus is configured. (bd-z4cu.2)

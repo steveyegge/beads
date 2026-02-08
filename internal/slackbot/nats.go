@@ -145,12 +145,16 @@ func (w *NATSWatcher) waitDisconnect() <-chan struct{} {
 // handleMessage parses a NATS message from the DECISION_EVENTS stream and
 // dispatches it to the appropriate Bot notification method.
 func (w *NATSWatcher) handleMessage(msg *nats.Msg) {
+	log.Printf("slackbot/nats: received message on %s (%d bytes)", msg.Subject, len(msg.Data))
+
 	var payload eventbus.DecisionEventPayload
 	if err := json.Unmarshal(msg.Data, &payload); err != nil {
-		log.Printf("slackbot/nats: unmarshal error: %v", err)
+		log.Printf("slackbot/nats: unmarshal error: %v (data: %s)", err, string(msg.Data))
 		_ = msg.Ack()
 		return
 	}
+
+	log.Printf("slackbot/nats: parsed event decision_id=%s question=%q", payload.DecisionID, payload.Question)
 
 	// Determine event type from the NATS subject suffix.
 	// Subjects are formatted as "decisions.<EventType>".

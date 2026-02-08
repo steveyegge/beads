@@ -110,8 +110,12 @@ func (b *Bus) publishToJetStream(js nats.JetStreamContext, event *Event) {
 		}
 	}
 
-	if _, err := js.Publish(subject, data); err != nil {
+	ack, err := js.Publish(subject, data)
+	if err != nil {
 		log.Printf("eventbus: JetStream publish to %s failed: %v", subject, err)
+	} else {
+		log.Printf("eventbus: JetStream published to %s (stream=%s seq=%d, %d bytes)",
+			subject, ack.Stream, ack.Sequence, len(data))
 	}
 }
 
