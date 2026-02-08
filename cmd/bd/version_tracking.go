@@ -10,7 +10,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 )
 
 // localVersionFile is the gitignored file that stores the last bd version used locally.
@@ -202,26 +202,40 @@ func findActualJSONLFile(beadsDir string) string {
 //
 // IMPORTANT: This must be called AFTER determining we're in direct mode (no daemon)
 // and BEFORE opening the database, to avoid: 1) conflicts with daemon, 2) opening DB twice.
-func autoMigrateOnVersionBump(dbPath string) {
+//
+// beadsDir is the path to the .beads directory. The function uses factory.NewFromConfig
+// to open the correct backend (SQLite or Dolt) based on metadata.json configuration.
+func autoMigrateOnVersionBump(beadsDir string) {
 	// Only migrate if version upgrade was detected
 	if !versionUpgradeDetected {
 		return
 	}
 
-	// Validate dbPath
-	if dbPath == "" {
-		debug.Logf("auto-migrate: skipping migration, no database path")
+	// Validate beadsDir
+	if beadsDir == "" {
+		debug.Logf("auto-migrate: skipping migration, no beads directory")
 		return
 	}
 
-	// Check if database exists
+	// Load config to determine the correct database path for this backend
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil {
+		debug.Logf("auto-migrate: failed to load config: %v", err)
+		return
+	}
+	if cfg == nil {
+		cfg = configfile.DefaultConfig()
+	}
+
+	// Check if database exists at the backend-appropriate path
+	dbPath := cfg.DatabasePath(beadsDir)
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// No database file - nothing to migrate
+		// No database - nothing to migrate
 		debug.Logf("auto-migrate: skipping migration, database does not exist: %s", dbPath)
 		return
 	}
 
-	// Open database to check current version
+	// Open database using factory (respects backend config from metadata.json)
 	// Use rootCtx if available and not canceled, otherwise use Background
 	ctx := rootCtx
 	if ctx == nil || ctx.Err() != nil {
@@ -229,7 +243,7 @@ func autoMigrateOnVersionBump(dbPath string) {
 		ctx = context.Background()
 	}
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		// Failed to open database - skip migration
 		debug.Logf("auto-migrate: failed to open database: %v", err)

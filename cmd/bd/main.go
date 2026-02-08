@@ -836,7 +836,7 @@ var rootCmd = &cobra.Command{
 		// Do this AFTER daemon check but BEFORE opening database for main operation
 		// This ensures: 1) no daemon has DB open, 2) we don't open DB twice
 		if !useReadOnly {
-			autoMigrateOnVersionBump(dbPath)
+			autoMigrateOnVersionBump(filepath.Dir(dbPath))
 		}
 
 		// Fall back to direct storage access
