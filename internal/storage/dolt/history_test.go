@@ -369,10 +369,19 @@ func TestGetIssueDiff_InvalidRefs(t *testing.T) {
 // =============================================================================
 
 func TestGetInternalConflicts_NoConflicts(t *testing.T) {
-	// Skip: The dolt_conflicts system table schema varies by Dolt version.
-	// Some versions use (table, num_conflicts), others use (table_name, num_conflicts).
-	// This needs to be fixed in the implementation to handle version differences.
-	t.Skip("Skipping: dolt_conflicts table schema varies by Dolt version")
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	conflicts, err := store.GetInternalConflicts(ctx)
+	if err != nil {
+		t.Fatalf("failed to get conflicts: %v", err)
+	}
+	if len(conflicts) != 0 {
+		t.Errorf("expected 0 conflicts, got %d", len(conflicts))
+	}
 }
 
 // =============================================================================
