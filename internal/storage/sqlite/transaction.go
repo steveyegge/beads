@@ -530,6 +530,14 @@ func (t *sqliteTxStorage) UpdateIssue(ctx context.Context, id string, updates ma
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
+	// Update metadata index if metadata was changed (GH#1589)
+	if metaVal, ok := updates["metadata"]; ok {
+		metaStr, _ := storage.NormalizeMetadataValue(metaVal)
+		if err := updateMetadataIndex(ctx, t.conn, id, metaStr); err != nil {
+			return fmt.Errorf("failed to update metadata index: %w", err)
+		}
+	}
+
 	// Mark issue as dirty
 	if err := markDirty(ctx, t.conn, id); err != nil {
 		return fmt.Errorf("failed to mark issue dirty: %w", err)

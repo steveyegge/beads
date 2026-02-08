@@ -108,6 +108,7 @@ func insertIssueStrict(ctx context.Context, conn *sql.Conn, issue *types.Issue) 
 		crystallizes = 1
 	}
 
+	metadataStr := string(issue.Metadata)
 	_, err := conn.ExecContext(ctx, `
 		INSERT INTO issues (
 			id, content_hash, title, description, design, acceptance_criteria, notes,
@@ -130,11 +131,17 @@ func insertIssueStrict(ctx context.Context, conn *sql.Conn, issue *types.Issue) 
 		issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 		string(issue.MolType),
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
-		issue.DueAt, issue.DeferUntil, string(issue.Metadata),
+		issue.DueAt, issue.DeferUntil, metadataStr,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert issue: %w", err)
 	}
+
+	// Update metadata index (GH#1589)
+	if err := updateMetadataIndex(ctx, conn, issue.ID, metadataStr); err != nil {
+		return fmt.Errorf("failed to index metadata: %w", err)
+	}
+
 	return nil
 }
 
@@ -180,7 +187,8 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			crystallizes = 1
 		}
 
-		_, err = stmt.ExecContext(ctx,
+		metadataStr := string(issue.Metadata)
+		res, err := stmt.ExecContext(ctx,
 			issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 			issue.AcceptanceCriteria, issue.Notes, issue.Status,
 			issue.Priority, issue.IssueType, issue.Assignee,
@@ -191,7 +199,7 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 			string(issue.MolType),
 			issue.EventKind, issue.Actor, issue.Target, issue.Payload,
-			issue.DueAt, issue.DeferUntil, string(issue.Metadata),
+			issue.DueAt, issue.DeferUntil, metadataStr,
 		)
 		if err != nil {
 			// INSERT OR IGNORE should handle duplicates, but driver may still return error
@@ -200,6 +208,16 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 				return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
 			}
 			// Duplicate ID detected and ignored (INSERT OR IGNORE succeeded)
+		} else {
+			// Update metadata index (GH#1589) — only if issue was actually inserted.
+			// INSERT OR IGNORE returns RowsAffected=0 for duplicates; indexing the
+			// ignored metadata would cause the index to drift from the issues table.
+			rows, _ := res.RowsAffected()
+			if rows > 0 {
+				if err := updateMetadataIndex(ctx, conn, issue.ID, metadataStr); err != nil {
+					return fmt.Errorf("failed to index metadata for %s: %w", issue.ID, err)
+				}
+			}
 		}
 	}
 	return nil
@@ -250,6 +268,7 @@ func insertIssuesStrict(ctx context.Context, conn *sql.Conn, issues []*types.Iss
 			crystallizes = 1
 		}
 
+		metadataStr := string(issue.Metadata)
 		_, err = stmt.ExecContext(ctx,
 			issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 			issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -261,10 +280,15 @@ func insertIssuesStrict(ctx context.Context, conn *sql.Conn, issues []*types.Iss
 			issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 			string(issue.MolType),
 			issue.EventKind, issue.Actor, issue.Target, issue.Payload,
-			issue.DueAt, issue.DeferUntil, string(issue.Metadata),
+			issue.DueAt, issue.DeferUntil, metadataStr,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
+		}
+
+		// Update metadata index (GH#1589)
+		if err := updateMetadataIndex(ctx, conn, issue.ID, metadataStr); err != nil {
+			return fmt.Errorf("failed to index metadata for %s: %w", issue.ID, err)
 		}
 	}
 	return nil

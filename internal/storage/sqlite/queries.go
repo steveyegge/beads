@@ -1081,6 +1081,14 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 
 		// NOTE: Graph edges now managed via AddDependency() per Decision 004 Phase 4.
 
+		// Update metadata index if metadata was changed (GH#1589)
+		if metaVal, ok := updates["metadata"]; ok {
+			metaStr, _ := storage.NormalizeMetadataValue(metaVal)
+			if err := updateMetadataIndex(ctx, conn, id, metaStr); err != nil {
+				return fmt.Errorf("failed to update metadata index: %w", err)
+			}
+		}
+
 		// Mark issue as dirty for incremental export
 		if err := markDirty(ctx, conn, id); err != nil {
 			return fmt.Errorf("failed to mark issue dirty: %w", err)
