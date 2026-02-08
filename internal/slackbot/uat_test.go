@@ -1956,3 +1956,242 @@ func TestUAT_Migration_NoPendingDecisionsNoop(t *testing.T) {
 		t.Errorf("expected 0 PostMessage calls with no pending decisions, got %d", len(mockAPI.PostedMessages))
 	}
 }
+
+// ---------- Rig Mode Lifecycle & Concurrency Tests ----------
+
+// TestUAT_ThreadedDecision_ResolutionUpdatesThreadReply verifies that resolving
+// a threaded decision updates the thread reply message in-place (not the status card).
+func TestUAT_ThreadedDecision_ResolutionUpdatesThreadReply(t *testing.T) {
+	bot, mockAPI := newRigRoutingBot(t)
+	mockDecisions := newMockDecisionProvider()
+	bot.decisions = mockDecisions
+
+	d := sampleDecision("bd-thread-res1")
+	mockDecisions.AddDecision(d)
+
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	// Capture the decision's thread reply timestamp
+	bot.decisionMessagesMu.RLock()
+	msgInfo := bot.decisionMessages["bd-thread-res1"]
+	bot.decisionMessagesMu.RUnlock()
+	decisionTS := msgInfo.timestamp
+	if decisionTS == "" {
+		t.Fatal("decision message not tracked")
+	}
+
+	// Resolve the decision
+	resolved := d
+	resolved.Resolved = true
+	resolved.ResolvedBy = "slack:U_RESOLVER"
+	resolved.ChosenIndex = 1
+
+	// Use ResolveDecision to mark it resolved in the mock provider
+	mockDecisions.mu.Lock()
+	rd := mockDecisions.decisions["bd-thread-res1"]
+	rd.Resolved = true
+	rd.ResolvedBy = "human"
+	rd.ChosenIndex = 1
+	mockDecisions.mu.Unlock()
+
+	// Notify resolution (non-slack resolver so it processes)
+	resolvedForNotify := d
+	resolvedForNotify.Resolved = true
+	resolvedForNotify.ResolvedBy = "human"
+	resolvedForNotify.ChosenIndex = 1
+	if err := bot.NotifyResolution(&resolvedForNotify); err != nil {
+		t.Fatalf("NotifyResolution: %v", err)
+	}
+
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+
+	// The thread reply message should have been updated
+	found := false
+	for _, upd := range mockAPI.UpdatedMessages {
+		if upd.Timestamp == decisionTS {
+			found = true
+			_, vals, _ := slack.UnsafeApplyMsgOptions("", upd.ChannelID, "", upd.Options...)
+			blocksJSON := vals.Get("blocks")
+			if !strings.Contains(blocksJSON, "Resolved") {
+				t.Errorf("updated message should contain 'Resolved', got %q", blocksJSON)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("thread reply message was not updated on resolution")
+	}
+}
+
+// TestUAT_FullLifecycle_RigMode_CreateResolveUpdate tests the complete rig-mode
+// lifecycle: create decision (threaded) → resolve via modal → verify thread update.
+func TestUAT_FullLifecycle_RigMode_CreateResolveUpdate(t *testing.T) {
+	bot, mockAPI := newRigRoutingBot(t)
+	mockDecisions := newMockDecisionProvider()
+	bot.decisions = mockDecisions
+
+	// Step 1: Create and notify a decision
+	d := sampleDecision("bd-riglife1")
+	mockDecisions.AddDecision(d)
+
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("step 1: NotifyNewDecision: %v", err)
+	}
+
+	// Verify: status card (msg 1) + threaded decision (msg 2)
+	mockAPI.mu.Lock()
+	if len(mockAPI.PostedMessages) < 2 {
+		t.Fatalf("step 1: expected at least 2 messages, got %d", len(mockAPI.PostedMessages))
+	}
+	mockAPI.mu.Unlock()
+
+	// Step 2: Verify decision is threaded
+	bot.decisionMessagesMu.RLock()
+	msgInfo := bot.decisionMessages["bd-riglife1"]
+	bot.decisionMessagesMu.RUnlock()
+
+	mockAPI.mu.Lock()
+	decisionMsg := mockAPI.PostedMessages[1] // 2nd message is the decision
+	mockAPI.mu.Unlock()
+	threadTS := extractThreadTS(t, decisionMsg.Options)
+	if threadTS == "" {
+		t.Fatal("step 2: decision should be threaded")
+	}
+
+	// Step 3: Verify pending count is 1
+	bot.agentPendingMu.Lock()
+	pending := bot.agentPendingCount["gastown/polecats/furiosa"]
+	bot.agentPendingMu.Unlock()
+	if pending != 1 {
+		t.Fatalf("step 3: pending = %d, want 1", pending)
+	}
+
+	// Step 4: Simulate user clicking resolve button → open modal
+	resolveCallback := slack.InteractionCallback{TriggerID: "trig_rig_resolve"}
+	resolveCallback.Channel.ID = msgInfo.channelID
+	resolveCallback.User.ID = "U_RESOLVER"
+	resolveCallback.Message.Timestamp = msgInfo.timestamp
+	resolveCallback.ActionCallback.BlockActions = []*slack.BlockAction{
+		{ActionID: "resolve_bd-riglife1_1", Value: "bd-riglife1:1"},
+	}
+	bot.handleInteraction(resolveCallback)
+
+	mockAPI.mu.Lock()
+	if len(mockAPI.OpenedViews) != 1 {
+		t.Fatalf("step 4: expected 1 modal, got %d", len(mockAPI.OpenedViews))
+	}
+	modalMeta := mockAPI.OpenedViews[0].View.PrivateMetadata
+	mockAPI.mu.Unlock()
+
+	// Step 5: Submit resolve modal
+	submitCallback := slack.InteractionCallback{}
+	submitCallback.User.ID = "U_RESOLVER"
+	submitCallback.View.CallbackID = "resolve_decision_modal"
+	submitCallback.View.PrivateMetadata = modalMeta
+	submitCallback.View.State = &slack.ViewState{
+		Values: map[string]map[string]slack.BlockAction{
+			"rationale_block": {
+				"rationale_input": {Value: "LGTM, ship it"},
+			},
+		},
+	}
+	bot.handleResolveModalSubmission(submitCallback)
+
+	// Step 6: Verify resolution
+	rc, ok := mockDecisions.getResolveCall("bd-riglife1")
+	if !ok {
+		t.Fatal("step 6: decision not resolved")
+	}
+	if rc.ChosenIndex != 1 {
+		t.Errorf("step 6: chosen = %d, want 1", rc.ChosenIndex)
+	}
+
+	// Step 7: Simulate resolution notification (from NATS)
+	resolvedD := d
+	resolvedD.Resolved = true
+	resolvedD.ResolvedBy = "human"
+	resolvedD.ChosenIndex = 1
+	if err := bot.NotifyResolution(&resolvedD); err != nil {
+		t.Fatalf("step 7: NotifyResolution: %v", err)
+	}
+
+	// Step 8: Verify pending decremented to 0
+	bot.agentPendingMu.Lock()
+	pending = bot.agentPendingCount["gastown/polecats/furiosa"]
+	bot.agentPendingMu.Unlock()
+	if pending != 0 {
+		t.Errorf("step 8: pending = %d, want 0", pending)
+	}
+
+	// Step 9: Thread reply should be updated with resolution
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+	updatedCount := len(mockAPI.UpdatedMessages)
+	if updatedCount == 0 {
+		t.Error("step 9: expected at least one UpdateMessage call")
+	}
+}
+
+// TestUAT_Concurrent_RigMode_MultipleDecisions verifies that concurrent decision
+// notifications in rig mode are thread-safe: all decisions get threaded under
+// the same status card and pending counts are accurate.
+func TestUAT_Concurrent_RigMode_MultipleDecisions(t *testing.T) {
+	bot, mockAPI := newRigRoutingBot(t)
+
+	// Post 10 decisions concurrently — all from same agent
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			d := sampleDecision(fmt.Sprintf("bd-rigconc-%d", idx))
+			_ = bot.NotifyNewDecision(&d)
+		}(i)
+	}
+	wg.Wait()
+
+	// All 10 decisions should be tracked
+	bot.decisionMessagesMu.RLock()
+	trackedCount := len(bot.decisionMessages)
+	bot.decisionMessagesMu.RUnlock()
+	if trackedCount != 10 {
+		t.Errorf("tracked %d decisions, want 10", trackedCount)
+	}
+
+	// Only 1 status card should exist (all from same agent)
+	bot.agentStatusCardsMu.RLock()
+	cardCount := len(bot.agentStatusCards)
+	bot.agentStatusCardsMu.RUnlock()
+	if cardCount != 1 {
+		t.Errorf("expected 1 status card, got %d", cardCount)
+	}
+
+	// Pending count should be 10
+	bot.agentPendingMu.Lock()
+	pending := bot.agentPendingCount["gastown/polecats/furiosa"]
+	bot.agentPendingMu.Unlock()
+	if pending != 10 {
+		t.Errorf("pending = %d, want 10", pending)
+	}
+
+	// All decision messages should be threaded (have the same thread_ts)
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+
+	// First PostMessage is the status card, rest are threaded decisions
+	// (status card may be first or interleaved due to concurrency, so just
+	// check that at least 10 messages have a thread_ts)
+	threadedCount := 0
+	for _, msg := range mockAPI.PostedMessages {
+		ts := extractThreadTS(t, msg.Options)
+		if ts != "" {
+			threadedCount++
+		}
+	}
+	if threadedCount < 10 {
+		t.Errorf("expected at least 10 threaded messages, got %d", threadedCount)
+	}
+}

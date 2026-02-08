@@ -3,6 +3,7 @@ package slackbot
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -11,10 +12,13 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockChannelCreator struct {
+	mu       sync.Mutex
 	channels map[string]string // name -> id
 }
 
 func (m *mockChannelCreator) FindChannelByName(name string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if id, ok := m.channels[name]; ok {
 		return id, nil
 	}
@@ -22,6 +26,8 @@ func (m *mockChannelCreator) FindChannelByName(name string) (string, error) {
 }
 
 func (m *mockChannelCreator) CreateChannel(name string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	id := "C" + strings.ToUpper(strings.ReplaceAll(name, "-", ""))
 	m.channels[name] = id
 	return id, nil
