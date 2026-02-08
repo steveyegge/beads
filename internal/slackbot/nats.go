@@ -286,7 +286,15 @@ func (w *NATSWatcher) catchUpMissedDecisions(ctx context.Context) {
 			continue
 		}
 
+		// Skip already-resolved decisions (shouldn't appear in ListPending,
+		// but guards against race conditions).
+		if pending[i].Resolved {
+			continue
+		}
+
 		// Skip decisions older than 1 hour — they're from before this bot instance.
+		// This prevents flooding Slack when the DB is cloned from prod with
+		// hundreds of pending decisions from other agents.
 		if !pending[i].RequestedAt.IsZero() && pending[i].RequestedAt.Before(cutoff) {
 			skippedOld++
 			continue
