@@ -239,7 +239,6 @@ func setGitIndexFlags(repoPath, filePath, excludePattern string) (bool, error) {
 	return true, nil
 }
 
-
 // parseGitLsFilesFlag interprets the flag character from git ls-files -v output.
 // Returns (hasAnyFlag, hasSkipWorktree) based on the first character of the line.
 //
