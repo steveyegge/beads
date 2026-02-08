@@ -199,7 +199,15 @@ func (b *Bot) Run(ctx context.Context) error {
 
 	go func() {
 		for evt := range b.socketMode.Events {
-			log.Printf("slackbot: RAW EVENT: type=%s", evt.Type)
+			if evt.Type == socketmode.EventTypeInteractive {
+				if cb, ok := evt.Data.(slack.InteractionCallback); ok {
+					log.Printf("slackbot: RAW EVENT: type=%s interaction_type=%s callback_id=%q", evt.Type, cb.Type, cb.View.CallbackID)
+				} else {
+					log.Printf("slackbot: RAW EVENT: type=%s (interactive, bad type assertion)", evt.Type)
+				}
+			} else {
+				log.Printf("slackbot: RAW EVENT: type=%s", evt.Type)
+			}
 			b.handleEvent(evt)
 		}
 	}()
@@ -229,6 +237,14 @@ func (b *Bot) handleEvent(evt socketmode.Event) {
 	switch evt.Type {
 	case socketmode.EventTypeConnecting:
 		log.Println("slackbot: connecting to Socket Mode...")
+
+	case socketmode.EventTypeHello:
+		if evt.Request != nil {
+			log.Printf("slackbot: hello: num_connections=%d app_id=%s", evt.Request.NumConnections, evt.Request.ConnectionInfo.AppID)
+			if evt.Request.NumConnections > 1 {
+				log.Printf("slackbot: WARNING: %d active Socket Mode connections detected! Slack will round-robin events across connections, causing missed events. Ensure only ONE instance uses this app token.", evt.Request.NumConnections)
+			}
+		}
 
 	case socketmode.EventTypeConnected:
 		log.Println("slackbot: connected to Socket Mode")
