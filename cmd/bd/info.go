@@ -289,6 +289,13 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.49.6",
+		Date:    "2026-02-08",
+		Changes: []string{
+			"REVERT: Embedded Dolt mode restored (removal was only intended for Gas Town, not Beads)",
+		},
+	},
+	{
 		Version: "0.49.5",
 		Date:    "2026-02-08",
 		Changes: []string{
