@@ -739,6 +739,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, doltLocksCheck)
 	// Don't fail overall check for Dolt locks, just warn
 
+	// Check 33: Label mutex invariants (validation.labels.mutex)
+	labelMutexCheck := convertDoctorCheck(doctor.CheckLabelMutexInvariants(path))
+	result.Checks = append(result.Checks, labelMutexCheck)
+	// Don't fail overall check for label mutex violations, just warn
+
 	return result
 }
 
