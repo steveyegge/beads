@@ -28,6 +28,12 @@ Examples:
   # Watch for a decision to be responded to
   bd watch --decision=gt-abc --timeout=30m
 
+  # General-purpose matching (AND logic)
+  bd watch --match type=create,issue_type=gate --timeout=30s
+
+  # Match with contains operator
+  bd watch --match title~=deploy --timeout=5m
+
   # Stream all mutations (raw mode, for debugging)
   bd watch --raw
 
@@ -37,19 +43,20 @@ Examples:
 Exit codes:
   0 - Condition met (or raw mode ended normally)
   1 - Timeout reached
-  2 - Error occurred`,
+  2 - Canceled`,
 	RunE: runWatch,
 }
 
 var (
-	watchIssue      string
-	watchDecision   string
+	watchIssue       string
+	watchDecision    string
 	watchUntilStatus string
-	watchTimeout    time.Duration
-	watchRaw        bool
-	watchJSON       bool
-	watchType       string
-	watchSince      int64
+	watchTimeout     time.Duration
+	watchRaw         bool
+	watchJSON        bool
+	watchType        string
+	watchSince       int64
+	watchMatch       string
 )
 
 func init() {
@@ -61,38 +68,113 @@ func init() {
 	watchCmd.Flags().BoolVar(&watchJSON, "json", false, "Output as JSON")
 	watchCmd.Flags().StringVar(&watchType, "type", "", "Filter by mutation type (create, update, delete, etc.)")
 	watchCmd.Flags().Int64Var(&watchSince, "since", 0, "Replay events since this unix timestamp (ms)")
+	watchCmd.Flags().StringVar(&watchMatch, "match", "", "General-purpose match expression (key=value,key=value; AND logic, ~= for contains)")
 
 	rootCmd.AddCommand(watchCmd)
 }
 
-// WatchResult is the JSON output when a watch condition is met.
-type WatchResult struct {
-	Matched  bool   `json:"matched"`
-	IssueID  string `json:"issue_id,omitempty"`
-	Type     string `json:"type,omitempty"`
-	Status   string `json:"status,omitempty"`
-	TimedOut bool   `json:"timed_out,omitempty"`
-	// Decision-specific fields (populated via follow-up RPC)
-	Selected    string `json:"selected,omitempty"`
-	RespondedBy string `json:"responded_by,omitempty"`
-	Reason      string `json:"reason,omitempty"`
+func runWatch(cmd *cobra.Command, args []string) error {
+	// Raw mode: stream all events directly
+	if watchRaw {
+		return runWatchRawMode()
+	}
+
+	// Decision mode: uses shared awaitDecision with initial-state check
+	if watchDecision != "" {
+		return runWatchDecisionMode()
+	}
+
+	// General --match mode or sugar flags compile to matcher
+	matcher, err := buildMatcher()
+	if err != nil {
+		return err
+	}
+
+	// If no matcher and no flags, stream everything (same as --raw)
+	if matcher.IsEmpty() && watchIssue == "" && watchType == "" {
+		return runWatchRawMode()
+	}
+
+	if daemonClient == nil {
+		return fmt.Errorf("no daemon connection (bd watch requires a running daemon)")
+	}
+
+	ctx, cancel := context.WithTimeout(rootCtx, watchTimeout)
+	defer cancel()
+
+	result, err := awaitEvent(ctx, daemonClient, AwaitOpts{
+		Matcher: matcher,
+		Timeout: watchTimeout,
+		JSON:    watchJSON,
+	})
+	if err != nil {
+		return err
+	}
+
+	outputResult(result)
+	if result.TimedOut {
+		os.Exit(1)
+	}
+	if result.Canceled {
+		os.Exit(2)
+	}
+	return nil
 }
 
-func runWatch(cmd *cobra.Command, args []string) error {
-	// Determine SSE endpoint from daemon client
+// buildMatcher compiles sugar flags and --match into a single EventMatcher.
+func buildMatcher() (*EventMatcher, error) {
+	// Start with explicit --match expression
+	matcher, err := ParseMatcher(watchMatch)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --match expression: %w", err)
+	}
+
+	// Sugar: --issue compiles to issue_id= condition
+	if watchIssue != "" {
+		matcher.Conditions = append(matcher.Conditions,
+			MatchCondition{Field: "issue_id", Value: watchIssue, Op: OpEqual})
+	}
+
+	// Sugar: --until-status compiles to new_status= condition
+	if watchUntilStatus != "" {
+		matcher.Conditions = append(matcher.Conditions,
+			MatchCondition{Field: "new_status", Value: watchUntilStatus, Op: OpEqual})
+	}
+
+	// Sugar: --type compiles to type= condition
+	if watchType != "" {
+		matcher.Conditions = append(matcher.Conditions,
+			MatchCondition{Field: "type", Value: watchType, Op: OpEqual})
+	}
+
+	return matcher, nil
+}
+
+// runWatchDecisionMode handles --decision with initial-state check and enrichment.
+func runWatchDecisionMode() error {
+	if daemonClient == nil {
+		return fmt.Errorf("no daemon connection (bd watch --decision requires a running daemon)")
+	}
+
+	ctx := rootCtx
+	result, exitCode := awaitDecision(ctx, daemonClient, watchDecision, watchTimeout)
+	if result == nil {
+		fmt.Fprintf(os.Stderr, "Error waiting for decision %s\n", watchDecision)
+		os.Exit(3)
+	}
+
+	outputResult(result)
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
+	return nil
+}
+
+// runWatchRawMode streams all events to stdout (no condition matching).
+func runWatchRawMode() error {
 	baseURL, token, err := resolveSSEEndpoint()
 	if err != nil {
 		return fmt.Errorf("cannot connect to SSE endpoint: %w", err)
-	}
-
-	// Build filter
-	var filter string
-	if watchIssue != "" {
-		filter = "issue:" + watchIssue
-	} else if watchDecision != "" {
-		filter = "issue:" + watchDecision
-	} else if watchType != "" {
-		filter = "type:" + watchType
 	}
 
 	ctx, cancel := context.WithTimeout(rootCtx, watchTimeout)
@@ -103,6 +185,12 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		since = time.Now().UnixMilli()
 	}
 
+	// Build optional server-side filter
+	var filter string
+	if watchType != "" {
+		filter = "type:" + watchType
+	}
+
 	events, errs := rpc.ConnectSSE(ctx, rpc.SSEClientOptions{
 		BaseURL: baseURL,
 		Token:   token,
@@ -110,23 +198,6 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		Filter:  filter,
 	})
 
-	if watchRaw {
-		return runWatchRaw(ctx, events, errs)
-	}
-
-	if watchDecision != "" {
-		return runWatchDecision(ctx, events, errs)
-	}
-
-	if watchIssue != "" {
-		return runWatchIssue(ctx, events, errs)
-	}
-
-	// No specific target — stream everything (same as --raw)
-	return runWatchRaw(ctx, events, errs)
-}
-
-func runWatchRaw(ctx context.Context, events <-chan rpc.SSEEvent, errs <-chan error) error {
 	for {
 		select {
 		case evt, ok := <-events:
@@ -148,103 +219,15 @@ func runWatchRaw(ctx context.Context, events <-chan rpc.SSEEvent, errs <-chan er
 				return err
 			}
 		case <-ctx.Done():
-			if ctx.Err() == context.DeadlineExceeded {
-				return nil // timeout is normal for raw mode
-			}
-			return nil
+			return nil // timeout or cancel is normal for raw mode
 		}
 	}
 }
 
-func runWatchIssue(ctx context.Context, events <-chan rpc.SSEEvent, errs <-chan error) error {
-	for {
-		select {
-		case evt, ok := <-events:
-			if !ok {
-				return fmt.Errorf("SSE connection closed")
-			}
-			// Check until-status condition
-			if watchUntilStatus != "" {
-				if evt.Data.NewStatus == watchUntilStatus {
-					result := WatchResult{
-						Matched: true,
-						IssueID: evt.Data.IssueID,
-						Type:    evt.Data.Type,
-						Status:  evt.Data.NewStatus,
-					}
-					outputWatchResult(result)
-					return nil
-				}
-			} else {
-				// Any mutation on the issue matches
-				result := WatchResult{
-					Matched: true,
-					IssueID: evt.Data.IssueID,
-					Type:    evt.Data.Type,
-					Status:  evt.Data.NewStatus,
-				}
-				outputWatchResult(result)
-				return nil
-			}
-		case err := <-errs:
-			if err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			if ctx.Err() == context.DeadlineExceeded {
-				result := WatchResult{TimedOut: true, IssueID: watchIssue}
-				outputWatchResult(result)
-				os.Exit(1)
-			}
-			return nil
-		}
-	}
-}
-
-func runWatchDecision(ctx context.Context, events <-chan rpc.SSEEvent, errs <-chan error) error {
-	for {
-		select {
-		case evt, ok := <-events:
-			if !ok {
-				return fmt.Errorf("SSE connection closed")
-			}
-			// A mutation on the decision issue — check if it's been responded to
-			// by fetching the full decision state via RPC
-			if daemonClient != nil {
-				dr, err := daemonClient.DecisionGet(&rpc.DecisionGetArgs{IssueID: watchDecision})
-				if err == nil && dr.Decision != nil && dr.Decision.RespondedAt != nil {
-					result := WatchResult{
-						Matched:     true,
-						IssueID:     evt.Data.IssueID,
-						Type:        evt.Data.Type,
-						Selected:    dr.Decision.SelectedOption,
-						RespondedBy: dr.Decision.RespondedBy,
-						Reason:      dr.Decision.ResponseText,
-					}
-					outputWatchResult(result)
-					return nil
-				}
-			}
-		case err := <-errs:
-			if err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			if ctx.Err() == context.DeadlineExceeded {
-				result := WatchResult{TimedOut: true, IssueID: watchDecision}
-				outputWatchResult(result)
-				os.Exit(1)
-			}
-			return nil
-		}
-	}
-}
-
-func outputWatchResult(result WatchResult) {
-	if watchJSON || true { // always JSON for scriptability
-		data, _ := json.Marshal(result)
-		fmt.Println(string(data))
-	}
+// outputResult writes a WatchResult as JSON to stdout.
+func outputResult(result *WatchResult) {
+	data, _ := json.Marshal(result)
+	fmt.Println(string(data))
 }
 
 // resolveSSEEndpoint determines the SSE base URL and token from the daemon client.

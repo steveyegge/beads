@@ -143,6 +143,10 @@ type MutationEvent struct {
 	NewStatus string `json:"new_status,omitempty"` // New status (for status events)
 	ParentID  string `json:"parent_id,omitempty"`  // Parent molecule (for bonded events)
 	StepCount int    `json:"step_count,omitempty"` // Number of steps (for bonded events)
+	// Enrichment fields for event matching (bd-pg90)
+	IssueType string   `json:"issue_type,omitempty"` // task, bug, feature, gate, etc.
+	Labels    []string `json:"labels,omitempty"`      // Issue labels at time of mutation
+	AwaitType string   `json:"await_type,omitempty"`  // decision, timer, human, etc. (gates only)
 }
 
 // isWisp checks if an issue should be stored in the in-memory WispStore.
@@ -265,6 +269,33 @@ func (s *Server) emitMutation(eventType, issueID, title, assignee string) {
 		Title:    title,
 		Assignee: assignee,
 	})
+}
+
+// enrichEvent populates IssueType, Labels, and AwaitType on a MutationEvent
+// from an issue object. Safe to call with nil issue (fields left empty).
+func enrichEvent(evt *MutationEvent, issue *types.Issue) {
+	if issue == nil {
+		return
+	}
+	evt.IssueType = string(issue.IssueType)
+	evt.Labels = issue.Labels
+	evt.AwaitType = issue.AwaitType
+}
+
+// emitMutationFor is like emitMutation but enriches the event with issue metadata.
+func (s *Server) emitMutationFor(eventType string, issue *types.Issue) {
+	if issue == nil {
+		s.emitMutation(eventType, "", "", "")
+		return
+	}
+	evt := MutationEvent{
+		Type:     eventType,
+		IssueID:  issue.ID,
+		Title:    issue.Title,
+		Assignee: issue.Assignee,
+	}
+	enrichEvent(&evt, issue)
+	s.emitRichMutation(evt)
 }
 
 // emitRichMutation sends a pre-built mutation event with optional metadata.

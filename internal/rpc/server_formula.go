@@ -239,9 +239,9 @@ func (s *Server) handleFormulaSave(req *Request) Response {
 	}
 
 	if created {
-		s.emitMutation(MutationCreate, issue.ID, issue.Title, "")
+		s.emitMutationFor(MutationCreate, issue)
 	} else {
-		s.emitMutation(MutationUpdate, issue.ID, issue.Title, "")
+		s.emitMutationFor(MutationUpdate, issue)
 	}
 
 	result := FormulaSaveResult{
@@ -324,7 +324,7 @@ func (s *Server) handleFormulaDelete(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("failed to delete formula: %v", err)}
 	}
 
-	s.emitMutation(MutationDelete, issue.ID, issue.Title, "")
+	s.emitMutationFor(MutationDelete, issue)
 
 	result := FormulaDeleteResult{
 		ID:   issue.ID,

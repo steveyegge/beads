@@ -78,8 +78,11 @@ func (s *Server) handleDepAdd(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	title, assignee := s.lookupIssueMeta(ctx, depArgs.FromID)
-	s.emitMutation(MutationUpdate, depArgs.FromID, title, assignee)
+	if issue, _ := store.GetIssue(ctx, depArgs.FromID); issue != nil {
+		s.emitMutationFor(MutationUpdate, issue)
+	} else {
+		s.emitMutation(MutationUpdate, depArgs.FromID, "", "")
+	}
 
 	result := map[string]interface{}{
 		"status":        "added",
@@ -120,8 +123,11 @@ func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc 
 	}
 
 	// Emit mutation event for event-driven daemon
-	title, assignee := s.lookupIssueMeta(ctx, issueID)
-	s.emitMutation(MutationUpdate, issueID, title, assignee)
+	if issue, _ := store.GetIssue(ctx, issueID); issue != nil {
+		s.emitMutationFor(MutationUpdate, issue)
+	} else {
+		s.emitMutation(MutationUpdate, issueID, "", "")
+	}
 
 	if responseData != nil {
 		data, _ := json.Marshal(responseData())
@@ -211,10 +217,16 @@ func (s *Server) handleDepAddBidirectional(req *Request) Response {
 	}
 
 	// Emit mutation events for both issues
-	title1, assignee1 := s.lookupIssueMeta(ctx, args.ID1)
-	title2, assignee2 := s.lookupIssueMeta(ctx, args.ID2)
-	s.emitMutation(MutationUpdate, args.ID1, title1, assignee1)
-	s.emitMutation(MutationUpdate, args.ID2, title2, assignee2)
+	if issue1, _ := store.GetIssue(ctx, args.ID1); issue1 != nil {
+		s.emitMutationFor(MutationUpdate, issue1)
+	} else {
+		s.emitMutation(MutationUpdate, args.ID1, "", "")
+	}
+	if issue2, _ := store.GetIssue(ctx, args.ID2); issue2 != nil {
+		s.emitMutationFor(MutationUpdate, issue2)
+	} else {
+		s.emitMutation(MutationUpdate, args.ID2, "", "")
+	}
 
 	result := map[string]interface{}{
 		"status":  "added",
@@ -272,10 +284,16 @@ func (s *Server) handleDepRemoveBidirectional(req *Request) Response {
 	}
 
 	// Emit mutation events for both issues
-	title1, assignee1 := s.lookupIssueMeta(ctx, args.ID1)
-	title2, assignee2 := s.lookupIssueMeta(ctx, args.ID2)
-	s.emitMutation(MutationUpdate, args.ID1, title1, assignee1)
-	s.emitMutation(MutationUpdate, args.ID2, title2, assignee2)
+	if issue1, _ := store.GetIssue(ctx, args.ID1); issue1 != nil {
+		s.emitMutationFor(MutationUpdate, issue1)
+	} else {
+		s.emitMutation(MutationUpdate, args.ID1, "", "")
+	}
+	if issue2, _ := store.GetIssue(ctx, args.ID2); issue2 != nil {
+		s.emitMutationFor(MutationUpdate, issue2)
+	} else {
+		s.emitMutation(MutationUpdate, args.ID2, "", "")
+	}
 
 	result := map[string]interface{}{
 		"status": "removed",
@@ -405,8 +423,11 @@ func (s *Server) handleBatchAddLabels(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	title, assignee := s.lookupIssueMeta(ctx, fullID)
-	s.emitMutation(MutationUpdate, fullID, title, assignee)
+	if issue, _ := store.GetIssue(ctx, fullID); issue != nil {
+		s.emitMutationFor(MutationUpdate, issue)
+	} else {
+		s.emitMutation(MutationUpdate, fullID, "", "")
+	}
 
 	// Invalidate label cache
 	if s.labelCache != nil {
@@ -471,8 +492,11 @@ func (s *Server) handleCommentAdd(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	title, assignee := s.lookupIssueMeta(ctx, commentArgs.ID)
-	s.emitMutation(MutationComment, commentArgs.ID, title, assignee)
+	if issue, _ := store.GetIssue(ctx, commentArgs.ID); issue != nil {
+		s.emitMutationFor(MutationComment, issue)
+	} else {
+		s.emitMutation(MutationComment, commentArgs.ID, "", "")
+	}
 
 	data, _ := json.Marshal(comment)
 	return Response{
@@ -664,8 +688,11 @@ func (s *Server) handleSetState(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	title, assignee := s.lookupIssueMeta(ctx, fullID)
-	s.emitMutation(MutationUpdate, fullID, title, assignee)
+	if issue, _ := store.GetIssue(ctx, fullID); issue != nil {
+		s.emitMutationFor(MutationUpdate, issue)
+	} else {
+		s.emitMutation(MutationUpdate, fullID, "", "")
+	}
 
 	// Invalidate label cache (label was renamed)
 	if s.labelCache != nil {
@@ -757,8 +784,11 @@ func (s *Server) handleBatchAddDependencies(req *Request) Response {
 		affectedIssues[dep.FromID] = true
 	}
 	for issueID := range affectedIssues {
-		title, assignee := s.lookupIssueMeta(ctx, issueID)
-		s.emitMutation(MutationUpdate, issueID, title, assignee)
+		if issue, _ := store.GetIssue(ctx, issueID); issue != nil {
+			s.emitMutationFor(MutationUpdate, issue)
+		} else {
+			s.emitMutation(MutationUpdate, issueID, "", "")
+		}
 	}
 
 	result := &BatchAddDependenciesResult{

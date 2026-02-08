@@ -53,11 +53,13 @@ func (s *Server) handleAgentPodRegister(req *Request) Response {
 		}
 	}
 
-	s.emitRichMutation(MutationEvent{
-		Type:    MutationUpdate,
-		IssueID: args.AgentID,
-		Actor:   req.Actor,
-	})
+	if agentIssue, _ := store.GetIssue(ctx, args.AgentID); agentIssue != nil {
+		evt := MutationEvent{Type: MutationUpdate, IssueID: args.AgentID, Actor: req.Actor}
+		enrichEvent(&evt, agentIssue)
+		s.emitRichMutation(evt)
+	} else {
+		s.emitRichMutation(MutationEvent{Type: MutationUpdate, IssueID: args.AgentID, Actor: req.Actor})
+	}
 
 	result := AgentPodRegisterResult{
 		AgentID:   args.AgentID,
@@ -106,11 +108,13 @@ func (s *Server) handleAgentPodDeregister(req *Request) Response {
 		}
 	}
 
-	s.emitRichMutation(MutationEvent{
-		Type:    MutationUpdate,
-		IssueID: args.AgentID,
-		Actor:   req.Actor,
-	})
+	if agentIssue, _ := store.GetIssue(ctx, args.AgentID); agentIssue != nil {
+		evt := MutationEvent{Type: MutationUpdate, IssueID: args.AgentID, Actor: req.Actor}
+		enrichEvent(&evt, agentIssue)
+		s.emitRichMutation(evt)
+	} else {
+		s.emitRichMutation(MutationEvent{Type: MutationUpdate, IssueID: args.AgentID, Actor: req.Actor})
+	}
 
 	result := AgentPodDeregisterResult{
 		AgentID: args.AgentID,
@@ -156,11 +160,13 @@ func (s *Server) handleAgentPodStatus(req *Request) Response {
 		}
 	}
 
-	s.emitRichMutation(MutationEvent{
-		Type:    MutationUpdate,
-		IssueID: args.AgentID,
-		Actor:   req.Actor,
-	})
+	if agentIssue, _ := store.GetIssue(ctx, args.AgentID); agentIssue != nil {
+		evt := MutationEvent{Type: MutationUpdate, IssueID: args.AgentID, Actor: req.Actor}
+		enrichEvent(&evt, agentIssue)
+		s.emitRichMutation(evt)
+	} else {
+		s.emitRichMutation(MutationEvent{Type: MutationUpdate, IssueID: args.AgentID, Actor: req.Actor})
+	}
 
 	result := AgentPodStatusResult{
 		AgentID:   args.AgentID,

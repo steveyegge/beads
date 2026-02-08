@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -126,21 +127,21 @@ func TestGetRecentMutations_CircularBuffer(t *testing.T) {
 	store := memory.New("/tmp/test.jsonl")
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 
-	// Emit more than maxMutationBuffer (100) mutations
-	for i := 0; i < 150; i++ {
-		server.emitMutation(MutationCreate, "bd-"+string(rune(i)), "", "")
-		time.Sleep(time.Millisecond) // Ensure different timestamps
+	// Emit more than maxMutationBuffer (1000) mutations
+	for i := 0; i < 1500; i++ {
+		server.emitMutation(MutationCreate, fmt.Sprintf("bd-%d", i), "", "")
+		time.Sleep(100 * time.Microsecond) // Ensure different timestamps
 	}
 
-	// Buffer should only keep last 100
+	// Buffer should only keep last 1000
 	mutations := server.GetRecentMutations(0)
-	if len(mutations) != 100 {
-		t.Errorf("expected 100 mutations (circular buffer limit), got %d", len(mutations))
+	if len(mutations) != 1000 {
+		t.Errorf("expected 1000 mutations (circular buffer limit), got %d", len(mutations))
 	}
 
-	// First mutation should be from iteration 50 (150-100)
+	// First mutation should be from iteration 500 (1500-1000)
 	firstID := mutations[0].IssueID
-	expectedFirstID := "bd-" + string(rune(50))
+	expectedFirstID := "bd-500"
 	if firstID != expectedFirstID {
 		t.Errorf("expected first mutation to be %s (after circular buffer wraparound), got %s", expectedFirstID, firstID)
 	}
@@ -382,9 +383,9 @@ func TestEmitMutation_NonBlocking(t *testing.T) {
 		t.Error("expected mutations in recent buffer even when channel is full")
 	}
 
-	// Verify buffer is capped at 100 (maxMutationBuffer)
-	if len(mutations) > 100 {
-		t.Errorf("expected at most 100 mutations in buffer, got %d", len(mutations))
+	// Verify buffer is capped at 1000 (maxMutationBuffer)
+	if len(mutations) > 1000 {
+		t.Errorf("expected at most 1000 mutations in buffer, got %d", len(mutations))
 	}
 }
 

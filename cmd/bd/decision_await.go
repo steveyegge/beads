@@ -88,7 +88,8 @@ func runDecisionAwait(cmd *cobra.Command, args []string) {
 	}
 }
 
-// runDecisionAwaitDaemon polls the daemon via RPC for decision resolution.
+// runDecisionAwaitDaemon uses the shared awaitDecision loop (SSE+polling)
+// for decision resolution via daemon.
 func runDecisionAwaitDaemon(client *rpc.Client, decisionID string) {
 	// Resolve partial ID via daemon
 	resp, err := client.ResolveID(&rpc.ResolveIDArgs{ID: decisionID})
@@ -104,7 +105,7 @@ func runDecisionAwaitDaemon(client *rpc.Client, decisionID string) {
 		resolvedID = decisionID
 	}
 
-	// Fetch initial state
+	// Validate it's a decision gate before waiting
 	dr, err := client.DecisionGet(&rpc.DecisionGetArgs{IssueID: resolvedID})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting decision: %v\n", err)
@@ -114,81 +115,40 @@ func runDecisionAwaitDaemon(client *rpc.Client, decisionID string) {
 		fmt.Fprintf(os.Stderr, "Error: no decision point data for %s\n", resolvedID)
 		os.Exit(3)
 	}
-
-	// Verify it's a decision gate
 	if dr.Issue != nil && (dr.Issue.IssueType != types.IssueType("gate") || dr.Issue.AwaitType != "decision") {
 		fmt.Fprintf(os.Stderr, "Error: %s is not a decision point\n", resolvedID)
 		os.Exit(3)
 	}
 
-	// If already responded, return immediately
-	if dr.Decision.RespondedAt != nil {
-		outputAwaitResponse(resolvedID, dr.Decision, false)
-		os.Exit(0)
-	}
-
-	// Check if already canceled/closed
-	if dr.Issue != nil && dr.Issue.Status == types.StatusClosed {
-		resp := AwaitResponse{
-			ID:       resolvedID,
-			Canceled: true,
-		}
-		outputJSON(resp)
-		os.Exit(2)
-	}
-
-	// Start polling via daemon RPC
-	deadline := time.Now().Add(awaitTimeout)
-	ticker := time.NewTicker(awaitPollInterval)
-	defer ticker.Stop()
-
 	fmt.Fprintf(os.Stderr, "Waiting for response to %s (timeout: %s, via daemon)...\n", resolvedID, awaitTimeout)
 
-	for {
-		select {
-		case <-ticker.C:
-			dr, err = client.DecisionGet(&rpc.DecisionGetArgs{IssueID: resolvedID})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error polling decision: %v\n", err)
-				continue
-			}
-
-			// Check if responded
-			if dr.Decision != nil && dr.Decision.RespondedAt != nil {
-				outputAwaitResponse(resolvedID, dr.Decision, false)
-				os.Exit(0)
-			}
-
-			// Check if canceled
-			if dr.Issue != nil && dr.Issue.Status == types.StatusClosed {
-				resp := AwaitResponse{
-					ID:       resolvedID,
-					Canceled: true,
-				}
-				outputJSON(resp)
-				os.Exit(2)
-			}
-
-			// Check timeout
-			if time.Now().After(deadline) {
-				resp := AwaitResponse{
-					ID:      resolvedID,
-					TimedOut: true,
-				}
-				outputJSON(resp)
-				fmt.Fprintf(os.Stderr, "Timeout waiting for response\n")
-				os.Exit(1)
-			}
-
-		case <-rootCtx.Done():
-			resp := AwaitResponse{
-				ID:       resolvedID,
-				Canceled: true,
-			}
-			outputJSON(resp)
-			os.Exit(2)
-		}
+	// Delegate to shared awaitDecision (SSE-first with polling fallback,
+	// includes initial-state check for already-responded decisions)
+	result, exitCode := awaitDecision(rootCtx, client, resolvedID, awaitTimeout)
+	if result == nil {
+		fmt.Fprintf(os.Stderr, "Error waiting for decision %s\n", resolvedID)
+		os.Exit(3)
 	}
+
+	// Convert WatchResult to AwaitResponse for backward compatibility
+	awaitResp := AwaitResponse{
+		ID:       resolvedID,
+		TimedOut: result.TimedOut,
+		Canceled: result.Canceled,
+	}
+	if result.Decision != nil {
+		awaitResp.Selected = result.Decision.Selected
+		awaitResp.Text = result.Decision.Reason
+		awaitResp.RespondedBy = result.Decision.RespondedBy
+		awaitResp.RespondedAt = result.Decision.RespondedAt
+	}
+	outputJSON(awaitResp)
+
+	if result.TimedOut {
+		fmt.Fprintf(os.Stderr, "Timeout waiting for response\n")
+	}
+
+	os.Exit(exitCode)
 }
 
 // runDecisionAwaitDirect polls the local store directly for decision resolution.

@@ -230,7 +230,7 @@ func (s *Server) handleMove(req *Request) Response {
 		}
 	}
 
-	s.emitMutation(MutationUpdate, args.IssueID, sourceIssue.Title, sourceIssue.Assignee)
+	s.emitMutationFor(MutationUpdate, sourceIssue)
 
 	result := MoveResult{
 		SourceID:     args.IssueID,
@@ -327,7 +327,7 @@ func (s *Server) handleRefile(req *Request) Response {
 		}
 	}
 
-	s.emitMutation(MutationUpdate, args.IssueID, sourceIssue.Title, sourceIssue.Assignee)
+	s.emitMutationFor(MutationUpdate, sourceIssue)
 
 	result := RefileResult{
 		SourceID: args.IssueID,

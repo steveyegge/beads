@@ -575,7 +575,7 @@ func (s *Server) handleCreate(req *Request) Response {
 			}
 		}
 		// Emit mutation event for event-driven daemon
-		s.emitMutation(MutationCreate, issue.ID, issue.Title, issue.Assignee)
+		s.emitMutationFor(MutationCreate, issue)
 
 		// Wisps don't support dependencies, labels, or other persistent relations
 		// They are purely in-memory ephemeral issues
@@ -750,7 +750,7 @@ func (s *Server) handleCreate(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon (after transaction commits)
-	s.emitMutation(MutationCreate, issue.ID, issue.Title, issue.Assignee)
+	s.emitMutationFor(MutationCreate, issue)
 
 	// Emit advice bus event if this is an advice bead (bd-z4cu.2)
 	if issue.IssueType == types.TypeAdvice {
@@ -832,7 +832,7 @@ func (s *Server) handleUpdate(req *Request) Response {
 			}
 
 			// Emit mutation event
-			s.emitMutation(MutationUpdate, issue.ID, issue.Title, issue.Assignee)
+			s.emitMutationFor(MutationUpdate, issue)
 
 			data, _ := json.Marshal(issue)
 			return Response{
@@ -1044,7 +1044,7 @@ func (s *Server) handleUpdate(req *Request) Response {
 		}
 
 		if updateArgs.Status != nil && *updateArgs.Status != string(issue.Status) {
-			s.emitRichMutation(MutationEvent{
+			evt := MutationEvent{
 				Type:      MutationStatus,
 				IssueID:   updateArgs.ID,
 				Title:     issue.Title,
@@ -1052,15 +1052,19 @@ func (s *Server) handleUpdate(req *Request) Response {
 				Actor:     actor,
 				OldStatus: string(issue.Status),
 				NewStatus: *updateArgs.Status,
-			})
+			}
+			enrichEvent(&evt, issue)
+			s.emitRichMutation(evt)
 		} else {
-			s.emitRichMutation(MutationEvent{
+			evt := MutationEvent{
 				Type:     MutationUpdate,
 				IssueID:  updateArgs.ID,
 				Title:    issue.Title,
 				Assignee: effectiveAssignee,
 				Actor:    actor,
-			})
+			}
+			enrichEvent(&evt, issue)
+			s.emitRichMutation(evt)
 		}
 	}
 
@@ -1226,7 +1230,7 @@ func (s *Server) handleUpdateWithComment(req *Request) Response {
 		}
 
 		if args.Status != nil && *args.Status != string(issue.Status) {
-			s.emitRichMutation(MutationEvent{
+			evt := MutationEvent{
 				Type:      MutationStatus,
 				IssueID:   args.ID,
 				Title:     issue.Title,
@@ -1234,20 +1238,24 @@ func (s *Server) handleUpdateWithComment(req *Request) Response {
 				Actor:     actor,
 				OldStatus: string(issue.Status),
 				NewStatus: *args.Status,
-			})
+			}
+			enrichEvent(&evt, issue)
+			s.emitRichMutation(evt)
 		} else {
-			s.emitRichMutation(MutationEvent{
+			evt := MutationEvent{
 				Type:     MutationUpdate,
 				IssueID:  args.ID,
 				Title:    issue.Title,
 				Assignee: effectiveAssignee,
 				Actor:    actor,
-			})
+			}
+			enrichEvent(&evt, issue)
+			s.emitRichMutation(evt)
 		}
 	}
 
 	if args.CommentText != "" {
-		s.emitMutation(MutationComment, args.ID, issue.Title, issue.Assignee)
+		s.emitMutationFor(MutationComment, issue)
 	}
 
 	// Invalidate label cache if labels were modified
@@ -1328,14 +1336,16 @@ func (s *Server) handleClose(req *Request) Response {
 	}
 
 	// Emit rich status change event for event-driven daemon
-	s.emitRichMutation(MutationEvent{
+	evt := MutationEvent{
 		Type:      MutationStatus,
 		IssueID:   closeArgs.ID,
 		Title:     issue.Title,
 		Assignee:  issue.Assignee,
 		OldStatus: oldStatus,
 		NewStatus: "closed",
-	})
+	}
+	enrichEvent(&evt, issue)
+	s.emitRichMutation(evt)
 
 	// Emit advice.deleted bus event when closing an advice bead (bd-z4cu.2)
 	if issue != nil && issue.IssueType == types.TypeAdvice {
@@ -1589,7 +1599,7 @@ func (s *Server) handleDelete(req *Request) Response {
 		}
 
 		// Emit mutation event for event-driven daemon
-		s.emitMutation(MutationDelete, issueID, issue.Title, issue.Assignee)
+		s.emitMutationFor(MutationDelete, issue)
 
 		// Emit advice.deleted bus event if this is an advice bead (bd-z4cu.2)
 		if issue.IssueType == types.TypeAdvice {
@@ -1715,7 +1725,7 @@ func (s *Server) handleRename(req *Request) Response {
 	referencesUpdated := s.updateReferencesInAllIssues(ctx, store, renameArgs.OldID, renameArgs.NewID, actor)
 
 	// Emit mutation event
-	s.emitMutation(MutationUpdate, renameArgs.NewID, oldIssue.Title, oldIssue.Assignee)
+	s.emitMutationFor(MutationUpdate, oldIssue)
 
 	result := RenameResult{
 		OldID:            renameArgs.OldID,
@@ -3196,7 +3206,7 @@ func (s *Server) handleGateCreate(req *Request) Response {
 	}
 
 	// Emit mutation event
-	s.emitMutation(MutationCreate, gate.ID, gate.Title, gate.Assignee)
+	s.emitMutationFor(MutationCreate, gate)
 
 	data, _ := json.Marshal(GateCreateResult{ID: gate.ID})
 	return Response{
@@ -3371,12 +3381,14 @@ func (s *Server) handleGateClose(req *Request) Response {
 	}
 
 	// Emit rich status change event
-	s.emitRichMutation(MutationEvent{
+	evt := MutationEvent{
 		Type:      MutationStatus,
 		IssueID:   gateID,
 		OldStatus: oldStatus,
 		NewStatus: "closed",
-	})
+	}
+	enrichEvent(&evt, gate)
+	s.emitRichMutation(evt)
 
 	closedGate, _ := store.GetIssue(ctx, gateID)
 	data, _ := json.Marshal(closedGate)
@@ -3481,7 +3493,7 @@ func (s *Server) handleGateWait(req *Request) Response {
 		}
 
 		// Emit mutation event
-		s.emitMutation(MutationUpdate, gateID, gate.Title, gate.Assignee)
+		s.emitMutationFor(MutationUpdate, gate)
 	}
 
 	data, _ := json.Marshal(GateWaitResult{AddedCount: addedCount})
@@ -3637,7 +3649,7 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 	}
 
 	// Emit mutation event so the daemon event-driven sync picks it up.
-	s.emitMutation(MutationCreate, args.IssueID, issue.Title, issue.Assignee)
+	s.emitMutationFor(MutationCreate, issue)
 
 	// Emit decision event to NATS JetStream so the Slack bot (and other
 	// consumers) are notified immediately.  Previously the CLI client was
@@ -3774,17 +3786,17 @@ func (s *Server) handleDecisionResolve(req *Request) Response {
 		}
 	}
 
+	// Get associated issue (before emit so we can enrich event)
+	issue, _ := store.GetIssue(ctx, args.IssueID)
+
 	// Emit mutation + decision event for resolve
-	s.emitMutation(MutationUpdate, args.IssueID, "", "")
+	s.emitMutationFor(MutationUpdate, issue)
 	s.emitDecisionEvent(eventbus.EventDecisionResponded, eventbus.DecisionEventPayload{
 		DecisionID:  args.IssueID,
 		ChosenLabel: args.SelectedOption,
 		ResolvedBy:  args.RespondedBy,
 		Rationale:   args.Guidance,
 	})
-
-	// Get associated issue
-	issue, _ := store.GetIssue(ctx, args.IssueID)
 
 	resp := DecisionResponse{
 		Decision: dp,
@@ -3938,7 +3950,7 @@ func (s *Server) handleDecisionRemind(req *Request) Response {
 		}
 	}
 
-	s.emitMutation(MutationUpdate, args.IssueID, issue.Title, issue.Assignee)
+	s.emitMutationFor(MutationUpdate, issue)
 
 	result := DecisionRemindResult{
 		IssueID:       args.IssueID,
@@ -4057,7 +4069,7 @@ func (s *Server) handleDecisionCancel(req *Request) Response {
 		}
 	}
 
-	s.emitMutation(MutationUpdate, args.IssueID, issue.Title, issue.Assignee)
+	s.emitMutationFor(MutationUpdate, issue)
 
 	result := DecisionCancelResult{
 		IssueID:    args.IssueID,

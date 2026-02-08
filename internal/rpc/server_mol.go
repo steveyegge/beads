@@ -1308,7 +1308,7 @@ func (s *Server) handleCloseContinue(req *Request) Response {
 		result.AutoAdvanced = true
 
 		// Emit mutation event for the claimed step
-		s.emitMutation(MutationUpdate, nextStep.ID, nextStep.Title, "")
+		s.emitMutationFor(MutationUpdate, nextStep)
 	}
 
 	data, _ := json.Marshal(result)

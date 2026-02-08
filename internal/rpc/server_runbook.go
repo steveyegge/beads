@@ -224,9 +224,9 @@ func (s *Server) handleRunbookSave(req *Request) Response {
 	}
 
 	if created {
-		s.emitMutation(MutationCreate, issue.ID, issue.Title, "")
+		s.emitMutationFor(MutationCreate, issue)
 	} else {
-		s.emitMutation(MutationUpdate, issue.ID, issue.Title, "")
+		s.emitMutationFor(MutationUpdate, issue)
 	}
 
 	result := RunbookSaveResult{
