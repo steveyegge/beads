@@ -194,6 +194,9 @@ func (b *Bot) Run(ctx context.Context) error {
 		log.Printf("slackbot: bot user ID: %s", b.botUserID)
 	}
 
+	// Migrate to rig routing if enabled and status cards were restored
+	b.migrateToRigRouting()
+
 	go func() {
 		for evt := range b.socketMode.Events {
 			b.handleEvent(evt)
@@ -1672,6 +1675,65 @@ func (b *Bot) isRigRoutingMode() bool {
 		return false
 	}
 	return b.router.GetConfig().RoutingMode == "rig"
+}
+
+// migrateToRigRouting handles the transition from flat messages to threaded rig
+// routing. Called on startup when rig mode is enabled.
+//
+// Migration scenarios:
+// 1. Fresh start with rig mode: status cards hydrated from state file, catch-up
+//    via NATSWatcher.catchUpMissedDecisions will thread new decisions naturally.
+// 2. Config change to rig mode (hot migration): any in-memory decisionMessages
+//    from before the switch were posted flat. We create status cards for those
+//    agents so new decisions thread correctly. Old flat messages are left as-is.
+// 3. Restart after running in rig mode: status cards restored from state, no
+//    migration needed.
+func (b *Bot) migrateToRigRouting() {
+	if !b.isRigRoutingMode() {
+		return
+	}
+
+	b.agentStatusCardsMu.RLock()
+	cardCount := len(b.agentStatusCards)
+	b.agentStatusCardsMu.RUnlock()
+
+	if cardCount > 0 {
+		log.Printf("slackbot: rig routing active with %d restored status cards", cardCount)
+		return
+	}
+
+	// Check if there are tracked decision messages from a prior non-rig session.
+	// If so, create status cards for those agents so future decisions thread.
+	b.decisionMessagesMu.RLock()
+	agentsWithPending := make(map[string]string) // agent → channelID
+	for _, msgInfo := range b.decisionMessages {
+		if msgInfo.agent != "" {
+			agentsWithPending[msgInfo.agent] = msgInfo.channelID
+		}
+	}
+	b.decisionMessagesMu.RUnlock()
+
+	if len(agentsWithPending) == 0 {
+		log.Printf("slackbot: rig routing active, no existing decisions to migrate")
+		return
+	}
+
+	log.Printf("slackbot: migrating %d agents to rig routing (creating status cards)", len(agentsWithPending))
+	for agent, channelID := range agentsWithPending {
+		// Resolve the rig channel for this agent (may differ from old channel)
+		rigChannel := channelID
+		if b.router != nil {
+			d := &Decision{RequestedBy: agent}
+			resolved := b.resolveChannelForDecision(d)
+			if resolved != "" {
+				rigChannel = resolved
+			}
+		}
+		ts := b.ensureAgentStatusCard(agent, rigChannel)
+		if ts != "" {
+			log.Printf("slackbot: migration: created status card for %s in %s", agent, rigChannel)
+		}
+	}
 }
 
 // ensureAgentStatusCard ensures a persistent top-level status card message

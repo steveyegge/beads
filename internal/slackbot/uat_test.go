@@ -1862,3 +1862,97 @@ func TestUAT_ThreadedDecision_NonRigModeUnchanged(t *testing.T) {
 		t.Errorf("non-rig mode should not track pending count, got %d", count)
 	}
 }
+
+// ---------- Migration Tests ----------
+
+// TestUAT_Migration_SkipsNonRigMode verifies migrateToRigRouting is a no-op
+// when the bot is not in rig routing mode.
+func TestUAT_Migration_SkipsNonRigMode(t *testing.T) {
+	bot, mockAPI, _ := newTestBot(t)
+
+	// Add a tracked decision to simulate pre-existing state
+	bot.decisionMessages["bd-old1"] = messageInfo{
+		channelID: "C_DEFAULT",
+		timestamp: "111.001",
+		agent:     "gastown/polecats/furiosa",
+	}
+
+	bot.migrateToRigRouting()
+
+	// No status cards should be created (no router = not rig mode)
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+	if len(mockAPI.PostedMessages) != 0 {
+		t.Errorf("expected 0 PostMessage calls in non-rig mode, got %d", len(mockAPI.PostedMessages))
+	}
+}
+
+// TestUAT_Migration_SkipsWhenCardsExist verifies that migration is a no-op
+// when status cards are already present (restored from state file).
+func TestUAT_Migration_SkipsWhenCardsExist(t *testing.T) {
+	bot, mockAPI := newRigRoutingBot(t)
+
+	// Pre-populate a status card (simulates state restoration)
+	bot.agentStatusCards["gastown/polecats/furiosa"] = messageInfo{
+		channelID: "C_RIG",
+		timestamp: "999.001",
+	}
+
+	bot.migrateToRigRouting()
+
+	// No new messages should be posted
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+	if len(mockAPI.PostedMessages) != 0 {
+		t.Errorf("expected 0 PostMessage calls when cards already exist, got %d", len(mockAPI.PostedMessages))
+	}
+}
+
+// TestUAT_Migration_CreatesCardsFromPendingDecisions verifies that migration
+// creates status cards for agents that have tracked pending decisions.
+func TestUAT_Migration_CreatesCardsFromPendingDecisions(t *testing.T) {
+	bot, mockAPI := newRigRoutingBot(t)
+
+	// Simulate tracked decisions from a prior non-rig session
+	bot.decisionMessages["bd-migrate1"] = messageInfo{
+		channelID: "C_OLD",
+		timestamp: "111.001",
+		agent:     "gastown/polecats/furiosa",
+	}
+	bot.decisionMessages["bd-migrate2"] = messageInfo{
+		channelID: "C_OLD",
+		timestamp: "111.002",
+		agent:     "gastown/crew/max",
+	}
+
+	bot.migrateToRigRouting()
+
+	// Should have created 2 status cards (one per agent)
+	bot.agentStatusCardsMu.RLock()
+	cardCount := len(bot.agentStatusCards)
+	bot.agentStatusCardsMu.RUnlock()
+	if cardCount != 2 {
+		t.Errorf("expected 2 status cards after migration, got %d", cardCount)
+	}
+
+	// Verify PostMessage was called for each status card
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+	if len(mockAPI.PostedMessages) != 2 {
+		t.Errorf("expected 2 PostMessage calls for status cards, got %d", len(mockAPI.PostedMessages))
+	}
+}
+
+// TestUAT_Migration_NoPendingDecisionsNoop verifies that migration with rig mode
+// enabled but no pending decisions is a clean no-op.
+func TestUAT_Migration_NoPendingDecisionsNoop(t *testing.T) {
+	bot, mockAPI := newRigRoutingBot(t)
+
+	bot.migrateToRigRouting()
+
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+	if len(mockAPI.PostedMessages) != 0 {
+		t.Errorf("expected 0 PostMessage calls with no pending decisions, got %d", len(mockAPI.PostedMessages))
+	}
+}
