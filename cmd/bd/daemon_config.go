@@ -23,6 +23,15 @@ func ensureBeadsDir() (string, error) {
 		} else if foundDB := beads.FindDatabasePath(); foundDB != "" {
 			dbPath = foundDB // Store it for later use
 			beadsDir = filepath.Dir(foundDB)
+		} else if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" {
+			// Server mode bootstrap: the .beads directory may not have project
+			// files yet (metadata.json is created later by runDaemonLoop).
+			// Trust BEADS_DIR directly and create the directory.
+			if envDir := os.Getenv("BEADS_DIR"); envDir != "" {
+				beadsDir = envDir
+			} else {
+				return "", fmt.Errorf("BEADS_DOLT_SERVER_MODE=1 requires BEADS_DIR to be set")
+			}
 		} else {
 			return "", fmt.Errorf("no database path configured (run 'bd init' or set BEADS_DB)")
 		}
