@@ -132,16 +132,20 @@ func (dc *DecisionClient) ListPending(ctx context.Context) ([]Decision, error) {
 
 // GetDecision retrieves a single decision by its issue ID.
 func (dc *DecisionClient) GetDecision(ctx context.Context, issueID string) (*Decision, error) {
+	log.Printf("slackbot/decisions: GetDecision(%s) calling daemon", issueID)
 	resp, err := dc.getClient().DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
 	if err != nil && isBrokenPipe(err) {
+		log.Printf("slackbot/decisions: GetDecision(%s) broken pipe, reconnecting", issueID)
 		if rerr := dc.reconnect(); rerr != nil {
 			return nil, fmt.Errorf("decision get %s (reconnect failed): %w", issueID, rerr)
 		}
 		resp, err = dc.getClient().DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
 	}
 	if err != nil {
+		log.Printf("slackbot/decisions: GetDecision(%s) error: %v", issueID, err)
 		return nil, fmt.Errorf("decision get %s: %w", issueID, err)
 	}
+	log.Printf("slackbot/decisions: GetDecision(%s) success", issueID)
 
 	d := convertDecisionResponse(resp)
 	return &d, nil
@@ -150,6 +154,7 @@ func (dc *DecisionClient) GetDecision(ctx context.Context, issueID string) (*Dec
 // Resolve picks one of the predefined options by 1-based index.
 // It fetches the decision first to map the index to the option ID that beads expects.
 func (dc *DecisionClient) Resolve(ctx context.Context, issueID string, chosenIndex int, rationale, resolvedBy string) (*Decision, error) {
+	log.Printf("slackbot/decisions: Resolve(%s, index=%d, by=%s) calling daemon", issueID, chosenIndex, resolvedBy)
 	// Fetch the decision to get the option IDs.
 	current, err := dc.getClient().DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
 	if err != nil && isBrokenPipe(err) {

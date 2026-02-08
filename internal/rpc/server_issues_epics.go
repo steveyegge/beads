@@ -3673,8 +3673,11 @@ func (s *Server) handleDecisionGet(req *Request) Response {
 		}
 	}
 
+	fmt.Fprintf(os.Stderr, "handleDecisionGet: issue_id=%s actor=%q cwd=%q\n", args.IssueID, req.Actor, req.Cwd)
+
 	store := s.storage
 	if store == nil {
+		fmt.Fprintf(os.Stderr, "handleDecisionGet: storage is nil!\n")
 		return Response{
 			Success: false,
 			Error:   "storage not available",
@@ -3686,17 +3689,20 @@ func (s *Server) handleDecisionGet(req *Request) Response {
 
 	dp, err := store.GetDecisionPoint(ctx, args.IssueID)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "handleDecisionGet: GetDecisionPoint(%s) error: %v\n", args.IssueID, err)
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to get decision point: %v", err),
 		}
 	}
 	if dp == nil {
+		fmt.Fprintf(os.Stderr, "handleDecisionGet: GetDecisionPoint(%s) returned nil (no rows)\n", args.IssueID)
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("no decision point for issue %s", args.IssueID),
 		}
 	}
+	fmt.Fprintf(os.Stderr, "handleDecisionGet: found issue_id=%s prompt=%q\n", args.IssueID, dp.Prompt)
 
 	// Get associated issue
 	issue, _ := store.GetIssue(ctx, args.IssueID)
@@ -3722,6 +3728,9 @@ func (s *Server) handleDecisionResolve(req *Request) Response {
 		}
 	}
 
+	fmt.Fprintf(os.Stderr, "handleDecisionResolve: issue_id=%s option=%q by=%q actor=%q\n",
+		args.IssueID, args.SelectedOption, args.RespondedBy, req.Actor)
+
 	store := s.storage
 	if store == nil {
 		return Response{
@@ -3736,12 +3745,14 @@ func (s *Server) handleDecisionResolve(req *Request) Response {
 	// Get existing decision point
 	dp, err := store.GetDecisionPoint(ctx, args.IssueID)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "handleDecisionResolve: GetDecisionPoint(%s) error: %v\n", args.IssueID, err)
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to get decision point: %v", err),
 		}
 	}
 	if dp == nil {
+		fmt.Fprintf(os.Stderr, "handleDecisionResolve: GetDecisionPoint(%s) returned nil\n", args.IssueID)
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("no decision point for issue %s", args.IssueID),
