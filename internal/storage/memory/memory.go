@@ -1967,6 +1967,36 @@ func (m *MemoryStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 
 // REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs
 
+// DeleteIssuesBySourceRepo removes all issues from a specific source repository.
+func (m *MemoryStorage) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var toDelete []string
+	for id, issue := range m.issues {
+		if issue.SourceRepo == sourceRepo {
+			toDelete = append(toDelete, id)
+		}
+	}
+
+	for _, id := range toDelete {
+		delete(m.issues, id)
+		delete(m.dependencies, id)
+		delete(m.labels, id)
+		delete(m.events, id)
+		delete(m.comments, id)
+		delete(m.dirty, id)
+		delete(m.externalRefToID, id)
+	}
+
+	return len(toDelete), nil
+}
+
+// ClearRepoMtime is a no-op for MemoryStorage (no mtime cache).
+func (m *MemoryStorage) ClearRepoMtime(ctx context.Context, repoPath string) error {
+	return nil
+}
+
 // MarkIssueDirty marks an issue as dirty for export
 func (m *MemoryStorage) MarkIssueDirty(ctx context.Context, issueID string) error {
 	m.mu.Lock()

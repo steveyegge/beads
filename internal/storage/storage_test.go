@@ -201,6 +201,12 @@ func (m *mockStorage) SetMetadata(ctx context.Context, key, value string) error 
 func (m *mockStorage) GetMetadata(ctx context.Context, key string) (string, error) {
 	return "", nil
 }
+func (m *mockStorage) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo string) (int, error) {
+	return 0, nil
+}
+func (m *mockStorage) ClearRepoMtime(ctx context.Context, repoPath string) error {
+	return nil
+}
 func (m *mockStorage) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
 	return nil
 }
@@ -403,6 +409,10 @@ func TestInterfaceDocumentation(t *testing.T) {
 		// Verify metadata operations
 		_ = s.SetMetadata
 		_ = s.GetMetadata
+
+		// Verify multi-repo cleanup operations
+		_ = s.DeleteIssuesBySourceRepo
+		_ = s.ClearRepoMtime
 
 		// Verify prefix rename operations
 		_ = s.UpdateIssueID

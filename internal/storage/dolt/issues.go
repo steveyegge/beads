@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -1246,6 +1248,110 @@ func parseJSONStringArray(s string) []string {
 		return nil
 	}
 	return result
+}
+
+// DeleteIssuesBySourceRepo permanently removes all issues from a specific source repository.
+// This is used when a repo is removed from the multi-repo configuration.
+// It also cleans up related data: dependencies, labels, comments, events, and dirty markers.
+// Returns the number of issues deleted.
+func (s *DoltStore) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo string) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Get the list of issue IDs to delete
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM issues WHERE source_repo = ?`, sourceRepo)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query issues: %w", err)
+	}
+	var issueIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("failed to scan issue ID: %w", err)
+		}
+		issueIDs = append(issueIDs, id)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("failed to iterate issues: %w", err)
+	}
+
+	if len(issueIDs) == 0 {
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("failed to commit empty transaction: %w", err)
+		}
+		return 0, nil
+	}
+
+	// Delete related data for all affected issues
+	tables := []string{"dependencies", "events", "comments", "labels", "dirty_issues"}
+	for _, table := range tables {
+		if err := validateTableName(table); err != nil {
+			return 0, fmt.Errorf("invalid table name %q: %w", table, err)
+		}
+		for _, id := range issueIDs {
+			if table == "dependencies" {
+				_, err = tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE issue_id = ? OR depends_on_id = ?", table), id, id) //nolint:gosec // G201: table validated by validateTableName above
+			} else {
+				_, err = tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE issue_id = ?", table), id) //nolint:gosec // G201: table validated by validateTableName above
+			}
+			if err != nil {
+				return 0, fmt.Errorf("failed to delete from %s for %s: %w", table, id, err)
+			}
+		}
+	}
+
+	// Delete the issues themselves
+	result, err := tx.ExecContext(ctx, `DELETE FROM issues WHERE source_repo = ?`, sourceRepo)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete issues: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to check rows affected: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return int(rowsAffected), nil
+}
+
+// ClearRepoMtime removes the mtime cache entry for a repository.
+// This is used when a repo is removed from the multi-repo configuration.
+func (s *DoltStore) ClearRepoMtime(ctx context.Context, repoPath string) error {
+	// Expand tilde in path to match how it's stored
+	expandedPath := repoPath
+	if strings.HasPrefix(repoPath, "~") {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+		if repoPath == "~" {
+			expandedPath = homeDir
+		} else {
+			expandedPath = filepath.Join(homeDir, repoPath[1:])
+		}
+	}
+
+	// Get absolute path to match how it's stored in repo_mtimes
+	absRepoPath, err := filepath.Abs(expandedPath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx, `DELETE FROM repo_mtimes WHERE repo_path = ?`, absRepoPath)
+	if err != nil {
+		return fmt.Errorf("failed to delete mtime cache: %w", err)
+	}
+
+	return nil
 }
 
 func formatJSONStringArray(arr []string) string {
