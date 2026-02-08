@@ -39,10 +39,11 @@ type MutationEventJSON struct {
 
 // DecisionDetail contains decision-specific enrichment when watching decisions.
 type DecisionDetail struct {
-	Selected    string `json:"selected,omitempty"`
-	RespondedBy string `json:"responded_by,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	RespondedAt string `json:"responded_at,omitempty"`
+	Selected      string `json:"selected,omitempty"`
+	SelectedLabel string `json:"selected_label,omitempty"`
+	RespondedBy   string `json:"responded_by,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	RespondedAt   string `json:"responded_at,omitempty"`
 }
 
 // AwaitOpts configures the await loop.
@@ -316,10 +317,25 @@ func enrichDecision(client *rpc.Client, decisionID string, result *WatchResult) 
 
 // enrichDecisionFromDP populates decision details from a DecisionPoint.
 func enrichDecisionFromDP(dp *types.DecisionPoint, result *WatchResult) {
+	// Map selected option ID to its label
+	selectedLabel := dp.SelectedOption
+	if dp.Options != "" {
+		var options []types.DecisionOption
+		if err := json.Unmarshal([]byte(dp.Options), &options); err == nil {
+			for _, opt := range options {
+				if opt.ID == dp.SelectedOption {
+					selectedLabel = opt.Label
+					break
+				}
+			}
+		}
+	}
+
 	result.Decision = &DecisionDetail{
-		Selected:    dp.SelectedOption,
-		RespondedBy: dp.RespondedBy,
-		Reason:      dp.ResponseText,
+		Selected:      dp.SelectedOption,
+		SelectedLabel: selectedLabel,
+		RespondedBy:   dp.RespondedBy,
+		Reason:        dp.ResponseText,
 	}
 	if dp.RespondedAt != nil {
 		result.Decision.RespondedAt = dp.RespondedAt.Format(time.RFC3339)

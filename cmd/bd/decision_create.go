@@ -429,16 +429,26 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 			}
 			return
 		}
+		// Map selected option ID to its label
+		selectedLabel := selected
+		for _, opt := range options {
+			if opt.ID == selected {
+				selectedLabel = opt.Label
+				break
+			}
+		}
+
 		// Output the response
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
-				"id":            decisionID,
-				"status":        "responded",
-				"selected":      selected,
-				"response_text": responseText,
+				"id":             decisionID,
+				"status":         "responded",
+				"selected":       selected,
+				"selected_label": selectedLabel,
+				"response_text":  responseText,
 			})
 		} else {
-			fmt.Printf("\n  Response received: %s\n", selected)
+			fmt.Printf("\n  Response received: %s\n", selectedLabel)
 			if responseText != "" {
 				fmt.Printf("  %s\n", responseText)
 			}

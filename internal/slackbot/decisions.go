@@ -183,7 +183,7 @@ func (dc *DecisionClient) Resolve(ctx context.Context, issueID string, chosenInd
 		IssueID:        issueID,
 		SelectedOption: optionID,
 		RespondedBy:    resolvedBy,
-		Guidance:       rationale,
+		ResponseText:   rationale,
 	})
 	if err != nil && isBrokenPipe(err) {
 		if rerr := dc.reconnect(); rerr != nil {
@@ -193,7 +193,7 @@ func (dc *DecisionClient) Resolve(ctx context.Context, issueID string, chosenInd
 			IssueID:        issueID,
 			SelectedOption: optionID,
 			RespondedBy:    resolvedBy,
-			Guidance:       rationale,
+			ResponseText:   rationale,
 		})
 	}
 	if err != nil {
