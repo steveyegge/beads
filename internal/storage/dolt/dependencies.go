@@ -26,7 +26,7 @@ const issueColumns = `id, content_hash, title, description, design, acceptance_c
        mol_type,
        event_kind, actor, target, payload,
        due_at, defer_until,
-       quality_score, work_type, source_system,
+       quality_score, work_type, source_system, metadata,
        advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure`
 
 // prefixColumns adds a table alias prefix to each column in the issueColumns list.
@@ -547,6 +547,7 @@ func scanIssueRow(rows rowScanner) (*types.Issue, error) {
 	var podName, podIP, podNode, podStatus, screenSession sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var qualityScore sql.NullFloat64
+	var metadata sql.NullString
 	// NOTE: advice_target_* fields removed - advice uses labels now
 	// Advice hook fields (hq--uaim)
 	var adviceHookCommand, adviceHookTrigger, adviceHookOnFailure sql.NullString
@@ -566,7 +567,7 @@ func scanIssueRow(rows rowScanner) (*types.Issue, error) {
 		&molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
-		&qualityScore, &workType, &sourceSystem,
+		&qualityScore, &workType, &sourceSystem, &metadata,
 		&adviceHookCommand, &adviceHookTrigger, &adviceHookTimeout, &adviceHookOnFailure,
 	); err != nil {
 		return nil, fmt.Errorf("failed to scan issue row: %w", err)
@@ -720,6 +721,9 @@ func scanIssueRow(rows rowScanner) (*types.Issue, error) {
 	}
 	if sourceSystem.Valid {
 		issue.SourceSystem = sourceSystem.String
+	}
+	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+		issue.Metadata = []byte(metadata.String)
 	}
 	// NOTE: advice_target_* fields removed - advice uses labels now
 	// Advice hook fields (hq--uaim)
