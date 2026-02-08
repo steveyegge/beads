@@ -100,6 +100,9 @@ func TestHydrateDeployConfig(t *testing.T) {
 }
 
 func TestWaitForStore_ImmediateSuccess(t *testing.T) {
+	// Clear BD_DAEMON_HOST so factory doesn't block direct database access
+	t.Setenv("BD_DAEMON_HOST", "")
+
 	// Set up a SQLite store in a temp directory — should connect immediately
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
