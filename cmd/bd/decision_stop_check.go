@@ -193,10 +193,12 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 				os.Exit(0)
 			}
 			if selected != "" {
-				// Any other selection (e.g. "continue") blocks the stop
-				reason := responseText
-				if reason == "" {
-					reason = fmt.Sprintf("Human responded to decision %s: selected '%s'", agentDecision.IssueID, selected)
+				// Any other selection (e.g. "continue") blocks the stop.
+				// Always lead with the selected option so the agent knows what
+				// the human chose, then append any extra text as context.
+				reason := fmt.Sprintf("Human selected '%s' on decision %s", selected, agentDecision.IssueID)
+				if responseText != "" {
+					reason += "\n\n" + responseText
 				}
 				if jsonOutput {
 					outputJSON(map[string]string{
@@ -271,9 +273,9 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 	// Interpret the response
 	if selected == "continue" {
 		// Block stop — human wants Claude to continue
-		reason := responseText
-		if reason == "" {
-			reason = "Human selected 'continue'"
+		reason := "Human selected 'continue'"
+		if responseText != "" {
+			reason += "\n\n" + responseText
 		}
 		if jsonOutput {
 			outputJSON(map[string]string{"decision": "block", "reason": reason})
