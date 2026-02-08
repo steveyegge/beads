@@ -123,7 +123,8 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 	// blocked. Instead, return immediately with block + instructions so the
 	// agent can create the decision, then on re-entry we'll find and await it.
 	if cfg.RequireAgentDecision {
-		agentDecision, err := findPendingAgentDecision(ctx)
+		sessionTag := getStopSessionTag()
+		agentDecision, err := findPendingAgentDecision(ctx, sessionTag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: error finding agent decision: %v\n", err)
 			// Fall through to generic decision creation
@@ -135,6 +136,10 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 				reason := "Create a decision with 'bd decision create' before stopping"
 				if cfg.AgentDecisionPrompt != "" {
 					reason = cfg.AgentDecisionPrompt
+				}
+				// Include session tag so the agent passes it as --requested-by
+				if sessionTag != "" {
+					reason += fmt.Sprintf("\n\nIMPORTANT: Pass --requested-by %q to scope this decision to your session.", sessionTag)
 				}
 				fmt.Fprintf(os.Stderr, "No agent decision found. Blocking so agent can create one.\n")
 				if jsonOutput {
@@ -701,7 +706,7 @@ func parseDurationOrDefault(s string, defaultVal time.Duration) time.Duration {
 
 // pollForAgentDecision polls until an agent-created decision appears or timeout.
 // Returns the decision if found, nil on timeout.
-func pollForAgentDecision(ctx context.Context, timeout, pollInterval time.Duration) (*types.DecisionPoint, error) {
+func pollForAgentDecision(ctx context.Context, sessionTag string, timeout, pollInterval time.Duration) (*types.DecisionPoint, error) {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -709,7 +714,7 @@ func pollForAgentDecision(ctx context.Context, timeout, pollInterval time.Durati
 	for {
 		select {
 		case <-ticker.C:
-			dp, err := findPendingAgentDecision(ctx)
+			dp, err := findPendingAgentDecision(ctx, sessionTag)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: error polling for agent decision: %v\n", err)
 				continue
@@ -728,7 +733,7 @@ func pollForAgentDecision(ctx context.Context, timeout, pollInterval time.Durati
 
 // findPendingAgentDecision finds the most recent pending decision created by an agent
 // (i.e., not by stop-hook). Returns nil if none found.
-func findPendingAgentDecision(ctx context.Context) (*types.DecisionPoint, error) {
+func findPendingAgentDecision(ctx context.Context, sessionTag string) (*types.DecisionPoint, error) {
 	var decisions []*types.DecisionPoint
 
 	if daemonClient != nil {
@@ -750,11 +755,16 @@ func findPendingAgentDecision(ctx context.Context) (*types.DecisionPoint, error)
 		return nil, fmt.Errorf("no database connection")
 	}
 
-	// Filter: not created by stop-hook, and has a RequestedBy value
-	// Return the most recent one (last in list, or by CreatedAt)
+	// Filter: not created by stop-hook, has a RequestedBy value,
+	// and matches the current session tag (if available).
+	// This prevents one Claude session from picking up another's decisions.
 	var best *types.DecisionPoint
 	for _, dp := range decisions {
 		if dp.RequestedBy == "stop-hook" || dp.RequestedBy == "" {
+			continue
+		}
+		// Session scoping: if we have a session tag, only match decisions from this session
+		if sessionTag != "" && dp.RequestedBy != sessionTag {
 			continue
 		}
 		if best == nil || dp.CreatedAt.After(best.CreatedAt) {
@@ -763,6 +773,19 @@ func findPendingAgentDecision(ctx context.Context) (*types.DecisionPoint, error)
 	}
 
 	return best, nil
+}
+
+// getStopSessionTag returns a session identifier for scoping stop decisions.
+// Priority: CLAUDE_SESSION_ID > TERM_SESSION_ID.
+// Returns "" if no session identifier is available (falls back to unscoped).
+func getStopSessionTag() string {
+	if id := os.Getenv("CLAUDE_SESSION_ID"); id != "" {
+		return id
+	}
+	if id := os.Getenv("TERM_SESSION_ID"); id != "" {
+		return id
+	}
+	return ""
 }
 
 // findUnclosedStopDecisions finds old stop decisions (created by stop-hook) whose
