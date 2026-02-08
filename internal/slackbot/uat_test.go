@@ -2,6 +2,7 @@ package slackbot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -1200,5 +1201,220 @@ func TestUAT_Timing_NotificationWithinThreshold(t *testing.T) {
 	// Mock should complete near-instantly (< 100ms)
 	if elapsed > 100*time.Millisecond {
 		t.Errorf("notification took %v, want < 100ms", elapsed)
+	}
+}
+
+// extractBlocksJSON extracts the raw blocks JSON from captured MsgOptions using
+// the slack library's UnsafeApplyMsgOptions utility.
+func extractBlocksJSON(t *testing.T, options []slack.MsgOption) string {
+	t.Helper()
+	_, vals, err := slack.UnsafeApplyMsgOptions("", "C_TEST", "", options...)
+	if err != nil {
+		t.Fatalf("UnsafeApplyMsgOptions: %v", err)
+	}
+	return vals.Get("blocks")
+}
+
+func TestUAT_CreateDecision_BlockKitStructure(t *testing.T) {
+	bot, mockAPI, _ := newTestBot(t)
+
+	d := sampleDecision("bd-bk1")
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+
+	if len(mockAPI.PostedMessages) == 0 {
+		t.Fatal("expected posted message")
+	}
+
+	blocksJSON := extractBlocksJSON(t, mockAPI.PostedMessages[0].Options)
+	if blocksJSON == "" {
+		t.Fatal("no blocks JSON in message options")
+	}
+
+	var blocks []json.RawMessage
+	if err := json.Unmarshal([]byte(blocksJSON), &blocks); err != nil {
+		t.Fatalf("failed to parse blocks JSON: %v", err)
+	}
+
+	// Expected structure for a 3-option decision with agent info:
+	// [0] section (header with urgency emoji + question)
+	// [1] section (context text)
+	// [2] divider
+	// [3] section (option 1 with "Choose 1" button)
+	// [4] section (option 2 with "Choose 2" button)
+	// [5] section (option 3 with "Choose 3" button)
+	// [6] section (Other with "Other..." button)
+	// [7] actions (Dismiss, Peek, DM Me, Break Out)
+
+	if len(blocks) < 8 {
+		t.Fatalf("expected at least 8 blocks, got %d", len(blocks))
+	}
+
+	// Verify header block contains urgency emoji and question
+	var header struct {
+		Type string `json:"type"`
+		Text struct {
+			Text string `json:"text"`
+		} `json:"text"`
+	}
+	if err := json.Unmarshal(blocks[0], &header); err != nil {
+		t.Fatalf("parse header block: %v", err)
+	}
+	if header.Type != "section" {
+		t.Errorf("block[0] type = %q, want section", header.Type)
+	}
+	if !strings.Contains(header.Text.Text, ":red_circle:") {
+		t.Errorf("header missing urgency emoji :red_circle:, got %q", header.Text.Text)
+	}
+	if !strings.Contains(header.Text.Text, "deploy-prod") {
+		t.Errorf("header missing semantic slug, got %q", header.Text.Text)
+	}
+	if !strings.Contains(header.Text.Text, d.Question) {
+		t.Errorf("header missing question, got %q", header.Text.Text)
+	}
+	if !strings.Contains(header.Text.Text, d.RequestedBy) {
+		t.Errorf("header missing agent info, got %q", header.Text.Text)
+	}
+
+	// Verify divider exists
+	var divider struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(blocks[2], &divider); err != nil {
+		t.Fatalf("parse divider block: %v", err)
+	}
+	if divider.Type != "divider" {
+		t.Errorf("block[2] type = %q, want divider", divider.Type)
+	}
+
+	// Verify option blocks have correct labels and buttons
+	for i, opt := range d.Options {
+		blockIdx := 3 + i
+		var optBlock struct {
+			Type string `json:"type"`
+			Text struct {
+				Text string `json:"text"`
+			} `json:"text"`
+			Accessory struct {
+				Type     string `json:"type"`
+				Text     struct{ Text string } `json:"text"`
+				ActionID string `json:"action_id"`
+				Value    string `json:"value"`
+			} `json:"accessory"`
+		}
+		if err := json.Unmarshal(blocks[blockIdx], &optBlock); err != nil {
+			t.Fatalf("parse option block %d: %v", i+1, err)
+		}
+		if !strings.Contains(optBlock.Text.Text, opt.Label) {
+			t.Errorf("option %d missing label %q in %q", i+1, opt.Label, optBlock.Text.Text)
+		}
+		if !strings.Contains(optBlock.Text.Text, opt.Description) {
+			t.Errorf("option %d missing description %q in %q", i+1, opt.Description, optBlock.Text.Text)
+		}
+		expectedLabel := fmt.Sprintf("Choose %d", i+1)
+		if optBlock.Accessory.Text.Text != expectedLabel {
+			t.Errorf("option %d button = %q, want %q", i+1, optBlock.Accessory.Text.Text, expectedLabel)
+		}
+		expectedActionID := fmt.Sprintf("resolve_bd-bk1_%d", i+1)
+		if optBlock.Accessory.ActionID != expectedActionID {
+			t.Errorf("option %d action_id = %q, want %q", i+1, optBlock.Accessory.ActionID, expectedActionID)
+		}
+	}
+
+	// Verify "Other" option block
+	otherIdx := 3 + len(d.Options) // block after the last option
+	var otherBlock struct {
+		Text struct{ Text string } `json:"text"`
+		Accessory struct {
+			Text     struct{ Text string } `json:"text"`
+			ActionID string                `json:"action_id"`
+		} `json:"accessory"`
+	}
+	if err := json.Unmarshal(blocks[otherIdx], &otherBlock); err != nil {
+		t.Fatalf("parse Other block: %v", err)
+	}
+	if !strings.Contains(otherBlock.Text.Text, "Other") {
+		t.Errorf("Other block missing 'Other' text, got %q", otherBlock.Text.Text)
+	}
+	if otherBlock.Accessory.Text.Text != "Other..." {
+		t.Errorf("Other button = %q, want 'Other...'", otherBlock.Accessory.Text.Text)
+	}
+	if otherBlock.Accessory.ActionID != "resolve_other_bd-bk1" {
+		t.Errorf("Other action_id = %q, want 'resolve_other_bd-bk1'", otherBlock.Accessory.ActionID)
+	}
+
+	// Verify action buttons block (last block)
+	actionsIdx := len(blocks) - 1
+	var actionsBlock struct {
+		Type     string `json:"type"`
+		Elements []struct {
+			Type     string `json:"type"`
+			Text     struct{ Text string } `json:"text"`
+			ActionID string `json:"action_id"`
+		} `json:"elements"`
+	}
+	if err := json.Unmarshal(blocks[actionsIdx], &actionsBlock); err != nil {
+		t.Fatalf("parse actions block: %v", err)
+	}
+	if actionsBlock.Type != "actions" {
+		t.Errorf("last block type = %q, want actions", actionsBlock.Type)
+	}
+
+	// Should have 4 action buttons: Dismiss, Peek, DM Me, Break Out (since RequestedBy is set)
+	if len(actionsBlock.Elements) != 4 {
+		t.Fatalf("expected 4 action buttons, got %d", len(actionsBlock.Elements))
+	}
+	expectedButtons := []struct {
+		label    string
+		actionID string
+	}{
+		{"Dismiss", "dismiss_decision"},
+		{"Peek", "peek_bd-bk1"},
+		{"DM Me", "open_preferences"},
+		{"Break Out", "break_out"},
+	}
+	for i, exp := range expectedButtons {
+		if actionsBlock.Elements[i].Text.Text != exp.label {
+			t.Errorf("button %d label = %q, want %q", i, actionsBlock.Elements[i].Text.Text, exp.label)
+		}
+		if actionsBlock.Elements[i].ActionID != exp.actionID {
+			t.Errorf("button %d action_id = %q, want %q", i, actionsBlock.Elements[i].ActionID, exp.actionID)
+		}
+	}
+}
+
+func TestUAT_CreateDecision_UrgencyEmojis(t *testing.T) {
+	tests := []struct {
+		urgency       string
+		expectedEmoji string
+	}{
+		{"high", ":red_circle:"},
+		{"medium", ":large_yellow_circle:"},
+		{"low", ":large_green_circle:"},
+		{"", ":white_circle:"},
+	}
+
+	for _, tt := range tests {
+		t.Run("urgency_"+tt.urgency, func(t *testing.T) {
+			bot, mockAPI, _ := newTestBot(t)
+
+			d := sampleDecision("bd-urg-emoji-" + tt.urgency)
+			d.Urgency = tt.urgency
+			if err := bot.NotifyNewDecision(&d); err != nil {
+				t.Fatalf("NotifyNewDecision: %v", err)
+			}
+
+			mockAPI.mu.Lock()
+			defer mockAPI.mu.Unlock()
+
+			blocksJSON := extractBlocksJSON(t, mockAPI.PostedMessages[0].Options)
+			if !strings.Contains(blocksJSON, tt.expectedEmoji) {
+				t.Errorf("urgency %q: blocks should contain %q", tt.urgency, tt.expectedEmoji)
+			}
+		})
 	}
 }
