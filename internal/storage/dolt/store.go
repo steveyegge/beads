@@ -15,7 +15,6 @@
 // Connection modes:
 //   - Embedded: No server required, database/sql interface via dolthub/driver
 //   - Server: Connect to running dolt sql-server for multi-writer scenarios
-//
 package dolt
 
 import (

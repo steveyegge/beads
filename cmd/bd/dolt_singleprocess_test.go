@@ -132,4 +132,3 @@ func TestDoltSingleProcess_StartDaemonGuardrailExitsNonZero(t *testing.T) {
 		t.Fatalf("expected output to mention daemon unsupported; got:\n%s", string(out))
 	}
 }
-
