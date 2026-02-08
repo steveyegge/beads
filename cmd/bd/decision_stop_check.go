@@ -81,62 +81,53 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 		os.Exit(0)
 	}
 
-	// Parse timeout and poll interval (command flags override config)
-	timeout := parseDurationOrDefault(cfg.Timeout, 30*time.Minute)
-	pollInterval := parseDurationOrDefault(cfg.PollInterval, 2*time.Second)
-
-	// Command-line flags override config values if explicitly set
-	if cmd.Flags().Changed("timeout") {
-		timeout, _ = cmd.Flags().GetDuration("timeout")
-	}
-	if cmd.Flags().Changed("poll-interval") {
-		pollInterval, _ = cmd.Flags().GetDuration("poll-interval")
-	}
-
-	// Step 1: If require_close_old, check for unclosed old stop decisions
-	if cfg.RequireCloseOld {
-		unclosed, err := findUnclosedStopDecisions(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: error checking unclosed stop decisions: %v\n", err)
-		} else if len(unclosed) > 0 {
-			ids := make([]string, len(unclosed))
-			for i, dp := range unclosed {
-				ids[i] = dp.IssueID
-			}
-			reason := fmt.Sprintf("Close previous stop decisions before stopping: %s", joinIDs(ids))
-			if cfg.AgentCloseOldPrompt != "" {
-				reason = fmt.Sprintf("%s\n\nDecisions to close: %s", cfg.AgentCloseOldPrompt, joinIDs(ids))
-			}
-			if jsonOutput {
-				outputJSON(map[string]string{"decision": "block", "reason": reason})
-			} else {
-				fmt.Printf("Block: %s\n", reason)
-			}
-			os.Exit(1)
-		}
-	}
-
-	// Step 2: If require_agent_decision, look for an agent decision.
-	// IMPORTANT: This must NOT poll/block when no decision exists, because
-	// the agent (Claude) is blocked waiting for this hook to return. If we
-	// poll here, it's a deadlock — the agent can't create a decision while
-	// blocked. Instead, return immediately with block + instructions so the
-	// agent can create the decision, then on re-entry we'll find and await it.
+	// -------------------------------------------------------------------------
+	// Pure guard: no polling, no blocking. Just check state and return fast.
 	//
-	// On re-entry (stop_hook_active=true → --reentry), if the agent STILL
-	// didn't create a decision, fall through to auto-create a generic one.
-	// This prevents infinite block loops where the agent ignores instructions.
-	isReentry, _ := cmd.Flags().GetBool("reentry")
+	// The stop hook's only job is to ensure the agent creates a decision via
+	// `bd decision create` (which blocks and waits for the human response).
+	// This hook fires when the agent tries to stop:
+	//
+	//   1. No agent decision found → block with "create a decision"
+	//   2. Agent decision found, still pending → allow (the agent is about to
+	//      call or has called `bd decision create --wait`, which handles polling)
+	//   3. Agent decision found, already responded → allow (response was already
+	//      delivered to the agent via `bd decision create --wait`)
+	//
+	// After the agent receives a response and acts on it, the decision is
+	// "consumed." The next time the agent tries to stop, findPendingAgentDecision
+	// won't find it (it's responded and old), so it blocks again → cycle repeats.
+	// -------------------------------------------------------------------------
+
 	if cfg.RequireAgentDecision {
 		sessionTag := getStopSessionTag()
 		agentDecision, err := findPendingAgentDecision(ctx, sessionTag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: error finding agent decision: %v\n", err)
-			// Fall through to generic decision creation
-		} else if agentDecision == nil {
-			if !isReentry {
-				// First attempt: block with instructions for the agent.
-				reason := `Before stopping, create a decision point for the human to review.
+			// Fail-open on error
+			if jsonOutput {
+				outputJSON(map[string]string{"decision": "allow", "reason": fmt.Sprintf("error: %v", err)})
+			}
+			os.Exit(0)
+		}
+
+		if agentDecision != nil {
+			// Agent created a decision — allow stop. The agent's `bd decision
+			// create --wait` call handles the actual waiting and returns the
+			// human's response directly to the agent.
+			fmt.Fprintf(os.Stderr, "Agent decision found: %s — allowing stop\n", agentDecision.IssueID)
+			if jsonOutput {
+				outputJSON(map[string]string{
+					"decision":  "allow",
+					"reason":    fmt.Sprintf("agent decision %s exists", agentDecision.IssueID),
+					"source_id": agentDecision.IssueID,
+				})
+			}
+			os.Exit(0)
+		}
+
+		// No agent decision — block and instruct agent to create one.
+		reason := `Before stopping, create a decision point for the human to review.
 
 Steps:
 1. Run 'bd ready' and 'bd list --status=in_progress' to find open/available work
@@ -148,147 +139,13 @@ Steps:
    Always include a "stop" option: {"id":"stop","short":"stop","label":"Done for now"}
 
 The human will pick which direction to go, or provide custom instructions.`
-				if cfg.AgentDecisionPrompt != "" {
-					reason = cfg.AgentDecisionPrompt
-				}
-				if sessionTag != "" {
-					reason += fmt.Sprintf("\n\nIMPORTANT: Pass --requested-by %q to scope this decision to your session.", sessionTag)
-				}
-				fmt.Fprintf(os.Stderr, "No agent decision found. Blocking so agent can create one.\n")
-				if jsonOutput {
-					outputJSON(map[string]string{"decision": "block", "reason": reason})
-				} else {
-					fmt.Printf("Block: %s\n", reason)
-				}
-				os.Exit(1)
-			}
-			// Re-entry: agent didn't comply. Fall through to auto-create
-			// a generic decision so the human still gets notified.
-			fmt.Fprintf(os.Stderr, "Re-entry: agent did not create decision. Auto-creating generic decision.\n")
-		} else {
-			// Note: context validation moved to `bd decision create` (enforced at
-			// creation time to prevent spam from create→reject→close→recreate cycles).
-
-			var selected, responseText string
-
-			if agentDecision.RespondedAt != nil {
-				// Decision already responded (human was fast — responded before
-				// the stop hook fired). Skip polling and use the response directly.
-				fmt.Fprintf(os.Stderr, "Found already-responded agent decision: %s (responded %s ago)\n",
-					agentDecision.IssueID, time.Since(*agentDecision.RespondedAt).Round(time.Second))
-				selected = agentDecision.SelectedOption
-				responseText = decisionResponseText(agentDecision)
-			} else {
-				// Await the human's response to the agent's decision.
-				// This is the only place we poll — and it's safe because the agent
-				// already created the decision before trying to stop.
-				fmt.Fprintf(os.Stderr, "Found agent decision: %s (timeout: %s)\n", agentDecision.IssueID, timeout)
-				fmt.Fprintf(os.Stderr, "Waiting for human response...\n")
-
-				var err error
-				selected, responseText, err = pollStopDecision(ctx, agentDecision.IssueID, timeout, pollInterval)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error polling agent decision: %v\n", err)
-					if jsonOutput {
-						outputJSON(map[string]string{"decision": "allow", "reason": fmt.Sprintf("poll error: %v", err)})
-					}
-					os.Exit(0)
-				}
-			}
-
-			// Check the human's selection
-			if selected == "stop" {
-				// Human said stop — allow it
-				if jsonOutput {
-					outputJSON(map[string]string{"decision": "allow", "reason": "human selected stop"})
-				}
-				os.Exit(0)
-			}
-			if selected != "" {
-				// Any other selection (e.g. "continue") blocks the stop.
-				// Always lead with the selected option so the agent knows what
-				// the human chose, then append any extra text as context.
-				reason := fmt.Sprintf("Human selected '%s' on decision %s", selected, agentDecision.IssueID)
-				if responseText != "" {
-					reason += "\n\n" + responseText
-				}
-				if jsonOutput {
-					outputJSON(map[string]string{
-						"decision":  "block",
-						"reason":    reason,
-						"selected":  selected,
-						"source_id": agentDecision.IssueID,
-					})
-				} else {
-					fmt.Printf("Block: %s\n", reason)
-				}
-				os.Exit(1)
-			}
-
-			// Timeout or canceled — allow stop
-			if jsonOutput {
-				outputJSON(map[string]string{"decision": "allow", "reason": "timeout or canceled"})
-			}
-			os.Exit(0)
+		if cfg.AgentDecisionPrompt != "" {
+			reason = cfg.AgentDecisionPrompt
 		}
-	}
-
-	// Default behavior: create a generic stop decision (same as before)
-	prompt := cfg.Prompt
-	if prompt == "" {
-		prompt = "Claude is ready to stop. Review and decide:"
-	}
-
-	options := cfg.Options
-	if len(options) == 0 {
-		options = []types.DecisionOption{
-			{ID: "continue", Short: "continue", Label: "Continue working - provide instructions"},
-			{ID: "stop", Short: "stop", Label: "Allow Claude to stop"},
+		if sessionTag != "" {
+			reason += fmt.Sprintf("\n\nIMPORTANT: Pass --requested-by %q to scope this decision to your session.", sessionTag)
 		}
-	}
-
-	urgency := cfg.Urgency
-	if urgency == "" {
-		urgency = "high"
-	}
-
-	defaultAction := cfg.DefaultAction
-	if defaultAction == "" {
-		defaultAction = "stop"
-	}
-
-	// Create the decision point
-	decisionID, err := createStopDecision(ctx, prompt, options, urgency, defaultAction, timeout)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating stop decision: %v\n", err)
-		// On error, allow stop (fail-open)
-		if jsonOutput {
-			outputJSON(map[string]string{"decision": "allow", "reason": fmt.Sprintf("error creating decision: %v", err)})
-		}
-		os.Exit(0)
-	}
-
-	fmt.Fprintf(os.Stderr, "Stop decision created: %s (timeout: %s)\n", decisionID, timeout)
-	fmt.Fprintf(os.Stderr, "Waiting for human response via 'bd decision watch' or 'bd decision respond'...\n")
-
-	// Poll for response
-	selected, responseText, err := pollStopDecision(ctx, decisionID, timeout, pollInterval)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error polling stop decision: %v\n", err)
-		// On error, allow stop (fail-open)
-		if jsonOutput {
-			outputJSON(map[string]string{"decision": "allow", "reason": fmt.Sprintf("poll error: %v", err)})
-		}
-		os.Exit(0)
-	}
-
-	// Interpret the response
-	if selected == "continue" {
-		// Block stop — human wants Claude to continue
-		reason := "Human selected 'continue'"
-		if responseText != "" {
-			reason += "\n\n" + responseText
-		}
+		fmt.Fprintf(os.Stderr, "No agent decision found. Blocking.\n")
 		if jsonOutput {
 			outputJSON(map[string]string{"decision": "block", "reason": reason})
 		} else {
@@ -297,13 +154,9 @@ The human will pick which direction to go, or provide custom instructions.`
 		os.Exit(1)
 	}
 
-	// Allow stop (human said "stop", timeout, canceled, or unknown selection)
+	// No require_agent_decision — allow stop
 	if jsonOutput {
-		reason := "human selected stop"
-		if selected == "" {
-			reason = "timeout or canceled"
-		}
-		outputJSON(map[string]string{"decision": "allow", "reason": reason})
+		outputJSON(map[string]string{"decision": "allow", "reason": "require_agent_decision not set"})
 	}
 	os.Exit(0)
 }

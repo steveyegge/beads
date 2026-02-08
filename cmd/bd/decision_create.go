@@ -66,6 +66,9 @@ func init() {
 	decisionCreateCmd.Flags().StringP("urgency", "u", "medium", "Urgency level: high, medium, low")
 	decisionCreateCmd.Flags().String("predecessor", "", "Previous decision in chain (for decision chaining)")
 	decisionCreateCmd.Flags().StringP("context", "c", "", "Background/analysis context for the decision (JSON or text)")
+	decisionCreateCmd.Flags().Bool("wait", true, "Block until human responds (default: true). Use --wait=false for fire-and-forget.")
+	decisionCreateCmd.Flags().Duration("wait-timeout", 60*time.Minute, "Timeout when waiting for response")
+	decisionCreateCmd.Flags().Duration("wait-poll-interval", 2*time.Second, "Poll interval when waiting for response")
 
 	_ = decisionCreateCmd.MarkFlagRequired("prompt")
 
@@ -84,6 +87,9 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 	noNotify, _ := cmd.Flags().GetBool("no-notify")
 	requestedBy, _ := cmd.Flags().GetString("requested-by")
+	waitForResponse, _ := cmd.Flags().GetBool("wait")
+	waitTimeout, _ := cmd.Flags().GetDuration("wait-timeout")
+	waitPollInterval, _ := cmd.Flags().GetDuration("wait-poll-interval")
 	urgency, _ := cmd.Flags().GetString("urgency")
 	predecessor, _ := cmd.Flags().GetString("predecessor")
 	decisionContext, _ := cmd.Flags().GetString("context")
@@ -320,8 +326,8 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		Options:     len(options),
 	})
 
-	// Output
-	if jsonOutput {
+	// Output — if waiting, defer JSON output until after response arrives.
+	if jsonOutput && !waitForResponse {
 		result := map[string]interface{}{
 			"id":             decisionID,
 			"prompt":         prompt,
@@ -335,6 +341,11 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		}
 		outputJSON(result)
 		return
+	}
+	if jsonOutput {
+		// When waiting, print creation info to stderr so stdout is reserved
+		// for the final response JSON.
+		fmt.Fprintf(os.Stderr, "Created decision: %s\n", decisionID)
 	}
 
 	// Human-readable output
@@ -389,6 +400,45 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 			}
 		} else {
 			fmt.Println("\n  (No notification routes configured)")
+		}
+	}
+
+	// --wait: block until human responds, then output the response.
+	// This is the primary mechanism for human-in-the-loop decisions.
+	// The stop hook is just a guard that forces the agent to call this.
+	if waitForResponse {
+		fmt.Fprintf(os.Stderr, "\nWaiting for response on %s (timeout: %s)...\n", decisionID, waitTimeout)
+		selected, responseText, err := pollStopDecision(ctx, decisionID, waitTimeout, waitPollInterval)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error waiting for response: %v\n", err)
+			os.Exit(1)
+		}
+		if selected == "" && responseText == "" {
+			fmt.Fprintf(os.Stderr, "Timeout waiting for response on %s\n", decisionID)
+			if jsonOutput {
+				outputJSON(map[string]string{
+					"id":       decisionID,
+					"status":   "timeout",
+					"selected": "",
+				})
+			} else {
+				fmt.Printf("\n  Timed out waiting for response.\n")
+			}
+			return
+		}
+		// Output the response
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"id":            decisionID,
+				"status":        "responded",
+				"selected":      selected,
+				"response_text": responseText,
+			})
+		} else {
+			fmt.Printf("\n  Response received: %s\n", selected)
+			if responseText != "" {
+				fmt.Printf("  %s\n", responseText)
+			}
 		}
 	}
 }
