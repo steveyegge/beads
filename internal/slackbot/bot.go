@@ -256,8 +256,10 @@ func (b *Bot) handleEvent(evt socketmode.Event) {
 	case socketmode.EventTypeInteractive:
 		callback, ok := evt.Data.(slack.InteractionCallback)
 		if !ok {
+			log.Printf("slackbot: EventTypeInteractive: type assertion to InteractionCallback failed, data type=%T", evt.Data)
 			return
 		}
+		log.Printf("slackbot: EventTypeInteractive: type=%s callbackID=%q user=%s", callback.Type, callback.View.CallbackID, callback.User.ID)
 		b.socketMode.Ack(*evt.Request)
 		b.handleInteraction(callback)
 	}
@@ -373,7 +375,9 @@ func (b *Bot) handleDecisionsCommand(cmd slack.SlashCommand) {
 // ---------- Interactive handlers ----------
 
 func (b *Bot) handleInteraction(callback slack.InteractionCallback) {
+	log.Printf("slackbot: handleInteraction: type=%s viewCallbackID=%q numActions=%d", callback.Type, callback.View.CallbackID, len(callback.ActionCallback.BlockActions))
 	if callback.Type == slack.InteractionTypeViewSubmission {
+		log.Printf("slackbot: handleInteraction: routing to handleViewSubmission")
 		b.handleViewSubmission(callback)
 		return
 	}
@@ -564,6 +568,7 @@ func (b *Bot) showResolvedDecisionView(callback slack.InteractionCallback, decis
 }
 
 func (b *Bot) handleResolveDecision(callback slack.InteractionCallback, action *slack.BlockAction) {
+	log.Printf("slackbot: handleResolveDecision: actionID=%s value=%q user=%s triggerID=%s", action.ActionID, action.Value, callback.User.ID, callback.TriggerID)
 	parts := strings.Split(action.Value, ":")
 	if len(parts) != 2 {
 		b.postEphemeral(callback.Channel.ID, callback.User.ID, "Invalid action value")
@@ -596,11 +601,13 @@ func (b *Bot) handleResolveDecision(callback slack.InteractionCallback, action *
 	messageTs := callback.Message.Timestamp
 	modalRequest := b.buildResolveModal(decisionID, chosenIndex, decision.Question, optionLabel, callback.Channel.ID, messageTs)
 
-	_, err = b.client.OpenView(callback.TriggerID, modalRequest)
+	viewResp, err := b.client.OpenView(callback.TriggerID, modalRequest)
 	if err != nil {
 		log.Printf("slackbot: error opening resolve modal: %v", err)
 		b.postEphemeral(callback.Channel.ID, callback.User.ID,
 			fmt.Sprintf("Error opening dialog: %v", err))
+	} else {
+		log.Printf("slackbot: resolve modal opened successfully: viewID=%s callbackID=%s", viewResp.View.ID, viewResp.View.CallbackID)
 	}
 }
 
@@ -1050,6 +1057,7 @@ func (b *Bot) buildPreferencesModal(userID string) slack.ModalViewRequest {
 // ---------- View submissions ----------
 
 func (b *Bot) handleViewSubmission(callback slack.InteractionCallback) {
+	log.Printf("slackbot: handleViewSubmission: callbackID=%q user=%s", callback.View.CallbackID, callback.User.ID)
 	switch callback.View.CallbackID {
 	case "resolve_decision_modal":
 		b.handleResolveModalSubmission(callback)
@@ -1057,10 +1065,13 @@ func (b *Bot) handleViewSubmission(callback slack.InteractionCallback) {
 		b.handleOtherModalSubmission(callback)
 	case "preferences_modal":
 		b.handlePreferencesModalSubmission(callback)
+	default:
+		log.Printf("slackbot: handleViewSubmission: UNKNOWN callbackID=%q — not handled!", callback.View.CallbackID)
 	}
 }
 
 func (b *Bot) handleResolveModalSubmission(callback slack.InteractionCallback) {
+	log.Printf("slackbot: handleResolveModalSubmission: user=%s metadata=%q", callback.User.ID, callback.View.PrivateMetadata)
 	metadata := callback.View.PrivateMetadata
 	labelSep := strings.LastIndex(metadata, "|")
 	optionLabel := ""
@@ -2309,6 +2320,7 @@ func (b *Bot) postEphemeral(channelID, userID, text string) {
 }
 
 func (b *Bot) postErrorMessage(channelID, userID, decisionID string, err error) {
+	log.Printf("slackbot: postErrorMessage: decision=%s user=%s error=%v", decisionID, userID, err)
 	errMsg := err.Error()
 	hint := ""
 	if strings.Contains(errMsg, "not found") {
