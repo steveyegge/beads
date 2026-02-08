@@ -671,6 +671,26 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 			}
 		}
 
+		// Label filtering (OR semantics): must have AT LEAST ONE of the specified labels
+		if len(filter.LabelsAny) > 0 {
+			issueLabels := m.labels[issue.ID]
+			hasAnyLabel := false
+			for _, reqLabel := range filter.LabelsAny {
+				for _, label := range issueLabels {
+					if label == reqLabel {
+						hasAnyLabel = true
+						break
+					}
+				}
+				if hasAnyLabel {
+					break
+				}
+			}
+			if !hasAnyLabel {
+				continue
+			}
+		}
+
 		// ID filtering
 		if len(filter.IDs) > 0 {
 			found := false
