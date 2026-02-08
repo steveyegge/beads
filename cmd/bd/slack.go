@@ -128,7 +128,7 @@ func runSlackStart(cmd *cobra.Command, args []string) error {
 		fmt.Sscanf(hp, "%d", &slackHealthPort)
 	}
 
-	decisions := slackbot.NewDecisionClient(rpcClient)
+	decisions := slackbot.NewDecisionClient(rpcClient, daemonHost, rpc.GetDaemonToken())
 
 	// Parse auto-invite users
 	var autoInviteUsers []string

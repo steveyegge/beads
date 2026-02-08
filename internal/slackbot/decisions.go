@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/steveyegge/beads/internal/rpc"
@@ -41,19 +44,67 @@ type DecisionOption struct {
 }
 
 // DecisionClient adapts beads' rpc.Client to provide a higher-level
-// decision-oriented API for the Slack bot.
+// decision-oriented API for the Slack bot. It reconnects automatically
+// when the underlying TCP connection is broken.
 type DecisionClient struct {
-	client *rpc.Client
+	client    *rpc.Client
+	addr      string
+	token     string
+	mu        sync.Mutex
 }
 
 // NewDecisionClient wraps an existing RPC client for decision operations.
-func NewDecisionClient(c *rpc.Client) *DecisionClient {
-	return &DecisionClient{client: c}
+// It stores the connection parameters so it can reconnect if the connection breaks.
+func NewDecisionClient(c *rpc.Client, addr, token string) *DecisionClient {
+	return &DecisionClient{client: c, addr: addr, token: token}
+}
+
+// reconnect attempts to establish a new RPC connection, replacing the broken one.
+func (dc *DecisionClient) reconnect() error {
+	dc.mu.Lock()
+	defer dc.mu.Unlock()
+
+	if dc.client != nil {
+		dc.client.Close()
+	}
+
+	newClient, err := rpc.TryConnectTCP(dc.addr, dc.token)
+	if err != nil {
+		return fmt.Errorf("reconnect to %s: %w", dc.addr, err)
+	}
+	dc.client = newClient
+	log.Printf("slackbot: reconnected to daemon at %s", dc.addr)
+	return nil
+}
+
+// getClient returns the current RPC client under lock.
+func (dc *DecisionClient) getClient() *rpc.Client {
+	dc.mu.Lock()
+	defer dc.mu.Unlock()
+	return dc.client
+}
+
+// isBrokenPipe returns true if the error indicates a broken TCP connection.
+func isBrokenPipe(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "broken pipe") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "EOF") ||
+		strings.Contains(s, "use of closed network connection")
 }
 
 // ListPending returns all unresolved decisions.
 func (dc *DecisionClient) ListPending(ctx context.Context) ([]Decision, error) {
-	resp, err := dc.client.DecisionList(&rpc.DecisionListArgs{All: false})
+	resp, err := dc.getClient().DecisionList(&rpc.DecisionListArgs{All: false})
+	if err != nil && isBrokenPipe(err) {
+		if rerr := dc.reconnect(); rerr != nil {
+			return nil, fmt.Errorf("decision list (reconnect failed): %w", rerr)
+		}
+		resp, err = dc.getClient().DecisionList(&rpc.DecisionListArgs{All: false})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("decision list: %w", err)
 	}
@@ -68,7 +119,13 @@ func (dc *DecisionClient) ListPending(ctx context.Context) ([]Decision, error) {
 
 // GetDecision retrieves a single decision by its issue ID.
 func (dc *DecisionClient) GetDecision(ctx context.Context, issueID string) (*Decision, error) {
-	resp, err := dc.client.DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
+	resp, err := dc.getClient().DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
+	if err != nil && isBrokenPipe(err) {
+		if rerr := dc.reconnect(); rerr != nil {
+			return nil, fmt.Errorf("decision get %s (reconnect failed): %w", issueID, rerr)
+		}
+		resp, err = dc.getClient().DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("decision get %s: %w", issueID, err)
 	}
@@ -81,7 +138,13 @@ func (dc *DecisionClient) GetDecision(ctx context.Context, issueID string) (*Dec
 // It fetches the decision first to map the index to the option ID that beads expects.
 func (dc *DecisionClient) Resolve(ctx context.Context, issueID string, chosenIndex int, rationale, resolvedBy string) (*Decision, error) {
 	// Fetch the decision to get the option IDs.
-	current, err := dc.client.DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
+	current, err := dc.getClient().DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
+	if err != nil && isBrokenPipe(err) {
+		if rerr := dc.reconnect(); rerr != nil {
+			return nil, fmt.Errorf("decision get for resolve %s (reconnect failed): %w", issueID, rerr)
+		}
+		current, err = dc.getClient().DecisionGet(&rpc.DecisionGetArgs{IssueID: issueID})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("decision get for resolve %s: %w", issueID, err)
 	}
@@ -98,12 +161,23 @@ func (dc *DecisionClient) Resolve(ctx context.Context, issueID string, chosenInd
 	}
 	optionID := opts[chosenIndex-1].ID
 
-	resp, err := dc.client.DecisionResolve(&rpc.DecisionResolveArgs{
+	resp, err := dc.getClient().DecisionResolve(&rpc.DecisionResolveArgs{
 		IssueID:        issueID,
 		SelectedOption: optionID,
 		RespondedBy:    resolvedBy,
 		Guidance:       rationale,
 	})
+	if err != nil && isBrokenPipe(err) {
+		if rerr := dc.reconnect(); rerr != nil {
+			return nil, fmt.Errorf("decision resolve %s (reconnect failed): %w", issueID, rerr)
+		}
+		resp, err = dc.getClient().DecisionResolve(&rpc.DecisionResolveArgs{
+			IssueID:        issueID,
+			SelectedOption: optionID,
+			RespondedBy:    resolvedBy,
+			Guidance:       rationale,
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("decision resolve %s: %w", issueID, err)
 	}
@@ -114,11 +188,21 @@ func (dc *DecisionClient) Resolve(ctx context.Context, issueID string, chosenInd
 
 // ResolveWithText resolves a decision with free-form text instead of a predefined option.
 func (dc *DecisionClient) ResolveWithText(ctx context.Context, issueID, text, resolvedBy string) (*Decision, error) {
-	resp, err := dc.client.DecisionResolve(&rpc.DecisionResolveArgs{
+	resp, err := dc.getClient().DecisionResolve(&rpc.DecisionResolveArgs{
 		IssueID:      issueID,
 		ResponseText: text,
 		RespondedBy:  resolvedBy,
 	})
+	if err != nil && isBrokenPipe(err) {
+		if rerr := dc.reconnect(); rerr != nil {
+			return nil, fmt.Errorf("decision resolve with text %s (reconnect failed): %w", issueID, rerr)
+		}
+		resp, err = dc.getClient().DecisionResolve(&rpc.DecisionResolveArgs{
+			IssueID:      issueID,
+			ResponseText: text,
+			RespondedBy:  resolvedBy,
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("decision resolve with text %s: %w", issueID, err)
 	}
@@ -129,7 +213,13 @@ func (dc *DecisionClient) ResolveWithText(ctx context.Context, issueID, text, re
 
 // Cancel cancels a pending decision.
 func (dc *DecisionClient) Cancel(ctx context.Context, issueID string) error {
-	_, err := dc.client.DecisionCancel(&rpc.DecisionCancelArgs{IssueID: issueID})
+	_, err := dc.getClient().DecisionCancel(&rpc.DecisionCancelArgs{IssueID: issueID})
+	if err != nil && isBrokenPipe(err) {
+		if rerr := dc.reconnect(); rerr != nil {
+			return fmt.Errorf("decision cancel %s (reconnect failed): %w", issueID, rerr)
+		}
+		_, err = dc.getClient().DecisionCancel(&rpc.DecisionCancelArgs{IssueID: issueID})
+	}
 	if err != nil {
 		return fmt.Errorf("decision cancel %s: %w", issueID, err)
 	}
