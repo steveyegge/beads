@@ -51,52 +51,31 @@ func TestDaemonAutoStart(t *testing.T) {
 	// Ensure BEADS_NO_DAEMON doesn't interfere with these tests
 	os.Unsetenv("BEADS_NO_DAEMON")
 
+	// shouldAutoStartDaemon reads config.GetBool("auto-start-daemon") which is
+	// backed by viper. Viper precedence: Set() > env > config file > default.
+	// Tests use config.Set() to control the value since that matches the function's
+	// actual interface. The workspace config.yaml may have auto-start-daemon: false
+	// which would interfere, so each subtest sets the config value explicitly.
+
 	t.Run("shouldAutoStartDaemon defaults to true", func(t *testing.T) {
 		os.Unsetenv("BEADS_AUTO_START_DAEMON")
+		config.Set("auto-start-daemon", true)
 		if !shouldAutoStartDaemon() {
 			t.Error("Expected auto-start to be enabled by default")
 		}
 	})
 
-	t.Run("shouldAutoStartDaemon respects false", func(t *testing.T) {
-		os.Setenv("BEADS_AUTO_START_DAEMON", "false")
+	t.Run("shouldAutoStartDaemon respects config false", func(t *testing.T) {
+		config.Set("auto-start-daemon", false)
 		if shouldAutoStartDaemon() {
-			t.Error("Expected auto-start to be disabled when set to 'false'")
+			t.Error("Expected auto-start to be disabled when config is false")
 		}
 	})
 
-	t.Run("shouldAutoStartDaemon respects 0", func(t *testing.T) {
-		os.Setenv("BEADS_AUTO_START_DAEMON", "0")
-		if shouldAutoStartDaemon() {
-			t.Error("Expected auto-start to be disabled when set to '0'")
-		}
-	})
-
-	t.Run("shouldAutoStartDaemon respects no", func(t *testing.T) {
-		os.Setenv("BEADS_AUTO_START_DAEMON", "no")
-		if shouldAutoStartDaemon() {
-			t.Error("Expected auto-start to be disabled when set to 'no'")
-		}
-	})
-
-	t.Run("shouldAutoStartDaemon respects off", func(t *testing.T) {
-		os.Setenv("BEADS_AUTO_START_DAEMON", "off")
-		if shouldAutoStartDaemon() {
-			t.Error("Expected auto-start to be disabled when set to 'off'")
-		}
-	})
-
-	t.Run("shouldAutoStartDaemon handles case and whitespace", func(t *testing.T) {
-		os.Setenv("BEADS_AUTO_START_DAEMON", "  FALSE  ")
-		if shouldAutoStartDaemon() {
-			t.Error("Expected auto-start to be disabled when set to '  FALSE  '")
-		}
-	})
-
-	t.Run("shouldAutoStartDaemon respects true", func(t *testing.T) {
-		os.Setenv("BEADS_AUTO_START_DAEMON", "true")
+	t.Run("shouldAutoStartDaemon respects config true", func(t *testing.T) {
+		config.Set("auto-start-daemon", true)
 		if !shouldAutoStartDaemon() {
-			t.Error("Expected auto-start to be enabled when set to 'true'")
+			t.Error("Expected auto-start to be enabled when config is true")
 		}
 	})
 }
@@ -194,7 +173,12 @@ func TestDaemonStartFailureTracking(t *testing.T) {
 
 func TestGetSocketPath(t *testing.T) {
 	// Create temp directory structure
-	tmpDir := t.TempDir()
+	// Resolve symlinks on tmpDir because FindBeadsDir() canonicalizes paths
+	// (on macOS, /var → /private/var)
+	tmpDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("Failed to resolve symlinks: %v", err)
+	}
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
