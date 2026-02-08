@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1574,5 +1576,69 @@ func TestUAT_CreateDecision_UrgencyEmojis(t *testing.T) {
 				t.Errorf("urgency %q: blocks should contain %q", tt.urgency, tt.expectedEmoji)
 			}
 		})
+	}
+}
+
+// TestUAT_AgentStatusCard_PersistedAcrossRestart verifies that agent status
+// cards survive a simulated bot restart. A new bot instance with the same
+// StateManager should reuse the existing card without posting a new one.
+func TestUAT_AgentStatusCard_PersistedAcrossRestart(t *testing.T) {
+	agent := "gastown/polecats/furiosa"
+	rigChannel := "C_RIG"
+
+	// --- Bot 1: create the initial status card ---
+	mockAPI1 := newMockSlackAPI()
+	bot1 := newBotForTest(mockAPI1, &mockDecisionProvider{}, "C_DEFAULT")
+
+	// Give bot1 a StateManager backed by a temp directory
+	beadsDir := filepath.Join(t.TempDir(), "fake", ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	bot1.stateManager = NewStateManager(beadsDir)
+
+	// Create the status card (this also persists via StateManager)
+	cardTS := bot1.ensureAgentStatusCard(agent, rigChannel)
+	if cardTS == "" {
+		t.Fatal("expected non-empty status card timestamp")
+	}
+
+	mockAPI1.mu.Lock()
+	postCount1 := len(mockAPI1.PostedMessages)
+	mockAPI1.mu.Unlock()
+	if postCount1 != 1 {
+		t.Fatalf("expected 1 PostMessage call on bot1, got %d", postCount1)
+	}
+
+	// Verify the card was persisted to disk
+	ch, ts, ok := bot1.stateManager.GetAgentCard(agent)
+	if !ok {
+		t.Fatal("expected agent card to be persisted in state")
+	}
+	if ch != rigChannel || ts != cardTS {
+		t.Fatalf("persisted state mismatch: ch=%s ts=%s, want ch=%s ts=%s", ch, ts, rigChannel, cardTS)
+	}
+
+	// --- Bot 2: simulate restart with fresh bot, same state directory ---
+	mockAPI2 := newMockSlackAPI()
+	bot2 := newBotForTest(mockAPI2, &mockDecisionProvider{}, "C_DEFAULT")
+	bot2.stateManager = NewStateManager(beadsDir)
+
+	// Hydrate status cards from state (simulates what NewBot does)
+	for agentKey, card := range bot2.stateManager.AllAgentCards() {
+		bot2.agentStatusCards[agentKey] = messageInfo{channelID: card.ChannelID, timestamp: card.Timestamp}
+	}
+
+	// Call ensureAgentStatusCard — should return existing card, NOT post a new one
+	ts2 := bot2.ensureAgentStatusCard(agent, rigChannel)
+	if ts2 != cardTS {
+		t.Fatalf("expected persisted ts=%s after restart, got %s", cardTS, ts2)
+	}
+
+	mockAPI2.mu.Lock()
+	postCount2 := len(mockAPI2.PostedMessages)
+	mockAPI2.mu.Unlock()
+	if postCount2 != 0 {
+		t.Fatalf("expected 0 PostMessage calls on bot2 (reused card), got %d", postCount2)
 	}
 }

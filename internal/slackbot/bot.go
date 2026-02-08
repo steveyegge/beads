@@ -49,6 +49,7 @@ type Bot struct {
 	agentStatusCardsMu sync.RWMutex
 	agentPendingCount  map[string]int // agent identity → pending decision count
 	agentPendingMu     sync.Mutex
+	stateManager       *StateManager // Persists status card refs across restarts
 
 	// Bot identity for filtering out own messages in thread replies
 	botUserID string
@@ -135,6 +136,17 @@ func NewBot(cfg BotConfig, decisions *DecisionClient) (*Bot, error) {
 		channelPrefix = "bd-decisions"
 	}
 
+	stateMgr := NewStateManager(beadsDir)
+
+	// Hydrate in-memory status cards from persisted state
+	agentCards := make(map[string]messageInfo)
+	for agent, card := range stateMgr.AllAgentCards() {
+		agentCards[agent] = messageInfo{channelID: card.ChannelID, timestamp: card.Timestamp}
+	}
+	if len(agentCards) > 0 {
+		log.Printf("slackbot: restored %d agent status cards from state file", len(agentCards))
+	}
+
 	bot := &Bot{
 		client:            client,
 		socketMode:        socketClient,
@@ -148,8 +160,9 @@ func NewBot(cfg BotConfig, decisions *DecisionClient) (*Bot, error) {
 		channelCache:      make(map[string]string),
 		autoInviteUsers:   cfg.AutoInviteUsers,
 		decisionMessages:  make(map[string]messageInfo),
-		agentStatusCards:  make(map[string]messageInfo),
+		agentStatusCards:  agentCards,
 		agentPendingCount: make(map[string]int),
+		stateManager:      stateMgr,
 		preferenceManager: NewPreferenceManager(beadsDir),
 	}
 	return bot, nil
@@ -1653,6 +1666,13 @@ func (b *Bot) ensureAgentStatusCard(agent, channelID string) string {
 	b.agentStatusCardsMu.Lock()
 	b.agentStatusCards[agent] = messageInfo{channelID: channelID, timestamp: ts}
 	b.agentStatusCardsMu.Unlock()
+
+	// Persist so status card survives bot restarts
+	if b.stateManager != nil {
+		if err := b.stateManager.SetAgentCard(agent, channelID, ts); err != nil {
+			log.Printf("slackbot: warning: failed to persist status card for %s: %v", agent, err)
+		}
+	}
 
 	log.Printf("slackbot: created status card for %s in %s (ts=%s)", agent, channelID, ts)
 	return ts
