@@ -786,6 +786,13 @@ func (b *Bot) handleDismissDecision(callback slack.InteractionCallback, decision
 		return
 	}
 
+	// Cancel the decision on the daemon so polling loops detect dismissal.
+	// Without this, bd decision create --wait hangs forever after Slack dismiss.
+	if err := b.decisions.Cancel(context.Background(), decisionID); err != nil {
+		log.Printf("slackbot: warning: failed to cancel decision %s on daemon: %v", decisionID, err)
+		// Continue with Slack message deletion — don't block UX on daemon errors
+	}
+
 	_, _, err := b.client.DeleteMessage(callback.Channel.ID, messageTs)
 	if err != nil {
 		b.postEphemeral(callback.Channel.ID, callback.User.ID,
@@ -793,7 +800,7 @@ func (b *Bot) handleDismissDecision(callback slack.InteractionCallback, decision
 		return
 	}
 
-	log.Printf("slackbot: dismissed decision %s", decisionID)
+	log.Printf("slackbot: dismissed decision %s (canceled on daemon)", decisionID)
 }
 
 // DismissDecisionByID deletes a decision's Slack notification message.

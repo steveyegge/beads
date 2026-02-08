@@ -87,6 +87,9 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 	noNotify, _ := cmd.Flags().GetBool("no-notify")
 	requestedBy, _ := cmd.Flags().GetString("requested-by")
+	if requestedBy == "" && actor != "" {
+		requestedBy = actor // Default to resolved actor identity for readable Slack display
+	}
 	waitForResponse, _ := cmd.Flags().GetBool("wait")
 	waitTimeout, _ := cmd.Flags().GetDuration("wait-timeout")
 	waitPollInterval, _ := cmd.Flags().GetDuration("wait-poll-interval")
