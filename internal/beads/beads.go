@@ -233,14 +233,7 @@ func findDatabaseInBeadsDir(beadsDir string, warnOnIssues bool) string {
 		backend := cfg.GetBackend()
 		if backend == configfile.BackendDolt {
 			// For Dolt server mode, database is on the server - no local directory required
-			if cfg.IsDoltServerMode() {
-				return cfg.DatabasePath(beadsDir)
-			}
-			// For embedded Dolt, check if the configured database directory exists
-			doltPath := cfg.DatabasePath(beadsDir)
-			if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
-				return doltPath
-			}
+			return cfg.DatabasePath(beadsDir)
 		} else {
 			// For SQLite, check if the .db file exists
 			dbPath := cfg.DatabasePath(beadsDir)
@@ -333,8 +326,6 @@ type (
 	WorkFilter = types.WorkFilter
 	// SortPolicy determines how ready work is ordered.
 	SortPolicy = types.SortPolicy
-	// EpicStatus represents the status of an epic issue.
-	EpicStatus = types.EpicStatus
 )
 
 // Status constants
@@ -342,7 +333,6 @@ const (
 	StatusOpen       = types.StatusOpen
 	StatusInProgress = types.StatusInProgress
 	StatusBlocked    = types.StatusBlocked
-	StatusDeferred   = types.StatusDeferred
 	StatusClosed     = types.StatusClosed
 )
 
@@ -357,33 +347,10 @@ const (
 
 // DependencyType constants
 const (
-	DepBlocks            = types.DepBlocks
-	DepRelated           = types.DepRelated
-	DepParentChild       = types.DepParentChild
-	DepDiscoveredFrom    = types.DepDiscoveredFrom
-	DepConditionalBlocks = types.DepConditionalBlocks // B runs only if A fails
-)
-
-// SortPolicy constants
-const (
-	SortPolicyHybrid   = types.SortPolicyHybrid
-	SortPolicyPriority = types.SortPolicyPriority
-	SortPolicyOldest   = types.SortPolicyOldest
-)
-
-// EventType constants
-const (
-	EventCreated           = types.EventCreated
-	EventUpdated           = types.EventUpdated
-	EventStatusChanged     = types.EventStatusChanged
-	EventCommented         = types.EventCommented
-	EventClosed            = types.EventClosed
-	EventReopened          = types.EventReopened
-	EventDependencyAdded   = types.EventDependencyAdded
-	EventDependencyRemoved = types.EventDependencyRemoved
-	EventLabelAdded        = types.EventLabelAdded
-	EventLabelRemoved      = types.EventLabelRemoved
-	EventCompacted         = types.EventCompacted
+	DepBlocks         = types.DepBlocks
+	DepRelated        = types.DepRelated
+	DepParentChild    = types.DepParentChild
+	DepDiscoveredFrom = types.DepDiscoveredFrom
 )
 
 // Storage provides the minimal interface for extension orchestration

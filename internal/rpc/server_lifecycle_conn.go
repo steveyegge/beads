@@ -127,14 +127,7 @@ func (s *Server) Stop() error {
 		// Signal cleanup goroutine to stop
 		close(s.shutdownChan)
 
-		// Close storage
-		if s.storage != nil {
-			if closeErr := s.storage.Close(); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to close default storage: %v\n", closeErr)
-			}
-		}
-
-		// Close listener under lock
+		// Close listener first to stop accepting new connections
 		s.mu.Lock()
 		listener := s.listener
 		s.listener = nil
@@ -143,7 +136,22 @@ func (s *Server) Stop() error {
 		if listener != nil {
 			if closeErr := listener.Close(); closeErr != nil {
 				err = fmt.Errorf("failed to close listener: %w", closeErr)
-				return
+			}
+		}
+
+		// Wait for in-flight requests to drain (with timeout)
+		drainDeadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(drainDeadline) {
+			if atomic.LoadInt32(&s.activeConns) == 0 {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		// Close storage after in-flight requests complete
+		if s.storage != nil {
+			if closeErr := s.storage.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to close default storage: %v\n", closeErr)
 			}
 		}
 
@@ -200,8 +208,8 @@ func (s *Server) handleSignals() {
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
-	defer func() { 
-		_ = conn.Close() 
+	defer func() {
+		_ = conn.Close()
 	}()
 
 	// Recover from panics to prevent daemon crash (bd-1048)
@@ -249,6 +257,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 			// Connection broken, stop handling this connection
 			return
 		}
+
+		// If shutdown was requested, trigger it now that the response has been written
+		if s.pendingShutdown.Load() {
+			go func() {
+				if err := s.Stop(); err != nil {
+					fmt.Fprintf(os.Stderr, "Error during shutdown: %v\n", err)
+				}
+			}()
+			return
+		}
 	}
 }
 
@@ -274,13 +292,8 @@ func (s *Server) writeResponse(writer *bufio.Writer, resp Response) error {
 }
 
 func (s *Server) handleShutdown(_ *Request) Response {
-	// Schedule shutdown in a goroutine so we can return a response first
-	go func() {
-		time.Sleep(100 * time.Millisecond) // Give time for response to be sent
-		if err := s.Stop(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error during shutdown: %v\n", err)
-		}
-	}()
+	// Signal pending shutdown - handleConnection will trigger Stop() after writing the response
+	s.pendingShutdown.Store(true)
 
 	return Response{
 		Success: true,

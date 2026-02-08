@@ -16,18 +16,18 @@ import (
 // setupTestStore creates a test storage with issue_prefix configured
 func setupTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
 	t.Helper()
-	
+
 	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
-	
+
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		store.Close()
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
-	
+
 	return store
 }
 
@@ -795,6 +795,60 @@ func TestIssueEqual(t *testing.T) {
 			a:        makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now),
 			b:        makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now.Add(time.Hour)),
 			expected: false,
+		},
+		{
+			name: "different dependencies",
+			a: func() *types.Issue {
+				i := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now)
+				i.Dependencies = []*types.Dependency{{DependsOnID: "bd-5678", Type: types.DepBlocks}}
+				return i
+			}(),
+			b:        makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now),
+			expected: false,
+		},
+		{
+			name: "same dependencies different order",
+			a: func() *types.Issue {
+				i := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now)
+				i.Dependencies = []*types.Dependency{
+					{DependsOnID: "bd-5678", Type: types.DepBlocks},
+					{DependsOnID: "bd-9999", Type: types.DepBlocks},
+				}
+				return i
+			}(),
+			b: func() *types.Issue {
+				i := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now)
+				i.Dependencies = []*types.Dependency{
+					{DependsOnID: "bd-9999", Type: types.DepBlocks},
+					{DependsOnID: "bd-5678", Type: types.DepBlocks},
+				}
+				return i
+			}(),
+			expected: true,
+		},
+		{
+			name: "different comments",
+			a: func() *types.Issue {
+				i := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now)
+				i.Comments = []*types.Comment{{Author: "alice", Text: "hello", CreatedAt: now}}
+				return i
+			}(),
+			b:        makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now),
+			expected: false,
+		},
+		{
+			name: "same comments",
+			a: func() *types.Issue {
+				i := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now)
+				i.Comments = []*types.Comment{{Author: "alice", Text: "hello", CreatedAt: now}}
+				return i
+			}(),
+			b: func() *types.Issue {
+				i := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now)
+				i.Comments = []*types.Comment{{Author: "alice", Text: "hello", CreatedAt: now}}
+				return i
+			}(),
+			expected: true,
 		},
 	}
 

@@ -159,6 +159,20 @@ jobs:
           ./bd.exe close $id
           echo "All smoke tests passed!"
 
+  fmt-check:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Check gofmt
+        run: make fmt-check
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -179,9 +193,6 @@ jobs:
   test-nix:
     name: Test Nix Flake
     runs-on: ubuntu-latest
-    # Allow failure until nixpkgs updates Go to 1.25.6+
-    # (dolthub/driver requires go 1.25.6, nixpkgs-unstable has go 1.25.1)
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
       - uses: cachix/install-nix-action@v31

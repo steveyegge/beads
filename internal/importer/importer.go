@@ -1207,17 +1207,29 @@ func importLabelsTx(ctx context.Context, tx storage.Transaction, issues []*types
 		if err != nil {
 			return fmt.Errorf("error getting labels for %s: %w", issue.ID, err)
 		}
-		set := make(map[string]bool, len(currentLabels))
+		currentSet := make(map[string]bool, len(currentLabels))
 		for _, l := range currentLabels {
-			set[l] = true
+			currentSet[l] = true
 		}
+		importSet := make(map[string]bool, len(issue.Labels))
 		for _, label := range issue.Labels {
-			if set[label] {
+			importSet[label] = true
+			if currentSet[label] {
 				continue
 			}
 			if err := tx.AddLabel(ctx, issue.ID, label, "import"); err != nil {
 				if opts.Strict {
 					return fmt.Errorf("error adding label %s to %s: %w", label, issue.ID, err)
+				}
+			}
+		}
+		// Remove labels that exist in DB but not in import data
+		for _, label := range currentLabels {
+			if !importSet[label] {
+				if err := tx.RemoveLabel(ctx, issue.ID, label, "import"); err != nil {
+					if opts.Strict {
+						return fmt.Errorf("error removing label %s from %s: %w", label, issue.ID, err)
+					}
 				}
 			}
 		}
@@ -1464,12 +1476,27 @@ func importLabels(ctx context.Context, store storage.Storage, issues []*types.Is
 			currentLabelSet[label] = true
 		}
 
+		importLabelSet := make(map[string]bool, len(issue.Labels))
+
 		// Add missing labels
 		for _, label := range issue.Labels {
+			importLabelSet[label] = true
 			if !currentLabelSet[label] {
 				if err := store.AddLabel(ctx, issue.ID, label, "import"); err != nil {
 					if opts.Strict {
 						return fmt.Errorf("error adding label %s to %s: %w", label, issue.ID, err)
+					}
+					continue
+				}
+			}
+		}
+
+		// Remove labels that exist in DB but not in import data
+		for _, label := range currentLabels {
+			if !importLabelSet[label] {
+				if err := store.RemoveLabel(ctx, issue.ID, label, "import"); err != nil {
+					if opts.Strict {
+						return fmt.Errorf("error removing label %s from %s: %w", label, issue.ID, err)
 					}
 					continue
 				}

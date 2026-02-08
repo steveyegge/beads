@@ -2,7 +2,7 @@ package sqlite
 
 import "testing"
 
-// TestIsHierarchicalID tests the IsHierarchicalID function which detects
+// TestisHierarchicalID tests the isHierarchicalID function which detects
 // if an issue ID is hierarchical (has a parent) based on the .N suffix pattern.
 // This test covers the fix for GH#508 where prefixes with dots were incorrectly
 // flagged as hierarchical.
@@ -120,13 +120,13 @@ func TestIsHierarchicalID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotHierarchical, gotParentID := IsHierarchicalID(tt.id)
+			gotHierarchical, gotParentID := isHierarchicalID(tt.id)
 			if gotHierarchical != tt.wantHierarchical {
-				t.Errorf("IsHierarchicalID(%q) hierarchical = %v, want %v",
+				t.Errorf("isHierarchicalID(%q) hierarchical = %v, want %v",
 					tt.id, gotHierarchical, tt.wantHierarchical)
 			}
 			if gotParentID != tt.wantParentID {
-				t.Errorf("IsHierarchicalID(%q) parentID = %q, want %q",
+				t.Errorf("isHierarchicalID(%q) parentID = %q, want %q",
 					tt.id, gotParentID, tt.wantParentID)
 			}
 		})

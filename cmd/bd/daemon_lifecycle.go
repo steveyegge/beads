@@ -72,7 +72,7 @@ func showDaemonStatus(pidFile string) {
 		// Try to get detailed status from daemon via RPC
 		var rpcStatus *rpc.StatusResponse
 		beadsDir := filepath.Dir(pidFile)
-		socketPath := filepath.Join(beadsDir, "bd.sock")
+		socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
 		if client, err := rpc.TryConnectWithTimeout(socketPath, 1*time.Second); err == nil && client != nil {
 			if status, err := client.Status(); err == nil {
 				rpcStatus = status
@@ -133,7 +133,7 @@ func showDaemonHealth() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
 
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil {
@@ -190,7 +190,7 @@ func showDaemonMetrics() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
 
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil {
@@ -377,8 +377,8 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMo
 		os.Exit(1)
 	}
 
-	// Guardrail: single-process backends (e.g., Dolt embedded) must never spawn a daemon process.
-	// Exception: federation mode runs dolt sql-server which enables multi-writer support.
+	// Guardrail: single-process backends must never spawn a daemon process.
+	// Exception: federation mode enables multi-writer support.
 	// This should already be blocked by command guards, but keep it defensive.
 	if singleProcessOnlyBackend() && !federation {
 		fmt.Fprintf(os.Stderr, "Error: daemon mode is not supported for single-process backends (e.g., dolt). Hint: use sqlite backend for daemon mode, use --federation for dolt server mode, or run commands in direct mode\n")
@@ -423,7 +423,7 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMo
 	}
 	if federation {
 		args = append(args, "--federation")
-		if federationPort != 0 && federationPort != 3306 {
+		if federationPort != 0 && federationPort != 3307 {
 			args = append(args, "--federation-port", strconv.Itoa(federationPort))
 		}
 		if remotesapiPort != 0 && remotesapiPort != 8080 {

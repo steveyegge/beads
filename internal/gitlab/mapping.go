@@ -25,9 +25,9 @@ func DefaultMappingConfig() *MappingConfig {
 		priorityMap[k] = v
 	}
 
-	// Copy TypeMapping to avoid external modification
-	labelTypeMap := make(map[string]string, len(TypeMapping))
-	for k, v := range TypeMapping {
+	// Copy typeMapping to avoid external modification
+	labelTypeMap := make(map[string]string, len(typeMapping))
+	for k, v := range typeMapping {
 		labelTypeMap[k] = v
 	}
 
@@ -49,11 +49,11 @@ func DefaultMappingConfig() *MappingConfig {
 	}
 }
 
-// PriorityFromLabels extracts priority from GitLab labels.
+// priorityFromLabels extracts priority from GitLab labels.
 // Returns default priority (2 = medium) if no priority label found.
-func PriorityFromLabels(labels []string, config *MappingConfig) int {
+func priorityFromLabels(labels []string, config *MappingConfig) int {
 	for _, label := range labels {
-		prefix, value := ParseLabelPrefix(label)
+		prefix, value := parseLabelPrefix(label)
 		if prefix == "priority" {
 			if p, ok := config.PriorityMap[strings.ToLower(value)]; ok {
 				return p
@@ -63,9 +63,9 @@ func PriorityFromLabels(labels []string, config *MappingConfig) int {
 	return 2 // Default to medium
 }
 
-// StatusFromLabelsAndState determines beads status from GitLab labels and state.
+// statusFromLabelsAndState determines beads status from GitLab labels and state.
 // GitLab's closed state takes precedence over status labels.
-func StatusFromLabelsAndState(labels []string, state string, config *MappingConfig) string {
+func statusFromLabelsAndState(labels []string, state string, config *MappingConfig) string {
 	// Closed state always wins
 	if state == "closed" {
 		return "closed"
@@ -73,7 +73,7 @@ func StatusFromLabelsAndState(labels []string, state string, config *MappingConf
 
 	// Check for status label
 	for _, label := range labels {
-		prefix, value := ParseLabelPrefix(label)
+		prefix, value := parseLabelPrefix(label)
 		if prefix == "status" {
 			normalized := strings.ToLower(value)
 			if normalized == "in_progress" {
@@ -95,12 +95,12 @@ func StatusFromLabelsAndState(labels []string, state string, config *MappingConf
 	return "open"
 }
 
-// TypeFromLabels extracts issue type from GitLab labels.
+// typeFromLabels extracts issue type from GitLab labels.
 // Checks both scoped (type::bug) and bare (bug) labels.
 // Returns "task" if no type label found.
-func TypeFromLabels(labels []string, config *MappingConfig) string {
+func typeFromLabels(labels []string, config *MappingConfig) string {
 	for _, label := range labels {
-		prefix, value := ParseLabelPrefix(label)
+		prefix, value := parseLabelPrefix(label)
 		if prefix == "type" {
 			if t, ok := config.LabelTypeMap[strings.ToLower(value)]; ok {
 				return t
@@ -126,10 +126,10 @@ func GitLabIssueToBeads(gl *Issue, config *MappingConfig) *IssueConversion {
 		Description:  gl.Description,
 		ExternalRef:  &webURL,
 		SourceSystem: sourceSystem,
-		IssueType:    types.IssueType(TypeFromLabels(gl.Labels, config)),
-		Priority:     PriorityFromLabels(gl.Labels, config),
-		Status:       types.Status(StatusFromLabelsAndState(gl.Labels, gl.State, config)),
-		Labels:       FilterNonScopedLabels(gl.Labels),
+		IssueType:    types.IssueType(typeFromLabels(gl.Labels, config)),
+		Priority:     priorityFromLabels(gl.Labels, config),
+		Status:       types.Status(statusFromLabelsAndState(gl.Labels, gl.State, config)),
+		Labels:       filterNonScopedLabels(gl.Labels),
 	}
 
 	// Set estimate from weight (convert to minutes - assume 1 weight = 1 hour)
@@ -223,8 +223,8 @@ func priorityToLabel(priority int) string {
 	}
 }
 
-// IssueLinksToDependencies converts GitLab IssueLinks to beads DependencyInfo.
-func IssueLinksToDependencies(sourceIID int, links []IssueLink, config *MappingConfig) []DependencyInfo {
+// issueLinksToDependencies converts GitLab IssueLinks to beads DependencyInfo.
+func issueLinksToDependencies(sourceIID int, links []IssueLink, config *MappingConfig) []DependencyInfo {
 	var deps []DependencyInfo
 
 	for _, link := range links {
@@ -261,12 +261,12 @@ func IssueLinksToDependencies(sourceIID int, links []IssueLink, config *MappingC
 	return deps
 }
 
-// FilterNonScopedLabels returns only labels without scoped prefixes.
+// filterNonScopedLabels returns only labels without scoped prefixes.
 // Removes priority::*, status::*, and type::* labels.
-func FilterNonScopedLabels(labels []string) []string {
+func filterNonScopedLabels(labels []string) []string {
 	var filtered []string
 	for _, label := range labels {
-		prefix, _ := ParseLabelPrefix(label)
+		prefix, _ := parseLabelPrefix(label)
 		// Skip scoped labels that we handle specially
 		if prefix == "priority" || prefix == "status" || prefix == "type" {
 			continue

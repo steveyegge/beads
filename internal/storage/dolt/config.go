@@ -1,4 +1,3 @@
-//go:build cgo
 package dolt
 
 import (
@@ -162,5 +161,3 @@ func parseCommaSeparatedList(value string) []string {
 	}
 	return result
 }
-
-

@@ -1,4 +1,3 @@
-//go:build cgo
 package main
 
 import (
@@ -45,6 +44,14 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 	if beadsDir == "" {
 		exitWithError("no_beads_directory", "No .beads directory found. Run 'bd init' first.",
 			"run 'bd init' to initialize bd")
+	}
+
+	// Check if daemon is running - migration with a running daemon risks race conditions
+	pidFile := filepath.Join(beadsDir, "daemon.pid")
+	if isRunning, pid := isDaemonRunning(pidFile); isRunning {
+		exitWithError("daemon_running",
+			fmt.Sprintf("bd daemon is running (PID %d). Stop it before migrating to avoid race conditions.", pid),
+			"run 'bd daemon stop' first, then retry migration")
 	}
 
 	// Load config
@@ -111,7 +118,13 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 	// Create Dolt database
 	printProgress("Creating Dolt database...")
 
-	doltStore, err := dolt.New(ctx, &dolt.Config{Path: doltPath})
+	// Use prefix-based database name to avoid cross-rig contamination (bd-u8rda).
+	// E.g., prefix "gt" → database "beads_gt", prefix "bd" → database "beads_bd".
+	dbName := "beads"
+	if data.prefix != "" {
+		dbName = "beads_" + data.prefix
+	}
+	doltStore, err := dolt.New(ctx, &dolt.Config{Path: doltPath, Database: dbName})
 	if err != nil {
 		exitWithError("dolt_create_failed", err.Error(), "")
 	}
@@ -138,6 +151,8 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 	// Update metadata.json
 	cfg.Backend = configfile.BackendDolt
 	cfg.Database = "dolt"
+	cfg.DoltDatabase = dbName
+	cfg.DoltServerPort = configfile.DefaultDoltServerPort
 	if err := cfg.Save(beadsDir); err != nil {
 		exitWithError("config_save_failed", err.Error(),
 			"data was imported but metadata.json was not updated - manually set backend to 'dolt'")
@@ -481,7 +496,9 @@ func importToDolt(ctx context.Context, store *dolt.DoltStore, data *migrationDat
 
 		// Insert labels
 		for _, label := range issue.Labels {
-			_, _ = tx.ExecContext(ctx, `INSERT INTO labels (issue_id, label) VALUES (?, ?)`, issue.ID, label)
+			if _, err := tx.ExecContext(ctx, `INSERT INTO labels (issue_id, label) VALUES (?, ?)`, issue.ID, label); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to insert label %q for issue %s: %v\n", label, issue.ID, err)
+			}
 		}
 
 		imported++
@@ -497,13 +514,16 @@ func importToDolt(ctx context.Context, store *dolt.DoltStore, data *migrationDat
 		for _, dep := range issue.Dependencies {
 			var exists int
 			if err := tx.QueryRowContext(ctx, "SELECT 1 FROM issues WHERE id = ?", dep.DependsOnID).Scan(&exists); err != nil {
-				continue // Target doesn't exist
+				fmt.Fprintf(os.Stderr, "Warning: skipping dependency %s -> %s: target issue not found\n", dep.IssueID, dep.DependsOnID)
+				continue
 			}
-			_, _ = tx.ExecContext(ctx, `
+			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, created_at)
 				VALUES (?, ?, ?, ?, ?)
 				ON DUPLICATE KEY UPDATE type = type
-			`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedBy, dep.CreatedAt)
+			`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedBy, dep.CreatedAt); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to insert dependency %s -> %s: %v\n", dep.IssueID, dep.DependsOnID, err)
+			}
 		}
 	}
 
@@ -579,7 +599,9 @@ func importToSQLite(ctx context.Context, store *sqlite.SQLiteStorage, data *migr
 			}
 
 			for _, label := range savedLabels {
-				_ = tx.AddLabel(ctx, issue.ID, label, "migration")
+				if err := tx.AddLabel(ctx, issue.ID, label, "migration"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to add label %q for issue %s: %v\n", label, issue.ID, err)
+				}
 			}
 
 			issue.Labels = savedLabels
@@ -595,7 +617,9 @@ func importToSQLite(ctx context.Context, store *sqlite.SQLiteStorage, data *migr
 		printProgress("Importing dependencies...")
 		for _, issue := range data.issues {
 			for _, dep := range issue.Dependencies {
-				_ = tx.AddDependency(ctx, dep, "migration")
+				if err := tx.AddDependency(ctx, dep, "migration"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", dep.IssueID, dep.DependsOnID, err)
+				}
 			}
 		}
 
@@ -845,5 +869,3 @@ func formatJSONArray(arr []string) string {
 	}
 	return string(data)
 }
-
-

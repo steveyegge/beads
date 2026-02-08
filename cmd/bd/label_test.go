@@ -99,14 +99,14 @@ func (h *labelTestHelper) assertLabelEvent(issueID string, eventType types.Event
 	if err != nil {
 		h.t.Fatalf("Failed to get events: %v", err)
 	}
-	
+
 	expectedComment := ""
 	if eventType == types.EventLabelAdded {
 		expectedComment = "Added label: " + labelName
 	} else if eventType == types.EventLabelRemoved {
 		expectedComment = "Removed label: " + labelName
 	}
-	
+
 	for _, e := range events {
 		if e.EventType == eventType && e.Comment != nil && *e.Comment == expectedComment {
 			return
@@ -116,6 +116,7 @@ func (h *labelTestHelper) assertLabelEvent(issueID string, eventType types.Event
 }
 
 func TestLabelCommands(t *testing.T) {
+	t.Parallel()
 	tmpDir, err := os.MkdirTemp("", "bd-test-label-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)

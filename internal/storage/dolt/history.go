@@ -1,4 +1,3 @@
-//go:build cgo
 package dolt
 
 import (
@@ -17,6 +16,9 @@ var validRefPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
 // validTablePattern matches valid table names
 var validTablePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+// validDatabasePattern matches valid MySQL database names (alphanumeric, underscore, hyphen)
+var validDatabasePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_\-]*$`)
+
 // validateRef checks if a ref is safe to use in queries
 func validateRef(ref string) error {
 	if ref == "" {
@@ -27,6 +29,21 @@ func validateRef(ref string) error {
 	}
 	if !validRefPattern.MatchString(ref) {
 		return fmt.Errorf("invalid ref format: %s", ref)
+	}
+	return nil
+}
+
+// validateDatabaseName checks if a database name is safe to use in queries.
+// Prevents SQL injection via backtick escaping in CREATE DATABASE statements.
+func validateDatabaseName(name string) error {
+	if name == "" {
+		return fmt.Errorf("database name cannot be empty")
+	}
+	if len(name) > 64 {
+		return fmt.Errorf("database name too long")
+	}
+	if !validDatabasePattern.MatchString(name) {
+		return fmt.Errorf("invalid database name: %s", name)
 	}
 	return nil
 }
@@ -311,9 +328,8 @@ type IssueDiff struct {
 // GetInternalConflicts returns any merge conflicts in the current state (internal format).
 // For the public interface, use GetConflicts which returns storage.Conflict.
 func (s *DoltStore) GetInternalConflicts(ctx context.Context) ([]*TableConflict, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT table_name, num_conflicts FROM dolt_conflicts
-	`)
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT `table`, num_conflicts FROM dolt_conflicts")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conflicts: %w", err)
 	}
@@ -361,5 +377,3 @@ func (s *DoltStore) ResolveConflicts(ctx context.Context, table string, strategy
 	}
 	return nil
 }
-
-

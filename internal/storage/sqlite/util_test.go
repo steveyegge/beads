@@ -43,9 +43,9 @@ func TestIsUniqueConstraintError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := IsUniqueConstraintError(tt.err)
+			result := isUniqueConstraintError(tt.err)
 			if result != tt.expected {
-				t.Errorf("IsUniqueConstraintError(%v) = %v, want %v", tt.err, result, tt.expected)
+				t.Errorf("isUniqueConstraintError(%v) = %v, want %v", tt.err, result, tt.expected)
 			}
 		})
 	}
@@ -91,9 +91,9 @@ func TestIsForeignKeyConstraintError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := IsForeignKeyConstraintError(tt.err)
+			result := isForeignKeyConstraintError(tt.err)
 			if result != tt.expected {
-				t.Errorf("IsForeignKeyConstraintError(%v) = %v, want %v", tt.err, result, tt.expected)
+				t.Errorf("isForeignKeyConstraintError(%v) = %v, want %v", tt.err, result, tt.expected)
 			}
 		})
 	}
@@ -250,9 +250,9 @@ func TestIsBusyError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := IsBusyError(tt.err)
+			result := isBusyError(tt.err)
 			if result != tt.expected {
-				t.Errorf("IsBusyError(%v) = %v, want %v", tt.err, result, tt.expected)
+				t.Errorf("isBusyError(%v) = %v, want %v", tt.err, result, tt.expected)
 			}
 		})
 	}

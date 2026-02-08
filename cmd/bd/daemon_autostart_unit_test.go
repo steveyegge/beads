@@ -103,6 +103,7 @@ func captureStderr(t *testing.T, fn func()) string {
 }
 
 func TestDaemonAutostart_AcquireStartLock_CreatesAndCleansStale(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	lockPath := filepath.Join(tmpDir, "bd.sock.startlock")
 	pid, err := readPIDFromFile(lockPath)
@@ -138,6 +139,7 @@ func TestDaemonAutostart_AcquireStartLock_CreatesAndCleansStale(t *testing.T) {
 }
 
 func TestDaemonAutostart_AcquireStartLock_CreatesMissingDir(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "missing", "bd.sock")
 	lockPath := socketPath + ".startlock"
@@ -481,6 +483,7 @@ func TestDaemonAutostart_RestartDaemonForVersionMismatch_Stubbed(t *testing.T) {
 
 // TestIsWispOperation tests the wisp operation detection for auto-daemon-bypass (bd-ta4r)
 func TestIsWispOperation(t *testing.T) {
+	t.Parallel()
 	// Helper to create a command with parent hierarchy
 	makeCmd := func(names ...string) *cobra.Command {
 		var current *cobra.Command

@@ -1,9 +1,8 @@
-//go:build cgo
 // Package dolt implements the storage interface using Dolt (versioned MySQL-compatible database).
 //
 // This file implements the dolt sql-server management for federation mode.
-// When federation is enabled, we run dolt sql-server instead of the embedded driver
-// to enable multi-writer support and expose the remotesapi for peer-to-peer sync.
+// When federation is enabled, we run dolt sql-server to enable multi-writer
+// support and expose the remotesapi for peer-to-peer sync.
 package dolt
 
 import (
@@ -20,8 +19,9 @@ import (
 )
 
 const (
-	// DefaultSQLPort is the default port for dolt sql-server MySQL protocol
-	DefaultSQLPort = 3306
+	// DefaultSQLPort is the default port for dolt sql-server MySQL protocol.
+	// Gas Town uses 3307 to avoid conflict with MySQL on 3306.
+	DefaultSQLPort = 3307
 	// DefaultRemotesAPIPort is the default port for dolt remotesapi (peer-to-peer sync)
 	DefaultRemotesAPIPort = 8080
 	// ServerStartTimeout is how long to wait for server to start
@@ -33,7 +33,7 @@ const (
 // ServerConfig holds configuration for the dolt sql-server
 type ServerConfig struct {
 	DataDir        string // Path to Dolt database directory
-	SQLPort        int    // MySQL protocol port (default: 3306)
+	SQLPort        int    // MySQL protocol port (default: 3307)
 	RemotesAPIPort int    // remotesapi port for peer sync (default: 8080)
 	Host           string // Host to bind to (default: 127.0.0.1)
 	LogFile        string // Log file for server output (optional)
@@ -340,5 +340,3 @@ func isServerListening(host string, port int) bool {
 	_ = conn.Close()
 	return true
 }
-
-

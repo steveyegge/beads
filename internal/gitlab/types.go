@@ -45,26 +45,26 @@ type Client struct {
 
 // Issue represents an issue from the GitLab API.
 type Issue struct {
-	ID          int        `json:"id"`          // Global issue ID
-	IID         int        `json:"iid"`         // Project-scoped issue ID
-	ProjectID   int        `json:"project_id"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	State       string     `json:"state"`       // "opened", "closed", "reopened"
-	CreatedAt   *time.Time `json:"created_at"`
-	UpdatedAt   *time.Time `json:"updated_at"`
-	ClosedAt    *time.Time `json:"closed_at,omitempty"`
-	ClosedBy    *User      `json:"closed_by,omitempty"`
-	Labels      []string   `json:"labels"`
-	Assignee    *User      `json:"assignee,omitempty"`
-	Assignees   []User     `json:"assignees,omitempty"`
-	Author      *User      `json:"author,omitempty"`
-	Milestone   *Milestone `json:"milestone,omitempty"`
-	WebURL      string     `json:"web_url"`
-	DueDate     string     `json:"due_date,omitempty"` // YYYY-MM-DD format
-	Weight      int        `json:"weight,omitempty"`   // GitLab Premium feature
-	Type        string     `json:"type,omitempty"`     // "issue", "incident", "test_case", "task"
-	Confidential bool      `json:"confidential"`
+	ID           int        `json:"id"`  // Global issue ID
+	IID          int        `json:"iid"` // Project-scoped issue ID
+	ProjectID    int        `json:"project_id"`
+	Title        string     `json:"title"`
+	Description  string     `json:"description"`
+	State        string     `json:"state"` // "opened", "closed", "reopened"
+	CreatedAt    *time.Time `json:"created_at"`
+	UpdatedAt    *time.Time `json:"updated_at"`
+	ClosedAt     *time.Time `json:"closed_at,omitempty"`
+	ClosedBy     *User      `json:"closed_by,omitempty"`
+	Labels       []string   `json:"labels"`
+	Assignee     *User      `json:"assignee,omitempty"`
+	Assignees    []User     `json:"assignees,omitempty"`
+	Author       *User      `json:"author,omitempty"`
+	Milestone    *Milestone `json:"milestone,omitempty"`
+	WebURL       string     `json:"web_url"`
+	DueDate      string     `json:"due_date,omitempty"` // YYYY-MM-DD format
+	Weight       int        `json:"weight,omitempty"`   // GitLab Premium feature
+	Type         string     `json:"type,omitempty"`     // "issue", "incident", "test_case", "task"
+	Confidential bool       `json:"confidential"`
 
 	// Links contains related URLs (populated in some API responses)
 	Links *IssueLinks `json:"links,omitempty"`
@@ -126,13 +126,13 @@ type IssueLink struct {
 
 // Project represents a GitLab project.
 type Project struct {
-	ID                int    `json:"id"`
-	Name              string `json:"name"`
-	Path              string `json:"path"`
-	PathWithNamespace string `json:"path_with_namespace"`
-	Description       string `json:"description,omitempty"`
-	WebURL            string `json:"web_url"`
-	DefaultBranch     string `json:"default_branch,omitempty"`
+	ID                int        `json:"id"`
+	Name              string     `json:"name"`
+	Path              string     `json:"path"`
+	PathWithNamespace string     `json:"path_with_namespace"`
+	Description       string     `json:"description,omitempty"`
+	WebURL            string     `json:"web_url"`
+	DefaultBranch     string     `json:"default_branch,omitempty"`
 	Namespace         *Namespace `json:"namespace,omitempty"`
 }
 
@@ -211,8 +211,8 @@ type DependencyInfo struct {
 	Type          string // Beads dependency type (blocks, related, parent-child)
 }
 
-// StateCache caches issue states for the project.
-type StateCache struct {
+// stateCache caches issue states for the project.
+type stateCache struct {
 	Labels     []Label
 	Milestones []Milestone
 }
@@ -224,15 +224,15 @@ var validStates = map[string]bool{
 	"reopened": true, // GitLab uses this state after reopening
 }
 
-// IsValidState checks if a GitLab state string is valid.
-func IsValidState(state string) bool {
+// isValidState checks if a GitLab state string is valid.
+func isValidState(state string) bool {
 	return validStates[state]
 }
 
-// ParseLabelPrefix splits a label into prefix and value.
+// parseLabelPrefix splits a label into prefix and value.
 // GitLab labels like "priority::high" are split into ("priority", "high").
 // Labels without "::" return empty prefix and the original label as value.
-func ParseLabelPrefix(label string) (prefix, value string) {
+func parseLabelPrefix(label string) (prefix, value string) {
 	parts := strings.SplitN(label, "::", 2)
 	if len(parts) == 2 {
 		return parts[0], parts[1]
@@ -262,10 +262,10 @@ var StatusMapping = map[string]string{
 	"closed":      "closed",
 }
 
-// TypeMapping maps type label values to beads issue type strings.
+// typeMapping maps type label values to beads issue type strings.
 // This is the single source of truth for type mappings.
 // Exported so DefaultMappingConfig in mapping.go can use it.
-var TypeMapping = map[string]string{
+var typeMapping = map[string]string{
 	"bug":         "bug",
 	"feature":     "feature",
 	"task":        "task",
@@ -274,23 +274,23 @@ var TypeMapping = map[string]string{
 	"enhancement": "feature",
 }
 
-// GetPriorityFromLabel returns the beads priority for a priority label value.
+// getPriorityFromLabel returns the beads priority for a priority label value.
 // Returns -1 if the value is not recognized.
-func GetPriorityFromLabel(value string) int {
+func getPriorityFromLabel(value string) int {
 	if p, ok := PriorityMapping[strings.ToLower(value)]; ok {
 		return p
 	}
 	return -1
 }
 
-// GetStatusFromLabel returns the beads status for a status label value.
+// getStatusFromLabel returns the beads status for a status label value.
 // Returns empty string if the value is not recognized.
-func GetStatusFromLabel(value string) string {
+func getStatusFromLabel(value string) string {
 	return StatusMapping[strings.ToLower(value)]
 }
 
-// GetTypeFromLabel returns the beads issue type for a type label value.
+// getTypeFromLabel returns the beads issue type for a type label value.
 // Returns empty string if the value is not recognized.
-func GetTypeFromLabel(value string) string {
-	return TypeMapping[strings.ToLower(value)]
+func getTypeFromLabel(value string) string {
+	return typeMapping[strings.ToLower(value)]
 }

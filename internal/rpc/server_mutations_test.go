@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,8 +14,9 @@ import (
 
 // TestHandleCreate_SetsCreatedBy verifies that CreatedBy is passed through RPC and stored (GH#748)
 func TestHandleCreate_SetsCreatedBy(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	createArgs := CreateArgs{
 		Title:     "Test CreatedBy Field",
@@ -55,8 +57,9 @@ func TestHandleCreate_SetsCreatedBy(t *testing.T) {
 }
 
 func TestEmitMutation(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Emit a mutation
 	server.emitMutation(MutationCreate, "bd-123", "Test Issue", "")
@@ -77,8 +80,9 @@ func TestEmitMutation(t *testing.T) {
 }
 
 func TestGetRecentMutations_EmptyBuffer(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	mutations := server.GetRecentMutations(0)
 	if len(mutations) != 0 {
@@ -87,8 +91,9 @@ func TestGetRecentMutations_EmptyBuffer(t *testing.T) {
 }
 
 func TestGetRecentMutations_TimestampFiltering(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Emit mutations with delays
 	server.emitMutation(MutationCreate, "bd-1", "Issue 1", "")
@@ -123,8 +128,9 @@ func TestGetRecentMutations_TimestampFiltering(t *testing.T) {
 }
 
 func TestGetRecentMutations_CircularBuffer(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Emit more than maxMutationBuffer (100) mutations
 	for i := 0; i < 150; i++ {
@@ -147,8 +153,9 @@ func TestGetRecentMutations_CircularBuffer(t *testing.T) {
 }
 
 func TestGetRecentMutations_ConcurrentAccess(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Simulate concurrent writes and reads
 	done := make(chan bool)
@@ -183,8 +190,9 @@ func TestGetRecentMutations_ConcurrentAccess(t *testing.T) {
 }
 
 func TestHandleGetMutations(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Emit some mutations
 	server.emitMutation(MutationCreate, "bd-1", "Issue 1", "")
@@ -225,8 +233,9 @@ func TestHandleGetMutations(t *testing.T) {
 }
 
 func TestHandleGetMutations_InvalidArgs(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create RPC request with invalid JSON
 	req := &Request{
@@ -247,8 +256,9 @@ func TestHandleGetMutations_InvalidArgs(t *testing.T) {
 }
 
 func TestMutationEventTypes(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Test all mutation types
 	types := []string{
@@ -282,8 +292,9 @@ func TestMutationEventTypes(t *testing.T) {
 
 // TestEmitRichMutation verifies that rich mutation events include metadata fields
 func TestEmitRichMutation(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Emit a rich status change event
 	server.emitRichMutation(MutationEvent{
@@ -318,8 +329,9 @@ func TestEmitRichMutation(t *testing.T) {
 
 // TestEmitRichMutation_Bonded verifies bonded events include step count
 func TestEmitRichMutation_Bonded(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Emit a bonded event with metadata
 	server.emitRichMutation(MutationEvent{
@@ -347,8 +359,9 @@ func TestEmitRichMutation_Bonded(t *testing.T) {
 }
 
 func TestMutationTimestamps(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	before := time.Now()
 	server.emitMutation(MutationCreate, "bd-123", "Test Issue", "")
@@ -366,8 +379,9 @@ func TestMutationTimestamps(t *testing.T) {
 }
 
 func TestEmitMutation_NonBlocking(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Don't consume from mutationChan to test non-blocking behavior
 	// Fill the buffer (default size is 512 from BEADS_MUTATION_BUFFER or default)
@@ -391,8 +405,9 @@ func TestEmitMutation_NonBlocking(t *testing.T) {
 // TestHandleClose_EmitsStatusMutation verifies that close operations emit MutationStatus events
 // with old/new status metadata (bd-313v fix)
 func TestHandleClose_EmitsStatusMutation(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create an issue first
 	createArgs := CreateArgs{
@@ -464,8 +479,9 @@ func TestHandleClose_EmitsStatusMutation(t *testing.T) {
 
 // TestHandleUpdate_EmitsStatusMutationOnStatusChange verifies that status updates emit MutationStatus
 func TestHandleUpdate_EmitsStatusMutationOnStatusChange(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create an issue first
 	createArgs := CreateArgs{
@@ -538,8 +554,9 @@ func TestHandleUpdate_EmitsStatusMutationOnStatusChange(t *testing.T) {
 
 // TestHandleUpdate_EmitsUpdateMutationForNonStatusChanges verifies non-status updates emit MutationUpdate
 func TestHandleUpdate_EmitsUpdateMutationForNonStatusChanges(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create an issue first
 	createArgs := CreateArgs{
@@ -611,8 +628,9 @@ func TestHandleUpdate_EmitsUpdateMutationForNonStatusChanges(t *testing.T) {
 // This is a regression test for the issue where delete operations bypass the daemon
 // and don't trigger auto-sync. The delete RPC handler should emit MutationDelete events.
 func TestHandleDelete_EmitsMutation(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create an issue first
 	createArgs := CreateArgs{
@@ -682,8 +700,9 @@ func TestHandleDelete_EmitsMutation(t *testing.T) {
 
 // TestHandleDelete_BatchEmitsMutations verifies batch delete emits mutation for each issue
 func TestHandleDelete_BatchEmitsMutations(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create multiple issues
 	issueIDs := make([]string, 3)
@@ -759,8 +778,9 @@ func TestHandleDelete_BatchEmitsMutations(t *testing.T) {
 
 // TestHandleDelete_ErrorEmptyIDs verifies error when no issue IDs provided
 func TestHandleDelete_ErrorEmptyIDs(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Try to delete with empty IDs
 	deleteArgs := DeleteArgs{
@@ -791,8 +811,9 @@ func TestHandleDelete_ErrorEmptyIDs(t *testing.T) {
 
 // TestHandleDelete_ErrorIssueNotFound verifies error when issue doesn't exist
 func TestHandleDelete_ErrorIssueNotFound(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Try to delete non-existent issue
 	deleteArgs := DeleteArgs{
@@ -840,8 +861,9 @@ func TestHandleDelete_ErrorIssueNotFound(t *testing.T) {
 
 // TestHandleDelete_ErrorCannotDeleteTemplate verifies that templates cannot be deleted
 func TestHandleDelete_ErrorCannotDeleteTemplate(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create a template issue directly in memory store
 	ctx, cancel := server.reqCtx(&Request{})
@@ -918,8 +940,9 @@ func TestHandleDelete_ErrorCannotDeleteTemplate(t *testing.T) {
 
 // TestHandleDelete_InvalidArgs verifies error for malformed request
 func TestHandleDelete_InvalidArgs(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Send invalid JSON
 	deleteReq := &Request{
@@ -940,8 +963,9 @@ func TestHandleDelete_InvalidArgs(t *testing.T) {
 
 // TestHandleDelete_ReasonField verifies that the reason field is passed through
 func TestHandleDelete_ReasonField(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create test issue
 	createArgs := CreateArgs{
@@ -1000,8 +1024,9 @@ func TestHandleDelete_ReasonField(t *testing.T) {
 // Note: At daemon level, these flags are accepted but cascade is not fully implemented
 // The CLI handles cascade logic before calling the daemon
 func TestHandleDelete_CascadeAndForceFlags(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create test issue
 	createArgs := CreateArgs{
@@ -1058,8 +1083,9 @@ func TestHandleDelete_CascadeAndForceFlags(t *testing.T) {
 
 // TestHandleUpdate_ClaimFlag verifies atomic claim operation (gt-il2p7)
 func TestHandleUpdate_ClaimFlag(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create an issue first
 	createArgs := CreateArgs{
@@ -1123,8 +1149,9 @@ func TestHandleUpdate_ClaimFlag(t *testing.T) {
 
 // TestHandleUpdate_ClaimFlag_AlreadyClaimed verifies double-claim returns error
 func TestHandleUpdate_ClaimFlag_AlreadyClaimed(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create an issue first
 	createArgs := CreateArgs{
@@ -1195,8 +1222,9 @@ func TestHandleUpdate_ClaimFlag_AlreadyClaimed(t *testing.T) {
 
 // TestHandleUpdate_ClaimFlag_WithOtherUpdates verifies claim can combine with other updates
 func TestHandleUpdate_ClaimFlag_WithOtherUpdates(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create an issue first
 	createArgs := CreateArgs{
@@ -1261,8 +1289,9 @@ func TestHandleUpdate_ClaimFlag_WithOtherUpdates(t *testing.T) {
 
 // TestHandleUpdate_ClaimFlag_Concurrent verifies atomic claim prevents race conditions
 func TestHandleUpdate_ClaimFlag_Concurrent(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 
 	// Create an issue first
 	createArgs := CreateArgs{
@@ -1342,8 +1371,9 @@ func TestHandleUpdate_ClaimFlag_Concurrent(t *testing.T) {
 
 // TestHandleClose_BlockerCheck verifies that close operation checks for open blockers (GH#962)
 func TestHandleClose_BlockerCheck(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 	ctx := context.Background()
 
 	// Create two issues: blocker and blocked
@@ -1448,8 +1478,9 @@ func TestHandleClose_BlockerCheck(t *testing.T) {
 
 // TestHandleClose_BlockerCheck_ClosedBlocker verifies close succeeds when blocker is closed (GH#962)
 func TestHandleClose_BlockerCheck_ClosedBlocker(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
-	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+	tmpDir := t.TempDir()
+	store := memory.New(filepath.Join(tmpDir, "test.jsonl"))
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), store, tmpDir, filepath.Join(tmpDir, "test.db"))
 	ctx := context.Background()
 
 	// Create two issues

@@ -148,45 +148,45 @@ func TestSentinelErrors(t *testing.T) {
 		want  bool
 	}{
 		{
-			name:  "ErrNotFound detected by IsNotFound",
+			name:  "ErrNotFound detected by isNotFound",
 			err:   ErrNotFound,
-			check: IsNotFound,
+			check: isNotFound,
 			want:  true,
 		},
 		{
 			name:  "wrapped ErrNotFound detected",
 			err:   fmt.Errorf("get issue: %w", ErrNotFound),
-			check: IsNotFound,
+			check: isNotFound,
 			want:  true,
 		},
 		{
 			name:  "other error not detected as ErrNotFound",
 			err:   errors.New("other error"),
-			check: IsNotFound,
+			check: isNotFound,
 			want:  false,
 		},
 		{
-			name:  "ErrConflict detected by IsConflict",
+			name:  "ErrConflict detected by isConflict",
 			err:   ErrConflict,
-			check: IsConflict,
+			check: isConflict,
 			want:  true,
 		},
 		{
 			name:  "wrapped ErrConflict detected",
 			err:   fmt.Errorf("unique constraint: %w", ErrConflict),
-			check: IsConflict,
+			check: isConflict,
 			want:  true,
 		},
 		{
-			name:  "ErrCycle detected by IsCycle",
+			name:  "ErrCycle detected by isCycle",
 			err:   ErrCycle,
-			check: IsCycle,
+			check: isCycle,
 			want:  true,
 		},
 		{
 			name:  "wrapped ErrCycle detected",
 			err:   fmt.Errorf("dependency check: %w", ErrCycle),
-			check: IsCycle,
+			check: isCycle,
 			want:  true,
 		},
 	}
@@ -229,10 +229,10 @@ func TestSQLErrNoRowsConversion(t *testing.T) {
 	err1 := wrapDBError("get config", sql.ErrNoRows)
 	err2 := wrapDBErrorf(sql.ErrNoRows, "get metadata %s", "key")
 
-	if !IsNotFound(err1) {
+	if !isNotFound(err1) {
 		t.Error("wrapDBError didn't convert sql.ErrNoRows to ErrNotFound")
 	}
-	if !IsNotFound(err2) {
+	if !isNotFound(err2) {
 		t.Error("wrapDBErrorf didn't convert sql.ErrNoRows to ErrNotFound")
 	}
 

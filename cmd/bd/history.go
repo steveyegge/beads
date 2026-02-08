@@ -30,6 +30,8 @@ Examples:
 		ctx := rootCtx
 		issueID := args[0]
 
+		requireFreshDB(ctx)
+
 		// Check if storage supports versioning
 		vs, ok := storage.AsVersioned(store)
 		if !ok {

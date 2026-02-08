@@ -24,15 +24,15 @@ type Config struct {
 
 // Compactor handles issue compaction using AI summarization.
 type Compactor struct {
-	store      CompactableStore
+	store      compactableStore
 	summarizer summarizer
 	config     *Config
 }
 
-// CompactableStore defines the storage interface required for compaction.
+// compactableStore defines the storage interface required for compaction.
 // This interface can be implemented by any storage backend (SQLite, Dolt, etc.)
 // that wants to support the compaction feature.
-type CompactableStore interface {
+type compactableStore interface {
 	CheckEligibility(ctx context.Context, issueID string, tier int) (bool, string, error)
 	GetIssue(ctx context.Context, issueID string) (*types.Issue, error)
 	UpdateIssue(ctx context.Context, issueID string, updates map[string]interface{}, actor string) error
@@ -46,8 +46,8 @@ type summarizer interface {
 }
 
 // New creates a new Compactor instance with the given configuration.
-// The store parameter must implement CompactableStore interface.
-func New(store CompactableStore, apiKey string, config *Config) (*Compactor, error) {
+// The store parameter must implement compactableStore interface.
+func New(store compactableStore, apiKey string, config *Config) (*Compactor, error) {
 	if config == nil {
 		config = &Config{
 			Concurrency: defaultConcurrency,
@@ -60,26 +60,26 @@ func New(store CompactableStore, apiKey string, config *Config) (*Compactor, err
 		config.APIKey = apiKey
 	}
 
-	var haikuClient summarizer
+	var haiClient summarizer
 	var err error
 	if !config.DryRun {
-		haikuClient, err = NewHaikuClient(config.APIKey)
+		haiClient, err = newHaikuClient(config.APIKey)
 		if err != nil {
-			if errors.Is(err, ErrAPIKeyRequired) {
+			if errors.Is(err, errAPIKeyRequired) {
 				config.DryRun = true
 			} else {
 				return nil, fmt.Errorf("failed to create Haiku client: %w", err)
 			}
 		}
 	}
-	if hc, ok := haikuClient.(*HaikuClient); ok && hc != nil {
+	if hc, ok := haiClient.(*haikuClient); ok && hc != nil {
 		hc.auditEnabled = config.AuditEnabled
 		hc.auditActor = config.Actor
 	}
 
 	return &Compactor{
 		store:      store,
-		summarizer: haikuClient,
+		summarizer: haiClient,
 		config:     config,
 	}, nil
 }
@@ -132,9 +132,9 @@ func (c *Compactor) CompactTier1(ctx context.Context, issueID string) error {
 
 	// Update issue with summarized content
 	updates := map[string]interface{}{
-		"description":        summary,
-		"design":             "",
-		"notes":              "",
+		"description":         summary,
+		"design":              "",
+		"notes":               "",
 		"acceptance_criteria": "",
 	}
 	if err := c.store.UpdateIssue(ctx, issueID, updates, "compactor"); err != nil {

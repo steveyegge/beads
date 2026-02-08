@@ -13,6 +13,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
@@ -61,6 +62,52 @@ func ensureCleanGlobalState(t *testing.T) {
 	t.Helper()
 	// Reset CommandContext so accessor functions fall back to globals
 	resetCommandContext()
+}
+
+// savedGlobals holds a snapshot of package-level globals for safe restoration.
+// Used by saveAndRestoreGlobals to ensure test isolation.
+type savedGlobals struct {
+	dbPath           string
+	store            storage.Storage
+	storeActive      bool
+	autoFlushEnabled bool
+	flushManager     *FlushManager
+}
+
+// saveAndRestoreGlobals snapshots all commonly-mutated package-level globals
+// and registers a t.Cleanup() to restore them when the test completes.
+// This replaces the fragile manual save/defer pattern:
+//
+//	oldDBPath := dbPath
+//	defer func() { dbPath = oldDBPath }()
+//
+// With the safer:
+//
+//	saveAndRestoreGlobals(t)
+//
+// Benefits:
+//   - All globals saved atomically (can't forget one)
+//   - t.Cleanup runs even on panic (no risk of missed defer registration)
+//   - Single call replaces multiple save/defer pairs
+func saveAndRestoreGlobals(t *testing.T) *savedGlobals {
+	t.Helper()
+	saved := &savedGlobals{
+		dbPath:           dbPath,
+		store:            store,
+		storeActive:      storeActive,
+		autoFlushEnabled: autoFlushEnabled,
+		flushManager:     flushManager,
+	}
+	t.Cleanup(func() {
+		dbPath = saved.dbPath
+		store = saved.store
+		storeMutex.Lock()
+		storeActive = saved.storeActive
+		storeMutex.Unlock()
+		autoFlushEnabled = saved.autoFlushEnabled
+		flushManager = saved.flushManager
+	})
+	return saved
 }
 
 // failIfProductionDatabase checks if the database path is in a production directory

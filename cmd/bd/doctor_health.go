@@ -113,7 +113,11 @@ func runServerHealth(path string) {
 	result := doctor.RunServerHealthChecks(path)
 
 	if jsonOutput {
-		jsonBytes, _ := json.Marshal(result)
+		jsonBytes, err := json.Marshal(result)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to marshal health check result: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Println(string(jsonBytes))
 	} else {
 		fmt.Println("Dolt Server Mode Health Check")

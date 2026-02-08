@@ -42,24 +42,24 @@ type doctorResult struct {
 }
 
 var (
-	doctorFix            bool
-	doctorYes            bool
-	doctorInteractive    bool   // per-fix confirmation mode
-	doctorDryRun         bool   // preview fixes without applying
-	doctorOutput         string // export diagnostics to file
-	doctorFixChildParent bool   // opt-in fix for child→parent deps
-	doctorVerbose        bool   // show detailed output during fixes
-	doctorForce          bool   // force repair mode, bypass validation where safe
-	doctorSource         string // source of truth selection: auto, jsonl, db
-	perfMode             bool
-	checkHealthMode      bool
-	doctorCheckFlag      string // run specific check (e.g., "pollution")
-	doctorClean          bool   // for pollution check, delete detected issues
-	doctorDeep                  bool   // full graph integrity validation
-	doctorGastown               bool   // running in gastown multi-workspace mode
-	gastownDuplicatesThreshold  int    // duplicate tolerance threshold for gastown mode
-	doctorServer                bool   // run server mode health checks
-	doctorMigration             string // migration validation mode: "pre" or "post"
+	doctorFix                  bool
+	doctorYes                  bool
+	doctorInteractive          bool   // per-fix confirmation mode
+	doctorDryRun               bool   // preview fixes without applying
+	doctorOutput               string // export diagnostics to file
+	doctorFixChildParent       bool   // opt-in fix for child→parent deps
+	doctorVerbose              bool   // show detailed output during fixes
+	doctorForce                bool   // force repair mode, bypass validation where safe
+	doctorSource               string // source of truth selection: auto, jsonl, db
+	perfMode                   bool
+	checkHealthMode            bool
+	doctorCheckFlag            string // run specific check (e.g., "pollution")
+	doctorClean                bool   // for pollution check, delete detected issues
+	doctorDeep                 bool   // full graph integrity validation
+	doctorGastown              bool   // running in gastown multi-workspace mode
+	gastownDuplicatesThreshold int    // duplicate tolerance threshold for gastown mode
+	doctorServer               bool   // run server mode health checks
+	doctorMigration            string // migration validation mode: "pre" or "post"
 )
 
 // ConfigKeyHintsDoctor is the config key for suppressing doctor hints
@@ -105,6 +105,8 @@ Export Mode (--output):
 Specific Check Mode (--check):
   Run a specific check in detail. Available checks:
   - pollution: Detect and optionally clean test issues from database
+  - validate: Run focused data-integrity checks (duplicates, orphaned
+    deps, test pollution, git conflicts). Use with --fix to auto-repair.
 
 Deep Validation Mode (--deep):
   Validate full graph integrity. May be slow on large databases.
@@ -152,6 +154,8 @@ Examples:
   bd doctor --output diagnostics.json  # Export diagnostics to file
   bd doctor --check=pollution          # Show potential test issues
   bd doctor --check=pollution --clean  # Delete test issues (with confirmation)
+  bd doctor --check=validate         # Data-integrity checks only
+  bd doctor --check=validate --fix   # Auto-fix data-integrity issues
   bd doctor --deep             # Full graph integrity validation
   bd doctor --server           # Dolt server mode health checks
   bd doctor --migration=pre    # Validate readiness for Dolt migration
@@ -197,9 +201,12 @@ Examples:
 			case "pollution":
 				runPollutionCheck(absPath, doctorClean, doctorYes)
 				return
+			case "validate":
+				runValidateCheck(absPath)
+				return
 			default:
 				fmt.Fprintf(os.Stderr, "Error: unknown check %q\n", doctorCheckFlag)
-				fmt.Fprintf(os.Stderr, "Available checks: pollution\n")
+				fmt.Fprintf(os.Stderr, "Available checks: pollution, validate\n")
 				os.Exit(1)
 			}
 		}
@@ -270,7 +277,7 @@ func init() {
 	doctorCmd.Flags().BoolVarP(&doctorInteractive, "interactive", "i", false, "Confirm each fix individually")
 	doctorCmd.Flags().BoolVar(&doctorDryRun, "dry-run", false, "Preview fixes without making changes")
 	doctorCmd.Flags().BoolVar(&doctorFixChildParent, "fix-child-parent", false, "Remove child→parent dependencies (opt-in)")
-	doctorCmd.Flags().BoolVarP(&doctorVerbose, "verbose", "v", false, "Show detailed output during fixes (e.g., list each removed dependency)")
+	doctorCmd.Flags().BoolVarP(&doctorVerbose, "verbose", "v", false, "Show all checks (default shows only warnings/errors)")
 	doctorCmd.Flags().BoolVar(&doctorForce, "force", false, "Force repair mode: attempt recovery even when database cannot be opened")
 	doctorCmd.Flags().StringVar(&doctorSource, "source", "auto", "Choose source of truth for recovery: auto (detect), jsonl (prefer JSONL), db (prefer database)")
 	doctorCmd.Flags().BoolVar(&doctorGastown, "gastown", false, "Running in gastown multi-workspace mode (routes.jsonl is expected, higher duplicate tolerance)")
@@ -284,6 +291,14 @@ func runDiagnostics(path string) doctorResult {
 		Path:       path,
 		CLIVersion: Version,
 		OverallOK:  true,
+	}
+
+	// Auto-detect gastown mode: routes.jsonl is only created by gastown workspaces
+	if !doctorGastown {
+		routesFile := filepath.Join(path, ".beads", "routes.jsonl")
+		if _, err := os.Stat(routesFile); err == nil {
+			doctorGastown = true
+		}
 	}
 
 	// Check 1: Installation (.beads/ directory)
@@ -473,7 +488,7 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false // Unresolved conflicts are a real problem
 	}
 
-	// Check 8h: Dolt init vs embedded mode mismatch
+	// Check 8h: Dolt server mode configuration
 	doltModeCheck := convertWithCategory(doctor.CheckDoltServerModeMismatch(path), doctor.CategoryFederation)
 	result.Checks = append(result.Checks, doltModeCheck)
 
@@ -765,59 +780,122 @@ func exportDiagnostics(result doctorResult, outputPath string) error {
 }
 
 func printDiagnostics(result doctorResult) {
-	// Print header with version
-	fmt.Printf("\nbd doctor v%s\n\n", result.CLIVersion)
-
-	// Group checks by category
+	// Pre-calculate counts and collect issues
 	checksByCategory := make(map[string][]doctorCheck)
+	var passCount, warnCount, failCount int
+	var warnings []doctorCheck
+
 	for _, check := range result.Checks {
 		cat := check.Category
 		if cat == "" {
 			cat = "Other"
 		}
 		checksByCategory[cat] = append(checksByCategory[cat], check)
+
+		switch check.Status {
+		case statusOK:
+			passCount++
+		case statusWarning:
+			warnCount++
+			warnings = append(warnings, check)
+		case statusError:
+			failCount++
+			warnings = append(warnings, check)
+		}
 	}
 
-	// Track counts
-	var passCount, warnCount, failCount int
-	var warnings []doctorCheck
+	// Print header with version and summary
+	fmt.Printf("\nbd doctor v%s", result.CLIVersion)
+	fmt.Printf("  %s  %s %d passed  %s %d warnings  %s %d errors\n",
+		ui.RenderSeparator(),
+		ui.RenderPassIcon(), passCount,
+		ui.RenderWarnIcon(), warnCount,
+		ui.RenderFailIcon(), failCount,
+	)
 
-	// Print checks by category in defined order
+	if doctorVerbose {
+		// Verbose mode: show all checks grouped by category
+		fmt.Println()
+		printAllChecks(checksByCategory)
+	}
+
+	// Print warnings/errors section with fixes
+	if len(warnings) > 0 {
+		fmt.Println()
+
+		// Sort by severity: errors first, then warnings
+		slices.SortStableFunc(warnings, func(a, b doctorCheck) int {
+			if a.Status == statusError && b.Status != statusError {
+				return -1
+			}
+			if a.Status != statusError && b.Status == statusError {
+				return 1
+			}
+			return 0
+		})
+
+		for i, check := range warnings {
+			line := fmt.Sprintf("%s: %s", check.Name, check.Message)
+			if check.Status == statusError {
+				fmt.Printf("  %s  %s %s\n", ui.RenderFailIcon(), ui.RenderFail(fmt.Sprintf("%d.", i+1)), ui.RenderFail(line))
+			} else {
+				fmt.Printf("  %s  %s %s\n", ui.RenderWarnIcon(), ui.RenderWarn(fmt.Sprintf("%d.", i+1)), line)
+			}
+			if check.Detail != "" {
+				fmt.Printf("        %s\n", ui.RenderMuted(check.Detail))
+			}
+			if check.Fix != "" {
+				lines := strings.Split(check.Fix, "\n")
+				for j, fixLine := range lines {
+					if j == 0 {
+						fmt.Printf("        %s%s\n", ui.MutedStyle.Render(ui.TreeLast), fixLine)
+					} else {
+						fmt.Printf("          %s\n", fixLine)
+					}
+				}
+			}
+		}
+
+		if !doctorVerbose {
+			fmt.Printf("\n%s\n", ui.RenderMuted("Run with --verbose to see all checks"))
+		}
+	} else {
+		fmt.Println()
+		fmt.Printf("%s\n", ui.RenderPass("✓ All checks passed"))
+		if !doctorVerbose {
+			fmt.Printf("%s\n", ui.RenderMuted("Run with --verbose to see all checks"))
+		}
+	}
+}
+
+// printAllChecks prints all checks grouped by category with section headers.
+func printAllChecks(checksByCategory map[string][]doctorCheck) {
+	// Print checks in defined category order
 	for _, category := range doctor.CategoryOrder {
 		checks, exists := checksByCategory[category]
 		if !exists || len(checks) == 0 {
 			continue
 		}
 
-		// Print category header
 		fmt.Println(ui.RenderCategory(category))
 
-		// Print each check in this category
 		for _, check := range checks {
-			// Determine status icon
 			var statusIcon string
 			switch check.Status {
 			case statusOK:
 				statusIcon = ui.RenderPassIcon()
-				passCount++
 			case statusWarning:
 				statusIcon = ui.RenderWarnIcon()
-				warnCount++
-				warnings = append(warnings, check)
 			case statusError:
 				statusIcon = ui.RenderFailIcon()
-				failCount++
-				warnings = append(warnings, check)
 			}
 
-			// Print check line: icon + name + message
 			fmt.Printf("  %s  %s", statusIcon, check.Name)
 			if check.Message != "" {
 				fmt.Printf("%s", ui.RenderMuted(" "+check.Message))
 			}
 			fmt.Println()
 
-			// Print detail if present (indented)
 			if check.Detail != "" {
 				fmt.Printf("     %s%s\n", ui.MutedStyle.Render(ui.TreeLast), ui.RenderMuted(check.Detail))
 			}
@@ -825,7 +903,7 @@ func printDiagnostics(result doctorResult) {
 		fmt.Println()
 	}
 
-	// Print any checks without a category
+	// Print any checks without a known category
 	if otherChecks, exists := checksByCategory["Other"]; exists && len(otherChecks) > 0 {
 		fmt.Println(ui.RenderCategory("Other"))
 		for _, check := range otherChecks {
@@ -833,15 +911,10 @@ func printDiagnostics(result doctorResult) {
 			switch check.Status {
 			case statusOK:
 				statusIcon = ui.RenderPassIcon()
-				passCount++
 			case statusWarning:
 				statusIcon = ui.RenderWarnIcon()
-				warnCount++
-				warnings = append(warnings, check)
 			case statusError:
 				statusIcon = ui.RenderFailIcon()
-				failCount++
-				warnings = append(warnings, check)
 			}
 			fmt.Printf("  %s  %s", statusIcon, check.Name)
 			if check.Message != "" {
@@ -853,58 +926,6 @@ func printDiagnostics(result doctorResult) {
 			}
 		}
 		fmt.Println()
-	}
-
-	// Print summary line
-	fmt.Println(ui.RenderSeparator())
-	summary := fmt.Sprintf("%s %d passed  %s %d warnings  %s %d failed",
-		ui.RenderPassIcon(), passCount,
-		ui.RenderWarnIcon(), warnCount,
-		ui.RenderFailIcon(), failCount,
-	)
-	fmt.Println(summary)
-
-	// Print warnings/errors section with fixes
-	if len(warnings) > 0 {
-		fmt.Println()
-		fmt.Println(ui.RenderWarn(ui.IconWarn + "  WARNINGS"))
-
-		// Sort by severity: errors first, then warnings
-		slices.SortStableFunc(warnings, func(a, b doctorCheck) int {
-			// Errors (statusError) come before warnings (statusWarning)
-			if a.Status == statusError && b.Status != statusError {
-				return -1
-			}
-			if a.Status != statusError && b.Status == statusError {
-				return 1
-			}
-			return 0 // maintain original order within same severity
-		})
-
-		for i, check := range warnings {
-			// Show numbered items with icon and color based on status
-			// Errors get entire line in red, warnings just the number in yellow
-			line := fmt.Sprintf("%s: %s", check.Name, check.Message)
-			if check.Status == statusError {
-				fmt.Printf("  %s  %s %s\n", ui.RenderFailIcon(), ui.RenderFail(fmt.Sprintf("%d.", i+1)), ui.RenderFail(line))
-			} else {
-				fmt.Printf("  %s  %s %s\n", ui.RenderWarnIcon(), ui.RenderWarn(fmt.Sprintf("%d.", i+1)), line)
-			}
-			if check.Fix != "" {
-				// Handle multiline Fix messages with proper indentation
-				lines := strings.Split(check.Fix, "\n")
-				for i, line := range lines {
-					if i == 0 {
-						fmt.Printf("        %s%s\n", ui.MutedStyle.Render(ui.TreeLast), line)
-					} else {
-						fmt.Printf("          %s\n", line)
-					}
-				}
-			}
-		}
-	} else {
-		fmt.Println()
-		fmt.Printf("%s\n", ui.RenderPass("✓ All checks passed"))
 	}
 }
 
@@ -932,10 +953,10 @@ func runMigrationValidation(path string, phase string) {
 	// JSON output for machine consumption
 	if jsonOutput {
 		output := struct {
-			Check      doctorCheck                       `json:"check"`
+			Check      doctorCheck                      `json:"check"`
 			Validation doctor.MigrationValidationResult `json:"validation"`
-			CLIVersion string                            `json:"cli_version"`
-			Timestamp  string                            `json:"timestamp"`
+			CLIVersion string                           `json:"cli_version"`
+			Timestamp  string                           `json:"timestamp"`
 		}{
 			Check:      check,
 			Validation: result,

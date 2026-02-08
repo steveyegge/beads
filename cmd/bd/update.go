@@ -14,7 +14,7 @@ import (
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/util"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -118,13 +118,20 @@ create, update, show, or close operation).`,
 		if cmd.Flags().Changed("type") {
 			issueType, _ := cmd.Flags().GetString("type")
 			// Normalize aliases (e.g., "enhancement" -> "feature") before validating
-			issueType = util.NormalizeIssueType(issueType)
+			issueType = utils.NormalizeIssueType(issueType)
 			// In daemon mode, skip client-side type pre-validation.
 			// The daemon validates authoritatively with database access (GH#1499).
 			if daemonClient == nil {
 				var customTypes []string
 				if store != nil {
-					if ct, err := store.GetCustomTypes(cmd.Context()); err == nil {
+					ct, err := store.GetCustomTypes(cmd.Context())
+					if err != nil {
+						// Log DB error but continue with YAML fallback (GH#1499 bd-2ll)
+						if !jsonOutput {
+							fmt.Fprintf(os.Stderr, "%s Failed to get custom types from DB: %v (falling back to config.yaml)\n",
+								ui.RenderWarn("!"), err)
+						}
+					} else {
 						customTypes = ct
 					}
 				}

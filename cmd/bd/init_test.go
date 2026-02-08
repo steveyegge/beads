@@ -193,192 +193,242 @@ func TestInitCommand(t *testing.T) {
 // GH#807: Rejection of main/master as sync branch is tested at unit level in
 // internal/syncbranch/syncbranch_test.go (TestValidateSyncBranchName, TestSet).
 
-// TestInitWithSyncBranch verifies that --branch flag correctly sets sync.branch
-// GH#807: Also verifies that valid sync branches work (rejection is tested at unit level)
-func TestInitWithSyncBranch(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
-
-	// Reset Cobra flags
-	initCmd.Flags().Set("branch", "")
-
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	// Initialize git repo first (needed for sync branch to make sense)
-	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
-		t.Fatalf("Failed to init git: %v", err)
+// TestInitSyncBranch groups sync-branch related init tests.
+// GH#807: Verifies --branch flag behavior (rejection of main/master tested at unit level)
+func TestInitSyncBranch(t *testing.T) {
+	// resetInitState is a helper to reset global state for each subtest.
+	resetInitState := func(t *testing.T) {
+		t.Helper()
+		origDBPath := dbPath
+		t.Cleanup(func() { dbPath = origDBPath })
+		dbPath = ""
+		initCmd.Flags().Set("branch", "")
+		initCmd.Flags().Set("force", "false")
 	}
 
-	// Run bd init with --branch flag
-	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init with --branch failed: %v", err)
-	}
+	t.Run("BranchFlagSetsSyncBranch", func(t *testing.T) {
+		resetInitState(t)
 
-	// Verify database was created
-	dbFilePath := filepath.Join(tmpDir, ".beads", "beads.db")
-	store, err := openExistingTestDB(t, dbFilePath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-	defer store.Close()
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
 
-	// Verify sync.branch was set correctly
-	ctx := context.Background()
-	syncBranch, err := store.GetConfig(ctx, "sync.branch")
-	if err != nil {
-		t.Fatalf("Failed to get sync.branch from database: %v", err)
-	}
-	if syncBranch != "beads-sync" {
-		t.Errorf("Expected sync.branch 'beads-sync', got %q", syncBranch)
-	}
-}
+		if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
+			t.Fatalf("Failed to init git: %v", err)
+		}
 
-// TestInitWithSyncBranchSetsGitExclude verifies that init with --branch sets up
-// .git/info/exclude to hide untracked JSONL files from git status.
-// This fixes the issue where fresh clones show .beads/issues.jsonl as modified.
-func TestInitWithSyncBranchSetsGitExclude(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
+		rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init with --branch failed: %v", err)
+		}
 
-	// Reset Cobra flags
-	initCmd.Flags().Set("branch", "")
+		dbFilePath := filepath.Join(tmpDir, ".beads", "beads.db")
+		store, err := openExistingTestDB(t, dbFilePath)
+		if err != nil {
+			t.Fatalf("Failed to open database: %v", err)
+		}
+		defer store.Close()
 
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
+		ctx := context.Background()
+		syncBranch, err := store.GetConfig(ctx, "sync.branch")
+		if err != nil {
+			t.Fatalf("Failed to get sync.branch from database: %v", err)
+		}
+		if syncBranch != "beads-sync" {
+			t.Errorf("Expected sync.branch 'beads-sync', got %q", syncBranch)
+		}
+	})
 
-	// Initialize git repo
-	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
-		t.Fatalf("Failed to init git: %v", err)
-	}
-	// Configure git user for commits
-	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@test.com")
-	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test")
+	// Verifies that init with --branch sets up .git/info/exclude to hide
+	// untracked JSONL files from git status.
+	t.Run("BranchFlagSetsGitExclude", func(t *testing.T) {
+		resetInitState(t)
 
-	// Run bd init with --branch flag
-	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init with --branch failed: %v", err)
-	}
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
 
-	// Verify .git/info/exclude contains the JSONL patterns
-	// (On fresh init, files are untracked so they go to exclude instead of index flags)
-	// Note: issues.jsonl only exists after first export, but interactions.jsonl is always created
-	excludePath := filepath.Join(tmpDir, ".git", "info", "exclude")
-	content, err := os.ReadFile(excludePath)
-	if err != nil {
-		t.Fatalf("Failed to read .git/info/exclude: %v", err)
-	}
+		if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
+			t.Fatalf("Failed to init git: %v", err)
+		}
+		_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@test.com")
+		_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test")
 
-	excludeContent := string(content)
-	if !strings.Contains(excludeContent, ".beads/interactions.jsonl") {
-		t.Errorf("Expected .git/info/exclude to contain '.beads/interactions.jsonl', got:\n%s", excludeContent)
-	}
-}
+		rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init with --branch failed: %v", err)
+		}
 
-// TestInitWithExistingSyncBranchConfig verifies that init without --branch flag
-// still sets git index flags when sync-branch is already configured in config.yaml.
-// This is the "fresh clone" scenario where config.yaml exists from the clone.
-func TestInitWithExistingSyncBranchConfig(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
+		excludePath := filepath.Join(tmpDir, ".git", "info", "exclude")
+		content, err := os.ReadFile(excludePath)
+		if err != nil {
+			t.Fatalf("Failed to read .git/info/exclude: %v", err)
+		}
 
-	// Reset Cobra flags
-	initCmd.Flags().Set("branch", "")
+		excludeContent := string(content)
+		if !strings.Contains(excludeContent, ".beads/interactions.jsonl") {
+			t.Errorf("Expected .git/info/exclude to contain '.beads/interactions.jsonl', got:\n%s", excludeContent)
+		}
+	})
 
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
+	// Verifies that init without --branch flag still sets git index flags when
+	// sync-branch is already configured in config.yaml (fresh clone scenario).
+	t.Run("ExistingSyncBranchConfig", func(t *testing.T) {
+		resetInitState(t)
 
-	// Initialize git repo
-	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
-		t.Fatalf("Failed to init git: %v", err)
-	}
-	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@test.com")
-	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test")
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
 
-	// Create .beads directory with config.yaml containing sync-branch (simulating a clone)
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("Failed to create .beads dir: %v", err)
-	}
-	configYaml := `sync-branch: "beads-sync"
+		if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
+			t.Fatalf("Failed to init git: %v", err)
+		}
+		_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@test.com")
+		_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test")
+
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("Failed to create .beads dir: %v", err)
+		}
+		configYaml := `sync-branch: "beads-sync"
 `
-	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYaml), 0644); err != nil {
-		t.Fatalf("Failed to write config.yaml: %v", err)
-	}
-	// Create interactions.jsonl (normally exists in cloned repos)
-	if err := os.WriteFile(filepath.Join(beadsDir, "interactions.jsonl"), []byte{}, 0644); err != nil {
-		t.Fatalf("Failed to write interactions.jsonl: %v", err)
-	}
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYaml), 0644); err != nil {
+			t.Fatalf("Failed to write config.yaml: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(beadsDir, "interactions.jsonl"), []byte{}, 0644); err != nil {
+			t.Fatalf("Failed to write interactions.jsonl: %v", err)
+		}
 
-	// Run bd init WITHOUT --branch flag (sync-branch already in config.yaml)
-	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet", "--force"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
+		rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet", "--force"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
 
-	// Verify .git/info/exclude contains the JSONL patterns
-	excludePath := filepath.Join(tmpDir, ".git", "info", "exclude")
-	content, err := os.ReadFile(excludePath)
-	if err != nil {
-		t.Fatalf("Failed to read .git/info/exclude: %v", err)
-	}
+		excludePath := filepath.Join(tmpDir, ".git", "info", "exclude")
+		content, err := os.ReadFile(excludePath)
+		if err != nil {
+			t.Fatalf("Failed to read .git/info/exclude: %v", err)
+		}
 
-	excludeContent := string(content)
-	if !strings.Contains(excludeContent, ".beads/interactions.jsonl") {
-		t.Errorf("Expected .git/info/exclude to contain '.beads/interactions.jsonl' when sync-branch is in config.yaml, got:\n%s", excludeContent)
-	}
-}
+		excludeContent := string(content)
+		if !strings.Contains(excludeContent, ".beads/interactions.jsonl") {
+			t.Errorf("Expected .git/info/exclude to contain '.beads/interactions.jsonl' when sync-branch is in config.yaml, got:\n%s", excludeContent)
+		}
+	})
 
-// TestInitWithoutBranchFlag verifies that sync.branch is NOT auto-set when --branch is omitted
-// GH#807: This was the root cause - init was auto-detecting current branch (e.g., main)
-func TestInitWithoutBranchFlag(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
+	// Verifies that sync.branch is NOT auto-set when --branch is omitted.
+	// GH#807: This was the root cause - init was auto-detecting current branch (e.g., main)
+	t.Run("WithoutBranchFlag", func(t *testing.T) {
+		resetInitState(t)
 
-	// Reset Cobra flags
-	initCmd.Flags().Set("branch", "")
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
 
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
+		if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=main"); err != nil {
+			t.Fatalf("Failed to init git: %v", err)
+		}
 
-	// Initialize git repo on 'main' branch
-	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=main"); err != nil {
-		t.Fatalf("Failed to init git: %v", err)
-	}
+		rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
 
-	// Run bd init WITHOUT --branch flag
-	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
+		dbFilePath := filepath.Join(tmpDir, ".beads", "beads.db")
+		store, err := openExistingTestDB(t, dbFilePath)
+		if err != nil {
+			t.Fatalf("Failed to open database: %v", err)
+		}
+		defer store.Close()
 
-	// Verify database was created
-	dbFilePath := filepath.Join(tmpDir, ".beads", "beads.db")
-	store, err := openExistingTestDB(t, dbFilePath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-	defer store.Close()
+		ctx := context.Background()
+		syncBranch, err := store.GetConfig(ctx, "sync.branch")
+		if err != nil {
+			t.Fatalf("Failed to get sync.branch from database: %v", err)
+		}
+		if syncBranch != "" {
+			t.Errorf("Expected sync.branch to be empty (not auto-detected), got %q", syncBranch)
+		}
+	})
 
-	// Verify sync.branch was NOT set (empty = use current branch directly)
-	ctx := context.Background()
-	syncBranch, err := store.GetConfig(ctx, "sync.branch")
-	if err != nil {
-		t.Fatalf("Failed to get sync.branch from database: %v", err)
-	}
-	if syncBranch != "" {
-		t.Errorf("Expected sync.branch to be empty (not auto-detected), got %q", syncBranch)
-	}
+	// Verifies that --branch flag persists to config.yaml.
+	t.Run("BranchPersistsToConfigYaml", func(t *testing.T) {
+		resetInitState(t)
+
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
+			t.Fatalf("Failed to init git: %v", err)
+		}
+
+		rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init with --branch failed: %v", err)
+		}
+
+		configPath := filepath.Join(tmpDir, ".beads", "config.yaml")
+		content, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("Failed to read config.yaml: %v", err)
+		}
+
+		configStr := string(content)
+
+		if strings.Contains(configStr, "# sync-branch:") && !strings.Contains(configStr, "\nsync-branch:") {
+			t.Errorf("BUG: --branch flag did not persist to config.yaml\n" +
+				"Expected uncommented 'sync-branch: \"beads-sync\"'\n" +
+				"Got commented '# sync-branch:' (only set in database, not config.yaml)")
+		}
+
+		if !strings.Contains(configStr, "sync-branch: \"beads-sync\"") {
+			t.Errorf("config.yaml should contain 'sync-branch: \"beads-sync\"', got:\n%s", configStr)
+		}
+	})
+
+	// Verifies that --branch flag works on reinit.
+	// GH#927: When reinitializing with --branch, config.yaml should be updated even if it exists.
+	t.Run("ReinitWithBranch", func(t *testing.T) {
+		resetInitState(t)
+
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
+			t.Fatalf("Failed to init git: %v", err)
+		}
+
+		// First init WITHOUT --branch
+		rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("First init failed: %v", err)
+		}
+
+		configPath := filepath.Join(tmpDir, ".beads", "config.yaml")
+		content, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("Failed to read config.yaml: %v", err)
+		}
+		if !strings.Contains(string(content), "# sync-branch:") {
+			t.Errorf("Initial config.yaml should have commented sync-branch")
+		}
+
+		// Reset Cobra flags for reinit
+		initCmd.Flags().Set("branch", "")
+		initCmd.Flags().Set("force", "false")
+
+		// Reinit WITH --branch
+		rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--force", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Reinit with --branch failed: %v", err)
+		}
+
+		content, err = os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("Failed to read config.yaml after reinit: %v", err)
+		}
+
+		configStr := string(content)
+		if !strings.Contains(configStr, "sync-branch: \"beads-sync\"") {
+			t.Errorf("After reinit with --branch, config.yaml should contain uncommented 'sync-branch: \"beads-sync\"', got:\n%s", configStr)
+		}
+	})
 }
 
 func TestInitAlreadyInitialized(t *testing.T) {
@@ -1278,109 +1328,8 @@ func TestSetupClaudeSettings_NoExistingFile(t *testing.T) {
 // GH#927 Bug 3: The --branch flag sets sync.branch in database but NOT in config.yaml.
 // This matters because config.yaml is version-controlled and shared across clones,
 // while the database is local and gitignored.
-func TestInitBranchPersistsToConfigYaml(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
-
-	// Reset Cobra flags
-	initCmd.Flags().Set("branch", "")
-
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	// Initialize git repo first (needed for sync branch)
-	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
-		t.Fatalf("Failed to init git: %v", err)
-	}
-
-	// Run bd init with --branch flag
-	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init with --branch failed: %v", err)
-	}
-
-	// Read config.yaml and verify sync-branch is uncommented
-	configPath := filepath.Join(tmpDir, ".beads", "config.yaml")
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("Failed to read config.yaml: %v", err)
-	}
-
-	configStr := string(content)
-
-	// The bug: sync-branch remains commented as "# sync-branch:" instead of "sync-branch:"
-	// This test should FAIL on the current codebase to prove the bug exists
-	if strings.Contains(configStr, "# sync-branch:") && !strings.Contains(configStr, "\nsync-branch:") {
-		t.Errorf("BUG: --branch flag did not persist to config.yaml\n" +
-			"Expected uncommented 'sync-branch: \"beads-sync\"'\n" +
-			"Got commented '# sync-branch:' (only set in database, not config.yaml)")
-	}
-
-	// Verify the uncommented line exists with correct value
-	if !strings.Contains(configStr, "sync-branch: \"beads-sync\"") {
-		t.Errorf("config.yaml should contain 'sync-branch: \"beads-sync\"', got:\n%s", configStr)
-	}
-}
-
-// TestInitReinitWithBranch verifies that --branch flag works on reinit
-// GH#927: When reinitializing with --branch, config.yaml should be updated even if it exists
-func TestInitReinitWithBranch(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
-
-	// Reset Cobra flags
-	initCmd.Flags().Set("branch", "")
-	initCmd.Flags().Set("force", "false")
-
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	// Initialize git repo first
-	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
-		t.Fatalf("Failed to init git: %v", err)
-	}
-
-	// First init WITHOUT --branch (creates config.yaml with commented sync-branch)
-	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("First init failed: %v", err)
-	}
-
-	// Verify config.yaml has commented sync-branch initially
-	configPath := filepath.Join(tmpDir, ".beads", "config.yaml")
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("Failed to read config.yaml: %v", err)
-	}
-	if !strings.Contains(string(content), "# sync-branch:") {
-		t.Errorf("Initial config.yaml should have commented sync-branch")
-	}
-
-	// Reset Cobra flags for reinit
-	initCmd.Flags().Set("branch", "")
-	initCmd.Flags().Set("force", "false")
-
-	// Reinit WITH --branch (should update existing config.yaml)
-	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--force", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Reinit with --branch failed: %v", err)
-	}
-
-	// Verify config.yaml now has uncommented sync-branch
-	content, err = os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("Failed to read config.yaml after reinit: %v", err)
-	}
-
-	configStr := string(content)
-	if !strings.Contains(configStr, "sync-branch: \"beads-sync\"") {
-		t.Errorf("After reinit with --branch, config.yaml should contain uncommented 'sync-branch: \"beads-sync\"', got:\n%s", configStr)
-	}
-}
+// Note: TestInitBranchPersistsToConfigYaml and TestInitReinitWithBranch are now
+// subtests of TestInitSyncBranch above.
 
 // setupIsolatedGitConfig creates an empty git config in tmpDir and sets GIT_CONFIG_GLOBAL
 // to prevent tests from using the real user's global git config.
@@ -1758,179 +1707,151 @@ func TestInitPromptExistingRole(t *testing.T) {
 
 // TestInitWithRedirect verifies that bd init creates the database in the redirect target,
 // not in the local .beads directory. (GH#bd-0qel)
-func TestInitWithRedirect(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
+// TestInitRedirect groups redirect-related init tests.
+func TestInitRedirect(t *testing.T) {
+	resetRedirectState := func(t *testing.T) {
+		t.Helper()
+		origDBPath := dbPath
+		origBeadsDir := os.Getenv("BEADS_DIR")
+		t.Cleanup(func() {
+			dbPath = origDBPath
+			if origBeadsDir != "" {
+				os.Setenv("BEADS_DIR", origBeadsDir)
+			} else {
+				os.Unsetenv("BEADS_DIR")
+			}
+		})
+		dbPath = ""
+		os.Unsetenv("BEADS_DIR")
+		initCmd.Flags().Set("prefix", "")
+		initCmd.Flags().Set("quiet", "false")
+		initCmd.Flags().Set("force", "false")
+	}
 
-	// Clear BEADS_DIR to ensure we test the tree search path
-	origBeadsDir := os.Getenv("BEADS_DIR")
-	os.Unsetenv("BEADS_DIR")
-	defer func() {
-		if origBeadsDir != "" {
-			os.Setenv("BEADS_DIR", origBeadsDir)
+	t.Run("RedirectCreatesDBInTarget", func(t *testing.T) {
+		resetRedirectState(t)
+
+		tmpDir := t.TempDir()
+
+		projectDir := filepath.Join(tmpDir, "project")
+		if err := os.MkdirAll(projectDir, 0755); err != nil {
+			t.Fatal(err)
 		}
-	}()
 
-	// Reset Cobra flags
-	initCmd.Flags().Set("prefix", "")
-	initCmd.Flags().Set("quiet", "false")
-
-	tmpDir := t.TempDir()
-
-	// Create project directory (where we'll run from)
-	projectDir := filepath.Join(tmpDir, "project")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create local .beads with redirect file pointing to target
-	localBeadsDir := filepath.Join(projectDir, ".beads")
-	if err := os.MkdirAll(localBeadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create target .beads directory (the redirect destination)
-	targetBeadsDir := filepath.Join(tmpDir, "canonical", ".beads")
-	if err := os.MkdirAll(targetBeadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write redirect file - use relative path
-	redirectPath := filepath.Join(localBeadsDir, beads.RedirectFileName)
-	// Relative path from project/.beads to canonical/.beads is ../canonical/.beads
-	if err := os.WriteFile(redirectPath, []byte("../canonical/.beads\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Change to project directory
-	t.Chdir(projectDir)
-
-	// Run bd init
-	rootCmd.SetArgs([]string{"init", "--prefix", "redirect-test", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init with redirect failed: %v", err)
-	}
-
-	// Verify database was created in TARGET directory, not local
-	targetDBPath := filepath.Join(targetBeadsDir, "beads.db")
-	if _, err := os.Stat(targetDBPath); os.IsNotExist(err) {
-		t.Errorf("Database was NOT created in redirect target: %s", targetDBPath)
-	}
-
-	// Verify database was NOT created in local directory
-	localDBPath := filepath.Join(localBeadsDir, "beads.db")
-	if _, err := os.Stat(localDBPath); err == nil {
-		t.Errorf("Database was incorrectly created in local .beads: %s (should be in redirect target)", localDBPath)
-	}
-
-	// Verify the database is functional
-	store, err := openExistingTestDB(t, targetDBPath)
-	if err != nil {
-		t.Fatalf("Failed to open database in redirect target: %v", err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-	prefix, err := store.GetConfig(ctx, "issue_prefix")
-	if err != nil {
-		t.Fatalf("Failed to get issue prefix from database: %v", err)
-	}
-	if prefix != "redirect-test" {
-		t.Errorf("Expected prefix 'redirect-test', got %q", prefix)
-	}
-}
-
-// TestInitWithRedirectToExistingDatabase verifies that bd init errors when the redirect
-// target already has a database, preventing accidental overwrites. (GH#bd-0qel)
-func TestInitWithRedirectToExistingDatabase(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
-
-	// Clear BEADS_DIR to ensure we test the tree search path
-	origBeadsDir := os.Getenv("BEADS_DIR")
-	os.Unsetenv("BEADS_DIR")
-	defer func() {
-		if origBeadsDir != "" {
-			os.Setenv("BEADS_DIR", origBeadsDir)
+		localBeadsDir := filepath.Join(projectDir, ".beads")
+		if err := os.MkdirAll(localBeadsDir, 0755); err != nil {
+			t.Fatal(err)
 		}
-	}()
 
-	// Reset Cobra flags
-	initCmd.Flags().Set("prefix", "")
-	initCmd.Flags().Set("quiet", "false")
-	initCmd.Flags().Set("force", "false")
+		targetBeadsDir := filepath.Join(tmpDir, "canonical", ".beads")
+		if err := os.MkdirAll(targetBeadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
 
-	tmpDir := t.TempDir()
+		redirectPath := filepath.Join(localBeadsDir, beads.RedirectFileName)
+		if err := os.WriteFile(redirectPath, []byte("../canonical/.beads\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-	// Create canonical .beads directory with EXISTING database
-	canonicalDir := filepath.Join(tmpDir, "canonical")
-	canonicalBeadsDir := filepath.Join(canonicalDir, ".beads")
-	if err := os.MkdirAll(canonicalBeadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+		t.Chdir(projectDir)
 
-	// Create an existing database in canonical location
-	canonicalDBPath := filepath.Join(canonicalBeadsDir, "beads.db")
-	store, err := sqlite.New(context.Background(), canonicalDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create canonical database: %v", err)
-	}
-	if err := store.SetConfig(context.Background(), "issue_prefix", "existing"); err != nil {
-		t.Fatalf("Failed to set prefix in canonical database: %v", err)
-	}
-	store.Close()
+		rootCmd.SetArgs([]string{"init", "--prefix", "redirect-test", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init with redirect failed: %v", err)
+		}
 
-	// Create project directory with redirect to canonical
-	projectDir := filepath.Join(tmpDir, "project")
-	projectBeadsDir := filepath.Join(projectDir, ".beads")
-	if err := os.MkdirAll(projectBeadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+		targetDBPath := filepath.Join(targetBeadsDir, "beads.db")
+		if _, err := os.Stat(targetDBPath); os.IsNotExist(err) {
+			t.Errorf("Database was NOT created in redirect target: %s", targetDBPath)
+		}
 
-	// Write redirect file pointing to canonical
-	redirectPath := filepath.Join(projectBeadsDir, beads.RedirectFileName)
-	if err := os.WriteFile(redirectPath, []byte("../canonical/.beads\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+		localDBPath := filepath.Join(localBeadsDir, "beads.db")
+		if _, err := os.Stat(localDBPath); err == nil {
+			t.Errorf("Database was incorrectly created in local .beads: %s (should be in redirect target)", localDBPath)
+		}
 
-	// Test checkExistingBeadsData directly since init uses os.Exit(1) which terminates tests
-	// Change to project directory first
-	origWd, _ := os.Getwd()
-	if err := os.Chdir(projectDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
+		store, err := openExistingTestDB(t, targetDBPath)
+		if err != nil {
+			t.Fatalf("Failed to open database in redirect target: %v", err)
+		}
+		defer store.Close()
 
-	// Call checkExistingBeadsData directly - should return error
-	err = checkExistingBeadsData("new-prefix")
-	if err == nil {
-		t.Fatal("Expected checkExistingBeadsData to return error when redirect target already has database")
-	}
+		ctx := context.Background()
+		prefix, err := store.GetConfig(ctx, "issue_prefix")
+		if err != nil {
+			t.Fatalf("Failed to get issue prefix from database: %v", err)
+		}
+		if prefix != "redirect-test" {
+			t.Errorf("Expected prefix 'redirect-test', got %q", prefix)
+		}
+	})
 
-	errorMsg := err.Error()
-	if !strings.Contains(errorMsg, "redirect target already has database") {
-		t.Errorf("Expected error about redirect target having database, got: %s", errorMsg)
-	}
+	// Verifies that bd init errors when the redirect target already has a database,
+	// preventing accidental overwrites. (GH#bd-0qel)
+	t.Run("ErrorWhenTargetHasExistingDB", func(t *testing.T) {
+		resetRedirectState(t)
 
-	// Verify canonical database was NOT modified
-	store, err = openExistingTestDB(t, canonicalDBPath)
-	if err != nil {
-		t.Fatalf("Failed to reopen canonical database: %v", err)
-	}
-	defer store.Close()
+		tmpDir := t.TempDir()
 
-	ctx := context.Background()
-	prefix, err := store.GetConfig(ctx, "issue_prefix")
-	if err != nil {
-		t.Fatalf("Failed to get prefix from canonical database: %v", err)
-	}
-	if prefix != "existing" {
-		t.Errorf("Canonical database prefix should still be 'existing', got %q (was overwritten!)", prefix)
-	}
+		canonicalDir := filepath.Join(tmpDir, "canonical")
+		canonicalBeadsDir := filepath.Join(canonicalDir, ".beads")
+		if err := os.MkdirAll(canonicalBeadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		canonicalDBPath := filepath.Join(canonicalBeadsDir, "beads.db")
+		store, err := sqlite.New(context.Background(), canonicalDBPath)
+		if err != nil {
+			t.Fatalf("Failed to create canonical database: %v", err)
+		}
+		if err := store.SetConfig(context.Background(), "issue_prefix", "existing"); err != nil {
+			t.Fatalf("Failed to set prefix in canonical database: %v", err)
+		}
+		store.Close()
+
+		projectDir := filepath.Join(tmpDir, "project")
+		projectBeadsDir := filepath.Join(projectDir, ".beads")
+		if err := os.MkdirAll(projectBeadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		redirectPath := filepath.Join(projectBeadsDir, beads.RedirectFileName)
+		if err := os.WriteFile(redirectPath, []byte("../canonical/.beads\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// Use os.Chdir since checkExistingBeadsData reads CWD directly
+		origWd, _ := os.Getwd()
+		if err := os.Chdir(projectDir); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chdir(origWd)
+
+		err = checkExistingBeadsData("new-prefix")
+		if err == nil {
+			t.Fatal("Expected checkExistingBeadsData to return error when redirect target already has database")
+		}
+
+		errorMsg := err.Error()
+		if !strings.Contains(errorMsg, "redirect target already has database") {
+			t.Errorf("Expected error about redirect target having database, got: %s", errorMsg)
+		}
+
+		store, err = openExistingTestDB(t, canonicalDBPath)
+		if err != nil {
+			t.Fatalf("Failed to reopen canonical database: %v", err)
+		}
+		defer store.Close()
+
+		ctx := context.Background()
+		prefix, err := store.GetConfig(ctx, "issue_prefix")
+		if err != nil {
+			t.Fatalf("Failed to get prefix from canonical database: %v", err)
+		}
+		if prefix != "existing" {
+			t.Errorf("Canonical database prefix should still be 'existing', got %q (was overwritten!)", prefix)
+		}
+	})
 }
 
 // =============================================================================
@@ -1939,40 +1860,47 @@ func TestInitWithRedirectToExistingDatabase(t *testing.T) {
 // These tests verify that bd init respects the BEADS_DIR environment variable
 // for both safety checks and database creation.
 
-// TestCheckExistingBeadsData_WithBEADS_DIR verifies that checkExistingBeadsData
-// uses BEADS_DIR instead of CWD when the environment variable is set.
-// This tests requirements FR-001, FR-004.
-func TestCheckExistingBeadsData_WithBEADS_DIR(t *testing.T) {
-	// Save and restore BEADS_DIR
-	origBeadsDir := os.Getenv("BEADS_DIR")
-	defer func() {
-		if origBeadsDir != "" {
-			os.Setenv("BEADS_DIR", origBeadsDir)
-		} else {
-			os.Unsetenv("BEADS_DIR")
-		}
+// TestInitBEADS_DIR groups BEADS_DIR-related init tests.
+// Tests requirements FR-001, FR-002, FR-004, NFR-001.
+func TestInitBEADS_DIR(t *testing.T) {
+	// resetBeadsDirState resets global state and env vars for each subtest.
+	resetBeadsDirState := func(t *testing.T) {
+		t.Helper()
+		origDBPath := dbPath
+		t.Cleanup(func() {
+			dbPath = origDBPath
+			beads.ResetCaches()
+			git.ResetCaches()
+		})
+		dbPath = ""
 		beads.ResetCaches()
 		git.ResetCaches()
-	}()
+		initCmd.Flags().Set("prefix", "")
+		initCmd.Flags().Set("quiet", "false")
+		initCmd.Flags().Set("backend", "")
+	}
 
-	t.Run("TC-002: BEADS_DIR set, no existing DB", func(t *testing.T) {
+	// checkExistingBeadsData tests (FR-001, FR-004)
+	t.Run("CheckExisting_NoExistingDB", func(t *testing.T) {
+		resetBeadsDirState(t)
+
 		tmpDir := t.TempDir()
-
-		// Create BEADS_DIR location (no database)
 		beadsDirPath := filepath.Join(tmpDir, "external", ".beads")
 		os.MkdirAll(beadsDirPath, 0755)
 
 		os.Setenv("BEADS_DIR", beadsDirPath)
+		t.Cleanup(func() { os.Unsetenv("BEADS_DIR") })
 		beads.ResetCaches()
 
-		// Should succeed because BEADS_DIR has no database
 		err := checkExistingBeadsData("test")
 		if err != nil {
 			t.Errorf("Expected no error when BEADS_DIR has no database, got: %v", err)
 		}
 	})
 
-	t.Run("TC-003: BEADS_DIR set, CWD has .beads, should ignore CWD", func(t *testing.T) {
+	t.Run("CheckExisting_CWDIgnoredWhenSet", func(t *testing.T) {
+		resetBeadsDirState(t)
+
 		tmpDir := t.TempDir()
 
 		// Create CWD with existing database (should be ignored)
@@ -1989,129 +1917,186 @@ func TestCheckExistingBeadsData_WithBEADS_DIR(t *testing.T) {
 		beadsDirPath := filepath.Join(tmpDir, "external", ".beads")
 		os.MkdirAll(beadsDirPath, 0755)
 
-		// Set BEADS_DIR - should check external, not CWD
 		os.Setenv("BEADS_DIR", beadsDirPath)
+		t.Cleanup(func() { os.Unsetenv("BEADS_DIR") })
 		beads.ResetCaches()
 
-		// Change to CWD with database
 		origWd, _ := os.Getwd()
 		os.Chdir(filepath.Join(tmpDir, "cwd"))
 		defer os.Chdir(origWd)
 
-		// Should succeed because BEADS_DIR has no database (CWD ignored)
 		err = checkExistingBeadsData("test")
 		if err != nil {
 			t.Errorf("Expected no error when BEADS_DIR has no database (CWD should be ignored), got: %v", err)
 		}
 	})
 
-	t.Run("TC-004: BEADS_DIR set, target exists with DB, should error", func(t *testing.T) {
+	t.Run("CheckExisting_ErrorWhenDBExists", func(t *testing.T) {
+		resetBeadsDirState(t)
+
 		tmpDir := t.TempDir()
 
-		// Create BEADS_DIR with existing database
 		beadsDirPath := filepath.Join(tmpDir, "external", ".beads")
 		os.MkdirAll(beadsDirPath, 0755)
-		dbPath := filepath.Join(beadsDirPath, beads.CanonicalDatabaseName)
-		store, err := sqlite.New(context.Background(), dbPath)
+		testDBPath := filepath.Join(beadsDirPath, beads.CanonicalDatabaseName)
+		store, err := sqlite.New(context.Background(), testDBPath)
 		if err != nil {
 			t.Fatal(err)
 		}
 		store.Close()
 
 		os.Setenv("BEADS_DIR", beadsDirPath)
+		t.Cleanup(func() { os.Unsetenv("BEADS_DIR") })
 		beads.ResetCaches()
 
-		// Should error because BEADS_DIR already has database
 		err = checkExistingBeadsData("test")
 		if err == nil {
 			t.Error("Expected error when BEADS_DIR already has database")
 		}
-		// FR-005: Error message should reference the BEADS_DIR path
 		if !strings.Contains(err.Error(), beadsDirPath) {
 			t.Errorf("Expected error to mention BEADS_DIR path %s, got: %v", beadsDirPath, err)
 		}
 	})
-}
 
-// TestInit_WithBEADS_DIR verifies that bd init creates the database at BEADS_DIR
-// when the environment variable is set.
-// This tests requirements FR-002.
-func TestInit_WithBEADS_DIR(t *testing.T) {
-	// Skip on Windows - init has platform-specific behaviors
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping BEADS_DIR test on Windows")
-	}
-
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
-
-	// Save and restore BEADS_DIR
-	origBeadsDir := os.Getenv("BEADS_DIR")
-	defer func() {
-		if origBeadsDir != "" {
-			os.Setenv("BEADS_DIR", origBeadsDir)
-		} else {
-			os.Unsetenv("BEADS_DIR")
+	// FR-002: init creates database at BEADS_DIR
+	t.Run("InitCreatesDBAtBeadsDir", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Skipping BEADS_DIR test on Windows")
 		}
+
+		resetBeadsDirState(t)
+
+		tmpDir := t.TempDir()
+
+		beadsDirPath := filepath.Join(tmpDir, "external", ".beads")
+		os.MkdirAll(filepath.Dir(beadsDirPath), 0755)
+
+		os.Setenv("BEADS_DIR", beadsDirPath)
+		t.Cleanup(func() { os.Unsetenv("BEADS_DIR") })
 		beads.ResetCaches()
 		git.ResetCaches()
-	}()
 
-	// Reset Cobra flags
-	initCmd.Flags().Set("prefix", "")
-	initCmd.Flags().Set("quiet", "false")
-	initCmd.Flags().Set("backend", "")
+		cwdPath := filepath.Join(tmpDir, "workdir")
+		os.MkdirAll(cwdPath, 0755)
+		t.Chdir(cwdPath)
 
-	tmpDir := t.TempDir()
+		rootCmd.SetArgs([]string{"init", "--prefix", "beadsdir-test", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init with BEADS_DIR failed: %v", err)
+		}
 
-	// Create external BEADS_DIR location
-	beadsDirPath := filepath.Join(tmpDir, "external", ".beads")
-	os.MkdirAll(filepath.Dir(beadsDirPath), 0755) // Create parent, not .beads itself
+		expectedDBPath := filepath.Join(beadsDirPath, beads.CanonicalDatabaseName)
+		if _, err := os.Stat(expectedDBPath); os.IsNotExist(err) {
+			t.Errorf("Database was not created at BEADS_DIR path: %s", expectedDBPath)
+		}
 
-	os.Setenv("BEADS_DIR", beadsDirPath)
-	beads.ResetCaches()
-	git.ResetCaches()
+		cwdDBPath := filepath.Join(cwdPath, ".beads", beads.CanonicalDatabaseName)
+		if _, err := os.Stat(cwdDBPath); err == nil {
+			t.Errorf("Database should NOT have been created at CWD: %s", cwdDBPath)
+		}
 
-	// Change to a different working directory
-	cwdPath := filepath.Join(tmpDir, "workdir")
-	os.MkdirAll(cwdPath, 0755)
-	t.Chdir(cwdPath)
+		store, err := openExistingTestDB(t, expectedDBPath)
+		if err != nil {
+			t.Fatalf("Failed to open database at BEADS_DIR: %v", err)
+		}
+		defer store.Close()
 
-	// Run bd init with quiet flag
-	rootCmd.SetArgs([]string{"init", "--prefix", "beadsdir-test", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init with BEADS_DIR failed: %v", err)
-	}
+		ctx := context.Background()
+		prefix, err := store.GetConfig(ctx, "issue_prefix")
+		if err != nil {
+			t.Fatalf("Failed to get prefix from database: %v", err)
+		}
+		if prefix != "beadsdir-test" {
+			t.Errorf("Expected prefix 'beadsdir-test', got %q", prefix)
+		}
+	})
 
-	// Verify database was created at BEADS_DIR, not CWD
-	expectedDBPath := filepath.Join(beadsDirPath, beads.CanonicalDatabaseName)
-	if _, err := os.Stat(expectedDBPath); os.IsNotExist(err) {
-		t.Errorf("Database was not created at BEADS_DIR path: %s", expectedDBPath)
-	}
+	// NFR-001: existing behavior unchanged when BEADS_DIR not set
+	t.Run("WithoutBeadsDirNoBehaviorChange", func(t *testing.T) {
+		resetBeadsDirState(t)
 
-	// Verify database was NOT created at CWD
-	cwdDBPath := filepath.Join(cwdPath, ".beads", beads.CanonicalDatabaseName)
-	if _, err := os.Stat(cwdDBPath); err == nil {
-		t.Errorf("Database should NOT have been created at CWD: %s", cwdDBPath)
-	}
+		os.Unsetenv("BEADS_DIR")
+		beads.ResetCaches()
+		git.ResetCaches()
 
-	// Verify database has correct prefix
-	store, err := openExistingTestDB(t, expectedDBPath)
-	if err != nil {
-		t.Fatalf("Failed to open database at BEADS_DIR: %v", err)
-	}
-	defer store.Close()
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
 
-	ctx := context.Background()
-	prefix, err := store.GetConfig(ctx, "issue_prefix")
-	if err != nil {
-		t.Fatalf("Failed to get prefix from database: %v", err)
-	}
-	if prefix != "beadsdir-test" {
-		t.Errorf("Expected prefix 'beadsdir-test', got %q", prefix)
-	}
+		rootCmd.SetArgs([]string{"init", "--prefix", "no-beadsdir", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init without BEADS_DIR failed: %v", err)
+		}
+
+		expectedDBPath := filepath.Join(tmpDir, ".beads", beads.CanonicalDatabaseName)
+		if _, err := os.Stat(expectedDBPath); os.IsNotExist(err) {
+			t.Errorf("Database was not created at default CWD/.beads path: %s", expectedDBPath)
+		}
+
+		store, err := openExistingTestDB(t, expectedDBPath)
+		if err != nil {
+			t.Fatalf("Failed to open database: %v", err)
+		}
+		defer store.Close()
+
+		ctx := context.Background()
+		prefix, err := store.GetConfig(ctx, "issue_prefix")
+		if err != nil {
+			t.Fatalf("Failed to get prefix from database: %v", err)
+		}
+		if prefix != "no-beadsdir" {
+			t.Errorf("Expected prefix 'no-beadsdir', got %q", prefix)
+		}
+	})
+
+	// Precedence: BEADS_DB > BEADS_DIR
+	t.Run("BEADS_DB_OverridesBeadsDir", func(t *testing.T) {
+		resetBeadsDirState(t)
+
+		beadsDirTarget := t.TempDir()
+		beadsDBTarget := t.TempDir()
+
+		beadsDirBeads := filepath.Join(beadsDirTarget, ".beads")
+		if err := os.MkdirAll(beadsDirBeads, 0750); err != nil {
+			t.Fatal(err)
+		}
+
+		beadsDBPath := filepath.Join(beadsDBTarget, "override.db")
+
+		t.Setenv("BEADS_DIR", beadsDirBeads)
+		t.Setenv("BEADS_DB", beadsDBPath)
+
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		rootCmd.SetArgs([]string{"init", "--prefix", "precedence", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("Init with BEADS_DB + BEADS_DIR failed: %v", err)
+		}
+
+		if _, err := os.Stat(beadsDBPath); os.IsNotExist(err) {
+			t.Errorf("Database was NOT created at BEADS_DB path: %s", beadsDBPath)
+		}
+
+		beadsDirDBPath := filepath.Join(beadsDirBeads, beads.CanonicalDatabaseName)
+		if _, err := os.Stat(beadsDirDBPath); err == nil {
+			t.Errorf("Database was incorrectly created at BEADS_DIR path: %s (BEADS_DB should override)", beadsDirDBPath)
+		}
+
+		store, err := openExistingTestDB(t, beadsDBPath)
+		if err != nil {
+			t.Fatalf("Failed to open database: %v", err)
+		}
+		defer store.Close()
+
+		ctx := context.Background()
+		prefix, err := store.GetConfig(ctx, "issue_prefix")
+		if err != nil {
+			t.Fatalf("Failed to get prefix from database: %v", err)
+		}
+		if prefix != "precedence" {
+			t.Errorf("Expected prefix 'precedence', got %q", prefix)
+		}
+	})
 }
 
 // TestInit_WithBEADS_DIR_DoltBackend verifies that bd init with Dolt backend
@@ -2186,130 +2171,5 @@ func TestInit_WithBEADS_DIR_DoltBackend(t *testing.T) {
 	}
 }
 
-// TestInit_WithoutBEADS_DIR_NoBehaviorChange verifies that existing behavior
-// is unchanged when BEADS_DIR is not set.
-// This tests requirement NFR-001.
-func TestInit_WithoutBEADS_DIR_NoBehaviorChange(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
-
-	// Ensure BEADS_DIR is not set
-	origBeadsDir := os.Getenv("BEADS_DIR")
-	os.Unsetenv("BEADS_DIR")
-	defer func() {
-		if origBeadsDir != "" {
-			os.Setenv("BEADS_DIR", origBeadsDir)
-		}
-		beads.ResetCaches()
-		git.ResetCaches()
-	}()
-
-	beads.ResetCaches()
-	git.ResetCaches()
-
-	// Reset Cobra flags
-	initCmd.Flags().Set("prefix", "")
-	initCmd.Flags().Set("quiet", "false")
-	initCmd.Flags().Set("backend", "")
-
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	// Run bd init
-	rootCmd.SetArgs([]string{"init", "--prefix", "no-beadsdir", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init without BEADS_DIR failed: %v", err)
-	}
-
-	// Verify database was created at CWD/.beads (default behavior)
-	expectedDBPath := filepath.Join(tmpDir, ".beads", beads.CanonicalDatabaseName)
-	if _, err := os.Stat(expectedDBPath); os.IsNotExist(err) {
-		t.Errorf("Database was not created at default CWD/.beads path: %s", expectedDBPath)
-	}
-
-	// Verify database has correct prefix
-	store, err := openExistingTestDB(t, expectedDBPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-	prefix, err := store.GetConfig(ctx, "issue_prefix")
-	if err != nil {
-		t.Fatalf("Failed to get prefix from database: %v", err)
-	}
-	if prefix != "no-beadsdir" {
-		t.Errorf("Expected prefix 'no-beadsdir', got %q", prefix)
-	}
-}
-
-// TestInit_BEADS_DB_OverridesBEADS_DIR verifies precedence: BEADS_DB > BEADS_DIR
-// This ensures that explicit database path env var takes precedence over directory env var.
-func TestInit_BEADS_DB_OverridesBEADS_DIR(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
-
-	beads.ResetCaches()
-	git.ResetCaches()
-
-	// Reset Cobra flags
-	initCmd.Flags().Set("prefix", "")
-	initCmd.Flags().Set("quiet", "false")
-	initCmd.Flags().Set("backend", "")
-
-	// Create two target locations
-	beadsDirTarget := t.TempDir() // Where BEADS_DIR points (should be ignored)
-	beadsDBTarget := t.TempDir()  // Where BEADS_DB points (should be used)
-
-	beadsDirBeads := filepath.Join(beadsDirTarget, ".beads")
-	if err := os.MkdirAll(beadsDirBeads, 0750); err != nil {
-		t.Fatal(err)
-	}
-
-	beadsDBPath := filepath.Join(beadsDBTarget, "override.db")
-
-	// Set both env vars - BEADS_DB should take precedence
-	t.Setenv("BEADS_DIR", beadsDirBeads)
-	t.Setenv("BEADS_DB", beadsDBPath)
-
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	// Run bd init
-	rootCmd.SetArgs([]string{"init", "--prefix", "precedence", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init with BEADS_DB + BEADS_DIR failed: %v", err)
-	}
-
-	// Verify database was created at BEADS_DB location (not BEADS_DIR)
-	if _, err := os.Stat(beadsDBPath); os.IsNotExist(err) {
-		t.Errorf("Database was NOT created at BEADS_DB path: %s", beadsDBPath)
-	}
-
-	// Verify database was NOT created at BEADS_DIR location
-	beadsDirDBPath := filepath.Join(beadsDirBeads, beads.CanonicalDatabaseName)
-	if _, err := os.Stat(beadsDirDBPath); err == nil {
-		t.Errorf("Database was incorrectly created at BEADS_DIR path: %s (BEADS_DB should override)", beadsDirDBPath)
-	}
-
-	// Verify the database has correct prefix
-	store, err := openExistingTestDB(t, beadsDBPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-	prefix, err := store.GetConfig(ctx, "issue_prefix")
-	if err != nil {
-		t.Fatalf("Failed to get prefix from database: %v", err)
-	}
-	if prefix != "precedence" {
-		t.Errorf("Expected prefix 'precedence', got %q", prefix)
-	}
-}
+// Note: TestInit_WithoutBEADS_DIR_NoBehaviorChange and TestInit_BEADS_DB_OverridesBEADS_DIR
+// are now subtests of TestInitBEADS_DIR above.

@@ -34,7 +34,7 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 	}
 
 	// External refs (external:<project>:<capability>) don't need target validation
-	// They are resolved lazily at query time by CheckExternalDep
+	// They are resolved lazily at query time by checkExternalDep
 	isExternalRef := strings.HasPrefix(dep.DependsOnID, "external:")
 
 	var dependsOnExists *types.Issue
@@ -743,7 +743,7 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 					}
 
 					// Check resolution status
-					status := CheckExternalDep(ctx, ref)
+					status := checkExternalDep(ctx, ref)
 					var nodeStatus types.Status
 					var title string
 					if status.Satisfied {
@@ -818,11 +818,14 @@ func (s *SQLiteStorage) loadDependencyGraph(ctx context.Context) (map[string][]s
 	for rows.Next() {
 		var from, to string
 		if err := rows.Scan(&from, &to); err != nil {
-			return nil, err
+			return nil, wrapDBError("scan dependency graph edge", err)
 		}
 		deps[from] = append(deps[from], to)
 	}
-	return deps, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, wrapDBError("iterate dependency graph", err)
+	}
+	return deps, nil
 }
 
 // DetectCycles finds circular dependencies and returns the actual cycle paths.
