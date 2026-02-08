@@ -66,8 +66,7 @@ func makeSocketTempDir(t testing.TB) string {
 
 func TestGetPIDFilePath(t *testing.T) {
 	tmpDir := t.TempDir()
-	oldDBPath := dbPath
-	defer func() { dbPath = oldDBPath }()
+	saveAndRestoreGlobals(t)
 
 	dbPath = filepath.Join(tmpDir, ".beads", "test.db")
 	pidFile, err := getPIDFilePath()
@@ -114,8 +113,7 @@ func TestGetLogFilePath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			userPath, dbFile, expected := tt.set(t)
 
-			oldDBPath := dbPath
-			defer func() { dbPath = oldDBPath }()
+			saveAndRestoreGlobals(t)
 			dbPath = dbFile
 
 			result, err := getLogFilePath(userPath)
@@ -193,13 +191,7 @@ func TestDaemonIntegration(t *testing.T) {
 	testDBPath := filepath.Join(dbDir, "test.db")
 	testStore := newTestStore(t, testDBPath)
 
-	oldStore := store
-	oldDBPath := dbPath
-	defer func() {
-		testStore.Close()
-		store = oldStore
-		dbPath = oldDBPath
-	}()
+	saveAndRestoreGlobals(t)
 	store = testStore
 	dbPath = testDBPath
 
@@ -719,25 +711,15 @@ func TestMutationToExportLatency(t *testing.T) {
 	initTestGitRepo(t, tmpDir)
 	
 	testStore := newTestStore(t, testDBPath)
-	defer testStore.Close()
 
-	// Configure test environment - set global store
-	oldDBPath := dbPath
-	oldStore := store
-	oldStoreActive := storeActive
-	oldAutoFlush := autoFlushEnabled
+	// Configure test environment - save/restore all globals atomically
+	saveAndRestoreGlobals(t)
 	origDebounce := config.GetDuration("flush-debounce")
-	defer func() { 
-		dbPath = oldDBPath 
-		store = oldStore
-		storeMutex.Lock()
-		storeActive = oldStoreActive
-		storeMutex.Unlock()
-		autoFlushEnabled = oldAutoFlush
+	t.Cleanup(func() {
 		config.Set("flush-debounce", origDebounce)
 		clearAutoFlushState()
-	}()
-	
+	})
+
 	dbPath = testDBPath
 	store = testStore
 	storeMutex.Lock()
