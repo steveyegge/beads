@@ -517,13 +517,13 @@ func awaitDecisionOnJetStream(ctx context.Context, js nats.JetStreamContext, dec
 // bd decision respond both records the response AND closes the gate issue.
 func checkDecisionResponse(ctx context.Context, decisionID string) (*types.DecisionPoint, string, string, bool, error) {
 	if daemonClient != nil {
-		// Check decision point response first (via store fallback).
-		if store != nil {
-			dp, err := store.GetDecisionPoint(ctx, decisionID)
-			if err != nil {
-				return nil, "", "", false, err
-			}
-			if dp != nil && dp.RespondedAt != nil {
+		// Check decision point response via RPC (works when store is nil,
+		// e.g., local bd connected to remote daemon).
+		getArgs := &rpc.DecisionGetArgs{IssueID: decisionID}
+		result, err := daemonClient.DecisionGet(getArgs)
+		if err == nil && result != nil && result.Decision != nil {
+			dp := result.Decision
+			if dp.RespondedAt != nil {
 				return dp, dp.SelectedOption, decisionResponseText(dp), true, nil
 			}
 		}
