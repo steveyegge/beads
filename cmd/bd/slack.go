@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
@@ -95,10 +96,19 @@ func runSlackStart(cmd *cobra.Command, args []string) error {
 	// Daemon host must come from flag/env (chicken-and-egg: can't read from DB without connection)
 	daemonHost := firstNonEmpty(slackDaemonHost, os.Getenv("BD_DAEMON_HOST"), "localhost:9876")
 
-	// Connect to daemon RPC via TCP
-	rpcClient, err := rpc.TryConnectTCP(daemonHost, rpc.GetDaemonToken())
-	if err != nil {
-		return fmt.Errorf("connect to daemon at %s: %w", daemonHost, err)
+	// Connect to daemon RPC via TCP (retry for sidecar startup race)
+	var rpcClient *rpc.Client
+	var err error
+	for attempt := 1; attempt <= 30; attempt++ {
+		rpcClient, err = rpc.TryConnectTCP(daemonHost, rpc.GetDaemonToken())
+		if err == nil {
+			break
+		}
+		if attempt == 30 {
+			return fmt.Errorf("connect to daemon at %s after 30 attempts: %w", daemonHost, err)
+		}
+		log.Printf("slackbot: daemon not ready (attempt %d/30), retrying in 2s: %v", attempt, err)
+		time.Sleep(2 * time.Second)
 	}
 	defer rpcClient.Close()
 
