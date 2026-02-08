@@ -175,6 +175,9 @@ func BuildPodSpec(agentID, role, rig string, cfg PodTemplateConfig) *corev1.Pod 
 					},
 				},
 			},
+			NodeSelector: map[string]string{
+				"kubernetes.io/arch": "amd64",
+			},
 			Volumes: []corev1.Volume{
 				{
 					Name: "workspace",
