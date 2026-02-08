@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -22,6 +23,10 @@ func TestAgentStateWithRouting(t *testing.T) {
 		os.Unsetenv("BD_DAEMON_HOST")
 		t.Cleanup(func() { os.Setenv("BD_DAEMON_HOST", oldHost) })
 	}
+	// Also clear daemon-host config key (may be set in workspace config.yaml)
+	oldDaemonHost := config.GetString("daemon-host")
+	config.Set("daemon-host", "")
+	t.Cleanup(func() { config.Set("daemon-host", oldDaemonHost) })
 
 	// Create temp directory structure:
 	// tmpDir/
@@ -172,6 +177,10 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 		os.Unsetenv("BD_DAEMON_HOST")
 		t.Cleanup(func() { os.Setenv("BD_DAEMON_HOST", oldHost) })
 	}
+	// Also clear daemon-host config key (may be set in workspace config.yaml)
+	oldDaemonHost := config.GetString("daemon-host")
+	config.Set("daemon-host", "")
+	t.Cleanup(func() { config.Set("daemon-host", oldDaemonHost) })
 
 	tmpDir := t.TempDir()
 
@@ -291,6 +300,10 @@ func TestAgentShowWithRouting(t *testing.T) {
 		os.Unsetenv("BD_DAEMON_HOST")
 		t.Cleanup(func() { os.Setenv("BD_DAEMON_HOST", oldHost) })
 	}
+	// Also clear daemon-host config key (may be set in workspace config.yaml)
+	oldDaemonHost := config.GetString("daemon-host")
+	config.Set("daemon-host", "")
+	t.Cleanup(func() { config.Set("daemon-host", oldDaemonHost) })
 
 	tmpDir := t.TempDir()
 

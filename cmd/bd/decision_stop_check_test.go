@@ -134,7 +134,7 @@ func TestFindPendingAgentDecision_NoDecisions(t *testing.T) {
 	defer func() { store = oldStore }()
 
 	ctx := context.Background()
-	dp, err := findPendingAgentDecision(ctx)
+	dp, err := findPendingAgentDecision(ctx, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestFindPendingAgentDecision_SkipsStopHook(t *testing.T) {
 	createTestDecision(t, s, "test-stop1", "Stop decision", "stop-hook", "")
 
 	ctx := context.Background()
-	dp, err := findPendingAgentDecision(ctx)
+	dp, err := findPendingAgentDecision(ctx, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestFindPendingAgentDecision_SkipsEmptyRequestedBy(t *testing.T) {
 	createTestDecision(t, s, "test-empty1", "Anonymous decision", "", "")
 
 	ctx := context.Background()
-	dp, err := findPendingAgentDecision(ctx)
+	dp, err := findPendingAgentDecision(ctx, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestFindPendingAgentDecision_FindsAgentDecision(t *testing.T) {
 	createTestDecision(t, s, "test-agent1", "Agent decision", "agent", "some context")
 
 	ctx := context.Background()
-	dp, err := findPendingAgentDecision(ctx)
+	dp, err := findPendingAgentDecision(ctx, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestFindPendingAgentDecision_ReturnsOneOfMultiple(t *testing.T) {
 	createTestDecision(t, s, "test-b", "Decision B", "agent", "")
 
 	ctx := context.Background()
-	dp, err := findPendingAgentDecision(ctx)
+	dp, err := findPendingAgentDecision(ctx, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestFindPendingAgentDecision_IgnoresStopHookAmongAgent(t *testing.T) {
 	createTestDecision(t, s, "test-agent", "Agent", "agent", "")
 
 	ctx := context.Background()
-	dp, err := findPendingAgentDecision(ctx)
+	dp, err := findPendingAgentDecision(ctx, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -258,6 +258,51 @@ func TestFindPendingAgentDecision_IgnoresStopHookAmongAgent(t *testing.T) {
 	}
 	if dp.IssueID != "test-agent" {
 		t.Fatalf("expected test-agent, got %s", dp.IssueID)
+	}
+}
+
+func TestFindPendingAgentDecision_SessionScoping(t *testing.T) {
+	s, cleanup := setupStopCheckTestDB(t)
+	defer cleanup()
+
+	oldStore := store
+	store = s
+	defer func() { store = oldStore }()
+
+	// Create decisions from different sessions
+	createTestDecision(t, s, "test-sess-a", "Decision A", "session-111", "")
+	createTestDecision(t, s, "test-sess-b", "Decision B", "session-222", "")
+
+	ctx := context.Background()
+
+	// With empty sessionTag, both are candidates (returns most recent)
+	dp, err := findPendingAgentDecision(ctx, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dp == nil {
+		t.Fatal("expected decision with empty session tag, got nil")
+	}
+
+	// With specific sessionTag, only matching decision is returned
+	dp, err = findPendingAgentDecision(ctx, "session-111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dp == nil {
+		t.Fatal("expected decision for session-111, got nil")
+	}
+	if dp.IssueID != "test-sess-a" {
+		t.Fatalf("expected test-sess-a, got %s", dp.IssueID)
+	}
+
+	// With non-matching sessionTag, no decision returned
+	dp, err = findPendingAgentDecision(ctx, "session-999")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dp != nil {
+		t.Fatalf("expected nil for non-matching session, got %+v", dp)
 	}
 }
 
@@ -360,7 +405,7 @@ func TestPollForAgentDecision_FindsExisting(t *testing.T) {
 	createTestDecision(t, s, "test-agent-poll", "Agent poll test", "agent", "context")
 
 	ctx := context.Background()
-	dp, err := pollForAgentDecision(ctx, 5*time.Second, 100*time.Millisecond)
+	dp, err := pollForAgentDecision(ctx, "", 5*time.Second, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -382,7 +427,7 @@ func TestPollForAgentDecision_TimesOut(t *testing.T) {
 
 	// No decisions — should timeout
 	ctx := context.Background()
-	dp, err := pollForAgentDecision(ctx, 300*time.Millisecond, 100*time.Millisecond)
+	dp, err := pollForAgentDecision(ctx, "", 300*time.Millisecond, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -406,7 +451,7 @@ func TestPollForAgentDecision_FindsDelayedDecision(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	dp, err := pollForAgentDecision(ctx, 2*time.Second, 100*time.Millisecond)
+	dp, err := pollForAgentDecision(ctx, "", 2*time.Second, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
