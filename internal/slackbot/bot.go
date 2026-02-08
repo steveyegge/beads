@@ -199,6 +199,7 @@ func (b *Bot) Run(ctx context.Context) error {
 
 	go func() {
 		for evt := range b.socketMode.Events {
+			log.Printf("slackbot: RAW EVENT: type=%s", evt.Type)
 			b.handleEvent(evt)
 		}
 	}()
