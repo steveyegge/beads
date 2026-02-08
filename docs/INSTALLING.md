@@ -182,17 +182,21 @@ The script installs a prebuilt Windows release if available. Go is only required
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
-The installer automatically applies the pure-Go regex backend on Windows.
+ICU is **not required** on Windows. The regex backend uses pure Go automatically.
 
 **From source**:
 ```pwsh
 git clone https://github.com/steveyegge/beads
 cd beads
-go build -o bd.exe ./cmd/bd
+make build
+# Or without Make:
+go build -tags gms_pure_go -o bd.exe ./cmd/bd
 Move-Item bd.exe $env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\
 ```
 
-The build automatically applies the pure-Go regex backend on Windows via the `gms_pure_go` build tag. If you see `unicode/uregex.h` missing while building, this is normal—the build will skip it on Windows.
+The `-tags gms_pure_go` flag tells go-mysql-server to use Go's stdlib regexp instead of ICU.
+Additionally, the vendored go-icu-regex library has a Windows-specific pure-Go implementation
+(`regex_windows.go`) that avoids ICU entirely. No C compiler or ICU libraries are needed.
 
 **Verify installation**:
 ```pwsh

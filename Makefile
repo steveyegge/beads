@@ -11,10 +11,17 @@ INSTALL_DIR := $(HOME)/.local/bin
 
 # Dolt backend requires CGO for embedded database support.
 # Without CGO, builds will fail with "dolt backend requires CGO".
+#
+# Windows notes:
+#   - ICU is NOT required. go-icu-regex has a pure-Go fallback (regex_windows.go)
+#     and gms_pure_go tag tells go-mysql-server to use pure-Go regex too.
+#   - CGO_ENABLED=0 is fine if you only need SQLite backend (no embedded Dolt).
+#   - CGO_ENABLED=1 needs a C compiler (MinGW/MSYS2) but does NOT need ICU.
 export CGO_ENABLED := 1
 
 # ICU4C is keg-only on macOS (Homebrew doesn't symlink it into /opt/homebrew).
 # Dolt's go-icu-regex dependency needs these paths to compile and link.
+# On Windows, ICU is not needed (pure-Go regex via gms_pure_go + regex_windows.go).
 ifeq ($(shell uname),Darwin)
 ICU_PREFIX := $(shell brew --prefix icu4c 2>/dev/null)
 ifneq ($(ICU_PREFIX),)

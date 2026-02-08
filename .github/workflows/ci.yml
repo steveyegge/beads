@@ -113,6 +113,11 @@ jobs:
 
   # Windows smoke tests only - full test suite times out (see bd-bmev)
   # Linux/macOS run comprehensive tests; Windows just verifies binary works
+  #
+  # ICU is NOT required on Windows:
+  # - go-mysql-server's regex_pure.go (via -tags gms_pure_go) uses Go stdlib regexp
+  # - go-icu-regex's regex_windows.go also uses Go stdlib regexp (build tag: windows)
+  # - The only CGO deps on Windows are runtime/cgo and gozstd (bundled C source)
   test-windows:
     name: Test (Windows - smoke)
     runs-on: windows-latest
@@ -124,25 +129,15 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Install ICU4C (Windows)
-        id: msys2
-        uses: msys2/setup-msys2@v2
-        with:
-          path-type: inherit
-          msystem: UCRT64
-          pacboy: icu:p toolchain:p pkg-config:p
-
-      - name: Add MSYS2 UCRT64 to PATH
-        run: |
-          echo "${{ steps.msys2.outputs.msys2-location }}\\ucrt64\\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
       - name: Configure Git
         run: |
           git config --global user.name "CI Bot"
           git config --global user.email "ci@beads.test"
 
-      - name: Build
-        run: go build -v -o bd.exe ./cmd/bd
+      - name: Build (no CGO, pure Go)
+        run: |
+          $env:CGO_ENABLED="0"
+          go build -v -tags gms_pure_go -o bd.exe ./cmd/bd
 
       - name: Smoke test - version
         run: ./bd.exe version
