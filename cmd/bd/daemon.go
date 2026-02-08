@@ -566,7 +566,9 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		warnIfSyncBranchMisconfigured(ctx, store, log)
 	}
 
-	// Validate schema version matches daemon version
+	// Validate schema version matches daemon version, with downgrade protection.
+	// Track the max version ever applied to prevent silent downgrades that could
+	// cause data loss if newer schemas added columns (gt-e3uiy).
 	versionCtx := context.Background()
 	dbVersion, err := store.GetMetadata(versionCtx, "bd_version")
 	if err != nil && err.Error() != "metadata key not found: bd_version" {
@@ -574,16 +576,50 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		return // Use return instead of os.Exit to allow defers to run
 	}
 
-	if dbVersion != "" && dbVersion != Version {
-		log.Warn("database schema version mismatch", "db_version", dbVersion, "daemon_version", Version)
-		log.Info("auto-upgrading database to daemon version")
+	// Read the max version ever applied to this database
+	maxVersion, _ := store.GetMetadata(versionCtx, "bd_version_max")
 
-		// Auto-upgrade database to daemon version
-		// The daemon operates on its own database, so it should always use its own version
+	if dbVersion != "" && dbVersion != Version {
+		cmp := doctor.CompareVersions(Version, dbVersion)
+		maxCmp := doctor.CompareVersions(Version, maxVersion)
+
+		if cmp < 0 {
+			// DOWNGRADE detected: daemon version is older than database version
+			log.Error("refusing to downgrade database schema",
+				"db_version", dbVersion,
+				"daemon_version", Version,
+				"max_version_ever", maxVersion,
+			)
+			log.Error("a newer daemon previously used this database; downgrading could cause data loss")
+			log.Error("upgrade the daemon to at least version " + dbVersion + ", or set BEADS_IGNORE_VERSION_MISMATCH=1 to force")
+
+			if os.Getenv("BEADS_IGNORE_VERSION_MISMATCH") != "1" {
+				return // Use return instead of os.Exit to allow defers to run
+			}
+			log.Warn("proceeding despite downgrade (BEADS_IGNORE_VERSION_MISMATCH=1)")
+		} else if maxVersion != "" && maxCmp < 0 {
+			// Current version is newer than db_version but older than max_version_ever.
+			// This means a newer version ran, then an even newer version ran, then
+			// this intermediate version is trying to start. Still a downgrade risk.
+			log.Error("refusing to downgrade database schema",
+				"db_version", dbVersion,
+				"daemon_version", Version,
+				"max_version_ever", maxVersion,
+			)
+			log.Error("a newer daemon (version " + maxVersion + ") previously used this database")
+			log.Error("upgrade the daemon to at least version " + maxVersion + ", or set BEADS_IGNORE_VERSION_MISMATCH=1 to force")
+
+			if os.Getenv("BEADS_IGNORE_VERSION_MISMATCH") != "1" {
+				return // Use return instead of os.Exit to allow defers to run
+			}
+			log.Warn("proceeding despite downgrade (BEADS_IGNORE_VERSION_MISMATCH=1)")
+		}
+
+		log.Info("auto-upgrading database schema version", "from", dbVersion, "to", Version)
+
 		if err := store.SetMetadata(versionCtx, "bd_version", Version); err != nil {
 			log.Error("failed to update database version", "error", err)
 
-			// Allow override via environment variable for emergencies
 			if os.Getenv("BEADS_IGNORE_VERSION_MISMATCH") != "1" {
 				return // Use return instead of os.Exit to allow defers to run
 			}
@@ -597,6 +633,13 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		if err := store.SetMetadata(versionCtx, "bd_version", Version); err != nil {
 			log.Error("failed to set database version", "error", err)
 			return // Use return instead of os.Exit to allow defers to run
+		}
+	}
+
+	// Update max version if this daemon is newer than any previously recorded max
+	if maxVersion == "" || doctor.CompareVersions(Version, maxVersion) > 0 {
+		if err := store.SetMetadata(versionCtx, "bd_version_max", Version); err != nil {
+			log.Warn("failed to update max version tracking", "error", err)
 		}
 	}
 

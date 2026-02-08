@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
@@ -267,6 +268,19 @@ func autoMigrateOnVersionBump(beadsDir string) {
 		return
 	}
 
+	// Check for downgrade: refuse to overwrite a newer version with an older one (gt-e3uiy)
+	maxVersion, _ := store.GetMetadata(ctx, "bd_version_max")
+	if dbVersion != "" && doctor.CompareVersions(Version, dbVersion) < 0 {
+		debug.Logf("auto-migrate: refusing downgrade from %s to %s", dbVersion, Version)
+		_ = store.Close()
+		return
+	}
+	if maxVersion != "" && doctor.CompareVersions(Version, maxVersion) < 0 {
+		debug.Logf("auto-migrate: refusing downgrade (max version %s > current %s)", maxVersion, Version)
+		_ = store.Close()
+		return
+	}
+
 	// Perform migration: update database version
 	debug.Logf("auto-migrate: migrating database from %s to %s", dbVersion, Version)
 	if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
@@ -274,6 +288,13 @@ func autoMigrateOnVersionBump(beadsDir string) {
 		debug.Logf("auto-migrate: failed to update database version: %v", err)
 		_ = store.Close()
 		return
+	}
+
+	// Update max version tracking
+	if maxVersion == "" || doctor.CompareVersions(Version, maxVersion) > 0 {
+		if err := store.SetMetadata(ctx, "bd_version_max", Version); err != nil {
+			debug.Logf("auto-migrate: failed to update max version: %v", err)
+		}
 	}
 
 	// Close database
