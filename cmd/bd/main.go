@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,6 +30,10 @@ import (
 	"github.com/steveyegge/beads/internal/storage/memory"
 	"github.com/steveyegge/beads/internal/utils"
 )
+
+// binaryName is the resolved name of the binary (e.g., "bd", "ops", "life").
+// Set in main() before cobra executes. Used for root command detection.
+var binaryName = "bd"
 
 var (
 	dbPath       string
@@ -420,7 +425,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Skip for root command with no subcommand (just shows help)
-		if cmd.Parent() == nil && cmdName == "bd" {
+		if cmd.Parent() == nil && cmdName == binaryName {
 			return
 		}
 
@@ -1094,7 +1099,49 @@ func checkBlockedEnvVars() error {
 	return nil
 }
 
+// loadInstanceConfig reads ~/.config/beads/instances.json, a map from
+// binary name to .beads directory path. Returns nil if the file doesn't exist.
+//
+// Example file:
+//
+//	{
+//	  "ops": "~/.openclaw/.beads",
+//	  "life": "~/.life/.beads"
+//	}
+func loadInstanceConfig() map[string]string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".config", "beads", "instances.json"))
+	if err != nil {
+		return nil
+	}
+	var instances map[string]string
+	if err := json.Unmarshal(data, &instances); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: invalid ~/.config/beads/instances.json: %v\n", err)
+		return nil
+	}
+	return instances
+}
+
 func main() {
+	// Dispatch by binary name (busybox pattern).
+	// If the binary is invoked via a symlink whose name matches an entry in
+	// ~/.config/beads/instances.json, set BEADS_DIR to the configured path
+	// and adjust cobra help text to match the invoked name.
+	name := filepath.Base(os.Args[0])
+	if instances := loadInstanceConfig(); instances != nil {
+		if dir, ok := instances[name]; ok {
+			binaryName = name
+			home := os.Getenv("HOME")
+			expanded := strings.Replace(dir, "~", home, 1)
+			os.Setenv("BEADS_DIR", expanded)
+			rootCmd.Use = name
+			rootCmd.Short = name + " - Dependency-aware issue tracker"
+		}
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
