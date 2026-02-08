@@ -159,6 +159,20 @@ jobs:
           ./bd.exe close $id
           echo "All smoke tests passed!"
 
+  fmt-check:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Check gofmt
+        run: make fmt-check
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

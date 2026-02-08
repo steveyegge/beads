@@ -1,6 +1,6 @@
 # Makefile for beads project
 
-.PHONY: all build test bench bench-quick clean install help check-up-to-date
+.PHONY: all build test bench bench-quick clean install help check-up-to-date fmt fmt-check
 
 # Default target
 all: build
@@ -71,6 +71,25 @@ install: check-up-to-date build
 	@ln -s $(BINARY) $(INSTALL_DIR)/beads
 	@echo "Created 'beads' alias -> $(BINARY)"
 
+# Format all Go files
+fmt:
+	@echo "Formatting Go files..."
+	@gofmt -w .
+	@echo "Done"
+
+# Check that all Go files are properly formatted (for CI)
+fmt-check:
+	@echo "Checking Go formatting..."
+	@UNFORMATTED=$$(gofmt -l .); \
+	if [ -n "$$UNFORMATTED" ]; then \
+		echo "The following files are not properly formatted:"; \
+		echo "$$UNFORMATTED"; \
+		echo ""; \
+		echo "Run 'make fmt' to fix formatting"; \
+		exit 1; \
+	fi
+	@echo "All Go files are properly formatted"
+
 # Clean build artifacts and benchmark profiles
 clean:
 	@echo "Cleaning..."
@@ -86,5 +105,7 @@ help:
 	@echo "  make bench        - Run performance benchmarks (generates CPU profiles)"
 	@echo "  make bench-quick  - Run quick benchmarks (shorter benchtime)"
 	@echo "  make install      - Install bd to ~/.local/bin (with codesign on macOS, includes 'beads' alias)"
+	@echo "  make fmt          - Format all Go files with gofmt"
+	@echo "  make fmt-check    - Check Go formatting (for CI)"
 	@echo "  make clean        - Remove build artifacts and profile files"
 	@echo "  make help         - Show this help message"
