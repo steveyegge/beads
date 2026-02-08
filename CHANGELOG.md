@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Reverted
+
+- **Embedded Dolt mode restored** - The v0.49.5 removal was premature; embedded mode is still needed in Beads (only Gas Town should be server-only). Restores dolthub/driver, advisory flock, embedded connector lifecycle, CGO build tags, and vendored go-icu-regex
+
 ## [0.49.5] - 2026-02-08
 
 ### Added
@@ -23,12 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Embedded Dolt mode removed** - Server-only Dolt connections now; embedded driver fully removed (bd-esqfe). Windows Dolt backend connects via MySQL protocol
+- **Embedded Dolt mode removed** - Server-only Dolt connections now; embedded driver fully removed (bd-esqfe). Windows Dolt backend connects via MySQL protocol. **Note: reverted post-release — see [Unreleased]**
 - **`bd init` defaults to chaining hooks** - No longer prompts; chains by default (bd-bxha)
 - **Homebrew formula name** - `bd doctor` now correctly suggests `brew upgrade beads` instead of `brew upgrade bd`
 - **Doctor output** - Summary-first layout with improved formatting (bd-4qfb)
 - **JSON output standardized** - Consistent JSON format across all commands (bd-au0.7)
-- **Go toolchain** - Downgraded from 1.25.7 to 1.25.5 for Nix compatibility
+- **Go toolchain** - Downgraded from 1.25.7 to 1.25.5 for Nix compatibility. **Note: back to 1.25.7 after embedded Dolt restore — see [Unreleased]**
 
 ### Fixed
 
