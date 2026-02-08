@@ -439,7 +439,7 @@ func TestDecisionCreateViaDaemon_BasicCreate(t *testing.T) {
 	createArgs := &rpc.DecisionCreateArgs{
 		IssueID:       gateIssue.ID,
 		Prompt:        "Should we implement feature X?",
-		Options:       []string{"Yes, implement it", "No, defer it", "Need more research"},
+		Options:       rpc.StringOptions("Yes, implement it", "No, defer it", "Need more research"),
 		DefaultOption: "need-more-research",
 		MaxIterations: 5,
 		RequestedBy:   "product-agent",
@@ -497,12 +497,12 @@ func TestDecisionCreateViaDaemon_WithOptions(t *testing.T) {
 	createArgs := &rpc.DecisionCreateArgs{
 		IssueID: gateIssue.ID,
 		Prompt:  "Which database should we use?",
-		Options: []string{
+		Options: rpc.StringOptions(
 			"PostgreSQL: Reliable, full-featured RDBMS",
 			"MySQL: Popular, fast for read-heavy workloads",
 			"SQLite: Simple, embedded database",
 			"MongoDB: Document-oriented, flexible schema",
-		},
+		),
 		DefaultOption: "postgresql",
 		MaxIterations: 3,
 		RequestedBy:   "data-architect",
@@ -758,7 +758,7 @@ func TestDecisionCreate_MinimalArgs(t *testing.T) {
 	createArgs := &rpc.DecisionCreateArgs{
 		IssueID: gateIssue.ID,
 		Prompt:  "Simple yes/no question?",
-		Options: []string{"Yes", "No"},
+		Options: rpc.StringOptions("Yes", "No"),
 	}
 
 	resp, err := client.DecisionCreate(createArgs)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // ============================================================================
@@ -47,7 +49,7 @@ func TestDecisionCreate_Basic(t *testing.T) {
 	createArgs := &DecisionCreateArgs{
 		IssueID: issueID,
 		Prompt:  "Which database should we use?",
-		Options: []string{"PostgreSQL", "MySQL", "SQLite"},
+		Options: StringOptions("PostgreSQL", "MySQL", "SQLite"),
 		DefaultOption: "SQLite",
 		MaxIterations: 5,
 		RequestedBy:   "test-agent",
@@ -84,8 +86,8 @@ func TestDecisionCreate_Basic(t *testing.T) {
 		t.Errorf("Expected iteration=1, got %d", result.Decision.Iteration)
 	}
 
-	// Verify options are stored as JSON
-	var storedOptions []string
+	// Verify options are stored as structured JSON
+	var storedOptions []types.DecisionOption
 	if err := json.Unmarshal([]byte(result.Decision.Options), &storedOptions); err != nil {
 		t.Errorf("Failed to unmarshal stored options: %v", err)
 	} else {
@@ -93,8 +95,8 @@ func TestDecisionCreate_Basic(t *testing.T) {
 			t.Errorf("Expected %d options, got %d", len(createArgs.Options), len(storedOptions))
 		}
 		for i, opt := range createArgs.Options {
-			if storedOptions[i] != opt {
-				t.Errorf("Option %d: expected %q, got %q", i, opt, storedOptions[i])
+			if storedOptions[i].Label != opt.Label {
+				t.Errorf("Option %d: expected label %q, got %q", i, opt.Label, storedOptions[i].Label)
 			}
 		}
 	}
@@ -131,7 +133,7 @@ func TestDecisionCreate_DefaultMaxIterations(t *testing.T) {
 	createArgs := &DecisionCreateArgs{
 		IssueID: issueID,
 		Prompt:  "Default max iterations test",
-		Options: []string{"A", "B"},
+		Options: StringOptions("A", "B"),
 		// MaxIterations not set
 	}
 
@@ -159,7 +161,7 @@ func TestDecisionGet_RetrieveDecision(t *testing.T) {
 	createArgs := &DecisionCreateArgs{
 		IssueID:       issueID,
 		Prompt:        "What color should the button be?",
-		Options:       []string{"Red", "Green", "Blue"},
+		Options:       StringOptions("Red", "Green", "Blue"),
 		DefaultOption: "Blue",
 		MaxIterations: 4,
 		RequestedBy:   "designer-agent",
@@ -200,7 +202,7 @@ func TestDecisionGet_RetrieveDecision(t *testing.T) {
 	}
 
 	// Verify options
-	var options []string
+	var options []types.DecisionOption
 	if err := json.Unmarshal([]byte(result.Decision.Options), &options); err != nil {
 		t.Errorf("Failed to unmarshal options: %v", err)
 	} else if len(options) != 3 {
@@ -238,7 +240,7 @@ func TestDecisionResolve_SelectOption(t *testing.T) {
 	createArgs := &DecisionCreateArgs{
 		IssueID: issueID,
 		Prompt:  "Which framework?",
-		Options: []string{"React", "Vue", "Angular"},
+		Options: StringOptions("React", "Vue", "Angular"),
 	}
 
 	_, err := client.DecisionCreate(createArgs)
@@ -300,7 +302,7 @@ func TestDecisionResolve_WithTextGuidance(t *testing.T) {
 	createArgs := &DecisionCreateArgs{
 		IssueID: issueID,
 		Prompt:  "How should we handle authentication?",
-		Options: []string{"JWT", "Session", "OAuth"},
+		Options: StringOptions("JWT", "Session", "OAuth"),
 	}
 
 	_, err := client.DecisionCreate(createArgs)
@@ -359,7 +361,7 @@ func TestDecisionList_PendingDecisions(t *testing.T) {
 		_, err := client.DecisionCreate(&DecisionCreateArgs{
 			IssueID: issueID,
 			Prompt:  "Decision prompt " + string(rune('A'+i)),
-			Options: []string{"Yes", "No"},
+			Options: StringOptions("Yes", "No"),
 		})
 		if err != nil {
 			t.Fatalf("DecisionCreate failed for issue %d: %v", i+1, err)
@@ -411,7 +413,7 @@ func TestDecisionList_IncludesResolvedWhenAll(t *testing.T) {
 	_, err := client.DecisionCreate(&DecisionCreateArgs{
 		IssueID: issueID1,
 		Prompt:  "Will be resolved",
-		Options: []string{"A", "B"},
+		Options: StringOptions("A", "B"),
 	})
 	if err != nil {
 		t.Fatalf("DecisionCreate failed: %v", err)
@@ -420,7 +422,7 @@ func TestDecisionList_IncludesResolvedWhenAll(t *testing.T) {
 	_, err = client.DecisionCreate(&DecisionCreateArgs{
 		IssueID: issueID2,
 		Prompt:  "Will stay pending",
-		Options: []string{"X", "Y"},
+		Options: StringOptions("X", "Y"),
 	})
 	if err != nil {
 		t.Fatalf("DecisionCreate failed: %v", err)
@@ -475,7 +477,7 @@ func TestDecisionCreate_IssueNotFound(t *testing.T) {
 	createArgs := &DecisionCreateArgs{
 		IssueID: "bd-nonexistent-12345",
 		Prompt:  "This should fail",
-		Options: []string{"A", "B"},
+		Options: StringOptions("A", "B"),
 	}
 
 	result, err := client.DecisionCreate(createArgs)
@@ -561,7 +563,7 @@ func TestDecisionResolve_AlreadyResolved(t *testing.T) {
 	_, err := client.DecisionCreate(&DecisionCreateArgs{
 		IssueID: issueID,
 		Prompt:  "Choose one",
-		Options: []string{"First", "Second"},
+		Options: StringOptions("First", "Second"),
 	})
 	if err != nil {
 		t.Fatalf("DecisionCreate failed: %v", err)
@@ -608,7 +610,7 @@ func TestDecisionCreate_EmptyOptions(t *testing.T) {
 	createArgs := &DecisionCreateArgs{
 		IssueID: issueID,
 		Prompt:  "Decision with empty options",
-		Options: []string{},
+		Options: StringOptions(),
 	}
 
 	result, err := client.DecisionCreate(createArgs)
@@ -623,7 +625,7 @@ func TestDecisionCreate_EmptyOptions(t *testing.T) {
 	}
 
 	// Verify options are stored as empty array
-	var options []string
+	var options []types.DecisionOption
 	if err := json.Unmarshal([]byte(result.Decision.Options), &options); err != nil {
 		t.Errorf("Failed to unmarshal options: %v", err)
 	} else if len(options) != 0 {
@@ -643,7 +645,7 @@ func TestDecisionCreate_DuplicateDecision(t *testing.T) {
 	_, err := client.DecisionCreate(&DecisionCreateArgs{
 		IssueID: issueID,
 		Prompt:  "First decision",
-		Options: []string{"A", "B"},
+		Options: StringOptions("A", "B"),
 	})
 	if err != nil {
 		t.Fatalf("First DecisionCreate failed: %v", err)
@@ -653,7 +655,7 @@ func TestDecisionCreate_DuplicateDecision(t *testing.T) {
 	result, err := client.DecisionCreate(&DecisionCreateArgs{
 		IssueID: issueID,
 		Prompt:  "Second decision",
-		Options: []string{"X", "Y"},
+		Options: StringOptions("X", "Y"),
 	})
 
 	// Document actual behavior
@@ -688,7 +690,7 @@ func TestDecisionWorkflow_CreateGetResolve(t *testing.T) {
 	createResult, err := client.DecisionCreate(&DecisionCreateArgs{
 		IssueID:       issueID,
 		Prompt:        "How should we proceed?",
-		Options:       []string{"Fast path", "Safe path", "Skip"},
+		Options:       StringOptions("Fast path", "Safe path", "Skip"),
 		DefaultOption: "Safe path",
 		RequestedBy:   "workflow-agent",
 	})
@@ -793,7 +795,7 @@ func TestDecisionCreate_WithAllFields(t *testing.T) {
 	createArgs := &DecisionCreateArgs{
 		IssueID:       issueID,
 		Prompt:        "Complete decision with all fields",
-		Options:       []string{"Option A: Do X", "Option B: Do Y", "Option C: Do nothing"},
+		Options:       StringOptions("Option A: Do X", "Option B: Do Y", "Option C: Do nothing"),
 		DefaultOption: "Option C: Do nothing",
 		MaxIterations: 10,
 		RequestedBy:   "comprehensive-test-agent",
@@ -848,8 +850,8 @@ func TestDecisionTypes_OptionsAreJSON(t *testing.T) {
 	defer cleanup()
 
 	testCases := []struct {
-		name    string
-		options []string
+		name   string
+		labels []string
 	}{
 		{"simple strings", []string{"a", "b", "c"}},
 		{"strings with spaces", []string{"option one", "option two"}},
@@ -865,28 +867,32 @@ func TestDecisionTypes_OptionsAreJSON(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			issueID := createTestIssueForDecision(t, client, "Options test: "+tc.name)
 
+			opts := StringOptions(tc.labels...)
 			result, err := client.DecisionCreate(&DecisionCreateArgs{
 				IssueID: issueID,
 				Prompt:  "Test: " + tc.name,
-				Options: tc.options,
+				Options: opts,
 			})
 			if err != nil {
 				t.Fatalf("DecisionCreate failed: %v", err)
 			}
 
-			// Verify options can be unmarshaled correctly
-			var stored []string
+			// Verify options can be unmarshaled as structured DecisionOption objects
+			var stored []types.DecisionOption
 			if err := json.Unmarshal([]byte(result.Decision.Options), &stored); err != nil {
 				t.Fatalf("Failed to unmarshal options: %v", err)
 			}
 
-			if len(stored) != len(tc.options) {
-				t.Errorf("Expected %d options, got %d", len(tc.options), len(stored))
+			if len(stored) != len(tc.labels) {
+				t.Errorf("Expected %d options, got %d", len(tc.labels), len(stored))
 			}
 
-			for i, opt := range tc.options {
-				if stored[i] != opt {
-					t.Errorf("Option %d mismatch: expected %q, got %q", i, opt, stored[i])
+			for i, label := range tc.labels {
+				if stored[i].Label != label {
+					t.Errorf("Option %d label mismatch: expected %q, got %q", i, label, stored[i].Label)
+				}
+				if stored[i].ID == "" {
+					t.Errorf("Option %d should have a non-empty ID", i)
 				}
 			}
 		})
@@ -911,7 +917,7 @@ func TestDecisionGet_AfterResolve(t *testing.T) {
 	createResult, err := client.DecisionCreate(&DecisionCreateArgs{
 		IssueID:       issueID,
 		Prompt:        "How should we proceed?",
-		Options:       []string{"Fast path", "Safe path", "Skip"},
+		Options:       StringOptions("Fast path", "Safe path", "Skip"),
 		DefaultOption: "Safe path",
 		RequestedBy:   "workflow-agent",
 	})

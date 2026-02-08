@@ -164,16 +164,9 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 
 	// Prefer daemon RPC when available
 	if daemonClient != nil {
-		// Convert structured options to string array for RPC
-		// The daemon expects simple string labels for options
-		optionStrings := make([]string, len(options))
-		for i, opt := range options {
-			optionStrings[i] = opt.Label
-		}
-
 		createArgs := &rpc.DecisionCreateArgs{
 			Prompt:        prompt,
-			Options:       optionStrings,
+			Options:       options,
 			DefaultOption: defaultOption,
 			MaxIterations: maxIterations,
 			RequestedBy:   requestedBy,

@@ -39,7 +39,7 @@ func TestDecisionCreate(t *testing.T) {
 		args := &DecisionCreateArgs{
 			IssueID:       issue.ID,
 			Prompt:        "Which database should we use?",
-			Options:       []string{"PostgreSQL", "MySQL", "SQLite"},
+			Options:       StringOptions("PostgreSQL", "MySQL", "SQLite"),
 			DefaultOption: "PostgreSQL",
 			MaxIterations: 3,
 			RequestedBy:   "test-agent",
@@ -76,8 +76,8 @@ func TestDecisionCreate(t *testing.T) {
 			t.Errorf("Expected RequestedBy %s, got %s", args.RequestedBy, resp.Decision.RequestedBy)
 		}
 
-		// Verify options were stored as JSON
-		var storedOptions []string
+		// Verify options were stored as structured JSON
+		var storedOptions []types.DecisionOption
 		if err := json.Unmarshal([]byte(resp.Decision.Options), &storedOptions); err != nil {
 			t.Fatalf("Failed to unmarshal stored options: %v", err)
 		}
@@ -97,7 +97,7 @@ func TestDecisionCreate(t *testing.T) {
 		args := &DecisionCreateArgs{
 			IssueID: "nonexistent-issue-id",
 			Prompt:  "Should fail?",
-			Options: []string{"Yes", "No"},
+			Options: StringOptions("Yes", "No"),
 		}
 
 		_, err := client.DecisionCreate(args)
@@ -129,7 +129,7 @@ func TestDecisionGet(t *testing.T) {
 	decisionArgs := &DecisionCreateArgs{
 		IssueID:       issue.ID,
 		Prompt:        "Test prompt",
-		Options:       []string{"Option A", "Option B"},
+		Options:       StringOptions("Option A", "Option B"),
 		MaxIterations: 5,
 	}
 
@@ -207,7 +207,7 @@ func TestDecisionResolveWithOption(t *testing.T) {
 	decisionArgs := &DecisionCreateArgs{
 		IssueID: issue.ID,
 		Prompt:  "Which option?",
-		Options: []string{"Option A", "Option B", "Option C"},
+		Options: StringOptions("Option A", "Option B", "Option C"),
 	}
 
 	_, err = client.DecisionCreate(decisionArgs)
@@ -284,7 +284,7 @@ func TestDecisionResolveWithGuidance(t *testing.T) {
 	decisionArgs := &DecisionCreateArgs{
 		IssueID:       issue.ID,
 		Prompt:        "Need more context",
-		Options:       []string{"Proceed", "Wait", "Abort"},
+		Options:       StringOptions("Proceed", "Wait", "Abort"),
 		MaxIterations: 3,
 	}
 
@@ -336,7 +336,7 @@ func TestDecisionResolveWithGuidance(t *testing.T) {
 		decisionArgs2 := &DecisionCreateArgs{
 			IssueID: issue2.ID,
 			Prompt:  "Combined test",
-			Options: []string{"A", "B"},
+			Options: StringOptions("A", "B"),
 		}
 		client.DecisionCreate(decisionArgs2)
 
@@ -405,7 +405,7 @@ func TestDecisionList(t *testing.T) {
 			decisionArgs := &DecisionCreateArgs{
 				IssueID: issue.ID,
 				Prompt:  "Decision " + issue.ID,
-				Options: []string{"Yes", "No"},
+				Options: StringOptions("Yes", "No"),
 			}
 			_, err = client.DecisionCreate(decisionArgs)
 			if err != nil {
@@ -454,7 +454,7 @@ func TestDecisionList(t *testing.T) {
 		decisionArgs := &DecisionCreateArgs{
 			IssueID: issue.ID,
 			Prompt:  "To be resolved",
-			Options: []string{"Yes", "No"},
+			Options: StringOptions("Yes", "No"),
 		}
 		_, err = client.DecisionCreate(decisionArgs)
 		if err != nil {
@@ -501,7 +501,7 @@ func TestDecisionErrorHandling(t *testing.T) {
 		args := &DecisionCreateArgs{
 			IssueID: "",
 			Prompt:  "Empty issue ID - should create gate",
-			Options: []string{"Yes"},
+			Options: StringOptions("Yes"),
 		}
 
 		resp, err := client.DecisionCreate(args)
@@ -542,7 +542,7 @@ func TestDecisionErrorHandling(t *testing.T) {
 		args := &DecisionCreateArgs{
 			IssueID: "bd-nonexistent",
 			Prompt:  "Should fail",
-			Options: []string{"A", "B"},
+			Options: StringOptions("A", "B"),
 		}
 
 		_, err := client.DecisionCreate(args)
@@ -611,7 +611,7 @@ func TestDecisionClientResponseParsing(t *testing.T) {
 	decisionArgs := &DecisionCreateArgs{
 		IssueID:       issue.ID,
 		Prompt:        "Parsing test prompt",
-		Options:       []string{"Alpha", "Beta", "Gamma"},
+		Options:       StringOptions("Alpha", "Beta", "Gamma"),
 		DefaultOption: "Beta",
 		MaxIterations: 5,
 		RequestedBy:   "parser-test",

@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -882,9 +883,9 @@ type ConfigUnsetResponse struct {
 
 // DecisionCreateArgs represents arguments for creating a decision point
 type DecisionCreateArgs struct {
-	IssueID       string   `json:"issue_id"`                 // Issue ID to attach decision to
-	Prompt        string   `json:"prompt"`                   // Question to ask
-	Options       []string `json:"options"`                  // Available choices
+	IssueID       string                 `json:"issue_id"`                 // Issue ID to attach decision to
+	Prompt        string                 `json:"prompt"`                   // Question to ask
+	Options       []types.DecisionOption `json:"options"`                  // Available choices (structured)
 	DefaultOption string   `json:"default_option,omitempty"` // Default option if no response
 	MaxIterations int      `json:"max_iterations,omitempty"` // Max follow-up iterations (default 3)
 	RequestedBy   string   `json:"requested_by,omitempty"`   // Who requested this decision
@@ -893,6 +894,20 @@ type DecisionCreateArgs struct {
 	Blocks        string   `json:"blocks,omitempty"`         // Issue ID this decision blocks
 	Predecessor   string   `json:"predecessor,omitempty"`    // Previous decision in chain
 	Urgency       string   `json:"urgency,omitempty"`        // Urgency level: high, medium, low
+}
+
+// StringOptions converts a slice of label strings into DecisionOption objects.
+// This is a convenience for callers (tests, legacy code) that only have labels.
+func StringOptions(labels ...string) []types.DecisionOption {
+	opts := make([]types.DecisionOption, len(labels))
+	for i, l := range labels {
+		opts[i] = types.DecisionOption{
+			ID:    strings.ToLower(strings.ReplaceAll(l, " ", "-")),
+			Short: l,
+			Label: l,
+		}
+	}
+	return opts
 }
 
 // DecisionGetArgs represents arguments for getting a decision point

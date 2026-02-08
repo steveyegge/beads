@@ -365,14 +365,9 @@ func createStopDecision(ctx context.Context, prompt string, options []types.Deci
 	}
 
 	if daemonClient != nil {
-		optionStrings := make([]string, len(options))
-		for i, opt := range options {
-			optionStrings[i] = opt.Label
-		}
-
 		createArgs := &rpc.DecisionCreateArgs{
 			Prompt:        prompt,
-			Options:       optionStrings,
+			Options:       options,
 			DefaultOption: defaultOption,
 			MaxIterations: 1,
 			RequestedBy:   "stop-hook",
