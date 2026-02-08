@@ -195,6 +195,7 @@ func applyFixList(path string, fixes []doctorCheck) {
 		"Database Integrity",
 		"Database",
 		"Schema Compatibility",
+		"Label Mutex Policy",
 		"JSONL Integrity",
 		"DB-JSONL Sync",
 		"Sync Divergence",
@@ -304,6 +305,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			// No auto-fix: git conflicts require manual resolution
 			fmt.Printf("  ⚠ Resolve conflicts manually: git checkout --ours or --theirs .beads/issues.jsonl\n")
 			continue
+		case "Label Mutex Policy":
+			err = fix.LabelMutexPolicy(path)
 		case "Stale Closed Issues":
 			// consolidate cleanup into doctor --fix
 			err = fix.StaleClosedIssues(path)

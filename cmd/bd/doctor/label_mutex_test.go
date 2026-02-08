@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/labelmutex"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -437,9 +438,9 @@ validation:
 		t.Fatal(err)
 	}
 
-	groups, err := parseMutexGroups(configPath)
+	groups, err := labelmutex.ParseMutexGroups(configPath)
 	if err != nil {
-		t.Fatalf("parseMutexGroups: %v", err)
+		t.Fatalf("ParseMutexGroups: %v", err)
 	}
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 group, got %d", len(groups))
@@ -470,9 +471,9 @@ validation:
 		t.Fatal(err)
 	}
 
-	groups, err := parseMutexGroups(configPath)
+	groups, err := labelmutex.ParseMutexGroups(configPath)
 	if err != nil {
-		t.Fatalf("parseMutexGroups: %v", err)
+		t.Fatalf("ParseMutexGroups: %v", err)
 	}
 
 	g := groups[0]
@@ -482,7 +483,7 @@ validation:
 }
 
 func TestParseMutexGroups_MissingFile(t *testing.T) {
-	groups, err := parseMutexGroups("/nonexistent/config.yaml")
+	groups, err := labelmutex.ParseMutexGroups("/nonexistent/config.yaml")
 	if err != nil {
 		t.Fatalf("expected nil error for missing file, got: %v", err)
 	}
@@ -502,7 +503,7 @@ validation:
 		t.Fatal(err)
 	}
 
-	groups, err := parseMutexGroups(configPath)
+	groups, err := labelmutex.ParseMutexGroups(configPath)
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}

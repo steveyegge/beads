@@ -3,193 +3,16 @@ package doctor
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/steveyegge/beads/internal/labelmutex"
 	"github.com/steveyegge/beads/internal/query"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
-
-// MutexGroup defines a mutually exclusive label set parsed from config.
-type MutexGroup struct {
-	Name     string
-	Labels   []string
-	Required bool
-	Query    string // optional scope query using internal/query syntax
-}
-
-// mutexViolation records a single label mutex violation on an issue.
-type mutexViolation struct {
-	IssueID   string
-	GroupName string
-	Kind      string   // "conflict" or "missing"
-	Present   []string // conflicting labels (for conflict) or empty (for missing)
-	Expected  []string // the mutex group labels
-}
-
-// parseMutexGroups reads validation.labels.mutex from a config.yaml file.
-// Returns nil, nil if the key is absent or the file doesn't exist.
-func parseMutexGroups(configPath string) ([]MutexGroup, error) {
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return nil, nil
-	}
-
-	v := viper.New()
-	v.SetConfigFile(configPath)
-	v.SetConfigType("yaml")
-	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
-	}
-
-	raw := v.Get("validation.labels.mutex")
-	if raw == nil {
-		return nil, nil
-	}
-
-	rawSlice, ok := raw.([]any)
-	if !ok {
-		return nil, fmt.Errorf("validation.labels.mutex must be a list, got %T", raw)
-	}
-
-	var groups []MutexGroup
-	for i, item := range rawSlice {
-		m, ok := item.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("validation.labels.mutex[%d]: expected map, got %T", i, item)
-		}
-
-		group := MutexGroup{}
-
-		// Parse name (optional)
-		if name, ok := m["name"].(string); ok {
-			group.Name = strings.TrimSpace(name)
-		}
-
-		// Parse labels (required)
-		labelsRaw, ok := m["labels"]
-		if !ok {
-			return nil, fmt.Errorf("validation.labels.mutex[%d]: missing 'labels' field", i)
-		}
-		labelsSlice, ok := labelsRaw.([]any)
-		if !ok {
-			return nil, fmt.Errorf("validation.labels.mutex[%d]: 'labels' must be a list", i)
-		}
-		for j, l := range labelsSlice {
-			s, ok := l.(string)
-			if !ok {
-				return nil, fmt.Errorf("validation.labels.mutex[%d].labels[%d]: expected string, got %T", i, j, l)
-			}
-			s = strings.TrimSpace(s)
-			if s == "" {
-				continue
-			}
-			group.Labels = append(group.Labels, s)
-		}
-		if len(group.Labels) < 2 {
-			return nil, fmt.Errorf("validation.labels.mutex[%d]: need at least 2 labels, got %d", i, len(group.Labels))
-		}
-
-		// Dedupe labels within group
-		seen := make(map[string]bool, len(group.Labels))
-		deduped := group.Labels[:0]
-		for _, l := range group.Labels {
-			if !seen[l] {
-				seen[l] = true
-				deduped = append(deduped, l)
-			}
-		}
-		group.Labels = deduped
-
-		// Parse required (optional, defaults to false)
-		if req, ok := m["required"].(bool); ok {
-			group.Required = req
-		}
-
-		// Parse scope.query (optional)
-		if scope, ok := m["scope"].(map[string]any); ok {
-			if q, ok := scope["query"].(string); ok {
-				group.Query = strings.TrimSpace(q)
-			}
-		}
-
-		// Synthesize name if not provided
-		if group.Name == "" {
-			group.Name = "labels: " + strings.Join(group.Labels, ",")
-		}
-
-		groups = append(groups, group)
-	}
-
-	return groups, nil
-}
-
-// shouldExcludeIssue returns true if the issue should be excluded from mutex checks
-// by default (when no scope query is provided).
-func shouldExcludeIssue(issue *types.Issue) bool {
-	if issue.Status == types.StatusTombstone {
-		return true
-	}
-	if issue.Ephemeral {
-		return true
-	}
-	if issue.IsTemplate {
-		return true
-	}
-	if issue.Pinned {
-		return true
-	}
-	if issue.Status == types.StatusPinned {
-		return true
-	}
-	return false
-}
-
-// findViolations checks a set of issues+labels against mutex groups.
-func findViolations(issues []*types.Issue, labelsMap map[string][]string, groups []MutexGroup) []mutexViolation {
-	var violations []mutexViolation
-
-	for _, issue := range issues {
-		issueLabels := labelsMap[issue.ID]
-		labelSet := make(map[string]bool, len(issueLabels))
-		for _, l := range issueLabels {
-			labelSet[l] = true
-		}
-
-		for _, group := range groups {
-			var present []string
-			for _, gl := range group.Labels {
-				if labelSet[gl] {
-					present = append(present, gl)
-				}
-			}
-
-			if len(present) > 1 {
-				violations = append(violations, mutexViolation{
-					IssueID:   issue.ID,
-					GroupName: group.Name,
-					Kind:      "conflict",
-					Present:   present,
-					Expected:  group.Labels,
-				})
-			}
-			if group.Required && len(present) == 0 {
-				violations = append(violations, mutexViolation{
-					IssueID:   issue.ID,
-					GroupName: group.Name,
-					Kind:      "missing",
-					Expected:  group.Labels,
-				})
-			}
-		}
-	}
-
-	return violations
-}
 
 // CheckLabelMutexInvariants checks that issues conform to label mutex rules
 // defined in validation.labels.mutex in .beads/config.yaml.
@@ -197,7 +20,7 @@ func CheckLabelMutexInvariants(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	configPath := filepath.Join(beadsDir, "config.yaml")
-	groups, err := parseMutexGroups(configPath)
+	groups, err := labelmutex.ParseMutexGroups(configPath)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Label Mutex Invariants",
@@ -231,12 +54,12 @@ func CheckLabelMutexInvariants(path string) DoctorCheck {
 	defer func() { _ = store.Close() }()
 
 	// Process each group — groups may have different scopes.
-	var allViolations []mutexViolation
+	var allViolations []labelmutex.Violation
 
 	// Partition groups by scope query to batch queries where possible.
 	// Groups with no scope query share a default fetch.
-	var defaultGroups []MutexGroup
-	scopedGroups := make(map[string][]MutexGroup) // query string -> groups
+	var defaultGroups []labelmutex.MutexGroup
+	scopedGroups := make(map[string][]labelmutex.MutexGroup) // query string -> groups
 	for _, g := range groups {
 		if g.Query == "" {
 			defaultGroups = append(defaultGroups, g)
@@ -261,7 +84,7 @@ func CheckLabelMutexInvariants(path string) DoctorCheck {
 		// Apply default exclusions.
 		var filtered []*types.Issue
 		for _, issue := range issues {
-			if !shouldExcludeIssue(issue) {
+			if !labelmutex.ShouldExcludeIssue(issue) {
 				filtered = append(filtered, issue)
 			}
 		}
@@ -281,7 +104,7 @@ func CheckLabelMutexInvariants(path string) DoctorCheck {
 					Category: CategoryData,
 				}
 			}
-			allViolations = append(allViolations, findViolations(filtered, labelsMap, defaultGroups)...)
+			allViolations = append(allViolations, labelmutex.FindViolations(filtered, labelsMap, defaultGroups)...)
 		}
 	}
 
@@ -289,7 +112,7 @@ func CheckLabelMutexInvariants(path string) DoctorCheck {
 	for scopeQuery, scopeGroups := range scopedGroups {
 		qr, err := query.EvaluateAt(scopeQuery, time.Now())
 		if err != nil {
-			allViolations = append(allViolations, mutexViolation{
+			allViolations = append(allViolations, labelmutex.Violation{
 				IssueID:   "",
 				GroupName: scopeGroups[0].Name,
 				Kind:      "config",
@@ -323,7 +146,7 @@ func CheckLabelMutexInvariants(path string) DoctorCheck {
 			if err != nil {
 				continue
 			}
-			allViolations = append(allViolations, findViolations(issues, labelsMap, scopeGroups)...)
+			allViolations = append(allViolations, labelmutex.FindViolations(issues, labelsMap, scopeGroups)...)
 		}
 	}
 

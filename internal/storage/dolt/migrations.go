@@ -22,6 +22,7 @@ type Migration struct {
 var migrationsList = []Migration{
 	{"wisp_type_column", migrations.MigrateWispTypeColumn},
 	{"spec_id_column", migrations.MigrateSpecIDColumn},
+	{"label_mutex_policy", migrations.MigrateLabelMutexPolicy},
 }
 
 // RunMigrations executes all registered Dolt migrations in order.
