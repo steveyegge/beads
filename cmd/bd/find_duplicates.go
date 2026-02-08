@@ -95,13 +95,7 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) {
 		}
 	}
 
-	// Check database freshness
-	if daemonClient == nil {
-		if err := ensureDatabaseFresh(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-	}
+	requireFreshDB(ctx)
 
 	// Fetch issues
 	filter := types.IssueFilter{}

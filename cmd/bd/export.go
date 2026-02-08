@@ -197,11 +197,7 @@ Examples:
 			defer func() { _ = store.Close() }()
 		}
 
-		// Check database freshness before reading (bd-2q6d)
-		// Export always uses direct mode (daemon closed above)
-		if err := ensureDatabaseFresh(rootCtx); err != nil {
-			FatalErrorRespectJSON("%v", err)
-		}
+		requireFreshDB(rootCtx)
 
 		// Handle --events and --events-reset flags
 		if eventsFlag || eventsReset {
