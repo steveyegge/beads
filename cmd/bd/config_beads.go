@@ -511,6 +511,8 @@ func runConfigSetBead(cmd *cobra.Command, _ []string) {
 		}
 
 		// Create new bead
+		// Config beads use "hq-cfg-" prefix regardless of daemon's configured prefix.
+		// Set Prefix="hq" so PrefixOverride skips prefix validation on the server.
 		createArgs := &rpc.CreateArgs{
 			ID:        beadID,
 			Title:     title,
@@ -518,6 +520,7 @@ func runConfigSetBead(cmd *cobra.Command, _ []string) {
 			Labels:    allLabels,
 			Rig:       rigField,
 			Metadata:  metadataJSON,
+			Prefix:    "hq",
 		}
 		_, err = daemonClient.Create(createArgs)
 		if err != nil {
