@@ -1,0 +1,63 @@
+# Multi-stage build for agent-controller
+# Uses ubuntu:24.04 for proper ICU/CGO support (Dolt/go-icu-regex)
+
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM ubuntu:24.04 AS builder
+
+# Install build essentials and ICU dev libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libicu-dev \
+    git \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Go 1.23.5 from golang.org (apt has 1.22 which is too old)
+RUN curl -fsSL https://go.dev/dl/go1.23.5.linux-amd64.tar.gz | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
+
+# GOTOOLCHAIN=auto lets Go download 1.25.6 as required by go.mod
+ENV GOTOOLCHAIN=auto
+
+WORKDIR /build
+
+# Copy go mod files first for better layer caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy entire source tree
+COPY . .
+
+# Build agent-controller with CGO enabled for linux/amd64
+ARG VERSION=dev
+ARG BUILD_COMMIT=unknown
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-s -w -X main.Version=${VERSION} -X main.Build=${BUILD_COMMIT}" \
+    -o agent-controller ./cmd/agent-controller
+
+# ── Runtime stage ────────────────────────────────────────────────────────────
+FROM ubuntu:24.04
+
+# Install ICU runtime library and ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libicu74 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user (GID 1000 may already exist as 'ubuntu' in base image)
+RUN groupadd beads 2>/dev/null || true && \
+    useradd -g beads -m -s /bin/bash beads
+
+# Copy binary from builder
+COPY --from=builder /build/agent-controller /agent-controller
+
+# Set ownership
+RUN chown beads:beads /agent-controller
+
+# Switch to non-root user
+USER beads
+
+WORKDIR /home/beads
+
+ENTRYPOINT ["/agent-controller"]
