@@ -3531,44 +3531,6 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 		}
 	}
 
-	// If IssueID is provided, validate it exists; otherwise create a gate issue
-	if args.IssueID != "" {
-		var err error
-		issue, err = store.GetIssue(ctx, args.IssueID)
-		if err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to get issue: %v", err),
-			}
-		}
-		if issue == nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("issue %s not found", args.IssueID),
-			}
-		}
-	} else {
-		// Create a new gate issue for the decision (gt-w3u2o9)
-		gateIssue := &types.Issue{
-			Title:       fmt.Sprintf("[DECISION] %s", args.Prompt),
-			Description: fmt.Sprintf("Decision ID: pending\nQuestion: %s", args.Prompt),
-			Status:      "open",
-			Priority:    2,
-			IssueType:   "gate",
-			AwaitType:   "decision",
-			CreatedBy:   actor,
-			Labels:      []string{"gt:decision", "decision:pending", "urgency:" + urgency},
-		}
-		if err := store.CreateIssue(ctx, gateIssue, actor); err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to create gate issue: %v", err),
-			}
-		}
-		issue = gateIssue
-		args.IssueID = gateIssue.ID
-	}
-
 	// Convert options to JSON
 	optionsJSON, err := json.Marshal(args.Options)
 	if err != nil {
@@ -3586,7 +3548,6 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 
 	now := time.Now()
 	dp := &types.DecisionPoint{
-		IssueID:       args.IssueID,
 		Prompt:        args.Prompt,
 		Context:       args.Context,
 		Options:       string(optionsJSON),
@@ -3600,37 +3561,78 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 		CreatedAt:     now,
 	}
 
-	if err := store.CreateDecisionPoint(ctx, dp); err != nil {
+	// Use a single transaction for gate issue + decision point creation to ensure
+	// atomicity. Previously these were separate transactions, so under Dolt overload
+	// the gate issue could be created but the decision point lost
+	// (beads-epc-fix_dolt_overload_export_hash_scan).
+	if err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		if args.IssueID != "" {
+			// Validate existing issue
+			existingIssue, err := tx.GetIssue(ctx, args.IssueID)
+			if err != nil {
+				return fmt.Errorf("failed to get issue: %w", err)
+			}
+			if existingIssue == nil {
+				return fmt.Errorf("issue %s not found", args.IssueID)
+			}
+			issue = existingIssue
+		} else {
+			// Create a new gate issue for the decision (gt-w3u2o9)
+			gateIssue := &types.Issue{
+				Title:       fmt.Sprintf("[DECISION] %s", args.Prompt),
+				Description: fmt.Sprintf("Decision ID: pending\nQuestion: %s", args.Prompt),
+				Status:      "open",
+				Priority:    2,
+				IssueType:   "gate",
+				AwaitType:   "decision",
+				CreatedBy:   actor,
+				Labels:      []string{"gt:decision", "decision:pending", "urgency:" + urgency},
+			}
+			if err := tx.CreateIssue(ctx, gateIssue, actor); err != nil {
+				return fmt.Errorf("failed to create gate issue: %w", err)
+			}
+			issue = gateIssue
+			args.IssueID = gateIssue.ID
+		}
+
+		dp.IssueID = args.IssueID
+
+		if err := tx.CreateDecisionPoint(ctx, dp); err != nil {
+			return fmt.Errorf("failed to create decision point: %w", err)
+		}
+
+		// Add parent-child dependency if parent specified.
+		if args.Parent != "" {
+			dep := &types.Dependency{
+				IssueID:     args.IssueID,
+				DependsOnID: args.Parent,
+				Type:        types.DepParentChild,
+				CreatedAt:   now,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				// Non-fatal within transaction: log but don't fail the whole create.
+				fmt.Fprintf(os.Stderr, "warning: failed to add parent dependency: %v\n", err)
+			}
+		}
+
+		// Add blocks dependency if specified.
+		if args.Blocks != "" {
+			dep := &types.Dependency{
+				IssueID:     args.Blocks,
+				DependsOnID: args.IssueID,
+				Type:        types.DepBlocks,
+				CreatedAt:   now,
+			}
+			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to add blocks dependency: %v\n", err)
+			}
+		}
+
+		return nil
+	}); err != nil {
 		return Response{
 			Success: false,
-			Error:   fmt.Sprintf("failed to create decision point: %v", err),
-		}
-	}
-
-	// Add parent-child dependency if parent specified.
-	if args.Parent != "" {
-		dep := &types.Dependency{
-			IssueID:     args.IssueID,
-			DependsOnID: args.Parent,
-			Type:        types.DepParentChild,
-			CreatedAt:   now,
-		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			// Non-fatal: decision was created, dependency just failed.
-			fmt.Fprintf(os.Stderr, "warning: failed to add parent dependency: %v\n", err)
-		}
-	}
-
-	// Add blocks dependency if specified.
-	if args.Blocks != "" {
-		dep := &types.Dependency{
-			IssueID:     args.Blocks,
-			DependsOnID: args.IssueID,
-			Type:        types.DepBlocks,
-			CreatedAt:   now,
-		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to add blocks dependency: %v\n", err)
+			Error:   fmt.Sprintf("decision create: %v", err),
 		}
 	}
 

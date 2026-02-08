@@ -190,18 +190,23 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 	}
 
 	// Update export_hashes for all exported issues (GH#1278)
-	// This ensures child issues created with --parent are properly registered
+	// This ensures child issues created with --parent are properly registered.
+	// Use BatchSetExportHashes to avoid flooding Dolt with individual transactions
+	// which saturates the connection pool and causes context deadline exceeded for
+	// concurrent RPCs (beads-epc-fix_dolt_overload_export_hash_scan).
+	hashes := make(map[string]string, len(issues))
 	for _, issue := range issues {
 		contentHash := issue.ContentHash
 		if contentHash == "" {
-			// Compute hash if not already set (common when fetching from DB)
 			contentHash = issue.ComputeContentHash()
 		}
 		if contentHash != "" {
-			if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
-				// Non-fatal warning - continue with other issues
-				fmt.Fprintf(os.Stderr, "Warning: failed to set export hash for %s: %v\n", issue.ID, err)
-			}
+			hashes[issue.ID] = contentHash
+		}
+	}
+	if len(hashes) > 0 {
+		if err := store.BatchSetExportHashes(ctx, hashes); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to batch set export hashes: %v\n", err)
 		}
 	}
 
