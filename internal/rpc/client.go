@@ -259,7 +259,7 @@ func TryConnectAutoWithTimeout(socketPath string, timeout time.Duration) (*Clien
 			return nil, nil
 		}
 		// Wrap HTTPClient in a Client-compatible wrapper
-		return wrapHTTPClient(httpClient), nil
+		return WrapHTTPClient(httpClient), nil
 	}
 
 	// Check if remote daemon host is configured (also check for HTTP URLs in BD_DAEMON_HOST)
@@ -280,7 +280,7 @@ func TryConnectAutoWithTimeout(socketPath string, timeout time.Duration) (*Clien
 				return nil, nil
 			}
 			// Wrap HTTPClient in a Client-compatible wrapper
-			return wrapHTTPClient(httpClient), nil
+			return WrapHTTPClient(httpClient), nil
 		}
 
 		rpcDebugLog("BD_DAEMON_HOST is set, attempting TCP connection to: %s", remoteHost)
@@ -299,9 +299,9 @@ func TryConnectAutoWithTimeout(socketPath string, timeout time.Duration) (*Clien
 	return TryConnectWithTimeout(socketPath, timeout)
 }
 
-// wrapHTTPClient wraps an HTTPClient in a Client struct that delegates to it.
+// WrapHTTPClient wraps an HTTPClient in a Client struct that delegates to it.
 // This allows HTTPClient to be used wherever *Client is expected.
-func wrapHTTPClient(httpClient *HTTPClient) *Client {
+func WrapHTTPClient(httpClient *HTTPClient) *Client {
 	return &Client{
 		httpClient: httpClient,
 		isRemote:   true,

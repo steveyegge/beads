@@ -60,6 +60,7 @@ func NewDecisionClient(c *rpc.Client, addr, token string) *DecisionClient {
 }
 
 // reconnect attempts to establish a new RPC connection, replacing the broken one.
+// Uses HTTP when the address looks like a URL, TCP otherwise (legacy).
 func (dc *DecisionClient) reconnect() error {
 	dc.mu.Lock()
 	defer dc.mu.Unlock()
@@ -68,7 +69,19 @@ func (dc *DecisionClient) reconnect() error {
 		dc.client.Close()
 	}
 
-	newClient, err := rpc.TryConnectTCP(dc.addr, dc.token)
+	var newClient *rpc.Client
+	var err error
+
+	if strings.HasPrefix(dc.addr, "http://") || strings.HasPrefix(dc.addr, "https://") {
+		var httpClient *rpc.HTTPClient
+		httpClient, err = rpc.TryConnectHTTP(dc.addr, dc.token)
+		if err == nil {
+			newClient = rpc.WrapHTTPClient(httpClient)
+		}
+	} else {
+		newClient, err = rpc.TryConnectTCP(dc.addr, dc.token)
+	}
+
 	if err != nil {
 		return fmt.Errorf("reconnect to %s: %w", dc.addr, err)
 	}

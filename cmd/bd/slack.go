@@ -93,15 +93,20 @@ func init() {
 }
 
 func runSlackStart(cmd *cobra.Command, args []string) error {
-	// Daemon host must come from flag/env (chicken-and-egg: can't read from DB without connection)
-	daemonHost := firstNonEmpty(slackDaemonHost, os.Getenv("BD_DAEMON_HOST"), "localhost:9876")
+	// Daemon host: flag > env > default.
+	// Default to HTTP on localhost:9080 (sidecar in same pod).
+	daemonHost := firstNonEmpty(slackDaemonHost, os.Getenv("BD_DAEMON_HOST"), "http://localhost:9080")
 
-	// Connect to daemon RPC via TCP (retry for sidecar startup race)
+	// Connect to daemon RPC via HTTP (retry for sidecar startup race).
+	// Previous versions used TCP (localhost:9876) but HTTP is more reliable
+	// because each request is independent — no persistent connection to break.
 	var rpcClient *rpc.Client
 	var err error
 	for attempt := 1; attempt <= 30; attempt++ {
-		rpcClient, err = rpc.TryConnectTCP(daemonHost, rpc.GetDaemonToken())
+		var httpClient *rpc.HTTPClient
+		httpClient, err = rpc.TryConnectHTTP(daemonHost, rpc.GetDaemonToken())
 		if err == nil {
+			rpcClient = rpc.WrapHTTPClient(httpClient)
 			break
 		}
 		if attempt == 30 {

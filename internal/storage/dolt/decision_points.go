@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -75,12 +76,18 @@ func (s *DoltStore) GetDecisionPoint(ctx context.Context, issueID string) (*type
 		&dp.ParentBeadID, &dp.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
+		// Debug: try a count query to see if the table has ANY rows
+		var count int
+		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM decision_points`).Scan(&count)
+		fmt.Fprintf(os.Stderr, "GetDecisionPoint(%s): no rows (total decision_points: %d)\n", issueID, count)
 		return nil, nil
 	}
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "GetDecisionPoint(%s): error: %v\n", issueID, err)
 		return nil, fmt.Errorf("failed to query decision point: %w", err)
 	}
 
+	fmt.Fprintf(os.Stderr, "GetDecisionPoint(%s): found prompt=%q\n", issueID, dp.Prompt)
 	return dp, nil
 }
 
