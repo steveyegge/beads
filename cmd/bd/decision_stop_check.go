@@ -169,19 +169,31 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 				os.Exit(1)
 			}
 
-			// Await the human's response to the agent's decision.
-			// This is the only place we poll — and it's safe because the agent
-			// already created the decision before trying to stop.
-			fmt.Fprintf(os.Stderr, "Found agent decision: %s (timeout: %s)\n", agentDecision.IssueID, timeout)
-			fmt.Fprintf(os.Stderr, "Waiting for human response...\n")
+			var selected, responseText string
 
-			selected, responseText, err := pollStopDecision(ctx, agentDecision.IssueID, timeout, pollInterval)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error polling agent decision: %v\n", err)
-				if jsonOutput {
-					outputJSON(map[string]string{"decision": "allow", "reason": fmt.Sprintf("poll error: %v", err)})
+			if agentDecision.RespondedAt != nil {
+				// Decision already responded (human was fast — responded before
+				// the stop hook fired). Skip polling and use the response directly.
+				fmt.Fprintf(os.Stderr, "Found already-responded agent decision: %s (responded %s ago)\n",
+					agentDecision.IssueID, time.Since(*agentDecision.RespondedAt).Round(time.Second))
+				selected = agentDecision.SelectedOption
+				responseText = decisionResponseText(agentDecision)
+			} else {
+				// Await the human's response to the agent's decision.
+				// This is the only place we poll — and it's safe because the agent
+				// already created the decision before trying to stop.
+				fmt.Fprintf(os.Stderr, "Found agent decision: %s (timeout: %s)\n", agentDecision.IssueID, timeout)
+				fmt.Fprintf(os.Stderr, "Waiting for human response...\n")
+
+				var err error
+				selected, responseText, err = pollStopDecision(ctx, agentDecision.IssueID, timeout, pollInterval)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error polling agent decision: %v\n", err)
+					if jsonOutput {
+						outputJSON(map[string]string{"decision": "allow", "reason": fmt.Sprintf("poll error: %v", err)})
+					}
+					os.Exit(0)
 				}
-				os.Exit(0)
 			}
 
 			// Check the human's selection
@@ -746,13 +758,16 @@ func pollForAgentDecision(ctx context.Context, sessionTag string, timeout, pollI
 	}
 }
 
-// findPendingAgentDecision finds the most recent pending decision created by an agent
-// (i.e., not by stop-hook). Returns nil if none found.
+// findPendingAgentDecision finds the most recent pending OR recently-responded
+// decision created by an agent (i.e., not by stop-hook). Returns nil if none found.
+// Checks both pending and all decisions (for fast human responses that resolve
+// before the stop hook runs).
 func findPendingAgentDecision(ctx context.Context, sessionTag string) (*types.DecisionPoint, error) {
 	var decisions []*types.DecisionPoint
 
 	if daemonClient != nil {
-		listArgs := &rpc.DecisionListArgs{All: false} // pending only
+		// First check pending decisions
+		listArgs := &rpc.DecisionListArgs{All: false}
 		resp, err := daemonClient.DecisionList(listArgs)
 		if err != nil {
 			return nil, fmt.Errorf("daemon decision list: %w", err)
@@ -760,12 +775,27 @@ func findPendingAgentDecision(ctx context.Context, sessionTag string) (*types.De
 		for _, dr := range resp.Decisions {
 			decisions = append(decisions, dr.Decision)
 		}
+
+		// Also check recently-responded decisions (human may have responded
+		// before the stop hook fired)
+		allArgs := &rpc.DecisionListArgs{All: true}
+		allResp, err := daemonClient.DecisionList(allArgs)
+		if err == nil {
+			for _, dr := range allResp.Decisions {
+				if dr.Decision.RespondedAt != nil && time.Since(*dr.Decision.RespondedAt) < 5*time.Minute {
+					decisions = append(decisions, dr.Decision)
+				}
+			}
+		}
 	} else if store != nil {
 		var err error
 		decisions, err = store.ListPendingDecisions(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("list pending decisions: %w", err)
 		}
+		// Note: recently-responded check is only needed for daemon path (Slack
+		// responds fast before stop hook fires). Local store path doesn't have
+		// this timing issue since human responds via CLI after hook runs.
 	} else {
 		return nil, fmt.Errorf("no database connection")
 	}
