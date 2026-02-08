@@ -236,9 +236,9 @@ func TestStateMapping(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := IsValidState(tt.gitlabState)
+		got := isValidState(tt.gitlabState)
 		if got != tt.wantValid {
-			t.Errorf("IsValidState(%q) = %v, want %v", tt.gitlabState, got, tt.wantValid)
+			t.Errorf("isValidState(%q) = %v, want %v", tt.gitlabState, got, tt.wantValid)
 		}
 	}
 }
@@ -258,17 +258,17 @@ func TestLabelParsing(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		prefix, value := ParseLabelPrefix(tt.label)
+		prefix, value := parseLabelPrefix(tt.label)
 		if prefix != tt.wantPrefix {
-			t.Errorf("ParseLabelPrefix(%q) prefix = %q, want %q", tt.label, prefix, tt.wantPrefix)
+			t.Errorf("parseLabelPrefix(%q) prefix = %q, want %q", tt.label, prefix, tt.wantPrefix)
 		}
 		if value != tt.wantValue {
-			t.Errorf("ParseLabelPrefix(%q) value = %q, want %q", tt.label, value, tt.wantValue)
+			t.Errorf("parseLabelPrefix(%q) value = %q, want %q", tt.label, value, tt.wantValue)
 		}
 	}
 }
 
-// TestGetPriorityFromLabel verifies priority label value to beads priority mapping.
+// TestgetPriorityFromLabel verifies priority label value to beads priority mapping.
 func TestGetPriorityFromLabel(t *testing.T) {
 	tests := []struct {
 		value string
@@ -287,14 +287,14 @@ func TestGetPriorityFromLabel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := GetPriorityFromLabel(tt.value)
+		got := getPriorityFromLabel(tt.value)
 		if got != tt.want {
-			t.Errorf("GetPriorityFromLabel(%q) = %d, want %d", tt.value, got, tt.want)
+			t.Errorf("getPriorityFromLabel(%q) = %d, want %d", tt.value, got, tt.want)
 		}
 	}
 }
 
-// TestGetStatusFromLabel verifies status label value to beads status mapping.
+// TestgetStatusFromLabel verifies status label value to beads status mapping.
 func TestGetStatusFromLabel(t *testing.T) {
 	tests := []struct {
 		value string
@@ -313,14 +313,14 @@ func TestGetStatusFromLabel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := GetStatusFromLabel(tt.value)
+		got := getStatusFromLabel(tt.value)
 		if got != tt.want {
-			t.Errorf("GetStatusFromLabel(%q) = %q, want %q", tt.value, got, tt.want)
+			t.Errorf("getStatusFromLabel(%q) = %q, want %q", tt.value, got, tt.want)
 		}
 	}
 }
 
-// TestGetTypeFromLabel verifies type label value to beads issue type mapping.
+// TestgetTypeFromLabel verifies type label value to beads issue type mapping.
 func TestGetTypeFromLabel(t *testing.T) {
 	tests := []struct {
 		value string
@@ -340,9 +340,9 @@ func TestGetTypeFromLabel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := GetTypeFromLabel(tt.value)
+		got := getTypeFromLabel(tt.value)
 		if got != tt.want {
-			t.Errorf("GetTypeFromLabel(%q) = %q, want %q", tt.value, got, tt.want)
+			t.Errorf("getTypeFromLabel(%q) = %q, want %q", tt.value, got, tt.want)
 		}
 	}
 }
