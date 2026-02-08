@@ -121,35 +121,31 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 	// the agent (Claude) is blocked waiting for this hook to return. If we
 	// poll here, it's a deadlock — the agent can't create a decision while
 	// blocked. Instead, return immediately with block + instructions so the
-	// agent can create the decision, then on re-entry we'll find and await it.
+	// agent can create the decision on every attempt until it complies.
 	if cfg.RequireAgentDecision {
 		sessionTag := getStopSessionTag()
 		agentDecision, err := findPendingAgentDecision(ctx, sessionTag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: error finding agent decision: %v\n", err)
 			// Fall through to generic decision creation
-		} else {
-			if agentDecision == nil {
-				// No agent decision yet — block immediately with instructions.
-				// The agent will resume, create a decision, and stop again.
-				// On re-entry (--reentry flag), we'll find and await it.
-				reason := "Create a decision with 'bd decision create' before stopping"
-				if cfg.AgentDecisionPrompt != "" {
-					reason = cfg.AgentDecisionPrompt
-				}
-				// Include session tag so the agent passes it as --requested-by
-				if sessionTag != "" {
-					reason += fmt.Sprintf("\n\nIMPORTANT: Pass --requested-by %q to scope this decision to your session.", sessionTag)
-				}
-				fmt.Fprintf(os.Stderr, "No agent decision found. Blocking so agent can create one.\n")
-				if jsonOutput {
-					outputJSON(map[string]string{"decision": "block", "reason": reason})
-				} else {
-					fmt.Printf("Block: %s\n", reason)
-				}
-				os.Exit(1)
+		} else if agentDecision == nil {
+			// No agent decision — block on EVERY attempt (including re-entry).
+			// The agent must create a decision before it can stop.
+			reason := "Create a decision with 'bd decision create' before stopping"
+			if cfg.AgentDecisionPrompt != "" {
+				reason = cfg.AgentDecisionPrompt
 			}
-
+			if sessionTag != "" {
+				reason += fmt.Sprintf("\n\nIMPORTANT: Pass --requested-by %q to scope this decision to your session.", sessionTag)
+			}
+			fmt.Fprintf(os.Stderr, "No agent decision found. Blocking so agent can create one.\n")
+			if jsonOutput {
+				outputJSON(map[string]string{"decision": "block", "reason": reason})
+			} else {
+				fmt.Printf("Block: %s\n", reason)
+			}
+			os.Exit(1)
+		} else {
 			// Agent decision found — validate context if required
 			if cfg.RequireContext && agentDecision.Context == "" {
 				reason := fmt.Sprintf("Decision %s is missing context. Close it and create a new one with --context", agentDecision.IssueID)
