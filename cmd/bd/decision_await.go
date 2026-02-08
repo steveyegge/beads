@@ -70,19 +70,20 @@ type AwaitResponse struct {
 }
 
 func runDecisionAwait(cmd *cobra.Command, args []string) {
-	// Ensure store is initialized
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(3)
-	}
-
 	decisionID := args[0]
 	ctx := rootCtx
 
 	// Route to daemon or direct store
+	// Use global daemonClient directly (not getDaemonClient()) because PersistentPreRun
+	// sets the global but not cmdCtx.DaemonClient. Matches pattern in decision_list.go.
 	if daemonClient != nil {
 		runDecisionAwaitDaemon(daemonClient, decisionID)
 	} else {
+		// Need local store for direct mode
+		if err := ensureStoreActive(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(3)
+		}
 		runDecisionAwaitDirect(ctx, decisionID)
 	}
 }
