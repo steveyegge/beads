@@ -4,7 +4,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 const (
@@ -133,8 +132,8 @@ func BuildPodSpec(agentID, role, rig string, cfg PodTemplateConfig) *corev1.Pod 
 					},
 					StartupProbe: &corev1.Probe{
 						ProbeHandler: corev1.ProbeHandler{
-							TCPSocket: &corev1.TCPSocketAction{
-								Port: intstr.FromInt32(DefaultScreenPort),
+							Exec: &corev1.ExecAction{
+								Command: []string{"test", "-f", "/tmp/health/alive"},
 							},
 						},
 						InitialDelaySeconds: 5,
@@ -144,8 +143,8 @@ func BuildPodSpec(agentID, role, rig string, cfg PodTemplateConfig) *corev1.Pod 
 					},
 					LivenessProbe: &corev1.Probe{
 						ProbeHandler: corev1.ProbeHandler{
-							TCPSocket: &corev1.TCPSocketAction{
-								Port: intstr.FromInt32(DefaultScreenPort),
+							Exec: &corev1.ExecAction{
+								Command: []string{"test", "-f", "/tmp/health/alive"},
 							},
 						},
 						InitialDelaySeconds: 10,
@@ -155,8 +154,8 @@ func BuildPodSpec(agentID, role, rig string, cfg PodTemplateConfig) *corev1.Pod 
 					},
 					ReadinessProbe: &corev1.Probe{
 						ProbeHandler: corev1.ProbeHandler{
-							TCPSocket: &corev1.TCPSocketAction{
-								Port: intstr.FromInt32(DefaultScreenPort),
+							Exec: &corev1.ExecAction{
+								Command: []string{"test", "-f", "/tmp/health/alive"},
 							},
 						},
 						InitialDelaySeconds: 5,
