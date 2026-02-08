@@ -62,33 +62,13 @@ var showCmd = &cobra.Command{
 			}
 		}
 
-		// Resolve partial IDs first (daemon mode only - direct mode uses routed resolution)
-		var resolvedIDs []string
-		var routedArgs []string // IDs that need cross-repo routing (bypass daemon)
-		if daemonClient != nil {
-			// In daemon mode, resolve via RPC - but check routing first
-			// Skip local routing for remote daemon - it handles all IDs centrally (gt-57wsnm)
-			skipLocalRouting := isRemoteDaemon()
-			for _, id := range args {
-				// Check if this ID needs routing to a different beads directory
-				// But skip this check for remote daemons which have all data centrally
-				if !skipLocalRouting && needsRouting(id) {
-					routedArgs = append(routedArgs, id)
-					continue
-				}
-				resolveArgs := &rpc.ResolveIDArgs{ID: id}
-				resp, err := daemonClient.ResolveID(resolveArgs)
-				if err != nil {
-					FatalErrorRespectJSON("resolving ID %s: %v", id, err)
-				}
-				var resolvedID string
-				if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-				}
-				resolvedIDs = append(resolvedIDs, resolvedID)
-			}
+		// Resolve partial IDs, splitting into local vs routed
+		batch, err := resolveIDsWithRouting(ctx, store, daemonClient, args)
+		if err != nil {
+			FatalErrorRespectJSON("%v", err)
 		}
-		// Note: Direct mode uses resolveAndGetIssueWithRouting for prefix-based routing
+		resolvedIDs := batch.ResolvedIDs
+		routedArgs := batch.RoutedArgs
 
 		// Handle --thread flag: show full conversation thread
 		if showThread {
@@ -125,31 +105,26 @@ var showCmd = &cobra.Command{
 			allDetails := []interface{}{}
 			displayIdx := 0
 
-			// First, handle routed IDs - try daemon at target rig, fall back to direct mode (bd-6lp0)
-			for _, id := range routedArgs {
-				// Try daemon at the routed rig first to avoid direct Dolt access conflicts
-				resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+			// First, handle routed IDs via centralized routing (bd-z344)
+			forEachRoutedID(ctx, store, routedArgs, func(resolvedID string, routedClient *rpc.Client, directResult *RoutedResult) error {
 				if routedClient != nil {
-					// Use daemon RPC at the target rig (same as local daemon path below)
 					showResp, showErr := routedClient.Show(&rpc.ShowArgs{ID: resolvedID})
 					routedClient.Close()
 					if showErr != nil {
-						fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, showErr)
-						continue
+						return showErr
 					}
 					if string(showResp.Data) == "null" || len(showResp.Data) == 0 {
-						fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-						continue
+						fmt.Fprintf(os.Stderr, "Issue %s not found\n", resolvedID)
+						return nil
 					}
 					var details types.IssueDetails
 					if err := json.Unmarshal(showResp.Data, &details); err != nil {
-						fmt.Fprintf(os.Stderr, "Error parsing response for %s: %v\n", id, err)
-						continue
+						return err
 					}
 					issue := &details.Issue
 					if shortMode {
 						fmt.Println(formatShortIssue(issue))
-						continue
+						return nil
 					}
 					if jsonOutput {
 						for _, dep := range details.Dependencies {
@@ -171,35 +146,15 @@ var showCmd = &cobra.Command{
 						fmt.Println()
 						displayIdx++
 					}
-					continue
-				}
-				if routeErr != nil {
-					fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
-					continue
+					return nil
 				}
 
-				// Fall back to direct storage (no daemon at target rig)
-				result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-				if err != nil {
-					if result != nil {
-						result.Close()
-					}
-					fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
-					continue
-				}
-				if result == nil || result.Issue == nil {
-					if result != nil {
-						result.Close()
-					}
-					fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-					continue
-				}
-				issue := result.Issue
-				issueStore := result.Store
+				// Direct storage fallback
+				issue := directResult.Issue
+				issueStore := directResult.Store
 				if shortMode {
 					fmt.Println(formatShortIssue(issue))
-					result.Close()
-					continue
+					return nil
 				}
 				if jsonOutput {
 					details := &types.IssueDetails{Issue: *issue}
@@ -226,8 +181,8 @@ var showCmd = &cobra.Command{
 					fmt.Println()
 					displayIdx++
 				}
-				result.Close()
-			}
+				return nil
+			})
 
 			// Then, handle local IDs via daemon
 			for _, id := range resolvedIDs {
@@ -839,46 +794,23 @@ func showIssueRefs(ctx context.Context, args []string, resolvedIDs []string, rou
 		return nil
 	}
 
-	// Handle routed IDs - try daemon at target rig, fall back to direct mode (bd-6lp0)
-	for _, id := range routedArgs {
-		// Try daemon at the routed rig first
-		resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+	// Handle routed IDs via centralized routing (bd-z344)
+	forEachRoutedID(ctx, store, routedArgs, func(resolvedID string, routedClient *rpc.Client, directResult *RoutedResult) error {
 		if routedClient != nil {
 			showResp, showErr := routedClient.Show(&rpc.ShowArgs{ID: resolvedID})
 			routedClient.Close()
-			if showErr == nil {
-				var details types.IssueDetails
-				if json.Unmarshal(showResp.Data, &details) == nil {
-					allRefs[resolvedID] = details.Dependents
-					continue
-				}
+			if showErr != nil {
+				return showErr
 			}
-			fmt.Fprintf(os.Stderr, "Error fetching refs for %s via daemon: %v\n", id, showErr)
-			continue
-		}
-		if routeErr != nil {
-			fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
-			continue
-		}
-
-		// Fall back to direct storage
-		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-			continue
-		}
-		if result == nil || result.Issue == nil {
-			if result != nil {
-				result.Close()
+			var details types.IssueDetails
+			if err := json.Unmarshal(showResp.Data, &details); err != nil {
+				return err
 			}
-			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-			continue
+			allRefs[resolvedID] = details.Dependents
+			return nil
 		}
-		if err := processIssue(result.ResolvedID, result.Store); err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting refs for %s: %v\n", id, err)
-		}
-		result.Close()
-	}
+		return processIssue(resolvedID, directResult.Store)
+	})
 
 	// Handle resolved IDs (daemon mode) - use Show RPC which returns IssueDetails with Dependents
 	if daemonClient != nil {
@@ -1064,53 +996,30 @@ func showIssueChildren(ctx context.Context, args []string, resolvedIDs []string,
 		return nil
 	}
 
-	// Handle routed IDs - try daemon at target rig, fall back to direct mode (bd-6lp0)
-	for _, id := range routedArgs {
-		// Try daemon at the routed rig first
-		resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+	// Handle routed IDs via centralized routing (bd-z344)
+	forEachRoutedID(ctx, store, routedArgs, func(resolvedID string, routedClient *rpc.Client, directResult *RoutedResult) error {
 		if routedClient != nil {
 			showResp, showErr := routedClient.Show(&rpc.ShowArgs{ID: resolvedID})
 			routedClient.Close()
-			if showErr == nil {
-				var details types.IssueDetails
-				if json.Unmarshal(showResp.Data, &details) == nil {
-					if _, exists := allChildren[resolvedID]; !exists {
-						allChildren[resolvedID] = []*types.IssueWithDependencyMetadata{}
-					}
-					for _, dep := range details.Dependents {
-						if dep.DependencyType == types.DepParentChild {
-							allChildren[resolvedID] = append(allChildren[resolvedID], dep)
-						}
-					}
-					continue
+			if showErr != nil {
+				return showErr
+			}
+			var details types.IssueDetails
+			if err := json.Unmarshal(showResp.Data, &details); err != nil {
+				return err
+			}
+			if _, exists := allChildren[resolvedID]; !exists {
+				allChildren[resolvedID] = []*types.IssueWithDependencyMetadata{}
+			}
+			for _, dep := range details.Dependents {
+				if dep.DependencyType == types.DepParentChild {
+					allChildren[resolvedID] = append(allChildren[resolvedID], dep)
 				}
 			}
-			fmt.Fprintf(os.Stderr, "Error fetching children for %s via daemon: %v\n", id, showErr)
-			continue
+			return nil
 		}
-		if routeErr != nil {
-			fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
-			continue
-		}
-
-		// Fall back to direct storage
-		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-			continue
-		}
-		if result == nil || result.Issue == nil {
-			if result != nil {
-				result.Close()
-			}
-			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-			continue
-		}
-		if err := processIssue(result.ResolvedID, result.Store); err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting children for %s: %v\n", id, err)
-		}
-		result.Close()
-	}
+		return processIssue(resolvedID, directResult.Store)
+	})
 
 	// Handle resolved IDs (daemon mode) - use Show RPC which returns IssueDetails with Dependents
 	if daemonClient != nil {

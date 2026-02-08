@@ -10,7 +10,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var closeCmd = &cobra.Command{
@@ -68,44 +67,13 @@ create, update, show, or close operation).`,
 			FatalErrorRespectJSON("--suggest-next only works when closing a single issue")
 		}
 
-		// Resolve partial IDs first, handling cross-rig routing
-		var resolvedIDs []string
-		var routedArgs []string // IDs that need cross-repo routing (bypass daemon)
-		if daemonClient != nil {
-			// Skip local routing for remote daemon - it handles all IDs centrally (gt-57wsnm)
-			skipLocalRouting := isRemoteDaemon()
-			for _, id := range args {
-				// Check if this ID needs routing to a different beads directory
-				// But skip this check for remote daemons which have all data centrally
-				if !skipLocalRouting && needsRouting(id) {
-					routedArgs = append(routedArgs, id)
-					continue
-				}
-				resolveArgs := &rpc.ResolveIDArgs{ID: id}
-				resp, err := daemonClient.ResolveID(resolveArgs)
-				if err != nil {
-					FatalErrorRespectJSON("resolving ID %s: %v", id, err)
-				}
-				var resolvedID string
-				if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-				}
-				resolvedIDs = append(resolvedIDs, resolvedID)
-			}
-		} else {
-			// Direct mode - check routing for each ID
-			for _, id := range args {
-				if needsRouting(id) {
-					routedArgs = append(routedArgs, id)
-				} else {
-					resolved, err := utils.ResolvePartialID(ctx, store, id)
-					if err != nil {
-						FatalErrorRespectJSON("resolving ID %s: %v", id, err)
-					}
-					resolvedIDs = append(resolvedIDs, resolved)
-				}
-			}
+		// Resolve partial IDs, splitting into local vs routed (bd-z344)
+		batch, err := resolveIDsWithRouting(ctx, store, daemonClient, args)
+		if err != nil {
+			FatalErrorRespectJSON("%v", err)
 		}
+		resolvedIDs := batch.ResolvedIDs
+		routedArgs := batch.RoutedArgs
 
 		// If daemon is running, use RPC
 		if daemonClient != nil {
@@ -178,12 +146,9 @@ create, update, show, or close operation).`,
 				}
 			}
 
-			// Handle routed IDs - try daemon at target rig, fall back to direct mode (bd-6lp0)
-			for _, id := range routedArgs {
-				// Try daemon at the routed rig first
-				resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+			// Handle routed IDs via centralized routing (bd-z344)
+			forEachRoutedID(ctx, store, routedArgs, func(resolvedID string, routedClient *rpc.Client, directResult *RoutedResult) error {
 				if routedClient != nil {
-					// Close via routed daemon RPC
 					routedClient.SetActor(actor)
 					closeArgs := &rpc.CloseArgs{
 						ID:      resolvedID,
@@ -194,8 +159,7 @@ create, update, show, or close operation).`,
 					resp, closeErr := routedClient.CloseIssue(closeArgs)
 					routedClient.Close()
 					if closeErr != nil {
-						fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, closeErr)
-						continue
+						return closeErr
 					}
 					var issue types.Issue
 					if json.Unmarshal(resp.Data, &issue) == nil {
@@ -209,67 +173,38 @@ create, update, show, or close operation).`,
 					if !jsonOutput {
 						fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), resolvedID, reason)
 					}
-					continue
-				}
-				if routeErr != nil {
-					fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
-					continue
+					return nil
 				}
 
-				// Fall back to direct storage (no daemon at target rig)
-				result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-					continue
+				// Direct storage fallback
+				if err := validateIssueClosable(resolvedID, directResult.Issue, force); err != nil {
+					return err
 				}
-				if result == nil || result.Issue == nil {
-					if result != nil {
-						result.Close()
-					}
-					fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-					continue
-				}
-
-				if err := validateIssueClosable(result.ResolvedID, result.Issue, force); err != nil {
-					result.Close()
-					fmt.Fprintf(os.Stderr, "%s\n", err)
-					continue
-				}
-
 				if !force {
-					blocked, blockers, err := result.Store.IsBlocked(ctx, result.ResolvedID)
+					blocked, blockers, err := directResult.Store.IsBlocked(ctx, resolvedID)
 					if err != nil {
-						result.Close()
-						fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
-						continue
+						return err
 					}
 					if blocked && len(blockers) > 0 {
-						result.Close()
-						fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
-						continue
+						return fmt.Errorf("cannot close %s: blocked by open issues %v (use --force to override)", resolvedID, blockers)
 					}
 				}
-
-				if err := result.Store.CloseIssue(ctx, result.ResolvedID, reason, actor, session); err != nil {
-					result.Close()
-					fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
-					continue
+				if err := directResult.Store.CloseIssue(ctx, resolvedID, reason, actor, session); err != nil {
+					return err
 				}
-
-				closedIssue, _ := result.Store.GetIssue(ctx, result.ResolvedID)
+				closedIssue, _ := directResult.Store.GetIssue(ctx, resolvedID)
 				if closedIssue != nil && hookRunner != nil {
 					hookRunner.Run(hooks.EventClose, closedIssue)
 				}
-
 				if jsonOutput {
 					if closedIssue != nil {
 						closedIssues = append(closedIssues, closedIssue)
 					}
 				} else {
-					fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), result.ResolvedID, reason)
+					fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), resolvedID, reason)
 				}
-				result.Close()
-			}
+				return nil
+			})
 
 			// Handle --continue flag in daemon mode (bd-ympw)
 			if continueFlag && len(closedIssues) > 0 && len(resolvedIDs) == 1 {
@@ -350,65 +285,42 @@ create, update, show, or close operation).`,
 			}
 		}
 
-		// Handle routed IDs (cross-rig)
-		for _, id := range routedArgs {
-			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-				continue
-			}
-			if result == nil || result.Issue == nil {
-				if result != nil {
-					result.Close()
-				}
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-				continue
-			}
+		// Handle routed IDs via centralized routing (bd-z344)
+		forEachRoutedID(ctx, store, routedArgs, func(resolvedID string, routedClient *rpc.Client, directResult *RoutedResult) error {
+			issueStore := directResult.Store
+			issue := directResult.Issue
+			// Note: in direct mode, routedClient is always nil — forEachRoutedID
+			// falls through to resolveAndGetIssueWithRouting for all IDs.
 
-			if err := validateIssueClosable(result.ResolvedID, result.Issue, force); err != nil {
-				result.Close()
-				fmt.Fprintf(os.Stderr, "%s\n", err)
-				continue
+			if err := validateIssueClosable(resolvedID, issue, force); err != nil {
+				return err
 			}
-
-			// Check if issue has open blockers (GH#962)
 			if !force {
-				blocked, blockers, err := result.Store.IsBlocked(ctx, result.ResolvedID)
+				blocked, blockers, err := issueStore.IsBlocked(ctx, resolvedID)
 				if err != nil {
-					result.Close()
-					fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
-					continue
+					return err
 				}
 				if blocked && len(blockers) > 0 {
-					result.Close()
-					fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
-					continue
+					return fmt.Errorf("cannot close %s: blocked by open issues %v (use --force to override)", resolvedID, blockers)
 				}
 			}
-
-			if err := result.Store.CloseIssue(ctx, result.ResolvedID, reason, actor, session); err != nil {
-				result.Close()
-				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
-				continue
+			if err := issueStore.CloseIssue(ctx, resolvedID, reason, actor, session); err != nil {
+				return err
 			}
-
 			closedCount++
-
-			// Get updated issue for hook
-			closedIssue, _ := result.Store.GetIssue(ctx, result.ResolvedID)
+			closedIssue, _ := issueStore.GetIssue(ctx, resolvedID)
 			if closedIssue != nil && hookRunner != nil {
 				hookRunner.Run(hooks.EventClose, closedIssue)
 			}
-
 			if jsonOutput {
 				if closedIssue != nil {
 					closedIssues = append(closedIssues, closedIssue)
 				}
 			} else {
-				fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), result.ResolvedID, reason)
+				fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), resolvedID, reason)
 			}
-			result.Close()
-		}
+			return nil
+		})
 
 		// Handle --suggest-next flag in direct mode
 		if suggestNext && len(resolvedIDs) == 1 && closedCount > 0 {

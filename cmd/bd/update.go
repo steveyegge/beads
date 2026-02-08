@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -224,70 +226,27 @@ create, update, show, or close operation).`,
 
 		ctx := rootCtx
 
-		// Resolve partial IDs first, checking for cross-rig routing
-		var resolvedIDs []string
-		var routedArgs []string // IDs that need cross-repo routing (bypass daemon)
-		if daemonClient != nil {
-			// In daemon mode, resolve via RPC - but check routing first
-			// Skip local routing for remote daemon - it handles all IDs centrally (gt-57wsnm)
-			skipLocalRouting := isRemoteDaemon()
-			for _, id := range args {
-				// Check if this ID needs routing to a different beads directory
-				// But skip this check for remote daemons which have all data centrally
-				if !skipLocalRouting && needsRouting(id) {
-					routedArgs = append(routedArgs, id)
-					continue
-				}
-				resolveArgs := &rpc.ResolveIDArgs{ID: id}
-				resp, err := daemonClient.ResolveID(resolveArgs)
-				if err != nil {
-					FatalErrorRespectJSON("resolving ID %s: %v", id, err)
-				}
-				var resolvedID string
-				if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-				}
-				resolvedIDs = append(resolvedIDs, resolvedID)
-			}
+		// Resolve partial IDs, splitting into local vs routed (bd-z344)
+		batch, err := resolveIDsWithRouting(ctx, store, daemonClient, args)
+		if err != nil {
+			FatalErrorRespectJSON("%v", err)
 		}
-		// Note: Direct mode (no daemon) uses resolveAndGetIssueWithRouting in the loop below
+		resolvedIDs := batch.ResolvedIDs
+		routedArgs := batch.RoutedArgs
 
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			updatedIssues := []*types.Issue{}
 			var firstUpdatedID string // Track first successful update for last-touched
 			for _, id := range resolvedIDs {
-				updateArgs := &rpc.UpdateArgs{ID: id}
+				updateArgs := buildUpdateArgs(id, updates, claimFlag, cmd)
 
-				// Map updates to RPC args
-				if status, ok := updates["status"].(string); ok {
-					updateArgs.Status = &status
-				}
-				if priority, ok := updates["priority"].(int); ok {
-					updateArgs.Priority = &priority
-				}
-				if title, ok := updates["title"].(string); ok {
-					updateArgs.Title = &title
-				}
-				if assignee, ok := updates["assignee"].(string); ok {
-					updateArgs.Assignee = &assignee
-				}
-				if description, ok := updates["description"].(string); ok {
-					updateArgs.Description = &description
-				}
-				if design, ok := updates["design"].(string); ok {
-					updateArgs.Design = &design
-				}
-				if notes, ok := updates["notes"].(string); ok {
-					updateArgs.Notes = &notes
-				}
+				// Handle append_notes: fetch existing issue notes via daemon
 				if appendNotes, ok := updates["append_notes"].(string); ok {
-					// Fetch existing issue to get current notes
-					showArgs := &rpc.ShowArgs{ID: id}
-					resp, err := daemonClient.Show(showArgs)
-					if err == nil {
+					showResp, showErr := daemonClient.Show(&rpc.ShowArgs{ID: id})
+					if showErr == nil {
 						var existingIssue types.Issue
-						if err := json.Unmarshal(resp.Data, &existingIssue); err == nil {
+						if json.Unmarshal(showResp.Data, &existingIssue) == nil {
 							combined := existingIssue.Notes
 							if combined != "" {
 								combined += "\n"
@@ -297,68 +256,6 @@ create, update, show, or close operation).`,
 						}
 					}
 				}
-				if acceptanceCriteria, ok := updates["acceptance_criteria"].(string); ok {
-					updateArgs.AcceptanceCriteria = &acceptanceCriteria
-				}
-				if externalRef, ok := updates["external_ref"].(string); ok {
-					updateArgs.ExternalRef = &externalRef
-				}
-				if estimate, ok := updates["estimated_minutes"].(int); ok {
-					updateArgs.EstimatedMinutes = &estimate
-				}
-				if issueType, ok := updates["issue_type"].(string); ok {
-					updateArgs.IssueType = &issueType
-				}
-				if addLabels, ok := updates["add_labels"].([]string); ok {
-					updateArgs.AddLabels = addLabels
-				}
-				if removeLabels, ok := updates["remove_labels"].([]string); ok {
-					updateArgs.RemoveLabels = removeLabels
-				}
-				if setLabels, ok := updates["set_labels"].([]string); ok {
-					updateArgs.SetLabels = setLabels
-				}
-				if issueType, ok := updates["issue_type"].(string); ok {
-					updateArgs.IssueType = &issueType
-				}
-				if parent, ok := updates["parent"].(string); ok {
-					updateArgs.Parent = &parent
-				}
-				// Gate fields (bd-z6kw)
-				if awaitID, ok := updates["await_id"].(string); ok {
-					updateArgs.AwaitID = &awaitID
-				}
-				// Time-based scheduling (GH#820)
-				if dueAt, ok := updates["due_at"].(time.Time); ok {
-					s := dueAt.Format(time.RFC3339)
-					updateArgs.DueAt = &s
-				} else if updates["due_at"] == nil && cmd.Flags().Changed("due") {
-					// Explicit clear
-					empty := ""
-					updateArgs.DueAt = &empty
-				}
-				if deferUntil, ok := updates["defer_until"].(time.Time); ok {
-					s := deferUntil.Format(time.RFC3339)
-					updateArgs.DeferUntil = &s
-				} else if updates["defer_until"] == nil && cmd.Flags().Changed("defer") {
-					// Explicit clear
-					empty := ""
-					updateArgs.DeferUntil = &empty
-				}
-				// Ephemeral/persistent
-				if wisp, ok := updates["wisp"].(bool); ok {
-					updateArgs.Ephemeral = &wisp
-				}
-				// Advice subscription fields (gt-w2mh8a.6)
-				if adviceSubs, ok := updates["advice_subscriptions"].([]string); ok {
-					updateArgs.AdviceSubscriptions = adviceSubs
-				}
-				if adviceExclude, ok := updates["advice_subscriptions_exclude"].([]string); ok {
-					updateArgs.AdviceSubscriptionsExclude = adviceExclude
-				}
-
-				// Set claim flag for atomic claim operation
-				updateArgs.Claim = claimFlag
 
 				resp, err := daemonClient.Update(updateArgs)
 				if err != nil {
@@ -386,35 +283,12 @@ create, update, show, or close operation).`,
 				}
 			}
 
-			// Handle routed IDs - try daemon at target rig, fall back to direct mode (bd-6lp0)
-			for _, id := range routedArgs {
-				// Try daemon at the routed rig first
-				resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+			// Handle routed IDs via centralized routing (bd-z344)
+			forEachRoutedID(ctx, store, routedArgs, func(resolvedID string, routedClient *rpc.Client, directResult *RoutedResult) error {
 				if routedClient != nil {
-					// Build UpdateArgs and send to routed daemon (same fields as local daemon path)
 					routedClient.SetActor(actor)
-					updateArgs := &rpc.UpdateArgs{ID: resolvedID}
-					if status, ok := updates["status"].(string); ok {
-						updateArgs.Status = &status
-					}
-					if priority, ok := updates["priority"].(int); ok {
-						updateArgs.Priority = &priority
-					}
-					if title, ok := updates["title"].(string); ok {
-						updateArgs.Title = &title
-					}
-					if assignee, ok := updates["assignee"].(string); ok {
-						updateArgs.Assignee = &assignee
-					}
-					if description, ok := updates["description"].(string); ok {
-						updateArgs.Description = &description
-					}
-					if design, ok := updates["design"].(string); ok {
-						updateArgs.Design = &design
-					}
-					if notes, ok := updates["notes"].(string); ok {
-						updateArgs.Notes = &notes
-					}
+					updateArgs := buildUpdateArgs(resolvedID, updates, claimFlag, cmd)
+					// Handle append_notes via RPC Show to get existing notes
 					if appendNotes, ok := updates["append_notes"].(string); ok {
 						showResp, err := routedClient.Show(&rpc.ShowArgs{ID: resolvedID})
 						if err == nil {
@@ -429,34 +303,10 @@ create, update, show, or close operation).`,
 							}
 						}
 					}
-					if acceptanceCriteria, ok := updates["acceptance_criteria"].(string); ok {
-						updateArgs.AcceptanceCriteria = &acceptanceCriteria
-					}
-					if externalRef, ok := updates["external_ref"].(string); ok {
-						updateArgs.ExternalRef = &externalRef
-					}
-					if issueType, ok := updates["issue_type"].(string); ok {
-						updateArgs.IssueType = &issueType
-					}
-					if addLabelsVal, ok := updates["add_labels"].([]string); ok {
-						updateArgs.AddLabels = addLabelsVal
-					}
-					if removeLabelsVal, ok := updates["remove_labels"].([]string); ok {
-						updateArgs.RemoveLabels = removeLabelsVal
-					}
-					if setLabelsVal, ok := updates["set_labels"].([]string); ok {
-						updateArgs.SetLabels = setLabelsVal
-					}
-					if parent, ok := updates["parent"].(string); ok {
-						updateArgs.Parent = &parent
-					}
-					updateArgs.Claim = claimFlag
-
 					resp, updateErr := routedClient.Update(updateArgs)
 					routedClient.Close()
 					if updateErr != nil {
-						fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, updateErr)
-						continue
+						return updateErr
 					}
 					var issue types.Issue
 					if json.Unmarshal(resp.Data, &issue) == nil {
@@ -473,113 +323,46 @@ create, update, show, or close operation).`,
 					if firstUpdatedID == "" {
 						firstUpdatedID = resolvedID
 					}
-					continue
-				}
-				if routeErr != nil {
-					fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
-					continue
+					return nil
 				}
 
-				// Fall back to direct storage (no daemon at target rig)
-				result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-				if err != nil {
-					if result != nil {
-						result.Close()
-					}
-					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-					continue
+				// Direct storage fallback
+				issue := directResult.Issue
+				issueStore := directResult.Store
+				if err := validateIssueUpdatable(resolvedID, issue); err != nil {
+					return err
 				}
-				if result == nil || result.Issue == nil {
-					if result != nil {
-						result.Close()
-					}
-					fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-					continue
-				}
-				issue := result.Issue
-				issueStore := result.Store
-
-				if err := validateIssueUpdatable(id, issue); err != nil {
-					fmt.Fprintf(os.Stderr, "%s\n", err)
-					result.Close()
-					continue
-				}
-
 				if claimFlag {
 					if issue.Assignee != "" {
-						fmt.Fprintf(os.Stderr, "Error claiming %s: already claimed by %s\n", id, issue.Assignee)
-						result.Close()
-						continue
+						return fmt.Errorf("already claimed by %s", issue.Assignee)
 					}
 					claimUpdates := map[string]interface{}{
 						"assignee": actor,
 						"status":   "in_progress",
 					}
-					if err := issueStore.UpdateIssue(ctx, result.ResolvedID, claimUpdates, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)
-						result.Close()
-						continue
+					if err := issueStore.UpdateIssue(ctx, resolvedID, claimUpdates, actor); err != nil {
+						return err
 					}
 				}
-
-				regularUpdates := make(map[string]interface{})
-				for k, v := range updates {
-					if k != "add_labels" && k != "remove_labels" && k != "set_labels" && k != "parent" && k != "append_notes" {
-						regularUpdates[k] = v
-					}
+				if err := applyDirectUpdates(ctx, issueStore, resolvedID, issue, updates, actor); err != nil {
+					return err
 				}
-				if appendNotes, ok := updates["append_notes"].(string); ok {
-					combined := issue.Notes
-					if combined != "" {
-						combined += "\n"
-					}
-					combined += appendNotes
-					regularUpdates["notes"] = combined
-				}
-				if len(regularUpdates) > 0 {
-					if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
-						result.Close()
-						continue
-					}
-				}
-
-				var setLabels, addLabels, removeLabels []string
-				if v, ok := updates["set_labels"].([]string); ok {
-					setLabels = v
-				}
-				if v, ok := updates["add_labels"].([]string); ok {
-					addLabels = v
-				}
-				if v, ok := updates["remove_labels"].([]string); ok {
-					removeLabels = v
-				}
-				if len(setLabels) > 0 || len(addLabels) > 0 || len(removeLabels) > 0 {
-					if err := applyLabelUpdates(ctx, issueStore, result.ResolvedID, actor, setLabels, addLabels, removeLabels); err != nil {
-						fmt.Fprintf(os.Stderr, "Error updating labels for %s: %v\n", id, err)
-						result.Close()
-						continue
-					}
-				}
-
-				updatedIssue, _ := issueStore.GetIssue(ctx, result.ResolvedID)
+				updatedIssue, _ := issueStore.GetIssue(ctx, resolvedID)
 				if updatedIssue != nil && hookRunner != nil {
 					hookRunner.Run(hooks.EventUpdate, updatedIssue)
 				}
-
 				if jsonOutput {
 					if updatedIssue != nil {
 						updatedIssues = append(updatedIssues, updatedIssue)
 					}
 				} else {
-					fmt.Printf("%s Updated issue: %s\n", ui.RenderPass("✓"), result.ResolvedID)
+					fmt.Printf("%s Updated issue: %s\n", ui.RenderPass("✓"), resolvedID)
 				}
-
 				if firstUpdatedID == "" {
-					firstUpdatedID = result.ResolvedID
+					firstUpdatedID = resolvedID
 				}
-				result.Close()
-			}
+				return nil
+			})
 
 			if jsonOutput && len(updatedIssues) > 0 {
 				outputJSON(updatedIssues)
@@ -623,13 +406,11 @@ create, update, show, or close operation).`,
 
 			// Handle claim operation atomically
 			if claimFlag {
-				// Check if already claimed (has non-empty assignee)
 				if issue.Assignee != "" {
 					fmt.Fprintf(os.Stderr, "Error claiming %s: already claimed by %s\n", id, issue.Assignee)
 					result.Close()
 					continue
 				}
-				// Atomically set assignee and status
 				claimUpdates := map[string]interface{}{
 					"assignee": actor,
 					"status":   "in_progress",
@@ -641,98 +422,13 @@ create, update, show, or close operation).`,
 				}
 			}
 
-			// Apply regular field updates if any
-			regularUpdates := make(map[string]interface{})
-			for k, v := range updates {
-				if k != "add_labels" && k != "remove_labels" && k != "set_labels" && k != "parent" && k != "append_notes" {
-					regularUpdates[k] = v
-				}
-			}
-			// Handle append_notes: combine existing notes with new content
-			if appendNotes, ok := updates["append_notes"].(string); ok {
-				combined := issue.Notes
-				if combined != "" {
-					combined += "\n"
-				}
-				combined += appendNotes
-				regularUpdates["notes"] = combined
-			}
-			if len(regularUpdates) > 0 {
-				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
-					fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
-					result.Close()
-					continue
-				}
+			// Apply field updates, labels, and parent reparenting via centralized helper (bd-z344)
+			if err := applyDirectUpdates(ctx, issueStore, result.ResolvedID, issue, updates, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
+				result.Close()
+				continue
 			}
 
-			// Handle label operations
-			var setLabels, addLabels, removeLabels []string
-			if v, ok := updates["set_labels"].([]string); ok {
-				setLabels = v
-			}
-			if v, ok := updates["add_labels"].([]string); ok {
-				addLabels = v
-			}
-			if v, ok := updates["remove_labels"].([]string); ok {
-				removeLabels = v
-			}
-			if len(setLabels) > 0 || len(addLabels) > 0 || len(removeLabels) > 0 {
-				if err := applyLabelUpdates(ctx, issueStore, result.ResolvedID, actor, setLabels, addLabels, removeLabels); err != nil {
-					fmt.Fprintf(os.Stderr, "Error updating labels for %s: %v\n", id, err)
-					result.Close()
-					continue
-				}
-			}
-
-			// Handle parent reparenting
-			if newParent, ok := updates["parent"].(string); ok {
-				// Validate new parent exists (unless empty string to remove parent)
-				if newParent != "" {
-					parentIssue, err := issueStore.GetIssue(ctx, newParent)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error getting parent %s: %v\n", newParent, err)
-						result.Close()
-						continue
-					}
-					if parentIssue == nil {
-						fmt.Fprintf(os.Stderr, "Error: parent issue %s not found\n", newParent)
-						result.Close()
-						continue
-					}
-				}
-
-				// Find and remove existing parent-child dependency
-				deps, err := issueStore.GetDependencyRecords(ctx, result.ResolvedID)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error getting dependencies for %s: %v\n", id, err)
-					result.Close()
-					continue
-				}
-				for _, dep := range deps {
-					if dep.Type == types.DepParentChild {
-						if err := issueStore.RemoveDependency(ctx, result.ResolvedID, dep.DependsOnID, actor); err != nil {
-							fmt.Fprintf(os.Stderr, "Error removing old parent dependency: %v\n", err)
-						}
-						break
-					}
-				}
-
-				// Add new parent-child dependency (if not removing parent)
-				if newParent != "" {
-					newDep := &types.Dependency{
-						IssueID:     result.ResolvedID,
-						DependsOnID: newParent,
-						Type:        types.DepParentChild,
-					}
-					if err := issueStore.AddDependency(ctx, newDep, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error adding parent dependency: %v\n", err)
-						result.Close()
-						continue
-					}
-				}
-			}
-
-			// Run update hook
 			updatedIssue, _ := issueStore.GetIssue(ctx, result.ResolvedID)
 			if updatedIssue != nil && hookRunner != nil {
 				hookRunner.Run(hooks.EventUpdate, updatedIssue)
@@ -746,7 +442,6 @@ create, update, show, or close operation).`,
 				fmt.Printf("%s Updated issue: %s\n", ui.RenderPass("✓"), result.ResolvedID)
 			}
 
-			// Track first successful update for last-touched
 			if firstUpdatedID == "" {
 				firstUpdatedID = result.ResolvedID
 			}
@@ -805,6 +500,166 @@ func init() {
 	updateCmd.Flags().String("advice-subscriptions-exclude", "", "Comma-separated labels to exclude from advice delivery (empty to clear)")
 	updateCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(updateCmd)
+}
+
+// buildUpdateArgs creates an rpc.UpdateArgs from the updates map, mapping all
+// fields except append_notes (which needs RPC Show to get existing notes).
+// This centralizes the map→RPC mapping used by both local and routed daemon paths.
+func buildUpdateArgs(id string, updates map[string]interface{}, claimFlag bool, cmd *cobra.Command) *rpc.UpdateArgs {
+	updateArgs := &rpc.UpdateArgs{ID: id}
+	if status, ok := updates["status"].(string); ok {
+		updateArgs.Status = &status
+	}
+	if priority, ok := updates["priority"].(int); ok {
+		updateArgs.Priority = &priority
+	}
+	if title, ok := updates["title"].(string); ok {
+		updateArgs.Title = &title
+	}
+	if assignee, ok := updates["assignee"].(string); ok {
+		updateArgs.Assignee = &assignee
+	}
+	if description, ok := updates["description"].(string); ok {
+		updateArgs.Description = &description
+	}
+	if design, ok := updates["design"].(string); ok {
+		updateArgs.Design = &design
+	}
+	if notes, ok := updates["notes"].(string); ok {
+		updateArgs.Notes = &notes
+	}
+	if acceptanceCriteria, ok := updates["acceptance_criteria"].(string); ok {
+		updateArgs.AcceptanceCriteria = &acceptanceCriteria
+	}
+	if externalRef, ok := updates["external_ref"].(string); ok {
+		updateArgs.ExternalRef = &externalRef
+	}
+	if estimate, ok := updates["estimated_minutes"].(int); ok {
+		updateArgs.EstimatedMinutes = &estimate
+	}
+	if issueType, ok := updates["issue_type"].(string); ok {
+		updateArgs.IssueType = &issueType
+	}
+	if addLabels, ok := updates["add_labels"].([]string); ok {
+		updateArgs.AddLabels = addLabels
+	}
+	if removeLabels, ok := updates["remove_labels"].([]string); ok {
+		updateArgs.RemoveLabels = removeLabels
+	}
+	if setLabels, ok := updates["set_labels"].([]string); ok {
+		updateArgs.SetLabels = setLabels
+	}
+	if parent, ok := updates["parent"].(string); ok {
+		updateArgs.Parent = &parent
+	}
+	if awaitID, ok := updates["await_id"].(string); ok {
+		updateArgs.AwaitID = &awaitID
+	}
+	if dueAt, ok := updates["due_at"].(time.Time); ok {
+		s := dueAt.Format(time.RFC3339)
+		updateArgs.DueAt = &s
+	} else if updates["due_at"] == nil && cmd.Flags().Changed("due") {
+		empty := ""
+		updateArgs.DueAt = &empty
+	}
+	if deferUntil, ok := updates["defer_until"].(time.Time); ok {
+		s := deferUntil.Format(time.RFC3339)
+		updateArgs.DeferUntil = &s
+	} else if updates["defer_until"] == nil && cmd.Flags().Changed("defer") {
+		empty := ""
+		updateArgs.DeferUntil = &empty
+	}
+	if wisp, ok := updates["wisp"].(bool); ok {
+		updateArgs.Ephemeral = &wisp
+	}
+	if adviceSubs, ok := updates["advice_subscriptions"].([]string); ok {
+		updateArgs.AdviceSubscriptions = adviceSubs
+	}
+	if adviceExclude, ok := updates["advice_subscriptions_exclude"].([]string); ok {
+		updateArgs.AdviceSubscriptionsExclude = adviceExclude
+	}
+	updateArgs.Claim = claimFlag
+	return updateArgs
+}
+
+// applyDirectUpdates applies field updates, label changes, and parent reparenting
+// directly to storage. Used by both the direct mode main loop and the routed
+// direct-storage fallback path.
+func applyDirectUpdates(ctx context.Context, issueStore storage.Storage, resolvedID string, issue *types.Issue, updates map[string]interface{}, actorName string) error {
+	// Apply regular field updates
+	regularUpdates := make(map[string]interface{})
+	for k, v := range updates {
+		if k != "add_labels" && k != "remove_labels" && k != "set_labels" && k != "parent" && k != "append_notes" {
+			regularUpdates[k] = v
+		}
+	}
+	if appendNotes, ok := updates["append_notes"].(string); ok {
+		combined := issue.Notes
+		if combined != "" {
+			combined += "\n"
+		}
+		combined += appendNotes
+		regularUpdates["notes"] = combined
+	}
+	if len(regularUpdates) > 0 {
+		if err := issueStore.UpdateIssue(ctx, resolvedID, regularUpdates, actorName); err != nil {
+			return err
+		}
+	}
+
+	// Apply label operations
+	var setLabels, addLabels, removeLabels []string
+	if v, ok := updates["set_labels"].([]string); ok {
+		setLabels = v
+	}
+	if v, ok := updates["add_labels"].([]string); ok {
+		addLabels = v
+	}
+	if v, ok := updates["remove_labels"].([]string); ok {
+		removeLabels = v
+	}
+	if len(setLabels) > 0 || len(addLabels) > 0 || len(removeLabels) > 0 {
+		if err := applyLabelUpdates(ctx, issueStore, resolvedID, actorName, setLabels, addLabels, removeLabels); err != nil {
+			return err
+		}
+	}
+
+	// Handle parent reparenting
+	if newParent, ok := updates["parent"].(string); ok {
+		if newParent != "" {
+			parentIssue, err := issueStore.GetIssue(ctx, newParent)
+			if err != nil {
+				return fmt.Errorf("getting parent %s: %w", newParent, err)
+			}
+			if parentIssue == nil {
+				return fmt.Errorf("parent issue %s not found", newParent)
+			}
+		}
+		deps, err := issueStore.GetDependencyRecords(ctx, resolvedID)
+		if err != nil {
+			return fmt.Errorf("getting dependencies for %s: %w", resolvedID, err)
+		}
+		for _, dep := range deps {
+			if dep.Type == types.DepParentChild {
+				if err := issueStore.RemoveDependency(ctx, resolvedID, dep.DependsOnID, actorName); err != nil {
+					fmt.Fprintf(os.Stderr, "Error removing old parent dependency: %v\n", err)
+				}
+				break
+			}
+		}
+		if newParent != "" {
+			newDep := &types.Dependency{
+				IssueID:     resolvedID,
+				DependsOnID: newParent,
+				Type:        types.DepParentChild,
+			}
+			if err := issueStore.AddDependency(ctx, newDep, actorName); err != nil {
+				return fmt.Errorf("adding parent dependency: %w", err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // splitCommaSeparated splits a comma-separated string into a slice,

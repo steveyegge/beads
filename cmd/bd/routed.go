@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/beads"
@@ -285,4 +287,116 @@ func resolveIDViaRoutedDaemon(id string) (string, *rpc.Client, error) {
 	}
 
 	return resolvedID, client, nil
+}
+
+// ResolvedBatch holds batch ID resolution results split by routing.
+// Non-routed IDs are resolved (partial → full) and placed in ResolvedIDs.
+// IDs needing cross-rig routing are collected in RoutedArgs for separate handling.
+type ResolvedBatch struct {
+	ResolvedIDs []string // IDs resolved via daemon or direct store
+	RoutedArgs  []string // IDs needing cross-rig routing
+}
+
+// resolveIDsWithRouting resolves a batch of partial IDs, splitting them into
+// locally-resolved IDs and routed IDs that need cross-rig handling.
+// This replaces the identical resolution loop duplicated in show/close/update.
+//
+// When daemon is non-nil, resolution uses RPC. Otherwise, uses direct store lookup.
+// Routed IDs (those needing a different beads directory) are collected separately.
+// Returns error on first resolution failure.
+func resolveIDsWithRouting(ctx context.Context, localStore storage.Storage,
+	daemon *rpc.Client, ids []string,
+) (*ResolvedBatch, error) {
+	batch := &ResolvedBatch{}
+	skipLocalRouting := isRemoteDaemon()
+
+	for _, id := range ids {
+		// Check if this ID needs routing to a different beads directory
+		// Skip for remote daemons which handle all IDs centrally (gt-57wsnm)
+		if !skipLocalRouting && needsRouting(id) {
+			batch.RoutedArgs = append(batch.RoutedArgs, id)
+			continue
+		}
+
+		if daemon != nil {
+			// Daemon mode: resolve via RPC
+			resp, err := daemon.ResolveID(&rpc.ResolveIDArgs{ID: id})
+			if err != nil {
+				return nil, fmt.Errorf("resolving ID %s: %w", id, err)
+			}
+			var resolvedID string
+			if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
+				return nil, fmt.Errorf("unmarshaling resolved ID: %w", err)
+			}
+			batch.ResolvedIDs = append(batch.ResolvedIDs, resolvedID)
+		} else {
+			// Direct mode: resolve via store, or mark as routed
+			if needsRouting(id) {
+				batch.RoutedArgs = append(batch.RoutedArgs, id)
+			} else {
+				resolvedID, err := utils.ResolvePartialID(ctx, localStore, id)
+				if err != nil {
+					return nil, fmt.Errorf("resolving ID %s: %w", id, err)
+				}
+				batch.ResolvedIDs = append(batch.ResolvedIDs, resolvedID)
+			}
+		}
+	}
+
+	return batch, nil
+}
+
+// RoutedIDAction is a callback for processing a single routed issue ID.
+// It receives the resolved full ID and either a routedClient (daemon at target rig)
+// or a directResult (direct storage fallback). Exactly one will be non-nil.
+type RoutedIDAction func(resolvedID string, routedClient *rpc.Client, directResult *RoutedResult) error
+
+// forEachRoutedID processes routed IDs by trying the daemon at the target rig first,
+// falling back to direct storage resolution. For each ID, it calls the action callback
+// with either a routed daemon client or a direct RoutedResult.
+//
+// The caller's action callback is responsible for closing the routedClient or using
+// directResult.Close() as appropriate. forEachRoutedID handles cleanup on errors.
+// Errors are logged to stderr and processing continues to the next ID.
+func forEachRoutedID(ctx context.Context, localStore storage.Storage,
+	routedArgs []string, action RoutedIDAction,
+) {
+	for _, id := range routedArgs {
+		// Try daemon at the routed rig first to avoid direct Dolt access conflicts
+		resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
+		if routedClient != nil {
+			if err := action(resolvedID, routedClient, nil); err != nil {
+				fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", id, err)
+			}
+			continue
+		}
+		if routeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
+			continue
+		}
+
+		// Fall back to direct storage (no daemon at target rig)
+		result, err := resolveAndGetIssueWithRouting(ctx, localStore, id)
+		if err != nil {
+			if result != nil {
+				result.Close()
+			}
+			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+			continue
+		}
+		if result == nil || result.Issue == nil {
+			if result != nil {
+				result.Close()
+			}
+			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			continue
+		}
+
+		if err := action(result.ResolvedID, nil, result); err != nil {
+			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", id, err)
+			result.Close()
+			continue
+		}
+		result.Close()
+	}
 }
