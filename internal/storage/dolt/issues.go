@@ -526,6 +526,311 @@ func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
+// CreateTombstone converts an issue to a tombstone record (soft delete)
+func (s *DoltStore) CreateTombstone(ctx context.Context, id string, actor string, reason string) error {
+	// Get the issue to preserve its original type
+	issue, err := s.GetIssue(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get issue: %w", err)
+	}
+	if issue == nil {
+		return fmt.Errorf("issue not found: %s", id)
+	}
+
+	now := time.Now().UTC()
+	originalType := string(issue.IssueType)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Convert issue to tombstone
+	_, err = tx.ExecContext(ctx, `
+		UPDATE issues
+		SET status = ?,
+		    closed_at = NULL,
+		    deleted_at = ?,
+		    deleted_by = ?,
+		    delete_reason = ?,
+		    original_type = ?,
+		    updated_at = ?
+		WHERE id = ?
+	`, types.StatusTombstone, now, actor, reason, originalType, now, id)
+	if err != nil {
+		return fmt.Errorf("failed to create tombstone: %w", err)
+	}
+
+	// Record tombstone creation event
+	if err := recordEvent(ctx, tx, id, "deleted", actor, "", reason); err != nil {
+		return fmt.Errorf("failed to record tombstone event: %w", err)
+	}
+
+	// Mark issue as dirty for incremental export
+	if err := markDirty(ctx, tx, id); err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// DeleteIssues deletes multiple issues in a single transaction.
+// If cascade is true, recursively deletes dependents.
+// If cascade is false but force is true, deletes issues and orphans dependents.
+// If both are false, returns an error if any issue has dependents.
+// If dryRun is true, only computes statistics without deleting.
+func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool, force bool, dryRun bool) (*types.DeleteIssuesResult, error) {
+	if len(ids) == 0 {
+		return &types.DeleteIssuesResult{}, nil
+	}
+
+	idSet := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idSet[id] = true
+	}
+
+	result := &types.DeleteIssuesResult{}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Resolve the full set of IDs to delete
+	expandedIDs := ids
+	if cascade {
+		allToDelete, err := s.findAllDependentsRecursiveTx(ctx, tx, ids)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find dependents: %w", err)
+		}
+		expandedIDs = make([]string, 0, len(allToDelete))
+		for id := range allToDelete {
+			expandedIDs = append(expandedIDs, id)
+		}
+	} else if !force {
+		// Check for external dependents
+		for _, id := range ids {
+			var depCount int
+			err := tx.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM dependencies WHERE depends_on_id = ?`, id).Scan(&depCount)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check dependents for %s: %w", id, err)
+			}
+			if depCount == 0 {
+				continue
+			}
+			rows, err := tx.QueryContext(ctx,
+				`SELECT issue_id FROM dependencies WHERE depends_on_id = ?`, id)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get dependents for %s: %w", id, err)
+			}
+			hasExternal := false
+			for rows.Next() {
+				var depID string
+				if err := rows.Scan(&depID); err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("failed to scan dependent: %w", err)
+				}
+				if !idSet[depID] {
+					hasExternal = true
+					result.OrphanedIssues = append(result.OrphanedIssues, depID)
+				}
+			}
+			_ = rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, fmt.Errorf("failed to iterate dependents for %s: %w", id, err)
+			}
+			if hasExternal {
+				return nil, fmt.Errorf("issue %s has dependents not in deletion set; use --cascade to delete them or --force to orphan them", id)
+			}
+		}
+	} else {
+		// Force mode: track orphaned issues
+		orphanSet := make(map[string]bool)
+		for _, id := range ids {
+			rows, err := tx.QueryContext(ctx,
+				`SELECT issue_id FROM dependencies WHERE depends_on_id = ?`, id)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get dependents for %s: %w", id, err)
+			}
+			for rows.Next() {
+				var depID string
+				if err := rows.Scan(&depID); err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("failed to scan dependent: %w", err)
+				}
+				if !idSet[depID] {
+					orphanSet[depID] = true
+				}
+			}
+			_ = rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, fmt.Errorf("failed to iterate dependents for %s: %w", id, err)
+			}
+		}
+		for orphanID := range orphanSet {
+			result.OrphanedIssues = append(result.OrphanedIssues, orphanID)
+		}
+	}
+
+	// Build IN clause for stats and deletion
+	inClause, args := doltBuildSQLInClause(expandedIDs)
+
+	// Populate stats
+	var depsCount, labelsCount, eventsCount int
+	err = tx.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT COUNT(*) FROM dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)`, inClause, inClause),
+		append(args, args...)...).Scan(&depsCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count dependencies: %w", err)
+	}
+	result.DependenciesCount = depsCount
+
+	err = tx.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT COUNT(*) FROM labels WHERE issue_id IN (%s)`, inClause),
+		args...).Scan(&labelsCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count labels: %w", err)
+	}
+	result.LabelsCount = labelsCount
+
+	err = tx.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT COUNT(*) FROM events WHERE issue_id IN (%s)`, inClause),
+		args...).Scan(&eventsCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count events: %w", err)
+	}
+	result.EventsCount = eventsCount
+	result.DeletedCount = len(expandedIDs)
+
+	if dryRun {
+		return result, nil
+	}
+
+	// 1. Delete dependencies
+	_, err = tx.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)`, inClause, inClause),
+		append(args, args...)...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete dependencies: %w", err)
+	}
+
+	// 2. Get issue types before converting to tombstones
+	issueTypes := make(map[string]string)
+	rows, err := tx.QueryContext(ctx,
+		fmt.Sprintf(`SELECT id, issue_type FROM issues WHERE id IN (%s)`, inClause),
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get issue types: %w", err)
+	}
+	for rows.Next() {
+		var id, issueType string
+		if err := rows.Scan(&id, &issueType); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("failed to scan issue type: %w", err)
+		}
+		issueTypes[id] = issueType
+	}
+	_ = rows.Close()
+
+	// 3. Convert issues to tombstones
+	now := time.Now().UTC()
+	deletedCount := 0
+	for id, originalType := range issueTypes {
+		execResult, err := tx.ExecContext(ctx, `
+			UPDATE issues
+			SET status = ?,
+			    closed_at = NULL,
+			    deleted_at = ?,
+			    deleted_by = ?,
+			    delete_reason = ?,
+			    original_type = ?,
+			    updated_at = ?
+			WHERE id = ?
+		`, types.StatusTombstone, now, "batch delete", "batch delete", originalType, now, id)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create tombstone for %s: %w", id, err)
+		}
+
+		rowsAffected, _ := execResult.RowsAffected()
+		if rowsAffected == 0 {
+			continue
+		}
+		deletedCount++
+
+		// Record tombstone creation event
+		if err := recordEvent(ctx, tx, id, "deleted", "batch delete", "", "batch delete"); err != nil {
+			return nil, fmt.Errorf("failed to record tombstone event for %s: %w", id, err)
+		}
+
+		// Mark issue as dirty
+		if err := markDirty(ctx, tx, id); err != nil {
+			return nil, fmt.Errorf("failed to mark issue dirty for %s: %w", id, err)
+		}
+	}
+
+	result.DeletedCount = deletedCount
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return result, nil
+}
+
+// findAllDependentsRecursiveTx finds all issues that depend on the given issues, recursively (within a transaction)
+func (s *DoltStore) findAllDependentsRecursiveTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]bool, error) {
+	result := make(map[string]bool)
+	for _, id := range ids {
+		result[id] = true
+	}
+
+	toProcess := make([]string, len(ids))
+	copy(toProcess, ids)
+
+	for len(toProcess) > 0 {
+		current := toProcess[0]
+		toProcess = toProcess[1:]
+
+		rows, err := tx.QueryContext(ctx,
+			`SELECT issue_id FROM dependencies WHERE depends_on_id = ?`, current)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query dependents for %s: %w", current, err)
+		}
+
+		for rows.Next() {
+			var depID string
+			if err := rows.Scan(&depID); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("failed to scan dependent: %w", err)
+			}
+			if !result[depID] {
+				result[depID] = true
+				toProcess = append(toProcess, depID)
+			}
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("failed to iterate dependents for %s: %w", current, err)
+		}
+	}
+
+	return result, nil
+}
+
+// doltBuildSQLInClause builds a parameterized IN clause for SQL queries
+func doltBuildSQLInClause(ids []string) (string, []interface{}) {
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return strings.Join(placeholders, ","), args
+}
+
 // =============================================================================
 // Helper functions
 // =============================================================================

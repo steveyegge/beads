@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -437,10 +437,10 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 		}
 	}
 	ctx := rootCtx
-	// Type assert to SQLite storage
-	d, ok := store.(*sqlite.SQLiteStorage)
+	// Type assert to BatchDeleter interface (supported by SQLite and Dolt backends)
+	d, ok := store.(storage.BatchDeleter)
 	if !ok {
-		// Fallback for non-SQLite storage (e.g., MemoryStorage in --no-db mode)
+		// Fallback for storage that doesn't implement BatchDeleter (e.g., MemoryStorage in --no-db mode)
 		deleteBatchFallback(issueIDs, force, dryRun, cascade, jsonOutput, hardDelete, reason)
 		return
 	}
