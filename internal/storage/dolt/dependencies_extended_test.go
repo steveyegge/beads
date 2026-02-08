@@ -1,4 +1,3 @@
-//go:build cgo
 package dolt
 
 import (
@@ -12,10 +11,10 @@ import (
 // =============================================================================
 
 func TestGetDependenciesWithMetadata(t *testing.T) {
-	// Note: This test is skipped in embedded Dolt mode because GetDependenciesWithMetadata
+	// Note: This test is skipped because GetDependenciesWithMetadata
 	// makes nested GetIssue calls inside a rows cursor, which can cause connection issues.
 	// This is a known limitation of the current implementation (see bd-tdgo.3).
-	t.Skip("Skipping: GetDependenciesWithMetadata has nested query issue in embedded Dolt mode")
+	t.Skip("Skipping: GetDependenciesWithMetadata has nested query issue in Dolt mode")
 }
 
 func TestGetDependenciesWithMetadata_NoResults(t *testing.T) {
@@ -27,11 +26,11 @@ func TestGetDependenciesWithMetadata_NoResults(t *testing.T) {
 
 	// Create an issue with no dependencies
 	issue := &types.Issue{
-		ID:          "no-deps-issue",
-		Title:       "No Dependencies",
-		Status:      types.StatusOpen,
-		Priority:    2,
-		IssueType:   types.TypeTask,
+		ID:        "no-deps-issue",
+		Title:     "No Dependencies",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
 	}
 	if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
 		t.Fatalf("failed to create issue: %v", err)
@@ -52,10 +51,10 @@ func TestGetDependenciesWithMetadata_NoResults(t *testing.T) {
 // =============================================================================
 
 func TestGetDependentsWithMetadata(t *testing.T) {
-	// Note: This test is skipped in embedded Dolt mode because GetDependentsWithMetadata
+	// Note: This test is skipped because GetDependentsWithMetadata
 	// makes nested GetIssue calls inside a rows cursor, which can cause connection issues.
 	// This is a known limitation of the current implementation (see bd-tdgo.3).
-	t.Skip("Skipping: GetDependentsWithMetadata has nested query issue in embedded Dolt mode")
+	t.Skip("Skipping: GetDependentsWithMetadata has nested query issue in Dolt mode")
 }
 
 // =============================================================================
@@ -675,5 +674,3 @@ func TestAddDependency_MultipleExternalReferences(t *testing.T) {
 }
 
 // Note: testContext is already defined in dolt_test.go for this package
-
-

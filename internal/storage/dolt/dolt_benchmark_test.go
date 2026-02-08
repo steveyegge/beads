@@ -1,4 +1,3 @@
-//go:build cgo
 // Package dolt provides performance benchmarks for the Dolt storage backend.
 // Run with: go test -bench=. -benchmem ./internal/storage/dolt/...
 //
@@ -70,9 +69,9 @@ func setupBenchStore(b *testing.B) (*DoltStore, func()) {
 // Bootstrap & Connection Benchmarks
 // =============================================================================
 
-// BenchmarkBootstrapEmbedded measures store initialization time in embedded mode.
+// BenchmarkBootstrap measures store initialization time.
 // This is the critical path for CLI commands that open/close the store each time.
-func BenchmarkBootstrapEmbedded(b *testing.B) {
+func BenchmarkBootstrap(b *testing.B) {
 	if _, err := os.LookupEnv("DOLT_PATH"); err != false {
 		if _, err := os.Stat("/usr/local/bin/dolt"); os.IsNotExist(err) {
 			if _, err := os.Stat("/usr/bin/dolt"); os.IsNotExist(err) {
@@ -95,7 +94,6 @@ func BenchmarkBootstrapEmbedded(b *testing.B) {
 		CommitterName:  "bench",
 		CommitterEmail: "bench@example.com",
 		Database:       "benchdb",
-		ServerMode:     false, // Force embedded mode
 	}
 
 	initStore, err := New(ctx, cfg)
@@ -143,7 +141,6 @@ func BenchmarkColdStart(b *testing.B) {
 		CommitterName:  "bench",
 		CommitterEmail: "bench@example.com",
 		Database:       "benchdb",
-		ServerMode:     false, // Force embedded mode
 	}
 
 	b.ResetTimer()
@@ -208,11 +205,11 @@ func BenchmarkCLIWorkflow(b *testing.B) {
 	// Create some issues
 	for i := 0; i < 20; i++ {
 		issue := &types.Issue{
-			ID:          fmt.Sprintf("cli-workflow-%d", i),
-			Title:       fmt.Sprintf("CLI Workflow Issue %d", i),
-			Status:      types.StatusOpen,
-			Priority:    (i % 4) + 1,
-			IssueType:   types.TypeTask,
+			ID:        fmt.Sprintf("cli-workflow-%d", i),
+			Title:     fmt.Sprintf("CLI Workflow Issue %d", i),
+			Status:    types.StatusOpen,
+			Priority:  (i % 4) + 1,
+			IssueType: types.TypeTask,
 		}
 		if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
 			b.Fatalf("failed to create issue: %v", err)
@@ -227,7 +224,6 @@ func BenchmarkCLIWorkflow(b *testing.B) {
 		CommitterName:  "bench",
 		CommitterEmail: "bench@example.com",
 		Database:       "benchdb",
-		ServerMode:     false,
 	}
 
 	b.ResetTimer()
@@ -493,11 +489,11 @@ func BenchmarkAddDependency(b *testing.B) {
 
 	// Create issues to link
 	parent := &types.Issue{
-		ID:          "dep-parent",
-		Title:       "Dependency Parent",
-		Status:      types.StatusOpen,
-		Priority:    1,
-		IssueType:   types.TypeEpic,
+		ID:        "dep-parent",
+		Title:     "Dependency Parent",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
 	}
 	if err := store.CreateIssue(ctx, parent, "bench"); err != nil {
 		b.Fatalf("failed to create parent: %v", err)
@@ -505,11 +501,11 @@ func BenchmarkAddDependency(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		child := &types.Issue{
-			ID:          fmt.Sprintf("dep-child-%d", i),
-			Title:       fmt.Sprintf("Dependency Child %d", i),
-			Status:      types.StatusOpen,
-			Priority:    2,
-			IssueType:   types.TypeTask,
+			ID:        fmt.Sprintf("dep-child-%d", i),
+			Title:     fmt.Sprintf("Dependency Child %d", i),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
 		}
 		if err := store.CreateIssue(ctx, child, "bench"); err != nil {
 			b.Fatalf("failed to create child: %v", err)
@@ -538,11 +534,11 @@ func BenchmarkGetDependencies(b *testing.B) {
 
 	// Create a child with multiple dependencies
 	child := &types.Issue{
-		ID:          "multi-dep-child",
-		Title:       "Multi Dependency Child",
-		Status:      types.StatusOpen,
-		Priority:    2,
-		IssueType:   types.TypeTask,
+		ID:        "multi-dep-child",
+		Title:     "Multi Dependency Child",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
 	}
 	if err := store.CreateIssue(ctx, child, "bench"); err != nil {
 		b.Fatalf("failed to create child: %v", err)
@@ -551,11 +547,11 @@ func BenchmarkGetDependencies(b *testing.B) {
 	// Create 10 parents and link them
 	for i := 0; i < 10; i++ {
 		parent := &types.Issue{
-			ID:          fmt.Sprintf("multi-parent-%d", i),
-			Title:       fmt.Sprintf("Multi Parent %d", i),
-			Status:      types.StatusOpen,
-			Priority:    1,
-			IssueType:   types.TypeTask,
+			ID:        fmt.Sprintf("multi-parent-%d", i),
+			Title:     fmt.Sprintf("Multi Parent %d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
 		}
 		if err := store.CreateIssue(ctx, parent, "bench"); err != nil {
 			b.Fatalf("failed to create parent: %v", err)
@@ -589,18 +585,18 @@ func BenchmarkIsBlocked(b *testing.B) {
 
 	// Create parent and child with blocking relationship
 	parent := &types.Issue{
-		ID:          "block-parent",
-		Title:       "Blocking Parent",
-		Status:      types.StatusOpen,
-		Priority:    1,
-		IssueType:   types.TypeTask,
+		ID:        "block-parent",
+		Title:     "Blocking Parent",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
 	}
 	child := &types.Issue{
-		ID:          "block-child",
-		Title:       "Blocked Child",
-		Status:      types.StatusOpen,
-		Priority:    2,
-		IssueType:   types.TypeTask,
+		ID:        "block-child",
+		Title:     "Blocked Child",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
 	}
 	if err := store.CreateIssue(ctx, parent, "bench"); err != nil {
 		b.Fatalf("failed to create parent: %v", err)
@@ -640,11 +636,11 @@ func BenchmarkConcurrentReads(b *testing.B) {
 
 	// Create test issue
 	issue := &types.Issue{
-		ID:          "concurrent-read",
-		Title:       "Concurrent Read Issue",
-		Status:      types.StatusOpen,
-		Priority:    2,
-		IssueType:   types.TypeTask,
+		ID:        "concurrent-read",
+		Title:     "Concurrent Read Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
 	}
 	if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
 		b.Fatalf("failed to create issue: %v", err)
@@ -680,11 +676,11 @@ func BenchmarkConcurrentWrites(b *testing.B) {
 			mu.Unlock()
 
 			issue := &types.Issue{
-				ID:          fmt.Sprintf("concurrent-write-%d", id),
-				Title:       fmt.Sprintf("Concurrent Write Issue %d", id),
-				Status:      types.StatusOpen,
-				Priority:    2,
-				IssueType:   types.TypeTask,
+				ID:        fmt.Sprintf("concurrent-write-%d", id),
+				Title:     fmt.Sprintf("Concurrent Write Issue %d", id),
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
 			}
 			if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
 				b.Errorf("concurrent write failed: %v", err)
@@ -703,11 +699,11 @@ func BenchmarkConcurrentMixedWorkload(b *testing.B) {
 	// Create some initial issues
 	for i := 0; i < 50; i++ {
 		issue := &types.Issue{
-			ID:          fmt.Sprintf("mixed-%d", i),
-			Title:       fmt.Sprintf("Mixed Workload Issue %d", i),
-			Status:      types.StatusOpen,
-			Priority:    (i % 4) + 1,
-			IssueType:   types.TypeTask,
+			ID:        fmt.Sprintf("mixed-%d", i),
+			Title:     fmt.Sprintf("Mixed Workload Issue %d", i),
+			Status:    types.StatusOpen,
+			Priority:  (i % 4) + 1,
+			IssueType: types.TypeTask,
 		}
 		if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
 			b.Fatalf("failed to create issue: %v", err)
@@ -730,11 +726,11 @@ func BenchmarkConcurrentMixedWorkload(b *testing.B) {
 				mu.Unlock()
 
 				issue := &types.Issue{
-					ID:          fmt.Sprintf("mixed-new-%d", id),
-					Title:       fmt.Sprintf("Mixed New Issue %d", id),
-					Status:      types.StatusOpen,
-					Priority:    2,
-					IssueType:   types.TypeTask,
+					ID:        fmt.Sprintf("mixed-new-%d", id),
+					Title:     fmt.Sprintf("Mixed New Issue %d", id),
+					Status:    types.StatusOpen,
+					Priority:  2,
+					IssueType: types.TypeTask,
 				}
 				if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
 					b.Errorf("write failed: %v", err)
@@ -765,11 +761,11 @@ func BenchmarkCommit(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		// Create an issue
 		issue := &types.Issue{
-			ID:          fmt.Sprintf("commit-bench-%d", i),
-			Title:       fmt.Sprintf("Commit Bench Issue %d", i),
-			Status:      types.StatusOpen,
-			Priority:    2,
-			IssueType:   types.TypeTask,
+			ID:        fmt.Sprintf("commit-bench-%d", i),
+			Title:     fmt.Sprintf("Commit Bench Issue %d", i),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
 		}
 		if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
 			b.Fatalf("failed to create issue: %v", err)
@@ -792,11 +788,11 @@ func BenchmarkLog(b *testing.B) {
 	// Create some commits
 	for i := 0; i < 20; i++ {
 		issue := &types.Issue{
-			ID:          fmt.Sprintf("log-bench-%d", i),
-			Title:       fmt.Sprintf("Log Bench Issue %d", i),
-			Status:      types.StatusOpen,
-			Priority:    2,
-			IssueType:   types.TypeTask,
+			ID:        fmt.Sprintf("log-bench-%d", i),
+			Title:     fmt.Sprintf("Log Bench Issue %d", i),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
 		}
 		if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
 			b.Fatalf("failed to create issue: %v", err)
@@ -836,11 +832,11 @@ func BenchmarkGetStatistics(b *testing.B) {
 		}
 
 		issue := &types.Issue{
-			ID:          fmt.Sprintf("stats-%d", i),
-			Title:       fmt.Sprintf("Stats Issue %d", i),
-			Status:      status,
-			Priority:    (i % 4) + 1,
-			IssueType:   types.TypeTask,
+			ID:        fmt.Sprintf("stats-%d", i),
+			Title:     fmt.Sprintf("Stats Issue %d", i),
+			Status:    status,
+			Priority:  (i % 4) + 1,
+			IssueType: types.TypeTask,
 		}
 		if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
 			b.Fatalf("failed to create issue: %v", err)
@@ -866,22 +862,22 @@ func BenchmarkGetReadyWork(b *testing.B) {
 	// Create issues with dependencies
 	for i := 0; i < 50; i++ {
 		parent := &types.Issue{
-			ID:          fmt.Sprintf("ready-parent-%d", i),
-			Title:       fmt.Sprintf("Ready Parent %d", i),
-			Status:      types.StatusOpen,
-			Priority:    1,
-			IssueType:   types.TypeTask,
+			ID:        fmt.Sprintf("ready-parent-%d", i),
+			Title:     fmt.Sprintf("Ready Parent %d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
 		}
 		if err := store.CreateIssue(ctx, parent, "bench"); err != nil {
 			b.Fatalf("failed to create parent: %v", err)
 		}
 
 		child := &types.Issue{
-			ID:          fmt.Sprintf("ready-child-%d", i),
-			Title:       fmt.Sprintf("Ready Child %d", i),
-			Status:      types.StatusOpen,
-			Priority:    2,
-			IssueType:   types.TypeTask,
+			ID:        fmt.Sprintf("ready-child-%d", i),
+			Title:     fmt.Sprintf("Ready Child %d", i),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
 		}
 		if err := store.CreateIssue(ctx, child, "bench"); err != nil {
 			b.Fatalf("failed to create child: %v", err)
@@ -922,11 +918,11 @@ func BenchmarkAddLabel(b *testing.B) {
 
 	// Create test issue
 	issue := &types.Issue{
-		ID:          "label-bench",
-		Title:       "Label Bench Issue",
-		Status:      types.StatusOpen,
-		Priority:    2,
-		IssueType:   types.TypeTask,
+		ID:        "label-bench",
+		Title:     "Label Bench Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
 	}
 	if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
 		b.Fatalf("failed to create issue: %v", err)
@@ -949,11 +945,11 @@ func BenchmarkGetLabels(b *testing.B) {
 
 	// Create issue with multiple labels
 	issue := &types.Issue{
-		ID:          "labels-bench",
-		Title:       "Labels Bench Issue",
-		Status:      types.StatusOpen,
-		Priority:    2,
-		IssueType:   types.TypeTask,
+		ID:        "labels-bench",
+		Title:     "Labels Bench Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
 	}
 	if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
 		b.Fatalf("failed to create issue: %v", err)
@@ -973,5 +969,3 @@ func BenchmarkGetLabels(b *testing.B) {
 		}
 	}
 }
-
-

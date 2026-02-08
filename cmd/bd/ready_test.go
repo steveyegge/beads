@@ -10,6 +10,7 @@ import (
 )
 
 func TestReadySuite(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -267,6 +268,7 @@ func TestReadySuite(t *testing.T) {
 }
 
 func TestReadyCommandInit(t *testing.T) {
+	t.Parallel()
 	if readyCmd == nil {
 		t.Fatal("readyCmd should be initialized")
 	}
@@ -282,6 +284,7 @@ func TestReadyCommandInit(t *testing.T) {
 
 // GH#820: Tests for defer_until filtering in ready work
 func TestReadyWorkDeferUntil(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -293,22 +296,22 @@ func TestReadyWorkDeferUntil(t *testing.T) {
 
 	issues := []*types.Issue{
 		{
-			ID:        "test-future-defer",
-			Title:     "Future deferred task",
-			Status:    types.StatusOpen,
-			Priority:  1,
-			IssueType: types.TypeTask,
+			ID:         "test-future-defer",
+			Title:      "Future deferred task",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  types.TypeTask,
 			DeferUntil: &futureDefer,
-			CreatedAt: time.Now(),
+			CreatedAt:  time.Now(),
 		},
 		{
-			ID:        "test-past-defer",
-			Title:     "Past deferred task",
-			Status:    types.StatusOpen,
-			Priority:  1,
-			IssueType: types.TypeTask,
+			ID:         "test-past-defer",
+			Title:      "Past deferred task",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  types.TypeTask,
 			DeferUntil: &pastDefer,
-			CreatedAt: time.Now(),
+			CreatedAt:  time.Now(),
 		},
 		{
 			ID:        "test-no-defer",
@@ -385,6 +388,7 @@ func TestReadyWorkDeferUntil(t *testing.T) {
 }
 
 func TestReadyWorkUnassigned(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)

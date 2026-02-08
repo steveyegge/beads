@@ -71,8 +71,8 @@ CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status);
 CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority);
 CREATE INDEX IF NOT EXISTS idx_issues_assignee ON issues(assignee);
 CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
-CREATE INDEX IF NOT EXISTS idx_issues_spec_id ON issues(spec_id);
 -- Note: idx_issues_external_ref is created in migrations/002_external_ref_column.go
+-- Note: idx_issues_spec_id is created in migrations/041_spec_id_column.go
 
 -- Dependencies table (edge schema - Decision 004)
 CREATE TABLE IF NOT EXISTS dependencies (
@@ -149,7 +149,7 @@ INSERT OR IGNORE INTO config (key, value) VALUES
     ('compact_tier2_days', '90'),
     ('compact_tier2_dep_levels', '5'),
     ('compact_tier2_commits', '100'),
-    ('compact_model', 'claude-3-5-haiku-20241022'),
+    ('compact_model', 'claude-haiku-4-5-20251001'),
     ('compact_batch_size', '50'),
     ('compact_parallel_workers', '5'),
     ('auto_compact_enabled', 'false');

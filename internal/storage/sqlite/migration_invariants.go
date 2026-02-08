@@ -3,28 +3,29 @@ package sqlite
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 )
 
-// Snapshot captures database state before migrations for validation
-type Snapshot struct {
+// snapshot captures database state before migrations for validation
+type snapshot struct {
 	IssueCount      int
 	ConfigKeys      []string
 	DependencyCount int
 	LabelCount      int
 }
 
-// MigrationInvariant represents a database invariant that must hold after migrations
-type MigrationInvariant struct {
+// migrationInvariant represents a database invariant that must hold after migrations
+type migrationInvariant struct {
 	Name        string
 	Description string
-	Check       func(*sql.DB, *Snapshot) error
+	Check       func(*sql.DB, *snapshot) error
 }
 
 // invariants is the list of all invariants checked after migrations
-var invariants = []MigrationInvariant{
+var invariants = []migrationInvariant{
 	{
 		Name:        "required_config_present",
 		Description: "Required config keys must exist",
@@ -43,8 +44,8 @@ var invariants = []MigrationInvariant{
 }
 
 // captureSnapshot takes a snapshot of the database state before migrations
-func captureSnapshot(db *sql.DB) (*Snapshot, error) {
-	snapshot := &Snapshot{}
+func captureSnapshot(db *sql.DB) (*snapshot, error) {
+	snapshot := &snapshot{}
 
 	// Count issues
 	err := db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&snapshot.IssueCount)
@@ -87,7 +88,7 @@ func captureSnapshot(db *sql.DB) (*Snapshot, error) {
 }
 
 // verifyInvariants checks all migration invariants and returns error if any fail
-func verifyInvariants(db *sql.DB, snapshot *Snapshot) error {
+func verifyInvariants(db *sql.DB, snapshot *snapshot) error {
 	var failures []string
 
 	for _, invariant := range invariants {
@@ -105,7 +106,7 @@ func verifyInvariants(db *sql.DB, snapshot *Snapshot) error {
 
 // checkRequiredConfig ensures required config keys exist (would have caught GH #201)
 // Only enforces issue_prefix requirement if there are issues in the database
-func checkRequiredConfig(db *sql.DB, snapshot *Snapshot) error {
+func checkRequiredConfig(db *sql.DB, snapshot *snapshot) error {
 	// Check current issue count (not snapshot, since migrations may add/remove issues)
 	var currentCount int
 	err := db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&currentCount)
@@ -122,7 +123,7 @@ func checkRequiredConfig(db *sql.DB, snapshot *Snapshot) error {
 	// Check for required config keys
 	var value string
 	err = db.QueryRow("SELECT value FROM config WHERE key = 'issue_prefix'").Scan(&value)
-	if err == sql.ErrNoRows || value == "" {
+	if errors.Is(err, sql.ErrNoRows) || value == "" {
 		return fmt.Errorf("required config key missing: issue_prefix (database has %d issues)", currentCount)
 	} else if err != nil {
 		return fmt.Errorf("failed to check config key issue_prefix: %w", err)
@@ -132,7 +133,7 @@ func checkRequiredConfig(db *sql.DB, snapshot *Snapshot) error {
 }
 
 // checkForeignKeys ensures no orphaned dependencies or labels exist
-func checkForeignKeys(db *sql.DB, snapshot *Snapshot) error {
+func checkForeignKeys(db *sql.DB, snapshot *snapshot) error {
 	// Check for orphaned dependencies (issue_id not in issues)
 	var orphanedDepsIssue int
 	err := db.QueryRow(`
@@ -182,7 +183,7 @@ func checkForeignKeys(db *sql.DB, snapshot *Snapshot) error {
 }
 
 // checkIssueCount ensures issue count doesn't decrease unexpectedly
-func checkIssueCount(db *sql.DB, snapshot *Snapshot) error {
+func checkIssueCount(db *sql.DB, snapshot *snapshot) error {
 	var currentCount int
 	err := db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&currentCount)
 	if err != nil {
@@ -206,7 +207,7 @@ func GetInvariantNames() []string {
 	return names
 }
 
-// CleanOrphanedRefs removes orphaned dependencies and labels that reference non-existent issues.
+// cleanOrphanedRefs removes orphaned dependencies and labels that reference non-existent issues.
 // This runs BEFORE migrations to prevent the chicken-and-egg problem where:
 // 1. bd doctor --fix tries to open the database
 // 2. Opening triggers migrations with invariant checks
@@ -214,7 +215,7 @@ func GetInvariantNames() []string {
 // 4. Fix never runs because database won't open
 //
 // Returns counts of cleaned items for logging.
-func CleanOrphanedRefs(db *sql.DB) (deps int, labels int, err error) {
+func cleanOrphanedRefs(db *sql.DB) (deps int, labels int, err error) {
 	// Clean orphaned dependencies (issue_id not in issues)
 	result, err := db.Exec(`
 		DELETE FROM dependencies

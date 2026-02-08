@@ -103,10 +103,7 @@ Examples:
 			}
 		} else {
 			// Direct mode
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
+			requireFreshDB(ctx)
 
 			if store == nil {
 				fmt.Fprintln(os.Stderr, "Error: database not initialized")

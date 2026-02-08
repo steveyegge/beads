@@ -24,7 +24,7 @@ import (
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/util"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -527,12 +527,14 @@ func formatDependencyInfo(blockedBy, blocks []string) string {
 }
 
 // buildBlockingMaps builds maps of blocking dependencies from dependency records.
-// Returns two maps: blockedByMap[issueID] = []IDs that block this issue,
-// and blocksMap[issueID] = []IDs that this issue blocks.
+// Returns three maps: blockedByMap[issueID] = []IDs that block this issue,
+// blocksMap[issueID] = []IDs that this issue blocks (excluding parent-child),
+// and childrenMap[issueID] = []IDs that are children of this issue.
 // Only includes dependencies where AffectsReadyWork() is true (blocks, parent-child, etc.)
-func buildBlockingMaps(allDeps map[string][]*types.Dependency) (blockedByMap, blocksMap map[string][]string) {
+func buildBlockingMaps(allDeps map[string][]*types.Dependency) (blockedByMap, blocksMap, childrenMap map[string][]string) {
 	blockedByMap = make(map[string][]string)
 	blocksMap = make(map[string][]string)
+	childrenMap = make(map[string][]string)
 
 	for issueID, deps := range allDeps {
 		for _, dep := range deps {
@@ -542,11 +544,15 @@ func buildBlockingMaps(allDeps map[string][]*types.Dependency) (blockedByMap, bl
 			}
 			// issueID is blocked by dep.DependsOnID
 			blockedByMap[issueID] = append(blockedByMap[issueID], dep.DependsOnID)
-			// dep.DependsOnID blocks issueID
-			blocksMap[dep.DependsOnID] = append(blocksMap[dep.DependsOnID], issueID)
+			// Separate parent-child from blocking relationships
+			if dep.Type == types.DepParentChild {
+				childrenMap[dep.DependsOnID] = append(childrenMap[dep.DependsOnID], issueID)
+			} else {
+				blocksMap[dep.DependsOnID] = append(blocksMap[dep.DependsOnID], issueID)
+			}
 		}
 	}
-	return blockedByMap, blocksMap
+	return blockedByMap, blocksMap, childrenMap
 }
 
 // formatIssueCompact formats a single issue in compact format to a buffer
@@ -598,7 +604,7 @@ var listCmd = &cobra.Command{
 		status, _ := cmd.Flags().GetString("status")
 		assignee, _ := cmd.Flags().GetString("assignee")
 		issueType, _ := cmd.Flags().GetString("type")
-		issueType = util.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
+		issueType = utils.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
 		limit, _ := cmd.Flags().GetInt("limit")
 		allFlag, _ := cmd.Flags().GetBool("all")
 		formatStr, _ := cmd.Flags().GetString("format")
@@ -703,8 +709,8 @@ var listCmd = &cobra.Command{
 		// Use global jsonOutput set by PersistentPreRun
 
 		// Normalize labels: trim, dedupe, remove empty
-		labels = util.NormalizeLabels(labels)
-		labelsAny = util.NormalizeLabels(labelsAny)
+		labels = utils.NormalizeLabels(labels)
+		labelsAny = utils.NormalizeLabels(labelsAny)
 
 		// Apply directory-aware label scoping if no labels explicitly provided (GH#541)
 		if len(labels) == 0 && len(labelsAny) == 0 {
@@ -716,9 +722,12 @@ var listCmd = &cobra.Command{
 		// Handle limit: --limit 0 means unlimited (explicit override)
 		// Otherwise use the value (default 50 or user-specified)
 		// Agent mode uses lower default (20) for context efficiency
+		// --all without explicit --limit sets unlimited (bd-u0l9f)
 		effectiveLimit := limit
 		if cmd.Flags().Changed("limit") && limit == 0 {
 			effectiveLimit = 0 // Explicit unlimited
+		} else if !cmd.Flags().Changed("limit") && allFlag {
+			effectiveLimit = 0 // --all implies unlimited
 		} else if !cmd.Flags().Changed("limit") && ui.IsAgentMode() {
 			effectiveLimit = 20 // Agent mode default
 		}
@@ -773,7 +782,7 @@ var listCmd = &cobra.Command{
 			filter.TitleSearch = titleSearch
 		}
 		if idFilter != "" {
-			ids := util.NormalizeLabels(strings.Split(idFilter, ","))
+			ids := utils.NormalizeLabels(strings.Split(idFilter, ","))
 			if len(ids) > 0 {
 				filter.IDs = ids
 			}
@@ -953,15 +962,8 @@ var listCmd = &cobra.Command{
 			filter.Overdue = true
 		}
 
-		// Check database freshness before reading
-		// Skip check when using daemon (daemon auto-imports on staleness)
 		ctx := rootCtx
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
+		requireFreshDB(ctx)
 
 		// If daemon is running, use RPC
 		if daemonClient != nil {
@@ -1183,7 +1185,7 @@ var listCmd = &cobra.Command{
 					_ = roStore.Close()
 				}
 			}
-			blockedByMap, blocksMap := buildBlockingMaps(allDepsForList)
+			blockedByMap, blocksMap, _ := buildBlockingMaps(allDepsForList)
 
 			// Build output in buffer for pager support (bd-jdz3)
 			var buf strings.Builder
@@ -1338,7 +1340,7 @@ var listCmd = &cobra.Command{
 
 		// Load dependencies for blocking info display
 		allDepsForList, _ := store.GetAllDependencyRecords(ctx)
-		blockedByMap, blocksMap := buildBlockingMaps(allDepsForList)
+		blockedByMap, blocksMap, _ := buildBlockingMaps(allDepsForList)
 
 		// Build output in buffer for pager support (bd-jdz3)
 		var buf strings.Builder

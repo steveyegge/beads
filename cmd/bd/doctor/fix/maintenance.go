@@ -14,8 +14,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// CleanupResult contains the results of a cleanup operation
-type CleanupResult struct {
+// cleanupResult contains the results of a cleanup operation
+type cleanupResult struct {
 	DeletedCount   int
 	TombstoneCount int
 	SkippedPinned  int

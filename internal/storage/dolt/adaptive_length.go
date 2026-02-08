@@ -1,4 +1,3 @@
-//go:build cgo
 package dolt
 
 import (
@@ -128,5 +127,3 @@ func GetAdaptiveIDLengthTx(ctx context.Context, tx *sql.Tx, prefix string) (int,
 
 	return length, nil
 }
-
-

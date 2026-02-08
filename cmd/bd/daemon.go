@@ -276,7 +276,7 @@ func init() {
 	daemonCmd.Flags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	daemonCmd.Flags().Bool("log-json", false, "Output logs in JSON format (structured logging)")
 	daemonCmd.Flags().Bool("federation", false, "Enable federation mode (runs dolt sql-server with remotesapi)")
-	daemonCmd.Flags().Int("federation-port", 3306, "MySQL port for federation mode dolt sql-server")
+	daemonCmd.Flags().Int("federation-port", 3307, "MySQL port for federation mode dolt sql-server")
 	daemonCmd.Flags().Int("remotesapi-port", 8080, "remotesapi port for peer-to-peer sync in federation mode")
 	daemonCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
 	rootCmd.AddCommand(daemonCmd)
@@ -366,8 +366,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		backend = configfile.BackendSQLite
 	}
 
-	// Daemon is not supported with single-process backends (e.g., embedded Dolt)
-	// Note: Dolt server mode supports multi-process, so check capabilities not backend type
+	// Daemon is not supported with single-process backends
 	cfg, cfgErr := configfile.Load(beadsDir)
 	if cfgErr == nil && cfg != nil && cfg.GetCapabilities().SingleProcessOnly {
 		errMsg := fmt.Sprintf(`DAEMON NOT SUPPORTED WITH %s BACKEND
@@ -493,8 +492,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 			"sql_port", doltServer.SQLPort(),
 			"remotesapi_port", doltServer.RemotesAPIPort())
 
-		// Configure factory to use server mode
-		factoryOpts.ServerMode = true
+		// Configure factory with server connection details
 		factoryOpts.ServerHost = doltServer.Host()
 		factoryOpts.ServerPort = doltServer.SQLPort()
 	}
@@ -512,10 +510,8 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
 		sqliteStore.EnableFreshnessChecking()
 		log.Info("database opened", "path", store.Path(), "backend", "sqlite", "freshness_checking", true)
-	} else if federation {
-		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "federation/server")
 	} else {
-		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "embedded")
+		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "server")
 	}
 
 	// Auto-upgrade .beads/.gitignore if outdated
@@ -670,15 +666,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 			importCtx, importCancel := context.WithTimeout(ctx, 30*time.Second)
 			defer importCancel()
 
-			// Suppress stderr during initial import to avoid confusing parent process
-			// The import prints "Import complete: no changes" which the parent mistakes for an error
-			oldStderr := os.Stderr
-			os.Stderr, _ = os.Open(os.DevNull)
-
 			err := importToJSONLWithStore(importCtx, store, jsonlPath)
-
-			// Restore stderr
-			os.Stderr = oldStderr
 
 			if err != nil {
 				log.Warn("initial import failed (continuing anyway)", "error", err)
@@ -774,6 +762,22 @@ The daemon will now exit.`, strings.ToUpper(backend))
 //
 // 4. Fallback: all default to true when sync-branch configured
 //
+// getDaemonYAMLConfig reads a daemon config key from YAML, checking both
+// hyphenated and underscored variants since either may be used in config.yaml.
+// Viper treats hyphens and underscores as distinct in YAML key names, so
+// "daemon.auto-sync" and "daemon.auto_sync" are different keys.
+func getDaemonYAMLConfig(key string) string {
+	if val := config.GetString(key); val != "" {
+		return val
+	}
+	// Try the alternate variant (hyphen ↔ underscore)
+	alt := strings.NewReplacer("-", "_").Replace(key)
+	if alt == key {
+		alt = strings.NewReplacer("_", "-").Replace(key)
+	}
+	return config.GetString(alt)
+}
+
 // loadYAMLDaemonSettings loads daemon auto-settings from YAML config and env vars only (no database).
 // This is safe to call from the parent process since it doesn't require database access.
 // Returns (autoCommit, autoPush, autoPull, hasSettings) where hasSettings indicates
@@ -783,14 +787,14 @@ func loadYAMLDaemonSettings() (autoCommit, autoPush, autoPull, hasSettings bool)
 	if envVal := os.Getenv("BEADS_AUTO_SYNC"); envVal == "true" || envVal == "1" {
 		return true, true, true, true
 	}
-	if yamlAutoSync := config.GetString("daemon.auto-sync"); yamlAutoSync == "true" {
+	if yamlAutoSync := getDaemonYAMLConfig("daemon.auto-sync"); yamlAutoSync == "true" {
 		return true, true, true, true
 	}
 
 	// Check individual settings (env var > YAML for each)
-	yamlAutoCommit := config.GetString("daemon.auto-commit")
-	yamlAutoPush := config.GetString("daemon.auto-push")
-	yamlAutoPull := config.GetString("daemon.auto-pull")
+	yamlAutoCommit := getDaemonYAMLConfig("daemon.auto-commit")
+	yamlAutoPush := getDaemonYAMLConfig("daemon.auto-push")
+	yamlAutoPull := getDaemonYAMLConfig("daemon.auto-pull")
 	envAutoCommit := os.Getenv("BEADS_AUTO_COMMIT")
 	envAutoPush := os.Getenv("BEADS_AUTO_PUSH")
 	envAutoPull := os.Getenv("BEADS_AUTO_PULL")
@@ -848,7 +852,7 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 	unifiedAutoSync := ""
 	if envVal := os.Getenv("BEADS_AUTO_SYNC"); envVal != "" {
 		unifiedAutoSync = envVal
-	} else if configVal := config.GetString("daemon.auto-sync"); configVal != "" {
+	} else if configVal := getDaemonYAMLConfig("daemon.auto-sync"); configVal != "" {
 		unifiedAutoSync = configVal
 	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-sync"); configVal != "" {
 		unifiedAutoSync = configVal
@@ -875,7 +879,7 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 			// Use the CLI flag value (already in autoPull)
 		} else if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
 			autoPull = envVal == "true" || envVal == "1"
-		} else if configVal := config.GetString("daemon.auto-pull"); configVal != "" {
+		} else if configVal := getDaemonYAMLConfig("daemon.auto-pull"); configVal != "" {
 			autoPull = configVal == "true"
 		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-pull"); configVal != "" {
 			autoPull = configVal == "true"
@@ -892,9 +896,9 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 
 	// Check YAML config for individual daemon settings (allows fine-grained control)
 	// Priority for each setting: CLI flag > env var > YAML config > database config
-	yamlAutoCommit := config.GetString("daemon.auto-commit")
-	yamlAutoPush := config.GetString("daemon.auto-push")
-	yamlAutoPull := config.GetString("daemon.auto-pull")
+	yamlAutoCommit := getDaemonYAMLConfig("daemon.auto-commit")
+	yamlAutoPush := getDaemonYAMLConfig("daemon.auto-push")
+	yamlAutoPull := getDaemonYAMLConfig("daemon.auto-pull")
 
 	// Check individual env vars (take precedence over YAML)
 	envAutoCommit := os.Getenv("BEADS_AUTO_COMMIT")

@@ -58,7 +58,7 @@ func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 
 	// Start IMMEDIATE transaction to acquire write lock early.
 	// Use retry logic with exponential backoff to handle SQLITE_BUSY
-	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
+	if err := beginImmediateWithRetry(ctx, conn); err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
@@ -105,7 +105,9 @@ func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 // 1. Some BUSY errors aren't retryable by the busy handler (SQLITE_BUSY_SNAPSHOT)
 // 2. Explicit retries give us control over backoff timing
 // 3. We can log retry attempts for debugging
-func beginImmediateWithRetry(ctx context.Context, conn *sql.Conn, maxRetries int, initialBackoff time.Duration) error {
+func beginImmediateWithRetry(ctx context.Context, conn *sql.Conn) error {
+	const maxRetries = 5
+	const initialBackoff = 10 * time.Millisecond
 	backoff := initialBackoff
 	var lastErr error
 
@@ -194,7 +196,7 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 	// Get prefix from config (needed for both ID generation and validation)
 	var configPrefix string
 	err = t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&configPrefix)
-	if err == sql.ErrNoRows || configPrefix == "" {
+	if errors.Is(err, sql.ErrNoRows) || configPrefix == "" {
 		// CRITICAL: Reject operation if issue_prefix config is missing
 		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
 	} else if err != nil {
@@ -226,14 +228,14 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 		// Validate that explicitly provided ID matches the configured prefix
 		// Skip validation when PrefixOverride is set (cross-rig creation)
 		if !skipPrefixValidation {
-			if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+			if err := validateIssueIDPrefix(issue.ID, prefix); err != nil {
 				return fmt.Errorf("failed to validate issue ID prefix: %w", err)
 			}
 		}
 
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
-		// Use IsHierarchicalID to correctly handle prefixes with dots (GH#508)
-		if isHierarchical, parentID := IsHierarchicalID(issue.ID); isHierarchical {
+		// Use isHierarchicalID to correctly handle prefixes with dots (GH#508)
+		if isHierarchical, parentID := isHierarchicalID(issue.ID); isHierarchical {
 			// Try to resurrect entire parent chain if any parents are missing
 			resurrected, err := t.parent.tryResurrectParentChainWithConn(ctx, t.conn, issue.ID)
 			if err != nil {
@@ -325,7 +327,7 @@ func (t *sqliteTxStorage) CreateIssues(ctx context.Context, issues []*types.Issu
 	// Get prefix from config
 	var prefix string
 	err = t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
-	if err == sql.ErrNoRows || prefix == "" {
+	if errors.Is(err, sql.ErrNoRows) || prefix == "" {
 		return fmt.Errorf("database not initialized: issue_prefix config is missing")
 	} else if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
@@ -340,7 +342,7 @@ func (t *sqliteTxStorage) CreateIssues(ctx context.Context, issues []*types.Issu
 			}
 			issue.ID = generatedID
 		} else {
-			if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+			if err := validateIssueIDPrefix(issue.ID, prefix); err != nil {
 				return fmt.Errorf("failed to validate issue ID prefix: %w", err)
 			}
 		}
@@ -776,7 +778,7 @@ func (t *sqliteTxStorage) AddDependency(ctx context.Context, dep *types.Dependen
 	}
 
 	// External refs (external:<project>:<capability>) don't need target validation
-	// They are resolved lazily at query time by CheckExternalDep
+	// They are resolved lazily at query time by checkExternalDep
 	isExternalRef := strings.HasPrefix(dep.DependsOnID, "external:")
 
 	var dependsOnExists *types.Issue
@@ -1068,7 +1070,7 @@ func (t *sqliteTxStorage) SetConfig(ctx context.Context, key, value string) erro
 func (t *sqliteTxStorage) GetConfig(ctx context.Context, key string) (string, error) {
 	var value string
 	err := t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, key).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
@@ -1079,7 +1081,7 @@ func (t *sqliteTxStorage) GetConfig(ctx context.Context, key string) (string, er
 
 // GetCustomStatuses retrieves the list of custom status states from config within the transaction.
 func (t *sqliteTxStorage) GetCustomStatuses(ctx context.Context) ([]string, error) {
-	value, err := t.GetConfig(ctx, CustomStatusConfigKey)
+	value, err := t.GetConfig(ctx, customStatusConfigKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,7 +1093,7 @@ func (t *sqliteTxStorage) GetCustomStatuses(ctx context.Context) ([]string, erro
 
 // GetCustomTypes retrieves the list of custom issue types from config within the transaction.
 func (t *sqliteTxStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
-	value, err := t.GetConfig(ctx, CustomTypeConfigKey)
+	value, err := t.GetConfig(ctx, customTypeConfigKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1118,7 +1120,7 @@ func (t *sqliteTxStorage) SetMetadata(ctx context.Context, key, value string) er
 func (t *sqliteTxStorage) GetMetadata(ctx context.Context, key string) (string, error) {
 	var value string
 	err := t.conn.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key = ?`, key).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {

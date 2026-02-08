@@ -577,10 +577,10 @@ func TestOutputMermaidTree_Siblings(t *testing.T) {
 
 	// Verify incorrect edges do NOT exist (siblings shouldn't be connected)
 	incorrectEdges := []string{
-		"BD-2 --> BD-3",   // Siblings shouldn't be connected
-		"BD-3 --> BD-4",   // BD-4's parent is BD-2, not BD-3
-		"BD-4 --> BD-3",   // Wrong direction
-		"BD-4 --> BD-5",   // These are cousins, not parent-child
+		"BD-2 --> BD-3", // Siblings shouldn't be connected
+		"BD-3 --> BD-4", // BD-4's parent is BD-2, not BD-3
+		"BD-4 --> BD-3", // Wrong direction
+		"BD-4 --> BD-5", // These are cousins, not parent-child
 	}
 
 	for _, edge := range incorrectEdges {
@@ -994,11 +994,11 @@ func TestMergeBidirectionalTrees_MultipleDepth(t *testing.T) {
 
 	// Verify all IDs are present (except we might have root twice from both trees)
 	expectedIDs := map[string]bool{
-		"root":            false,
-		"dep-1":           false,
-		"dep-1-1":         false,
-		"dependent-1":     false,
-		"dependent-1-1":   false,
+		"root":          false,
+		"dep-1":         false,
+		"dep-1-1":       false,
+		"dependent-1":   false,
+		"dependent-1-1": false,
 	}
 
 	for _, node := range result {
@@ -1488,4 +1488,140 @@ func TestIsChildOf(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDepListCrossRigRouting tests that bd dep list resolves issues via routing
+// when run from the town root for rig-level issues. This is the regression test
+// for bd-ciouf: "bd dep list cross-rig routing broken from town root".
+//
+// NOTE: This test uses os.Chdir and cannot run in parallel with other tests.
+func TestDepListCrossRigRouting(t *testing.T) {
+	ctx := context.Background()
+
+	// Create temp directory structure:
+	// tmpDir/
+	//   .beads/
+	//     beads.db (town database, prefix "hq")
+	//     routes.jsonl (routing config)
+	//   rig/
+	//     .beads/
+	//       beads.db (rig database, prefix "gt")
+	tmpDir := t.TempDir()
+
+	// Create town .beads directory
+	townBeadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create town beads dir: %v", err)
+	}
+
+	// Create rig .beads directory
+	rigBeadsDir := filepath.Join(tmpDir, "rig", ".beads")
+	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create rig beads dir: %v", err)
+	}
+
+	// Initialize town database
+	townDBPath := filepath.Join(townBeadsDir, "beads.db")
+	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+
+	// Initialize rig database
+	rigDBPath := filepath.Join(rigBeadsDir, "beads.db")
+	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+
+	// Create test issues in rig database with a dependency
+	parent := &types.Issue{
+		ID:        "gt-parent1",
+		Title:     "Parent Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	child := &types.Issue{
+		ID:        "gt-child1",
+		Title:     "Child Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := rigStore.CreateIssue(ctx, parent, "test"); err != nil {
+		t.Fatalf("Failed to create parent issue: %v", err)
+	}
+	if err := rigStore.CreateIssue(ctx, child, "test"); err != nil {
+		t.Fatalf("Failed to create child issue: %v", err)
+	}
+
+	// gt-child1 depends on gt-parent1 (blocks relationship)
+	dep := &types.Dependency{
+		IssueID:     "gt-child1",
+		DependsOnID: "gt-parent1",
+		Type:        types.DepBlocks,
+	}
+	if err := rigStore.AddDependency(ctx, dep, "test"); err != nil {
+		t.Fatalf("Failed to add dependency: %v", err)
+	}
+
+	// Create routes.jsonl in town .beads directory
+	routesContent := `{"prefix":"gt-","path":"rig"}`
+	routesPath := filepath.Join(townBeadsDir, "routes.jsonl")
+	if err := os.WriteFile(routesPath, []byte(routesContent), 0644); err != nil {
+		t.Fatalf("Failed to write routes.jsonl: %v", err)
+	}
+
+	// Set up global state for routing to work
+	oldDbPath := dbPath
+	dbPath = townDBPath
+	t.Cleanup(func() { dbPath = oldDbPath })
+
+	// Change to tmpDir so routing can find town root via CWD
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	// Test 1: Verify routing resolution works for the rig issue
+	result, err := resolveAndGetIssueWithRouting(ctx, townStore, "gt-child1")
+	if err != nil {
+		t.Fatalf("resolveAndGetIssueWithRouting failed: %v", err)
+	}
+	if result == nil || result.Issue == nil {
+		t.Fatal("resolveAndGetIssueWithRouting returned nil")
+	}
+	defer result.Close()
+
+	if !result.Routed {
+		t.Error("Expected result.Routed to be true for cross-rig lookup")
+	}
+	if result.ResolvedID != "gt-child1" {
+		t.Errorf("Expected resolved ID %q, got %q", "gt-child1", result.ResolvedID)
+	}
+
+	// Test 2: Verify dependencies can be queried from the routed store
+	deps, err := result.Store.GetDependenciesWithMetadata(ctx, result.ResolvedID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata on routed store failed: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("Expected 1 dependency, got %d", len(deps))
+	}
+	if deps[0].ID != "gt-parent1" {
+		t.Errorf("Expected dependency on gt-parent1, got %s", deps[0].ID)
+	}
+
+	// Test 3: Verify dependents (up direction) also work from routed store
+	dependents, err := result.Store.GetDependentsWithMetadata(ctx, "gt-parent1")
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadata on routed store failed: %v", err)
+	}
+	if len(dependents) != 1 {
+		t.Fatalf("Expected 1 dependent, got %d", len(dependents))
+	}
+	if dependents[0].ID != "gt-child1" {
+		t.Errorf("Expected dependent gt-child1, got %s", dependents[0].ID)
+	}
+
+	t.Log("Successfully resolved cross-rig dependencies via routing")
 }

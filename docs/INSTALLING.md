@@ -71,31 +71,6 @@ The installer will:
 
 **TL;DR:** Use Homebrew if available. Use npm if you're in a Node.js environment. Use the script for quick one-off installs or CI.
 
-## Build Dependencies (go install / from source)
-
-If you install via `go install` or build from source, you need system dependencies for CGO:
-
-macOS (Homebrew):
-```bash
-brew install icu4c zstd
-```
-
-Linux (Debian/Ubuntu):
-```bash
-sudo apt-get install -y libicu-dev libzstd-dev
-```
-
-Linux (Fedora/RHEL):
-```bash
-sudo dnf install -y libicu-devel libzstd-devel
-```
-
-If you see `unicode/uregex.h` missing on macOS, `icu4c` is keg-only. Use:
-```bash
-ICU_PREFIX="$(brew --prefix icu4c)"
-CGO_CFLAGS="-I${ICU_PREFIX}/include" CGO_CPPFLAGS="-I${ICU_PREFIX}/include" CGO_LDFLAGS="-L${ICU_PREFIX}/lib" go install github.com/steveyegge/beads/cmd/bd@latest
-```
-
 ## Platform-Specific Installation
 
 ### macOS
@@ -175,7 +150,7 @@ irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
 
 The script installs a prebuilt Windows release if available. Go is only required for `go install` or building from source.
 
-**Dolt backend on Windows:** Supported. Windows builds use a pure-Go regex backend to avoid ICU/CGO headers. If you need full ICU regex semantics, use Linux/macOS (or WSL) with ICU installed.
+**Dolt backend on Windows:** Supported. Connects to dolt sql-server via MySQL protocol.
 
 **Via go install**:
 ```pwsh
@@ -189,8 +164,6 @@ cd beads
 go build -o bd.exe ./cmd/bd
 Move-Item bd.exe $env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\
 ```
-
-If you see `unicode/uregex.h` missing while building, use the PowerShell install script instead (it downloads a prebuilt binary).
 
 **Verify installation**:
 ```pwsh
@@ -382,21 +355,20 @@ go install github.com/steveyegge/beads/cmd/bd@latest
 
 ### `zsh: killed bd` or crashes on macOS
 
-Some users report crashes when running `bd init` or other commands on macOS. This is typically caused by CGO/SQLite compatibility issues.
+Some users report crashes when running `bd init` or other commands on macOS. Try reinstalling:
 
-**Workaround:**
 ```bash
-# Build with CGO enabled
-CGO_ENABLED=1 go install github.com/steveyegge/beads/cmd/bd@latest
+# Via Homebrew (recommended)
+brew reinstall beads
 
-# Or if building from source
+# Or rebuild from source
 git clone https://github.com/steveyegge/beads
 cd beads
-CGO_ENABLED=1 go build -o bd ./cmd/bd
+go build -o bd ./cmd/bd
 sudo mv bd /usr/local/bin/
 ```
 
-If you installed via Homebrew, this shouldn't be necessary as the formula already enables CGO. If you're still seeing crashes with the Homebrew version, please [file an issue](https://github.com/steveyegge/beads/issues).
+If you're still seeing crashes, please [file an issue](https://github.com/steveyegge/beads/issues).
 
 ### Claude Code Plugin: MCP server fails to start
 

@@ -1,5 +1,3 @@
-//go:build cgo
-
 package doctor
 
 import (
@@ -12,34 +10,34 @@ import (
 	"path/filepath"
 	"strings"
 
-	// Import Dolt driver for direct connection
-	_ "github.com/dolthub/driver"
-
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // MigrationValidationResult provides machine-parseable migration validation output.
 // This struct is designed to be consumed by Claude and other automation tools.
 type MigrationValidationResult struct {
-	Phase           string   `json:"phase"`            // "pre-migration" or "post-migration"
-	Ready           bool     `json:"ready"`            // true if migration can proceed/succeeded
-	Backend         string   `json:"backend"`          // current backend: "sqlite", "dolt", or "jsonl-only"
-	JSONLCount      int      `json:"jsonl_count"`      // issue count in JSONL
-	SQLiteCount     int      `json:"sqlite_count"`     // issue count in SQLite (pre-migration)
-	DoltCount       int      `json:"dolt_count"`       // issue count in Dolt (post-migration)
-	MissingInDB     []string `json:"missing_in_db"`    // issue IDs in JSONL but not in DB (sample)
-	MissingInJSONL  []string `json:"missing_in_jsonl"` // issue IDs in DB but not in JSONL (sample)
-	Errors          []string `json:"errors"`           // blocking errors
-	Warnings        []string `json:"warnings"`         // non-blocking warnings
-	JSONLValid      bool     `json:"jsonl_valid"`      // true if JSONL is parseable
-	JSONLMalformed  int      `json:"jsonl_malformed"`  // count of malformed JSONL lines
-	DoltHealthy     bool     `json:"dolt_healthy"`     // true if Dolt DB is healthy
-	DoltLocked      bool     `json:"dolt_locked"`      // true if Dolt has uncommitted changes
-	SchemaValid     bool     `json:"schema_valid"`     // true if schema is complete
-	RecommendedFix  string   `json:"recommended_fix"`  // suggested command to fix issues
+	Phase              string         `json:"phase"`                // "pre-migration" or "post-migration"
+	Ready              bool           `json:"ready"`                // true if migration can proceed/succeeded
+	Backend            string         `json:"backend"`              // current backend: "sqlite", "dolt", or "jsonl-only"
+	JSONLCount         int            `json:"jsonl_count"`          // issue count in JSONL
+	SQLiteCount        int            `json:"sqlite_count"`         // issue count in SQLite (pre-migration)
+	DoltCount          int            `json:"dolt_count"`           // issue count in Dolt (post-migration)
+	MissingInDB        []string       `json:"missing_in_db"`        // issue IDs in JSONL but not in DB (sample)
+	MissingInJSONL     []string       `json:"missing_in_jsonl"`     // issue IDs in DB but not in JSONL (sample)
+	Errors             []string       `json:"errors"`               // blocking errors
+	Warnings           []string       `json:"warnings"`             // non-blocking warnings
+	JSONLValid         bool           `json:"jsonl_valid"`          // true if JSONL is parseable
+	JSONLMalformed     int            `json:"jsonl_malformed"`      // count of malformed JSONL lines
+	DoltHealthy        bool           `json:"dolt_healthy"`         // true if Dolt DB is healthy
+	DoltLocked         bool           `json:"dolt_locked"`          // true if Dolt has uncommitted changes
+	SchemaValid        bool           `json:"schema_valid"`         // true if schema is complete
+	RecommendedFix     string         `json:"recommended_fix"`      // suggested command to fix issues
+	ForeignPrefixCount int            `json:"foreign_prefix_count"` // count of issues with non-local prefixes (cross-rig contamination)
+	ForeignPrefixes    map[string]int `json:"foreign_prefixes"`     // prefix -> count for foreign-prefix issues
 }
 
 // CheckMigrationReadiness validates that a beads installation is ready for Dolt migration.
@@ -294,9 +292,20 @@ func CheckMigrationCompletion(path string) (DoctorCheck, MigrationValidationResu
 					result.Errors = append(result.Errors,
 						fmt.Sprintf("Count mismatch: Dolt has %d, JSONL has %d", result.DoltCount, jsonlCount))
 				} else {
-					// Dolt has more - likely includes ephemeral issues
-					result.Warnings = append(result.Warnings,
-						fmt.Sprintf("Dolt has more issues than JSONL (%d vs %d) - ephemeral issues not in JSONL", result.DoltCount, jsonlCount))
+					// Dolt has more - check if extra issues are cross-rig contamination or ephemeral
+					foreignCount, foreignPrefixes, ephemeralCount := categorizeDoltExtras(ctx, store, jsonlIDs)
+					result.ForeignPrefixCount = foreignCount
+					result.ForeignPrefixes = foreignPrefixes
+
+					if foreignCount > 0 {
+						prefixList := formatPrefixCounts(foreignPrefixes)
+						result.Warnings = append(result.Warnings,
+							fmt.Sprintf("Dolt has %d issues from other rigs (cross-rig contamination): %s", foreignCount, prefixList))
+					}
+					if ephemeralCount > 0 {
+						result.Warnings = append(result.Warnings,
+							fmt.Sprintf("Dolt has %d ephemeral issues not in JSONL", ephemeralCount))
+					}
 				}
 			}
 		} else {
@@ -507,21 +516,15 @@ func compareDoltWithJSONL(ctx context.Context, store storage.Storage, jsonlIDs m
 	return missing
 }
 
-// checkDoltLocks checks for uncommitted changes in Dolt.
+// checkDoltLocks checks for uncommitted changes in Dolt via server connection.
 func checkDoltLocks(beadsDir string) (bool, string) {
-	doltDir := filepath.Join(beadsDir, "dolt")
-	connStr := fmt.Sprintf("file://%s?commitname=beads&commitemail=beads@local", doltDir)
-
-	db, err := sql.Open("dolt", connStr)
+	db, err := openDoltServerDB(beadsDir)
 	if err != nil {
 		return false, ""
 	}
 	defer db.Close()
 
 	ctx := context.Background()
-	if _, err := db.ExecContext(ctx, "USE beads"); err != nil {
-		return false, ""
-	}
 
 	// Check dolt_status for uncommitted changes
 	rows, err := db.QueryContext(ctx, "SELECT table_name, staged, status FROM dolt_status")
@@ -550,4 +553,61 @@ func checkDoltLocks(beadsDir string) (bool, string) {
 	}
 
 	return false, ""
+}
+
+// categorizeDoltExtras finds issues in Dolt that aren't in JSONL and categorizes them
+// as either foreign-prefix (cross-rig contamination) or ephemeral (same-prefix).
+// Returns: foreignCount, foreignPrefixes map, ephemeralCount.
+func categorizeDoltExtras(ctx context.Context, store storage.Storage, jsonlIDs map[string]bool) (int, map[string]int, int) {
+	// Get the configured prefix for this rig
+	localPrefix, _ := store.GetConfig(ctx, "issue_prefix")
+
+	// Query all issue IDs from Dolt
+	db := store.UnderlyingDB()
+	if db == nil {
+		return 0, nil, 0
+	}
+
+	rows, err := db.QueryContext(ctx, "SELECT id FROM issues")
+	if err != nil {
+		return 0, nil, 0
+	}
+	defer rows.Close()
+
+	foreignPrefixes := make(map[string]int)
+	var ephemeralCount int
+
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		// Skip issues that are in JSONL (those are expected)
+		if jsonlIDs[id] {
+			continue
+		}
+		// This issue is in Dolt but not in JSONL - categorize it
+		prefix := utils.ExtractIssuePrefix(id)
+		if localPrefix != "" && prefix != "" && prefix != localPrefix {
+			foreignPrefixes[prefix]++
+		} else {
+			ephemeralCount++
+		}
+	}
+
+	var foreignCount int
+	for _, count := range foreignPrefixes {
+		foreignCount += count
+	}
+
+	return foreignCount, foreignPrefixes, ephemeralCount
+}
+
+// formatPrefixCounts formats a map of prefix -> count as "prefix1 (N), prefix2 (M)".
+func formatPrefixCounts(prefixes map[string]int) string {
+	var parts []string
+	for prefix, count := range prefixes {
+		parts = append(parts, fmt.Sprintf("%s (%d)", prefix, count))
+	}
+	return strings.Join(parts, ", ")
 }

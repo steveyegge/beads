@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -67,7 +68,7 @@ func (s *SQLiteStorage) generateBatchIDs(ctx context.Context, conn *sql.Conn, is
 	// Get prefix from config (needed for both generation and validation)
 	var prefix string
 	err := conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
-	if err == sql.ErrNoRows || prefix == "" {
+	if errors.Is(err, sql.ErrNoRows) || prefix == "" {
 		// CRITICAL: Reject operation if issue_prefix config is missing
 		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
 	} else if err != nil {
@@ -75,10 +76,10 @@ func (s *SQLiteStorage) generateBatchIDs(ctx context.Context, conn *sql.Conn, is
 	}
 
 	// Generate or validate IDs for all issues
-	if err := EnsureIDs(ctx, conn, prefix, issues, actor, orphanHandling, skipPrefixValidation); err != nil {
+	if err := ensureIDs(ctx, conn, prefix, issues, actor, orphanHandling, skipPrefixValidation); err != nil {
 		return wrapDBError("ensure IDs", err)
 	}
-	
+
 	// Compute content hashes
 	for i := range issues {
 		if issues[i].ContentHash == "" {
@@ -209,13 +210,15 @@ func checkForExistingIDs(ctx context.Context, conn *sql.Conn, issues []*types.Is
 //   - This reflects that they were created as a single atomic operation
 //
 // Usage:
-//   // Bulk import from external source
-//   issues := []*types.Issue{...}
-//   if err := store.CreateIssues(ctx, issues, "import"); err != nil {
-//       return err
-//   }
 //
-//   // After importing with explicit IDs, sync counters to prevent collisions
+//	// Bulk import from external source
+//	issues := []*types.Issue{...}
+//	if err := store.CreateIssues(ctx, issues, "import"); err != nil {
+//	    return err
+//	}
+//
+//	// After importing with explicit IDs, sync counters to prevent collisions
+//
 // REMOVED: SyncAllCounters example - no longer needed with hash IDs
 //
 // Performance:
@@ -272,9 +275,10 @@ func (s *SQLiteStorage) CreateIssuesWithFullOptions(ctx context.Context, issues 
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Start IMMEDIATE transaction to acquire write lock early.
-	// The connection's busy_timeout pragma (30s) handles retries if locked.
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	// Start IMMEDIATE transaction with retry logic for SQLITE_BUSY.
+	// Retries with exponential backoff handle cases where busy_timeout alone
+	// is insufficient (e.g., SQLITE_BUSY_SNAPSHOT).
+	if err := beginImmediateWithRetry(ctx, conn); err != nil {
 		return fmt.Errorf("failed to begin immediate transaction: %w", err)
 	}
 

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
@@ -33,7 +34,7 @@ func (s *SQLiteStorage) GetConfig(ctx context.Context, key string) (string, erro
 
 	var value string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, key).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return value, wrapDBError("get config", err)
@@ -128,23 +129,23 @@ func (s *SQLiteStorage) GetMetadata(ctx context.Context, key string) (string, er
 
 	var value string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key = ?`, key).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return value, wrapDBError("get metadata", err)
 }
 
-// CustomStatusConfigKey is the config key for custom status states
-const CustomStatusConfigKey = "status.custom"
+// customStatusConfigKey is the config key for custom status states
+const customStatusConfigKey = "status.custom"
 
-// CustomTypeConfigKey is the config key for custom issue types
-const CustomTypeConfigKey = "types.custom"
+// customTypeConfigKey is the config key for custom issue types
+const customTypeConfigKey = "types.custom"
 
 // GetCustomStatuses retrieves the list of custom status states from config.
 // Custom statuses are stored as comma-separated values in the "status.custom" config key.
 // Returns an empty slice if no custom statuses are configured.
 func (s *SQLiteStorage) GetCustomStatuses(ctx context.Context) ([]string, error) {
-	value, err := s.GetConfig(ctx, CustomStatusConfigKey)
+	value, err := s.GetConfig(ctx, customStatusConfigKey)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +162,7 @@ func (s *SQLiteStorage) GetCustomStatuses(ctx context.Context) ([]string, error)
 // but auto-import needs to validate issues with custom types (GH#1225).
 // Returns an empty slice if no custom types are configured.
 func (s *SQLiteStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
-	value, err := s.GetConfig(ctx, CustomTypeConfigKey)
+	value, err := s.GetConfig(ctx, customTypeConfigKey)
 	if err != nil {
 		return nil, err
 	}

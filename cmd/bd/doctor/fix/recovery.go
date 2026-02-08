@@ -9,9 +9,9 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 )
 
-// DatabaseCorruptionRecovery recovers a corrupted database from JSONL backup.
+// databaseCorruptionRecovery recovers a corrupted database from JSONL backup.
 // It backs up the corrupted database, deletes it, and re-imports from JSONL.
-func DatabaseCorruptionRecovery(path string) error {
+func databaseCorruptionRecovery(path string) error {
 	// Validate workspace
 	if err := validateBeadsWorkspace(path); err != nil {
 		return err

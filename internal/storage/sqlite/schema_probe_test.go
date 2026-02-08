@@ -200,8 +200,8 @@ func TestVerifySchemaCompatibility_Incompatible(t *testing.T) {
 	if err == nil {
 		t.Error("expected schema incompatibility error, got nil")
 	}
-	if err != nil && err != ErrSchemaIncompatible {
-		// Check that error wraps ErrSchemaIncompatible
+	if err != nil && err != errSchemaIncompatible {
+		// Check that error wraps errSchemaIncompatible
 		t.Logf("got error: %v", err)
 	}
 }

@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// SyncBranchConfig fixes missing sync.branch configuration by auto-setting it to the current branch
-func SyncBranchConfig(path string) error {
+// syncBranchConfig fixes missing sync.branch configuration by auto-setting it to the current branch
+func syncBranchConfig(path string) error {
 	if err := validateBeadsWorkspace(path); err != nil {
 		return err
 	}
@@ -239,47 +239,15 @@ func setGitIndexFlags(repoPath, filePath, excludePattern string) (bool, error) {
 	return true, nil
 }
 
-// ClearSyncBranchGitignore removes git index flags from .beads/*.jsonl files.
-// Called when sync.branch is disabled to restore normal git tracking.
-func ClearSyncBranchGitignore(path string) error {
-	beadsDir := filepath.Join(path, ".beads")
-	filesToClear := []string{"issues.jsonl", "interactions.jsonl"}
-
-	for _, filename := range filesToClear {
-		jsonlPath := filepath.Join(beadsDir, filename)
-
-		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-			continue // File doesn't exist, skip
-		}
-
-		// Check if file is tracked
-		cmd := exec.Command("git", "ls-files", "--error-unmatch", jsonlPath)
-		cmd.Dir = path
-		if err := cmd.Run(); err != nil {
-			continue // Not tracked, skip
-		}
-
-		// Clear both flags (ignore errors - flags might not be set)
-		cmd = exec.Command("git", "update-index", "--no-assume-unchanged", jsonlPath)
-		cmd.Dir = path
-		_ = cmd.Run()
-
-		cmd = exec.Command("git", "update-index", "--no-skip-worktree", jsonlPath)
-		cmd.Dir = path
-		_ = cmd.Run()
-	}
-
-	return nil
-}
-
 // parseGitLsFilesFlag interprets the flag character from git ls-files -v output.
 // Returns (hasAnyFlag, hasSkipWorktree) based on the first character of the line.
 //
 // Git ls-files -v output flags:
-//   'H' = tracked normally (no flags)
-//   'h' = assume-unchanged only
-//   'S' = skip-worktree only
-//   's' = both skip-worktree + assume-unchanged (lowercase due to assume-unchanged)
+//
+//	'H' = tracked normally (no flags)
+//	'h' = assume-unchanged only
+//	'S' = skip-worktree only
+//	's' = both skip-worktree + assume-unchanged (lowercase due to assume-unchanged)
 func parseGitLsFilesFlag(flag byte) (hasAnyFlag bool, hasSkipWorktree bool) {
 	hasAnyFlag = flag == 'h' || flag == 'S' || flag == 's'
 	hasSkipWorktree = flag == 'S' || flag == 's'

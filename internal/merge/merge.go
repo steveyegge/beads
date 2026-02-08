@@ -50,8 +50,8 @@ type Issue struct {
 	RawLine string `json:"-"`
 }
 
-// IssueKey uniquely identifies an issue for matching
-type IssueKey struct {
+// issueKey uniquely identifies an issue for matching
+type issueKey struct {
 	ID        string
 	CreatedAt time.Time
 	CreatedBy string
@@ -214,8 +214,8 @@ func readIssues(path string) ([]Issue, error) {
 	return issues, nil
 }
 
-func makeKey(issue Issue) IssueKey {
-	return IssueKey{
+func makeKey(issue Issue) issueKey {
+	return issueKey{
 		ID:        issue.ID,
 		CreatedAt: issue.CreatedAt,
 		CreatedBy: issue.CreatedBy,
@@ -228,26 +228,23 @@ const (
 	StatusClosed    = types.StatusClosed
 )
 
-// Comment is an alias to types.Comment for backward compatibility
-type Comment = types.Comment
-
 // Alias TTL constants from types package for local use
 var (
 	DefaultTombstoneTTL = types.DefaultTombstoneTTL
 	ClockSkewGrace      = types.ClockSkewGrace
 )
 
-// IsTombstone returns true if the issue has been soft-deleted
-func IsTombstone(issue Issue) bool {
+// isTombstone returns true if the issue has been soft-deleted
+func isTombstone(issue Issue) bool {
 	return issue.Status == StatusTombstone
 }
 
-// IsExpiredTombstone returns true if the tombstone has exceeded its TTL.
+// isExpiredTombstone returns true if the tombstone has exceeded its TTL.
 // Non-tombstone issues always return false.
 // ttl is the configured TTL duration; if zero, DefaultTombstoneTTL is used.
-func IsExpiredTombstone(issue Issue, ttl time.Duration) bool {
+func isExpiredTombstone(issue Issue, ttl time.Duration) bool {
 	// Non-tombstones never expire
-	if !IsTombstone(issue) {
+	if !isTombstone(issue) {
 		return false
 	}
 
@@ -270,27 +267,27 @@ func IsExpiredTombstone(issue Issue, ttl time.Duration) bool {
 }
 
 func merge3Way(base, left, right []Issue, debug bool) ([]Issue, []string) {
-	return Merge3WayWithTTL(base, left, right, DefaultTombstoneTTL, debug)
+	return merge3WayWithTTL(base, left, right, DefaultTombstoneTTL, debug)
 }
 
-// Merge3WayWithTTL performs a 3-way merge with configurable tombstone TTL.
+// merge3WayWithTTL performs a 3-way merge with configurable tombstone TTL.
 // This is the core merge function that handles tombstone semantics.
 // Use this when you need to configure TTL for testing, debugging, or
 // per-repository configuration. For default TTL behavior, use merge3Way.
 // When debug is true, logs resurrection events to stderr.
-func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration, debug bool) ([]Issue, []string) {
-	// Build maps for quick lookup by IssueKey
-	baseMap := make(map[IssueKey]Issue)
+func merge3WayWithTTL(base, left, right []Issue, ttl time.Duration, debug bool) ([]Issue, []string) {
+	// Build maps for quick lookup by issueKey
+	baseMap := make(map[issueKey]Issue)
 	for _, issue := range base {
 		baseMap[makeKey(issue)] = issue
 	}
 
-	leftMap := make(map[IssueKey]Issue)
+	leftMap := make(map[issueKey]Issue)
 	for _, issue := range left {
 		leftMap[makeKey(issue)] = issue
 	}
 
-	rightMap := make(map[IssueKey]Issue)
+	rightMap := make(map[issueKey]Issue)
 	for _, issue := range right {
 		rightMap[makeKey(issue)] = issue
 	}
@@ -309,13 +306,13 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration, debug bool) 
 	}
 
 	// Track which issues we've processed (by both key and ID)
-	processed := make(map[IssueKey]bool)
+	processed := make(map[issueKey]bool)
 	processedIDs := make(map[string]bool) // track processed IDs to avoid duplicates
 	var result []Issue
 	var conflicts []string
 
 	// Process all unique keys
-	allKeys := make(map[IssueKey]bool)
+	allKeys := make(map[issueKey]bool)
 	for k := range baseMap {
 		allKeys[k] = true
 	}
@@ -374,8 +371,8 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration, debug bool) 
 		}
 
 		// Determine tombstone status
-		leftTombstone := inLeft && IsTombstone(leftIssue)
-		rightTombstone := inRight && IsTombstone(rightIssue)
+		leftTombstone := inLeft && isTombstone(leftIssue)
+		rightTombstone := inRight && isTombstone(rightIssue)
 
 		// Handle different scenarios
 		if inBase && inLeft && inRight {
@@ -390,7 +387,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration, debug bool) 
 
 			// CASE: Left is tombstone, right is live
 			if leftTombstone && !rightTombstone {
-				if IsExpiredTombstone(leftIssue, ttl) {
+				if isExpiredTombstone(leftIssue, ttl) {
 					// Tombstone expired - resurrection allowed, keep live issue
 					if debug {
 						fmt.Fprintf(os.Stderr, "Issue %s resurrected (tombstone expired)\n", rightIssue.ID)
@@ -405,7 +402,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration, debug bool) 
 
 			// CASE: Right is tombstone, left is live
 			if rightTombstone && !leftTombstone {
-				if IsExpiredTombstone(rightIssue, ttl) {
+				if isExpiredTombstone(rightIssue, ttl) {
 					// Tombstone expired - resurrection allowed, keep live issue
 					if debug {
 						fmt.Fprintf(os.Stderr, "Issue %s resurrected (tombstone expired)\n", leftIssue.ID)
@@ -437,7 +434,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration, debug bool) 
 
 			// CASE: Left is tombstone, right is live
 			if leftTombstone && !rightTombstone {
-				if IsExpiredTombstone(leftIssue, ttl) {
+				if isExpiredTombstone(leftIssue, ttl) {
 					if debug {
 						fmt.Fprintf(os.Stderr, "Issue %s resurrected (tombstone expired)\n", rightIssue.ID)
 					}
@@ -450,7 +447,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration, debug bool) 
 
 			// CASE: Right is tombstone, left is live
 			if rightTombstone && !leftTombstone {
-				if IsExpiredTombstone(rightIssue, ttl) {
+				if isExpiredTombstone(rightIssue, ttl) {
 					if debug {
 						fmt.Fprintf(os.Stderr, "Issue %s resurrected (tombstone expired)\n", leftIssue.ID)
 					}
@@ -1091,7 +1088,6 @@ func mergeDependencies(base, left, right []*types.Dependency) []*types.Dependenc
 
 	return result
 }
-
 
 // === Helper functions for new field merging (GH#1480) ===
 

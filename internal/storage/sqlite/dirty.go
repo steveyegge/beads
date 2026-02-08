@@ -96,7 +96,7 @@ func (s *SQLiteStorage) GetDirtyIssueHash(ctx context.Context, issueID string) (
 		SELECT content_hash FROM dirty_issues WHERE issue_id = ?
 	`, issueID).Scan(&hash)
 
-	if IsNotFound(wrapDBErrorf(err, "get dirty issue hash for %s", issueID)) {
+	if isNotFound(wrapDBErrorf(err, "get dirty issue hash for %s", issueID)) {
 		return "", nil // Issue not dirty
 	}
 	if err != nil {
@@ -143,7 +143,7 @@ func (s *SQLiteStorage) GetDirtyIssueCount(ctx context.Context) (int, error) {
 
 	var count int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dirty_issues`).Scan(&count)
-	if IsNotFound(wrapDBError("count dirty issues", err)) {
+	if isNotFound(wrapDBError("count dirty issues", err)) {
 		return 0, nil
 	}
 	if err != nil {

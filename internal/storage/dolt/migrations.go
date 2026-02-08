@@ -1,4 +1,3 @@
-//go:build cgo
 package dolt
 
 import (
@@ -54,5 +53,3 @@ func ListMigrations() []string {
 	}
 	return names
 }
-
-

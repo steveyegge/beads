@@ -151,7 +151,7 @@ func TestConcurrentTransactions_HeavyLoad(t *testing.T) {
 
 	var busyErrors int
 	for err := range errChan {
-		if IsBusyError(err) {
+		if isBusyError(err) {
 			busyErrors++
 		} else {
 			t.Logf("non-busy error: %v", err)

@@ -501,10 +501,10 @@ func FixStaleMQFiles(path string) error {
 	return nil
 }
 
-// CheckMisclassifiedWisps detects wisp-patterned issues that lack the ephemeral flag.
+// checkMisclassifiedWisps detects wisp-patterned issues that lack the ephemeral flag.
 // Issues with IDs containing "-wisp-" should always have Ephemeral=true.
 // If they're in JSONL without the ephemeral flag, they'll pollute bd ready.
-func CheckMisclassifiedWisps(path string) DoctorCheck {
+func checkMisclassifiedWisps(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
@@ -582,8 +582,8 @@ const (
 	SessionBeadThreshold  = 50 // Warn if session beads > 50
 )
 
-// PatrolPollutionResult contains counts of detected pollution beads
-type PatrolPollutionResult struct {
+// patrolPollutionResult contains counts of detected pollution beads
+type patrolPollutionResult struct {
 	PatrolDigestCount int      // Count of "Digest: mol-*-patrol" beads
 	SessionBeadCount  int      // Count of "Session ended: *" beads
 	PatrolDigestIDs   []string // Sample IDs for display
@@ -665,8 +665,8 @@ func CheckPatrolPollution(path string) DoctorCheck {
 }
 
 // detectPatrolPollution scans a JSONL file for patrol pollution patterns
-func detectPatrolPollution(file *os.File) PatrolPollutionResult {
-	var result PatrolPollutionResult
+func detectPatrolPollution(file *os.File) patrolPollutionResult {
+	var result patrolPollutionResult
 	decoder := json.NewDecoder(file)
 
 	for {
@@ -703,8 +703,8 @@ func detectPatrolPollution(file *os.File) PatrolPollutionResult {
 	return result
 }
 
-// GetPatrolPollutionIDs returns all IDs of patrol pollution beads for deletion
-func GetPatrolPollutionIDs(path string) ([]string, error) {
+// getPatrolPollutionIDs returns all IDs of patrol pollution beads for deletion
+func getPatrolPollutionIDs(path string) ([]string, error) {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 

@@ -16,14 +16,14 @@ func TestFixGitignore_FilePermissions(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		setupFunc      func(t *testing.T, tmpDir string) // setup before fix
-		expectedPerms  os.FileMode
-		expectError    bool
+		name          string
+		setupFunc     func(t *testing.T, tmpDir string) // setup before fix
+		expectedPerms os.FileMode
+		expectError   bool
 	}{
 		{
-			name:          "creates new file with 0600 permissions",
-			setupFunc:     func(t *testing.T, tmpDir string) {
+			name: "creates new file with 0600 permissions",
+			setupFunc: func(t *testing.T, tmpDir string) {
 				// Create .beads directory but no .gitignore
 				beadsDir := filepath.Join(tmpDir, ".beads")
 				if err := os.Mkdir(beadsDir, 0750); err != nil {
@@ -762,10 +762,10 @@ beads.right.meta.json
 
 func TestFixGitignore_VeryLongLines(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupFunc      func(t *testing.T, tmpDir string) string
-		description    string
-		expectSuccess  bool
+		name          string
+		setupFunc     func(t *testing.T, tmpDir string) string
+		description   string
+		expectSuccess bool
 	}{
 		{
 			name: "single very long line (10KB)",
@@ -1639,5 +1639,29 @@ func TestRequiredPatterns_ContainsLastTouched(t *testing.T) {
 	}
 	if !found {
 		t.Error("requiredPatterns should include 'last-touched'")
+	}
+}
+
+// TestGitignoreTemplate_ContainsJSONLLock verifies that the .beads/.gitignore template
+// includes .jsonl.lock to prevent the JSONL coordination lock file from being tracked.
+// The lock file is a runtime artifact in the same category as daemon.lock and .sync.lock.
+func TestGitignoreTemplate_ContainsJSONLLock(t *testing.T) {
+	if !strings.Contains(GitignoreTemplate, ".jsonl.lock") {
+		t.Error("GitignoreTemplate should contain '.jsonl.lock' pattern")
+	}
+}
+
+// TestRequiredPatterns_ContainsJSONLLock verifies that bd doctor validates
+// the presence of the .jsonl.lock pattern in .beads/.gitignore.
+func TestRequiredPatterns_ContainsJSONLLock(t *testing.T) {
+	found := false
+	for _, pattern := range requiredPatterns {
+		if pattern == ".jsonl.lock" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("requiredPatterns should include '.jsonl.lock'")
 	}
 }

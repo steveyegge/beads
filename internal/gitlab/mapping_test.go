@@ -49,7 +49,7 @@ func TestDefaultGitLabMappingConfig(t *testing.T) {
 	}
 }
 
-// TestPriorityFromLabels verifies parsing priority::* labels.
+// TestpriorityFromLabels verifies parsing priority::* labels.
 func TestPriorityFromLabels(t *testing.T) {
 	config := DefaultMappingConfig()
 
@@ -92,15 +92,15 @@ func TestPriorityFromLabels(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := PriorityFromLabels(tt.labels, config)
+			got := priorityFromLabels(tt.labels, config)
 			if got != tt.wantPriority {
-				t.Errorf("PriorityFromLabels(%v) = %d, want %d", tt.labels, got, tt.wantPriority)
+				t.Errorf("priorityFromLabels(%v) = %d, want %d", tt.labels, got, tt.wantPriority)
 			}
 		})
 	}
 }
 
-// TestStatusFromLabelsAndState verifies status determination from labels and GitLab state.
+// TeststatusFromLabelsAndState verifies status determination from labels and GitLab state.
 func TestStatusFromLabelsAndState(t *testing.T) {
 	config := DefaultMappingConfig()
 
@@ -150,15 +150,15 @@ func TestStatusFromLabelsAndState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := StatusFromLabelsAndState(tt.labels, tt.state, config)
+			got := statusFromLabelsAndState(tt.labels, tt.state, config)
 			if got != tt.wantStatus {
-				t.Errorf("StatusFromLabelsAndState(%v, %q) = %q, want %q", tt.labels, tt.state, got, tt.wantStatus)
+				t.Errorf("statusFromLabelsAndState(%v, %q) = %q, want %q", tt.labels, tt.state, got, tt.wantStatus)
 			}
 		})
 	}
 }
 
-// TestTypeFromLabels verifies parsing type::* labels.
+// TesttypeFromLabels verifies parsing type::* labels.
 func TestTypeFromLabels(t *testing.T) {
 	config := DefaultMappingConfig()
 
@@ -211,9 +211,9 @@ func TestTypeFromLabels(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := TypeFromLabels(tt.labels, config)
+			got := typeFromLabels(tt.labels, config)
 			if got != tt.wantType {
-				t.Errorf("TypeFromLabels(%v) = %q, want %q", tt.labels, got, tt.wantType)
+				t.Errorf("typeFromLabels(%v) = %q, want %q", tt.labels, got, tt.wantType)
 			}
 		})
 	}
@@ -402,7 +402,7 @@ func TestBeadsIssueToGitLabFields_StateEvent(t *testing.T) {
 	}
 }
 
-// TestIssueLinksToDependencies verifies conversion of GitLab IssueLinks to beads Dependencies.
+// TestissueLinksToDependencies verifies conversion of GitLab IssueLinks to beads Dependencies.
 func TestIssueLinksToDependencies(t *testing.T) {
 	config := DefaultMappingConfig()
 
@@ -424,10 +424,10 @@ func TestIssueLinksToDependencies(t *testing.T) {
 		},
 	}
 
-	deps := IssueLinksToDependencies(42, links, config)
+	deps := issueLinksToDependencies(42, links, config)
 
 	if len(deps) != 3 {
-		t.Fatalf("IssueLinksToDependencies returned %d dependencies, want 3", len(deps))
+		t.Fatalf("issueLinksToDependencies returned %d dependencies, want 3", len(deps))
 	}
 
 	// Check blocks dependency
@@ -449,7 +449,7 @@ func TestIssueLinksToDependencies(t *testing.T) {
 	}
 }
 
-// TestFilterNonScopedLabels verifies that non-scoped labels are preserved.
+// TestfilterNonScopedLabels verifies that non-scoped labels are preserved.
 func TestFilterNonScopedLabels(t *testing.T) {
 	labels := []string{
 		"type::bug",
@@ -460,12 +460,12 @@ func TestFilterNonScopedLabels(t *testing.T) {
 		"urgent",
 	}
 
-	filtered := FilterNonScopedLabels(labels)
+	filtered := filterNonScopedLabels(labels)
 
 	// Should only have non-scoped labels
 	expected := []string{"backend", "needs-review", "urgent"}
 	if len(filtered) != len(expected) {
-		t.Fatalf("FilterNonScopedLabels returned %d labels, want %d", len(filtered), len(expected))
+		t.Fatalf("filterNonScopedLabels returned %d labels, want %d", len(filtered), len(expected))
 	}
 
 	for i, l := range filtered {
@@ -499,7 +499,7 @@ func TestPriorityToLabel(t *testing.T) {
 	}
 }
 
-// TestIssueLinksToDependencies_AsTarget verifies conversion when we are the target issue.
+// TestissueLinksToDependencies_AsTarget verifies conversion when we are the target issue.
 func TestIssueLinksToDependencies_AsTarget(t *testing.T) {
 	config := DefaultMappingConfig()
 
@@ -512,10 +512,10 @@ func TestIssueLinksToDependencies_AsTarget(t *testing.T) {
 		},
 	}
 
-	deps := IssueLinksToDependencies(42, links, config)
+	deps := issueLinksToDependencies(42, links, config)
 
 	if len(deps) != 1 {
-		t.Fatalf("IssueLinksToDependencies returned %d dependencies, want 1", len(deps))
+		t.Fatalf("issueLinksToDependencies returned %d dependencies, want 1", len(deps))
 	}
 
 	// When we are target, source becomes the dependency
@@ -527,7 +527,7 @@ func TestIssueLinksToDependencies_AsTarget(t *testing.T) {
 	}
 }
 
-// TestIssueLinksToDependencies_UnknownLinkType verifies unknown link types default to "related".
+// TestissueLinksToDependencies_UnknownLinkType verifies unknown link types default to "related".
 func TestIssueLinksToDependencies_UnknownLinkType(t *testing.T) {
 	config := DefaultMappingConfig()
 
@@ -539,10 +539,10 @@ func TestIssueLinksToDependencies_UnknownLinkType(t *testing.T) {
 		},
 	}
 
-	deps := IssueLinksToDependencies(42, links, config)
+	deps := issueLinksToDependencies(42, links, config)
 
 	if len(deps) != 1 {
-		t.Fatalf("IssueLinksToDependencies returned %d dependencies, want 1", len(deps))
+		t.Fatalf("issueLinksToDependencies returned %d dependencies, want 1", len(deps))
 	}
 
 	// Unknown link types should default to "related"
@@ -551,7 +551,7 @@ func TestIssueLinksToDependencies_UnknownLinkType(t *testing.T) {
 	}
 }
 
-// TestIssueLinksToDependencies_NilIssues verifies handling of nil source/target issues.
+// TestissueLinksToDependencies_NilIssues verifies handling of nil source/target issues.
 func TestIssueLinksToDependencies_NilIssues(t *testing.T) {
 	config := DefaultMappingConfig()
 
@@ -564,11 +564,11 @@ func TestIssueLinksToDependencies_NilIssues(t *testing.T) {
 		},
 	}
 
-	deps := IssueLinksToDependencies(42, links, config)
+	deps := issueLinksToDependencies(42, links, config)
 
 	// Should still create a dependency but with ToGitLabIID = 0
 	if len(deps) != 1 {
-		t.Fatalf("IssueLinksToDependencies returned %d dependencies, want 1", len(deps))
+		t.Fatalf("issueLinksToDependencies returned %d dependencies, want 1", len(deps))
 	}
 
 	if deps[0].ToGitLabIID != 0 {
@@ -607,17 +607,17 @@ func TestMappingConfigUsesTypesConstants(t *testing.T) {
 		t.Errorf("StateMap[closed] = %q, want %q (from StatusMapping)", s, StatusMapping["closed"])
 	}
 
-	// Type mappings should match types.go TypeMapping
-	if typ := config.LabelTypeMap["bug"]; typ != TypeMapping["bug"] {
-		t.Errorf("LabelTypeMap[bug] = %q, want %q (from TypeMapping)", typ, TypeMapping["bug"])
+	// Type mappings should match types.go typeMapping
+	if typ := config.LabelTypeMap["bug"]; typ != typeMapping["bug"] {
+		t.Errorf("LabelTypeMap[bug] = %q, want %q (from typeMapping)", typ, typeMapping["bug"])
 	}
-	if typ := config.LabelTypeMap["feature"]; typ != TypeMapping["feature"] {
-		t.Errorf("LabelTypeMap[feature] = %q, want %q (from TypeMapping)", typ, TypeMapping["feature"])
+	if typ := config.LabelTypeMap["feature"]; typ != typeMapping["feature"] {
+		t.Errorf("LabelTypeMap[feature] = %q, want %q (from typeMapping)", typ, typeMapping["feature"])
 	}
-	if typ := config.LabelTypeMap["task"]; typ != TypeMapping["task"] {
-		t.Errorf("LabelTypeMap[task] = %q, want %q (from TypeMapping)", typ, TypeMapping["task"])
+	if typ := config.LabelTypeMap["task"]; typ != typeMapping["task"] {
+		t.Errorf("LabelTypeMap[task] = %q, want %q (from typeMapping)", typ, typeMapping["task"])
 	}
-	if typ := config.LabelTypeMap["enhancement"]; typ != TypeMapping["enhancement"] {
-		t.Errorf("LabelTypeMap[enhancement] = %q, want %q (from TypeMapping)", typ, TypeMapping["enhancement"])
+	if typ := config.LabelTypeMap["enhancement"]; typ != typeMapping["enhancement"] {
+		t.Errorf("LabelTypeMap[enhancement] = %q, want %q (from typeMapping)", typ, typeMapping["enhancement"])
 	}
 }
