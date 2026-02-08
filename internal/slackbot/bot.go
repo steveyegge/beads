@@ -44,6 +44,12 @@ type Bot struct {
 	decisionMessages   map[string]messageInfo // decision ID → message info
 	decisionMessagesMu sync.RWMutex
 
+	// Agent status cards: persistent top-level messages per agent (rig routing mode)
+	agentStatusCards   map[string]messageInfo // agent identity → status card message
+	agentStatusCardsMu sync.RWMutex
+	agentPendingCount  map[string]int // agent identity → pending decision count
+	agentPendingMu     sync.Mutex
+
 	// Bot identity for filtering out own messages in thread replies
 	botUserID string
 
@@ -142,6 +148,8 @@ func NewBot(cfg BotConfig, decisions *DecisionClient) (*Bot, error) {
 		channelCache:      make(map[string]string),
 		autoInviteUsers:   cfg.AutoInviteUsers,
 		decisionMessages:  make(map[string]messageInfo),
+		agentStatusCards:  make(map[string]messageInfo),
+		agentPendingCount: make(map[string]int),
 		preferenceManager: NewPreferenceManager(beadsDir),
 	}
 	return bot, nil
@@ -156,6 +164,8 @@ func newBotForTest(slackAPI SlackAPI, decisions DecisionProvider, channelID stri
 		channelID:         channelID,
 		channelCache:      make(map[string]string),
 		decisionMessages:  make(map[string]messageInfo),
+		agentStatusCards:  make(map[string]messageInfo),
+		agentPendingCount: make(map[string]int),
 		preferenceManager: NewPreferenceManager(""),
 	}
 }
@@ -1603,9 +1613,121 @@ func (b *Bot) resolveChannel(agent string) string {
 }
 
 func (b *Bot) resolveChannelForDecision(decision *Decision) string {
-	// Simple: use default channel. Multi-channel routing can be enabled later
-	// by uncommenting epic/agent/convoy routing logic.
+	// Use router if available and enabled
+	if b.router != nil && b.router.IsEnabled() {
+		result := b.router.ResolveForDecision(decision.RequestedBy, decision, "")
+		if result != nil && result.ChannelID != "" {
+			return result.ChannelID
+		}
+	}
 	return b.channelID
+}
+
+// isRigRoutingMode returns true if the bot is configured for rig-based routing.
+func (b *Bot) isRigRoutingMode() bool {
+	if b.router == nil || !b.router.IsEnabled() {
+		return false
+	}
+	return b.router.GetConfig().RoutingMode == "rig"
+}
+
+// ensureAgentStatusCard ensures a persistent top-level status card message
+// exists for the given agent in the specified channel. Returns the status
+// card's message timestamp for threading.
+func (b *Bot) ensureAgentStatusCard(agent, channelID string) string {
+	b.agentStatusCardsMu.RLock()
+	card, ok := b.agentStatusCards[agent]
+	b.agentStatusCardsMu.RUnlock()
+	if ok && card.channelID == channelID {
+		return card.timestamp
+	}
+
+	// Create a new status card
+	blocks := b.buildAgentStatusCardBlocks(agent, 0)
+	_, ts, err := b.client.PostMessage(channelID, slack.MsgOptionBlocks(blocks...))
+	if err != nil {
+		log.Printf("slackbot: error creating status card for %s in %s: %v", agent, channelID, err)
+		return ""
+	}
+
+	b.agentStatusCardsMu.Lock()
+	b.agentStatusCards[agent] = messageInfo{channelID: channelID, timestamp: ts}
+	b.agentStatusCardsMu.Unlock()
+
+	log.Printf("slackbot: created status card for %s in %s (ts=%s)", agent, channelID, ts)
+	return ts
+}
+
+// updateAgentStatusCard updates the status card message with current pending count.
+func (b *Bot) updateAgentStatusCard(agent string) {
+	b.agentStatusCardsMu.RLock()
+	card, ok := b.agentStatusCards[agent]
+	b.agentStatusCardsMu.RUnlock()
+	if !ok {
+		return
+	}
+
+	b.agentPendingMu.Lock()
+	count := b.agentPendingCount[agent]
+	b.agentPendingMu.Unlock()
+
+	blocks := b.buildAgentStatusCardBlocks(agent, count)
+	_, _, _, err := b.client.UpdateMessage(card.channelID, card.timestamp, slack.MsgOptionBlocks(blocks...))
+	if err != nil {
+		log.Printf("slackbot: error updating status card for %s: %v", agent, err)
+	}
+}
+
+// buildAgentStatusCardBlocks builds the Block Kit blocks for an agent status card.
+func (b *Bot) buildAgentStatusCardBlocks(agent string, pendingCount int) []slack.Block {
+	parts := strings.Split(agent, "/")
+	rig := parts[0]
+	agentName := agent
+	if len(parts) >= 3 {
+		agentName = parts[2]
+	} else if len(parts) >= 2 {
+		agentName = parts[1]
+	}
+
+	statusEmoji := ":white_circle:"
+	statusText := "idle"
+	if pendingCount > 0 {
+		statusEmoji = ":large_yellow_circle:"
+		statusText = fmt.Sprintf("%d pending", pendingCount)
+		if pendingCount == 1 {
+			statusText = "1 pending"
+		}
+	}
+
+	headerText := fmt.Sprintf("%s *%s* · _%s_ · %s", statusEmoji, agentName, rig, statusText)
+
+	blocks := []slack.Block{
+		slack.NewSectionBlock(
+			slack.NewTextBlockObject("mrkdwn", headerText, false, false),
+			nil, nil),
+		slack.NewContextBlock("",
+			slack.NewTextBlockObject("mrkdwn",
+				fmt.Sprintf(":busts_in_silhouette: `%s` · Decisions appear as thread replies below", agent),
+				false, false)),
+	}
+
+	return blocks
+}
+
+// incrementAgentPending increments the pending decision count for an agent.
+func (b *Bot) incrementAgentPending(agent string) {
+	b.agentPendingMu.Lock()
+	b.agentPendingCount[agent]++
+	b.agentPendingMu.Unlock()
+}
+
+// decrementAgentPending decrements the pending decision count for an agent.
+func (b *Bot) decrementAgentPending(agent string) {
+	b.agentPendingMu.Lock()
+	if b.agentPendingCount[agent] > 0 {
+		b.agentPendingCount[agent]--
+	}
+	b.agentPendingMu.Unlock()
 }
 
 func (b *Bot) agentToChannelName(agent string) string {

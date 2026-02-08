@@ -1387,6 +1387,164 @@ func TestUAT_CreateDecision_BlockKitStructure(t *testing.T) {
 	}
 }
 
+func TestUAT_RigRouting_ResolvesToRigChannel(t *testing.T) {
+	cfg := &Config{
+		Type:            "slack",
+		Version:         1,
+		Enabled:         true,
+		RoutingMode:     "rig",
+		DynamicChannels: true,
+		ChannelPrefix:   "bd",
+		DefaultChannel:  "C_DEFAULT",
+		Channels:        make(map[string]string),
+		Overrides:       make(map[string]string),
+		ChannelNames:    make(map[string]string),
+	}
+	router := NewRouter(cfg)
+	router.SetChannelCreator(&mockChannelCreator{channels: make(map[string]string)})
+
+	d := sampleDecision("bd-rig1")
+	// Agent is "gastown/polecats/furiosa" — rig is "gastown"
+	result := router.ResolveForDecision(d.RequestedBy, &d, "")
+
+	if result.ChannelID == "" {
+		t.Fatal("expected rig channel to be resolved")
+	}
+	if !strings.Contains(result.MatchedBy, "rig:gastown") {
+		t.Errorf("matchedBy = %q, want to contain 'rig:gastown'", result.MatchedBy)
+	}
+}
+
+func TestUAT_RigRouting_DifferentRigsDifferentChannels(t *testing.T) {
+	cfg := &Config{
+		Type:            "slack",
+		Version:         1,
+		Enabled:         true,
+		RoutingMode:     "rig",
+		DynamicChannels: true,
+		ChannelPrefix:   "bd",
+		DefaultChannel:  "C_DEFAULT",
+		Channels:        make(map[string]string),
+		Overrides:       make(map[string]string),
+		ChannelNames:    make(map[string]string),
+	}
+	router := NewRouter(cfg)
+	router.SetChannelCreator(&mockChannelCreator{channels: make(map[string]string)})
+
+	d1 := sampleDecision("bd-rig-a")
+	d1.RequestedBy = "gastown/polecats/furiosa"
+	result1 := router.ResolveForDecision(d1.RequestedBy, &d1, "")
+
+	d2 := sampleDecision("bd-rig-b")
+	d2.RequestedBy = "citadel/warboys/nux"
+	result2 := router.ResolveForDecision(d2.RequestedBy, &d2, "")
+
+	if result1.ChannelID == result2.ChannelID {
+		t.Errorf("different rigs should get different channels, both got %q", result1.ChannelID)
+	}
+	if !strings.Contains(result1.MatchedBy, "rig:gastown") {
+		t.Errorf("result1 matchedBy = %q, want gastown", result1.MatchedBy)
+	}
+	if !strings.Contains(result2.MatchedBy, "rig:citadel") {
+		t.Errorf("result2 matchedBy = %q, want citadel", result2.MatchedBy)
+	}
+}
+
+func TestUAT_AgentStatusCard_CreatedOnFirstDecision(t *testing.T) {
+	bot, mockAPI, _ := newTestBot(t)
+
+	agent := "gastown/polecats/furiosa"
+	ts := bot.ensureAgentStatusCard(agent, "C_RIG")
+
+	if ts == "" {
+		t.Fatal("expected status card timestamp")
+	}
+
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+
+	if len(mockAPI.PostedMessages) != 1 {
+		t.Fatalf("expected 1 posted message (status card), got %d", len(mockAPI.PostedMessages))
+	}
+	if mockAPI.PostedMessages[0].ChannelID != "C_RIG" {
+		t.Errorf("posted to %q, want C_RIG", mockAPI.PostedMessages[0].ChannelID)
+	}
+
+	// Verify status card content
+	blocksJSON := extractBlocksJSON(t, mockAPI.PostedMessages[0].Options)
+	if !strings.Contains(blocksJSON, "furiosa") {
+		t.Errorf("status card should contain agent name, got %q", blocksJSON)
+	}
+	if !strings.Contains(blocksJSON, "gastown") {
+		t.Errorf("status card should contain rig name, got %q", blocksJSON)
+	}
+}
+
+func TestUAT_AgentStatusCard_ReusedOnSecondCall(t *testing.T) {
+	bot, mockAPI, _ := newTestBot(t)
+
+	agent := "gastown/polecats/furiosa"
+	ts1 := bot.ensureAgentStatusCard(agent, "C_RIG")
+	ts2 := bot.ensureAgentStatusCard(agent, "C_RIG")
+
+	if ts1 != ts2 {
+		t.Errorf("expected same timestamp, got %q and %q", ts1, ts2)
+	}
+
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+
+	// Should only post once — second call reuses cached card
+	if len(mockAPI.PostedMessages) != 1 {
+		t.Errorf("expected 1 posted message, got %d", len(mockAPI.PostedMessages))
+	}
+}
+
+func TestUAT_AgentStatusCard_UpdatesPendingCount(t *testing.T) {
+	bot, mockAPI, _ := newTestBot(t)
+
+	agent := "gastown/polecats/furiosa"
+	bot.ensureAgentStatusCard(agent, "C_RIG")
+
+	// Increment pending and update
+	bot.incrementAgentPending(agent)
+	bot.incrementAgentPending(agent)
+	bot.updateAgentStatusCard(agent)
+
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+
+	if len(mockAPI.UpdatedMessages) == 0 {
+		t.Fatal("expected status card to be updated")
+	}
+
+	// Verify updated content shows pending count
+	upd := mockAPI.UpdatedMessages[len(mockAPI.UpdatedMessages)-1]
+	_, vals, _ := slack.UnsafeApplyMsgOptions("", upd.ChannelID, "", upd.Options...)
+	blocksJSON := vals.Get("blocks")
+	if !strings.Contains(blocksJSON, "2 pending") {
+		t.Errorf("updated status card should show '2 pending', got %q", blocksJSON)
+	}
+}
+
+func TestUAT_AgentStatusCard_MultipleAgentsSameChannel(t *testing.T) {
+	bot, mockAPI, _ := newTestBot(t)
+
+	ts1 := bot.ensureAgentStatusCard("gastown/polecats/furiosa", "C_RIG")
+	ts2 := bot.ensureAgentStatusCard("gastown/crew/max", "C_RIG")
+
+	if ts1 == ts2 {
+		t.Error("different agents should get different status cards")
+	}
+
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+
+	if len(mockAPI.PostedMessages) != 2 {
+		t.Errorf("expected 2 status cards, got %d", len(mockAPI.PostedMessages))
+	}
+}
+
 func TestUAT_CreateDecision_UrgencyEmojis(t *testing.T) {
 	tests := []struct {
 		urgency       string

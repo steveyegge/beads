@@ -560,7 +560,23 @@ func (r *Router) ResolveForDecision(agent string, decision *Decision, channelHin
 	}
 	r.mu.RUnlock()
 
-	// Priority 4: Epic-based routing
+	// Priority 4: Rig-based routing (one channel per rig)
+	if agent != "" && r.config.RoutingMode == "rig" {
+		rig := extractRig(agent)
+		if rig != "" {
+			channelID := r.ensureRigChannel(rig)
+			if channelID != "" {
+				return &RouteResult{
+					ChannelID:   channelID,
+					ChannelName: r.channelName(channelID),
+					WebhookURL:  r.getWebhookForChannel(channelID),
+					MatchedBy:   "(rig:" + rig + ")",
+				}
+			}
+		}
+	}
+
+	// Priority 5: Epic-based routing
 	if decision != nil && decision.ParentBeadTitle != "" {
 		mode := r.config.RoutingMode
 		if mode == "" || mode == "epic" {
@@ -576,7 +592,7 @@ func (r *Router) ResolveForDecision(agent string, decision *Decision, channelHin
 		}
 	}
 
-	// Priority 5: Default channel
+	// Priority 6: Default channel
 	return &RouteResult{
 		ChannelID:   r.config.DefaultChannel,
 		ChannelName: r.channelName(r.config.DefaultChannel),
@@ -646,6 +662,64 @@ func (r *Router) ensureEpicChannel(epicTitle string) string {
 
 	r.cacheChannel(channelName, channelID)
 	log.Printf("slack: created epic channel #%s (%s) for %q", channelName, channelID, epicTitle)
+	return channelID
+}
+
+// extractRig extracts the rig name (first segment) from an agent identity.
+// Agent format: "rig/role/name" → returns "rig".
+// For single-segment agents (e.g., "mayor"), returns the agent name itself.
+func extractRig(agent string) string {
+	parts := strings.Split(agent, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return ""
+	}
+	return parts[0]
+}
+
+// ensureRigChannel looks up or creates a channel for the given rig name.
+// Returns the channel ID, or empty string if the channel cannot be resolved.
+func (r *Router) ensureRigChannel(rig string) string {
+	channelName := sanitizeChannelName(r.channelPrefix() + "-" + rig)
+
+	// Check cache
+	r.channelCacheMu.RLock()
+	if id, ok := r.channelCache[channelName]; ok {
+		r.channelCacheMu.RUnlock()
+		return id
+	}
+	r.channelCacheMu.RUnlock()
+
+	if r.channelCreator == nil {
+		return ""
+	}
+
+	// Try to find existing channel
+	channelID, err := r.channelCreator.FindChannelByName(channelName)
+	if err == nil && channelID != "" {
+		r.cacheChannel(channelName, channelID)
+		return channelID
+	}
+
+	// Create if dynamic channels enabled
+	if !r.config.DynamicChannels {
+		return ""
+	}
+
+	channelID, err = r.channelCreator.CreateChannel(channelName)
+	if err != nil {
+		log.Printf("slack: failed to create rig channel %s: %v", channelName, err)
+		if strings.Contains(err.Error(), "name_taken") {
+			channelID, err = r.channelCreator.FindChannelByName(channelName)
+			if err == nil && channelID != "" {
+				r.cacheChannel(channelName, channelID)
+				return channelID
+			}
+		}
+		return ""
+	}
+
+	r.cacheChannel(channelName, channelID)
+	log.Printf("slack: created rig channel #%s (%s) for rig %q", channelName, channelID, rig)
 	return channelID
 }
 
@@ -1038,6 +1112,8 @@ const (
 	ChannelModeAgent ChannelMode = "agent"
 	// ChannelModeEpic routes to a channel based on the work's parent epic.
 	ChannelModeEpic ChannelMode = "epic"
+	// ChannelModeRig routes to a channel based on the agent's rig (first segment).
+	ChannelModeRig ChannelMode = "rig"
 	// ChannelModeDM routes to a direct message with the overseer.
 	ChannelModeDM ChannelMode = "dm"
 )
@@ -1047,6 +1123,7 @@ var ValidChannelModes = []ChannelMode{
 	ChannelModeGeneral,
 	ChannelModeAgent,
 	ChannelModeEpic,
+	ChannelModeRig,
 	ChannelModeDM,
 }
 
