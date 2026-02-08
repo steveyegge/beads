@@ -100,6 +100,20 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Validate context requirement from stop_decision config.
+	// This catches missing context at creation time so bad decisions
+	// never reach Slack (avoids spam from create-close-recreate cycles).
+	if decisionContext == "" {
+		cfg := loadStopDecisionConfig(ctx)
+		if cfg != nil && cfg.Enabled && cfg.RequireContext {
+			fmt.Fprintf(os.Stderr, "Error: --context is required by stop_decision config (require_context=true)\n")
+			if cfg.AgentContextPrompt != "" {
+				fmt.Fprintf(os.Stderr, "%s\n", cfg.AgentContextPrompt)
+			}
+			os.Exit(1)
+		}
+	}
+
 	// Validate options JSON - at least one option is required
 	if optionsJSON == "" {
 		fmt.Fprintf(os.Stderr, "Error: --options is required (at least one option must be provided)\n")

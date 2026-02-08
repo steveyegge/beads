@@ -136,7 +136,18 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 		} else if agentDecision == nil {
 			if !isReentry {
 				// First attempt: block with instructions for the agent.
-				reason := "Create a decision with 'bd decision create' before stopping"
+				reason := `Before stopping, create a decision point for the human to review.
+
+Steps:
+1. Run 'bd ready' and 'bd list --status=in_progress' to find open/available work
+2. Summarize what you accomplished this session and what remains
+3. Suggest 2-4 concrete next actions as decision options (based on open work, blockers, or logical next steps)
+4. Create the decision with 'bd decision create' including:
+   --context="<summary of session work and current state>"
+   --options='[{"id":"...","short":"...","label":"<specific actionable option>"},...]'
+   Always include a "stop" option: {"id":"stop","short":"stop","label":"Done for now"}
+
+The human will pick which direction to go, or provide custom instructions.`
 				if cfg.AgentDecisionPrompt != "" {
 					reason = cfg.AgentDecisionPrompt
 				}
@@ -155,19 +166,8 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 			// a generic decision so the human still gets notified.
 			fmt.Fprintf(os.Stderr, "Re-entry: agent did not create decision. Auto-creating generic decision.\n")
 		} else {
-			// Agent decision found — validate context if required
-			if cfg.RequireContext && agentDecision.Context == "" {
-				reason := fmt.Sprintf("Decision %s is missing context. Close it and create a new one with --context", agentDecision.IssueID)
-				if cfg.AgentContextPrompt != "" {
-					reason = fmt.Sprintf("%s\n\nDecision to close: %s", cfg.AgentContextPrompt, agentDecision.IssueID)
-				}
-				if jsonOutput {
-					outputJSON(map[string]string{"decision": "block", "reason": reason})
-				} else {
-					fmt.Printf("Block: %s\n", reason)
-				}
-				os.Exit(1)
-			}
+			// Note: context validation moved to `bd decision create` (enforced at
+			// creation time to prevent spam from create→reject→close→recreate cycles).
 
 			var selected, responseText string
 
