@@ -16,7 +16,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/util"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -143,7 +143,7 @@ Examples:
 		// Additional filter flags
 		assignee, _ := cmd.Flags().GetString("assignee")
 		issueType, _ := cmd.Flags().GetString("type")
-		issueType = util.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
+		issueType = utils.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		priorityMinStr, _ := cmd.Flags().GetString("priority-min")
@@ -197,11 +197,7 @@ Examples:
 			defer func() { _ = store.Close() }()
 		}
 
-		// Check database freshness before reading (bd-2q6d)
-		// Export always uses direct mode (daemon closed above)
-		if err := ensureDatabaseFresh(rootCtx); err != nil {
-			FatalErrorRespectJSON("%v", err)
-		}
+		requireFreshDB(rootCtx)
 
 		// Handle --events and --events-reset flags
 		if eventsFlag || eventsReset {
@@ -228,8 +224,8 @@ Examples:
 		}
 
 		// Normalize labels: trim, dedupe, remove empty
-		labels = util.NormalizeLabels(labels)
-		labelsAny = util.NormalizeLabels(labelsAny)
+		labels = utils.NormalizeLabels(labels)
+		labelsAny = utils.NormalizeLabels(labelsAny)
 
 		// Build filter
 		// Tombstone export logic:
@@ -260,7 +256,7 @@ Examples:
 			filter.LabelsAny = labelsAny
 		}
 		if idFilter != "" {
-			ids := util.NormalizeLabels(strings.Split(idFilter, ","))
+			ids := utils.NormalizeLabels(strings.Split(idFilter, ","))
 			if len(ids) > 0 {
 				filter.IDs = ids
 			}

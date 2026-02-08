@@ -56,13 +56,7 @@ var showCmd = &cobra.Command{
 			return
 		}
 
-		// Check database freshness before reading
-		// Skip check when using daemon (daemon auto-imports on staleness)
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
-		}
+		requireFreshDB(ctx)
 
 		// Resolve partial IDs first (daemon mode only - direct mode uses routed resolution)
 		var resolvedIDs []string

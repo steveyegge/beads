@@ -116,6 +116,7 @@ func (h *labelTestHelper) assertLabelEvent(issueID string, eventType types.Event
 }
 
 func TestLabelCommands(t *testing.T) {
+	t.Parallel()
 	tmpDir, err := os.MkdirTemp("", "bd-test-label-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)

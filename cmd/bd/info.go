@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -98,14 +97,7 @@ Examples:
 			if store != nil {
 				ctx := rootCtx
 
-				// Check database freshness before reading
-				// Skip check when using daemon (daemon auto-imports on staleness)
-				if daemonClient == nil {
-					if err := ensureDatabaseFresh(ctx); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-						os.Exit(1)
-					}
-				}
+				requireFreshDB(ctx)
 
 				filter := types.IssueFilter{}
 				issues, err := store.SearchIssues(ctx, "", filter)

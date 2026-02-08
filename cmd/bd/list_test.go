@@ -10,7 +10,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/util"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // listTestHelper provides test setup and assertion methods
@@ -92,6 +92,7 @@ func (h *listTestHelper) assertAtMost(count, maxCount int, desc string) {
 }
 
 func TestListCommandSuite(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -157,7 +158,7 @@ func TestListCommandSuite(t *testing.T) {
 
 		t.Run("normalize labels", func(t *testing.T) {
 			labels := []string{" bug ", "critical", "", "bug", "  feature  "}
-			normalized := util.NormalizeLabels(labels)
+			normalized := utils.NormalizeLabels(labels)
 			expected := []string{"bug", "critical", "feature"}
 			h.assertCount(len(normalized), len(expected), "normalized labels")
 
@@ -226,6 +227,7 @@ func TestListCommandSuite(t *testing.T) {
 }
 
 func TestListQueryCapabilitiesSuite(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -467,6 +469,7 @@ func TestListQueryCapabilitiesSuite(t *testing.T) {
 // This test specifically addresses the bug where --tree output was non-deterministic due to
 // unstable ordering of root issues and children within the same priority level
 func TestStableTreeOrdering(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	store := newTestStore(t, testDB)
@@ -631,6 +634,7 @@ func slicesEqual(a, b []string) bool {
 }
 
 func TestFormatIssueLong(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		issue  *types.Issue
@@ -701,6 +705,7 @@ func TestFormatIssueLong(t *testing.T) {
 }
 
 func TestFormatIssueCompact(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		issue  *types.Issue
@@ -771,6 +776,7 @@ func TestFormatIssueCompact(t *testing.T) {
 }
 
 func TestBuildBlockingMaps(t *testing.T) {
+	t.Parallel()
 	// Create test dependency records
 	allDeps := map[string][]*types.Dependency{
 		"issue-A": {
@@ -806,6 +812,7 @@ func TestBuildBlockingMaps(t *testing.T) {
 }
 
 func TestFormatIssueCompactWithDependencies(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		issue     *types.Issue
@@ -880,6 +887,7 @@ func TestFormatIssueCompactWithDependencies(t *testing.T) {
 }
 
 func TestParseTimeFlag(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		input   string
@@ -913,6 +921,7 @@ func TestParseTimeFlag(t *testing.T) {
 
 // TestListTimeBasedFilters tests the time-based scheduling filters (GH#820)
 func TestListTimeBasedFilters(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -1087,6 +1096,7 @@ func TestListTimeBasedFilters(t *testing.T) {
 
 // TestHierarchicalChildren tests the --tree --parent functionality for showing all descendants
 func TestHierarchicalChildren(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	store := newTestStore(t, testDB)

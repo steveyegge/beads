@@ -1125,9 +1125,9 @@ func TestIsTombstone(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			issue := Issue{Issue: types.Issue{Status: tt.status}}
-			result := IsTombstone(issue)
+			result := isTombstone(issue)
 			if result != tt.expected {
-				t.Errorf("IsTombstone() = %v, want %v", result, tt.expected)
+				t.Errorf("isTombstone() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
@@ -1385,7 +1385,7 @@ func TestMerge3WayWithTTL(t *testing.T) {
 		left := []Issue{tombstone}
 		right := []Issue{liveIssue}
 
-		result, _ := Merge3WayWithTTL(base, left, right, shortTTL, false)
+		result, _ := merge3WayWithTTL(base, left, right, shortTTL, false)
 		if len(result) != 1 {
 			t.Fatalf("expected 1 issue, got %d", len(result))
 		}
@@ -1402,7 +1402,7 @@ func TestMerge3WayWithTTL(t *testing.T) {
 		left := []Issue{tombstone}
 		right := []Issue{liveIssue}
 
-		result, _ := Merge3WayWithTTL(base, left, right, longTTL, false)
+		result, _ := merge3WayWithTTL(base, left, right, longTTL, false)
 		if len(result) != 1 {
 			t.Fatalf("expected 1 issue, got %d", len(result))
 		}
@@ -1629,7 +1629,7 @@ func TestMergeIssue_TombstoneFields(t *testing.T) {
 	})
 }
 
-// TestIsExpiredTombstone tests edge cases for the IsExpiredTombstone function (bd-fmo)
+// TestIsExpiredTombstone tests edge cases for the isExpiredTombstone function (bd-fmo)
 func TestIsExpiredTombstone(t *testing.T) {
 	now := time.Now()
 
@@ -1714,9 +1714,9 @@ func TestIsExpiredTombstone(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := IsExpiredTombstone(tt.issue, tt.ttl)
+			result := isExpiredTombstone(tt.issue, tt.ttl)
 			if result != tt.expected {
-				t.Errorf("IsExpiredTombstone() = %v, want %v (deleted_at=%v, ttl=%v)",
+				t.Errorf("isExpiredTombstone() = %v, want %v (deleted_at=%v, ttl=%v)",
 					result, tt.expected, tt.issue.DeletedAt, tt.ttl)
 			}
 		})

@@ -326,8 +326,6 @@ type (
 	WorkFilter = types.WorkFilter
 	// SortPolicy determines how ready work is ordered.
 	SortPolicy = types.SortPolicy
-	// EpicStatus represents the status of an epic issue.
-	EpicStatus = types.EpicStatus
 )
 
 // Status constants
@@ -335,8 +333,7 @@ const (
 	StatusOpen       = types.StatusOpen
 	StatusInProgress = types.StatusInProgress
 	StatusBlocked    = types.StatusBlocked
-	StatusDeferred   = types.StatusDeferred
-	StatusClosed     = types.StatusClosed
+	StatusClosed = types.StatusClosed
 )
 
 // IssueType constants (core types only - Gas Town types removed)
@@ -354,30 +351,8 @@ const (
 	DepRelated           = types.DepRelated
 	DepParentChild       = types.DepParentChild
 	DepDiscoveredFrom    = types.DepDiscoveredFrom
-	DepConditionalBlocks = types.DepConditionalBlocks // B runs only if A fails
 )
 
-// SortPolicy constants
-const (
-	SortPolicyHybrid   = types.SortPolicyHybrid
-	SortPolicyPriority = types.SortPolicyPriority
-	SortPolicyOldest   = types.SortPolicyOldest
-)
-
-// EventType constants
-const (
-	EventCreated           = types.EventCreated
-	EventUpdated           = types.EventUpdated
-	EventStatusChanged     = types.EventStatusChanged
-	EventCommented         = types.EventCommented
-	EventClosed            = types.EventClosed
-	EventReopened          = types.EventReopened
-	EventDependencyAdded   = types.EventDependencyAdded
-	EventDependencyRemoved = types.EventDependencyRemoved
-	EventLabelAdded        = types.EventLabelAdded
-	EventLabelRemoved      = types.EventLabelRemoved
-	EventCompacted         = types.EventCompacted
-)
 
 // Storage provides the minimal interface for extension orchestration
 type Storage = storage.Storage
