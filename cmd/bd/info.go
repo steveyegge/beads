@@ -293,6 +293,8 @@ var versionChanges = []VersionChange{
 		Date:    "2026-02-08",
 		Changes: []string{
 			"REVERT: Embedded Dolt mode restored (removal was only intended for Gas Town, not Beads)",
+			"FIX: External BEADS_DIR setups now correctly detect the containing git repo",
+			"NEW: BD_BRANCH support for branch-per-polecat write isolation in Dolt server mode",
 		},
 	},
 	{
