@@ -643,6 +643,7 @@ type StatusResponse struct {
 	LocalMode    bool   `json:"local_mode"`             // Whether running in local-only mode (no git)
 	SyncInterval string `json:"sync_interval"`          // Sync interval (e.g., "5s")
 	DaemonMode   string `json:"daemon_mode"`            // Sync mode: "poll" or "events"
+	HTTPAddr     string `json:"http_addr,omitempty"`    // HTTP listen address (for SSE, health endpoints)
 }
 
 // HealthResponse is the response for a health check operation

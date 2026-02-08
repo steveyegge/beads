@@ -45,13 +45,16 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/readyz", h.handleReadiness)
 	mux.HandleFunc("/metrics", h.handleMetrics)
 
+	// SSE event stream (auth required, handled inside handler)
+	mux.HandleFunc("/events", h.handleSSEEvents)
+
 	// Connect-RPC style endpoints (auth required)
 	mux.HandleFunc("/bd.v1.BeadsService/", h.handleRPC)
 
 	h.httpServer = &http.Server{
 		Handler:      mux,
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		WriteTimeout: 0, // Disabled for SSE long-lived connections; per-handler timeouts used instead
 		IdleTimeout:  120 * time.Second,
 	}
 

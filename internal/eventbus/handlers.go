@@ -160,6 +160,7 @@ func (h *DecisionHandler) Handle(ctx context.Context, event *Event, result *Resu
 
 // runBDCommand executes a bd subcommand and captures stdout/stderr.
 // The CWD parameter sets the working directory for the subprocess.
+// Falls back to os.TempDir() if the CWD doesn't exist (e.g., remote daemon in K8s).
 func runBDCommand(ctx context.Context, cwd string, args ...string) (string, string, error) {
 	bdPath, err := findBDBinary()
 	if err != nil {
@@ -172,6 +173,10 @@ func runBDCommand(ctx context.Context, cwd string, args ...string) (string, stri
 	cmd.Stderr = &stderr
 
 	if cwd != "" {
+		// Verify CWD exists; fall back to temp dir if not (remote daemon scenario)
+		if info, statErr := os.Stat(cwd); statErr != nil || !info.IsDir() {
+			cwd = os.TempDir()
+		}
 		cmd.Dir = cwd
 	}
 
@@ -193,11 +198,13 @@ func findBDBinary() (string, error) {
 }
 
 // DefaultHandlers returns the standard set of event bus handlers for daemon registration.
+// Note: StopDecisionHandler was removed in favor of the SSE-based stop hook shell script
+// (bd-f39m). The Stop hook now creates a decision and uses `bd watch --decision` to
+// block until the human responds, eliminating the need for subprocess-based event bus handlers.
 func DefaultHandlers() []Handler {
 	return []Handler{
-		&PrimeHandler{},          // 10
-		&StopDecisionHandler{},   // 15
-		&GateHandler{},           // 20
-		&DecisionHandler{},       // 30
+		&PrimeHandler{},    // 10
+		&GateHandler{},     // 20
+		&DecisionHandler{}, // 30
 	}
 }

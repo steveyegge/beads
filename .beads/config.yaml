@@ -16,6 +16,12 @@ issue-prefix: "bd"
 # Disable daemon for RPC communication (forces direct database access)
 # no-daemon: false
 
+# Remote daemon connection (gastown-uat)
+# Enables hooks and local bd commands to reach the remote daemon via HTTP.
+# Priority: BD_DAEMON_HOST env var > this config key
+daemon-host: "https://gastown-uat.app.e2e.dev.fics.ai"
+daemon-token: "V6T4jmuDY1GDgYDmSRaFa1wwd4RTkFKv"
+
 # Disable auto-flush of database to JSONL after mutations
 # no-auto-flush: false
 

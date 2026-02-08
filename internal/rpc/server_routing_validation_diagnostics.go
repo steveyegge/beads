@@ -544,6 +544,12 @@ func (s *Server) handleStatus(_ *Request) Response {
 	daemonMode := s.daemonMode
 	s.mu.RUnlock()
 	
+	// Get HTTP address if server is running
+	httpAddr := ""
+	if s.httpServer != nil {
+		httpAddr = s.httpServer.Addr()
+	}
+
 	statusResp := StatusResponse{
 		Version:             ServerVersion,
 		WorkspacePath:       s.workspacePath,
@@ -560,6 +566,7 @@ func (s *Server) handleStatus(_ *Request) Response {
 		LocalMode:           localMode,
 		SyncInterval:        syncInterval,
 		DaemonMode:          daemonMode,
+		HTTPAddr:            httpAddr,
 	}
 	
 	data, _ := json.Marshal(statusResp)

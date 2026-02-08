@@ -90,10 +90,14 @@ type Server struct {
 	// Mutation events for event-driven daemon
 	mutationChan    chan MutationEvent
 	droppedEvents   atomic.Int64 // Counter for dropped mutation events
-	// Recent mutations buffer for polling (circular buffer, max 100 events)
+	// Recent mutations buffer for polling (circular buffer, configurable size)
 	recentMutations   []MutationEvent
 	recentMutationsMu sync.RWMutex
 	maxMutationBuffer int
+	// SSE fan-out subscribers
+	subscribersMu sync.RWMutex
+	subscribers   []*sseSubscriber
+	nextSubID     uint64
 	// Query result cache for read operations
 	queryCache *QueryCache
 	// Daemon configuration (set via SetConfig after creation)
@@ -233,8 +237,8 @@ func NewServerWithWispStore(socketPath string, store storage.Storage, wispStore 
 		requestTimeout:    requestTimeout,
 		readyChan:         make(chan struct{}),
 		mutationChan:      make(chan MutationEvent, mutationBufferSize), // Configurable buffer
-		recentMutations:   make([]MutationEvent, 0, 100),
-		maxMutationBuffer: 100,
+		recentMutations:   make([]MutationEvent, 0, 1000),
+		maxMutationBuffer: 1000,
 		queryCache:        NewQueryCache(cacheTTL, cacheMaxSize),
 		queryDedup:        NewQueryDeduplicator(500 * time.Millisecond), // 500ms dedup window
 		labelCache:        NewLabelCache(store),
@@ -299,11 +303,57 @@ func (s *Server) emitRichMutation(event MutationEvent) {
 		s.recentMutations = s.recentMutations[1:]
 	}
 	s.recentMutationsMu.Unlock()
+
+	// Fan out to SSE subscribers (non-blocking per subscriber)
+	s.subscribersMu.RLock()
+	for _, sub := range s.subscribers {
+		select {
+		case sub.ch <- event:
+		default:
+			// Slow consumer, drop event
+		}
+	}
+	s.subscribersMu.RUnlock()
 }
 
 // MutationChan returns the mutation event channel for the daemon to consume
 func (s *Server) MutationChan() <-chan MutationEvent {
 	return s.mutationChan
+}
+
+// sseSubscriber represents an SSE client subscribing to mutation events.
+type sseSubscriber struct {
+	id uint64
+	ch chan MutationEvent
+}
+
+// Subscribe registers a new SSE subscriber and returns a channel of events
+// plus an unsubscribe function. The channel is buffered to absorb short bursts;
+// slow consumers will have events dropped.
+func (s *Server) Subscribe() (<-chan MutationEvent, func()) {
+	sub := &sseSubscriber{
+		ch: make(chan MutationEvent, 64),
+	}
+
+	s.subscribersMu.Lock()
+	s.nextSubID++
+	sub.id = s.nextSubID
+	s.subscribers = append(s.subscribers, sub)
+	s.subscribersMu.Unlock()
+
+	unsubscribe := func() {
+		s.subscribersMu.Lock()
+		defer s.subscribersMu.Unlock()
+		for i, existing := range s.subscribers {
+			if existing.id == sub.id {
+				s.subscribers = append(s.subscribers[:i], s.subscribers[i+1:]...)
+				close(sub.ch)
+				break
+			}
+		}
+	}
+
+	return sub.ch, unsubscribe
 }
 
 // PeriodicStatsSummary returns a human-readable summary of metrics for periodic logging
