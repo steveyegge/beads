@@ -239,38 +239,6 @@ func setGitIndexFlags(repoPath, filePath, excludePattern string) (bool, error) {
 	return true, nil
 }
 
-// clearSyncBranchGitignore removes git index flags from .beads/*.jsonl files.
-// Called when sync.branch is disabled to restore normal git tracking.
-func clearSyncBranchGitignore(path string) error {
-	beadsDir := filepath.Join(path, ".beads")
-	filesToClear := []string{"issues.jsonl", "interactions.jsonl"}
-
-	for _, filename := range filesToClear {
-		jsonlPath := filepath.Join(beadsDir, filename)
-
-		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-			continue // File doesn't exist, skip
-		}
-
-		// Check if file is tracked
-		cmd := exec.Command("git", "ls-files", "--error-unmatch", jsonlPath)
-		cmd.Dir = path
-		if err := cmd.Run(); err != nil {
-			continue // Not tracked, skip
-		}
-
-		// Clear both flags (ignore errors - flags might not be set)
-		cmd = exec.Command("git", "update-index", "--no-assume-unchanged", jsonlPath)
-		cmd.Dir = path
-		_ = cmd.Run()
-
-		cmd = exec.Command("git", "update-index", "--no-skip-worktree", jsonlPath)
-		cmd.Dir = path
-		_ = cmd.Run()
-	}
-
-	return nil
-}
 
 // parseGitLsFilesFlag interprets the flag character from git ls-files -v output.
 // Returns (hasAnyFlag, hasSkipWorktree) based on the first character of the line.

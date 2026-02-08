@@ -696,7 +696,7 @@ func countLinesInGitHEAD(filePath string, workDir string) int {
 	}
 
 	// Get file content from git HEAD and count lines in Go (no shell pipe)
-	gitShowCmd := exec.Command("git", "show", "HEAD:"+relPath)
+	gitShowCmd := exec.Command("git", "show", "HEAD:"+relPath) //nolint:gosec // relPath is from filepath.Rel, not user input
 	gitShowCmd.Dir = workDir
 	output, err := gitShowCmd.Output()
 	if err != nil {

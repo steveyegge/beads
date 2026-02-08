@@ -321,6 +321,22 @@ SELECT * FROM dependencies;
 SELECT * FROM events WHERE issue_id = 'test-1';
 ```
 
+### Updating Nix flake.lock (without nix installed)
+
+The `flake.lock` file pins a specific nixpkgs revision. When `go.mod` bumps the Go version beyond what's in the pinned nixpkgs, the Nix CI job will fail. To update `flake.lock` without installing nix locally, use Docker:
+
+```bash
+# Update flake.lock
+docker run --rm -v $(pwd):/workspace -w /workspace nixos/nix \
+  sh -c 'echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf && nix flake update'
+
+# Verify the build works
+docker run --rm -v $(pwd):/workspace -w /workspace nixos/nix \
+  sh -c 'echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf && nix build .#default && ./result/bin/bd version'
+```
+
+If the build fails with a `vendorHash` mismatch, update `default.nix` with the `got:` hash from the error message and rebuild.
+
 ### Debugging
 
 Use Go's built-in debugging tools:
