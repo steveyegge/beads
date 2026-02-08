@@ -1,0 +1,17 @@
+{{- if .Values.dolt.statefulSet.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bd-daemon.dolt.fullname" . }}
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.dolt.service.type }}
+  ports:
+    - port: {{ .Values.dolt.service.port }}
+      targetPort: mysql
+      protocol: TCP
+      name: mysql
+  selector:
+    {{- include "bd-daemon.dolt.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -1,35 +1,21 @@
-{{- if .Values.service.tcp.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "bd-daemon.fullname" . }}-tcp
+  name: {{ include "bd-daemon.daemon.fullname" . }}
   labels:
-    {{- include "bd-daemon.labels" . | nindent 4 }}
+    {{- include "bd-daemon.daemon.labels" . | nindent 4 }}
 spec:
-  type: {{ .Values.service.tcp.type }}
+  type: {{ .Values.daemon.service.type | default "ClusterIP" }}
   ports:
-    - port: {{ .Values.service.tcp.port }}
-      targetPort: tcp
+    - port: {{ .Values.daemon.service.port | default 9876 }}
+      targetPort: rpc
       protocol: TCP
-      name: tcp
-  selector:
-    {{- include "bd-daemon.selectorLabels" . | nindent 4 }}
-{{- end }}
----
-{{- if .Values.service.http.enabled }}
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "bd-daemon.fullname" . }}-http
-  labels:
-    {{- include "bd-daemon.labels" . | nindent 4 }}
-spec:
-  type: {{ .Values.service.http.type }}
-  ports:
-    - port: {{ .Values.service.http.port }}
+      name: rpc
+    {{- if .Values.daemon.http.enabled }}
+    - port: {{ .Values.daemon.service.httpPort | default 9080 }}
       targetPort: http
       protocol: TCP
       name: http
+    {{- end }}
   selector:
-    {{- include "bd-daemon.selectorLabels" . | nindent 4 }}
-{{- end }}
+    {{- include "bd-daemon.daemon.selectorLabels" . | nindent 4 }}

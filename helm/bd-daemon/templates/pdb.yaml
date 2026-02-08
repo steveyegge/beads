@@ -1,0 +1,29 @@
+{{- if .Values.daemon.pdb.enabled }}
+# PDB for daemon — prevents eviction
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "bd-daemon.daemon.fullname" . }}
+  labels:
+    {{- include "bd-daemon.daemon.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.daemon.pdb.maxUnavailable | default 0 }}
+  selector:
+    matchLabels:
+      {{- include "bd-daemon.daemon.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if and .Values.dolt.statefulSet.enabled .Values.dolt.pdb.enabled }}
+---
+# PDB for dolt — prevents data loss from eviction
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "bd-daemon.dolt.fullname" . }}
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.dolt.pdb.maxUnavailable | default 0 }}
+  selector:
+    matchLabels:
+      {{- include "bd-daemon.dolt.selectorLabels" . | nindent 6 }}
+{{- end }}

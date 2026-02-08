@@ -1,9 +1,9 @@
 apiVersion: v2
 name: bd-daemon
-description: Helm chart for the bd (beads) daemon with optional Redis backend
+description: Helm chart for the bd (beads) daemon — Dolt database, RPC daemon, Slack bot, and Redis
 type: application
-version: 0.1.0
-appVersion: "0.21.0"
+version: 0.2.0
+appVersion: "0.57.11"
 
 dependencies:
   - name: redis

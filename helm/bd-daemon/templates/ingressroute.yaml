@@ -1,0 +1,26 @@
+{{- if and .Values.daemon.http.enabled .Values.ingress.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "bd-daemon.daemon.fullname" . }}
+  labels:
+    {{- include "bd-daemon.daemon.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    {{- toYaml .Values.ingress.entryPoints | nindent 4 }}
+  routes:
+    - match: Host(`{{ .Values.ingress.host }}`)
+      kind: Rule
+      services:
+        - name: {{ include "bd-daemon.daemon.fullname" . }}
+          port: {{ .Values.daemon.service.httpPort }}
+      {{- if or .Values.ingress.ipWhitelist.enabled .Values.ingress.rateLimit.enabled }}
+      middlewares:
+        {{- if .Values.ingress.ipWhitelist.enabled }}
+        - name: {{ include "bd-daemon.daemon.fullname" . }}-ipwhitelist
+        {{- end }}
+        {{- if .Values.ingress.rateLimit.enabled }}
+        - name: {{ include "bd-daemon.daemon.fullname" . }}-ratelimit
+        {{- end }}
+      {{- end }}
+{{- end }}

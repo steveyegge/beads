@@ -1,27 +1,28 @@
 bd-daemon has been deployed.
 
-TCP endpoint (bd RPC):
-  kubectl port-forward svc/{{ include "bd-daemon.fullname" . }}-tcp {{ .Values.service.tcp.port }}:{{ .Values.service.tcp.port }}
+RPC endpoint:
+  kubectl port-forward svc/{{ include "bd-daemon.daemon.fullname" . }} {{ .Values.daemon.service.port }}:{{ .Values.daemon.service.port }}
 
-HTTP endpoint (Connect-RPC):
-  kubectl port-forward svc/{{ include "bd-daemon.fullname" . }}-http {{ .Values.service.http.port }}:{{ .Values.service.http.port }}
+{{- if .Values.daemon.http.enabled }}
+HTTP endpoint:
+  kubectl port-forward svc/{{ include "bd-daemon.daemon.fullname" . }} {{ .Values.daemon.service.httpPort }}:{{ .Values.daemon.service.httpPort }}
+{{- end }}
+
+{{- if .Values.dolt.statefulSet.enabled }}
+Dolt database: ENABLED (StatefulSet)
+  kubectl port-forward svc/{{ include "bd-daemon.dolt.fullname" . }} {{ .Values.dolt.service.port }}:{{ .Values.dolt.service.port }}
+{{- end }}
 
 {{- if .Values.redis.enabled }}
-
-Redis WispStore: ENABLED
-  Namespace: {{ .Values.redis.namespace }}
-  TTL: {{ .Values.redis.wispTTL }}
+Redis WispStore: ENABLED (namespace={{ .Values.redis.namespace }}, TTL={{ .Values.redis.wispTTL }})
 {{- else }}
-
 Redis WispStore: DISABLED (using in-memory store)
-  Note: In-memory mode does not support multi-replica state sharing.
-  Enable Redis with: --set redis.enabled=true
 {{- end }}
 
-{{- if gt (int .Values.replicaCount) 1 }}
-{{- if not .Values.redis.enabled }}
-
-WARNING: Multiple replicas ({{ .Values.replicaCount }}) without Redis will result in
-isolated wisp state per pod. Enable Redis for shared ephemeral state.
+{{- if .Values.slackBot.enabled }}
+Slack bot: ENABLED (sidecar)
 {{- end }}
+
+{{- if .Values.ingress.enabled }}
+Ingress: ENABLED (host={{ .Values.ingress.host }})
 {{- end }}

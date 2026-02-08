@@ -1,9 +1,10 @@
 # bd-daemon Helm chart values
+# All new features (Dolt StatefulSet, Slack bot, ExternalSecrets, Ingress) are
+# disabled by default for backward compatibility.
 
-replicaCount: 1
-
+# --- Daemon image ---
 image:
-  repository: bd-daemon
+  repository: ghcr.io/steveyegge/beads
   pullPolicy: IfNotPresent
   tag: ""  # Defaults to Chart.appVersion
 
@@ -11,121 +12,313 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-serviceAccount:
-  create: true
-  automount: true
-  annotations: {}
-  name: ""
-
-# bd-daemon configuration
+# --- Daemon configuration ---
 daemon:
-  # Token for TCP connection authentication
-  # If set, creates a Secret and injects BD_DAEMON_TOKEN
+  replicaCount: 1
+  deploymentStrategy: Recreate
+
+  # Token for RPC authentication
   token: ""
-  # Reference an existing secret for the daemon token
-  # existingTokenSecret: ""
-  # existingTokenSecretKey: "token"
 
   # Logging
   logLevel: "info"
+  logJSON: true
 
-# Dolt server mode configuration
-# When enabled, daemon connects to an external Dolt sql-server via TCP
-# instead of using embedded Dolt. Required for multi-replica deployments.
+  # TCP RPC listener
+  tcp:
+    addr: ":9876"
+    port: 9876
+
+  # HTTP API listener (health checks, ingress)
+  http:
+    enabled: true
+    addr: ":9080"
+    port: 9080
+
+  # TLS
+  tls:
+    enabled: false
+    existingSecret: ""
+
+  # Priority class (e.g., "production")
+  priorityClassName: ""
+
+  # Service account
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  # Service
+  service:
+    type: ClusterIP
+    port: 9876
+    httpPort: 9080
+
+  # Health probes
+  startupProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 30
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  # Pod disruption budget
+  pdb:
+    enabled: false
+    maxUnavailable: 0
+
+  # Resources
+  resources: {}
+    # limits:
+    #   cpu: 2
+    #   memory: 4Gi
+    # requests:
+    #   cpu: 500m
+    #   memory: 1Gi
+
+  # Scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# --- Dolt database ---
 dolt:
+  # Deploy Dolt as a StatefulSet within the chart
+  statefulSet:
+    enabled: false
+
+  # OR connect to an external Dolt sql-server (legacy mode)
   serverMode:
     enabled: false
-    host: "dolt-sql-server"  # Dolt sql-server Service hostname
-    port: 3307               # Dolt sql-server port
-    user: "root"             # MySQL user
-    database: "beads"        # Database name
-    # password: ""           # Set via --set or existingSecret
-    # existingSecret: ""     # Name of existing Secret with password
-    # existingSecretKey: "dolt-password"  # Key in existing Secret
+    host: "dolt-sql-server"
+    port: 3307
+    user: "root"
+    database: "beads"
+    # existingSecret: ""
+    # existingSecretKey: "dolt-password"
 
-# Redis WispStore configuration
-# When redis.enabled is true, BD_REDIS_URL is automatically set from the subchart.
+  # Database name
+  database: "beads"
+
+  # Dolt image (used when statefulSet.enabled=true)
+  image:
+    repository: dolthub/dolt-sql-server
+    tag: "1.81.6"
+    pullPolicy: IfNotPresent
+
+  # User for server config
+  user:
+    name: "root"
+
+  # Dolt SQL server configuration
+  config:
+    host: "0.0.0.0"
+    port: 3306
+    log_level: info
+    max_connections: 100
+    read_timeout_millis: 28800000
+    write_timeout_millis: 28800000
+
+  # Service
+  service:
+    type: ClusterIP
+    port: 3306
+
+  # Service account
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  # S3 backup/sync
+  s3:
+    enabled: false
+    region: "us-east-1"
+    bucket: ""
+    prefix: ""
+    dynamoTable: ""
+    credentials:
+      enabled: false
+      secretName: "dolt-s3-credentials"
+    sync:
+      pullOnStartup: true
+      pushOnShutdown: true
+      schedule:
+        enabled: false
+        intervalMinutes: 60
+
+  # EKS Pod Identity for S3 access (alternative to static credentials)
+  podIdentity:
+    enabled: false
+    clusterName: ""
+    roleArn: ""
+
+  # Persistence (PVC for StatefulSet)
+  persistence:
+    enabled: true
+    storageClass: "gp3"
+    accessMode: ReadWriteOnce
+    size: 10Gi
+    deleteClaim: false
+
+  # Init SQL script (optional)
+  initSql: ""
+
+  # Termination grace period (seconds)
+  terminationGracePeriodSeconds: 120
+
+  # Security contexts
+  podSecurityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+
+  # Health probes
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  # Pod disruption budget
+  pdb:
+    enabled: false
+    maxUnavailable: 0
+
+  # Resources
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1
+      memory: 2Gi
+
+  # Scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# --- Slack bot sidecar ---
+slackBot:
+  enabled: false
+  image:
+    repository: ""  # Defaults to main image.repository
+    tag: ""         # Defaults to main image.tag
+    pullPolicy: ""  # Defaults to main image.pullPolicy
+  secretName: "slack-bot-credentials"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# --- External Secrets Operator ---
+externalSecrets:
+  enabled: false
+  refreshInterval: "15m"
+  secretStoreKind: ClusterSecretStore
+  secretStoreName: ""  # Name of your ClusterSecretStore/SecretStore
+
+  # Dolt root password
+  doltRootPassword:
+    remoteRef: ""      # Secret key in your secret store
+    property: ""       # Property within the secret (if JSON)
+
+  # S3 credentials
+  doltS3Credentials:
+    enabled: false
+    remoteRef: ""
+    accessKeyIdProperty: "aws_access_key_id"
+    secretAccessKeyProperty: "aws_secret_access_key"
+
+  # Daemon token
+  daemonToken:
+    remoteRef: ""
+    property: ""
+
+  # Slack bot credentials
+  slackBotCredentials:
+    enabled: false
+    remoteRef: ""
+    botTokenProperty: "bot-token"
+    appTokenProperty: "app-token"
+
+# --- Ingress (Traefik IngressRoute) ---
+ingress:
+  enabled: false
+  host: ""
+  entryPoints:
+    - web
+    - websecure
+  ipWhitelist:
+    enabled: false
+    sourceRange: []
+  rateLimit:
+    enabled: false
+    average: 50
+    burst: 100
+
+# --- Redis WispStore ---
 redis:
-  enabled: true
+  enabled: false
 
-  # Key namespace prefix for Redis wisp keys
+  # Key namespace prefix
   namespace: "bd"
 
-  # TTL for wisp entries (Go duration format)
+  # TTL for wisp entries
   wispTTL: "24h"
 
   # Bitnami Redis subchart overrides
-  # See https://github.com/bitnami/charts/tree/main/bitnami/redis
   architecture: standalone
   auth:
     enabled: true
-    password: ""  # Set via --set or external secret in production
+    password: ""
 
   master:
     persistence:
-      enabled: false  # Wisps are ephemeral; disable persistence by default
+      enabled: false  # Wisps are ephemeral
 
-# Service configuration
-service:
-  tcp:
-    enabled: true
-    type: ClusterIP
-    port: 9876
-  http:
-    enabled: true
-    type: ClusterIP
-    port: 9877
-
-# Pod resource limits
-resources: {}
-  # limits:
-  #   cpu: 500m
-  #   memory: 256Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
-
-# Liveness and readiness probes (HTTP port 9877)
-livenessProbe:
-  tcpSocket:
-    port: http
-  initialDelaySeconds: 10
-  periodSeconds: 30
-  timeoutSeconds: 5
-  failureThreshold: 3
-
-readinessProbe:
-  tcpSocket:
-    port: http
-  initialDelaySeconds: 5
-  periodSeconds: 10
-  timeoutSeconds: 5
-  failureThreshold: 3
-
-# Pod scheduling
-nodeSelector: {}
-tolerations: []
-affinity: {}
-
-# Additional environment variables
-extraEnv: []
-  # - name: BD_REDIS_WISP_TTL
-  #   value: "48h"
-
-# Pod annotations
+# --- Pod configuration ---
 podAnnotations: {}
 
-# Pod security context
 podSecurityContext:
   runAsUser: 1000
   runAsGroup: 1000
   fsGroup: 1000
   runAsNonRoot: true
 
-# Container security context
 securityContext:
   readOnlyRootFilesystem: true
   allowPrivilegeEscalation: false
   capabilities:
     drop:
       - ALL
+
+# Additional environment variables
+extraEnv: []

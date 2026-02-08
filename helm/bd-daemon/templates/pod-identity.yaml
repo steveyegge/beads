@@ -1,0 +1,16 @@
+{{- if .Values.dolt.podIdentity.enabled }}
+# PodIdentityAssociation for EKS Pod Identity
+# Provides S3 access via IAM role without static credentials
+apiVersion: eks.services.k8s.aws/v1alpha1
+kind: PodIdentityAssociation
+metadata:
+  name: {{ include "bd-daemon.dolt.fullname" . }}-s3-access
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pod-identity
+spec:
+  clusterName: {{ required "dolt.podIdentity.clusterName is required when dolt.podIdentity.enabled=true" .Values.dolt.podIdentity.clusterName }}
+  namespace: {{ .Release.Namespace }}
+  roleARN: {{ required "dolt.podIdentity.roleArn is required when dolt.podIdentity.enabled=true" .Values.dolt.podIdentity.roleArn }}
+  serviceAccount: {{ include "bd-daemon.dolt.serviceAccountName" . }}
+{{- end }}

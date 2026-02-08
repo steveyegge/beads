@@ -1,0 +1,343 @@
+{{- if .Values.dolt.statefulSet.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "bd-daemon.dolt.fullname" . }}
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "bd-daemon.dolt.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "bd-daemon.dolt.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bd-daemon.dolt.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/dolt-configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "bd-daemon.dolt.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.dolt.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.dolt.terminationGracePeriodSeconds | default 120 }}
+      {{- if and .Values.dolt.s3.enabled .Values.dolt.s3.sync.pullOnStartup }}
+      initContainers:
+        - name: s3-pull
+          image: "{{ .Values.dolt.image.repository }}:{{ .Values.dolt.image.tag }}"
+          imagePullPolicy: {{ .Values.dolt.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.dolt.securityContext | nindent 12 }}
+          env:
+            - name: HOME
+              value: {{ include "bd-daemon.dolt.dataDir" . }}
+            - name: DOLT_ROOT_PATH
+              value: {{ include "bd-daemon.dolt.dataDir" . }}
+            - name: AWS_REGION
+              value: {{ .Values.dolt.s3.region | quote }}
+            {{- if .Values.externalSecrets.enabled }}
+            - name: DOLT_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bd-daemon.dolt.fullname" . }}-root-password
+                  key: password
+            {{- end }}
+            {{- if .Values.dolt.s3.credentials.enabled }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.dolt.s3.credentials.secretName }}
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.dolt.s3.credentials.secretName }}
+                  key: secret-key
+            {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              DATA_DIR="{{ include "bd-daemon.dolt.dataDir" . }}"
+              DB_DIR="{{ include "bd-daemon.dolt.databaseDir" . }}"
+              REMOTE_URL="{{ include "bd-daemon.dolt.s3RemoteUrl" . }}"
+
+              echo "Initializing Dolt data directory..."
+              mkdir -p "$DATA_DIR"
+              cd "$DATA_DIR"
+
+              # Configure dolt user if not already done
+              if [ ! -f "$DATA_DIR/.dolt/config_global.json" ]; then
+                dolt config --global --add user.email "dolt@{{ .Release.Namespace }}.local"
+                dolt config --global --add user.name "Dolt Server"
+              fi
+
+              # Check if database already exists locally
+              if [ -d "$DB_DIR/.dolt" ]; then
+                echo "Database exists on PVC, ensuring root@% user..."
+                cd "$DB_DIR"
+                # Remove DB-level .doltcfg to avoid conflicts — server reads from $DATA_DIR/.doltcfg
+                rm -rf "$DB_DIR/.doltcfg"
+                mkdir -p "$DATA_DIR/.doltcfg"
+                {{- if .Values.externalSecrets.enabled }}
+                if [ -n "$DOLT_ROOT_PASSWORD" ]; then
+                  dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "DROP USER IF EXISTS 'root'@'%';" 2>/dev/null || true
+                  dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "CREATE USER 'root'@'%' IDENTIFIED BY '$DOLT_ROOT_PASSWORD'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;"
+                  echo "Ensured root@% user with password from secret"
+                fi
+                {{- else }}
+                dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "CREATE USER IF NOT EXISTS 'root'@'%'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null || true
+                {{- end }}
+              else
+                echo "No local database found, attempting to clone from S3..."
+                if dolt clone "$REMOTE_URL" "$DB_DIR" 2>/dev/null; then
+                  echo "Successfully cloned database from S3"
+                  cd "$DB_DIR"
+                  rm -rf "$DB_DIR/.doltcfg"
+                  mkdir -p "$DATA_DIR/.doltcfg"
+                  {{- if .Values.externalSecrets.enabled }}
+                  if [ -n "$DOLT_ROOT_PASSWORD" ]; then
+                    dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "DROP USER IF EXISTS 'root'@'%';" 2>/dev/null || true
+                    dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "CREATE USER 'root'@'%' IDENTIFIED BY '$DOLT_ROOT_PASSWORD'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;"
+                  else
+                    dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "CREATE USER IF NOT EXISTS 'root'@'%'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null || true
+                  fi
+                  {{- else }}
+                  dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "CREATE USER IF NOT EXISTS 'root'@'%'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null || true
+                  {{- end }}
+                else
+                  echo "No existing data in S3, initializing new database..."
+                  mkdir -p "$DB_DIR"
+                  cd "$DB_DIR"
+                  dolt init
+                  mkdir -p "$DATA_DIR/.doltcfg"
+                  {{- if .Values.externalSecrets.enabled }}
+                  if [ -n "$DOLT_ROOT_PASSWORD" ]; then
+                    dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "CREATE USER 'root'@'%' IDENTIFIED BY '$DOLT_ROOT_PASSWORD'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;"
+                  else
+                    dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "CREATE USER IF NOT EXISTS 'root'@'%'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;"
+                  fi
+                  {{- else }}
+                  dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "CREATE USER IF NOT EXISTS 'root'@'%'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;"
+                  {{- end }}
+                  dolt remote add origin "$REMOTE_URL" || true
+                  echo "New database initialized"
+                fi
+              fi
+
+              echo "S3 pull initialization complete"
+          volumeMounts:
+            - name: data
+              mountPath: {{ include "bd-daemon.dolt.dataDir" . }}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      {{- end }}
+      containers:
+        - name: dolt
+          image: "{{ .Values.dolt.image.repository }}:{{ .Values.dolt.image.tag }}"
+          imagePullPolicy: {{ .Values.dolt.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.dolt.securityContext | nindent 12 }}
+          ports:
+            - name: mysql
+              containerPort: {{ .Values.dolt.config.port }}
+              protocol: TCP
+          env:
+            - name: HOME
+              value: {{ include "bd-daemon.dolt.dataDir" . }}
+            - name: DOLT_ROOT_PATH
+              value: {{ include "bd-daemon.dolt.dataDir" . }}
+            - name: DOLT_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bd-daemon.dolt.fullname" . }}-root-password
+                  key: password
+            - name: AWS_REGION
+              value: {{ .Values.dolt.s3.region | quote }}
+            {{- if .Values.dolt.s3.credentials.enabled }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.dolt.s3.credentials.secretName }}
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.dolt.s3.credentials.secretName }}
+                  key: secret-key
+            {{- end }}
+          command:
+            - dolt
+            - sql-server
+          args:
+            - --host=0.0.0.0
+            - --port={{ .Values.dolt.config.port }}
+            - --config=/etc/dolt/config.yaml
+          volumeMounts:
+            - name: data
+              mountPath: {{ include "bd-daemon.dolt.dataDir" . }}
+            - name: config
+              mountPath: /etc/dolt
+              readOnly: true
+            {{- if .Values.dolt.initSql }}
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+            {{- end }}
+          {{- if .Values.dolt.livenessProbe.enabled }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.dolt.config.port }}
+            initialDelaySeconds: {{ .Values.dolt.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.dolt.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.dolt.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.dolt.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.dolt.readinessProbe.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.dolt.config.port }}
+            initialDelaySeconds: {{ .Values.dolt.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.dolt.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.dolt.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.dolt.readinessProbe.failureThreshold }}
+          {{- end }}
+          {{- if and .Values.dolt.s3.enabled .Values.dolt.s3.sync.pushOnShutdown }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    set -e
+                    DB_DIR="{{ include "bd-daemon.dolt.databaseDir" . }}"
+                    echo "Graceful shutdown: committing and pushing to S3..."
+                    cd "$DB_DIR"
+                    if dolt status | grep -q "modified\|new file\|deleted"; then
+                      dolt add .
+                      dolt commit -m "Auto-commit on pod shutdown at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                      echo "Changes committed"
+                    else
+                      echo "No uncommitted changes"
+                    fi
+                    if dolt remote -v 2>/dev/null | grep -q origin; then
+                      dolt push origin main || echo "Push failed, data may be lost"
+                    else
+                      echo "Warning: No remote configured, skipping push"
+                    fi
+                    echo "S3 push complete"
+          {{- end }}
+          resources:
+            {{- toYaml .Values.dolt.resources | nindent 12 }}
+        {{- if and .Values.dolt.s3.enabled .Values.dolt.s3.sync.schedule.enabled }}
+        - name: s3-sync
+          image: "{{ .Values.dolt.image.repository }}:{{ .Values.dolt.image.tag }}"
+          imagePullPolicy: {{ .Values.dolt.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.dolt.securityContext | nindent 12 }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              INTERVAL={{ mul .Values.dolt.s3.sync.schedule.intervalMinutes 60 }}
+              DB_DIR="{{ include "bd-daemon.dolt.databaseDir" . }}"
+              echo "Starting S3 sync sidecar (interval: ${INTERVAL}s)"
+              while true; do
+                sleep $INTERVAL
+                echo "Running scheduled S3 sync..."
+                cd "$DB_DIR"
+                if dolt status | grep -q "modified\|new file\|deleted"; then
+                  echo "Uncommitted changes detected, committing..."
+                  dolt add .
+                  dolt commit -m "Auto-commit at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                  echo "Changes committed, pushing to S3..."
+                  if dolt remote -v 2>/dev/null | grep -q origin; then
+                    dolt push origin main || echo "Push failed"
+                  else
+                    echo "Warning: No remote configured, skipping push"
+                  fi
+                else
+                  echo "No uncommitted changes"
+                fi
+              done
+          env:
+            - name: HOME
+              value: {{ include "bd-daemon.dolt.dataDir" . }}
+            - name: DOLT_ROOT_PATH
+              value: {{ include "bd-daemon.dolt.dataDir" . }}
+            - name: AWS_REGION
+              value: {{ .Values.dolt.s3.region | quote }}
+            {{- if .Values.dolt.s3.credentials.enabled }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.dolt.s3.credentials.secretName }}
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.dolt.s3.credentials.secretName }}
+                  key: secret-key
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ include "bd-daemon.dolt.dataDir" . }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+        {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "bd-daemon.dolt.fullname" . }}-config
+        {{- if .Values.dolt.initSql }}
+        - name: init-sql
+          configMap:
+            name: {{ include "bd-daemon.dolt.fullname" . }}-init-sql
+        {{- end }}
+      {{- with .Values.dolt.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dolt.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dolt.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.dolt.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "bd-daemon.dolt.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - {{ .Values.dolt.persistence.accessMode }}
+        storageClassName: {{ .Values.dolt.persistence.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.dolt.persistence.size }}
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: {{ if .Values.dolt.persistence.deleteClaim }}Delete{{ else }}Retain{{ end }}
+    whenScaled: Retain
+  {{- end }}
+{{- end }}

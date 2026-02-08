@@ -1,0 +1,29 @@
+{{- if and .Values.daemon.http.enabled .Values.ingress.enabled }}
+{{- if .Values.ingress.ipWhitelist.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "bd-daemon.daemon.fullname" . }}-ipwhitelist
+  labels:
+    {{- include "bd-daemon.daemon.labels" . | nindent 4 }}
+spec:
+  ipWhiteList:
+    sourceRange:
+      {{- range .Values.ingress.ipWhitelist.sourceRange }}
+      - {{ . | quote }}
+      {{- end }}
+---
+{{- end }}
+{{- if .Values.ingress.rateLimit.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "bd-daemon.daemon.fullname" . }}-ratelimit
+  labels:
+    {{- include "bd-daemon.daemon.labels" . | nindent 4 }}
+spec:
+  rateLimit:
+    average: {{ .Values.ingress.rateLimit.average }}
+    burst: {{ .Values.ingress.rateLimit.burst }}
+{{- end }}
+{{- end }}

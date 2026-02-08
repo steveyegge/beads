@@ -1,14 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "bd-daemon.fullname" . }}
+  name: {{ include "bd-daemon.daemon.fullname" . }}
   labels:
-    {{- include "bd-daemon.labels" . | nindent 4 }}
+    {{- include "bd-daemon.daemon.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.daemon.replicaCount | default 1 }}
+  strategy:
+    type: {{ .Values.daemon.deploymentStrategy | default "Recreate" }}
   selector:
     matchLabels:
-      {{- include "bd-daemon.selectorLabels" . | nindent 6 }}
+      {{- include "bd-daemon.daemon.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -16,65 +18,73 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "bd-daemon.selectorLabels" . | nindent 8 }}
+        {{- include "bd-daemon.daemon.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "bd-daemon.serviceAccountName" . }}
+      serviceAccountName: {{ include "bd-daemon.daemon.serviceAccountName" . }}
+      {{- if .Values.daemon.priorityClassName }}
+      priorityClassName: {{ .Values.daemon.priorityClassName }}
+      {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-        - name: {{ .Chart.Name }}
+        - name: bd-daemon
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args:
+          command:
+            - bd
             - daemon
             - start
             - --foreground
-            - --tcp-addr=:9876
-            - --http-addr=:9877
-            - --log-json
-            - --log-level={{ .Values.daemon.logLevel }}
             - --local
+            - --tcp-addr={{ .Values.daemon.tcp.addr | default ":9876" }}
+            - --log-level={{ .Values.daemon.logLevel }}
+            {{- if .Values.daemon.logJSON }}
+            - --log-json
+            {{- end }}
+            {{- if .Values.daemon.tls.enabled }}
+            - --tls-cert=/etc/bd-daemon/tls/tls.crt
+            - --tls-key=/etc/bd-daemon/tls/tls.key
+            {{- end }}
+            {{- if .Values.daemon.http.enabled }}
+            - --http-addr={{ .Values.daemon.http.addr | default ":9080" }}
+            {{- end }}
           ports:
-            - name: tcp
-              containerPort: 9876
+            - name: rpc
+              containerPort: {{ .Values.daemon.tcp.port | default 9876 }}
               protocol: TCP
+            {{- if .Values.daemon.http.enabled }}
             - name: http
-              containerPort: 9877
+              containerPort: {{ .Values.daemon.http.port | default 9080 }}
               protocol: TCP
+            {{- end }}
           env:
-            - name: BEADS_DIR
-              value: /data/.beads
-            {{- if .Values.redis.enabled }}
-            {{- if .Values.redis.auth.enabled }}
-            - name: REDIS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-redis
-                  key: redis-password
-            {{- end }}
-            - name: BD_REDIS_URL
-              value: {{ include "bd-daemon.redisURL" . | quote }}
-            - name: BD_REDIS_NAMESPACE
-              value: {{ .Values.redis.namespace | quote }}
-            - name: BD_REDIS_WISP_TTL
-              value: {{ .Values.redis.wispTTL | quote }}
-            {{- end }}
-            {{- if .Values.daemon.token }}
-            - name: BD_DAEMON_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "bd-daemon.fullname" . }}
-                  key: daemon-token
-            {{- end }}
-            {{- if .Values.dolt.serverMode.enabled }}
+            # Server mode bootstrap — daemon generates metadata.json from these
+            # env vars and uses waitForStore() to retry Dolt connection.
+            {{- if .Values.dolt.statefulSet.enabled }}
             - name: BEADS_DOLT_SERVER_MODE
               value: "1"
+            - name: BEADS_DIR
+              value: "/home/beads/.beads"
+            - name: BEADS_DOLT_SERVER_HOST
+              value: "{{ include "bd-daemon.dolt.serviceName" . }}"
+            - name: BEADS_DOLT_SERVER_PORT
+              value: "{{ .Values.dolt.config.port }}"
+            - name: BEADS_DOLT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bd-daemon.dolt.fullname" . }}-root-password
+                  key: password
+            {{- else if .Values.dolt.serverMode.enabled }}
+            - name: BEADS_DOLT_SERVER_MODE
+              value: "1"
+            - name: BEADS_DIR
+              value: "/home/beads/.beads"
             - name: BEADS_DOLT_SERVER_HOST
               value: {{ .Values.dolt.serverMode.host | quote }}
             - name: BEADS_DOLT_SERVER_PORT
@@ -90,31 +100,166 @@ spec:
                   name: {{ .Values.dolt.serverMode.existingSecret }}
                   key: {{ .Values.dolt.serverMode.existingSecretKey | default "dolt-password" }}
             {{- end }}
+            {{- else }}
+            - name: BEADS_DIR
+              value: /data/.beads
+            {{- end }}
+            # Daemon token for authentication
+            {{- if and .Values.externalSecrets.enabled .Values.externalSecrets.daemonToken.remoteRef }}
+            - name: BD_DAEMON_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bd-daemon.daemon.tokenSecretName" . }}
+                  key: token
+            {{- else if .Values.daemon.token }}
+            - name: BD_DAEMON_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bd-daemon.daemon.fullname" . }}
+                  key: daemon-token
+            {{- end }}
+            # TLS configuration
+            {{- if .Values.daemon.tls.enabled }}
+            - name: BD_DAEMON_TLS_CERT
+              value: "/etc/bd-daemon/tls/tls.crt"
+            - name: BD_DAEMON_TLS_KEY
+              value: "/etc/bd-daemon/tls/tls.key"
+            {{- end }}
+            - name: HOME
+              value: "/home/beads"
+            {{- if .Values.redis.enabled }}
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-redis
+                  key: redis-password
+            {{- end }}
+            - name: BD_REDIS_URL
+              value: {{ include "bd-daemon.redisURL" . | quote }}
+            - name: BD_REDIS_NAMESPACE
+              value: {{ .Values.redis.namespace | quote }}
+            - name: BD_REDIS_WISP_TTL
+              value: {{ .Values.redis.wispTTL | quote }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           volumeMounts:
-            - name: data
+            - name: beads-data
+              mountPath: /home/beads/.beads
+            {{- if not .Values.dolt.statefulSet.enabled }}
+            - name: beads-data
               mountPath: /data
+            {{- end }}
+            {{- if .Values.daemon.tls.enabled }}
+            - name: tls
+              mountPath: /etc/bd-daemon/tls
+              readOnly: true
+            {{- end }}
+          {{- if .Values.daemon.startupProbe.enabled }}
+          startupProbe:
+            {{- if .Values.daemon.http.enabled }}
+            httpGet:
+              path: /healthz
+              port: {{ .Values.daemon.http.port | default 9080 }}
+            {{- else }}
+            tcpSocket:
+              port: {{ .Values.daemon.tcp.port | default 9876 }}
+            {{- end }}
+            initialDelaySeconds: {{ .Values.daemon.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.daemon.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.daemon.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.daemon.startupProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.daemon.livenessProbe.enabled }}
           livenessProbe:
-            {{- toYaml .Values.livenessProbe | nindent 12 }}
+            {{- if .Values.daemon.http.enabled }}
+            httpGet:
+              path: /healthz
+              port: {{ .Values.daemon.http.port | default 9080 }}
+            {{- else }}
+            tcpSocket:
+              port: {{ .Values.daemon.tcp.port | default 9876 }}
+            {{- end }}
+            initialDelaySeconds: {{ .Values.daemon.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.daemon.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.daemon.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.daemon.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.daemon.readinessProbe.enabled }}
           readinessProbe:
-            {{- toYaml .Values.readinessProbe | nindent 12 }}
+            {{- if .Values.daemon.http.enabled }}
+            httpGet:
+              path: /readyz
+              port: {{ .Values.daemon.http.port | default 9080 }}
+            {{- else }}
+            tcpSocket:
+              port: {{ .Values.daemon.tcp.port | default 9876 }}
+            {{- end }}
+            initialDelaySeconds: {{ .Values.daemon.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.daemon.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.daemon.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.daemon.readinessProbe.failureThreshold }}
+          {{- end }}
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml .Values.daemon.resources | nindent 12 }}
+        {{- if .Values.slackBot.enabled }}
+        - name: slack-bot
+          image: "{{ .Values.slackBot.image.repository | default .Values.image.repository }}:{{ .Values.slackBot.image.tag | default .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.slackBot.image.pullPolicy | default .Values.image.pullPolicy }}
+          command: ["bd", "slack", "start"]
+          env:
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.slackBot.secretName | default "slack-bot-credentials" }}
+                  key: bot-token
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.slackBot.secretName | default "slack-bot-credentials" }}
+                  key: app-token
+            - name: BD_DAEMON_HOST
+              value: "http://localhost:{{ .Values.daemon.http.port | default 9080 }}"
+            {{- if and .Values.externalSecrets.enabled .Values.externalSecrets.daemonToken.remoteRef }}
+            - name: BD_DAEMON_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bd-daemon.daemon.tokenSecretName" . }}
+                  key: token
+            {{- else if .Values.daemon.token }}
+            - name: BD_DAEMON_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bd-daemon.daemon.fullname" . }}
+                  key: daemon-token
+            {{- end }}
+            - name: HOME
+              value: "/home/beads"
+          volumeMounts:
+            - name: beads-data
+              mountPath: /home/beads/.beads
+          resources:
+            {{- toYaml .Values.slackBot.resources | nindent 12 }}
+        {{- end }}
       volumes:
-        - name: data
+        - name: beads-data
           emptyDir: {}
-      {{- with .Values.nodeSelector }}
+        {{- if .Values.daemon.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "bd-daemon.daemon.tlsSecretName" . }}
+        {{- end }}
+      {{- with .Values.daemon.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- with .Values.daemon.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
+      {{- with .Values.daemon.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
