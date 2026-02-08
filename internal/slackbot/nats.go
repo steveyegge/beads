@@ -259,7 +259,9 @@ func (w *NATSWatcher) handleExpiredDecision(payload eventbus.DecisionEventPayloa
 
 // catchUpMissedDecisions fetches all pending decisions and notifies the Bot
 // for any that haven't been seen yet. Called on initial connect and reconnect.
-// Rate-limits notifications to avoid flooding Slack (max 1 per second).
+// Only catches up decisions created within the last hour to avoid flooding
+// Slack with old decisions from cloned databases.
+// Rate-limits notifications to ~1 per second to respect Slack API limits.
 func (w *NATSWatcher) catchUpMissedDecisions(ctx context.Context) {
 	pending, err := w.decisions.ListPending(ctx)
 	if err != nil {
@@ -267,22 +269,28 @@ func (w *NATSWatcher) catchUpMissedDecisions(ctx context.Context) {
 		return
 	}
 
-	notified := 0
+	cutoff := time.Now().Add(-1 * time.Hour)
+	notified, skippedOld := 0, 0
+
 	for i := range pending {
 		if ctx.Err() != nil {
 			return
 		}
 
+		// Mark all pending as seen so NATS events for old decisions are ignored.
 		w.seenMu.Lock()
 		already := w.seen[pending[i].ID]
+		w.seen[pending[i].ID] = true
 		w.seenMu.Unlock()
 		if already {
 			continue
 		}
 
-		w.seenMu.Lock()
-		w.seen[pending[i].ID] = true
-		w.seenMu.Unlock()
+		// Skip decisions older than 1 hour — they're from before this bot instance.
+		if !pending[i].RequestedAt.IsZero() && pending[i].RequestedAt.Before(cutoff) {
+			skippedOld++
+			continue
+		}
 
 		d := pending[i]
 		w.bot.NotifyNewDecision(&d)
@@ -292,8 +300,9 @@ func (w *NATSWatcher) catchUpMissedDecisions(ctx context.Context) {
 		time.Sleep(1100 * time.Millisecond)
 	}
 
-	if notified > 0 {
-		log.Printf("slackbot/nats: catch-up complete: notified %d pending decisions", notified)
+	if notified > 0 || skippedOld > 0 {
+		log.Printf("slackbot/nats: catch-up complete: notified %d, skipped %d old (>1h) decisions",
+			notified, skippedOld)
 	}
 }
 
