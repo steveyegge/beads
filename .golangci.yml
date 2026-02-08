@@ -100,6 +100,16 @@ linters:
         linters:
           - unparam
         text: 'readOnly'
+      # unparam: childrenMap return used by tests; logical part of 3-way split API
+      - path: 'cmd/bd/list\.go'
+        linters:
+          - unparam
+        text: 'buildBlockingMaps.*childrenMap'
+      # unparam: maxLen keeps truncateID general-purpose (currently called with 8)
+      - path: 'cmd/bd/migrate\.go'
+        linters:
+          - unparam
+        text: 'truncateID.*maxLen'
       # misspell: "cancelled" is intentional - matching GitHub API response values
       - path: 'cmd/bd/gate\.go'
         linters:

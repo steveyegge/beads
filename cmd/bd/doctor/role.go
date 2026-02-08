@@ -90,4 +90,3 @@ func getRoleFromDatabase(path string) string {
 
 	return ""
 }
-
