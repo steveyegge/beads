@@ -132,13 +132,11 @@ func showDoltConfig(testConnection bool) {
 		if backend == configfile.BackendDolt {
 			result["mode"] = cfg.GetDoltMode()
 			result["database"] = cfg.GetDoltDatabase()
-			if cfg.IsDoltServerMode() {
-				result["host"] = cfg.GetDoltServerHost()
-				result["port"] = cfg.GetDoltServerPort()
-				result["user"] = cfg.GetDoltServerUser()
-				if testConnection {
-					result["connection_ok"] = testServerConnection(cfg)
-				}
+			result["host"] = cfg.GetDoltServerHost()
+			result["port"] = cfg.GetDoltServerPort()
+			result["user"] = cfg.GetDoltServerUser()
+			if cfg.IsDoltServerMode() && testConnection {
+				result["connection_ok"] = testServerConnection(cfg)
 			}
 		}
 		outputJSON(result)
