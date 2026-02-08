@@ -45,6 +45,7 @@ func (h *StopDecisionHandler) Handle(ctx context.Context, event *Event, result *
 	// We no longer skip the handler entirely on re-entry because the agent may
 	// have created a decision that needs to be awaited.
 	args := []string{"decision", "stop-check", "--json"}
+	var callerSessionTag string
 	if len(event.Raw) > 0 {
 		var raw map[string]interface{}
 		if err := json.Unmarshal(event.Raw, &raw); err == nil {
@@ -53,10 +54,14 @@ func (h *StopDecisionHandler) Handle(ctx context.Context, event *Event, result *
 					args = append(args, "--reentry")
 				}
 			}
+			// Extract caller's session tag for decision scoping
+			if tag, ok := raw["caller_session_tag"].(string); ok && tag != "" {
+				callerSessionTag = tag
+			}
 		}
 	}
 
-	stdout, _, err := runBDCommand(ctx, event.CWD, args...)
+	stdout, _, err := runBDCommandWithEnv(ctx, event.CWD, callerSessionTag, args...)
 	if err != nil {
 		// Exit code 1 means block (human said "continue").
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
@@ -162,6 +167,13 @@ func (h *DecisionHandler) Handle(ctx context.Context, event *Event, result *Resu
 // The CWD parameter sets the working directory for the subprocess.
 // Falls back to os.TempDir() if the CWD doesn't exist (e.g., remote daemon in K8s).
 func runBDCommand(ctx context.Context, cwd string, args ...string) (string, string, error) {
+	return runBDCommandWithEnv(ctx, cwd, "", args...)
+}
+
+// runBDCommandWithEnv runs a bd subprocess with optional caller session tag override.
+// When callerSessionTag is non-empty, TERM_SESSION_ID is set so the subprocess
+// can scope decisions to the original caller's terminal session.
+func runBDCommandWithEnv(ctx context.Context, cwd string, callerSessionTag string, args ...string) (string, string, error) {
 	bdPath, err := findBDBinary()
 	if err != nil {
 		return "", "", err
@@ -183,6 +195,12 @@ func runBDCommand(ctx context.Context, cwd string, args ...string) (string, stri
 	// Pass through environment but ensure no daemon socket override
 	// (subprocess should discover daemon via normal socket discovery).
 	cmd.Env = os.Environ()
+
+	// Override TERM_SESSION_ID with the caller's session tag so the subprocess
+	// scopes decisions to the original terminal session, not the daemon's.
+	if callerSessionTag != "" {
+		cmd.Env = append(cmd.Env, "TERM_SESSION_ID="+callerSessionTag)
+	}
 
 	err = cmd.Run()
 	return strings.TrimRight(stdout.String(), "\n"), strings.TrimRight(stderr.String(), "\n"), err
