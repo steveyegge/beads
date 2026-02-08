@@ -23,11 +23,11 @@ const (
 	initialBackoff = 1 * time.Second
 )
 
-// ErrAPIKeyRequired is returned when an API key is needed but not provided.
-var ErrAPIKeyRequired = errors.New("API key required")
+// errAPIKeyRequired is returned when an API key is needed but not provided.
+var errAPIKeyRequired = errors.New("API key required")
 
-// HaikuClient wraps the Anthropic API for issue summarization.
-type HaikuClient struct {
+// haikuClient wraps the Anthropic API for issue summarization.
+type haikuClient struct {
 	client         anthropic.Client
 	model          anthropic.Model
 	tier1Template  *template.Template
@@ -37,14 +37,14 @@ type HaikuClient struct {
 	auditActor     string
 }
 
-// NewHaikuClient creates a new Haiku API client. Env var ANTHROPIC_API_KEY takes precedence over explicit apiKey.
-func NewHaikuClient(apiKey string) (*HaikuClient, error) {
+// newHaikuClient creates a new Haiku API client. Env var ANTHROPIC_API_KEY takes precedence over explicit apiKey.
+func newHaikuClient(apiKey string) (*haikuClient, error) {
 	envKey := os.Getenv("ANTHROPIC_API_KEY")
 	if envKey != "" {
 		apiKey = envKey
 	}
 	if apiKey == "" {
-		return nil, fmt.Errorf("%w: set ANTHROPIC_API_KEY environment variable or provide via config", ErrAPIKeyRequired)
+		return nil, fmt.Errorf("%w: set ANTHROPIC_API_KEY environment variable or provide via config", errAPIKeyRequired)
 	}
 
 	client := anthropic.NewClient(option.WithAPIKey(apiKey))
@@ -54,7 +54,7 @@ func NewHaikuClient(apiKey string) (*HaikuClient, error) {
 		return nil, fmt.Errorf("failed to parse tier1 template: %w", err)
 	}
 
-	return &HaikuClient{
+	return &haikuClient{
 		client:         client,
 		model:          anthropic.Model(config.DefaultAIModel()),
 		tier1Template:  tier1Tmpl,
@@ -64,7 +64,7 @@ func NewHaikuClient(apiKey string) (*HaikuClient, error) {
 }
 
 // SummarizeTier1 creates a structured summary of an issue (Summary, Key Decisions, Resolution).
-func (h *HaikuClient) SummarizeTier1(ctx context.Context, issue *types.Issue) (string, error) {
+func (h *haikuClient) SummarizeTier1(ctx context.Context, issue *types.Issue) (string, error) {
 	prompt, err := h.renderTier1Prompt(issue)
 	if err != nil {
 		return "", fmt.Errorf("failed to render prompt: %w", err)
@@ -89,7 +89,7 @@ func (h *HaikuClient) SummarizeTier1(ctx context.Context, issue *types.Issue) (s
 	return resp, callErr
 }
 
-func (h *HaikuClient) callWithRetry(ctx context.Context, prompt string) (string, error) {
+func (h *haikuClient) callWithRetry(ctx context.Context, prompt string) (string, error) {
 	var lastErr error
 	params := anthropic.MessageNewParams{
 		Model:     h.model,
@@ -170,7 +170,7 @@ type tier1Data struct {
 	Notes              string
 }
 
-func (h *HaikuClient) renderTier1Prompt(issue *types.Issue) (string, error) {
+func (h *haikuClient) renderTier1Prompt(issue *types.Issue) (string, error) {
 	var buf []byte
 	w := &bytesWriter{buf: buf}
 
