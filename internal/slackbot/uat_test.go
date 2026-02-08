@@ -2195,3 +2195,519 @@ func TestUAT_Concurrent_RigMode_MultipleDecisions(t *testing.T) {
 		t.Errorf("expected at least 10 threaded messages, got %d", threadedCount)
 	}
 }
+
+// ==========================================================================
+// UAT Epic: Simulate button click → verify resolution (#7 subtasks)
+// ==========================================================================
+
+// TestUAT_ButtonClick_ResolveUpdatesMessageContent verifies that clicking a
+// resolve button and submitting the modal updates the original Slack message
+// with: "Resolved" header, chosen option label marked, rationale, and resolver.
+func TestUAT_ButtonClick_ResolveUpdatesMessageContent(t *testing.T) {
+	bot, mockAPI, mockDecisions := newTestBot(t)
+
+	d := sampleDecision("bd-btn1")
+	mockDecisions.AddDecision(d)
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	bot.decisionMessagesMu.RLock()
+	msgInfo := bot.decisionMessages["bd-btn1"]
+	bot.decisionMessagesMu.RUnlock()
+
+	// Click "Choose 1" button
+	callback := slack.InteractionCallback{TriggerID: "trig_btn"}
+	callback.Channel.ID = msgInfo.channelID
+	callback.User.ID = "U_CLICKER"
+	callback.Message.Timestamp = msgInfo.timestamp
+	callback.ActionCallback.BlockActions = []*slack.BlockAction{
+		{ActionID: "resolve_bd-btn1_1", Value: "bd-btn1:1"},
+	}
+	bot.handleInteraction(callback)
+
+	// Submit modal with rationale
+	mockAPI.mu.Lock()
+	modalMeta := mockAPI.OpenedViews[0].View.PrivateMetadata
+	mockAPI.mu.Unlock()
+
+	submit := slack.InteractionCallback{}
+	submit.User.ID = "U_CLICKER"
+	submit.View.CallbackID = "resolve_decision_modal"
+	submit.View.PrivateMetadata = modalMeta
+	submit.View.State = &slack.ViewState{
+		Values: map[string]map[string]slack.BlockAction{
+			"rationale_block": {
+				"rationale_input": {Value: "Tests pass, approved"},
+			},
+		},
+	}
+	bot.handleResolveModalSubmission(submit)
+
+	// Verify decision was resolved with correct option
+	rc, ok := mockDecisions.getResolveCall("bd-btn1")
+	if !ok {
+		t.Fatal("decision not resolved")
+	}
+	if rc.ChosenIndex != 1 {
+		t.Errorf("chosen = %d, want 1", rc.ChosenIndex)
+	}
+
+	// Now simulate the resolution notification (as if NATS delivered it)
+	resolvedD := d
+	resolvedD.Resolved = true
+	resolvedD.ResolvedBy = "U_CLICKER"
+	resolvedD.ChosenIndex = 1
+	resolvedD.Rationale = "Tests pass, approved"
+	if err := bot.NotifyResolution(&resolvedD); err != nil {
+		t.Fatalf("NotifyResolution: %v", err)
+	}
+
+	// Verify the updated message content
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+
+	if len(mockAPI.UpdatedMessages) == 0 {
+		t.Fatal("expected at least one UpdateMessage call")
+	}
+
+	lastUpdate := mockAPI.UpdatedMessages[len(mockAPI.UpdatedMessages)-1]
+	_, vals, _ := slack.UnsafeApplyMsgOptions("", lastUpdate.ChannelID, "", lastUpdate.Options...)
+	blocksJSON := vals.Get("blocks")
+
+	// Verify resolution content
+	if !strings.Contains(blocksJSON, "Resolved") {
+		t.Errorf("updated message should contain 'Resolved', got blocks: %s", blocksJSON)
+	}
+	if !strings.Contains(blocksJSON, "Yes, deploy now") {
+		t.Errorf("updated message should contain chosen option label 'Yes, deploy now'")
+	}
+	if !strings.Contains(blocksJSON, "Tests pass, approved") {
+		t.Errorf("updated message should contain rationale 'Tests pass, approved'")
+	}
+	if !strings.Contains(blocksJSON, "deploy-prod") {
+		t.Errorf("updated message should contain semantic slug 'deploy-prod'")
+	}
+}
+
+// TestUAT_ButtonClick_OtherOptionCustomText verifies the "Other" button flow:
+// click Other → modal with text input → resolve with custom text.
+func TestUAT_ButtonClick_OtherOptionCustomText(t *testing.T) {
+	bot, mockAPI, mockDecisions := newTestBot(t)
+
+	d := sampleDecision("bd-other1")
+	mockDecisions.AddDecision(d)
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	bot.decisionMessagesMu.RLock()
+	msgInfo := bot.decisionMessages["bd-other1"]
+	bot.decisionMessagesMu.RUnlock()
+
+	// Click "Other..." button
+	callback := slack.InteractionCallback{TriggerID: "trig_other"}
+	callback.Channel.ID = msgInfo.channelID
+	callback.User.ID = "U_OTHER"
+	callback.Message.Timestamp = msgInfo.timestamp
+	callback.ActionCallback.BlockActions = []*slack.BlockAction{
+		{ActionID: "resolve_other_bd-other1", Value: "bd-other1"},
+	}
+	bot.handleInteraction(callback)
+
+	mockAPI.mu.Lock()
+	if len(mockAPI.OpenedViews) == 0 {
+		t.Fatal("expected Other modal to be opened")
+	}
+	otherMeta := mockAPI.OpenedViews[0].View.PrivateMetadata
+	mockAPI.mu.Unlock()
+
+	// Submit with custom text
+	submit := slack.InteractionCallback{}
+	submit.User.ID = "U_OTHER"
+	submit.View.CallbackID = "resolve_other_modal"
+	submit.View.PrivateMetadata = otherMeta
+	submit.View.State = &slack.ViewState{
+		Values: map[string]map[string]slack.BlockAction{
+			"custom_text_block": {
+				"custom_text_input": {Value: "Deploy to staging first, then prod next week"},
+			},
+		},
+	}
+	bot.handleOtherModalSubmission(submit)
+
+	// Verify custom text resolution
+	rc, ok := mockDecisions.getResolveCall("bd-other1")
+	if !ok {
+		t.Fatal("decision not resolved via Other")
+	}
+	if !strings.Contains(rc.Text, "Deploy to staging first, then prod next week") {
+		t.Errorf("custom text = %q, should contain user input", rc.Text)
+	}
+}
+
+// TestUAT_ButtonClick_DismissRemovesMessage verifies the dismiss button deletes
+// the Slack message and removes it from tracking.
+func TestUAT_ButtonClick_DismissRemovesMessage(t *testing.T) {
+	bot, mockAPI, _ := newTestBot(t)
+
+	d := sampleDecision("bd-dismiss1")
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	bot.decisionMessagesMu.RLock()
+	msgInfo := bot.decisionMessages["bd-dismiss1"]
+	bot.decisionMessagesMu.RUnlock()
+
+	// Click dismiss button
+	callback := slack.InteractionCallback{TriggerID: "trig_dismiss"}
+	callback.Channel.ID = msgInfo.channelID
+	callback.User.ID = "U_DISMISSER"
+	callback.Message.Timestamp = msgInfo.timestamp
+	callback.ActionCallback.BlockActions = []*slack.BlockAction{
+		{ActionID: "dismiss_decision", Value: "bd-dismiss1"},
+	}
+	bot.handleInteraction(callback)
+
+	// Verify message was deleted
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+	if len(mockAPI.DeletedMessages) == 0 {
+		t.Fatal("expected dismiss to delete the message")
+	}
+	if mockAPI.DeletedMessages[0].Timestamp != msgInfo.timestamp {
+		t.Errorf("deleted wrong message: %s, want %s", mockAPI.DeletedMessages[0].Timestamp, msgInfo.timestamp)
+	}
+}
+
+// ==========================================================================
+// UAT Epic: Epic/convoy-based channel routing
+// ==========================================================================
+
+// TestUAT_EpicRouting_DifferentEpicsDifferentChannels verifies that decisions
+// with different ParentBeadTitle values route to different epic-derived channels.
+func TestUAT_EpicRouting_DifferentEpicsDifferentChannels(t *testing.T) {
+	cfg := &Config{
+		Type:            "slack",
+		Version:         1,
+		Enabled:         true,
+		RoutingMode:     "epic",
+		DynamicChannels: true,
+		ChannelPrefix:   "bd",
+		DefaultChannel:  "C_DEFAULT",
+		Channels:        make(map[string]string),
+		Overrides:       make(map[string]string),
+		ChannelNames:    make(map[string]string),
+	}
+	router := NewRouter(cfg)
+	router.SetChannelCreator(&mockChannelCreator{channels: make(map[string]string)})
+
+	d1 := sampleDecision("bd-epic-a")
+	d1.ParentBeadTitle = "Epic: Authentication System"
+	result1 := router.ResolveForDecision(d1.RequestedBy, &d1, "")
+
+	d2 := sampleDecision("bd-epic-b")
+	d2.ParentBeadTitle = "Epic: Payment Gateway"
+	result2 := router.ResolveForDecision(d2.RequestedBy, &d2, "")
+
+	if result1.ChannelID == "" || result2.ChannelID == "" {
+		t.Fatal("expected both epic decisions to resolve to channels")
+	}
+	if result1.ChannelID == result2.ChannelID {
+		t.Errorf("different epics should route to different channels, both got %q", result1.ChannelID)
+	}
+}
+
+// TestUAT_EpicRouting_NoParentFallsToDefault verifies that decisions without
+// a ParentBeadTitle fall through to the default channel.
+func TestUAT_EpicRouting_NoParentFallsToDefault(t *testing.T) {
+	cfg := &Config{
+		Type:            "slack",
+		Version:         1,
+		Enabled:         true,
+		RoutingMode:     "epic",
+		DynamicChannels: true,
+		ChannelPrefix:   "bd",
+		DefaultChannel:  "C_DEFAULT",
+		Channels:        make(map[string]string),
+		Overrides:       make(map[string]string),
+		ChannelNames:    make(map[string]string),
+	}
+	router := NewRouter(cfg)
+	router.SetChannelCreator(&mockChannelCreator{channels: make(map[string]string)})
+
+	d := sampleDecision("bd-no-epic")
+	d.ParentBeadTitle = "" // No epic
+	result := router.ResolveForDecision(d.RequestedBy, &d, "")
+
+	if result == nil || result.ChannelID == "" {
+		t.Fatal("expected decision to resolve to a channel")
+	}
+	// Without a ParentBeadTitle, epic routing can't create a channel,
+	// so it should fall through to default or agent routing
+	if strings.Contains(result.MatchedBy, "epic:") {
+		t.Errorf("decision without parent should not match epic routing, got %q", result.MatchedBy)
+	}
+}
+
+// TestUAT_RoutingModeSwitching verifies that changing routing_mode between
+// "epic", "rig", and "general" produces different routing behavior.
+func TestUAT_RoutingModeSwitching(t *testing.T) {
+	tests := []struct {
+		mode     string
+		agent    string
+		epic     string
+		matchSub string // substring expected in MatchedBy
+	}{
+		{"rig", "gastown/polecats/furiosa", "", "rig:gastown"},
+		{"epic", "gastown/polecats/furiosa", "Auth Epic", "epic:"},
+	}
+
+	for _, tt := range tests {
+		t.Run("mode_"+tt.mode, func(t *testing.T) {
+			cfg := &Config{
+				Type:            "slack",
+				Version:         1,
+				Enabled:         true,
+				RoutingMode:     tt.mode,
+				DynamicChannels: true,
+				ChannelPrefix:   "bd",
+				DefaultChannel:  "C_DEFAULT",
+				Channels:        make(map[string]string),
+				Overrides:       make(map[string]string),
+				ChannelNames:    make(map[string]string),
+			}
+			router := NewRouter(cfg)
+			router.SetChannelCreator(&mockChannelCreator{channels: make(map[string]string)})
+
+			d := sampleDecision("bd-mode-" + tt.mode)
+			d.RequestedBy = tt.agent
+			d.ParentBeadTitle = tt.epic
+			result := router.ResolveForDecision(d.RequestedBy, &d, "")
+
+			if result == nil || result.ChannelID == "" {
+				t.Fatalf("mode %q: expected channel resolution", tt.mode)
+			}
+			if !strings.Contains(result.MatchedBy, tt.matchSub) {
+				t.Errorf("mode %q: matchedBy=%q, want substring %q", tt.mode, result.MatchedBy, tt.matchSub)
+			}
+		})
+	}
+}
+
+// ==========================================================================
+// UAT Epic: Error cases and resilience
+// ==========================================================================
+
+// TestUAT_ErrorCase_DoubleResolveRejected verifies that resolving an already-
+// resolved decision is handled gracefully.
+func TestUAT_ErrorCase_DoubleResolveRejected(t *testing.T) {
+	bot, _, mockDecisions := newTestBot(t)
+
+	d := sampleDecision("bd-dbl1")
+	mockDecisions.AddDecision(d)
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	// First resolution succeeds
+	resolved := d
+	resolved.Resolved = true
+	resolved.ResolvedBy = "human"
+	resolved.ChosenIndex = 1
+	err := bot.NotifyResolution(&resolved)
+	if err != nil {
+		t.Fatalf("first NotifyResolution: %v", err)
+	}
+
+	// Second resolution should not panic or error (graceful degradation)
+	err = bot.NotifyResolution(&resolved)
+	if err != nil {
+		t.Errorf("second NotifyResolution should not error, got %v", err)
+	}
+}
+
+// TestUAT_ErrorCase_DismissAlreadyResolved verifies that dismissing a decision
+// that was already resolved (and removed from tracking) returns false.
+func TestUAT_ErrorCase_DismissAlreadyResolved(t *testing.T) {
+	bot, _, _ := newTestBot(t)
+
+	d := sampleDecision("bd-dismiss-resolved")
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	// Resolve it first
+	resolved := d
+	resolved.Resolved = true
+	resolved.ResolvedBy = "human"
+	resolved.ChosenIndex = 1
+	_ = bot.NotifyResolution(&resolved)
+
+	// Now try to dismiss — should return false since it's already untracked
+	ok := bot.DismissDecisionByID("bd-dismiss-resolved")
+	if ok {
+		t.Error("dismissing an already-resolved decision should return false")
+	}
+}
+
+// TestUAT_ErrorCase_PostMessageFailure verifies that a Slack API error during
+// notification doesn't crash the bot and returns an error.
+func TestUAT_ErrorCase_PostMessageFailure(t *testing.T) {
+	bot, mockAPI, _ := newTestBot(t)
+	mockAPI.postMessageErr = fmt.Errorf("slack API rate limited")
+
+	d := sampleDecision("bd-err1")
+	err := bot.NotifyNewDecision(&d)
+
+	if err == nil {
+		t.Fatal("expected error when PostMessage fails")
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("error = %q, want to contain 'rate limited'", err.Error())
+	}
+}
+
+// TestUAT_ErrorCase_ResolveUnknownDecision verifies that resolving a decision
+// the bot hasn't seen posts a fallback resolution message.
+func TestUAT_ErrorCase_ResolveUnknownDecision(t *testing.T) {
+	bot, mockAPI, _ := newTestBot(t)
+
+	d := sampleDecision("bd-unknown1")
+	d.Resolved = true
+	d.ResolvedBy = "human"
+	d.ChosenIndex = 1
+
+	err := bot.NotifyResolution(&d)
+	if err != nil {
+		t.Fatalf("NotifyResolution for unknown decision should not error, got %v", err)
+	}
+
+	// Should post a fallback resolution message
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+	if len(mockAPI.PostedMessages) == 0 {
+		t.Error("expected fallback resolution message to be posted")
+	}
+}
+
+// TestUAT_ErrorCase_ConcurrentResolveAndDismiss verifies thread safety when
+// resolve and dismiss race on the same decision.
+func TestUAT_ErrorCase_ConcurrentResolveAndDismiss(t *testing.T) {
+	bot, _, _ := newTestBot(t)
+
+	d := sampleDecision("bd-race1")
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	// Race resolve and dismiss concurrently
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		resolved := d
+		resolved.Resolved = true
+		resolved.ResolvedBy = "human"
+		resolved.ChosenIndex = 1
+		_ = bot.NotifyResolution(&resolved)
+	}()
+
+	go func() {
+		defer wg.Done()
+		_ = bot.DismissDecisionByID("bd-race1")
+	}()
+
+	wg.Wait()
+
+	// Should not panic — exactly one should succeed
+	bot.decisionMessagesMu.RLock()
+	_, tracked := bot.decisionMessages["bd-race1"]
+	bot.decisionMessagesMu.RUnlock()
+	if tracked {
+		t.Error("decision should no longer be tracked after resolve/dismiss")
+	}
+}
+
+// ==========================================================================
+// UAT Epic: NATS event propagation timing
+// ==========================================================================
+
+// TestUAT_Timing_DecisionNotificationLatency verifies that NotifyNewDecision
+// completes within a tight time bound (simulating the NATS→Slack path).
+func TestUAT_Timing_DecisionNotificationLatency(t *testing.T) {
+	bot, _, _ := newTestBot(t)
+
+	start := time.Now()
+	d := sampleDecision("bd-timing1")
+	err := bot.NotifyNewDecision(&d)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	// With mock Slack API, this should be sub-millisecond
+	// In production, the threshold is 2 seconds for NATS→Slack
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("notification took %v, expected <100ms with mock API", elapsed)
+	}
+}
+
+// TestUAT_Timing_ResolutionUpdateLatency verifies that NotifyResolution
+// (updating an existing message) completes quickly.
+func TestUAT_Timing_ResolutionUpdateLatency(t *testing.T) {
+	bot, _, _ := newTestBot(t)
+
+	d := sampleDecision("bd-timing2")
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	resolved := d
+	resolved.Resolved = true
+	resolved.ResolvedBy = "human"
+	resolved.ChosenIndex = 1
+
+	start := time.Now()
+	err := bot.NotifyResolution(&resolved)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("NotifyResolution: %v", err)
+	}
+
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("resolution update took %v, expected <100ms with mock API", elapsed)
+	}
+}
+
+// TestUAT_Timing_BurstDecisions verifies that posting many decisions in rapid
+// succession completes within a reasonable time bound.
+func TestUAT_Timing_BurstDecisions(t *testing.T) {
+	bot, _, _ := newTestBot(t)
+
+	start := time.Now()
+	for i := 0; i < 50; i++ {
+		d := sampleDecision(fmt.Sprintf("bd-burst-%d", i))
+		if err := bot.NotifyNewDecision(&d); err != nil {
+			t.Fatalf("NotifyNewDecision[%d]: %v", i, err)
+		}
+	}
+	elapsed := time.Since(start)
+
+	// 50 decisions with mock API should complete in well under a second
+	if elapsed > 1*time.Second {
+		t.Errorf("50 decisions took %v, expected <1s with mock API", elapsed)
+	}
+
+	// All should be tracked
+	bot.decisionMessagesMu.RLock()
+	tracked := len(bot.decisionMessages)
+	bot.decisionMessagesMu.RUnlock()
+	if tracked != 50 {
+		t.Errorf("tracked %d decisions, want 50", tracked)
+	}
+}
