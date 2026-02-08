@@ -1,5 +1,5 @@
-{ pkgs, self }:
-pkgs.buildGoModule {
+{ pkgs, self, buildGoModule ? pkgs.buildGoModule }:
+buildGoModule {
   pname = "beads";
   version = "0.49.6";
 
@@ -9,14 +9,12 @@ pkgs.buildGoModule {
   subPackages = [ "cmd/bd" ];
   doCheck = false;
   # Go module dependencies hash - if build fails with hash mismatch, update with the "got:" value
-  vendorHash = "sha256-deLPoWXRsWAyehUn2QlXA/vs7zepUF3jAjUq+MFCGbI=";
-
-  # Allow Go toolchain to auto-download newer version if needed
-  # (go.mod requires 1.25.6+ but nixpkgs may have older)
-  env.GOTOOLCHAIN = "auto";
+  vendorHash = "sha256-dyu3rsuFOruhw7729LlCxM29PSPavscDxlTsWdSaZmQ=";
 
   # Git is required for tests
   nativeBuildInputs = [ pkgs.git ];
+  # ICU headers/libs are required for go-icu-regex cgo build.
+  buildInputs = [ pkgs.icu pkgs.icu.dev ];
 
   meta = with pkgs.lib; {
     description = "beads (bd) - An issue tracker designed for AI-supervised coding workflows";

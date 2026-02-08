@@ -69,8 +69,8 @@ type RepoContext struct {
 	// May differ from RepoRoot when BEADS_DIR points elsewhere.
 	CWDRepoRoot string
 
-	// IsRedirected is true if BeadsDir was resolved via BEADS_DIR env var
-	// pointing to a different repository than CWD.
+	// IsRedirected is true if BeadsDir resolves to a different repository than CWD.
+	// This covers explicit BEADS_DIR usage and redirect files.
 	IsRedirected bool
 
 	// IsWorktree is true if CWD is in a git worktree.
@@ -112,14 +112,21 @@ func buildRepoContext() (*RepoContext, error) {
 		return nil, fmt.Errorf("BEADS_DIR points to unsafe location: %s", beadsDir)
 	}
 
-	// 3. Check for redirect
+	// 3. Check for redirect file in the local repo
 	redirectInfo := GetRedirectInfo()
 
-	// 3. Determine RepoRoot based on redirect status
+	// 4. Determine RepoRoot based on external/redirect status
 	var repoRoot string
-	if redirectInfo.IsRedirected {
-		// BEADS_DIR points to different repo - use that repo's root
-		repoRoot = filepath.Dir(beadsDir)
+	isExternal := redirectInfo.IsRedirected
+	if !isExternal {
+		if external, err := isExternalBeadsDir(beadsDir); err == nil {
+			isExternal = external
+		}
+	}
+
+	if isExternal {
+		// Beads dir is in a different repo - use that repo's root
+		repoRoot = repoRootForBeadsDir(beadsDir)
 	} else {
 		// Normal case - find repo root via git
 		var err error
@@ -129,19 +136,81 @@ func buildRepoContext() (*RepoContext, error) {
 		}
 	}
 
-	// 4. Get CWD's repo root (may differ from RepoRoot)
+	// 5. Get CWD's repo root (may differ from RepoRoot)
 	cwdRepoRoot := git.GetRepoRoot() // Returns "" if not in git repo
 
-	// 5. Check worktree status
+	// 6. Check worktree status
 	isWorktree := git.IsWorktree()
 
 	return &RepoContext{
 		BeadsDir:     beadsDir,
 		RepoRoot:     repoRoot,
 		CWDRepoRoot:  cwdRepoRoot,
-		IsRedirected: redirectInfo.IsRedirected,
+		IsRedirected: isExternal,
 		IsWorktree:   isWorktree,
 	}, nil
+}
+
+// isExternalBeadsDir returns true if beadsDir is in a different git repo than CWD.
+// Uses git common dir to correctly handle worktrees and bare repos.
+func isExternalBeadsDir(beadsDir string) (bool, error) {
+	cwdCommonDir, err := git.GetGitCommonDir()
+	if err != nil {
+		return false, err
+	}
+
+	beadsCommonDir, err := getGitCommonDirForPath(beadsDir)
+	if err != nil {
+		return false, err
+	}
+
+	return cwdCommonDir != beadsCommonDir, nil
+}
+
+// getGitCommonDirForPath returns the shared git directory for a path.
+// For worktrees, this returns the shared git directory (common to all worktrees).
+func getGitCommonDirForPath(path string) (string, error) {
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--git-common-dir")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get git common dir for %s: %w", path, err)
+	}
+	result := strings.TrimSpace(string(output))
+
+	if !filepath.IsAbs(result) {
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("failed to get absolute path for %s: %w", path, err)
+		}
+		result = filepath.Join(absPath, result)
+	}
+
+	result = filepath.Clean(result)
+	if resolved, err := filepath.EvalSymlinks(result); err == nil {
+		result = resolved
+	}
+
+	return result, nil
+}
+
+// repoRootForBeadsDir returns the repository root for a beads directory.
+// Falls back to the beadsDir parent if git lookup fails.
+func repoRootForBeadsDir(beadsDir string) string {
+	repoRoot, err := getRepoRootFromPath(beadsDir)
+	if err == nil && repoRoot != "" {
+		return repoRoot
+	}
+	return filepath.Dir(beadsDir)
+}
+
+// getRepoRootFromPath returns the git repository root for a given path.
+func getRepoRootFromPath(path string) (string, error) {
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get git root for %s: %w", path, err)
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 // GitCmd creates an exec.Cmd configured to run git in the beads repository.

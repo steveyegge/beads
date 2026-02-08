@@ -609,6 +609,72 @@ func TestRole_NoConfig(t *testing.T) {
 	}
 }
 
+func TestGetRepoContext_BEADS_DIR_ExternalRepo(t *testing.T) {
+	originalBeadsDir := os.Getenv("BEADS_DIR")
+	t.Cleanup(func() {
+		if originalBeadsDir != "" {
+			os.Setenv("BEADS_DIR", originalBeadsDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		ResetCaches()
+		git.ResetCaches()
+	})
+
+	tmpDir := t.TempDir()
+	sourceRepo := filepath.Join(tmpDir, "source")
+	targetRepo := filepath.Join(tmpDir, "target")
+
+	for _, repo := range []string{sourceRepo, targetRepo} {
+		if err := os.MkdirAll(repo, 0750); err != nil {
+			t.Fatalf("failed to create repo dir: %v", err)
+		}
+		if err := initGitRepo(repo); err != nil {
+			t.Fatalf("failed to init git repo: %v", err)
+		}
+	}
+
+	targetBeadsDir := filepath.Join(targetRepo, ".beads")
+	if err := os.MkdirAll(targetBeadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads in target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(targetBeadsDir, "beads.db"), []byte{}, 0644); err != nil {
+		t.Fatalf("failed to create beads.db: %v", err)
+	}
+
+	os.Setenv("BEADS_DIR", targetBeadsDir)
+
+	originalWd, _ := os.Getwd()
+	if err := os.Chdir(sourceRepo); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		os.Chdir(originalWd)
+	})
+
+	ResetCaches()
+	git.ResetCaches()
+
+	rc, err := GetRepoContext()
+	if err != nil {
+		t.Fatalf("GetRepoContext failed: %v", err)
+	}
+
+	expectedBeadsDir := resolveSymlinks(targetBeadsDir)
+	if rc.BeadsDir != expectedBeadsDir {
+		t.Errorf("BeadsDir mismatch: expected %s, got %s", expectedBeadsDir, rc.BeadsDir)
+	}
+
+	expectedRepoRoot := resolveSymlinks(targetRepo)
+	if rc.RepoRoot != expectedRepoRoot {
+		t.Errorf("RepoRoot mismatch: expected %s, got %s", expectedRepoRoot, rc.RepoRoot)
+	}
+
+	if !rc.IsRedirected {
+		t.Error("IsRedirected should be true when BEADS_DIR points to a different repo")
+	}
+}
+
 // TestRole_BEADS_DIR_ImpliesContributor tests that BEADS_DIR redirect
 // implicitly returns Contributor role without requiring git config.
 func TestRole_BEADS_DIR_ImpliesContributor(t *testing.T) {

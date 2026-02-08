@@ -30,7 +30,7 @@ func TestUCharStr(t *testing.T) {
 	assert.Equal(t, 256, s.cap)
 	assert.Equal(t, "hello, world!", s.GetString())
 
-	assert.Equal(t, "hello", s.GetSubstring(0,5))
-	assert.Equal(t, "ello", s.GetSubstring(1,5))
+	assert.Equal(t, "hello", s.GetSubstring(0, 5))
+	assert.Equal(t, "ello", s.GetSubstring(1, 5))
 	assert.Equal(t, "world", s.GetSubstring(7, 12))
 }

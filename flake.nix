@@ -23,7 +23,19 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          bdBase = pkgs.callPackage ./default.nix { inherit pkgs self; };
+          # Pin Go to 1.25.6 to satisfy go.mod minimum patch version.
+          go_1_25_6 = pkgs.go_1_25.overrideAttrs (old: rec {
+            version = "1.25.6";
+            src = pkgs.fetchurl {
+              url = "https://go.dev/dl/go${version}.src.tar.gz";
+              hash = "sha256-WMv3ceRNdt5vVtGeM7d9dFoeSJNAkih15GWFuXXCsFk=";
+            };
+          });
+          buildGoModule_1_25_6 = pkgs.buildGoModule.override { go = go_1_25_6; };
+          bdBase = pkgs.callPackage ./default.nix {
+            inherit pkgs self;
+            buildGoModule = buildGoModule_1_25_6;
+          };
           # Wrap the base package with shell completions baked in
           bd = pkgs.stdenv.mkDerivation {
             pname = "beads";
@@ -79,7 +91,7 @@
 
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go
+              go_1_25_6
               git
               gopls
               gotools
