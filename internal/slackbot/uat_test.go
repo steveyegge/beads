@@ -1642,3 +1642,223 @@ func TestUAT_AgentStatusCard_PersistedAcrossRestart(t *testing.T) {
 		t.Fatalf("expected 0 PostMessage calls on bot2 (reused card), got %d", postCount2)
 	}
 }
+
+// extractThreadTS returns the thread_ts from a set of MsgOption, or "" if not threaded.
+func extractThreadTS(t *testing.T, options []slack.MsgOption) string {
+	t.Helper()
+	_, vals, err := slack.UnsafeApplyMsgOptions("", "C_TEST", "", options...)
+	if err != nil {
+		t.Fatalf("UnsafeApplyMsgOptions: %v", err)
+	}
+	return vals.Get("thread_ts")
+}
+
+// newRigRoutingBot creates a bot configured for rig routing mode with a mock
+// channel creator. The rig channel is pre-populated in the router cache so
+// no actual channel creation is needed.
+func newRigRoutingBot(t *testing.T) (*Bot, *mockSlackAPI) {
+	t.Helper()
+	mockAPI := newMockSlackAPI()
+	bot := newBotForTest(mockAPI, &mockDecisionProvider{}, "C_DEFAULT")
+
+	cfg := &Config{
+		Type:            "slack",
+		Version:         1,
+		Enabled:         true,
+		RoutingMode:     "rig",
+		DynamicChannels: true,
+		ChannelPrefix:   "bd",
+		DefaultChannel:  "C_DEFAULT",
+		Channels:        make(map[string]string),
+		Overrides:       make(map[string]string),
+		ChannelNames:    make(map[string]string),
+	}
+	router := NewRouter(cfg)
+	router.SetChannelCreator(&mockChannelCreator{channels: make(map[string]string)})
+	bot.router = router
+
+	return bot, mockAPI
+}
+
+// TestUAT_ThreadedDecision_PostsUnderStatusCard verifies that in rig routing mode,
+// NotifyNewDecision threads decisions under the agent's status card.
+func TestUAT_ThreadedDecision_PostsUnderStatusCard(t *testing.T) {
+	bot, mockAPI := newRigRoutingBot(t)
+
+	d := sampleDecision("bd-thread1")
+	// sampleDecision sets RequestedBy = "gastown/polecats/furiosa"
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+
+	// Should have 2 PostMessage calls: status card (1st) + threaded decision (2nd)
+	if len(mockAPI.PostedMessages) < 2 {
+		t.Fatalf("expected at least 2 PostMessage calls, got %d", len(mockAPI.PostedMessages))
+	}
+
+	// First message is the status card (no thread_ts)
+	cardThreadTS := extractThreadTS(t, mockAPI.PostedMessages[0].Options)
+	if cardThreadTS != "" {
+		t.Errorf("status card should NOT be threaded, but has thread_ts=%q", cardThreadTS)
+	}
+
+	// Second message is the decision — should be threaded under the status card
+	decisionThreadTS := extractThreadTS(t, mockAPI.PostedMessages[1].Options)
+	if decisionThreadTS == "" {
+		t.Fatal("decision should be threaded under status card, but has no thread_ts")
+	}
+
+	// The thread_ts of the decision should match the status card's timestamp
+	// Status card was the first PostMessage, so its ts = 1234567890.000001
+	expectedCardTS := "1234567890.000001"
+	if decisionThreadTS != expectedCardTS {
+		t.Errorf("decision thread_ts=%q, want %q (status card ts)", decisionThreadTS, expectedCardTS)
+	}
+}
+
+// TestUAT_ThreadedDecision_PendingCountIncrements verifies that posting a threaded
+// decision increments the agent's pending count and updates the status card.
+func TestUAT_ThreadedDecision_PendingCountIncrements(t *testing.T) {
+	bot, mockAPI := newRigRoutingBot(t)
+
+	agent := "gastown/polecats/furiosa"
+
+	// Post two decisions
+	d1 := sampleDecision("bd-pend1")
+	if err := bot.NotifyNewDecision(&d1); err != nil {
+		t.Fatalf("NotifyNewDecision d1: %v", err)
+	}
+	d2 := sampleDecision("bd-pend2")
+	if err := bot.NotifyNewDecision(&d2); err != nil {
+		t.Fatalf("NotifyNewDecision d2: %v", err)
+	}
+
+	// Pending count should be 2
+	bot.agentPendingMu.Lock()
+	count := bot.agentPendingCount[agent]
+	bot.agentPendingMu.Unlock()
+	if count != 2 {
+		t.Errorf("pending count = %d, want 2", count)
+	}
+
+	// Status card should have been updated (at least 2 UpdateMessage calls)
+	mockAPI.mu.Lock()
+	updateCount := len(mockAPI.UpdatedMessages)
+	mockAPI.mu.Unlock()
+	if updateCount < 2 {
+		t.Errorf("expected at least 2 UpdateMessage calls for status card, got %d", updateCount)
+	}
+}
+
+// TestUAT_ThreadedDecision_ResolutionDecrementsPending verifies that resolving a
+// threaded decision decrements the agent's pending count.
+func TestUAT_ThreadedDecision_ResolutionDecrementsPending(t *testing.T) {
+	bot, mockAPI := newRigRoutingBot(t)
+	agent := "gastown/polecats/furiosa"
+
+	// Post a decision
+	d := sampleDecision("bd-res-dec1")
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	// Verify pending is 1
+	bot.agentPendingMu.Lock()
+	count := bot.agentPendingCount[agent]
+	bot.agentPendingMu.Unlock()
+	if count != 1 {
+		t.Fatalf("pending count after post = %d, want 1", count)
+	}
+
+	// Resolve the decision
+	resolved := d
+	resolved.Resolved = true
+	resolved.ResolvedBy = "human"
+	resolved.ChosenIndex = 1
+	if err := bot.NotifyResolution(&resolved); err != nil {
+		t.Fatalf("NotifyResolution: %v", err)
+	}
+
+	// Pending should be back to 0
+	bot.agentPendingMu.Lock()
+	count = bot.agentPendingCount[agent]
+	bot.agentPendingMu.Unlock()
+	if count != 0 {
+		t.Errorf("pending count after resolution = %d, want 0", count)
+	}
+
+	// Status card should have been updated with the decremented count
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+	lastUpdate := mockAPI.UpdatedMessages[len(mockAPI.UpdatedMessages)-1]
+	_, vals, _ := slack.UnsafeApplyMsgOptions("", lastUpdate.ChannelID, "", lastUpdate.Options...)
+	blocksJSON := vals.Get("blocks")
+	if strings.Contains(blocksJSON, "pending") {
+		// "idle" not "pending" since count is 0
+		if !strings.Contains(blocksJSON, "idle") {
+			t.Errorf("status card after resolution should show idle, got %q", blocksJSON)
+		}
+	}
+}
+
+// TestUAT_ThreadedDecision_DismissDecrementsPending verifies that dismissing a
+// threaded decision decrements the agent's pending count.
+func TestUAT_ThreadedDecision_DismissDecrementsPending(t *testing.T) {
+	bot, _ := newRigRoutingBot(t)
+	agent := "gastown/polecats/furiosa"
+
+	// Post a decision
+	d := sampleDecision("bd-dismiss-dec1")
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	// Dismiss the decision
+	ok := bot.DismissDecisionByID("bd-dismiss-dec1")
+	if !ok {
+		t.Fatal("DismissDecisionByID returned false")
+	}
+
+	// Pending should be back to 0
+	bot.agentPendingMu.Lock()
+	count := bot.agentPendingCount[agent]
+	bot.agentPendingMu.Unlock()
+	if count != 0 {
+		t.Errorf("pending count after dismiss = %d, want 0", count)
+	}
+}
+
+// TestUAT_ThreadedDecision_NonRigModeUnchanged verifies that non-rig-mode bots
+// still post decisions as top-level messages (no thread_ts from status cards).
+func TestUAT_ThreadedDecision_NonRigModeUnchanged(t *testing.T) {
+	bot, mockAPI, _ := newTestBot(t)
+
+	d := sampleDecision("bd-norig1")
+	if err := bot.NotifyNewDecision(&d); err != nil {
+		t.Fatalf("NotifyNewDecision: %v", err)
+	}
+
+	mockAPI.mu.Lock()
+	defer mockAPI.mu.Unlock()
+
+	if len(mockAPI.PostedMessages) == 0 {
+		t.Fatal("expected at least 1 PostMessage call")
+	}
+
+	// First PostMessage is the decision — should NOT be threaded (no status card)
+	threadTS := extractThreadTS(t, mockAPI.PostedMessages[0].Options)
+	if threadTS != "" {
+		t.Errorf("non-rig mode decision should not be threaded, but has thread_ts=%q", threadTS)
+	}
+
+	// No agent pending count should be tracked
+	bot.agentPendingMu.Lock()
+	count := bot.agentPendingCount["gastown/polecats/furiosa"]
+	bot.agentPendingMu.Unlock()
+	if count != 0 {
+		t.Errorf("non-rig mode should not track pending count, got %d", count)
+	}
+}

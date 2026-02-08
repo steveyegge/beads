@@ -21,6 +21,7 @@ import (
 type messageInfo struct {
 	channelID string
 	timestamp string
+	agent     string // agent identity (for rig routing pending count tracking)
 }
 
 // Bot is a Slack bot for managing beads decisions.
@@ -783,6 +784,12 @@ func (b *Bot) DismissDecisionByID(decisionID string) bool {
 		return false
 	}
 
+	// Decrement agent pending count for rig routing mode
+	if msgInfo.agent != "" {
+		b.decrementAgentPending(msgInfo.agent)
+		b.updateAgentStatusCard(msgInfo.agent)
+	}
+
 	b.decisionMessagesMu.Lock()
 	delete(b.decisionMessages, decisionID)
 	b.decisionMessagesMu.Unlock()
@@ -1316,12 +1323,23 @@ func (b *Bot) NotifyNewDecision(decision *Decision) error {
 			slack.NewActionBlock("", dismissButton, peekButton, dmButton))
 	}
 
-	// Thread follow-up decisions to predecessor
+	// Threading: in rig mode, thread under agent's status card.
+	// Otherwise, thread under predecessor decision if present.
 	var msgOpts []slack.MsgOption
 	msgOpts = append(msgOpts, slack.MsgOptionBlocks(blocks...))
 
+	var statusCardTS string
 	var predecessorThreadTS string
-	if decision.PredecessorID != "" {
+	agent := decision.RequestedBy
+
+	if b.isRigRoutingMode() && agent != "" {
+		// Rig routing: thread decisions under the agent's status card
+		statusCardTS = b.ensureAgentStatusCard(agent, targetChannel)
+		if statusCardTS != "" {
+			msgOpts = append(msgOpts, slack.MsgOptionTS(statusCardTS))
+		}
+	} else if decision.PredecessorID != "" {
+		// Non-rig: thread under predecessor decision
 		b.decisionMessagesMu.RLock()
 		predMsgInfo, hasPredecessor := b.decisionMessages[decision.PredecessorID]
 		b.decisionMessagesMu.RUnlock()
@@ -1342,10 +1360,15 @@ func (b *Bot) NotifyNewDecision(decision *Decision) error {
 		b.decisionMessages[decision.ID] = messageInfo{
 			channelID: targetChannel,
 			timestamp: ts,
+			agent:     agent,
 		}
 		b.decisionMessagesMu.Unlock()
 
-		if predecessorThreadTS != "" {
+		if statusCardTS != "" {
+			// Rig mode: update agent status card with pending count
+			b.incrementAgentPending(agent)
+			b.updateAgentStatusCard(agent)
+		} else if predecessorThreadTS != "" {
 			b.markDecisionSuperseded(decision.PredecessorID, decision.ID, targetChannel, predecessorThreadTS)
 		}
 	}
@@ -1378,6 +1401,13 @@ func (b *Bot) NotifyResolution(decision *Decision) error {
 
 	if hasTracked {
 		b.updateMessageAsResolved(msgInfo.channelID, msgInfo.timestamp, decision, resolvedBy)
+
+		// Decrement agent pending count for rig routing mode
+		if msgInfo.agent != "" {
+			b.decrementAgentPending(msgInfo.agent)
+			b.updateAgentStatusCard(msgInfo.agent)
+		}
+
 		b.decisionMessagesMu.Lock()
 		delete(b.decisionMessages, decision.ID)
 		b.decisionMessagesMu.Unlock()
