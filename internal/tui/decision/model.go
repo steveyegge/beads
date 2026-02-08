@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/steveyegge/beads/internal/coop"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -77,6 +78,9 @@ type Model struct {
 	peekSessionName string
 	peekViewport    viewport.Model
 
+	// Session backend for terminal peek (tmux or coop)
+	backend coop.SessionBackend
+
 	// Polling
 	done chan struct{}
 }
@@ -98,6 +102,7 @@ func New() *Model {
 		detailViewport: viewport.New(0, 0),
 		peekViewport:   viewport.New(0, 0),
 		filter:         "all",
+		backend:        &coop.TmuxBackend{},
 		done:           make(chan struct{}),
 	}
 }
@@ -110,6 +115,11 @@ func (m *Model) SetFilter(filter string) {
 // SetNotify enables desktop notifications.
 func (m *Model) SetNotify(notify bool) {
 	m.notify = notify
+}
+
+// SetBackend sets the session backend for terminal peek (tmux or coop).
+func (m *Model) SetBackend(b coop.SessionBackend) {
+	m.backend = b
 }
 
 // Init initializes the model.
@@ -284,49 +294,33 @@ func (m *Model) dismissDecision(decisionID, reason string) tea.Cmd {
 }
 
 // getSessionName converts a RequestedBy path to a tmux session name.
-// e.g., "gastown/crew/decision_point" -> "bd-gastown-crew-decision_point"
+// Delegates to coop.GetSessionName for the shared implementation.
 func getSessionName(requestedBy string) (string, error) {
-	if requestedBy == "" {
-		return "", fmt.Errorf("no requestor specified")
-	}
-
-	// Handle special cases
-	if requestedBy == "overseer" || requestedBy == "human" {
-		return "", fmt.Errorf("cannot peek human session")
-	}
-
-	// Require at least rig/type format
-	parts := strings.Split(requestedBy, "/")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid requestor format: %s", requestedBy)
-	}
-
-	return "bd-" + strings.ReplaceAll(requestedBy, "/", "-"), nil
+	return coop.GetSessionName(requestedBy)
 }
 
-// captureTerminal captures the content of an agent's terminal.
+// captureTerminal captures the content of an agent's terminal using the
+// configured session backend (tmux or coop).
 func (m *Model) captureTerminal(sessionName string) tea.Cmd {
+	backend := m.backend
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		// First check if session exists
-		checkCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", sessionName)
-		if err := checkCmd.Run(); err != nil {
+		has, err := backend.HasSession(ctx, sessionName)
+		if err != nil {
+			return peekMsg{sessionName: sessionName, err: fmt.Errorf("session check failed: %w", err)}
+		}
+		if !has {
 			return peekMsg{sessionName: sessionName, err: fmt.Errorf("session '%s' not found", sessionName)}
 		}
 
-		// Capture pane content with scrollback
-		cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-S", "-100")
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-
-		if err := cmd.Run(); err != nil {
-			return peekMsg{sessionName: sessionName, err: fmt.Errorf("capture failed: %s", stderr.String())}
+		content, err := backend.CapturePane(ctx, sessionName, 100)
+		if err != nil {
+			return peekMsg{sessionName: sessionName, err: fmt.Errorf("capture failed: %w", err)}
 		}
 
-		return peekMsg{sessionName: sessionName, content: stdout.String()}
+		return peekMsg{sessionName: sessionName, content: content}
 	}
 }
 
@@ -427,7 +421,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					m.status = fmt.Sprintf("Cannot peek: %v", err)
 				} else {
-					m.status = fmt.Sprintf("Peeking at %s...", sessionName)
+					m.status = fmt.Sprintf("Peeking at %s via %s...", sessionName, m.backend.Name())
 					cmds = append(cmds, m.captureTerminal(sessionName))
 				}
 			}
