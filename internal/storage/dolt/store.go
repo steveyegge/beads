@@ -340,6 +340,22 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		}
 	}
 
+	// Branch-per-polecat: if BD_BRANCH is set, checkout polecat-specific branch.
+	// Each polecat writes to its own Dolt branch to eliminate optimistic lock
+	// contention between concurrent writers. Merges happen at gt done time.
+	// Only applies in server mode (embedded mode doesn't support concurrent writers).
+	if bdBranch := os.Getenv("BD_BRANCH"); bdBranch != "" && cfg.ServerMode {
+		// Force single connection to ensure branch checkout applies to all operations.
+		// This is safe because each polecat is a separate bd process.
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+		if _, err := db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", bdBranch); err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("failed to checkout Dolt branch %s: %w", bdBranch, err)
+		}
+		store.branch = bdBranch
+	}
+
 	return store, nil
 }
 
