@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
@@ -31,6 +34,7 @@ var showCmd = &cobra.Command{
 		asOfRef, _ := cmd.Flags().GetString("as-of")
 		idFlags, _ := cmd.Flags().GetStringArray("id")
 		localTime, _ := cmd.Flags().GetBool("local-time")
+		watchMode, _ := cmd.Flags().GetBool("watch")
 		ctx := rootCtx
 
 		// Helper to format timestamp based on --local-time flag
@@ -52,7 +56,20 @@ var showCmd = &cobra.Command{
 
 		// Handle --as-of flag: show issue at a specific point in history
 		if asOfRef != "" {
-			showIssueAsOf(ctx, args, asOfRef, shortMode)
+			store.GetIssue(ctx, asOfRef)
+			return
+		}
+
+		// Handle --watch mode (GH#654)
+		// Watch mode requires direct store access for file watching
+		if watchMode {
+			if err := ensureDirectMode("watch mode requires direct database access"); err != nil {
+				FatalErrorRespectJSON("%v", err)
+			}
+			if len(args) != 1 {
+				FatalErrorRespectJSON("watch mode requires exactly one issue ID")
+			}
+			watchIssue(ctx, args[0])
 			return
 		}
 
@@ -1140,6 +1157,95 @@ func showIssueAsOf(ctx context.Context, args []string, ref string, shortMode boo
 	}
 }
 
+// displayShowIssue displays a single issue (reusable for watch mode)
+func displayShowIssue(ctx context.Context, issueID string) {
+	issue, err := store.GetIssue(ctx, issueID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching issue: %v\n", err)
+		return
+	}
+
+	if issue == nil {
+		fmt.Printf("Issue not found: %s\n", issueID)
+		return
+	}
+
+	// Display the issue
+	fmt.Println(formatIssueHeader(issue))
+	fmt.Println(formatIssueMetadata(issue))
+	if issue.Description != "" {
+		fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
+	}
+	fmt.Println()
+}
+
+// watchIssue watches for changes to an issue and auto-refreshes the display (GH#654)
+func watchIssue(ctx context.Context, issueID string) {
+	// Find .beads directory
+	beadsDir := ".beads"
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Error: .beads directory not found\n")
+		return
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating watcher: %v\n", err)
+		return
+	}
+	defer func() { _ = watcher.Close() }()
+
+	// Watch the .beads directory
+	if err := watcher.Add(beadsDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error watching directory: %v\n", err)
+		return
+	}
+
+	// Initial display
+	displayShowIssue(ctx, issueID)
+
+	fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
+
+	// Handle Ctrl+C
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Debounce timer
+	var debounceTimer *time.Timer
+	debounceDelay := 500 * time.Millisecond
+
+	for {
+		select {
+		case <-sigChan:
+			fmt.Fprintf(os.Stderr, "\nStopped watching.\n")
+			return
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			// Only react to writes on issues.jsonl or database files
+			if event.Has(fsnotify.Write) {
+				basename := filepath.Base(event.Name)
+				if basename == "issues.jsonl" || strings.HasSuffix(basename, ".db") {
+					// Debounce rapid changes
+					if debounceTimer != nil {
+						debounceTimer.Stop()
+					}
+					debounceTimer = time.AfterFunc(debounceDelay, func() {
+						displayShowIssue(ctx, issueID)
+						fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
+					})
+				}
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Watcher error: %v\n", err)
+		}
+	}
+}
+
 func init() {
 	showCmd.Flags().Bool("thread", false, "Show full conversation thread (for messages)")
 	showCmd.Flags().Bool("short", false, "Show compact one-line output per issue")
@@ -1148,6 +1254,7 @@ func init() {
 	showCmd.Flags().String("as-of", "", "Show issue as it existed at a specific commit hash or branch (requires Dolt)")
 	showCmd.Flags().StringArray("id", nil, "Issue ID (use for IDs that look like flags, e.g., --id=gt--xyz)")
 	showCmd.Flags().Bool("local-time", false, "Show timestamps in local time instead of UTC")
+	showCmd.Flags().BoolP("watch", "w", false, "Watch for changes and auto-refresh display")
 	showCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(showCmd)
 }
