@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/lockfile"
 )
@@ -144,16 +145,24 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 	return client, nil
 }
 
-// GetDaemonHost returns the BD_DAEMON_HOST environment variable if set.
-// When set, clients should connect via TCP to this address instead of Unix socket.
+// GetDaemonHost returns the daemon host address.
+// Priority: BD_DAEMON_HOST env var > daemon-host config key.
+// When set, clients should connect to this address instead of Unix socket.
 func GetDaemonHost() string {
-	return os.Getenv("BD_DAEMON_HOST")
+	if host := os.Getenv("BD_DAEMON_HOST"); host != "" {
+		return host
+	}
+	return config.GetString("daemon-host")
 }
 
-// GetDaemonToken returns the BD_DAEMON_TOKEN environment variable if set.
-// This token is used for authentication when connecting to remote daemons via TCP.
+// GetDaemonToken returns the daemon authentication token.
+// Priority: BD_DAEMON_TOKEN env var > daemon-token config key.
+// This token is used for authentication when connecting to remote daemons.
 func GetDaemonToken() string {
-	return os.Getenv("BD_DAEMON_TOKEN")
+	if token := os.Getenv("BD_DAEMON_TOKEN"); token != "" {
+		return token
+	}
+	return config.GetString("daemon-token")
 }
 
 // TryConnectTCP attempts to connect to a remote daemon via TCP.
