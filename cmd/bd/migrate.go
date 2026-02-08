@@ -220,7 +220,7 @@ Subcommands:
 				})
 			} else {
 				fmt.Println("Dry run mode - no changes will be made")
-				if needsMigration {
+				if needsMigration && len(oldDBs) > 0 {
 				fmt.Printf("Would migrate: %s → %s\n", filepath.Base(oldDBs[0].path), cfg.Database)
 				}
 				if needsVersionUpdate {
@@ -702,13 +702,13 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 			outputJSON(map[string]interface{}{
 				"dry_run":     true,
 				"old_repo_id": oldDisplay,
-				"new_repo_id": newRepoID[:8],
+				"new_repo_id": truncateID(newRepoID, 8),
 			})
 		} else {
 			fmt.Println("Dry run mode - no changes will be made")
 			fmt.Printf("Would update repository ID:\n")
 			fmt.Printf("  Old: %s\n", oldDisplay)
-			fmt.Printf("  New: %s\n", newRepoID[:8])
+			fmt.Printf("  New: %s\n", truncateID(newRepoID, 8))
 		}
 		return
 	}
@@ -717,7 +717,7 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 	if oldRepoID != "" && oldRepoID != newRepoID && !autoYes && !jsonOutput {
 		fmt.Printf("WARNING: Changing repository ID can break sync if other clones exist.\n\n")
 		fmt.Printf("Current repo ID: %s\n", oldDisplay)
-		fmt.Printf("New repo ID:     %s\n\n", newRepoID[:8])
+		fmt.Printf("New repo ID:     %s\n\n", truncateID(newRepoID, 8))
 		fmt.Printf("Continue? [y/N] ")
 		var response string
 		_, _ = fmt.Scanln(&response)
@@ -744,13 +744,22 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 		outputJSON(map[string]interface{}{
 			"status":      "success",
 			"old_repo_id": oldDisplay,
-			"new_repo_id": newRepoID[:8],
+			"new_repo_id": truncateID(newRepoID, 8),
 		})
 	} else {
 		fmt.Printf("%s\n\n", ui.RenderPass("✓ Repository ID updated"))
 		fmt.Printf("  Old: %s\n", oldDisplay)
-		fmt.Printf("  New: %s\n", newRepoID[:8])
+		fmt.Printf("  New: %s\n", truncateID(newRepoID, 8))
 	}
+}
+
+// truncateID safely truncates an ID string to maxLen characters.
+// Returns the full string if it's shorter than maxLen.
+func truncateID(id string, maxLen int) string {
+	if len(id) <= maxLen {
+		return id
+	}
+	return id[:maxLen]
 }
 
 // loadOrCreateConfig loads metadata.json or creates default if not found
