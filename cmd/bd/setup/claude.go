@@ -125,6 +125,10 @@ func installClaude(env claudeEnv, project bool, stealth bool) error {
 	}
 	_ = stealth // stealth is handled by handler configuration, not hook command
 
+	// Install permission deny rules to prevent interactive modals that
+	// interfere with autonomous execution (plan approval, choice dialogs).
+	ensurePermissionDenyRules(settings, env)
+
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		_, _ = fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
@@ -390,6 +394,40 @@ func hasBeadsHooks(settingsPath string) bool {
 	}
 
 	return false
+}
+
+// denyRules lists tools that should be denied to prevent interactive modals
+// from interrupting autonomous execution.
+var denyRules = []string{
+	"AskUserQuestion",
+	"EnterPlanMode",
+}
+
+// ensurePermissionDenyRules adds deny rules for tools that spawn interactive
+// modals (plan approval, choice dialogs). These interfere with autonomous
+// agent execution and should be suppressed.
+func ensurePermissionDenyRules(settings map[string]interface{}, env claudeEnv) {
+	perms, ok := settings["permissions"].(map[string]interface{})
+	if !ok {
+		perms = make(map[string]interface{})
+		settings["permissions"] = perms
+	}
+
+	deny, _ := perms["deny"].([]interface{})
+	existing := make(map[string]bool, len(deny))
+	for _, d := range deny {
+		if s, ok := d.(string); ok {
+			existing[s] = true
+		}
+	}
+
+	for _, rule := range denyRules {
+		if !existing[rule] {
+			deny = append(deny, rule)
+			_, _ = fmt.Fprintf(env.stdout, "✓ Added permission deny: %s\n", rule)
+		}
+	}
+	perms["deny"] = deny
 }
 
 // hookEntry pairs a Claude Code event with the hook command string.

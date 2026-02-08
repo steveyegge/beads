@@ -1272,6 +1272,145 @@ func TestInstallClaudePreservesThirdPartyHooks(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Permission deny rules tests
+// ---------------------------------------------------------------------------
+
+// TestInstallClaudeAddsDenyRules verifies that installClaude adds permission
+// deny rules for AskUserQuestion and EnterPlanMode.
+func TestInstallClaudeAddsDenyRules(t *testing.T) {
+	env, stdout, _ := newClaudeTestEnv(t)
+	settingsPath := globalSettingsPath(env.homeDir)
+
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+
+	settings := readSettingsFile(t, settingsPath)
+	perms, ok := settings["permissions"].(map[string]interface{})
+	if !ok {
+		t.Fatal("permissions section missing")
+	}
+	deny, ok := perms["deny"].([]interface{})
+	if !ok {
+		t.Fatal("permissions.deny missing")
+	}
+
+	denySet := make(map[string]bool)
+	for _, d := range deny {
+		if s, ok := d.(string); ok {
+			denySet[s] = true
+		}
+	}
+
+	for _, rule := range denyRules {
+		if !denySet[rule] {
+			t.Errorf("deny rule %q not found in permissions.deny", rule)
+		}
+	}
+
+	out := stdout.String()
+	for _, rule := range denyRules {
+		expected := fmt.Sprintf("Added permission deny: %s", rule)
+		if !strings.Contains(out, expected) {
+			t.Errorf("expected output to contain %q", expected)
+		}
+	}
+}
+
+// TestInstallClaudeDenyRulesIdempotent verifies that running installClaude
+// twice does not duplicate deny rules.
+func TestInstallClaudeDenyRulesIdempotent(t *testing.T) {
+	env, _, _ := newClaudeTestEnv(t)
+	settingsPath := globalSettingsPath(env.homeDir)
+
+	// First install.
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("first installClaude: %v", err)
+	}
+
+	// Second install.
+	env2, stdout2, _ := newClaudeTestEnv(t)
+	env2.homeDir = env.homeDir
+	env2.projectDir = env.projectDir
+
+	if err := installClaude(env2, false, false); err != nil {
+		t.Fatalf("second installClaude: %v", err)
+	}
+
+	// Should not print "Added" on second run.
+	out := stdout2.String()
+	for _, rule := range denyRules {
+		expected := fmt.Sprintf("Added permission deny: %s", rule)
+		if strings.Contains(out, expected) {
+			t.Errorf("second install should not re-add deny rule %q", rule)
+		}
+	}
+
+	// Verify no duplicates in the file.
+	settings := readSettingsFile(t, settingsPath)
+	perms := settings["permissions"].(map[string]interface{})
+	deny := perms["deny"].([]interface{})
+
+	counts := make(map[string]int)
+	for _, d := range deny {
+		if s, ok := d.(string); ok {
+			counts[s]++
+		}
+	}
+	for _, rule := range denyRules {
+		if counts[rule] != 1 {
+			t.Errorf("expected exactly 1 instance of deny rule %q, got %d", rule, counts[rule])
+		}
+	}
+}
+
+// TestInstallClaudeDenyRulesPreservesExisting verifies that installClaude
+// preserves existing deny rules and other permission settings.
+func TestInstallClaudeDenyRulesPreservesExisting(t *testing.T) {
+	env, _, _ := newClaudeTestEnv(t)
+	settingsPath := globalSettingsPath(env.homeDir)
+
+	// Pre-populate with existing permissions.
+	writeSettings(t, settingsPath, map[string]interface{}{
+		"permissions": map[string]interface{}{
+			"allow": []interface{}{"Bash(make *)"},
+			"deny":  []interface{}{"Bash(rm -rf *)"},
+		},
+	})
+
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+
+	settings := readSettingsFile(t, settingsPath)
+	perms := settings["permissions"].(map[string]interface{})
+
+	// Existing allow rules should be preserved.
+	allow, ok := perms["allow"].([]interface{})
+	if !ok || len(allow) == 0 {
+		t.Error("existing allow rules should be preserved")
+	}
+
+	// Deny list should contain both existing and new rules.
+	deny := perms["deny"].([]interface{})
+	denySet := make(map[string]bool)
+	for _, d := range deny {
+		if s, ok := d.(string); ok {
+			denySet[s] = true
+		}
+	}
+
+	if !denySet["Bash(rm -rf *)"] {
+		t.Error("existing deny rule 'Bash(rm -rf *)' should be preserved")
+	}
+	for _, rule := range denyRules {
+		if !denySet[rule] {
+			t.Errorf("deny rule %q should be added", rule)
+		}
+	}
+}
+
 // TestBusEmitHookCommandsComplete verifies that busEmitHookCommands returns
 // entries for all 4 expected events.
 func TestBusEmitHookCommandsComplete(t *testing.T) {
