@@ -226,12 +226,22 @@ bd bus register --id=oj-status-update --events=OjStepAdvanced \
 - Remove any remaining direct shell commands in hook configs
 
 **od-k3o.13: GT hook commands as bus handlers**
-- Register GT commands (gt sling, gt witness, etc.) as persistent bus handlers
-- Example: `bd bus register --id=gt-witness --events=SessionStart --command="gt witness start"`
+- Register GT operational commands as bus handlers for lifecycle events
+- Examples:
+  - `bd bus register --id=gt-work-done-notify --events=WorkCompleted --command="gt notify work-done" --priority=40`
+    (Posts a summary to the rig's status channel when a polecat completes work)
+  - `bd bus register --id=gt-escalation-handler --events=OjAgentEscalated --command="gt escalate --auto-assign" --priority=30`
+    (Auto-assigns an escalated issue to the crew lead when an agent can't proceed)
+  - `bd bus register --id=gt-idle-reaper --events=OjAgentIdle --command="gt polecat check-idle" --priority=50`
+    (Checks if an idle agent should be reassigned or shut down)
+- Note: The witness and crew are long-running processes started by the agent dispatcher, not per-event.
+  Bus handlers are for _reactions_ to events, not for starting infrastructure.
 
 **od-k3o.14: GT witness subscribes to bus**
 - Replace tmux polling with NATS subscription to OJ_EVENTS stream
-- Witness uses `bd bus subscribe --filter=OjAgentIdle` instead of `tmux capture-pane`
+- Witness connects to NATS JetStream and subscribes to `oj.>` events for its rig
+- Replaces `tmux capture-pane` polling loop with push-based event delivery
+- Witness still runs as a long-lived process; it just receives events via NATS instead of polling
 
 ### Phase 5: Advanced (P3 — defer)
 
