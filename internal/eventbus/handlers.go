@@ -198,13 +198,11 @@ func findBDBinary() (string, error) {
 }
 
 // DefaultHandlers returns the standard set of event bus handlers for daemon registration.
-// Note: StopDecisionHandler was removed in favor of the SSE-based stop hook shell script
-// (bd-f39m). The Stop hook now creates a decision and uses `bd watch --decision` to
-// block until the human responds, eliminating the need for subprocess-based event bus handlers.
 func DefaultHandlers() []Handler {
 	return []Handler{
-		&PrimeHandler{},    // 10
-		&GateHandler{},     // 20
-		&DecisionHandler{}, // 30
+		&PrimeHandler{},        // 10
+		&StopDecisionHandler{}, // 15
+		&GateHandler{},         // 20
+		&DecisionHandler{},     // 30
 	}
 }

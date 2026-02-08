@@ -291,6 +291,10 @@ func updatesFromArgs(a UpdateArgs) (map[string]interface{}, error) {
 	if len(a.AdviceSubscriptionsExclude) > 0 {
 		u["advice_subscriptions_exclude"] = a.AdviceSubscriptionsExclude
 	}
+	// Metadata field (config beads, etc.)
+	if a.Metadata != nil {
+		u["metadata"] = string(*a.Metadata)
+	}
 	return u, nil
 }
 
@@ -518,6 +522,8 @@ func (s *Server) handleCreate(req *Request) Response {
 		AdviceHookTrigger:   createArgs.AdviceHookTrigger,
 		AdviceHookTimeout:   createArgs.AdviceHookTimeout,
 		AdviceHookOnFailure: createArgs.AdviceHookOnFailure,
+		// Metadata (config beads, etc.)
+		Metadata: createArgs.Metadata,
 	}
 
 	// Check if any dependencies are discovered-from type

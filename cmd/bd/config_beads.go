@@ -490,22 +490,12 @@ func runConfigSetBead(cmd *cobra.Command, _ []string) {
 				Title:     &titleStr,
 				Rig:       &rigStr,
 				AddLabels: allLabels,
+				Metadata:  &metadataJSON,
 			}
 			_, err := daemonClient.Update(updateArgs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error updating config bead: %v\n", err)
 				os.Exit(1)
-			}
-
-			// Set metadata via direct store if available (RPC UpdateArgs doesn't support metadata)
-			if store != nil {
-				ctx := rootCtx
-				metaUpdate := map[string]interface{}{
-					"metadata": string(metadataJSON),
-				}
-				if err := store.UpdateIssue(ctx, beadID, metaUpdate, actor); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: updated bead but failed to set metadata: %v\n", err)
-				}
 			}
 
 			if jsonOutput {
@@ -527,22 +517,12 @@ func runConfigSetBead(cmd *cobra.Command, _ []string) {
 			IssueType: "config",
 			Labels:    allLabels,
 			Rig:       rigField,
+			Metadata:  metadataJSON,
 		}
 		_, err = daemonClient.Create(createArgs)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating config bead: %v\n", err)
 			os.Exit(1)
-		}
-
-		// Set metadata via direct store if available
-		if store != nil {
-			ctx := rootCtx
-			metaUpdate := map[string]interface{}{
-				"metadata": string(metadataJSON),
-			}
-			if err := store.UpdateIssue(ctx, beadID, metaUpdate, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: created bead but failed to set metadata: %v\n", err)
-			}
 		}
 
 		if jsonOutput {
