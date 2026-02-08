@@ -252,6 +252,11 @@ func isPathInSafeBoundary(path string) bool {
 		return true
 	}
 
+	// Allow /var/home as a valid user home directory (used by Fedora Silverblue, Bluefin, etc.)
+	if strings.HasPrefix(absPath, "/var/home/") {
+		return true
+	}
+
 	for _, prefix := range unsafePrefixes {
 		if strings.HasPrefix(absPath, prefix+"/") || absPath == prefix {
 			return false
