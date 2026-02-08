@@ -184,11 +184,6 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           nix_path: nixpkgs=channel:nixos-unstable
-      # Temporary: flake.lock pins nixpkgs Oct 2025 (Go 1.25.1), but we need
-      # Go 1.25.5+. Update the lock in CI until someone with nix commits a
-      # fresh flake.lock. Track removal: #1575
-      - name: Update flake.lock
-        run: nix flake update
       - name: Run bd help via Nix
         run: |
           export BEADS_DB="$PWD/.ci-beads/beads.db"
