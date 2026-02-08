@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
@@ -41,11 +42,11 @@ func SetRouteQuerier(q RouteQuerier) {
 // LoadRoutes loads routes, trying daemon RPC first (if querier set), falling back to routes.jsonl.
 // Returns an empty slice if no routes are found.
 //
-// When BD_DAEMON_HOST is set, routes.jsonl is completely ignored and routes are only
-// loaded from the remote daemon. If the daemon is unreachable, an error is returned
-// rather than silently falling back to the local file.
+// When BD_DAEMON_HOST is set or daemon-host is configured in config.yaml, routes.jsonl
+// is completely ignored and routes are only loaded from the remote daemon. If the daemon
+// is unreachable, an error is returned rather than silently falling back to the local file.
 func LoadRoutes(beadsDir string) ([]Route, error) {
-	remoteDaemon := os.Getenv("BD_DAEMON_HOST") != ""
+	remoteDaemon := os.Getenv("BD_DAEMON_HOST") != "" || config.GetString("daemon-host") != ""
 
 	// Try loading from beads first (via injected querier)
 	if routeQuerier != nil {
@@ -57,7 +58,7 @@ func LoadRoutes(beadsDir string) ([]Route, error) {
 			return routes, nil
 		}
 
-		// When BD_DAEMON_HOST is set, don't fall back to routes.jsonl
+		// When remote daemon is configured (env or config.yaml), don't fall back to routes.jsonl
 		if remoteDaemon {
 			if err != nil {
 				if os.Getenv("BD_DEBUG_ROUTING") != "" {
@@ -76,15 +77,15 @@ func LoadRoutes(beadsDir string) ([]Route, error) {
 			fmt.Fprintf(os.Stderr, "[routing] Route bead query failed: %v, falling back to file\n", err)
 		}
 	} else if remoteDaemon {
-		// BD_DAEMON_HOST is set but no route querier was initialized
+		// Remote daemon is configured but no route querier was initialized
 		// This shouldn't normally happen, but handle it gracefully
 		if os.Getenv("BD_DEBUG_ROUTING") != "" {
-			fmt.Fprintf(os.Stderr, "[routing] BD_DAEMON_HOST set but no route querier initialized (routes.jsonl ignored)\n")
+			fmt.Fprintf(os.Stderr, "[routing] Remote daemon configured but no route querier initialized (routes.jsonl ignored)\n")
 		}
-		return nil, fmt.Errorf("BD_DAEMON_HOST is set but route querier not initialized; cannot load routes")
+		return nil, fmt.Errorf("BD_DAEMON_HOST or config.yaml daemon-host is set but route querier not initialized; cannot load routes")
 	}
 
-	// Fall back to routes.jsonl (only when BD_DAEMON_HOST is not set)
+	// Fall back to routes.jsonl (only when no remote daemon is configured)
 	return LoadRoutesFromFile(beadsDir)
 }
 

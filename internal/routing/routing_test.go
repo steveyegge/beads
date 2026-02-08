@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/config"
 )
 
 func TestDetermineTargetRepo(t *testing.T) {
@@ -659,9 +661,86 @@ func TestLoadRoutes_RemoteDaemonNoFallback(t *testing.T) {
 		if routes != nil {
 			t.Errorf("Expected nil routes, got %v", routes)
 		}
-		expectedMsg := "BD_DAEMON_HOST is set but route querier not initialized"
+		expectedMsg := "route querier not initialized"
 		if !strings.Contains(err.Error(), expectedMsg) {
 			t.Errorf("Expected error containing %q, got: %v", expectedMsg, err)
+		}
+	})
+
+	// Test 6: With config.yaml daemon-host (no env var) and no querier, should error
+	t.Run("with_config_daemon_host_no_querier", func(t *testing.T) {
+		// Ensure BD_DAEMON_HOST env var is NOT set
+		originalHost := os.Getenv("BD_DAEMON_HOST")
+		os.Unsetenv("BD_DAEMON_HOST")
+		defer func() {
+			if originalHost != "" {
+				os.Setenv("BD_DAEMON_HOST", originalHost)
+			}
+		}()
+
+		// Initialize config so viper is available for Set/GetString
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("config.Initialize() error: %v", err)
+		}
+
+		// Set daemon-host via config (simulates config.yaml)
+		config.Set("daemon-host", "http://remote:9080")
+		defer config.Set("daemon-host", "")
+
+		// Clear the route querier
+		originalQuerier := routeQuerier
+		SetRouteQuerier(nil)
+		defer SetRouteQuerier(originalQuerier)
+
+		routes, err := LoadRoutes(tmpDir)
+		if err == nil {
+			t.Fatal("LoadRoutes should error with config.yaml daemon-host but no querier")
+		}
+		if routes != nil {
+			t.Errorf("Expected nil routes, got %v", routes)
+		}
+		expectedMsg := "route querier not initialized"
+		if !strings.Contains(err.Error(), expectedMsg) {
+			t.Errorf("Expected error containing %q, got: %v", expectedMsg, err)
+		}
+	})
+
+	// Test 7: With config.yaml daemon-host and failing querier, should error (not fall back)
+	t.Run("with_config_daemon_host_failing_querier", func(t *testing.T) {
+		// Ensure BD_DAEMON_HOST env var is NOT set
+		originalHost := os.Getenv("BD_DAEMON_HOST")
+		os.Unsetenv("BD_DAEMON_HOST")
+		defer func() {
+			if originalHost != "" {
+				os.Setenv("BD_DAEMON_HOST", originalHost)
+			}
+		}()
+
+		// Initialize config so viper is available for Set/GetString
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("config.Initialize() error: %v", err)
+		}
+
+		// Set daemon-host via config
+		config.Set("daemon-host", "http://remote:9080")
+		defer config.Set("daemon-host", "")
+
+		// Set a failing route querier
+		originalQuerier := routeQuerier
+		SetRouteQuerier(func(_ string) ([]Route, error) {
+			return nil, errors.New("daemon connection refused")
+		})
+		defer SetRouteQuerier(originalQuerier)
+
+		routes, err := LoadRoutes(tmpDir)
+		if err == nil {
+			t.Fatal("LoadRoutes should error when config.yaml remote daemon fails")
+		}
+		if routes != nil {
+			t.Errorf("Expected nil routes, got %v", routes)
+		}
+		if !strings.Contains(err.Error(), "daemon connection refused") {
+			t.Errorf("Expected error containing daemon error, got: %v", err)
 		}
 	})
 
