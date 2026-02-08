@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/beads"
@@ -197,11 +196,12 @@ func getRoutedStoreForID(ctx context.Context, id string) (*routing.RoutedStorage
 	return routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
 }
 
-// isRemoteDaemon returns true if connected to a remote daemon via BD_DAEMON_HOST.
-// When connected to a remote daemon, skip local filesystem routing - the remote
-// daemon handles all IDs centrally. This fixes gt-57wsnm.
+// isRemoteDaemon returns true if connected to a remote daemon via BD_DAEMON_HOST
+// env var or daemon-host config key. When connected to a remote daemon, skip local
+// filesystem routing - the remote daemon handles all IDs centrally. This fixes
+// gt-57wsnm. Using rpc.GetDaemonHost() ensures config.yaml is also checked.
 func isRemoteDaemon() bool {
-	return os.Getenv("BD_DAEMON_HOST") != ""
+	return rpc.GetDaemonHost() != ""
 }
 
 // needsRouting checks if an ID would be routed to a different beads directory.
