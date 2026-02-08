@@ -504,32 +504,45 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 		return nil, fmt.Errorf("failed to get statistics: %w", err)
 	}
 
-	// Blocked count: use two separate queries to avoid multi-table joins
-	// that trigger Dolt's mergeJoinIter panic (slice bounds out of range).
-	// Step 1: Get IDs of open blockers
-	// Step 2: Count distinct blocked issues from those blockers
+	// Blocked count: use separate queries with Go-level filtering to avoid
+	// Dolt's joinIter panic (slice bounds out of range in joinIter.removeParentRow
+	// at join_iters.go:192). The previous fix avoided mergeJoinIter panics but
+	// IN subqueries still trigger joinIter panics via semi-join plans.
+	// Step 1: Get set of open/active issue IDs (single-table, no join)
+	// Step 2: Get all blocking dependencies (single-table, no join)
+	// Step 3: Filter in Go — only count where both sides are open/active
 	var blockedCount int
-	blockerRows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT d.issue_id
-		FROM dependencies d
-		WHERE d.type = 'blocks'
-		  AND d.depends_on_id IN (
-		    SELECT id FROM issues
-		    WHERE status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-		  )
-		  AND d.issue_id IN (
-		    SELECT id FROM issues
-		    WHERE status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-		  )
+	openIDs := make(map[string]bool)
+	openRows, err := s.db.QueryContext(ctx, `
+		SELECT id FROM issues
+		WHERE status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 	`)
 	if err == nil {
-		defer blockerRows.Close()
-		for blockerRows.Next() {
+		defer openRows.Close()
+		for openRows.Next() {
 			var id string
-			if err := blockerRows.Scan(&id); err == nil {
-				blockedCount++
+			if err := openRows.Scan(&id); err == nil {
+				openIDs[id] = true
 			}
 		}
+	}
+	if len(openIDs) > 0 {
+		blockedSet := make(map[string]bool)
+		depRows, err := s.db.QueryContext(ctx, `
+			SELECT issue_id, depends_on_id FROM dependencies WHERE type = 'blocks'
+		`)
+		if err == nil {
+			defer depRows.Close()
+			for depRows.Next() {
+				var issueID, dependsOnID string
+				if err := depRows.Scan(&issueID, &dependsOnID); err == nil {
+					if openIDs[issueID] && openIDs[dependsOnID] {
+						blockedSet[issueID] = true
+					}
+				}
+			}
+		}
+		blockedCount = len(blockedSet)
 	}
 	stats.BlockedIssues = blockedCount
 
