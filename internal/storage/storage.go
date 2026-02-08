@@ -224,6 +224,14 @@ type Storage interface {
 	// The caller MUST close the connection when done to return it to the pool.
 	// For general queries, prefer UnderlyingDB() which manages the pool automatically.
 	UnderlyingConn(ctx context.Context) (*sql.Conn, error)
+
+	// Resource Management
+	SaveResource(ctx context.Context, resource *types.Resource) error
+	GetResource(ctx context.Context, identifier string) (*types.Resource, error)
+	ListResources(ctx context.Context, filter types.ResourceFilter) ([]*types.Resource, error)
+	DeleteResource(ctx context.Context, identifier string) error
+	// SyncResources bulk upserts resources for a given source, deactivating missing ones
+	SyncResources(ctx context.Context, source string, resources []*types.Resource) error
 }
 
 // Config holds database configuration

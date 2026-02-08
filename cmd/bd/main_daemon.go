@@ -39,11 +39,6 @@ const (
 	FallbackWispOperation     = "wisp_operation"
 )
 
-// Command group IDs for help organization
-const (
-	GroupMaintenance  = "maintenance"
-	GroupIntegrations = "integrations"
-)
 
 // signalOrchestratorActivity writes an activity signal for orchestrator daemon.
 // This enables exponential backoff based on bd usage detection.

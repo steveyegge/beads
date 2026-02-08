@@ -30,6 +30,12 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// Command group constants
+const (
+	GroupMaintenance = "maintenance"
+	GroupIntegrations = "integrations"
+)
+
 var (
 	dbPath       string
 	actor        string
@@ -124,6 +130,8 @@ var readOnlyCommands = map[string]bool{
 	"duplicates": true,
 	"comments":   true, // list comments (not add)
 	"current":    true, // bd sync mode current
+	// resources command has subcommands, some read-only, some write
+	// For now we don't mark it read-only to allow sync to write
 	// NOTE: "export" is NOT read-only - it writes to clear dirty issues and update jsonl_file_hash
 }
 
@@ -481,6 +489,12 @@ var rootCmd = &cobra.Command{
 		// Force direct mode for human-only interactive commands
 		// edit: can take minutes in $EDITOR, daemon connection times out (GH #227)
 		if cmd.Name() == "edit" {
+			noDaemon = true
+		}
+
+		// GH#Resources: Resources command involves local file scanning and should run in direct mode
+		// to avoid serializing large resource lists over RPC and handle local environment correctly.
+		if cmd.Name() == "resources" || (cmd.Parent() != nil && cmd.Parent().Name() == "resources") {
 			noDaemon = true
 		}
 

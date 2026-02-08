@@ -60,6 +60,7 @@ var migrationsList = []Migration{
 	{"metadata_column", migrations.MigrateMetadataColumn},
 	{"wisp_type_column", migrations.MigrateWispTypeColumn},
 	{"spec_id_column", migrations.MigrateSpecIDColumn},
+	{"resource_tables", migrations.MigrateResourceTables},
 }
 
 // migrationInfo contains metadata about a migration for inspection
@@ -127,6 +128,7 @@ func getMigrationDescription(name string) string {
 		"metadata_column":            "Adds metadata column for arbitrary JSON data (tool annotations, file lists) per GH#1406",
 		"wisp_type_column":           "Adds wisp_type column for TTL-based compaction classification (gt-9br)",
 		"spec_id_column":             "Adds spec_id column for linking issues to specification documents",
+		"resource_tables":            "Adds resource management tables (resources, resource_types, resource_tags)",
 	}
 
 	if desc, ok := descriptions[name]; ok {
