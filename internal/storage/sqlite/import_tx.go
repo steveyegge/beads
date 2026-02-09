@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -63,7 +64,7 @@ func (t *sqliteTxStorage) CreateIssueImport(ctx context.Context, issue *types.Is
 	// Get configured prefix for validation and ID generation behavior
 	var configPrefix string
 	err = t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&configPrefix)
-	if err == sql.ErrNoRows || configPrefix == "" {
+	if errors.Is(err, sql.ErrNoRows) || configPrefix == "" {
 		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
 	} else if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
@@ -82,13 +83,13 @@ func (t *sqliteTxStorage) CreateIssueImport(ctx context.Context, issue *types.Is
 		}
 		issue.ID = generatedID
 	} else if !skipPrefixValidation {
-		if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+		if err := validateIssueIDPrefix(issue.ID, prefix); err != nil {
 			return fmt.Errorf("failed to validate issue ID prefix: %w", err)
 		}
 	}
 
 	// Ensure parent exists for hierarchical IDs (importer should have ensured / resurrected).
-	if isHierarchical, parentID := IsHierarchicalID(issue.ID); isHierarchical {
+	if isHierarchical, parentID := isHierarchicalID(issue.ID); isHierarchical {
 		var parentCount int
 		if err := t.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&parentCount); err != nil {
 			return fmt.Errorf("failed to check parent existence: %w", err)
@@ -112,4 +113,3 @@ func (t *sqliteTxStorage) CreateIssueImport(ctx context.Context, issue *types.Is
 	}
 	return nil
 }
-

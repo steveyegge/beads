@@ -27,12 +27,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
 
       - name: Install cross-compilation toolchains and signing tools
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-aarch64-linux-gnu osslsigncode
+
+      - name: Install go-winres for Windows PE resource embedding
+        run: go install github.com/tc-hib/go-winres@latest
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

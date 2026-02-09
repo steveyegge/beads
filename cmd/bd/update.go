@@ -4,15 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/util"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -130,19 +132,34 @@ create, update, show, or close operation).`,
 		if cmd.Flags().Changed("type") {
 			issueType, _ := cmd.Flags().GetString("type")
 			// Normalize aliases (e.g., "enhancement" -> "feature") before validating
-			issueType = util.NormalizeIssueType(issueType)
-			var customTypes []string
-			if store != nil {
-				if ct, err := store.GetCustomTypes(cmd.Context()); err == nil {
-					customTypes = ct
+			issueType = utils.NormalizeIssueType(issueType)
+			// In daemon mode, skip client-side type pre-validation.
+			// The daemon validates authoritatively with database access (GH#1499).
+			if daemonClient == nil {
+				var customTypes []string
+				if store != nil {
+					ct, err := store.GetCustomTypes(cmd.Context())
+					if err != nil {
+						// Log DB error but continue with YAML fallback (GH#1499 bd-2ll)
+						if !jsonOutput {
+							fmt.Fprintf(os.Stderr, "%s Failed to get custom types from DB: %v (falling back to config.yaml)\n",
+								ui.RenderWarn("!"), err)
+						}
+					} else {
+						customTypes = ct
+					}
 				}
-			}
-			if !types.IssueType(issueType).IsValidWithCustom(customTypes) {
-				validTypes := "bug, feature, task, epic, chore"
-				if len(customTypes) > 0 {
-					validTypes += ", " + joinStrings(customTypes, ", ")
+				// Fallback to config.yaml when store returns no custom types.
+				if len(customTypes) == 0 {
+					customTypes = config.GetCustomTypesFromYAML()
 				}
-				FatalErrorRespectJSON("invalid issue type %q. Valid types: %s", issueType, validTypes)
+				if !types.IssueType(issueType).IsValidWithCustom(customTypes) {
+					validTypes := "bug, feature, task, epic, chore"
+					if len(customTypes) > 0 {
+						validTypes += ", " + joinStrings(customTypes, ", ")
+					}
+					FatalErrorRespectJSON("invalid issue type %q. Valid types: %s", issueType, validTypes)
+				}
 			}
 			updates["issue_type"] = issueType
 		}
@@ -212,6 +229,28 @@ create, update, show, or close operation).`,
 		}
 		if persistentChanged {
 			updates["wisp"] = false
+		}
+		// Metadata flag (GH#1413)
+		if cmd.Flags().Changed("metadata") {
+			metadataValue, _ := cmd.Flags().GetString("metadata")
+			var metadataJSON string
+			if strings.HasPrefix(metadataValue, "@") {
+				// Read JSON from file
+				filePath := metadataValue[1:]
+				// #nosec G304 -- user explicitly provides file path via @file.json syntax
+				data, err := os.ReadFile(filePath)
+				if err != nil {
+					FatalErrorRespectJSON("failed to read metadata file %s: %v", filePath, err)
+				}
+				metadataJSON = string(data)
+			} else {
+				metadataJSON = metadataValue
+			}
+			// Validate JSON
+			if !json.Valid([]byte(metadataJSON)) {
+				FatalErrorRespectJSON("invalid JSON in --metadata: must be valid JSON")
+			}
+			updates["metadata"] = json.RawMessage(metadataJSON)
 		}
 
 		// Get claim flag
@@ -307,9 +346,6 @@ create, update, show, or close operation).`,
 					empty := ""
 					updateArgs.SpecChangedAt = &empty
 				}
-				if specID, ok := updates["spec_id"].(string); ok {
-					updateArgs.SpecID = &specID
-				}
 				if estimate, ok := updates["estimated_minutes"].(int); ok {
 					updateArgs.EstimatedMinutes = &estimate
 				}
@@ -355,6 +391,11 @@ create, update, show, or close operation).`,
 				// Ephemeral/persistent
 				if wisp, ok := updates["wisp"].(bool); ok {
 					updateArgs.Ephemeral = &wisp
+				}
+				// Metadata (GH#1413)
+				if metadata, ok := updates["metadata"].(json.RawMessage); ok {
+					metadataStr := string(metadata)
+					updateArgs.Metadata = &metadataStr
 				}
 
 				// Set claim flag for atomic claim operation
@@ -533,20 +574,9 @@ create, update, show, or close operation).`,
 				continue
 			}
 
-			// Handle claim operation atomically
+			// Handle claim operation atomically using compare-and-swap semantics
 			if claimFlag {
-				// Check if already claimed (has non-empty assignee)
-				if issue.Assignee != "" {
-					fmt.Fprintf(os.Stderr, "Error claiming %s: already claimed by %s\n", id, issue.Assignee)
-					result.Close()
-					continue
-				}
-				// Atomically set assignee and status
-				claimUpdates := map[string]interface{}{
-					"assignee": actor,
-					"status":   "in_progress",
-				}
-				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, claimUpdates, actor); err != nil {
+				if err := issueStore.ClaimIssue(ctx, result.ResolvedID, actor); err != nil {
 					fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)
 					result.Close()
 					continue
@@ -715,6 +745,8 @@ func init() {
 	// Ephemeral/persistent flags
 	updateCmd.Flags().Bool("ephemeral", false, "Mark issue as ephemeral (wisp) - not exported to JSONL")
 	updateCmd.Flags().Bool("persistent", false, "Mark issue as persistent (promote wisp to regular issue)")
+	// Metadata flag (GH#1413)
+	updateCmd.Flags().String("metadata", "", "Set custom metadata (JSON string or @file.json to read from file)")
 	updateCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(updateCmd)
 }

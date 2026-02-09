@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/util"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 var countCmd = &cobra.Command{
@@ -101,17 +101,11 @@ Examples:
 		}
 
 		// Normalize labels
-		labels = util.NormalizeLabels(labels)
-		labelsAny = util.NormalizeLabels(labelsAny)
+		labels = utils.NormalizeLabels(labels)
+		labelsAny = utils.NormalizeLabels(labelsAny)
 
-		// Check database freshness before reading
 		ctx := rootCtx
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
+		requireFreshDB(ctx)
 
 		// If daemon is running, use RPC
 		if daemonClient != nil {
@@ -135,7 +129,7 @@ Examples:
 				countArgs.Query = titleSearch
 			}
 			if idFilter != "" {
-				ids := util.NormalizeLabels(strings.Split(idFilter, ","))
+				ids := utils.NormalizeLabels(strings.Split(idFilter, ","))
 				if len(ids) > 0 {
 					countArgs.IDs = ids
 				}
@@ -249,7 +243,7 @@ Examples:
 			filter.TitleSearch = titleSearch
 		}
 		if idFilter != "" {
-			ids := util.NormalizeLabels(strings.Split(idFilter, ","))
+			ids := utils.NormalizeLabels(strings.Split(idFilter, ","))
 			if len(ids) > 0 {
 				filter.IDs = ids
 			}

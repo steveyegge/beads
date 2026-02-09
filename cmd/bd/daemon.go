@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -25,6 +26,7 @@ import (
 
 var daemonCmd = &cobra.Command{
 	Use:     "daemon",
+	Aliases: []string{"daemons"},
 	GroupID: "sync",
 	Short:   "Manage background sync daemon",
 	Long: `Manage the background daemon that automatically syncs issues with git remote.
@@ -276,7 +278,7 @@ func init() {
 	daemonCmd.Flags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	daemonCmd.Flags().Bool("log-json", false, "Output logs in JSON format (structured logging)")
 	daemonCmd.Flags().Bool("federation", false, "Enable federation mode (runs dolt sql-server with remotesapi)")
-	daemonCmd.Flags().Int("federation-port", 3306, "MySQL port for federation mode dolt sql-server")
+	daemonCmd.Flags().Int("federation-port", 3307, "MySQL port for federation mode dolt sql-server")
 	daemonCmd.Flags().Int("remotesapi-port", 8080, "remotesapi port for peer-to-peer sync in federation mode")
 	daemonCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
 	rootCmd.AddCommand(daemonCmd)
@@ -303,6 +305,11 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	// Declare server and socketPath early so panic recovery can access them.
+	// They are assigned later once the socket directory and RPC server are ready.
+	var server *rpc.Server
+	var socketPath string
+
 	// Top-level panic recovery to ensure clean shutdown and diagnostics
 	defer func() {
 		if r := recover(); r != nil {
@@ -325,6 +332,26 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 				crashReport := fmt.Sprintf("Daemon crashed at %s\n\nPanic: %v\n\nStack trace:\n%s\n",
 					time.Now().Format(time.RFC3339), r, stackTrace)
 				log.Error("crash report", "report", crashReport)
+			}
+
+			// Stop RPC server (cleans up socket file) with timeout guard
+			if server != nil {
+				done := make(chan struct{})
+				go func() {
+					_ = server.Stop()
+					close(done)
+				}()
+				select {
+				case <-done:
+					log.Info("RPC server stopped during panic recovery")
+				case <-time.After(5 * time.Second):
+					log.Error("timeout waiting for RPC server stop during panic recovery")
+				}
+			}
+
+			// Clean up socket file if server.Stop() didn't handle it
+			if socketPath != "" {
+				_ = os.Remove(socketPath)
 			}
 
 			// Clean up PID file
@@ -354,9 +381,9 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	defer func() { _ = os.Remove(pidFile) }()
 
 	if localMode {
-		log.log("Daemon started in LOCAL mode (interval: %v, no git sync)", interval)
+		log.Info("Daemon started in LOCAL mode", "interval", interval)
 	} else {
-		log.log("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)", interval, autoCommit, autoPush)
+		log.Info("Daemon started", "interval", interval, "auto_commit", autoCommit, "auto_push", autoPush)
 	}
 
 	// Check for multiple .db files (ambiguity error)
@@ -415,7 +442,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 				errMsg += "Run 'bd init' to migrate legacy databases or manually remove old databases\n"
 				errMsg += "Or run 'bd doctor' for more diagnostics"
 
-				log.log(errMsg)
+				log.Info(errMsg)
 
 				// Write error to file so user can see it without checking logs
 				errFile := filepath.Join(beadsDir, "daemon-error")
@@ -529,9 +556,9 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		}
 	}
 
-	// Hydrate from multi-repo if configured (SQLite only)
-	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-		if results, err := sqliteStore.HydrateFromMultiRepo(ctx); err != nil {
+	// Hydrate from multi-repo if configured
+	if mrStore, ok := store.(storage.MultiRepoStorage); ok {
+		if results, err := mrStore.HydrateFromMultiRepo(ctx); err != nil {
 			log.Error("multi-repo hydration failed", "error", err)
 			return // Use return instead of os.Exit to allow defers to run
 		} else if results != nil {
@@ -545,7 +572,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	// Validate database fingerprint (skip in local mode - no git available)
 	if localMode {
 		log.Info("skipping fingerprint validation (local mode)")
-	} else if err := validateDatabaseFingerprint(ctx, store, &log); err != nil {
+	} else if err := validateDatabaseFingerprint(ctx, store, log); err != nil {
 		if os.Getenv("BEADS_IGNORE_REPO_MISMATCH") != "1" {
 			log.Error("repository fingerprint validation failed", "error", err)
 			// Write error to daemon-error file so user sees it instead of just "daemon took too long"
@@ -566,7 +593,9 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		warnIfSyncBranchMisconfigured(ctx, store, log)
 	}
 
-	// Validate schema version matches daemon version
+	// Validate schema version matches daemon version, with downgrade protection.
+	// Track the max version ever applied to prevent silent downgrades that could
+	// cause data loss if newer schemas added columns (gt-e3uiy).
 	versionCtx := context.Background()
 	dbVersion, err := store.GetMetadata(versionCtx, "bd_version")
 	if err != nil && err.Error() != "metadata key not found: bd_version" {
@@ -574,16 +603,50 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		return // Use return instead of os.Exit to allow defers to run
 	}
 
-	if dbVersion != "" && dbVersion != Version {
-		log.Warn("database schema version mismatch", "db_version", dbVersion, "daemon_version", Version)
-		log.Info("auto-upgrading database to daemon version")
+	// Read the max version ever applied to this database
+	maxVersion, _ := store.GetMetadata(versionCtx, "bd_version_max")
 
-		// Auto-upgrade database to daemon version
-		// The daemon operates on its own database, so it should always use its own version
+	if dbVersion != "" && dbVersion != Version {
+		cmp := doctor.CompareVersions(Version, dbVersion)
+		maxCmp := doctor.CompareVersions(Version, maxVersion)
+
+		if cmp < 0 {
+			// DOWNGRADE detected: daemon version is older than database version
+			log.Error("refusing to downgrade database schema",
+				"db_version", dbVersion,
+				"daemon_version", Version,
+				"max_version_ever", maxVersion,
+			)
+			log.Error("a newer daemon previously used this database; downgrading could cause data loss")
+			log.Error("upgrade the daemon to at least version " + dbVersion + ", or set BEADS_IGNORE_VERSION_MISMATCH=1 to force")
+
+			if os.Getenv("BEADS_IGNORE_VERSION_MISMATCH") != "1" {
+				return // Use return instead of os.Exit to allow defers to run
+			}
+			log.Warn("proceeding despite downgrade (BEADS_IGNORE_VERSION_MISMATCH=1)")
+		} else if maxVersion != "" && maxCmp < 0 {
+			// Current version is newer than db_version but older than max_version_ever.
+			// This means a newer version ran, then an even newer version ran, then
+			// this intermediate version is trying to start. Still a downgrade risk.
+			log.Error("refusing to downgrade database schema",
+				"db_version", dbVersion,
+				"daemon_version", Version,
+				"max_version_ever", maxVersion,
+			)
+			log.Error("a newer daemon (version " + maxVersion + ") previously used this database")
+			log.Error("upgrade the daemon to at least version " + maxVersion + ", or set BEADS_IGNORE_VERSION_MISMATCH=1 to force")
+
+			if os.Getenv("BEADS_IGNORE_VERSION_MISMATCH") != "1" {
+				return // Use return instead of os.Exit to allow defers to run
+			}
+			log.Warn("proceeding despite downgrade (BEADS_IGNORE_VERSION_MISMATCH=1)")
+		}
+
+		log.Info("auto-upgrading database schema version", "from", dbVersion, "to", Version)
+
 		if err := store.SetMetadata(versionCtx, "bd_version", Version); err != nil {
 			log.Error("failed to update database version", "error", err)
 
-			// Allow override via environment variable for emergencies
 			if os.Getenv("BEADS_IGNORE_VERSION_MISMATCH") != "1" {
 				return // Use return instead of os.Exit to allow defers to run
 			}
@@ -600,13 +663,20 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		}
 	}
 
+	// Update max version if this daemon is newer than any previously recorded max
+	if maxVersion == "" || doctor.CompareVersions(Version, maxVersion) > 0 {
+		if err := store.SetMetadata(versionCtx, "bd_version_max", Version); err != nil {
+			log.Warn("failed to update max version tracking", "error", err)
+		}
+	}
+
 	// Get workspace path (.beads directory) - beadsDir already defined above
 	// Get actual workspace root (parent of .beads)
 	workspacePath := filepath.Dir(beadsDir)
 	// Use short socket path to avoid Unix socket path length limits (macOS: 104 chars)
 	// Check BD_SOCKET env var first for custom socket path (e.g., test isolation,
 	// or filesystems that don't support sockets in .beads directory)
-	socketPath := os.Getenv("BD_SOCKET")
+	socketPath = os.Getenv("BD_SOCKET")
 	if socketPath == "" {
 		socketPath = rpc.ShortSocketPath(workspacePath)
 	}
@@ -618,7 +688,8 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	serverCtx, serverCancel := context.WithCancel(ctx)
 	defer serverCancel()
 
-	server, serverErrChan, err := startRPCServer(serverCtx, socketPath, store, workspacePath, daemonDBPath, log)
+	var serverErrChan chan error
+	server, serverErrChan, err = startRPCServer(serverCtx, socketPath, store, workspacePath, daemonDBPath, log)
 	if err != nil {
 		return
 	}
@@ -660,6 +731,38 @@ The daemon will now exit.`, strings.ToUpper(backend))
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	// Import JSONL on daemon startup to ensure metadata hash is current
+	// This prevents "refusing to export: JSONL content has changed" errors on first sync
+	if !localMode {
+		jsonlPath := findJSONLPath()
+		if jsonlPath != "" {
+			// Only import if JSONL exists and is newer/different
+			importCtx, importCancel := context.WithTimeout(ctx, 30*time.Second)
+			defer importCancel()
+
+			err := importToJSONLWithStore(importCtx, store, jsonlPath)
+
+			if err != nil {
+				log.Warn("initial import failed (continuing anyway)", "error", err)
+			} else {
+				// Update metadata hash to match imported JSONL
+				// This is necessary because importToJSONLWithStore doesn't update the hash
+				// (only exportToJSONLWithStore updates it via updateExportMetadata)
+				if currentHash, err := computeJSONLHash(jsonlPath); err == nil {
+					repoKey := getRepoKeyForPath(jsonlPath)
+					hashKey := "jsonl_content_hash"
+					if repoKey != "" {
+						hashKey += ":" + repoKey
+					}
+					if err := store.SetMetadata(importCtx, hashKey, currentHash); err != nil {
+						log.Warn("failed to update JSONL hash after import", "error", err)
+					}
+				}
+				log.Info("initial import complete")
+			}
+		}
+	}
 
 	// Create sync function based on mode
 	var doSync func()
@@ -734,6 +837,22 @@ The daemon will now exit.`, strings.ToUpper(backend))
 //
 // 4. Fallback: all default to true when sync-branch configured
 //
+// getDaemonYAMLConfig reads a daemon config key from YAML, checking both
+// hyphenated and underscored variants since either may be used in config.yaml.
+// Viper treats hyphens and underscores as distinct in YAML key names, so
+// "daemon.auto-sync" and "daemon.auto_sync" are different keys.
+func getDaemonYAMLConfig(key string) string {
+	if val := config.GetString(key); val != "" {
+		return val
+	}
+	// Try the alternate variant (hyphen ↔ underscore)
+	alt := strings.NewReplacer("-", "_").Replace(key)
+	if alt == key {
+		alt = strings.NewReplacer("_", "-").Replace(key)
+	}
+	return config.GetString(alt)
+}
+
 // loadYAMLDaemonSettings loads daemon auto-settings from YAML config and env vars only (no database).
 // This is safe to call from the parent process since it doesn't require database access.
 // Returns (autoCommit, autoPush, autoPull, hasSettings) where hasSettings indicates
@@ -743,14 +862,14 @@ func loadYAMLDaemonSettings() (autoCommit, autoPush, autoPull, hasSettings bool)
 	if envVal := os.Getenv("BEADS_AUTO_SYNC"); envVal == "true" || envVal == "1" {
 		return true, true, true, true
 	}
-	if yamlAutoSync := config.GetString("daemon.auto-sync"); yamlAutoSync == "true" {
+	if yamlAutoSync := getDaemonYAMLConfig("daemon.auto-sync"); yamlAutoSync == "true" {
 		return true, true, true, true
 	}
 
 	// Check individual settings (env var > YAML for each)
-	yamlAutoCommit := config.GetString("daemon.auto-commit")
-	yamlAutoPush := config.GetString("daemon.auto-push")
-	yamlAutoPull := config.GetString("daemon.auto-pull")
+	yamlAutoCommit := getDaemonYAMLConfig("daemon.auto-commit")
+	yamlAutoPush := getDaemonYAMLConfig("daemon.auto-push")
+	yamlAutoPull := getDaemonYAMLConfig("daemon.auto-pull")
 	envAutoCommit := os.Getenv("BEADS_AUTO_COMMIT")
 	envAutoPush := os.Getenv("BEADS_AUTO_PUSH")
 	envAutoPull := os.Getenv("BEADS_AUTO_PULL")
@@ -808,7 +927,7 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 	unifiedAutoSync := ""
 	if envVal := os.Getenv("BEADS_AUTO_SYNC"); envVal != "" {
 		unifiedAutoSync = envVal
-	} else if configVal := config.GetString("daemon.auto-sync"); configVal != "" {
+	} else if configVal := getDaemonYAMLConfig("daemon.auto-sync"); configVal != "" {
 		unifiedAutoSync = configVal
 	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-sync"); configVal != "" {
 		unifiedAutoSync = configVal
@@ -835,7 +954,7 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 			// Use the CLI flag value (already in autoPull)
 		} else if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
 			autoPull = envVal == "true" || envVal == "1"
-		} else if configVal := config.GetString("daemon.auto-pull"); configVal != "" {
+		} else if configVal := getDaemonYAMLConfig("daemon.auto-pull"); configVal != "" {
 			autoPull = configVal == "true"
 		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-pull"); configVal != "" {
 			autoPull = configVal == "true"
@@ -852,9 +971,9 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 
 	// Check YAML config for individual daemon settings (allows fine-grained control)
 	// Priority for each setting: CLI flag > env var > YAML config > database config
-	yamlAutoCommit := config.GetString("daemon.auto-commit")
-	yamlAutoPush := config.GetString("daemon.auto-push")
-	yamlAutoPull := config.GetString("daemon.auto-pull")
+	yamlAutoCommit := getDaemonYAMLConfig("daemon.auto-commit")
+	yamlAutoPush := getDaemonYAMLConfig("daemon.auto-push")
+	yamlAutoPull := getDaemonYAMLConfig("daemon.auto-pull")
 
 	// Check individual env vars (take precedence over YAML)
 	envAutoCommit := os.Getenv("BEADS_AUTO_COMMIT")

@@ -41,7 +41,8 @@ type Server struct {
 	metrics          *Metrics
 	// Connection limiting
 	maxConns      int
-	activeConns   int32 // atomic counter
+	activeConns   int32          // atomic counter (for metrics/diagnostics)
+	connWg        sync.WaitGroup // tracks in-flight connection goroutines for clean drain
 	connSemaphore chan struct{}
 	// Request timeout
 	requestTimeout time.Duration
@@ -49,9 +50,11 @@ type Server struct {
 	readyChan chan struct{}
 	// Auto-import single-flight guard
 	importInProgress atomic.Bool
+	// Pending shutdown: set by handleShutdown, checked by handleConnection after response write
+	pendingShutdown atomic.Bool
 	// Mutation events for event-driven daemon
-	mutationChan    chan MutationEvent
-	droppedEvents   atomic.Int64 // Counter for dropped mutation events
+	mutationChan  chan MutationEvent
+	droppedEvents atomic.Int64 // Counter for dropped mutation events
 	// Recent mutations buffer for polling (circular buffer, max 100 events)
 	recentMutations   []MutationEvent
 	recentMutationsMu sync.RWMutex
@@ -80,11 +83,11 @@ const (
 
 // MutationEvent represents a database mutation for event-driven sync
 type MutationEvent struct {
-	Type      string    // One of the Mutation* constants
-	IssueID   string    // e.g., "bd-42"
-	Title     string    // Issue title for display context (may be empty for some operations)
-	Assignee  string    // Issue assignee for display context (may be empty)
-	Actor     string    // Who performed the action (may differ from assignee)
+	Type      string // One of the Mutation* constants
+	IssueID   string // e.g., "bd-42"
+	Title     string // Issue title for display context (may be empty for some operations)
+	Assignee  string // Issue assignee for display context (may be empty)
+	Actor     string // Who performed the action (may differ from assignee)
 	Timestamp time.Time
 	// Optional metadata for richer events (used by status, bonded, etc.)
 	OldStatus string `json:"old_status,omitempty"` // Previous status (for status events)
@@ -174,9 +177,13 @@ func (s *Server) emitRichMutation(event MutationEvent) {
 	// Store in recent mutations buffer for polling
 	s.recentMutationsMu.Lock()
 	s.recentMutations = append(s.recentMutations, event)
-	// Keep buffer size limited (circular buffer behavior)
+	// Keep buffer size limited: copy active window to new slice so the old
+	// backing array can be GC'd (reslicing with [1:] leaks memory because
+	// dropped head elements remain reachable via the original backing array).
 	if len(s.recentMutations) > s.maxMutationBuffer {
-		s.recentMutations = s.recentMutations[1:]
+		newBuf := make([]MutationEvent, s.maxMutationBuffer)
+		copy(newBuf, s.recentMutations[len(s.recentMutations)-s.maxMutationBuffer:])
+		s.recentMutations = newBuf
 	}
 	s.recentMutationsMu.Unlock()
 }
@@ -255,7 +262,8 @@ func (s *Server) handleGetMoleculeProgress(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Get the molecule (parent issue)
 	molecule, err := store.GetIssue(ctx, args.MoleculeID)

@@ -12,6 +12,7 @@ linters:
     - misspell
     - unconvert
     - unparam
+    - sloglint
 
   settings:
     errcheck:
@@ -94,6 +95,21 @@ linters:
         linters:
           - unparam
         text: 'reimportConflicts|resolveConflictsByTimestamp'
+      # unparam: readOnly param kept for API symmetry with fix/sqlite_open.go
+      - path: 'cmd/bd/doctor/sqlite_open\.go'
+        linters:
+          - unparam
+        text: 'readOnly'
+      # unparam: childrenMap return computed for future parent-child display
+      - path: 'cmd/bd/list\.go'
+        linters:
+          - unparam
+        text: 'buildBlockingMaps.*childrenMap'
+      # unparam: truncateID maxLen kept for readability
+      - path: 'cmd/bd/migrate\.go'
+        linters:
+          - unparam
+        text: 'truncateID.*maxLen'
       # misspell: "cancelled" is intentional - matching GitHub API response values
       - path: 'cmd/bd/gate\.go'
         linters:

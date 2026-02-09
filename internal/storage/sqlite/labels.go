@@ -97,9 +97,12 @@ func (s *SQLiteStorage) GetLabels(ctx context.Context, issueID string) ([]string
 	for rows.Next() {
 		var label string
 		if err := rows.Scan(&label); err != nil {
-			return nil, err
+			return nil, wrapDBError("scan label", err)
 		}
 		labels = append(labels, label)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrapDBError("iterate labels", err)
 	}
 
 	return labels, nil
@@ -140,9 +143,12 @@ func (s *SQLiteStorage) GetLabelsForIssues(ctx context.Context, issueIDs []strin
 	for rows.Next() {
 		var issueID, label string
 		if err := rows.Scan(&issueID, &label); err != nil {
-			return nil, err
+			return nil, wrapDBError("scan label for issue", err)
 		}
 		result[issueID] = append(result[issueID], label)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrapDBError("iterate labels for issues", err)
 	}
 
 	return result, nil
@@ -170,12 +176,12 @@ func (s *SQLiteStorage) GetIssuesByLabel(ctx context.Context, label string) ([]*
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
+		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.spec_id, i.source_repo, i.close_reason,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
 		       i.hook_bead, i.role_bead, i.agent_state, i.last_activity, i.role_type, i.rig, i.mol_type,
-		       i.due_at, i.defer_until, i.spec_id, i.spec_changed_at
+		       i.due_at, i.defer_until, i.metadata, i.spec_id, i.spec_changed_at
 		FROM issues i
 		JOIN labels l ON i.id = l.issue_id
 		WHERE l.label = ?

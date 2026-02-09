@@ -39,6 +39,9 @@ func (m *mockStorage) GetIssueByExternalRef(ctx context.Context, externalRef str
 func (m *mockStorage) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	return nil
 }
+func (m *mockStorage) ClaimIssue(ctx context.Context, id string, actor string) error {
+	return nil
+}
 func (m *mockStorage) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	return nil
 }
@@ -123,6 +126,9 @@ func (m *mockStorage) AddComment(ctx context.Context, issueID, actor, comment st
 func (m *mockStorage) GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error) {
+	return nil, nil
+}
 func (m *mockStorage) AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
 	return nil, nil
 }
@@ -133,6 +139,9 @@ func (m *mockStorage) GetIssueComments(ctx context.Context, issueID string) ([]*
 	return nil, nil
 }
 func (m *mockStorage) GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error) {
+	return nil, nil
+}
+func (m *mockStorage) GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error) {
 	return nil, nil
 }
 func (m *mockStorage) GetStatistics(ctx context.Context) (*types.Statistics, error) {
@@ -191,6 +200,12 @@ func (m *mockStorage) SetMetadata(ctx context.Context, key, value string) error 
 }
 func (m *mockStorage) GetMetadata(ctx context.Context, key string) (string, error) {
 	return "", nil
+}
+func (m *mockStorage) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo string) (int, error) {
+	return 0, nil
+}
+func (m *mockStorage) ClearRepoMtime(ctx context.Context, repoPath string) error {
+	return nil
 }
 func (m *mockStorage) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
 	return nil
@@ -328,6 +343,7 @@ func TestInterfaceDocumentation(t *testing.T) {
 		_ = s.GetIssue
 		_ = s.GetIssueByExternalRef
 		_ = s.UpdateIssue
+		_ = s.ClaimIssue
 		_ = s.CloseIssue
 		_ = s.DeleteIssue
 		_ = s.SearchIssues
@@ -359,6 +375,7 @@ func TestInterfaceDocumentation(t *testing.T) {
 		// Verify event/comment operations
 		_ = s.AddComment
 		_ = s.GetEvents
+		_ = s.GetAllEventsSince
 		_ = s.AddIssueComment
 		_ = s.GetIssueComments
 		_ = s.GetCommentsForIssues
@@ -392,6 +409,10 @@ func TestInterfaceDocumentation(t *testing.T) {
 		// Verify metadata operations
 		_ = s.SetMetadata
 		_ = s.GetMetadata
+
+		// Verify multi-repo cleanup operations
+		_ = s.DeleteIssuesBySourceRepo
+		_ = s.ClearRepoMtime
 
 		// Verify prefix rename operations
 		_ = s.UpdateIssueID

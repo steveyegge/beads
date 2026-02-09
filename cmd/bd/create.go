@@ -140,6 +140,16 @@ var createCmd = &cobra.Command{
 			}
 		}
 
+		// Parse wisp type (TTL classification for ephemeral wisps)
+		wispTypeStr, _ := cmd.Flags().GetString("wisp-type")
+		var wispType types.WispType
+		if wispTypeStr != "" {
+			wispType = types.WispType(wispTypeStr)
+			if !wispType.IsValid() {
+				FatalError("invalid wisp-type %q (must be heartbeat, ping, patrol, gc_report, recovery, error, or escalation)", wispTypeStr)
+			}
+		}
+
 		// Agent-specific flags
 		agentRig, _ := cmd.Flags().GetString("agent-rig")
 
@@ -229,6 +239,7 @@ var createCmd = &cobra.Command{
 				Design:             design,
 				AcceptanceCriteria: acceptance,
 				Notes:              notes,
+				SpecID:             specID,
 				Status:             types.StatusOpen,
 				Priority:           priority,
 				IssueType:          types.IssueType(issueType).Normalize(),
@@ -238,6 +249,7 @@ var createCmd = &cobra.Command{
 				CreatedBy:          getActorWithGit(),
 				Owner:              getOwner(),
 				MolType:            molType,
+				WispType:           wispType,
 				Rig:                agentRig,
 				DueAt:              dueAt,
 				DeferUntil:         deferUntil,
@@ -307,7 +319,7 @@ var createCmd = &cobra.Command{
 								// Found a matching route - auto-route to that rig
 								rigName := routing.ExtractProjectFromPath(route.Path)
 								if rigName != "" {
-									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, specID, wisp)
 									return
 								}
 							}
@@ -327,7 +339,7 @@ var createCmd = &cobra.Command{
 			targetRig = prefixOverride
 		}
 		if targetRig != "" {
-			createInRig(cmd, targetRig, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+			createInRig(cmd, targetRig, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, specID, wisp)
 			return
 		}
 
@@ -522,9 +534,9 @@ var createCmd = &cobra.Command{
 				Design:             design,
 				AcceptanceCriteria: acceptance,
 				Notes:              notes,
+				SpecID:             specID,
 				Assignee:           assignee,
 				ExternalRef:        externalRef,
-				SpecID:             specID,
 				EstimatedMinutes:   estimatedMinutes,
 				Labels:             labels,
 				Dependencies:       deps,
@@ -534,6 +546,7 @@ var createCmd = &cobra.Command{
 				CreatedBy:          getActorWithGit(),
 				Owner:              getOwner(),
 				MolType:            string(molType),
+				WispType:           string(wispType),
 				Rig:                agentRig,
 				EventCategory:      eventCategory,
 				EventActor:         eventActor,
@@ -603,17 +616,18 @@ var createCmd = &cobra.Command{
 			Design:             design,
 			AcceptanceCriteria: acceptance,
 			Notes:              notes,
+			SpecID:             specID,
 			Status:             types.StatusOpen,
 			Priority:           priority,
 			IssueType:          types.IssueType(issueType).Normalize(),
 			Assignee:           assignee,
 			ExternalRef:        externalRefPtr,
-			SpecID:             specID,
 			EstimatedMinutes:   estimatedMinutes,
 			Ephemeral:          wisp,
 			CreatedBy:          getActorWithGit(),
 			Owner:              getOwner(),
 			MolType:            molType,
+			WispType:           wispType,
 			Rig:                agentRig,
 			EventKind:          eventCategory,
 			Actor:              eventActor,
@@ -822,15 +836,9 @@ var createCmd = &cobra.Command{
 
 // flushRoutedRepo ensures the target repo's JSONL is updated after routing an issue.
 // This is critical for multi-repo hydration to work correctly (bd-fix-routing).
-// Respects sync mode: skips JSONL export in dolt-native mode (bd-a9ka).
+// Always writes local JSONL as a safety net (even in dolt-native mode).
 func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 	ctx := context.Background()
-
-	// Check sync mode before JSONL export (bd-a9ka: dolt-native mode should skip JSONL)
-	if !ShouldExportJSONL(ctx, targetStore) {
-		debug.Logf("skipping JSONL flush for routed repo (dolt-native mode)")
-		return
-	}
 
 	// Expand the repo path and construct the .beads directory path
 	targetBeadsDir := routing.ExpandPath(repoPath)
@@ -846,7 +854,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 
 	// Construct paths for daemon socket and JSONL
 	beadsDir := filepath.Join(targetBeadsDir, ".beads")
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	socketPath := rpc.ShortSocketPath(targetBeadsDir)
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	debug.Logf("attempting to flush routed repo at %s", targetBeadsDir)
@@ -948,13 +956,13 @@ func init() {
 	registerPriorityFlag(createCmd, "2")
 	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|merge-request|molecule|gate|agent|role|rig|convoy|event); enhancement is alias for feature")
 	registerCommonIssueFlags(createCmd)
+	createCmd.Flags().String("spec-id", "", "Link to specification document")
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
 	createCmd.Flags().StringSlice("label", []string{}, "Alias for --labels")
 	_ = createCmd.Flags().MarkHidden("label") // Only fails if flag missing (caught in tests)
 	createCmd.Flags().String("id", "", "Explicit issue ID (e.g., 'bd-42' for partitioning)")
 	createCmd.Flags().String("parent", "", "Parent issue ID for hierarchical child (e.g., 'bd-a3f8e9')")
 	createCmd.Flags().StringSlice("deps", []string{}, "Dependencies in format 'type:id' or 'id' (e.g., 'discovered-from:bd-20,blocks:bd-15' or 'bd-20')")
-	createCmd.Flags().String("spec-id", "", "Spec identifier, path, or URL to link to this issue")
 	createCmd.Flags().String("spec", "", "Alias for --spec-id")
 	createCmd.Flags().String("waits-for", "", "Spawner issue ID to wait for (creates waits-for dependency for fanout gate)")
 	createCmd.Flags().String("waits-for-gate", "all-children", "Gate type: all-children (wait for all) or any-children (wait for first)")
@@ -965,6 +973,7 @@ func init() {
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
 	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")
+	createCmd.Flags().String("wisp-type", "", "Wisp type for TTL-based compaction: heartbeat, ping, patrol, gc_report, recovery, error, escalation")
 	createCmd.Flags().Bool("validate", false, "Validate description contains required sections for issue type")
 	// Agent-specific flags (only valid when --type=agent)
 	createCmd.Flags().String("agent-rig", "", "Agent's rig name (requires --type=agent)")
@@ -991,7 +1000,7 @@ func init() {
 
 // createInRig creates an issue in a different rig using --rig flag or auto-routing.
 // This bypasses the normal daemon/direct flow and directly creates in the target rig.
-func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp bool) {
+func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef, specID string, wisp bool) {
 	ctx := rootCtx
 
 	// Find the town-level beads directory (where routes.jsonl lives)
@@ -1028,14 +1037,6 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 	if externalRef != "" {
 		externalRefPtr = &externalRef
 	}
-	specID, _ := cmd.Flags().GetString("spec-id")
-	specAlias, _ := cmd.Flags().GetString("spec")
-	if specID == "" {
-		specID = specAlias
-	} else if specAlias != "" && specAlias != specID {
-		FatalError("--spec and --spec-id must match if both are provided")
-	}
-
 	// Extract event-specific flags (bd-xwvo fix)
 	eventCategory, _ := cmd.Flags().GetString("event-category")
 	eventActor, _ := cmd.Flags().GetString("event-actor")
@@ -1049,6 +1050,13 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		molType = types.MolType(molTypeStr)
 	}
 	agentRig, _ := cmd.Flags().GetString("agent-rig")
+
+	// Extract wisp type (TTL classification for ephemeral wisps)
+	wispTypeStr, _ := cmd.Flags().GetString("wisp-type")
+	var wispType types.WispType
+	if wispTypeStr != "" {
+		wispType = types.WispType(wispTypeStr)
+	}
 
 	// Extract time-based scheduling flags (bd-xwvo fix)
 	var dueAt *time.Time
@@ -1079,12 +1087,12 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		Design:             design,
 		AcceptanceCriteria: acceptance,
 		Notes:              notes,
+		SpecID:             specID,
 		Status:             types.StatusOpen,
 		Priority:           priority,
 		IssueType:          types.IssueType(issueType).Normalize(),
 		Assignee:           assignee,
 		ExternalRef:        externalRefPtr,
-		SpecID:             specID,
 		Ephemeral:          wisp,
 		CreatedBy:          getActorWithGit(),
 		Owner:              getOwner(),
@@ -1094,8 +1102,9 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		Target:    eventTarget,
 		Payload:   eventPayload,
 		// Molecule/agent fields (bd-xwvo fix)
-		MolType: molType,
-		Rig:     agentRig,
+		MolType:  molType,
+		WispType: wispType,
+		Rig:      agentRig,
 		// Time scheduling fields (bd-xwvo fix)
 		DueAt:      dueAt,
 		DeferUntil: deferUntil,

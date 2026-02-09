@@ -358,7 +358,7 @@ database: dolt           # sqlite | dolt
 
 # Dolt-specific settings
 dolt:
-  # Auto-commit Dolt history after writes (default: on)
+  # Auto-commit Dolt history after writes (default: on for embedded, off for server)
   auto-commit: on        # on | off
 
   # Server mode settings (when mode: server)
@@ -377,10 +377,14 @@ sync:
 
 | Variable | Purpose |
 |----------|---------|
-| `BD_BACKEND` | Override backend (sqlite/dolt) |
-| `BD_DOLT_MODE` | Override mode (embedded/server) |
 | `BEADS_DOLT_PASSWORD` | Server mode password |
+| `BEADS_DOLT_SERVER_MODE` | Enable server mode (set to "1") |
+| `BEADS_DOLT_SERVER_HOST` | Server host (default: 127.0.0.1) |
+| `BEADS_DOLT_SERVER_PORT` | Server port (default: 3307) |
 | `BD_DOLT_AUTO_COMMIT` | Override auto-commit setting |
+
+**Note**: Backend selection (`sqlite` vs `dolt`) is controlled by `metadata.json`,
+not environment variables. This prevents accidental data fragmentation across backends.
 
 ## Dolt Version Control
 
@@ -399,13 +403,17 @@ bd vc commit -m "Checkpoint before refactor"
 
 ### Auto-Commit Behavior
 
-By default, each `bd` write command creates a Dolt commit:
+In **embedded mode** (default), each `bd` write command creates a Dolt commit:
 
 ```bash
 bd create "New issue"    # Creates issue + Dolt commit
 ```
 
-Disable for batch operations:
+In **server mode**, auto-commit defaults to OFF because the server manages its
+own transaction lifecycle. Firing `DOLT_COMMIT` after every write under
+concurrent load causes 'database is read only' errors.
+
+Override for batch operations (embedded) or explicit commits (server):
 
 ```bash
 bd --dolt-auto-commit off create "Issue 1"

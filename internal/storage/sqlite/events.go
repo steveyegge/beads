@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -108,6 +109,54 @@ func (s *SQLiteStorage) GetEvents(ctx context.Context, issueID string, limit int
 		events = append(events, &event)
 	}
 
+	return events, nil
+}
+
+// GetAllEventsSince returns all events with ID greater than sinceID, ordered by ID ascending.
+func (s *SQLiteStorage) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error) {
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
+		FROM events
+		WHERE id > ?
+		ORDER BY id ASC
+	`, sinceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get events since %d: %w", sinceID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var events []*types.Event
+	for rows.Next() {
+		var event types.Event
+		var oldValue, newValue, comment sql.NullString
+
+		err := rows.Scan(
+			&event.ID, &event.IssueID, &event.EventType, &event.Actor,
+			&oldValue, &newValue, &comment, &event.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan event: %w", err)
+		}
+
+		if oldValue.Valid {
+			event.OldValue = &oldValue.String
+		}
+		if newValue.Valid {
+			event.NewValue = &newValue.String
+		}
+		if comment.Valid {
+			event.Comment = &comment.String
+		}
+
+		events = append(events, &event)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, wrapDBError("iterate events", err)
+	}
 	return events, nil
 }
 
@@ -230,7 +279,7 @@ func (s *SQLiteStorage) GetMoleculeProgress(ctx context.Context, moleculeID stri
 	var title string
 	err := s.db.QueryRowContext(ctx, `SELECT title FROM issues WHERE id = ?`, moleculeID).Scan(&title)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("molecule not found: %s", moleculeID)
 		}
 		return nil, fmt.Errorf("failed to get molecule: %w", err)

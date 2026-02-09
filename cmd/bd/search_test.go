@@ -23,6 +23,7 @@ import (
 // - The error from Help() is rare (typically I/O errors writing to stderr)
 // - Since we're already in an error state, ignoring Help() errors is acceptable
 func TestSearchCommand_HelpErrorHandling(t *testing.T) {
+	t.Parallel()
 	// Create a test command similar to searchCmd
 	cmd := &cobra.Command{
 		Use:   "search [query]",
@@ -77,6 +78,7 @@ func TestSearchCommand_HelpErrorHandling(t *testing.T) {
 
 // TestSearchCommand_HelpSuppression verifies that #nosec comment is appropriate
 func TestSearchCommand_HelpSuppression(t *testing.T) {
+	t.Parallel()
 	// This test documents why ignoring cmd.Help() error is safe:
 	//
 	// 1. Help() is called in an error path (missing required argument)
@@ -118,6 +120,7 @@ func (fw *failingWriter) Write(p []byte) (n int, err error) {
 
 // TestSearchCommand_MissingQueryShowsHelp verifies the intended behavior
 func TestSearchCommand_MissingQueryShowsHelp(t *testing.T) {
+	t.Parallel()
 	// This test verifies that when query is missing, we:
 	// 1. Print error message to stderr
 	// 2. Show help (even if it fails, we tried)
@@ -165,6 +168,7 @@ func TestSearchCommand_MissingQueryShowsHelp(t *testing.T) {
 
 // TestSearchWithDateAndPriorityFilters tests bd search with date range and priority filters
 func TestSearchWithDateAndPriorityFilters(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -299,9 +303,9 @@ func TestSearchWithDateAndPriorityFilters(t *testing.T) {
 		minPrio := 0
 		maxPrio := 2
 		results, err := s.SearchIssues(ctx, "auth", types.IssueFilter{
-			PriorityMin:   &minPrio,
-			PriorityMax:   &maxPrio,
-			CreatedAfter:  &twoDaysAgo,
+			PriorityMin:  &minPrio,
+			PriorityMax:  &maxPrio,
+			CreatedAfter: &twoDaysAgo,
 		})
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)

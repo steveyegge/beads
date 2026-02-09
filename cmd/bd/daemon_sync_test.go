@@ -5,14 +5,22 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestExportToJSONLWithStore(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
@@ -77,6 +85,12 @@ func TestExportToJSONLWithStore(t *testing.T) {
 }
 
 func TestExportToJSONLWithStore_EmptyDatabase(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
@@ -172,7 +186,66 @@ func TestImportToJSONLWithStore(t *testing.T) {
 	}
 }
 
+func TestImportToJSONLWithStore_LargeDescription(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
+
+	store, err := sqlite.New(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(jsonlPath), 0755); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
+	}
+
+	// Create an issue with a description larger than the default 64KB scanner buffer
+	largeDesc := strings.Repeat("x", 100*1024) // 100KB
+	issue := &types.Issue{
+		ID:          "test-large",
+		Title:       "Large Issue",
+		Description: largeDesc,
+		IssueType:   types.TypeBug,
+		Priority:    1,
+		Status:      types.StatusOpen,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	data, _ := json.Marshal(issue)
+	if err := os.WriteFile(jsonlPath, append(data, '\n'), 0644); err != nil {
+		t.Fatalf("failed to write JSONL: %v", err)
+	}
+
+	if err := importToJSONLWithStore(ctx, store, jsonlPath); err != nil {
+		t.Fatalf("importToJSONLWithStore failed on large JSONL line: %v", err)
+	}
+
+	imported, err := store.GetIssue(ctx, "test-large")
+	if err != nil {
+		t.Fatalf("failed to get imported issue: %v", err)
+	}
+
+	if len(imported.Description) != 100*1024 {
+		t.Errorf("expected description length %d, got %d", 100*1024, len(imported.Description))
+	}
+}
+
 func TestExportImportRoundTrip(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
@@ -294,6 +367,12 @@ func TestExportImportRoundTrip(t *testing.T) {
 
 // TestExportUpdatesMetadata verifies that export updates last_import_hash metadata (bd-ymj fix)
 func TestExportUpdatesMetadata(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
@@ -367,6 +446,12 @@ func TestExportUpdatesMetadata(t *testing.T) {
 }
 
 func TestUpdateExportMetadataMultiRepo(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath1 := filepath.Join(tmpDir, "repo1", ".beads", "issues.jsonl")
@@ -475,6 +560,12 @@ func TestUpdateExportMetadataMultiRepo(t *testing.T) {
 // TestExportWithMultiRepoConfigUpdatesAllMetadata verifies that export with multi-repo
 // config correctly updates metadata for ALL JSONL files with proper keySuffix (bd-ar2.8)
 func TestExportWithMultiRepoConfigUpdatesAllMetadata(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	primaryDir := filepath.Join(tmpDir, "primary")
 	additionalDir := filepath.Join(tmpDir, "additional")
@@ -706,10 +797,16 @@ func TestUpdateExportMetadataInvalidKeySuffix(t *testing.T) {
 // 4. But sync branch worktree JSONL showed status:"open" (bug)
 // 5. Other clones would not see the deletion
 func TestExportToJSONLWithStore_IncludesTombstones(t *testing.T) {
-	t.Parallel()
+	// Not parallel: mutates global config state for isolation.
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
+
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
 
 	// Create storage
 	store, err := sqlite.New(context.Background(), dbPath)

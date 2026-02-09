@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -11,9 +12,9 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// GetReadyWork returns issues with no open blockers
-// By default, shows both 'open' and 'in_progress' issues so epics/tasks
-// ready to close are visible.
+// GetReadyWork returns issues with no open blockers.
+// If filter.Status is empty, shows both 'open' and 'in_progress' issues.
+// If filter.Status is set (e.g., "open"), only shows that status.
 // Excludes pinned issues which are persistent anchors, not actionable work.
 func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
 	whereClauses := []string{
@@ -100,6 +101,20 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		}
 	}
 
+	// Label pattern filtering (glob): issue must have at least one label matching the pattern
+	if filter.LabelPattern != "" {
+		whereClauses = append(whereClauses, `
+			EXISTS (
+				SELECT 1 FROM labels
+				WHERE issue_id = i.id AND label GLOB ?
+			)
+		`)
+		args = append(args, filter.LabelPattern)
+	}
+
+	// Label regex filtering: done at application level after query
+	// SQLite doesn't have built-in regex support without extensions
+
 	// Parent filtering: filter to all descendants of a root issue (epic/molecule)
 	// Uses recursive CTE to find all descendants via parent-child dependencies
 	if filter.ParentID != nil {
@@ -123,6 +138,12 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 	if filter.MolType != nil {
 		whereClauses = append(whereClauses, "i.mol_type = ?")
 		args = append(args, string(*filter.MolType))
+	}
+
+	// Wisp type filtering (TTL-based compaction classification)
+	if filter.WispType != nil {
+		whereClauses = append(whereClauses, "i.wisp_type = ?")
+		args = append(args, string(*filter.WispType))
 	}
 
 	// Time-based deferral filtering (GH#820)
@@ -164,12 +185,12 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 	query := fmt.Sprintf(`
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
+		i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.spec_id, i.source_repo, i.close_reason,
 		i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		i.await_type, i.await_id, i.timeout_ns, i.waiters,
 		i.hook_bead, i.role_bead, i.agent_state, i.last_activity, i.role_type, i.rig, i.mol_type,
-		i.due_at, i.defer_until, i.spec_id, i.spec_changed_at
+		i.due_at, i.defer_until, i.metadata, i.spec_id, i.spec_changed_at
 		FROM issues i
 		WHERE %s
 		AND NOT EXISTS (
@@ -199,7 +220,39 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		}
 	}
 
+	// Apply label regex filtering at application level
+	// SQLite doesn't have built-in regex support without extensions
+	if filter.LabelRegex != "" {
+		issues, err = s.filterReadyByLabelRegex(issues, filter.LabelRegex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to filter by label regex: %w", err)
+		}
+	}
+
 	return issues, nil
+}
+
+// filterReadyByLabelRegex filters issues to only include those with at least one label
+// matching the given regex pattern. Used by GetReadyWork.
+func (s *SQLiteStorage) filterReadyByLabelRegex(issues []*types.Issue, pattern string) ([]*types.Issue, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
+	}
+
+	// Filter issues that have at least one label matching the regex
+	// Labels are already populated by scanReadyIssues
+	var filtered []*types.Issue
+	for _, issue := range issues {
+		for _, label := range issue.Labels {
+			if re.MatchString(label) {
+				filtered = append(filtered, issue)
+				break // Only need one match
+			}
+		}
+	}
+
+	return filtered, nil
 }
 
 // filterByExternalDeps removes issues that have unsatisfied external dependencies.
@@ -244,7 +297,7 @@ func (s *SQLiteStorage) filterByExternalDeps(ctx context.Context, issues []*type
 	for ref := range uniqueRefs {
 		refList = append(refList, ref)
 	}
-	statuses := CheckExternalDeps(ctx, refList)
+	statuses := checkExternalDeps(ctx, refList)
 
 	// Build set of blocked issue IDs using batch results
 	blockedIssues := make(map[string]bool)
@@ -674,7 +727,7 @@ func filterBlockedByExternalDeps(ctx context.Context, blocked []*types.BlockedIs
 	for ref := range externalRefs {
 		refList = append(refList, ref)
 	}
-	statuses := CheckExternalDeps(ctx, refList)
+	statuses := checkExternalDeps(ctx, refList)
 
 	// Build set of satisfied refs
 	satisfiedRefs := make(map[string]bool)
@@ -778,12 +831,12 @@ func (s *SQLiteStorage) GetNewlyUnblockedByClose(ctx context.Context, closedIssu
 	query := `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
+		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.spec_id, i.source_repo, i.close_reason,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
 		       i.hook_bead, i.role_bead, i.agent_state, i.last_activity, i.role_type, i.rig, i.mol_type,
-		       i.due_at, i.defer_until, i.spec_id, i.spec_changed_at
+		       i.due_at, i.defer_until, i.metadata, i.spec_id, i.spec_changed_at
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		WHERE d.depends_on_id = ?
@@ -834,20 +887,20 @@ func buildOrderByClause(policy types.SortPolicy) string {
 	}
 }
 
-// ExcludeIDPatternsConfigKey is the config key for ID exclusion patterns in GetReadyWork
-const ExcludeIDPatternsConfigKey = "ready.exclude_id_patterns"
+// excludeIDPatternsConfigKey is the config key for ID exclusion patterns in GetReadyWork
+const excludeIDPatternsConfigKey = "ready.exclude_id_patterns"
 
-// DefaultExcludeIDPatterns are the default patterns to exclude from GetReadyWork
+// defaultExcludeIDPatterns are the default patterns to exclude from GetReadyWork
 // These exclude molecule steps (-mol-) and wisps (-wisp-) which are internal workflow items
-var DefaultExcludeIDPatterns = []string{"-mol-", "-wisp-"}
+var defaultExcludeIDPatterns = []string{"-mol-", "-wisp-"}
 
 // getExcludeIDPatterns returns the ID patterns to exclude from GetReadyWork.
-// Reads from ready.exclude_id_patterns config, defaults to DefaultExcludeIDPatterns.
+// Reads from ready.exclude_id_patterns config, defaults to defaultExcludeIDPatterns.
 // Config format: comma-separated patterns, e.g., "-mol-,-wisp-"
 func (s *SQLiteStorage) getExcludeIDPatterns(ctx context.Context) []string {
-	value, err := s.GetConfig(ctx, ExcludeIDPatternsConfigKey)
+	value, err := s.GetConfig(ctx, excludeIDPatternsConfigKey)
 	if err != nil || value == "" {
-		return DefaultExcludeIDPatterns
+		return defaultExcludeIDPatterns
 	}
 
 	// Parse comma-separated patterns
@@ -861,7 +914,7 @@ func (s *SQLiteStorage) getExcludeIDPatterns(ctx context.Context) []string {
 	}
 
 	if len(patterns) == 0 {
-		return DefaultExcludeIDPatterns
+		return defaultExcludeIDPatterns
 	}
 	return patterns
 }

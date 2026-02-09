@@ -49,11 +49,11 @@ Examples:
 func runMolReadyGated(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
-	// mol ready --gated requires direct store access
+	// --gated mode requires direct store access
 	if store == nil {
 		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: mol ready --gated requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol ready --gated\n")
+			fmt.Fprintf(os.Stderr, "Error: bd ready --gated requires direct database access\n")
+			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon ready --gated\n")
 		} else {
 			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
 		}

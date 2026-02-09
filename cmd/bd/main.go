@@ -219,7 +219,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&noDb, "no-db", false, "Use no-db mode: load from JSONL, no SQLite")
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
-	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on). Default from config key dolt.auto-commit")
+	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on). Default: on for embedded, off for server mode. Override via config key dolt.auto-commit")
 	rootCmd.PersistentFlags().DurationVar(&lockTimeout, "lock-timeout", 30*time.Second, "SQLite busy timeout (0 = fail immediately if locked)")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
@@ -274,6 +274,12 @@ var rootCmd = &cobra.Command{
 		// Apply verbosity flags early (before any output)
 		debug.SetVerbose(verboseFlag)
 		debug.SetQuiet(quietFlag)
+
+		// Block dangerous env var overrides that could cause data fragmentation (bd-hevyw).
+		if err := checkBlockedEnvVars(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 		// Apply viper configuration if flags weren't explicitly set
 		// Priority: flags > viper (config file + env vars) > defaults
@@ -421,7 +427,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Skip for root command with no subcommand (just shows help)
-		if cmd.Parent() == nil && cmdName == "bd" {
+		if cmd.Parent() == nil && cmdName == cmd.Use {
 			return
 		}
 
@@ -436,6 +442,11 @@ var rootCmd = &cobra.Command{
 
 		// Protect forks from accidentally committing upstream issue database
 		ensureForkProtection()
+
+		// Show migration hint if SQLite + prefer-dolt configured (rate-limited, non-blocking)
+		if hintDir := beads.FindBeadsDir(); hintDir != "" {
+			maybeShowMigrationHint(hintDir)
+		}
 
 		// Performance profiling setup
 		// When --profile is enabled, force direct mode to capture actual database operations
@@ -624,6 +635,12 @@ var rootCmd = &cobra.Command{
 		// repair daemon/DB issues, so attempting to connect to (or auto-start) a daemon
 		// can add noise and timeouts.
 		if cmd.Name() == "doctor" {
+			noDaemon = true
+		}
+
+		// Restore should always run in direct mode. It performs git checkouts to read
+		// historical issue data, which could conflict with daemon operations.
+		if cmd.Name() == "restore" {
 			noDaemon = true
 		}
 
@@ -831,7 +848,7 @@ var rootCmd = &cobra.Command{
 		// Do this AFTER daemon check but BEFORE opening database for main operation
 		// This ensures: 1) no daemon has DB open, 2) we don't open DB twice
 		if !useReadOnly {
-			autoMigrateOnVersionBump(dbPath)
+			autoMigrateOnVersionBump(filepath.Dir(dbPath))
 		}
 
 		// Fall back to direct storage access
@@ -849,6 +866,15 @@ var rootCmd = &cobra.Command{
 		}
 
 		if backend == configfile.BackendDolt {
+			// Set advisory lock timeout for dolt embedded mode.
+			// Reads get a shorter timeout (shared lock, less contention expected).
+			// Writes get a longer timeout (exclusive lock, may need to wait for readers).
+			if useReadOnly {
+				opts.OpenTimeout = 5 * time.Second
+			} else {
+				opts.OpenTimeout = 15 * time.Second
+			}
+
 			// For Dolt, use the dolt subdirectory
 			doltPath := filepath.Join(beadsDir, "dolt")
 
@@ -859,7 +885,21 @@ var rootCmd = &cobra.Command{
 				opts.ServerHost = cfg.GetDoltServerHost()
 				opts.ServerPort = cfg.GetDoltServerPort()
 				if cfg.Database != "" {
-					opts.Database = cfg.Database
+					opts.Database = cfg.GetDoltDatabase()
+				}
+			}
+
+			// Apply mode-aware default for dolt-auto-commit if neither flag nor
+			// config explicitly set it. Server mode defaults to OFF because the
+			// server handles commits via its own transaction lifecycle; firing
+			// DOLT_COMMIT after every write under concurrent load causes
+			// 'database is read only' errors. Embedded mode defaults to ON so
+			// each write is durably committed.
+			if strings.TrimSpace(doltAutoCommit) == "" {
+				if opts.ServerMode {
+					doltAutoCommit = string(doltAutoCommitOff)
+				} else {
+					doltAutoCommit = string(doltAutoCommitOn)
 				}
 			}
 
@@ -1047,6 +1087,7 @@ var rootCmd = &cobra.Command{
 		if store != nil {
 			_ = store.Close()
 		}
+
 		if profileFile != nil {
 			pprof.StopCPUProfile()
 			_ = profileFile.Close()
@@ -1063,7 +1104,30 @@ var rootCmd = &cobra.Command{
 	},
 }
 
+// blockedEnvVars lists environment variables that must not be set because they
+// could silently override the storage backend via viper's AutomaticEnv, causing
+// data fragmentation between sqlite and dolt (bd-hevyw).
+var blockedEnvVars = []string{"BD_BACKEND", "BD_DATABASE_BACKEND"}
+
+// checkBlockedEnvVars returns an error if any blocked env vars are set.
+func checkBlockedEnvVars() error {
+	for _, name := range blockedEnvVars {
+		if os.Getenv(name) != "" {
+			return fmt.Errorf("%s env var is not supported and has been removed to prevent data fragmentation.\n"+
+				"The storage backend is set in .beads/metadata.json. To change it, use: bd migrate dolt (or bd migrate sqlite)", name)
+		}
+	}
+	return nil
+}
+
 func main() {
+	// BD_NAME overrides the binary name in help text (e.g. BD_NAME=ops makes
+	// "ops --help" show "ops" instead of "bd"). Useful for multi-instance
+	// setups where wrapper scripts set BEADS_DIR for routing.
+	if name := os.Getenv("BD_NAME"); name != "" {
+		rootCmd.Use = name
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

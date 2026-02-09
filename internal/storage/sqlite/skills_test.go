@@ -475,7 +475,7 @@ func TestDeleteSkill_NotFound(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for deleting nonexistent skill")
 	}
-	if !IsNotFound(err) {
+	if !isNotFound(err) {
 		t.Errorf("expected ErrNotFound, got: %v", err)
 	}
 }

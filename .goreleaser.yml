@@ -7,6 +7,9 @@ before:
   hooks:
     # Ensure dependencies are up to date
     - go mod tidy
+    # Generate Windows PE version info resources (.syso files)
+    # Reduces antivirus false positives by embedding legitimate metadata
+    - ./scripts/gen-winres.sh
 
 builds:
   - id: bd-linux-amd64
@@ -93,9 +96,7 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=1
-      - CC=x86_64-w64-mingw32-gcc
-      - CXX=x86_64-w64-mingw32-g++
+      - CGO_ENABLED=0
     goos:
       - windows
     goarch:

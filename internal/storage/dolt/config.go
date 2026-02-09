@@ -1,3 +1,4 @@
+//go:build cgo
 package dolt
 
 import (
@@ -11,8 +12,8 @@ import (
 
 // SetConfig sets a configuration value
 func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO config (` + "`key`" + `, value) VALUES (?, ?)
+	_, err := s.execContext(ctx, `
+		INSERT INTO config (`+"`key`"+`, value) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value)
 	`, key, value)
 	if err != nil {
@@ -24,8 +25,14 @@ func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
 // GetConfig retrieves a configuration value
 func (s *DoltStore) GetConfig(ctx context.Context, key string) (string, error) {
 	var value string
-	err := s.db.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", key).Scan(&value)
-	if err == sql.ErrNoRows {
+	var scanErr error
+
+	err := s.withRetry(ctx, func() error {
+		scanErr = s.db.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", key).Scan(&value)
+		return scanErr
+	})
+
+	if err == sql.ErrNoRows || scanErr == sql.ErrNoRows {
 		return "", nil
 	}
 	if err != nil {
@@ -36,7 +43,7 @@ func (s *DoltStore) GetConfig(ctx context.Context, key string) (string, error) {
 
 // GetAllConfig retrieves all configuration values
 func (s *DoltStore) GetAllConfig(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT `key`, value FROM config")
+	rows, err := s.queryContext(ctx, "SELECT `key`, value FROM config")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all config: %w", err)
 	}
@@ -55,7 +62,7 @@ func (s *DoltStore) GetAllConfig(ctx context.Context) (map[string]string, error)
 
 // DeleteConfig removes a configuration value
 func (s *DoltStore) DeleteConfig(ctx context.Context, key string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM config WHERE `key` = ?", key)
+	_, err := s.execContext(ctx, "DELETE FROM config WHERE `key` = ?", key)
 	if err != nil {
 		return fmt.Errorf("failed to delete config %s: %w", key, err)
 	}
@@ -64,8 +71,8 @@ func (s *DoltStore) DeleteConfig(ctx context.Context, key string) error {
 
 // SetMetadata sets a metadata value
 func (s *DoltStore) SetMetadata(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO metadata (` + "`key`" + `, value) VALUES (?, ?)
+	_, err := s.execContext(ctx, `
+		INSERT INTO metadata (`+"`key`"+`, value) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value)
 	`, key, value)
 	if err != nil {

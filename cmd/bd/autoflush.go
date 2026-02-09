@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/steveyegge/beads/internal/beads"
@@ -24,6 +25,9 @@ import (
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
+
+// tempFileCounter provides unique IDs for concurrent temp file creation
+var tempFileCounter atomic.Uint64
 
 // outputJSON outputs data as pretty-printed JSON
 func outputJSON(v interface{}) {
@@ -202,6 +206,10 @@ func detectPrefixFromJSONL(jsonlData []byte) string {
 // Hash-based comparison is git-proof (mtime comparison fails after git pull).
 // Uses collision detection to prevent silently overwriting local changes.
 // Defense-in-depth check to respect --no-auto-import flag.
+//
+// Thread-safety: Acquires a shared JSONL lock to prevent reading while another
+// process is writing. This fixes the race condition where auto-import could read
+// a partially-written JSONL file during export (SECURITY_AUDIT.md Issue #3).
 func autoImportIfNewer() {
 	// Defense-in-depth: always check noAutoImport flag directly
 	// This ensures auto-import is disabled even if caller forgot to check autoImportEnabled
@@ -210,8 +218,37 @@ func autoImportIfNewer() {
 		return
 	}
 
+	// Skip JSONL import in dolt-native mode — there is no JSONL to import.
+	// Without this guard, the store.GetMetadata call below can panic with a nil
+	// pointer when the Dolt backend connection is in a degraded state.
+	if store != nil && !ShouldImportJSONL(rootCtx, store) {
+		debug.Logf("auto-import skipped (dolt-native mode, no JSONL)")
+		return
+	}
+
 	// Find JSONL path
 	jsonlPath := findJSONLPath()
+	if jsonlPath == "" {
+		debug.Logf("auto-import skipped, JSONL path not found")
+		return
+	}
+
+	beadsDir := filepath.Dir(jsonlPath)
+
+	// Acquire shared lock before reading JSONL to prevent reading during write
+	// This fixes the race condition where auto-import could read partially-written JSONL
+	lock := newJSONLLock(beadsDir)
+	locked, err := lock.TryAcquireShared()
+	if err != nil {
+		debug.Logf("auto-import skipped, failed to acquire shared lock: %v", err)
+		return
+	}
+	if !locked {
+		// Another process is writing - skip auto-import, will retry on next command
+		debug.Logf("auto-import skipped, JSONL lock held by another process (export in progress)")
+		return
+	}
+	defer func() { _ = lock.Release() }()
 
 	// Read JSONL file
 	jsonlData, err := os.ReadFile(jsonlPath)
@@ -552,8 +589,10 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 		return cmp.Compare(a.ID, b.ID)
 	})
 
-	// Create temp file with PID suffix to avoid collisions
-	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
+	// Create temp file with unique suffix to avoid collisions between concurrent writers
+	// Uses PID + atomic counter to ensure uniqueness within and across processes
+	tempID := tempFileCounter.Add(1)
+	tempPath := fmt.Sprintf("%s.tmp.%d.%d", jsonlPath, os.Getpid(), tempID)
 	f, err := os.Create(tempPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
@@ -848,6 +887,26 @@ func flushToJSONLWithState(state flushState) {
 	}
 
 	jsonlPath := findJSONLPath()
+	if jsonlPath == "" {
+		return
+	}
+
+	// Acquire exclusive JSONL lock before reading/writing
+	// This prevents race conditions between concurrent flush operations and imports
+	// (SECURITY_AUDIT.md Issue #1, fixes TestExportImportRace_ConcurrentOperations)
+	beadsDir := filepath.Dir(jsonlPath)
+	lock := newJSONLLock(beadsDir)
+	locked, err := lock.TryAcquireExclusive()
+	if err != nil {
+		debug.Logf("auto-flush: failed to acquire exclusive lock: %v", err)
+		return
+	}
+	if !locked {
+		// Another process is writing - skip this flush, will retry later
+		debug.Logf("auto-flush: JSONL lock held by another process, skipping")
+		return
+	}
+	defer func() { _ = lock.Release() }()
 
 	// Double-check store is still active before accessing
 	storeMutex.Lock()
@@ -929,6 +988,14 @@ func flushToJSONLWithState(state flushState) {
 	// Update metadata (hashes, timestamps)
 	updateFlushExportMetadata(ctx, store, jsonlPath)
 
+	// Export events to JSONL (non-fatal, opt-in via config)
+	if config.GetBool("events-export") {
+		eventsPath := filepath.Join(filepath.Dir(jsonlPath), "events.jsonl")
+		if err := exportEventsToJSONL(ctx, store, eventsPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: events export failed: %v\n", err)
+		}
+	}
+
 	recordFlushSuccess()
 }
 
@@ -936,7 +1003,7 @@ func flushToJSONLWithState(state flushState) {
 // For full export, returns all issue IDs. For incremental, returns only dirty IDs.
 func getIssuesToExport(ctx context.Context, fullExport bool) ([]string, error) {
 	if fullExport {
-		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 		if err != nil {
 			return nil, fmt.Errorf("failed to get all issues: %w", err)
 		}

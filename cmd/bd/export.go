@@ -16,7 +16,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/util"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -137,11 +137,13 @@ Examples:
 		output, _ := cmd.Flags().GetString("output")
 		statusFilter, _ := cmd.Flags().GetString("status")
 		force, _ := cmd.Flags().GetBool("force")
+		eventsFlag, _ := cmd.Flags().GetBool("events")
+		eventsReset, _ := cmd.Flags().GetBool("events-reset")
 
 		// Additional filter flags
 		assignee, _ := cmd.Flags().GetString("assignee")
 		issueType, _ := cmd.Flags().GetString("type")
-		issueType = util.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
+		issueType = utils.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		priorityMinStr, _ := cmd.Flags().GetString("priority-min")
@@ -195,9 +197,35 @@ Examples:
 			defer func() { _ = store.Close() }()
 		}
 
+		requireFreshDB(rootCtx)
+
+		// Handle --events and --events-reset flags
+		if eventsFlag || eventsReset {
+			eventsPath := filepath.Join(filepath.Dir(dbPath), "events.jsonl")
+			ctx := rootCtx
+
+			if eventsReset {
+				if err := resetEventsExport(ctx, store, eventsPath); err != nil {
+					fmt.Fprintf(os.Stderr, "Error resetting events export: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Fprintf(os.Stderr, "Events export state reset\n")
+			}
+
+			if eventsFlag {
+				if err := exportEventsToJSONL(ctx, store, eventsPath); err != nil {
+					fmt.Fprintf(os.Stderr, "Error exporting events: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Fprintf(os.Stderr, "Events exported to %s\n", eventsPath)
+			}
+
+			return
+		}
+
 		// Normalize labels: trim, dedupe, remove empty
-		labels = util.NormalizeLabels(labels)
-		labelsAny = util.NormalizeLabels(labelsAny)
+		labels = utils.NormalizeLabels(labels)
+		labelsAny = utils.NormalizeLabels(labelsAny)
 
 		// Build filter
 		// Tombstone export logic:
@@ -228,7 +256,7 @@ Examples:
 			filter.LabelsAny = labelsAny
 		}
 		if idFilter != "" {
-			ids := util.NormalizeLabels(strings.Split(idFilter, ","))
+			ids := utils.NormalizeLabels(strings.Split(idFilter, ","))
 			if len(ids) > 0 {
 				filter.IDs = ids
 			}
@@ -521,13 +549,13 @@ Examples:
 		}
 
 		// Report skipped issues if any (helps debugging bd-159)
-		if skippedCount > 0 && (output == "" || output == findJSONLPath()) {
+		if skippedCount > 0 && output == findJSONLPath() {
 			fmt.Fprintf(os.Stderr, "Skipped %d issue(s) with timestamp-only changes\n", skippedCount)
 		}
 
 		// Only clear dirty issues and auto-flush state if exporting to the default JSONL path
-		// This prevents clearing dirty flags when exporting to custom paths (e.g., bd export -o backup.jsonl)
-		if output == "" || output == findJSONLPath() {
+		// This prevents clearing dirty flags when exporting to stdout or custom paths (e.g., bd export -o backup.jsonl)
+		if output == findJSONLPath() {
 			// Clear only the issues that were actually exported (fixes bd-52 race condition)
 			if err := store.ClearDirtyIssuesByID(ctx, exportedIDs); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
@@ -591,9 +619,9 @@ Examples:
 			}
 
 			// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
-			// Only do this when exporting to default JSONL path (not arbitrary outputs)
+			// Only do this when exporting to default JSONL path (not stdout or arbitrary outputs)
 			// This prevents validatePreExport from incorrectly blocking on next export
-			if output == "" || output == findJSONLPath() {
+			if output == findJSONLPath() {
 				// Dolt backend does not have a SQLite DB file, so only touch mtime for SQLite.
 				// Use store.Path() to get the actual database location, not the JSONL directory,
 				// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
@@ -630,6 +658,8 @@ func init() {
 	exportCmd.Flags().StringP("status", "s", "", "Filter by status")
 	exportCmd.Flags().Bool("force", false, "Force export even if database is empty")
 	exportCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output export statistics in JSON format")
+	exportCmd.Flags().Bool("events", false, "Export events to .beads/events.jsonl (append-only)")
+	exportCmd.Flags().Bool("events-reset", false, "Reset events export state and truncate events.jsonl")
 
 	// Filter flags
 	registerPriorityFlag(exportCmd, "")

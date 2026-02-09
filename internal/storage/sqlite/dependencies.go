@@ -34,7 +34,7 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 	}
 
 	// External refs (external:<project>:<capability>) don't need target validation
-	// They are resolved lazily at query time by CheckExternalDep
+	// They are resolved lazily at query time by checkExternalDep
 	isExternalRef := strings.HasPrefix(dep.DependsOnID, "external:")
 
 	var dependsOnExists *types.Issue
@@ -52,20 +52,13 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 			return fmt.Errorf("issue cannot depend on itself")
 		}
 
-		// Validate parent-child dependency direction (only for local deps)
-		// In parent-child relationships: child depends on parent (child is part of parent)
-		// Parent should NOT depend on child (semantically backwards)
-		// Consistent with dependency semantics: IssueID depends on DependsOnID
-		if dep.Type == types.DepParentChild {
-			// issueExists is the dependent (the one that depends on something)
-			// dependsOnExists is what it depends on
-			// Correct: Task (child) depends on Epic (parent) - child belongs to parent
-			// Incorrect: Epic (parent) depends on Task (child) - backwards
-			if issueExists.IssueType == types.TypeEpic && dependsOnExists.IssueType != types.TypeEpic {
-				return fmt.Errorf("invalid parent-child dependency: parent (%s) cannot depend on child (%s). Use: bd dep add %s %s --type parent-child",
-					dep.IssueID, dep.DependsOnID, dep.DependsOnID, dep.IssueID)
-			}
-		}
+		// Parent-child direction validation note:
+		// The previous type-based check (Epic can't depend on non-Epic) was removed because
+		// it incorrectly rejected valid hierarchies involving custom types (e.g., theme → epic).
+		// Custom types like "theme" or "shot" are valid parents for built-in types like "epic"
+		// or "task". This method's cycle detection (below) prevents circular dependencies; duplicate
+		// hierarchical links are enforced by higher-level validation (e.g., CLI/RPC isChildOf checks),
+		// not by this storage-layer method.
 	}
 
 	if dep.CreatedAt.IsZero() {
@@ -247,7 +240,7 @@ func (s *SQLiteStorage) GetDependenciesWithMetadata(ctx context.Context, issueID
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.spec_id, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		       i.await_type, i.await_id, i.timeout_ns, i.waiters, i.spec_id, i.spec_changed_at,
@@ -270,7 +263,7 @@ func (s *SQLiteStorage) GetDependentsWithMetadata(ctx context.Context, issueID s
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.spec_id, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		       i.await_type, i.await_id, i.timeout_ns, i.waiters, i.spec_id, i.spec_changed_at,
@@ -743,7 +736,7 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 					}
 
 					// Check resolution status
-					status := CheckExternalDep(ctx, ref)
+					status := checkExternalDep(ctx, ref)
 					var nodeStatus types.Status
 					var title string
 					if status.Satisfied {
@@ -818,11 +811,14 @@ func (s *SQLiteStorage) loadDependencyGraph(ctx context.Context) (map[string][]s
 	for rows.Next() {
 		var from, to string
 		if err := rows.Scan(&from, &to); err != nil {
-			return nil, err
+			return nil, wrapDBError("scan dependency graph edge", err)
 		}
 		deps[from] = append(deps[from], to)
 	}
-	return deps, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, wrapDBError("iterate dependency graph", err)
+	}
+	return deps, nil
 }
 
 // DetectCycles finds circular dependencies and returns the actual cycle paths.
@@ -951,6 +947,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var assignee sql.NullString
 		var owner sql.NullString
 		var externalRef sql.NullString
+		var specID sql.NullString
 		var sourceRepo sql.NullString
 		var closeReason sql.NullString
 		var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
@@ -982,20 +979,21 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		// Time-based scheduling fields
 		var dueAt sql.NullTime
 		var deferUntil sql.NullTime
-		// Spec integration field
-		var specID sql.NullString
+		// Custom metadata field (GH#1406)
+		var metadata sql.NullString
+		// Spec change tracking (Shadow Ledger)
 		var specChangedAt sql.NullTime
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &sourceRepo, &closeReason,
+			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &specID, &sourceRepo, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
 			&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
-			&dueAt, &deferUntil, &specID, &specChangedAt,
+			&dueAt, &deferUntil, &metadata, &specID, &specChangedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1027,6 +1025,9 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		}
 		if externalRef.Valid {
 			issue.ExternalRef = &externalRef.String
+		}
+		if specID.Valid {
+			issue.SpecID = specID.String
 		}
 		if sourceRepo.Valid {
 			issue.SourceRepo = sourceRepo.String
@@ -1105,6 +1106,10 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		if deferUntil.Valid {
 			issue.DeferUntil = &deferUntil.Time
 		}
+		// Custom metadata field (GH#1406)
+		if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+			issue.Metadata = []byte(metadata.String)
+		}
 		if specID.Valid {
 			issue.SpecID = specID.String
 		}
@@ -1150,6 +1155,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		var assignee sql.NullString
 		var owner sql.NullString
 		var externalRef sql.NullString
+		var specID sql.NullString
 		var sourceRepo sql.NullString
 		var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
 		var deletedBy sql.NullString
@@ -1170,14 +1176,13 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		var timeoutNs sql.NullInt64
 		var waiters sql.NullString
 		var depType types.DependencyType
-		var specID sql.NullString
 		var specChangedAt sql.NullTime
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &sourceRepo,
+			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &specID, &sourceRepo,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
@@ -1214,6 +1219,9 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		}
 		if externalRef.Valid {
 			issue.ExternalRef = &externalRef.String
+		}
+		if specID.Valid {
+			issue.SpecID = specID.String
 		}
 		if sourceRepo.Valid {
 			issue.SourceRepo = sourceRepo.String

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -30,15 +31,23 @@ type sqliteTxStorage struct {
 // preventing deadlocks when multiple goroutines compete for the same lock.
 //
 // Transaction lifecycle:
-//  1. Acquire dedicated connection from pool
-//  2. Begin IMMEDIATE transaction with retry on SQLITE_BUSY
-//  3. Execute user function with Transaction interface
-//  4. On success: COMMIT
-//  5. On error or panic: ROLLBACK
+//  1. Increment active transaction counter (blocks reconnect during active transactions)
+//  2. Acquire dedicated connection from pool
+//  3. Begin IMMEDIATE transaction with retry on SQLITE_BUSY
+//  4. Execute user function with Transaction interface
+//  5. On success: COMMIT
+//  6. On error or panic: ROLLBACK
+//  7. Decrement active transaction counter (via defer)
 //
 // Panic safety: If the callback panics, the transaction is rolled back
 // and the panic is re-raised to the caller.
 func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage.Transaction) error) error {
+	// Increment active transaction count BEFORE acquiring connection.
+	// This blocks reconnect() from closing the connection while we're using it.
+	// The counter is decremented via defer to ensure it always happens.
+	s.activeTxCount.Add(1)
+	defer s.activeTxCount.Add(-1)
+
 	// Acquire a dedicated connection for the transaction.
 	// This ensures all operations in the transaction use the same connection.
 	conn, err := s.db.Conn(ctx)
@@ -48,9 +57,8 @@ func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 	defer func() { _ = conn.Close() }()
 
 	// Start IMMEDIATE transaction to acquire write lock early.
-	// BEGIN IMMEDIATE prevents deadlocks by acquiring the write lock upfront.
-	// The connection's busy_timeout pragma (30s) handles retries if locked.
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	// Use retry logic with exponential backoff to handle SQLITE_BUSY
+	if err := beginImmediateWithRetry(ctx, conn); err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
@@ -88,6 +96,49 @@ func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 	}
 	committed = true
 	return nil
+}
+
+// beginImmediateWithRetry starts a transaction with BEGIN IMMEDIATE, retrying
+// on SQLITE_BUSY errors with exponential backoff.
+//
+// This is more robust than relying solely on busy_timeout because:
+// 1. Some BUSY errors aren't retryable by the busy handler (SQLITE_BUSY_SNAPSHOT)
+// 2. Explicit retries give us control over backoff timing
+// 3. We can log retry attempts for debugging
+func beginImmediateWithRetry(ctx context.Context, conn *sql.Conn) error {
+	const maxRetries = 5
+	const initialBackoff = 10 * time.Millisecond
+	backoff := initialBackoff
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		_, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		// Check if this is a retryable error (SQLITE_BUSY)
+		errStr := err.Error()
+		if !strings.Contains(errStr, "database is locked") &&
+			!strings.Contains(errStr, "SQLITE_BUSY") {
+			// Not a busy error, don't retry
+			return err
+		}
+
+		// Check context before sleeping
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// Sleep with exponential backoff
+		if attempt < maxRetries {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+	}
+
+	return fmt.Errorf("failed to begin transaction after %d retries: %w", maxRetries, lastErr)
 }
 
 // CreateIssue creates a new issue within the transaction.
@@ -145,7 +196,7 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 	// Get prefix from config (needed for both ID generation and validation)
 	var configPrefix string
 	err = t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&configPrefix)
-	if err == sql.ErrNoRows || configPrefix == "" {
+	if errors.Is(err, sql.ErrNoRows) || configPrefix == "" {
 		// CRITICAL: Reject operation if issue_prefix config is missing
 		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
 	} else if err != nil {
@@ -177,14 +228,14 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 		// Validate that explicitly provided ID matches the configured prefix
 		// Skip validation when PrefixOverride is set (cross-rig creation)
 		if !skipPrefixValidation {
-			if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+			if err := validateIssueIDPrefix(issue.ID, prefix); err != nil {
 				return fmt.Errorf("failed to validate issue ID prefix: %w", err)
 			}
 		}
 
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
-		// Use IsHierarchicalID to correctly handle prefixes with dots (GH#508)
-		if isHierarchical, parentID := IsHierarchicalID(issue.ID); isHierarchical {
+		// Use isHierarchicalID to correctly handle prefixes with dots (GH#508)
+		if isHierarchical, parentID := isHierarchicalID(issue.ID); isHierarchical {
 			// Try to resurrect entire parent chain if any parents are missing
 			resurrected, err := t.parent.tryResurrectParentChainWithConn(ctx, t.conn, issue.ID)
 			if err != nil {
@@ -276,7 +327,7 @@ func (t *sqliteTxStorage) CreateIssues(ctx context.Context, issues []*types.Issu
 	// Get prefix from config
 	var prefix string
 	err = t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
-	if err == sql.ErrNoRows || prefix == "" {
+	if errors.Is(err, sql.ErrNoRows) || prefix == "" {
 		return fmt.Errorf("database not initialized: issue_prefix config is missing")
 	} else if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
@@ -291,7 +342,7 @@ func (t *sqliteTxStorage) CreateIssues(ctx context.Context, issues []*types.Issu
 			}
 			issue.ID = generatedID
 		} else {
-			if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+			if err := validateIssueIDPrefix(issue.ID, prefix); err != nil {
 				return fmt.Errorf("failed to validate issue ID prefix: %w", err)
 			}
 		}
@@ -339,12 +390,12 @@ func (t *sqliteTxStorage) GetIssue(ctx context.Context, id string) (*types.Issue
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       spec_id, compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until, spec_id, spec_changed_at
+		       due_at, defer_until, metadata, spec_id, spec_changed_at
 		FROM issues
 		WHERE id = ?
 	`, id)
@@ -727,7 +778,7 @@ func (t *sqliteTxStorage) AddDependency(ctx context.Context, dep *types.Dependen
 	}
 
 	// External refs (external:<project>:<capability>) don't need target validation
-	// They are resolved lazily at query time by CheckExternalDep
+	// They are resolved lazily at query time by checkExternalDep
 	isExternalRef := strings.HasPrefix(dep.DependsOnID, "external:")
 
 	var dependsOnExists *types.Issue
@@ -745,13 +796,13 @@ func (t *sqliteTxStorage) AddDependency(ctx context.Context, dep *types.Dependen
 			return fmt.Errorf("issue cannot depend on itself")
 		}
 
-		// Validate parent-child dependency direction (only for local deps)
-		if dep.Type == types.DepParentChild {
-			if issueExists.IssueType == types.TypeEpic && dependsOnExists.IssueType != types.TypeEpic {
-				return fmt.Errorf("invalid parent-child dependency: parent (%s) cannot depend on child (%s). Use: bd dep add %s %s --type parent-child",
-					dep.IssueID, dep.DependsOnID, dep.DependsOnID, dep.IssueID)
-			}
-		}
+		// Parent-child direction validation note:
+		// The previous type-based check (Epic can't depend on non-Epic) was removed because
+		// it incorrectly rejected valid hierarchies involving custom types (e.g., theme → epic).
+		// Custom types like "theme" or "shot" are valid parents for built-in types like "epic"
+		// or "task". Cycle detection in this function and higher-level relationship constraints
+		// already prevent the actual problematic cases (circular dependencies and duplicate
+		// hierarchical links).
 	}
 
 	if dep.CreatedAt.IsZero() {
@@ -1019,7 +1070,7 @@ func (t *sqliteTxStorage) SetConfig(ctx context.Context, key, value string) erro
 func (t *sqliteTxStorage) GetConfig(ctx context.Context, key string) (string, error) {
 	var value string
 	err := t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, key).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
@@ -1030,7 +1081,7 @@ func (t *sqliteTxStorage) GetConfig(ctx context.Context, key string) (string, er
 
 // GetCustomStatuses retrieves the list of custom status states from config within the transaction.
 func (t *sqliteTxStorage) GetCustomStatuses(ctx context.Context) ([]string, error) {
-	value, err := t.GetConfig(ctx, CustomStatusConfigKey)
+	value, err := t.GetConfig(ctx, customStatusConfigKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1042,7 +1093,7 @@ func (t *sqliteTxStorage) GetCustomStatuses(ctx context.Context) ([]string, erro
 
 // GetCustomTypes retrieves the list of custom issue types from config within the transaction.
 func (t *sqliteTxStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
-	value, err := t.GetConfig(ctx, CustomTypeConfigKey)
+	value, err := t.GetConfig(ctx, customTypeConfigKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1069,7 +1120,7 @@ func (t *sqliteTxStorage) SetMetadata(ctx context.Context, key, value string) er
 func (t *sqliteTxStorage) GetMetadata(ctx context.Context, key string) (string, error) {
 	var value string
 	err := t.conn.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key = ?`, key).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
@@ -1317,6 +1368,15 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM labels WHERE label IN (%s))", strings.Join(placeholders, ", ")))
 	}
 
+	// Label pattern filtering (glob): issue must have at least one label matching the pattern
+	if filter.LabelPattern != "" {
+		whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM labels WHERE label GLOB ?)")
+		args = append(args, filter.LabelPattern)
+	}
+
+	// Label regex filtering: done at application level after query (see filterByLabelRegex)
+	// SQLite doesn't have built-in regex support without extensions
+
 	// ID filtering: match specific issue IDs
 	if len(filter.IDs) > 0 {
 		placeholders := make([]string, len(filter.IDs))
@@ -1331,6 +1391,10 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 	if filter.IDPrefix != "" {
 		whereClauses = append(whereClauses, "id LIKE ?")
 		args = append(args, filter.IDPrefix+"%")
+	}
+	if filter.SpecIDPrefix != "" {
+		whereClauses = append(whereClauses, "spec_id LIKE ?")
+		args = append(args, filter.SpecIDPrefix+"%")
 	}
 
 	// Spec filtering
@@ -1368,9 +1432,11 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 	}
 
 	// Parent filtering: filter children by parent issue
+	// Also includes dotted-ID children (e.g., "parent.1.2" is child of "parent")
 	if filter.ParentID != nil {
-		whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?)")
-		args = append(args, *filter.ParentID)
+		parentID := *filter.ParentID
+		whereClauses = append(whereClauses, "(id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?) OR id LIKE ? || '.%')")
+		args = append(args, parentID, parentID)
 	}
 
 	whereSQL := ""
@@ -1389,12 +1455,12 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       spec_id, compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until, spec_id, spec_changed_at
+		       due_at, defer_until, metadata, spec_id, spec_changed_at
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
@@ -1407,7 +1473,21 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 	}
 	defer func() { _ = rows.Close() }()
 
-	return t.scanIssues(ctx, rows)
+	issues, err := t.scanIssues(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply label regex filtering at application level
+	// SQLite doesn't have built-in regex support without extensions
+	if filter.LabelRegex != "" {
+		issues, err = t.filterByLabelRegex(ctx, issues, filter.LabelRegex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to filter by label regex: %w", err)
+		}
+	}
+
+	return issues, nil
 }
 
 // scanner is an interface that both *sql.Row and *sql.Rows satisfy
@@ -1428,6 +1508,7 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	var assignee sql.NullString
 	var owner sql.NullString
 	var externalRef sql.NullString
+	var specID sql.NullString
 	var compactedAt sql.NullTime
 	var originalSize sql.NullInt64
 	var sourceRepo sql.NullString
@@ -1462,8 +1543,9 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	// Time-based scheduling fields
 	var dueAt sql.NullTime
 	var deferUntil sql.NullTime
-	// Spec integration field
-	var specID sql.NullString
+	// Custom metadata field (GH#1406)
+	var metadata sql.NullString
+	// Spec change tracking (Shadow Ledger)
 	var specChangedAt sql.NullTime
 
 	err := row.Scan(
@@ -1471,12 +1553,12 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&specID, &issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
-		&dueAt, &deferUntil, &specID, &specChangedAt,
+		&dueAt, &deferUntil, &metadata, &specID, &specChangedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1508,6 +1590,9 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	}
 	if externalRef.Valid {
 		issue.ExternalRef = &externalRef.String
+	}
+	if specID.Valid {
+		issue.SpecID = specID.String
 	}
 	if compactedAt.Valid {
 		issue.CompactedAt = &compactedAt.Time
@@ -1595,6 +1680,10 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
 	}
+	// Custom metadata field (GH#1406)
+	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+		issue.Metadata = []byte(metadata.String)
+	}
 	if specID.Valid {
 		issue.SpecID = specID.String
 	}
@@ -1675,4 +1764,28 @@ func (t *sqliteTxStorage) getLabelsForIssues(ctx context.Context, issueIDs []str
 	}
 
 	return result, rows.Err()
+}
+
+// filterByLabelRegex filters issues to only include those with at least one label
+// matching the given regex pattern. This is done at the application level because
+// SQLite doesn't have built-in regex support without extensions.
+func (t *sqliteTxStorage) filterByLabelRegex(_ context.Context, issues []*types.Issue, pattern string) ([]*types.Issue, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
+	}
+
+	// Filter issues that have at least one label matching the regex
+	// Note: Labels were already loaded by scanIssues
+	var filtered []*types.Issue
+	for _, issue := range issues {
+		for _, label := range issue.Labels {
+			if re.MatchString(label) {
+				filtered = append(filtered, issue)
+				break // Only need one match
+			}
+		}
+	}
+
+	return filtered, nil
 }

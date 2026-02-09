@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,7 +72,7 @@ func showDaemonStatus(pidFile string) {
 		// Try to get detailed status from daemon via RPC
 		var rpcStatus *rpc.StatusResponse
 		beadsDir := filepath.Dir(pidFile)
-		socketPath := filepath.Join(beadsDir, "bd.sock")
+		socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
 		if client, err := rpc.TryConnectWithTimeout(socketPath, 1*time.Second); err == nil && client != nil {
 			if status, err := client.Status(); err == nil {
 				rpcStatus = status
@@ -132,7 +133,7 @@ func showDaemonHealth() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
 
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil {
@@ -142,7 +143,6 @@ func showDaemonHealth() {
 
 	if client == nil {
 		// Check if lock is held to provide better diagnostic message
-		beadsDir := filepath.Dir(socketPath)
 		running, _ := tryDaemonLock(beadsDir)
 		if running {
 			fmt.Println("Daemon lock is held but connection failed")
@@ -189,7 +189,7 @@ func showDaemonMetrics() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
 
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil {
@@ -292,26 +292,26 @@ func stopDaemon(pidFile string) {
 		fmt.Println("Daemon stopped")
 		return
 	}
-	
+
 	socketPath := getSocketPathForPID(pidFile)
-	
+
 	if err := process.Kill(); err != nil {
 		// Ignore "process already finished" errors
 		if !strings.Contains(err.Error(), "process already finished") {
 			fmt.Fprintf(os.Stderr, "Error killing process: %v\n", err)
 		}
 	}
-	
+
 	// Clean up stale artifacts after forced kill
 	_ = os.Remove(pidFile) // Best-effort cleanup, file may not exist
-	
+
 	// Also remove socket file if it exists
 	if _, err := os.Stat(socketPath); err == nil {
 		if err := os.Remove(socketPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to remove stale socket: %v\n", err)
 		}
 	}
-	
+
 	fmt.Println("Daemon killed")
 }
 
@@ -422,7 +422,7 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMo
 	}
 	if federation {
 		args = append(args, "--federation")
-		if federationPort != 0 && federationPort != 3306 {
+		if federationPort != 0 && federationPort != 3307 {
 			args = append(args, "--federation-port", strconv.Itoa(federationPort))
 		}
 		if remotesapiPort != 0 && remotesapiPort != 8080 {
@@ -472,9 +472,9 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMo
 }
 
 // setupDaemonLock acquires the daemon lock and writes PID file
-func setupDaemonLock(pidFile string, dbPath string, log daemonLogger) (*DaemonLock, error) {
+func setupDaemonLock(pidFile string, dbPath string, log *slog.Logger) (*DaemonLock, error) {
 	beadsDir := filepath.Dir(pidFile)
-	
+
 	// Detect nested .beads directories (e.g., .beads/.beads/.beads/)
 	cleanPath := filepath.Clean(beadsDir)
 	if strings.Contains(cleanPath, string(filepath.Separator)+".beads"+string(filepath.Separator)+".beads") {
@@ -483,7 +483,7 @@ func setupDaemonLock(pidFile string, dbPath string, log daemonLogger) (*DaemonLo
 		log.Info("hint: use absolute paths for BEADS_DB or run from workspace root")
 		return nil, fmt.Errorf("nested .beads directory detected")
 	}
-	
+
 	lock, err := acquireDaemonLock(beadsDir, dbPath)
 	if err != nil {
 		if err == ErrDaemonLocked {

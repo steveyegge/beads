@@ -3,6 +3,7 @@ package rpc
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -604,6 +605,56 @@ func TestCommentAdd_MultipleComments(t *testing.T) {
 	}
 }
 
+// TestCommentList_NilStorage verifies handleCommentList returns an error when storage is nil (bd-10)
+func TestCommentList_NilStorage(t *testing.T) {
+	tmpDir := t.TempDir()
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), nil, tmpDir, filepath.Join(tmpDir, "test.db"))
+
+	commentArgs := CommentListArgs{ID: "bd-123"}
+	argsJSON, _ := json.Marshal(commentArgs)
+	req := &Request{
+		Operation: OpCommentList,
+		Args:      argsJSON,
+		Actor:     "test-user",
+	}
+
+	resp := server.handleCommentList(req)
+
+	if resp.Success {
+		t.Error("expected failure when storage not available")
+	}
+	if resp.Error == "" {
+		t.Error("expected error message about storage not available")
+	}
+}
+
+// TestCommentAdd_NilStorage verifies handleCommentAdd returns an error when storage is nil (bd-10)
+func TestCommentAdd_NilStorage(t *testing.T) {
+	tmpDir := t.TempDir()
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), nil, tmpDir, filepath.Join(tmpDir, "test.db"))
+
+	commentArgs := CommentAddArgs{
+		ID:     "bd-123",
+		Author: "test-user",
+		Text:   "test comment",
+	}
+	argsJSON, _ := json.Marshal(commentArgs)
+	req := &Request{
+		Operation: OpCommentAdd,
+		Args:      argsJSON,
+		Actor:     "test-user",
+	}
+
+	resp := server.handleCommentAdd(req)
+
+	if resp.Success {
+		t.Error("expected failure when storage not available")
+	}
+	if resp.Error == "" {
+		t.Error("expected error message about storage not available")
+	}
+}
+
 // TestMetrics tests the Metrics operation via RPC
 func TestMetrics(t *testing.T) {
 	_, client, cleanup := setupTestServer(t)
@@ -781,7 +832,6 @@ func intPtr(i int) *int {
 	return &i
 }
 
-
 // GetMutations and Export tests
 
 // TestGetMutations tests the GetMutations operation via RPC
@@ -818,7 +868,7 @@ func TestGetMutations(t *testing.T) {
 
 // TestExport tests the Export operation via RPC
 func TestExport(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
+	server, client, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	// Create some issues first
@@ -834,17 +884,12 @@ func TestExport(t *testing.T) {
 		}
 	}
 
-	// Create a temp file for export
-	tmpFile, err := os.CreateTemp("", "beads-export-*.jsonl")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.Close()
+	// Create export file within the workspace directory (path traversal prevention)
+	exportPath := filepath.Join(server.workspacePath, ".beads", "export.jsonl")
 
-	// Export to the temp file
+	// Export to the file within workspace
 	resp, err := client.Export(&ExportArgs{
-		JSONLPath: tmpFile.Name(),
+		JSONLPath: exportPath,
 	})
 	if err != nil {
 		t.Fatalf("Export failed: %v", err)
@@ -855,7 +900,7 @@ func TestExport(t *testing.T) {
 	}
 
 	// Verify file was written
-	info, err := os.Stat(tmpFile.Name())
+	info, err := os.Stat(exportPath)
 	if err != nil {
 		t.Fatalf("Failed to stat export file: %v", err)
 	}
@@ -888,4 +933,27 @@ func TestResetDroppedEventsCount(t *testing.T) {
 	server.ResetDroppedEventsCount()
 
 	// No error means success
+}
+
+func TestHealthNilStorage(t *testing.T) {
+	// Create a server with nil storage to test degraded-state robustness
+	srv := NewServer("/tmp/test-nil-storage.sock", nil, t.TempDir(), "")
+	resp := srv.handleHealth(&Request{Operation: OpHealth})
+
+	// Should return unhealthy, not panic
+	if resp.Success {
+		t.Fatal("expected health check to report failure with nil storage")
+	}
+
+	var health HealthResponse
+	if err := json.Unmarshal(resp.Data, &health); err != nil {
+		t.Fatalf("failed to unmarshal health response: %v", err)
+	}
+
+	if health.Status != statusUnhealthy {
+		t.Errorf("expected status %q, got %q", statusUnhealthy, health.Status)
+	}
+	if health.Error == "" {
+		t.Error("expected error message for nil storage")
+	}
 }

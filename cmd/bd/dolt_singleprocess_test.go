@@ -87,8 +87,9 @@ func TestDoltSingleProcess_DaemonGuardBlocksStartCommand(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected daemon guard error for dolt backend without --federation")
 	}
+	// Guardrail wording may evolve; assert a stable intent.
 	if !strings.Contains(err.Error(), "daemon mode is not supported") {
-		t.Fatalf("expected error to mention daemon mode is not supported, got: %v", err)
+		t.Fatalf("expected error to mention daemon mode unsupported, got: %v", err)
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -419,9 +419,30 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
 
-		// Resolve partial ID first
+		// Resolve partial ID with cross-rig routing support
 		var fullID string
-		if daemonClient != nil {
+		var depStore storage.Storage // store to query dependencies from
+		var routedResult *RoutedResult
+		defer func() {
+			if routedResult != nil {
+				routedResult.Close()
+			}
+		}()
+
+		if daemonClient != nil && needsRouting(args[0]) {
+			// Cross-rig: bypass daemon, resolve via routing
+			var err error
+			routedResult, err = resolveAndGetIssueWithRouting(ctx, store, args[0])
+			if err != nil {
+				FatalErrorRespectJSON("resolving issue ID %s: %v", args[0], err)
+			}
+			if routedResult == nil || routedResult.Issue == nil {
+				FatalErrorRespectJSON("no issue found: %s", args[0])
+			}
+			fullID = routedResult.ResolvedID
+			depStore = routedResult.Store
+		} else if daemonClient != nil {
+			// Local daemon resolution
 			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
 			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
@@ -431,21 +452,32 @@ Examples:
 				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 			}
 		} else {
+			// Direct mode - use routing-aware resolution
 			var err error
-			fullID, err = utils.ResolvePartialID(ctx, store, args[0])
+			routedResult, err = resolveAndGetIssueWithRouting(ctx, store, args[0])
 			if err != nil {
 				FatalErrorRespectJSON("resolving %s: %v", args[0], err)
 			}
+			if routedResult == nil || routedResult.Issue == nil {
+				FatalErrorRespectJSON("no issue found: %s", args[0])
+			}
+			fullID = routedResult.ResolvedID
+			if routedResult.Routed {
+				depStore = routedResult.Store
+			}
 		}
 
-		// If daemon is running but doesn't support this command, use direct storage
-		if daemonClient != nil && store == nil {
-			var err error
-			store, err = sqlite.New(rootCtx, dbPath)
-			if err != nil {
-				FatalErrorRespectJSON("failed to open database: %v", err)
+		// If no routed store was used, set up local storage
+		if depStore == nil {
+			if daemonClient != nil && store == nil {
+				var err error
+				store, err = factory.NewFromConfig(rootCtx, getBeadsDir())
+				if err != nil {
+					FatalErrorRespectJSON("failed to open database: %v", err)
+				}
+				defer func() { _ = store.Close() }()
 			}
-			defer func() { _ = store.Close() }()
+			depStore = store
 		}
 
 		direction, _ := cmd.Flags().GetString("direction")
@@ -459,9 +491,9 @@ Examples:
 		var err error
 
 		if direction == "up" {
-			issues, err = store.GetDependentsWithMetadata(ctx, fullID)
+			issues, err = depStore.GetDependentsWithMetadata(ctx, fullID)
 		} else {
-			issues, err = store.GetDependenciesWithMetadata(ctx, fullID)
+			issues, err = depStore.GetDependenciesWithMetadata(ctx, fullID)
 		}
 		if err != nil {
 			FatalErrorRespectJSON("%v", err)
@@ -471,7 +503,7 @@ Examples:
 		// GetDependenciesWithMetadata only returns local issues, so we need to
 		// fetch raw dependency records and resolve external refs separately
 		if direction == "down" {
-			externalIssues := resolveExternalDependencies(ctx, fullID, typeFilter)
+			externalIssues := resolveExternalDependencies(ctx, depStore, fullID, typeFilter)
 			issues = append(issues, externalIssues...)
 		}
 
@@ -548,7 +580,7 @@ var depRemoveCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("dep remove")
 		ctx := rootCtx
-		
+
 		// Resolve partial IDs first
 		var fromID, toID string
 		if daemonClient != nil {
@@ -607,7 +639,7 @@ var depRemoveCmd = &cobra.Command{
 		// Direct mode
 		fullFromID := fromID
 		fullToID := toID
-		
+
 		if err := store.RemoveDependency(ctx, fullFromID, fullToID, actor); err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
@@ -670,7 +702,7 @@ Examples:
 		// If daemon is running but doesn't support this command, use direct storage
 		if daemonClient != nil && store == nil {
 			var err error
-			store, err = sqlite.New(rootCtx, dbPath)
+			store, err = factory.NewFromConfig(rootCtx, getBeadsDir())
 			if err != nil {
 				FatalErrorRespectJSON("failed to open database: %v", err)
 			}
@@ -782,7 +814,7 @@ var depCyclesCmd = &cobra.Command{
 		// If daemon is running but doesn't support this command, use direct storage
 		if daemonClient != nil && store == nil {
 			var err error
-			store, err = sqlite.New(rootCtx, dbPath)
+			store, err = factory.NewFromConfig(rootCtx, getBeadsDir())
 			if err != nil {
 				FatalErrorRespectJSON("failed to open database: %v", err)
 			}
@@ -1162,13 +1194,13 @@ func ParseExternalRef(ref string) (project, capability string) {
 
 // resolveExternalDependencies fetches issue metadata for external (cross-rig) dependencies.
 // It queries raw dependency records, finds external refs, and resolves them via routing.
-func resolveExternalDependencies(ctx context.Context, issueID string, typeFilter string) []*types.IssueWithDependencyMetadata {
-	if store == nil {
+func resolveExternalDependencies(ctx context.Context, depStore storage.Storage, issueID string, typeFilter string) []*types.IssueWithDependencyMetadata {
+	if depStore == nil {
 		return nil
 	}
 
 	// Get raw dependency records to find external refs
-	deps, err := store.GetDependencyRecords(ctx, issueID)
+	deps, err := depStore.GetDependencyRecords(ctx, issueID)
 	if err != nil {
 		if isVerbose() {
 			fmt.Fprintf(os.Stderr, "[external-deps] GetDependencyRecords error: %v\n", err)
@@ -1227,12 +1259,11 @@ func resolveExternalDependencies(ctx context.Context, issueID string, typeFilter
 			fmt.Fprintf(os.Stderr, "[external-deps] resolved beads dir: %s\n", targetBeadsDir)
 		}
 
-		// Open storage for the target rig
-		targetDBPath := filepath.Join(targetBeadsDir, "beads.db")
-		targetStore, err := sqlite.New(ctx, targetDBPath)
+		// Open storage for the target rig (auto-detect backend from metadata.json)
+		targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
 		if err != nil {
 			if isVerbose() {
-				fmt.Fprintf(os.Stderr, "[external-deps] failed to open target db %s: %v\n", targetDBPath, err)
+				fmt.Fprintf(os.Stderr, "[external-deps] failed to open target db %s: %v\n", targetBeadsDir, err)
 			}
 			continue // Can't open target database
 		}

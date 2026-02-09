@@ -468,7 +468,19 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 		return fmt.Errorf("acquiring sync lock: %w", err)
 	}
 	if !locked {
-		return fmt.Errorf("another sync is in progress")
+		// Check if lock file is stale (from a crashed sync process).
+		// On Unix, flock is released when a process exits, so TryLock normally
+		// succeeds after a crash. This handles edge cases (NFS, hung processes).
+		if cleanedUp := cleanStaleSyncLock(lockPath); cleanedUp {
+			lock = flock.New(lockPath)
+			locked, err = lock.TryLock()
+			if err != nil {
+				return fmt.Errorf("acquiring sync lock after stale cleanup: %w", err)
+			}
+		}
+		if !locked {
+			return fmt.Errorf("another sync is in progress (lock: %s)", lockPath)
+		}
 	}
 	defer func() { _ = lock.Unlock() }()
 
@@ -514,7 +526,8 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	}
 
 	// Git-based pull (for git-portable, belt-and-suspenders, or when Dolt not available)
-	if ShouldExportJSONL(ctx, store) {
+	// In dolt-native mode, skip git pull for JSONL (JSONL is export-only backup)
+	if syncMode != SyncModeDoltNative {
 		if sbc.IsConfigured() {
 			fmt.Printf("→ Pulling from sync branch '%s'...\n", sbc.Branch)
 			pullResult, err := syncbranch.PullFromSyncBranch(ctx, sbc.RepoRoot, sbc.Branch, jsonlPath, false)
@@ -634,7 +647,17 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 		return fmt.Errorf("acquiring sync lock: %w", err)
 	}
 	if !locked {
-		return fmt.Errorf("another sync is in progress")
+		// Check if lock file is stale (from a crashed sync process).
+		if cleanedUp := cleanStaleSyncLock(lockPath); cleanedUp {
+			lock = flock.New(lockPath)
+			locked, err = lock.TryLock()
+			if err != nil {
+				return fmt.Errorf("acquiring sync lock after stale cleanup: %w", err)
+			}
+		}
+		if !locked {
+			return fmt.Errorf("another sync is in progress (lock: %s)", lockPath)
+		}
 	}
 	defer func() { _ = lock.Unlock() }()
 
@@ -682,7 +705,8 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 
 // writeMergedStateToJSONL writes merged issues to JSONL file
 func writeMergedStateToJSONL(path string, issues []*beads.Issue) error {
-	tempPath := path + ".tmp"
+	tempID := tempFileCounter.Add(1)
+	tempPath := fmt.Sprintf("%s.tmp.%d.%d", path, os.Getpid(), tempID)
 	file, err := os.Create(tempPath) //nolint:gosec // path is trusted internal beads path
 	if err != nil {
 		return err
@@ -1034,6 +1058,8 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy config
 		return resolveSyncConflictsManually(ctx, jsonlPath, beadsDir, conflictState, baseMap, localMap, remoteMap)
 	}
 
+	// Determine winner for each conflict based on strategy
+	winners := make(map[string]*beads.Issue) // issueID -> winning version
 	resolved := 0
 	for _, conflict := range conflictState.Conflicts {
 		local := localMap[conflict.IssueID]
@@ -1062,6 +1088,13 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy config
 			}
 		}
 
+		// Store the winning version
+		if winner == "local" && local != nil {
+			winners[conflict.IssueID] = local
+		} else if remote != nil {
+			winners[conflict.IssueID] = remote
+		}
+
 		fmt.Printf("✓ %s: kept %s", conflict.IssueID, winner)
 		if strategy == config.ConflictStrategyNewest {
 			fmt.Print(" (newer)")
@@ -1075,12 +1108,14 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy config
 		return fmt.Errorf("clearing conflict state: %w", err)
 	}
 
-	// Re-run merge with the resolved conflicts
+	// Run merge for non-conflicting issues, then override conflicts with chosen winners
 	mergeResult := MergeIssues(baseIssues, localIssues, remoteIssues)
 
-	// Display any remaining manual conflicts
-	if len(mergeResult.ManualConflicts) > 0 {
-		displayManualConflicts(mergeResult.ManualConflicts)
+	// Override conflicting issues with the strategy-chosen winner
+	for i, issue := range mergeResult.Merged {
+		if winner, ok := winners[issue.ID]; ok {
+			mergeResult.Merged[i] = winner
+		}
 	}
 
 	// Write merged state
@@ -1243,6 +1278,33 @@ func resolveSyncConflictsManually(ctx context.Context, jsonlPath, beadsDir strin
 	fmt.Printf("\n✓ Manual resolution complete (%d resolved, %d skipped)\n", resolvedCount, skipped)
 
 	return nil
+}
+
+// staleSyncLockAge is the maximum age of a sync lock file before it's considered stale.
+// Sync operations should complete well within this window, even for large repos.
+const staleSyncLockAge = 1 * time.Hour
+
+// cleanStaleSyncLock checks if the sync lock file is stale and removes it.
+// Returns true if a stale lock was cleaned up.
+// On Unix, flock is automatically released when a process exits, so this is a safety
+// net for edge cases (NFS mounts, hung processes, container restarts).
+func cleanStaleSyncLock(lockPath string) bool {
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		return false
+	}
+
+	age := time.Since(info.ModTime())
+	if age <= staleSyncLockAge {
+		return false
+	}
+
+	fmt.Fprintf(os.Stderr, "Warning: removing stale sync lock (age: %s)\n", age.Round(time.Second))
+	if err := os.Remove(lockPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove stale sync lock: %v\n", err)
+		return false
+	}
+	return true
 }
 
 func init() {

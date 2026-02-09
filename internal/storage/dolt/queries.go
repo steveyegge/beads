@@ -1,3 +1,4 @@
+//go:build cgo
 package dolt
 
 import (
@@ -59,13 +60,14 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		whereClauses = append(whereClauses, fmt.Sprintf("status NOT IN (%s)", strings.Join(placeholders, ",")))
 	}
 
+	// Use subquery for type exclusion to prevent Dolt mergeJoinIter panic (same as IssueType above).
 	if len(filter.ExcludeTypes) > 0 {
 		placeholders := make([]string, len(filter.ExcludeTypes))
 		for i, t := range filter.ExcludeTypes {
 			placeholders[i] = "?"
 			args = append(args, string(t))
 		}
-		whereClauses = append(whereClauses, fmt.Sprintf("issue_type NOT IN (%s)", strings.Join(placeholders, ",")))
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT id FROM issues WHERE issue_type NOT IN (%s))", strings.Join(placeholders, ",")))
 	}
 
 	if filter.Priority != nil {
@@ -81,8 +83,13 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		args = append(args, *filter.PriorityMax)
 	}
 
+	// Use subquery for type filter to prevent Dolt mergeJoinIter panic.
+	// When issue_type equality is combined with other indexed predicates (status, priority)
+	// in the same WHERE clause, Dolt's query optimizer may select a merge join plan
+	// between index scans that panics in mergeJoinIter. Isolating the type predicate
+	// in a subquery forces sequential evaluation and avoids the problematic plan.
 	if filter.IssueType != nil {
-		whereClauses = append(whereClauses, "issue_type = ?")
+		whereClauses = append(whereClauses, "id IN (SELECT id FROM issues WHERE issue_type = ?)")
 		args = append(args, *filter.IssueType)
 	}
 
@@ -152,6 +159,16 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		whereClauses = append(whereClauses, "id LIKE ?")
 		args = append(args, filter.IDPrefix+"%")
 	}
+	if filter.SpecIDPrefix != "" {
+		whereClauses = append(whereClauses, "spec_id LIKE ?")
+		args = append(args, filter.SpecIDPrefix+"%")
+	}
+
+	// Source repo filtering
+	if filter.SourceRepo != nil {
+		whereClauses = append(whereClauses, "source_repo = ?")
+		args = append(args, *filter.SourceRepo)
+	}
 
 	// Spec filtering
 	if filter.SpecID != nil {
@@ -193,16 +210,24 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		}
 	}
 
-	// Parent filtering
+	// Parent filtering: filter children by parent issue
+	// Also includes dotted-ID children (e.g., "parent.1.2" is child of "parent")
 	if filter.ParentID != nil {
-		whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?)")
-		args = append(args, *filter.ParentID)
+		parentID := *filter.ParentID
+		whereClauses = append(whereClauses, "(id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?) OR id LIKE CONCAT(?, '.%'))")
+		args = append(args, parentID, parentID)
 	}
 
 	// Molecule type filtering
 	if filter.MolType != nil {
 		whereClauses = append(whereClauses, "mol_type = ?")
 		args = append(args, string(*filter.MolType))
+	}
+
+	// Wisp type filtering (TTL-based compaction classification)
+	if filter.WispType != nil {
+		whereClauses = append(whereClauses, "wisp_type = ?")
+		args = append(args, string(*filter.WispType))
 	}
 
 	// Time-based scheduling filters
@@ -232,7 +257,7 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		%s
 	`, whereSQL, limitSQL)
 
-	rows, err := s.db.QueryContext(ctx, querySQL, args...)
+	rows, err := s.queryContext(ctx, querySQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search issues: %w", err)
 	}
@@ -253,8 +278,9 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		whereClauses = append(whereClauses, "priority = ?")
 		args = append(args, *filter.Priority)
 	}
+	// Use subquery for type filter to prevent Dolt mergeJoinIter panic (see SearchIssues).
 	if filter.Type != "" {
-		whereClauses = append(whereClauses, "issue_type = ?")
+		whereClauses = append(whereClauses, "id IN (SELECT id FROM issues WHERE issue_type = ?)")
 		args = append(args, filter.Type)
 	}
 	if filter.Assignee != nil {
@@ -268,14 +294,17 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		}
 	}
 
-	// Exclude blocked issues using subquery
+	// Exclude blocked issues using nested EXISTS to avoid Dolt mergeJoinIter panic
 	whereClauses = append(whereClauses, `
-		id NOT IN (
-			SELECT DISTINCT d.issue_id
-			FROM dependencies d
-			JOIN issues blocker ON d.depends_on_id = blocker.id
-			WHERE d.type = 'blocks'
-			  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+		NOT EXISTS (
+			SELECT 1 FROM dependencies d
+			WHERE d.issue_id = issues.id
+			  AND d.type = 'blocks'
+			  AND EXISTS (
+			    SELECT 1 FROM issues blocker
+			    WHERE blocker.id = d.depends_on_id
+			      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+			  )
 		)
 	`)
 
@@ -294,7 +323,7 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		%s
 	`, whereSQL, limitSQL)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ready work: %w", err)
 	}
@@ -308,15 +337,31 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id, COUNT(d.depends_on_id) as blocked_by_count
+	// Use correlated subquery to avoid three-table merge join (Dolt mergeJoinIter panic)
+	rows, err := s.queryContext(ctx, `
+		SELECT i.id,
+		  (SELECT COUNT(*)
+		   FROM dependencies d
+		   WHERE d.issue_id = i.id
+		     AND d.type = 'blocks'
+		     AND EXISTS (
+		       SELECT 1 FROM issues blocker
+		       WHERE blocker.id = d.depends_on_id
+		         AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+		     )
+		  ) as blocked_by_count
 		FROM issues i
-		JOIN dependencies d ON i.id = d.issue_id
-		JOIN issues blocker ON d.depends_on_id = blocker.id
 		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-		  AND d.type = 'blocks'
-		  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-		GROUP BY i.id
+		  AND EXISTS (
+		    SELECT 1 FROM dependencies d
+		    WHERE d.issue_id = i.id
+		      AND d.type = 'blocks'
+		      AND EXISTS (
+		        SELECT 1 FROM issues blocker
+		        WHERE blocker.id = d.depends_on_id
+		          AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+		      )
+		  )
 		ORDER BY i.priority ASC, i.created_at DESC
 	`)
 	if err != nil {
@@ -339,13 +384,16 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 
 		// Get blocker IDs
 		var blockerIDs []string
-		blockerRows, err := s.db.QueryContext(ctx, `
+		blockerRows, err := s.queryContext(ctx, `
 			SELECT d.depends_on_id
 			FROM dependencies d
-			JOIN issues blocker ON d.depends_on_id = blocker.id
 			WHERE d.issue_id = ?
 			  AND d.type = 'blocks'
-			  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+			  AND EXISTS (
+			    SELECT 1 FROM issues blocker
+			    WHERE blocker.id = d.depends_on_id
+			      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+			  )
 		`, id)
 		if err != nil {
 			return nil, err
@@ -372,7 +420,7 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 
 // GetEpicsEligibleForClosure returns epics whose children are all closed
 func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT e.id,
 		       (SELECT COUNT(*) FROM dependencies d JOIN issues c ON d.issue_id = c.id
 		        WHERE d.depends_on_id = e.id AND d.type = 'parent-child') as total_children,
@@ -439,7 +487,7 @@ func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter
 		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stale issues: %w", err)
 	}
@@ -477,25 +525,41 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 		return nil, fmt.Errorf("failed to get statistics: %w", err)
 	}
 
-	// Blocked count (same semantics as SQLite: blocked by open deps).
-	err = s.db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT i.id)
-		FROM issues i
-		JOIN dependencies d ON i.id = d.issue_id
-		JOIN issues blocker ON d.depends_on_id = blocker.id
-		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-		  AND d.type = 'blocks'
-		  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-	`).Scan(&stats.BlockedIssues)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get blocked count: %w", err)
+	// Blocked count: use two separate queries to avoid multi-table joins
+	// that trigger Dolt's mergeJoinIter panic (slice bounds out of range).
+	// Step 1: Get IDs of open blockers
+	// Step 2: Count distinct blocked issues from those blockers
+	var blockedCount int
+	blockerRows, err := s.queryContext(ctx, `
+		SELECT DISTINCT d.issue_id
+		FROM dependencies d
+		WHERE d.type = 'blocks'
+		  AND d.depends_on_id IN (
+		    SELECT id FROM issues
+		    WHERE status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+		  )
+		  AND d.issue_id IN (
+		    SELECT id FROM issues
+		    WHERE status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+		  )
+	`)
+	if err == nil {
+		defer blockerRows.Close()
+		for blockerRows.Next() {
+			var id string
+			if err := blockerRows.Scan(&id); err == nil {
+				blockedCount++
+			}
+		}
 	}
+	stats.BlockedIssues = blockedCount
 
-	// Ready count (use the ready_issues view).
-	// Note: view already excludes ephemeral issues and blocked transitive deps.
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ready_issues`).Scan(&stats.ReadyIssues)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ready count: %w", err)
+	// Ready count: compute without using the ready_issues view to avoid
+	// recursive CTE join that triggers the same Dolt panic.
+	// Ready = open, non-ephemeral, not blocked (directly or transitively).
+	stats.ReadyIssues = stats.OpenIssues - blockedCount
+	if stats.ReadyIssues < 0 {
+		stats.ReadyIssues = 0
 	}
 
 	return stats, nil

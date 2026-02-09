@@ -24,7 +24,7 @@ import (
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/util"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -214,6 +214,7 @@ func buildIssueTreeWithDeps(issues []*types.Issue, allDeps map[string][]*types.D
 
 	// If we have dependency records, use them to find parent-child relationships
 	if allDeps != nil {
+		addedChild := make(map[string]bool) // tracks "parentID:childID" to prevent duplicates
 		for issueID, deps := range allDeps {
 			for _, dep := range deps {
 				parentID := dep.DependsOnID
@@ -228,7 +229,11 @@ func buildIssueTreeWithDeps(issues []*types.Issue, allDeps map[string][]*types.D
 				// 1. Explicit parent-child dependency type, OR
 				// 2. Any dependency where the target is an epic
 				if dep.Type == types.DepParentChild || epicIDs[parentID] {
-					childrenMap[parentID] = append(childrenMap[parentID], child)
+					key := parentID + ":" + issueID
+					if !addedChild[key] {
+						childrenMap[parentID] = append(childrenMap[parentID], child)
+						addedChild[key] = true
+					}
 					isChild[issueID] = true
 				}
 			}
@@ -599,12 +604,14 @@ func buildVolatilityBadges(ctx context.Context, issues []*types.Issue, showVolat
 }
 
 // buildBlockingMaps builds maps of blocking dependencies from dependency records.
-// Returns two maps: blockedByMap[issueID] = []IDs that block this issue,
-// and blocksMap[issueID] = []IDs that this issue blocks.
+// Returns three maps: blockedByMap[issueID] = []IDs that block this issue,
+// blocksMap[issueID] = []IDs that this issue blocks (excluding parent-child),
+// and childrenMap[issueID] = []IDs that are children of this issue.
 // Only includes dependencies where AffectsReadyWork() is true (blocks, parent-child, etc.)
-func buildBlockingMaps(allDeps map[string][]*types.Dependency) (blockedByMap, blocksMap map[string][]string) {
+func buildBlockingMaps(allDeps map[string][]*types.Dependency) (blockedByMap, blocksMap, childrenMap map[string][]string) {
 	blockedByMap = make(map[string][]string)
 	blocksMap = make(map[string][]string)
+	childrenMap = make(map[string][]string)
 
 	for issueID, deps := range allDeps {
 		for _, dep := range deps {
@@ -614,11 +621,15 @@ func buildBlockingMaps(allDeps map[string][]*types.Dependency) (blockedByMap, bl
 			}
 			// issueID is blocked by dep.DependsOnID
 			blockedByMap[issueID] = append(blockedByMap[issueID], dep.DependsOnID)
-			// dep.DependsOnID blocks issueID
-			blocksMap[dep.DependsOnID] = append(blocksMap[dep.DependsOnID], issueID)
+			// Separate parent-child from blocking relationships
+			if dep.Type == types.DepParentChild {
+				childrenMap[dep.DependsOnID] = append(childrenMap[dep.DependsOnID], issueID)
+			} else {
+				blocksMap[dep.DependsOnID] = append(blocksMap[dep.DependsOnID], issueID)
+			}
 		}
 	}
-	return blockedByMap, blocksMap
+	return blockedByMap, blocksMap, childrenMap
 }
 
 // formatIssueCompact formats a single issue in compact format to a buffer
@@ -674,13 +685,16 @@ var listCmd = &cobra.Command{
 		status, _ := cmd.Flags().GetString("status")
 		assignee, _ := cmd.Flags().GetString("assignee")
 		issueType, _ := cmd.Flags().GetString("type")
-		issueType = util.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
+		issueType = utils.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
 		limit, _ := cmd.Flags().GetInt("limit")
 		allFlag, _ := cmd.Flags().GetBool("all")
 		formatStr, _ := cmd.Flags().GetString("format")
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
+		labelPattern, _ := cmd.Flags().GetString("label-pattern")
+		labelRegex, _ := cmd.Flags().GetString("label-regex")
 		titleSearch, _ := cmd.Flags().GetString("title")
+		specPrefix, _ := cmd.Flags().GetString("spec")
 		idFilter, _ := cmd.Flags().GetString("id")
 		specFilter, _ := cmd.Flags().GetString("spec")
 		specIDFilter, _ := cmd.Flags().GetString("spec-id")
@@ -740,6 +754,18 @@ var listCmd = &cobra.Command{
 			molType = &mt
 		}
 
+		// Wisp type filtering (TTL-based compaction classification)
+		wispTypeStr, _ := cmd.Flags().GetString("wisp-type")
+		var wispType *types.WispType
+		if wispTypeStr != "" {
+			wt := types.WispType(wispTypeStr)
+			if !wt.IsValid() {
+				fmt.Fprintf(os.Stderr, "Error: invalid wisp-type %q (must be heartbeat, ping, patrol, gc_report, recovery, error, or escalation)\n", wispTypeStr)
+				os.Exit(1)
+			}
+			wispType = &wt
+		}
+
 		// Time-based scheduling filters (GH#820)
 		deferredFlag, _ := cmd.Flags().GetBool("deferred")
 		deferAfter, _ := cmd.Flags().GetString("defer-after")
@@ -770,8 +796,8 @@ var listCmd = &cobra.Command{
 		// Use global jsonOutput set by PersistentPreRun
 
 		// Normalize labels: trim, dedupe, remove empty
-		labels = util.NormalizeLabels(labels)
-		labelsAny = util.NormalizeLabels(labelsAny)
+		labels = utils.NormalizeLabels(labels)
+		labelsAny = utils.NormalizeLabels(labelsAny)
 
 		// Apply directory-aware label scoping if no labels explicitly provided (GH#541)
 		if len(labels) == 0 && len(labelsAny) == 0 {
@@ -783,9 +809,12 @@ var listCmd = &cobra.Command{
 		// Handle limit: --limit 0 means unlimited (explicit override)
 		// Otherwise use the value (default 50 or user-specified)
 		// Agent mode uses lower default (20) for context efficiency
+		// --all without explicit --limit sets unlimited (bd-u0l9f)
 		effectiveLimit := limit
 		if cmd.Flags().Changed("limit") && limit == 0 {
 			effectiveLimit = 0 // Explicit unlimited
+		} else if !cmd.Flags().Changed("limit") && allFlag {
+			effectiveLimit = 0 // --all implies unlimited
 		} else if !cmd.Flags().Changed("limit") && ui.IsAgentMode() {
 			effectiveLimit = 20 // Agent mode default
 		}
@@ -830,11 +859,17 @@ var listCmd = &cobra.Command{
 		if len(labelsAny) > 0 {
 			filter.LabelsAny = labelsAny
 		}
+		if labelPattern != "" {
+			filter.LabelPattern = labelPattern
+		}
+		if labelRegex != "" {
+			filter.LabelRegex = labelRegex
+		}
 		if titleSearch != "" {
 			filter.TitleSearch = titleSearch
 		}
 		if idFilter != "" {
-			ids := util.NormalizeLabels(strings.Split(idFilter, ","))
+			ids := utils.NormalizeLabels(strings.Split(idFilter, ","))
 			if len(ids) > 0 {
 				filter.IDs = ids
 			}
@@ -851,6 +886,9 @@ var listCmd = &cobra.Command{
 			} else {
 				filter.SpecID = &specFilter
 			}
+		}
+		if specPrefix != "" {
+			filter.SpecIDPrefix = specPrefix
 		}
 
 		if showVolatilityFlag && hideVolatilityFlag {
@@ -988,6 +1026,11 @@ var listCmd = &cobra.Command{
 			filter.MolType = molType
 		}
 
+		// Wisp type filtering
+		if wispType != nil {
+			filter.WispType = wispType
+		}
+
 		// Time-based scheduling filters (GH#820)
 		if deferredFlag {
 			filter.Deferred = true
@@ -1034,15 +1077,8 @@ var listCmd = &cobra.Command{
 			filter.NoSpec = true
 		}
 
-		// Check database freshness before reading
-		// Skip check when using daemon (daemon auto-imports on staleness)
 		ctx := rootCtx
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
+		requireFreshDB(ctx)
 
 		// If daemon is running, use RPC
 		if daemonClient != nil {
@@ -1052,10 +1088,11 @@ var listCmd = &cobra.Command{
 				effectiveStatus = "open"
 			}
 			listArgs := &rpc.ListArgs{
-				Status:    effectiveStatus,
-				IssueType: issueType,
-				Assignee:  assignee,
-				Limit:     effectiveLimit,
+				Status:       effectiveStatus,
+				IssueType:    issueType,
+				Assignee:     assignee,
+				Limit:        effectiveLimit,
+				SpecIDPrefix: specPrefix,
 			}
 			if cmd.Flags().Changed("priority") {
 				priorityStr, _ := cmd.Flags().GetString("priority")
@@ -1071,6 +1108,12 @@ var listCmd = &cobra.Command{
 			}
 			if len(labelsAny) > 0 {
 				listArgs.LabelsAny = labelsAny
+			}
+			if labelPattern != "" {
+				listArgs.LabelPattern = labelPattern
+			}
+			if labelRegex != "" {
+				listArgs.LabelRegex = labelRegex
 			}
 			// Forward title search via Query field (searches title/description/id)
 			if titleSearch != "" {
@@ -1302,7 +1345,7 @@ var listCmd = &cobra.Command{
 					_ = roStore.Close()
 				}
 			}
-			blockedByMap, blocksMap := buildBlockingMaps(allDepsForList)
+			blockedByMap, blocksMap, _ := buildBlockingMaps(allDepsForList)
 
 			// Build output in buffer for pager support (bd-jdz3)
 			var buf strings.Builder
@@ -1429,6 +1472,7 @@ var listCmd = &cobra.Command{
 			labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
 			depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
 			allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
+			commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
 
 			// Populate labels and dependencies for JSON output
 			for _, issue := range issues {
@@ -1480,6 +1524,7 @@ var listCmd = &cobra.Command{
 					DependencyCount: counts.DependencyCount,
 					DependentCount:  counts.DependentCount,
 					Volatility:      volatility,
+					CommentCount:    commentCounts[issue.ID],
 				}
 			}
 			outputJSON(issuesWithCounts)
@@ -1498,7 +1543,7 @@ var listCmd = &cobra.Command{
 
 		// Load dependencies for blocking info display
 		allDepsForList, _ := store.GetAllDependencyRecords(ctx)
-		blockedByMap, blocksMap := buildBlockingMaps(allDepsForList)
+		blockedByMap, blocksMap, _ := buildBlockingMaps(allDepsForList)
 
 		// Build output in buffer for pager support (bd-jdz3)
 		var buf strings.Builder
@@ -1556,6 +1601,8 @@ func init() {
 	listCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore, merge-request, molecule, gate, convoy). Aliases: mr→merge-request, feat→feature, mol→molecule")
 	listCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
 	listCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
+	listCmd.Flags().String("label-pattern", "", "Filter by label glob pattern (e.g., 'tech-*' matches tech-debt, tech-legacy)")
+	listCmd.Flags().String("label-regex", "", "Filter by label regex pattern (e.g., 'tech-(debt|legacy)')")
 	listCmd.Flags().String("title", "", "Filter by title text (case-insensitive substring match)")
 	listCmd.Flags().String("id", "", "Filter by specific issue IDs (comma-separated, e.g., bd-1,bd-5,bd-10)")
 	listCmd.Flags().String("spec", "", "Filter by spec ID (exact match; use trailing / for prefix)")
@@ -1609,6 +1656,9 @@ func init() {
 
 	// Molecule type filtering
 	listCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
+
+	// Wisp type filtering (TTL-based compaction classification)
+	listCmd.Flags().String("wisp-type", "", "Filter by wisp type: heartbeat, ping, patrol, gc_report, recovery, error, escalation")
 
 	// Time-based scheduling filters (GH#820)
 	listCmd.Flags().Bool("deferred", false, "Show only issues with defer_until set")

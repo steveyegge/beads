@@ -11,6 +11,6 @@ import (
 // File replacement detection will rely on mtime/size instead.
 func getFileInode(info os.FileInfo) uint64 {
 	// Windows doesn't have inodes, return 0 to skip inode-based detection.
-	// The FreshnessChecker will fall back to mtime-based detection.
+	// The freshnessChecker will fall back to mtime-based detection.
 	return 0
 }

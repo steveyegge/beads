@@ -11,13 +11,14 @@ import (
 )
 
 func TestStaleIssues(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
 	ctx := context.Background()
 
 	now := time.Now()
-	oldTime := now.Add(-40 * 24 * time.Hour) // 40 days ago
+	oldTime := now.Add(-40 * 24 * time.Hour)    // 40 days ago
 	recentTime := now.Add(-10 * 24 * time.Hour) // 10 days ago
 
 	// Create issues with different update times
@@ -115,6 +116,7 @@ func TestStaleIssues(t *testing.T) {
 }
 
 func TestStaleIssuesWithStatusFilter(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -205,6 +207,7 @@ func TestStaleIssuesWithStatusFilter(t *testing.T) {
 }
 
 func TestStaleIssuesWithLimit(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -255,6 +258,7 @@ func TestStaleIssuesWithLimit(t *testing.T) {
 }
 
 func TestStaleIssuesEmpty(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -292,6 +296,7 @@ func TestStaleIssuesEmpty(t *testing.T) {
 }
 
 func TestStaleIssuesDifferentDaysThreshold(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -380,6 +385,7 @@ func TestStaleIssuesDifferentDaysThreshold(t *testing.T) {
 }
 
 func TestStaleCommandInit(t *testing.T) {
+	t.Parallel()
 	if staleCmd == nil {
 		t.Fatal("staleCmd should be initialized")
 	}

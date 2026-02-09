@@ -212,11 +212,15 @@ func (c *Client) ExecuteWithCwd(operation string, args interface{}, cwd string) 
 		return nil, fmt.Errorf("failed to flush: %w", err)
 	}
 
-	reader := bufio.NewReader(c.conn)
-	respLine, err := reader.ReadBytes('\n')
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+	scanner := bufio.NewScanner(c.conn)
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxMessageSize)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("failed to read response: %w", err)
+		}
+		return nil, fmt.Errorf("failed to read response: connection closed")
 	}
+	respLine := scanner.Bytes()
 
 	var resp Response
 	if err := json.Unmarshal(respLine, &resp); err != nil {
@@ -370,6 +374,11 @@ func (c *Client) RemoveDependency(args *DepRemoveArgs) (*Response, error) {
 	return c.Execute(OpDepRemove, args)
 }
 
+// GetDependencyTree retrieves the dependency tree for an issue via the daemon
+func (c *Client) GetDependencyTree(args *DepTreeArgs) (*Response, error) {
+	return c.Execute(OpDepTree, args)
+}
+
 // AddLabel adds a label via the daemon
 func (c *Client) AddLabel(args *LabelAddArgs) (*Response, error) {
 	return c.Execute(OpLabelAdd, args)
@@ -454,7 +463,6 @@ func (c *Client) SpecMarkDone(args *SpecMarkDoneArgs) (*Response, error) {
 func (c *Client) SpecCandidates(args *SpecCandidatesArgs) (*Response, error) {
 	return c.Execute(OpSpecCandidates, args)
 }
-
 // Export exports the database to JSONL format
 func (c *Client) Export(args *ExportArgs) (*Response, error) {
 	return c.Execute(OpExport, args)

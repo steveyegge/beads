@@ -1,5 +1,4 @@
 //go:build cgo
-
 package doctor
 
 import (
@@ -97,7 +96,7 @@ func CheckFederationRemotesAPI(path string) DoctorCheck {
 	remotesAPIPort := dolt.DefaultRemotesAPIPort
 	host := "127.0.0.1"
 
-	addr := fmt.Sprintf("%s:%d", host, remotesAPIPort)
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", remotesAPIPort))
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
 		return DoctorCheck{

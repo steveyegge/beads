@@ -8,16 +8,17 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 var migrateCmd = &cobra.Command{
@@ -83,32 +84,39 @@ Subcommands:
 		// Find .beads directory
 		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
-		if jsonOutput {
-		outputJSON(map[string]interface{}{
-		"error":   "no_beads_directory",
-		"message": "No .beads directory found. Run 'bd init' first.",
-		})
-		os.Exit(1)
-		} else {
-		FatalErrorWithHint("no .beads directory found", "run 'bd init' to initialize bd")
-		}
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"error":   "no_beads_directory",
+					"message": "No .beads directory found. Run 'bd init' first.",
+				})
+				os.Exit(1)
+			} else {
+				FatalErrorWithHint("no .beads directory found", "run 'bd init' to initialize bd")
+			}
 		}
 
 		// Load config to get target database name (respects user's config.json)
-	cfg, err := loadOrCreateConfig(beadsDir)
-	if err != nil {
-		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"error":   "config_load_failed",
-				"message": err.Error(),
-			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
+		cfg, err := loadOrCreateConfig(beadsDir)
+		if err != nil {
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"error":   "config_load_failed",
+					"message": err.Error(),
+				})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
+			}
+			os.Exit(1)
 		}
-		os.Exit(1)
-	}
 
-	// Detect all database files
+		// For Dolt backend, handle metadata update directly via storage factory
+		// (detectDatabases only finds .db files, which don't exist for Dolt)
+		if cfg.GetBackend() == configfile.BackendDolt {
+			handleDoltMetadataUpdate(cfg, beadsDir, dryRun)
+			return
+		}
+
+		// Detect all database files (SQLite backend only)
 		databases, err := detectDatabases(beadsDir)
 		if err != nil {
 			if jsonOutput {
@@ -212,8 +220,8 @@ Subcommands:
 				})
 			} else {
 				fmt.Println("Dry run mode - no changes will be made")
-				if needsMigration {
-				fmt.Printf("Would migrate: %s → %s\n", filepath.Base(oldDBs[0].path), cfg.Database)
+				if needsMigration && len(oldDBs) > 0 {
+					fmt.Printf("Would migrate: %s → %s\n", filepath.Base(oldDBs[0].path), cfg.Database)
 				}
 				if needsVersionUpdate {
 					fmt.Printf("Would update version: %s → %s\n", currentDB.version, Version)
@@ -299,7 +307,7 @@ Subcommands:
 			}
 
 			ctx := rootCtx
-			
+
 			// Detect and set issue_prefix if missing (fixes GH #201)
 			prefix, err := store.GetConfig(ctx, "issue_prefix")
 			if err != nil || prefix == "" {
@@ -326,7 +334,7 @@ Subcommands:
 					}
 				}
 			}
-			
+
 			if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
 				_ = store.Close()
 				if jsonOutput {
@@ -339,7 +347,7 @@ Subcommands:
 				}
 				os.Exit(1)
 			}
-			
+
 			// Close and checkpoint to finalize the WAL
 			if err := store.Close(); err != nil {
 				if !jsonOutput {
@@ -399,7 +407,7 @@ Subcommands:
 				// Don't fail migration if config save fails
 			}
 		}
-		
+
 		// Final status
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
@@ -420,6 +428,122 @@ Subcommands:
 type dbInfo struct {
 	path    string
 	version string
+}
+
+// handleDoltMetadataUpdate handles version metadata updates for Dolt backends.
+// The standard migration flow (detectDatabases, rename .db files) is SQLite-only.
+// For Dolt, we just need to ensure version metadata is set correctly.
+func handleDoltMetadataUpdate(cfg *configfile.Config, beadsDir string, dryRun bool) {
+	doltPath := cfg.DatabasePath(beadsDir)
+
+	// Check if Dolt database directory exists
+	info, err := os.Stat(doltPath)
+	if err != nil || !info.IsDir() {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"status":  "no_databases",
+				"message": "No Dolt database found in .beads/",
+			})
+		} else {
+			fmt.Fprintf(os.Stderr, "No Dolt database found at %s\n", doltPath)
+			fmt.Fprintf(os.Stderr, "Run 'bd init' to create a new database, or 'bd migrate --to-dolt' to migrate from SQLite.\n")
+		}
+		return
+	}
+
+	// Open database using storage factory
+	ctx := rootCtx
+	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{})
+	if err != nil {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"error":   "open_failed",
+				"message": err.Error(),
+			})
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: failed to open Dolt database: %v\n", err)
+		}
+		os.Exit(1)
+	}
+	defer func() { _ = store.Close() }()
+
+	// Check current version
+	currentVersion, _ := store.GetMetadata(ctx, "bd_version")
+	if currentVersion == Version {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"status":  "current",
+				"message": fmt.Sprintf("Dolt database already at version %s", Version),
+			})
+		} else {
+			fmt.Printf("Dolt database version: %s\n", currentVersion)
+			fmt.Printf("%s\n", ui.RenderPass("✓ Version matches"))
+		}
+		return
+	}
+
+	if dryRun {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"dry_run":              true,
+				"needs_version_update": true,
+				"current_version":      currentVersion,
+				"target_version":       Version,
+			})
+		} else {
+			fmt.Println("Dry run mode - no changes will be made")
+			fmt.Printf("Would update Dolt version: %s → %s\n", currentVersion, Version)
+		}
+		return
+	}
+
+	if !jsonOutput {
+		fmt.Printf("Updating Dolt schema version: %s → %s\n", currentVersion, Version)
+	}
+
+	// Detect and set issue_prefix if missing
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil || prefix == "" {
+		issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		if err == nil && len(issues) > 0 {
+			detectedPrefix := utils.ExtractIssuePrefix(issues[0].ID)
+			if detectedPrefix != "" {
+				if err := store.SetConfig(ctx, "issue_prefix", detectedPrefix); err != nil {
+					if !jsonOutput {
+						fmt.Fprintf(os.Stderr, "Warning: failed to set issue prefix: %v\n", err)
+					}
+				} else if !jsonOutput {
+					fmt.Printf("%s\n", ui.RenderPass(fmt.Sprintf("✓ Detected and set issue prefix: %s", detectedPrefix)))
+				}
+			}
+		}
+	}
+
+	// Update version metadata
+	if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"error":   "version_update_failed",
+				"message": err.Error(),
+			})
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: failed to update version: %v\n", err)
+		}
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"status":           "success",
+			"current_database": cfg.Database,
+			"backend":          "dolt",
+			"version":          Version,
+			"version_updated":  true,
+		})
+	} else {
+		fmt.Printf("%s\n", ui.RenderPass("✓ Version updated"))
+		fmt.Printf("\nDolt database: %s (version %s)\n", cfg.Database, Version)
+	}
 }
 
 func detectDatabases(beadsDir string) ([]*dbInfo, error) {
@@ -494,8 +618,6 @@ func getDBVersion(dbPath string) string {
 	return "unknown"
 }
 
-
-
 func formatDBList(dbs []*dbInfo) []map[string]string {
 	result := make([]map[string]string, len(dbs))
 	for i, db := range dbs {
@@ -509,9 +631,9 @@ func formatDBList(dbs []*dbInfo) []map[string]string {
 }
 
 func handleUpdateRepoID(dryRun bool, autoYes bool) {
-	// Find database
-	foundDB := beads.FindDatabasePath()
-	if foundDB == "" {
+	// Find .beads directory
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"error":   "no_database",
@@ -538,8 +660,8 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 		os.Exit(1)
 	}
 
-	// Open database
-	store, err := sqlite.New(rootCtx, foundDB)
+	// Open database using storage factory (supports both SQLite and Dolt backends)
+	store, err := storagefactory.NewFromConfigWithOptions(rootCtx, beadsDir, storagefactory.Options{})
 	if err != nil {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
@@ -578,13 +700,13 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 			outputJSON(map[string]interface{}{
 				"dry_run":     true,
 				"old_repo_id": oldDisplay,
-				"new_repo_id": newRepoID[:8],
+				"new_repo_id": truncateID(newRepoID, 8),
 			})
 		} else {
 			fmt.Println("Dry run mode - no changes will be made")
 			fmt.Printf("Would update repository ID:\n")
 			fmt.Printf("  Old: %s\n", oldDisplay)
-			fmt.Printf("  New: %s\n", newRepoID[:8])
+			fmt.Printf("  New: %s\n", truncateID(newRepoID, 8))
 		}
 		return
 	}
@@ -593,7 +715,7 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 	if oldRepoID != "" && oldRepoID != newRepoID && !autoYes && !jsonOutput {
 		fmt.Printf("WARNING: Changing repository ID can break sync if other clones exist.\n\n")
 		fmt.Printf("Current repo ID: %s\n", oldDisplay)
-		fmt.Printf("New repo ID:     %s\n\n", newRepoID[:8])
+		fmt.Printf("New repo ID:     %s\n\n", truncateID(newRepoID, 8))
 		fmt.Printf("Continue? [y/N] ")
 		var response string
 		_, _ = fmt.Scanln(&response)
@@ -620,13 +742,22 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 		outputJSON(map[string]interface{}{
 			"status":      "success",
 			"old_repo_id": oldDisplay,
-			"new_repo_id": newRepoID[:8],
+			"new_repo_id": truncateID(newRepoID, 8),
 		})
 	} else {
 		fmt.Printf("%s\n\n", ui.RenderPass("✓ Repository ID updated"))
 		fmt.Printf("  Old: %s\n", oldDisplay)
-		fmt.Printf("  New: %s\n", newRepoID[:8])
+		fmt.Printf("  New: %s\n", truncateID(newRepoID, 8))
 	}
+}
+
+// truncateID safely truncates an ID string to maxLen characters.
+// Returns the full string if it's shorter than maxLen.
+func truncateID(id string, maxLen int) string {
+	if len(id) <= maxLen {
+		return id
+	}
+	return id[:maxLen]
 }
 
 // loadOrCreateConfig loads metadata.json or creates default if not found
@@ -635,12 +766,12 @@ func loadOrCreateConfig(beadsDir string) (*configfile.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Create default if no config exists
 	if cfg == nil {
 		cfg = configfile.DefaultConfig()
 	}
-	
+
 	return cfg, nil
 }
 
@@ -648,7 +779,7 @@ func loadOrCreateConfig(beadsDir string) (*configfile.Config, error) {
 func cleanupWALFiles(dbPath string) {
 	walPath := dbPath + "-wal"
 	shmPath := dbPath + "-shm"
-	
+
 	// Best effort cleanup - don't fail if these don't exist
 	_ = os.Remove(walPath) // WAL may not exist
 	_ = os.Remove(shmPath) // SHM may not exist
@@ -702,7 +833,7 @@ func handleInspect() {
 		}
 		os.Exit(1)
 	}
-	
+
 	// If database doesn't exist, return inspection with defaults
 	if !dbExists {
 		result := map[string]interface{}{
@@ -717,7 +848,7 @@ func handleInspect() {
 			"warnings":            []string{"Database does not exist - run 'bd init' first"},
 			"invariants_to_check": sqlite.GetInvariantNames(),
 		}
-		
+
 		if jsonOutput {
 			outputJSON(result)
 		} else {
@@ -729,8 +860,8 @@ func handleInspect() {
 		return
 	}
 
-	// Open database in read-only mode for inspection
-	store, err := sqlite.New(rootCtx, targetPath)
+	// Open database in read-only mode for inspection (supports both SQLite and Dolt)
+	store, err := storagefactory.NewFromConfigWithOptions(rootCtx, beadsDir, storagefactory.Options{ReadOnly: true})
 	if err != nil {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
@@ -773,7 +904,7 @@ func handleInspect() {
 
 	// Get registered migrations (all migrations are idempotent and run on every open)
 	registeredMigrations := sqlite.ListMigrations()
-	
+
 	// Build invariants list
 	invariantNames := sqlite.GetInvariantNames()
 
@@ -814,21 +945,21 @@ func handleInspect() {
 		fmt.Printf("Schema Version: %s\n", schemaVersion)
 		fmt.Printf("Issue Count: %d\n", issueCount)
 		fmt.Printf("Registered Migrations: %d\n", len(registeredMigrations))
-		
+
 		if len(warnings) > 0 {
 			fmt.Println("\nWarnings:")
 			for _, w := range warnings {
 				fmt.Printf("  ⚠ %s\n", w)
 			}
 		}
-		
+
 		if len(missingConfig) > 0 {
 			fmt.Println("\nMissing Config:")
 			for _, k := range missingConfig {
 				fmt.Printf("  - %s\n", k)
 			}
 		}
-		
+
 		fmt.Printf("\nInvariants to Check: %d\n", len(invariantNames))
 		for _, inv := range invariantNames {
 			fmt.Printf("  ✓ %s\n", inv)
@@ -898,8 +1029,8 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 		os.Exit(1)
 	}
 
-	// Open database
-	store, err := sqlite.New(rootCtx, targetPath)
+	// Open database (supports both SQLite and Dolt backends)
+	store, err := storagefactory.NewFromConfigWithOptions(rootCtx, beadsDir, storagefactory.Options{})
 	if err != nil {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
@@ -941,9 +1072,9 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 	if current == b {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
-				"status":   "noop",
-				"branch":   b,
-				"message":  "sync.branch already set to this value",
+				"status":  "noop",
+				"branch":  b,
+				"message": "sync.branch already set to this value",
 			})
 		} else {
 			fmt.Printf("%s\n", ui.RenderPass(fmt.Sprintf("✓ sync.branch already set to '%s'", b)))

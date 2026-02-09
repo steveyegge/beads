@@ -48,7 +48,7 @@ func (s *Server) checkVersionCompatibility(clientVersion string) error {
 		cmp := semver.Compare(serverVer, clientVer)
 		if cmp < 0 {
 			// Daemon is older - needs upgrade
-			return fmt.Errorf("incompatible major versions: client %s, daemon %s. Daemon is older; upgrade and restart daemon: 'bd daemon stop && bd daemon start'",
+			return fmt.Errorf("incompatible major versions: client %s, daemon %s. Daemon is older; upgrade and restart daemon: 'bd daemon stop . && bd daemon start'",
 				clientVersion, ServerVersion)
 		}
 		// Daemon is newer - client needs upgrade
@@ -147,10 +147,9 @@ func (s *Server) handleRequest(req *Request) Response {
 	}
 
 	// Check for stale JSONL and auto-import if needed
-	// Skip for write operations that will trigger export anyway
-	// Skip for import operation itself to avoid recursion
-	if req.Operation != OpPing && req.Operation != OpHealth && req.Operation != OpMetrics &&
-		req.Operation != OpImport && req.Operation != OpExport {
+	// Skip for operations that don't need fresh data: shutdown, diagnostics,
+	// export (triggers its own sync), import (avoid recursion), and lightweight probes (ping/health/metrics)
+	if !skipAutoImport(req.Operation) {
 		if err := s.checkAndAutoImportIfStale(req); err != nil {
 			// Log warning but continue - don't fail the request
 			fmt.Fprintf(os.Stderr, "Warning: staleness check failed: %v\n", err)
@@ -198,6 +197,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleDepAdd(req)
 	case OpDepRemove:
 		resp = s.handleDepRemove(req)
+	case OpDepTree:
+		resp = s.handleDepTree(req)
 	case OpLabelAdd:
 		resp = s.handleLabelAdd(req)
 	case OpLabelRemove:
@@ -239,8 +240,6 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleCompactStats(req)
 	case OpExport:
 		resp = s.handleExport(req)
-	case OpImport:
-		resp = s.handleImport(req)
 	case OpEpicStatus:
 		resp = s.handleEpicStatus(req)
 	case OpGetMutations:
@@ -282,14 +281,36 @@ func (s *Server) handleRequest(req *Request) Response {
 	return resp
 }
 
+// skipAutoImport returns true for operations where the auto-import staleness
+// check should be skipped. This includes: lightweight probes (ping, health,
+// metrics), export (handles its own sync), shutdown (counterproductive to
+// import during teardown), and read-only diagnostic/monitoring operations.
+func skipAutoImport(op string) bool {
+	switch op {
+	case OpPing, OpHealth, OpMetrics, OpExport, OpImport:
+		// Original skip list: probes, export, and import (avoid recursion)
+		return true
+	case OpShutdown:
+		// Importing during shutdown is counterproductive
+		return true
+	case OpGetMutations, OpGetMoleculeProgress, OpGetWorkerStatus, OpGetConfig, OpMolStale, OpCompactStats:
+		// Read-only diagnostic/monitoring operations
+		return true
+	case OpGateCreate, OpGateList, OpGateShow, OpGateClose, OpGateWait:
+		// Gate operations are coordination primitives, not data queries
+		return true
+	default:
+		return false
+	}
+}
+
 // Adapter helpers
 
 // reqCtx returns a context with the server's request timeout applied.
 // This prevents request handlers from hanging indefinitely if database
 // operations or other internal calls stall (GH#bd-p76kv).
-func (s *Server) reqCtx(_ *Request) context.Context {
-	ctx, _ := context.WithTimeout(context.Background(), s.requestTimeout)
-	return ctx
+func (s *Server) reqCtx(_ *Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), s.requestTimeout)
 }
 
 func (s *Server) reqActor(req *Request) string {
@@ -370,20 +391,26 @@ func (s *Server) handleHealth(req *Request) Response {
 
 	store := s.storage
 
-	healthCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-
 	status := "healthy"
 	dbError := ""
+	dbResponseMs := 0.0
 
-	_, pingErr := store.GetStatistics(healthCtx)
-	dbResponseMs := time.Since(start).Seconds() * 1000
-
-	if pingErr != nil {
+	if store == nil {
 		status = statusUnhealthy
-		dbError = pingErr.Error()
-	} else if dbResponseMs > 500 {
-		status = "degraded"
+		dbError = "storage not initialized"
+	} else {
+		healthCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		_, pingErr := store.GetStatistics(healthCtx)
+		dbResponseMs = time.Since(start).Seconds() * 1000
+
+		if pingErr != nil {
+			status = statusUnhealthy
+			dbError = pingErr.Error()
+		} else if dbResponseMs > 500 {
+			status = "degraded"
+		}
 	}
 
 	// Check version compatibility
@@ -431,7 +458,8 @@ func (s *Server) handleMetrics(_ *Request) Response {
 }
 
 func (s *Server) handleGetWorkerStatus(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Parse optional args
 	var args GetWorkerStatusArgs

@@ -66,7 +66,22 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
+
+      - name: Install ICU4C (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev
+
+      - name: Install ICU4C (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install icu4c
+          dir="$(brew --prefix icu4c)"
+          echo "CGO_CPPFLAGS=-I$dir/include" >> "$GITHUB_ENV"
+          echo "CGO_LDFLAGS=-L$dir/lib -Wl,-rpath,$dir/lib" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$dir/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Configure Git
         run: |
@@ -104,6 +119,11 @@ jobs:
 
   # Windows smoke tests only - full test suite times out (see bd-bmev)
   # Linux/macOS run comprehensive tests; Windows just verifies binary works
+  #
+  # ICU is NOT required on Windows:
+  # - go-mysql-server's regex_pure.go (via -tags gms_pure_go) uses Go stdlib regexp
+  # - go-icu-regex's regex_windows.go also uses Go stdlib regexp (build tag: windows)
+  # - The only CGO deps on Windows are runtime/cgo and gozstd (bundled C source)
   test-windows:
     name: Test (Windows - smoke)
     runs-on: windows-latest
@@ -113,15 +133,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
 
       - name: Configure Git
         run: |
           git config --global user.name "CI Bot"
           git config --global user.email "ci@beads.test"
 
-      - name: Build
-        run: go build -v -o bd.exe ./cmd/bd
+      - name: Build (no CGO, pure Go)
+        run: |
+          $env:CGO_ENABLED="0"
+          go build -v -tags gms_pure_go -o bd.exe ./cmd/bd
 
       - name: Smoke test - version
         run: ./bd.exe version
@@ -138,6 +160,20 @@ jobs:
           ./bd.exe close $id
           echo "All smoke tests passed!"
 
+  fmt-check:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Check gofmt
+        run: make fmt-check
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -147,7 +183,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
+
+      - name: Install ICU4C (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -158,6 +199,9 @@ jobs:
   test-nix:
     name: Test Nix Flake
     runs-on: ubuntu-latest
+    # Allow failure until nixpkgs updates Go to 1.25.6+
+    # (dolthub/driver requires go 1.25.6, nixpkgs-unstable has go 1.25.1)
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
       - uses: cachix/install-nix-action@v31

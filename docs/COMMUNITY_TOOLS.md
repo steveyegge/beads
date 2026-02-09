@@ -31,6 +31,10 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 - **[beads-kanban-ui](https://github.com/AvivK5498/Beads-Kanban-UI)** - Visual Kanban board with git branch status tracking, epic/subtask management, design doc viewer, and activity timeline. Install via npm: `npm install -g beads-kanban-ui`. Built by [@AvivK5498](https://github.com/AvivK5498). (TypeScript/Rust)
 
+- **[beads-pm-ui](https://github.com/qosha1/beads-pm-ui)** - Gantt chart timeline view, project / team based filtering (via folder structure), quarterly goal setting and dependency chain visualization. Inline editable. Built by [@qosha1](https://github.com/qosha1). (Nextjs/Typscript)
+
+- **[Beadspace](https://github.com/cameronsjo/beadspace)** - Drop-in GitHub Pages dashboard with triage suggestions, priority/status breakdowns, and searchable issue table. Single HTML file, zero build dependencies, auto-deploys via GitHub Action. Built by [@cameronsjo](https://github.com/cameronsjo). (HTML/CSS/JS)
+
 ## Editor Extensions
 
 - **[vscode-beads](https://marketplace.visualstudio.com/items?itemName=planet57.vscode-beads)** - VS Code extension with issues panel and daemon management. Built by [@jdillon](https://github.com/jdillon). (TypeScript)
@@ -43,7 +47,11 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 - **[nvim-beads](https://github.com/joeblubaugh/nvim-beads)** - Neovim plugin for managing beads. Built by [@joeblubaugh](https://github.com/joeblubaugh). (Lua)
 
+- **[beads-manager](https://plugins.jetbrains.com/plugin/30089-beads-manager)** - Jetbrains IDE plugin to manage and view bead details. Maintained by [@developmeh](https://github.com/developmeh). (Kotlin)
+
 ## Native Apps
+
+- **[Beads Task-Issue Tracker](https://github.com/w3dev33/beads-task-issue-tracker)** - Cross-platform desktop application (macOS, Windows, Linux) for browsing, creating, and managing Beads issues with a visual interface. Features multi-project support with favorites, image attachments, dashboard with statistics, advanced filtering, and dark/light theme. Built by [@w3dev33](https://github.com/w3dev33). (Tauri/Vue)
 
 - **[Beadster](https://github.com/beadster/beadster)** - macOS app for browsing and managing issues from `.beads/` directories in git repositories. Built by [@podviaznikov](https://github.com/podviaznikov). (Swift)
 
@@ -52,6 +60,10 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 ## Data Source Middleware
 
 - **[jira-beads-sync](https://github.com/conallob/jira-beads-sync)** - CLI tool & Claude Code plugin to sync tasks from Jira into beads and publish beads task states back to Jira. Built by [@conallob](https://github.com/conallob). (Go)
+
+## SDKs & Libraries
+
+- **[beads-sdk](https://github.com/HerbCaudill/beads-sdk)** - Typed TypeScript SDK with zero runtime dependencies. High-level `BeadsClient` for CRUD, filtering, search, labels, dependencies, comments, epics, and sync. Includes `DaemonSocket` for real-time mutation watching via the beads daemon. Install with `pnpm add @herbcaudill/beads-sdk`. Built by [@HerbCaudill](https://github.com/HerbCaudill). (TypeScript)
 
 ## Claude Code Orchestration
 

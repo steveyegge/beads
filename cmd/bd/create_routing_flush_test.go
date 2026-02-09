@@ -8,12 +8,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // TestFlushRoutedRepo_DirectExport tests that routed issues are exported to JSONL
 // in the target repo when no daemon is running (direct export fallback).
 func TestFlushRoutedRepo_DirectExport(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	// Create a test source repo (current repo)
 	sourceDir := t.TempDir()
 	sourceBeadsDir := filepath.Join(sourceDir, ".beads")

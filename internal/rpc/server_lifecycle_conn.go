@@ -2,8 +2,10 @@ package rpc
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -12,8 +14,21 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
+
+// isPermissionUnsupportedError checks if an error indicates the filesystem
+// doesn't support permission changes on sockets (e.g., EINVAL on virtio-fs)
+func isPermissionUnsupportedError(err error) bool {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		// EINVAL: filesystem doesn't support chmod on sockets
+		// ENOTSUP/EOPNOTSUPP: operation not supported
+		return errno == syscall.EINVAL || errno == syscall.ENOTSUP
+	}
+	return false
+}
 
 // Start starts the RPC server and listens for connections
 func (s *Server) Start(_ context.Context) error {
@@ -32,10 +47,18 @@ func (s *Server) Start(_ context.Context) error {
 	s.listener = listener
 
 	// Set socket permissions to 0600 for security (owner only)
+	// Some filesystems (e.g., virtio-fs in containers) don't support chmod on sockets,
+	// returning EINVAL. This is non-fatal since the socket is already protected by
+	// its parent directory permissions and umask.
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(s.socketPath, 0600); err != nil {
-			_ = listener.Close()
-			return fmt.Errorf("failed to set socket permissions: %w", err)
+			// EINVAL typically means the filesystem doesn't support chmod on sockets
+			if !isPermissionUnsupportedError(err) {
+				_ = listener.Close()
+				return fmt.Errorf("failed to set socket permissions: %w", err)
+			}
+			// Log but continue - socket is still usable
+			fmt.Fprintf(os.Stderr, "Warning: could not set socket permissions (filesystem limitation): %v\n", err)
 		}
 	}
 
@@ -75,7 +98,9 @@ func (s *Server) Start(_ context.Context) error {
 		case s.connSemaphore <- struct{}{}:
 			// Acquired slot, handle connection
 			s.metrics.RecordConnection()
+			s.connWg.Add(1)
 			go func(c net.Conn) {
+				defer s.connWg.Done()
 				defer func() { <-s.connSemaphore }() // Release slot
 				atomic.AddInt32(&s.activeConns, 1)
 				defer atomic.AddInt32(&s.activeConns, -1)
@@ -105,14 +130,7 @@ func (s *Server) Stop() error {
 		// Signal cleanup goroutine to stop
 		close(s.shutdownChan)
 
-		// Close storage
-		if s.storage != nil {
-			if closeErr := s.storage.Close(); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to close default storage: %v\n", closeErr)
-			}
-		}
-
-		// Close listener under lock
+		// Close listener first to stop accepting new connections
 		s.mu.Lock()
 		listener := s.listener
 		s.listener = nil
@@ -121,7 +139,26 @@ func (s *Server) Stop() error {
 		if listener != nil {
 			if closeErr := listener.Close(); closeErr != nil {
 				err = fmt.Errorf("failed to close listener: %w", closeErr)
-				return
+			}
+		}
+
+		// Wait for in-flight connection goroutines to drain (with timeout)
+		drainDone := make(chan struct{})
+		go func() {
+			s.connWg.Wait()
+			close(drainDone)
+		}()
+		select {
+		case <-drainDone:
+			// All connections drained cleanly
+		case <-time.After(5 * time.Second):
+			// Timeout waiting for connections to drain - proceed with shutdown
+		}
+
+		// Close storage after in-flight requests complete
+		if s.storage != nil {
+			if closeErr := s.storage.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to close default storage: %v\n", closeErr)
 			}
 		}
 
@@ -178,8 +215,8 @@ func (s *Server) handleSignals() {
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
-	defer func() { 
-		_ = conn.Close() 
+	defer func() {
+		_ = conn.Close()
 	}()
 
 	// Recover from panics to prevent daemon crash (bd-1048)
@@ -190,7 +227,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 	}()
 
-	reader := bufio.NewReader(conn)
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxMessageSize)
+	scanner.Split(scanCompleteLines)
 	writer := bufio.NewWriter(conn)
 
 	for {
@@ -199,10 +238,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
+		if !scanner.Scan() {
 			return
 		}
+		line := scanner.Bytes()
 
 		var req Request
 		if err := json.Unmarshal(line, &req); err != nil {
@@ -225,6 +264,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 		resp := s.handleRequest(&req)
 		if err := s.writeResponse(writer, resp); err != nil {
 			// Connection broken, stop handling this connection
+			return
+		}
+
+		// If shutdown was requested, trigger it now that the response has been written
+		if s.pendingShutdown.Load() {
+			go func() {
+				if err := s.Stop(); err != nil {
+					fmt.Fprintf(os.Stderr, "Error during shutdown: %v\n", err)
+				}
+			}()
 			return
 		}
 	}
@@ -251,14 +300,24 @@ func (s *Server) writeResponse(writer *bufio.Writer, resp Response) error {
 	return nil
 }
 
-func (s *Server) handleShutdown(_ *Request) Response {
-	// Schedule shutdown in a goroutine so we can return a response first
-	go func() {
-		time.Sleep(100 * time.Millisecond) // Give time for response to be sent
-		if err := s.Stop(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error during shutdown: %v\n", err)
+// scanCompleteLines is a bufio.SplitFunc that only returns complete newline-terminated
+// lines. Unlike bufio.ScanLines, it does NOT return partial data on EOF/timeout,
+// ensuring that read deadline expiry causes the scanner to return false immediately
+// rather than yielding an incomplete message for processing.
+func scanCompleteLines(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		line := data[0:i]
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
 		}
-	}()
+		return i + 1, line, nil
+	}
+	return 0, nil, nil
+}
+
+func (s *Server) handleShutdown(_ *Request) Response {
+	// Signal pending shutdown - handleConnection will trigger Stop() after writing the response
+	s.pendingShutdown.Store(true)
 
 	return Response{
 		Success: true,

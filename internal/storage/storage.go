@@ -4,10 +4,15 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// ErrAlreadyClaimed is returned when attempting to claim an issue that is already
+// claimed by another user. The error message contains the current assignee.
+var ErrAlreadyClaimed = errors.New("issue already claimed")
 
 // Transaction provides atomic multi-operation support within a single database transaction.
 //
@@ -53,7 +58,7 @@ type Transaction interface {
 	UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error
 	CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error
 	DeleteIssue(ctx context.Context, id string) error
-	GetIssue(ctx context.Context, id string) (*types.Issue, error)                                  // For read-your-writes within transaction
+	GetIssue(ctx context.Context, id string) (*types.Issue, error)                                    // For read-your-writes within transaction
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) // For read-your-writes within transaction
 
 	// Dependency operations
@@ -89,6 +94,12 @@ type Storage interface {
 	GetIssue(ctx context.Context, id string) (*types.Issue, error)
 	GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error)
 	UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error
+	// ClaimIssue atomically claims an issue using compare-and-swap semantics.
+	// It sets the assignee to actor and status to "in_progress" only if the issue
+	// has no current assignee. Returns ErrAlreadyClaimed if the issue is already
+	// claimed by another user. This provides race-condition-free claiming for
+	// concurrent agents.
+	ClaimIssue(ctx context.Context, id string, actor string) error
 	CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error
 	DeleteIssue(ctx context.Context, id string) error
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
@@ -125,6 +136,7 @@ type Storage interface {
 	// Events
 	AddComment(ctx context.Context, issueID, actor, comment string) error
 	GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error)
+	GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error)
 
 	// Comments
 	AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
@@ -133,6 +145,7 @@ type Storage interface {
 	ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
 	GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error)
+	GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error)
 
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)
@@ -149,7 +162,7 @@ type Storage interface {
 	GetExportHash(ctx context.Context, issueID string) (string, error)
 	SetExportHash(ctx context.Context, issueID, contentHash string) error
 	ClearAllExportHashes(ctx context.Context) error
-	
+
 	// JSONL file integrity (bd-160)
 	GetJSONLFileHash(ctx context.Context) (string, error)
 	SetJSONLFileHash(ctx context.Context, fileHash string) error
@@ -168,6 +181,10 @@ type Storage interface {
 	// Metadata (for internal state like import hashes)
 	SetMetadata(ctx context.Context, key, value string) error
 	GetMetadata(ctx context.Context, key string) (string, error)
+
+	// Multi-repo cleanup
+	DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo string) (int, error)
+	ClearRepoMtime(ctx context.Context, repoPath string) error
 
 	// Prefix rename operations
 	UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
@@ -254,6 +271,24 @@ type CompactableStorage interface {
 
 	// MarkIssueDirty marks an issue as needing export to JSONL.
 	MarkIssueDirty(ctx context.Context, issueID string) error
+}
+
+// MultiRepoStorage extends Storage with multi-repo sync capabilities.
+// Multi-repo mode allows a single database to aggregate issues from multiple
+// git repositories via their JSONL files. Not all backends support this;
+// backends that don't (e.g., Dolt with native sync) should return nil, nil.
+type MultiRepoStorage interface {
+	Storage
+
+	// ExportToMultiRepo writes issues to their respective JSONL files based on source_repo.
+	// Returns a map of repo path -> exported issue count.
+	// Returns nil, nil if not in multi-repo mode or if the backend doesn't support it.
+	ExportToMultiRepo(ctx context.Context) (map[string]int, error)
+
+	// HydrateFromMultiRepo loads issues from all configured repositories into the database.
+	// Returns a map of repo path -> imported issue count.
+	// Returns nil, nil if not in multi-repo mode or if the backend doesn't support it.
+	HydrateFromMultiRepo(ctx context.Context) (map[string]int, error)
 }
 
 // BatchDeleter extends Storage with batch delete capabilities.

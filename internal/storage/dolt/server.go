@@ -1,3 +1,4 @@
+//go:build cgo
 // Package dolt implements the storage interface using Dolt (versioned MySQL-compatible database).
 //
 // This file implements the dolt sql-server management for federation mode.
@@ -19,8 +20,9 @@ import (
 )
 
 const (
-	// DefaultSQLPort is the default port for dolt sql-server MySQL protocol
-	DefaultSQLPort = 3306
+	// DefaultSQLPort is the default port for dolt sql-server MySQL protocol.
+	// Gas Town uses 3307 to avoid conflict with MySQL on 3306.
+	DefaultSQLPort = 3307
 	// DefaultRemotesAPIPort is the default port for dolt remotesapi (peer-to-peer sync)
 	DefaultRemotesAPIPort = 8080
 	// ServerStartTimeout is how long to wait for server to start
@@ -32,7 +34,7 @@ const (
 // ServerConfig holds configuration for the dolt sql-server
 type ServerConfig struct {
 	DataDir        string // Path to Dolt database directory
-	SQLPort        int    // MySQL protocol port (default: 3306)
+	SQLPort        int    // MySQL protocol port (default: 3307)
 	RemotesAPIPort int    // remotesapi port for peer sync (default: 8080)
 	Host           string // Host to bind to (default: 127.0.0.1)
 	LogFile        string // Log file for server output (optional)
@@ -221,7 +223,7 @@ func (s *Server) DSN(database string) string {
 
 // checkPortAvailable checks if a TCP port is available
 func (s *Server) checkPortAvailable(port int) error {
-	addr := fmt.Sprintf("%s:%d", s.cfg.Host, port)
+	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -233,7 +235,7 @@ func (s *Server) checkPortAvailable(port int) error {
 // waitForReady waits for the server to accept connections
 func (s *Server) waitForReady(ctx context.Context) error {
 	deadline := time.Now().Add(ServerStartTimeout)
-	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.SQLPort)
+	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.SQLPort))
 
 	for time.Now().Before(deadline) {
 		select {
@@ -331,7 +333,7 @@ func DetectRunningServer() (string, int, bool) {
 
 // isServerListening checks if a server is accepting connections on the given host:port.
 func isServerListening(host string, port int) bool {
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 	if err != nil {
 		return false

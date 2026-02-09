@@ -46,17 +46,17 @@ func wrapDBErrorf(err error, format string, args ...interface{}) error {
 	return fmt.Errorf("%s: %w", op, err)
 }
 
-// IsNotFound checks if an error is or wraps ErrNotFound
-func IsNotFound(err error) bool {
+// isNotFound checks if an error is or wraps ErrNotFound
+func isNotFound(err error) bool {
 	return errors.Is(err, ErrNotFound)
 }
 
-// IsConflict checks if an error is or wraps ErrConflict
-func IsConflict(err error) bool {
+// isConflict checks if an error is or wraps ErrConflict
+func isConflict(err error) bool {
 	return errors.Is(err, ErrConflict)
 }
 
-// IsCycle checks if an error is or wraps ErrCycle
-func IsCycle(err error) bool {
+// isCycle checks if an error is or wraps ErrCycle
+func isCycle(err error) bool {
 	return errors.Is(err, ErrCycle)
 }

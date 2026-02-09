@@ -20,7 +20,7 @@ const (
 	// Provides immediate persistence but more git noise.
 	SyncModeRealtime = string(config.SyncModeRealtime)
 
-	// SyncModeDoltNative uses Dolt remotes for sync, skipping JSONL.
+	// SyncModeDoltNative uses Dolt remotes for sync, no JSONL writes.
 	// Requires Dolt backend and configured Dolt remote.
 	SyncModeDoltNative = string(config.SyncModeDoltNative)
 
@@ -107,9 +107,30 @@ func GetImportTrigger(ctx context.Context, s storage.Storage) string {
 }
 
 // ShouldExportJSONL returns true if the current sync mode uses JSONL export.
+// In dolt-native mode, JSONL is not used — all sync is via Dolt remotes.
+// Belt-and-suspenders mode uses both Dolt AND JSONL for maximum redundancy.
+//
+// This checks the database config directly rather than going through GetSyncMode
+// (which reads config.yaml via viper). This avoids false positives when config.yaml
+// is loaded from the wrong directory context — matching ShouldImportJSONL's approach.
 func ShouldExportJSONL(ctx context.Context, s storage.Storage) bool {
-	mode := GetSyncMode(ctx, s)
-	// All modes except dolt-native use JSONL
+	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
+	if err != nil || mode == "" {
+		return true // default (git-portable) uses JSONL
+	}
+	return mode != SyncModeDoltNative
+}
+
+// ShouldImportJSONL returns true if the current sync mode uses JSONL import.
+// In dolt-native mode, there is no JSONL to import — all sync is via Dolt remotes.
+// Like ShouldExportJSONL, this checks the database config directly rather than
+// going through GetSyncMode (which reads config.yaml via viper). This avoids false
+// negatives when config.yaml is loaded from the wrong directory context.
+func ShouldImportJSONL(ctx context.Context, s storage.Storage) bool {
+	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
+	if err != nil || mode == "" {
+		return true // default (git-portable) uses JSONL
+	}
 	return mode != SyncModeDoltNative
 }
 
@@ -127,7 +148,7 @@ func SyncModeDescription(mode string) string {
 	case SyncModeRealtime:
 		return "JSONL exported on every change"
 	case SyncModeDoltNative:
-		return "Dolt remotes only, no JSONL"
+		return "Dolt remotes for sync, no JSONL writes"
 	case SyncModeBeltAndSuspenders:
 		return "Both Dolt remotes and JSONL"
 	default:

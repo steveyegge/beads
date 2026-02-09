@@ -53,7 +53,8 @@ func (s *Server) handleCompact(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	startTime := time.Now()
 
 	if args.IssueID != "" {
@@ -121,12 +122,18 @@ func (s *Server) handleCompact(req *Request) Response {
 		}
 
 		duration := time.Since(startTime)
+		var reduction string
+		if originalSize > 0 {
+			reduction = fmt.Sprintf("%.1f%%", float64(originalSize-compactedSize)/float64(originalSize)*100)
+		} else {
+			reduction = "0.0%"
+		}
 		result := CompactResponse{
 			Success:       true,
 			IssueID:       args.IssueID,
 			OriginalSize:  originalSize,
 			CompactedSize: compactedSize,
-			Reduction:     fmt.Sprintf("%.1f%%", float64(originalSize-compactedSize)/float64(originalSize)*100),
+			Reduction:     reduction,
 			Duration:      duration.String(),
 		}
 		data, _ := json.Marshal(result)
@@ -252,7 +259,8 @@ func (s *Server) handleCompactStats(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	tier1, err := compactStore.GetTier1Candidates(ctx)
 	if err != nil {

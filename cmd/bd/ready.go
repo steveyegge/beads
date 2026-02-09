@@ -15,14 +15,18 @@ import (
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/util"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
 var readyCmd = &cobra.Command{
 	Use:   "ready",
-	Short: "Show ready work (no blockers, open or in_progress)",
-	Long: `Show ready work (issues with no blockers that are open or in_progress).
+	Short: "Show ready work (open, no blockers)",
+	Long: `Show ready work (open issues with no blockers).
+
+Excludes in_progress, blocked, deferred, and hooked issues. This uses the
+GetReadyWork API which applies blocker-aware semantics to find truly claimable work.
+
+Note: 'bd list --ready' is NOT equivalent - it only filters by status=open.
 
 Use --mol to filter to a specific molecule's steps:
   bd ready --mol bd-patrol   # Show ready steps within molecule
@@ -54,7 +58,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		issueType, _ := cmd.Flags().GetString("type")
-		issueType = util.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
+		issueType = utils.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
 		parentID, _ := cmd.Flags().GetString("parent")
 		molTypeStr, _ := cmd.Flags().GetString("mol-type")
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
@@ -71,8 +75,8 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
 
 		// Normalize labels: trim, dedupe, remove empty
-		labels = util.NormalizeLabels(labels)
-		labelsAny = util.NormalizeLabels(labelsAny)
+		labels = utils.NormalizeLabels(labels)
+		labelsAny = utils.NormalizeLabels(labelsAny)
 
 		// Apply directory-aware label scoping if no labels explicitly provided (GH#541)
 		if len(labels) == 0 && len(labelsAny) == 0 {
@@ -82,7 +86,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		}
 
 		filter := types.WorkFilter{
-			// Leave Status empty to get both 'open' and 'in_progress'
+			Status:          "open", // Only show open issues, not in_progress (matches bd list --ready)
 			Type:            issueType,
 			Limit:           limit,
 			Unassigned:      unassigned,
@@ -122,6 +126,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			readyArgs := &rpc.ReadyArgs{
+				Status:          "open", // Only show open issues, not in_progress (matches bd list --ready)
 				Assignee:        assignee,
 				Unassigned:      unassigned,
 				Type:            issueType,
@@ -186,14 +191,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		// Direct mode
 		ctx := rootCtx
 
-		// Check database freshness before reading
-		// Skip check when using daemon (daemon auto-imports on staleness)
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
+		requireFreshDB(ctx)
 
 		issues, err := store.GetReadyWork(ctx, filter)
 		if err != nil {
@@ -216,7 +214,19 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			if issues == nil {
 				issues = []*types.Issue{}
 			}
-			outputJSON(issues)
+			issueIDs := make([]string, len(issues))
+			for i, issue := range issues {
+				issueIDs[i] = issue.ID
+			}
+			commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
+			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
+			for i, issue := range issues {
+				issuesWithCounts[i] = &types.IssueWithCounts{
+					Issue:        issue,
+					CommentCount: commentCounts[issue.ID],
+				}
+			}
+			outputJSON(issuesWithCounts)
 			return
 		}
 		// Show upgrade notification if needed
@@ -260,8 +270,7 @@ var blockedCmd = &cobra.Command{
 			var err error
 			store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("failed to open database: %v", err)
 			}
 			defer func() { _ = store.Close() }()
 		}
@@ -272,8 +281,7 @@ var blockedCmd = &cobra.Command{
 		}
 		blocked, err := store.GetBlockedIssues(ctx, blockedFilter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("%v", err)
 		}
 		if jsonOutput {
 			// Always output array, even if empty

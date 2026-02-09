@@ -14,7 +14,9 @@ func TestSetTimeout(t *testing.T) {
 	defer client.Close()
 
 	client.SetTimeout(5 * time.Second)
-	// No crash means success
+	if client.timeout != 5*time.Second {
+		t.Errorf("expected timeout 5s, got %v", client.timeout)
+	}
 }
 
 func TestShow(t *testing.T) {
@@ -63,7 +65,18 @@ func TestReady(t *testing.T) {
 	}
 
 	if !resp.Success {
-		t.Errorf("Ready failed: %s", resp.Error)
+		t.Fatalf("Ready failed: %s", resp.Error)
+	}
+
+	// Verify response data is valid JSON array of issues
+	var issues []*types.Issue
+	if err := json.Unmarshal(resp.Data, &issues); err != nil {
+		t.Fatalf("failed to unmarshal Ready response: %v", err)
+	}
+
+	// Result count should respect the limit
+	if len(issues) > 10 {
+		t.Errorf("expected at most 10 issues (limit), got %d", len(issues))
 	}
 }
 
@@ -78,7 +91,22 @@ func TestStats(t *testing.T) {
 	}
 
 	if !resp.Success {
-		t.Errorf("Stats failed: %s", resp.Error)
+		t.Fatalf("Stats failed: %s", resp.Error)
+	}
+
+	// Verify response data contains valid statistics
+	var stats types.Statistics
+	if err := json.Unmarshal(resp.Data, &stats); err != nil {
+		t.Fatalf("failed to unmarshal Stats response: %v", err)
+	}
+
+	// Total should be non-negative and consistent with breakdown
+	if stats.TotalIssues < 0 {
+		t.Errorf("expected non-negative TotalIssues, got %d", stats.TotalIssues)
+	}
+	if stats.OpenIssues < 0 || stats.ClosedIssues < 0 || stats.InProgressIssues < 0 {
+		t.Errorf("expected non-negative counts: open=%d closed=%d in_progress=%d",
+			stats.OpenIssues, stats.ClosedIssues, stats.InProgressIssues)
 	}
 }
 
@@ -214,6 +242,39 @@ func TestBatch(t *testing.T) {
 
 	if !resp.Success {
 		t.Errorf("Batch failed: %s", resp.Error)
+	}
+}
+
+func TestBatch_RejectsNestedBatch(t *testing.T) {
+	_, client, cleanup := setupTestServer(t)
+	defer cleanup()
+	defer client.Close()
+
+	// Construct a batch containing a nested batch operation — this should be rejected
+	// to prevent unbounded recursion (stack overflow crash).
+	innerBatchArgs, _ := json.Marshal(BatchArgs{
+		Operations: []BatchOperation{
+			{Operation: "list", Args: json.RawMessage(`{}`)},
+		},
+	})
+	args := &BatchArgs{
+		Operations: []BatchOperation{
+			{
+				Operation: "batch",
+				Args:      innerBatchArgs,
+			},
+		},
+	}
+
+	resp, err := client.Batch(args)
+	if err == nil {
+		t.Fatal("expected nested batch to be rejected, but it succeeded")
+	}
+	if resp == nil || resp.Success {
+		t.Fatal("expected unsuccessful response for nested batch")
+	}
+	if resp.Error != "nested batch operations are not allowed" {
+		t.Errorf("unexpected error message: %s", resp.Error)
 	}
 }
 

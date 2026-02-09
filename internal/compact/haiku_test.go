@@ -21,12 +21,12 @@ func (timeoutErr) Temporary() bool { return true }
 func TestNewHaikuClient_RequiresAPIKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
-	_, err := NewHaikuClient("")
+	_, err := newHaikuClient("")
 	if err == nil {
 		t.Fatal("expected error when API key is missing")
 	}
-	if !errors.Is(err, ErrAPIKeyRequired) {
-		t.Fatalf("expected ErrAPIKeyRequired, got %v", err)
+	if !errors.Is(err, errAPIKeyRequired) {
+		t.Fatalf("expected errAPIKeyRequired, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "API key required") {
 		t.Errorf("unexpected error message: %v", err)
@@ -36,7 +36,7 @@ func TestNewHaikuClient_RequiresAPIKey(t *testing.T) {
 func TestNewHaikuClient_EnvVarUsedWhenNoExplicitKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-key-from-env")
 
-	client, err := NewHaikuClient("")
+	client, err := newHaikuClient("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestNewHaikuClient_EnvVarUsedWhenNoExplicitKey(t *testing.T) {
 func TestNewHaikuClient_EnvVarOverridesExplicitKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-key-from-env")
 
-	client, err := NewHaikuClient("test-key-explicit")
+	client, err := newHaikuClient("test-key-explicit")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestNewHaikuClient_EnvVarOverridesExplicitKey(t *testing.T) {
 }
 
 func TestRenderTier1Prompt(t *testing.T) {
-	client, err := NewHaikuClient("test-key")
+	client, err := newHaikuClient("test-key")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestRenderTier1Prompt(t *testing.T) {
 }
 
 func TestRenderTier1Prompt_HandlesEmptyFields(t *testing.T) {
-	client, err := NewHaikuClient("test-key")
+	client, err := newHaikuClient("test-key")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestRenderTier1Prompt_HandlesEmptyFields(t *testing.T) {
 }
 
 func TestRenderTier1Prompt_UTF8(t *testing.T) {
-	client, err := NewHaikuClient("test-key")
+	client, err := newHaikuClient("test-key")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestRenderTier1Prompt_UTF8(t *testing.T) {
 }
 
 func TestCallWithRetry_ContextCancellation(t *testing.T) {
-	client, err := NewHaikuClient("test-key")
+	client, err := newHaikuClient("test-key")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,6 +200,70 @@ func TestIsRetryable(t *testing.T) {
 				t.Errorf("isRetryable(%v) = %v, want %v", tt.err, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestSummarizeTier1_CancelledContext(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	client, err := newHaikuClient("test-key-fake")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	issue := &types.Issue{
+		ID:          "bd-1",
+		Title:       "Test",
+		Description: "Test desc",
+	}
+
+	_, err = client.SummarizeTier1(ctx, issue)
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+}
+
+func TestSummarizeTier1_WithAuditEnabled(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	client, err := newHaikuClient("test-key-fake")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	client.auditEnabled = true
+	client.auditActor = "test-actor"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	issue := &types.Issue{
+		ID:          "bd-audit",
+		Title:       "Audit Test",
+		Description: "Test audit logging",
+	}
+
+	_, err = client.SummarizeTier1(ctx, issue)
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+}
+
+func TestCallWithRetry_ImmediateContextCancel(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	client, err := newHaikuClient("test-key-fake")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	client.initialBackoff = 1 * time.Millisecond
+	client.maxRetries = 0
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = client.callWithRetry(ctx, "test prompt")
+	if err == nil {
+		t.Fatal("expected error")
 	}
 }
 

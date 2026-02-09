@@ -68,7 +68,8 @@ func (s *Server) handleDepAdd(req *Request) Response {
 		Type:        types.DependencyType(depArgs.DepType),
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	if err := store.AddDependency(ctx, dep, s.reqActor(req)); err != nil {
 		return Response{
 			Success: false,
@@ -90,9 +91,11 @@ func (s *Server) handleDepAdd(req *Request) Response {
 	return Response{Success: true, Data: data}
 }
 
-// Generic handler for simple store operations with standard error handling
+// Generic handler for simple store operations with standard error handling.
+// issueIDFunc is called after args are unmarshaled to extract the issue ID
+// for mutation events (passing the ID directly would evaluate before unmarshal).
 func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc string,
-	opFunc func(context.Context, storage.Storage, string) error, issueID string,
+	opFunc func(context.Context, storage.Storage, string) error, issueIDFunc func() string,
 	responseData func() map[string]interface{}) Response {
 	if err := json.Unmarshal(req.Args, argsPtr); err != nil {
 		return Response{
@@ -109,7 +112,8 @@ func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc 
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	if err := opFunc(ctx, store, s.reqActor(req)); err != nil {
 		return Response{
 			Success: false,
@@ -118,6 +122,7 @@ func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc 
 	}
 
 	// Emit mutation event for event-driven daemon
+	issueID := issueIDFunc()
 	title, assignee := s.lookupIssueMeta(ctx, issueID)
 	s.emitMutation(MutationUpdate, issueID, title, assignee)
 
@@ -128,13 +133,49 @@ func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc 
 	return Response{Success: true}
 }
 
+func (s *Server) handleDepTree(req *Request) Response {
+	var depArgs DepTreeArgs
+	if err := json.Unmarshal(req.Args, &depArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid dep tree args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	maxDepth := depArgs.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = 50
+	}
+
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
+	tree, err := store.GetDependencyTree(ctx, depArgs.ID, maxDepth, false, false)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get dependency tree: %v", err),
+		}
+	}
+
+	data, _ := json.Marshal(tree)
+	return Response{Success: true, Data: data}
+}
+
 func (s *Server) handleDepRemove(req *Request) Response {
 	var depArgs DepRemoveArgs
 	return s.handleSimpleStoreOp(req, &depArgs, "dep remove",
 		func(ctx context.Context, store storage.Storage, actor string) error {
 			return store.RemoveDependency(ctx, depArgs.FromID, depArgs.ToID, actor)
 		},
-		depArgs.FromID,
+		func() string { return depArgs.FromID },
 		func() map[string]interface{} {
 			return map[string]interface{}{
 				"status":        "removed",
@@ -149,14 +190,14 @@ func (s *Server) handleLabelAdd(req *Request) Response {
 	var labelArgs LabelAddArgs
 	return s.handleSimpleStoreOp(req, &labelArgs, "label add", func(ctx context.Context, store storage.Storage, actor string) error {
 		return store.AddLabel(ctx, labelArgs.ID, labelArgs.Label, actor)
-	}, labelArgs.ID, nil)
+	}, func() string { return labelArgs.ID }, nil)
 }
 
 func (s *Server) handleLabelRemove(req *Request) Response {
 	var labelArgs LabelRemoveArgs
 	return s.handleSimpleStoreOp(req, &labelArgs, "label remove", func(ctx context.Context, store storage.Storage, actor string) error {
 		return store.RemoveLabel(ctx, labelArgs.ID, labelArgs.Label, actor)
-	}, labelArgs.ID, nil)
+	}, func() string { return labelArgs.ID }, nil)
 }
 
 func (s *Server) handleCommentList(req *Request) Response {
@@ -169,8 +210,15 @@ func (s *Server) handleCommentList(req *Request) Response {
 	}
 
 	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	comments, err := store.GetIssueComments(ctx, commentArgs.ID)
 	if err != nil {
 		return Response{
@@ -196,8 +244,15 @@ func (s *Server) handleCommentAdd(req *Request) Response {
 	}
 
 	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	comment, err := store.AddIssueComment(ctx, commentArgs.ID, commentArgs.Author, commentArgs.Text)
 	if err != nil {
 		return Response{
@@ -223,6 +278,18 @@ func (s *Server) handleBatch(req *Request) Response {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("invalid batch args: %v", err),
+		}
+	}
+
+	// Reject nested batch operations to prevent stack overflow via unbounded recursion.
+	// handleBatch -> handleRequest -> handleBatch would allow a single malicious
+	// request to crash the daemon. There is no legitimate use case for nested batches.
+	for _, op := range batchArgs.Operations {
+		if op.Operation == OpBatch {
+			return Response{
+				Success: false,
+				Error:   "nested batch operations are not allowed",
+			}
 		}
 	}
 

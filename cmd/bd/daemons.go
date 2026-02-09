@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -18,6 +20,20 @@ import (
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/utils"
 )
+
+// fileRotated checks if the file at path is a different file than f (log rotation).
+// Uses os.SameFile for cross-platform inode/file identity comparison.
+func fileRotated(f *os.File, path string) bool {
+	fInfo, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	pathInfo, err := os.Stat(path)
+	if err != nil {
+		return false // path gone; not rotated yet
+	}
+	return !os.SameFile(fInfo, pathInfo)
+}
 
 // JSON response types for daemons commands
 
@@ -67,19 +83,9 @@ type DaemonHealthResponse struct {
 	Unresponsive int                  `json:"unresponsive"`
 	Daemons      []DaemonHealthReport `json:"daemons"`
 }
-var daemonsCmd = &cobra.Command{
-	Use:     "daemons",
-	GroupID: "sync",
-	Short:   "Manage multiple bd daemons",
-	Long: `Manage bd daemon processes across all repositories and worktrees.
-Subcommands:
-  list    - Show all running daemons
-  health  - Check health of all daemons
-  stop    - Stop a specific daemon by workspace path or PID
-  logs    - View daemon logs
-  killall - Stop all running daemons
-  restart - Restart a specific daemon (not yet implemented)`,
-}
+
+// daemonsCmd is no longer needed — "daemons" is now a Cobra alias on daemonCmd.
+// See daemon.go for the primary command definition.
 var daemonsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all running bd daemons",
@@ -140,11 +146,12 @@ uptime, last activity, and exclusive lock status.`,
 				lock = fmt.Sprintf("🔒 %s", d.ExclusiveLockHolder)
 			}
 			_, _ = fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\n",
-			workspace, d.PID, d.Version, uptime, lastActivity, lock)
-			}
-			_ = w.Flush()
+				workspace, d.PID, d.Version, uptime, lastActivity, lock)
+		}
+		_ = w.Flush()
 	},
 }
+
 func formatDaemonDuration(seconds float64) string {
 	d := time.Duration(seconds * float64(time.Second))
 	if d < time.Minute {
@@ -167,6 +174,7 @@ func formatDaemonRelativeTime(t time.Time) string {
 	}
 	return fmt.Sprintf("%.1fd ago", d.Hours()/24)
 }
+
 var daemonsStopCmd = &cobra.Command{
 	Use:   "stop <workspace-path|pid>",
 	Short: "Stop a specific bd daemon",
@@ -426,6 +434,7 @@ Supports tail mode (last N lines) and follow mode (like tail -f).`,
 		}
 	},
 }
+
 func tailLines(filePath string, n int) error {
 	// #nosec G304 - controlled path from daemon discovery
 	file, err := os.Open(filePath)
@@ -453,6 +462,11 @@ func tailLines(filePath string, n int) error {
 	return nil
 }
 func tailFollow(filePath string) {
+	// Set up signal handling for graceful exit
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
 	// #nosec G304 - controlled path from daemon discovery
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -460,15 +474,52 @@ func tailFollow(filePath string) {
 		os.Exit(1)
 	}
 	defer file.Close()
+
 	// Seek to end
 	_, _ = file.Seek(0, io.SeekEnd)
 	reader := bufio.NewReader(file)
+
 	for {
+		// Check for signal before each iteration
+		select {
+		case <-sigCh:
+			return
+		default:
+		}
+
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				// Wait for more content
-				time.Sleep(100 * time.Millisecond)
+				// Check for log rotation: file at path is now a different file
+				if fileRotated(file, filePath) {
+					// File rotated — reopen
+					file.Close()
+					// #nosec G304 - controlled path from daemon discovery
+					file, err = os.Open(filePath)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error reopening rotated log file: %v\n", err)
+						os.Exit(1)
+					}
+					reader.Reset(file)
+					continue
+				}
+
+				// Check for truncation: current position > file size
+				if pos, err := file.Seek(0, io.SeekCurrent); err == nil {
+					if info, err := file.Stat(); err == nil && pos > info.Size() {
+						// File was truncated — seek to beginning
+						_, _ = file.Seek(0, io.SeekStart)
+						reader.Reset(file)
+						continue
+					}
+				}
+
+				// Normal EOF — wait for more content, but respect signals
+				select {
+				case <-sigCh:
+					return
+				case <-time.After(100 * time.Millisecond):
+				}
 				continue
 			}
 			fmt.Fprintf(os.Stderr, "Error reading log file: %v\n", err)
@@ -477,6 +528,7 @@ func tailFollow(filePath string) {
 		fmt.Print(strings.TrimRight(line, "\n\r") + "\n")
 	}
 }
+
 var daemonsKillallCmd = &cobra.Command{
 	Use:   "killall",
 	Short: "Stop all running bd daemons",
@@ -618,15 +670,16 @@ stale sockets, version mismatches, and unresponsive daemons.`,
 				issue = "-"
 			}
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			workspace, pidStr, version, status, issue)
-			}
-			_ = w.Flush()
+				workspace, pidStr, version, status, issue)
+		}
+		_ = w.Flush()
 		// Exit with error if there are any issues
 		if staleCount > 0 || mismatchCount > 0 || unresponsiveCount > 0 {
 			os.Exit(1)
 		}
 	},
 }
+
 func init() {
 	// Add multi-daemon subcommands to daemonCmd (primary location)
 	daemonCmd.AddCommand(daemonsListCmd)
@@ -636,17 +689,8 @@ func init() {
 	daemonCmd.AddCommand(daemonsKillallCmd)
 	daemonCmd.AddCommand(daemonsRestartCmd)
 
-	// Also add to daemonsCmd for backwards compatibility
-	// Make daemonsCmd a hidden alias that shows deprecation
-	daemonsCmd.Hidden = true
-	daemonsCmd.Deprecated = "use 'bd daemon <subcommand>' instead (will be removed in v1.0.0)"
-	daemonsCmd.AddCommand(daemonsListCmd)
-	daemonsCmd.AddCommand(daemonsHealthCmd)
-	daemonsCmd.AddCommand(daemonsStopCmd)
-	daemonsCmd.AddCommand(daemonsLogsCmd)
-	daemonsCmd.AddCommand(daemonsKillallCmd)
-	daemonsCmd.AddCommand(daemonsRestartCmd)
-	rootCmd.AddCommand(daemonsCmd)
+	// "daemons" backwards compatibility is handled by Aliases on daemonCmd
+	// (see daemon.go). No separate daemonsCmd needed.
 
 	// Flags for list command
 	daemonsListCmd.Flags().StringSlice("search", nil, "Directories to search for daemons (default: home, /tmp, cwd)")

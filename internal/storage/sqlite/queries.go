@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -151,15 +154,15 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Start IMMEDIATE transaction to acquire write lock early and prevent race conditions.
+	// Start IMMEDIATE transaction with retry logic for SQLITE_BUSY.
 	// IMMEDIATE acquires a RESERVED lock immediately, preventing other IMMEDIATE or EXCLUSIVE
 	// transactions from starting. This serializes ID generation across concurrent writers.
 	//
 	// We use raw Exec instead of BeginTx because database/sql doesn't support transaction
 	// modes in BeginTx, and modernc.org/sqlite's BeginTx always uses DEFERRED mode.
 	//
-	// The connection's busy_timeout pragma (30s) handles retries if locked.
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	// Retries with exponential backoff handle cases where busy_timeout alone is insufficient.
+	if err := beginImmediateWithRetry(ctx, conn); err != nil {
 		return fmt.Errorf("failed to begin immediate transaction: %w", err)
 	}
 
@@ -175,7 +178,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	// Get prefix from config (needed for both ID generation and validation)
 	var configPrefix string
 	err = conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&configPrefix)
-	if err == sql.ErrNoRows || configPrefix == "" {
+	if errors.Is(err, sql.ErrNoRows) || configPrefix == "" {
 		// CRITICAL: Reject operation if issue_prefix config is missing
 		// This prevents duplicate issues with wrong prefix
 		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
@@ -204,13 +207,13 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		issue.ID = generatedID
 	} else {
 		// Validate that explicitly provided ID matches the configured prefix
-		if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+		if err := validateIssueIDPrefix(issue.ID, prefix); err != nil {
 			return wrapDBError("validate issue ID prefix", err)
 		}
 
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
-		// Use IsHierarchicalID to correctly handle prefixes with dots (GH#508)
-		if isHierarchical, parentID := IsHierarchicalID(issue.ID); isHierarchical {
+		// Use isHierarchicalID to correctly handle prefixes with dots (GH#508)
+		if isHierarchical, parentID := isHierarchicalID(issue.ID); isHierarchical {
 			// Try to resurrect entire parent chain if any parents are missing
 			// Use the conn-based version to participate in the same transaction
 			resurrected, err := s.tryResurrectParentChainWithConn(ctx, conn, issue.ID)
@@ -314,6 +317,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var estimatedMinutes sql.NullInt64
 	var assignee sql.NullString
 	var externalRef sql.NullString
+	var specID sql.NullString
 	var compactedAt sql.NullTime
 	var originalSize sql.NullInt64
 	var sourceRepo sql.NullString
@@ -325,6 +329,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	// Messaging fields
 	var sender sql.NullString
 	var wisp sql.NullInt64
+	var wispType sql.NullString
 	// Pinned field
 	var pinned sql.NullInt64
 	// Template field
@@ -353,8 +358,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	// Time-based scheduling fields (GH#820)
 	var dueAt sql.NullTime
 	var deferUntil sql.NullTime
+	// Custom metadata field (GH#1406)
+	var metadata sql.NullString
 	// Spec integration field
-	var specID sql.NullString
 	var specChangedAt sql.NullTime
 
 	var contentHash sql.NullString
@@ -364,13 +370,13 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       spec_id, compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
-		       sender, ephemeral, pinned, is_template, crystallizes,
+		       sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
-		       due_at, defer_until, spec_id, spec_changed_at
+		       due_at, defer_until, metadata, spec_changed_at
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -378,16 +384,16 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&specID, &issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
-		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
+		&sender, &wisp, &wispType, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
-		&dueAt, &deferUntil, &specID, &specChangedAt,
+		&dueAt, &deferUntil, &metadata, &specChangedAt,
 	)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -421,6 +427,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	if externalRef.Valid {
 		issue.ExternalRef = &externalRef.String
 	}
+	if specID.Valid {
+		issue.SpecID = specID.String
+	}
 	if compactedAt.Valid {
 		issue.CompactedAt = &compactedAt.Time
 	}
@@ -452,6 +461,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if wisp.Valid && wisp.Int64 != 0 {
 		issue.Ephemeral = true
+	}
+	if wispType.Valid {
+		issue.WispType = types.WispType(wispType.String)
 	}
 	// Pinned field
 	if pinned.Valid && pinned.Int64 != 0 {
@@ -521,6 +533,10 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
 	}
+	// Custom metadata field (GH#1406)
+	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+		issue.Metadata = []byte(metadata.String)
+	}
 	if specID.Valid {
 		issue.SpecID = specID.String
 	}
@@ -548,7 +564,7 @@ func (s *SQLiteStorage) GetCloseReason(ctx context.Context, issueID string) (str
 		LIMIT 1
 	`, issueID, types.EventClosed).Scan(&comment)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
@@ -622,6 +638,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var estimatedMinutes sql.NullInt64
 	var assignee sql.NullString
 	var externalRefCol sql.NullString
+	var specID sql.NullString
 	var compactedAt sql.NullTime
 	var originalSize sql.NullInt64
 	var contentHash sql.NullString
@@ -635,6 +652,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	// Messaging fields
 	var sender sql.NullString
 	var wisp sql.NullInt64
+	var wispType sql.NullString
 	// Pinned field
 	var pinned sql.NullInt64
 	// Template field
@@ -646,7 +664,6 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var awaitID sql.NullString
 	var timeoutNs sql.NullInt64
 	var waiters sql.NullString
-	var specID sql.NullString
 	var specChangedAt sql.NullTime
 
 	var owner sql.NullString
@@ -654,10 +671,10 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       spec_id, compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
-		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters, spec_id, spec_changed_at
+		       sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
+		       await_type, await_id, timeout_ns, waiters, spec_changed_at
 		FROM issues
 		WHERE external_ref = ?
 	`, externalRef).Scan(
@@ -665,13 +682,13 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRefCol,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&specID, &issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
-		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
-		&awaitType, &awaitID, &timeoutNs, &waiters, &specID, &specChangedAt,
+		&sender, &wisp, &wispType, &pinned, &isTemplate, &crystallizes,
+		&awaitType, &awaitID, &timeoutNs, &waiters, &specChangedAt,
 	)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -705,6 +722,9 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	if externalRefCol.Valid {
 		issue.ExternalRef = &externalRefCol.String
 	}
+	if specID.Valid {
+		issue.SpecID = specID.String
+	}
 	if compactedAt.Valid {
 		issue.CompactedAt = &compactedAt.Time
 	}
@@ -736,6 +756,9 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	}
 	if wisp.Valid && wisp.Int64 != 0 {
 		issue.Ephemeral = true
+	}
+	if wispType.Valid {
+		issue.WispType = types.WispType(wispType.String)
 	}
 	// Pinned field
 	if pinned.Valid && pinned.Int64 != 0 {
@@ -792,9 +815,12 @@ var allowedUpdateFields = map[string]bool{
 	"issue_type":          true,
 	"estimated_minutes":   true,
 	"external_ref":        true,
+	"spec_id":             true,
 	"closed_at":           true,
 	"close_reason":        true,
 	"closed_by_session":   true,
+	// Source repo field (for multi-repo migration)
+	"source_repo": true,
 	// Messaging fields
 	"sender": true,
 	"wisp":   true, // Database column is 'ephemeral', mapped in UpdateIssue
@@ -822,8 +848,8 @@ var allowedUpdateFields = map[string]bool{
 	// Gate fields (bd-z6kw: support await_id updates for gate discovery)
 	"await_id": true,
 	"waiters":  true,
-	// Spec integration field (SpecBeads)
-	"spec_id": true,
+	// Custom metadata field (GH#1406)
+	"metadata": true,
 	// Spec change tracking (Shadow Ledger)
 	"spec_changed_at": true,
 }
@@ -945,6 +971,13 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		if key == "waiters" {
 			waitersJSON, _ := json.Marshal(value)
 			args = append(args, string(waitersJSON))
+		} else if key == "metadata" {
+			// GH#1417: Normalize metadata to string, accepting string/[]byte/json.RawMessage
+			metadataStr, err := storage.NormalizeMetadataValue(value)
+			if err != nil {
+				return fmt.Errorf("invalid metadata: %w", err)
+			}
+			args = append(args, metadataStr)
 		} else {
 			args = append(args, value)
 		}
@@ -955,7 +988,7 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 
 	// Recompute content_hash if any content fields changed
 	contentChanged := false
-	contentFields := []string{"title", "description", "design", "acceptance_criteria", "notes", "status", "priority", "issue_type", "assignee", "external_ref"}
+	contentFields := []string{"title", "description", "design", "acceptance_criteria", "notes", "status", "priority", "issue_type", "assignee", "external_ref", "spec_id"}
 	for _, field := range contentFields {
 		if _, exists := updates[field]; exists {
 			contentChanged = true
@@ -1012,6 +1045,12 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 					default:
 						return fmt.Errorf("external_ref must be string or *string, got %T", value)
 					}
+				}
+			case "spec_id":
+				if value == nil {
+					updatedIssue.SpecID = ""
+				} else {
+					updatedIssue.SpecID = value.(string)
 				}
 			}
 		}
@@ -1076,6 +1115,111 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 
 		return nil
 	})
+}
+
+// ClaimIssue atomically claims an issue using compare-and-swap semantics.
+// It sets the assignee to actor and status to "in_progress" only if the issue
+// currently has no assignee (empty string). This is done in a single transaction
+// with a conditional UPDATE to prevent race conditions where multiple concurrent
+// callers could both successfully claim the same issue.
+//
+// Returns storage.ErrAlreadyClaimed (wrapped with current assignee) if the issue
+// is already claimed. Returns an error if the issue doesn't exist.
+func (s *SQLiteStorage) ClaimIssue(ctx context.Context, id string, actor string) error {
+	// Get the issue first to check existence and get old data for event
+	oldIssue, err := s.GetIssue(ctx, id)
+	if err != nil {
+		return wrapDBError("get issue for claim", err)
+	}
+	if oldIssue == nil {
+		return fmt.Errorf("issue %s not found", id)
+	}
+
+	// Prepare event data
+	oldData, err := json.Marshal(oldIssue)
+	if err != nil {
+		oldData = []byte(fmt.Sprintf(`{"id":"%s"}`, id))
+	}
+	newUpdates := map[string]interface{}{
+		"assignee": actor,
+		"status":   "in_progress",
+	}
+	newData, err := json.Marshal(newUpdates)
+	if err != nil {
+		newData = []byte(`{}`)
+	}
+
+	now := time.Now()
+
+	// Compute new content hash
+	updatedIssue := *oldIssue
+	updatedIssue.Assignee = actor
+	updatedIssue.Status = types.StatusInProgress
+	newHash := updatedIssue.ComputeContentHash()
+
+	var alreadyClaimedBy string
+
+	err = s.withTx(ctx, func(conn *sql.Conn) error {
+		// Use conditional UPDATE with WHERE clause to ensure atomicity.
+		// The UPDATE only succeeds if assignee is currently empty.
+		// This is the compare-and-swap: we compare assignee='' and swap to new value.
+		result, err := conn.ExecContext(ctx, `
+			UPDATE issues
+			SET assignee = ?, status = 'in_progress', updated_at = ?, content_hash = ?
+			WHERE id = ? AND (assignee = '' OR assignee IS NULL)
+		`, actor, now, newHash, id)
+		if err != nil {
+			return fmt.Errorf("failed to claim issue: %w", err)
+		}
+
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
+
+		if rowsAffected == 0 {
+			// The UPDATE didn't affect any rows, which means the assignee was not empty.
+			// Query to find out who has it claimed.
+			var currentAssignee string
+			err := conn.QueryRowContext(ctx, `SELECT assignee FROM issues WHERE id = ?`, id).Scan(&currentAssignee)
+			if err != nil {
+				return fmt.Errorf("failed to get current assignee: %w", err)
+			}
+			alreadyClaimedBy = currentAssignee
+			// Return a sentinel error that we'll convert outside the transaction
+			return fmt.Errorf("already claimed")
+		}
+
+		// Record the claim event
+		_, err = conn.ExecContext(ctx, `
+			INSERT INTO events (issue_id, event_type, actor, old_value, new_value)
+			VALUES (?, ?, ?, ?, ?)
+		`, id, "claimed", actor, string(oldData), string(newData))
+		if err != nil {
+			return fmt.Errorf("failed to record claim event: %w", err)
+		}
+
+		// Mark issue as dirty for incremental export
+		if err := markDirty(ctx, conn, id); err != nil {
+			return fmt.Errorf("failed to mark issue dirty: %w", err)
+		}
+
+		// Invalidate blocked issues cache since status changed
+		if err := s.invalidateBlockedCache(ctx, conn); err != nil {
+			return fmt.Errorf("failed to invalidate blocked cache: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		if strings.Contains(err.Error(), "already claimed") {
+			return fmt.Errorf("%w by %s", storage.ErrAlreadyClaimed, alreadyClaimedBy)
+		}
+		return err
+	}
+
+	return nil
 }
 
 // UpdateIssueID updates an issue ID and all its text fields in a single transaction
@@ -1943,6 +2087,15 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM labels WHERE label IN (%s))", strings.Join(placeholders, ", ")))
 	}
 
+	// Label pattern filtering (glob): issue must have at least one label matching the pattern
+	if filter.LabelPattern != "" {
+		whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM labels WHERE label GLOB ?)")
+		args = append(args, filter.LabelPattern)
+	}
+
+	// Label regex filtering: done at application level after query (see filterByLabelRegex)
+	// SQLite doesn't have built-in regex support without extensions
+
 	// ID filtering: match specific issue IDs
 	if len(filter.IDs) > 0 {
 		placeholders := make([]string, len(filter.IDs))
@@ -1957,6 +2110,16 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	if filter.IDPrefix != "" {
 		whereClauses = append(whereClauses, "id LIKE ?")
 		args = append(args, filter.IDPrefix+"%")
+	}
+	if filter.SpecIDPrefix != "" {
+		whereClauses = append(whereClauses, "spec_id LIKE ?")
+		args = append(args, filter.SpecIDPrefix+"%")
+	}
+
+	// Source repo filtering
+	if filter.SourceRepo != nil {
+		whereClauses = append(whereClauses, "source_repo = ?")
+		args = append(args, *filter.SourceRepo)
 	}
 
 	// Spec filtering
@@ -2003,15 +2166,23 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	}
 
 	// Parent filtering: filter children by parent issue
+	// Also includes dotted-ID children (e.g., "parent.1.2" is child of "parent")
 	if filter.ParentID != nil {
-		whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?)")
-		args = append(args, *filter.ParentID)
+		parentID := *filter.ParentID
+		whereClauses = append(whereClauses, "(id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?) OR id LIKE ? || '.%')")
+		args = append(args, parentID, parentID)
 	}
 
 	// Molecule type filtering
 	if filter.MolType != nil {
 		whereClauses = append(whereClauses, "mol_type = ?")
 		args = append(args, string(*filter.MolType))
+	}
+
+	// Wisp type filtering (TTL-based compaction classification)
+	if filter.WispType != nil {
+		whereClauses = append(whereClauses, "wisp_type = ?")
+		args = append(args, string(*filter.WispType))
 	}
 
 	// Time-based scheduling filters (GH#820)
@@ -2054,12 +2225,12 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	querySQL := fmt.Sprintf(`
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
+		       created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until, spec_id, spec_changed_at
+		       due_at, defer_until, metadata, spec_id, spec_changed_at
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
@@ -2072,5 +2243,54 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	}
 	defer func() { _ = rows.Close() }()
 
-	return s.scanIssues(ctx, rows)
+	issues, err := s.scanIssues(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply label regex filtering at application level
+	// SQLite doesn't have built-in regex support without extensions
+	if filter.LabelRegex != "" {
+		issues, err = s.filterByLabelRegex(ctx, issues, filter.LabelRegex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to filter by label regex: %w", err)
+		}
+	}
+
+	return issues, nil
+}
+
+// filterByLabelRegex filters issues to only include those with at least one label
+// matching the given regex pattern. This is done at the application level because
+// SQLite doesn't have built-in regex support without extensions.
+func (s *SQLiteStorage) filterByLabelRegex(ctx context.Context, issues []*types.Issue, pattern string) ([]*types.Issue, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
+	}
+
+	// Get all issue IDs to fetch labels in bulk
+	issueIDs := make([]string, len(issues))
+	for i, issue := range issues {
+		issueIDs[i] = issue.ID
+	}
+
+	labelsMap, err := s.GetLabelsForIssues(ctx, issueIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter issues that have at least one label matching the regex
+	var filtered []*types.Issue
+	for _, issue := range issues {
+		labels := labelsMap[issue.ID]
+		for _, label := range labels {
+			if re.MatchString(label) {
+				filtered = append(filtered, issue)
+				break // Only need one match
+			}
+		}
+	}
+
+	return filtered, nil
 }

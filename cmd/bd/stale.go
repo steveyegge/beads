@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
+
 var staleCmd = &cobra.Command{
 	Use:     "stale",
 	GroupID: "views",
@@ -65,14 +66,7 @@ This helps identify:
 		// Direct mode
 		ctx := rootCtx
 
-		// Check database freshness before reading (bd-2q6d, bd-c4rq)
-		// Skip check when using daemon (daemon auto-imports on staleness)
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
+		requireFreshDB(ctx)
 
 		issues, err := store.GetStaleIssues(ctx, filter)
 		if err != nil {
@@ -89,6 +83,7 @@ This helps identify:
 		displayStaleIssues(issues, days)
 	},
 }
+
 func displayStaleIssues(issues []*types.Issue, days int) {
 	if len(issues) == 0 {
 		fmt.Printf("\n%s No stale issues found (all active)\n\n", ui.RenderPass("✨"))

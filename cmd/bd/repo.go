@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 var repoCmd = &cobra.Command{
@@ -113,19 +112,15 @@ that came from the removed repository.`,
 
 		// Delete issues from the removed repo before removing from config
 		// The source_repo field uses the original path (e.g., "~/foo")
-		deletedCount := 0
-		if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-			count, err := sqliteStore.DeleteIssuesBySourceRepo(ctx, repoPath)
-			if err != nil {
-				return fmt.Errorf("failed to delete issues from repo: %w", err)
-			}
-			deletedCount = count
+		deletedCount, err := store.DeleteIssuesBySourceRepo(ctx, repoPath)
+		if err != nil {
+			return fmt.Errorf("failed to delete issues from repo: %w", err)
+		}
 
-			// Also clear the mtime cache entry
-			if err := sqliteStore.ClearRepoMtime(ctx, repoPath); err != nil {
-				// Non-fatal: just log a warning
-				fmt.Fprintf(os.Stderr, "Warning: failed to clear mtime cache: %v\n", err)
-			}
+		// Also clear the mtime cache entry
+		if err := store.ClearRepoMtime(ctx, repoPath); err != nil {
+			// Non-fatal: just log a warning
+			fmt.Fprintf(os.Stderr, "Warning: failed to clear mtime cache: %v\n", err)
 		}
 
 		// Find config.yaml

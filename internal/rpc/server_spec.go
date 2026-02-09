@@ -26,7 +26,8 @@ func (s *Server) specStore() (spec.SpecRegistryStore, error) {
 }
 
 func (s *Server) handleSpecScan(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecScanArgs
 	if len(req.Args) > 0 {
@@ -80,7 +81,8 @@ func (s *Server) handleSpecScan(req *Request) Response {
 }
 
 func (s *Server) handleSpecList(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecListArgs
 	if len(req.Args) > 0 {
@@ -115,7 +117,8 @@ func (s *Server) handleSpecList(req *Request) Response {
 }
 
 func (s *Server) handleSpecShow(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecShowArgs
 	if err := json.Unmarshal(req.Args, &args); err != nil {
@@ -153,7 +156,8 @@ func (s *Server) handleSpecShow(req *Request) Response {
 }
 
 func (s *Server) handleSpecCoverage(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecCoverageArgs
 	if len(req.Args) > 0 {
@@ -200,7 +204,8 @@ func (s *Server) handleSpecCoverage(req *Request) Response {
 }
 
 func (s *Server) handleSpecCompact(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecCompactArgs
 	if err := json.Unmarshal(req.Args, &args); err != nil {
@@ -262,7 +267,8 @@ func (s *Server) handleSpecCompact(req *Request) Response {
 }
 
 func (s *Server) handleSpecRisk(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecRiskArgs
 	if len(req.Args) > 0 {
@@ -394,7 +400,8 @@ func parseDurationString(input string) (time.Duration, error) {
 }
 
 func (s *Server) handleSpecSuggest(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecSuggestArgs
 	if err := json.Unmarshal(req.Args, &args); err != nil {
@@ -454,7 +461,8 @@ func (s *Server) handleSpecSuggest(req *Request) Response {
 }
 
 func (s *Server) handleSpecLinkAuto(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecLinkAutoArgs
 	if err := json.Unmarshal(req.Args, &args); err != nil {
@@ -540,7 +548,8 @@ func (s *Server) handleSpecLinkAuto(req *Request) Response {
 }
 
 func (s *Server) handleSpecCandidates(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecCandidatesArgs
 	if len(req.Args) > 0 {
@@ -687,7 +696,8 @@ func (s *Server) handleSpecCandidates(req *Request) Response {
 }
 
 func (s *Server) handleSpecAudit(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecAuditArgs
 	if len(req.Args) > 0 {
@@ -814,7 +824,8 @@ func (s *Server) handleSpecAudit(req *Request) Response {
 }
 
 func (s *Server) handleSpecMarkDone(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	var args SpecMarkDoneArgs
 	if err := json.Unmarshal(req.Args, &args); err != nil {

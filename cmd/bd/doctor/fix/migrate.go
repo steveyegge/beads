@@ -7,6 +7,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // DatabaseVersion fixes database version mismatches by running bd migrate,
@@ -24,7 +25,7 @@ func DatabaseVersion(path string) error {
 	}
 
 	// Check if database exists - if not, run init instead of migrate
-	beadsDir := filepath.Join(path, ".beads")
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
 		dbPath = cfg.DatabasePath(beadsDir)
@@ -59,18 +60,13 @@ func DatabaseVersion(path string) error {
 }
 
 // findJSONLPath returns the path to the JSONL file in the beads directory.
-// Returns empty string if no JSONL file exists.
+// Delegates to utils.FindJSONLInDir for path discovery but returns empty
+// string if no JSONL file actually exists on disk.
 func findJSONLPath(beadsDir string) string {
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	if _, err := os.Stat(jsonlPath); err == nil {
-		return jsonlPath
+	path := utils.FindJSONLInDir(beadsDir)
+	if _, err := os.Stat(path); err == nil {
+		return path
 	}
-
-	beadsJSONLPath := filepath.Join(beadsDir, "beads.jsonl")
-	if _, err := os.Stat(beadsJSONLPath); err == nil {
-		return beadsJSONLPath
-	}
-
 	return ""
 }
 

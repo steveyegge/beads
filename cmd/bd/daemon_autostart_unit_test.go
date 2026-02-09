@@ -103,6 +103,7 @@ func captureStderr(t *testing.T, fn func()) string {
 }
 
 func TestDaemonAutostart_AcquireStartLock_CreatesAndCleansStale(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	lockPath := filepath.Join(tmpDir, "bd.sock.startlock")
 	pid, err := readPIDFromFile(lockPath)
@@ -138,6 +139,7 @@ func TestDaemonAutostart_AcquireStartLock_CreatesAndCleansStale(t *testing.T) {
 }
 
 func TestDaemonAutostart_AcquireStartLock_CreatesMissingDir(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "missing", "bd.sock")
 	lockPath := socketPath + ".startlock"
@@ -282,9 +284,7 @@ func TestDaemonAutostart_MiscHelpers(t *testing.T) {
 		t.Fatalf("determineSocketPath should be identity")
 	}
 
-	if err := config.Initialize(); err != nil {
-		t.Fatalf("config.Initialize: %v", err)
-	}
+	initConfigForTest(t)
 	old := config.GetDuration("flush-debounce")
 	defer config.Set("flush-debounce", old)
 
@@ -332,11 +332,19 @@ func TestDaemonAutostart_StartDaemonProcess_Stubbed(t *testing.T) {
 	oldExec := execCommandFn
 	oldWait := waitForSocketReadinessFn
 	oldCfg := configureDaemonProcessFn
+	oldIsDolt := isDoltBackendFn
+	oldSingleProcess := singleProcessOnlyBackendFn
 	defer func() {
 		execCommandFn = oldExec
 		waitForSocketReadinessFn = oldWait
 		configureDaemonProcessFn = oldCfg
+		isDoltBackendFn = oldIsDolt
+		singleProcessOnlyBackendFn = oldSingleProcess
 	}()
+
+	// Stub out backend checks so they don't interfere with this test
+	isDoltBackendFn = func() bool { return false }
+	singleProcessOnlyBackendFn = func() bool { return false }
 
 	execCommandFn = func(string, ...string) *exec.Cmd {
 		return exec.Command(os.Args[0], "-test.run=^$")
@@ -475,6 +483,7 @@ func TestDaemonAutostart_RestartDaemonForVersionMismatch_Stubbed(t *testing.T) {
 
 // TestIsWispOperation tests the wisp operation detection for auto-daemon-bypass (bd-ta4r)
 func TestIsWispOperation(t *testing.T) {
+	t.Parallel()
 	// Helper to create a command with parent hierarchy
 	makeCmd := func(names ...string) *cobra.Command {
 		var current *cobra.Command
@@ -626,5 +635,33 @@ func TestTryAutoStartDaemon_EmptyDbPath(t *testing.T) {
 	result := tryAutoStartDaemon("/tmp/test.sock")
 	if result {
 		t.Errorf("tryAutoStartDaemon() = true, want false when dbPath is empty")
+	}
+}
+
+// TestSetupDaemonIO_DevNullNotClosed verifies that setupDaemonIO does not
+// close the /dev/null fd, preventing a race where the daemon process writes
+// to a closed (and potentially reused) fd number.
+func TestSetupDaemonIO_DevNullNotClosed(t *testing.T) {
+	t.Parallel()
+
+	cmd := exec.Command("true")
+	setupDaemonIO(cmd)
+
+	if cmd.Stdout == nil || cmd.Stderr == nil || cmd.Stdin == nil {
+		t.Fatal("setupDaemonIO should set Stdout, Stderr, and Stdin")
+	}
+
+	// The fd should remain valid (not closed) after setup.
+	// Sleep past the old 1-second timer to catch regressions.
+	time.Sleep(1500 * time.Millisecond)
+
+	f, ok := cmd.Stdout.(*os.File)
+	if !ok {
+		t.Fatal("Stdout is not an *os.File")
+	}
+
+	// Stat on a closed fd returns an error; on an open fd it succeeds.
+	if _, err := f.Stat(); err != nil {
+		t.Errorf("devNull fd was closed prematurely: %v", err)
 	}
 }

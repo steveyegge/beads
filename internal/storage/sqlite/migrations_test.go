@@ -477,6 +477,7 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				closed_at DATETIME,
 				closed_by_session TEXT DEFAULT '',
 				external_ref TEXT,
+				spec_id TEXT DEFAULT '',
 				compaction_level INTEGER DEFAULT 0,
 				compacted_at DATETIME,
 				original_size INTEGER,
@@ -489,6 +490,7 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				original_type TEXT DEFAULT '',
 				sender TEXT DEFAULT '',
 				ephemeral INTEGER DEFAULT 0,
+				wisp_type TEXT DEFAULT '',
 				pinned INTEGER DEFAULT 0,
 				is_template INTEGER DEFAULT 0,
 				crystallizes INTEGER DEFAULT 0,
@@ -511,23 +513,24 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				defer_until DATETIME,
 				spec_id TEXT DEFAULT '',
 				spec_changed_at DATETIME,
+				metadata TEXT NOT NULL DEFAULT '{}',
 				CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 			);
 			INSERT INTO issues (
 				id, title, description, design, acceptance_criteria, notes, status, priority, issue_type,
 				assignee, estimated_minutes, created_at, created_by, owner, updated_at, closed_at, closed_by_session,
 				external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, close_reason,
-				deleted_at, deleted_by, delete_reason, original_type, sender, ephemeral, pinned, is_template, crystallizes,
+				deleted_at, deleted_by, delete_reason, original_type, sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
 				await_type, await_id, timeout_ns, waiters, hook_bead, role_bead, agent_state, last_activity, role_type, rig,
-				mol_type, event_kind, actor, target, payload, due_at, defer_until, spec_id, spec_changed_at
+				mol_type, event_kind, actor, target, payload, due_at, defer_until, spec_id, spec_changed_at, metadata
 			)
 			SELECT
 				id, title, description, design, acceptance_criteria, notes, status, priority, issue_type,
 				assignee, estimated_minutes, created_at, '', '', updated_at, closed_at, '',
 				external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '',
-				NULL, '', '', '', '', 0, 0, 0, 0,
+				NULL, '', '', '', '', 0, '', 0, 0, 0,
 				'', '', 0, '', '', '', '', NULL, '', '',
-				'', '', '', '', '', NULL, NULL, spec_id, spec_changed_at
+				'', '', '', '', '', NULL, NULL, spec_id, spec_changed_at, '{}'
 			FROM issues_backup;
 			DROP TABLE issues_backup;
 		`)
@@ -678,7 +681,7 @@ func TestMigrateOrphanDetection(t *testing.T) {
 
 		// Insert issues with dotted prefix directly (bypassing prefix validation)
 		testCases := []struct {
-			id          string
+			id           string
 			expectOrphan bool
 		}{
 			// These should NOT be flagged as orphans (dots in prefix)

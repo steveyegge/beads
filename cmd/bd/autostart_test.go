@@ -5,16 +5,22 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-	
-	"github.com/steveyegge/beads/internal/config"
 )
 
 func TestDaemonAutoStart(t *testing.T) {
 	// Initialize config for tests
-	if err := config.Initialize(); err != nil {
-		t.Fatalf("Failed to initialize config: %v", err)
-	}
-	
+	initConfigForTest(t)
+
+	// Stub out backend checks so they don't interfere with env var testing
+	oldIsDoltBackendFn := isDoltBackendFn
+	oldSingleProcessOnlyBackendFn := singleProcessOnlyBackendFn
+	isDoltBackendFn = func() bool { return false }
+	singleProcessOnlyBackendFn = func() bool { return false }
+	defer func() {
+		isDoltBackendFn = oldIsDoltBackendFn
+		singleProcessOnlyBackendFn = oldSingleProcessOnlyBackendFn
+	}()
+
 	// Save original env
 	origAutoStart := os.Getenv("BEADS_AUTO_START_DAEMON")
 	origNoDaemon := os.Getenv("BEADS_NO_DAEMON")

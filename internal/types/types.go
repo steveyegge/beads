@@ -3,6 +3,7 @@ package types
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"strings"
@@ -22,6 +23,7 @@ type Issue struct {
 	Design             string `json:"design,omitempty"`
 	AcceptanceCriteria string `json:"acceptance_criteria,omitempty"`
 	Notes              string `json:"notes,omitempty"`
+	SpecID             string `json:"spec_id,omitempty"`
 
 	// ===== Status & Workflow =====
 	Status    Status    `json:"status,omitempty"`
@@ -50,9 +52,14 @@ type Issue struct {
 	SourceSystem string  `json:"source_system,omitempty"` // Adapter/system that created this issue (federation)
 
 	// ===== Spec Integration =====
-	SpecID string `json:"spec_id,omitempty"` // Reference to spec file, e.g., "spec-001"
+	// SpecID is declared in the Issue Content section above.
 	// Spec change tracking (Shadow Ledger)
 	SpecChangedAt *time.Time `json:"spec_changed_at,omitempty"` // When linked spec last changed
+
+	// ===== Custom Metadata =====
+	// Metadata holds arbitrary JSON data for extension points (tool annotations, file lists, etc.)
+	// Validated as well-formed JSON on create/update. See GH#1406.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 
 	// ===== Compaction Metadata =====
 	CompactionLevel   int        `json:"compaction_level,omitempty"`
@@ -77,8 +84,9 @@ type Issue struct {
 	OriginalType string     `json:"original_type,omitempty"` // Issue type before deletion
 
 	// ===== Messaging Fields (inter-agent communication) =====
-	Sender    string `json:"sender,omitempty"`    // Who sent this (for messages)
-	Ephemeral bool   `json:"ephemeral,omitempty"` // If true, not exported to JSONL
+	Sender    string   `json:"sender,omitempty"`    // Who sent this (for messages)
+	Ephemeral bool     `json:"ephemeral,omitempty"` // If true, not exported to JSONL
+	WispType  WispType `json:"wisp_type,omitempty"` // Classification for TTL-based compaction (gt-9br)
 	// NOTE: RepliesTo, RelatesTo, DuplicateOf, SupersededBy moved to dependencies table
 	// per Decision 004 (Edge Schema Consolidation). Use dependency API instead.
 
@@ -142,6 +150,7 @@ func (i *Issue) ComputeContentHash() string {
 	w.str(i.Design)
 	w.str(i.AcceptanceCriteria)
 	w.str(i.Notes)
+	w.str(i.SpecID)
 	w.str(string(i.Status))
 	w.int(i.Priority)
 	w.str(string(i.IssueType))
@@ -152,8 +161,8 @@ func (i *Issue) ComputeContentHash() string {
 	// Optional fields
 	w.strPtr(i.ExternalRef)
 	w.str(i.SourceSystem)
-	w.str(i.SpecID)
 	w.flag(i.Pinned, "pinned")
+	w.str(string(i.Metadata)) // Include metadata in content hash
 	w.flag(i.IsTemplate, "template")
 
 	// Bonded molecules
@@ -366,6 +375,12 @@ func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
 	if !i.AgentState.IsValid() {
 		return fmt.Errorf("invalid agent state: %s", i.AgentState)
 	}
+	// Validate metadata is well-formed JSON if set (GH#1406)
+	if len(i.Metadata) > 0 {
+		if !json.Valid(i.Metadata) {
+			return fmt.Errorf("metadata must be valid JSON")
+		}
+	}
 	return nil
 }
 
@@ -414,6 +429,12 @@ func (i *Issue) ValidateForImport(customStatuses []string) error {
 	// Validate agent state if set
 	if !i.AgentState.IsValid() {
 		return fmt.Errorf("invalid agent state: %s", i.AgentState)
+	}
+	// Validate metadata is well-formed JSON if set (GH#1406)
+	if len(i.Metadata) > 0 {
+		if !json.Valid(i.Metadata) {
+			return fmt.Errorf("metadata must be valid JSON")
+		}
 	}
 	return nil
 }
@@ -492,9 +513,16 @@ const (
 	TypeChore   IssueType = "chore"
 )
 
-// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, event, message)
+// TypeEvent is a system-internal type used by set-state for audit trail beads.
+// Originally a Gas Town type, promoted to built-in internal type. It is not a
+// core work type (not in IsValid) but is accepted by IsValidWithCustom /
+// ValidateWithCustom and treated as built-in for hydration trust (GH#1356).
+const TypeEvent IssueType = "event"
+
+// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, message)
 // were removed from beads core. They are now purely custom types with no built-in constants.
 // Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
+// (event was also a Gas Town type but was promoted to a built-in internal type above.)
 
 // IsValid checks if the issue type is a core work type.
 // Only core work types (bug, feature, task, epic, chore) are built-in.
@@ -507,22 +535,21 @@ func (t IssueType) IsValid() bool {
 	return false
 }
 
-// IsBuiltIn returns true if the type is a built-in type (same as IsValid).
-// Used during multi-repo hydration to determine trust:
-// - Built-in types: validate (catch typos)
+// IsBuiltIn returns true for core work types and system-internal types
+// (i.e. TypeEvent). Used during multi-repo hydration to determine trust:
+// - Built-in/internal types: validate (catch typos)
 // - Custom types (!IsBuiltIn): trust from source repo
 func (t IssueType) IsBuiltIn() bool {
-	return t.IsValid()
+	return t.IsValid() || t == TypeEvent
 }
 
 // IsValidWithCustom checks if the issue type is valid, including custom types.
 // Custom types are user-defined via bd config set types.custom "type1,type2,..."
 func (t IssueType) IsValidWithCustom(customTypes []string) bool {
-	// First check built-in types
-	if t.IsValid() {
+	if t.IsBuiltIn() {
 		return true
 	}
-	// Then check custom types
+	// Check user-configured custom types
 	for _, custom := range customTypes {
 		if string(t) == custom {
 			return true
@@ -616,6 +643,35 @@ func (m MolType) IsValid() bool {
 	return false
 }
 
+// WispType categorizes ephemeral wisps for TTL-based compaction (gt-9br)
+type WispType string
+
+// WispType constants - see WISP-COMPACTION-POLICY.md for TTL assignments
+const (
+	// Category 1: High-churn, low forensic value (TTL: 6h)
+	WispTypeHeartbeat WispType = "heartbeat" // Liveness pings
+	WispTypePing      WispType = "ping"      // Health check ACKs
+
+	// Category 2: Operational state (TTL: 24h)
+	WispTypePatrol   WispType = "patrol"    // Patrol cycle reports
+	WispTypeGCReport WispType = "gc_report" // Garbage collection reports
+
+	// Category 3: Significant events (TTL: 7d)
+	WispTypeRecovery   WispType = "recovery"   // Force-kill, recovery actions
+	WispTypeError      WispType = "error"      // Error reports
+	WispTypeEscalation WispType = "escalation" // Human escalations
+)
+
+// IsValid checks if the wisp type value is valid
+func (w WispType) IsValid() bool {
+	switch w {
+	case WispTypeHeartbeat, WispTypePing, WispTypePatrol, WispTypeGCReport,
+		WispTypeRecovery, WispTypeError, WispTypeEscalation, "":
+		return true // empty is valid (uses default TTL)
+	}
+	return false
+}
+
 // WorkType categorizes how work assignment operates for a bead (Decision 006)
 type WorkType string
 
@@ -667,6 +723,7 @@ type IssueWithCounts struct {
 	*Issue
 	DependencyCount int             `json:"dependency_count"`
 	DependentCount  int             `json:"dependent_count"`
+	CommentCount    int             `json:"comment_count"`
 	Volatility      *SpecVolatility `json:"volatility,omitempty"`
 }
 
@@ -908,16 +965,19 @@ type Statistics struct {
 
 // IssueFilter is used to filter issue queries
 type IssueFilter struct {
-	Status      *Status
-	Priority    *int
-	IssueType   *IssueType
-	Assignee    *string
-	Labels      []string // AND semantics: issue must have ALL these labels
-	LabelsAny   []string // OR semantics: issue must have AT LEAST ONE of these labels
-	TitleSearch string
-	IDs         []string // Filter by specific issue IDs
-	IDPrefix    string   // Filter by ID prefix (e.g., "bd-" to match "bd-abc123")
-	Limit       int
+	Status       *Status
+	Priority     *int
+	IssueType    *IssueType
+	Assignee     *string
+	Labels       []string // AND semantics: issue must have ALL these labels
+	LabelsAny    []string // OR semantics: issue must have AT LEAST ONE of these labels
+	LabelPattern string   // Glob pattern for label matching (e.g., "tech-*")
+	LabelRegex   string   // Regex pattern for label matching (e.g., "tech-(debt|legacy)")
+	TitleSearch  string
+	IDs          []string // Filter by specific issue IDs
+	IDPrefix     string   // Filter by ID prefix (e.g., "bd-" to match "bd-abc123")
+	SpecIDPrefix string   // Filter by spec_id prefix
+	Limit        int
 
 	// Pattern matching
 	TitleContains       string
@@ -950,6 +1010,9 @@ type IssueFilter struct {
 	// Tombstone filtering
 	IncludeTombstones bool // If false (default), exclude tombstones from results
 
+	// Source repo filtering (for multi-repo support)
+	SourceRepo *string // Filter by source_repo field (nil = any)
+
 	// Ephemeral filtering
 	Ephemeral *bool // Filter by ephemeral flag (nil = any, true = only ephemeral, false = only persistent)
 
@@ -964,6 +1027,9 @@ type IssueFilter struct {
 
 	// Molecule type filtering
 	MolType *MolType // Filter by molecule type (nil = any, swarm/patrol/work)
+
+	// Wisp type filtering (TTL-based compaction classification)
+	WispType *WispType // Filter by wisp type (nil = any, heartbeat/ping/patrol/gc_report/recovery/error/escalation)
 
 	// Status exclusion (for default non-closed behavior)
 	ExcludeStatus []Status // Exclude issues with these statuses
@@ -1010,21 +1076,26 @@ func (s SortPolicy) IsValid() bool {
 
 // WorkFilter is used to filter ready work queries
 type WorkFilter struct {
-	Status     Status
-	Type       string // Filter by issue type (task, bug, feature, epic, merge-request, etc.)
-	Priority   *int
-	Assignee   *string
-	Unassigned bool     // Filter for issues with no assignee
-	Labels     []string // AND semantics: issue must have ALL these labels
-	LabelsAny  []string // OR semantics: issue must have AT LEAST ONE of these labels
-	Limit      int
-	SortPolicy SortPolicy
+	Status       Status
+	Type         string // Filter by issue type (task, bug, feature, epic, merge-request, etc.)
+	Priority     *int
+	Assignee     *string
+	Unassigned   bool     // Filter for issues with no assignee
+	Labels       []string // AND semantics: issue must have ALL these labels
+	LabelsAny    []string // OR semantics: issue must have AT LEAST ONE of these labels
+	LabelPattern string   // Glob pattern for label matching (e.g., "tech-*")
+	LabelRegex   string   // Regex pattern for label matching (e.g., "tech-(debt|legacy)")
+	Limit        int
+	SortPolicy   SortPolicy
 
 	// Parent filtering: filter to descendants of a bead/epic (recursive)
 	ParentID *string // Show all descendants of this issue
 
 	// Molecule type filtering
 	MolType *MolType // Filter by molecule type (nil = any, swarm/patrol/work)
+
+	// Wisp type filtering (TTL-based compaction classification)
+	WispType *WispType // Filter by wisp type (nil = any, heartbeat/ping/patrol/gc_report/recovery/error/escalation)
 
 	// Time-based deferral filtering (GH#820)
 	IncludeDeferred bool // If true, include issues with future defer_until timestamps

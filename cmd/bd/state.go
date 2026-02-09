@@ -234,7 +234,7 @@ The --reason flag provides context for the event bead (recommended).`,
 				Parent:      fullID,
 				Title:       eventTitle,
 				Description: eventDesc,
-				IssueType:   "event",
+				IssueType:   string(types.TypeEvent),
 				Priority:    4, // Low priority for events
 				CreatedBy:   getActorWithGit(),
 			}
@@ -260,7 +260,7 @@ The --reason flag provides context for the event bead (recommended).`,
 				Description: eventDesc,
 				Status:      types.StatusClosed, // Events are immediately closed
 				Priority:    4,
-				IssueType:   types.IssueType("event"),
+				IssueType:   types.TypeEvent,
 				CreatedBy:   getActorWithGit(),
 			}
 			if err := store.CreateIssue(ctx, event, actor); err != nil {
@@ -313,12 +313,12 @@ The --reason flag provides context for the event bead (recommended).`,
 
 		if jsonOutput {
 			result := map[string]interface{}{
-				"issue_id":   fullID,
-				"dimension":  dimension,
-				"old_value":  oldValue,
-				"new_value":  newValue,
-				"event_id":   eventID,
-				"changed":    true,
+				"issue_id":  fullID,
+				"dimension": dimension,
+				"old_value": oldValue,
+				"new_value": newValue,
+				"event_id":  eventID,
+				"changed":   true,
 			}
 			if oldValue == "" {
 				result["old_value"] = nil

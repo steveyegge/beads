@@ -20,8 +20,8 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 )
 
-// ExternalDepStatus represents whether an external dependency is satisfied
-type ExternalDepStatus struct {
+// externalDepStatus represents whether an external dependency is satisfied
+type externalDepStatus struct {
 	Ref        string // The full external reference (external:project:capability)
 	Project    string // Parsed project name
 	Capability string // Parsed capability name
@@ -29,10 +29,10 @@ type ExternalDepStatus struct {
 	Reason     string // Human-readable reason if not satisfied
 }
 
-// CheckExternalDep checks if a single external dependency is satisfied.
+// checkExternalDep checks if a single external dependency is satisfied.
 // Returns status information about the dependency.
-func CheckExternalDep(ctx context.Context, ref string) *ExternalDepStatus {
-	status := &ExternalDepStatus{
+func checkExternalDep(ctx context.Context, ref string) *externalDepStatus {
+	status := &externalDepStatus{
 		Ref:       ref,
 		Satisfied: false,
 	}
@@ -120,13 +120,13 @@ func CheckExternalDep(ctx context.Context, ref string) *ExternalDepStatus {
 	return status
 }
 
-// CheckExternalDeps checks multiple external dependencies with batching optimization.
+// checkExternalDeps checks multiple external dependencies with batching optimization.
 // Groups refs by project and opens each external DB only once, checking all
 // capabilities for that project in a single query. This avoids O(N) DB opens
 // when multiple issues depend on the same external project.
 // Returns a map of ref -> status.
-func CheckExternalDeps(ctx context.Context, refs []string) map[string]*ExternalDepStatus {
-	results := make(map[string]*ExternalDepStatus)
+func checkExternalDeps(ctx context.Context, refs []string) map[string]*externalDepStatus {
+	results := make(map[string]*externalDepStatus)
 
 	// Parse and group refs by project
 	// Key: project name, Value: map of capability -> list of original refs
@@ -136,7 +136,7 @@ func CheckExternalDeps(ctx context.Context, refs []string) map[string]*ExternalD
 	for _, ref := range refs {
 		parsed := parseExternalRef(ref)
 		if parsed == nil {
-			results[ref] = &ExternalDepStatus{
+			results[ref] = &externalDepStatus{
 				Ref:       ref,
 				Satisfied: false,
 				Reason:    "invalid external reference format",
@@ -170,7 +170,7 @@ func CheckExternalDeps(ctx context.Context, refs []string) map[string]*ExternalD
 			}
 
 			for _, ref := range refList {
-				results[ref] = &ExternalDepStatus{
+				results[ref] = &externalDepStatus{
 					Ref:        ref,
 					Project:    project,
 					Capability: cap,
@@ -287,11 +287,11 @@ func checkProjectCapabilities(ctx context.Context, project string, capabilities 
 	return result
 }
 
-// GetUnsatisfiedExternalDeps returns external dependencies that are not satisfied.
-func GetUnsatisfiedExternalDeps(ctx context.Context, refs []string) []string {
+// getUnsatisfiedExternalDeps returns external dependencies that are not satisfied.
+func getUnsatisfiedExternalDeps(ctx context.Context, refs []string) []string {
 	var unsatisfied []string
 	for _, ref := range refs {
-		status := CheckExternalDep(ctx, ref)
+		status := checkExternalDep(ctx, ref)
 		if !status.Satisfied {
 			unsatisfied = append(unsatisfied, ref)
 		}

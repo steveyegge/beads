@@ -596,7 +596,7 @@ func discoverRigDaemons() []rigDaemon {
 		beadsDir = resolveBeadsRedirect(beadsDir)
 
 		// Check if daemon is running
-		socketPath := filepath.Join(beadsDir, "bd.sock")
+		socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
 		client, _ := rpc.TryConnect(socketPath)
 
 		rigName := routing.ExtractProjectFromPath(route.Path)

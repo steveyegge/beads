@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/autoimport"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/export"
 	"github.com/steveyegge/beads/internal/importer"
@@ -30,8 +31,17 @@ func (s *Server) handleExport(req *Request) Response {
 		}
 	}
 
+	// Validate that JSONLPath resolves within the workspace directory (path traversal prevention)
+	if err := s.validatePathWithinWorkspace(exportArgs.JSONLPath); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid export path: %v", err),
+		}
+	}
+
 	store := s.storage
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Load export configuration (user-initiated export, not auto)
 	cfg, err := export.LoadConfig(ctx, store, false)
@@ -240,33 +250,25 @@ func (s *Server) handleExport(req *Request) Response {
 	}
 }
 
-// handleImport handles the import operation
-func (s *Server) handleImport(req *Request) Response {
-	var importArgs ImportArgs
-	if err := json.Unmarshal(req.Args, &importArgs); err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("invalid import args: %v", err),
-		}
-	}
-
-	// Note: The actual import logic is complex and lives in cmd/bd/import.go
-	// For now, we'll return an error suggesting to use direct mode
-	// In the future, we can refactor the import logic into a shared package
-	return Response{
-		Success: false,
-		Error:   "import via daemon not yet implemented, use --no-daemon flag",
-	}
-}
-
 // checkAndAutoImportIfStale checks if JSONL is newer than last import and triggers auto-import
 // This fixes bd-132: daemon shows stale data after git pull
 // This fixes bd-8931: daemon gets stuck when auto-import blocked by git conflicts
 func (s *Server) checkAndAutoImportIfStale(req *Request) error {
+	if !config.NeedsJSONLImport() {
+		return nil
+	}
+
 	// Get storage for this request
 	store := s.storage
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
+
+	// Skip auto-import in dolt-native mode — JSONL is export-only backup
+	mode, _ := store.GetConfig(ctx, "sync.mode")
+	if mode == "dolt-native" {
+		return nil
+	}
 
 	// Get database path from storage (Path() is part of Storage interface)
 	dbPath := store.Path()
@@ -443,6 +445,43 @@ func hasUncommittedBeadsFiles(workspacePath string) bool {
 	}
 
 	return false
+}
+
+// validatePathWithinWorkspace checks that a file path resolves within the server's workspace directory.
+// It canonicalizes both paths (resolving symlinks and ".." components) to prevent path traversal attacks.
+func (s *Server) validatePathWithinWorkspace(path string) error {
+	if path == "" {
+		return fmt.Errorf("path must not be empty")
+	}
+
+	// Make absolute relative to workspace
+	absPath := path
+	if !filepath.IsAbs(path) {
+		absPath = filepath.Join(s.workspacePath, path)
+	}
+
+	// Clean the path to resolve ".." components
+	absPath = filepath.Clean(absPath)
+
+	// Resolve symlinks to prevent symlink traversal
+	resolvedPath, err := filepath.EvalSymlinks(filepath.Dir(absPath))
+	if err != nil {
+		// If parent directory doesn't exist yet, validate the cleaned path without symlink resolution
+		resolvedPath = filepath.Dir(absPath)
+	}
+	resolvedPath = filepath.Join(resolvedPath, filepath.Base(absPath))
+
+	resolvedWorkspace, err := filepath.EvalSymlinks(s.workspacePath)
+	if err != nil {
+		resolvedWorkspace = filepath.Clean(s.workspacePath)
+	}
+
+	// Ensure the resolved path is within the workspace
+	if !strings.HasPrefix(resolvedPath, resolvedWorkspace+string(filepath.Separator)) && resolvedPath != resolvedWorkspace {
+		return fmt.Errorf("path %q resolves outside workspace directory", path)
+	}
+
+	return nil
 }
 
 // triggerExport exports all issues to JSONL after auto-import remaps IDs

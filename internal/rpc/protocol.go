@@ -8,6 +8,11 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// MaxMessageSize is the maximum size of a single RPC message (request or response).
+// This prevents unbounded memory allocation from malicious or malformed messages.
+// 10MB is generous for any legitimate beads operation (issue lists, batch ops, etc.).
+const MaxMessageSize = 10 * 1024 * 1024 // 10MB
+
 // Operation constants for all bd commands
 const (
 	OpPing           = "ping"
@@ -96,9 +101,9 @@ type CreateArgs struct {
 	Design             string   `json:"design,omitempty"`
 	AcceptanceCriteria string   `json:"acceptance_criteria,omitempty"`
 	Notes              string   `json:"notes,omitempty"`
+	SpecID             string   `json:"spec_id,omitempty"`
 	Assignee           string   `json:"assignee,omitempty"`
 	ExternalRef        string   `json:"external_ref,omitempty"`      // Link to external issue trackers
-	SpecID             string   `json:"spec_id,omitempty"`           // Link to specification document
 	EstimatedMinutes   *int     `json:"estimated_minutes,omitempty"` // Time estimate in minutes
 	Labels             []string `json:"labels,omitempty"`
 	Dependencies       []string `json:"dependencies,omitempty"`
@@ -115,6 +120,8 @@ type CreateArgs struct {
 	Owner     string `json:"owner,omitempty"`      // Human owner for CV attribution (git author email)
 	// Molecule type (for swarm coordination)
 	MolType string `json:"mol_type,omitempty"` // swarm, patrol, or work (default)
+	// Wisp type (for TTL-based compaction of ephemeral wisps)
+	WispType string `json:"wisp_type,omitempty"` // heartbeat, ping, patrol, gc_report, recovery, error, escalation
 	// Agent identity fields (only valid when IssueType == "agent")
 	RoleType string `json:"role_type,omitempty"` // polecat|crew|witness|refinery|mayor|deacon
 	Rig      string `json:"rig,omitempty"`       // Rig name (empty for town-level agents)
@@ -138,9 +145,9 @@ type UpdateArgs struct {
 	Design             *string  `json:"design,omitempty"`
 	AcceptanceCriteria *string  `json:"acceptance_criteria,omitempty"`
 	Notes              *string  `json:"notes,omitempty"`
+	SpecID             *string  `json:"spec_id,omitempty"`
 	Assignee           *string  `json:"assignee,omitempty"`
 	ExternalRef        *string  `json:"external_ref,omitempty"`      // Link to external issue trackers
-	SpecID             *string  `json:"spec_id,omitempty"`           // Link to specification document
 	SpecChangedAt      *string  `json:"spec_changed_at,omitempty"`   // RFC3339 or empty to clear
 	EstimatedMinutes   *int     `json:"estimated_minutes,omitempty"` // Time estimate in minutes
 	IssueType          *string  `json:"issue_type,omitempty"`        // Issue type (bug|feature|task|epic|chore)
@@ -183,6 +190,8 @@ type UpdateArgs struct {
 	Waiters []string `json:"waiters,omitempty"`  // Mail addresses to notify when gate clears
 	// Slot fields
 	Holder *string `json:"holder,omitempty"` // Who currently holds the slot (for type=slot beads)
+	// Metadata field (GH#1413)
+	Metadata *string `json:"metadata,omitempty"` // Arbitrary JSON metadata
 }
 
 // CloseArgs represents arguments for the close operation
@@ -212,16 +221,19 @@ type DeleteArgs struct {
 
 // ListArgs represents arguments for the list operation
 type ListArgs struct {
-	Query     string   `json:"query,omitempty"`
-	Status    string   `json:"status,omitempty"`
-	Priority  *int     `json:"priority,omitempty"`
-	IssueType string   `json:"issue_type,omitempty"`
-	Assignee  string   `json:"assignee,omitempty"`
-	Label     string   `json:"label,omitempty"`      // Deprecated: use Labels
-	Labels    []string `json:"labels,omitempty"`     // AND semantics
-	LabelsAny []string `json:"labels_any,omitempty"` // OR semantics
-	IDs       []string `json:"ids,omitempty"`        // Filter by specific issue IDs
-	Limit     int      `json:"limit,omitempty"`
+	Query        string   `json:"query,omitempty"`
+	Status       string   `json:"status,omitempty"`
+	Priority     *int     `json:"priority,omitempty"`
+	IssueType    string   `json:"issue_type,omitempty"`
+	Assignee     string   `json:"assignee,omitempty"`
+	Label        string   `json:"label,omitempty"`          // Deprecated: use Labels
+	Labels       []string `json:"labels,omitempty"`         // AND semantics
+	LabelsAny    []string `json:"labels_any,omitempty"`     // OR semantics
+	LabelPattern string   `json:"label_pattern,omitempty"`  // Glob pattern (e.g., "tech-*")
+	LabelRegex   string   `json:"label_regex,omitempty"`    // Regex pattern (e.g., "tech-(debt|legacy)")
+	IDs          []string `json:"ids,omitempty"`            // Filter by specific issue IDs
+	SpecIDPrefix string   `json:"spec_id_prefix,omitempty"` // Filter by spec_id prefix
+	Limit        int      `json:"limit,omitempty"`
 
 	// Spec filtering
 	SpecID      string `json:"spec_id,omitempty"`      // Exact match
@@ -265,6 +277,9 @@ type ListArgs struct {
 
 	// Molecule type filtering
 	MolType string `json:"mol_type,omitempty"`
+
+	// Wisp type filtering (TTL-based compaction classification)
+	WispType string `json:"wisp_type,omitempty"`
 
 	// Status exclusion (for default non-closed behavior, GH#788)
 	ExcludeStatus []string `json:"exclude_status,omitempty"`
@@ -340,6 +355,7 @@ type ResolveIDArgs struct {
 
 // ReadyArgs represents arguments for the ready operation
 type ReadyArgs struct {
+	Status          string   `json:"status,omitempty"` // Filter by status (e.g., "open" to exclude in_progress)
 	Assignee        string   `json:"assignee,omitempty"`
 	Unassigned      bool     `json:"unassigned,omitempty"`
 	Priority        *int     `json:"priority,omitempty"`
@@ -695,11 +711,6 @@ type CompactStatsData struct {
 // ExportArgs represents arguments for the export operation
 type ExportArgs struct {
 	JSONLPath string `json:"jsonl_path"` // Path to export JSONL file
-}
-
-// ImportArgs represents arguments for the import operation
-type ImportArgs struct {
-	JSONLPath string `json:"jsonl_path"` // Path to import JSONL file
 }
 
 // GetMutationsArgs represents arguments for retrieving recent mutations

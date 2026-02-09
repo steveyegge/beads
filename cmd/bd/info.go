@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -98,14 +97,7 @@ Examples:
 			if store != nil {
 				ctx := rootCtx
 
-				// Check database freshness before reading
-				// Skip check when using daemon (daemon auto-imports on staleness)
-				if daemonClient == nil {
-					if err := ensureDatabaseFresh(ctx); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-						os.Exit(1)
-					}
-				}
+				requireFreshDB(ctx)
 
 				filter := types.IssueFilter{}
 				issues, err := store.SearchIssues(ctx, "", filter)
@@ -296,6 +288,87 @@ type VersionChange struct {
 
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
+	{
+		Version: "0.49.6",
+		Date:    "2026-02-08",
+		Changes: []string{
+			"REVERT: Embedded Dolt mode restored (removal was only intended for Gas Town, not Beads)",
+		},
+	},
+	{
+		Version: "0.49.5",
+		Date:    "2026-02-08",
+		Changes: []string{
+			"NEW: bd search --has/--no flags for content and null-check filtering",
+			"NEW: bd promote command for wisp-to-bead promotion",
+			"NEW: bd todo command for lightweight task management",
+			"NEW: bd find-duplicates for AI-powered duplicate detection",
+			"NEW: bd validate integrated into bd doctor --check=validate",
+			"NEW: Dolt fail-fast TCP check before MySQL protocol init",
+			"SECURITY: SQL identifier validation prevents injection in dynamic table/db names",
+			"SECURITY: Path traversal fix in export handler; command injection fix in import",
+			"FIX: RPC mutation events now include issueID (was zero-value for label/dep ops)",
+			"FIX: Daemon YAML config recognizes both hyphen and underscore variants",
+			"FIX: Doctor role check falls back to database config",
+			"FIX: SQLite Close() idempotent (WAL retry deadlock fix)",
+			"FIX: SQLITE_BUSY retry for all BEGIN IMMEDIATE calls",
+			"FIX: Dolt cross-rig contamination prevented with prefix-based db names",
+			"FIX: bd list separates parent-child from blocks display",
+			"FIX: Cross-prefix ID resolution in multi-repo scenarios",
+			"CHANGE: Embedded Dolt mode fully removed (server-only connections)",
+			"CHANGE: bd init defaults to chaining hooks (no prompt)",
+			"CHANGE: brew upgrade command corrected to 'brew upgrade beads'",
+		},
+	},
+	{
+		Version: "0.49.4",
+		Date:    "2026-02-05",
+		Changes: []string{
+			"NEW: --label-pattern and --label-regex flags for bd list and bd ready - glob and regex filtering on labels",
+			"NEW: Simple query language for complex bd list filtering",
+			"NEW: spec_id field for linking issues to specification documents",
+			"NEW: Wisp type field for TTL-based compaction of ephemeral molecules",
+			"NEW: Dolt schema migration runner and doctor validation checks",
+			"NEW: --metadata flag for bd update (JSON metadata from CLI)",
+			"NEW: config.local.yaml for local configuration overrides",
+			"FIX: JSONL file locking prevents race conditions in concurrent writes",
+			"FIX: Merge driver preserves all issue fields (spec_id, metadata, deps)",
+			"FIX: Atomic bd claim with compare-and-swap semantics",
+			"FIX: Dolt lock contention - advisory flock prevents zombie processes",
+			"FIX: Windows Dolt build via pure-Go regex backend",
+			"CHANGE: bd ready excludes in_progress issues (shows only claimable work)",
+		},
+	},
+	{
+		Version: "0.49.3",
+		Date:    "2026-01-31",
+		Changes: []string{
+			"FIX: Dolt split-brain eliminated - DatabasePath() always resolves to .beads/dolt/ for dolt backend; JSONL auto-import blocked in dolt-native mode",
+			"CHANGE: Embedded Dolt is now the default - server mode is opt-in via dolt_mode: server",
+			"FIX: Dolt mergeJoinIter panic on type-filtered queries eliminated",
+			"FIX: CGO/ICU build - Makefile and test.sh auto-detect Homebrew icu4c paths on macOS",
+		},
+	},
+	{
+		Version: "0.49.2",
+		Date:    "2026-01-31",
+		Changes: []string{
+			"NEW: GitLab backend - Bidirectional issue sync with GitLab (bd gitlab sync/status/projects)",
+			"NEW: Key-value store - bd kv get/set/delete/list for persistent key-value storage",
+			"NEW: Per-issue JSON metadata field for custom structured data (SQLite + Dolt)",
+			"NEW: Events JSONL export - Opt-in audit trail via events-export config",
+			"NEW: Role configuration - Explicit roles via git, interactive contributor prompt",
+			"NEW: bd backend and bd sync mode subcommands for storage inspection",
+			"NEW: Dolt auto-detect server mode during bd init",
+			"NEW: comment_count in JSON views, comment timestamps with --local-time",
+			"CHANGE: Removed Gas Town-specific code from beads core (hooks, validation, role types)",
+			"CHANGE: Storage layer refactored for backend-agnostic access",
+			"FIX: Worktree support - GIT_DIR/GIT_WORK_TREE in sync operations",
+			"FIX: Graceful Dolt server-to-embedded fallback",
+			"FIX: Multiple sync fixes for dolt-native mode and sync-branch",
+			"FIX: Formula handlebars, ephemeral sync exclusion, daemon idempotency",
+		},
+	},
 	{
 		Version: "0.49.1",
 		Date:    "2026-01-25",

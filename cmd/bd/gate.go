@@ -105,6 +105,8 @@ By default, shows only open gates. Use --all to include closed gates.`,
 			return
 		}
 
+		requireFreshDB(ctx)
+
 		// Direct mode
 		issues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {

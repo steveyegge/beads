@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -123,6 +124,13 @@ create, update, show, or close operation).`,
 							fmt.Fprintf(os.Stderr, "%s\n", err)
 							continue
 						}
+						// Check gate satisfaction for machine-checkable gates
+						if !force {
+							if err := checkGateSatisfaction(&issue); err != nil {
+								fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, err)
+								continue
+							}
+						}
 					}
 				}
 
@@ -197,6 +205,15 @@ create, update, show, or close operation).`,
 					result.Close()
 					fmt.Fprintf(os.Stderr, "%s\n", err)
 					continue
+				}
+
+				// Check gate satisfaction for machine-checkable gates (GH#1467)
+				if !force {
+					if err := checkGateSatisfaction(result.Issue); err != nil {
+						result.Close()
+						fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, err)
+						continue
+					}
 				}
 
 				// Check if issue has open blockers (GH#962)
@@ -278,6 +295,14 @@ create, update, show, or close operation).`,
 				continue
 			}
 
+			// Check gate satisfaction for machine-checkable gates (GH#1467)
+			if !force {
+				if err := checkGateSatisfaction(issue); err != nil {
+					fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, err)
+					continue
+				}
+			}
+
 			// Check if issue has open blockers (GH#962)
 			if !force {
 				blocked, blockers, err := store.IsBlocked(ctx, id)
@@ -332,6 +357,15 @@ create, update, show, or close operation).`,
 				result.Close()
 				fmt.Fprintf(os.Stderr, "%s\n", err)
 				continue
+			}
+
+			// Check gate satisfaction for machine-checkable gates (GH#1467)
+			if !force {
+				if err := checkGateSatisfaction(result.Issue); err != nil {
+					result.Close()
+					fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, err)
+					continue
+				}
 			}
 
 			// Check if issue has open blockers (GH#962)
@@ -445,7 +479,7 @@ func init() {
 	_ = closeCmd.Flags().MarkHidden("resolution") // Hidden alias for agent/CLI ergonomics
 	closeCmd.Flags().StringP("message", "m", "", "Alias for --reason (git commit convention)")
 	_ = closeCmd.Flags().MarkHidden("message") // Hidden alias for agent/CLI ergonomics
-	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues")
+	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues or unsatisfied gates")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
 	closeCmd.Flags().Bool("suggest-next", false, "Show newly unblocked issues after closing")
@@ -564,4 +598,67 @@ func compactSkillsForClosedIssues(ctx context.Context, closedIssues []*types.Iss
 	if archivedCount > 0 && !jsonOutput {
 		fmt.Printf("Compacted %d unused skills\n", archivedCount)
 	}
+}
+
+// isMachineCheckableGate returns true if the issue is a gate with a machine-checkable await type.
+func isMachineCheckableGate(issue *types.Issue) bool {
+	if issue == nil || issue.IssueType != "gate" {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(issue.AwaitType, "gh:pr"):
+		return true
+	case strings.HasPrefix(issue.AwaitType, "gh:run"):
+		return true
+	case issue.AwaitType == "timer":
+		return true
+	case issue.AwaitType == "bead":
+		return true
+	default:
+		return false
+	}
+}
+
+// checkGateSatisfaction checks whether a gate issue's condition is satisfied.
+// Returns nil if the gate is satisfied (or not a machine-checkable gate), or an error describing why it cannot be closed.
+func checkGateSatisfaction(issue *types.Issue) error {
+	if !isMachineCheckableGate(issue) {
+		return nil
+	}
+
+	var resolved bool
+	var escalated bool
+	var reason string
+	var err error
+
+	switch {
+	case strings.HasPrefix(issue.AwaitType, "gh:run"):
+		resolved, escalated, reason, err = checkGHRun(issue)
+	case strings.HasPrefix(issue.AwaitType, "gh:pr"):
+		resolved, escalated, reason, err = checkGHPR(issue)
+	case issue.AwaitType == "timer":
+		resolved, escalated, reason, err = checkTimer(issue, time.Now())
+	case issue.AwaitType == "bead":
+		resolved, reason = checkBeadGate(rootCtx, issue.AwaitID)
+		if resolved {
+			return nil
+		}
+		return fmt.Errorf("gate condition not satisfied: %s (use --force to override)", reason)
+	}
+
+	if err != nil {
+		// If we can't check the condition, allow close with a warning
+		fmt.Fprintf(os.Stderr, "Warning: could not evaluate gate condition: %v\n", err)
+		return nil
+	}
+
+	if resolved {
+		return nil
+	}
+
+	if escalated {
+		return fmt.Errorf("gate condition not satisfied: %s (use --force to override)", reason)
+	}
+
+	return fmt.Errorf("gate condition not satisfied: %s (use --force to override)", reason)
 }

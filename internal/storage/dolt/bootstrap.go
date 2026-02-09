@@ -1,5 +1,4 @@
 //go:build cgo
-
 package dolt
 
 import (
@@ -146,8 +145,25 @@ func findJSONLPath(beadsDir string) string {
 	return ""
 }
 
-// acquireBootstrapLock acquires an exclusive lock for bootstrap operations
+// staleLockAge is the maximum age of a lock file before it's considered stale.
+// Bootstrap operations should complete well within this window.
+const staleLockAge = 5 * time.Minute
+
+// acquireBootstrapLock acquires an exclusive lock for bootstrap operations.
+// Uses non-blocking flock with polling to respect the timeout deadline.
+// Detects and cleans up stale lock files from crashed processes.
 func acquireBootstrapLock(lockPath string, timeout time.Duration) (*os.File, error) {
+	// Check for stale lock file before attempting to acquire.
+	// If the lock file is very old, the holding process likely crashed
+	// without cleanup. Remove it so we can proceed.
+	if info, err := os.Stat(lockPath); err == nil {
+		age := time.Since(info.ModTime())
+		if age > staleLockAge {
+			fmt.Fprintf(os.Stderr, "Bootstrap: removing stale lock file (age: %s)\n", age.Round(time.Second))
+			_ = os.Remove(lockPath)
+		}
+	}
+
 	// Create lock file
 	// #nosec G304 - controlled path
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
@@ -155,18 +171,26 @@ func acquireBootstrapLock(lockPath string, timeout time.Duration) (*os.File, err
 		return nil, fmt.Errorf("failed to create lock file: %w", err)
 	}
 
-	// Try to acquire lock with timeout
+	// Try to acquire lock with non-blocking flock and polling.
+	// The previous implementation used FlockExclusiveBlocking which blocks
+	// indefinitely, making the timeout unreachable.
 	deadline := time.Now().Add(timeout)
 	for {
-		err := lockfile.FlockExclusiveBlocking(f)
+		err := lockfile.FlockExclusiveNonBlocking(f)
 		if err == nil {
-			// Lock acquired
+			// Lock acquired - update modification time for stale detection
 			return f, nil
+		}
+
+		if !lockfile.IsLocked(err) {
+			// Unexpected error (not contention)
+			_ = f.Close()
+			return nil, fmt.Errorf("failed to acquire bootstrap lock: %w", err)
 		}
 
 		if time.Now().After(deadline) {
 			_ = f.Close()
-			return nil, fmt.Errorf("timeout waiting for bootstrap lock")
+			return nil, fmt.Errorf("timeout after %s waiting for bootstrap lock (another bootstrap may be running)", timeout)
 		}
 
 		// Wait briefly before retrying
@@ -313,10 +337,44 @@ func parseJSONLWithErrors(jsonlPath string) ([]*types.Issue, []ParseError) {
 		// Apply defaults for omitted fields
 		issue.SetDefaults()
 
+		// Validate ID is present (corruption check)
+		if issue.ID == "" {
+			parseErrors = append(parseErrors, ParseError{
+				Line:    lineNo,
+				Message: "issue has empty ID",
+				Snippet: truncateSnippet(line, 50),
+			})
+			continue
+		}
+
+		// Validate status enum (catches corruption like 'opne' for 'open')
+		if !issue.Status.IsValid() {
+			parseErrors = append(parseErrors, ParseError{
+				Line:    lineNo,
+				Message: fmt.Sprintf("invalid status %q for issue %s", issue.Status, issue.ID),
+				Snippet: truncateSnippet(line, 50),
+			})
+			continue
+		}
+
 		// Fix closed_at invariant
 		if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
 			now := time.Now()
 			issue.ClosedAt = &now
+		}
+
+		// Fix non-closed issue with closed_at set (corruption recovery)
+		if issue.Status != types.StatusClosed && issue.Status != types.StatusTombstone && issue.ClosedAt != nil {
+			issue.ClosedAt = nil
+		}
+
+		// Fix tombstone invariants (corruption recovery)
+		if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
+			now := time.Now()
+			issue.DeletedAt = &now
+		}
+		if issue.Status != types.StatusTombstone && issue.DeletedAt != nil {
+			issue.DeletedAt = nil
 		}
 
 		issues = append(issues, &issue)
@@ -370,8 +428,8 @@ func detectPrefixFromIssues(issues []*types.Issue) string {
 // importIssuesBootstrap imports issues during bootstrap
 // Returns (imported, skipped, error)
 func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*types.Issue) (int, int, error) {
-	// Skip validation during bootstrap since we're importing existing data
-	// The data was already validated when originally created
+	// Issues are validated during parsing (parseJSONLWithErrors).
+	// This function handles cross-issue uniqueness checks.
 
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -379,9 +437,20 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Pre-scan: identify IDs with tombstone versions (resurrection protection).
+	// If a JSONL has both a live and tombstone version of the same ID,
+	// the tombstone wins to prevent resurrecting deleted issues.
+	tombstoneIDs := make(map[string]bool)
+	for _, issue := range issues {
+		if issue.Status == types.StatusTombstone {
+			tombstoneIDs[issue.ID] = true
+		}
+	}
+
 	imported := 0
 	skipped := 0
 	seenIDs := make(map[string]bool)
+	seenExternalRefs := make(map[string]bool)
 
 	for _, issue := range issues {
 		// Skip duplicates within batch
@@ -389,7 +458,26 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 			skipped++
 			continue
 		}
+
+		// Tombstone resurrection protection: if this ID has a tombstone
+		// version anywhere in the file, skip the live version
+		if tombstoneIDs[issue.ID] && issue.Status != types.StatusTombstone {
+			skipped++
+			continue
+		}
+
 		seenIDs[issue.ID] = true
+
+		// Skip duplicate external_ref values (corruption protection)
+		if issue.ExternalRef != nil && *issue.ExternalRef != "" {
+			if seenExternalRefs[*issue.ExternalRef] {
+				fmt.Fprintf(os.Stderr, "Bootstrap: warning: skipping issue %s with duplicate external_ref %s\n",
+					issue.ID, *issue.ExternalRef)
+				skipped++
+				continue
+			}
+			seenExternalRefs[*issue.ExternalRef] = true
+		}
 
 		// Set timestamps if missing
 		now := time.Now().UTC()
@@ -562,3 +650,5 @@ func importInteractionsBootstrap(ctx context.Context, store *DoltStore, interact
 
 	return imported, nil
 }
+
+

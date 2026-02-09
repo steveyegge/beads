@@ -10,7 +10,6 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/util"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -75,14 +74,14 @@ func updatesFromArgs(a UpdateArgs) (map[string]interface{}, error) {
 	if a.Notes != nil {
 		u["notes"] = *a.Notes
 	}
+	if a.SpecID != nil {
+		u["spec_id"] = *a.SpecID
+	}
 	if a.Assignee != nil {
 		u["assignee"] = *a.Assignee
 	}
 	if a.ExternalRef != nil {
 		u["external_ref"] = *a.ExternalRef
-	}
-	if a.SpecID != nil {
-		u["spec_id"] = *a.SpecID
 	}
 	if a.SpecChangedAt != nil {
 		if *a.SpecChangedAt == "" {
@@ -170,6 +169,14 @@ func updatesFromArgs(a UpdateArgs) (map[string]interface{}, error) {
 	if a.Holder != nil {
 		u["holder"] = *a.Holder
 	}
+	// Metadata field (GH#1413)
+	if a.Metadata != nil {
+		// Validate that the metadata is well-formed JSON
+		if !json.Valid([]byte(*a.Metadata)) {
+			return nil, fmt.Errorf("metadata must be valid JSON")
+		}
+		u["metadata"] = json.RawMessage(*a.Metadata)
+	}
 	// Time-based scheduling fields (GH#820)
 	if a.DueAt != nil {
 		if *a.DueAt == "" {
@@ -234,7 +241,8 @@ func (s *Server) handleCreate(req *Request) Response {
 			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
 		}
 	}
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// If parent is specified, generate child ID
 	issueID := createArgs.ID
@@ -309,9 +317,9 @@ func (s *Server) handleCreate(req *Request) Response {
 		Design:             strValue(design),
 		AcceptanceCriteria: strValue(acceptance),
 		Notes:              strValue(notes),
+		SpecID:             createArgs.SpecID,
 		Assignee:           strValue(assignee),
 		ExternalRef:        externalRef,
-		SpecID:             createArgs.SpecID,
 		EstimatedMinutes:   createArgs.EstimatedMinutes,
 		Status:             types.StatusOpen,
 		// Messaging fields
@@ -324,6 +332,8 @@ func (s *Server) handleCreate(req *Request) Response {
 		Owner:     createArgs.Owner,
 		// Molecule type
 		MolType: types.MolType(createArgs.MolType),
+		// Wisp type (TTL classification)
+		WispType: types.WispType(createArgs.WispType),
 		// Agent identity fields
 		RoleType: createArgs.RoleType,
 		Rig:      createArgs.Rig,
@@ -555,7 +565,8 @@ func (s *Server) handleUpdate(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Check if issue is a template (beads-1ra): templates are read-only
 	issue, err := store.GetIssue(ctx, updateArgs.ID)
@@ -580,21 +591,16 @@ func (s *Server) handleUpdate(req *Request) Response {
 
 	actor := s.reqActor(req)
 
-	// Handle claim operation atomically
+	// Handle claim operation atomically using compare-and-swap semantics
 	if updateArgs.Claim {
-		// Check if already claimed (has non-empty assignee)
-		if issue.Assignee != "" {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("already claimed by %s", issue.Assignee),
+		if err := store.ClaimIssue(ctx, updateArgs.ID, actor); err != nil {
+			// Check if it's an "already claimed" error and format appropriately
+			if strings.Contains(err.Error(), "already claimed") {
+				return Response{
+					Success: false,
+					Error:   err.Error(),
+				}
 			}
-		}
-		// Atomically set assignee and status
-		claimUpdates := map[string]interface{}{
-			"assignee": actor,
-			"status":   "in_progress",
-		}
-		if err := store.UpdateIssue(ctx, updateArgs.ID, claimUpdates, actor); err != nil {
 			return Response{
 				Success: false,
 				Error:   fmt.Sprintf("failed to claim issue: %v", err),
@@ -830,7 +836,8 @@ func (s *Server) handleClose(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Check if issue is a template (beads-1ra): templates are read-only
 	issue, err := store.GetIssue(ctx, closeArgs.ID)
@@ -840,7 +847,13 @@ func (s *Server) handleClose(req *Request) Response {
 			Error:   fmt.Sprintf("failed to get issue: %v", err),
 		}
 	}
-	if issue != nil && issue.IsTemplate {
+	if issue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue %s not found", closeArgs.ID),
+		}
+	}
+	if issue.IsTemplate {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("cannot close template %s: templates are read-only", closeArgs.ID),
@@ -865,10 +878,7 @@ func (s *Server) handleClose(req *Request) Response {
 	}
 
 	// Capture old status for rich mutation event
-	oldStatus := ""
-	if issue != nil {
-		oldStatus = string(issue.Status)
-	}
+	oldStatus := string(issue.Status)
 
 	if err := store.CloseIssue(ctx, closeArgs.ID, closeArgs.Reason, s.reqActor(req), closeArgs.Session); err != nil {
 		return Response{
@@ -940,7 +950,8 @@ func (s *Server) handleDelete(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Use batch delete for cascade/multi-issue operations if storage supports it
 	// This handles cascade delete properly by expanding dependents recursively
@@ -1117,13 +1128,16 @@ func (s *Server) handleList(req *Request) Response {
 	if listArgs.Assignee != "" {
 		filter.Assignee = &listArgs.Assignee
 	}
+	if listArgs.SpecIDPrefix != "" {
+		filter.SpecIDPrefix = listArgs.SpecIDPrefix
+	}
 	if listArgs.Priority != nil {
 		filter.Priority = listArgs.Priority
 	}
 
 	// Normalize and apply label filters
-	labels := util.NormalizeLabels(listArgs.Labels)
-	labelsAny := util.NormalizeLabels(listArgs.LabelsAny)
+	labels := utils.NormalizeLabels(listArgs.Labels)
+	labelsAny := utils.NormalizeLabels(listArgs.LabelsAny)
 	// Support both old single Label and new Labels array (backward compat)
 	if len(labels) > 0 {
 		filter.Labels = labels
@@ -1133,8 +1147,14 @@ func (s *Server) handleList(req *Request) Response {
 	if len(labelsAny) > 0 {
 		filter.LabelsAny = labelsAny
 	}
+	if listArgs.LabelPattern != "" {
+		filter.LabelPattern = listArgs.LabelPattern
+	}
+	if listArgs.LabelRegex != "" {
+		filter.LabelRegex = listArgs.LabelRegex
+	}
 	if len(listArgs.IDs) > 0 {
-		ids := util.NormalizeLabels(listArgs.IDs)
+		ids := utils.NormalizeLabels(listArgs.IDs)
 		if len(ids) > 0 {
 			filter.IDs = ids
 		}
@@ -1253,6 +1273,12 @@ func (s *Server) handleList(req *Request) Response {
 		filter.MolType = &molType
 	}
 
+	// Wisp type filtering (TTL-based compaction classification)
+	if listArgs.WispType != "" {
+		wispType := types.WispType(listArgs.WispType)
+		filter.WispType = &wispType
+	}
+
 	// Status exclusion (for default non-closed behavior, GH#788)
 	if len(listArgs.ExcludeStatus) > 0 {
 		for _, s := range listArgs.ExcludeStatus {
@@ -1320,7 +1346,8 @@ func (s *Server) handleList(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	issues, err := store.SearchIssues(ctx, listArgs.Query, filter)
 	if err != nil {
 		return Response{
@@ -1329,18 +1356,21 @@ func (s *Server) handleList(req *Request) Response {
 		}
 	}
 
-	// Populate labels for each issue
-	for _, issue := range issues {
-		labels, _ := store.GetLabels(ctx, issue.ID)
-		issue.Labels = labels
-	}
-
-	// Get dependency counts in bulk (single query instead of N queries)
+	// Build issue ID list for batch queries
 	issueIDs := make([]string, len(issues))
 	for i, issue := range issues {
 		issueIDs[i] = issue.ID
 	}
+
+	// Populate labels in bulk (single query instead of N queries)
+	labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
+	for _, issue := range issues {
+		issue.Labels = labelsMap[issue.ID]
+	}
+
+	// Get dependency counts in bulk (single query instead of N queries)
 	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+	commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
 
 	// Populate dependencies for JSON output
 	allDeps, _ := store.GetAllDependencyRecords(ctx)
@@ -1359,6 +1389,7 @@ func (s *Server) handleList(req *Request) Response {
 			Issue:           issue,
 			DependencyCount: counts.DependencyCount,
 			DependentCount:  counts.DependentCount,
+			CommentCount:    commentCounts[issue.ID],
 		}
 	}
 
@@ -1406,8 +1437,8 @@ func (s *Server) handleCount(req *Request) Response {
 	}
 
 	// Normalize and apply label filters
-	labels := util.NormalizeLabels(countArgs.Labels)
-	labelsAny := util.NormalizeLabels(countArgs.LabelsAny)
+	labels := utils.NormalizeLabels(countArgs.Labels)
+	labelsAny := utils.NormalizeLabels(countArgs.LabelsAny)
 	if len(labels) > 0 {
 		filter.Labels = labels
 	}
@@ -1415,7 +1446,7 @@ func (s *Server) handleCount(req *Request) Response {
 		filter.LabelsAny = labelsAny
 	}
 	if len(countArgs.IDs) > 0 {
-		ids := util.NormalizeLabels(countArgs.IDs)
+		ids := utils.NormalizeLabels(countArgs.IDs)
 		if len(ids) > 0 {
 			filter.IDs = ids
 		}
@@ -1511,7 +1542,8 @@ func (s *Server) handleCount(req *Request) Response {
 	filter.PriorityMin = countArgs.PriorityMin
 	filter.PriorityMax = countArgs.PriorityMax
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	issues, err := store.SearchIssues(ctx, countArgs.Query, filter)
 	if err != nil {
 		return Response{
@@ -1631,7 +1663,8 @@ func (s *Server) handleResolveID(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	resolvedID, err := utils.ResolvePartialID(ctx, s.storage, args.ID)
 	if err != nil {
 		return Response{
@@ -1664,7 +1697,8 @@ func (s *Server) handleShow(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	issue, err := store.GetIssue(ctx, showArgs.ID)
 	if err != nil {
 		return Response{
@@ -1724,14 +1758,14 @@ func (s *Server) handleReady(req *Request) Response {
 	}
 
 	wf := types.WorkFilter{
-		// Leave Status empty to get both 'open' and 'in_progress' (GH#5aml)
+		Status:          types.Status(readyArgs.Status), // Pass through status filter (e.g., "open" to exclude in_progress)
 		Type:            readyArgs.Type,
 		Priority:        readyArgs.Priority,
 		Unassigned:      readyArgs.Unassigned,
 		Limit:           readyArgs.Limit,
 		SortPolicy:      types.SortPolicy(readyArgs.SortPolicy),
-		Labels:          util.NormalizeLabels(readyArgs.Labels),
-		LabelsAny:       util.NormalizeLabels(readyArgs.LabelsAny),
+		Labels:          utils.NormalizeLabels(readyArgs.Labels),
+		LabelsAny:       utils.NormalizeLabels(readyArgs.LabelsAny),
 		IncludeDeferred: readyArgs.IncludeDeferred, // GH#820
 	}
 	if readyArgs.Assignee != "" && !readyArgs.Unassigned {
@@ -1745,7 +1779,8 @@ func (s *Server) handleReady(req *Request) Response {
 		wf.MolType = &molType
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	issues, err := store.GetReadyWork(ctx, wf)
 	if err != nil {
 		return Response{
@@ -1754,7 +1789,21 @@ func (s *Server) handleReady(req *Request) Response {
 		}
 	}
 
-	data, _ := json.Marshal(issues)
+	// Build response with comment counts
+	issueIDs := make([]string, len(issues))
+	for i, issue := range issues {
+		issueIDs[i] = issue.ID
+	}
+	commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
+	issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
+	for i, issue := range issues {
+		issuesWithCounts[i] = &types.IssueWithCounts{
+			Issue:        issue,
+			CommentCount: commentCounts[issue.ID],
+		}
+	}
+
+	data, _ := json.Marshal(issuesWithCounts)
 	return Response{
 		Success: true,
 		Data:    data,
@@ -1783,7 +1832,8 @@ func (s *Server) handleBlocked(req *Request) Response {
 		wf.ParentID = &blockedArgs.ParentID
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	blocked, err := store.GetBlockedIssues(ctx, wf)
 	if err != nil {
 		return Response{
@@ -1822,7 +1872,8 @@ func (s *Server) handleStale(req *Request) Response {
 		Limit:  staleArgs.Limit,
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	issues, err := store.GetStaleIssues(ctx, filter)
 	if err != nil {
 		return Response{
@@ -1847,7 +1898,8 @@ func (s *Server) handleStats(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	stats, err := store.GetStatistics(ctx)
 	if err != nil {
 		return Response{
@@ -1880,7 +1932,8 @@ func (s *Server) handleEpicStatus(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	epics, err := store.GetEpicsEligibleForClosure(ctx)
 	if err != nil {
 		return Response{
@@ -1931,7 +1984,8 @@ func (s *Server) handleGetConfig(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Get config value from database
 	value, err := store.GetConfig(ctx, args.Key)
@@ -1972,7 +2026,8 @@ func (s *Server) handleMolStale(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Get all epics eligible for closure (complete but unclosed)
 	epicStatuses, err := store.GetEpicsEligibleForClosure(ctx)
@@ -2077,7 +2132,8 @@ func (s *Server) handleGateCreate(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 	now := time.Now()
 
 	// Create gate issue
@@ -2131,7 +2187,8 @@ func (s *Server) handleGateList(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Build filter for gates
 	gateType := types.IssueType("gate")
@@ -2175,7 +2232,8 @@ func (s *Server) handleGateShow(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Resolve partial ID
 	gateID, err := utils.ResolvePartialID(ctx, store, args.ID)
@@ -2230,7 +2288,8 @@ func (s *Server) handleGateClose(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Resolve partial ID
 	gateID, err := utils.ResolvePartialID(ctx, store, args.ID)
@@ -2309,7 +2368,8 @@ func (s *Server) handleGateWait(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	// Resolve partial ID
 	gateID, err := utils.ResolvePartialID(ctx, store, args.ID)

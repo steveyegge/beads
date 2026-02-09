@@ -206,6 +206,9 @@ func (e *DualModeTestEnv) UpdateIssue(id string, updates map[string]interface{})
 	if desc, ok := updates["description"].(string); ok {
 		args.Description = &desc
 	}
+	if issueType, ok := updates["issue_type"].(string); ok {
+		args.IssueType = &issueType
+	}
 
 	resp, err := e.client.Update(args)
 	if err != nil {
@@ -531,7 +534,7 @@ func setupDaemonModeEnv(t *testing.T) *DualModeTestEnv {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
 	// Create daemon logger
-	log := daemonLogger{logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))}
+	log := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	// Start RPC server
 	server, serverErrChan, err := startRPCServer(ctx, socketPath, store, tmpDir, dbPath, log)

@@ -57,6 +57,8 @@ var migrationsList = []Migration{
 	{"work_type_column", migrations.MigrateWorkTypeColumn},
 	{"source_system_column", migrations.MigrateSourceSystemColumn},
 	{"quality_score_column", migrations.MigrateQualityScoreColumn},
+	{"metadata_column", migrations.MigrateMetadataColumn},
+	{"wisp_type_column", migrations.MigrateWispTypeColumn},
 	{"spec_id_column", migrations.MigrateSpecIDColumn},
 	{"spec_registry_table", migrations.MigrateSpecRegistryTable},
 	{"spec_changed_at_column", migrations.MigrateSpecChangedAtColumn},
@@ -65,18 +67,18 @@ var migrationsList = []Migration{
 	{"skills_manifest", migrations.MigrateSkillsManifest},
 }
 
-// MigrationInfo contains metadata about a migration for inspection
-type MigrationInfo struct {
+// migrationInfo contains metadata about a migration for inspection
+type migrationInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
 // ListMigrations returns list of all registered migrations with descriptions
 // Note: This returns ALL registered migrations, not just pending ones (all are idempotent)
-func ListMigrations() []MigrationInfo {
-	result := make([]MigrationInfo, len(migrationsList))
+func ListMigrations() []migrationInfo {
+	result := make([]migrationInfo, len(migrationsList))
 	for i, m := range migrationsList {
-		result[i] = MigrationInfo{
+		result[i] = migrationInfo{
 			Name:        m.Name,
 			Description: getMigrationDescription(m.Name),
 		}
@@ -127,6 +129,8 @@ func getMigrationDescription(name string) string {
 		"work_type_column":             "Adds work_type column for work assignment model (mutex vs open_competition per Decision 006)",
 		"source_system_column":         "Adds source_system column for federation adapter tracking",
 		"quality_score_column":         "Adds quality_score column for aggregate quality (0.0-1.0) set by Refineries",
+		"metadata_column":              "Adds metadata column for arbitrary JSON data (tool annotations, file lists) per GH#1406",
+		"wisp_type_column":             "Adds wisp_type column for TTL-based compaction classification (gt-9br)",
 		"spec_id_column":               "Adds spec_id column for linking issues to specification documents",
 		"spec_registry_table":          "Adds spec_registry table for Shadow Ledger spec tracking",
 		"spec_changed_at_column":       "Adds spec_changed_at column for Shadow Ledger change signals",
@@ -174,7 +178,7 @@ func RunMigrations(db *sql.DB) error {
 	// Pre-migration cleanup: remove orphaned refs that would fail invariant checks.
 	// This prevents the chicken-and-egg problem where the database can't open
 	// due to orphans left behind by tombstone deletion (see bd-eko4).
-	if _, _, err := CleanOrphanedRefs(db); err != nil {
+	if _, _, err := cleanOrphanedRefs(db); err != nil {
 		return fmt.Errorf("pre-migration orphan cleanup failed: %w", err)
 	}
 

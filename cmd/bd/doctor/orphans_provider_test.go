@@ -272,7 +272,7 @@ func TestFindOrphanedIssues_CrossRepo(t *testing.T) {
 }
 
 // TestFindOrphanedIssues_LocalProvider tests backward compatibility (RT-01).
-// This tests the FindOrphanedIssuesFromPath function which creates a LocalProvider
+// This tests the findOrphanedIssuesFromPath function which creates a LocalProvider
 // from the local .beads/ directory.
 func TestFindOrphanedIssues_LocalProvider(t *testing.T) {
 	dir := t.TempDir()
@@ -328,10 +328,10 @@ func TestFindOrphanedIssues_LocalProvider(t *testing.T) {
 	cmd.Dir = dir
 	_ = cmd.Run()
 
-	// Use FindOrphanedIssuesFromPath (the backward-compatible wrapper)
-	orphans, err := FindOrphanedIssuesFromPath(dir)
+	// Use findOrphanedIssuesFromPath (the backward-compatible wrapper)
+	orphans, err := findOrphanedIssuesFromPath(dir)
 	if err != nil {
-		t.Fatalf("FindOrphanedIssuesFromPath returned error: %v", err)
+		t.Fatalf("findOrphanedIssuesFromPath returned error: %v", err)
 	}
 
 	if len(orphans) != 1 {

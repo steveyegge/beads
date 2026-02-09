@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -16,13 +17,13 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
+	"golang.org/x/term"
 )
 
 var initCmd = &cobra.Command{
@@ -81,23 +82,6 @@ variable.`,
 		if serverMode && backend != configfile.BackendDolt {
 			fmt.Fprintf(os.Stderr, "Error: --server flag requires --backend dolt\n")
 			os.Exit(1)
-		}
-
-		// Auto-detect dolt server if backend is dolt and --server wasn't explicitly specified
-		// This enables server mode by default when a dolt sql-server is already running
-		if backend == configfile.BackendDolt && !serverMode {
-			if host, port, detected := dolt.DetectRunningServer(); detected {
-				serverMode = true
-				if serverHost == "" {
-					serverHost = host
-				}
-				if serverPort == 0 {
-					serverPort = port
-				}
-				if !quiet {
-					fmt.Printf("Detected running dolt sql-server on %s:%d, enabling server mode\n", host, port)
-				}
-			}
 		}
 
 		// Initialize config (PersistentPreRun doesn't run for init command)
@@ -191,6 +175,23 @@ variable.`,
 		} else {
 			localBeadsDir := filepath.Join(".", ".beads")
 			beadsDirForInit = beads.FollowRedirect(localBeadsDir)
+		}
+
+		// Stop any running daemon before reinitializing (bd-7h7).
+		// A running daemon caches the old database in memory. If we create a new
+		// database without stopping it, bd commands routed through the daemon
+		// (e.g., bd stats) will show stale counts from the old cached data.
+		pidFile, pidErr := getPIDFilePath()
+		if pidErr == nil {
+			if isRunning, _ := isDaemonRunning(pidFile); isRunning {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "→ Stopping running daemon before reinitializing...\n")
+				}
+				stopDaemonQuiet(pidFile)
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "✓ Daemon stopped\n")
+				}
+			}
 		}
 
 		// Determine storage path.
@@ -374,7 +375,12 @@ variable.`,
 		if backend == configfile.BackendDolt {
 			// Dolt uses a directory, not a file
 			storagePath = filepath.Join(beadsDir, "dolt")
-			store, err = factory.New(ctx, backend, storagePath)
+			// Use prefix-based database name to avoid cross-rig contamination (bd-u8rda)
+			dbName := "beads"
+			if prefix != "" {
+				dbName = "beads_" + prefix
+			}
+			store, err = factory.NewWithOptions(ctx, backend, storagePath, factory.Options{Database: dbName})
 		} else {
 			storagePath = initDBPath
 			store, err = sqlite.New(ctx, storagePath)
@@ -470,6 +476,12 @@ variable.`,
 			if backend == configfile.BackendDolt {
 				if cfg.Database == "" || cfg.Database == beads.CanonicalDatabaseName {
 					cfg.Database = "dolt"
+				}
+
+				// Set prefix-based SQL database name to avoid cross-rig contamination (bd-u8rda).
+				// E.g., prefix "gt" → database "beads_gt", prefix "bd" → database "beads_bd".
+				if prefix != "" {
+					cfg.DoltDatabase = "beads_" + prefix
 				}
 
 				// Save server mode configuration (bd-dolt.2.2)
@@ -570,7 +582,23 @@ variable.`,
 			}
 		}
 
-		// Run contributor wizard if --contributor flag is set
+		// Prompt for contributor mode if:
+		// - In a git repo (needed to set beads.role config)
+		// - Interactive terminal (stdin is TTY)
+		// - No explicit --contributor or --team flag provided
+		if isGitRepo() && !contributor && !team && shouldPromptForRole() {
+			promptedContributor, err := promptContributorMode()
+			if err != nil {
+				// Non-fatal: warn but continue with default behavior
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "Warning: failed to prompt for role: %v\n", err)
+				}
+			} else if promptedContributor {
+				contributor = true // Triggers contributor wizard below
+			}
+		}
+
+		// Run contributor wizard if --contributor flag is set or user chose contributor
 		if contributor {
 			if err := runContributorWizard(ctx, store); err != nil {
 				fmt.Fprintf(os.Stderr, "Error running contributor wizard: %v\n", err)
@@ -757,9 +785,9 @@ func init() {
 	initCmd.Flags().Bool("if-missing", false, "Only initialize if .beads doesn't exist (idempotent for CI)")
 
 	// Dolt server mode flags (bd-dolt.2.2)
-	initCmd.Flags().Bool("server", false, "Configure Dolt in server mode (connect to external dolt sql-server)")
+	initCmd.Flags().Bool("server", false, "Explicitly configure Dolt in server mode for high-concurrency (default: embedded)")
 	initCmd.Flags().String("server-host", "", "Dolt server host (default: 127.0.0.1)")
-	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3306)")
+	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3307)")
 	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")
 
 	rootCmd.AddCommand(initCmd)
@@ -1006,4 +1034,85 @@ func checkExistingBeadsData(prefix string) error {
 	}
 
 	return checkExistingBeadsDataAt(beadsDir, prefix)
+}
+
+// shouldPromptForRole returns true if we should prompt the user for their role.
+// Skips prompt in non-interactive contexts (CI, scripts, piped input).
+func shouldPromptForRole() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// getBeadsRole reads the beads.role git config value.
+// Returns the role and true if configured, or empty string and false if not set.
+func getBeadsRole() (string, bool) {
+	cmd := exec.Command("git", "config", "--get", "beads.role")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	role := strings.TrimSpace(string(output))
+	if role == "" {
+		return "", false
+	}
+	return role, true
+}
+
+// setBeadsRole writes the beads.role git config value.
+func setBeadsRole(role string) error {
+	cmd := exec.Command("git", "config", "beads.role", role)
+	return cmd.Run()
+}
+
+// promptContributorMode prompts the user to determine if they are a contributor.
+// Returns true if the user indicates they are a contributor, false otherwise.
+//
+// Behavior:
+// - If beads.role is already set: shows current role, offers to change
+// - If not set: prompts "Contributing to someone else's repo? [y/N]"
+// - Sets git config beads.role based on answer
+func promptContributorMode() (isContributor bool, err error) {
+	reader := bufio.NewReader(os.Stdin)
+
+	// Check if role is already configured
+	existingRole, hasRole := getBeadsRole()
+	if hasRole {
+		fmt.Printf("\n%s Already configured as: %s\n", ui.RenderAccent("▶"), ui.RenderBold(existingRole))
+		fmt.Print("Change role? [y/N]: ")
+
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			return false, fmt.Errorf("failed to read input: %w", err)
+		}
+		response = strings.TrimSpace(strings.ToLower(response))
+
+		if response != "y" && response != "yes" {
+			// Keep existing role
+			return existingRole == "contributor", nil
+		}
+		// Fall through to re-prompt
+		fmt.Println()
+	}
+
+	// Prompt for role
+	fmt.Print("Contributing to someone else's repo? [y/N]: ")
+
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false, fmt.Errorf("failed to read input: %w", err)
+	}
+	response = strings.TrimSpace(strings.ToLower(response))
+
+	isContributor = response == "y" || response == "yes"
+
+	// Set the role in git config
+	role := "maintainer"
+	if isContributor {
+		role = "contributor"
+	}
+
+	if err := setBeadsRole(role); err != nil {
+		return isContributor, fmt.Errorf("failed to set beads.role config: %w", err)
+	}
+
+	return isContributor, nil
 }

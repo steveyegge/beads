@@ -123,6 +123,16 @@ func TestFindJSONLInDir(t *testing.T) {
 			expected: "issues.jsonl",
 		},
 		{
+			name:     "only routes.jsonl - returns default issues.jsonl",
+			files:    []string{"routes.jsonl"},
+			expected: "issues.jsonl",
+		},
+		{
+			name:     "routes.jsonl with deletions - returns default issues.jsonl",
+			files:    []string{"routes.jsonl", "deletions.jsonl"},
+			expected: "issues.jsonl",
+		},
+		{
 			name:     "only merge artifacts - returns default issues.jsonl",
 			files:    []string{"beads.base.jsonl", "beads.left.jsonl", "beads.right.jsonl"},
 			expected: "issues.jsonl",
@@ -252,12 +262,12 @@ func TestFindMoleculesJSONLInDir(t *testing.T) {
 		t.Fatalf("failed to create molecules.jsonl: %v", err)
 	}
 
-	if got := FindMoleculesJSONLInDir(root); got != molecules {
+	if got := findMoleculesJSONLInDir(root); got != molecules {
 		t.Fatalf("expected %q, got %q", molecules, got)
 	}
 
 	otherDir := t.TempDir()
-	if got := FindMoleculesJSONLInDir(otherDir); got != "" {
+	if got := findMoleculesJSONLInDir(otherDir); got != "" {
 		t.Fatalf("expected empty path when file missing, got %q", got)
 	}
 }

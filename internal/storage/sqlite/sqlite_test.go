@@ -883,8 +883,8 @@ func TestSearchIssues(t *testing.T) {
 
 	// Create test issues
 	issues := []*types.Issue{
-		{Title: "Bug in login", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeBug},
-		{Title: "Feature request", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeFeature},
+		{Title: "Bug in login", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeBug, SpecID: "specs/auth.md"},
+		{Title: "Feature request", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeFeature, SpecID: "specs/ui/flow.md"},
 		{Title: "Another bug", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeBug},
 	}
 
@@ -1006,6 +1006,22 @@ func TestSearchIssues(t *testing.T) {
 	}
 	if len(results) > 0 && results[0].ID != issues[0].ID {
 		t.Errorf("Expected issue %s, got %s", issues[0].ID, results[0].ID)
+	}
+
+	// Test spec_id prefix filtering
+	results, err = store.SearchIssues(ctx, "", types.IssueFilter{SpecIDPrefix: "specs/"})
+	if err != nil {
+		t.Fatalf("SearchIssues with spec_id prefix failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 issues with spec_id prefix 'specs/', got %d", len(results))
+	}
+	results, err = store.SearchIssues(ctx, "", types.IssueFilter{SpecIDPrefix: "specs/ui/"})
+	if err != nil {
+		t.Fatalf("SearchIssues with spec_id prefix failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("Expected 1 issue with spec_id prefix 'specs/ui/', got %d", len(results))
 	}
 
 	// Test whitespace trimming in labels

@@ -138,6 +138,10 @@ func applyFixesInteractive(path string, issues []doctorCheck) {
 		response, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+			if len(approvedFixes) > 0 {
+				fmt.Printf("\nApplying %d previously approved fix(es) before exit...\n", len(approvedFixes))
+				applyFixList(path, approvedFixes)
+			}
 			return
 		}
 
@@ -183,6 +187,7 @@ func applyFixList(path string, fixes []doctorCheck) {
 	// Rough dependency chain:
 	// permissions/daemon cleanup → config sanity → DB integrity/migrations → DB↔JSONL sync.
 	order := []string{
+		"Lock Files",
 		"Permissions",
 		"Daemon Health",
 		"Database Config",
@@ -317,6 +322,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = doctor.FixStaleMQFiles(path)
 		case "Patrol Pollution":
 			err = fix.PatrolPollution(path)
+		case "Lock Files":
+			err = fix.StaleLockFiles(path)
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)

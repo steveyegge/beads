@@ -45,7 +45,8 @@ type wobbleDriftSummary struct {
 }
 
 func (s *Server) handleDriftSummary(req *Request) Response {
-	ctx := s.reqCtx(req)
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
 
 	skillsPath, historyPath := wobbleStorePathsForRPC(s, req)
 	storeSnapshot, history, err := loadWobbleStoreForRPC(skillsPath, historyPath)

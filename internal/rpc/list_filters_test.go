@@ -695,6 +695,7 @@ func listArgsToFilter(args *ListArgs, t *testing.T) *types.IssueFilter {
 		PriorityMin:         args.PriorityMin,
 		PriorityMax:         args.PriorityMax,
 		Labels:              args.Labels,
+		SpecIDPrefix:        args.SpecIDPrefix,
 	}
 	if args.SpecID != "" {
 		filter.SpecID = &args.SpecID

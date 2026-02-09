@@ -69,6 +69,52 @@ func TestExtractIssuePrefixWordSuffix(t *testing.T) {
 	}
 }
 
+// TestExtractIssuePrefixMultiHyphen tests GH#405:
+// Multi-hyphen prefixes like "hacker-news" and "me-py-toolkit" were parsed
+// incorrectly because ExtractIssuePrefix fell back to first-hyphen splitting
+// when the suffix wasn't recognized as a hash. This caused:
+//   - "hacker-news-ko4" → "hacker" (wrong, should be "hacker-news")
+//   - "me-py-toolkit-abc" → "me" (wrong, should be "me-py-toolkit")
+//
+// See: https://github.com/steveyegge/beads/issues/405
+func TestExtractIssuePrefixMultiHyphen(t *testing.T) {
+	tests := []struct {
+		issueID  string
+		expected string
+		reason   string
+	}{
+		// GH#405 reporter: varunrandery - "hacker-news" prefix
+		{"hacker-news-ko4", "hacker-news", "2-part prefix, 3-char hash with digit"},
+		{"hacker-news-1", "hacker-news", "2-part prefix, numeric suffix"},
+		{"hacker-news-42", "hacker-news", "2-part prefix, 2-digit numeric suffix"},
+		{"hacker-news-a1b2c3", "hacker-news", "2-part prefix, 6-char hash"},
+		{"hacker-news-", "hacker-news", "2-part prefix, trailing hyphen"},
+
+		// GH#405 reporter: afekz - "me-py-toolkit" prefix
+		{"me-py-toolkit-a1b", "me-py-toolkit", "3-part prefix, 3-char hash with digit"},
+		{"me-py-toolkit-xyz", "me-py-toolkit", "3-part prefix, 3-char all-letter hash"},
+		{"me-py-toolkit-1a2b", "me-py-toolkit", "3-part prefix, 4-char hash"},
+		{"me-py-toolkit-7", "me-py-toolkit", "3-part prefix, single digit"},
+		{"me-py-toolkit-999", "me-py-toolkit", "3-part prefix, 3-digit numeric"},
+
+		// Additional multi-hyphen prefix cases
+		{"my-web-app-4f2", "my-web-app", "3-part prefix, 3-char hash"},
+		{"super-long-name-123", "super-long-name", "3-part prefix, numeric"},
+		{"a-b-c-d-1", "a-b-c-d", "4-part prefix, single digit"},
+		{"one-two-three-four-a9z", "one-two-three-four", "4-part prefix, 3-char hash"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.issueID, func(t *testing.T) {
+			result := ExtractIssuePrefix(tc.issueID)
+			if result != tc.expected {
+				t.Errorf("ExtractIssuePrefix(%q) = %q; want %q (%s)",
+					tc.issueID, result, tc.expected, tc.reason)
+			}
+		})
+	}
+}
+
 // TestIsLikelyHashAllLetters verifies the root cause:
 // isLikelyHash returns false for all-letter strings even though
 // they are valid base36 hashes.
@@ -124,4 +170,3 @@ func TestIsLikelyHashAllLetters(t *testing.T) {
 		})
 	}
 }
-

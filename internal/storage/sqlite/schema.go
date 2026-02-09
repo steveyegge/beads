@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS issues (
     -- Messaging fields (bd-kwro)
     sender TEXT DEFAULT '',
     ephemeral INTEGER DEFAULT 0,
+    -- Wisp type for TTL-based compaction (gt-9br)
+    wisp_type TEXT DEFAULT '',
     -- Pinned field (bd-7h5)
     pinned INTEGER DEFAULT 0,
     -- Template field (beads-1ra)
@@ -47,6 +49,8 @@ CREATE TABLE IF NOT EXISTS issues (
     quality_score REAL,
     -- Federation source system field
     source_system TEXT DEFAULT '',
+    -- Custom metadata field (GH#1406)
+    metadata TEXT NOT NULL DEFAULT '{}',
     -- Spec integration field (SpecBeads)
     spec_id TEXT DEFAULT '',
     -- Spec change tracking (Shadow Ledger)
@@ -73,6 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
 CREATE INDEX IF NOT EXISTS idx_issues_spec_id ON issues(spec_id);
 CREATE INDEX IF NOT EXISTS idx_issues_spec_changed_at ON issues(spec_changed_at);
 -- Note: idx_issues_external_ref is created in migrations/002_external_ref_column.go
+-- Note: idx_issues_spec_id is created in migrations/041_spec_id_column.go
 
 -- Dependencies table (edge schema - Decision 004)
 CREATE TABLE IF NOT EXISTS dependencies (
@@ -200,7 +205,7 @@ INSERT OR IGNORE INTO config (key, value) VALUES
     ('compact_tier2_days', '90'),
     ('compact_tier2_dep_levels', '5'),
     ('compact_tier2_commits', '100'),
-    ('compact_model', 'claude-3-5-haiku-20241022'),
+    ('compact_model', 'claude-haiku-4-5-20251001'),
     ('compact_batch_size', '50'),
     ('compact_parallel_workers', '5'),
     ('auto_compact_enabled', 'false');

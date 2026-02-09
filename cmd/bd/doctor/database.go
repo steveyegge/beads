@@ -21,10 +21,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// localConfig represents the config.yaml structure for no-db mode detection
+// localConfig represents the config.yaml structure for no-db and prefer-dolt detection
 type localConfig struct {
 	SyncBranch string `yaml:"sync-branch"`
 	NoDb       bool   `yaml:"no-db"`
+	PreferDolt bool   `yaml:"prefer-dolt"`
 }
 
 // CheckDatabaseVersion checks the database version and migration status
@@ -66,7 +67,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Unable to open database",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Run 'bd init --backend dolt' (or remove and re-init .beads/dolt if corrupted)",
+				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init --backend dolt",
 			}
 		}
 		defer func() { _ = store.Close() }()
@@ -78,7 +79,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Unable to read database version",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Database may be corrupted. Try re-initializing the dolt database with 'bd init --backend dolt'",
+				Fix:     "Database may be corrupted. Run 'bd doctor --fix' to recover from JSONL backup",
 			}
 		}
 		if dbVersion == "" {
@@ -247,7 +248,7 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Database schema is incomplete or incompatible",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Re-run 'bd init --backend dolt' or remove and re-initialize .beads/dolt if corrupted",
+				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init --backend dolt",
 			}
 		}
 
@@ -367,7 +368,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Failed to open database",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Re-run 'bd init --backend dolt' or remove and re-initialize .beads/dolt if corrupted",
+				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init --backend dolt",
 			}
 		}
 		defer func() { _ = store.Close() }()

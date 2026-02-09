@@ -2,17 +2,50 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
+// testIDCounter ensures unique IDs across all test runs
+var testIDCounter atomic.Uint64
+
+// generateUniqueTestID creates a globally unique test ID using prefix, test name, and atomic counter.
+// This prevents ID collisions when multiple tests manipulate global state.
+func generateUniqueTestID(t *testing.T, prefix string, index int) string {
+	t.Helper()
+	counter := testIDCounter.Add(1)
+	// include test name, counter, and index for uniqueness
+	data := []byte(t.Name() + prefix + string(rune(counter)) + string(rune(index)))
+	hash := sha256.Sum256(data)
+	return prefix + "-" + hex.EncodeToString(hash[:])[:8]
+}
+
 const windowsOS = "windows"
+
+// initConfigForTest initializes viper config for a test and ensures cleanup.
+// main.go's init() calls config.Initialize() which picks up the real .beads/config.yaml.
+// TestMain resets viper, but any test calling config.Initialize() re-loads the real config.
+// This helper ensures viper is reset after the test completes, preventing state pollution
+// (e.g., sync.mode=dolt-native leaking into JSONL export tests).
+func initConfigForTest(t *testing.T) {
+	t.Helper()
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
+	}
+	t.Cleanup(config.ResetForTesting)
+}
 
 // ensureTestMode sets BEADS_TEST_MODE environment variable to prevent production pollution
 func ensureTestMode(t *testing.T) {
@@ -31,28 +64,74 @@ func ensureCleanGlobalState(t *testing.T) {
 	resetCommandContext()
 }
 
+// savedGlobals holds a snapshot of package-level globals for safe restoration.
+// Used by saveAndRestoreGlobals to ensure test isolation.
+type savedGlobals struct {
+	dbPath           string
+	store            storage.Storage
+	storeActive      bool
+	autoFlushEnabled bool
+	flushManager     *FlushManager
+}
+
+// saveAndRestoreGlobals snapshots all commonly-mutated package-level globals
+// and registers a t.Cleanup() to restore them when the test completes.
+// This replaces the fragile manual save/defer pattern:
+//
+//	oldDBPath := dbPath
+//	defer func() { dbPath = oldDBPath }()
+//
+// With the safer:
+//
+//	saveAndRestoreGlobals(t)
+//
+// Benefits:
+//   - All globals saved atomically (can't forget one)
+//   - t.Cleanup runs even on panic (no risk of missed defer registration)
+//   - Single call replaces multiple save/defer pairs
+func saveAndRestoreGlobals(t *testing.T) *savedGlobals {
+	t.Helper()
+	saved := &savedGlobals{
+		dbPath:           dbPath,
+		store:            store,
+		storeActive:      storeActive,
+		autoFlushEnabled: autoFlushEnabled,
+		flushManager:     flushManager,
+	}
+	t.Cleanup(func() {
+		dbPath = saved.dbPath
+		store = saved.store
+		storeMutex.Lock()
+		storeActive = saved.storeActive
+		storeMutex.Unlock()
+		autoFlushEnabled = saved.autoFlushEnabled
+		flushManager = saved.flushManager
+	})
+	return saved
+}
+
 // failIfProductionDatabase checks if the database path is in a production directory
 // and fails the test to prevent test pollution (bd-2c5a)
 func failIfProductionDatabase(t *testing.T, dbPath string) {
 	t.Helper()
-	
+
 	// CRITICAL (bd-2c5a): Set test mode flag
 	ensureTestMode(t)
-	
+
 	// Get absolute path for comparison
 	absPath, err := filepath.Abs(dbPath)
 	if err != nil {
 		t.Logf("Warning: Could not get absolute path for %s: %v", dbPath, err)
 		return
 	}
-	
+
 	// Use worktree-aware git directory detection
 	gitDir, err := git.GetGitDir()
 	if err != nil {
 		// Not a git repository, no pollution risk
 		return
 	}
-	
+
 	// Check if database is in .beads/ directory of this git repository
 	beadsPath := ""
 	gitDirAbs, err := filepath.Abs(gitDir)
@@ -60,12 +139,12 @@ func failIfProductionDatabase(t *testing.T, dbPath string) {
 		t.Logf("Warning: Could not get absolute path for git dir %s: %v", gitDir, err)
 		return
 	}
-	
+
 	// The .beads directory should be at the root of the git repository
 	// For worktrees, gitDir points to the main repo's .git directory
 	repoRoot := filepath.Dir(gitDirAbs)
 	beadsPath = filepath.Join(repoRoot, ".beads")
-	
+
 	if strings.HasPrefix(absPath, beadsPath) {
 		// Database is in .beads/ directory of a git repository
 		// This is ONLY allowed if we're in a temp directory
@@ -117,19 +196,19 @@ func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
 // newTestStoreWithPrefix creates a SQLite store with custom issue_prefix configured
 func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.SQLiteStorage {
 	t.Helper()
-	
+
 	// CRITICAL (bd-2c5a): Ensure we're not polluting production database
 	failIfProductionDatabase(t, dbPath)
-	
+
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		t.Fatalf("Failed to create database directory: %v", err)
 	}
-	
+
 	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
-	
+
 	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {

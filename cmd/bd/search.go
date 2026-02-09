@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/util"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -30,7 +30,9 @@ Examples:
   bd search "bug" --created-after 2025-01-01
   bd search "refactor" --updated-after 2025-01-01 --priority-min 1
   bd search "bug" --sort priority
-  bd search "task" --sort created --reverse`,
+  bd search "task" --sort created --reverse
+  bd search "api" --desc-contains "endpoint"
+  bd search "cleanup" --no-assignee --no-labels`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Get query from args or --query flag
 		queryFlag, _ := cmd.Flags().GetString("query")
@@ -73,9 +75,18 @@ Examples:
 		priorityMinStr, _ := cmd.Flags().GetString("priority-min")
 		priorityMaxStr, _ := cmd.Flags().GetString("priority-max")
 
+		// Pattern matching flags
+		descContains, _ := cmd.Flags().GetString("desc-contains")
+		notesContains, _ := cmd.Flags().GetString("notes-contains")
+
+		// Empty/null check flags
+		emptyDesc, _ := cmd.Flags().GetBool("empty-description")
+		noAssignee, _ := cmd.Flags().GetBool("no-assignee")
+		noLabels, _ := cmd.Flags().GetBool("no-labels")
+
 		// Normalize labels
-		labels = util.NormalizeLabels(labels)
-		labelsAny = util.NormalizeLabels(labelsAny)
+		labels = utils.NormalizeLabels(labels)
+		labelsAny = utils.NormalizeLabels(labelsAny)
 
 		// Build filter
 		filter := types.IssueFilter{
@@ -102,6 +113,25 @@ Examples:
 
 		if len(labelsAny) > 0 {
 			filter.LabelsAny = labelsAny
+		}
+
+		// Pattern matching
+		if descContains != "" {
+			filter.DescriptionContains = descContains
+		}
+		if notesContains != "" {
+			filter.NotesContains = notesContains
+		}
+
+		// Empty/null checks
+		if emptyDesc {
+			filter.EmptyDescription = true
+		}
+		if noAssignee {
+			filter.NoAssignee = true
+		}
+		if noLabels {
+			filter.NoLabels = true
 		}
 
 		// Date ranges
@@ -174,13 +204,7 @@ Examples:
 
 		ctx := rootCtx
 
-		// Check database freshness before reading (skip when using daemon)
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
+		requireFreshDB(ctx)
 
 		// If daemon is running, use RPC
 		if daemonClient != nil {
@@ -223,6 +247,15 @@ Examples:
 			// Priority range
 			listArgs.PriorityMin = filter.PriorityMin
 			listArgs.PriorityMax = filter.PriorityMax
+
+			// Pattern matching
+			listArgs.DescriptionContains = descContains
+			listArgs.NotesContains = notesContains
+
+			// Empty/null checks
+			listArgs.EmptyDescription = filter.EmptyDescription
+			listArgs.NoAssignee = filter.NoAssignee
+			listArgs.NoLabels = filter.NoLabels
 
 			resp, err := daemonClient.List(listArgs)
 			if err != nil {
@@ -292,6 +325,11 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Warning: failed to get dependency counts: %v\n", err)
 				depCounts = make(map[string]*types.DependencyCounts)
 			}
+			commentCounts, err := store.GetCommentCounts(ctx, issueIDs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to get comment counts: %v\n", err)
+				commentCounts = make(map[string]int)
+			}
 
 			// Populate labels
 			for _, issue := range issues {
@@ -309,6 +347,7 @@ Examples:
 					Issue:           issue,
 					DependencyCount: counts.DependencyCount,
 					DependentCount:  counts.DependentCount,
+					CommentCount:    commentCounts[issue.ID],
 				}
 			}
 			outputJSON(issuesWithCounts)
@@ -392,6 +431,15 @@ func init() {
 	// Priority range flags
 	searchCmd.Flags().String("priority-min", "", "Filter by minimum priority (inclusive, 0-4 or P0-P4)")
 	searchCmd.Flags().String("priority-max", "", "Filter by maximum priority (inclusive, 0-4 or P0-P4)")
+
+	// Pattern matching flags
+	searchCmd.Flags().String("desc-contains", "", "Filter by description substring (case-insensitive)")
+	searchCmd.Flags().String("notes-contains", "", "Filter by notes substring (case-insensitive)")
+
+	// Empty/null check flags
+	searchCmd.Flags().Bool("empty-description", false, "Filter issues with empty or missing description")
+	searchCmd.Flags().Bool("no-assignee", false, "Filter issues with no assignee")
+	searchCmd.Flags().Bool("no-labels", false, "Filter issues with no labels")
 
 	rootCmd.AddCommand(searchCmd)
 }

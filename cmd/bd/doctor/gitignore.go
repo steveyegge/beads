@@ -49,7 +49,9 @@ beads.right.meta.json
 # Sync state (local-only, per-machine)
 # These files are machine-specific and should not be shared across clones
 .sync.lock
+.jsonl.lock
 sync_base.jsonl
+export-state/
 
 # NOTE: Do NOT add negation patterns (e.g., !issues.jsonl) here.
 # They would override fork protection in .git/info/exclude, allowing
@@ -70,13 +72,15 @@ var requiredPatterns = []string{
 	"redirect",
 	"last-touched",
 	".sync.lock",
+	".jsonl.lock",
 	"sync_base.jsonl",
+	"export-state/",
 }
 
 // CheckGitignore checks if .beads/.gitignore is up to date
 func CheckGitignore() DoctorCheck {
 	gitignorePath := filepath.Join(".beads", ".gitignore")
-	
+
 	// Check if file exists
 	content, err := os.ReadFile(gitignorePath) // #nosec G304 -- path is hardcoded
 	if err != nil {
@@ -151,8 +155,8 @@ func CheckIssuesTracking() DoctorCheck {
 	if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
 		// File doesn't exist yet - not an error, bd init may not have been run
 		return DoctorCheck{
-			Name:   "Issues Tracking",
-			Status: "ok",
+			Name:    "Issues Tracking",
+			Status:  "ok",
 			Message: "No issues.jsonl yet (will be created on first issue)",
 		}
 	}
