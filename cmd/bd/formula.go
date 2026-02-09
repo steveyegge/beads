@@ -226,7 +226,31 @@ func runFormulaList(cmd *cobra.Command, args []string) {
 }
 
 // listFormulasFromDB queries the database for formula-type issues.
+// Uses daemon RPC when available, falls back to direct store access.
 func listFormulasFromDB(typeFilter string) []FormulaListEntry {
+	// Use daemon RPC if available (required for remote BD_DAEMON_HOST)
+	if daemonClient != nil {
+		args := &rpc.FormulaListArgs{
+			Type: typeFilter,
+		}
+		result, err := daemonClient.FormulaList(args)
+		if err != nil {
+			return nil
+		}
+		var entries []FormulaListEntry
+		for _, f := range result.Formulas {
+			entries = append(entries, FormulaListEntry{
+				Name:        f.Name,
+				Type:        f.Type,
+				Description: truncateDescription(f.Description, 60),
+				Source:      f.Source,
+				Vars:        0, // RPC summary doesn't include step/var counts
+			})
+		}
+		return entries
+	}
+
+	// Direct store access (local mode)
 	s := getStore()
 	if s == nil {
 		return nil
@@ -647,9 +671,28 @@ func runFormulaShow(cmd *cobra.Command, args []string) {
 
 // loadFormulaFromDBForShow tries to load a formula from the database.
 // Returns nil if the formula is not found in DB or DB is not available.
-// When the name looks like a bead ID (contains a hyphen prefix pattern),
-// it does a direct ID lookup. Otherwise it searches by title.
+// Uses daemon RPC when available, falls back to direct store access.
 func loadFormulaFromDBForShow(nameOrID string) *formula.Formula {
+	// Use daemon RPC if available (required for remote BD_DAEMON_HOST)
+	if daemonClient != nil {
+		args := &rpc.FormulaGetArgs{}
+		if strings.Contains(nameOrID, "-formula-") {
+			args.ID = nameOrID
+		} else {
+			args.Name = nameOrID
+		}
+		result, err := daemonClient.FormulaGet(args)
+		if err != nil {
+			return nil
+		}
+		var f formula.Formula
+		if err := json.Unmarshal(result.Formula, &f); err != nil {
+			return nil
+		}
+		return &f
+	}
+
+	// Direct store access (local mode)
 	s := getStore()
 	if s == nil {
 		return nil
