@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
@@ -127,6 +128,8 @@ func TestCheckDaemonAutoSync(t *testing.T) {
 
 	t.Run("no sync-branch configured", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		// Resolve symlinks so rpc.ShortSocketPath matches on macOS (/var -> /private/var)
+		tmpDir, _ = filepath.EvalSymlinks(tmpDir)
 		beadsDir := filepath.Join(tmpDir, ".beads")
 		if err := os.Mkdir(beadsDir, 0755); err != nil {
 			t.Fatal(err)
@@ -141,11 +144,18 @@ func TestCheckDaemonAutoSync(t *testing.T) {
 		}
 		defer func() { _ = store.Close() }()
 
-		// Create a fake socket file to simulate daemon running
-		socketPath := filepath.Join(beadsDir, "bd.sock")
+		// Create a fake socket file at the path ShortSocketPath computes.
+		// On macOS, long temp paths cause ShortSocketPath to use /tmp/beads-{hash}/
+		// instead of .beads/bd.sock, so we must match that.
+		socketPath := rpc.ShortSocketPath(tmpDir)
+		socketDir := filepath.Dir(socketPath)
+		if err := os.MkdirAll(socketDir, 0755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(socketPath, []byte{}, 0600); err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 
 		check := CheckDaemonAutoSync(tmpDir)
 
@@ -160,6 +170,8 @@ func TestCheckDaemonAutoSync(t *testing.T) {
 
 	t.Run("sync-branch configured but cannot connect", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		// Resolve symlinks so rpc.ShortSocketPath matches on macOS (/var -> /private/var)
+		tmpDir, _ = filepath.EvalSymlinks(tmpDir)
 		beadsDir := filepath.Join(tmpDir, ".beads")
 		if err := os.Mkdir(beadsDir, 0755); err != nil {
 			t.Fatal(err)
@@ -177,11 +189,16 @@ func TestCheckDaemonAutoSync(t *testing.T) {
 		}
 		_ = store.Close()
 
-		// Create a fake socket file (not a real daemon)
-		socketPath := filepath.Join(beadsDir, "bd.sock")
+		// Create a fake socket file at the path ShortSocketPath computes.
+		socketPath := rpc.ShortSocketPath(tmpDir)
+		socketDir := filepath.Dir(socketPath)
+		if err := os.MkdirAll(socketDir, 0755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(socketPath, []byte{}, 0600); err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 
 		check := CheckDaemonAutoSync(tmpDir)
 

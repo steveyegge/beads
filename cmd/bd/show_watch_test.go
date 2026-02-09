@@ -15,6 +15,11 @@ import (
 func TestWatchIssueInitialization(t *testing.T) {
 	// Create a temporary .beads directory
 	tempDir := t.TempDir()
+	// Resolve symlinks so os.Getwd() matches on macOS where /var -> /private/var
+	tempDir, err := filepath.EvalSymlinks(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to resolve symlinks for temp directory: %v", err)
+	}
 	beadsDir := filepath.Join(tempDir, ".beads")
 
 	// Change to temp directory (must succeed for test validity)
