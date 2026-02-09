@@ -241,7 +241,6 @@ var showCmd = &cobra.Command{
 					}
 					displayIdx++
 
-
 					// Metadata: Owner · Type | Created · Updated
 					fmt.Println(formatIssueMetadata(issue))
 

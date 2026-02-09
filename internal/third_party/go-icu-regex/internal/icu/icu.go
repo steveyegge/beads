@@ -164,8 +164,8 @@ func (s *UCharStr) Free() {
 func (s *UCharStr) slice(start, end int) *UCharStr {
 	// slice never owns the storage and must not outlive the owning *UCharStr, including a SetString called on it.
 	var res UCharStr
-	res.len = end-start
-	res.ptr = (*C.UChar)(unsafe.Pointer(uintptr(unsafe.Pointer(s.ptr)) + 2 * uintptr(start)))
+	res.len = end - start
+	res.ptr = (*C.UChar)(unsafe.Pointer(uintptr(unsafe.Pointer(s.ptr)) + 2*uintptr(start)))
 	return &res
 }
 
