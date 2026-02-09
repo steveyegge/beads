@@ -306,6 +306,101 @@ func TestFindPendingAgentDecision_SessionScoping(t *testing.T) {
 	}
 }
 
+// TestFindPendingAgentDecision_SkipsRespondedDecisions verifies that
+// responded decisions are NOT returned, preventing the infinite loop bug
+// where the stop hook kept finding an already-responded decision and
+// allowing stop indefinitely (bd-yy1s).
+func TestFindPendingAgentDecision_SkipsRespondedDecisions(t *testing.T) {
+	s, cleanup := setupStopCheckTestDB(t)
+	defer cleanup()
+
+	oldStore := store
+	store = s
+	defer func() { store = oldStore }()
+
+	ctx := context.Background()
+
+	// Create an agent decision
+	createTestDecision(t, s, "test-responded", "What next?", "session-abc", "context")
+
+	// Verify it's found while still pending
+	dp, err := findPendingAgentDecision(ctx, "session-abc")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dp == nil {
+		t.Fatal("expected pending decision, got nil")
+	}
+
+	// Respond to the decision (simulates human answering via Slack/CLI)
+	dp, err = s.GetDecisionPoint(ctx, "test-responded")
+	if err != nil {
+		t.Fatalf("get decision: %v", err)
+	}
+	now := time.Now()
+	dp.RespondedAt = &now
+	dp.SelectedOption = "continue"
+	dp.ResponseText = "keep working"
+	if err := s.UpdateDecisionPoint(ctx, dp); err != nil {
+		t.Fatalf("update decision: %v", err)
+	}
+
+	// After response, findPendingAgentDecision must NOT return it.
+	// This is the core regression test for bd-yy1s: previously the function
+	// would still return recently-responded decisions, causing the stop hook
+	// to fire in an infinite loop.
+	dp, err = findPendingAgentDecision(ctx, "session-abc")
+	if err != nil {
+		t.Fatalf("unexpected error after response: %v", err)
+	}
+	if dp != nil {
+		t.Fatalf("expected nil after decision was responded to, got %+v (infinite loop bug)", dp)
+	}
+}
+
+// TestFindPendingAgentDecision_RespondedDoesNotMaskPending verifies that
+// a responded decision doesn't interfere with finding a newer pending one.
+func TestFindPendingAgentDecision_RespondedDoesNotMaskPending(t *testing.T) {
+	s, cleanup := setupStopCheckTestDB(t)
+	defer cleanup()
+
+	oldStore := store
+	store = s
+	defer func() { store = oldStore }()
+
+	ctx := context.Background()
+
+	// Create first decision and respond to it
+	createTestDecisionAt(t, s, "test-old", "Old question", "session-abc", "",
+		time.Now().Add(-1*time.Minute))
+
+	dp, err := s.GetDecisionPoint(ctx, "test-old")
+	if err != nil {
+		t.Fatalf("get decision: %v", err)
+	}
+	now := time.Now()
+	dp.RespondedAt = &now
+	dp.SelectedOption = "done"
+	if err := s.UpdateDecisionPoint(ctx, dp); err != nil {
+		t.Fatalf("update decision: %v", err)
+	}
+
+	// Create a new pending decision
+	createTestDecision(t, s, "test-new", "New question", "session-abc", "new context")
+
+	// Should find the new pending one, not the old responded one
+	found, err := findPendingAgentDecision(ctx, "session-abc")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if found == nil {
+		t.Fatal("expected new pending decision, got nil")
+	}
+	if found.IssueID != "test-new" {
+		t.Fatalf("expected test-new, got %s", found.IssueID)
+	}
+}
+
 func TestFindUnclosedStopDecisions_NoDecisions(t *testing.T) {
 	s, cleanup := setupStopCheckTestDB(t)
 	defer cleanup()

@@ -91,12 +91,10 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 	//   1. No agent decision found → block with "create a decision"
 	//   2. Agent decision found, still pending → allow (the agent is about to
 	//      call or has called `bd decision create --wait`, which handles polling)
-	//   3. Agent decision found, already responded → allow (response was already
-	//      delivered to the agent via `bd decision create --wait`)
 	//
-	// After the agent receives a response and acts on it, the decision is
-	// "consumed." The next time the agent tries to stop, findPendingAgentDecision
-	// won't find it (it's responded and old), so it blocks again → cycle repeats.
+	// After the agent receives a response (decision is no longer pending),
+	// findPendingAgentDecision won't find it, so the next stop attempt blocks
+	// again → agent creates a new decision → cycle repeats.
 	// -------------------------------------------------------------------------
 
 	if cfg.RequireAgentDecision {
@@ -611,15 +609,22 @@ func pollForAgentDecision(ctx context.Context, sessionTag string, timeout, pollI
 	}
 }
 
-// findPendingAgentDecision finds the most recent pending OR recently-responded
-// decision created by an agent (i.e., not by stop-hook). Returns nil if none found.
-// Checks both pending and all decisions (for fast human responses that resolve
-// before the stop hook runs).
+// findPendingAgentDecision finds the most recent pending decision created by
+// an agent (i.e., not by stop-hook). Returns nil if none found.
+//
+// Only returns decisions with responded_at IS NULL (truly pending). Previously
+// this also included recently-responded decisions (within 5 minutes), but that
+// caused an infinite loop: after a decision was responded to, the stop hook
+// kept finding it and allowing stop, which fired the hook again immediately.
+// The race condition the 5-minute window was meant to handle (human responds
+// before stop hook fires) is not an actual problem — the agent's
+// `bd decision create --wait` call blocks until response, so by the time the
+// agent tries to stop, the decision flow is complete.
 func findPendingAgentDecision(ctx context.Context, sessionTag string) (*types.DecisionPoint, error) {
 	var decisions []*types.DecisionPoint
 
 	if daemonClient != nil {
-		// First check pending decisions
+		// Only check pending (unresponded) decisions
 		listArgs := &rpc.DecisionListArgs{All: false}
 		resp, err := daemonClient.DecisionList(listArgs)
 		if err != nil {
@@ -628,27 +633,12 @@ func findPendingAgentDecision(ctx context.Context, sessionTag string) (*types.De
 		for _, dr := range resp.Decisions {
 			decisions = append(decisions, dr.Decision)
 		}
-
-		// Also check recently-responded decisions (human may have responded
-		// before the stop hook fired)
-		allArgs := &rpc.DecisionListArgs{All: true}
-		allResp, err := daemonClient.DecisionList(allArgs)
-		if err == nil {
-			for _, dr := range allResp.Decisions {
-				if dr.Decision.RespondedAt != nil && time.Since(*dr.Decision.RespondedAt) < 5*time.Minute {
-					decisions = append(decisions, dr.Decision)
-				}
-			}
-		}
 	} else if store != nil {
 		var err error
 		decisions, err = store.ListPendingDecisions(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("list pending decisions: %w", err)
 		}
-		// Note: recently-responded check is only needed for daemon path (Slack
-		// responds fast before stop hook fires). Local store path doesn't have
-		// this timing issue since human responds via CLI after hook runs.
 	} else {
 		return nil, fmt.Errorf("no database connection")
 	}
