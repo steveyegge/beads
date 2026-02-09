@@ -136,9 +136,11 @@ const (
 	OpRunbookSave = "runbook_save"
 
 	// Event bus operations (gt-wfaq5n)
-	OpBusEmit     = "bus_emit"
-	OpBusStatus   = "bus_status"
-	OpBusHandlers = "bus_handlers"
+	OpBusEmit       = "bus_emit"
+	OpBusStatus     = "bus_status"
+	OpBusHandlers   = "bus_handlers"
+	OpBusRegister   = "bus_register"
+	OpBusUnregister = "bus_unregister"
 
 	// Agent pod operations (gt-el7sxq.7)
 	OpAgentPodRegister   = "agent_pod_register"
@@ -1713,6 +1715,34 @@ type BusHandlerInfo struct {
 	ID       string   `json:"id"`
 	Priority int      `json:"priority"`
 	Handles  []string `json:"handles"`
+	External bool     `json:"external,omitempty"` // true for externally-registered handlers
+}
+
+// BusRegisterArgs represents arguments for the bus_register operation (bd-4q86.1)
+type BusRegisterArgs struct {
+	ID       string   `json:"id"`                   // Unique handler ID
+	Command  string   `json:"command"`              // Shell command to run
+	Events   []string `json:"events"`               // Event types to handle
+	Priority int      `json:"priority,omitempty"`    // Default 50
+	Shell    string   `json:"shell,omitempty"`       // Default "sh"
+	Persist  bool     `json:"persist,omitempty"`     // Save to config table for daemon restart
+}
+
+// BusRegisterResult represents the result of a bus_register operation
+type BusRegisterResult struct {
+	ID        string `json:"id"`
+	Persisted bool   `json:"persisted"`
+}
+
+// BusUnregisterArgs represents arguments for the bus_unregister operation (bd-4q86.1)
+type BusUnregisterArgs struct {
+	ID string `json:"id"` // Handler ID to remove
+}
+
+// BusUnregisterResult represents the result of a bus_unregister operation
+type BusUnregisterResult struct {
+	Removed   bool `json:"removed"`
+	Persisted bool `json:"persisted"` // true if also removed from config table
 }
 
 // ===== Agent Pod Operations (gt-el7sxq.7) =====

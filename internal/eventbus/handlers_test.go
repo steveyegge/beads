@@ -10,9 +10,8 @@ import (
 
 func TestDefaultHandlers(t *testing.T) {
 	handlers := DefaultHandlers()
-	// StopDecisionHandler removed in favor of SSE-based stop hook (bd-f39m)
-	if len(handlers) != 3 {
-		t.Fatalf("expected 3 default handlers, got %d", len(handlers))
+	if len(handlers) != 4 {
+		t.Fatalf("expected 4 default handlers, got %d", len(handlers))
 	}
 
 	// Verify IDs
@@ -133,9 +132,8 @@ func TestBusWithDefaultHandlers(t *testing.T) {
 		bus.Register(h)
 	}
 
-	// Verify all handlers registered (3 after StopDecisionHandler removal)
-	if len(bus.Handlers()) != 3 {
-		t.Errorf("expected 3 handlers, got %d", len(bus.Handlers()))
+	if len(bus.Handlers()) != 4 {
+		t.Errorf("expected 4 handlers, got %d", len(bus.Handlers()))
 	}
 }
 

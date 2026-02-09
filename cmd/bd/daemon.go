@@ -867,6 +867,19 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		log.Info("JetStream connected to event bus - events will be persisted")
 	}
 
+	// Load persisted external handlers from config table (bd-4q86.1)
+	if store != nil {
+		allCfg, cfgErr := store.GetAllConfig(context.Background())
+		if cfgErr == nil {
+			n := bus.LoadPersistedHandlers(allCfg)
+			if n > 0 {
+				log.Info("loaded persisted bus handlers", "count", n)
+			}
+		} else {
+			log.Warn("failed to load persisted bus handlers", "error", cfgErr)
+		}
+	}
+
 	server.SetBus(bus)
 
 	// Wire NATS health into RPC status reporting
@@ -884,7 +897,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		})
 	}
 
-	log.Info("event bus initialized", "handlers", len(eventbus.DefaultHandlers()), "jetstream", jsCtx != nil)
+	log.Info("event bus initialized", "handlers", len(bus.Handlers()), "jetstream", jsCtx != nil)
 
 	// Register daemon in global registry
 	registry, err := daemon.NewRegistry()

@@ -399,13 +399,17 @@ func (s *Server) executeOperation(req *Request) Response {
 		resp = s.handleRunbookGet(req)
 	case OpRunbookSave:
 		resp = s.handleRunbookSave(req)
-	// Event bus operations (bd-66fp)
+	// Event bus operations (bd-66fp, bd-4q86.1)
 	case OpBusEmit:
 		resp = s.handleBusEmit(req)
 	case OpBusStatus:
 		resp = s.handleBusStatus(req)
 	case OpBusHandlers:
 		resp = s.handleBusHandlers(req)
+	case OpBusRegister:
+		resp = s.handleBusRegister(req)
+	case OpBusUnregister:
+		resp = s.handleBusUnregister(req)
 	// Agent pod operations (gt-el7sxq.7)
 	case OpAgentPodRegister:
 		resp = s.handleAgentPodRegister(req)

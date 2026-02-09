@@ -1297,6 +1297,262 @@ func TestDefaultHandlerChainBDNotInPath(t *testing.T) {
 	}
 }
 
+// Register/Unregister RPC tests (bd-4q86.1)
+
+func TestHandleBusRegister(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	server.SetBus(bus)
+
+	args := BusRegisterArgs{
+		ID:       "test-ext",
+		Command:  "echo hello",
+		Events:   []string{"SessionStart", "Stop"},
+		Priority: 25,
+	}
+
+	resp, err := client.Execute(OpBusRegister, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusRegisterResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if result.ID != "test-ext" {
+		t.Errorf("expected ID 'test-ext', got %q", result.ID)
+	}
+
+	// Verify handler is registered.
+	handlers := bus.Handlers()
+	if len(handlers) != 1 {
+		t.Fatalf("expected 1 handler, got %d", len(handlers))
+	}
+	if handlers[0].ID() != "test-ext" {
+		t.Errorf("expected handler ID 'test-ext', got %q", handlers[0].ID())
+	}
+	if handlers[0].Priority() != 25 {
+		t.Errorf("expected priority 25, got %d", handlers[0].Priority())
+	}
+}
+
+func TestHandleBusRegisterMissingFields(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	server.SetBus(bus)
+
+	tests := []struct {
+		name string
+		args BusRegisterArgs
+	}{
+		{"missing id", BusRegisterArgs{Command: "echo", Events: []string{"Stop"}}},
+		{"missing command", BusRegisterArgs{ID: "test", Events: []string{"Stop"}}},
+		{"missing events", BusRegisterArgs{ID: "test", Command: "echo"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := client.Execute(OpBusRegister, tt.args)
+			if err == nil {
+				t.Error("expected error for missing fields")
+			}
+		})
+	}
+}
+
+func TestHandleBusRegisterReRegistration(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	server.SetBus(bus)
+
+	// Register once.
+	args1 := BusRegisterArgs{
+		ID:       "reregister",
+		Command:  "echo v1",
+		Events:   []string{"Stop"},
+		Priority: 10,
+	}
+	resp, err := client.Execute(OpBusRegister, args1)
+	if err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("first register failed: %s", resp.Error)
+	}
+
+	// Register again with same ID — should replace.
+	args2 := BusRegisterArgs{
+		ID:       "reregister",
+		Command:  "echo v2",
+		Events:   []string{"SessionStart", "Stop"},
+		Priority: 20,
+	}
+	resp, err = client.Execute(OpBusRegister, args2)
+	if err != nil {
+		t.Fatalf("second register: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("second register failed: %s", resp.Error)
+	}
+
+	// Should still have exactly 1 handler (not 2).
+	handlers := bus.Handlers()
+	if len(handlers) != 1 {
+		t.Fatalf("expected 1 handler after re-registration, got %d", len(handlers))
+	}
+	if handlers[0].Priority() != 20 {
+		t.Errorf("expected updated priority 20, got %d", handlers[0].Priority())
+	}
+}
+
+func TestHandleBusRegisterNoBus(t *testing.T) {
+	_, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// No bus set on server.
+	args := BusRegisterArgs{
+		ID:      "test",
+		Command: "echo",
+		Events:  []string{"Stop"},
+	}
+	_, err := client.Execute(OpBusRegister, args)
+	if err == nil {
+		t.Error("expected error when bus is nil")
+	}
+}
+
+func TestHandleBusUnregister(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	cfg := eventbus.ExternalHandlerConfig{
+		ID:      "to-remove",
+		Command: "echo",
+		Events:  []string{"Stop"},
+	}
+	bus.Register(eventbus.NewExternalHandler(cfg))
+	server.SetBus(bus)
+
+	if len(bus.Handlers()) != 1 {
+		t.Fatalf("expected 1 handler before unregister, got %d", len(bus.Handlers()))
+	}
+
+	args := BusUnregisterArgs{ID: "to-remove"}
+	resp, err := client.Execute(OpBusUnregister, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusUnregisterResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if !result.Removed {
+		t.Error("expected removed=true")
+	}
+	if len(bus.Handlers()) != 0 {
+		t.Errorf("expected 0 handlers after unregister, got %d", len(bus.Handlers()))
+	}
+}
+
+func TestHandleBusUnregisterNonExistent(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	server.SetBus(bus)
+
+	args := BusUnregisterArgs{ID: "nonexistent"}
+	resp, err := client.Execute(OpBusUnregister, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusUnregisterResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if result.Removed {
+		t.Error("expected removed=false for nonexistent handler")
+	}
+}
+
+func TestHandleBusHandlersShowsExternalFlag(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	// Register a built-in handler.
+	bus.Register(&testBusHandler{id: "built-in", handles: []eventbus.EventType{eventbus.EventStop}, priority: 1})
+	// Register an external handler.
+	bus.Register(eventbus.NewExternalHandler(eventbus.ExternalHandlerConfig{
+		ID: "external", Command: "echo", Events: []string{"Stop"},
+	}))
+	server.SetBus(bus)
+
+	resp, err := client.Execute(OpBusHandlers, nil)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusHandlersResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if len(result.Handlers) != 2 {
+		t.Fatalf("expected 2 handlers, got %d", len(result.Handlers))
+	}
+
+	// Find handlers by ID.
+	var builtIn, external *BusHandlerInfo
+	for i, h := range result.Handlers {
+		if h.ID == "built-in" {
+			builtIn = &result.Handlers[i]
+		}
+		if h.ID == "external" {
+			external = &result.Handlers[i]
+		}
+	}
+
+	if builtIn == nil {
+		t.Fatal("built-in handler not found")
+	}
+	if builtIn.External {
+		t.Error("expected built-in handler External=false")
+	}
+
+	if external == nil {
+		t.Fatal("external handler not found")
+	}
+	if !external.External {
+		t.Error("expected external handler External=true")
+	}
+}
+
 func TestDefaultHandlerChainEventFieldPassthrough(t *testing.T) {
 	server, client, cleanup := setupTestServer(t)
 	defer cleanup()

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +49,19 @@ func (b *Bus) Register(h Handler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.handlers = append(b.handlers, h)
+}
+
+// Unregister removes a handler by ID. Returns true if a handler was removed.
+func (b *Bus) Unregister(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, h := range b.handlers {
+		if h.ID() == id {
+			b.handlers = append(b.handlers[:i], b.handlers[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // Dispatch sends an event to all registered handlers that handle its type.
@@ -126,6 +140,32 @@ func (b *Bus) Handlers() []Handler {
 	out := make([]Handler, len(b.handlers))
 	copy(out, b.handlers)
 	return out
+}
+
+// LoadPersistedHandlers loads external handlers from config table entries
+// with the "bus.handler." prefix. Each value is a JSON-encoded ExternalHandlerConfig.
+// Returns the number of handlers loaded.
+func (b *Bus) LoadPersistedHandlers(configs map[string]string) int {
+	count := 0
+	for key, value := range configs {
+		if !strings.HasPrefix(key, HandlerConfigPrefix) {
+			continue
+		}
+		var cfg ExternalHandlerConfig
+		if err := json.Unmarshal([]byte(value), &cfg); err != nil {
+			log.Printf("eventbus: skip bad config %q: %v", key, err)
+			continue
+		}
+		if cfg.ID == "" || cfg.Command == "" || len(cfg.Events) == 0 {
+			log.Printf("eventbus: skip incomplete config %q", key)
+			continue
+		}
+		h := NewExternalHandler(cfg)
+		b.Register(h)
+		count++
+		log.Printf("eventbus: loaded persisted handler %q (priority=%d, events=%v)", cfg.ID, h.Priority(), cfg.Events)
+	}
+	return count
 }
 
 // matchingHandlers returns handlers that handle the given event type, sorted

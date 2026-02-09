@@ -517,6 +517,160 @@ func TestDispatchConcurrentSafety(t *testing.T) {
 	}
 }
 
+// Unregister tests (bd-4q86.1)
+
+func TestUnregisterExisting(t *testing.T) {
+	bus := New()
+	bus.Register(&testHandler{id: "h1", handles: []EventType{EventStop}, priority: 1})
+	bus.Register(&testHandler{id: "h2", handles: []EventType{EventStop}, priority: 2})
+
+	if len(bus.Handlers()) != 2 {
+		t.Fatalf("expected 2 handlers, got %d", len(bus.Handlers()))
+	}
+
+	removed := bus.Unregister("h1")
+	if !removed {
+		t.Error("expected Unregister to return true for existing handler")
+	}
+	if len(bus.Handlers()) != 1 {
+		t.Fatalf("expected 1 handler after unregister, got %d", len(bus.Handlers()))
+	}
+	if bus.Handlers()[0].ID() != "h2" {
+		t.Errorf("expected remaining handler to be h2, got %s", bus.Handlers()[0].ID())
+	}
+}
+
+func TestUnregisterNonExistent(t *testing.T) {
+	bus := New()
+	bus.Register(&testHandler{id: "h1", handles: []EventType{EventStop}, priority: 1})
+
+	removed := bus.Unregister("nonexistent")
+	if removed {
+		t.Error("expected Unregister to return false for nonexistent handler")
+	}
+	if len(bus.Handlers()) != 1 {
+		t.Errorf("expected handler count unchanged, got %d", len(bus.Handlers()))
+	}
+}
+
+func TestUnregisterEmpty(t *testing.T) {
+	bus := New()
+	removed := bus.Unregister("anything")
+	if removed {
+		t.Error("expected Unregister to return false on empty bus")
+	}
+}
+
+// LoadPersistedHandlers tests (bd-4q86.1)
+
+func TestLoadPersistedHandlersEmpty(t *testing.T) {
+	bus := New()
+	n := bus.LoadPersistedHandlers(map[string]string{})
+	if n != 0 {
+		t.Errorf("expected 0 handlers loaded from empty config, got %d", n)
+	}
+}
+
+func TestLoadPersistedHandlersIgnoresNonBusKeys(t *testing.T) {
+	bus := New()
+	configs := map[string]string{
+		"status.custom":       "review,blocked",
+		"import.orphan_handling": "allow",
+	}
+	n := bus.LoadPersistedHandlers(configs)
+	if n != 0 {
+		t.Errorf("expected 0 handlers loaded from non-bus config, got %d", n)
+	}
+}
+
+func TestLoadPersistedHandlersValid(t *testing.T) {
+	bus := New()
+
+	cfg := ExternalHandlerConfig{
+		ID:       "my-logger",
+		Command:  "cat >> /tmp/events.log",
+		Events:   []string{"SessionStart", "Stop"},
+		Priority: 40,
+		Shell:    "sh",
+	}
+	cfgJSON, _ := json.Marshal(cfg)
+
+	configs := map[string]string{
+		HandlerConfigPrefix + "my-logger": string(cfgJSON),
+	}
+
+	n := bus.LoadPersistedHandlers(configs)
+	if n != 1 {
+		t.Fatalf("expected 1 handler loaded, got %d", n)
+	}
+
+	handlers := bus.Handlers()
+	if len(handlers) != 1 {
+		t.Fatalf("expected 1 handler registered, got %d", len(handlers))
+	}
+
+	h := handlers[0]
+	if h.ID() != "my-logger" {
+		t.Errorf("expected ID 'my-logger', got %q", h.ID())
+	}
+	if h.Priority() != 40 {
+		t.Errorf("expected priority 40, got %d", h.Priority())
+	}
+	if len(h.Handles()) != 2 {
+		t.Errorf("expected 2 event types, got %d", len(h.Handles()))
+	}
+}
+
+func TestLoadPersistedHandlersMultiple(t *testing.T) {
+	bus := New()
+
+	cfg1JSON, _ := json.Marshal(ExternalHandlerConfig{
+		ID: "handler-a", Command: "echo a", Events: []string{"Stop"},
+	})
+	cfg2JSON, _ := json.Marshal(ExternalHandlerConfig{
+		ID: "handler-b", Command: "echo b", Events: []string{"SessionStart"},
+	})
+
+	configs := map[string]string{
+		HandlerConfigPrefix + "handler-a": string(cfg1JSON),
+		HandlerConfigPrefix + "handler-b": string(cfg2JSON),
+		"unrelated.key":                   "value",
+	}
+
+	n := bus.LoadPersistedHandlers(configs)
+	if n != 2 {
+		t.Fatalf("expected 2 handlers loaded, got %d", n)
+	}
+	if len(bus.Handlers()) != 2 {
+		t.Errorf("expected 2 handlers registered, got %d", len(bus.Handlers()))
+	}
+}
+
+func TestLoadPersistedHandlersSkipsBadJSON(t *testing.T) {
+	bus := New()
+	configs := map[string]string{
+		HandlerConfigPrefix + "broken": "not-valid-json",
+	}
+	n := bus.LoadPersistedHandlers(configs)
+	if n != 0 {
+		t.Errorf("expected 0 handlers from bad JSON, got %d", n)
+	}
+}
+
+func TestLoadPersistedHandlersSkipsIncomplete(t *testing.T) {
+	bus := New()
+
+	// Missing command
+	cfg, _ := json.Marshal(ExternalHandlerConfig{ID: "no-cmd", Events: []string{"Stop"}})
+	configs := map[string]string{
+		HandlerConfigPrefix + "no-cmd": string(cfg),
+	}
+	n := bus.LoadPersistedHandlers(configs)
+	if n != 0 {
+		t.Errorf("expected 0 handlers from incomplete config, got %d", n)
+	}
+}
+
 // Decision event tests (od-k3o.15.1)
 
 func TestDecisionEventTypes(t *testing.T) {

@@ -130,15 +130,126 @@ func (s *Server) handleBusHandlers(_ *Request) Response {
 			for i, e := range h.Handles() {
 				events[i] = string(e)
 			}
-			handlers = append(handlers, BusHandlerInfo{
+			info := BusHandlerInfo{
 				ID:       h.ID(),
 				Priority: h.Priority(),
 				Handles:  events,
-			})
+			}
+			if _, ok := h.(*eventbus.ExternalHandler); ok {
+				info.External = true
+			}
+			handlers = append(handlers, info)
 		}
 	}
 
 	data, _ := json.Marshal(BusHandlersResult{Handlers: handlers})
+	return Response{Success: true, Data: data}
+}
+
+// handleBusRegister registers an external handler on the event bus. (bd-4q86.1)
+func (s *Server) handleBusRegister(req *Request) Response {
+	var args BusRegisterArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
+	}
+
+	if args.ID == "" {
+		return Response{Success: false, Error: "id is required"}
+	}
+	if args.Command == "" {
+		return Response{Success: false, Error: "command is required"}
+	}
+	if len(args.Events) == 0 {
+		return Response{Success: false, Error: "events is required (at least one event type)"}
+	}
+
+	s.mu.RLock()
+	bus := s.bus
+	s.mu.RUnlock()
+
+	if bus == nil {
+		return Response{Success: false, Error: "event bus not configured"}
+	}
+
+	cfg := eventbus.ExternalHandlerConfig{
+		ID:       args.ID,
+		Command:  args.Command,
+		Events:   args.Events,
+		Priority: args.Priority,
+		Shell:    args.Shell,
+	}
+
+	// Remove existing handler with same ID (re-registration).
+	bus.Unregister(args.ID)
+
+	handler := eventbus.NewExternalHandler(cfg)
+	bus.Register(handler)
+
+	fmt.Fprintf(os.Stderr, "bus_register: registered handler %q (events=%v priority=%d persist=%v)\n",
+		args.ID, args.Events, handler.Priority(), args.Persist)
+
+	persisted := false
+	if args.Persist {
+		s.mu.RLock()
+		store := s.storage
+		s.mu.RUnlock()
+
+		if store != nil {
+			cfgJSON, err := json.Marshal(cfg)
+			if err == nil {
+				key := eventbus.HandlerConfigPrefix + args.ID
+				if err := store.SetConfig(context.Background(), key, string(cfgJSON)); err != nil {
+					fmt.Fprintf(os.Stderr, "bus_register: persist failed for %q: %v\n", args.ID, err)
+				} else {
+					persisted = true
+				}
+			}
+		}
+	}
+
+	data, _ := json.Marshal(BusRegisterResult{ID: args.ID, Persisted: persisted})
+	return Response{Success: true, Data: data}
+}
+
+// handleBusUnregister removes an external handler from the event bus. (bd-4q86.1)
+func (s *Server) handleBusUnregister(req *Request) Response {
+	var args BusUnregisterArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid arguments: %v", err)}
+	}
+
+	if args.ID == "" {
+		return Response{Success: false, Error: "id is required"}
+	}
+
+	s.mu.RLock()
+	bus := s.bus
+	s.mu.RUnlock()
+
+	if bus == nil {
+		return Response{Success: false, Error: "event bus not configured"}
+	}
+
+	removed := bus.Unregister(args.ID)
+
+	// Also remove from config table if persisted.
+	persistRemoved := false
+	s.mu.RLock()
+	store := s.storage
+	s.mu.RUnlock()
+
+	if store != nil {
+		key := eventbus.HandlerConfigPrefix + args.ID
+		if val, err := store.GetConfig(context.Background(), key); err == nil && val != "" {
+			if err := store.DeleteConfig(context.Background(), key); err == nil {
+				persistRemoved = true
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "bus_unregister: removed=%v persisted=%v handler %q\n", removed, persistRemoved, args.ID)
+
+	data, _ := json.Marshal(BusUnregisterResult{Removed: removed, Persisted: persistRemoved})
 	return Response{Success: true, Data: data}
 }
 
