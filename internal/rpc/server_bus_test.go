@@ -1619,3 +1619,309 @@ exit 0
 		t.Errorf("expected '--json' in captured args, got:\n%s", argsStr)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// OJ event dispatch via RPC (bd-4q86.9)
+// ---------------------------------------------------------------------------
+
+func TestHandleBusEmitOjJobCompleted(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	var handledType eventbus.EventType
+	var handledPayload []byte
+	bus.Register(&testBusHandler{
+		id:       "oj-complete-tracker",
+		handles:  []eventbus.EventType{eventbus.EventOjJobCompleted},
+		priority: 40,
+		fn: func(ctx context.Context, event *eventbus.Event, result *eventbus.Result) error {
+			handledType = event.Type
+			handledPayload = event.Raw
+			result.Inject = append(result.Inject, "oj-complete-handled")
+			return nil
+		},
+	})
+	server.SetBus(bus)
+
+	ojPayload := `{"job_id":"j-rpc-1","job_name":"Build X","bead_id":"gt-rpc-abc"}`
+	args := BusEmitArgs{
+		HookType:  "OjJobCompleted",
+		EventJSON: json.RawMessage(ojPayload),
+		SessionID: "rpc-oj-1",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusEmitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Verify handler was invoked with correct event type.
+	if handledType != eventbus.EventOjJobCompleted {
+		t.Errorf("expected event type %s, got %s", eventbus.EventOjJobCompleted, handledType)
+	}
+
+	// Verify payload was passed through.
+	if string(handledPayload) != ojPayload {
+		t.Errorf("payload mismatch: got %q", string(handledPayload))
+	}
+
+	// Verify result includes handler output.
+	if len(result.Inject) != 1 || result.Inject[0] != "oj-complete-handled" {
+		t.Errorf("unexpected inject: %v", result.Inject)
+	}
+}
+
+func TestHandleBusEmitOjJobFailed(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	var handledType eventbus.EventType
+	bus.Register(&testBusHandler{
+		id:       "oj-fail-tracker",
+		handles:  []eventbus.EventType{eventbus.EventOjJobFailed},
+		priority: 40,
+		fn: func(ctx context.Context, event *eventbus.Event, result *eventbus.Result) error {
+			handledType = event.Type
+			return nil
+		},
+	})
+	server.SetBus(bus)
+
+	ojPayload := `{"job_id":"j-rpc-fail","error":"timeout","exit_code":137}`
+	args := BusEmitArgs{
+		HookType:  "OjJobFailed",
+		EventJSON: json.RawMessage(ojPayload),
+		SessionID: "rpc-oj-fail",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	if handledType != eventbus.EventOjJobFailed {
+		t.Errorf("expected event type %s, got %s", eventbus.EventOjJobFailed, handledType)
+	}
+}
+
+func TestHandleBusEmitOjStepAdvanced(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	var handledType eventbus.EventType
+	bus.Register(&testBusHandler{
+		id:       "oj-step-tracker",
+		handles:  []eventbus.EventType{eventbus.EventOjStepAdvanced},
+		priority: 40,
+		fn: func(ctx context.Context, event *eventbus.Event, result *eventbus.Result) error {
+			handledType = event.Type
+			return nil
+		},
+	})
+	server.SetBus(bus)
+
+	ojPayload := `{"job_id":"j-rpc-step","from_step":"init","to_step":"build","bead_id":"gt-step"}`
+	args := BusEmitArgs{
+		HookType:  "OjStepAdvanced",
+		EventJSON: json.RawMessage(ojPayload),
+		SessionID: "rpc-oj-step",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	if handledType != eventbus.EventOjStepAdvanced {
+		t.Errorf("expected event type %s, got %s", eventbus.EventOjStepAdvanced, handledType)
+	}
+}
+
+func TestHandleBusEmitOjEventDoesNotTriggerHookHandlers(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	hookCalled := false
+	bus.Register(&testBusHandler{
+		id:       "hook-only",
+		handles:  []eventbus.EventType{eventbus.EventSessionStart, eventbus.EventStop},
+		priority: 10,
+		fn: func(ctx context.Context, event *eventbus.Event, result *eventbus.Result) error {
+			hookCalled = true
+			return nil
+		},
+	})
+	server.SetBus(bus)
+
+	args := BusEmitArgs{
+		HookType:  "OjJobCompleted",
+		EventJSON: json.RawMessage(`{"job_id":"j-isolation"}`),
+		SessionID: "rpc-isolation",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	if hookCalled {
+		t.Error("hook handler should not be triggered by OJ event")
+	}
+}
+
+func TestHandleBusEmitOjWithDefaultHandlers(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Set up mock bd that just exits 0 for all commands.
+	setupMockBDForRPC(t, `exit 0`)
+
+	bus := eventbus.New()
+	for _, h := range eventbus.DefaultHandlers() {
+		bus.Register(h)
+	}
+	server.SetBus(bus)
+
+	// OJ events should dispatch to OjJobCompleteHandler (which calls `bd close`).
+	// Since our mock bd exits 0, the handler should succeed.
+	// BeadID is empty, so handler returns nil without calling bd.
+	ojPayload := `{"job_id":"j-default","job_name":"Test"}`
+	args := BusEmitArgs{
+		HookType:  "OjJobCompleted",
+		EventJSON: json.RawMessage(ojPayload),
+		SessionID: "rpc-default-oj",
+	}
+
+	resp, err := client.Execute(OpBusEmit, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got error: %s", resp.Error)
+	}
+
+	var result BusEmitResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// No block expected for OJ events (they don't use gate/stop-decision).
+	if result.Block {
+		t.Error("expected no block for OJ event")
+	}
+}
+
+func TestHandleBusEmitOjConcurrent(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	bus := eventbus.New()
+	var ojCount, hookCount sync.WaitGroup
+	var ojTotal, hookTotal int
+	var mu sync.Mutex
+
+	bus.Register(&testBusHandler{
+		id:       "oj-counter",
+		handles:  []eventbus.EventType{eventbus.EventOjJobCompleted, eventbus.EventOjJobFailed},
+		priority: 40,
+		fn: func(ctx context.Context, event *eventbus.Event, result *eventbus.Result) error {
+			mu.Lock()
+			ojTotal++
+			mu.Unlock()
+			return nil
+		},
+	})
+	bus.Register(&testBusHandler{
+		id:       "hook-counter",
+		handles:  []eventbus.EventType{eventbus.EventSessionStart, eventbus.EventStop},
+		priority: 10,
+		fn: func(ctx context.Context, event *eventbus.Event, result *eventbus.Result) error {
+			mu.Lock()
+			hookTotal++
+			mu.Unlock()
+			return nil
+		},
+	})
+	server.SetBus(bus)
+	_ = ojCount
+	_ = hookCount
+
+	const goroutines = 20
+	done := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func(i int) {
+			var hookType string
+			var payload string
+			switch i % 4 {
+			case 0:
+				hookType = "OjJobCompleted"
+				payload = fmt.Sprintf(`{"job_id":"j-%d"}`, i)
+			case 1:
+				hookType = "OjJobFailed"
+				payload = fmt.Sprintf(`{"job_id":"j-%d","error":"fail"}`, i)
+			case 2:
+				hookType = "SessionStart"
+				payload = fmt.Sprintf(`{"session_id":"s-%d"}`, i)
+			case 3:
+				hookType = "Stop"
+				payload = fmt.Sprintf(`{"session_id":"s-%d"}`, i)
+			}
+
+			args := BusEmitArgs{
+				HookType:  hookType,
+				EventJSON: json.RawMessage(payload),
+				SessionID: fmt.Sprintf("concurrent-%d", i),
+			}
+			resp, err := client.Execute(OpBusEmit, args)
+			if err != nil {
+				done <- fmt.Errorf("goroutine %d: %v", i, err)
+				return
+			}
+			if !resp.Success {
+				done <- fmt.Errorf("goroutine %d: %s", i, resp.Error)
+				return
+			}
+			done <- nil
+		}(i)
+	}
+
+	for i := 0; i < goroutines; i++ {
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// 5 OjJobCompleted + 5 OjJobFailed = 10 OJ events
+	if ojTotal != 10 {
+		t.Errorf("expected 10 OJ handler calls, got %d", ojTotal)
+	}
+	// 5 SessionStart + 5 Stop = 10 hook events
+	if hookTotal != 10 {
+		t.Errorf("expected 10 hook handler calls, got %d", hookTotal)
+	}
+}

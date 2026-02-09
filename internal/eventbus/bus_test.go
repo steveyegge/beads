@@ -1468,6 +1468,478 @@ func TestCoopFieldsInRawJSON(t *testing.T) {
 	}
 }
 
+// --- OJ Dispatch Integration Tests (bd-4q86.9) ---
+
+// TestDispatchOjEventMatchesOjHandler verifies OJ events dispatch to OJ handlers.
+func TestDispatchOjEventMatchesOjHandler(t *testing.T) {
+	bus := New()
+	var handledEvents []EventType
+
+	bus.Register(&testHandler{
+		id:       "oj-tracker",
+		handles:  []EventType{EventOjJobCompleted, EventOjJobFailed, EventOjStepAdvanced},
+		priority: 40,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			handledEvents = append(handledEvents, event.Type)
+			return nil
+		},
+	})
+
+	ojPayloads := []struct {
+		eventType EventType
+		payload   interface{}
+	}{
+		{EventOjJobCompleted, OjJobEventPayload{JobID: "j-1", BeadID: "gt-abc"}},
+		{EventOjJobFailed, OjJobEventPayload{JobID: "j-2", Error: "timeout"}},
+		{EventOjStepAdvanced, OjStepEventPayload{JobID: "j-3", FromStep: "init", ToStep: "build"}},
+	}
+
+	for _, p := range ojPayloads {
+		raw, _ := json.Marshal(p.payload)
+		_, err := bus.Dispatch(context.Background(), &Event{Type: p.eventType, Raw: raw})
+		if err != nil {
+			t.Fatalf("dispatch %s: %v", p.eventType, err)
+		}
+	}
+
+	if len(handledEvents) != 3 {
+		t.Fatalf("expected 3 handled events, got %d", len(handledEvents))
+	}
+	for i, expected := range []EventType{EventOjJobCompleted, EventOjJobFailed, EventOjStepAdvanced} {
+		if handledEvents[i] != expected {
+			t.Errorf("event %d: expected %s, got %s", i, expected, handledEvents[i])
+		}
+	}
+}
+
+// TestOjEventNotMatchedToHookHandlers verifies OJ events don't dispatch to hook handlers.
+func TestOjEventNotMatchedToHookHandlers(t *testing.T) {
+	bus := New()
+	hookCalled := false
+	bus.Register(&testHandler{
+		id:       "hook-only",
+		handles:  []EventType{EventSessionStart, EventStop, EventPreToolUse},
+		priority: 1,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			hookCalled = true
+			return nil
+		},
+	})
+
+	ojEvents := []EventType{EventOjJobCompleted, EventOjJobFailed, EventOjStepAdvanced,
+		EventOjJobCreated, EventOjAgentSpawned, EventOjAgentIdle}
+	for _, et := range ojEvents {
+		raw, _ := json.Marshal(OjJobEventPayload{JobID: "j-test"})
+		_, err := bus.Dispatch(context.Background(), &Event{Type: et, Raw: raw})
+		if err != nil {
+			t.Fatalf("dispatch %s: %v", et, err)
+		}
+	}
+
+	if hookCalled {
+		t.Error("hook handler should not be called for OJ events")
+	}
+}
+
+// TestHookEventNotMatchedToOjHandlers verifies hook events don't dispatch to OJ handlers.
+func TestHookEventNotMatchedToOjHandlers(t *testing.T) {
+	bus := New()
+	ojCalled := false
+	bus.Register(&testHandler{
+		id:       "oj-only",
+		handles:  []EventType{EventOjJobCompleted, EventOjJobFailed, EventOjStepAdvanced},
+		priority: 40,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			ojCalled = true
+			return nil
+		},
+	})
+
+	hookEvents := []EventType{EventSessionStart, EventStop, EventPreToolUse, EventNotification}
+	for _, et := range hookEvents {
+		_, err := bus.Dispatch(context.Background(), &Event{Type: et, SessionID: "test"})
+		if err != nil {
+			t.Fatalf("dispatch %s: %v", et, err)
+		}
+	}
+
+	if ojCalled {
+		t.Error("OJ handler should not be called for hook events")
+	}
+}
+
+// TestDispatchOjWithMixedHandlerPriorities verifies OJ handlers run after lower-priority handlers.
+func TestDispatchOjWithMixedHandlerPriorities(t *testing.T) {
+	bus := New()
+	var order []string
+
+	// Register handlers at different priorities that ALL handle OjJobCompleted.
+	bus.Register(&testHandler{
+		id: "early", handles: []EventType{EventOjJobCompleted}, priority: 10,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			order = append(order, "early")
+			return nil
+		},
+	})
+	bus.Register(&testHandler{
+		id: "oj-handler", handles: []EventType{EventOjJobCompleted}, priority: 40,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			order = append(order, "oj")
+			return nil
+		},
+	})
+	bus.Register(&testHandler{
+		id: "late-external", handles: []EventType{EventOjJobCompleted}, priority: 50,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			order = append(order, "external")
+			return nil
+		},
+	})
+
+	raw, _ := json.Marshal(OjJobEventPayload{JobID: "j-1"})
+	_, err := bus.Dispatch(context.Background(), &Event{Type: EventOjJobCompleted, Raw: raw})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	expected := []string{"early", "oj", "external"}
+	if len(order) != len(expected) {
+		t.Fatalf("expected %d handlers, got %d: %v", len(expected), len(order), order)
+	}
+	for i, v := range expected {
+		if order[i] != v {
+			t.Errorf("position %d: expected %q, got %q", i, v, order[i])
+		}
+	}
+}
+
+// TestDispatchOjEventPublishesToJetStream verifies OJ events route to the OJ_EVENTS stream.
+func TestDispatchOjEventPublishesToJetStream(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	// Subscribe to OJ events.
+	sub, err := js.SubscribeSync(SubjectOjPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	// Also subscribe to hook events to verify OJ events don't end up there.
+	subHook, err := js.SubscribeSync(SubjectHookPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe hooks: %v", err)
+	}
+	defer subHook.Unsubscribe()
+
+	payload := OjJobEventPayload{JobID: "j-42", JobName: "Build", BeadID: "gt-xyz"}
+	raw, _ := json.Marshal(payload)
+
+	_, err = bus.Dispatch(context.Background(), &Event{Type: EventOjJobCompleted, Raw: raw})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	// Verify message arrived on OJ subject.
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected OJ JetStream message, got error: %v", err)
+	}
+
+	expectedSubject := SubjectForEvent(EventOjJobCompleted)
+	if msg.Subject != expectedSubject {
+		t.Errorf("expected subject %q, got %q", expectedSubject, msg.Subject)
+	}
+
+	// Verify payload preserved.
+	var decoded OjJobEventPayload
+	if err := json.Unmarshal(msg.Data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.JobID != "j-42" {
+		t.Errorf("JobID: expected %q, got %q", "j-42", decoded.JobID)
+	}
+	if decoded.BeadID != "gt-xyz" {
+		t.Errorf("BeadID: expected %q, got %q", "gt-xyz", decoded.BeadID)
+	}
+
+	// Verify no message on hook stream.
+	_, err = subHook.NextMsg(200 * time.Millisecond)
+	if err == nil {
+		t.Error("OJ event should not appear on hook stream")
+	}
+}
+
+// TestOjJetStreamSubjectRoutingAllTypes verifies each OJ event type routes to correct subject.
+func TestOjJetStreamSubjectRoutingAllTypes(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	sub, err := js.SubscribeSync(SubjectOjPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	ojTypes := []EventType{
+		EventOjJobCreated, EventOjStepAdvanced, EventOjAgentSpawned,
+		EventOjJobCompleted, EventOjJobFailed,
+	}
+
+	for _, et := range ojTypes {
+		raw, _ := json.Marshal(OjJobEventPayload{JobID: "j-route-test"})
+		_, err := bus.Dispatch(context.Background(), &Event{Type: et, Raw: raw})
+		if err != nil {
+			t.Fatalf("dispatch %s: %v", et, err)
+		}
+	}
+
+	// Verify all messages received with correct subjects.
+	for i, et := range ojTypes {
+		msg, err := sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Fatalf("message %d (%s): %v", i, et, err)
+		}
+		expected := SubjectForEvent(et)
+		if msg.Subject != expected {
+			t.Errorf("message %d: expected subject %q, got %q", i, expected, msg.Subject)
+		}
+	}
+}
+
+// TestDispatchExternalHandlerThroughBus verifies loaded external handlers participate in dispatch.
+func TestDispatchExternalHandlerThroughBus(t *testing.T) {
+	bus := New()
+
+	cfg := ExternalHandlerConfig{
+		ID:      "inject-logger",
+		Command: `echo '{"inject":["ext-handled"]}'`,
+		Events:  []string{"OjJobCompleted"},
+		Shell:   "sh",
+	}
+	cfgJSON, _ := json.Marshal(cfg)
+
+	n := bus.LoadPersistedHandlers(map[string]string{
+		HandlerConfigPrefix + "inject-logger": string(cfgJSON),
+	})
+	if n != 1 {
+		t.Fatalf("expected 1 handler loaded, got %d", n)
+	}
+
+	raw, _ := json.Marshal(OjJobEventPayload{JobID: "j-ext"})
+	result, err := bus.Dispatch(context.Background(), &Event{Type: EventOjJobCompleted, Raw: raw})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	if len(result.Inject) != 1 || result.Inject[0] != "ext-handled" {
+		t.Errorf("expected inject ['ext-handled'], got %v", result.Inject)
+	}
+}
+
+// TestDispatchExternalHandlerErrorContinuesChain verifies external handler errors
+// don't stop the dispatch chain.
+func TestDispatchExternalHandlerErrorContinuesChain(t *testing.T) {
+	bus := New()
+
+	// External handler that fails (exit 1).
+	failCfg := ExternalHandlerConfig{
+		ID: "fail-handler", Command: "exit 1",
+		Events: []string{"OjJobCompleted"}, Priority: 30,
+	}
+	failJSON, _ := json.Marshal(failCfg)
+
+	// Test handler that runs after.
+	var afterCalled bool
+	bus.Register(&testHandler{
+		id: "after-handler", handles: []EventType{EventOjJobCompleted}, priority: 50,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			afterCalled = true
+			result.Inject = append(result.Inject, "survived")
+			return nil
+		},
+	})
+
+	bus.LoadPersistedHandlers(map[string]string{
+		HandlerConfigPrefix + "fail-handler": string(failJSON),
+	})
+
+	raw, _ := json.Marshal(OjJobEventPayload{JobID: "j-chain"})
+	result, err := bus.Dispatch(context.Background(), &Event{Type: EventOjJobCompleted, Raw: raw})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	if !afterCalled {
+		t.Error("handler after failing external handler should have been called")
+	}
+	if len(result.Inject) != 1 || result.Inject[0] != "survived" {
+		t.Errorf("expected inject ['survived'], got %v", result.Inject)
+	}
+}
+
+// TestExternalHandlerReceivesOjPayloadOnStdin verifies OJ event JSON reaches external handler stdin.
+func TestExternalHandlerReceivesOjPayloadOnStdin(t *testing.T) {
+	bus := New()
+
+	// External handler that reads stdin and echoes the job_id back.
+	cfg := ExternalHandlerConfig{
+		ID:      "stdin-echo",
+		Command: `input=$(cat) && job_id=$(echo "$input" | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])") && echo "{\"inject\":[\"got:$job_id\"]}"`,
+		Events:  []string{"OjJobCompleted"},
+		Shell:   "bash",
+	}
+	cfgJSON, _ := json.Marshal(cfg)
+	bus.LoadPersistedHandlers(map[string]string{
+		HandlerConfigPrefix + "stdin-echo": string(cfgJSON),
+	})
+
+	raw, _ := json.Marshal(OjJobEventPayload{JobID: "j-stdin-42", BeadID: "gt-check"})
+	result, err := bus.Dispatch(context.Background(), &Event{Type: EventOjJobCompleted, Raw: raw})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	if len(result.Inject) != 1 || result.Inject[0] != "got:j-stdin-42" {
+		t.Errorf("expected inject ['got:j-stdin-42'], got %v", result.Inject)
+	}
+}
+
+// TestDispatchOjWithExternalHandlerAndJetStream verifies all three paths work together.
+func TestDispatchOjWithExternalHandlerAndJetStream(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	// Built-in test handler.
+	var builtinCalled bool
+	bus.Register(&testHandler{
+		id: "oj-builtin", handles: []EventType{EventOjJobCompleted}, priority: 40,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			builtinCalled = true
+			result.Inject = append(result.Inject, "builtin-ok")
+			return nil
+		},
+	})
+
+	// External handler.
+	cfg := ExternalHandlerConfig{
+		ID: "oj-ext", Command: `echo '{"inject":["ext-ok"]}'`,
+		Events: []string{"OjJobCompleted"}, Priority: 50,
+	}
+	cfgJSON, _ := json.Marshal(cfg)
+	bus.LoadPersistedHandlers(map[string]string{
+		HandlerConfigPrefix + "oj-ext": string(cfgJSON),
+	})
+
+	// Subscribe to JetStream.
+	sub, err := js.SubscribeSync(SubjectOjPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	raw, _ := json.Marshal(OjJobEventPayload{JobID: "j-triple"})
+	result, err := bus.Dispatch(context.Background(), &Event{Type: EventOjJobCompleted, Raw: raw})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	// Verify builtin handler executed.
+	if !builtinCalled {
+		t.Error("builtin handler not called")
+	}
+
+	// Verify both handlers contributed to result.
+	if len(result.Inject) != 2 {
+		t.Fatalf("expected 2 injections, got %d: %v", len(result.Inject), result.Inject)
+	}
+	if result.Inject[0] != "builtin-ok" {
+		t.Errorf("first inject: expected 'builtin-ok', got %q", result.Inject[0])
+	}
+	if result.Inject[1] != "ext-ok" {
+		t.Errorf("second inject: expected 'ext-ok', got %q", result.Inject[1])
+	}
+
+	// Verify JetStream received the event.
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected JetStream message: %v", err)
+	}
+	if msg.Subject != SubjectForEvent(EventOjJobCompleted) {
+		t.Errorf("expected subject %q, got %q", SubjectForEvent(EventOjJobCompleted), msg.Subject)
+	}
+}
+
+// TestConcurrentOjAndHookDispatch verifies no races when OJ and hook events dispatch concurrently.
+func TestConcurrentOjAndHookDispatch(t *testing.T) {
+	bus := New()
+
+	var ojCount, hookCount atomic.Int64
+
+	bus.Register(&testHandler{
+		id: "oj-counter", handles: []EventType{EventOjJobCompleted, EventOjJobFailed}, priority: 40,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			ojCount.Add(1)
+			return nil
+		},
+	})
+	bus.Register(&testHandler{
+		id: "hook-counter", handles: []EventType{EventSessionStart, EventStop}, priority: 10,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			hookCount.Add(1)
+			return nil
+		},
+	})
+
+	const goroutines = 40
+	done := make(chan struct{}, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func(i int) {
+			defer func() { done <- struct{}{} }()
+			var event *Event
+			switch i % 4 {
+			case 0:
+				raw, _ := json.Marshal(OjJobEventPayload{JobID: fmt.Sprintf("j-%d", i)})
+				event = &Event{Type: EventOjJobCompleted, Raw: raw}
+			case 1:
+				raw, _ := json.Marshal(OjJobEventPayload{JobID: fmt.Sprintf("j-%d", i)})
+				event = &Event{Type: EventOjJobFailed, Raw: raw}
+			case 2:
+				event = &Event{Type: EventSessionStart, SessionID: fmt.Sprintf("s-%d", i)}
+			case 3:
+				event = &Event{Type: EventStop, SessionID: fmt.Sprintf("s-%d", i)}
+			}
+			_, err := bus.Dispatch(context.Background(), event)
+			if err != nil {
+				t.Errorf("goroutine %d: %v", i, err)
+			}
+		}(i)
+	}
+
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+
+	// 40 goroutines: 10 OjJobCompleted + 10 OjJobFailed = 20 OJ events
+	if oj := ojCount.Load(); oj != 20 {
+		t.Errorf("expected 20 OJ handler calls, got %d", oj)
+	}
+	// 10 SessionStart + 10 Stop = 20 hook events
+	if hook := hookCount.Load(); hook != 20 {
+		t.Errorf("expected 20 hook handler calls, got %d", hook)
+	}
+}
+
 // TestCoopFieldsInStructJSON verifies that when Raw is absent (programmatic events),
 // the marshaled Event struct includes all fields Coop needs plus a timestamp.
 func TestCoopFieldsInStructJSON(t *testing.T) {
