@@ -159,6 +159,9 @@ dolt:
       schedule:
         enabled: false
         intervalMinutes: 60
+        gcEveryNCycles: 12
+        squashEveryNCycles: 48
+        squashThreshold: 100
 
   # EKS Pod Identity for S3 access (alternative to static credentials)
   podIdentity:

@@ -252,24 +252,83 @@ spec:
             - -c
             - |
               INTERVAL={{ mul .Values.dolt.s3.sync.schedule.intervalMinutes 60 }}
+              GC_EVERY={{ .Values.dolt.s3.sync.schedule.gcEveryNCycles | default 12 }}
+              SQUASH_EVERY={{ .Values.dolt.s3.sync.schedule.squashEveryNCycles | default 48 }}
+              SQUASH_THRESHOLD={{ .Values.dolt.s3.sync.schedule.squashThreshold | default 100 }}
               DB_DIR="{{ include "bd-daemon.dolt.databaseDir" . }}"
-              echo "Starting S3 sync sidecar (interval: ${INTERVAL}s)"
+              CYCLE=0
+              FORCE_PUSH=0
+              echo "Starting S3 sync sidecar (interval: ${INTERVAL}s, gc every ${GC_EVERY} cycles, squash every ${SQUASH_EVERY} cycles when >${SQUASH_THRESHOLD} commits)"
               while true; do
                 sleep $INTERVAL
-                echo "Running scheduled S3 sync..."
+                CYCLE=$((CYCLE + 1))
+                echo "Running scheduled S3 sync (cycle $CYCLE)..."
                 cd "$DB_DIR"
+
+                # --- Periodic squash: collapse commit history ---
+                if [ $((CYCLE % SQUASH_EVERY)) -eq 0 ]; then
+                  COMMIT_COUNT=$(dolt log --oneline | wc -l | tr -d ' ')
+                  if [ "$COMMIT_COUNT" -gt "$SQUASH_THRESHOLD" ]; then
+                    echo "Squashing $COMMIT_COUNT commits (threshold: $SQUASH_THRESHOLD)..."
+                    # Commit any uncommitted changes first
+                    if dolt status | grep -q "modified\|new file\|deleted"; then
+                      dolt add .
+                      dolt commit -m "Pre-squash commit at $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
+                    fi
+                    # Strip ANSI color codes from dolt log output
+                    ROOT=$(dolt log --oneline | tail -1 | sed 's/\x1b\[[0-9;]*m//g' | awk '{print $1}')
+                    if [ -n "$ROOT" ]; then
+                      if dolt reset --soft "$ROOT" 2>&1 && \
+                         dolt add . && \
+                         dolt commit -m "Squashed: auto-maintenance ($COMMIT_COUNT commits) at $(date -u +%Y-%m-%dT%H:%M:%SZ)"; then
+                        echo "Squash complete: $COMMIT_COUNT -> 2 commits"
+                        FORCE_PUSH=1
+                      else
+                        echo "Squash failed, continuing with normal sync"
+                      fi
+                    fi
+                    # Always GC after squash
+                    echo "Running dolt gc after squash..."
+                    dolt gc --shallow 2>&1 || echo "GC after squash failed"
+                  else
+                    echo "Squash skipped: only $COMMIT_COUNT commits (threshold: $SQUASH_THRESHOLD)"
+                  fi
+                fi
+
+                # --- Normal sync: commit + push ---
                 if dolt status | grep -q "modified\|new file\|deleted"; then
                   echo "Uncommitted changes detected, committing..."
                   dolt add .
                   dolt commit -m "Auto-commit at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
                   echo "Changes committed, pushing to S3..."
                   if dolt remote -v 2>/dev/null | grep -q origin; then
-                    dolt push origin main || echo "Push failed"
+                    if [ "$FORCE_PUSH" -eq 1 ]; then
+                      echo "Force pushing after squash..."
+                      dolt push --force origin main || echo "Force push failed"
+                      FORCE_PUSH=0
+                    else
+                      dolt push origin main || echo "Push failed"
+                    fi
                   else
                     echo "Warning: No remote configured, skipping push"
                   fi
                 else
-                  echo "No uncommitted changes"
+                  # Still need to force-push after squash even if no new changes
+                  if [ "$FORCE_PUSH" -eq 1 ]; then
+                    echo "Force pushing squashed history to S3..."
+                    if dolt remote -v 2>/dev/null | grep -q origin; then
+                      dolt push --force origin main || echo "Force push failed"
+                    fi
+                    FORCE_PUSH=0
+                  else
+                    echo "No uncommitted changes"
+                  fi
+                fi
+
+                # --- Periodic GC ---
+                if [ $((CYCLE % GC_EVERY)) -eq 0 ]; then
+                  echo "Running scheduled dolt gc (shallow)..."
+                  dolt gc --shallow 2>&1 && echo "GC complete" || echo "GC failed"
                 fi
               done
           env:
