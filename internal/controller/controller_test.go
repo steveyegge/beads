@@ -441,10 +441,13 @@ func TestReconcile_SpawningAgentAlreadyHasPod_Skips(t *testing.T) {
 		spawningAgents: []types.Issue{
 			makeSpawningAgent("agent-006", "polecat", "beads"),
 		},
+		registeredPods: []rpc.AgentPodInfo{
+			{AgentID: "agent-006", PodName: "agent-agent-006", AgentState: "running"},
+		},
 	}
 	ctrl, fakeClient := newTestController(t, mock)
 
-	// Pre-create the pod - agent already has one
+	// Pre-create the pod - agent already has one and is registered
 	_, err := fakeClient.CoreV1().Pods("test-ns").Create(context.Background(),
 		makeAgentPod("agent-006", "agent-agent-006", "test-ns", corev1.PodRunning),
 		metav1.CreateOptions{})
@@ -466,9 +469,48 @@ func TestReconcile_SpawningAgentAlreadyHasPod_Skips(t *testing.T) {
 		t.Errorf("expected still 1 pod (not duplicated), got %d", len(pods.Items))
 	}
 
-	// No registration call
+	// No registration call (already registered)
 	if len(mock.registeredCalls) != 0 {
-		t.Errorf("expected no register calls for existing pod, got %d", len(mock.registeredCalls))
+		t.Errorf("expected no register calls for existing registered pod, got %d", len(mock.registeredCalls))
+	}
+}
+
+func TestReconcile_SpawningAgentHasPodButNotRegistered_Registers(t *testing.T) {
+	// Pod exists in K8s but was never registered (e.g. registration failed on previous cycle).
+	// Controller should register the existing pod, not create a new one.
+	mock := &mockBeadsClient{
+		spawningAgents: []types.Issue{
+			makeSpawningAgent("agent-006b", "polecat", "beads"),
+		},
+	}
+	ctrl, fakeClient := newTestController(t, mock)
+
+	pod := makeAgentPod("agent-006b", "agent-agent-006b", "test-ns", corev1.PodRunning)
+	_, err := fakeClient.CoreV1().Pods("test-ns").Create(context.Background(), pod, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to pre-create pod: %v", err)
+	}
+
+	err = ctrl.reconcileOnce(context.Background())
+	if err != nil {
+		t.Fatalf("reconcileOnce error: %v", err)
+	}
+
+	// Pod should still exist (not duplicated)
+	pods, err := fakeClient.CoreV1().Pods("test-ns").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("failed to list pods: %v", err)
+	}
+	if len(pods.Items) != 1 {
+		t.Errorf("expected 1 pod (not duplicated, not orphan-deleted), got %d", len(pods.Items))
+	}
+
+	// Existing pod should be registered
+	if len(mock.registeredCalls) != 1 {
+		t.Fatalf("expected 1 register call for existing unregistered pod, got %d", len(mock.registeredCalls))
+	}
+	if mock.registeredCalls[0].agentID != "agent-006b" {
+		t.Errorf("expected register for 'agent-006b', got %q", mock.registeredCalls[0].agentID)
 	}
 }
 
@@ -1694,6 +1736,227 @@ func TestReconcile_OrphanedDoneAgent_DeregisterError(t *testing.T) {
 	err := ctrl.reconcileOnce(context.Background())
 	if err != nil {
 		t.Fatalf("reconcileOnce should continue on deregister error, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Step 6: Orphan Pod Cleanup Tests
+// =============================================================================
+
+func TestReconcile_OrphanPod_DeletedWhenNotRegistered(t *testing.T) {
+	// A K8s pod exists with our labels but is not registered in beads.
+	// This simulates the crash recovery scenario where the old pod was
+	// deregistered but not deleted from K8s.
+	mock := &mockBeadsClient{}
+	ctrl, fakeClient := newTestController(t, mock)
+
+	// Create an orphan pod — has managed-by label but no beads registration
+	orphanPod := makeAgentPod("orphan-agent", "agent-orphan-agent", "test-ns", corev1.PodRunning)
+	orphanPod.Labels[LabelManagedBy] = LabelManagedByValue
+	_, err := fakeClient.CoreV1().Pods("test-ns").Create(context.Background(), orphanPod, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create orphan pod: %v", err)
+	}
+
+	err = ctrl.reconcileOnce(context.Background())
+	if err != nil {
+		t.Fatalf("reconcileOnce error: %v", err)
+	}
+
+	// Orphan pod should be deleted
+	pods, err := fakeClient.CoreV1().Pods("test-ns").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("failed to list pods: %v", err)
+	}
+	if len(pods.Items) != 0 {
+		t.Errorf("expected orphan pod to be deleted, got %d pods", len(pods.Items))
+	}
+}
+
+func TestReconcile_RegisteredPod_NotDeletedAsOrphan(t *testing.T) {
+	// A pod that IS registered should NOT be deleted by orphan cleanup.
+	mock := &mockBeadsClient{
+		registeredPods: []rpc.AgentPodInfo{
+			{AgentID: "registered-agent", PodName: "agent-registered-agent", AgentState: "running"},
+		},
+	}
+	ctrl, fakeClient := newTestController(t, mock)
+
+	pod := makeAgentPod("registered-agent", "agent-registered-agent", "test-ns", corev1.PodRunning)
+	pod.Labels[LabelManagedBy] = LabelManagedByValue
+	_, err := fakeClient.CoreV1().Pods("test-ns").Create(context.Background(), pod, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create pod: %v", err)
+	}
+
+	err = ctrl.reconcileOnce(context.Background())
+	if err != nil {
+		t.Fatalf("reconcileOnce error: %v", err)
+	}
+
+	// Pod should NOT be deleted
+	pods, err := fakeClient.CoreV1().Pods("test-ns").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("failed to list pods: %v", err)
+	}
+	if len(pods.Items) != 1 {
+		t.Errorf("expected registered pod to survive orphan cleanup, got %d pods", len(pods.Items))
+	}
+}
+
+func TestReconcile_OrphanPodWithoutManagedByLabel_NotDeleted(t *testing.T) {
+	// A pod without the managed-by label should not be deleted as orphan.
+	mock := &mockBeadsClient{}
+	ctrl, fakeClient := newTestController(t, mock)
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foreign-pod",
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				LabelApp:   LabelAppValue,
+				LabelAgent: "some-agent",
+				// No LabelManagedBy
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	_, err := fakeClient.CoreV1().Pods("test-ns").Create(context.Background(), pod, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create pod: %v", err)
+	}
+
+	err = ctrl.reconcileOnce(context.Background())
+	if err != nil {
+		t.Fatalf("reconcileOnce error: %v", err)
+	}
+
+	// Pod should NOT be deleted (not managed by us)
+	pods, err := fakeClient.CoreV1().Pods("test-ns").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("failed to list pods: %v", err)
+	}
+	if len(pods.Items) != 1 {
+		t.Errorf("expected unmanaged pod to survive, got %d pods", len(pods.Items))
+	}
+}
+
+func TestReconcile_MixedOrphanAndRegistered(t *testing.T) {
+	// Mix of registered and orphan pods — only orphans should be deleted.
+	mock := &mockBeadsClient{
+		registeredPods: []rpc.AgentPodInfo{
+			{AgentID: "good-agent", PodName: "agent-good-agent", AgentState: "running"},
+		},
+	}
+	ctrl, fakeClient := newTestController(t, mock)
+
+	// Create the registered pod
+	goodPod := makeAgentPod("good-agent", "agent-good-agent", "test-ns", corev1.PodRunning)
+	goodPod.Labels[LabelManagedBy] = LabelManagedByValue
+	_, err := fakeClient.CoreV1().Pods("test-ns").Create(context.Background(), goodPod, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create good pod: %v", err)
+	}
+
+	// Create an orphan pod
+	orphanPod := makeAgentPod("orphan-agent", "agent-orphan-agent", "test-ns", corev1.PodRunning)
+	orphanPod.Labels[LabelManagedBy] = LabelManagedByValue
+	_, err = fakeClient.CoreV1().Pods("test-ns").Create(context.Background(), orphanPod, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create orphan pod: %v", err)
+	}
+
+	err = ctrl.reconcileOnce(context.Background())
+	if err != nil {
+		t.Fatalf("reconcileOnce error: %v", err)
+	}
+
+	// Only the registered pod should remain
+	pods, err := fakeClient.CoreV1().Pods("test-ns").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("failed to list pods: %v", err)
+	}
+	if len(pods.Items) != 1 {
+		t.Fatalf("expected 1 pod (registered), got %d", len(pods.Items))
+	}
+	if pods.Items[0].Name != "agent-good-agent" {
+		t.Errorf("expected surviving pod to be 'agent-good-agent', got %q", pods.Items[0].Name)
+	}
+}
+
+func TestReconcile_CrashRecoveryScenario_ReregistersExistingPod(t *testing.T) {
+	// Crash recovery scenario:
+	// Agent is spawning, pod exists in K8s but is not registered (registration
+	// failed on previous cycle). Controller should re-register the existing pod.
+	mock := &mockBeadsClient{
+		spawningAgents: []types.Issue{
+			makeSpawningAgent("crash-recover", "polecat", "beads"),
+		},
+	}
+	ctrl, fakeClient := newTestController(t, mock)
+
+	// Existing pod in K8s, NOT registered in beads
+	existingPod := makeAgentPod("crash-recover", "agent-crash-recover", "test-ns", corev1.PodRunning)
+	existingPod.Labels[LabelManagedBy] = LabelManagedByValue
+	_, err := fakeClient.CoreV1().Pods("test-ns").Create(context.Background(), existingPod, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create existing pod: %v", err)
+	}
+
+	err = ctrl.reconcileOnce(context.Background())
+	if err != nil {
+		t.Fatalf("reconcileOnce error: %v", err)
+	}
+
+	// Step 3 should register the existing pod, not create a new one
+	pods, err := fakeClient.CoreV1().Pods("test-ns").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("failed to list pods: %v", err)
+	}
+	if len(pods.Items) != 1 {
+		t.Fatalf("expected 1 pod (existing re-registered), got %d", len(pods.Items))
+	}
+	if pods.Items[0].Name != "agent-crash-recover" {
+		t.Errorf("expected pod 'agent-crash-recover', got %q", pods.Items[0].Name)
+	}
+
+	// The existing pod should be registered (not created new)
+	if len(mock.registeredCalls) != 1 {
+		t.Fatalf("expected 1 register call for re-registration, got %d", len(mock.registeredCalls))
+	}
+	if mock.registeredCalls[0].agentID != "crash-recover" {
+		t.Errorf("expected register for 'crash-recover', got %q", mock.registeredCalls[0].agentID)
+	}
+}
+
+func TestReconcile_OrphanPodFromDoneAgent_Deleted(t *testing.T) {
+	// True orphan scenario: agent went done, pod was deregistered from beads
+	// but not deleted from K8s. On next reconciliation, Step 6 cleans it up.
+	mock := &mockBeadsClient{
+		// Agent is no longer spawning, done, or registered — it's fully cleaned up
+		// in beads but the K8s pod is still running
+	}
+	ctrl, fakeClient := newTestController(t, mock)
+
+	orphanPod := makeAgentPod("finished-agent", "agent-finished-agent", "test-ns", corev1.PodRunning)
+	orphanPod.Labels[LabelManagedBy] = LabelManagedByValue
+	_, err := fakeClient.CoreV1().Pods("test-ns").Create(context.Background(), orphanPod, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create orphan pod: %v", err)
+	}
+
+	err = ctrl.reconcileOnce(context.Background())
+	if err != nil {
+		t.Fatalf("reconcileOnce error: %v", err)
+	}
+
+	// Orphan pod should be deleted by Step 6
+	pods, err := fakeClient.CoreV1().Pods("test-ns").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("failed to list pods: %v", err)
+	}
+	if len(pods.Items) != 0 {
+		t.Errorf("expected orphan pod to be deleted, got %d pods", len(pods.Items))
 	}
 }
 

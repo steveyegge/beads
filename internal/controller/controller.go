@@ -122,8 +122,20 @@ func (c *Controller) reconcileOnce(ctx context.Context) error {
 
 	// Step 3: Reconcile - create pods for spawning agents
 	for _, agent := range spawning {
-		if _, exists := podsByAgent[agent.ID]; exists {
-			c.logger.Printf("agent %s already has a pod, skipping create", agent.ID)
+		if existingPod, exists := podsByAgent[agent.ID]; exists {
+			// Pod exists in K8s — ensure it's registered in beads.
+			// This handles the case where pod creation succeeded but
+			// registration failed on a previous cycle.
+			if !registeredByAgent[agent.ID] {
+				c.logger.Printf("REGISTER existing pod %s for agent %s", existingPod.Name, agent.ID)
+				if err := c.beads.RegisterPod(agent.ID, existingPod.Name, PodIP(existingPod), PodNode(existingPod)); err != nil {
+					c.logger.Printf("ERROR registering existing pod for agent %s: %v", agent.ID, err)
+				} else {
+					registeredByAgent[agent.ID] = true
+				}
+			} else {
+				c.logger.Printf("agent %s already has a pod, skipping create", agent.ID)
+			}
 			continue
 		}
 		c.logger.Printf("CREATE pod for agent %s (state=%s, role=%s, rig=%s)",
@@ -190,8 +202,35 @@ func (c *Controller) reconcileOnce(ctx context.Context) error {
 		}
 	}
 
-	c.logger.Printf("reconciliation complete (spawning=%d, done=%d, registered=%d, actual=%d)",
-		len(spawning), len(done), len(registered), len(actualPods))
+	// Step 6: Orphan pod cleanup — delete K8s pods with our managed-by label
+	// that are not registered in beads. This catches pods left behind when a
+	// pod crashes and the controller creates a replacement in the same cycle:
+	// the old pod gets deregistered but not deleted from K8s.
+	orphanCount := 0
+	for i := range actualPods {
+		pod := &actualPods[i]
+		agentID := AgentIDFromPod(pod)
+		if agentID == "" {
+			continue
+		}
+		// Only clean up pods we manage
+		if pod.Labels[LabelManagedBy] != LabelManagedByValue {
+			continue
+		}
+		if !registeredByAgent[agentID] {
+			c.logger.Printf("DELETE orphan pod %s for unregistered agent %s", pod.Name, agentID)
+			if err := c.k8s.DeletePod(ctx, pod.Name); err != nil {
+				if !k8serrors.IsNotFound(err) {
+					c.logger.Printf("ERROR deleting orphan pod %s: %v", pod.Name, err)
+				}
+			} else {
+				orphanCount++
+			}
+		}
+	}
+
+	c.logger.Printf("reconciliation complete (spawning=%d, done=%d, registered=%d, actual=%d, orphans=%d)",
+		len(spawning), len(done), len(registered), len(actualPods), orphanCount)
 
 	return nil
 }
