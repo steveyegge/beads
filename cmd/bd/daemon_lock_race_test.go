@@ -616,3 +616,51 @@ func TestLockWithParentPID(t *testing.T) {
 		t.Errorf("Parent PID mismatch: expected %d, got %d", expectedParentPID, info.ParentPID)
 	}
 }
+
+// TestConcurrentClose verifies that calling DaemonLock.Close() concurrently
+// from multiple goroutines does not race or double-close the file descriptor.
+//
+// Race condition tested: signal handler and deferred cleanup both calling Close().
+// Run with: go test -race -run TestConcurrentClose -v
+func TestConcurrentClose(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	dbPath := filepath.Join(beadsDir, "beads.db")
+
+	lock, err := acquireDaemonLock(beadsDir, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to acquire lock: %v", err)
+	}
+
+	// Simulate signal handler + deferred cleanup racing on Close()
+	const goroutines = 10
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = lock.Close()
+		}(i)
+	}
+	wg.Wait()
+
+	// All calls should return the same error (nil on success)
+	for i, e := range errs {
+		if e != nil {
+			t.Errorf("goroutine %d: Close() returned error: %v", i, e)
+		}
+	}
+
+	// A second round of Close() calls should also be safe (idempotent)
+	for i := 0; i < 5; i++ {
+		if err := lock.Close(); err != nil {
+			t.Errorf("subsequent Close() call %d returned error: %v", i, err)
+		}
+	}
+}
