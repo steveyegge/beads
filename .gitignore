@@ -24,9 +24,6 @@ pkg/
 *.swo
 *~
 
-# Claude Code local state (skills, settings, etc.)
-.claude/
-
 # OS
 .DS_Store
 Thumbs.db
