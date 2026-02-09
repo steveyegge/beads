@@ -288,7 +288,7 @@ func TestRegisterMultipleEventTypes(t *testing.T) {
 
 // startTestNATS starts an embedded NATS server with JetStream for testing.
 // Returns the server, JetStream context, and a cleanup function.
-func startTestNATS(t *testing.T) (*natsserver.Server, nats.JetStreamContext, func()) {
+func startTestNATS(t testing.TB) (*natsserver.Server, nats.JetStreamContext, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	opts := &natsserver.Options{
