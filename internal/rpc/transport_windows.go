@@ -4,9 +4,10 @@ package rpc
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -40,6 +41,19 @@ func listenRPC(socketPath string) (net.Listener, error) {
 	return listener, nil
 }
 
+func validateEndpoint(info endpointInfo) error {
+	if info.Network != "" && info.Network != "tcp" {
+		return fmt.Errorf("invalid RPC endpoint: network must be tcp, got %q", info.Network)
+	}
+	if info.Address == "" {
+		return fmt.Errorf("invalid RPC endpoint: missing address")
+	}
+	if !strings.HasPrefix(info.Address, "127.0.0.1:") && !strings.HasPrefix(info.Address, "localhost:") {
+		return fmt.Errorf("invalid RPC endpoint: address must bind to localhost, got %q", info.Address)
+	}
+	return nil
+}
+
 func dialRPC(socketPath string, timeout time.Duration) (net.Conn, error) {
 	data, err := os.ReadFile(socketPath)
 	if err != nil {
@@ -51,16 +65,11 @@ func dialRPC(socketPath string, timeout time.Duration) (net.Conn, error) {
 		return nil, err
 	}
 
-	if info.Address == "" {
-		return nil, errors.New("invalid RPC endpoint: missing address")
+	if err := validateEndpoint(info); err != nil {
+		return nil, err
 	}
 
-	network := info.Network
-	if network == "" {
-		network = "tcp"
-	}
-
-	return net.DialTimeout(network, info.Address, timeout)
+	return net.DialTimeout("tcp", info.Address, timeout)
 }
 
 func endpointExists(socketPath string) bool {
