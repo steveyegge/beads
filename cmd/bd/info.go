@@ -551,7 +551,6 @@ var versionChanges = []VersionChange{
 			"NEW: bd state/set-state commands - Label-based state management",
 			"NEW: bd activity --town - Cross-rig aggregated activity feed",
 			"NEW: Convoy issue type - Reactive completion with 'tracks' relation",
-			"NEW: prepare-commit-msg hook - Agent identity trailers in commits",
 			"NEW: Daemon RPC endpoints - Config and mol stale queries",
 			"NEW: Non-TTY auto-detection - Cleaner output in pipes",
 			"FIX: Git hook chaining now works correctly (GH#816)",
