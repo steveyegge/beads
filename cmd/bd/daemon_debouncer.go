@@ -12,7 +12,8 @@ type Debouncer struct {
 	timer    *time.Timer
 	duration time.Duration
 	action   func()
-	seq      uint64 // Sequence number to prevent stale timer fires
+	seq      uint64         // Sequence number to prevent stale timer fires
+	wg       sync.WaitGroup // Tracks in-flight actions for graceful shutdown
 }
 
 // NewDebouncer creates a new debouncer with the given duration and action.
@@ -32,14 +33,20 @@ func (d *Debouncer) Trigger() {
 	defer d.mu.Unlock()
 
 	if d.timer != nil {
-		d.timer.Stop()
+		if d.timer.Stop() {
+			// Timer was stopped before firing; release WaitGroup for it
+			d.wg.Done()
+		}
 	}
 
 	// Increment sequence number to invalidate any pending timers
 	d.seq++
 	currentSeq := d.seq
 
+	d.wg.Add(1)
 	d.timer = time.AfterFunc(d.duration, func() {
+		defer d.wg.Done()
+
 		d.mu.Lock()
 		// Only fire if this is still the latest trigger
 		if d.seq != currentSeq {
@@ -58,12 +65,24 @@ func (d *Debouncer) Trigger() {
 
 // Cancel stops any pending debounced action.
 // Safe to call even if no action is pending.
+// Does NOT wait for an already-executing action to finish.
 func (d *Debouncer) Cancel() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if d.timer != nil {
-		d.timer.Stop()
+		if d.timer.Stop() {
+			// Timer was stopped before firing; release WaitGroup for it
+			d.wg.Done()
+		}
 		d.timer = nil
 	}
+}
+
+// CancelAndWait stops any pending debounced action and blocks until any
+// in-flight action completes. Use this during graceful shutdown to drain
+// in-flight sync operations (export/import).
+func (d *Debouncer) CancelAndWait() {
+	d.Cancel()
+	d.wg.Wait()
 }

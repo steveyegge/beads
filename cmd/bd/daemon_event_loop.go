@@ -50,13 +50,13 @@ func runEventDrivenLoop(
 		log.Info("Export triggered by mutation events")
 		doExport()
 	})
-	defer exportDebouncer.Cancel()
+	defer exportDebouncer.CancelAndWait()
 
 	importDebouncer := NewDebouncer(500*time.Millisecond, func() {
 		log.Info("Import triggered by file change")
 		doAutoImport()
 	})
-	defer importDebouncer.Cancel()
+	defer importDebouncer.CancelAndWait()
 
 	// Start file watcher for JSONL changes
 	watcher, err := NewFileWatcher(jsonlPath, func() {

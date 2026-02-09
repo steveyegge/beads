@@ -179,6 +179,81 @@ func TestDebouncer_MultipleSequentialTriggerCycles(t *testing.T) {
 	awaitCount(3)
 }
 
+func TestDebouncer_CancelAndWaitDrainsInFlight(t *testing.T) {
+	started := make(chan struct{})
+	done := make(chan struct{})
+	debouncer := NewDebouncer(10*time.Millisecond, func() {
+		close(started)
+		// Simulate a long-running sync operation
+		time.Sleep(200 * time.Millisecond)
+		close(done)
+	})
+
+	debouncer.Trigger()
+
+	// Wait for the action to start executing
+	select {
+	case <-started:
+	case <-time.After(1 * time.Second):
+		t.Fatal("action did not start in time")
+	}
+
+	// CancelAndWait should block until the action finishes
+	debouncer.CancelAndWait()
+
+	// Verify the action completed
+	select {
+	case <-done:
+		// Success - action completed before CancelAndWait returned
+	default:
+		t.Error("CancelAndWait returned before in-flight action completed")
+	}
+}
+
+func TestDebouncer_CancelAndWaitNoPending(t *testing.T) {
+	debouncer := NewDebouncer(50*time.Millisecond, func() {})
+
+	// CancelAndWait with nothing pending should return immediately
+	waitDone := make(chan struct{})
+	go func() {
+		debouncer.CancelAndWait()
+		close(waitDone)
+	}()
+
+	select {
+	case <-waitDone:
+	case <-time.After(1 * time.Second):
+		t.Fatal("CancelAndWait blocked with nothing pending")
+	}
+}
+
+func TestDebouncer_CancelAndWaitWithPendingTimer(t *testing.T) {
+	var count int32
+	debouncer := NewDebouncer(5*time.Second, func() {
+		// This should never fire - timer should be stopped
+		atomic.AddInt32(&count, 1)
+	})
+
+	debouncer.Trigger()
+
+	// CancelAndWait should stop the timer and return immediately
+	waitDone := make(chan struct{})
+	go func() {
+		debouncer.CancelAndWait()
+		close(waitDone)
+	}()
+
+	select {
+	case <-waitDone:
+	case <-time.After(1 * time.Second):
+		t.Fatal("CancelAndWait blocked with only a pending (not yet fired) timer")
+	}
+
+	if got := atomic.LoadInt32(&count); got != 0 {
+		t.Errorf("action should not have fired after CancelAndWait: got %d, want 0", got)
+	}
+}
+
 func TestDebouncer_CancelImmediatelyAfterTrigger(t *testing.T) {
 	var count int32
 	debouncer := NewDebouncer(50*time.Millisecond, func() {
