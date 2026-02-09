@@ -45,16 +45,30 @@ func init() {
 					return nil, berr
 				}
 
-				return dolt.New(ctx, &dolt.Config{
+				store, err = dolt.New(ctx, &dolt.Config{
 					Path:        path,
 					Database:    opts.Database,
 					ReadOnly:    opts.ReadOnly,
 					OpenTimeout: opts.OpenTimeout,
 					ServerMode:  false, // Fall back to embedded
 				})
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				return nil, err
 			}
-			return nil, err
 		}
+
+		// Seed custom types/statuses from config.yaml if not already in database.
+		// This self-heals databases that were created before types.custom was
+		// configured, or that lost config during a backend migration (e.g.,
+		// SQLite → Dolt). Uses check-then-set to avoid overwriting values
+		// that were explicitly configured via 'bd config set'. (bd-qbzia)
+		if !opts.ReadOnly {
+			seedConfigFromYAML(ctx, store)
+		}
+
 		return store, nil
 	})
 }
@@ -114,6 +128,30 @@ func hasDoltSubdir(basePath string) bool {
 		}
 	}
 	return false
+}
+
+// seedConfigFromYAML seeds custom types and statuses from config.yaml into the
+// database if they're not already set. This self-heals databases that were
+// created before types.custom was configured, or that lost config during a
+// backend migration (e.g., SQLite → Dolt). (bd-qbzia)
+//
+// Uses check-then-set semantics: only writes if the key has no value in the
+// database, preserving any explicitly configured values.
+func seedConfigFromYAML(ctx context.Context, store storage.Storage) {
+	// Seed types.custom
+	if yamlTypes := config.GetCustomTypesFromYAML(); len(yamlTypes) > 0 {
+		existing, err := store.GetConfig(ctx, "types.custom")
+		if err == nil && existing == "" {
+			_ = store.SetConfig(ctx, "types.custom", strings.Join(yamlTypes, ","))
+		}
+	}
+	// Seed status.custom
+	if yamlStatuses := config.GetCustomStatusesFromYAML(); len(yamlStatuses) > 0 {
+		existing, err := store.GetConfig(ctx, "status.custom")
+		if err == nil && existing == "" {
+			_ = store.SetConfig(ctx, "status.custom", strings.Join(yamlStatuses, ","))
+		}
+	}
 }
 
 // isServerConnectionError returns true if the error indicates the Dolt server
