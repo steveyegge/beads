@@ -1347,7 +1347,7 @@ func (s *DoltStore) ClearRepoMtime(ctx context.Context, repoPath string) error {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	_, err = s.db.ExecContext(ctx, `DELETE FROM repo_mtimes WHERE repo_path = ?`, absRepoPath)
+	_, err = s.execContext(ctx, `DELETE FROM repo_mtimes WHERE repo_path = ?`, absRepoPath)
 	if err != nil {
 		return fmt.Errorf("failed to delete mtime cache: %w", err)
 	}

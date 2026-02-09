@@ -10,7 +10,7 @@ import (
 
 // GetDirtyIssues returns IDs of issues that have been modified since last export
 func (s *DoltStore) GetDirtyIssues(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT issue_id FROM dirty_issues ORDER BY marked_at ASC
 	`)
 	if err != nil {
@@ -58,7 +58,7 @@ func (s *DoltStore) ClearDirtyIssuesByID(ctx context.Context, issueIDs []string)
 
 	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
 	query := fmt.Sprintf("DELETE FROM dirty_issues WHERE issue_id IN (%s)", strings.Join(placeholders, ","))
-	_, err := s.db.ExecContext(ctx, query, args...)
+	_, err := s.execContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to clear dirty issues: %w", err)
 	}
@@ -79,7 +79,7 @@ func (s *DoltStore) GetExportHash(ctx context.Context, issueID string) (string, 
 
 // SetExportHash stores the export hash for an issue
 func (s *DoltStore) SetExportHash(ctx context.Context, issueID, contentHash string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execContext(ctx, `
 		INSERT INTO export_hashes (issue_id, content_hash, exported_at)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE content_hash = VALUES(content_hash), exported_at = VALUES(exported_at)
@@ -92,7 +92,7 @@ func (s *DoltStore) SetExportHash(ctx context.Context, issueID, contentHash stri
 
 // ClearAllExportHashes removes all export hashes (for full re-export)
 func (s *DoltStore) ClearAllExportHashes(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM export_hashes")
+	_, err := s.execContext(ctx, "DELETE FROM export_hashes")
 	if err != nil {
 		return fmt.Errorf("failed to clear export hashes: %w", err)
 	}

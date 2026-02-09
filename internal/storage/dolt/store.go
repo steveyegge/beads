@@ -133,6 +133,18 @@ func isRetryableError(err error) bool {
 	if strings.Contains(errStr, "database is read only") {
 		return true
 	}
+	// MySQL error 2013: mid-query disconnect
+	if strings.Contains(errStr, "lost connection") {
+		return true
+	}
+	// MySQL error 2006: idle connection timeout
+	if strings.Contains(errStr, "gone away") {
+		return true
+	}
+	// Go net package timeout on read/write
+	if strings.Contains(errStr, "i/o timeout") {
+		return true
+	}
 	return false
 }
 
@@ -154,6 +166,37 @@ func (s *DoltStore) withRetry(ctx context.Context, op func() error) error {
 		}
 		return nil
 	}, backoff.WithContext(bo, ctx))
+}
+
+// execContext wraps s.db.ExecContext with server-mode retry for transient errors.
+func (s *DoltStore) execContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	var result sql.Result
+	err := s.withRetry(ctx, func() error {
+		var execErr error
+		result, execErr = s.db.ExecContext(ctx, query, args...)
+		return execErr
+	})
+	return result, err
+}
+
+// queryContext wraps s.db.QueryContext with server-mode retry for transient errors.
+func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	var rows *sql.Rows
+	err := s.withRetry(ctx, func() error {
+		var queryErr error
+		rows, queryErr = s.db.QueryContext(ctx, query, args...)
+		return queryErr
+	})
+	return rows, err
+}
+
+// queryRowContext wraps s.db.QueryRowContext with server-mode retry for transient errors.
+// The scan function receives the *sql.Row and should call .Scan() on it.
+func (s *DoltStore) queryRowContext(ctx context.Context, scan func(*sql.Row) error, query string, args ...any) error {
+	return s.withRetry(ctx, func() error {
+		row := s.db.QueryRowContext(ctx, query, args...)
+		return scan(row)
+	})
 }
 
 // New creates a new Dolt storage backend

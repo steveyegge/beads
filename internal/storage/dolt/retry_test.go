@@ -59,6 +59,21 @@ func TestIsRetryableError(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:     "lost connection - retryable (MySQL error 2013)",
+			err:      errors.New("Error 2013: Lost connection to MySQL server during query"),
+			expected: true,
+		},
+		{
+			name:     "server gone away - retryable (MySQL error 2006)",
+			err:      errors.New("Error 2006: MySQL server has gone away"),
+			expected: true,
+		},
+		{
+			name:     "i/o timeout - retryable",
+			err:      errors.New("read tcp 127.0.0.1:3307: i/o timeout"),
+			expected: true,
+		},
+		{
 			name:     "syntax error - not retryable",
 			err:      errors.New("Error 1064: You have an error in your SQL syntax"),
 			expected: false,

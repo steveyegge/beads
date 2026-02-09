@@ -244,7 +244,7 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		%s
 	`, whereSQL, limitSQL)
 
-	rows, err := s.db.QueryContext(ctx, querySQL, args...)
+	rows, err := s.queryContext(ctx, querySQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search issues: %w", err)
 	}
@@ -310,7 +310,7 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		%s
 	`, whereSQL, limitSQL)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ready work: %w", err)
 	}
@@ -325,7 +325,7 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 	defer s.mu.RUnlock()
 
 	// Use correlated subquery to avoid three-table merge join (Dolt mergeJoinIter panic)
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT i.id,
 		  (SELECT COUNT(*)
 		   FROM dependencies d
@@ -371,7 +371,7 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 
 		// Get blocker IDs
 		var blockerIDs []string
-		blockerRows, err := s.db.QueryContext(ctx, `
+		blockerRows, err := s.queryContext(ctx, `
 			SELECT d.depends_on_id
 			FROM dependencies d
 			WHERE d.issue_id = ?
@@ -407,7 +407,7 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 
 // GetEpicsEligibleForClosure returns epics whose children are all closed
 func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT e.id,
 		       (SELECT COUNT(*) FROM dependencies d JOIN issues c ON d.issue_id = c.id
 		        WHERE d.depends_on_id = e.id AND d.type = 'parent-child') as total_children,
@@ -474,7 +474,7 @@ func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter
 		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stale issues: %w", err)
 	}
@@ -517,7 +517,7 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 	// Step 1: Get IDs of open blockers
 	// Step 2: Count distinct blocked issues from those blockers
 	var blockedCount int
-	blockerRows, err := s.db.QueryContext(ctx, `
+	blockerRows, err := s.queryContext(ctx, `
 		SELECT DISTINCT d.issue_id
 		FROM dependencies d
 		WHERE d.type = 'blocks'
