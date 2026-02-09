@@ -15,7 +15,7 @@ const (
 func getDoltAutoCommitMode() (doltAutoCommitMode, error) {
 	mode := strings.TrimSpace(strings.ToLower(doltAutoCommit))
 	if mode == "" {
-		mode = string(doltAutoCommitOn)
+		mode = string(doltAutoCommitOff)
 	}
 	switch doltAutoCommitMode(mode) {
 	case doltAutoCommitOff:
