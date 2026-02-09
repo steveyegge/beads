@@ -579,7 +579,7 @@ variable.`,
 				if isCanceled(err) {
 					fmt.Fprintln(os.Stderr, "Setup canceled.")
 					_ = store.Close()
-					os.Exit(1)
+					exitCanceled()
 				}
 				// Non-fatal: warn but continue with default behavior
 				if !quiet {
@@ -591,30 +591,38 @@ variable.`,
 		}
 
 		// Run contributor wizard if --contributor flag is set or user chose contributor
-		if contributor {
-			if err := runContributorWizard(ctx, store); err != nil {
-				if isCanceled(err) {
-					fmt.Fprintln(os.Stderr, "Setup canceled.")
-				} else {
-					fmt.Fprintf(os.Stderr, "Error running contributor wizard: %v\n", err)
+			if contributor {
+				if err := runContributorWizard(ctx, store); err != nil {
+					canceled := isCanceled(err)
+					if canceled {
+						fmt.Fprintln(os.Stderr, "Setup canceled.")
+					} else {
+						fmt.Fprintf(os.Stderr, "Error running contributor wizard: %v\n", err)
+					}
+					_ = store.Close()
+					if canceled {
+						exitCanceled()
+					}
+					os.Exit(1)
 				}
-				_ = store.Close()
-				os.Exit(1)
 			}
-		}
 
 		// Run team wizard if --team flag is set
-		if team {
-			if err := runTeamWizard(ctx, store); err != nil {
-				if isCanceled(err) {
-					fmt.Fprintln(os.Stderr, "Setup canceled.")
-				} else {
-					fmt.Fprintf(os.Stderr, "Error running team wizard: %v\n", err)
+			if team {
+				if err := runTeamWizard(ctx, store); err != nil {
+					canceled := isCanceled(err)
+					if canceled {
+						fmt.Fprintln(os.Stderr, "Setup canceled.")
+					} else {
+						fmt.Fprintf(os.Stderr, "Error running team wizard: %v\n", err)
+					}
+					_ = store.Close()
+					if canceled {
+						exitCanceled()
+					}
+					os.Exit(1)
 				}
-				_ = store.Close()
-				os.Exit(1)
 			}
-		}
 
 		if err := store.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
@@ -634,7 +642,7 @@ variable.`,
 				if err != nil {
 					if isCanceled(err) {
 						fmt.Fprintln(os.Stderr, "Setup canceled.")
-						os.Exit(1)
+						exitCanceled()
 					}
 				}
 				if shouldExclude {
@@ -1086,7 +1094,7 @@ func promptContributorMode() (isContributor bool, err error) {
 		fmt.Printf("\n%s Already configured as: %s\n", ui.RenderAccent("▶"), ui.RenderBold(existingRole))
 		fmt.Print("Change role? [y/N]: ")
 
-		response, err := readLineWithContext(ctx, reader)
+		response, err := readLineWithContext(ctx, reader, os.Stdin)
 		if err != nil {
 			return false, fmt.Errorf("failed to read input: %w", err)
 		}
@@ -1103,7 +1111,7 @@ func promptContributorMode() (isContributor bool, err error) {
 	// Prompt for role
 	fmt.Print("Contributing to someone else's repo? [y/N]: ")
 
-	response, err := readLineWithContext(ctx, reader)
+	response, err := readLineWithContext(ctx, reader, os.Stdin)
 	if err != nil {
 		return false, fmt.Errorf("failed to read input: %w", err)
 	}

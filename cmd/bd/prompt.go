@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,8 +13,11 @@ import (
 // notifyContext is overridden in tests to avoid sending real signals.
 var notifyContext = signal.NotifyContext
 
+const exitCodeCanceled = 130
+
 // readLineWithContext returns a line from reader or ctx.Err() if canceled.
-func readLineWithContext(ctx context.Context, reader *bufio.Reader) (string, error) {
+// If closer is provided, it is closed on cancellation to unblock the read.
+func readLineWithContext(ctx context.Context, reader *bufio.Reader, closer io.Closer) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -38,6 +42,9 @@ func readLineWithContext(ctx context.Context, reader *bufio.Reader) (string, err
 
 	select {
 	case <-sigCtx.Done():
+		if closer != nil {
+			_ = closer.Close()
+		}
 		return "", sigCtx.Err()
 	case res := <-resultCh:
 		return res.line, res.err
@@ -46,4 +53,8 @@ func readLineWithContext(ctx context.Context, reader *bufio.Reader) (string, err
 
 func isCanceled(err error) bool {
 	return errors.Is(err, context.Canceled)
+}
+
+func exitCanceled() {
+	os.Exit(exitCodeCanceled)
 }

@@ -52,7 +52,7 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Println("  GitLab: Settings → Repository → Protected branches")
 	fmt.Print("\nProtected main branch? [y/N]: ")
 
-	response, err := readLineWithContext(ctx, reader)
+	response, err := readLineWithContext(ctx, reader, os.Stdin)
 	if err != nil {
 		if isCanceled(err) {
 			return err
@@ -71,7 +71,7 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 		fmt.Printf("  Default sync branch: %s\n", ui.RenderAccent("beads-metadata"))
 		fmt.Print("\n  Sync branch name [press Enter for default]: ")
 
-		branchName, err := readLineWithContext(ctx, reader)
+		branchName, err := readLineWithContext(ctx, reader, os.Stdin)
 		if err != nil {
 			if isCanceled(err) {
 				return err
@@ -129,7 +129,7 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Println("  • Auto-push: Pushes commits to remote")
 	fmt.Print("\nEnable auto-sync? [Y/n]: ")
 
-	response, err = readLineWithContext(ctx, reader)
+	response, err = readLineWithContext(ctx, reader, os.Stdin)
 	if err != nil {
 		if isCanceled(err) {
 			return err

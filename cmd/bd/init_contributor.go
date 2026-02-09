@@ -33,7 +33,7 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 		fmt.Println("  you likely don't need --contributor.")
 		fmt.Println()
 		fmt.Print("Continue anyway? [y/N]: ")
-		response, err := readLineWithContext(ctx, reader)
+		response, err := readLineWithContext(ctx, reader, os.Stdin)
 		if err != nil {
 			if isCanceled(err) {
 				return err
@@ -64,7 +64,7 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 
 		// Ask if they want to continue anyway
 		fmt.Print("Continue with contributor setup? [y/N]: ")
-		response, err := readLineWithContext(ctx, reader)
+		response, err := readLineWithContext(ctx, reader, os.Stdin)
 		if err != nil {
 			if isCanceled(err) {
 				return err
@@ -89,7 +89,7 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 		fmt.Printf("  %s You can commit directly to this repository.\n", ui.RenderWarn("⚠"))
 		fmt.Println()
 		fmt.Print("Do you want to use a separate planning repo anyway? [Y/n]: ")
-		response, err := readLineWithContext(ctx, reader)
+		response, err := readLineWithContext(ctx, reader, os.Stdin)
 		if err != nil {
 			if isCanceled(err) {
 				return err
@@ -126,7 +126,7 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Printf("Default: %s\n", ui.RenderAccent(defaultPlanningRepo))
 	fmt.Print("Planning repo path [press Enter for default]: ")
 
-	planningPath, err := readLineWithContext(ctx, reader)
+	planningPath, err := readLineWithContext(ctx, reader, os.Stdin)
 	if err != nil {
 		if isCanceled(err) {
 			return err

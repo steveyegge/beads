@@ -200,7 +200,7 @@ func promptForkExclude(upstreamURL string, quiet bool) (bool, error) {
 	fmt.Print("\n[Y/n]: ")
 
 	reader := bufio.NewReader(os.Stdin)
-	response, err := readLineWithContext(getRootContext(), reader)
+	response, err := readLineWithContext(getRootContext(), reader, os.Stdin)
 	if err != nil {
 		if isCanceled(err) {
 			return false, err

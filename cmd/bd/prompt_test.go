@@ -40,7 +40,7 @@ func TestReadLineWithContextReadsLine(t *testing.T) {
 	stub := installNotifyStub(t)
 
 	reader := bufio.NewReader(strings.NewReader("yes\n"))
-	line, err := readLineWithContext(context.Background(), reader)
+	line, err := readLineWithContext(context.Background(), reader, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestReadLineWithContextCanceled(t *testing.T) {
 	reader := bufio.NewReader(pr)
 	done := make(chan error, 1)
 	go func() {
-		_, err := readLineWithContext(context.Background(), reader)
+		_, err := readLineWithContext(context.Background(), reader, pr)
 		done <- err
 	}()
 
