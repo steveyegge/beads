@@ -358,7 +358,8 @@ func runCreateForm(cmd *cobra.Command) {
 
 		resp, err := daemonClient.Create(createArgs)
 		if err != nil {
-			FatalError("%v", err)
+			printFormDataOnError(fv, err)
+			os.Exit(1)
 		}
 
 		if jsonOutput {
@@ -376,7 +377,8 @@ func runCreateForm(cmd *cobra.Command) {
 	// Direct mode - use the extracted creation function
 	issue, err := CreateIssueFromFormValues(rootCtx, store, fv, actor)
 	if err != nil {
-		FatalError("%v", err)
+		printFormDataOnError(fv, err)
+		os.Exit(1)
 	}
 
 	// Schedule auto-flush
@@ -387,6 +389,49 @@ func runCreateForm(cmd *cobra.Command) {
 	} else {
 		printCreatedIssue(issue)
 	}
+}
+
+// printFormDataOnError prints the form data as JSON to stderr so the user
+// can recover their input when issue creation fails for any reason
+// (e.g., daemon not running, database error, flush failure).
+func printFormDataOnError(fv *createFormValues, originalErr error) {
+	fmt.Fprintf(os.Stderr, "Error: %v\n", originalErr)
+
+	data, err := json.MarshalIndent(map[string]interface{}{
+		"title":               fv.Title,
+		"description":         fv.Description,
+		"type":                fv.IssueType,
+		"priority":            fv.Priority,
+		"assignee":            fv.Assignee,
+		"labels":              fv.Labels,
+		"design":              fv.Design,
+		"acceptance_criteria": fv.AcceptanceCriteria,
+		"external_ref":        fv.ExternalRef,
+		"dependencies":        fv.Dependencies,
+	}, "", "  ")
+	if err != nil {
+		// Last resort: print raw values if JSON marshaling fails
+		fmt.Fprintf(os.Stderr, "\nForm data (raw):\n")
+		fmt.Fprintf(os.Stderr, "  Title: %s\n", fv.Title)
+		fmt.Fprintf(os.Stderr, "  Description: %s\n", fv.Description)
+		fmt.Fprintf(os.Stderr, "  Type: %s\n", fv.IssueType)
+		fmt.Fprintf(os.Stderr, "  Priority: %d\n", fv.Priority)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "\nYour form data (use with 'bd create' flags to retry):\n%s\n", string(data))
+	fmt.Fprintf(os.Stderr, "\nEquivalent command:\n  bd create --title=%q --description=%q --type=%s --priority=%d",
+		fv.Title, fv.Description, fv.IssueType, fv.Priority)
+	if fv.Assignee != "" {
+		fmt.Fprintf(os.Stderr, " --assignee=%q", fv.Assignee)
+	}
+	if fv.Design != "" {
+		fmt.Fprintf(os.Stderr, " --design=%q", fv.Design)
+	}
+	if fv.ExternalRef != "" {
+		fmt.Fprintf(os.Stderr, " --external-ref=%q", fv.ExternalRef)
+	}
+	fmt.Fprintf(os.Stderr, "\n")
 }
 
 func printCreatedIssue(issue *types.Issue) {
