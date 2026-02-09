@@ -20,6 +20,11 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Println("This wizard will configure beads for team collaboration.")
 	fmt.Println()
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	reader := bufio.NewReader(os.Stdin)
+
 	// Step 1: Check if we're in a git repository
 	fmt.Printf("%s Detecting git repository setup...\n", ui.RenderAccent("▶"))
 
@@ -47,8 +52,13 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Println("  GitLab: Settings → Repository → Protected branches")
 	fmt.Print("\nProtected main branch? [y/N]: ")
 
-	reader := bufio.NewReader(os.Stdin)
-	response, _ := reader.ReadString('\n')
+	response, err := readLineWithContext(ctx, reader)
+	if err != nil {
+		if isCanceled(err) {
+			return err
+		}
+		response = ""
+	}
 	response = strings.TrimSpace(strings.ToLower(response))
 
 	protectedMain := (response == "y" || response == "yes")
@@ -61,7 +71,13 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 		fmt.Printf("  Default sync branch: %s\n", ui.RenderAccent("beads-metadata"))
 		fmt.Print("\n  Sync branch name [press Enter for default]: ")
 
-		branchName, _ := reader.ReadString('\n')
+		branchName, err := readLineWithContext(ctx, reader)
+		if err != nil {
+			if isCanceled(err) {
+				return err
+			}
+			branchName = ""
+		}
 		branchName = strings.TrimSpace(branchName)
 
 		if branchName == "" {
@@ -113,7 +129,13 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Println("  • Auto-push: Pushes commits to remote")
 	fmt.Print("\nEnable auto-sync? [Y/n]: ")
 
-	response, _ = reader.ReadString('\n')
+	response, err = readLineWithContext(ctx, reader)
+	if err != nil {
+		if isCanceled(err) {
+			return err
+		}
+		response = ""
+	}
 	response = strings.TrimSpace(strings.ToLower(response))
 
 	autoSync := !(response == "n" || response == "no")

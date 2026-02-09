@@ -20,6 +20,11 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Println("This wizard will configure beads for OSS contribution.")
 	fmt.Println()
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	reader := bufio.NewReader(os.Stdin)
+
 	// Early check: BEADS_DIR takes precedence over routing
 	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
 		fmt.Printf("%s BEADS_DIR is set: %s\n", ui.RenderWarn("⚠"), beadsDir)
@@ -28,8 +33,13 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 		fmt.Println("  you likely don't need --contributor.")
 		fmt.Println()
 		fmt.Print("Continue anyway? [y/N]: ")
-		reader := bufio.NewReader(os.Stdin)
-		response, _ := reader.ReadString('\n')
+		response, err := readLineWithContext(ctx, reader)
+		if err != nil {
+			if isCanceled(err) {
+				return err
+			}
+			response = ""
+		}
 		response = strings.TrimSpace(strings.ToLower(response))
 
 		if response != "y" && response != "yes" {
@@ -54,8 +64,13 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 
 		// Ask if they want to continue anyway
 		fmt.Print("Continue with contributor setup? [y/N]: ")
-		reader := bufio.NewReader(os.Stdin)
-		response, _ := reader.ReadString('\n')
+		response, err := readLineWithContext(ctx, reader)
+		if err != nil {
+			if isCanceled(err) {
+				return err
+			}
+			response = ""
+		}
 		response = strings.TrimSpace(strings.ToLower(response))
 
 		if response != "y" && response != "yes" {
@@ -74,8 +89,13 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 		fmt.Printf("  %s You can commit directly to this repository.\n", ui.RenderWarn("⚠"))
 		fmt.Println()
 		fmt.Print("Do you want to use a separate planning repo anyway? [Y/n]: ")
-		reader := bufio.NewReader(os.Stdin)
-		response, _ := reader.ReadString('\n')
+		response, err := readLineWithContext(ctx, reader)
+		if err != nil {
+			if isCanceled(err) {
+				return err
+			}
+			response = ""
+		}
 		response = strings.TrimSpace(strings.ToLower(response))
 
 		if response == "n" || response == "no" {
@@ -106,8 +126,13 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Printf("Default: %s\n", ui.RenderAccent(defaultPlanningRepo))
 	fmt.Print("Planning repo path [press Enter for default]: ")
 
-	reader := bufio.NewReader(os.Stdin)
-	planningPath, _ := reader.ReadString('\n')
+	planningPath, err := readLineWithContext(ctx, reader)
+	if err != nil {
+		if isCanceled(err) {
+			return err
+		}
+		planningPath = ""
+	}
 	planningPath = strings.TrimSpace(planningPath)
 
 	if planningPath == "" {
