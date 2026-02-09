@@ -147,10 +147,9 @@ func (s *Server) handleRequest(req *Request) Response {
 	}
 
 	// Check for stale JSONL and auto-import if needed
-	// Skip for write operations that will trigger export anyway
-	// Skip for import operation itself to avoid recursion
-	if req.Operation != OpPing && req.Operation != OpHealth && req.Operation != OpMetrics &&
-		req.Operation != OpExport {
+	// Skip for operations that don't need fresh data: shutdown, diagnostics,
+	// export (triggers its own sync), and lightweight probes (ping/health/metrics)
+	if !skipAutoImport(req.Operation) {
 		if err := s.checkAndAutoImportIfStale(req); err != nil {
 			// Log warning but continue - don't fail the request
 			fmt.Fprintf(os.Stderr, "Warning: staleness check failed: %v\n", err)
@@ -254,6 +253,29 @@ func (s *Server) handleRequest(req *Request) Response {
 	}
 
 	return resp
+}
+
+// skipAutoImport returns true for operations where the auto-import staleness
+// check should be skipped. This includes: lightweight probes (ping, health,
+// metrics), export (handles its own sync), shutdown (counterproductive to
+// import during teardown), and read-only diagnostic/monitoring operations.
+func skipAutoImport(op string) bool {
+	switch op {
+	case OpPing, OpHealth, OpMetrics, OpExport:
+		// Original skip list: probes and export
+		return true
+	case OpShutdown:
+		// Importing during shutdown is counterproductive
+		return true
+	case OpGetMutations, OpGetMoleculeProgress, OpGetWorkerStatus, OpGetConfig, OpMolStale, OpCompactStats:
+		// Read-only diagnostic/monitoring operations
+		return true
+	case OpGateCreate, OpGateList, OpGateShow, OpGateClose, OpGateWait:
+		// Gate operations are coordination primitives, not data queries
+		return true
+	default:
+		return false
+	}
 }
 
 // Adapter helpers
