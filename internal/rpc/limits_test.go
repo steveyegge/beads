@@ -282,6 +282,83 @@ func TestShutdownDrainsBeforeClosingStorage(t *testing.T) {
 	}
 }
 
+// TestIdleConnectionClosedByServer verifies that when a client connects but
+// doesn't send a request within the server's requestTimeout, the server closes
+// the connection and the client gets a write error ("broken pipe" or similar).
+// This reproduces GH#933: `bd create-form` fails when the user spends too long
+// filling out the interactive form, because the connection established at startup
+// goes stale during the form interaction.
+func TestIdleConnectionClosedByServer(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "test.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := sqlite.New(context.Background(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.SetConfig(context.Background(), "issue_prefix", "test")
+
+	socketPath := newTestSocketPath(t)
+
+	// Set a very short timeout to simulate the form delay
+	os.Setenv("BEADS_DAEMON_REQUEST_TIMEOUT", "200ms")
+	defer os.Unsetenv("BEADS_DAEMON_REQUEST_TIMEOUT")
+
+	srv := NewServer(socketPath, store, tmpDir, dbPath)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		if err := srv.Start(ctx); err != nil && ctx.Err() == nil {
+			t.Logf("server error: %v", err)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	defer srv.Stop()
+
+	// Step 1: Connect a client and do a health check (simulates PersistentPreRun)
+	client, err := TryConnect(socketPath)
+	if err != nil || client == nil {
+		t.Fatalf("initial connect failed: %v", err)
+	}
+	client.SetDatabasePath(dbPath)
+
+	// Step 2: Simulate the user filling out the form for longer than the timeout
+	time.Sleep(400 * time.Millisecond)
+
+	// Step 3: Try to create an issue - should fail because server closed the connection
+	createArgs := &CreateArgs{
+		Title:     "Test issue",
+		IssueType: "task",
+		Priority:  2,
+	}
+	_, createErr := client.Create(createArgs)
+	if createErr == nil {
+		t.Fatal("expected error after idle timeout, but Create succeeded")
+	}
+	t.Logf("got expected error on stale connection: %v", createErr)
+	client.Close()
+
+	// Step 4: Reconnect and verify the daemon is still alive and functional
+	client2, err := TryConnect(socketPath)
+	if err != nil || client2 == nil {
+		t.Fatalf("reconnect failed: %v", err)
+	}
+	defer client2.Close()
+	client2.SetDatabasePath(dbPath)
+
+	_, err = client2.Create(createArgs)
+	if err != nil {
+		t.Fatalf("create after reconnect failed: %v", err)
+	}
+}
+
 func TestHealthResponseIncludesLimits(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")

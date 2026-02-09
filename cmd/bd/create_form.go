@@ -341,7 +341,16 @@ func runCreateForm(cmd *cobra.Command) {
 	// Parse the form input
 	fv := parseCreateFormInput(raw)
 
-	// If daemon is running, use RPC
+	// Reconnect to the daemon if one was active at startup. The daemon's read
+	// deadline (default 30s) may have expired while the user was filling out the
+	// interactive form, causing the server to close the idle connection.
+	// Establishing a fresh connection avoids the "broken pipe" error that occurs
+	// when writing to a closed socket. (GH#933)
+	if daemonClient != nil {
+		reconnectDaemonClient()
+	}
+
+	// If daemon is available (possibly after reconnect), use RPC
 	if daemonClient != nil {
 		createArgs := &rpc.CreateArgs{
 			Title:              fv.Title,
@@ -389,6 +398,26 @@ func runCreateForm(cmd *cobra.Command) {
 	} else {
 		printCreatedIssue(issue)
 	}
+}
+
+// reconnectDaemonClient closes the existing daemon connection and opens a fresh one.
+// This is needed for interactive commands (like create-form) where the user may spend
+// longer than the daemon's request timeout (default 30s) filling out the form,
+// causing the server to close the idle connection. (GH#933)
+func reconnectDaemonClient() {
+	socketPath := getSocketPath()
+	if old := getDaemonClient(); old != nil {
+		_ = old.Close()
+	}
+	client, err := rpc.TryConnect(socketPath)
+	if err != nil || client == nil {
+		// Daemon went away during the form; clear the client so we fall
+		// through to direct mode.
+		setDaemonClient(nil)
+		return
+	}
+	client.SetActor(actor)
+	setDaemonClient(client)
 }
 
 // printFormDataOnError prints the form data as JSON to stderr so the user
