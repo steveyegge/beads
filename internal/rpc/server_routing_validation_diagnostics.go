@@ -197,6 +197,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleDepAdd(req)
 	case OpDepRemove:
 		resp = s.handleDepRemove(req)
+	case OpDepTree:
+		resp = s.handleDepTree(req)
 	case OpLabelAdd:
 		resp = s.handleLabelAdd(req)
 	case OpLabelRemove:

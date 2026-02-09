@@ -133,6 +133,42 @@ func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc 
 	return Response{Success: true}
 }
 
+func (s *Server) handleDepTree(req *Request) Response {
+	var depArgs DepTreeArgs
+	if err := json.Unmarshal(req.Args, &depArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid dep tree args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	maxDepth := depArgs.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = 50
+	}
+
+	ctx, cancel := s.reqCtx(req)
+	defer cancel()
+	tree, err := store.GetDependencyTree(ctx, depArgs.ID, maxDepth, false, false)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get dependency tree: %v", err),
+		}
+	}
+
+	data, _ := json.Marshal(tree)
+	return Response{Success: true, Data: data}
+}
+
 func (s *Server) handleDepRemove(req *Request) Response {
 	var depArgs DepRemoveArgs
 	return s.handleSimpleStoreOp(req, &depArgs, "dep remove",
