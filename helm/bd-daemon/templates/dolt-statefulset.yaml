@@ -275,6 +275,12 @@ spec:
                       dolt add .
                       dolt commit -m "Pre-squash commit at $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
                     fi
+                    # Backup current branch before squash
+                    BACKUP_BRANCH="backup/pre-squash-$(date -u +%Y%m%dT%H%M%SZ)"
+                    dolt branch "$BACKUP_BRANCH" 2>&1 && echo "Created backup branch: $BACKUP_BRANCH" || echo "Warning: backup branch creation failed"
+                    if dolt remote -v 2>/dev/null | grep -q origin; then
+                      dolt push origin "$BACKUP_BRANCH" 2>&1 && echo "Pushed backup branch to S3" || echo "Warning: backup branch push failed"
+                    fi
                     # Strip ANSI color codes from dolt log output
                     ROOT=$(dolt log --oneline | tail -1 | sed 's/\x1b\[[0-9;]*m//g' | awk '{print $1}')
                     if [ -n "$ROOT" ]; then
