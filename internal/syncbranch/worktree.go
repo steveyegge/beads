@@ -1011,8 +1011,9 @@ Merge error: %v`, branch, remote, branch, branch, lastErr, mergeErr)
 //
 // Returns error if push fails.
 func pushSyncBranch(ctx context.Context, repoRoot, syncBranch string) error {
-	// Worktree path is under .git/beads-worktrees/<branch>
-	worktreePath := filepath.Join(repoRoot, ".git", "beads-worktrees", syncBranch)
+	// GH#bd-n3v: Use getBeadsWorktreePath instead of hardcoding .git path.
+	// When run from a git worktree, .git is a file, not a directory.
+	worktreePath := getBeadsWorktreePath(ctx, repoRoot, syncBranch)
 
 	// Recreate worktree if it was cleaned up, using the same pattern as CommitToSyncBranch
 	wtMgr := git.NewWorktreeManager(repoRoot)
