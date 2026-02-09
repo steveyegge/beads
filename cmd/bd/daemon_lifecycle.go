@@ -143,7 +143,6 @@ func showDaemonHealth() {
 
 	if client == nil {
 		// Check if lock is held to provide better diagnostic message
-		beadsDir := filepath.Dir(socketPath)
 		running, _ := tryDaemonLock(beadsDir)
 		if running {
 			fmt.Println("Daemon lock is held but connection failed")

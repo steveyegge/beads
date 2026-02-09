@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/steveyegge/beads/internal/rpc"
 )
 
 // Daemon fixes daemon issues (stale sockets, version mismatches, duplicates)
@@ -14,13 +16,18 @@ func Daemon(path string) error {
 		return err
 	}
 
-	beadsDir := filepath.Join(path, ".beads")
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	socketPath := rpc.ShortSocketPath(path)
+	legacySocketPath := filepath.Join(path, ".beads", "bd.sock")
 
 	// Check if there's actually a socket or daemon issue to fix
 	hasSocket := false
 	if _, err := os.Stat(socketPath); err == nil {
 		hasSocket = true
+	} else if socketPath != legacySocketPath {
+		// Also check legacy path for backwards compatibility
+		if _, err := os.Stat(legacySocketPath); err == nil {
+			hasSocket = true
+		}
 	}
 
 	if !hasSocket {

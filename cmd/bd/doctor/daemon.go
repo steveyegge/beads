@@ -49,20 +49,23 @@ func CheckDaemonStatus(path string, cliVersion string) DoctorCheck {
 	}
 
 	// Check for stale socket directly (catches cases where RPC failed so WorkspacePath is empty)
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
-	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	socketPath := rpc.ShortSocketPath(path)
+	legacySocketPath := filepath.Join(resolveBeadsDir(filepath.Join(path, ".beads")), "bd.sock")
+	staleSocket := ""
 	if _, err := os.Stat(socketPath); err == nil {
-		// Socket exists - try to connect
-		if len(workspaceDaemons) == 0 {
-			// Socket exists but no daemon found in registry - likely stale
-			return DoctorCheck{
-				Name:    "Daemon Health",
-				Status:  StatusWarning,
-				Message: "Stale daemon socket detected",
-				Detail:  fmt.Sprintf("Socket exists at %s but daemon is not responding", socketPath),
-				Fix:     "Run 'bd daemons killall' to clean up stale sockets",
-			}
+		staleSocket = socketPath
+	} else if socketPath != legacySocketPath {
+		if _, err := os.Stat(legacySocketPath); err == nil {
+			staleSocket = legacySocketPath
+		}
+	}
+	if staleSocket != "" && len(workspaceDaemons) == 0 {
+		return DoctorCheck{
+			Name:    "Daemon Health",
+			Status:  StatusWarning,
+			Message: "Stale daemon socket detected",
+			Detail:  fmt.Sprintf("Socket exists at %s but daemon is not responding", staleSocket),
+			Fix:     "Run 'bd daemons killall' to clean up stale sockets",
 		}
 	}
 
@@ -169,7 +172,7 @@ func CheckGitSyncSetup(path string) DoctorCheck {
 // sync-branch is configured. Missing auto-sync slows down agent workflows.
 func CheckDaemonAutoSync(path string) DoctorCheck {
 	_, beadsDir := getBackendAndBeadsDir(path)
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
 
 	// Check if daemon is running
 	if _, err := os.Stat(socketPath); os.IsNotExist(err) {
@@ -343,7 +346,7 @@ func CheckHydratedRepoDaemons(path string) DoctorCheck {
 		expandedPath := expandPath(repoPath)
 
 		// Construct socket path
-		socketPath := filepath.Join(expandedPath, ".beads", "bd.sock")
+		socketPath := rpc.ShortSocketPath(expandedPath)
 
 		// Try to connect to daemon
 		client, err := rpc.TryConnect(socketPath)

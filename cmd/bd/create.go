@@ -794,7 +794,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 
 	// Construct paths for daemon socket and JSONL
 	beadsDir := filepath.Join(targetBeadsDir, ".beads")
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	socketPath := rpc.ShortSocketPath(targetBeadsDir)
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	debug.Logf("attempting to flush routed repo at %s", targetBeadsDir)
