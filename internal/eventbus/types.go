@@ -34,6 +34,16 @@ const (
 	EventDecisionResponded EventType = "DecisionResponded"
 	EventDecisionEscalated EventType = "DecisionEscalated"
 	EventDecisionExpired   EventType = "DecisionExpired"
+
+	// OddJobs lifecycle events (bd-4q86.4).
+	EventOjJobCreated        EventType = "OjJobCreated"
+	EventOjStepAdvanced      EventType = "OjStepAdvanced"
+	EventOjAgentSpawned      EventType = "OjAgentSpawned"
+	EventOjAgentIdle         EventType = "OjAgentIdle"
+	EventOjAgentEscalated    EventType = "OjAgentEscalated"
+	EventOjJobCompleted      EventType = "OjJobCompleted"
+	EventOjJobFailed         EventType = "OjJobFailed"
+	EventOjWorkerPollComplete EventType = "OjWorkerPollComplete"
 )
 
 // Event represents a single hook event flowing through the bus.
@@ -70,6 +80,55 @@ func (t EventType) IsDecisionEvent() bool {
 		return true
 	}
 	return false
+}
+
+// IsOjEvent returns true if the event type belongs to the OddJobs
+// event category.
+func (t EventType) IsOjEvent() bool {
+	switch t {
+	case EventOjJobCreated, EventOjStepAdvanced,
+		EventOjAgentSpawned, EventOjAgentIdle,
+		EventOjAgentEscalated, EventOjJobCompleted,
+		EventOjJobFailed, EventOjWorkerPollComplete:
+		return true
+	}
+	return false
+}
+
+// OjJobEventPayload carries data for OJ job lifecycle events.
+// Used by OjJobCreated, OjJobCompleted, OjJobFailed.
+type OjJobEventPayload struct {
+	JobID    string `json:"job_id"`
+	JobName  string `json:"job_name,omitempty"`
+	Worker   string `json:"worker,omitempty"`
+	BeadID   string `json:"bead_id,omitempty"`   // Associated bead (if any)
+	ExitCode int    `json:"exit_code,omitempty"` // For completed/failed
+	Error    string `json:"error,omitempty"`     // For failed
+}
+
+// OjStepEventPayload carries data for OjStepAdvanced events.
+type OjStepEventPayload struct {
+	JobID    string `json:"job_id"`
+	FromStep string `json:"from_step"`
+	ToStep   string `json:"to_step"`
+	BeadID   string `json:"bead_id,omitempty"`
+}
+
+// OjAgentEventPayload carries data for OJ agent lifecycle events.
+// Used by OjAgentSpawned, OjAgentIdle, OjAgentEscalated.
+type OjAgentEventPayload struct {
+	JobID     string `json:"job_id"`
+	AgentName string `json:"agent_name"`
+	SessionID string `json:"session_id,omitempty"` // tmux/coop session
+	BeadID    string `json:"bead_id,omitempty"`
+	Reason    string `json:"reason,omitempty"` // For escalated
+}
+
+// OjWorkerPollPayload carries data for OjWorkerPollComplete events.
+type OjWorkerPollPayload struct {
+	Worker    string `json:"worker"`
+	Queue     string `json:"queue"`
+	ItemCount int    `json:"item_count"` // Items found in poll
 }
 
 // DecisionEventPayload carries data for decision events in Event.Raw.

@@ -294,8 +294,8 @@ func startTestNATS(t *testing.T) (*natsserver.Server, nats.JetStreamContext, fun
 	opts := &natsserver.Options{
 		Port:               -1, // random available port
 		JetStream:          true,
-		JetStreamMaxMemory: 256 << 20,
-		JetStreamMaxStore:  256 << 20,
+		JetStreamMaxMemory: 512 << 20,
+		JetStreamMaxStore:  512 << 20,
 		StoreDir:           dir,
 		NoLog:              true,
 		NoSigs:             true,

@@ -9,8 +9,9 @@ bd daemon's hook event stream.
 |-----------|---------|---------|-----------|
 | NATS URL | `COOP_NATS_URL` / `BD_NATS_PORT` | `nats://127.0.0.1:4222` | `.runtime/nats-info.json` or `bd bus nats-info` |
 | Auth token | `BD_DAEMON_TOKEN` | (none) | Same token used for daemon RPC |
-| Stream | — | `HOOK_EVENTS` | — |
-| Subject pattern | — | `hooks.>` | — |
+| Hook stream | — | `HOOK_EVENTS` | `hooks.>` |
+| Decision stream | — | `DECISION_EVENTS` | `decisions.>` |
+| OJ stream | — | `OJ_EVENTS` | `oj.>` |
 
 ### nats-info.json
 
@@ -61,6 +62,19 @@ Examples: `hooks.SessionStart`, `hooks.PreToolUse`, `hooks.Stop`
 | `SubagentStop` | `hooks.SubagentStop` | Subagent completed |
 | `Notification` | `hooks.Notification` | System notification |
 | `SessionEnd` | `hooks.SessionEnd` | Agent session ends |
+
+### OddJobs Lifecycle Events (OJ_EVENTS stream)
+
+| EventType | Subject | When it fires |
+|-----------|---------|---------------|
+| `OjJobCreated` | `oj.OjJobCreated` | OJ job is created |
+| `OjStepAdvanced` | `oj.OjStepAdvanced` | Job advances to next step |
+| `OjAgentSpawned` | `oj.OjAgentSpawned` | Agent session started by OJ |
+| `OjAgentIdle` | `oj.OjAgentIdle` | OJ agent goes idle |
+| `OjAgentEscalated` | `oj.OjAgentEscalated` | OJ agent escalated (dead/stuck) |
+| `OjJobCompleted` | `oj.OjJobCompleted` | Job finished successfully |
+| `OjJobFailed` | `oj.OjJobFailed` | Job failed |
+| `OjWorkerPollComplete` | `oj.OjWorkerPollComplete` | Worker poll cycle completed |
 
 ## Event JSON Fields
 
