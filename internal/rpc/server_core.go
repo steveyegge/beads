@@ -176,9 +176,13 @@ func (s *Server) emitRichMutation(event MutationEvent) {
 	// Store in recent mutations buffer for polling
 	s.recentMutationsMu.Lock()
 	s.recentMutations = append(s.recentMutations, event)
-	// Keep buffer size limited (circular buffer behavior)
+	// Keep buffer size limited: copy active window to new slice so the old
+	// backing array can be GC'd (reslicing with [1:] leaks memory because
+	// dropped head elements remain reachable via the original backing array).
 	if len(s.recentMutations) > s.maxMutationBuffer {
-		s.recentMutations = s.recentMutations[1:]
+		newBuf := make([]MutationEvent, s.maxMutationBuffer)
+		copy(newBuf, s.recentMutations[len(s.recentMutations)-s.maxMutationBuffer:])
+		s.recentMutations = newBuf
 	}
 	s.recentMutationsMu.Unlock()
 }
