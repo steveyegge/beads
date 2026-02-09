@@ -605,6 +605,56 @@ func TestCommentAdd_MultipleComments(t *testing.T) {
 	}
 }
 
+// TestCommentList_NilStorage verifies handleCommentList returns an error when storage is nil (bd-10)
+func TestCommentList_NilStorage(t *testing.T) {
+	tmpDir := t.TempDir()
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), nil, tmpDir, filepath.Join(tmpDir, "test.db"))
+
+	commentArgs := CommentListArgs{ID: "bd-123"}
+	argsJSON, _ := json.Marshal(commentArgs)
+	req := &Request{
+		Operation: OpCommentList,
+		Args:      argsJSON,
+		Actor:     "test-user",
+	}
+
+	resp := server.handleCommentList(req)
+
+	if resp.Success {
+		t.Error("expected failure when storage not available")
+	}
+	if resp.Error == "" {
+		t.Error("expected error message about storage not available")
+	}
+}
+
+// TestCommentAdd_NilStorage verifies handleCommentAdd returns an error when storage is nil (bd-10)
+func TestCommentAdd_NilStorage(t *testing.T) {
+	tmpDir := t.TempDir()
+	server := NewServer(filepath.Join(tmpDir, "test.sock"), nil, tmpDir, filepath.Join(tmpDir, "test.db"))
+
+	commentArgs := CommentAddArgs{
+		ID:     "bd-123",
+		Author: "test-user",
+		Text:   "test comment",
+	}
+	argsJSON, _ := json.Marshal(commentArgs)
+	req := &Request{
+		Operation: OpCommentAdd,
+		Args:      argsJSON,
+		Actor:     "test-user",
+	}
+
+	resp := server.handleCommentAdd(req)
+
+	if resp.Success {
+		t.Error("expected failure when storage not available")
+	}
+	if resp.Error == "" {
+		t.Error("expected error message about storage not available")
+	}
+}
+
 // TestMetrics tests the Metrics operation via RPC
 func TestMetrics(t *testing.T) {
 	_, client, cleanup := setupTestServer(t)
