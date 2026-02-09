@@ -217,10 +217,12 @@ func findBDBinary() (string, error) {
 
 // DefaultHandlers returns the standard set of event bus handlers for daemon registration.
 func DefaultHandlers() []Handler {
-	return []Handler{
+	handlers := []Handler{
 		&PrimeHandler{},        // 10
 		&StopDecisionHandler{}, // 15
 		&GateHandler{},         // 20
 		&DecisionHandler{},     // 30
 	}
+	handlers = append(handlers, DefaultOjHandlers()...)
+	return handlers
 }

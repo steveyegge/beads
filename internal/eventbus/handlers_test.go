@@ -10,8 +10,8 @@ import (
 
 func TestDefaultHandlers(t *testing.T) {
 	handlers := DefaultHandlers()
-	if len(handlers) != 4 {
-		t.Fatalf("expected 4 default handlers, got %d", len(handlers))
+	if len(handlers) != 7 {
+		t.Fatalf("expected 7 default handlers, got %d", len(handlers))
 	}
 
 	// Verify IDs
@@ -34,6 +34,15 @@ func TestDefaultHandlers(t *testing.T) {
 	}
 	if !ids["decision"] {
 		t.Error("missing decision handler")
+	}
+	if !ids["oj-job-complete"] {
+		t.Error("missing oj-job-complete handler")
+	}
+	if !ids["oj-job-fail"] {
+		t.Error("missing oj-job-fail handler")
+	}
+	if !ids["oj-step"] {
+		t.Error("missing oj-step handler")
 	}
 }
 
@@ -116,10 +125,10 @@ func TestStopDecisionHandlerMetadata(t *testing.T) {
 
 func TestHandlerPriorityOrdering(t *testing.T) {
 	handlers := DefaultHandlers()
-	// Verify priority ordering: prime(10) < stop-decision(15) < gate(20) < decision(30)
+	// Verify non-decreasing priority ordering: prime(10) ≤ stop-decision(15) ≤ gate(20) ≤ decision(30) ≤ oj-*(40)
 	for i := 0; i < len(handlers)-1; i++ {
-		if handlers[i].Priority() >= handlers[i+1].Priority() {
-			t.Errorf("handler %q (priority %d) should have lower priority than %q (priority %d)",
+		if handlers[i].Priority() > handlers[i+1].Priority() {
+			t.Errorf("handler %q (priority %d) should not have higher priority than %q (priority %d)",
 				handlers[i].ID(), handlers[i].Priority(),
 				handlers[i+1].ID(), handlers[i+1].Priority())
 		}
@@ -132,8 +141,8 @@ func TestBusWithDefaultHandlers(t *testing.T) {
 		bus.Register(h)
 	}
 
-	if len(bus.Handlers()) != 4 {
-		t.Errorf("expected 4 handlers, got %d", len(bus.Handlers()))
+	if len(bus.Handlers()) != 7 {
+		t.Errorf("expected 7 handlers, got %d", len(bus.Handlers()))
 	}
 }
 
