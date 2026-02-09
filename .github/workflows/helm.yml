@@ -1,0 +1,90 @@
+name: Helm Chart
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm.yml'
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm.yml'
+
+concurrency:
+  group: helm-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint charts
+        run: |
+          for chart in helm/*/; do
+            if [ -f "$chart/Chart.yaml" ]; then
+              echo "Linting $chart..."
+              helm lint "$chart"
+            fi
+          done
+
+      - name: Template charts (dry-run)
+        run: |
+          for chart in helm/*/; do
+            if [ -f "$chart/Chart.yaml" ]; then
+              name=$(basename "$chart")
+              echo "Templating $chart..."
+              helm dependency build "$chart" 2>/dev/null || true
+              helm template "$name" "$chart" > /dev/null
+            fi
+          done
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: lint
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push charts
+        run: |
+          for chart in helm/*/; do
+            if [ -f "$chart/Chart.yaml" ]; then
+              name=$(basename "$chart")
+              version=$(grep '^version:' "$chart/Chart.yaml" | awk '{print $2}')
+              echo "Publishing $name v$version..."
+
+              # Build dependencies (e.g., Redis subchart)
+              helm dependency build "$chart" 2>/dev/null || true
+
+              # Package the chart
+              helm package "$chart" --destination /tmp/helm-packages
+
+              # Push to GHCR OCI registry
+              helm push "/tmp/helm-packages/${name}-${version}.tgz" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
+
+              echo "Published: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${name}:${version}"
+            fi
+          done
