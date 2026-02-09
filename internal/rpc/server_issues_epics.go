@@ -836,7 +836,13 @@ func (s *Server) handleClose(req *Request) Response {
 			Error:   fmt.Sprintf("failed to get issue: %v", err),
 		}
 	}
-	if issue != nil && issue.IsTemplate {
+	if issue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue %s not found", closeArgs.ID),
+		}
+	}
+	if issue.IsTemplate {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("cannot close template %s: templates are read-only", closeArgs.ID),
@@ -861,10 +867,7 @@ func (s *Server) handleClose(req *Request) Response {
 	}
 
 	// Capture old status for rich mutation event
-	oldStatus := ""
-	if issue != nil {
-		oldStatus = string(issue.Status)
-	}
+	oldStatus := string(issue.Status)
 
 	if err := store.CloseIssue(ctx, closeArgs.ID, closeArgs.Reason, s.reqActor(req), closeArgs.Session); err != nil {
 		return Response{
