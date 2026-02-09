@@ -525,7 +525,7 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 		// and safe for mutation-triggered exports.
 		repoKey := getRepoKeyForPath(jsonlPath)
 		isMutationTriggered := (mode == "export") // Mutation exports use mode="export"
-		
+
 		if isMutationTriggered {
 			// ALWAYS skip pre-export import for mutations
 			log.Info("Skipping pre-export import (mutation-triggered export)", "mode", mode)

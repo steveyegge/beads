@@ -193,7 +193,7 @@ func (wm *WorktreeManager) SyncJSONLToWorktreeWithOptions(worktreePath, jsonlRel
 	// includes worktree path components (e.g., ".git/beads-worktrees/beads-sync/.beads/issues.jsonl").
 	// This prevents srcPath from pointing to a non-existent nested .git location.
 	normalizedRelPath := NormalizeBeadsRelPath(jsonlRelPath)
-	
+
 	// Source: main repo JSONL (use normalized path to ensure correct location)
 	srcPath := filepath.Join(wm.repoPath, normalizedRelPath)
 

@@ -25,7 +25,7 @@ const mutationExportCooldown = 10 * time.Second
 var (
 	// lastMutationExportTime tracks when the last mutation-triggered export completed.
 	// Protected by lastMutationExportMutex.
-	lastMutationExportTime time.Time
+	lastMutationExportTime  time.Time
 	lastMutationExportMutex sync.RWMutex
 )
 
@@ -184,7 +184,7 @@ func runEventDrivenLoop(
 			// Periodic remote sync to pull updates from other clones
 			// This ensures the daemon sees changes pushed by other clones
 			// even when the local file watcher doesn't trigger
-			
+
 			// Check if we're in cooldown period after mutation export
 			lastMutationExportMutex.RLock()
 			lastExport := lastMutationExportTime
