@@ -1,7 +1,21 @@
-# Multi-stage build for bd daemon
-# Builds a minimal container with just the bd binary
+# Multi-stage build for bd daemon + oj CLI
+# Builds a minimal container with bd and oj binaries
 
-# Build stage
+# ── Rust builder: OddJobs CLI ──────────────────────────────────────────
+FROM rust:1.85-alpine AS oj-builder
+
+RUN apk add --no-cache musl-dev git
+RUN rustup toolchain install 1.93.0 && rustup default 1.93.0
+
+ARG OJ_REPO=https://github.com/groblegark/oddjobs.git
+ARG OJ_REF=main
+
+WORKDIR /oj
+RUN git clone --depth 1 --branch ${OJ_REF} ${OJ_REPO} . \
+    && rm -f .cargo/config.toml \
+    && cargo build --release -p oj
+
+# ── Go builder: bd daemon ──────────────────────────────────────────────
 FROM golang:1.23-alpine AS builder
 
 # Install git and build dependencies for CGO (including ICU for go-icu-regex)
@@ -36,11 +50,12 @@ RUN apk add --no-cache ca-certificates tzdata icu-libs netcat-openbsd
 RUN addgroup -g 1000 beads && \
     adduser -u 1000 -G beads -s /bin/sh -D beads
 
-# Copy binary from builder
+# Copy binaries from builders
 COPY --from=builder /build/bd /usr/local/bin/bd
+COPY --from=oj-builder /oj/target/release/oj /usr/local/bin/oj
 
 # Set ownership
-RUN chown beads:beads /usr/local/bin/bd
+RUN chown beads:beads /usr/local/bin/bd /usr/local/bin/oj
 
 # Switch to non-root user
 USER beads
