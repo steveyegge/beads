@@ -1713,6 +1713,316 @@ func TestOjJetStreamSubjectRoutingAllTypes(t *testing.T) {
 	}
 }
 
+// --- Agent lifecycle event tests (bd-e6vh) ---
+
+// TestDispatchAgentEventMatchesAgentHandler verifies agent events dispatch to agent handlers.
+func TestDispatchAgentEventMatchesAgentHandler(t *testing.T) {
+	bus := New()
+	var handledEvents []EventType
+
+	bus.Register(&testHandler{
+		id:      "agent-tracker",
+		handles: []EventType{EventAgentStarted, EventAgentStopped, EventAgentCrashed, EventAgentIdle, EventAgentHeartbeat},
+		priority: 40,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			handledEvents = append(handledEvents, event.Type)
+			return nil
+		},
+	})
+
+	agentPayloads := []struct {
+		eventType EventType
+		payload   interface{}
+	}{
+		{EventAgentStarted, AgentEventPayload{AgentID: "a-1", AgentName: "builder", RigName: "dev"}},
+		{EventAgentStopped, AgentEventPayload{AgentID: "a-2", Reason: "clean exit"}},
+		{EventAgentCrashed, AgentEventPayload{AgentID: "a-3", Reason: "OOM killed"}},
+		{EventAgentIdle, AgentEventPayload{AgentID: "a-4", SessionID: "sess-1"}},
+		{EventAgentHeartbeat, AgentEventPayload{AgentID: "a-5", Uptime: 3600}},
+	}
+
+	for _, p := range agentPayloads {
+		raw, _ := json.Marshal(p.payload)
+		_, err := bus.Dispatch(context.Background(), &Event{Type: p.eventType, Raw: raw})
+		if err != nil {
+			t.Fatalf("dispatch %s: %v", p.eventType, err)
+		}
+	}
+
+	if len(handledEvents) != 5 {
+		t.Fatalf("expected 5 handled events, got %d", len(handledEvents))
+	}
+	expected := []EventType{EventAgentStarted, EventAgentStopped, EventAgentCrashed, EventAgentIdle, EventAgentHeartbeat}
+	for i, exp := range expected {
+		if handledEvents[i] != exp {
+			t.Errorf("event %d: expected %s, got %s", i, exp, handledEvents[i])
+		}
+	}
+}
+
+// TestAgentEventNotMatchedToHookHandlers verifies agent events don't dispatch to hook handlers.
+func TestAgentEventNotMatchedToHookHandlers(t *testing.T) {
+	bus := New()
+	hookCalled := false
+	bus.Register(&testHandler{
+		id:       "hook-only",
+		handles:  []EventType{EventSessionStart, EventStop, EventPreToolUse},
+		priority: 1,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			hookCalled = true
+			return nil
+		},
+	})
+
+	agentEvents := []EventType{EventAgentStarted, EventAgentStopped, EventAgentCrashed,
+		EventAgentIdle, EventAgentHeartbeat}
+	for _, et := range agentEvents {
+		raw, _ := json.Marshal(AgentEventPayload{AgentID: "a-test"})
+		_, err := bus.Dispatch(context.Background(), &Event{Type: et, Raw: raw})
+		if err != nil {
+			t.Fatalf("dispatch %s: %v", et, err)
+		}
+	}
+
+	if hookCalled {
+		t.Error("hook handler should not be called for agent events")
+	}
+}
+
+// TestAgentEventNotMatchedToOjHandlers verifies agent events don't dispatch to OJ handlers.
+func TestAgentEventNotMatchedToOjHandlers(t *testing.T) {
+	bus := New()
+	ojCalled := false
+	bus.Register(&testHandler{
+		id:       "oj-only",
+		handles:  []EventType{EventOjJobCompleted, EventOjJobFailed, EventOjAgentSpawned},
+		priority: 40,
+		fn: func(ctx context.Context, event *Event, result *Result) error {
+			ojCalled = true
+			return nil
+		},
+	})
+
+	agentEvents := []EventType{EventAgentStarted, EventAgentStopped, EventAgentCrashed,
+		EventAgentIdle, EventAgentHeartbeat}
+	for _, et := range agentEvents {
+		raw, _ := json.Marshal(AgentEventPayload{AgentID: "a-test"})
+		_, err := bus.Dispatch(context.Background(), &Event{Type: et, Raw: raw})
+		if err != nil {
+			t.Fatalf("dispatch %s: %v", et, err)
+		}
+	}
+
+	if ojCalled {
+		t.Error("OJ handler should not be called for agent events")
+	}
+}
+
+// TestDispatchAgentEventPublishesToJetStream verifies agent events route to the AGENT_EVENTS stream.
+func TestDispatchAgentEventPublishesToJetStream(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	// Subscribe to agent events.
+	sub, err := js.SubscribeSync(SubjectAgentPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	// Subscribe to hook and OJ events to verify agent events don't leak.
+	subHook, err := js.SubscribeSync(SubjectHookPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe hooks: %v", err)
+	}
+	defer subHook.Unsubscribe()
+
+	subOj, err := js.SubscribeSync(SubjectOjPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe oj: %v", err)
+	}
+	defer subOj.Unsubscribe()
+
+	payload := AgentEventPayload{
+		AgentID: "a-42", AgentName: "builder", RigName: "dev",
+		Role: "worker", SessionID: "sess-123",
+	}
+	raw, _ := json.Marshal(payload)
+
+	_, err = bus.Dispatch(context.Background(), &Event{Type: EventAgentStarted, Raw: raw})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	// Verify message arrived on agent subject.
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected agent JetStream message, got error: %v", err)
+	}
+
+	expectedSubject := SubjectForEvent(EventAgentStarted)
+	if msg.Subject != expectedSubject {
+		t.Errorf("expected subject %q, got %q", expectedSubject, msg.Subject)
+	}
+
+	// Verify payload preserved.
+	var decoded AgentEventPayload
+	if err := json.Unmarshal(msg.Data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.AgentID != "a-42" {
+		t.Errorf("AgentID: expected %q, got %q", "a-42", decoded.AgentID)
+	}
+	if decoded.AgentName != "builder" {
+		t.Errorf("AgentName: expected %q, got %q", "builder", decoded.AgentName)
+	}
+	if decoded.RigName != "dev" {
+		t.Errorf("RigName: expected %q, got %q", "dev", decoded.RigName)
+	}
+	if decoded.SessionID != "sess-123" {
+		t.Errorf("SessionID: expected %q, got %q", "sess-123", decoded.SessionID)
+	}
+
+	// Verify no message on hook or OJ streams.
+	_, err = subHook.NextMsg(200 * time.Millisecond)
+	if err == nil {
+		t.Error("agent event should not appear on hook stream")
+	}
+	_, err = subOj.NextMsg(200 * time.Millisecond)
+	if err == nil {
+		t.Error("agent event should not appear on OJ stream")
+	}
+}
+
+// TestAgentJetStreamSubjectRoutingAllTypes verifies each agent event type routes to correct subject.
+func TestAgentJetStreamSubjectRoutingAllTypes(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	sub, err := js.SubscribeSync(SubjectAgentPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	agentTypes := []EventType{
+		EventAgentStarted, EventAgentStopped, EventAgentCrashed,
+		EventAgentIdle, EventAgentHeartbeat,
+	}
+
+	for _, et := range agentTypes {
+		raw, _ := json.Marshal(AgentEventPayload{AgentID: "a-route-test"})
+		_, err := bus.Dispatch(context.Background(), &Event{Type: et, Raw: raw})
+		if err != nil {
+			t.Fatalf("dispatch %s: %v", et, err)
+		}
+	}
+
+	// Verify all messages received with correct subjects.
+	for i, et := range agentTypes {
+		msg, err := sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Fatalf("message %d (%s): %v", i, et, err)
+		}
+		expected := SubjectForEvent(et)
+		if msg.Subject != expected {
+			t.Errorf("message %d: expected subject %q, got %q", i, expected, msg.Subject)
+		}
+	}
+}
+
+// TestAgentHeartbeatPayloadFields verifies heartbeat-specific fields serialize correctly.
+func TestAgentHeartbeatPayloadFields(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	sub, err := js.SubscribeSync(SubjectAgentPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	payload := AgentEventPayload{
+		AgentID: "a-hb", AgentName: "monitor", Uptime: 7200,
+	}
+	raw, _ := json.Marshal(payload)
+
+	_, err = bus.Dispatch(context.Background(), &Event{Type: EventAgentHeartbeat, Raw: raw})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected message: %v", err)
+	}
+
+	var decoded AgentEventPayload
+	if err := json.Unmarshal(msg.Data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.Uptime != 7200 {
+		t.Errorf("Uptime: expected 7200, got %d", decoded.Uptime)
+	}
+	if decoded.AgentName != "monitor" {
+		t.Errorf("AgentName: expected %q, got %q", "monitor", decoded.AgentName)
+	}
+}
+
+// TestAgentCrashedPayloadFields verifies crash-specific fields serialize correctly.
+func TestAgentCrashedPayloadFields(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	sub, err := js.SubscribeSync(SubjectAgentPrefix+">", nats.DeliverAll())
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	payload := AgentEventPayload{
+		AgentID: "a-crash", AgentName: "worker-1", RigName: "prod",
+		Role: "builder", Reason: "OOM killed by kubelet",
+	}
+	raw, _ := json.Marshal(payload)
+
+	_, err = bus.Dispatch(context.Background(), &Event{Type: EventAgentCrashed, Raw: raw})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected message: %v", err)
+	}
+
+	var decoded AgentEventPayload
+	if err := json.Unmarshal(msg.Data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.Reason != "OOM killed by kubelet" {
+		t.Errorf("Reason: expected %q, got %q", "OOM killed by kubelet", decoded.Reason)
+	}
+	if decoded.Role != "builder" {
+		t.Errorf("Role: expected %q, got %q", "builder", decoded.Role)
+	}
+	if decoded.RigName != "prod" {
+		t.Errorf("RigName: expected %q, got %q", "prod", decoded.RigName)
+	}
+}
+
 // TestDispatchExternalHandlerThroughBus verifies loaded external handlers participate in dispatch.
 func TestDispatchExternalHandlerThroughBus(t *testing.T) {
 	bus := New()

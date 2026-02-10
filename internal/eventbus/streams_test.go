@@ -140,4 +140,71 @@ func TestIsOjEvent(t *testing.T) {
 	}
 }
 
+func TestSubjectForAgentEvent(t *testing.T) {
+	tests := []struct {
+		eventType EventType
+		want      string
+	}{
+		{EventAgentStarted, "agents.AgentStarted"},
+		{EventAgentStopped, "agents.AgentStopped"},
+		{EventAgentCrashed, "agents.AgentCrashed"},
+		{EventAgentIdle, "agents.AgentIdle"},
+		{EventAgentHeartbeat, "agents.AgentHeartbeat"},
+	}
+	for _, tt := range tests {
+		got := SubjectForEvent(tt.eventType)
+		if got != tt.want {
+			t.Errorf("SubjectForEvent(%s) = %q, want %q", tt.eventType, got, tt.want)
+		}
+	}
+}
+
+func TestEnsureStreamsCreatesAgentStream(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	info, err := js.StreamInfo(StreamAgentEvents)
+	if err != nil {
+		t.Fatalf("StreamInfo(%s): %v", StreamAgentEvents, err)
+	}
+	if info.Config.Name != StreamAgentEvents {
+		t.Errorf("expected stream name %q, got %q", StreamAgentEvents, info.Config.Name)
+	}
+	foundAgentSubject := false
+	for _, s := range info.Config.Subjects {
+		if s == SubjectAgentPrefix+">" {
+			foundAgentSubject = true
+		}
+	}
+	if !foundAgentSubject {
+		t.Errorf("expected %q in stream subjects, got %v", SubjectAgentPrefix+">", info.Config.Subjects)
+	}
+}
+
+func TestIsAgentEvent(t *testing.T) {
+	agentEvents := []EventType{
+		EventAgentStarted, EventAgentStopped, EventAgentCrashed,
+		EventAgentIdle, EventAgentHeartbeat,
+	}
+	for _, e := range agentEvents {
+		if !e.IsAgentEvent() {
+			t.Errorf("expected %s.IsAgentEvent() = true", e)
+		}
+		if e.IsDecisionEvent() {
+			t.Errorf("expected %s.IsDecisionEvent() = false", e)
+		}
+		if e.IsOjEvent() {
+			t.Errorf("expected %s.IsOjEvent() = false", e)
+		}
+	}
+
+	// Non-agent events should return false.
+	nonAgent := []EventType{EventSessionStart, EventStop, EventDecisionCreated, EventOjJobCreated}
+	for _, e := range nonAgent {
+		if e.IsAgentEvent() {
+			t.Errorf("expected %s.IsAgentEvent() = false", e)
+		}
+	}
+}
+
 // TestEnsureStreamsIdempotent lives in bus_test.go (more thorough version).
