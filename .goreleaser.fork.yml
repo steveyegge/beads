@@ -1,6 +1,6 @@
 # GoReleaser config for groblegark/beads fork releases.
-# CGO required for dolthub deps (gozstd, go-mysql-server regex).
-# Cross-compilation needs platform-specific C toolchains.
+# CGO required for dolthub deps (gozstd, go-mysql-server regex, icu4c).
+# Only linux/amd64 for now — arm64 cross-compile needs ICU arm64 libs.
 
 version: 2
 
@@ -18,23 +18,6 @@ builds:
       - linux
     goarch:
       - amd64
-    ldflags:
-      - -s -w
-      - -X main.Version={{.Version}}
-      - -X main.Build={{.ShortCommit}}
-      - -X main.Commit={{.Commit}}
-
-  - id: bd-linux-arm64
-    main: ./cmd/bd
-    binary: bd
-    env:
-      - CGO_ENABLED=1
-      - CC=aarch64-linux-gnu-gcc
-      - CXX=aarch64-linux-gnu-g++
-    goos:
-      - linux
-    goarch:
-      - arm64
     ldflags:
       - -s -w
       - -X main.Version={{.Version}}
