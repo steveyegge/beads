@@ -127,6 +127,7 @@ var showCmd = &cobra.Command{
 		if daemonClient != nil {
 			allDetails := []interface{}{}
 			displayIdx := 0
+			foundCount := 0
 
 			// First, handle routed IDs via direct mode
 			for _, id := range routedArgs {
@@ -147,6 +148,7 @@ var showCmd = &cobra.Command{
 				}
 				issue := result.Issue
 				issueStore := result.Store
+				foundCount++
 				if shortMode {
 					fmt.Println(formatShortIssue(issue))
 					result.Close()
@@ -205,6 +207,7 @@ var showCmd = &cobra.Command{
 							}
 						}
 						allDetails = append(allDetails, details)
+						foundCount++
 					}
 				} else {
 					// Check if issue exists (daemon returns null for non-existent issues)
@@ -212,6 +215,7 @@ var showCmd = &cobra.Command{
 						fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
 						continue
 					}
+					foundCount++
 
 					// Parse response first to check shortMode before output
 					var details types.IssueDetails
@@ -374,8 +378,17 @@ var showCmd = &cobra.Command{
 				}
 			}
 
-			if jsonOutput && len(allDetails) > 0 {
-				outputJSON(allDetails)
+			if jsonOutput {
+				if len(allDetails) > 0 {
+					outputJSON(allDetails)
+				} else {
+					// No issues found - exit non-zero with structured JSON error
+					// so downstream consumers (e.g., gt bd move) get a proper error
+					// instead of empty stdout causing "unexpected end of JSON input"
+					FatalErrorRespectJSON("no issues found matching the provided IDs")
+				}
+			} else if foundCount == 0 {
+				os.Exit(1)
 			}
 
 			// Track first shown issue as last touched
@@ -389,6 +402,7 @@ var showCmd = &cobra.Command{
 
 		// Direct mode - use routed resolution for cross-repo lookups
 		allDetails := []interface{}{}
+		foundCount := 0
 		for idx, id := range args {
 			// Resolve and get issue with routing (e.g., gt-xyz routes to gastown)
 			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
@@ -409,6 +423,7 @@ var showCmd = &cobra.Command{
 			issue := result.Issue
 			issueStore := result.Store // Use the store that contains this issue
 			// Note: result.Close() called at end of loop iteration
+			foundCount++
 
 			if shortMode {
 				fmt.Println(formatShortIssue(issue))
@@ -591,11 +606,20 @@ var showCmd = &cobra.Command{
 			result.Close() // Close routed storage after each iteration
 		}
 
-		if jsonOutput && len(allDetails) > 0 {
-			outputJSON(allDetails)
-		} else if len(allDetails) > 0 {
+		if jsonOutput {
+			if len(allDetails) > 0 {
+				outputJSON(allDetails)
+			} else {
+				// No issues found - exit non-zero with structured JSON error
+				// so downstream consumers (e.g., gt bd move) get a proper error
+				// instead of empty stdout causing "unexpected end of JSON input"
+				FatalErrorRespectJSON("no issues found matching the provided IDs")
+			}
+		} else if foundCount > 0 {
 			// Show tip after successful show (non-JSON mode)
 			maybeShowTip(store)
+		} else {
+			os.Exit(1)
 		}
 
 		// Track first shown issue as last touched
