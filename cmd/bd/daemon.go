@@ -634,6 +634,8 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		log.Info("database opened", "path", store.Path(), "backend", "sqlite", "freshness_checking", true)
 	} else if federation {
 		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "federation/server")
+	} else if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" {
+		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "server")
 	} else {
 		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "embedded")
 	}

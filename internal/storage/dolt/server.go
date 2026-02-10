@@ -317,6 +317,13 @@ func EnsureServerRunning(ctx context.Context, dataDir string, host string, port 
 		return nil // Server already running
 	}
 
+	// If the host is remote (not localhost), don't try to auto-start a local server.
+	// Auto-starting only makes sense for local Dolt servers. In K8s, the Dolt server
+	// runs in a separate pod and we should just report the connection failure.
+	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		return fmt.Errorf("SQL port %d not available: remote Dolt server at %s is not reachable (connect: %v)", port, host, err)
+	}
+
 	// Check for stale PID file and clean up
 	pid := GetRunningServerPID(dataDir)
 	if pid > 0 {

@@ -18,6 +18,7 @@ spec:
         {{- include "bd-daemon.dolt.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/dolt-configmap.yaml") . | sha256sum }}
+        karpenter.sh/do-not-disrupt: "true"
     spec:
       serviceAccountName: {{ include "bd-daemon.dolt.serviceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
