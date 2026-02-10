@@ -63,13 +63,6 @@ func importIssuesEngine(ctx context.Context, dbPathArg string, store storage.Sto
 		opts.SkipPrefixValidation = true
 	}
 
-	// Clear export_hashes before import to prevent staleness
-	if !opts.DryRun {
-		if err := store.ClearAllExportHashes(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to clear export_hashes before import: %v\n", err)
-		}
-	}
-
 	// Read orphan handling from config if not explicitly set
 	orphanHandling := storage.OrphanHandling(opts.OrphanHandling)
 	if orphanHandling == "" {
