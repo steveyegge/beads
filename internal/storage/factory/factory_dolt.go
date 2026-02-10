@@ -33,6 +33,7 @@ func init() {
 			ServerHost:  opts.ServerHost,
 			ServerPort:  opts.ServerPort,
 			ServerUser:  opts.ServerUser,
+			ServerTLS:   opts.ServerTLS,
 		})
 		if err != nil {
 			// If server mode failed with a connection error, fall back to embedded mode.

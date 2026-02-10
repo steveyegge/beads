@@ -642,6 +642,8 @@ var rootCmd = &cobra.Command{
 					opts.ServerMode = true
 					opts.ServerHost = cfg.GetDoltServerHost()
 					opts.ServerPort = cfg.GetDoltServerPort()
+					opts.ServerUser = cfg.GetDoltServerUser()
+					opts.ServerTLS = cfg.GetDoltServerTLS()
 				}
 			}
 

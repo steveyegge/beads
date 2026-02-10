@@ -172,13 +172,18 @@ func checkDoltVersion(cfg *configfile.Config) (DoctorCheck, *sql.DB) {
 	password := os.Getenv("BEADS_DOLT_PASSWORD")
 
 	// Build DSN without database (just to test server connectivity)
+	// Include tls=true if configured (required by Hosted Dolt)
+	params := "parseTime=true&timeout=5s"
+	if cfg.GetDoltServerTLS() {
+		params += "&tls=true"
+	}
 	var connStr string
 	if password != "" {
-		connStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&timeout=5s",
-			user, password, host, port)
+		connStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/?%s",
+			user, password, host, port, params)
 	} else {
-		connStr = fmt.Sprintf("%s@tcp(%s:%d)/?parseTime=true&timeout=5s",
-			user, host, port)
+		connStr = fmt.Sprintf("%s@tcp(%s:%d)/?%s",
+			user, host, port, params)
 	}
 
 	db, err := sql.Open("mysql", connStr)

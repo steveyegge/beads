@@ -28,10 +28,11 @@ type Options struct {
 	LockTimeout time.Duration
 
 	// Dolt server mode options (federation)
-	ServerMode bool   // Connect to dolt sql-server instead of embedded
-	ServerHost string // Server host (default: 127.0.0.1)
-	ServerPort int    // Server port (default: 3307)
+	ServerMode  bool          // Connect to dolt sql-server instead of embedded
+	ServerHost  string        // Server host (default: 127.0.0.1)
+	ServerPort  int           // Server port (default: 3307)
 	ServerUser  string        // MySQL user (default: root)
+	ServerTLS   bool          // Enable TLS for MySQL connections (required by Hosted Dolt)
 	Database    string        // Database name for Dolt server mode (default: beads)
 	OpenTimeout time.Duration // Advisory lock timeout for embedded dolt (0 = no lock)
 }
@@ -105,6 +106,9 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 			}
 			if opts.Database == "" {
 				opts.Database = cfg.GetDoltDatabase()
+			}
+			if !opts.ServerTLS {
+				opts.ServerTLS = cfg.GetDoltServerTLS()
 			}
 		}
 		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)

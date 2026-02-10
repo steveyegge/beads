@@ -77,6 +77,7 @@ type Config struct {
 	ServerPort     int    // Server port (default: 3307)
 	ServerUser     string // MySQL user (default: root)
 	ServerPassword string // MySQL password (default: empty, can be set via BEADS_DOLT_PASSWORD)
+	ServerTLS      bool   // Enable TLS for MySQL connections (required by Hosted Dolt)
 }
 
 const embeddedOpenMaxElapsed = 30 * time.Second
@@ -445,13 +446,18 @@ func openEmbeddedConnection(dsn string) (*sql.DB, string, *embedded.Connector, e
 func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, error) {
 	// DSN format: user:password@tcp(host:port)/database?parseTime=true
 	// parseTime=true tells the MySQL driver to parse DATETIME/TIMESTAMP to time.Time
+	// tls=true enables TLS (required by Hosted Dolt instances)
+	params := "parseTime=true"
+	if cfg.ServerTLS {
+		params += "&tls=true"
+	}
 	var connStr string
 	if cfg.ServerPassword != "" {
-		connStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
-			cfg.ServerUser, cfg.ServerPassword, cfg.ServerHost, cfg.ServerPort, cfg.Database)
+		connStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s",
+			cfg.ServerUser, cfg.ServerPassword, cfg.ServerHost, cfg.ServerPort, cfg.Database, params)
 	} else {
-		connStr = fmt.Sprintf("%s@tcp(%s:%d)/%s?parseTime=true",
-			cfg.ServerUser, cfg.ServerHost, cfg.ServerPort, cfg.Database)
+		connStr = fmt.Sprintf("%s@tcp(%s:%d)/%s?%s",
+			cfg.ServerUser, cfg.ServerHost, cfg.ServerPort, cfg.Database, params)
 	}
 
 	db, err := sql.Open("mysql", connStr)
@@ -468,11 +474,11 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	// First connect without database to create it
 	var initConnStr string
 	if cfg.ServerPassword != "" {
-		initConnStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true",
-			cfg.ServerUser, cfg.ServerPassword, cfg.ServerHost, cfg.ServerPort)
+		initConnStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/?%s",
+			cfg.ServerUser, cfg.ServerPassword, cfg.ServerHost, cfg.ServerPort, params)
 	} else {
-		initConnStr = fmt.Sprintf("%s@tcp(%s:%d)/?parseTime=true",
-			cfg.ServerUser, cfg.ServerHost, cfg.ServerPort)
+		initConnStr = fmt.Sprintf("%s@tcp(%s:%d)/?%s",
+			cfg.ServerUser, cfg.ServerHost, cfg.ServerPort, params)
 	}
 	initDB, err := sql.Open("mysql", initConnStr)
 	if err != nil {
