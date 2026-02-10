@@ -188,7 +188,7 @@ func (s *Server) handleMove(req *Request) Response {
 	}
 
 	// Resolve target rig
-	targetBeadsDir, targetPrefix, err := resolveTargetRig(req, args.TargetRig)
+	targetBeadsDir, targetPrefix, err := s.resolveTargetRig(req, args.TargetRig)
 	if err != nil {
 		return Response{Success: false, Error: fmt.Sprintf("failed to resolve target rig: %v", err)}
 	}
@@ -199,12 +199,17 @@ func (s *Server) handleMove(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("issue %s is already in rig %q", args.IssueID, args.TargetRig)}
 	}
 
-	// Open target storage
-	targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
-	if err != nil {
-		return Response{Success: false, Error: fmt.Sprintf("failed to open target rig database: %v", err)}
+	// Open target storage (in single-DB mode, reuse server's own storage)
+	var targetStore storage.Storage
+	if s.isSingleDBMode() {
+		targetStore = store // same database, different prefix
+	} else {
+		targetStore, err = factory.NewFromConfig(ctx, targetBeadsDir)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("failed to open target rig database: %v", err)}
+		}
+		defer targetStore.Close()
 	}
-	defer targetStore.Close()
 
 	// Create new issue in target
 	newIssue := copyIssueForMove(sourceIssue, args.IssueID, actor)
@@ -279,7 +284,7 @@ func (s *Server) handleRefile(req *Request) Response {
 	}
 
 	// Resolve target rig
-	targetBeadsDir, targetPrefix, err := resolveTargetRig(req, args.TargetRig)
+	targetBeadsDir, targetPrefix, err := s.resolveTargetRig(req, args.TargetRig)
 	if err != nil {
 		return Response{Success: false, Error: fmt.Sprintf("failed to resolve target rig: %v", err)}
 	}
@@ -289,12 +294,17 @@ func (s *Server) handleRefile(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("issue %s is already in rig %q", args.IssueID, args.TargetRig)}
 	}
 
-	// Open target storage
-	targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
-	if err != nil {
-		return Response{Success: false, Error: fmt.Sprintf("failed to open target rig database: %v", err)}
+	// Open target storage (in single-DB mode, reuse server's own storage)
+	var targetStore storage.Storage
+	if s.isSingleDBMode() {
+		targetStore = store // same database, different prefix
+	} else {
+		targetStore, err = factory.NewFromConfig(ctx, targetBeadsDir)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("failed to open target rig database: %v", err)}
+		}
+		defer targetStore.Close()
 	}
-	defer targetStore.Close()
 
 	// Create new issue in target (simpler than move — no dependency remapping)
 	newIssue := &types.Issue{
@@ -795,9 +805,86 @@ func (s *Server) cookFormulaFull(ctx context.Context, formulaName string, condit
 
 // --- helpers ---
 
+// isSingleDBMode returns true when the daemon is running in single-DB mode
+// (K8s deployment with shared Dolt database). In this mode, all rigs share
+// one database and are distinguished by prefix, not separate .beads directories.
+func (s *Server) isSingleDBMode() bool {
+	return os.Getenv("BEADS_DOLT_SERVER_MODE") == "1"
+}
+
+// resolveRigToPrefix queries rig beads (type=rig) from the server's own storage
+// to resolve a rig name to its prefix. Used in single-DB mode where all rigs
+// share one database and there is no filesystem-based routes.jsonl.
+//
+// Rig beads have: type=rig, title=<rig-name>, label prefix:<X>.
+// Matches by title (rig name) or by prefix label value.
+func (s *Server) resolveRigToPrefix(targetRig string) (string, error) {
+	store := s.storage
+	if store == nil {
+		return "", fmt.Errorf("storage not available")
+	}
+
+	ctx := context.Background()
+	rigType := types.IssueType("rig")
+	openStatus := types.StatusOpen
+	rigBeads, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		IssueType: &rigType,
+		Status:    &openStatus,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to query rig beads: %v", err)
+	}
+
+	for _, rig := range rigBeads {
+		// Check title match (rig name)
+		if strings.EqualFold(rig.Title, targetRig) {
+			return extractPrefixLabel(ctx, store, rig.ID)
+		}
+		// Check if targetRig matches the prefix value itself
+		labels, _ := store.GetLabels(ctx, rig.ID)
+		for _, label := range labels {
+			if strings.HasPrefix(label, "prefix:") {
+				prefix := strings.TrimPrefix(label, "prefix:")
+				if strings.EqualFold(prefix, targetRig) {
+					return prefix, nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("rig %q not found in rig beads", targetRig)
+}
+
+// extractPrefixLabel reads the prefix:<X> label from a rig bead.
+func extractPrefixLabel(ctx context.Context, store storage.Storage, issueID string) (string, error) {
+	labels, err := store.GetLabels(ctx, issueID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get labels for rig %s: %v", issueID, err)
+	}
+	for _, label := range labels {
+		if strings.HasPrefix(label, "prefix:") {
+			return strings.TrimPrefix(label, "prefix:"), nil
+		}
+	}
+	return "", fmt.Errorf("rig bead %s has no prefix: label", issueID)
+}
+
 // resolveTargetRig resolves a target rig name/prefix to a beads directory and prefix.
-func resolveTargetRig(req *Request, targetRig string) (string, string, error) {
-	// Use the request's cwd to find the town beads directory
+// In single-DB mode (K8s), queries rig beads from the shared database.
+// In classical mode, walks the filesystem to find routes.jsonl.
+func (s *Server) resolveTargetRig(req *Request, targetRig string) (string, string, error) {
+	// Single-DB mode: resolve from rig beads, return same dbPath with resolved prefix
+	if s.isSingleDBMode() {
+		prefix, err := s.resolveRigToPrefix(targetRig)
+		if err != nil {
+			return "", "", err
+		}
+		// In single-DB mode, the beads dir is the server's own dbPath parent
+		// (all rigs share the same database)
+		return s.dbPath, prefix, nil
+	}
+
+	// Classical mode: filesystem-based resolution via routes.jsonl
 	cwd := req.Cwd
 	if cwd == "" {
 		cwd = "."

@@ -561,3 +561,98 @@ func TestRenamePrefixRPC_EmptyNewPrefix(t *testing.T) {
 		t.Fatal("Expected error for empty new_prefix")
 	}
 }
+
+// TestResolveRigToPrefix tests rig bead resolution in single-DB mode (bd-q3sw).
+func TestResolveRigToPrefix(t *testing.T) {
+	server, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a rig bead with prefix label
+	rigIssue := &types.Issue{
+		Title:     "beads",
+		Status:    types.StatusOpen,
+		IssueType: types.IssueType("rig"),
+		Priority:  2,
+	}
+	if err := server.storage.CreateIssue(ctx, rigIssue, "test"); err != nil {
+		t.Fatalf("Failed to create rig bead: %v", err)
+	}
+	if err := server.storage.AddLabel(ctx, rigIssue.ID, "prefix:bd", "test"); err != nil {
+		t.Fatalf("Failed to add prefix label: %v", err)
+	}
+
+	// Create a second rig
+	rig2 := &types.Issue{
+		Title:     "gastown",
+		Status:    types.StatusOpen,
+		IssueType: types.IssueType("rig"),
+		Priority:  2,
+	}
+	if err := server.storage.CreateIssue(ctx, rig2, "test"); err != nil {
+		t.Fatalf("Failed to create rig2 bead: %v", err)
+	}
+	if err := server.storage.AddLabel(ctx, rig2.ID, "prefix:gt", "test"); err != nil {
+		t.Fatalf("Failed to add prefix label: %v", err)
+	}
+
+	// Test: resolve by rig name
+	prefix, err := server.resolveRigToPrefix("beads")
+	if err != nil {
+		t.Fatalf("resolveRigToPrefix(beads) failed: %v", err)
+	}
+	if prefix != "bd" {
+		t.Errorf("Expected prefix 'bd', got %q", prefix)
+	}
+
+	// Test: resolve second rig by name
+	prefix, err = server.resolveRigToPrefix("gastown")
+	if err != nil {
+		t.Fatalf("resolveRigToPrefix(gastown) failed: %v", err)
+	}
+	if prefix != "gt" {
+		t.Errorf("Expected prefix 'gt', got %q", prefix)
+	}
+
+	// Test: resolve by prefix value
+	prefix, err = server.resolveRigToPrefix("gt")
+	if err != nil {
+		t.Fatalf("resolveRigToPrefix(gt) failed: %v", err)
+	}
+	if prefix != "gt" {
+		t.Errorf("Expected prefix 'gt', got %q", prefix)
+	}
+
+	// Test: not found
+	_, err = server.resolveRigToPrefix("nonexistent")
+	if err == nil {
+		t.Fatal("Expected error for nonexistent rig")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("Expected 'not found' error, got: %v", err)
+	}
+}
+
+// TestIsSingleDBMode tests the single-DB mode detection (bd-q3sw).
+func TestIsSingleDBMode(t *testing.T) {
+	server, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Default: not in single-DB mode
+	if server.isSingleDBMode() {
+		t.Error("Expected isSingleDBMode() = false by default")
+	}
+
+	// Set env var
+	t.Setenv("BEADS_DOLT_SERVER_MODE", "1")
+	if !server.isSingleDBMode() {
+		t.Error("Expected isSingleDBMode() = true with BEADS_DOLT_SERVER_MODE=1")
+	}
+
+	// Unset
+	t.Setenv("BEADS_DOLT_SERVER_MODE", "0")
+	if server.isSingleDBMode() {
+		t.Error("Expected isSingleDBMode() = false with BEADS_DOLT_SERVER_MODE=0")
+	}
+}

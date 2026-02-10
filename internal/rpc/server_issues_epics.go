@@ -1818,30 +1818,51 @@ func (s *Server) handleList(req *Request) Response {
 
 	// Cross-rig listing: open target rig's storage (bd-rl6y)
 	var useTargetStore bool
+	var targetPrefix string
 	if listArgs.TargetRig != "" {
-		targetBeadsDir, _, err := resolveTargetRig(req, listArgs.TargetRig)
-		if err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to resolve target rig: %v", err),
+		if s.isSingleDBMode() {
+			// Single-DB mode (K8s): resolve prefix from rig beads, filter by prefix
+			prefix, err := s.resolveRigToPrefix(listArgs.TargetRig)
+			if err != nil {
+				return Response{
+					Success: false,
+					Error:   fmt.Sprintf("failed to resolve target rig: %v", err),
+				}
 			}
-		}
-		targetStore, err := factory.NewFromConfig(context.Background(), targetBeadsDir)
-		if err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("failed to open rig %q database: %v", listArgs.TargetRig, err),
+			targetPrefix = prefix
+			useTargetStore = true
+			// store stays the same — we'll filter by prefix below
+		} else {
+			// Classical mode: open separate rig database
+			targetBeadsDir, _, err := s.resolveTargetRig(req, listArgs.TargetRig)
+			if err != nil {
+				return Response{
+					Success: false,
+					Error:   fmt.Sprintf("failed to resolve target rig: %v", err),
+				}
 			}
+			targetStore, err := factory.NewFromConfig(context.Background(), targetBeadsDir)
+			if err != nil {
+				return Response{
+					Success: false,
+					Error:   fmt.Sprintf("failed to open rig %q database: %v", listArgs.TargetRig, err),
+				}
+			}
+			defer targetStore.Close()
+			store = targetStore
+			useTargetStore = true
 		}
-		defer targetStore.Close()
-		store = targetStore
-		useTargetStore = true
 	}
 
 	filter := types.IssueFilter{
 		Limit: listArgs.Limit,
 	}
-	
+
+	// Single-DB cross-rig: filter by prefix (bd-q3sw)
+	if targetPrefix != "" {
+		filter.IDPrefix = targetPrefix + "-"
+	}
+
 	// Normalize status: treat "" or "all" as unset (no filter)
 	if listArgs.Status != "" && listArgs.Status != "all" {
 		status := types.Status(listArgs.Status)
