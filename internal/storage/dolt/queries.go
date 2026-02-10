@@ -276,8 +276,8 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		whereClauses = append(whereClauses, "issue_type = ?")
 		args = append(args, filter.Type)
 	} else {
-		// Exclude workflow types from ready work by default (matches SQLite)
-		whereClauses = append(whereClauses, "issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent', 'role', 'rig')")
+		// Exclude non-work types from ready queue by default (matches SQLite)
+		whereClauses = append(whereClauses, "issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent', 'role', 'rig', 'formula', 'config', 'advice', 'runbook', 'convoy', 'slot', 'event')")
 		// Exclude IDs matching configured patterns (default: -mol-, -wisp-)
 		if !filter.IncludeMolSteps {
 			patterns := s.getExcludeIDPatterns(ctx)

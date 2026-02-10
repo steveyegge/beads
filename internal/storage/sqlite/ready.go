@@ -35,16 +35,11 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		whereClauses = append(whereClauses, "i.issue_type = ?")
 		args = append(args, filter.Type)
 	} else {
-		// Exclude workflow types from ready work by default
-		// These are internal workflow items, not work for polecats to claim:
-		// - merge-request: processed by Refinery
-		// - gate: async wait conditions
-		// - molecule: workflow containers
-		// - message: mail/communication items
-		// - agent: identity/state tracking beads
-		// - role: agent role definitions (reference metadata)
-		// - rig: rig identity beads (reference metadata)
-		whereClauses = append(whereClauses, "i.issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent', 'role', 'rig')")
+		// Exclude non-work types from ready queue by default.
+		// These are workflow/infrastructure items, not actionable work:
+		// merge-request, gate, molecule, message, agent, role, rig,
+		// formula, config, advice, runbook, convoy, slot, event
+		whereClauses = append(whereClauses, "i.issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent', 'role', 'rig', 'formula', 'config', 'advice', 'runbook', 'convoy', 'slot', 'event')")
 		// Exclude IDs matching configured patterns
 		// Default patterns: -mol- (molecule steps), -wisp- (ephemeral wisps)
 		// Configure with: bd config set ready.exclude_id_patterns "-mol-,-wisp-"

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -64,7 +63,7 @@ func (s *DoltStore) GetDecisionPoint(ctx context.Context, issueID string) (*type
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
 			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
-			COALESCE(parent_bead_id, ''), created_at
+			COALESCE(parent_bead_id, ''), created_at, reminder_count
 		FROM decision_points
 		WHERE issue_id = ?
 	`, issueID).Scan(
@@ -73,21 +72,15 @@ func (s *DoltStore) GetDecisionPoint(ctx context.Context, issueID string) (*type
 		&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 		&dp.Iteration, &dp.MaxIterations,
 		&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
-		&dp.ParentBeadID, &dp.CreatedAt,
+		&dp.ParentBeadID, &dp.CreatedAt, &dp.ReminderCount,
 	)
 	if err == sql.ErrNoRows {
-		// Debug: try a count query to see if the table has ANY rows
-		var count int
-		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM decision_points`).Scan(&count)
-		fmt.Fprintf(os.Stderr, "GetDecisionPoint(%s): no rows (total decision_points: %d)\n", issueID, count)
 		return nil, nil
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "GetDecisionPoint(%s): error: %v\n", issueID, err)
 		return nil, fmt.Errorf("failed to query decision point: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "GetDecisionPoint(%s): found prompt=%q\n", issueID, dp.Prompt)
 	return dp, nil
 }
 
@@ -155,7 +148,7 @@ func (s *DoltStore) ListPendingDecisions(ctx context.Context) ([]*types.Decision
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
 			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
-			COALESCE(parent_bead_id, ''), created_at
+			COALESCE(parent_bead_id, ''), created_at, reminder_count
 		FROM decision_points
 		WHERE responded_at IS NULL
 		ORDER BY created_at ASC
@@ -174,7 +167,7 @@ func (s *DoltStore) ListPendingDecisions(ctx context.Context) ([]*types.Decision
 			&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 			&dp.Iteration, &dp.MaxIterations,
 			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
-			&dp.ParentBeadID, &dp.CreatedAt,
+			&dp.ParentBeadID, &dp.CreatedAt, &dp.ReminderCount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan decision point: %w", err)
@@ -202,7 +195,7 @@ func (s *DoltStore) ListRecentlyRespondedDecisions(ctx context.Context, since ti
 				COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 				iteration, max_iterations,
 				COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
-				COALESCE(parent_bead_id, ''), created_at
+				COALESCE(parent_bead_id, ''), created_at, reminder_count
 			FROM decision_points
 			WHERE responded_at IS NOT NULL
 			  AND responded_at >= ?
@@ -216,7 +209,7 @@ func (s *DoltStore) ListRecentlyRespondedDecisions(ctx context.Context, since ti
 				COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 				iteration, max_iterations,
 				COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
-				COALESCE(parent_bead_id, ''), created_at
+				COALESCE(parent_bead_id, ''), created_at, reminder_count
 			FROM decision_points
 			WHERE responded_at IS NOT NULL
 			  AND responded_at >= ?
@@ -237,7 +230,7 @@ func (s *DoltStore) ListRecentlyRespondedDecisions(ctx context.Context, since ti
 			&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 			&dp.Iteration, &dp.MaxIterations,
 			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
-			&dp.ParentBeadID, &dp.CreatedAt,
+			&dp.ParentBeadID, &dp.CreatedAt, &dp.ReminderCount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan decision point: %w", err)
@@ -302,7 +295,7 @@ func (t *doltTransaction) GetDecisionPoint(ctx context.Context, issueID string) 
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
 			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
-			COALESCE(parent_bead_id, ''), created_at
+			COALESCE(parent_bead_id, ''), created_at, reminder_count
 		FROM decision_points
 		WHERE issue_id = ?
 	`, issueID).Scan(
@@ -311,7 +304,7 @@ func (t *doltTransaction) GetDecisionPoint(ctx context.Context, issueID string) 
 		&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 		&dp.Iteration, &dp.MaxIterations,
 		&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
-		&dp.ParentBeadID, &dp.CreatedAt,
+		&dp.ParentBeadID, &dp.CreatedAt, &dp.ReminderCount,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -381,7 +374,7 @@ func (t *doltTransaction) ListPendingDecisions(ctx context.Context) ([]*types.De
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
 			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
-			COALESCE(parent_bead_id, ''), created_at
+			COALESCE(parent_bead_id, ''), created_at, reminder_count
 		FROM decision_points
 		WHERE responded_at IS NULL
 		ORDER BY created_at ASC
@@ -400,7 +393,7 @@ func (t *doltTransaction) ListPendingDecisions(ctx context.Context) ([]*types.De
 			&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 			&dp.Iteration, &dp.MaxIterations,
 			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
-			&dp.ParentBeadID, &dp.CreatedAt,
+			&dp.ParentBeadID, &dp.CreatedAt, &dp.ReminderCount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan decision point: %w", err)

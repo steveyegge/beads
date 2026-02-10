@@ -1003,6 +1003,17 @@ var listCmd = &cobra.Command{
 			filter.ExcludeTypes = append(filter.ExcludeTypes, "gate")
 		}
 
+		// Exclude non-work types by default (beads-qpy)
+		// When no explicit --type filter, hide infrastructure/workflow items:
+		// formula, config, message, agent, role, rig, convoy, slot, event
+		// (merge-request, molecule, runbook, advice are kept — they appear as user work)
+		// Use --type=<type> to explicitly query any hidden type.
+		if issueType == "" {
+			for _, t := range []types.IssueType{"formula", "config", "message", "agent", "role", "rig", "convoy", "slot", "event"} {
+				filter.ExcludeTypes = append(filter.ExcludeTypes, t)
+			}
+		}
+
 		// Parent filtering: filter children by parent issue
 		if parentID != "" {
 			filter.ParentID = &parentID

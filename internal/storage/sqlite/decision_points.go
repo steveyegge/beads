@@ -66,7 +66,7 @@ func (s *SQLiteStorage) GetDecisionPoint(ctx context.Context, issueID string) (*
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
 			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
-			COALESCE(parent_bead_id, ''), created_at
+			COALESCE(parent_bead_id, ''), created_at, reminder_count
 		FROM decision_points
 		WHERE issue_id = ?
 	`, issueID).Scan(
@@ -75,7 +75,7 @@ func (s *SQLiteStorage) GetDecisionPoint(ctx context.Context, issueID string) (*
 		&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 		&dp.Iteration, &dp.MaxIterations,
 		&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
-		&dp.ParentBeadID, &dp.CreatedAt,
+		&dp.ParentBeadID, &dp.CreatedAt, &dp.ReminderCount,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -150,7 +150,7 @@ func (s *SQLiteStorage) ListPendingDecisions(ctx context.Context) ([]*types.Deci
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
 			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
-			COALESCE(parent_bead_id, ''), created_at
+			COALESCE(parent_bead_id, ''), created_at, reminder_count
 		FROM decision_points
 		WHERE responded_at IS NULL
 		ORDER BY created_at ASC
@@ -169,7 +169,7 @@ func (s *SQLiteStorage) ListPendingDecisions(ctx context.Context) ([]*types.Deci
 			&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 			&dp.Iteration, &dp.MaxIterations,
 			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
-			&dp.ParentBeadID, &dp.CreatedAt,
+			&dp.ParentBeadID, &dp.CreatedAt, &dp.ReminderCount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan decision point: %w", err)
@@ -202,7 +202,7 @@ func (s *SQLiteStorage) ListRecentlyRespondedDecisions(ctx context.Context, sinc
 				COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 				iteration, max_iterations,
 				COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
-				COALESCE(parent_bead_id, ''), created_at
+				COALESCE(parent_bead_id, ''), created_at, reminder_count
 			FROM decision_points
 			WHERE responded_at IS NOT NULL
 			  AND responded_at >= ?
@@ -216,7 +216,7 @@ func (s *SQLiteStorage) ListRecentlyRespondedDecisions(ctx context.Context, sinc
 				COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 				iteration, max_iterations,
 				COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
-				COALESCE(parent_bead_id, ''), created_at
+				COALESCE(parent_bead_id, ''), created_at, reminder_count
 			FROM decision_points
 			WHERE responded_at IS NOT NULL
 			  AND responded_at >= ?
@@ -237,7 +237,7 @@ func (s *SQLiteStorage) ListRecentlyRespondedDecisions(ctx context.Context, sinc
 			&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 			&dp.Iteration, &dp.MaxIterations,
 			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
-			&dp.ParentBeadID, &dp.CreatedAt,
+			&dp.ParentBeadID, &dp.CreatedAt, &dp.ReminderCount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan decision point: %w", err)
