@@ -224,5 +224,6 @@ func DefaultHandlers() []Handler {
 		&DecisionHandler{},     // 30
 	}
 	handlers = append(handlers, DefaultOjHandlers()...)
+	handlers = append(handlers, DefaultMailHandlers()...)
 	return handlers
 }
