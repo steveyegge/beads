@@ -339,8 +339,8 @@ nats:
   enabled: false
 
   # Deploys a standalone NATS server (StatefulSet + Service + ConfigMap).
-  # When enabled, the daemon connects as a client instead of starting
-  # its embedded NATS server (BD_NATS_DISABLED=true, BD_NATS_URL set).
+  # When enabled, the daemon connects as a client (BD_NATS_URL) instead
+  # of starting its embedded NATS server.
 
   # Token auth (shared with daemon and agents).
   # Set via --set nats.auth.token=<daemon-token> at deploy time.
@@ -366,6 +366,24 @@ nats:
     repository: docker/library/nats
     tag: "2.10-alpine"
     pullPolicy: IfNotPresent
+
+  # WebSocket listener for browser-based and external NATS clients.
+  # Clients connect via wss://<host>/nats when ingress is enabled.
+  websocket:
+    enabled: false
+    port: 8443
+
+  # Ingress for external NATS access (WebSocket + monitoring).
+  # Requires websocket.enabled=true for client connections.
+  # Monitoring endpoints (/nats-monitor/connz, /nats-monitor/jsz, etc.)
+  # are always available when ingress is enabled.
+  ingress:
+    enabled: false
+    host: ""
+    entryPoints:
+      - web
+      - websecure
+    stripPrefix: true  # Strip /nats prefix before forwarding to NATS WS
 
   # Resource limits
   resources:

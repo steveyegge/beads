@@ -1,0 +1,57 @@
+{{- if and .Values.nats.enabled .Values.nats.ingress.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "bd-daemon.fullname" . }}-nats
+  labels:
+    {{- include "bd-daemon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  entryPoints:
+    {{- toYaml .Values.nats.ingress.entryPoints | nindent 4 }}
+  routes:
+    # WebSocket endpoint for NATS clients (wss://<host>/nats)
+    - match: Host(`{{ .Values.nats.ingress.host }}`) && PathPrefix(`/nats`)
+      kind: Rule
+      services:
+        - name: {{ include "bd-daemon.fullname" . }}-nats
+          port: {{ .Values.nats.websocket.port | default 8443 }}
+      {{- if .Values.nats.ingress.stripPrefix }}
+      middlewares:
+        - name: {{ include "bd-daemon.fullname" . }}-nats-stripprefix
+      {{- end }}
+    # Monitoring endpoint (/nats/healthz, /nats/connz, /nats/jsz, etc.)
+    - match: Host(`{{ .Values.nats.ingress.host }}`) && PathPrefix(`/nats-monitor`)
+      kind: Rule
+      services:
+        - name: {{ include "bd-daemon.fullname" . }}-nats
+          port: 8222
+      middlewares:
+        - name: {{ include "bd-daemon.fullname" . }}-nats-monitor-stripprefix
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "bd-daemon.fullname" . }}-nats-monitor-stripprefix
+  labels:
+    {{- include "bd-daemon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  stripPrefix:
+    prefixes:
+      - /nats-monitor
+{{- if .Values.nats.ingress.stripPrefix }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "bd-daemon.fullname" . }}-nats-stripprefix
+  labels:
+    {{- include "bd-daemon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  stripPrefix:
+    prefixes:
+      - /nats
+{{- end }}
+{{- end }}

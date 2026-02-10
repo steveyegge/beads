@@ -18,6 +18,12 @@ data:
       {{- end }}
     }
     {{- end }}
+    {{- if .Values.nats.websocket.enabled }}
+    websocket {
+      listen: "0.0.0.0:{{ .Values.nats.websocket.port | default 8443 }}"
+      no_tls: true
+    }
+    {{- end }}
     jetstream {
       store_dir: /data/jetstream
       max_memory_store: {{ .Values.nats.jetstream.maxMemory | default "256M" }}
@@ -42,6 +48,12 @@ spec:
       targetPort: monitoring
       protocol: TCP
       name: monitoring
+    {{- if .Values.nats.websocket.enabled }}
+    - port: {{ .Values.nats.websocket.port | default 8443 }}
+      targetPort: websocket
+      protocol: TCP
+      name: websocket
+    {{- end }}
   selector:
     {{- include "bd-daemon.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: nats
@@ -84,6 +96,11 @@ spec:
             - name: monitoring
               containerPort: 8222
               protocol: TCP
+            {{- if .Values.nats.websocket.enabled }}
+            - name: websocket
+              containerPort: {{ .Values.nats.websocket.port | default 8443 }}
+              protocol: TCP
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
