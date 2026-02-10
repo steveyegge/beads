@@ -497,6 +497,16 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, hydratedRepoDaemonsCheck)
 	// Note: Don't set OverallOK = false for this - it's a performance/freshness hint
 
+	// Check 8j: Daemon freshness (warn if daemon hasn't processed requests recently)
+	daemonFreshnessCheck := convertWithCategory(doctor.CheckDaemonFreshness(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, daemonFreshnessCheck)
+	// Note: Don't set OverallOK = false for this - it's advisory
+
+	// Check 8k: Sync freshness (JSONL uncommitted, conflict markers - no SQLite)
+	syncFreshnessCheck := convertWithCategory(doctor.CheckSyncFreshness(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, syncFreshnessCheck)
+	// Note: Don't set OverallOK = false for this - it's advisory
+
 	// Check 9: Database-JSONL sync
 	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, syncCheck)

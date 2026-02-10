@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/git"
@@ -115,6 +116,82 @@ func CheckDaemonStatus(path string, cliVersion string) DoctorCheck {
 		Message: fmt.Sprintf("Daemon running (PID %d, version %s)", workspaceDaemons[0].PID, workspaceDaemons[0].Version),
 	}
 }
+
+// CheckDaemonFreshness checks if the daemon's last activity is recent.
+// If the daemon is running but hasn't processed a request in over an hour,
+// it may indicate a stuck daemon or stale sync state.
+func CheckDaemonFreshness(path string) DoctorCheck {
+	_, beadsDir := getBackendAndBeadsDir(path)
+	socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
+
+	client, err := rpc.TryConnect(socketPath)
+	if err != nil || client == nil {
+		return DoctorCheck{
+			Name:    "Daemon Freshness",
+			Status:  StatusOK,
+			Message: "No daemon running (N/A)",
+		}
+	}
+	defer func() { _ = client.Close() }()
+
+	status, err := client.Status()
+	if err != nil {
+		return DoctorCheck{
+			Name:    "Daemon Freshness",
+			Status:  StatusOK,
+			Message: "Could not query daemon status",
+		}
+	}
+
+	// If not auto-syncing, freshness is the user's responsibility
+	if !status.AutoCommit || !status.AutoPush {
+		return DoctorCheck{
+			Name:    "Daemon Freshness",
+			Status:  StatusOK,
+			Message: "Daemon running (auto-sync not enabled, freshness N/A)",
+		}
+	}
+
+	if status.LastActivityTime == "" {
+		return DoctorCheck{
+			Name:    "Daemon Freshness",
+			Status:  StatusOK,
+			Message: "Daemon running (no activity timestamp available)",
+		}
+	}
+
+	lastActivity, err := time.Parse(time.RFC3339Nano, status.LastActivityTime)
+	if err != nil {
+		lastActivity, err = time.Parse(time.RFC3339, status.LastActivityTime)
+	}
+	if err != nil {
+		return DoctorCheck{
+			Name:    "Daemon Freshness",
+			Status:  StatusOK,
+			Message: "Daemon running (could not parse activity timestamp)",
+		}
+	}
+
+	elapsed := time.Since(lastActivity)
+	if elapsed > daemonFreshnessThreshold {
+		return DoctorCheck{
+			Name:    "Daemon Freshness",
+			Status:  StatusWarning,
+			Message: fmt.Sprintf("Last daemon activity was %s ago", elapsed.Truncate(time.Minute)),
+			Detail:  fmt.Sprintf("Last activity: %s", status.LastActivityTime),
+			Fix:     "Run 'bd sync --status' to check sync state, or restart daemon with 'bd daemon stop . && bd daemon start'",
+		}
+	}
+
+	return DoctorCheck{
+		Name:    "Daemon Freshness",
+		Status:  StatusOK,
+		Message: fmt.Sprintf("Daemon active (%s ago)", elapsed.Truncate(time.Second)),
+	}
+}
+
+// daemonFreshnessThreshold is how long without daemon activity before warning.
+const daemonFreshnessThreshold = 1 * time.Hour
 
 // CheckVersionMismatch checks if the database version matches the CLI version.
 // Returns a warning message if there's a mismatch, or empty string if versions match or can't be read.
