@@ -54,20 +54,48 @@ func globalSettingsPath(home string) string {
 	return filepath.Join(home, ".claude", "settings.json")
 }
 
+// knownBeadsCommands lists all exact command strings we install in hooks.
+// Used by hasBeadsHooks (detection) and removeClaude (cleanup).
+var knownBeadsCommands = []string{
+	"bd prime",
+	"bd prime --stealth",
+	"bd sync && bd prime",
+	"bd sync && bd prime --stealth",
+	"bd sync --status && bd prime",
+	"bd sync --status && bd prime --stealth",
+}
+
+// buildHookCommand constructs the hook command string from flags.
+func buildHookCommand(stealth, withSync, withStatusCheck bool) string {
+	prime := "bd prime"
+	if stealth {
+		prime = "bd prime --stealth"
+	}
+
+	// --with-sync takes precedence over --with-status-check
+	if withSync {
+		return "bd sync && " + prime
+	}
+	if withStatusCheck {
+		return "bd sync --status && " + prime
+	}
+	return prime
+}
+
 // InstallClaude installs Claude Code hooks
-func InstallClaude(project bool, stealth bool) {
+func InstallClaude(project bool, stealth bool, withSync bool, withStatusCheck bool) {
 	env, err := claudeEnvProvider()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		setupExit(1)
 		return
 	}
-	if err := installClaude(env, project, stealth); err != nil {
+	if err := installClaude(env, project, stealth, withSync, withStatusCheck); err != nil {
 		setupExit(1)
 	}
 }
 
-func installClaude(env claudeEnv, project bool, stealth bool) error {
+func installClaude(env claudeEnv, project bool, stealth bool, withSync bool, withStatusCheck bool) error {
 	var settingsPath string
 	if project {
 		settingsPath = projectSettingsPath(env.projectDir)
@@ -104,10 +132,7 @@ func installClaude(env claudeEnv, project bool, stealth bool) error {
 		}
 	}
 
-	command := "bd prime"
-	if stealth {
-		command = "bd prime --stealth"
-	}
+	command := buildHookCommand(stealth, withSync, withStatusCheck)
 
 	if addHookCommand(hooks, "SessionStart", command) {
 		_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
@@ -205,10 +230,10 @@ func removeClaude(env claudeEnv, project bool) error {
 		return nil
 	}
 
-	removeHookCommand(hooks, "SessionStart", "bd prime")
-	removeHookCommand(hooks, "PreCompact", "bd prime")
-	removeHookCommand(hooks, "SessionStart", "bd prime --stealth")
-	removeHookCommand(hooks, "PreCompact", "bd prime --stealth")
+	for _, cmd := range knownBeadsCommands {
+		removeHookCommand(hooks, "SessionStart", cmd)
+		removeHookCommand(hooks, "PreCompact", cmd)
+	}
 
 	data, err = json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -361,10 +386,12 @@ func hasBeadsHooks(settingsPath string) bool {
 				if !ok {
 					continue
 				}
-				// Check for either variant
-				cmd := cmdMap["command"]
-				if cmd == "bd prime" || cmd == "bd prime --stealth" {
-					return true
+				// Check for any known beads hook command
+				cmdStr, _ := cmdMap["command"].(string)
+				for _, known := range knownBeadsCommands {
+					if cmdStr == known {
+						return true
+					}
 				}
 			}
 		}

@@ -910,9 +910,11 @@ bd setup aider --remove
 
 **Claude Code options:**
 ```bash
-bd setup claude              # Install globally (~/.claude/settings.json)
-bd setup claude --project    # Install for this project only
-bd setup claude --stealth    # Use stealth mode (flush only, no git operations)
+bd setup claude                        # Install globally (~/.claude/settings.json)
+bd setup claude --project              # Install for this project only
+bd setup claude --stealth              # Use stealth mode (flush only, no git operations)
+bd setup claude --with-status-check    # Run bd sync --status before bd prime
+bd setup claude --with-sync            # Run bd sync before bd prime
 ```
 
 **What each setup does:**

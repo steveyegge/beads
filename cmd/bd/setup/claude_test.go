@@ -330,7 +330,7 @@ func TestInstallClaudeCleanupNullHooks(t *testing.T) {
 	})
 
 	// Install should clean up null values and add proper hooks
-	err := installClaude(env, false, false)
+	err := installClaude(env, false, false, false, false)
 	if err != nil {
 		t.Fatalf("install failed: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestIdempotencyWithStealth(t *testing.T) {
 
 func TestInstallClaudeProject(t *testing.T) {
 	env, stdout, stderr := newClaudeTestEnv(t)
-	if err := installClaude(env, true, false); err != nil {
+	if err := installClaude(env, true, false, false, false); err != nil {
 		t.Fatalf("installClaude: %v", err)
 	}
 	data, err := os.ReadFile(projectSettingsPath(env.projectDir))
@@ -577,7 +577,7 @@ func TestInstallClaudeProject(t *testing.T) {
 
 func TestInstallClaudeGlobalStealth(t *testing.T) {
 	env, stdout, _ := newClaudeTestEnv(t)
-	if err := installClaude(env, false, true); err != nil {
+	if err := installClaude(env, false, true, false, false); err != nil {
 		t.Fatalf("installClaude: %v", err)
 	}
 	data, err := os.ReadFile(globalSettingsPath(env.homeDir))
@@ -602,7 +602,7 @@ func TestInstallClaudeErrors(t *testing.T) {
 		if err := os.WriteFile(path, []byte("not json"), 0o644); err != nil {
 			t.Fatalf("write file: %v", err)
 		}
-		if err := installClaude(env, true, false); err == nil {
+		if err := installClaude(env, true, false, false, false); err == nil {
 			t.Fatal("expected parse error")
 		}
 		if !strings.Contains(stderr.String(), "failed to parse") {
@@ -613,7 +613,7 @@ func TestInstallClaudeErrors(t *testing.T) {
 	t.Run("ensure dir error", func(t *testing.T) {
 		env, _, _ := newClaudeTestEnv(t)
 		env.ensureDir = func(string, os.FileMode) error { return errors.New("boom") }
-		if err := installClaude(env, true, false); err == nil {
+		if err := installClaude(env, true, false, false, false); err == nil {
 			t.Fatal("expected ensureDir error")
 		}
 	})
@@ -739,7 +739,7 @@ func TestClaudeWrappersExit(t *testing.T) {
 	t.Run("install provider error", func(t *testing.T) {
 		cap := stubSetupExit(t)
 		stubClaudeEnvProvider(t, claudeEnv{}, errors.New("boom"))
-		InstallClaude(false, false)
+		InstallClaude(false, false, false, false)
 		if !cap.called || cap.code != 1 {
 			t.Fatal("InstallClaude should exit on provider error")
 		}
@@ -750,7 +750,7 @@ func TestClaudeWrappersExit(t *testing.T) {
 		env, _, _ := newClaudeTestEnv(t)
 		env.ensureDir = func(string, os.FileMode) error { return errors.New("boom") }
 		stubClaudeEnvProvider(t, env, nil)
-		InstallClaude(true, false)
+		InstallClaude(true, false, false, false)
 		if !cap.called || cap.code != 1 {
 			t.Fatal("InstallClaude should exit when installClaude fails")
 		}
@@ -782,4 +782,194 @@ func TestClaudeWrappersExit(t *testing.T) {
 			t.Fatal("RemoveClaude should exit on parse error")
 		}
 	})
+}
+
+func TestBuildHookCommand(t *testing.T) {
+	tests := []struct {
+		name            string
+		stealth         bool
+		withSync        bool
+		withStatusCheck bool
+		want            string
+	}{
+		{"default", false, false, false, "bd prime"},
+		{"stealth", true, false, false, "bd prime --stealth"},
+		{"with-sync", false, true, false, "bd sync && bd prime"},
+		{"with-sync stealth", true, true, false, "bd sync && bd prime --stealth"},
+		{"with-status-check", false, false, true, "bd sync --status && bd prime"},
+		{"with-status-check stealth", true, false, true, "bd sync --status && bd prime --stealth"},
+		{"with-sync takes precedence", false, true, true, "bd sync && bd prime"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildHookCommand(tt.stealth, tt.withSync, tt.withStatusCheck)
+			if got != tt.want {
+				t.Errorf("buildHookCommand(%v, %v, %v) = %q, want %q",
+					tt.stealth, tt.withSync, tt.withStatusCheck, got, tt.want)
+			}
+		})
+	}
+}
+
+// assertHookCommand parses the settings JSON and checks if the given event
+// contains a hook with the expected command. This avoids issues with Go's
+// json.MarshalIndent escaping & as \u0026 in string comparisons.
+func assertHookCommand(t *testing.T, settingsData []byte, event, wantCommand string) {
+	t.Helper()
+	var settings map[string]interface{}
+	if err := json.Unmarshal(settingsData, &settings); err != nil {
+		t.Fatalf("unmarshal settings: %v", err)
+	}
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		t.Fatal("hooks section missing")
+	}
+	eventHooks, ok := hooks[event].([]interface{})
+	if !ok {
+		t.Fatalf("event %q not found in hooks", event)
+	}
+	for _, hook := range eventHooks {
+		hookMap, ok := hook.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		commands, ok := hookMap["hooks"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, cmd := range commands {
+			cmdMap, ok := cmd.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if cmdMap["command"] == wantCommand {
+				return
+			}
+		}
+	}
+	t.Errorf("command %q not found in event %q", wantCommand, event)
+}
+
+func TestInstallClaudeWithSync(t *testing.T) {
+	env, _, _ := newClaudeTestEnv(t)
+	if err := installClaude(env, false, false, true, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	data, err := os.ReadFile(globalSettingsPath(env.homeDir))
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	assertHookCommand(t, data, "SessionStart", "bd sync && bd prime")
+	assertHookCommand(t, data, "PreCompact", "bd sync && bd prime")
+}
+
+func TestInstallClaudeWithStatusCheck(t *testing.T) {
+	env, _, _ := newClaudeTestEnv(t)
+	if err := installClaude(env, false, false, false, true); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	data, err := os.ReadFile(globalSettingsPath(env.homeDir))
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	assertHookCommand(t, data, "SessionStart", "bd sync --status && bd prime")
+	assertHookCommand(t, data, "PreCompact", "bd sync --status && bd prime")
+}
+
+func TestInstallClaudeWithSyncStealth(t *testing.T) {
+	env, _, _ := newClaudeTestEnv(t)
+	if err := installClaude(env, false, true, true, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	data, err := os.ReadFile(globalSettingsPath(env.homeDir))
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	assertHookCommand(t, data, "SessionStart", "bd sync && bd prime --stealth")
+	assertHookCommand(t, data, "PreCompact", "bd sync && bd prime --stealth")
+}
+
+func TestHasBeadsHooksSyncVariants(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	for _, cmd := range knownBeadsCommands {
+		t.Run(cmd, func(t *testing.T) {
+			settingsPath := filepath.Join(tmpDir, "settings.json")
+			settings := map[string]interface{}{
+				"hooks": map[string]interface{}{
+					"SessionStart": []interface{}{
+						map[string]interface{}{
+							"matcher": "",
+							"hooks": []interface{}{
+								map[string]interface{}{
+									"type":    "command",
+									"command": cmd,
+								},
+							},
+						},
+					},
+				},
+			}
+			data, err := json.Marshal(settings)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if err := os.WriteFile(settingsPath, data, 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			if !hasBeadsHooks(settingsPath) {
+				t.Errorf("hasBeadsHooks should detect %q", cmd)
+			}
+		})
+	}
+}
+
+func TestRemoveClaudeAllVariants(t *testing.T) {
+	env, _, _ := newClaudeTestEnv(t)
+
+	// Install with sync
+	if err := installClaude(env, false, false, true, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+
+	// Verify hooks exist
+	path := globalSettingsPath(env.homeDir)
+	if !hasBeadsHooks(path) {
+		t.Fatal("hooks should exist after install")
+	}
+
+	// Remove should clean up all variants
+	if err := removeClaude(env, false); err != nil {
+		t.Fatalf("removeClaude: %v", err)
+	}
+
+	// Verify hooks are gone
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	for _, cmd := range knownBeadsCommands {
+		if strings.Contains(string(data), cmd) {
+			t.Errorf("command %q should have been removed", cmd)
+		}
+	}
+}
+
+func TestIdempotencyWithSync(t *testing.T) {
+	hooks := make(map[string]interface{})
+
+	added1 := addHookCommand(hooks, "SessionStart", "bd sync && bd prime")
+	if !added1 {
+		t.Error("First call should have added the hook")
+	}
+
+	added2 := addHookCommand(hooks, "SessionStart", "bd sync && bd prime")
+	if added2 {
+		t.Error("Second call should have detected existing hook")
+	}
+
+	eventHooks := hooks["SessionStart"].([]interface{})
+	if len(eventHooks) != 1 {
+		t.Errorf("Expected 1 hook, got %d", len(eventHooks))
+	}
 }

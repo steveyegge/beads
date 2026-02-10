@@ -174,6 +174,12 @@ bd setup claude --project
 
 # With stealth mode (flush only, no git operations)
 bd setup claude --stealth
+
+# Run bd sync --status before bd prime on each session start
+bd setup claude --with-status-check
+
+# Run bd sync before bd prime on each session start
+bd setup claude --with-sync
 ```
 
 ### What Gets Installed
@@ -193,6 +199,8 @@ bd setup claude --stealth
 | `--remove` | Remove beads hooks |
 | `--project` | Install for this project only (not globally) |
 | `--stealth` | Use `bd prime --stealth` (flush only, no git operations) |
+| `--with-status-check` | Run `bd sync --status` before `bd prime` in hooks |
+| `--with-sync` | Run `bd sync` before `bd prime` in hooks |
 
 ### Examples
 

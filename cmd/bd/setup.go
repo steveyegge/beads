@@ -13,14 +13,16 @@ import (
 )
 
 var (
-	setupProject bool
-	setupCheck   bool
-	setupRemove  bool
-	setupStealth bool
-	setupPrint   bool
-	setupOutput  string
-	setupList    bool
-	setupAdd     string
+	setupProject         bool
+	setupCheck           bool
+	setupRemove          bool
+	setupStealth         bool
+	setupPrint           bool
+	setupOutput          string
+	setupList            bool
+	setupAdd             string
+	setupWithSync        bool
+	setupWithStatusCheck bool
 )
 
 var setupCmd = &cobra.Command{
@@ -263,7 +265,7 @@ func runClaudeRecipe() {
 		setup.RemoveClaude(setupProject)
 		return
 	}
-	setup.InstallClaude(setupProject, setupStealth)
+	setup.InstallClaude(setupProject, setupStealth, setupWithSync, setupWithStatusCheck)
 }
 
 func runGeminiRecipe() {
@@ -351,6 +353,8 @@ func init() {
 	setupCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove the integration")
 	setupCmd.Flags().BoolVar(&setupProject, "project", false, "Install for this project only (claude/gemini)")
 	setupCmd.Flags().BoolVar(&setupStealth, "stealth", false, "Use stealth mode (claude/gemini)")
+	setupCmd.Flags().BoolVar(&setupWithSync, "with-sync", false, "Add 'bd sync' before 'bd prime' in hooks (claude)")
+	setupCmd.Flags().BoolVar(&setupWithStatusCheck, "with-status-check", false, "Add 'bd sync --status' before 'bd prime' in hooks (claude)")
 
 	rootCmd.AddCommand(setupCmd)
 }

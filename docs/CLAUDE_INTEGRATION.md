@@ -93,6 +93,12 @@ bd setup claude --project
 # Use stealth mode (flush only, no git operations)
 bd setup claude --stealth
 
+# Run bd sync --status before bd prime on each session start
+bd setup claude --with-status-check
+
+# Run bd sync before bd prime on each session start
+bd setup claude --with-sync
+
 # Check installation status
 bd setup claude --check
 
