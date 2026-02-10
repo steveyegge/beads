@@ -4,49 +4,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // isGitWorktree detects if the current directory is in a git worktree.
 // This is a wrapper around git.IsWorktree() for CLI-layer compatibility.
 func isGitWorktree() bool {
 	return git.IsWorktree()
-}
-
-// shouldDisableDaemonForWorktree returns true if daemon should be disabled
-// due to being in a git worktree without sync-branch configured.
-//
-// The daemon is unsafe in worktrees because all worktrees share the same
-// .beads directory, and the daemon commits to whatever branch its working
-// directory has checked out - which can cause commits to go to the wrong branch.
-//
-// However, when sync-branch is configured, the daemon commits to a dedicated
-// branch (e.g., "beads-metadata") using an internal worktree, so the user's
-// current branch is never affected. This makes daemon mode safe in worktrees.
-//
-// Returns:
-//   - true: Disable daemon (in worktree without sync-branch)
-//   - false: Allow daemon (not in worktree, or sync-branch is configured)
-func shouldDisableDaemonForWorktree() bool {
-	// If not in a worktree, daemon is safe
-	if !isGitWorktree() {
-		return false
-	}
-
-	// In a worktree - check if sync-branch is configured
-	// IsConfiguredWithDB checks env var, config.yaml, AND database config
-	if syncbranch.IsConfiguredWithDB("") {
-		// Sync-branch is configured, daemon is safe (commits go to dedicated branch)
-		return false
-	}
-
-	// In worktree without sync-branch - daemon is unsafe, disable it
-	return true
 }
 
 // gitRevParse runs git rev-parse with the given flag and returns the trimmed output.
@@ -67,49 +34,6 @@ func getWorktreeGitDir() string {
 		return ""
 	}
 	return gitDir
-}
-
-// warnWorktreeDaemon prints a warning if using daemon with worktrees without sync-branch.
-// Call this only when daemon mode is actually active (connected).
-//
-// With the new worktree safety logic, this warning should rarely appear because:
-// - Daemon is auto-disabled in worktrees without sync-branch
-// - When sync-branch is configured, daemon is safe (commits go to dedicated branch)
-//
-// This warning is kept as a safety net for edge cases where daemon might still
-// be connected in a worktree (e.g., daemon started in main repo, then user cd's to worktree).
-func warnWorktreeDaemon(dbPathForWarning string) {
-	if !isGitWorktree() {
-		return
-	}
-
-	// If sync-branch is configured, daemon is safe in worktrees - no warning needed
-	if syncbranch.IsConfiguredWithDB("") {
-		return
-	}
-
-	gitDir := getWorktreeGitDir()
-	beadsDir := filepath.Dir(dbPathForWarning)
-	if beadsDir == "." || beadsDir == "" {
-		beadsDir = dbPathForWarning
-	}
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "╔══════════════════════════════════════════════════════════════════════════╗")
-	fmt.Fprintln(os.Stderr, "║ WARNING: Git worktree detected with daemon mode                         ║")
-	fmt.Fprintln(os.Stderr, "╠══════════════════════════════════════════════════════════════════════════╣")
-	fmt.Fprintln(os.Stderr, "║ Git worktrees share the same .beads directory, which can cause the      ║")
-	fmt.Fprintln(os.Stderr, "║ daemon to commit/push to the wrong branch.                               ║")
-	fmt.Fprintln(os.Stderr, "║                                                                          ║")
-	fmt.Fprintf(os.Stderr, "║ Shared database: %-55s ║\n", truncateForBox(beadsDir, 55))
-	fmt.Fprintf(os.Stderr, "║ Worktree git dir: %-54s ║\n", truncateForBox(gitDir, 54))
-	fmt.Fprintln(os.Stderr, "║                                                                          ║")
-	fmt.Fprintln(os.Stderr, "║ RECOMMENDED SOLUTIONS:                                                   ║")
-	fmt.Fprintln(os.Stderr, "║   1. Configure sync-branch:   bd config set sync-branch beads-metadata  ║")
-	fmt.Fprintln(os.Stderr, "║   2. Use --no-daemon flag:    bd --no-daemon <command>                   ║")
-	fmt.Fprintln(os.Stderr, "║   3. Disable daemon mode:     export BEADS_NO_DAEMON=1                   ║")
-	fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════════════════════════════╝")
-	fmt.Fprintln(os.Stderr)
 }
 
 // truncateForBox truncates a path to fit in the warning box

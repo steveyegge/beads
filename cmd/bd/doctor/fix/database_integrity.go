@@ -36,9 +36,6 @@ func DatabaseIntegrity(path string) error {
 		return doltCorruptionRecovery(absPath, beadsDir)
 	}
 
-	// Best-effort: stop any running daemon to reduce the chance of DB file locks.
-	_ = Daemon(absPath)
-
 	// Resolve database path (respects metadata.json database override).
 	var dbPath string
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
@@ -74,12 +71,7 @@ func DatabaseIntegrity(path string) error {
 	ts := time.Now().UTC().Format("20060102T150405Z")
 	backupDB := dbPath + "." + ts + ".corrupt.backup.db"
 	if err := moveFile(dbPath, backupDB); err != nil {
-		// Retry once after attempting to kill daemons again (helps on platforms with strict file locks).
-		_ = Daemon(absPath)
-		if err2 := moveFile(dbPath, backupDB); err2 != nil {
-			// Prefer the original error (more likely root cause).
-			return fmt.Errorf("failed to back up database: %w", err)
-		}
+		return fmt.Errorf("failed to back up database: %w", err)
 	}
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 		sidecar := dbPath + suffix

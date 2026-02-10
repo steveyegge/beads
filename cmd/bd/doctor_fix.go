@@ -237,8 +237,6 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = doctor.FixLastTouchedTracking()
 		case "Git Hooks":
 			err = fix.GitHooks(path)
-		case "Daemon Health":
-			err = fix.Daemon(path)
 		case "DB-JSONL Sync":
 			err = fix.DBJSONLSync(path)
 		case "Sync Divergence":

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -25,7 +24,6 @@ type CommandContext struct {
 	DBPath       string
 	Actor        string
 	JSONOutput   bool
-	NoDaemon     bool
 	SandboxMode  bool
 	AllowStale   bool
 	NoDb         bool
@@ -35,12 +33,10 @@ type CommandContext struct {
 	Quiet        bool
 
 	// Runtime state
-	Store        storage.Storage
-	DaemonClient *rpc.Client
-	DaemonStatus DaemonStatus
-	RootCtx      context.Context
-	RootCancel   context.CancelFunc
-	HookRunner   *hooks.Runner
+	Store      storage.Storage
+	RootCtx    context.Context
+	RootCancel context.CancelFunc
+	HookRunner *hooks.Runner
 
 	// Auto-flush state (grouped with protecting mutex)
 	FlushManager      *FlushManager
@@ -112,7 +108,7 @@ func shouldUseGlobals() bool {
 // migration period, and they can be gradually replaced with direct
 // cmdCtx access as files are updated.
 
-// getStore returns the current storage backend (daemon client or direct SQLite).
+// getStore returns the current storage backend.
 // This is the primary way commands should access storage.
 func getStore() storage.Storage {
 	if shouldUseGlobals() {
@@ -143,22 +139,6 @@ func setActor(a string) {
 		cmdCtx.Actor = a
 	}
 	actor = a
-}
-
-// getDaemonClient returns the RPC client for daemon mode, or nil in direct mode.
-func getDaemonClient() *rpc.Client {
-	if shouldUseGlobals() {
-		return daemonClient
-	}
-	return cmdCtx.DaemonClient
-}
-
-// setDaemonClient updates the daemon client in the CommandContext.
-func setDaemonClient(c *rpc.Client) {
-	if cmdCtx != nil {
-		cmdCtx.DaemonClient = c
-	}
-	daemonClient = c
 }
 
 // isJSONOutput returns true if JSON output mode is enabled.
@@ -282,39 +262,7 @@ func setFlushManager(fm *FlushManager) {
 	flushManager = fm
 }
 
-// getDaemonStatus returns the current daemon status.
-func getDaemonStatus() DaemonStatus {
-	if shouldUseGlobals() {
-		return daemonStatus
-	}
-	return cmdCtx.DaemonStatus
-}
-
-// setDaemonStatus updates the daemon status.
-func setDaemonStatus(ds DaemonStatus) {
-	if cmdCtx != nil {
-		cmdCtx.DaemonStatus = ds
-	}
-	daemonStatus = ds
-}
-
-// isNoDaemon returns true if daemon mode is disabled.
-func isNoDaemon() bool {
-	if shouldUseGlobals() {
-		return noDaemon
-	}
-	return cmdCtx.NoDaemon
-}
-
-// setNoDaemon updates the no-daemon flag.
-func setNoDaemon(nd bool) {
-	if cmdCtx != nil {
-		cmdCtx.NoDaemon = nd
-	}
-	noDaemon = nd
-}
-
-// isReadonlyMode returns true if read-only mode is enabled.
+// isJSONOutput returns true if JSON output mode is enabled.
 func isReadonlyMode() bool {
 	if shouldUseGlobals() {
 		return readonlyMode
@@ -546,7 +494,6 @@ func syncCommandContext() {
 	cmdCtx.DBPath = dbPath
 	cmdCtx.Actor = actor
 	cmdCtx.JSONOutput = jsonOutput
-	cmdCtx.NoDaemon = noDaemon
 	cmdCtx.SandboxMode = sandboxMode
 	cmdCtx.AllowStale = allowStale
 	cmdCtx.NoDb = noDb
@@ -557,8 +504,6 @@ func syncCommandContext() {
 
 	// Runtime state
 	cmdCtx.Store = store
-	cmdCtx.DaemonClient = daemonClient
-	cmdCtx.DaemonStatus = daemonStatus
 	cmdCtx.RootCtx = rootCtx
 	cmdCtx.RootCancel = rootCancel
 	cmdCtx.HookRunner = hookRunner

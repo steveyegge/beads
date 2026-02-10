@@ -83,7 +83,6 @@ This command checks:
   - If Claude plugin is current (when running in Claude Code)
   - Multiple database files
   - Multiple JSONL files
-  - Daemon health (version mismatches, stale processes)
   - Database-JSONL sync status
   - File permissions
   - Circular dependencies
@@ -445,27 +444,7 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 8a: Git sync setup (informational - explains why daemon might not start)
-	gitSyncCheck := convertWithCategory(doctor.CheckGitSyncSetup(path), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, gitSyncCheck)
-	// Don't fail overall check for git sync warning - beads works fine without git
 
-	// Check 8b: Daemon health
-	daemonCheck := convertWithCategory(doctor.CheckDaemonStatus(path, Version), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, daemonCheck)
-	if daemonCheck.Status == statusWarning || daemonCheck.Status == statusError {
-		result.OverallOK = false
-	}
-
-	// Check 8b: Daemon auto-sync (only warn, don't fail overall)
-	autoSyncCheck := convertWithCategory(doctor.CheckDaemonAutoSync(path), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, autoSyncCheck)
-	// Note: Don't set OverallOK = false for this - it's a performance hint, not a failure
-
-	// Check 8c: Legacy daemon config (warn about deprecated options)
-	legacyDaemonConfigCheck := convertWithCategory(doctor.CheckLegacyDaemonConfig(path), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, legacyDaemonConfigCheck)
-	// Note: Don't set OverallOK = false for this - deprecated options still work
 
 	// Federation health checks (bd-wkumz.6)
 	// Check 8d: Federation remotesapi port accessibility
@@ -492,10 +471,6 @@ func runDiagnostics(path string) doctorResult {
 	doltModeCheck := convertWithCategory(doctor.CheckDoltServerModeMismatch(path), doctor.CategoryFederation)
 	result.Checks = append(result.Checks, doltModeCheck)
 
-	// Check 8i: Hydrated repo daemons (warn if multi-repo hydration configured but daemons not running)
-	hydratedRepoDaemonsCheck := convertWithCategory(doctor.CheckHydratedRepoDaemons(path), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, hydratedRepoDaemonsCheck)
-	// Note: Don't set OverallOK = false for this - it's a performance/freshness hint
 
 	// Check 9: Database-JSONL sync
 	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryData)

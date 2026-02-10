@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// SyncState tracks daemon sync health for backoff and user hints.
+// SyncState tracks sync health for backoff and user hints.
 // Stored in .beads/sync-state.json (gitignored, local-only).
 type SyncState struct {
 	LastFailure     time.Time `json:"last_failure,omitempty"`
@@ -112,7 +112,6 @@ func ClearSyncState(beadsDir string) error {
 
 // RecordSyncFailure updates the sync state after a failure.
 // Returns the duration until next retry.
-// Thread-safe: holds lock for entire load-modify-save operation to prevent races.
 func RecordSyncFailure(beadsDir string, reason string) time.Duration {
 	syncStateMu.Lock()
 	defer syncStateMu.Unlock()
@@ -157,20 +156,16 @@ func ShouldSkipSync(beadsDir string) bool {
 
 // ResetBackoffOnDaemonStart resets backoff counters when daemon starts,
 // but preserves NeedsManualSync flag so hints still show.
-// This allows a fresh start while keeping user informed of conflicts.
-// Thread-safe: holds lock for entire load-modify-save operation to prevent races.
 func ResetBackoffOnDaemonStart(beadsDir string) {
 	syncStateMu.Lock()
 	defer syncStateMu.Unlock()
 
 	state := loadSyncStateUnlocked(beadsDir)
 
-	// Nothing to reset
 	if state.FailureCount == 0 && !state.NeedsManualSync {
 		return
 	}
 
-	// Reset backoff but preserve NeedsManualSync
 	needsManual := state.NeedsManualSync
 	reason := state.FailureReason
 

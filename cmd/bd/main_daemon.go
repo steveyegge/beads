@@ -8,35 +8,8 @@ import (
 	"time"
 )
 
-// DaemonStatus captures daemon connection state for the current command
-type DaemonStatus struct {
-	Mode               string `json:"mode"` // "daemon" or "direct"
-	Connected          bool   `json:"connected"`
-	Degraded           bool   `json:"degraded"`
-	SocketPath         string `json:"socket_path,omitempty"`
-	AutoStartEnabled   bool   `json:"auto_start_enabled"`
-	AutoStartAttempted bool   `json:"auto_start_attempted"`
-	AutoStartSucceeded bool   `json:"auto_start_succeeded"`
-	FallbackReason     string `json:"fallback_reason,omitempty"` // "none","flag_no_daemon","connect_failed","health_failed","auto_start_disabled","auto_start_failed"
-	Detail             string `json:"detail,omitempty"`          // short diagnostic
-	Health             string `json:"health,omitempty"`          // "healthy","degraded","unhealthy"
-}
-
-// Fallback reason constants
 const (
-	FallbackNone              = "none"
-	FallbackFlagNoDaemon      = "flag_no_daemon"
-	FallbackConnectFailed     = "connect_failed"
-	FallbackHealthFailed      = "health_failed"
-	FallbackWorktreeSafety    = "worktree_safety"
-	FallbackSingleProcessOnly = "single_process_only"
-	cmdDaemon                 = "daemon"
-	cmdImport                 = "import"
-	statusHealthy             = "healthy"
-	FallbackAutoStartDisabled = "auto_start_disabled"
-	FallbackAutoStartFailed   = "auto_start_failed"
-	FallbackDaemonUnsupported = "daemon_unsupported"
-	FallbackWispOperation     = "wisp_operation"
+	cmdImport = "import"
 )
 
 // Command group IDs for help organization
