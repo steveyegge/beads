@@ -414,4 +414,3 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 		}
 	}
 }
-

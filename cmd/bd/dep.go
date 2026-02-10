@@ -507,7 +507,6 @@ Examples:
 			FatalErrorRespectJSON("resolving %s: %v", args[0], err)
 		}
 
-
 		showAllPaths, _ := cmd.Flags().GetBool("show-all-paths")
 		maxDepth, _ := cmd.Flags().GetInt("max-depth")
 		reverse, _ := cmd.Flags().GetBool("reverse")

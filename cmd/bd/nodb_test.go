@@ -365,4 +365,3 @@ func TestInitializeNoDbMode_SetsCmdCtxStoreActive(t *testing.T) {
 		t.Errorf("Expected 'Test comment', got %s", comment.Text)
 	}
 }
-

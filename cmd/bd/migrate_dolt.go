@@ -1,4 +1,5 @@
 //go:build cgo
+
 package main
 
 import (
@@ -870,4 +871,9 @@ func formatJSONArray(arr []string) string {
 		return ""
 	}
 	return string(data)
+}
+
+// listMigrations returns registered Dolt migrations (CGO build).
+func listMigrations() []string {
+	return dolt.ListMigrations()
 }

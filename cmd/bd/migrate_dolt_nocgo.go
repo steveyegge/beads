@@ -1,4 +1,5 @@
 //go:build !cgo
+
 package main
 
 import (
@@ -38,4 +39,7 @@ func handleToSQLiteMigration(dryRun bool, autoYes bool) {
 	os.Exit(1)
 }
 
-
+// listMigrations returns an empty list (no Dolt without CGO).
+func listMigrations() []string {
+	return nil
+}

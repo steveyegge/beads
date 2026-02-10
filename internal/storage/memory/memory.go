@@ -296,7 +296,6 @@ func (m *MemoryStorage) CreateIssues(ctx context.Context, issues []*types.Issue,
 	// Store all issues
 	for _, issue := range issues {
 		m.issues[issue.ID] = issue
-	
 
 		// Index external ref for O(1) lookup
 		if issue.ExternalRef != nil && *issue.ExternalRef != "" {
@@ -476,8 +475,6 @@ func (m *MemoryStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		}
 	}
 
-
-
 	// Record event
 	eventType := types.EventUpdated
 	if status, hasStatus := updates["status"]; hasStatus {
@@ -533,8 +530,6 @@ func (m *MemoryStorage) ClaimIssue(ctx context.Context, id string, actor string)
 	issue.Status = types.StatusInProgress
 	issue.UpdatedAt = now
 
-
-
 	// Record claim event
 	event := &types.Event{
 		IssueID:   id,
@@ -565,8 +560,6 @@ func (m *MemoryStorage) CreateTombstone(ctx context.Context, id string, actor st
 	issue.DeletedBy = actor
 	issue.DeleteReason = reason
 	issue.UpdatedAt = now
-
-
 
 	// Record tombstone creation event
 	event := &types.Event{
@@ -605,7 +598,6 @@ func (m *MemoryStorage) DeleteIssue(ctx context.Context, id string) error {
 	delete(m.labels, id)
 	delete(m.events, id)
 	delete(m.comments, id)
-
 
 	return nil
 }
@@ -779,7 +771,6 @@ func (m *MemoryStorage) AddDependency(ctx context.Context, dep *types.Dependency
 
 	m.dependencies[dep.IssueID] = append(m.dependencies[dep.IssueID], dep)
 
-
 	return nil
 }
 
@@ -798,7 +789,6 @@ func (m *MemoryStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 	}
 
 	m.dependencies[issueID] = newDeps
-
 
 	return nil
 }
@@ -1034,7 +1024,6 @@ func (m *MemoryStorage) AddLabel(ctx context.Context, issueID, label, actor stri
 
 	m.labels[issueID] = append(m.labels[issueID], label)
 
-
 	return nil
 }
 
@@ -1052,7 +1041,6 @@ func (m *MemoryStorage) RemoveLabel(ctx context.Context, issueID, label, actor s
 	}
 
 	m.labels[issueID] = newLabels
-
 
 	return nil
 }
@@ -1523,7 +1511,6 @@ func (m *MemoryStorage) AddIssueComment(ctx context.Context, issueID, author, te
 
 	m.comments[issueID] = append(m.comments[issueID], comment)
 
-
 	return comment, nil
 }
 
@@ -1540,7 +1527,6 @@ func (m *MemoryStorage) ImportIssueComment(ctx context.Context, issueID, author,
 	}
 
 	m.comments[issueID] = append(m.comments[issueID], comment)
-
 
 	return comment, nil
 }
@@ -1918,7 +1904,7 @@ func (m *MemoryStorage) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo
 		delete(m.labels, id)
 		delete(m.events, id)
 		delete(m.comments, id)
-	
+
 		delete(m.externalRefToID, id)
 	}
 
@@ -1929,4 +1915,3 @@ func (m *MemoryStorage) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo
 func (m *MemoryStorage) ClearRepoMtime(ctx context.Context, repoPath string) error {
 	return nil
 }
-

@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/storage/dolt"
 	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -837,7 +836,7 @@ func handleInspect() {
 	// If database doesn't exist, return inspection with defaults
 	if !dbExists {
 		result := map[string]interface{}{
-			"registered_migrations": dolt.ListMigrations(),
+			"registered_migrations": listMigrations(),
 			"current_state": map[string]interface{}{
 				"schema_version": "missing",
 				"issue_count":    0,
@@ -903,7 +902,7 @@ func handleInspect() {
 	}
 
 	// Get registered migrations (all migrations are idempotent and run on every open)
-	registeredMigrations := dolt.ListMigrations()
+	registeredMigrations := listMigrations()
 
 	// Build invariants list
 	invariantNames := []string{}

@@ -17,12 +17,12 @@ type ArtifactFinding struct {
 
 // ArtifactReport contains all findings from an artifact scan.
 type ArtifactReport struct {
-	JSONLArtifacts   []ArtifactFinding
-	SQLiteArtifacts  []ArtifactFinding
-	CruftBeadsDirs   []ArtifactFinding
-	RedirectIssues   []ArtifactFinding
-	TotalCount       int
-	SafeDeleteCount  int
+	JSONLArtifacts  []ArtifactFinding
+	SQLiteArtifacts []ArtifactFinding
+	CruftBeadsDirs  []ArtifactFinding
+	RedirectIssues  []ArtifactFinding
+	TotalCount      int
+	SafeDeleteCount int
 }
 
 // CheckClassicArtifacts scans for beads classic artifacts that should be cleaned up

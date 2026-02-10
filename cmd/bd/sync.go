@@ -713,7 +713,7 @@ func writeMergedStateToJSONL(path string, issues []*beads.Issue) error {
 // - dolt-native: Commit and push to Dolt remote (skip JSONL)
 // - belt-and-suspenders: Both JSONL export and Dolt push
 // Does NOT stage or commit to git - that's the user's job.
-func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) error {
+func doExportSync(ctx context.Context, jsonlPath string, _, dryRun bool) error {
 	if err := ensureStoreActive(); err != nil {
 		return fmt.Errorf("failed to initialize store: %w", err)
 	}

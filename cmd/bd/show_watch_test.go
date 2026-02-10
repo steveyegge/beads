@@ -102,11 +102,11 @@ func TestWatchIssueDebounceBehavior(t *testing.T) {
 	// Create a channel to simulate events
 	events := make(chan bool, 3)
 	go func() {
-		events <- true  // Event 1
+		events <- true // Event 1
 		time.Sleep(100 * time.Millisecond)
-		events <- true  // Event 2 (within debounce)
+		events <- true // Event 2 (within debounce)
 		time.Sleep(600 * time.Millisecond)
-		events <- true  // Event 3 (after debounce)
+		events <- true // Event 3 (after debounce)
 		close(events)
 	}()
 

@@ -350,7 +350,9 @@ func exportToJSONLIncrementalDeferred(ctx context.Context, jsonlPath string) (*E
 
 // shouldUseIncrementalExport determines if incremental export would be beneficial.
 // Returns (useIncremental, dirtyIDs, error).
-func shouldUseIncrementalExport(ctx context.Context, jsonlPath string) (bool, []string, error) {
+//
+//nolint:unparam // result always false for now; incremental export support planned
+func shouldUseIncrementalExport(_ context.Context, jsonlPath string) (bool, []string, error) {
 	// Check if JSONL file exists (can't do incremental without existing file)
 	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
 		return false, nil, nil

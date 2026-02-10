@@ -206,4 +206,3 @@ func TestShowCleanupDeprecationHint(t *testing.T) {
 	// This function just prints to stdout, so we just verify it doesn't panic
 	showCleanupDeprecationHint()
 }
-
