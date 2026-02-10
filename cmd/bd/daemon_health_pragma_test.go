@@ -53,7 +53,8 @@ func TestCheckDaemonHealth_BackendSpecificQueries(t *testing.T) {
 		log := newTestLogger()
 
 		// Should complete without error - PRAGMA quick_check is valid SQLite
-		checkDaemonHealth(ctx, store, log)
+		noFailures := 0
+		checkDaemonHealth(ctx, store, log, &noFailures)
 	})
 
 	t.Run("dolt backend uses SELECT 1 not PRAGMA", func(t *testing.T) {
@@ -81,7 +82,8 @@ func TestCheckDaemonHealth_BackendSpecificQueries(t *testing.T) {
 		log := newTestLogger()
 
 		// Should complete without error - SELECT 1 works on any SQL backend
-		checkDaemonHealth(ctx, doltStore, log)
+		noFailures := 0
+		checkDaemonHealth(ctx, doltStore, log, &noFailures)
 	})
 
 	t.Run("nil underlying DB skips integrity check", func(t *testing.T) {
@@ -96,7 +98,8 @@ func TestCheckDaemonHealth_BackendSpecificQueries(t *testing.T) {
 		log := newTestLogger()
 
 		// Should complete without error - nil DB guard skips integrity check
-		checkDaemonHealth(ctx, memStore, log)
+		noFailures := 0
+		checkDaemonHealth(ctx, memStore, log, &noFailures)
 	})
 }
 
@@ -140,7 +143,8 @@ func TestCheckDaemonHealth_DoltNoPRAGMA(t *testing.T) {
 
 	// Run full health check - should NOT send PRAGMA to "dolt" backend
 	log := newTestLogger()
-	checkDaemonHealth(ctx, doltStore, log)
+	noFailures := 0
+	checkDaemonHealth(ctx, doltStore, log, &noFailures)
 }
 
 // TestCheckDaemonHealth_RejectsInvalidSQL verifies that if PRAGMA were sent to a

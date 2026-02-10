@@ -133,7 +133,13 @@ func (h *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if health.Status != "healthy" {
+	// Liveness probe (/healthz): return 200 for "healthy" and "degraded" states.
+	// "degraded" means the DB is temporarily unreachable (e.g., during Dolt HA
+	// failover) but the daemon process itself is alive. Returning 503 here would
+	// cause K8s to restart the pod, which is counterproductive — the sql.DB pool
+	// will auto-reconnect once the new primary is reachable.
+	// Only return 503 for truly "unhealthy" states (daemon logic broken).
+	if health.Status == "unhealthy" {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 

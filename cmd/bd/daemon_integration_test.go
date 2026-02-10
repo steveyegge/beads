@@ -313,13 +313,15 @@ func TestCheckDaemonHealth_StorageAccess(t *testing.T) {
 
 	t.Run("completes without error on healthy storage", func(t *testing.T) {
 		// Should not panic or error
-		checkDaemonHealth(ctx, testStore, log)
+		noFailures := 0
+		checkDaemonHealth(ctx, testStore, log, &noFailures)
 	})
 
 	t.Run("logs appropriately when storage is accessible", func(t *testing.T) {
 		// This just verifies it runs without panic
 		// In a real scenario, we'd check log output
-		checkDaemonHealth(ctx, testStore, log)
+		noFailures := 0
+		checkDaemonHealth(ctx, testStore, log, &noFailures)
 	})
 }
 

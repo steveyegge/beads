@@ -115,9 +115,10 @@ func runEventDrivenLoop(
 		}
 	}()
 
-	// Periodic health check
+	// Periodic health check — tracks consecutive DB failures for HA failover resilience
 	healthTicker := time.NewTicker(60 * time.Second)
 	defer healthTicker.Stop()
+	dbFailures := 0
 
 	// Periodic dirty flush (every 5 minutes) to prevent dirty_issues table bloat (bd-13lq)
 	// Clears orphaned entries and already-exported entries that accumulate between restarts.
@@ -181,7 +182,7 @@ func runEventDrivenLoop(
 
 		case <-healthTicker.C:
 			// Periodic health validation (not sync)
-			checkDaemonHealth(ctx, store, log)
+			checkDaemonHealth(ctx, store, log, &dbFailures)
 
 		case <-dirtyFlushTicker.C:
 			// Periodic cleanup of stale dirty_issues entries (bd-13lq)
@@ -269,7 +270,11 @@ func runEventDrivenLoop(
 
 // checkDaemonHealth performs periodic health validation.
 // Separate from sync operations - just validates state.
-func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLogger) {
+// Returns true if database connectivity is OK, false if degraded.
+// The dbFailures counter tracks consecutive DB failures for logging recovery.
+func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLogger, dbFailures *int) bool {
+	dbOK := true
+
 	// Health check 1: Verify metadata is accessible
 	// This helps detect if external operations (like bd import --force) have modified metadata
 	// Without this, daemon may continue operating with stale metadata cache
@@ -290,6 +295,7 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 			var result string
 			if err := db.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&result); err != nil {
 				log.log("Health check: database integrity check failed: %v", err)
+				dbOK = false
 			} else if result != "ok" {
 				log.log("Health check: database integrity issue: %s", result)
 			}
@@ -298,8 +304,25 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 			var one int
 			if err := db.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
 				log.log("Health check: database connectivity check failed: %v", err)
+				dbOK = false
 			}
 		}
+	}
+
+	// Track consecutive DB failures and log recovery.
+	// During Dolt HA failover the database/sql pool will discard broken
+	// connections and create new ones once the new primary is reachable.
+	// We just need to ride it out without crashing.
+	if !dbOK {
+		*dbFailures++
+		if *dbFailures == 1 {
+			log.log("Database connectivity lost — waiting for reconnection (HA failover?)")
+		} else if *dbFailures%5 == 0 {
+			log.log("Database still unreachable after %d consecutive checks", *dbFailures)
+		}
+	} else if *dbFailures > 0 {
+		log.log("Database connectivity restored after %d failed checks", *dbFailures)
+		*dbFailures = 0
 	}
 
 	// Health check 3: Disk space check (platform-specific)
@@ -324,6 +347,8 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 	if heapMB > 500 {
 		log.log("Health check: high memory usage warning: %dMB heap allocated", heapMB)
 	}
+
+	return dbOK
 }
 
 // rebuildBlockedCacheIfDolt rebuilds the blocked_issues_cache table for Dolt backends.
