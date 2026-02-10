@@ -21,6 +21,8 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+var autoImportIfNewerFn = autoimport.AutoImportIfNewer
+
 // handleExport handles the export operation
 func (s *Server) handleExport(req *Request) Response {
 	var exportArgs ExportArgs
@@ -381,7 +383,7 @@ func (s *Server) checkAndAutoImportIfStale(req *Request) error {
 	}
 
 	// Perform import with timeout (still synchronous but won't hang forever)
-	err = autoimport.AutoImportIfNewer(importCtx, store, dbPath, notify, importFunc, onChanged)
+	err = autoImportIfNewerFn(importCtx, store, dbPath, notify, importFunc, onChanged)
 	if err != nil {
 		if importCtx.Err() == context.DeadlineExceeded {
 			fmt.Fprintf(os.Stderr, "Error: auto-import timed out after 5s. Run 'bd sync --import-only' manually.\n")
