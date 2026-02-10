@@ -189,9 +189,9 @@ func containsExactPattern(content, pattern string) bool {
 }
 
 // promptForkExclude asks if user wants to configure .git/info/exclude for fork workflow (GH#742)
-func promptForkExclude(upstreamURL string, quiet bool) bool {
+func promptForkExclude(upstreamURL string, quiet bool) (bool, error) {
 	if quiet {
-		return false // Don't prompt in quiet mode
+		return false, nil // Don't prompt in quiet mode
 	}
 
 	fmt.Printf("\n%s Detected fork (upstream: %s)\n\n", ui.RenderAccent("▶"), upstreamURL)
@@ -200,11 +200,17 @@ func promptForkExclude(upstreamURL string, quiet bool) bool {
 	fmt.Print("\n[Y/n]: ")
 
 	reader := bufio.NewReader(os.Stdin)
-	response, _ := reader.ReadString('\n')
+	response, err := readLineWithContext(getRootContext(), reader, os.Stdin)
+	if err != nil {
+		if isCanceled(err) {
+			return false, err
+		}
+		response = ""
+	}
 	response = strings.TrimSpace(strings.ToLower(response))
 
 	// Default to yes (empty or "y" or "yes")
-	return response == "" || response == "y" || response == "yes"
+	return response == "" || response == "y" || response == "yes", nil
 }
 
 // setupGlobalGitIgnore configures global gitignore to ignore beads and claude files for a specific project
