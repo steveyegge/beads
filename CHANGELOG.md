@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.57.13] - 2026-02-10
+
+### Added
+
+- **Single-DB rig routing for K8s** - Daemon routes operations to the correct rig prefix within a shared Dolt database (bd-ka78)
+- **Remote daemon health check in bd doctor** - `bd doctor` now checks remote daemon connectivity when `BD_DAEMON_HOST` is set, skipping irrelevant local-only checks (bd-3rdw)
+- **2-replica daemon with rolling updates** - Helm chart supports HA daemon deployment with rolling update strategy (beads-b2s)
+
+### Changed
+
+- **Remote-first CLI posture** - When `BD_DAEMON_HOST` is set, the CLI now hard-fails instead of silently falling back to local storage. Local-mode flags (--db, --lock-timeout, --no-auto-flush, --no-auto-import) print deprecation warnings. `bd init` is blocked. CLI help text and docs rewritten to emphasize remote daemon as the primary workflow (bd-4qyw)
+
+### Fixed
+
+- **Dolt HA failover** - Daemon survives Dolt primary failover without pod restart by reconnecting to the new primary (bd-vker)
+- **Local Dolt auto-start** - Prevent auto-start of local Dolt server when a remote Dolt server is configured but temporarily unreachable
+
 ## [0.49.1] - 2026-01-25
 
 ### Added

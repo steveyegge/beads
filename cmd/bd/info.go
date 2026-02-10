@@ -297,6 +297,19 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.57.13",
+		Date:    "2026-02-10",
+		Changes: []string{
+			"NEW: Single-DB rig routing for K8s daemon (bd-ka78)",
+			"NEW: Remote daemon health check in bd doctor (bd-3rdw)",
+			"NEW: 2-replica daemon with rolling updates for HA (beads-b2s)",
+			"CHANGED: Remote-first CLI - hard fail instead of silent fallback when BD_DAEMON_HOST set (bd-4qyw)",
+			"CHANGED: Local-mode flags print deprecation warnings, bd init blocked in remote mode",
+			"FIX: Daemon survives Dolt HA failover without pod restart (bd-vker)",
+			"FIX: Prevent local Dolt auto-start when remote server unreachable",
+		},
+	},
+	{
 		Version: "0.49.1",
 		Date:    "2026-01-25",
 		Changes: []string{
