@@ -208,6 +208,8 @@ func runEventDrivenLoop(
 			// Check if parent process is still alive
 			if !checkParentProcessAlive(parentPID) {
 				log.log("Parent process (PID %d) died, shutting down daemon", parentPID)
+				log.log("Final export before shutdown...")
+				doExport()
 				cancel()
 				if err := server.Stop(); err != nil {
 					log.log("Error stopping server: %v", err)
@@ -231,6 +233,8 @@ func runEventDrivenLoop(
 				continue
 			}
 			log.log("Received signal %v, shutting down...", sig)
+			log.log("Final export before shutdown...")
+			doExport()
 			cancel()
 			if err := server.Stop(); err != nil {
 				log.log("Error stopping server: %v", err)
@@ -239,6 +243,8 @@ func runEventDrivenLoop(
 
 		case <-ctx.Done():
 		log.log("Context canceled, shutting down")
+		log.log("Final export before shutdown...")
+		doExport()
 		if watcher != nil {
 		_ = watcher.Close()
 		}

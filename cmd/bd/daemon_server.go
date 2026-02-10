@@ -131,6 +131,8 @@ func runEventLoop(ctx context.Context, cancel context.CancelFunc, ticker *time.T
 			// Check if parent process is still alive
 			if !checkParentProcessAlive(parentPID) {
 				log.Info("parent process died, shutting down daemon", "parent_pid", parentPID)
+				log.Info("final sync before shutdown")
+				doSync()
 				cancel()
 				if err := server.Stop(); err != nil {
 					log.Error("stopping server", "error", err)
@@ -143,6 +145,8 @@ func runEventLoop(ctx context.Context, cancel context.CancelFunc, ticker *time.T
 				continue
 			}
 			log.Info("received signal, shutting down gracefully", "signal", sig)
+			log.Info("final sync before shutdown")
+			doSync()
 			cancel()
 			if err := server.Stop(); err != nil {
 				log.Error("stopping RPC server", "error", err)
@@ -150,6 +154,8 @@ func runEventLoop(ctx context.Context, cancel context.CancelFunc, ticker *time.T
 			return
 		case <-ctx.Done():
 			log.Info("context canceled, shutting down")
+			log.Info("final sync before shutdown")
+			doSync()
 			if err := server.Stop(); err != nil {
 				log.Error("stopping RPC server", "error", err)
 			}
