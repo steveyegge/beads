@@ -103,6 +103,8 @@ Export Mode (--output):
 
 Specific Check Mode (--check):
   Run a specific check in detail. Available checks:
+  - artifacts: Detect and optionally clean beads classic artifacts
+    (stale JSONL, SQLite files, cruft .beads dirs). Use with --clean.
   - pollution: Detect and optionally clean test issues from database
   - validate: Run focused data-integrity checks (duplicates, orphaned
     deps, test pollution, git conflicts). Use with --fix to auto-repair.
@@ -151,6 +153,8 @@ Examples:
   bd doctor --dry-run    # Preview what --fix would do without making changes
   bd doctor --perf       # Performance diagnostics
   bd doctor --output diagnostics.json  # Export diagnostics to file
+  bd doctor --check=artifacts           # Show classic artifacts (JSONL, SQLite, cruft dirs)
+  bd doctor --check=artifacts --clean  # Delete safe-to-delete artifacts (with confirmation)
   bd doctor --check=pollution          # Show potential test issues
   bd doctor --check=pollution --clean  # Delete test issues (with confirmation)
   bd doctor --check=validate         # Data-integrity checks only
@@ -203,9 +207,12 @@ Examples:
 			case "validate":
 				runValidateCheck(absPath)
 				return
+			case "artifacts":
+				runArtifactsCheck(absPath, doctorClean, doctorYes)
+				return
 			default:
 				fmt.Fprintf(os.Stderr, "Error: unknown check %q\n", doctorCheckFlag)
-				fmt.Fprintf(os.Stderr, "Available checks: pollution, validate\n")
+				fmt.Fprintf(os.Stderr, "Available checks: artifacts, pollution, validate\n")
 				os.Exit(1)
 			}
 		}
@@ -735,6 +742,11 @@ func runDiagnostics(path string) doctorResult {
 	doltLocksCheck := convertDoctorCheck(doctor.CheckDoltLocks(path))
 	result.Checks = append(result.Checks, doltLocksCheck)
 	// Don't fail overall check for Dolt locks, just warn
+
+	// Check 33: Classic artifacts (post-Dolt-migration cleanup)
+	classicArtifactsCheck := convertDoctorCheck(doctor.CheckClassicArtifacts(path))
+	result.Checks = append(result.Checks, classicArtifactsCheck)
+	// Don't fail overall check for classic artifacts, just warn
 
 	return result
 }
