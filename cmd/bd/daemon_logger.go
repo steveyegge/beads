@@ -105,8 +105,8 @@ func setupDaemonLogger(logPath string, jsonFormat bool, level slog.Level) (*lumb
 		Compress:   compress,
 	}
 
-	// Create multi-writer to log to both file and stderr (for foreground mode visibility)
-	var w io.Writer = logF
+	// Write to both file and stderr so kubectl logs / foreground mode can see output
+	var w io.Writer = io.MultiWriter(logF, os.Stderr)
 
 	// Configure slog handler
 	opts := &slog.HandlerOptions{

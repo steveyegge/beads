@@ -360,9 +360,10 @@ nats:
     size: 2Gi
 
   # Official NATS alpine image (tiny, no entrypoint issues)
+  # Default to ECR mirror to avoid Docker Hub rate limits.
   image:
-    registry: docker.io
-    repository: nats
+    registry: public.ecr.aws
+    repository: docker/library/nats
     tag: "2.10-alpine"
     pullPolicy: IfNotPresent
 

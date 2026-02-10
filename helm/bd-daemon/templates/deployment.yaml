@@ -133,9 +133,7 @@ spec:
             - name: HOME
               value: "/home/beads"
             {{- if .Values.nats.enabled }}
-            # Standalone NATS — disable embedded, point to subchart service
-            - name: BD_NATS_DISABLED
-              value: "true"
+            # Standalone NATS — BD_NATS_URL takes priority over embedded server
             - name: BD_NATS_URL
               value: {{ include "bd-daemon.natsURL" . | quote }}
             {{- if .Values.nats.auth.token }}
