@@ -13,7 +13,6 @@ import (
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -194,23 +193,6 @@ func exportToJSONLDeferred(ctx context.Context, jsonlPath string) (*ExportResult
 		return nil, nil
 	}
 
-	// If daemon is running, use RPC
-	// Note: daemon already handles its own metadata updates
-	if daemonClient != nil {
-		exportArgs := &rpc.ExportArgs{
-			JSONLPath: jsonlPath,
-		}
-		resp, err := daemonClient.Export(exportArgs)
-		if err != nil {
-			return nil, fmt.Errorf("daemon export failed: %w", err)
-		}
-		if !resp.Success {
-			return nil, fmt.Errorf("daemon export error: %s", resp.Error)
-		}
-		// Daemon handles its own metadata updates, return nil result
-		return nil, nil
-	}
-
 	// Direct mode: access store directly
 	// Ensure store is initialized
 	if err := ensureStoreActive(); err != nil {
@@ -371,11 +353,6 @@ func exportToJSONLIncrementalDeferred(ctx context.Context, jsonlPath string) (*E
 	// Skip JSONL export in dolt-native mode (bd-zlih1)
 	if store != nil && !ShouldExportJSONL(ctx, store) {
 		return nil, nil
-	}
-
-	// If daemon is running, delegate to it (daemon has its own optimization)
-	if daemonClient != nil {
-		return exportToJSONLDeferred(ctx, jsonlPath)
 	}
 
 	// Ensure store is initialized

@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/validation"
 )
@@ -39,28 +37,6 @@ Example:
 			FatalError("%v", err)
 		}
 
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			createArgs := &rpc.CreateArgs{
-				Title:     title,
-				Priority:  priority,
-				IssueType: issueType,
-				Labels:    labels,
-			}
-
-			resp, err := daemonClient.Create(createArgs)
-			if err != nil {
-				FatalError("%v", err)
-			}
-
-			var issue types.Issue
-			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				FatalError("parsing response: %v", err)
-			}
-			fmt.Println(issue.ID)
-			return
-		}
-
 		// Direct mode
 		issue := &types.Issue{
 			Title:     title,
@@ -78,9 +54,6 @@ Example:
 		for _, label := range labels {
 			_ = store.AddLabel(ctx, issue.ID, label, actor)
 		}
-
-		// Schedule auto-flush
-		markDirtyAndScheduleFlush()
 
 		// Output only the ID
 		fmt.Println(issue.ID)

@@ -164,23 +164,6 @@ variable.`,
 			beadsDirForInit = beads.FollowRedirect(localBeadsDir)
 		}
 
-		// Stop any running daemon before reinitializing (bd-7h7).
-		// A running daemon caches the old database in memory. If we create a new
-		// database without stopping it, bd commands routed through the daemon
-		// (e.g., bd stats) will show stale counts from the old cached data.
-		pidFile, pidErr := getPIDFilePath()
-		if pidErr == nil {
-			if isRunning, _ := isDaemonRunning(pidFile); isRunning {
-				if !quiet {
-					fmt.Fprintf(os.Stderr, "→ Stopping running daemon before reinitializing...\n")
-				}
-				stopDaemonQuiet(pidFile)
-				if !quiet {
-					fmt.Fprintf(os.Stderr, "✓ Daemon stopped\n")
-				}
-			}
-		}
-
 		// Determine storage path.
 		//
 		// IMPORTANT: In Dolt mode, we must NOT create a SQLite database file.
@@ -916,8 +899,22 @@ func checkExistingBeadsDataAt(beadsDir string, prefix string) error {
 
 	// Check for existing database (SQLite or Dolt)
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
+		// For Dolt, check both the local directory AND server mode config.
+		// In server mode the local dolt/ directory may be empty — the database
+		// lives on the Dolt sql-server. Checking only the directory would miss
+		// server-mode installations and allow re-init to create SQLite.
 		doltPath := filepath.Join(beadsDir, "dolt")
+		doltDirExists := false
 		if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
+			doltDirExists = true
+		}
+		if doltDirExists || cfg.IsDoltServerMode() {
+			location := doltPath
+			if cfg.IsDoltServerMode() {
+				host := cfg.GetDoltServerHost()
+				port := cfg.GetDoltServerPort()
+				location = fmt.Sprintf("dolt server at %s:%d", host, port)
+			}
 			return fmt.Errorf(`
 %s Found existing Dolt database: %s
 
@@ -929,7 +926,7 @@ To use the existing database:
 To completely reinitialize (data loss warning):
   rm -rf %s && bd init --backend dolt --prefix %s
 
-Aborting.`, ui.RenderWarn("⚠"), doltPath, ui.RenderAccent("bd list"), beadsDir, prefix)
+Aborting.`, ui.RenderWarn("⚠"), location, ui.RenderAccent("bd list"), beadsDir, prefix)
 		}
 	}
 

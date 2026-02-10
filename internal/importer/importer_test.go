@@ -5,6 +5,7 @@ package importer
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1772,4 +1773,305 @@ func TestBuildAllowedPrefixSet(t *testing.T) {
 			t.Error("Primary prefix 'gt' should be allowed")
 		}
 	})
+}
+
+// TestImportIssues_FreshDB_MultipleIssues verifies that importing many issues
+// into a fresh (empty) database correctly reports Created count.
+// Regression test for bd-77gm: "Import reports misleading '0 created, 0 updated'"
+func TestImportIssues_FreshDB_MultipleIssues(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create 50 issues to simulate a real import
+	var issues []*types.Issue
+	for i := 0; i < 50; i++ {
+		issues = append(issues, &types.Issue{
+			ID:          fmt.Sprintf("test-%05d", i),
+			Title:       fmt.Sprintf("Issue %d", i),
+			Description: fmt.Sprintf("Description for issue %d", i),
+			Status:      types.StatusOpen,
+			Priority:    2,
+			IssueType:   types.TypeTask,
+		})
+	}
+
+	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+
+	if result.Created != 50 {
+		t.Errorf("Expected 50 created, got %d (Updated=%d, Unchanged=%d, Skipped=%d)",
+			result.Created, result.Updated, result.Unchanged, result.Skipped)
+	}
+	if result.Updated != 0 {
+		t.Errorf("Expected 0 updated on fresh DB, got %d", result.Updated)
+	}
+
+	// Verify all issues are in the database
+	dbIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("Failed to search issues: %v", err)
+	}
+	if len(dbIssues) != 50 {
+		t.Errorf("Expected 50 issues in DB, got %d", len(dbIssues))
+	}
+}
+
+// TestImportIssues_DryRun_UpdateCount verifies that dry-run correctly reports
+// the number of issues that would be updated (collision candidates).
+// Regression test for bd-77gm: dry-run never set result.Updated for collisions.
+func TestImportIssues_DryRun_UpdateCount(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// First, import some issues
+	now := time.Now()
+	issues := []*types.Issue{
+		{
+			ID:        "test-aaa111",
+			Title:     "Issue One",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "test-bbb222",
+			Title:     "Issue Two",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			UpdatedAt: now,
+		},
+	}
+
+	result1, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err != nil {
+		t.Fatalf("Initial import failed: %v", err)
+	}
+
+	// Verify first import results
+	if result1.Created != 2 {
+		t.Fatalf("First import: expected Created=2, got %d (Updated=%d, Unchanged=%d, Skipped=%d)",
+			result1.Created, result1.Updated, result1.Unchanged, result1.Skipped)
+	}
+
+	// Now dry-run with modified versions of the same issues
+	later := now.Add(time.Hour)
+	modifiedIssues := []*types.Issue{
+		{
+			ID:        "test-aaa111",
+			Title:     "Issue One MODIFIED",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			UpdatedAt: later,
+		},
+		{
+			ID:        "test-bbb222",
+			Title:     "Issue Two MODIFIED",
+			Status:    types.StatusClosed,
+			Priority:  3,
+			IssueType: types.TypeBug,
+			UpdatedAt: later,
+		},
+		{
+			ID:        "test-ccc333",
+			Title:     "New Issue Three",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			UpdatedAt: later,
+		},
+	}
+
+	result, err := ImportIssues(ctx, tmpDB, store, modifiedIssues, Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Dry-run import failed: %v", err)
+	}
+
+	// Should report: 1 new, 2 updates (collision candidates), 0 unchanged
+	if result.Created != 1 {
+		t.Errorf("Dry-run: expected Created=1, got %d", result.Created)
+	}
+	if result.Updated != 2 {
+		t.Errorf("Dry-run: expected Updated=2, got %d", result.Updated)
+	}
+	if result.Unchanged != 0 {
+		t.Errorf("Dry-run: expected Unchanged=0, got %d", result.Unchanged)
+	}
+
+	// Verify dry-run did NOT modify the database
+	issue1, err := store.GetIssue(ctx, "test-aaa111")
+	if err != nil {
+		t.Fatalf("Failed to get issue after dry-run: %v", err)
+	}
+	if issue1.Title != "Issue One" {
+		t.Errorf("Dry-run modified the database! Title is '%s', expected 'Issue One'", issue1.Title)
+	}
+
+	// Verify new issue was NOT created
+	newIssue, _ := store.GetIssue(ctx, "test-ccc333")
+	if newIssue != nil {
+		t.Error("Dry-run created a new issue in the database!")
+	}
+}
+
+// TestImportIssues_DryRun_NoDBModification verifies that dry-run with
+// collision candidates does NOT modify the database.
+// Regression test for bd-77gm: dry-run with collisions fell through to RunInTransaction.
+func TestImportIssues_DryRun_NoDBModification(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Import initial issue
+	now := time.Now()
+	initial := []*types.Issue{
+		{
+			ID:        "test-xxx999",
+			Title:     "Original Title",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			UpdatedAt: now,
+		},
+	}
+
+	_, err = ImportIssues(ctx, tmpDB, store, initial, Options{})
+	if err != nil {
+		t.Fatalf("Initial import failed: %v", err)
+	}
+
+	// Dry-run with a collision (same ID, different content)
+	later := now.Add(time.Hour)
+	modified := []*types.Issue{
+		{
+			ID:        "test-xxx999",
+			Title:     "MODIFIED Title",
+			Status:    types.StatusClosed,
+			Priority:  3,
+			IssueType: types.TypeBug,
+			UpdatedAt: later,
+		},
+	}
+
+	result, err := ImportIssues(ctx, tmpDB, store, modified, Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Dry-run failed: %v", err)
+	}
+
+	if result.Collisions != 1 {
+		t.Errorf("Expected 1 collision, got %d", result.Collisions)
+	}
+	if result.Updated != 1 {
+		t.Errorf("Expected Updated=1 for collision in dry-run, got %d", result.Updated)
+	}
+
+	// Verify database was NOT modified
+	issue, err := store.GetIssue(ctx, "test-xxx999")
+	if err != nil {
+		t.Fatalf("Failed to get issue: %v", err)
+	}
+	if issue.Title != "Original Title" {
+		t.Errorf("Dry-run modified DB! Title='%s', expected 'Original Title'", issue.Title)
+	}
+	if issue.Status != types.StatusOpen {
+		t.Errorf("Dry-run modified DB! Status='%s', expected 'open'", issue.Status)
+	}
+}
+
+// TestImportIssues_ReimportSameIssues verifies that re-importing the same
+// issues reports them as Unchanged, not Created.
+func TestImportIssues_ReimportSameIssues(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	issues := []*types.Issue{
+		{
+			ID:        "test-aaa111",
+			Title:     "Issue One",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		},
+		{
+			ID:        "test-bbb222",
+			Title:     "Issue Two",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		},
+		{
+			ID:        "test-ccc333",
+			Title:     "Issue Three",
+			Status:    types.StatusClosed,
+			Priority:  3,
+			IssueType: types.TypeBug,
+		},
+	}
+
+	// First import
+	result1, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err != nil {
+		t.Fatalf("First import failed: %v", err)
+	}
+	if result1.Created != 3 {
+		t.Errorf("First import: expected Created=3, got %d", result1.Created)
+	}
+
+	// Second import of the same issues
+	result2, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err != nil {
+		t.Fatalf("Second import failed: %v", err)
+	}
+	if result2.Created != 0 {
+		t.Errorf("Second import: expected Created=0, got %d", result2.Created)
+	}
+	if result2.Unchanged != 3 {
+		t.Errorf("Second import: expected Unchanged=3, got %d", result2.Unchanged)
+	}
+	if result2.Updated != 0 {
+		t.Errorf("Second import: expected Updated=0, got %d", result2.Updated)
+	}
 }

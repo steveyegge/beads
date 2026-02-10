@@ -193,7 +193,7 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	if err != nil {
 		return result, err
 	}
-	if opts.DryRun && result.Collisions == 0 {
+	if opts.DryRun {
 		return result, nil
 	}
 
@@ -383,6 +383,7 @@ func detectUpdates(ctx context.Context, store storage.Storage, issues []*types.I
 	result.Collisions = collisionCount
 	if opts.DryRun {
 		result.Created = newCount
+		result.Updated = collisionCount
 		result.Unchanged = exactCount
 	}
 	return issues, nil

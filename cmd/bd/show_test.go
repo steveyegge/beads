@@ -177,4 +177,63 @@ func TestShow(t *testing.T) {
 			t.Error("expected error when no ID provided, but command succeeded")
 		}
 	})
+
+	t.Run("NotFoundExitsNonZero", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+
+		// Initialize beads
+		initCmd := exec.Command(tmpBin, "init", "--prefix", "test", "--quiet")
+		initCmd.Dir = tmpDir
+		if out, err := initCmd.CombinedOutput(); err != nil {
+			t.Fatalf("init failed: %v\n%s", err, out)
+		}
+
+		// Show nonexistent issue should exit non-zero
+		showCmd := exec.Command(tmpBin, "--no-daemon", "show", "test-nonexistent")
+		showCmd.Dir = tmpDir
+		_, err := showCmd.CombinedOutput()
+		if err == nil {
+			t.Error("expected non-zero exit for nonexistent issue, but command succeeded")
+		}
+	})
+
+	t.Run("NotFoundJSON", func(t *testing.T) {
+		t.Parallel()
+
+		tmpDir := t.TempDir()
+
+		// Initialize beads
+		initCmd := exec.Command(tmpBin, "init", "--prefix", "test", "--quiet")
+		initCmd.Dir = tmpDir
+		if out, err := initCmd.CombinedOutput(); err != nil {
+			t.Fatalf("init failed: %v\n%s", err, out)
+		}
+
+		// Show nonexistent issue with --json should exit non-zero
+		// and output structured JSON error to stdout (not empty stdout)
+		showCmd := exec.Command(tmpBin, "--no-daemon", "show", "test-nonexistent", "--json")
+		showCmd.Dir = tmpDir
+		var stdout, stderr strings.Builder
+		showCmd.Stdout = &stdout
+		showCmd.Stderr = &stderr
+		err := showCmd.Run()
+		if err == nil {
+			t.Error("expected non-zero exit for nonexistent issue with --json, but command succeeded")
+		}
+
+		// Verify stdout contains valid JSON with an error field
+		stdoutStr := stdout.String()
+		if stdoutStr == "" {
+			t.Fatal("expected JSON error on stdout, got empty output")
+		}
+		var errResp map[string]string
+		if jsonErr := json.Unmarshal([]byte(stdoutStr), &errResp); jsonErr != nil {
+			t.Fatalf("expected valid JSON error response on stdout, got parse error: %v\nStdout: %s\nStderr: %s", jsonErr, stdoutStr, stderr.String())
+		}
+		if errResp["error"] == "" {
+			t.Errorf("expected non-empty 'error' field in JSON response, got: %s", stdoutStr)
+		}
+	})
 }

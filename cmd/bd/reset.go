@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/git"
@@ -93,18 +92,6 @@ type resetItem struct {
 
 func collectResetItems(gitCommonDir, beadsDir string) []resetItem {
 	var items []resetItem
-
-	// Check for running daemon
-	pidFile := filepath.Join(beadsDir, "daemon.pid")
-	if _, err := os.Stat(pidFile); err == nil {
-		if isRunning, pid := isDaemonRunning(pidFile); isRunning {
-			items = append(items, resetItem{
-				Type:        "daemon",
-				Path:        pidFile,
-				Description: fmt.Sprintf("Stop running daemon (PID %d)", pid),
-			})
-		}
-	}
 
 	// Check for git hooks (hooks are in common git dir, shared across worktrees)
 	hookNames := []string{"pre-commit", "post-merge", "pre-push", "post-checkout"}
@@ -231,13 +218,6 @@ func performReset(items []resetItem, _, beadsDir string) {
 
 	for _, item := range items {
 		switch item.Type {
-		case "daemon":
-			pidFile := filepath.Join(beadsDir, "daemon.pid")
-			stopDaemonQuiet(pidFile)
-			if !jsonOutput {
-				fmt.Printf("%s Stopped daemon\n", ui.RenderPass("✓"))
-			}
-
 		case "hook":
 			if err := os.Remove(item.Path); err != nil {
 				errors = append(errors, fmt.Sprintf("failed to remove hook %s: %v", item.Path, err))
@@ -306,32 +286,6 @@ func performReset(items []resetItem, _, beadsDir string) {
 		fmt.Println()
 		fmt.Println("To reinitialize beads, run: bd init")
 	}
-}
-
-// stopDaemonQuiet stops the daemon without printing status messages
-func stopDaemonQuiet(pidFile string) {
-	isRunning, pid := isDaemonRunning(pidFile)
-	if !isRunning {
-		return
-	}
-
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return
-	}
-
-	_ = sendStopSignal(process) // Best-effort graceful stop
-
-	// Wait for daemon to stop gracefully
-	for i := 0; i < daemonShutdownAttempts; i++ {
-		time.Sleep(daemonShutdownPollInterval)
-		if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
-			return
-		}
-	}
-
-	// Force kill if still running
-	_ = process.Kill() // Best-effort force kill, process may have already exited
 }
 
 func removeGitattributesEntry() error {

@@ -20,22 +20,10 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) {
 	var startMsg *types.Issue
 	var err error
 
-	if daemonClient != nil {
-		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: messageID})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching message %s: %v\n", messageID, err)
-			os.Exit(1)
-		}
-		if err := json.Unmarshal(resp.Data, &startMsg); err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		startMsg, err = store.GetIssue(ctx, messageID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching message %s: %v\n", messageID, err)
-			os.Exit(1)
-		}
+	startMsg, err = store.GetIssue(ctx, messageID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching message %s: %v\n", messageID, err)
+		os.Exit(1)
 	}
 
 	if startMsg == nil {
@@ -60,18 +48,7 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) {
 		}
 		seen[parentID] = true
 
-		var parentMsg *types.Issue
-		if daemonClient != nil {
-			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: parentID})
-			if err != nil {
-				break // Parent not found, use current as root
-			}
-			if err := json.Unmarshal(resp.Data, &parentMsg); err != nil {
-				break
-			}
-		} else {
-			parentMsg, _ = store.GetIssue(ctx, parentID)
-		}
+		parentMsg, _ := store.GetIssue(ctx, parentID)
 		if parentMsg == nil {
 			break
 		}
@@ -163,30 +140,6 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) {
 // findRepliesTo finds the parent ID that this issue replies to via replies-to dependency.
 // Returns empty string if no parent found.
 func findRepliesTo(ctx context.Context, issueID string, daemonClient *rpc.Client, store storage.Storage) string {
-	if daemonClient != nil {
-		// In daemon mode, use Show to get dependencies with metadata
-		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: issueID})
-		if err != nil {
-			return ""
-		}
-		// Parse the full show response to get dependencies
-		type showResponse struct {
-			Dependencies []struct {
-				ID             string `json:"id"`
-				DependencyType string `json:"dependency_type"`
-			} `json:"dependencies"`
-		}
-		var details showResponse
-		if err := json.Unmarshal(resp.Data, &details); err != nil {
-			return ""
-		}
-		for _, dep := range details.Dependencies {
-			if dep.DependencyType == string(types.DepRepliesTo) {
-				return dep.ID
-			}
-		}
-		return ""
-	}
 	// Direct mode - query storage
 	deps, err := store.GetDependencyRecords(ctx, issueID)
 	if err != nil {
@@ -202,32 +155,6 @@ func findRepliesTo(ctx context.Context, issueID string, daemonClient *rpc.Client
 
 // findReplies finds all issues that reply to this issue via replies-to dependency.
 func findReplies(ctx context.Context, issueID string, daemonClient *rpc.Client, store storage.Storage) []*types.Issue {
-	if daemonClient != nil {
-		// In daemon mode, use Show to get dependents with metadata
-		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: issueID})
-		if err != nil {
-			return nil
-		}
-		// Parse the full show response to get dependents
-		type showResponse struct {
-			Dependents []struct {
-				types.Issue
-				DependencyType string `json:"dependency_type"`
-			} `json:"dependents"`
-		}
-		var details showResponse
-		if err := json.Unmarshal(resp.Data, &details); err != nil {
-			return nil
-		}
-		var replies []*types.Issue
-		for _, dep := range details.Dependents {
-			if dep.DependencyType == string(types.DepRepliesTo) {
-				issue := dep.Issue // Copy to avoid aliasing
-				replies = append(replies, &issue)
-			}
-		}
-		return replies
-	}
 	// Direct mode - query storage
 	deps, err := store.GetDependentsWithMetadata(ctx, issueID)
 	if err != nil {

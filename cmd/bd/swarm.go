@@ -5,12 +5,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -160,16 +158,7 @@ Examples:
 
 		// Swarm commands require direct store access
 		if store == nil {
-			if daemonClient != nil {
-				var err error
-				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
-				if err != nil {
-					FatalErrorRespectJSON("failed to open database: %v", err)
-				}
-				defer func() { _ = store.Close() }()
-			} else {
-				FatalErrorRespectJSON("no database connection")
-			}
+			FatalErrorRespectJSON("no database connection")
 		}
 
 		// Resolve epic ID
@@ -626,16 +615,7 @@ Examples:
 
 		// Swarm commands require direct store access
 		if store == nil {
-			if daemonClient != nil {
-				var err error
-				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
-				if err != nil {
-					FatalErrorRespectJSON("failed to open database: %v", err)
-				}
-				defer func() { _ = store.Close() }()
-			} else {
-				FatalErrorRespectJSON("no database connection")
-			}
+			FatalErrorRespectJSON("no database connection")
 		}
 
 		// Resolve ID
@@ -920,16 +900,7 @@ Examples:
 
 		// Swarm commands require direct store access
 		if store == nil {
-			if daemonClient != nil {
-				var err error
-				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
-				if err != nil {
-					FatalErrorRespectJSON("failed to open database: %v", err)
-				}
-				defer func() { _ = store.Close() }()
-			} else {
-				FatalErrorRespectJSON("no database connection")
-			}
+			FatalErrorRespectJSON("no database connection")
 		}
 
 		// Resolve the input ID
@@ -1102,16 +1073,7 @@ Examples:
 
 		// Swarm commands require direct store access
 		if store == nil {
-			if daemonClient != nil {
-				var err error
-				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
-				if err != nil {
-					FatalErrorRespectJSON("failed to open database: %v", err)
-				}
-				defer func() { _ = store.Close() }()
-			} else {
-				FatalErrorRespectJSON("no database connection")
-			}
+			FatalErrorRespectJSON("no database connection")
 		}
 
 		// Query for all swarm molecules

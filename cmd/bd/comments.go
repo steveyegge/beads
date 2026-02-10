@@ -1,13 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -36,54 +34,19 @@ Examples:
 		localTime, _ := cmd.Flags().GetBool("local-time")
 		issueID := args[0]
 
-		comments := make([]*types.Comment, 0)
-		usedDaemon := false
-		if daemonClient != nil {
-			// Resolve short/partial ID to full ID before sending to daemon (#1070)
-			resolveArgs := &rpc.ResolveIDArgs{ID: issueID}
-			resolveResp, err := daemonClient.ResolveID(resolveArgs)
-			if err != nil {
-				FatalErrorRespectJSON("resolving ID %s: %v", issueID, err)
-			}
-			var resolvedID string
-			if err := json.Unmarshal(resolveResp.Data, &resolvedID); err != nil {
-				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-			}
-			issueID = resolvedID
-
-			resp, err := daemonClient.ListComments(&rpc.CommentListArgs{ID: issueID})
-			if err != nil {
-				if isUnknownOperationError(err) {
-					if err := fallbackToDirectMode("daemon does not support comment_list RPC"); err != nil {
-						FatalErrorRespectJSON("getting comments: %v", err)
-					}
-				} else {
-					FatalErrorRespectJSON("getting comments: %v", err)
-				}
-			} else {
-				if err := json.Unmarshal(resp.Data, &comments); err != nil {
-					FatalErrorRespectJSON("decoding comments: %v", err)
-				}
-				usedDaemon = true
-			}
+		if err := ensureStoreActive(); err != nil {
+			FatalErrorRespectJSON("getting comments: %v", err)
 		}
+		ctx := rootCtx
+		fullID, err := utils.ResolvePartialID(ctx, store, issueID)
+		if err != nil {
+			FatalErrorRespectJSON("resolving %s: %v", issueID, err)
+		}
+		issueID = fullID
 
-		if !usedDaemon {
-			if err := ensureStoreActive(); err != nil {
-				FatalErrorRespectJSON("getting comments: %v", err)
-			}
-			ctx := rootCtx
-			fullID, err := utils.ResolvePartialID(ctx, store, issueID)
-			if err != nil {
-				FatalErrorRespectJSON("resolving %s: %v", issueID, err)
-			}
-			issueID = fullID
-
-			result, err := store.GetIssueComments(ctx, issueID)
-			if err != nil {
-				FatalErrorRespectJSON("getting comments: %v", err)
-			}
-			comments = result
+		comments, err := store.GetIssueComments(ctx, issueID)
+		if err != nil {
+			FatalErrorRespectJSON("getting comments: %v", err)
 		}
 
 		// Normalize nil to empty slice for consistent JSON output
@@ -156,58 +119,20 @@ Examples:
 			author = getActorWithGit()
 		}
 
-		var comment *types.Comment
-		if daemonClient != nil {
-			// Resolve short/partial ID to full ID before sending to daemon (#1070)
-			resolveArgs := &rpc.ResolveIDArgs{ID: issueID}
-			resolveResp, err := daemonClient.ResolveID(resolveArgs)
-			if err != nil {
-				FatalErrorRespectJSON("resolving ID %s: %v", issueID, err)
-			}
-			var resolvedID string
-			if err := json.Unmarshal(resolveResp.Data, &resolvedID); err != nil {
-				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-			}
-			issueID = resolvedID
-
-			resp, err := daemonClient.AddComment(&rpc.CommentAddArgs{
-				ID:     issueID,
-				Author: author,
-				Text:   commentText,
-			})
-			if err != nil {
-				if isUnknownOperationError(err) {
-					if err := fallbackToDirectMode("daemon does not support comment_add RPC"); err != nil {
-						FatalErrorRespectJSON("adding comment: %v", err)
-					}
-				} else {
-					FatalErrorRespectJSON("adding comment: %v", err)
-				}
-			} else {
-				var parsed types.Comment
-				if err := json.Unmarshal(resp.Data, &parsed); err != nil {
-					FatalErrorRespectJSON("decoding comment: %v", err)
-				}
-				comment = &parsed
-			}
+		if err := ensureStoreActive(); err != nil {
+			FatalErrorRespectJSON("adding comment: %v", err)
 		}
+		ctx := rootCtx
 
-		if comment == nil {
-			if err := ensureStoreActive(); err != nil {
-				FatalErrorRespectJSON("adding comment: %v", err)
-			}
-			ctx := rootCtx
+		fullID, err := utils.ResolvePartialID(ctx, store, issueID)
+		if err != nil {
+			FatalErrorRespectJSON("resolving %s: %v", issueID, err)
+		}
+		issueID = fullID
 
-			fullID, err := utils.ResolvePartialID(ctx, store, issueID)
-			if err != nil {
-				FatalErrorRespectJSON("resolving %s: %v", issueID, err)
-			}
-			issueID = fullID
-
-			comment, err = store.AddIssueComment(ctx, issueID, author, commentText)
-			if err != nil {
-				FatalErrorRespectJSON("adding comment: %v", err)
-			}
+		comment, err := store.AddIssueComment(ctx, issueID, author, commentText)
+		if err != nil {
+			FatalErrorRespectJSON("adding comment: %v", err)
 		}
 
 		if jsonOutput {

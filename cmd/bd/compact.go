@@ -109,16 +109,12 @@ Examples:
 
 		// Handle compact stats first
 		if compactStats {
-			if daemonClient != nil {
-				runCompactStatsRPC()
-			} else {
-				compactStore, ok := store.(storage.CompactableStorage)
-				if !ok {
-					fmt.Fprintf(os.Stderr, "Error: compact requires CompactableStorage (not supported by current backend)\n")
-					os.Exit(1)
-				}
-				runCompactStats(ctx, compactStore)
+			compactStore, ok := store.(storage.CompactableStorage)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "Error: compact requires CompactableStorage (not supported by current backend)\n")
+				os.Exit(1)
 			}
+			runCompactStats(ctx, compactStore)
 			return
 		}
 
@@ -218,13 +214,7 @@ Examples:
 				os.Exit(1)
 			}
 
-			// Use RPC if daemon available, otherwise direct mode
-			if daemonClient != nil {
-				runCompactRPC(ctx)
-				return
-			}
-
-			// Fallback to direct mode
+			// Direct mode
 			apiKey := os.Getenv("ANTHROPIC_API_KEY")
 			if apiKey == "" && !compactDryRun {
 				fmt.Fprintf(os.Stderr, "Error: --auto mode requires ANTHROPIC_API_KEY environment variable\n")
@@ -353,9 +343,6 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store s
 		fmt.Printf("\nTombstones pruned: %d expired (older than %d days)\n",
 			tombstonePruneResult.PrunedCount, tombstonePruneResult.TTLDays)
 	}
-
-	// Schedule auto-flush to export changes
-	markDirtyAndScheduleFlush()
 }
 
 func runCompactAll(ctx context.Context, compactor *compact.Compactor, store storage.CompactableStorage) {
@@ -484,11 +471,6 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 	} else if tombstonePruneResult != nil && tombstonePruneResult.PrunedCount > 0 {
 		fmt.Printf("\nTombstones pruned: %d expired (older than %d days)\n",
 			tombstonePruneResult.PrunedCount, tombstonePruneResult.TTLDays)
-	}
-
-	// Schedule auto-flush to export changes
-	if successCount > 0 {
-		markDirtyAndScheduleFlush()
 	}
 }
 
@@ -782,9 +764,6 @@ func runCompactApply(ctx context.Context, store storage.CompactableStorage) {
 		fmt.Printf("\nTombstones pruned: %d expired tombstones (older than %d days) removed\n",
 			tombstonePruneResult.PrunedCount, tombstonePruneResult.TTLDays)
 	}
-
-	// Schedule auto-flush to export changes
-	markDirtyAndScheduleFlush()
 }
 
 // runCompactDolt runs Dolt garbage collection on the .beads/dolt directory

@@ -222,9 +222,6 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 		})
 	}
 
-	// Schedule auto-flush
-	markDirtyAndScheduleFlush()
-
 	if jsonOutput {
 		outputJSON(batchResult)
 		return
@@ -302,9 +299,6 @@ func burnWispMolecule(ctx context.Context, resolvedID string, dryRun, force bool
 	// Perform the burn
 	result := burnWisps(ctx, store, wispIDs)
 	result.MoleculeID = resolvedID
-
-	// Schedule auto-flush
-	markDirtyAndScheduleFlush()
 
 	if jsonOutput {
 		outputJSON(result)

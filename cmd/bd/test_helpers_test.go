@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -249,4 +251,31 @@ func runCommandInDirWithOutput(dir string, name string, args ...string) (string,
 		return "", err
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+// captureStderr captures stderr output from fn and returns it as a string.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(done)
+	}()
+
+	fn()
+	_ = w.Close()
+	os.Stderr = old
+	<-done
+	_ = r.Close()
+
+	return buf.String()
 }

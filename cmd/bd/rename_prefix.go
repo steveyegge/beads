@@ -67,12 +67,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		ctx := rootCtx
 
 		// rename-prefix requires direct mode (not supported by daemon)
-		if daemonClient != nil {
-			if err := ensureDirectMode("daemon does not support rename-prefix command"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		} else if store == nil {
+		if store == nil {
 			if err := ensureStoreActive(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -236,8 +231,6 @@ NOTE: This is a rare operation. Most users never need this command.`,
 				}
 			}
 		}
-		// Also schedule for flush manager if available
-		markDirtyAndScheduleFullExport()
 
 		fmt.Printf("%s Successfully renamed prefix from %s to %s\n", ui.RenderPass("✓"), ui.RenderAccent(oldPrefix), ui.RenderAccent(newPrefix))
 
@@ -465,8 +458,6 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 			}
 		}
 	}
-	// Also schedule for flush manager if available
-	markDirtyAndScheduleFullExport()
 
 	fmt.Printf("\n%s Successfully consolidated %d prefixes into %s\n",
 		ui.RenderPass("✓"), len(prefixes), ui.RenderAccent(targetPrefix))

@@ -488,72 +488,6 @@ var createCmd = &cobra.Command{
 			externalRefPtr = &externalRef
 		}
 
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			createArgs := &rpc.CreateArgs{
-				ID:                 explicitID,
-				Parent:             parentID,
-				Title:              title,
-				Description:        description,
-				IssueType:          issueType,
-				Priority:           priority,
-				Design:             design,
-				AcceptanceCriteria: acceptance,
-				Notes:              notes,
-				SpecID:             specID,
-				Assignee:           assignee,
-				ExternalRef:        externalRef,
-				EstimatedMinutes:   estimatedMinutes,
-				Labels:             labels,
-				Dependencies:       deps,
-				WaitsFor:           waitsFor,
-				WaitsForGate:       waitsForGate,
-				Ephemeral:          wisp,
-				CreatedBy:          getActorWithGit(),
-				Owner:              getOwner(),
-				MolType:            string(molType),
-				WispType:           string(wispType),
-				Rig:                agentRig,
-				EventCategory:      eventCategory,
-				EventActor:         eventActor,
-				EventTarget:        eventTarget,
-				EventPayload:       eventPayload,
-				DueAt:              formatTimeForRPC(dueAt),
-				DeferUntil:         formatTimeForRPC(deferUntil),
-			}
-
-			resp, err := daemonClient.Create(createArgs)
-			if err != nil {
-				FatalError("%v", err)
-			}
-
-			// Parse response to get issue for hook
-			var issue types.Issue
-			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				FatalError("parsing response: %v", err)
-			}
-
-			// Run create hook
-			if hookRunner != nil {
-				hookRunner.Run(hooks.EventCreate, &issue)
-			}
-
-			if jsonOutput {
-				fmt.Println(string(resp.Data))
-			} else if silent {
-				fmt.Println(issue.ID)
-			} else {
-				fmt.Printf("%s Created issue: %s\n", ui.RenderPass("✓"), issue.ID)
-				fmt.Printf("  Title: %s\n", issue.Title)
-				fmt.Printf("  Priority: P%d\n", issue.Priority)
-				fmt.Printf("  Status: %s\n", issue.Status)
-			}
-
-			// Track as last touched issue
-			SetLastTouchedID(issue.ID)
-			return
-		}
-
 		// Direct mode
 		issue := &types.Issue{
 			ID:                 explicitID, // Set explicit ID if provided (empty string if not)
@@ -740,9 +674,6 @@ var createCmd = &cobra.Command{
 				WarnError("failed to add waits-for dependency %s -> %s: %v", issue.ID, waitsFor, err)
 			}
 		}
-
-		// Schedule auto-flush
-		markDirtyAndScheduleFlush()
 
 		// If issue was routed to a different repo, flush its JSONL immediately
 		// so the issue appears in bd list when hydration is enabled (bd-fix-routing)

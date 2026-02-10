@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -129,56 +128,36 @@ Examples:
 
 		requireFreshDB(ctx)
 
-		var issues []*types.Issue
+		// Direct mode
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no storage available\n")
+			os.Exit(1)
+		}
 
-		// Execute query
-		if daemonClient != nil {
-			// Daemon mode: use RPC with filter
-			// Convert filter to ListArgs
-			listArgs := filterToListArgs(&result.Filter)
-
-			resp, err := daemonClient.List(listArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+		// If we need predicate filtering, we may need to fetch more results
+		// to ensure we get enough after filtering
+		searchFilter := result.Filter
+		if result.RequiresPredicate && limit > 0 {
+			// Fetch more to account for predicate filtering
+			searchFilter.Limit = limit * 3
+			if searchFilter.Limit < 100 {
+				searchFilter.Limit = 100
 			}
+		}
 
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			// Direct mode
-			if store == nil {
-				fmt.Fprintf(os.Stderr, "Error: no storage available\n")
-				os.Exit(1)
-			}
+		issues, err := store.SearchIssues(ctx, "", searchFilter)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
-			// If we need predicate filtering, we may need to fetch more results
-			// to ensure we get enough after filtering
-			searchFilter := result.Filter
-			if result.RequiresPredicate && limit > 0 {
-				// Fetch more to account for predicate filtering
-				searchFilter.Limit = limit * 3
-				if searchFilter.Limit < 100 {
-					searchFilter.Limit = 100
-				}
-			}
-
-			issues, err = store.SearchIssues(ctx, "", searchFilter)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-
-			// If no issues found, check if git has issues and auto-import
-			if len(issues) == 0 {
-				if checkAndAutoImport(ctx, store) {
-					issues, err = store.SearchIssues(ctx, "", searchFilter)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-						os.Exit(1)
-					}
+		// If no issues found, check if git has issues and auto-import
+		if len(issues) == 0 {
+			if checkAndAutoImport(ctx, store) {
+				issues, err = store.SearchIssues(ctx, "", searchFilter)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
 				}
 			}
 		}

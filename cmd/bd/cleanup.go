@@ -95,12 +95,7 @@ SEE ALSO:
 		}
 
 		// Ensure we have storage
-		if daemonClient != nil {
-			if err := ensureDirectMode("daemon does not support delete command"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		} else if store == nil {
+		if store == nil {
 			if err := ensureStoreActive(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
