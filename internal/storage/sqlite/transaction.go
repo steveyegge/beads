@@ -1821,11 +1821,13 @@ func (t *sqliteTxStorage) UpdateDecisionPoint(ctx context.Context, dp *types.Dec
 			prior_id = ?,
 			guidance = ?,
 			urgency = ?,
-			parent_bead_id = ?
+			parent_bead_id = ?,
+			reminder_count = ?
 		WHERE issue_id = ?
 	`, dp.Prompt, dp.Context, dp.Options, dp.DefaultOption, dp.SelectedOption,
 		dp.ResponseText, dp.Rationale, dp.RespondedAt, dp.RespondedBy,
-		dp.Iteration, dp.MaxIterations, priorID, dp.Guidance, dp.Urgency, parentBeadID, dp.IssueID)
+		dp.Iteration, dp.MaxIterations, priorID, dp.Guidance, dp.Urgency, parentBeadID,
+		dp.ReminderCount, dp.IssueID)
 	if err != nil {
 		return fmt.Errorf("failed to update decision point: %w", err)
 	}

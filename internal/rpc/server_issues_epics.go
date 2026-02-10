@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/routing"
@@ -3690,6 +3691,15 @@ func (s *Server) handleDecisionCreate(req *Request) Response {
 		Options:     len(args.Options),
 	})
 
+	// Emit OjAgentEscalated when a decision is created by an agent (bd-2iae)
+	if args.RequestedBy != "" {
+		s.emitOjEvent(eventbus.EventOjAgentEscalated, eventbus.OjAgentEventPayload{
+			AgentName: args.RequestedBy,
+			BeadID:    args.Parent,
+			Reason:    args.Prompt,
+		})
+	}
+
 	// Return the decision with its associated issue
 	resp := DecisionResponse{
 		Decision: dp,
@@ -3960,7 +3970,7 @@ func (s *Server) handleDecisionRemind(req *Request) Response {
 	}
 
 	// Check reminder limit
-	maxReminders := 3
+	maxReminders := config.GetDecisionMaxReminders()
 	if dp.ReminderCount >= maxReminders && !args.Force {
 		return Response{
 			Success: false,
@@ -3978,6 +3988,17 @@ func (s *Server) handleDecisionRemind(req *Request) Response {
 	}
 
 	s.emitMutationFor(MutationUpdate, issue)
+
+	// Emit escalation event when reminder count reaches max.
+	// The Slack bot's notifyEscalatedDecision handler picks this up.
+	if dp.ReminderCount >= maxReminders {
+		s.emitDecisionEvent(eventbus.EventDecisionEscalated, eventbus.DecisionEventPayload{
+			DecisionID:  args.IssueID,
+			Question:    dp.Prompt,
+			Urgency:     dp.Urgency,
+			RequestedBy: dp.RequestedBy,
+		})
+	}
 
 	result := DecisionRemindResult{
 		IssueID:       args.IssueID,
@@ -4421,6 +4442,14 @@ func (s *Server) handleCreateMolecule(req *Request) Response {
 		IDMapping: idMapping,
 		RootID:    rootID,
 		Created:   len(args.Issues),
+	}
+
+	// Emit OjJobCreated event (bd-2iae)
+	if rootID != "" {
+		s.emitOjEvent(eventbus.EventOjJobCreated, eventbus.OjJobEventPayload{
+			JobID:  rootID,
+			BeadID: rootID,
+		})
 	}
 
 	data, _ := json.Marshal(result)

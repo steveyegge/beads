@@ -24,6 +24,12 @@ const (
 
 	// SubjectOjPrefix is the subject prefix for OddJobs events.
 	SubjectOjPrefix = "oj."
+
+	// StreamAgentEvents is the JetStream stream for agent lifecycle events (bd-e6vh).
+	StreamAgentEvents = "AGENT_EVENTS"
+
+	// SubjectAgentPrefix is the subject prefix for agent lifecycle events.
+	SubjectAgentPrefix = "agents."
 )
 
 // SubjectForEvent returns the NATS subject for a given event type.
@@ -35,6 +41,9 @@ func SubjectForEvent(eventType EventType) string {
 	}
 	if eventType.IsOjEvent() {
 		return SubjectOjPrefix + string(eventType)
+	}
+	if eventType.IsAgentEvent() {
+		return SubjectAgentPrefix + string(eventType)
 	}
 	return SubjectHookPrefix + string(eventType)
 }
@@ -82,6 +91,20 @@ func EnsureStreams(js nats.JetStreamContext) error {
 		})
 		if err != nil {
 			return fmt.Errorf("create %s stream: %w", StreamOjEvents, err)
+		}
+	}
+
+	// Agent lifecycle events stream (bd-e6vh).
+	if _, err := js.StreamInfo(StreamAgentEvents); err != nil {
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     StreamAgentEvents,
+			Subjects: []string{SubjectAgentPrefix + ">"},
+			Storage:  nats.FileStorage,
+			MaxMsgs:  10000,
+			MaxBytes: 100 << 20,
+		})
+		if err != nil {
+			return fmt.Errorf("create %s stream: %w", StreamAgentEvents, err)
 		}
 	}
 

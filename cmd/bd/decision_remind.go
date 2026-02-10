@@ -6,14 +6,13 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
-
-// Default max reminders if not configured
-const defaultMaxReminders = 3
 
 // decisionRemindCmd sends a reminder for a pending decision point
 var decisionRemindCmd = &cobra.Command{
@@ -103,9 +102,8 @@ func runDecisionRemind(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Get max_reminders from config (default to 3)
-	maxReminders := defaultMaxReminders
-	// TODO: Read from escalation.json config when notification system is implemented
+	// Get max_reminders from config
+	maxReminders := config.GetDecisionMaxReminders()
 
 	// Check reminder limit
 	if dp.ReminderCount >= maxReminders && !force {
@@ -124,6 +122,16 @@ func runDecisionRemind(cmd *cobra.Command, args []string) {
 	}
 
 	markDirtyAndScheduleFlush()
+
+	// Emit escalation event when reminder count reaches max.
+	if dp.ReminderCount >= maxReminders {
+		emitDecisionEvent(eventbus.EventDecisionEscalated, eventbus.DecisionEventPayload{
+			DecisionID:  resolvedID,
+			Question:    dp.Prompt,
+			Urgency:     dp.Urgency,
+			RequestedBy: dp.RequestedBy,
+		})
+	}
 
 	printRemindResult(resolvedID, dp.ReminderCount, maxReminders, dp.Prompt)
 }
@@ -174,9 +182,6 @@ func printRemindResult(id string, reminderCount, maxReminders int, prompt string
 	fmt.Printf("  Reminders: %d/%d\n", reminderCount, maxReminders)
 
 	if reminderCount >= maxReminders {
-		fmt.Printf("\n  %s Max reminders reached\n", ui.RenderWarn("⚠"))
+		fmt.Printf("\n  %s Max reminders reached — escalation event emitted\n", ui.RenderWarn("⚠"))
 	}
-
-	// TODO: Dispatch actual notifications when notification system is implemented
-	fmt.Println("\n  (Notification dispatch not yet implemented)")
 }

@@ -44,6 +44,13 @@ const (
 	EventOjJobCompleted      EventType = "OjJobCompleted"
 	EventOjJobFailed         EventType = "OjJobFailed"
 	EventOjWorkerPollComplete EventType = "OjWorkerPollComplete"
+
+	// Agent lifecycle events (bd-e6vh).
+	EventAgentStarted   EventType = "AgentStarted"
+	EventAgentStopped   EventType = "AgentStopped"
+	EventAgentCrashed   EventType = "AgentCrashed"
+	EventAgentIdle      EventType = "AgentIdle"
+	EventAgentHeartbeat EventType = "AgentHeartbeat"
 )
 
 // Event represents a single hook event flowing through the bus.
@@ -95,6 +102,18 @@ func (t EventType) IsOjEvent() bool {
 	return false
 }
 
+// IsAgentEvent returns true if the event type belongs to the agent
+// lifecycle event category (bd-e6vh).
+func (t EventType) IsAgentEvent() bool {
+	switch t {
+	case EventAgentStarted, EventAgentStopped,
+		EventAgentCrashed, EventAgentIdle,
+		EventAgentHeartbeat:
+		return true
+	}
+	return false
+}
+
 // OjJobEventPayload carries data for OJ job lifecycle events.
 // Used by OjJobCreated, OjJobCompleted, OjJobFailed.
 type OjJobEventPayload struct {
@@ -129,6 +148,18 @@ type OjWorkerPollPayload struct {
 	Worker    string `json:"worker"`
 	Queue     string `json:"queue"`
 	ItemCount int    `json:"item_count"` // Items found in poll
+}
+
+// AgentEventPayload carries data for agent lifecycle events.
+// Used by AgentStarted, AgentStopped, AgentCrashed, AgentIdle, AgentHeartbeat.
+type AgentEventPayload struct {
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name,omitempty"`
+	RigName   string `json:"rig_name,omitempty"`
+	Role      string `json:"role,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`     // for stopped/crashed
+	Uptime    int64  `json:"uptime_sec,omitempty"` // for heartbeat
 }
 
 // DecisionEventPayload carries data for decision events in Event.Raw.

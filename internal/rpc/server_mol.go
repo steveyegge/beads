@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -86,6 +87,14 @@ func (s *Server) handleMolBond(req *Request) Response {
 
 	// Emit mutation event
 	s.emitMutation(MutationBonded, result.ResultID, result.ResultType, "")
+
+	// Emit OjJobCreated when a subgraph was spawned (bd-2iae)
+	if result.Spawned > 0 {
+		s.emitOjEvent(eventbus.EventOjJobCreated, eventbus.OjJobEventPayload{
+			JobID:  result.ResultID,
+			BeadID: result.ResultID,
+		})
+	}
 
 	data, _ := json.Marshal(result)
 	return Response{Success: true, Data: data}
@@ -1272,6 +1281,13 @@ func (s *Server) handleCloseContinue(req *Request) Response {
 	// Check if molecule is complete
 	if progress.Completed >= progress.Total {
 		result.MolComplete = true
+
+		// Emit OjJobCompleted event (bd-2iae)
+		s.emitOjEvent(eventbus.EventOjJobCompleted, eventbus.OjJobEventPayload{
+			JobID:  moleculeID,
+			BeadID: moleculeID,
+		})
+
 		data, _ := json.Marshal(result)
 		return Response{Success: true, Data: data}
 	}
@@ -1296,6 +1312,14 @@ func (s *Server) handleCloseContinue(req *Request) Response {
 	}
 
 	result.NextStep = nextStep
+
+	// Emit OjStepAdvanced event (bd-2iae)
+	s.emitOjEvent(eventbus.EventOjStepAdvanced, eventbus.OjStepEventPayload{
+		JobID:    moleculeID,
+		FromStep: closedStepID,
+		ToStep:   nextStep.ID,
+		BeadID:   moleculeID,
+	})
 
 	// Auto-claim if requested
 	if args.AutoClaim {

@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -80,7 +81,8 @@ type Server struct {
 	activeConns   int32 // atomic counter
 	connSemaphore chan struct{}
 	// Request timeout
-	requestTimeout time.Duration
+	requestTimeout  time.Duration
+	decisionTimeout time.Duration // Timeout for decision expiration sweeper (0 = disabled)
 	// Ready channel signals when server is listening
 	readyChan chan struct{}
 	// Auto-import single-flight guard
@@ -224,6 +226,8 @@ func NewServerWithWispStore(socketPath string, store storage.Storage, wispStore 
 		}
 	}
 
+	decisionTimeout := config.GetDecisionDefaultTimeout()
+
 	metrics := NewMetrics()
 	metrics.SetSlowQueryThreshold(slowQueryThreshold)
 	s := &Server{
@@ -239,6 +243,7 @@ func NewServerWithWispStore(socketPath string, store storage.Storage, wispStore 
 		maxConns:          maxConns,
 		connSemaphore:     make(chan struct{}, maxConns),
 		requestTimeout:    requestTimeout,
+		decisionTimeout:   decisionTimeout,
 		readyChan:         make(chan struct{}),
 		mutationChan:      make(chan MutationEvent, mutationBufferSize), // Configurable buffer
 		recentMutations:   make([]MutationEvent, 0, 1000),

@@ -135,6 +135,9 @@ func (s *Server) Start(_ context.Context) error {
 
 	go s.handleSignals()
 
+	// Start background decision expiration sweeper
+	s.startDecisionSweeper()
+
 	// Ensure cleanup is signaled when this function returns
 	defer close(s.doneChan)
 

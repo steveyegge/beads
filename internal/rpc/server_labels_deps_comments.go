@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -854,6 +855,13 @@ func (s *Server) handleBatchQueryWorkers(req *Request) Response {
 			Status:   string(issue.Status),
 		}
 	}
+
+	// Emit OjWorkerPollComplete event (bd-2iae)
+	s.emitOjEvent(eventbus.EventOjWorkerPollComplete, eventbus.OjWorkerPollPayload{
+		Worker:    s.reqActor(req),
+		Queue:     "batch_query",
+		ItemCount: len(workers),
+	})
 
 	result := &BatchQueryWorkersResult{
 		Workers: workers,

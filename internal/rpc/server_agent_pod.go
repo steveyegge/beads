@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/steveyegge/beads/internal/eventbus"
 )
 
 // handleAgentPodRegister sets pod fields on an agent bead.
@@ -60,6 +62,12 @@ func (s *Server) handleAgentPodRegister(req *Request) Response {
 	} else {
 		s.emitRichMutation(MutationEvent{Type: MutationUpdate, IssueID: args.AgentID, Actor: req.Actor})
 	}
+
+	// Emit OjAgentSpawned event (bd-2iae)
+	s.emitOjEvent(eventbus.EventOjAgentSpawned, eventbus.OjAgentEventPayload{
+		AgentName: args.AgentID,
+		SessionID: args.ScreenSession,
+	})
 
 	result := AgentPodRegisterResult{
 		AgentID:   args.AgentID,
@@ -166,6 +174,20 @@ func (s *Server) handleAgentPodStatus(req *Request) Response {
 		s.emitRichMutation(evt)
 	} else {
 		s.emitRichMutation(MutationEvent{Type: MutationUpdate, IssueID: args.AgentID, Actor: req.Actor})
+	}
+
+	// Emit OJ agent lifecycle events based on pod status (bd-2iae)
+	switch args.PodStatus {
+	case "idle":
+		s.emitOjEvent(eventbus.EventOjAgentIdle, eventbus.OjAgentEventPayload{
+			AgentName: args.AgentID,
+		})
+	case "failed":
+		s.emitOjEvent(eventbus.EventOjJobFailed, eventbus.OjJobEventPayload{
+			JobID:  args.AgentID,
+			BeadID: args.AgentID,
+			Error:  "agent pod failed",
+		})
 	}
 
 	result := AgentPodStatusResult{

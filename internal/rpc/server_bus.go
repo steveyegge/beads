@@ -295,6 +295,37 @@ func (s *Server) emitDecisionEvent(eventType eventbus.EventType, payload eventbu
 	}
 }
 
+// emitOjEvent dispatches an OddJobs lifecycle event to the event bus (and NATS
+// JetStream) so that handlers and external consumers are notified of OJ
+// lifecycle transitions.  No-op if the bus is nil.  (bd-2iae)
+func (s *Server) emitOjEvent(eventType eventbus.EventType, payload interface{}) {
+	s.mu.RLock()
+	bus := s.bus
+	s.mu.RUnlock()
+
+	if bus == nil {
+		return
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "emitOjEvent: marshal failed: %v\n", err)
+		return
+	}
+
+	event := &eventbus.Event{
+		Type: eventType,
+		Raw:  raw,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), s.requestTimeout)
+	defer cancel()
+
+	if _, err := bus.Dispatch(ctx, event); err != nil {
+		fmt.Fprintf(os.Stderr, "emitOjEvent: dispatch %s failed: %v\n", eventType, err)
+	}
+}
+
 // emitAdviceEvent dispatches an advice bus event if the bus is configured. (bd-z4cu.2)
 // No-op if bus is nil — CRUD operations still succeed without a bus.
 func (s *Server) emitAdviceEvent(eventType eventbus.EventType, payload AdviceEventPayload) {
