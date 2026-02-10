@@ -780,10 +780,11 @@ func exportDiagnostics(result doctorResult, outputPath string) error {
 }
 
 func printDiagnostics(result doctorResult) {
-	// Pre-calculate counts and collect issues
+	// Pre-calculate counts and collect issues grouped by category
 	checksByCategory := make(map[string][]doctorCheck)
+	issuesByCategory := make(map[string][]doctorCheck)
 	var passCount, warnCount, failCount int
-	var warnings []doctorCheck
+	hasIssues := false
 
 	for _, check := range result.Checks {
 		cat := check.Category
@@ -797,10 +798,12 @@ func printDiagnostics(result doctorResult) {
 			passCount++
 		case statusWarning:
 			warnCount++
-			warnings = append(warnings, check)
+			issuesByCategory[cat] = append(issuesByCategory[cat], check)
+			hasIssues = true
 		case statusError:
 			failCount++
-			warnings = append(warnings, check)
+			issuesByCategory[cat] = append(issuesByCategory[cat], check)
+			hasIssues = true
 		}
 	}
 
@@ -819,45 +822,92 @@ func printDiagnostics(result doctorResult) {
 		printAllChecks(checksByCategory)
 	}
 
-	// Print warnings/errors section with fixes
-	if len(warnings) > 0 {
+	// Print warnings/errors grouped by category
+	if hasIssues {
 		fmt.Println()
 
-		// Sort by severity: errors first, then warnings
-		slices.SortStableFunc(warnings, func(a, b doctorCheck) int {
-			if a.Status == statusError && b.Status != statusError {
-				return -1
+		// Walk categories in defined order, only showing those with issues
+		for _, category := range doctor.CategoryOrder {
+			issues, exists := issuesByCategory[category]
+			if !exists || len(issues) == 0 {
+				continue
 			}
-			if a.Status != statusError && b.Status == statusError {
-				return 1
-			}
-			return 0
-		})
 
-		for i, check := range warnings {
-			line := fmt.Sprintf("%s: %s", check.Name, check.Message)
-			if check.Status == statusError {
-				fmt.Printf("  %s  %s %s\n", ui.RenderFailIcon(), ui.RenderFail(fmt.Sprintf("%d.", i+1)), ui.RenderFail(line))
-			} else {
-				fmt.Printf("  %s  %s %s\n", ui.RenderWarnIcon(), ui.RenderWarn(fmt.Sprintf("%d.", i+1)), line)
+			// Sort within category: errors first, then warnings
+			slices.SortStableFunc(issues, func(a, b doctorCheck) int {
+				if a.Status == statusError && b.Status != statusError {
+					return -1
+				}
+				if a.Status != statusError && b.Status == statusError {
+					return 1
+				}
+				return 0
+			})
+
+			// Category header
+			catChecks := checksByCategory[category]
+			catPass := 0
+			for _, c := range catChecks {
+				if c.Status == statusOK {
+					catPass++
+				}
 			}
-			if check.Detail != "" {
-				fmt.Printf("        %s\n", ui.RenderMuted(check.Detail))
-			}
-			if check.Fix != "" {
-				lines := strings.Split(check.Fix, "\n")
-				for j, fixLine := range lines {
-					if j == 0 {
-						fmt.Printf("        %s%s\n", ui.MutedStyle.Render(ui.TreeLast), fixLine)
-					} else {
-						fmt.Printf("          %s\n", fixLine)
+			fmt.Printf("%s %s\n", ui.RenderCategory(category),
+				ui.RenderMuted(fmt.Sprintf("(%d/%d passed)", catPass, len(catChecks))))
+
+			for _, check := range issues {
+				line := fmt.Sprintf("%s: %s", check.Name, check.Message)
+				if check.Status == statusError {
+					fmt.Printf("  %s  %s\n", ui.RenderFailIcon(), ui.RenderFail(line))
+				} else {
+					fmt.Printf("  %s  %s\n", ui.RenderWarnIcon(), line)
+				}
+				if check.Detail != "" {
+					fmt.Printf("      %s\n", ui.RenderMuted(check.Detail))
+				}
+				if check.Fix != "" {
+					lines := strings.Split(check.Fix, "\n")
+					for j, fixLine := range lines {
+						if j == 0 {
+							fmt.Printf("      %s%s\n", ui.MutedStyle.Render(ui.TreeLast), fixLine)
+						} else {
+							fmt.Printf("        %s\n", fixLine)
+						}
 					}
 				}
 			}
+			fmt.Println()
+		}
+
+		// Handle "Other" category
+		if otherIssues, exists := issuesByCategory["Other"]; exists && len(otherIssues) > 0 {
+			fmt.Printf("%s\n", ui.RenderCategory("Other"))
+			for _, check := range otherIssues {
+				line := fmt.Sprintf("%s: %s", check.Name, check.Message)
+				if check.Status == statusError {
+					fmt.Printf("  %s  %s\n", ui.RenderFailIcon(), ui.RenderFail(line))
+				} else {
+					fmt.Printf("  %s  %s\n", ui.RenderWarnIcon(), line)
+				}
+				if check.Detail != "" {
+					fmt.Printf("      %s\n", ui.RenderMuted(check.Detail))
+				}
+				if check.Fix != "" {
+					lines := strings.Split(check.Fix, "\n")
+					for j, fixLine := range lines {
+						if j == 0 {
+							fmt.Printf("      %s%s\n", ui.MutedStyle.Render(ui.TreeLast), fixLine)
+						} else {
+							fmt.Printf("        %s\n", fixLine)
+						}
+					}
+				}
+			}
+			fmt.Println()
 		}
 
 		if !doctorVerbose {
-			fmt.Printf("\n%s\n", ui.RenderMuted("Run with --verbose to see all checks"))
+			fmt.Printf("%s\n", ui.RenderMuted("Run with --verbose to see all checks"))
 		}
 	} else {
 		fmt.Println()
