@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
@@ -683,8 +684,7 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 
 // writeMergedStateToJSONL writes merged issues to JSONL file
 func writeMergedStateToJSONL(path string, issues []*beads.Issue) error {
-	tempID := tempFileCounter.Add(1)
-	tempPath := fmt.Sprintf("%s.tmp.%d.%d", path, os.Getpid(), tempID)
+	tempPath := fmt.Sprintf("%s.tmp.%d.%d", path, os.Getpid(), time.Now().UnixNano())
 	file, err := os.Create(tempPath) //nolint:gosec // path is trusted internal beads path
 	if err != nil {
 		return err

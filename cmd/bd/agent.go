@@ -246,11 +246,6 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update agent state: %w", err)
 	}
 
-	// Trigger auto-flush
-	if flushManager != nil {
-		flushManager.MarkDirty(false)
-	}
-
 	if jsonOutput {
 		result := map[string]interface{}{
 			"agent":         agentID,
@@ -328,11 +323,6 @@ func runAgentHeartbeat(cmd *cobra.Command, args []string) error {
 	}
 	if err := activeStore.UpdateIssue(ctx, agentID, updates, actor); err != nil {
 		return fmt.Errorf("failed to update agent heartbeat: %w", err)
-	}
-
-	// Trigger auto-flush
-	if flushManager != nil {
-		flushManager.MarkDirty(false)
 	}
 
 	if jsonOutput {
@@ -586,11 +576,6 @@ func runAgentBackfillLabels(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("%s Updated %s (role_type:%s, rig:%s)\n", ui.RenderPass("✓"), agent.ID, roleType, rig)
 		updated++
-	}
-
-	// Trigger auto-flush
-	if flushManager != nil && !backfillDryRun {
-		flushManager.MarkDirty(false)
 	}
 
 	if backfillDryRun {

@@ -228,8 +228,28 @@ func writeIssuesToJSONL(memStore *memory.MemoryStorage, beadsDir string) error {
 	}
 	issues = filtered
 
-	// Write atomically using common helper (handles temp file + rename + permissions)
-	if _, err := writeJSONLAtomic(jsonlPath, issues); err != nil {
+	// Write atomically using temp file + rename
+	tempPath := jsonlPath + fmt.Sprintf(".tmp.%d", os.Getpid())
+	file, err := os.Create(tempPath) //nolint:gosec // path is trusted internal beads path
+	if err != nil {
+		return err
+	}
+
+	encoder := json.NewEncoder(file)
+	encoder.SetEscapeHTML(false)
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			_ = file.Close()
+			_ = os.Remove(tempPath)
+			return err
+		}
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+	if err := os.Rename(tempPath, jsonlPath); err != nil {
+		_ = os.Remove(tempPath)
 		return err
 	}
 

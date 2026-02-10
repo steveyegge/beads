@@ -77,9 +77,5 @@ func ensureStoreActive() error {
 	setStoreActive(true)
 	unlockStore()
 
-	if isAutoImportEnabled() && ShouldImportJSONL(rootCtx, store) {
-		autoImportIfNewer()
-	}
-
 	return nil
 }

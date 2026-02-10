@@ -120,11 +120,6 @@ func runRelate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to add relates-to %s -> %s: %w", id2, id1, err)
 	}
 
-	// Trigger auto-flush
-	if flushManager != nil {
-		flushManager.MarkDirty(false)
-	}
-
 	if jsonOutput {
 		result := map[string]interface{}{
 			"id1":     id1,
@@ -184,11 +179,6 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 	// Remove id2 -> id1 (bidirectional)
 	if err := store.RemoveDependency(ctx, id2, id1, actor); err != nil {
 		return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id2, id1, err)
-	}
-
-	// Trigger auto-flush
-	if flushManager != nil {
-		flushManager.MarkDirty(false)
 	}
 
 	if jsonOutput {

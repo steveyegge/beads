@@ -142,10 +142,6 @@ func runBDForCoverage(t *testing.T, dir string, args ...string) (stdout string, 
 	storeActive = false
 	flushFailureCount = 0
 	lastFlushError = nil
-	if flushManager != nil {
-		_ = flushManager.Shutdown()
-		flushManager = nil
-	}
 	rootCtx = nil
 	rootCancel = nil
 

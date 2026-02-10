@@ -127,11 +127,6 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	storeActive = false
 	flushFailureCount = 0
 	lastFlushError = nil
-	// Shutdown any existing FlushManager
-	if flushManager != nil {
-		_ = flushManager.Shutdown()
-		flushManager = nil
-	}
 	// Reset context state
 	rootCtx = nil
 	rootCancel = nil
@@ -884,10 +879,6 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 	storeActive = false
 	flushFailureCount = 0
 	lastFlushError = nil
-	if flushManager != nil {
-		_ = flushManager.Shutdown()
-		flushManager = nil
-	}
 	rootCtx = nil
 	rootCancel = nil
 

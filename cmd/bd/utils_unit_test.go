@@ -207,8 +207,3 @@ func TestShowCleanupDeprecationHint(t *testing.T) {
 	showCleanupDeprecationHint()
 }
 
-// Test clearAutoFlushState - ensure it doesn't panic when called without initialization
-func TestClearAutoFlushState(t *testing.T) {
-	// This should not panic even if flush manager isn't initialized
-	clearAutoFlushState()
-}

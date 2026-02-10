@@ -201,23 +201,12 @@ NOTE: This is a rare operation. Most users never need this command.`,
 			_ = store.SetMetadata(ctx, "export_hashes", "")
 			_ = store.SetJSONLFileHash(ctx, "")
 
-			// Get all renamed issues from DB and export directly
-			renamedIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to get issues for export: %v\n", err)
+			// Export renamed issues directly to JSONL
+			if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to export: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Run 'bd export --force' to update JSONL\n")
 			} else {
-				// Get dependencies for each issue
-				for _, issue := range renamedIssues {
-					deps, _ := store.GetDependencyRecords(ctx, issue.ID)
-					issue.Dependencies = deps
-				}
-				// Write directly to JSONL
-				if _, err := writeJSONLAtomic(jsonlPath, renamedIssues); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to export: %v\n", err)
-					fmt.Fprintf(os.Stderr, "Run 'bd export --force' to update JSONL\n")
-				} else {
-					fmt.Printf("Updated %s with new IDs\n", jsonlPath)
-				}
+				fmt.Printf("Updated %s with new IDs\n", jsonlPath)
 			}
 		}
 
@@ -428,23 +417,12 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 		_ = st.SetMetadata(ctx, "export_hashes", "")
 		_ = st.SetJSONLFileHash(ctx, "")
 
-		// Get all renamed issues from DB and export directly
-		renamedIssues, err := st.SearchIssues(ctx, "", types.IssueFilter{})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to get issues for export: %v\n", err)
+		// Export renamed issues directly to JSONL
+		if err := exportToJSONLWithStore(ctx, st, jsonlPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to export: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Run 'bd export --force' to update JSONL\n")
 		} else {
-			// Get dependencies for each issue
-			for _, issue := range renamedIssues {
-				deps, _ := st.GetDependencyRecords(ctx, issue.ID)
-				issue.Dependencies = deps
-			}
-			// Write directly to JSONL
-			if _, err := writeJSONLAtomic(jsonlPath, renamedIssues); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to export: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Run 'bd export --force' to update JSONL\n")
-			} else {
-				fmt.Printf("Updated %s with new IDs\n", jsonlPath)
-			}
+			fmt.Printf("Updated %s with new IDs\n", jsonlPath)
 		}
 	}
 

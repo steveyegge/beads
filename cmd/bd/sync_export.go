@@ -101,9 +101,6 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 		}
 	}
 
-	// Clear auto-flush state
-	clearAutoFlushState()
-
 	// Update jsonl_content_hash metadata to enable content-based staleness detection
 	if result.ContentHash != "" {
 		if err := store.SetMetadata(ctx, "jsonl_content_hash", result.ContentHash); err != nil {

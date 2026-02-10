@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/syncbranch"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -118,3 +120,33 @@ func detectPrefixFromJSONL(jsonlData []byte) string {
 	}
 	return ""
 }
+
+// countIssuesInJSONL counts the number of issues in a JSONL file
+func countIssuesInJSONL(path string) (int, error) {
+	// #nosec G304 - controlled path from config
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close file: %v\n", err)
+		}
+	}()
+
+	count := 0
+	decoder := json.NewDecoder(file)
+	for {
+		var issue types.Issue
+		if err := decoder.Decode(&issue); err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			// Return error for corrupt/invalid JSON
+			return count, fmt.Errorf("invalid JSON at issue %d: %w", count+1, err)
+		}
+		count++
+	}
+	return count, nil
+}
+

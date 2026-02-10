@@ -73,7 +73,6 @@ type savedGlobals struct {
 	store            storage.Storage
 	storeActive      bool
 	autoFlushEnabled bool
-	flushManager     *FlushManager
 }
 
 // saveAndRestoreGlobals snapshots all commonly-mutated package-level globals
@@ -98,7 +97,6 @@ func saveAndRestoreGlobals(t *testing.T) *savedGlobals {
 		store:            store,
 		storeActive:      storeActive,
 		autoFlushEnabled: autoFlushEnabled,
-		flushManager:     flushManager,
 	}
 	t.Cleanup(func() {
 		dbPath = saved.dbPath
@@ -107,7 +105,6 @@ func saveAndRestoreGlobals(t *testing.T) *savedGlobals {
 		storeActive = saved.storeActive
 		storeMutex.Unlock()
 		autoFlushEnabled = saved.autoFlushEnabled
-		flushManager = saved.flushManager
 	})
 	return saved
 }

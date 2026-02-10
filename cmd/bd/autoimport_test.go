@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,85 +30,6 @@ func TestCheckAndAutoImport_NoAutoImportFlag(t *testing.T) {
 	result := checkAndAutoImport(ctx, store)
 	if result {
 		t.Error("Expected auto-import to be disabled when noAutoImport is true")
-	}
-}
-
-func TestAutoImportIfNewer_NoAutoImportFlag(t *testing.T) {
-	// Test that autoImportIfNewer() respects noAutoImport flag directly (bd-4t7 fix)
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("Failed to create beads dir: %v", err)
-	}
-
-	testDBPath := filepath.Join(beadsDir, "bd.db")
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-
-	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer testStore.Close()
-
-	// Set prefix
-	if err := testStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
-		t.Fatalf("Failed to set prefix: %v", err)
-	}
-
-	// Create JSONL with an issue that should NOT be imported
-	jsonlIssue := &types.Issue{
-		ID:        "test-noimport-bd4t7",
-		Title:     "Should Not Import",
-		Status:    types.StatusOpen,
-		Priority:  1,
-		IssueType: types.TypeTask,
-	}
-	f, err := os.Create(jsonlPath)
-	if err != nil {
-		t.Fatalf("Failed to create JSONL: %v", err)
-	}
-	encoder := json.NewEncoder(f)
-	if err := encoder.Encode(jsonlIssue); err != nil {
-		t.Fatalf("Failed to encode issue: %v", err)
-	}
-	f.Close()
-
-	// Save and set global state
-	oldNoAutoImport := noAutoImport
-	oldAutoImportEnabled := autoImportEnabled
-	oldStore := store
-	oldDbPath := dbPath
-	oldRootCtx := rootCtx
-	oldStoreActive := storeActive
-
-	noAutoImport = true
-	autoImportEnabled = false // Also set this for consistency
-	store = testStore
-	dbPath = testDBPath
-	rootCtx = ctx
-	storeActive = true
-
-	defer func() {
-		noAutoImport = oldNoAutoImport
-		autoImportEnabled = oldAutoImportEnabled
-		store = oldStore
-		dbPath = oldDbPath
-		rootCtx = oldRootCtx
-		storeActive = oldStoreActive
-	}()
-
-	// Call autoImportIfNewer directly - should be blocked by noAutoImport check
-	autoImportIfNewer()
-
-	// Verify issue was NOT imported
-	imported, err := testStore.GetIssue(ctx, "test-noimport-bd4t7")
-	if err != nil {
-		t.Fatalf("Failed to check for issue: %v", err)
-	}
-	if imported != nil {
-		t.Error("autoImportIfNewer() imported despite noAutoImport=true - bd-4t7 fix failed")
 	}
 }
 

@@ -62,7 +62,6 @@ func ensureDatabaseFresh(ctx context.Context) error {
 	// returning an error. This allows commands like `bd show` to work after git pull.
 	// Skip auto-import if store is read-only - it can't write anyway (GH#1089)
 	if !noAutoImport && !storeIsReadOnly {
-		autoImportIfNewer()
 		return nil
 	}
 
