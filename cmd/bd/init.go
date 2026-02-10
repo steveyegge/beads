@@ -717,6 +717,16 @@ variable.`,
 			}
 		}
 
+		// Check for missing git upstream and warn if not configured
+		// This is helpful for sync workflows where upstream is important
+		if isGitRepo() && !quiet {
+			if !gitHasUpstream() {
+				fmt.Fprintf(os.Stderr, "\n%s Git upstream not configured\n", ui.RenderWarn("⚠"))
+				fmt.Fprintf(os.Stderr, "  For sync workflows, set your upstream with:\n")
+				fmt.Fprintf(os.Stderr, "  %s\n\n", ui.RenderAccent("git remote add upstream <repo-url>"))
+			}
+		}
+
 		// Skip output if quiet mode
 		if quiet {
 			return
