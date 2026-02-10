@@ -1,0 +1,86 @@
+name: Mirror Images to ECR
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_image:
+        description: 'Source image (e.g. dolthub/doltclusterctl:v0.7.0)'
+        required: true
+        type: string
+      ecr_repo:
+        description: 'ECR repository name (e.g. external/dolthub/doltclusterctl)'
+        required: true
+        type: string
+      tag:
+        description: 'Tag to apply (e.g. v0.7.0)'
+        required: true
+        type: string
+  # Also run on push to keep images in sync
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mirror-ecr.yml'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: 909418727440.dkr.ecr.us-east-1.amazonaws.com
+
+jobs:
+  mirror-doltclusterctl:
+    # Run on push to main (keeps image up to date) or manual dispatch
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && contains(inputs.source_image, 'doltclusterctl'))
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Mirror doltclusterctl
+        run: |
+          SOURCE="${{ inputs.source_image || 'dolthub/doltclusterctl:v0.7.0' }}"
+          ECR_REPO="${{ inputs.ecr_repo || 'external/dolthub/doltclusterctl' }}"
+          TAG="${{ inputs.tag || 'v0.7.0' }}"
+
+          echo "Mirroring $SOURCE -> ${{ env.ECR_REGISTRY }}/$ECR_REPO:$TAG"
+          docker pull "$SOURCE"
+          docker tag "$SOURCE" "${{ env.ECR_REGISTRY }}/$ECR_REPO:$TAG"
+          docker push "${{ env.ECR_REGISTRY }}/$ECR_REPO:$TAG"
+          echo "Done: ${{ env.ECR_REGISTRY }}/$ECR_REPO:$TAG"
+
+  mirror-custom:
+    # Only for manual dispatch of non-doltclusterctl images
+    if: github.event_name == 'workflow_dispatch' && !contains(inputs.source_image, 'doltclusterctl')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repository exists
+        run: |
+          aws ecr describe-repositories --repository-names "${{ inputs.ecr_repo }}" 2>/dev/null || \
+          aws ecr create-repository --repository-name "${{ inputs.ecr_repo }}"
+
+      - name: Mirror image
+        run: |
+          echo "Mirroring ${{ inputs.source_image }} -> ${{ env.ECR_REGISTRY }}/${{ inputs.ecr_repo }}:${{ inputs.tag }}"
+          docker pull "${{ inputs.source_image }}"
+          docker tag "${{ inputs.source_image }}" "${{ env.ECR_REGISTRY }}/${{ inputs.ecr_repo }}:${{ inputs.tag }}"
+          docker push "${{ env.ECR_REGISTRY }}/${{ inputs.ecr_repo }}:${{ inputs.tag }}"
+          echo "Done: ${{ env.ECR_REGISTRY }}/${{ inputs.ecr_repo }}:${{ inputs.tag }}"

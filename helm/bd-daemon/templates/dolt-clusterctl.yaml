@@ -1,0 +1,82 @@
+{{- if .Values.dolt.statefulSet.enabled }}
+{{- $clusterEnabled := and .Values.dolt.cluster.enabled (gt (.Values.dolt.cluster.replicas | default 1 | int) 1) }}
+{{- if and $clusterEnabled (.Values.dolt.cluster.clusterctl).enabled }}
+{{- $fullname := include "bd-daemon.dolt.fullname" . }}
+# --- ServiceAccount for doltclusterctl ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-clusterctl
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+---
+# --- Role: pod label management + statefulset read ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-clusterctl
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list"]
+---
+# --- RoleBinding ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-clusterctl
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-clusterctl
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}-clusterctl
+    namespace: {{ .Release.Namespace }}
+---
+# --- CronJob: apply primary/standby labels to pods ---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullname }}-clusterctl
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.dolt.cluster.clusterctl.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 30
+      template:
+        metadata:
+          labels:
+            {{- include "bd-daemon.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: clusterctl
+        spec:
+          serviceAccountName: {{ $fullname }}-clusterctl
+          restartPolicy: Never
+          containers:
+            - name: clusterctl
+              image: "{{ .Values.dolt.cluster.clusterctl.image.repository }}:{{ .Values.dolt.cluster.clusterctl.image.tag }}"
+              imagePullPolicy: {{ .Values.dolt.cluster.clusterctl.image.pullPolicy }}
+              command:
+                - doltclusterctl
+              args:
+                - -n
+                - {{ .Release.Namespace }}
+                - applyprimarylabels
+                - {{ $fullname }}
+              resources:
+                {{- toYaml .Values.dolt.cluster.clusterctl.resources | nindent 16 }}
+{{- end }}
+{{- end }}

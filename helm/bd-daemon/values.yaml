@@ -177,6 +177,28 @@ dolt:
     size: 10Gi
     deleteClaim: false
 
+  # HA cluster (standby replication)
+  cluster:
+    enabled: false
+    replicas: 1              # Set to 3 for HA
+    remotesapiPort: 50051    # Port for inter-node replication
+    bootstrapEpoch: 1        # Increment on manual failover
+    # doltclusterctl label controller
+    clusterctl:
+      enabled: true          # Deploy CronJob to apply primary/standby labels
+      image:
+        repository: dolthub/doltclusterctl
+        tag: "v0.7.0"
+        pullPolicy: IfNotPresent
+      schedule: "*/1 * * * *"  # Every minute
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+
   # Init SQL script (optional)
   initSql: ""
 

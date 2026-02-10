@@ -1,0 +1,102 @@
+# gastown-ha: HA Dolt cluster for e2e validation
+# Deploy with: helm upgrade --install gastown-ha ./helm/bd-daemon -n gastown-ha --values helm/bd-daemon/values/gastown-ha.yaml
+
+image:
+  repository: ghcr.io/steveyegge/beads
+  tag: "0.57.11"
+
+daemon:
+  replicaCount: 1
+  logLevel: info
+  logJSON: true
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+dolt:
+  statefulSet:
+    enabled: true
+
+  database: beads
+
+  image:
+    repository: 909418727440.dkr.ecr.us-east-1.amazonaws.com/external/dolthub/dolt-sql-server
+    tag: "1.81.6"
+
+  config:
+    port: 3306
+    log_level: info
+    max_connections: 50
+    read_timeout_millis: 28800000
+    write_timeout_millis: 28800000
+
+  # HA cluster: 3 replicas with standby replication
+  cluster:
+    enabled: true
+    replicas: 3
+    remotesapiPort: 50051
+    bootstrapEpoch: 1
+    clusterctl:
+      enabled: true
+      image:
+        repository: 909418727440.dkr.ecr.us-east-1.amazonaws.com/external/dolthub/doltclusterctl
+        tag: "v0.7.0"
+      schedule: "*/1 * * * *"
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+
+  # S3 disabled for initial e2e — test pure replication first
+  s3:
+    enabled: false
+
+  # Smaller resources for e2e testing
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+  persistence:
+    enabled: true
+    storageClass: gp2
+    accessMode: ReadWriteOnce
+    size: 5Gi
+    deleteClaim: true  # Clean up PVCs on delete for e2e
+
+  terminationGracePeriodSeconds: 60
+
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 20
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+externalSecrets:
+  enabled: true
+  refreshInterval: "15m"
+  secretStoreKind: ClusterSecretStore
+  secretStoreName: "aws-secretsmanager"
+  doltRootPassword:
+    remoteRef: "shared-e2e-dolt-root-password"
+    property: "password"
+  daemonToken:
+    remoteRef: "shared-e2e-bd-daemon-token"

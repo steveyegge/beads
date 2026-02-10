@@ -1,4 +1,29 @@
 {{- if .Values.dolt.statefulSet.enabled }}
+{{- $clusterEnabled := and .Values.dolt.cluster.enabled (gt (.Values.dolt.cluster.replicas | default 1 | int) 1) }}
+{{- if $clusterEnabled }}
+# --- Headless service for StatefulSet pod DNS (pod-to-pod replication) ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bd-daemon.dolt.fullname" . }}-headless
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: {{ .Values.dolt.service.port }}
+      targetPort: mysql
+      protocol: TCP
+      name: mysql
+    - port: {{ .Values.dolt.cluster.remotesapiPort | default 50051 }}
+      targetPort: remotesapi
+      protocol: TCP
+      name: remotesapi
+  selector:
+    {{- include "bd-daemon.dolt.selectorLabels" . | nindent 4 }}
+---
+# --- Primary service (routes to current primary via doltclusterctl labels) ---
 apiVersion: v1
 kind: Service
 metadata:
@@ -14,4 +39,41 @@ spec:
       name: mysql
   selector:
     {{- include "bd-daemon.dolt.selectorLabels" . | nindent 4 }}
+    dolthub.com/cluster_role: primary
+---
+# --- Standby service (routes to standby replicas for read-only traffic) ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bd-daemon.dolt.fullname" . }}-standby
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.dolt.service.type }}
+  ports:
+    - port: {{ .Values.dolt.service.port }}
+      targetPort: mysql
+      protocol: TCP
+      name: mysql
+  selector:
+    {{- include "bd-daemon.dolt.selectorLabels" . | nindent 4 }}
+    dolthub.com/cluster_role: standby
+{{- else }}
+# --- Single instance service ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bd-daemon.dolt.fullname" . }}
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.dolt.service.type }}
+  ports:
+    - port: {{ .Values.dolt.service.port }}
+      targetPort: mysql
+      protocol: TCP
+      name: mysql
+  selector:
+    {{- include "bd-daemon.dolt.selectorLabels" . | nindent 4 }}
+{{- end }}
 {{- end }}

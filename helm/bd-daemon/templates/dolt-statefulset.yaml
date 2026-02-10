@@ -6,8 +6,9 @@ metadata:
   labels:
     {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
 spec:
-  serviceName: {{ include "bd-daemon.dolt.fullname" . }}
-  replicas: 1
+  {{- $clusterEnabled := and .Values.dolt.cluster.enabled (gt (.Values.dolt.cluster.replicas | default 1 | int) 1) }}
+  serviceName: {{ include "bd-daemon.dolt.fullname" . }}{{- if $clusterEnabled }}-headless{{- end }}
+  replicas: {{ .Values.dolt.cluster.replicas | default 1 }}
   selector:
     matchLabels:
       {{- include "bd-daemon.dolt.selectorLabels" . | nindent 6 }}
@@ -26,8 +27,121 @@ spec:
       securityContext:
         {{- toYaml .Values.dolt.podSecurityContext | nindent 8 }}
       terminationGracePeriodSeconds: {{ .Values.dolt.terminationGracePeriodSeconds | default 120 }}
-      {{- if and .Values.dolt.s3.enabled .Values.dolt.s3.sync.pullOnStartup }}
+      {{- if and $clusterEnabled (not .Values.dolt.affinity) }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "bd-daemon.dolt.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      {{- if or $clusterEnabled (and .Values.dolt.s3.enabled .Values.dolt.s3.sync.pullOnStartup) .Values.externalSecrets.enabled }}
       initContainers:
+        {{- if $clusterEnabled }}
+        - name: config-select
+          image: "{{ .Values.dolt.image.repository }}:{{ .Values.dolt.image.tag }}"
+          imagePullPolicy: {{ .Values.dolt.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              ORDINAL=$(echo "$HOSTNAME" | rev | cut -d'-' -f1 | rev)
+              echo "Pod ordinal: $ORDINAL — copying config-${ORDINAL}.yaml"
+              cp "/etc/dolt-configs/config-${ORDINAL}.yaml" /etc/dolt/config.yaml
+              cat /etc/dolt/config.yaml
+          volumeMounts:
+            - name: config-all
+              mountPath: /etc/dolt-configs
+              readOnly: true
+            - name: config
+              mountPath: /etc/dolt
+        {{- end }}
+        {{- if not (and .Values.dolt.s3.enabled .Values.dolt.s3.sync.pullOnStartup) }}
+        - name: dolt-init
+          image: "{{ .Values.dolt.image.repository }}:{{ .Values.dolt.image.tag }}"
+          imagePullPolicy: {{ .Values.dolt.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.dolt.securityContext | nindent 12 }}
+          env:
+            - name: HOME
+              value: {{ include "bd-daemon.dolt.dataDir" . }}
+            - name: DOLT_ROOT_PATH
+              value: {{ include "bd-daemon.dolt.dataDir" . }}
+            {{- if .Values.externalSecrets.enabled }}
+            - name: DOLT_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bd-daemon.dolt.fullname" . }}-root-password
+                  key: password
+            {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              DATA_DIR="{{ include "bd-daemon.dolt.dataDir" . }}"
+              DB_DIR="{{ include "bd-daemon.dolt.databaseDir" . }}"
+
+              echo "Initializing Dolt data directory..."
+              mkdir -p "$DATA_DIR"
+              cd "$DATA_DIR"
+
+              # Configure dolt user if not already done
+              if [ ! -f "$DATA_DIR/.dolt/config_global.json" ]; then
+                dolt config --global --add user.email "dolt@{{ .Release.Namespace }}.local"
+                dolt config --global --add user.name "Dolt Server"
+              fi
+
+              {{- if $clusterEnabled }}
+              # Standbys get data via replication, only init primary
+              ORDINAL=$(echo "$HOSTNAME" | rev | cut -d'-' -f1 | rev)
+              if [ "$ORDINAL" != "0" ]; then
+                echo "Standby pod (ordinal $ORDINAL): setting up doltcfg only"
+                mkdir -p "$DATA_DIR/.doltcfg"
+                echo "Standby init complete"
+                exit 0
+              fi
+              {{- end }}
+
+              # Initialize database if it doesn't exist
+              if [ ! -d "$DB_DIR/.dolt" ]; then
+                echo "No local database found, initializing..."
+                mkdir -p "$DB_DIR"
+                cd "$DB_DIR"
+                dolt init
+                echo "New database initialized"
+              fi
+
+              cd "$DB_DIR"
+              rm -rf "$DB_DIR/.doltcfg"
+              mkdir -p "$DATA_DIR/.doltcfg"
+              {{- if .Values.externalSecrets.enabled }}
+              if [ -n "$DOLT_ROOT_PASSWORD" ]; then
+                dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "DROP USER IF EXISTS 'root'@'%';" 2>/dev/null || true
+                dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "CREATE USER 'root'@'%' IDENTIFIED BY '$DOLT_ROOT_PASSWORD'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;"
+                echo "Ensured root@% user with password from secret"
+              fi
+              {{- else }}
+              dolt --doltcfg-dir="$DATA_DIR/.doltcfg" sql -q "CREATE USER IF NOT EXISTS 'root'@'%'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null || true
+              {{- end }}
+
+              echo "Dolt init complete"
+          volumeMounts:
+            - name: data
+              mountPath: {{ include "bd-daemon.dolt.dataDir" . }}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+        {{- end }}
+        {{- if and .Values.dolt.s3.enabled .Values.dolt.s3.sync.pullOnStartup }}
         - name: s3-pull
           image: "{{ .Values.dolt.image.repository }}:{{ .Values.dolt.image.tag }}"
           imagePullPolicy: {{ .Values.dolt.image.pullPolicy }}
@@ -71,6 +185,23 @@ spec:
               echo "Initializing Dolt data directory..."
               mkdir -p "$DATA_DIR"
               cd "$DATA_DIR"
+
+              {{- if $clusterEnabled }}
+              # In cluster mode, standbys skip S3 clone — they get data via replication
+              ORDINAL=$(echo "$HOSTNAME" | rev | cut -d'-' -f1 | rev)
+              if [ "$ORDINAL" != "0" ]; then
+                echo "Standby pod (ordinal $ORDINAL): skipping S3 clone, data comes via replication"
+                # Still need dolt config and root user setup
+                if [ ! -f "$DATA_DIR/.dolt/config_global.json" ]; then
+                  dolt config --global --add user.email "dolt@{{ .Release.Namespace }}.local"
+                  dolt config --global --add user.name "Dolt Server"
+                fi
+                mkdir -p "$DATA_DIR/.doltcfg"
+                echo "Standby init complete"
+                exit 0
+              fi
+              echo "Primary pod (ordinal 0): proceeding with S3 init..."
+              {{- end }}
 
               # Configure dolt user if not already done
               if [ ! -f "$DATA_DIR/.dolt/config_global.json" ]; then
@@ -142,6 +273,7 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+        {{- end }}
       {{- end }}
       containers:
         - name: dolt
@@ -153,6 +285,11 @@ spec:
             - name: mysql
               containerPort: {{ .Values.dolt.config.port }}
               protocol: TCP
+            {{- if $clusterEnabled }}
+            - name: remotesapi
+              containerPort: {{ .Values.dolt.cluster.remotesapiPort | default 50051 }}
+              protocol: TCP
+            {{- end }}
           env:
             - name: HOME
               value: {{ include "bd-daemon.dolt.dataDir" . }}
@@ -189,7 +326,9 @@ spec:
               mountPath: {{ include "bd-daemon.dolt.dataDir" . }}
             - name: config
               mountPath: /etc/dolt
+              {{- if not $clusterEnabled }}
               readOnly: true
+              {{- end }}
             {{- if .Values.dolt.initSql }}
             - name: init-sql
               mountPath: /docker-entrypoint-initdb.d
@@ -368,9 +507,20 @@ spec:
               memory: 256Mi
         {{- end }}
       volumes:
+        {{- if $clusterEnabled }}
+        - name: config
+          emptyDir: {}
+        - name: config-all
+          configMap:
+            name: {{ include "bd-daemon.dolt.fullname" . }}-config
+        {{- else }}
         - name: config
           configMap:
             name: {{ include "bd-daemon.dolt.fullname" . }}-config
+            items:
+              - key: config-0.yaml
+                path: config.yaml
+        {{- end }}
         {{- if .Values.dolt.initSql }}
         - name: init-sql
           configMap:

@@ -6,22 +6,43 @@ metadata:
   labels:
     {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
 data:
-  config.yaml: |
-    log_level: {{ .Values.dolt.config.log_level }}
+  {{- $doltFullname := include "bd-daemon.dolt.fullname" . }}
+  {{- $headlessSvc := printf "%s-headless" $doltFullname }}
+  {{- $namespace := .Release.Namespace }}
+  {{- $replicas := .Values.dolt.cluster.replicas | default 1 | int }}
+  {{- $clusterEnabled := and .Values.dolt.cluster.enabled (gt $replicas 1) }}
+  {{- range $i := until $replicas }}
+  config-{{ $i }}.yaml: |
+    log_level: {{ $.Values.dolt.config.log_level }}
     behavior:
       read_only: false
       autocommit: true
       dolt_transaction_commit: false
     user:
-      name: {{ .Values.dolt.user.name | quote }}
+      name: {{ $.Values.dolt.user.name | quote }}
     listener:
-      host: {{ .Values.dolt.config.host | quote }}
-      port: {{ .Values.dolt.config.port }}
-      max_connections: {{ .Values.dolt.config.max_connections }}
-      read_timeout_millis: {{ .Values.dolt.config.read_timeout_millis | int }}
-      write_timeout_millis: {{ .Values.dolt.config.write_timeout_millis | int }}
-    data_dir: {{ include "bd-daemon.dolt.dataDir" . }}
-    cfg_dir: {{ include "bd-daemon.dolt.dataDir" . }}/.doltcfg
+      host: {{ $.Values.dolt.config.host | quote }}
+      port: {{ $.Values.dolt.config.port }}
+      max_connections: {{ $.Values.dolt.config.max_connections }}
+      read_timeout_millis: {{ $.Values.dolt.config.read_timeout_millis | int }}
+      write_timeout_millis: {{ $.Values.dolt.config.write_timeout_millis | int }}
+    data_dir: {{ include "bd-daemon.dolt.dataDir" $ }}
+    cfg_dir: {{ include "bd-daemon.dolt.dataDir" $ }}/.doltcfg
+    {{- if $clusterEnabled }}
+    cluster:
+      standby_remotes:
+        {{- range $j := until $replicas }}
+        {{- if ne $i $j }}
+        - name: "{{ $doltFullname }}-{{ $j }}"
+          remote_url_template: "http://{{ $doltFullname }}-{{ $j }}.{{ $headlessSvc }}.{{ $namespace }}.svc.cluster.local:{{ $.Values.dolt.cluster.remotesapiPort | default 50051 }}/{database}"
+        {{- end }}
+        {{- end }}
+      bootstrap_role: {{ if eq $i 0 }}primary{{ else }}standby{{ end }}
+      bootstrap_epoch: {{ $.Values.dolt.cluster.bootstrapEpoch | default 1 }}
+      remotesapi:
+        port: {{ $.Values.dolt.cluster.remotesapiPort | default 50051 }}
+    {{- end }}
+  {{- end }}
 {{- if .Values.dolt.initSql }}
 ---
 apiVersion: v1
