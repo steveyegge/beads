@@ -71,16 +71,18 @@ var createCmd = &cobra.Command{
 		silent, _ := cmd.Flags().GetBool("silent")
 
 		// Warn if creating a test issue in production database (unless silent mode)
-		if strings.HasPrefix(strings.ToLower(title), "test") && !silent && !debug.IsQuiet() {
-			fmt.Fprintf(os.Stderr, "%s Creating issue with 'Test' prefix in production database.\n", ui.RenderWarn("⚠"))
-			fmt.Fprintf(os.Stderr, "  For testing, consider using: BEADS_DB=/tmp/test.db ./bd create \"Test issue\"\n")
+		if isTestIssue(title) && !silent && !debug.IsQuiet() {
+			fmt.Fprintf(os.Stderr, "%s Creating test issue in production database\n", ui.RenderWarn("⚠"))
+			fmt.Fprintf(os.Stderr, "  Title: %q appears to be test data\n", title)
+			fmt.Fprintf(os.Stderr, "  Recommendation: Use isolated test database with BEADS_DB\n")
+			fmt.Fprintf(os.Stderr, "    BEADS_DB=/tmp/test.db ./bd create %q\n", title)
 		}
 
 		// Get field values
 		description, _ := getDescriptionFlag(cmd)
 
 		// Check if description is required by config
-		if description == "" && !strings.Contains(strings.ToLower(title), "test") {
+		if description == "" && !isTestIssue(title) {
 			if config.GetBool("create.require-description") {
 				FatalError("description is required (set create.require-description: false in config.yaml to disable)")
 			}

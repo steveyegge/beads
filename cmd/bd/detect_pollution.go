@@ -179,6 +179,13 @@ type pollutionResult struct {
 	reasons []string
 }
 
+// isTestIssue checks if an issue title looks like a test issue based on common test prefixes.
+// This function is used both for warnings during creation and for pollution detection.
+func isTestIssue(title string) bool {
+	testPrefixPattern := regexp.MustCompile(`^(test|benchmark|sample|tmp|temp|debug|dummy)[-_\s]`)
+	return testPrefixPattern.MatchString(strings.ToLower(title))
+}
+
 func detectTestPollution(issues []*types.Issue) []pollutionResult {
 	var results []pollutionResult
 
