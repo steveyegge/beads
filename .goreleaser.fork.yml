@@ -1,5 +1,6 @@
 # GoReleaser config for groblegark/beads fork releases.
-# Simplified: linux + darwin only, no Windows signing, no cross-compile deps.
+# CGO required for dolthub deps (gozstd, go-mysql-server regex).
+# Cross-compilation needs platform-specific C toolchains.
 
 version: 2
 
@@ -12,7 +13,7 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     goos:
       - linux
     goarch:
@@ -27,7 +28,9 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
+      - CC=aarch64-linux-gnu-gcc
+      - CXX=aarch64-linux-gnu-g++
     goos:
       - linux
     goarch:
@@ -38,39 +41,10 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
 
-  - id: bd-darwin-amd64
-    main: ./cmd/bd
-    binary: bd
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - darwin
-    goarch:
-      - amd64
-    ldflags:
-      - -s -w
-      - -X main.Version={{.Version}}
-      - -X main.Build={{.ShortCommit}}
-      - -X main.Commit={{.Commit}}
-
-  - id: bd-darwin-arm64
-    main: ./cmd/bd
-    binary: bd
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - darwin
-    goarch:
-      - arm64
-    ldflags:
-      - -s -w
-      - -X main.Version={{.Version}}
-      - -X main.Build={{.ShortCommit}}
-      - -X main.Commit={{.Commit}}
-
 archives:
   - id: bd-archive
-    format: tar.gz
+    formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
@@ -94,7 +68,6 @@ changelog:
       - "Merge branch"
 
 release:
-  # Omitting github owner/name lets goreleaser use the current repo
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"
