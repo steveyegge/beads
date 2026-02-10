@@ -8,6 +8,11 @@ spec:
   replicas: {{ .Values.daemon.replicaCount | default 1 }}
   strategy:
     type: {{ .Values.daemon.deploymentStrategy | default "Recreate" }}
+    {{- if eq (.Values.daemon.deploymentStrategy | default "Recreate") "RollingUpdate" }}
+    rollingUpdate:
+      maxSurge: {{ .Values.daemon.rollingUpdate.maxSurge | default 1 }}
+      maxUnavailable: {{ .Values.daemon.rollingUpdate.maxUnavailable | default 0 }}
+    {{- end }}
   selector:
     matchLabels:
       {{- include "bd-daemon.daemon.selectorLabels" . | nindent 6 }}

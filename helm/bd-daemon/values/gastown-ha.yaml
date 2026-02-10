@@ -2,13 +2,34 @@
 # Deploy with: helm upgrade --install gastown-ha ./helm/bd-daemon -n gastown-ha --values helm/bd-daemon/values/gastown-ha.yaml
 
 image:
-  repository: ghcr.io/steveyegge/beads
-  tag: "0.57.11"
+  repository: ghcr.io/groblegark/beads
+  tag: "sha-99befd9"
 
 daemon:
-  replicaCount: 1
+  replicaCount: 2
+  deploymentStrategy: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
   logLevel: info
   logJSON: true
+
+  # PDB: always keep at least 1 daemon running during voluntary disruptions
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+
+  # Spread daemon pods across nodes for HA
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: daemon
+            topologyKey: kubernetes.io/hostname
+
   resources:
     requests:
       cpu: 250m
