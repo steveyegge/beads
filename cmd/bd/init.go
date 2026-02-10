@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
@@ -506,6 +507,15 @@ variable.`,
 			if !quiet {
 				fmt.Printf("  Sync branch: %s\n", branch)
 			}
+		}
+
+		// Initialize last_import_time metadata to mark the database as synced.
+		// This prevents bd doctor from reporting "No last_import_time recorded in database"
+		// after init completes. Sets the metadata to current time in RFC3339 format.
+		// (mybd-9gw: sync divergence fix)
+		if err := store.SetMetadata(ctx, "last_import_time", time.Now().Format(time.RFC3339)); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to initialize last_import_time: %v\n", err)
+			// Non-fatal - continue anyway
 		}
 
 		// Import issues on init:
