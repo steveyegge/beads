@@ -177,11 +177,11 @@ Dolt database directory path
 
 {{/*
 NATS URL for the event bus.
-When the NATS subchart is enabled, constructs nats://<service>:4222.
+When NATS is enabled, constructs nats://<service>:4222.
 */}}
 {{- define "bd-daemon.natsURL" -}}
 {{- if .Values.nats.enabled -}}
-nats://{{ .Release.Name }}-nats:4222
+nats://{{ include "bd-daemon.fullname" . }}-nats:4222
 {{- end -}}
 {{- end }}
 

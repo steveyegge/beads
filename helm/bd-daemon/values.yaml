@@ -338,27 +338,20 @@ redis:
 nats:
   enabled: false
 
-  # Bitnami NATS subchart overrides
-  # When enabled, deploys a standalone NATS server and wires the daemon
-  # to use it instead of the embedded NATS (BD_NATS_DISABLED=true).
+  # Deploys a standalone NATS server (StatefulSet + Service + ConfigMap).
+  # When enabled, the daemon connects as a client instead of starting
+  # its embedded NATS server (BD_NATS_DISABLED=true, BD_NATS_URL set).
 
-  # Token for client authentication (shared with daemon and agents).
-  # IMPORTANT: Must match the daemon token (BD_DAEMON_TOKEN). Set via:
-  #   --set nats.auth.token=<your-daemon-token>
-  # The bitnami chart bakes this into the NATS server config.
-  # Daemon and slack-bot use BD_DAEMON_TOKEN / BD_NATS_TOKEN to connect.
+  # Token auth (shared with daemon and agents).
+  # Set via --set nats.auth.token=<daemon-token> at deploy time.
+  # Leave empty to disable auth (cluster-internal only).
   auth:
-    enabled: true
-    token: ""  # Set via --set at deploy time to match daemon token
+    enabled: false
+    token: ""
 
   # JetStream (required for HOOK_EVENTS, DECISION_EVENTS streams)
   jetstream:
-    enabled: true
     maxMemory: 256M
-
-  # Single replica is fine — agents reconnect on restart
-  replicaCount: 1
-  resourceType: statefulset
 
   # Persistence for JetStream file store
   persistence:
@@ -366,11 +359,12 @@ nats:
     storageClass: ""
     size: 2Gi
 
-  # Use ECR mirror to avoid Docker Hub rate limits
+  # Official NATS alpine image (tiny, no entrypoint issues)
   image:
-    registry: public.ecr.aws
-    repository: bitnami/nats
-    tag: "2.10.24"
+    registry: docker.io
+    repository: nats
+    tag: "2.10-alpine"
+    pullPolicy: IfNotPresent
 
   # Resource limits
   resources:

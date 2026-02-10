@@ -1,0 +1,130 @@
+{{- if .Values.nats.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bd-daemon.fullname" . }}-nats
+  labels:
+    {{- include "bd-daemon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+data:
+  nats-server.conf: |
+    server_name: bd-nats
+    listen: 0.0.0.0:4222
+    http: 0.0.0.0:8222
+    {{- if .Values.nats.auth.enabled }}
+    authorization {
+      {{- if .Values.nats.auth.token }}
+      token: "{{ .Values.nats.auth.token }}"
+      {{- end }}
+    }
+    {{- end }}
+    jetstream {
+      store_dir: /data/jetstream
+      max_memory_store: {{ .Values.nats.jetstream.maxMemory | default "256M" }}
+      max_file_store: {{ .Values.nats.persistence.size | default "2Gi" }}
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bd-daemon.fullname" . }}-nats
+  labels:
+    {{- include "bd-daemon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4222
+      targetPort: client
+      protocol: TCP
+      name: client
+    - port: 8222
+      targetPort: monitoring
+      protocol: TCP
+      name: monitoring
+  selector:
+    {{- include "bd-daemon.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "bd-daemon.fullname" . }}-nats
+  labels:
+    {{- include "bd-daemon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  serviceName: {{ include "bd-daemon.fullname" . }}-nats
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "bd-daemon.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+  template:
+    metadata:
+      labels:
+        {{- include "bd-daemon.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nats
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: nats
+          image: "{{ .Values.nats.image.registry | default "docker.io" }}/{{ .Values.nats.image.repository | default "nats" }}:{{ .Values.nats.image.tag | default "2.10-alpine" }}"
+          imagePullPolicy: {{ .Values.nats.image.pullPolicy | default "IfNotPresent" }}
+          args:
+            - "--config"
+            - "/etc/nats/nats-server.conf"
+          ports:
+            - name: client
+              containerPort: 4222
+              protocol: TCP
+            - name: monitoring
+              containerPort: 8222
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: monitoring
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: monitoring
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.nats.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats
+              readOnly: true
+            {{- if .Values.nats.persistence.enabled }}
+            - name: data
+              mountPath: /data
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "bd-daemon.fullname" . }}-nats
+  {{- if .Values.nats.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        {{- if .Values.nats.persistence.storageClass }}
+        storageClassName: {{ .Values.nats.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.nats.persistence.size | default "2Gi" }}
+  {{- end }}
+{{- end }}
