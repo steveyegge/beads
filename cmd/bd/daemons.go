@@ -493,7 +493,7 @@ func tailFollow(filePath string) {
 				// Check for log rotation: file at path is now a different file
 				if fileRotated(file, filePath) {
 					// File rotated — reopen
-					file.Close()
+					_ = file.Close()
 					// #nosec G304 - controlled path from daemon discovery
 					file, err = os.Open(filePath)
 					if err != nil {
