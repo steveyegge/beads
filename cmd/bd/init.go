@@ -576,6 +576,16 @@ variable.`,
 			} else if promptedContributor {
 				contributor = true // Triggers contributor wizard below
 			}
+		} else if isGitRepo() {
+			// If prompt was skipped (non-interactive or CI environment),
+			// ensure beads.role is set to avoid "not configured" warning
+			// during diagnostics. Only set if not already configured.
+			if _, hasRole := getBeadsRole(); !hasRole {
+				// Default to maintainer for non-interactive environments
+				if err := setBeadsRole("maintainer"); err != nil && !quiet {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set default beads.role: %v\n", err)
+				}
+			}
 		}
 
 		// Run contributor wizard if --contributor flag is set or user chose contributor
