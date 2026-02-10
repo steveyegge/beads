@@ -1562,6 +1562,11 @@ func TestDepListCrossRigRouting(t *testing.T) {
 		t.Fatalf("Failed to add dependency: %v", err)
 	}
 
+	// Close rig store to release Dolt lock before routing opens it
+	if closer, ok := rigStore.(io.Closer); ok {
+		closer.Close()
+	}
+
 	// Create routes.jsonl in town .beads directory
 	routesContent := `{"prefix":"gt-","path":"rig"}`
 	routesPath := filepath.Join(townBeadsDir, "routes.jsonl")

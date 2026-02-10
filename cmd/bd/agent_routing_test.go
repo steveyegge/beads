@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,6 +64,11 @@ func TestAgentStateWithRouting(t *testing.T) {
 	}
 	if err := rigStore.AddLabel(ctx, agentBead.ID, "gt:agent", "test"); err != nil {
 		t.Fatalf("Failed to add gt:agent label: %v", err)
+	}
+
+	// Close rig store to release Dolt lock before routing opens it
+	if closer, ok := rigStore.(io.Closer); ok {
+		closer.Close()
 	}
 
 	// Create routes.jsonl in town .beads directory
@@ -171,6 +177,11 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 		t.Fatalf("Failed to add gt:agent label: %v", err)
 	}
 
+	// Close rig store to release Dolt lock before routing opens it
+	if closer, ok := rigStore.(io.Closer); ok {
+		closer.Close()
+	}
+
 	// Create routes.jsonl
 	routesContent := `{"prefix":"gt-","path":"rig"}`
 	routesPath := filepath.Join(townBeadsDir, "routes.jsonl")
@@ -255,6 +266,11 @@ func TestAgentShowWithRouting(t *testing.T) {
 	}
 	if err := rigStore.AddLabel(ctx, agentBead.ID, "gt:agent", "test"); err != nil {
 		t.Fatalf("Failed to add gt:agent label: %v", err)
+	}
+
+	// Close rig store to release Dolt lock before routing opens it
+	if closer, ok := rigStore.(io.Closer); ok {
+		closer.Close()
 	}
 
 	// Create routes.jsonl
