@@ -72,6 +72,76 @@ func CheckLegacyBeadsSlashCommands(repoPath string) DoctorCheck {
 	}
 }
 
+// CheckLegacyMCPToolReferences detects direct MCP tool name references in documentation
+// (e.g., mcp__beads_beads__list, mcp__plugin_beads_beads__show) and recommends
+// migration to bd prime hooks for better token efficiency.
+//
+// Old pattern: Document MCP tool names for direct tool calls (~10.5k tokens per scan)
+// New pattern: bd prime hooks with CLI commands (~50-2k tokens)
+func CheckLegacyMCPToolReferences(repoPath string) DoctorCheck {
+	docFiles := []string{
+		filepath.Join(repoPath, "AGENTS.md"),
+		filepath.Join(repoPath, "CLAUDE.md"),
+		filepath.Join(repoPath, ".claude", "CLAUDE.md"),
+		// Local-only variants (not committed to repo)
+		filepath.Join(repoPath, "claude.local.md"),
+		filepath.Join(repoPath, ".claude", "claude.local.md"),
+	}
+
+	mcpPatterns := []string{
+		"mcp__beads_beads__",
+		"mcp__plugin_beads_beads__",
+		"mcp_beads_",
+	}
+
+	var filesWithMCPRefs []string
+	for _, docFile := range docFiles {
+		content, err := os.ReadFile(docFile) // #nosec G304 - controlled paths from repoPath
+		if err != nil {
+			continue
+		}
+
+		contentStr := string(content)
+		for _, pattern := range mcpPatterns {
+			if strings.Contains(contentStr, pattern) {
+				filesWithMCPRefs = append(filesWithMCPRefs, filepath.Base(docFile))
+				break
+			}
+		}
+	}
+
+	if len(filesWithMCPRefs) == 0 {
+		return DoctorCheck{
+			Name:    "MCP Tool References",
+			Status:  "ok",
+			Message: "No MCP tool references in documentation",
+		}
+	}
+
+	return DoctorCheck{
+		Name:    "MCP Tool References",
+		Status:  "warning",
+		Message: fmt.Sprintf("MCP tool references found in %s", strings.Join(filesWithMCPRefs, ", ")),
+		Detail: "Found: Direct MCP tool name references (e.g., mcp__beads_beads__list)\n" +
+			"  MCP tool calls consume ~10.5k tokens per session for tool scanning",
+		Fix: "Migrate to bd prime hooks for better token efficiency:\n" +
+			"\n" +
+			"Migration Steps:\n" +
+			"  1. Run 'bd setup claude' to add SessionStart/PreCompact hooks\n" +
+			"  2. Replace MCP tool references with CLI commands:\n" +
+			"     - mcp__beads_beads__list  → bd list\n" +
+			"     - mcp__beads_beads__show  → bd show <id>\n" +
+			"     - mcp__beads_beads__ready → bd ready\n" +
+			"  3. bd prime hooks auto-inject context on session start\n" +
+			"\n" +
+			"Benefits:\n" +
+			"  • bd prime + hooks: ~50-2k tokens vs ~10.5k for MCP tool scan\n" +
+			"  • Automatic context recovery on session start and compaction\n" +
+			"\n" +
+			"See: bd setup claude --help",
+	}
+}
+
 // CheckAgentDocumentation checks if agent documentation (AGENTS.md or CLAUDE.md) exists
 // and recommends adding it if missing, suggesting bd onboard or bd setup claude.
 // Also supports local-only variants (claude.local.md) that are gitignored.

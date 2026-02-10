@@ -556,6 +556,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, legacyDocsCheck)
 	// Don't fail overall check for legacy docs, just warn
 
+	// Check 13a: MCP tool references in documentation
+	mcpToolRefsCheck := convertWithCategory(doctor.CheckLegacyMCPToolReferences(path), doctor.CategoryIntegration)
+	result.Checks = append(result.Checks, mcpToolRefsCheck)
+	// Don't fail overall check for MCP tool refs, just warn
+
 	// Check 14: Gitignore up to date
 	gitignoreCheck := convertWithCategory(doctor.CheckGitignore(), doctor.CategoryGit)
 	result.Checks = append(result.Checks, gitignoreCheck)
