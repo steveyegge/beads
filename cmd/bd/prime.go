@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads"
@@ -17,29 +18,57 @@ import (
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
-// isDaemonAutoSyncing checks if daemon is running with auto-commit and auto-push enabled.
-// Returns false if daemon is not running or check fails (fail-safe to show full protocol).
-// This is a variable to allow stubbing in tests.
-var isDaemonAutoSyncing = func() bool {
+// primeDaemonStatus returns the daemon's StatusResponse, or nil if the daemon
+// is not running or the check fails. This is a variable to allow stubbing in tests.
+var primeDaemonStatus = func() *rpc.StatusResponse {
 	beadsDir := beads.FindBeadsDir()
 	if beadsDir == "" {
-		return false
+		return nil
 	}
 
 	socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil || client == nil {
-		return false
+		return nil
 	}
 	defer func() { _ = client.Close() }()
 
 	status, err := client.Status()
 	if err != nil {
-		return false
+		return nil
 	}
 
-	// Only check auto-commit and auto-push (auto-pull is separate)
-	return status.AutoCommit && status.AutoPush
+	return status
+}
+
+const stalenessThreshold = 1 * time.Hour
+
+// checkSyncStaleness returns a markdown warning string if sync may be stale,
+// or "" if everything looks fine. Fail-safe: returns "" on any error.
+func checkSyncStaleness(status *rpc.StatusResponse) string {
+	if status == nil {
+		return "> ⚠ **Sync freshness unknown** (daemon not running). Run `bd sync --status` to check.\n\n"
+	}
+	if !status.AutoCommit || !status.AutoPush {
+		return "" // user's explicit choice
+	}
+	if status.LastActivityTime == "" {
+		return "" // no data yet
+	}
+	lastActivity, err := time.Parse(time.RFC3339Nano, status.LastActivityTime)
+	if err != nil {
+		lastActivity, err = time.Parse(time.RFC3339, status.LastActivityTime)
+		if err != nil {
+			return "" // fail-safe
+		}
+	}
+	elapsed := time.Since(lastActivity)
+	if elapsed > stalenessThreshold {
+		hours := int(elapsed.Hours())
+		mins := int(elapsed.Minutes()) % 60
+		return fmt.Sprintf("> ⚠ **Sync may be stale** — daemon last active %dh%02dm ago. Run `bd sync --status` to check.\n\n", hours, mins)
+	}
+	return ""
 }
 
 var (
@@ -217,8 +246,14 @@ func outputPrimeContext(w io.Writer, mcpMode bool, stealthMode bool) error {
 func outputMCPContext(w io.Writer, stealthMode bool) error {
 	ephemeral := isEphemeralBranch()
 	noPush := config.GetBool("no-push")
-	autoSync := isDaemonAutoSyncing()
+	status := primeDaemonStatus()
+	autoSync := status != nil && status.AutoCommit && status.AutoPush
 	localOnly := !primeHasGitRemote()
+
+	var stalenessWarning string
+	if !stealthMode && !localOnly {
+		stalenessWarning = checkSyncStaleness(status)
+	}
 
 	var closeProtocol string
 	if stealthMode || localOnly {
@@ -239,7 +274,7 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 
 	context := `# Beads Issue Tracker Active
 
-` + redirectNotice + `# 🚨 SESSION CLOSE PROTOCOL 🚨
+` + redirectNotice + stalenessWarning + `# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 ` + closeProtocol + `
 
@@ -259,8 +294,14 @@ Start: Check ` + "`ready`" + ` tool for available work.
 func outputCLIContext(w io.Writer, stealthMode bool) error {
 	ephemeral := isEphemeralBranch()
 	noPush := config.GetBool("no-push")
-	autoSync := isDaemonAutoSyncing()
+	status := primeDaemonStatus()
+	autoSync := status != nil && status.AutoCommit && status.AutoPush
 	localOnly := !primeHasGitRemote()
+
+	var stalenessWarning string
+	if !stealthMode && !localOnly {
+		stalenessWarning = checkSyncStaleness(status)
+	}
 
 	var closeProtocol string
 	var closeNote string
@@ -361,7 +402,7 @@ bd sync                     # Push to remote
 > **Context Recovery**: Run ` + "`bd prime`" + ` after compaction, clear, or new session
 > Hooks auto-call this in Claude Code when .beads/ detected
 
-` + redirectNotice + `# 🚨 SESSION CLOSE PROTOCOL 🚨
+` + redirectNotice + stalenessWarning + `# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 **CRITICAL**: Before saying "done" or "complete", you MUST run this checklist:
 
