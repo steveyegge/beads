@@ -452,6 +452,23 @@ var rootCmd = &cobra.Command{
 		// Protect forks from accidentally committing upstream issue database
 		ensureForkProtection()
 
+		// Emit deprecation warnings for local-mode flags when BD_DAEMON_HOST is set.
+		// These flags are only meaningful for local/direct storage and are ignored or
+		// blocked by the remote daemon. (bd-dx85)
+		if remoteHost := rpc.GetDaemonHost(); remoteHost != "" {
+			localFlags := map[string]string{
+				"db":             "--db is ignored with remote daemon (BD_DAEMON_HOST is set)",
+				"lock-timeout":   "--lock-timeout is a SQLite setting, ignored with remote daemon",
+				"no-auto-flush":  "--no-auto-flush is a JSONL setting, ignored with remote daemon",
+				"no-auto-import": "--no-auto-import is a JSONL setting, ignored with remote daemon",
+			}
+			for flag, msg := range localFlags {
+				if cmd.Flags().Changed(flag) {
+					fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+				}
+			}
+		}
+
 		// Track if direct mode is forced for this command (profile, sandbox, edit, doctor, restore)
 		forceDirectMode := false
 

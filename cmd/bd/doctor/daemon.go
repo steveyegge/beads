@@ -17,7 +17,14 @@ import (
 
 // CheckDaemonStatus checks the health of the daemon for a workspace.
 // It checks for stale sockets, multiple daemons, and version mismatches.
+// When BD_DAEMON_HOST is set (remote daemon mode), it checks connectivity
+// to the remote daemon instead of local socket/PID checks.
 func CheckDaemonStatus(path string, cliVersion string) DoctorCheck {
+	// Remote daemon mode: check remote connectivity instead of local state
+	if remoteHost := rpc.GetDaemonHost(); remoteHost != "" {
+		return checkRemoteDaemonHealth(remoteHost, cliVersion)
+	}
+
 	// Normalize path for reliable comparison (handles symlinks)
 	wsNorm, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -113,6 +120,57 @@ func CheckDaemonStatus(path string, cliVersion string) DoctorCheck {
 	}
 }
 
+// checkRemoteDaemonHealth checks connectivity and health of a remote daemon.
+func checkRemoteDaemonHealth(host string, cliVersion string) DoctorCheck {
+	token := rpc.GetDaemonToken()
+	client, err := rpc.TryConnectTCP(host, token)
+	if err != nil {
+		return DoctorCheck{
+			Name:    "Daemon Health",
+			Status:  StatusError,
+			Message: fmt.Sprintf("Remote daemon unreachable: %s", host),
+			Detail:  err.Error(),
+			Fix:     "Check BD_DAEMON_HOST and BD_DAEMON_TOKEN settings, and verify the remote daemon is running",
+		}
+	}
+	defer func() { _ = client.Close() }()
+
+	health, err := client.Health()
+	if err != nil {
+		return DoctorCheck{
+			Name:    "Daemon Health",
+			Status:  StatusWarning,
+			Message: fmt.Sprintf("Remote daemon at %s — health check failed", host),
+			Detail:  err.Error(),
+		}
+	}
+
+	if health.Status == "unhealthy" {
+		return DoctorCheck{
+			Name:    "Daemon Health",
+			Status:  StatusError,
+			Message: fmt.Sprintf("Remote daemon at %s — unhealthy", host),
+			Detail:  health.Error,
+		}
+	}
+
+	// Check version compatibility
+	if health.Version != "" && health.Version != cliVersion {
+		return DoctorCheck{
+			Name:    "Daemon Health",
+			Status:  StatusWarning,
+			Message: fmt.Sprintf("Remote daemon at %s — version mismatch (daemon: %s, CLI: %s)", host, health.Version, cliVersion),
+			Detail:  fmt.Sprintf("Status: %s, uptime: %.0fs", health.Status, health.Uptime),
+		}
+	}
+
+	return DoctorCheck{
+		Name:    "Daemon Health",
+		Status:  StatusOK,
+		Message: fmt.Sprintf("Remote daemon at %s — %s (v%s, uptime: %.0fs)", host, health.Status, health.Version, health.Uptime),
+	}
+}
+
 // CheckVersionMismatch checks if the database version matches the CLI version.
 // Returns a warning message if there's a mismatch, or empty string if versions match or can't be read.
 func CheckVersionMismatch(db *sql.DB, cliVersion string) string {
@@ -131,7 +189,17 @@ func CheckVersionMismatch(db *sql.DB, cliVersion string) string {
 
 // CheckGitSyncSetup checks if git repository and sync-branch are configured for daemon sync.
 // This is informational - beads works fine without git sync, but users may want to enable it.
+// Skipped in remote daemon mode since sync is handled by the remote daemon.
 func CheckGitSyncSetup(path string) DoctorCheck {
+	if rpc.GetDaemonHost() != "" {
+		return DoctorCheck{
+			Name:     "Git Sync Setup",
+			Status:   StatusOK,
+			Message:  "N/A (remote daemon mode)",
+			Category: CategoryRuntime,
+		}
+	}
+
 	// Check if we're in a git repository
 	_, err := git.GetGitDir()
 	if err != nil {
@@ -167,7 +235,16 @@ func CheckGitSyncSetup(path string) DoctorCheck {
 
 // CheckDaemonAutoSync checks if daemon has auto-commit/auto-push enabled when
 // sync-branch is configured. Missing auto-sync slows down agent workflows.
+// Skipped in remote daemon mode since auto-sync is configured on the remote.
 func CheckDaemonAutoSync(path string) DoctorCheck {
+	if rpc.GetDaemonHost() != "" {
+		return DoctorCheck{
+			Name:   "Daemon Auto-Sync",
+			Status: StatusOK,
+			Message: "N/A (remote daemon mode)",
+		}
+	}
+
 	_, beadsDir := getBackendAndBeadsDir(path)
 	socketPath := filepath.Join(beadsDir, "bd.sock")
 
@@ -248,7 +325,16 @@ func CheckDaemonAutoSync(path string) DoctorCheck {
 
 // CheckLegacyDaemonConfig checks for deprecated daemon config options and
 // encourages migration to the unified daemon.auto-sync setting.
+// Skipped in remote daemon mode since config is managed on the remote.
 func CheckLegacyDaemonConfig(path string) DoctorCheck {
+	if rpc.GetDaemonHost() != "" {
+		return DoctorCheck{
+			Name:   "Daemon Config",
+			Status: StatusOK,
+			Message: "N/A (remote daemon mode)",
+		}
+	}
+
 	_, beadsDir := getBackendAndBeadsDir(path)
 
 	ctx := context.Background()
@@ -292,7 +378,16 @@ func CheckLegacyDaemonConfig(path string) DoctorCheck {
 // CheckHydratedRepoDaemons checks if daemons are running for all repos
 // configured in repos.additional. Without running daemons, JSONL files won't
 // be kept updated, causing multi-repo hydration to become stale (bd-fix-routing).
+// Skipped in remote daemon mode since hydration is managed by the remote daemon.
 func CheckHydratedRepoDaemons(path string) DoctorCheck {
+	if rpc.GetDaemonHost() != "" {
+		return DoctorCheck{
+			Name:   "Hydrated Repo Daemons",
+			Status: StatusOK,
+			Message: "N/A (remote daemon mode)",
+		}
+	}
+
 	beadsDir := filepath.Join(path, ".beads")
 
 	ctx := context.Background()

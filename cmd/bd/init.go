@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -76,6 +77,15 @@ variable.`,
 		if err := config.Initialize(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
 			// Non-fatal - continue with defaults
+		}
+
+		// When BD_DAEMON_HOST is set, refuse to create a local database.
+		// The remote daemon is the source of truth — use 'bd connect' instead. (bd-a71c)
+		if rpc.GetDaemonHost() != "" {
+			fmt.Fprintf(os.Stderr, "Error: BD_DAEMON_HOST is set (%s) — cannot create a local database.\n", rpc.GetDaemonHost())
+			fmt.Fprintf(os.Stderr, "The remote daemon manages storage. Use 'bd connect' to configure the connection,\n")
+			fmt.Fprintf(os.Stderr, "or unset BD_DAEMON_HOST to create a standalone local workspace.\n")
+			os.Exit(1)
 		}
 
 		// Validate backend flag

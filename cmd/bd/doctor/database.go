@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/rpc"
 	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
 	"gopkg.in/yaml.v3"
 )
@@ -27,8 +28,19 @@ type localConfig struct {
 	NoDb       bool   `yaml:"no-db"`
 }
 
-// CheckDatabaseVersion checks the database version and migration status
+// CheckDatabaseVersion checks the database version and migration status.
+// When BD_DAEMON_HOST is set (remote daemon mode), local database checks are
+// skipped since the database is managed by the remote daemon.
 func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
+	if rpc.GetDaemonHost() != "" {
+		return DoctorCheck{
+			Name:    "Database",
+			Status:  StatusOK,
+			Message: "Remote daemon mode — local database checks skipped",
+			Detail:  fmt.Sprintf("Remote daemon: %s", rpc.GetDaemonHost()),
+		}
+	}
+
 	backend, beadsDir := getBackendAndBeadsDir(path)
 
 	// Dolt backend: directory-backed store; version lives in metadata table.
@@ -225,8 +237,17 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 	}
 }
 
-// CheckSchemaCompatibility checks if all required tables and columns are present
+// CheckSchemaCompatibility checks if all required tables and columns are present.
+// Skipped in remote daemon mode since schema is managed by the remote daemon.
 func CheckSchemaCompatibility(path string) DoctorCheck {
+	if rpc.GetDaemonHost() != "" {
+		return DoctorCheck{
+			Name:    "Schema Compatibility",
+			Status:  StatusOK,
+			Message: "N/A (remote daemon mode)",
+		}
+	}
+
 	backend, beadsDir := getBackendAndBeadsDir(path)
 
 	// Dolt backend: no SQLite schema probe. Instead, run a lightweight query sanity check.
@@ -365,8 +386,17 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 	}
 }
 
-// CheckDatabaseIntegrity runs SQLite's PRAGMA integrity_check
+// CheckDatabaseIntegrity runs SQLite's PRAGMA integrity_check.
+// Skipped in remote daemon mode since the database is managed by the remote daemon.
 func CheckDatabaseIntegrity(path string) DoctorCheck {
+	if rpc.GetDaemonHost() != "" {
+		return DoctorCheck{
+			Name:    "Database Integrity",
+			Status:  StatusOK,
+			Message: "N/A (remote daemon mode)",
+		}
+	}
+
 	backend, beadsDir := getBackendAndBeadsDir(path)
 
 	// Dolt backend: SQLite PRAGMA integrity_check doesn't apply.
@@ -537,8 +567,17 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 	}
 }
 
-// CheckDatabaseJSONLSync checks if database and JSONL are in sync
+// CheckDatabaseJSONLSync checks if database and JSONL are in sync.
+// Skipped in remote daemon mode since sync is managed by the remote daemon.
 func CheckDatabaseJSONLSync(path string) DoctorCheck {
+	if rpc.GetDaemonHost() != "" {
+		return DoctorCheck{
+			Name:    "DB-JSONL Sync",
+			Status:  StatusOK,
+			Message: "N/A (remote daemon mode)",
+		}
+	}
+
 	backend, beadsDir := getBackendAndBeadsDir(path)
 
 	// Dolt backend: JSONL is an optional compatibility artifact.
@@ -1041,7 +1080,16 @@ func isNoDbModeConfigured(beadsDir string) bool {
 // checks that fix configuration or sync issues, pruning is destructive and
 // irreversible. The user must make an explicit decision to delete their
 // closed issue history. We only provide guidance, never action.
+// Skipped in remote daemon mode since the database is managed remotely.
 func CheckDatabaseSize(path string) DoctorCheck {
+	if rpc.GetDaemonHost() != "" {
+		return DoctorCheck{
+			Name:    "Large Database",
+			Status:  StatusOK,
+			Message: "N/A (remote daemon mode)",
+		}
+	}
+
 	_, beadsDir := getBackendAndBeadsDir(path)
 
 	// Get database path
