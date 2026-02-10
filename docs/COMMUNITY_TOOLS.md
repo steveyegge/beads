@@ -61,6 +61,8 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 - **[jira-beads-sync](https://github.com/conallob/jira-beads-sync)** - CLI tool & Claude Code plugin to sync tasks from Jira into beads and publish beads task states back to Jira. Built by [@conallob](https://github.com/conallob). (Go)
 
+- **[stringer](https://github.com/davetashner/stringer)** - Codebase archaeology CLI that mines git repos for TODOs, churn hotspots, lottery-risk files, dependency health, and more. Outputs beads JSONL for `bd import`. Install with `brew install davetashner/tap/stringer`. Built by [@davetashner](https://github.com/davetashner). (Go)
+
 ## SDKs & Libraries
 
 - **[beads-sdk](https://github.com/HerbCaudill/beads-sdk)** - Typed TypeScript SDK with zero runtime dependencies. High-level `BeadsClient` for CRUD, filtering, search, labels, dependencies, comments, epics, and sync. Includes `DaemonSocket` for real-time mutation watching via the beads daemon. Install with `pnpm add @herbcaudill/beads-sdk`. Built by [@HerbCaudill](https://github.com/HerbCaudill). (TypeScript)
