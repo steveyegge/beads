@@ -161,22 +161,7 @@ The --full flag provides the legacy full sync behavior for backwards compatibili
 			noPush = config.GetBool("no-push")
 		}
 
-		// Force direct mode for sync operations.
-		// This prevents stale daemon SQLite connections from corrupting exports.
-		// If the daemon was running but its database file was deleted and recreated
-		// (e.g., during recovery), the daemon's SQLite connection points to the old
-		// (deleted) file, causing export to return incomplete/corrupt data.
-		// Using direct mode ensures we always read from the current database file.
-		//
-		// GH#984: Must use fallbackToDirectMode() instead of just closing daemon.
-		// When connected to daemon, PersistentPreRun skips store initialization.
-		// Just closing daemon leaves store=nil, causing "no database store available"
-		// errors in post-checkout hook's `bd sync --import-only`.
-
-		// Initialize local store after daemon disconnect.
-		// When daemon was connected, PersistentPreRun returns early without initializing
-		// the store global. Commands like --import-only need the store, so we must
-		// initialize it here after closing the daemon connection.
+		// Ensure direct store is active for sync operations.
 		if err := ensureStoreActive(); err != nil {
 			FatalError("failed to initialize store: %v", err)
 		}

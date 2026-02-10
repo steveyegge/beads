@@ -114,11 +114,6 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 		store.Close()
 		store = nil
 	}
-	if daemonClient != nil {
-		daemonClient.Close()
-		daemonClient = nil
-	}
-
 	// Reset all global flags and state
 	dbPath = ""
 	actor = ""
@@ -877,11 +872,6 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 		store.Close()
 		store = nil
 	}
-	if daemonClient != nil {
-		daemonClient.Close()
-		daemonClient = nil
-	}
-
 	dbPath = ""
 	actor = ""
 	jsonOutput = false

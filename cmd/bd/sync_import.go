@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -15,15 +14,9 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// importFromJSONL imports the JSONL file by running the import command
+// importFromJSONL imports the JSONL file using inline import.
 // Optional parameters: noGitHistory, protectLeftSnapshot (bd-sync-deletion fix)
 func importFromJSONL(ctx context.Context, jsonlPath string, renameOnImport bool, opts ...bool) error {
-	// Get current executable path to avoid "./bd" path issues
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("cannot resolve current executable: %w", err)
-	}
-
 	// Parse optional parameters
 	noGitHistory := false
 	protectLeftSnapshot := false
@@ -34,39 +27,7 @@ func importFromJSONL(ctx context.Context, jsonlPath string, renameOnImport bool,
 		protectLeftSnapshot = opts[1]
 	}
 
-	// Guardrail: single-process backends (e.g., Dolt) must not spawn a helper `bd import`
-	// process while the parent holds an open store. Use inline import instead.
-	if singleProcessOnlyBackend() {
-		return importFromJSONLInline(ctx, jsonlPath, renameOnImport, noGitHistory, protectLeftSnapshot)
-	}
-
-	// Build args for import command
-	// Use --no-daemon to ensure subprocess uses direct mode, avoiding daemon connection issues
-	args := []string{"--no-daemon", "import", "-i", jsonlPath}
-	if renameOnImport {
-		args = append(args, "--rename-on-import")
-	}
-	if noGitHistory {
-		args = append(args, "--no-git-history")
-	}
-	// Add --protect-left-snapshot flag for post-pull imports (bd-sync-deletion fix)
-	if protectLeftSnapshot {
-		args = append(args, "--protect-left-snapshot")
-	}
-
-	// Run import command
-	cmd := exec.CommandContext(ctx, exe, args...) // #nosec G204 - bd import command from trusted binary
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("import failed: %w\n%s", err, output)
-	}
-
-	// Show output (import command provides the summary)
-	if len(output) > 0 {
-		fmt.Print(string(output))
-	}
-
-	return nil
+	return importFromJSONLInline(ctx, jsonlPath, renameOnImport, noGitHistory, protectLeftSnapshot)
 }
 
 // importFromJSONLInline imports the JSONL file directly without spawning a subprocess.

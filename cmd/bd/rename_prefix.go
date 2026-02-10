@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
-	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -82,18 +81,8 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		// Get JSONL path for sync operations
 		jsonlPath := findJSONLPath()
 
-		// If sync-branch is configured, pull latest remote issues first
-		// This ensures we have all issues from remote before renaming
-		if !dryRun && syncbranch.IsConfigured() {
-			silentLog := newSilentLogger()
-			pulled, err := syncBranchPull(ctx, store, silentLog)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to pull sync-branch: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Continue anyway? Issues from remote may be missing.\n")
-			} else if pulled {
-				fmt.Printf("Pulled latest issues from sync-branch\n")
-			}
-		}
+		// Sync-branch pull was previously handled by the daemon.
+		// With daemon removed, sync-branch operations are handled by bd sync.
 
 		// Force import from JSONL to ensure DB has all issues before rename
 		// This prevents data loss if JSONL has issues from other workspaces

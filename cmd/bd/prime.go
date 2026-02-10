@@ -13,33 +13,13 @@ import (
 	"github.com/steveyegge/beads"
 	internalbeads "github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
-// isDaemonAutoSyncing checks if daemon is running with auto-commit and auto-push enabled.
-// Returns false if daemon is not running or check fails (fail-safe to show full protocol).
+// isDaemonAutoSyncing always returns false. The daemon has been removed.
 // This is a variable to allow stubbing in tests.
 var isDaemonAutoSyncing = func() bool {
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		return false
-	}
-
-	socketPath := rpc.ShortSocketPath(filepath.Dir(beadsDir))
-	client, err := rpc.TryConnect(socketPath)
-	if err != nil || client == nil {
-		return false
-	}
-	defer func() { _ = client.Close() }()
-
-	status, err := client.Status()
-	if err != nil {
-		return false
-	}
-
-	// Only check auto-commit and auto-push (auto-pull is separate)
-	return status.AutoCommit && status.AutoPush
+	return false
 }
 
 var (

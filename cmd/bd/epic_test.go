@@ -77,7 +77,6 @@ func TestEpicCommand(t *testing.T) {
 
 	// Test GetEpicsEligibleForClosure
 	store = sqliteStore
-	daemonClient = nil
 
 	epics, err := sqliteStore.GetEpicsEligibleForClosure(ctx)
 	if err != nil {

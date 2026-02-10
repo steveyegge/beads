@@ -129,11 +129,6 @@ func runBDForCoverage(t *testing.T, dir string, args ...string) (stdout string, 
 		store.Close()
 		store = nil
 	}
-	if daemonClient != nil {
-		daemonClient.Close()
-		daemonClient = nil
-	}
-
 	// Reset all global flags and state (keep aligned with integration cli_fast_test).
 	dbPath = ""
 	actor = ""
