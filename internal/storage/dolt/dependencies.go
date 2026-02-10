@@ -19,6 +19,30 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 		metadata = "{}"
 	}
 
+	// Validate that the source issue exists
+	var issueExists int
+	if err := s.queryRowContext(ctx, func(row *sql.Row) error {
+		return row.Scan(&issueExists)
+	}, `SELECT COUNT(*) FROM issues WHERE id = ?`, dep.IssueID); err != nil {
+		return fmt.Errorf("failed to check issue existence: %w", err)
+	}
+	if issueExists == 0 {
+		return fmt.Errorf("issue %s not found", dep.IssueID)
+	}
+
+	// Validate that the target issue exists (skip for external cross-rig references)
+	if !strings.HasPrefix(dep.DependsOnID, "external:") {
+		var targetExists int
+		if err := s.queryRowContext(ctx, func(row *sql.Row) error {
+			return row.Scan(&targetExists)
+		}, `SELECT COUNT(*) FROM issues WHERE id = ?`, dep.DependsOnID); err != nil {
+			return fmt.Errorf("failed to check target issue existence: %w", err)
+		}
+		if targetExists == 0 {
+			return fmt.Errorf("issue %s not found", dep.DependsOnID)
+		}
+	}
+
 	// Cycle detection for blocking dependency types: check if adding this edge
 	// would create a cycle by seeing if depends_on_id can already reach issue_id.
 	if dep.Type == types.DepBlocks {
