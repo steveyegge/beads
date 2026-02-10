@@ -30,39 +30,30 @@ var cleanupCmd = &cobra.Command{
 	Short: "Delete closed issues and prune expired tombstones",
 	Long: `Delete closed issues and prune expired tombstones to reduce database size.
 
-This command:
+This command permanently removes closed issues from the database:
 1. Converts closed issues to tombstones (soft delete)
-2. Prunes expired tombstones (older than 30 days) from issues.jsonl
+2. Prunes expired tombstones (older than 30 days)
 
-It does NOT remove temporary files - use 'bd clean' for that.
+NOTE: This command only manages issue lifecycle (closed → deleted). For general
+health checks and automatic repairs, use 'bd doctor --fix' instead.
 
 By default, deletes ALL closed issues. Use --older-than to only delete
 issues closed before a certain date.
 
 HARD DELETE MODE:
 Use --hard to bypass the 30-day tombstone safety period. When combined with
---older-than, tombstones older than N days are permanently removed from JSONL.
+--older-than, tombstones older than N days are permanently removed.
 This is useful for cleaning house when you know old clones won't resurrect issues.
 
 WARNING: --hard bypasses sync safety. Deleted issues may resurrect if an old
 clone syncs before you've cleaned up all clones.
 
 EXAMPLES:
-Delete all closed issues and prune tombstones:
-  bd cleanup --force
-
-Delete issues closed more than 30 days ago:
-  bd cleanup --older-than 30 --force
-
-Delete only closed wisps (transient molecules):
-  bd cleanup --ephemeral --force
-
-Preview what would be deleted/pruned:
-  bd cleanup --dry-run
-  bd cleanup --older-than 90 --dry-run
-
-Hard delete: permanently remove issues/tombstones older than 3 days:
-  bd cleanup --older-than 3 --hard --force
+  bd admin cleanup --force                          # Delete all closed issues
+  bd admin cleanup --older-than 30 --force          # Only issues closed 30+ days ago
+  bd admin cleanup --ephemeral --force              # Only closed wisps (transient molecules)
+  bd admin cleanup --dry-run                        # Preview what would be deleted
+  bd admin cleanup --older-than 3 --hard --force    # Hard delete: bypass tombstone TTL
 
 SAFETY:
 - Requires --force flag to actually delete (unless --dry-run)
@@ -71,8 +62,8 @@ SAFETY:
 - Use --json for programmatic output
 
 SEE ALSO:
-  bd clean      Remove temporary git merge artifacts
-  bd compact    Run compaction on issues`,
+  bd doctor --fix    Automatic health checks and repairs (recommended for routine maintenance)
+  bd admin compact   Compact old closed issues to save space`,
 	Run: func(cmd *cobra.Command, args []string) {
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
