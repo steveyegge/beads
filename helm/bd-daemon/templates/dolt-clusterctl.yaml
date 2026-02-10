@@ -20,7 +20,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "patch"]
+    verbs: ["get", "list", "patch", "update"]
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
     verbs: ["get", "list"]
@@ -76,6 +76,12 @@ spec:
                 - {{ .Release.Namespace }}
                 - applyprimarylabels
                 - {{ $fullname }}
+              env:
+                - name: DOLT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $fullname }}-root-password
+                      key: password
               resources:
                 {{- toYaml .Values.dolt.cluster.clusterctl.resources | nindent 16 }}
 {{- end }}
