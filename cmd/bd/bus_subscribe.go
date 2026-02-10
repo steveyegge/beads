@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,20 +27,28 @@ JetStream correctly. Coop and other consumers use NATS directly, but this
 command is useful for quick verification.
 
 Examples:
-  bd bus subscribe                    # All events
-  bd bus subscribe --filter=Stop      # Only Stop events
-  bd bus subscribe --json             # Machine-readable output`,
+  bd bus subscribe                                          # All events (local daemon)
+  bd bus subscribe --filter=Stop                            # Only Stop events
+  bd bus subscribe --nats-url=nats://remote:4222            # Remote NATS server
+  bd bus subscribe --nats-url=wss://host.example.com/nats   # Via WebSocket
+  bd bus subscribe --json                                   # Machine-readable output`,
 	RunE: runBusSubscribe,
 }
 
 func runBusSubscribe(cmd *cobra.Command, args []string) error {
 	filter, _ := cmd.Flags().GetString("filter")
+	flagURL, _ := cmd.Flags().GetString("nats-url")
+	flagToken, _ := cmd.Flags().GetString("nats-token")
 
-	// Get NATS connection details from daemon.
+	// Resolve NATS URL: flag > env > daemon query > localhost fallback.
 	var natsURL string
 	var natsToken string
 
-	if daemonClient != nil {
+	if flagURL != "" {
+		natsURL = flagURL
+	} else if envURL := os.Getenv("BD_NATS_URL"); envURL != "" {
+		natsURL = envURL
+	} else if daemonClient != nil {
 		resp, err := daemonClient.Execute(rpc.OpBusStatus, nil)
 		if err == nil && resp.Success {
 			var result rpc.BusStatusResult
@@ -57,7 +67,11 @@ func runBusSubscribe(cmd *cobra.Command, args []string) error {
 		natsURL = fmt.Sprintf("nats://127.0.0.1:%s", port)
 	}
 
-	natsToken = os.Getenv("BD_DAEMON_TOKEN")
+	if flagToken != "" {
+		natsToken = flagToken
+	} else {
+		natsToken = os.Getenv("BD_DAEMON_TOKEN")
+	}
 
 	// Connect to NATS.
 	connectOpts := []nats.Option{
@@ -67,6 +81,17 @@ func runBusSubscribe(cmd *cobra.Command, args []string) error {
 	}
 	if natsToken != "" {
 		connectOpts = append(connectOpts, nats.Token(natsToken))
+	}
+
+	// For WebSocket URLs with a path (e.g., wss://host/nats), extract the path
+	// into ProxyPath and connect to the host-only URL. The nats.go client
+	// requires ProxyPath for WebSocket connections behind a reverse proxy.
+	if strings.HasPrefix(natsURL, "ws://") || strings.HasPrefix(natsURL, "wss://") {
+		if u, err := url.Parse(natsURL); err == nil && u.Path != "" && u.Path != "/" {
+			connectOpts = append(connectOpts, nats.ProxyPath(u.Path))
+			u.Path = ""
+			natsURL = u.String()
+		}
 	}
 
 	nc, err := nats.Connect(natsURL, connectOpts...)
@@ -147,5 +172,7 @@ func runBusSubscribe(cmd *cobra.Command, args []string) error {
 
 func init() {
 	busSubscribeCmd.Flags().String("filter", "", "Filter by event type (e.g., Stop, PreToolUse, SessionStart)")
+	busSubscribeCmd.Flags().String("nats-url", "", "NATS server URL (nats://, wss://) — overrides daemon auto-discovery")
+	busSubscribeCmd.Flags().String("nats-token", "", "NATS auth token (default: BD_DAEMON_TOKEN env)")
 	busCmd.AddCommand(busSubscribeCmd)
 }
