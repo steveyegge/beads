@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -340,38 +338,6 @@ func runCreateForm(cmd *cobra.Command) {
 
 	// Parse the form input
 	fv := parseCreateFormInput(raw)
-
-	// If daemon is running, use RPC
-	if daemonClient != nil {
-		createArgs := &rpc.CreateArgs{
-			Title:              fv.Title,
-			Description:        fv.Description,
-			IssueType:          fv.IssueType,
-			Priority:           fv.Priority,
-			Design:             fv.Design,
-			AcceptanceCriteria: fv.AcceptanceCriteria,
-			Assignee:           fv.Assignee,
-			ExternalRef:        fv.ExternalRef,
-			Labels:             fv.Labels,
-			Dependencies:       fv.Dependencies,
-		}
-
-		resp, err := daemonClient.Create(createArgs)
-		if err != nil {
-			FatalError("%v", err)
-		}
-
-		if jsonOutput {
-			fmt.Println(string(resp.Data))
-		} else {
-			var issue types.Issue
-			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				FatalError("parsing response: %v", err)
-			}
-			printCreatedIssue(&issue)
-		}
-		return
-	}
 
 	// Direct mode - use the extracted creation function
 	issue, err := CreateIssueFromFormValues(rootCtx, store, fv, actor)

@@ -172,12 +172,6 @@ The --full flag provides the legacy full sync behavior for backwards compatibili
 		// When connected to daemon, PersistentPreRun skips store initialization.
 		// Just closing daemon leaves store=nil, causing "no database store available"
 		// errors in post-checkout hook's `bd sync --import-only`.
-		if daemonClient != nil {
-			debug.Logf("sync: forcing direct mode for consistency")
-			if err := fallbackToDirectMode("sync requires direct database access"); err != nil {
-				FatalError("failed to initialize direct mode: %v", err)
-			}
-		}
 
 		// Initialize local store after daemon disconnect.
 		// When daemon was connected, PersistentPreRun returns early without initializing

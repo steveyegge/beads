@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -115,38 +114,13 @@ Examples:
 			filter.Status = &s
 		}
 
-		var issues []*types.Issue
-
-		// Try daemon first
-		if daemonClient != nil {
-			listArgs := &rpc.ListArgs{
-				Labels: []string{"human"},
-				Status: status,
-			}
-
-			resp, err := daemonClient.List(listArgs)
-			if err == nil && !isUnknownOperationError(err) {
-				if jsonOutput {
-					fmt.Printf("%s\n", string(resp.Data))
-				} else {
-					// Parse and format output
-					if err := json.Unmarshal(resp.Data, &issues); err == nil {
-						printHumanList(issues)
-					} else {
-						fmt.Printf("%s\n", string(resp.Data))
-					}
-				}
-				return
-			}
-		}
-
 		// Direct mode
 		if err := ensureStoreActive(); err != nil {
 			FatalErrorRespectJSON("listing human beads: %v", err)
 		}
 
 		var err error
-		issues, err = store.SearchIssues(ctx, "", filter)
+		issues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {
 			FatalErrorRespectJSON("listing human beads: %v", err)
 		}
@@ -358,30 +332,13 @@ Example:
 			Labels: []string{"human"},
 		}
 
-		var issues []*types.Issue
-
-		// Try daemon first
-		if daemonClient != nil {
-			listArgs := &rpc.ListArgs{
-				Labels: []string{"human"},
-			}
-
-			resp, err := daemonClient.List(listArgs)
-			if err == nil && !isUnknownOperationError(err) {
-				if err := json.Unmarshal(resp.Data, &issues); err == nil {
-					printHumanStats(issues)
-					return
-				}
-			}
-		}
-
 		// Direct mode
 		if err := ensureStoreActive(); err != nil {
 			FatalErrorRespectJSON("getting human bead stats: %v", err)
 		}
 
 		var err error
-		issues, err = store.SearchIssues(ctx, "", filter)
+		issues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {
 			FatalErrorRespectJSON("getting human bead stats: %v", err)
 		}

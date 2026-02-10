@@ -10,76 +10,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
-
-// deleteViaDaemon uses the RPC daemon to delete issues
-func deleteViaDaemon(issueIDs []string, force, dryRun, cascade bool, jsonOutput bool, reason string) {
-	// NOTE: The daemon's delete handler implements the core deletion logic.
-	// cascade and detailed dependency handling are not yet implemented in the RPC layer.
-	// For now, we pass force=true to the daemon and rely on its simpler deletion logic.
-
-	deleteArgs := &rpc.DeleteArgs{
-		IDs:     issueIDs,
-		Force:   force,
-		DryRun:  dryRun,
-		Cascade: cascade,
-		Reason:  reason,
-	}
-
-	resp, err := daemonClient.Delete(deleteArgs)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if !resp.Success {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
-		os.Exit(1)
-	}
-
-	// Parse response
-	var result map[string]interface{}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-		os.Exit(1)
-	}
-
-	if jsonOutput {
-		outputJSON(result)
-		return
-	}
-
-	// Pretty print for human output
-	if dryRun {
-		fmt.Printf("Dry run - would delete %v issue(s)\n", result["issue_count"])
-		return
-	}
-
-	deletedCount := int(result["deleted_count"].(float64))
-	totalCount := int(result["total_count"].(float64))
-
-	if deletedCount > 0 {
-		if deletedCount == 1 {
-			fmt.Printf("%s Deleted %s\n", ui.RenderPass("✓"), issueIDs[0])
-		} else {
-			fmt.Printf("%s Deleted %d issue(s)\n", ui.RenderPass("✓"), deletedCount)
-		}
-	}
-
-	if errors, ok := result["errors"].([]interface{}); ok && len(errors) > 0 {
-		fmt.Printf("\n%s Warnings:\n", ui.RenderWarn("⚠"))
-		for _, e := range errors {
-			fmt.Printf("  %s\n", e)
-		}
-		if deletedCount < totalCount {
-			os.Exit(1)
-		}
-	}
-}
 
 var deleteCmd = &cobra.Command{
 	Use:     "delete <issue-id> [issue-id...]",
@@ -150,12 +84,6 @@ the issues will not resurrect from remote branches.`,
 		}
 		// Remove duplicates
 		issueIDs = uniqueStrings(issueIDs)
-
-		// Use daemon if available, otherwise use direct mode
-		if daemonClient != nil {
-			deleteViaDaemon(issueIDs, force, dryRun, cascade, jsonOutput, reason)
-			return
-		}
 
 		// Direct mode - ensure store is available
 		if store == nil {

@@ -1,14 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
@@ -205,86 +202,6 @@ Examples:
 		ctx := rootCtx
 
 		requireFreshDB(ctx)
-
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			listArgs := &rpc.ListArgs{
-				Query:     query, // This will search title/description/id with OR logic
-				Status:    status,
-				IssueType: issueType,
-				Assignee:  assignee,
-				Limit:     limit,
-			}
-
-			if len(labels) > 0 {
-				listArgs.Labels = labels
-			}
-
-			if len(labelsAny) > 0 {
-				listArgs.LabelsAny = labelsAny
-			}
-
-			// Date ranges
-			if filter.CreatedAfter != nil {
-				listArgs.CreatedAfter = filter.CreatedAfter.Format(time.RFC3339)
-			}
-			if filter.CreatedBefore != nil {
-				listArgs.CreatedBefore = filter.CreatedBefore.Format(time.RFC3339)
-			}
-			if filter.UpdatedAfter != nil {
-				listArgs.UpdatedAfter = filter.UpdatedAfter.Format(time.RFC3339)
-			}
-			if filter.UpdatedBefore != nil {
-				listArgs.UpdatedBefore = filter.UpdatedBefore.Format(time.RFC3339)
-			}
-			if filter.ClosedAfter != nil {
-				listArgs.ClosedAfter = filter.ClosedAfter.Format(time.RFC3339)
-			}
-			if filter.ClosedBefore != nil {
-				listArgs.ClosedBefore = filter.ClosedBefore.Format(time.RFC3339)
-			}
-
-			// Priority range
-			listArgs.PriorityMin = filter.PriorityMin
-			listArgs.PriorityMax = filter.PriorityMax
-
-			// Pattern matching
-			listArgs.DescriptionContains = descContains
-			listArgs.NotesContains = notesContains
-
-			// Empty/null checks
-			listArgs.EmptyDescription = filter.EmptyDescription
-			listArgs.NoAssignee = filter.NoAssignee
-			listArgs.NoLabels = filter.NoLabels
-
-			resp, err := daemonClient.List(listArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-
-			if jsonOutput {
-				var issuesWithCounts []*types.IssueWithCounts
-				if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-					os.Exit(1)
-				}
-				outputJSON(issuesWithCounts)
-				return
-			}
-
-			var issues []*types.Issue
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Apply sorting
-			sortIssues(issues, sortBy, reverse)
-
-			outputSearchResults(issues, query, longFormat)
-			return
-		}
 
 		// Direct mode - search using store
 		// The query parameter in SearchIssues already searches across title, description, and id

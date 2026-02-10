@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -47,44 +45,27 @@ func showIssueRefs(ctx context.Context, args []string, resolvedIDs []string, rou
 		result.Close()
 	}
 
-	// Handle resolved IDs (daemon mode)
-	if daemonClient != nil {
-		for _, id := range resolvedIDs {
-			// Need to open direct connection for GetDependentsWithMetadata
-			// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
-			dbStore, err := factory.NewFromConfig(ctx, filepath.Dir(dbPath))
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-				continue
-			}
-			if err := processIssue(id, dbStore); err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting refs for %s: %v\n", id, err)
-			}
-			_ = dbStore.Close()
+	// Direct mode - process each arg
+	for _, id := range args {
+		if containsStr(routedArgs, id) {
+			continue // Already processed above
 		}
-	} else {
-		// Direct mode - process each arg
-		for _, id := range args {
-			if containsStr(routedArgs, id) {
-				continue // Already processed above
-			}
-			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-				continue
-			}
-			if result == nil || result.Issue == nil {
-				if result != nil {
-					result.Close()
-				}
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-				continue
-			}
-			if err := processIssue(result.ResolvedID, result.Store); err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting refs for %s: %v\n", id, err)
-			}
-			result.Close()
+		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+			continue
 		}
+		if result == nil || result.Issue == nil {
+			if result != nil {
+				result.Close()
+			}
+			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			continue
+		}
+		if err := processIssue(result.ResolvedID, result.Store); err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting refs for %s: %v\n", id, err)
+		}
+		result.Close()
 	}
 
 	// Output results

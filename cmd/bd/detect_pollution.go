@@ -45,13 +45,6 @@ EXAMPLES:
 
 NOTE: Review detected issues carefully before using --clean. False positives are possible.`,
 	Run: func(cmd *cobra.Command, _ []string) {
-		// Check daemon mode - not supported yet (uses direct storage access)
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: detect-pollution command not yet supported in daemon mode\n")
-			fmt.Fprintf(os.Stderr, "Use: bd --no-daemon detect-pollution\n")
-			os.Exit(1)
-		}
-
 		clean, _ := cmd.Flags().GetBool("clean")
 		yes, _ := cmd.Flags().GetBool("yes")
 

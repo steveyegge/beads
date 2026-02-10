@@ -366,12 +366,7 @@ func runCook(cmd *cobra.Command, args []string) {
 	if flags.persist {
 		CheckReadonly("cook --persist")
 		if store == nil {
-			if daemonClient != nil {
-				fmt.Fprintf(os.Stderr, "Error: cook --persist requires direct database access\n")
-				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon cook %s --persist ...\n", flags.formulaPath)
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			}
+			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
 			os.Exit(1)
 		}
 	}

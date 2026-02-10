@@ -89,12 +89,7 @@ func runMolBond(cmd *cobra.Command, args []string) {
 
 	// mol bond requires direct store access
 	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: mol bond requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol bond %s %s ...\n", args[0], args[1])
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
+		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
 		os.Exit(1)
 	}
 

@@ -109,16 +109,12 @@ Examples:
 
 		// Handle compact stats first
 		if compactStats {
-			if daemonClient != nil {
-				runCompactStatsRPC()
-			} else {
-				compactStore, ok := store.(storage.CompactableStorage)
-				if !ok {
-					fmt.Fprintf(os.Stderr, "Error: compact requires CompactableStorage (not supported by current backend)\n")
-					os.Exit(1)
-				}
-				runCompactStats(ctx, compactStore)
+			compactStore, ok := store.(storage.CompactableStorage)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "Error: compact requires CompactableStorage (not supported by current backend)\n")
+				os.Exit(1)
 			}
+			runCompactStats(ctx, compactStore)
 			return
 		}
 
@@ -218,13 +214,7 @@ Examples:
 				os.Exit(1)
 			}
 
-			// Use RPC if daemon available, otherwise direct mode
-			if daemonClient != nil {
-				runCompactRPC(ctx)
-				return
-			}
-
-			// Fallback to direct mode
+			// Direct mode
 			apiKey := os.Getenv("ANTHROPIC_API_KEY")
 			if apiKey == "" && !compactDryRun {
 				fmt.Fprintf(os.Stderr, "Error: --auto mode requires ANTHROPIC_API_KEY environment variable\n")

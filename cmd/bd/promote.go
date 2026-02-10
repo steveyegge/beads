@@ -1,13 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -39,74 +36,6 @@ Examples:
 		comment := "Promoted from Level 0"
 		if reason != "" {
 			comment += ": " + reason
-		}
-
-		// Resolve partial ID and handle routing
-		if daemonClient != nil {
-			// Check if this ID needs routing to a different beads directory
-			if needsRouting(id) {
-				promoteRouted(id, comment)
-				return
-			}
-
-			resolveArgs := &rpc.ResolveIDArgs{ID: id}
-			resp, err := daemonClient.ResolveID(resolveArgs)
-			if err != nil {
-				FatalErrorRespectJSON("resolving ID %s: %v", id, err)
-			}
-			var resolvedID string
-			if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-			}
-			id = resolvedID
-
-			// Verify the issue is actually a wisp
-			showArgs := &rpc.ShowArgs{ID: id}
-			showResp, err := daemonClient.Show(showArgs)
-			if err != nil {
-				FatalErrorRespectJSON("getting issue %s: %v", id, err)
-			}
-			var issue types.Issue
-			if err := json.Unmarshal(showResp.Data, &issue); err != nil {
-				FatalErrorRespectJSON("decoding issue: %v", err)
-			}
-			if !issue.Ephemeral {
-				FatalErrorRespectJSON("%s is not a wisp (already persistent)", id)
-			}
-
-			// Set ephemeral=false via update RPC
-			ephemeral := false
-			updateArgs := &rpc.UpdateArgs{
-				ID:        id,
-				Ephemeral: &ephemeral,
-			}
-			if _, err := daemonClient.Update(updateArgs); err != nil {
-				FatalErrorRespectJSON("promoting %s: %v", id, err)
-			}
-
-			// Add promotion comment
-			commentArgs := &rpc.CommentAddArgs{
-				ID:     id,
-				Author: actor,
-				Text:   comment,
-			}
-			if _, err := daemonClient.AddComment(commentArgs); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", id, err)
-			}
-
-			if jsonOutput {
-				// Re-fetch to return updated issue
-				showResp2, err := daemonClient.Show(showArgs)
-				if err == nil {
-					var updated types.Issue
-					if err := json.Unmarshal(showResp2.Data, &updated); err == nil {
-						outputJSON(&updated)
-					}
-				}
-			} else {
-				fmt.Printf("%s Promoted %s to permanent bead\n", ui.RenderPass("✓"), id)
-			}
-			return
 		}
 
 		// Direct mode

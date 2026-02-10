@@ -1,14 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -68,37 +66,11 @@ var showCmd = &cobra.Command{
 
 		requireFreshDB(ctx)
 
-		// Resolve partial IDs first (daemon mode only - direct mode uses routed resolution)
-		var resolvedIDs []string
-		var routedArgs []string // IDs that need cross-repo routing (bypass daemon)
-		if daemonClient != nil {
-			// In daemon mode, resolve via RPC - but check routing first
-			for _, id := range args {
-				// Check if this ID needs routing to a different beads directory
-				if needsRouting(id) {
-					routedArgs = append(routedArgs, id)
-					continue
-				}
-				resolveArgs := &rpc.ResolveIDArgs{ID: id}
-				resp, err := daemonClient.ResolveID(resolveArgs)
-				if err != nil {
-					FatalErrorRespectJSON("resolving ID %s: %v", id, err)
-				}
-				var resolvedID string
-				if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-				}
-				resolvedIDs = append(resolvedIDs, resolvedID)
-			}
-		}
 		// Note: Direct mode uses resolveAndGetIssueWithRouting for prefix-based routing
 
 		// Handle --thread flag: show full conversation thread
 		if showThread {
-			if daemonClient != nil && len(resolvedIDs) > 0 {
-				showMessageThread(ctx, resolvedIDs[0], jsonOutput)
-				return
-			} else if len(args) > 0 {
+			if len(args) > 0 {
 				// Direct mode - resolve first arg with routing
 				result, err := resolveAndGetIssueWithRouting(ctx, store, args[0])
 				if result != nil {
@@ -113,290 +85,13 @@ var showCmd = &cobra.Command{
 
 		// Handle --refs flag: show issues that reference this issue
 		if showRefs {
-			showIssueRefs(ctx, args, resolvedIDs, routedArgs, jsonOutput)
+			showIssueRefs(ctx, args, nil, nil, jsonOutput)
 			return
 		}
 
 		// Handle --children flag: show only children of this issue
 		if showChildren {
-			showIssueChildren(ctx, args, resolvedIDs, routedArgs, jsonOutput, shortMode)
-			return
-		}
-
-		// If daemon is running, use RPC (but fall back to direct mode for routed IDs)
-		if daemonClient != nil {
-			allDetails := []interface{}{}
-			displayIdx := 0
-			foundCount := 0
-
-			// First, handle routed IDs via direct mode
-			for _, id := range routedArgs {
-				result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-				if err != nil {
-					if result != nil {
-						result.Close()
-					}
-					fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
-					continue
-				}
-				if result == nil || result.Issue == nil {
-					if result != nil {
-						result.Close()
-					}
-					fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-					continue
-				}
-				issue := result.Issue
-				issueStore := result.Store
-				foundCount++
-				if shortMode {
-					fmt.Println(formatShortIssue(issue))
-					result.Close()
-					continue
-				}
-				if jsonOutput {
-					// Get labels and deps for JSON output
-					details := &types.IssueDetails{Issue: *issue}
-					details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
-					details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
-					details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)
-					details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID)
-					// Compute parent from dependencies
-					for _, dep := range details.Dependencies {
-						if dep.DependencyType == types.DepParentChild {
-							details.Parent = &dep.ID
-							break
-						}
-					}
-					allDetails = append(allDetails, details)
-				} else {
-					if displayIdx > 0 {
-						fmt.Println("\n" + ui.RenderMuted(strings.Repeat("─", 60)))
-						fmt.Printf("\n%s\n", formatIssueHeader(issue))
-					} else {
-						fmt.Printf("%s\n", formatIssueHeader(issue))
-					}
-					// Metadata: Owner · Type | Created · Updated
-					fmt.Println(formatIssueMetadata(issue))
-					if issue.Description != "" {
-						fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
-					}
-					fmt.Println()
-					displayIdx++
-				}
-				result.Close() // Close immediately after processing each routed ID
-			}
-
-			// Then, handle local IDs via daemon
-			for _, id := range resolvedIDs {
-				showArgs := &rpc.ShowArgs{ID: id}
-				resp, err := daemonClient.Show(showArgs)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
-					continue
-				}
-
-				if jsonOutput {
-					var details types.IssueDetails
-					if err := json.Unmarshal(resp.Data, &details); err == nil {
-						// Compute parent from dependencies
-						for _, dep := range details.Dependencies {
-							if dep.DependencyType == types.DepParentChild {
-								details.Parent = &dep.ID
-								break
-							}
-						}
-						allDetails = append(allDetails, details)
-						foundCount++
-					}
-				} else {
-					// Check if issue exists (daemon returns null for non-existent issues)
-					if string(resp.Data) == "null" || len(resp.Data) == 0 {
-						fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-						continue
-					}
-					foundCount++
-
-					// Parse response first to check shortMode before output
-					var details types.IssueDetails
-					if err := json.Unmarshal(resp.Data, &details); err != nil {
-						fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-						os.Exit(1)
-					}
-					issue := &details.Issue
-
-					if shortMode {
-						fmt.Println(formatShortIssue(issue))
-						continue
-					}
-
-					if displayIdx > 0 {
-						fmt.Println("\n" + ui.RenderMuted(strings.Repeat("─", 60)))
-						fmt.Printf("\n%s\n", formatIssueHeader(issue))
-					} else {
-						fmt.Printf("%s\n", formatIssueHeader(issue))
-					}
-					displayIdx++
-
-
-					// Metadata: Owner · Type | Created · Updated
-					fmt.Println(formatIssueMetadata(issue))
-
-					// Compaction info (if applicable)
-					if issue.CompactionLevel > 0 {
-						fmt.Println()
-						if issue.OriginalSize > 0 {
-							currentSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
-							saved := issue.OriginalSize - currentSize
-							if saved > 0 {
-								reduction := float64(saved) / float64(issue.OriginalSize) * 100
-								fmt.Printf("📊 %d → %d bytes (%.0f%% reduction)\n",
-									issue.OriginalSize, currentSize, reduction)
-							}
-						}
-					}
-
-					// Content sections
-					if issue.Description != "" {
-						fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
-					}
-					if issue.Design != "" {
-						fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESIGN"), ui.RenderMarkdown(issue.Design))
-					}
-					if issue.Notes != "" {
-						fmt.Printf("\n%s\n%s\n", ui.RenderBold("NOTES"), ui.RenderMarkdown(issue.Notes))
-					}
-					if issue.AcceptanceCriteria != "" {
-						fmt.Printf("\n%s\n%s\n", ui.RenderBold("ACCEPTANCE CRITERIA"), ui.RenderMarkdown(issue.AcceptanceCriteria))
-					}
-
-					if len(details.Labels) > 0 {
-						fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(details.Labels, ", "))
-					}
-
-					// Collect related issues from both directions for deduplication
-					// (relates-to is bidirectional, so we merge and show once)
-					relatedSeen := make(map[string]*types.IssueWithDependencyMetadata)
-
-					// Dependencies grouped by type with semantic colors
-					if len(details.Dependencies) > 0 {
-						var blocks, parent, discovered []*types.IssueWithDependencyMetadata
-						for _, dep := range details.Dependencies {
-							switch dep.DependencyType {
-							case types.DepBlocks:
-								blocks = append(blocks, dep)
-							case types.DepParentChild:
-								parent = append(parent, dep)
-							case types.DepRelated, types.DepRelatesTo:
-								relatedSeen[dep.ID] = dep
-							case types.DepDiscoveredFrom:
-								discovered = append(discovered, dep)
-							default:
-								blocks = append(blocks, dep)
-							}
-						}
-
-						if len(parent) > 0 {
-							fmt.Printf("\n%s\n", ui.RenderBold("PARENT"))
-							for _, dep := range parent {
-								fmt.Println(formatDependencyLine("↑", dep))
-							}
-						}
-						if len(blocks) > 0 {
-							fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
-							for _, dep := range blocks {
-								fmt.Println(formatDependencyLine("→", dep))
-							}
-						}
-						if len(discovered) > 0 {
-							fmt.Printf("\n%s\n", ui.RenderBold("DISCOVERED FROM"))
-							for _, dep := range discovered {
-								fmt.Println(formatDependencyLine("◊", dep))
-							}
-						}
-					}
-
-					// Dependents grouped by type with semantic colors
-					if len(details.Dependents) > 0 {
-						var blocks, children, discovered []*types.IssueWithDependencyMetadata
-						for _, dep := range details.Dependents {
-							switch dep.DependencyType {
-							case types.DepBlocks:
-								blocks = append(blocks, dep)
-							case types.DepParentChild:
-								children = append(children, dep)
-							case types.DepRelated, types.DepRelatesTo:
-								relatedSeen[dep.ID] = dep
-							case types.DepDiscoveredFrom:
-								discovered = append(discovered, dep)
-							default:
-								blocks = append(blocks, dep)
-							}
-						}
-
-						if len(children) > 0 {
-							fmt.Printf("\n%s\n", ui.RenderBold("CHILDREN"))
-							for _, dep := range children {
-								fmt.Println(formatDependencyLine("↳", dep))
-							}
-						}
-						if len(blocks) > 0 {
-							fmt.Printf("\n%s\n", ui.RenderBold("BLOCKS"))
-							for _, dep := range blocks {
-								fmt.Println(formatDependencyLine("←", dep))
-							}
-						}
-						if len(discovered) > 0 {
-							fmt.Printf("\n%s\n", ui.RenderBold("DISCOVERED"))
-							for _, dep := range discovered {
-								fmt.Println(formatDependencyLine("◊", dep))
-							}
-						}
-					}
-
-					// Print deduplicated RELATED section (bidirectional links shown once)
-					if len(relatedSeen) > 0 {
-						fmt.Printf("\n%s\n", ui.RenderBold("RELATED"))
-						for _, dep := range relatedSeen {
-							fmt.Println(formatDependencyLine("↔", dep))
-						}
-					}
-
-					if len(details.Comments) > 0 {
-						fmt.Printf("\n%s\n", ui.RenderBold("COMMENTS"))
-						for _, comment := range details.Comments {
-							fmt.Printf("  %s %s\n", ui.RenderMuted(formatTime(comment.CreatedAt)), comment.Author)
-							rendered := ui.RenderMarkdown(comment.Text)
-							// TrimRight removes trailing newlines that Glamour adds, preventing extra blank lines
-							for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
-								fmt.Printf("    %s\n", line)
-							}
-						}
-					}
-
-					fmt.Println()
-				}
-			}
-
-			if jsonOutput {
-				if len(allDetails) > 0 {
-					outputJSON(allDetails)
-				} else {
-					// No issues found - exit non-zero with structured JSON error
-					// so downstream consumers (e.g., gt bd move) get a proper error
-					// instead of empty stdout causing "unexpected end of JSON input"
-					FatalErrorRespectJSON("no issues found matching the provided IDs")
-				}
-			} else if foundCount == 0 {
-				os.Exit(1)
-			}
-
-			// Track first shown issue as last touched
-			if len(resolvedIDs) > 0 {
-				SetLastTouchedID(resolvedIDs[0])
-			} else if len(routedArgs) > 0 {
-				SetLastTouchedID(routedArgs[0])
-			}
+			showIssueChildren(ctx, args, nil, nil, jsonOutput, shortMode)
 			return
 		}
 

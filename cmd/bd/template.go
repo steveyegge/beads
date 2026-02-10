@@ -84,24 +84,7 @@ var templateListCmd = &cobra.Command{
 		ctx := rootCtx
 		var beadsTemplates []*types.Issue
 
-		if daemonClient != nil {
-			resp, err := daemonClient.List(&rpc.ListArgs{})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading templates: %v\n", err)
-				os.Exit(1)
-			}
-			var allIssues []*types.Issue
-			if err := json.Unmarshal(resp.Data, &allIssues); err == nil {
-				for _, issue := range allIssues {
-					for _, label := range issue.Labels {
-						if label == BeadsTemplateLabel {
-							beadsTemplates = append(beadsTemplates, issue)
-							break
-						}
-					}
-				}
-			}
-		} else if store != nil {
+		if store != nil {
 			var err error
 			beadsTemplates, err = store.GetIssuesByLabel(ctx, BeadsTemplateLabel)
 			if err != nil {
@@ -150,18 +133,7 @@ var templateShowCmd = &cobra.Command{
 		ctx := rootCtx
 		var templateID string
 
-		if daemonClient != nil {
-			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
-			resp, err := daemonClient.ResolveID(resolveArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: template '%s' not found\n", args[0])
-				os.Exit(1)
-			}
-			if err := json.Unmarshal(resp.Data, &templateID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		} else if store != nil {
+		if store != nil {
 			var err error
 			templateID, err = utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
@@ -176,11 +148,7 @@ var templateShowCmd = &cobra.Command{
 		// Load and show Beads template
 		var subgraph *TemplateSubgraph
 		var err error
-		if daemonClient != nil {
-			subgraph, err = loadTemplateSubgraphViaDaemon(daemonClient, templateID)
-		} else {
-			subgraph, err = loadTemplateSubgraph(ctx, store, templateID)
-		}
+		subgraph, err = loadTemplateSubgraph(ctx, store, templateID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading template: %v\n", err)
 			os.Exit(1)
@@ -253,18 +221,7 @@ Example:
 
 		// Resolve template ID
 		var templateID string
-		if daemonClient != nil {
-			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
-			resp, err := daemonClient.ResolveID(resolveArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving template ID %s: %v\n", args[0], err)
-				os.Exit(1)
-			}
-			if err := json.Unmarshal(resp.Data, &templateID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		} else if store != nil {
+		if store != nil {
 			var err error
 			templateID, err = utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
@@ -331,11 +288,7 @@ Example:
 			Ephemeral: false,
 		}
 		var result *InstantiateResult
-		if daemonClient != nil {
-			result, err = cloneSubgraphViaDaemon(daemonClient, subgraph, opts)
-		} else {
-			result, err = cloneSubgraph(ctx, store, subgraph, opts)
-		}
+		result, err = cloneSubgraph(ctx, store, subgraph, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error instantiating template: %v\n", err)
 			os.Exit(1)

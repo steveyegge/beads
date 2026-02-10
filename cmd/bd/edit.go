@@ -1,15 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -34,14 +31,12 @@ Examples:
 		id := args[0]
 		ctx := rootCtx
 
-		// Resolve partial ID if in direct mode
-		if daemonClient == nil {
-			fullID, err := utils.ResolvePartialID(ctx, store, id)
-			if err != nil {
-				FatalErrorRespectJSON("resolving %s: %v", id, err)
-			}
-			id = fullID
+		// Resolve partial ID
+		fullID, err := utils.ResolvePartialID(ctx, store, id)
+		if err != nil {
+			FatalErrorRespectJSON("resolving %s: %v", id, err)
 		}
+		id = fullID
 
 		// Determine which field to edit
 		fieldToEdit := "description"
@@ -74,30 +69,12 @@ Examples:
 		}
 
 		// Get the current issue
-		var issue *types.Issue
-		var err error
-
-		if daemonClient != nil {
-			// Daemon mode
-			showArgs := &rpc.ShowArgs{ID: id}
-			resp, err := daemonClient.Show(showArgs)
-			if err != nil {
-				FatalErrorRespectJSON("fetching issue %s: %v", id, err)
-			}
-
-			issue = &types.Issue{}
-			if err := json.Unmarshal(resp.Data, issue); err != nil {
-				FatalErrorRespectJSON("parsing issue data: %v", err)
-			}
-		} else {
-			// Direct mode
-			issue, err = store.GetIssue(ctx, id)
-			if err != nil {
-				FatalErrorRespectJSON("fetching issue %s: %v", id, err)
-			}
-			if issue == nil {
-				FatalErrorRespectJSON("issue %s not found", id)
-			}
+		issue, err := store.GetIssue(ctx, id)
+		if err != nil {
+			FatalErrorRespectJSON("fetching issue %s: %v", id, err)
+		}
+		if issue == nil {
+			FatalErrorRespectJSON("issue %s not found", id)
 		}
 
 		// Get the current field value
@@ -167,32 +144,8 @@ Examples:
 			fieldToEdit: newValue,
 		}
 
-		if daemonClient != nil {
-			// Daemon mode
-			updateArgs := &rpc.UpdateArgs{ID: id}
-
-			switch fieldToEdit {
-			case "title":
-				updateArgs.Title = &newValue
-			case "description":
-				updateArgs.Description = &newValue
-			case "design":
-				updateArgs.Design = &newValue
-			case "notes":
-				updateArgs.Notes = &newValue
-			case "acceptance_criteria":
-				updateArgs.AcceptanceCriteria = &newValue
-			}
-
-			_, err := daemonClient.Update(updateArgs)
-			if err != nil {
-				FatalErrorRespectJSON("updating issue: %v", err)
-			}
-		} else {
-			// Direct mode
-			if err := store.UpdateIssue(ctx, id, updates, actor); err != nil {
-				FatalErrorRespectJSON("updating issue: %v", err)
-			}
+		if err := store.UpdateIssue(ctx, id, updates, actor); err != nil {
+			FatalErrorRespectJSON("updating issue: %v", err)
 		}
 
 		fieldName := strings.ReplaceAll(fieldToEdit, "_", " ")

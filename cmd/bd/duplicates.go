@@ -31,12 +31,6 @@ Example:
 		if autoMerge && !dryRun {
 			CheckReadonly("duplicates --auto-merge")
 		}
-		// Check daemon mode - not supported yet (merge command limitation)
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: duplicates command not yet supported in daemon mode (see bd-190)\n")
-			fmt.Fprintf(os.Stderr, "Use: bd --no-daemon duplicates\n")
-			os.Exit(1)
-		}
 		// Use global jsonOutput set by PersistentPreRun
 		ctx := rootCtx
 
