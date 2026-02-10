@@ -60,12 +60,12 @@ var (
 )
 
 // Deprecated accessor stubs for context.go compatibility.
-func getDaemonClient() *rpc.Client  { return nil }
-func setDaemonClient(_ *rpc.Client) {}
-func getDaemonStatus() DaemonStatus { return DaemonStatus{} }
+func getDaemonClient() *rpc.Client   { return nil }
+func setDaemonClient(_ *rpc.Client)  {}
+func getDaemonStatus() DaemonStatus  { return DaemonStatus{} }
 func setDaemonStatus(_ DaemonStatus) {}
-func isNoDaemon() bool              { return false }
-func setNoDaemon(_ bool)            {}
+func isNoDaemon() bool               { return false }
+func setNoDaemon(_ bool)             {}
 
 // Deprecated daemon lifecycle stubs.
 func isDaemonRunning(_ string) (bool, int) { return false, 0 }

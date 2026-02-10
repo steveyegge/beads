@@ -31,7 +31,9 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 		reopenedIssues := []*types.Issue{}
 		// Direct storage access
 		if store == nil {
-			fmt.Fprintln(os.Stderr, "Error: database not initialized")
+			fmt.Fprintf(os.Stderr, "no beads database found.\n"+
+				"Hint: run 'bd init' to create a database in the current directory,\n"+
+				"      or use 'bd --no-db' for JSONL-only mode\n")
 			os.Exit(1)
 		}
 		for _, id := range args {

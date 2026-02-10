@@ -106,7 +106,6 @@ func TestMergeDriver_Validation(t *testing.T) {
 	})
 }
 
-
 // TestDBJSONLSync_Validation tests DBJSONLSync validation
 func TestDBJSONLSync_Validation(t *testing.T) {
 	t.Run("no database - nothing to do", func(t *testing.T) {

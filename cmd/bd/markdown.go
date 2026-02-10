@@ -327,7 +327,9 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 
 	// Direct mode: ensure globals are initialized
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: database not initialized\n")
+		fmt.Fprintf(os.Stderr, "no beads database found.\n"+
+			"Hint: run 'bd init' to create a database in the current directory,\n"+
+			"      or use 'bd --no-db' for JSONL-only mode\n")
 		os.Exit(1)
 	}
 	if actor == "" {
