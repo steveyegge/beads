@@ -30,10 +30,16 @@ import (
 var daemonCmd = &cobra.Command{
 	Use:     "daemon",
 	GroupID: "sync",
-	Short:   "Manage background sync daemon",
-	Long: `Manage the background daemon that automatically syncs issues with git remote.
+	Short:   "Manage the bd daemon",
+	Long: `Manage the bd daemon that serves as the RPC backend for all bd operations.
+
+The daemon is the central server that bd CLI commands communicate with.
+In production (K8s), the daemon runs as a pod and clients connect via
+BD_DAEMON_HOST. For local development, it runs as a background process
+and clients connect via Unix socket.
 
 The daemon will:
+- Serve RPC requests from bd CLI clients (Unix socket, TCP, or HTTP)
 - Poll for changes at configurable intervals (default: 5 seconds)
 - Export pending database changes to JSONL
 - Auto-commit changes if --auto-commit flag set
@@ -43,7 +49,7 @@ The daemon will:
 
 Common operations:
   bd daemon start                Start the daemon (background)
-  bd daemon start --foreground   Start in foreground (for systemd/supervisord)
+  bd daemon start --foreground   Start in foreground (for systemd/K8s)
   bd daemon stop                 Stop current workspace daemon
   bd daemon status               Show daemon status
   bd daemon status --all         Show all daemons with health check

@@ -7,6 +7,46 @@
 
 bd runs a background daemon per workspace for auto-sync, RPC operations, and real-time monitoring. This guide covers daemon management, event-driven mode, and troubleshooting.
 
+## Remote Daemon Connection
+
+The recommended way to use beads is via a remote daemon:
+
+```bash
+export BD_DAEMON_HOST=https://your-daemon.example.com
+export BD_DAEMON_TOKEN=your-token
+bd list  # All commands automatically use the remote daemon
+```
+
+When `BD_DAEMON_HOST` is set, the CLI will fail hard if the daemon is unreachable
+rather than silently falling back to a local database.
+
+For persistent configuration, use `bd connect`:
+
+```bash
+bd connect --url https://your-daemon.example.com --token your-token
+# Writes to .beads/config.yaml — no env vars needed after this
+```
+
+### Troubleshooting Connection Issues
+
+If you see `beads.db` errors, `bd init` prompts, or `no beads database found` messages,
+you are **not connected to the daemon**. Fix with:
+
+```bash
+# Option 1: Set environment variables
+export BD_DAEMON_HOST=https://your-daemon.example.com
+export BD_DAEMON_TOKEN=your-token
+
+# Option 2: Persistent connection
+bd connect --url https://your-daemon.example.com --token your-token
+```
+
+Verify your connection:
+
+```bash
+bd info --json | grep daemon
+```
+
 ## Do I Need the Daemon?
 
 **TL;DR:** For most users, the daemon runs automatically and you don't need to think about it.
@@ -20,14 +60,12 @@ bd runs a background daemon per workspace for auto-sync, RPC operations, and rea
 | **Long coding sessions** | Changes saved even if you forget `bd sync` |
 | **Real-time monitoring** | Enables `bd watch` and status updates |
 
-### When to Disable Daemon
+### When to Use Sandbox/Isolation Mode
 
-| Scenario | How to Disable |
-|----------|----------------|
+| Scenario | How |
+|----------|-----|
 | **Git worktrees (no sync-branch)** | Auto-disabled for safety |
-| **CI/CD pipelines** | `BEADS_NO_DAEMON=true` |
-| **Offline work** | `--no-daemon` (no git push available) |
-| **Resource-constrained** | `BEADS_NO_DAEMON=true` |
+| **CI/CD pipelines** | Use `--sandbox` for test isolation |
 | **Deterministic testing** | Use exclusive lock (see below) |
 
 ### Git Worktrees and Daemon
@@ -40,24 +78,6 @@ bd config set sync-branch beads-sync
 ```
 
 With sync-branch configured, daemon commits to a dedicated branch using an internal worktree, so your current branch is never affected. See [WORKTREES.md](WORKTREES.md) for details.
-
-### Local-Only Users
-
-If you're working alone on a local project with no git remote:
-- **Daemon still helps**: Batches writes, handles auto-export to JSONL
-- **But optional**: Use `--no-daemon` if you prefer direct database access
-- **No network calls**: Daemon doesn't phone home or require internet
-
-```bash
-# Check if daemon is running
-bd info | grep daemon
-
-# Force direct mode for one command
-bd --no-daemon list
-
-# Disable for entire session
-export BEADS_NO_DAEMON=true
-```
 
 ## Architecture
 
@@ -399,14 +419,10 @@ bd daemon start
 | `BEADS_AUTO_START_DAEMON` | `true`, `false` | `true` | Auto-start daemon on commands |
 | `BEADS_DAEMON_MODE` | `poll`, `events` | `poll` | Sync mode (polling vs events) |
 | `BEADS_WATCHER_FALLBACK` | `true`, `false` | `true` | Fall back to poll if events fail |
-| `BEADS_NO_DAEMON` | `true`, `false` | `false` | Disable daemon entirely (direct DB) |
 
 **Example configurations:**
 
 ```bash
-# Force direct mode (no daemon)
-export BEADS_NO_DAEMON=true
-
 # Event-driven with strict requirements
 export BEADS_DAEMON_MODE=events
 export BEADS_WATCHER_FALLBACK=false
@@ -417,35 +433,24 @@ export BEADS_AUTO_START_DAEMON=false
 
 ## Git Worktrees Warning
 
-**⚠️ Important Limitation:** Daemon mode does NOT work correctly with `git worktree`.
+**Important:** Daemon mode requires sync-branch configuration when used with `git worktree`.
 
 **The Problem:**
 - Git worktrees share the same `.git` directory and `.beads` database
 - Daemon doesn't know which branch each worktree has checked out
 - Can commit/push to wrong branch
 
-**Solutions:**
+**Solution:** Configure sync-branch so the daemon commits to a dedicated branch:
 
-1. **Use `--no-daemon` flag** (recommended):
-   ```bash
-   bd --no-daemon ready
-   bd --no-daemon create "Fix bug" -p 1
-   ```
+```bash
+bd config set sync-branch beads-sync
+```
 
-2. **Disable via environment** (entire session):
-   ```bash
-   export BEADS_NO_DAEMON=1
-   bd ready  # All commands use direct mode
-   ```
+With sync-branch configured, daemon commits to a dedicated branch using an internal worktree, so your current branch is never affected.
 
-3. **Disable auto-start** (less safe):
-   ```bash
-   export BEADS_AUTO_START_DAEMON=false
-   ```
+**Automatic detection:** bd detects worktrees and auto-disables the daemon unless sync-branch is configured.
 
-**Automatic detection:** bd detects worktrees and warns if daemon is active.
-
-See [GIT_INTEGRATION.md](GIT_INTEGRATION.md) for more details.
+See [WORKTREES.md](WORKTREES.md) and [GIT_INTEGRATION.md](GIT_INTEGRATION.md) for more details.
 
 ## Exclusive Lock Protocol (Advanced)
 
@@ -639,12 +644,11 @@ bd daemons killall
 - CPU: <1% per daemon (idle), 2-3% (active sync)
 - File descriptors: ~10 per daemon
 
-### When to disable daemons:
+### When to use sandbox/isolation:
 
-- ✅ Git worktrees (use `--no-daemon`)
-- ✅ Embedded/resource-constrained environments
-- ✅ Testing/CI (deterministic execution)
-- ✅ Offline work (no git push available)
+- Git worktrees without sync-branch configured (auto-disabled)
+- CI/CD pipelines (use `--sandbox` for test isolation)
+- Deterministic testing (use exclusive lock protocol)
 
 ## See Also
 

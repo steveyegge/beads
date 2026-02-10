@@ -13,9 +13,13 @@ import (
 var daemonStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the background daemon",
-	Long: `Start the background daemon that automatically syncs issues with git remote.
+	Long: `Start the background daemon that serves as the central RPC server for bd operations.
+
+Most bd commands communicate with the daemon via RPC (Unix socket or TCP).
+Remote clients connect using BD_DAEMON_HOST and BD_DAEMON_TOKEN.
 
 The daemon will:
+- Serve RPC requests from bd CLI clients
 - Poll for changes at configurable intervals (default: 5 seconds)
 - Export pending database changes to JSONL
 - Auto-commit changes if --auto-commit flag set
@@ -33,8 +37,9 @@ Examples:
   bd daemon start --auto-commit      # Enable auto-commit
   bd daemon start --auto-push        # Enable auto-push (implies --auto-commit)
   bd daemon start --foreground       # Run in foreground (for systemd/supervisord)
-  bd daemon start --local            # Local-only mode (no git sync)
-  bd daemon start --federation       # Enable federation mode (dolt sql-server)`,
+  bd daemon start --federation       # Enable federation mode (dolt sql-server)
+  bd daemon start --tcp-addr :9876   # Listen on TCP for remote clients
+  bd daemon start --http-addr :9080  # Enable Connect-RPC HTTP API`,
 	PreRunE: guardDaemonStartForDolt,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Check if BD_DAEMON_HOST is set - refuse to start local daemon when configured for remote

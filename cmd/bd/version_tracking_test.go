@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -374,6 +375,10 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 
 	// Clear BD_DAEMON_HOST - autoMigrateOnVersionBump is for direct mode only
 	t.Setenv("BD_DAEMON_HOST", "")
+	// Also clear config-level daemon-host (may be set in config.yaml) (bd-lkks)
+	config.ResetForTesting()
+	_ = config.Initialize()
+	config.Set("daemon-host", "")
 
 	// Save original state FIRST - critical to avoid test pollution from previous tests
 	origUpgradeDetected := versionUpgradeDetected
@@ -458,6 +463,12 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 }
 
 func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
+	// Clear BD_DAEMON_HOST - autoMigrateOnVersionBump is for direct mode only (bd-lkks)
+	t.Setenv("BD_DAEMON_HOST", "")
+	config.ResetForTesting()
+	_ = config.Initialize()
+	config.Set("daemon-host", "")
+
 	// Create temp directory (beadsDir)
 	beadsDir := t.TempDir()
 	// Factory will look for beads.db inside beadsDir

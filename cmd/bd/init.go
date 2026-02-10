@@ -31,9 +31,12 @@ var initCmd = &cobra.Command{
 	GroupID: "setup",
 	Short:   "Initialize bd in the current directory",
 	Long: `Initialize bd in the current directory by creating a .beads/ directory
-and database file. Optionally specify a custom issue prefix.
+and storage backend. Optionally specify a custom issue prefix.
 
-With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite database.
+For remote daemon usage (K8s/production), use 'bd connect' instead. The init
+command is for setting up a local workspace with its own database.
+
+With --no-db: creates .beads/ directory and issues.jsonl file instead of a database.
 
 With --from-jsonl: imports from the current .beads/issues.jsonl file on disk instead
 of scanning git history. Use this after manual JSONL cleanup (e.g., bd compact --purge-tombstones)

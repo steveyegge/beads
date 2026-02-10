@@ -100,7 +100,7 @@ golangci-lint run ./...
 ## Important Notes
 
 - **Always read AGENTS.md first** - it has the complete workflow
-- Use `bd --no-daemon` in git worktrees (see AGENTS.md for why)
+- Configure sync-branch for git worktrees: `bd config set sync-branch beads-sync` (see WORKTREES.md)
 - Install git hooks for zero-lag sync: `./examples/git-hooks/install.sh`
 - Dolt handles sync automatically; no need to run manual sync commands
 - Check for duplicates proactively: `bd duplicates --auto-merge`

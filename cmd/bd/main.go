@@ -509,6 +509,13 @@ var rootCmd = &cobra.Command{
 
 		// Handle --no-db mode: load from JSONL, use in-memory storage
 		if noDb {
+			// When BD_DAEMON_HOST is set, --no-db makes no sense — the remote daemon
+			// handles storage. Warn the user instead of silently ignoring the daemon. (bd-lkks)
+			if remoteHost := rpc.GetDaemonHost(); remoteHost != "" {
+				fmt.Fprintf(os.Stderr, "Error: --no-db is not compatible with BD_DAEMON_HOST (%s)\n", remoteHost)
+				fmt.Fprintf(os.Stderr, "The remote daemon manages storage. Remove --no-db to use the daemon.\n")
+				os.Exit(1)
+			}
 			if err := initializeNoDbMode(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error initializing --no-db mode: %v\n", err)
 				os.Exit(1)
@@ -596,8 +603,9 @@ var rootCmd = &cobra.Command{
 					}
 
 					// Generic error - no beads directory or JSONL found
-					fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
-					fmt.Fprintf(os.Stderr, "      or use 'bd --no-db' to work with JSONL only (no SQLite)\n")
+					fmt.Fprintf(os.Stderr, "Hint: run 'bd connect' to connect to a remote daemon (BD_DAEMON_HOST)\n")
+					fmt.Fprintf(os.Stderr, "      or run 'bd init' to create a local workspace\n")
+					fmt.Fprintf(os.Stderr, "      or use 'bd --no-db' to work with JSONL only\n")
 					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
 					os.Exit(1)
 				}
@@ -651,6 +659,15 @@ var rootCmd = &cobra.Command{
 
 		// Try to connect to daemon first (unless direct mode is forced or worktree safety check fails)
 		if forceDirectMode {
+			// When BD_DAEMON_HOST is set, direct mode is not allowed for most commands
+			// since the remote daemon should handle all operations. Only doctor is exempt
+			// because it specifically diagnoses daemon connectivity issues. (bd-lkks)
+			if remoteHost := rpc.GetDaemonHost(); remoteHost != "" && cmd.Name() != "doctor" {
+				fmt.Fprintf(os.Stderr, "Error: this command requested direct database access, but BD_DAEMON_HOST is set (%s)\n", remoteHost)
+				fmt.Fprintf(os.Stderr, "Direct mode (--sandbox, --profile, restore) is not available with a remote daemon.\n")
+				fmt.Fprintf(os.Stderr, "Hint: unset BD_DAEMON_HOST to use local mode, or run the command without --sandbox/--profile\n")
+				os.Exit(1)
+			}
 			// Only set FallbackFlagNoDaemon if not already set by auto-bypass logic
 			if daemonStatus.FallbackReason == FallbackNone {
 				daemonStatus.FallbackReason = FallbackFlagNoDaemon

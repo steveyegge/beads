@@ -61,8 +61,9 @@ Behavior:
   - Use --dedupe-after to find and merge content duplicates after import
   - Use --dry-run to preview changes without applying them
 
-NOTE: Import requires direct database access and does not work with daemon mode.
-      The command automatically uses --no-daemon when executed.`,
+NOTE: Import requires direct database access. When using a remote daemon
+      (BD_DAEMON_HOST), import is handled internally by the daemon's sync loop.
+      For local usage, the command automatically falls back to direct mode.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("import")
 		// Check for positional arguments (common mistake: bd import file.jsonl instead of bd import -i file.jsonl)

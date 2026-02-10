@@ -12,8 +12,8 @@ bd has two complementary configuration systems:
 Tool preferences control how `bd` behaves globally or per-user. These are stored in config files or environment variables and managed by [Viper](https://github.com/spf13/viper).
 
 **Configuration precedence** (highest to lowest):
-1. Command-line flags (`--json`, `--no-daemon`, etc.)
-2. Environment variables (`BD_JSON`, `BD_NO_DAEMON`, etc.)
+1. Command-line flags (`--json`, `--sandbox`, etc.)
+2. Environment variables (`BD_JSON`, `BD_DAEMON_HOST`, etc.)
 3. Config file (`~/.config/bd/config.yaml` or `.beads/config.yaml`)
 4. Defaults
 
@@ -31,7 +31,7 @@ Tool-level settings you can configure:
 | Setting | Flag | Environment Variable | Default | Description |
 |---------|------|---------------------|---------|-------------|
 | `json` | `--json` | `BD_JSON` | `false` | Output in JSON format |
-| `no-daemon` | `--no-daemon` | `BD_NO_DAEMON` | `false` | Force direct mode, bypass daemon |
+| `sandbox` | `--sandbox` | `BD_SANDBOX` | `false` | Sandbox mode for CI/test isolation |
 | `no-auto-flush` | `--no-auto-flush` | `BD_NO_AUTO_FLUSH` | `false` | Disable auto JSONL export |
 | `no-auto-import` | `--no-auto-import` | `BD_NO_AUTO_IMPORT` | `false` | Disable auto JSONL import |
 | `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in bd sync |
@@ -179,9 +179,6 @@ federation:
 # Default to JSON output for scripting
 json: true
 
-# Disable daemon for single-user workflows
-no-daemon: true
-
 # Custom debounce for auto-flush (default 5s)
 flush-debounce: 10s
 
@@ -238,7 +235,7 @@ external_projects:
 
 **Tool settings (Viper)** are user preferences:
 - How should I see output? (`--json`)
-- Should I use the daemon? (`--no-daemon`)
+- Should I use sandbox mode? (`--sandbox`)
 - How should the CLI behave?
 
 **Project config (`bd config`)** is project data:

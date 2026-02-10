@@ -15,6 +15,10 @@ import (
 )
 
 func TestFallbackToDirectModeEnablesFlush(t *testing.T) {
+	// Clear BD_DAEMON_HOST — this test exercises the local fallback path which is
+	// blocked when a remote daemon is configured (bd-lkks).
+	t.Setenv("BD_DAEMON_HOST", "")
+
 	// FIX: Initialize rootCtx for flush operations (issue #355)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -28,6 +32,9 @@ func TestFallbackToDirectModeEnablesFlush(t *testing.T) {
 	}
 	config.Set("sync.mode", SyncModeGitPortable)
 	config.Set("storage-backend", "sqlite")
+	// Clear daemon-host from config.yaml to ensure local fallback path is tested (bd-lkks)
+	config.Set("daemon-host", "")
+	config.Set("daemon-token", "")
 
 	oldRootCtx := rootCtx
 	rootCtx = ctx
@@ -191,6 +198,13 @@ func TestFallbackToDirectModeEnablesFlush(t *testing.T) {
 func TestImportFromJSONLInlineAfterDaemonDisconnect(t *testing.T) {
 	// Clear BD_DAEMON_HOST to prevent remote daemon from blocking direct access (bd-srr1)
 	t.Setenv("BD_DAEMON_HOST", "")
+	// Also clear config-level daemon-host to prevent ensureStoreActive guard (bd-lkks)
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+	config.Set("daemon-host", "")
+	config.Set("daemon-token", "")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

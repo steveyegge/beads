@@ -34,7 +34,15 @@ func ensureDirectMode(reason string) error {
 }
 
 // fallbackToDirectMode disables the daemon client and ensures a local store is ready.
+// When BD_DAEMON_HOST is set (remote daemon), falling back to local storage is not
+// allowed — the user explicitly requested a remote daemon connection (bd-lkks).
 func fallbackToDirectMode(reason string) error {
+	if rpc.GetDaemonHost() != "" {
+		return fmt.Errorf("cannot fall back to local storage: BD_DAEMON_HOST is set (%s).\n"+
+			"The remote daemon at %s should handle this operation.\n"+
+			"Hint: check that the daemon is running and BD_DAEMON_TOKEN is correct",
+			reason, rpc.GetDaemonHost())
+	}
 	disableDaemonForFallback(reason)
 	return ensureStoreActive()
 }
@@ -86,9 +94,23 @@ func ensureStoreActive() error {
 	// Find the .beads directory
 	beadsDir := beads.FindBeadsDir()
 	if beadsDir == "" {
+		if rpc.GetDaemonHost() != "" {
+			return fmt.Errorf("no local database found, but BD_DAEMON_HOST is set (%s).\n"+
+				"Hint: this command should use the remote daemon. Check daemon connectivity with 'bd doctor'",
+				rpc.GetDaemonHost())
+		}
 		return fmt.Errorf("no beads database found.\n" +
-			"Hint: run 'bd init' to create a database in the current directory,\n" +
-			"      or use 'bd --no-db' for JSONL-only mode")
+			"Hint: run 'bd connect --url <DAEMON_URL> --token <TOKEN>' to connect to a remote daemon,\n" +
+			"      or run 'bd init' to create a local database")
+	}
+
+	// When BD_DAEMON_HOST is set, refuse to open a local database even if one exists.
+	// Local writes would not persist — the remote daemon is the source of truth. (bd-lkks)
+	if rpc.GetDaemonHost() != "" {
+		return fmt.Errorf("local database found at %s, but BD_DAEMON_HOST is set (%s).\n"+
+			"Writing to a local database will NOT persist — the remote daemon is the source of truth.\n"+
+			"Hint: check daemon connectivity with 'bd doctor', or unset BD_DAEMON_HOST for local-only use",
+			beadsDir, rpc.GetDaemonHost())
 	}
 
 	// GH#1349: Ensure sync branch worktree exists if configured.
