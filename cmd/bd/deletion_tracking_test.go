@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -9,7 +11,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -29,7 +31,7 @@ func TestMultiWorkspaceDeletionSync(t *testing.T) {
 	ctx := context.Background()
 
 	// Create stores for both clones
-	storeA, err := sqlite.New(context.Background(), cloneADB)
+	storeA, err := dolt.New(context.Background(), &dolt.Config{Path: cloneADB})
 	if err != nil {
 		t.Fatalf("Failed to create store A: %v", err)
 	}
@@ -39,7 +41,7 @@ func TestMultiWorkspaceDeletionSync(t *testing.T) {
 		t.Fatalf("Failed to set issue_prefix for store A: %v", err)
 	}
 
-	storeB, err := sqlite.New(context.Background(), cloneBDB)
+	storeB, err := dolt.New(context.Background(), &dolt.Config{Path: cloneBDB})
 	if err != nil {
 		t.Fatalf("Failed to create store B: %v", err)
 	}
@@ -183,7 +185,7 @@ func TestDeletionWithLocalModification(t *testing.T) {
 
 	ctx := context.Background()
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -418,7 +420,7 @@ func TestMultiRepoDeletionTracking(t *testing.T) {
 	dbPath := filepath.Join(primaryBeadsDir, "beads.db")
 	ctx := context.Background()
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -872,7 +874,7 @@ func TestMultiRepoFlushPrefixFiltering(t *testing.T) {
 	dbPath := filepath.Join(additionalBeadsDir, "beads.db")
 	ctx := context.Background()
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

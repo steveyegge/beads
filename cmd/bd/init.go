@@ -18,7 +18,6 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -353,7 +352,7 @@ variable.`,
 			store, err = factory.NewWithOptions(ctx, backend, storagePath, factory.Options{Database: dbName})
 		} else {
 			storagePath = initDBPath
-			store, err = sqlite.New(ctx, storagePath)
+			store, err = factory.New(ctx, configfile.BackendDolt, storagePath)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to create %s database: %v\n", backend, err)

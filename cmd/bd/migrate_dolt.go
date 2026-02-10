@@ -14,7 +14,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -277,7 +277,7 @@ func handleToSQLiteMigration(dryRun bool, autoYes bool) {
 	// Create SQLite database
 	printProgress("Creating SQLite database...")
 
-	sqliteStore, err := sqlite.New(ctx, sqlitePath)
+	sqliteStore, err := factory.New(ctx, configfile.BackendDolt, sqlitePath)
 	if err != nil {
 		exitWithError("sqlite_create_failed", err.Error(), "")
 	}
@@ -313,7 +313,7 @@ func handleToSQLiteMigration(dryRun bool, autoYes bool) {
 
 // extractFromSQLite extracts all data from a SQLite database
 func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, error) {
-	store, err := sqlite.NewReadOnly(ctx, dbPath)
+	store, err := factory.NewWithOptions(ctx, configfile.BackendDolt, dbPath, factory.Options{ReadOnly: true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 	}
@@ -557,7 +557,7 @@ func importToDolt(ctx context.Context, store *dolt.DoltStore, data *migrationDat
 }
 
 // importToSQLite imports all data to SQLite, returning (imported, skipped, error)
-func importToSQLite(ctx context.Context, store *sqlite.SQLiteStorage, data *migrationData) (int, int, error) {
+func importToSQLite(ctx context.Context, store storage.Storage, data *migrationData) (int, int, error) {
 	// Set all config values first
 	for key, value := range data.config {
 		if err := store.SetConfig(ctx, key, value); err != nil {

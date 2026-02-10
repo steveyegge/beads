@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -9,7 +11,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -27,7 +29,7 @@ func TestEnsureDatabaseFresh_NoAutoImportFlag(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -124,7 +126,7 @@ func TestEnsureDatabaseFresh_AllowStaleFlag(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -234,7 +236,7 @@ func TestEnsureDatabaseFresh_FreshDB(t *testing.T) {
 	f.Close()
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -304,7 +306,7 @@ func TestEnsureDatabaseFresh_DoltNativeSkipsCheck(t *testing.T) {
 	testDBPath := filepath.Join(beadsDir, "bd.db")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

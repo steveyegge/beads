@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -13,7 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 func TestInitCommand(t *testing.T) {
@@ -1800,7 +1802,7 @@ func TestInitRedirect(t *testing.T) {
 		}
 
 		canonicalDBPath := filepath.Join(canonicalBeadsDir, "beads.db")
-		store, err := sqlite.New(context.Background(), canonicalDBPath)
+		store, err := dolt.New(context.Background(), &dolt.Config{Path: canonicalDBPath})
 		if err != nil {
 			t.Fatalf("Failed to create canonical database: %v", err)
 		}
@@ -1837,14 +1839,14 @@ func TestInitRedirect(t *testing.T) {
 			t.Errorf("Expected error about redirect target having database, got: %s", errorMsg)
 		}
 
-		store, err = openExistingTestDB(t, canonicalDBPath)
+		reopened, err := openExistingTestDB(t, canonicalDBPath)
 		if err != nil {
 			t.Fatalf("Failed to reopen canonical database: %v", err)
 		}
-		defer store.Close()
+		defer reopened.Close()
 
 		ctx := context.Background()
-		prefix, err := store.GetConfig(ctx, "issue_prefix")
+		prefix, err := reopened.GetConfig(ctx, "issue_prefix")
 		if err != nil {
 			t.Fatalf("Failed to get prefix from canonical database: %v", err)
 		}
@@ -1907,7 +1909,7 @@ func TestInitBEADS_DIR(t *testing.T) {
 		cwdBeadsDir := filepath.Join(tmpDir, "cwd", ".beads")
 		os.MkdirAll(cwdBeadsDir, 0755)
 		cwdDBPath := filepath.Join(cwdBeadsDir, beads.CanonicalDatabaseName)
-		store, err := sqlite.New(context.Background(), cwdDBPath)
+		store, err := dolt.New(context.Background(), &dolt.Config{Path: cwdDBPath})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1939,7 +1941,7 @@ func TestInitBEADS_DIR(t *testing.T) {
 		beadsDirPath := filepath.Join(tmpDir, "external", ".beads")
 		os.MkdirAll(beadsDirPath, 0755)
 		testDBPath := filepath.Join(beadsDirPath, beads.CanonicalDatabaseName)
-		store, err := sqlite.New(context.Background(), testDBPath)
+		store, err := dolt.New(context.Background(), &dolt.Config{Path: testDBPath})
 		if err != nil {
 			t.Fatal(err)
 		}

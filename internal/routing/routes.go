@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 // RoutesFileName is the name of the routes configuration file
@@ -441,7 +440,7 @@ func GetRoutedStorageForID(ctx context.Context, id, currentBeadsDir string) (*Ro
 
 // GetRoutedStorageWithOpener returns a storage connection for the given issue ID.
 // If the ID matches a route, it opens a connection to the routed database.
-// The opener function is used to create storage; if nil, defaults to SQLite.
+// The opener function is used to create storage; if nil, an error is returned.
 // Otherwise, it returns nil (caller should use their existing storage).
 //
 // The caller is responsible for closing the returned RoutedStorage.
@@ -461,14 +460,10 @@ func GetRoutedStorageWithOpener(ctx context.Context, id, currentBeadsDir string,
 	}
 
 	// Open storage for the routed directory
-	var store storage.Storage
-	if opener != nil {
-		store, err = opener(ctx, beadsDir)
-	} else {
-		// Default to SQLite for backward compatibility
-		dbPath := filepath.Join(beadsDir, "beads.db")
-		store, err = sqlite.New(ctx, dbPath)
+	if opener == nil {
+		return nil, fmt.Errorf("no storage opener provided for routed storage (use GetRoutedStorageWithOpener with an explicit opener)")
 	}
+	store, err := opener(ctx, beadsDir)
 	if err != nil {
 		return nil, err
 	}

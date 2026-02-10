@@ -1,5 +1,5 @@
-//go:build integration
-// +build integration
+//go:build cgo && integration
+// +build cgo,integration
 
 package main
 
@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -33,7 +33,7 @@ func TestContentBasedComparison(t *testing.T) {
 	ctx := context.Background()
 
 	// Create and populate database
-	localStore, err := sqlite.New(ctx, dbPath)
+	localStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestContentHashComputation(t *testing.T) {
 	ctx := context.Background()
 
 	// Create and populate database
-	localStore, err := sqlite.New(ctx, dbPath)
+	localStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

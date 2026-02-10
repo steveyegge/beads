@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -24,7 +25,7 @@ func newTestIssue(id string) *types.Issue {
 
 // insertIssueDirectly inserts an issue via raw SQL, bypassing prefix validation.
 // This simulates cross-rig contamination where foreign-prefix issues end up in the DB.
-func insertIssueDirectly(t *testing.T, store *sqlite.SQLiteStorage, id string) {
+func insertIssueDirectly(t *testing.T, store storage.Storage, id string) {
 	t.Helper()
 	db := store.UnderlyingDB()
 	_, err := db.Exec(
@@ -347,7 +348,7 @@ func TestCategorizeDoltExtras_AllForeign(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -397,7 +398,7 @@ func TestCategorizeDoltExtras_MixedEphemeralAndForeign(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -440,7 +441,7 @@ func TestCategorizeDoltExtras_AllEphemeral(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -478,7 +479,7 @@ func TestCategorizeDoltExtras_NoExtras(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}

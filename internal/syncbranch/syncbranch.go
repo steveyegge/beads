@@ -11,7 +11,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 
-	// Import SQLite driver (same as used by storage/sqlite)
+	// Import SQLite driver for legacy database config reads
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
 )

@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -9,14 +11,14 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestCheckAndAutoImport_NoAutoImportFlag(t *testing.T) {
 	ctx := context.Background()
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: tmpDB})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -36,7 +38,7 @@ func TestCheckAndAutoImport_NoAutoImportFlag(t *testing.T) {
 func TestCheckAndAutoImport_DatabaseHasIssues(t *testing.T) {
 	ctx := context.Background()
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: tmpDB})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -74,7 +76,7 @@ func TestCheckAndAutoImport_EmptyDatabaseNoGit(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	tmpDB := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(context.Background(), tmpDB)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: tmpDB})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

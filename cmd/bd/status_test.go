@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -8,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -28,7 +30,7 @@ func TestStatusCommand(t *testing.T) {
 	}
 
 	// Initialize the database
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -179,7 +181,7 @@ func TestGetAssignedStatistics(t *testing.T) {
 	}
 
 	// Initialize the database
-	testStore, err := sqlite.New(context.Background(), dbPath)
+	testStore, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}

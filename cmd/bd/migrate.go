@@ -13,8 +13,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -293,7 +293,7 @@ Subcommands:
 			// Clean up WAL files before opening to avoid "disk I/O error"
 			cleanupWALFiles(currentDB.path)
 
-			store, err := sqlite.New(rootCtx, currentDB.path)
+			store, err := storagefactory.New(rootCtx, configfile.BackendDolt, currentDB.path)
 			if err != nil {
 				if jsonOutput {
 					outputJSON(map[string]interface{}{
@@ -837,7 +837,7 @@ func handleInspect() {
 	// If database doesn't exist, return inspection with defaults
 	if !dbExists {
 		result := map[string]interface{}{
-			"registered_migrations": sqlite.ListMigrations(),
+			"registered_migrations": dolt.ListMigrations(),
 			"current_state": map[string]interface{}{
 				"schema_version": "missing",
 				"issue_count":    0,
@@ -846,7 +846,7 @@ func handleInspect() {
 				"db_exists":      false,
 			},
 			"warnings":            []string{"Database does not exist - run 'bd init' first"},
-			"invariants_to_check": sqlite.GetInvariantNames(),
+			"invariants_to_check": []string{},
 		}
 
 		if jsonOutput {
@@ -903,10 +903,10 @@ func handleInspect() {
 	}
 
 	// Get registered migrations (all migrations are idempotent and run on every open)
-	registeredMigrations := sqlite.ListMigrations()
+	registeredMigrations := dolt.ListMigrations()
 
 	// Build invariants list
-	invariantNames := sqlite.GetInvariantNames()
+	invariantNames := []string{}
 
 	// Generate warnings
 	warnings := []string{}

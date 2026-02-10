@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -16,7 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // testIDCounter ensures unique IDs across all test runs
@@ -158,9 +160,9 @@ func failIfProductionDatabase(t *testing.T, dbPath string) {
 	}
 }
 
-// newTestStore creates a SQLite store with issue_prefix configured (bd-166)
+// newTestStore creates a Dolt store with issue_prefix configured (bd-166)
 // This prevents "database not initialized" errors in tests
-func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
+func newTestStore(t *testing.T, dbPath string) storage.Storage {
 	t.Helper()
 
 	// CRITICAL (bd-2c5a): Ensure we're not polluting production database
@@ -170,7 +172,7 @@ func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
 		t.Fatalf("Failed to create database directory: %v", err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
@@ -192,8 +194,8 @@ func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
 	return store
 }
 
-// newTestStoreWithPrefix creates a SQLite store with custom issue_prefix configured
-func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.SQLiteStorage {
+// newTestStoreWithPrefix creates a Dolt store with custom issue_prefix configured
+func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) storage.Storage {
 	t.Helper()
 
 	// CRITICAL (bd-2c5a): Ensure we're not polluting production database
@@ -203,7 +205,7 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.
 		t.Fatalf("Failed to create database directory: %v", err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
@@ -227,9 +229,9 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.
 
 // openExistingTestDB opens an existing database without modifying it.
 // Used in tests where the database was already created by the code under test.
-func openExistingTestDB(t *testing.T, dbPath string) (*sqlite.SQLiteStorage, error) {
+func openExistingTestDB(t *testing.T, dbPath string) (storage.Storage, error) {
 	t.Helper()
-	return sqlite.New(context.Background(), dbPath)
+	return dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 }
 
 // runCommandInDir runs a command in the specified directory

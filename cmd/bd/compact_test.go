@@ -9,13 +9,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestCompactSuite(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
-	s := newTestStore(t, testDB)
+	baseStore := newTestStore(t, testDB)
+	s, ok := baseStore.(storage.CompactableStorage)
+	if !ok {
+		t.Skip("storage backend does not support compaction")
+	}
 	ctx := context.Background()
 
 	t.Run("DryRun", func(t *testing.T) {

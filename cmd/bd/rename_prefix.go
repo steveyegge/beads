@@ -4,18 +4,18 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -494,28 +494,36 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 	return nil
 }
 
-// generateRepairHashID generates a hash-based ID for an issue during repair
-// Uses the sqlite.GenerateIssueID function but also checks usedIDs for batch collision avoidance
-func generateRepairHashID(ctx context.Context, conn *sql.Conn, prefix string, issue *types.Issue, actor string, usedIDs map[string]bool) (string, error) {
-	// Try to generate a unique ID using the standard generation function
-	// This handles collision detection against existing database IDs
-	newID, err := sqlite.GenerateIssueID(ctx, conn, prefix, issue, actor)
-	if err != nil {
-		return "", err
-	}
+// generateRepairHashID generates a hash-based ID for an issue during repair.
+// Uses content hashing and checks usedIDs for batch collision avoidance.
+func generateRepairHashID(_ context.Context, _ *sql.Conn, prefix string, issue *types.Issue, actor string, usedIDs map[string]bool) (string, error) {
+	// Generate a hash ID from issue content (same approach as generateHashIDForIssue)
+	content := fmt.Sprintf("%s|%s|%s|%d|%d",
+		issue.Title,
+		issue.Description,
+		actor,
+		issue.CreatedAt.UnixNano(),
+		0, // nonce
+	)
+	h := sha256.Sum256([]byte(content))
+	shortHash := hex.EncodeToString(h[:4]) // 4 bytes = 8 hex chars
+	newID := fmt.Sprintf("%s-%s", prefix, shortHash)
 
 	// Check if this ID was already used in this batch
-	// If so, we need to generate a new one with a different timestamp
+	// If so, we need to generate a new one with a different nonce
 	attempts := 0
 	for usedIDs[newID] && attempts < 100 {
-		// Slightly modify the creation time to get a different hash
-		modifiedIssue := *issue
-		modifiedIssue.CreatedAt = issue.CreatedAt.Add(time.Duration(attempts+1) * time.Nanosecond)
-		newID, err = sqlite.GenerateIssueID(ctx, conn, prefix, &modifiedIssue, actor)
-		if err != nil {
-			return "", err
-		}
 		attempts++
+		content = fmt.Sprintf("%s|%s|%s|%d|%d",
+			issue.Title,
+			issue.Description,
+			actor,
+			issue.CreatedAt.UnixNano(),
+			attempts,
+		)
+		h = sha256.Sum256([]byte(content))
+		shortHash = hex.EncodeToString(h[:4])
+		newID = fmt.Sprintf("%s-%s", prefix, shortHash)
 	}
 
 	if usedIDs[newID] {

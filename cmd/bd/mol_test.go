@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -6,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/formula"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -214,7 +216,7 @@ func TestMinPriority(t *testing.T) {
 func TestBondProtoProto(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -290,7 +292,7 @@ func TestBondProtoProto(t *testing.T) {
 func TestBondProtoMol(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -363,7 +365,7 @@ func TestBondProtoMol(t *testing.T) {
 func TestBondMolMol(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -463,7 +465,7 @@ func TestBondMolMol(t *testing.T) {
 func TestSquashMolecule(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -571,7 +573,7 @@ func TestSquashMolecule(t *testing.T) {
 func TestSquashMoleculeWithDelete(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -680,7 +682,7 @@ func TestGenerateDigest(t *testing.T) {
 func TestSquashMoleculeWithAgentSummary(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -751,7 +753,7 @@ func TestSquashMoleculeWithAgentSummary(t *testing.T) {
 func TestSpawnWithBasicAttach(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -884,7 +886,7 @@ func TestSpawnWithBasicAttach(t *testing.T) {
 func TestSpawnWithMultipleAttachments(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1002,7 +1004,7 @@ func TestSpawnWithMultipleAttachments(t *testing.T) {
 func TestSpawnAttachTypes(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1122,7 +1124,7 @@ func TestSpawnAttachNonProtoError(t *testing.T) {
 func TestSpawnVariableAggregation(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1290,7 +1292,7 @@ func TestSpawnAttachDryRunOutput(t *testing.T) {
 func TestWispFilteringFromExport(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1356,7 +1358,7 @@ func TestWispFilteringFromExport(t *testing.T) {
 func TestGetMoleculeProgress(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1457,7 +1459,7 @@ func TestGetMoleculeProgress(t *testing.T) {
 func TestFindParentMolecule(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1554,7 +1556,7 @@ func TestFindParentMolecule(t *testing.T) {
 func TestFindHookedMolecules(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1637,7 +1639,7 @@ func TestFindHookedMolecules(t *testing.T) {
 func TestAdvanceToNextStep(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1739,7 +1741,7 @@ func TestAdvanceToNextStep(t *testing.T) {
 func TestAdvanceToNextStepMoleculeComplete(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1797,7 +1799,7 @@ func TestAdvanceToNextStepMoleculeComplete(t *testing.T) {
 func TestAdvanceToNextStepOrphanIssue(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1987,7 +1989,7 @@ func TestGetRelativeID(t *testing.T) {
 func TestBondProtoMolWithRef(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -2077,7 +2079,7 @@ func TestBondProtoMolWithRef(t *testing.T) {
 func TestBondProtoMolMultipleArms(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -2454,7 +2456,7 @@ func TestCalculateBlockingDepths(t *testing.T) {
 func TestSpawnMoleculeEphemeralFlag(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -2530,7 +2532,7 @@ func TestSpawnMoleculeEphemeralFlag(t *testing.T) {
 func TestSpawnMoleculeFromFormulaEphemeral(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -2719,7 +2721,7 @@ func TestFormatBondType(t *testing.T) {
 func TestPourRootTitleDescSubstitution(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -2809,7 +2811,7 @@ func TestPourRootTitleDescSubstitution(t *testing.T) {
 func TestPourRootTitleOnly(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -2864,7 +2866,7 @@ func TestPourRootTitleOnly(t *testing.T) {
 func TestPourRootNoVars(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
+	s, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

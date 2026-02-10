@@ -11,7 +11,7 @@
 // - Client pre-validation against config.yaml would reject valid types
 //
 // Solution: In daemon mode, trust the daemon to validate. The daemon has
-// database access and validates via internal/storage/sqlite/validators.go.
+// database access and validates via internal/storage/dolt/validators.go.
 
 //go:build integration
 // +build integration

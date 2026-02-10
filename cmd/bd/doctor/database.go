@@ -292,8 +292,8 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 	}
 	defer db.Close()
 
-	// Run schema probe (defined in internal/storage/sqlite/schema_probe.go)
-	// This is a simplified version since we can't import the internal package directly
+	// Run schema probe against SQLite database
+	// This is a simplified version for legacy SQLite databases
 	// Check all critical tables and columns
 	criticalChecks := map[string][]string{
 		"issues":         {"id", "title", "content_hash", "external_ref", "compacted_at", "close_reason", "pinned", "sender", "ephemeral"},
@@ -718,7 +718,7 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 
 		// Only warn if majority of issues have wrong prefix
 		// BUT: recognize that <prefix>-mol and <prefix>-wisp are valid variants
-		// created by molecule/wisp workflows (see internal/storage/sqlite/queries.go:166-170)
+		// created by molecule/wisp workflows
 		if mostCommonPrefix != dbPrefix && maxCount > jsonlCount/2 {
 			// Check if the common prefix is a known workflow variant of the db prefix
 			isValidVariant := false

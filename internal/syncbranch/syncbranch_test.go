@@ -1,3 +1,5 @@
+//go:build cgo
+
 package syncbranch
 
 import (
@@ -7,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 func TestValidateBranchName(t *testing.T) {
@@ -80,9 +83,9 @@ func TestValidateSyncBranchName(t *testing.T) {
 	}
 }
 
-func newTestStore(t *testing.T) *sqlite.SQLiteStorage {
+func newTestStore(t *testing.T) storage.Storage {
 	t.Helper()
-	store, err := sqlite.New(context.Background(), "file::memory:?mode=memory&cache=private")
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
@@ -479,7 +482,7 @@ func TestGetConfigFromDB(t *testing.T) {
 		dbPath := tmpDir + "/beads.db"
 
 		// Create a valid SQLite database with the config table
-		store, err := sqlite.New(context.Background(), "file:"+dbPath)
+		store, err := dolt.New(context.Background(), &dolt.Config{Path: tmpDir})
 		if err != nil {
 			t.Fatalf("Failed to create test database: %v", err)
 		}
@@ -499,8 +502,7 @@ func TestGetConfigFromDB(t *testing.T) {
 
 		// Create a valid SQLite database with the config table
 		ctx := context.Background()
-		// Use the same connection string format as getConfigFromDB expects
-		store, err := sqlite.New(ctx, "file:"+dbPath+"?_journal_mode=DELETE")
+		store, err := dolt.New(ctx, &dolt.Config{Path: tmpDir})
 		if err != nil {
 			t.Fatalf("Failed to create test database: %v", err)
 		}

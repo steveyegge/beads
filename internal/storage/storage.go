@@ -28,11 +28,10 @@ var ErrAlreadyClaimed = errors.New("issue already claimed")
 //   - If the callback function panics, the transaction is rolled back
 //   - On successful return from the callback, the transaction is committed
 //
-// # SQLite Specifics
+// # Backend Specifics
 //
-//   - Uses BEGIN IMMEDIATE mode to acquire write lock early
-//   - This prevents deadlocks when multiple operations compete for the same lock
-//   - IMMEDIATE mode serializes concurrent transactions properly
+//   - Uses appropriate locking strategy for the backend
+//   - Transactions are serialized to prevent deadlocks
 //
 // # Example Usage
 //
@@ -186,7 +185,7 @@ type Storage interface {
 	//   - If fn returns nil, the transaction is committed
 	//   - If fn returns an error, the transaction is rolled back
 	//   - If fn panics, the transaction is rolled back and the panic is re-raised
-	//   - Uses BEGIN IMMEDIATE for SQLite to acquire write lock early
+	//   - Uses appropriate transaction isolation for the backend
 	//
 	// Example:
 	//   err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
@@ -218,12 +217,12 @@ type Storage interface {
 
 // Config holds database configuration
 type Config struct {
-	Backend string // "sqlite" or "postgres"
+	Backend string // "dolt"
 
-	// SQLite config
-	Path string // database file path
+	// Dolt config
+	Path string // database directory path
 
-	// PostgreSQL config
+	// Server mode config
 	Host     string
 	Port     int
 	Database string

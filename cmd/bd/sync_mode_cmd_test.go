@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -11,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // TestSyncModeListText tests `bd sync mode list` text output.
@@ -95,7 +97,7 @@ func TestSyncModeCurrentWithStore(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -258,7 +260,7 @@ func TestSyncModeSetValidModes(t *testing.T) {
 			}
 
 			dbPath := filepath.Join(beadsDir, "beads.db")
-			testStore, err := sqlite.New(ctx, dbPath)
+			testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 			if err != nil {
 				t.Fatalf("failed to create store: %v", err)
 			}
@@ -289,7 +291,7 @@ func TestSyncModeSetInvalidMode(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}

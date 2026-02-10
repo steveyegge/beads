@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -7,13 +9,14 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // setupValidateTestDB creates a temp .beads workspace with a configured database.
 // The caller must call store.Close() when done inserting test data.
-func setupValidateTestDB(t *testing.T, prefix string) (tmpDir string, store *sqlite.SQLiteStorage) {
+func setupValidateTestDB(t *testing.T, prefix string) (tmpDir string, store storage.Storage) {
 	t.Helper()
 	tmpDir = t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -25,7 +28,7 @@ func setupValidateTestDB(t *testing.T, prefix string) (tmpDir string, store *sql
 	ctx := context.Background()
 
 	var err error
-	store, err = sqlite.New(ctx, dbPath)
+	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

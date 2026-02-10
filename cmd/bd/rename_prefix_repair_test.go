@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -7,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -21,7 +23,7 @@ func TestRepairMultiplePrefixes(t *testing.T) {
 		t.Fatalf("failed to create .beads dir: %v", err)
 	}
 
-	testStore, err := sqlite.New(context.Background(), testDBPath)
+	testStore, err := dolt.New(context.Background(), &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
