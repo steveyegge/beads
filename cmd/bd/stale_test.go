@@ -71,13 +71,13 @@ func TestStaleIssues(t *testing.T) {
 	}
 
 	// Update timestamps directly in DB (CreateIssue sets updated_at to now)
-	// Use datetime() function to compute old timestamps
+	// Use DATE_SUB for MySQL/Dolt compatibility
 	db := s.UnderlyingDB()
-	_, err := db.ExecContext(ctx, "UPDATE issues SET updated_at = datetime('now', '-40 days') WHERE id IN (?, ?)", "test-stale-1", "test-stale-2")
+	_, err := db.ExecContext(ctx, "UPDATE issues SET updated_at = DATE_SUB(NOW(), INTERVAL 40 DAY) WHERE id IN (?, ?)", "test-stale-1", "test-stale-2")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.ExecContext(ctx, "UPDATE issues SET updated_at = datetime('now', '-10 days') WHERE id = ?", "test-recent")
+	_, err = db.ExecContext(ctx, "UPDATE issues SET updated_at = DATE_SUB(NOW(), INTERVAL 10 DAY) WHERE id = ?", "test-recent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,9 +163,9 @@ func TestStaleIssuesWithStatusFilter(t *testing.T) {
 		}
 	}
 
-	// Update timestamps directly in DB using datetime() function
+	// Update timestamps directly in DB using DATE_SUB for MySQL/Dolt compatibility
 	db := s.UnderlyingDB()
-	_, err := db.ExecContext(ctx, "UPDATE issues SET updated_at = datetime('now', '-40 days') WHERE id IN (?, ?, ?)",
+	_, err := db.ExecContext(ctx, "UPDATE issues SET updated_at = DATE_SUB(NOW(), INTERVAL 40 DAY) WHERE id IN (?, ?, ?)",
 		"test-open", "test-in-progress", "test-blocked")
 	if err != nil {
 		t.Fatal(err)
@@ -234,12 +234,12 @@ func TestStaleIssuesWithLimit(t *testing.T) {
 		}
 	}
 
-	// Update timestamps directly in DB using datetime() function
+	// Update timestamps directly in DB using DATE_SUB/DATE_ADD for MySQL/Dolt compatibility
 	db := s.UnderlyingDB()
 	for i := 1; i <= 5; i++ {
 		id := "test-stale-limit-" + strconv.Itoa(i)
 		// Make each slightly different (40 days ago + i hours)
-		_, err := db.ExecContext(ctx, "UPDATE issues SET updated_at = datetime('now', '-40 days', '+' || ? || ' hours') WHERE id = ?", i, id)
+		_, err := db.ExecContext(ctx, "UPDATE issues SET updated_at = DATE_ADD(DATE_SUB(NOW(), INTERVAL 40 DAY), INTERVAL ? HOUR) WHERE id = ?", i, id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -335,13 +335,13 @@ func TestStaleIssuesDifferentDaysThreshold(t *testing.T) {
 		}
 	}
 
-	// Update timestamps directly in DB using datetime() function
+	// Update timestamps directly in DB using DATE_SUB for MySQL/Dolt compatibility
 	db := s.UnderlyingDB()
-	_, err := db.ExecContext(ctx, "UPDATE issues SET updated_at = datetime('now', '-20 days') WHERE id = ?", "test-20-days")
+	_, err := db.ExecContext(ctx, "UPDATE issues SET updated_at = DATE_SUB(NOW(), INTERVAL 20 DAY) WHERE id = ?", "test-20-days")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.ExecContext(ctx, "UPDATE issues SET updated_at = datetime('now', '-50 days') WHERE id = ?", "test-50-days")
+	_, err = db.ExecContext(ctx, "UPDATE issues SET updated_at = DATE_SUB(NOW(), INTERVAL 50 DAY) WHERE id = ?", "test-50-days")
 	if err != nil {
 		t.Fatal(err)
 	}
