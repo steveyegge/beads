@@ -720,11 +720,6 @@ func runCompactApply(ctx context.Context, store storage.CompactableStorage) {
 		os.Exit(1)
 	}
 
-	if err := store.MarkIssueDirty(ctx, compactID); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to mark dirty: %v\n", err)
-		os.Exit(1)
-	}
-
 	elapsed := time.Since(start)
 
 	// Prune expired tombstones from issues.jsonl

@@ -108,9 +108,6 @@ func importFromJSONLInline(ctx context.Context, jsonlPath string, renameOnImport
 		if err := store.SetMetadata(ctx, "jsonl_content_hash", currentHash); err != nil {
 			debug.Logf("Warning: failed to update jsonl_content_hash: %v", err)
 		}
-		if err := store.SetJSONLFileHash(ctx, currentHash); err != nil {
-			debug.Logf("Warning: failed to update jsonl_file_hash: %v", err)
-		}
 		importTime := time.Now().Format(time.RFC3339Nano)
 		if err := store.SetMetadata(ctx, "last_import_time", importTime); err != nil {
 			debug.Logf("Warning: failed to update last_import_time: %v", err)

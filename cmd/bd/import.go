@@ -441,13 +441,6 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 					// is unavailable. This ensures import operations always succeed even if metadata storage fails.
 					debug.Logf("Warning: failed to update jsonl_content_hash: %v", err)
 				}
-				// Also update jsonl_file_hash to prevent integrity check warnings
-				// validateJSONLIntegrity() compares this hash against actual JSONL content.
-				// Without this, sync that imports but skips re-export leaves jsonl_file_hash stale,
-				// causing spurious "hash mismatch" warnings on subsequent operations.
-				if err := store.SetJSONLFileHash(ctx, currentHash); err != nil {
-					debug.Logf("Warning: failed to update jsonl_file_hash: %v", err)
-				}
 				// Use RFC3339Nano for nanosecond precision to avoid race with file mtime (fixes #399)
 				importTime := time.Now().Format(time.RFC3339Nano)
 				if err := store.SetMetadata(ctx, "last_import_time", importTime); err != nil {

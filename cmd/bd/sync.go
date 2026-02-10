@@ -770,17 +770,6 @@ func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) err
 	if shouldExportJSONL {
 		fmt.Println("Exporting beads to JSONL...")
 
-		// Get count of dirty (changed) issues for incremental tracking
-		var changedCount int
-		if !force {
-			dirtyIDs, err := store.GetDirtyIssues(ctx)
-			if err != nil {
-				debug.Logf("warning: failed to get dirty issues: %v", err)
-			} else {
-				changedCount = len(dirtyIDs)
-			}
-		}
-
 		// Export to JSONL (uses incremental export for large repos)
 		result, err := exportToJSONLIncrementalDeferred(ctx, jsonlPath)
 		if err != nil {
@@ -796,11 +785,7 @@ func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) err
 			totalCount = len(result.ExportedIDs)
 		}
 
-		if changedCount > 0 && !force {
-			fmt.Printf("✓ Exported %d issues (%d changed since last sync)\n", totalCount, changedCount)
-		} else {
-			fmt.Printf("✓ Exported %d issues\n", totalCount)
-		}
+		fmt.Printf("✓ Exported %d issues\n", totalCount)
 		fmt.Printf("✓ %s updated\n", jsonlPath)
 	}
 

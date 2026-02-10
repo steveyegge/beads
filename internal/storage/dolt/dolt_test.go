@@ -714,60 +714,6 @@ func TestDoltStoreDeleteIssue(t *testing.T) {
 	}
 }
 
-func TestDoltStoreDirtyTracking(t *testing.T) {
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	ctx, cancel := testContext(t)
-	defer cancel()
-
-	// Create an issue (marks it dirty)
-	issue := &types.Issue{
-		ID:          "test-dirty-issue",
-		Title:       "Dirty Issue",
-		Description: "Will be dirty",
-		Status:      types.StatusOpen,
-		Priority:    2,
-		IssueType:   types.TypeTask,
-	}
-
-	if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
-		t.Fatalf("failed to create issue: %v", err)
-	}
-
-	// Get dirty issues
-	dirtyIDs, err := store.GetDirtyIssues(ctx)
-	if err != nil {
-		t.Fatalf("failed to get dirty issues: %v", err)
-	}
-	found := false
-	for _, id := range dirtyIDs {
-		if id == issue.ID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected issue to be in dirty list")
-	}
-
-	// Clear dirty issues
-	if err := store.ClearDirtyIssuesByID(ctx, []string{issue.ID}); err != nil {
-		t.Fatalf("failed to clear dirty issues: %v", err)
-	}
-
-	// Verify it's cleared
-	dirtyIDs, err = store.GetDirtyIssues(ctx)
-	if err != nil {
-		t.Fatalf("failed to get dirty issues after clear: %v", err)
-	}
-	for _, id := range dirtyIDs {
-		if id == issue.ID {
-			t.Error("expected issue to be cleared from dirty list")
-		}
-	}
-}
-
 func TestDoltStoreStatistics(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()

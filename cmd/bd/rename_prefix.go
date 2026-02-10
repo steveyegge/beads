@@ -199,7 +199,6 @@ NOTE: This is a rare operation. Most users never need this command.`,
 			// Clear metadata hashes so integrity check doesn't fail
 			_ = store.SetMetadata(ctx, "jsonl_content_hash", "")
 			_ = store.SetMetadata(ctx, "export_hashes", "")
-			_ = store.SetJSONLFileHash(ctx, "")
 
 			// Export renamed issues directly to JSONL
 			if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
@@ -415,7 +414,6 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 		// Clear metadata hashes so integrity check doesn't fail
 		_ = st.SetMetadata(ctx, "jsonl_content_hash", "")
 		_ = st.SetMetadata(ctx, "export_hashes", "")
-		_ = st.SetJSONLFileHash(ctx, "")
 
 		// Export renamed issues directly to JSONL
 		if err := exportToJSONLWithStore(ctx, st, jsonlPath); err != nil {
