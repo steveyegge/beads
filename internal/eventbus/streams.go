@@ -30,11 +30,23 @@ const (
 
 	// SubjectAgentPrefix is the subject prefix for agent lifecycle events.
 	SubjectAgentPrefix = "agents."
+
+	// StreamMailEvents is the JetStream stream for mail events (bd-h59f).
+	StreamMailEvents = "MAIL_EVENTS"
+
+	// SubjectMailPrefix is the subject prefix for mail events.
+	SubjectMailPrefix = "mail."
+
+	// StreamMutationEvents is the JetStream stream for bead mutation events (bd-laz4).
+	StreamMutationEvents = "MUTATION_EVENTS"
+
+	// SubjectMutationPrefix is the subject prefix for mutation events.
+	SubjectMutationPrefix = "mutations."
 )
 
 // SubjectForEvent returns the NATS subject for a given event type.
 // Hook events use "hooks.<type>"; decision events use "decisions.<type>";
-// OJ events use "oj.<type>".
+// OJ events use "oj.<type>"; mutation events use "mutations.<type>".
 func SubjectForEvent(eventType EventType) string {
 	if eventType.IsDecisionEvent() {
 		return SubjectDecisionPrefix + string(eventType)
@@ -44,6 +56,12 @@ func SubjectForEvent(eventType EventType) string {
 	}
 	if eventType.IsAgentEvent() {
 		return SubjectAgentPrefix + string(eventType)
+	}
+	if eventType.IsMailEvent() {
+		return SubjectMailPrefix + string(eventType)
+	}
+	if eventType.IsMutationEvent() {
+		return SubjectMutationPrefix + string(eventType)
 	}
 	return SubjectHookPrefix + string(eventType)
 }
@@ -105,6 +123,34 @@ func EnsureStreams(js nats.JetStreamContext) error {
 		})
 		if err != nil {
 			return fmt.Errorf("create %s stream: %w", StreamAgentEvents, err)
+		}
+	}
+
+	// Mail events stream (bd-h59f).
+	if _, err := js.StreamInfo(StreamMailEvents); err != nil {
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     StreamMailEvents,
+			Subjects: []string{SubjectMailPrefix + ">"},
+			Storage:  nats.FileStorage,
+			MaxMsgs:  10000,
+			MaxBytes: 100 << 20,
+		})
+		if err != nil {
+			return fmt.Errorf("create %s stream: %w", StreamMailEvents, err)
+		}
+	}
+
+	// Mutation events stream (bd-laz4).
+	if _, err := js.StreamInfo(StreamMutationEvents); err != nil {
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     StreamMutationEvents,
+			Subjects: []string{SubjectMutationPrefix + ">"},
+			Storage:  nats.FileStorage,
+			MaxMsgs:  10000,
+			MaxBytes: 100 << 20,
+		})
+		if err != nil {
+			return fmt.Errorf("create %s stream: %w", StreamMutationEvents, err)
 		}
 	}
 

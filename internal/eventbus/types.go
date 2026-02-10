@@ -51,6 +51,17 @@ const (
 	EventAgentCrashed   EventType = "AgentCrashed"
 	EventAgentIdle      EventType = "AgentIdle"
 	EventAgentHeartbeat EventType = "AgentHeartbeat"
+
+	// Mail events (bd-h59f).
+	EventMailSent EventType = "MailSent"
+	EventMailRead EventType = "MailRead"
+
+	// Bead mutation events (bd-laz4).
+	EventMutationCreate  EventType = "MutationCreate"
+	EventMutationUpdate  EventType = "MutationUpdate"
+	EventMutationDelete  EventType = "MutationDelete"
+	EventMutationComment EventType = "MutationComment"
+	EventMutationStatus  EventType = "MutationStatus"
 )
 
 // Event represents a single hook event flowing through the bus.
@@ -114,6 +125,28 @@ func (t EventType) IsAgentEvent() bool {
 	return false
 }
 
+// IsMailEvent returns true if the event type belongs to the mail
+// event category (bd-h59f).
+func (t EventType) IsMailEvent() bool {
+	switch t {
+	case EventMailSent, EventMailRead:
+		return true
+	}
+	return false
+}
+
+// IsMutationEvent returns true if the event type belongs to the bead
+// mutation event category (bd-laz4).
+func (t EventType) IsMutationEvent() bool {
+	switch t {
+	case EventMutationCreate, EventMutationUpdate,
+		EventMutationDelete, EventMutationComment,
+		EventMutationStatus:
+		return true
+	}
+	return false
+}
+
 // OjJobEventPayload carries data for OJ job lifecycle events.
 // Used by OjJobCreated, OjJobCompleted, OjJobFailed.
 type OjJobEventPayload struct {
@@ -160,6 +193,33 @@ type AgentEventPayload struct {
 	SessionID string `json:"session_id,omitempty"`
 	Reason    string `json:"reason,omitempty"`     // for stopped/crashed
 	Uptime    int64  `json:"uptime_sec,omitempty"` // for heartbeat
+}
+
+// MailEventPayload carries data for mail events (bd-h59f).
+// Used by MailSent and MailRead events.
+type MailEventPayload struct {
+	MessageID string `json:"message_id,omitempty"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Subject   string `json:"subject"`
+	SentAt    string `json:"sent_at,omitempty"`
+}
+
+// MutationEventPayload carries data for bead mutation events (bd-laz4).
+// Mirrors the rpc.MutationEvent struct for JetStream publishing.
+type MutationEventPayload struct {
+	Type      string   `json:"type"`                 // create, update, delete, comment, status, etc.
+	IssueID   string   `json:"issue_id"`
+	Title     string   `json:"title,omitempty"`
+	Assignee  string   `json:"assignee,omitempty"`
+	Actor     string   `json:"actor,omitempty"`
+	Timestamp string   `json:"timestamp"`
+	OldStatus string   `json:"old_status,omitempty"`
+	NewStatus string   `json:"new_status,omitempty"`
+	ParentID  string   `json:"parent_id,omitempty"`
+	IssueType string   `json:"issue_type,omitempty"`
+	Labels    []string `json:"labels,omitempty"`
+	AwaitType string   `json:"await_type,omitempty"`
 }
 
 // DecisionEventPayload carries data for decision events in Event.Raw.

@@ -350,6 +350,48 @@ func (s *Server) emitRichMutation(event MutationEvent) {
 		}
 	}
 	s.subscribersMu.RUnlock()
+
+	// Publish to JetStream MUTATION_EVENTS stream (bd-laz4).
+	if s.bus != nil && s.bus.JetStreamEnabled() {
+		evtType := mutationTypeToEventType(event.Type)
+		subject := eventbus.SubjectForEvent(evtType)
+		payload := eventbus.MutationEventPayload{
+			Type:      event.Type,
+			IssueID:   event.IssueID,
+			Title:     event.Title,
+			Assignee:  event.Assignee,
+			Actor:     event.Actor,
+			Timestamp: event.Timestamp.UTC().Format(time.RFC3339Nano),
+			OldStatus: event.OldStatus,
+			NewStatus: event.NewStatus,
+			ParentID:  event.ParentID,
+			IssueType: event.IssueType,
+			Labels:    event.Labels,
+			AwaitType: event.AwaitType,
+		}
+		if data, err := json.Marshal(payload); err == nil {
+			s.bus.PublishRaw(subject, data)
+		}
+	}
+}
+
+// mutationTypeToEventType maps RPC mutation type strings to eventbus EventTypes.
+func mutationTypeToEventType(mutType string) eventbus.EventType {
+	switch mutType {
+	case MutationCreate:
+		return eventbus.EventMutationCreate
+	case MutationUpdate:
+		return eventbus.EventMutationUpdate
+	case MutationDelete:
+		return eventbus.EventMutationDelete
+	case MutationComment:
+		return eventbus.EventMutationComment
+	case MutationStatus:
+		return eventbus.EventMutationStatus
+	default:
+		// For extended types (bonded, squashed, burned), use MutationUpdate as fallback.
+		return eventbus.EventMutationUpdate
+	}
 }
 
 // MutationChan returns the mutation event channel for the daemon to consume

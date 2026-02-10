@@ -133,6 +133,27 @@ func (b *Bus) publishToJetStream(js nats.JetStreamContext, event *Event) {
 	}
 }
 
+// PublishRaw publishes arbitrary JSON data to a JetStream subject.
+// Used by non-hook event producers (e.g., mutation events) that don't flow
+// through the Dispatch handler chain. Returns silently if JetStream is not enabled.
+func (b *Bus) PublishRaw(subject string, data []byte) {
+	b.mu.RLock()
+	js := b.js
+	b.mu.RUnlock()
+
+	if js == nil {
+		return
+	}
+
+	ack, err := js.Publish(subject, data)
+	if err != nil {
+		log.Printf("eventbus: JetStream publish to %s failed: %v", subject, err)
+	} else {
+		log.Printf("eventbus: JetStream published to %s (stream=%s seq=%d, %d bytes)",
+			subject, ack.Stream, ack.Sequence, len(data))
+	}
+}
+
 // Handlers returns all registered handlers (for introspection/status reporting).
 func (b *Bus) Handlers() []Handler {
 	b.mu.RLock()
