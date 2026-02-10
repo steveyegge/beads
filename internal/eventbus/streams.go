@@ -42,6 +42,12 @@ const (
 
 	// SubjectMutationPrefix is the subject prefix for mutation events.
 	SubjectMutationPrefix = "mutations."
+
+	// StreamConfigEvents is the JetStream stream for config/formula change events (bd-hkgu).
+	StreamConfigEvents = "CONFIG_EVENTS"
+
+	// SubjectConfigPrefix is the subject prefix for config/formula events.
+	SubjectConfigPrefix = "config."
 )
 
 // SubjectForEvent returns the NATS subject for a given event type.
@@ -62,6 +68,9 @@ func SubjectForEvent(eventType EventType) string {
 	}
 	if eventType.IsMutationEvent() {
 		return SubjectMutationPrefix + string(eventType)
+	}
+	if eventType.IsConfigEvent() {
+		return SubjectConfigPrefix + string(eventType)
 	}
 	return SubjectHookPrefix + string(eventType)
 }
@@ -151,6 +160,20 @@ func EnsureStreams(js nats.JetStreamContext) error {
 		})
 		if err != nil {
 			return fmt.Errorf("create %s stream: %w", StreamMutationEvents, err)
+		}
+	}
+
+	// Config/formula events stream (bd-hkgu).
+	if _, err := js.StreamInfo(StreamConfigEvents); err != nil {
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     StreamConfigEvents,
+			Subjects: []string{SubjectConfigPrefix + ">"},
+			Storage:  nats.FileStorage,
+			MaxMsgs:  10000,
+			MaxBytes: 100 << 20,
+		})
+		if err != nil {
+			return fmt.Errorf("create %s stream: %w", StreamConfigEvents, err)
 		}
 	}
 

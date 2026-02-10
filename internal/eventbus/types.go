@@ -62,6 +62,12 @@ const (
 	EventMutationDelete  EventType = "MutationDelete"
 	EventMutationComment EventType = "MutationComment"
 	EventMutationStatus  EventType = "MutationStatus"
+
+	// Config/formula change events (bd-hkgu).
+	EventConfigSet     EventType = "ConfigSet"
+	EventConfigUnset   EventType = "ConfigUnset"
+	EventFormulaSaved  EventType = "FormulaSaved"
+	EventFormulaDeleted EventType = "FormulaDeleted"
 )
 
 // Event represents a single hook event flowing through the bus.
@@ -147,6 +153,17 @@ func (t EventType) IsMutationEvent() bool {
 	return false
 }
 
+// IsConfigEvent returns true if the event type belongs to the config/formula
+// change event category (bd-hkgu).
+func (t EventType) IsConfigEvent() bool {
+	switch t {
+	case EventConfigSet, EventConfigUnset,
+		EventFormulaSaved, EventFormulaDeleted:
+		return true
+	}
+	return false
+}
+
 // OjJobEventPayload carries data for OJ job lifecycle events.
 // Used by OjJobCreated, OjJobCompleted, OjJobFailed.
 type OjJobEventPayload struct {
@@ -220,6 +237,16 @@ type MutationEventPayload struct {
 	IssueType string   `json:"issue_type,omitempty"`
 	Labels    []string `json:"labels,omitempty"`
 	AwaitType string   `json:"await_type,omitempty"`
+}
+
+// ConfigEventPayload carries data for config/formula change events (bd-hkgu).
+type ConfigEventPayload struct {
+	Key      string `json:"key,omitempty"`       // Config key (for ConfigSet/ConfigUnset)
+	Value    string `json:"value,omitempty"`     // Config value (for ConfigSet)
+	Name     string `json:"name,omitempty"`      // Formula name (for FormulaSaved/FormulaDeleted)
+	IssueID  string `json:"issue_id,omitempty"`  // Formula bead ID
+	Created  bool   `json:"created,omitempty"`   // True if formula was newly created vs updated
+	Actor    string `json:"actor,omitempty"`
 }
 
 // DecisionEventPayload carries data for decision events in Event.Raw.

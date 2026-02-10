@@ -772,6 +772,19 @@ func (s *Server) handleCreate(req *Request) Response {
 		})
 	}
 
+	// Emit mail event when a message issue is created (bd-h59f).
+	// This publishes to NATS MAIL_EVENTS stream so subscribers (coop, controller)
+	// can deliver mail instantly without polling.
+	if issue.IssueType == types.IssueType("message") {
+		s.emitMailEvent(eventbus.EventMailSent, eventbus.MailEventPayload{
+			MessageID: issue.ID,
+			From:      issue.Sender,
+			To:        issue.Assignee,
+			Subject:   issue.Title,
+			SentAt:    issue.CreatedAt.Format(time.RFC3339),
+		})
+	}
+
 	// Update label cache for the new issue
 	if s.labelCache != nil && len(createArgs.Labels) > 0 {
 		s.labelCache.SetLabels(issue.ID, issue.Labels)
@@ -3101,6 +3114,12 @@ func (s *Server) handleConfigSet(req *Request) Response {
 		}
 	}
 
+	s.emitConfigEvent(eventbus.EventConfigSet, eventbus.ConfigEventPayload{
+		Key:   args.Key,
+		Value: args.Value,
+		Actor: s.reqActor(req),
+	})
+
 	result := ConfigSetResponse{
 		Key:   args.Key,
 		Value: args.Value,
@@ -3174,6 +3193,11 @@ func (s *Server) handleConfigUnset(req *Request) Response {
 			Error:   fmt.Sprintf("failed to unset config %q: %v", args.Key, err),
 		}
 	}
+
+	s.emitConfigEvent(eventbus.EventConfigUnset, eventbus.ConfigEventPayload{
+		Key:   args.Key,
+		Actor: s.reqActor(req),
+	})
 
 	result := ConfigUnsetResponse{
 		Key: args.Key,

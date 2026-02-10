@@ -19,16 +19,24 @@ import (
 
 var busSubscribeCmd = &cobra.Command{
 	Use:   "subscribe",
-	Short: "Subscribe to JetStream hook events (debug tool)",
-	Long: `Subscribe to the HOOK_EVENTS JetStream stream and print events as they arrive.
+	Short: "Subscribe to JetStream events (debug tool)",
+	Long: `Subscribe to JetStream streams and print events as they arrive.
 
 This is a debugging/development tool for verifying that events flow through
 JetStream correctly. Coop and other consumers use NATS directly, but this
 command is useful for quick verification.
 
+By default subscribes to hook events only. Use --stream to subscribe to other
+streams, or --all to subscribe to all streams.
+
+Streams: hooks, decisions, oj, agents, mail, mutations, config
+
 Examples:
-  bd bus subscribe                                          # All events (local daemon)
-  bd bus subscribe --filter=Stop                            # Only Stop events
+  bd bus subscribe                                          # Hook events (default)
+  bd bus subscribe --stream=mail                            # Mail events only
+  bd bus subscribe --stream=decisions                       # Decision events only
+  bd bus subscribe --all                                    # All streams
+  bd bus subscribe --filter=MailSent                        # Specific event type
   bd bus subscribe --nats-url=nats://remote:4222            # Remote NATS server
   bd bus subscribe --nats-url=wss://host.example.com/nats   # Via WebSocket
   bd bus subscribe --json                                   # Machine-readable output`,
@@ -106,13 +114,52 @@ func runBusSubscribe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine subject filter.
-	subject := eventbus.SubjectHookPrefix + ">"
-	if filter != "" {
-		subject = eventbus.SubjectForEvent(eventbus.EventType(filter))
+	streamFlag, _ := cmd.Flags().GetString("stream")
+	allFlag, _ := cmd.Flags().GetBool("all")
+
+	var subjects []string
+	switch {
+	case filter != "":
+		// Specific event type → auto-detect stream from event type
+		subjects = []string{eventbus.SubjectForEvent(eventbus.EventType(filter))}
+	case allFlag:
+		// Subscribe to all streams
+		subjects = []string{
+			eventbus.SubjectHookPrefix + ">",
+			eventbus.SubjectDecisionPrefix + ">",
+			eventbus.SubjectOjPrefix + ">",
+			eventbus.SubjectAgentPrefix + ">",
+			eventbus.SubjectMailPrefix + ">",
+			eventbus.SubjectMutationPrefix + ">",
+			eventbus.SubjectConfigPrefix + ">",
+		}
+	case streamFlag != "":
+		// Specific stream by name
+		switch strings.ToLower(streamFlag) {
+		case "hooks", "hook":
+			subjects = []string{eventbus.SubjectHookPrefix + ">"}
+		case "decisions", "decision":
+			subjects = []string{eventbus.SubjectDecisionPrefix + ">"}
+		case "oj", "oddjobs":
+			subjects = []string{eventbus.SubjectOjPrefix + ">"}
+		case "agents", "agent":
+			subjects = []string{eventbus.SubjectAgentPrefix + ">"}
+		case "mail":
+			subjects = []string{eventbus.SubjectMailPrefix + ">"}
+		case "mutations", "mutation":
+			subjects = []string{eventbus.SubjectMutationPrefix + ">"}
+		case "config", "formula":
+			subjects = []string{eventbus.SubjectConfigPrefix + ">"}
+		default:
+			return fmt.Errorf("unknown stream %q (valid: hooks, decisions, oj, agents, mail, mutations, config)", streamFlag)
+		}
+	default:
+		// Default: hook events only (backwards compatible)
+		subjects = []string{eventbus.SubjectHookPrefix + ">"}
 	}
 
-	// Subscribe with ephemeral consumer (no durable name = auto-cleanup).
-	sub, err := js.Subscribe(subject, func(msg *nats.Msg) {
+	// Message handler shared across subscriptions.
+	handler := func(msg *nats.Msg) {
 		meta, _ := msg.Metadata()
 		if jsonOutput {
 			entry := map[string]interface{}{
@@ -133,14 +180,22 @@ func runBusSubscribe(cmd *cobra.Command, args []string) error {
 				ts = meta.Timestamp.UTC().Format("15:04:05.000")
 			}
 			fmt.Printf("[%s] seq=%d %s ", ts, seq, msg.Subject)
-			// Try to extract a brief summary.
+			// Try to extract a brief summary from the payload.
 			var event struct {
 				SessionID string `json:"session_id"`
 				ToolName  string `json:"tool_name,omitempty"`
+				From      string `json:"from,omitempty"`
+				To        string `json:"to,omitempty"`
 			}
 			if json.Unmarshal(msg.Data, &event) == nil {
 				if event.ToolName != "" {
 					fmt.Printf("tool=%s ", event.ToolName)
+				}
+				if event.From != "" {
+					fmt.Printf("from=%s ", event.From)
+				}
+				if event.To != "" {
+					fmt.Printf("to=%s ", event.To)
 				}
 				if event.SessionID != "" {
 					sid := event.SessionID
@@ -152,14 +207,31 @@ func runBusSubscribe(cmd *cobra.Command, args []string) error {
 			}
 			fmt.Println()
 		}
-		msg.Ack()
-	}, nats.DeliverNew(), nats.AckExplicit())
-	if err != nil {
-		return fmt.Errorf("subscribe to %s: %w", subject, err)
+		_ = msg.Ack()
 	}
-	defer sub.Unsubscribe()
 
-	fmt.Fprintf(os.Stderr, "Subscribed to %s on %s (Ctrl-C to stop)\n", subject, natsURL)
+	// Subscribe to each subject with ephemeral consumer (no durable name = auto-cleanup).
+	var subs []*nats.Subscription
+	for _, subject := range subjects {
+		sub, err := js.Subscribe(subject, handler, nats.DeliverNew(), nats.AckExplicit())
+		if err != nil {
+			// Clean up already-created subscriptions
+			for _, s := range subs {
+				_ = s.Unsubscribe()
+			}
+			return fmt.Errorf("subscribe to %s: %w", subject, err)
+		}
+		subs = append(subs, sub)
+	}
+	defer func() {
+		for _, s := range subs {
+			_ = s.Unsubscribe()
+		}
+	}()
+
+	for _, subject := range subjects {
+		fmt.Fprintf(os.Stderr, "Subscribed to %s on %s (Ctrl-C to stop)\n", subject, natsURL)
+	}
 
 	// Wait for interrupt.
 	sigCh := make(chan os.Signal, 1)
@@ -171,7 +243,9 @@ func runBusSubscribe(cmd *cobra.Command, args []string) error {
 }
 
 func init() {
-	busSubscribeCmd.Flags().String("filter", "", "Filter by event type (e.g., Stop, PreToolUse, SessionStart)")
+	busSubscribeCmd.Flags().String("filter", "", "Filter by event type (e.g., Stop, MailSent, DecisionCreated)")
+	busSubscribeCmd.Flags().String("stream", "", "Stream to subscribe to (hooks, decisions, oj, agents, mail, mutations, config)")
+	busSubscribeCmd.Flags().Bool("all", false, "Subscribe to all streams")
 	busSubscribeCmd.Flags().String("nats-url", "", "NATS server URL (nats://, wss://) — overrides daemon auto-discovery")
 	busSubscribeCmd.Flags().String("nats-token", "", "NATS auth token (default: BD_DAEMON_TOKEN env)")
 	busCmd.AddCommand(busSubscribeCmd)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -244,6 +245,13 @@ func (s *Server) handleFormulaSave(req *Request) Response {
 		s.emitMutationFor(MutationUpdate, issue)
 	}
 
+	s.emitConfigEvent(eventbus.EventFormulaSaved, eventbus.ConfigEventPayload{
+		Name:    f.Formula,
+		IssueID: issue.ID,
+		Created: created,
+		Actor:   actor,
+	})
+
 	result := FormulaSaveResult{
 		ID:      issue.ID,
 		Name:    f.Formula,
@@ -325,6 +333,12 @@ func (s *Server) handleFormulaDelete(req *Request) Response {
 	}
 
 	s.emitMutationFor(MutationDelete, issue)
+
+	s.emitConfigEvent(eventbus.EventFormulaDeleted, eventbus.ConfigEventPayload{
+		Name:    issue.Title,
+		IssueID: issue.ID,
+		Actor:   actor,
+	})
 
 	result := FormulaDeleteResult{
 		ID:   issue.ID,

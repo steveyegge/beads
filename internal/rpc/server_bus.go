@@ -356,6 +356,36 @@ func (s *Server) emitMailEvent(eventType eventbus.EventType, payload eventbus.Ma
 	}
 }
 
+// emitConfigEvent dispatches a config/formula change event to the event bus
+// (and NATS JetStream). No-op if the bus is nil. (bd-hkgu)
+func (s *Server) emitConfigEvent(eventType eventbus.EventType, payload eventbus.ConfigEventPayload) {
+	s.mu.RLock()
+	bus := s.bus
+	s.mu.RUnlock()
+
+	if bus == nil {
+		return
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "emitConfigEvent: marshal failed: %v\n", err)
+		return
+	}
+
+	event := &eventbus.Event{
+		Type: eventType,
+		Raw:  raw,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), s.requestTimeout)
+	defer cancel()
+
+	if _, err := bus.Dispatch(ctx, event); err != nil {
+		fmt.Fprintf(os.Stderr, "emitConfigEvent: dispatch %s failed: %v\n", eventType, err)
+	}
+}
+
 // emitAdviceEvent dispatches an advice bus event if the bus is configured. (bd-z4cu.2)
 // No-op if bus is nil — CRUD operations still succeed without a bus.
 func (s *Server) emitAdviceEvent(eventType eventbus.EventType, payload AdviceEventPayload) {
