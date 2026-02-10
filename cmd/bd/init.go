@@ -708,6 +708,15 @@ variable.`,
 			addLandingThePlaneInstructions(!quiet)
 		}
 
+		// Commit .beads/ directory if in a git repo
+		// This ensures the initialization changes are tracked in version control
+		if isGitRepo() {
+			if err := commitBeadsDirectory(cwd, !quiet); err != nil && !quiet {
+				fmt.Fprintf(os.Stderr, "Warning: failed to auto-commit .beads/ directory: %v\n", err)
+				// Non-fatal - initialization succeeded, just warn about commit
+			}
+		}
+
 		// Skip output if quiet mode
 		if quiet {
 			return
@@ -1118,4 +1127,57 @@ func promptContributorMode() (isContributor bool, err error) {
 	}
 
 	return isContributor, nil
+}
+
+// commitBeadsDirectory commits the .beads/ directory to git after successful initialization.
+// This ensures all initialization changes (.gitignore, metadata.json, config.yaml, README.md)
+// are tracked in version control.
+func commitBeadsDirectory(cwd string, verbose bool) error {
+	// Check if there are any commits yet
+	// For new repos without commits, we skip the commit (user can manually add/commit if needed)
+	checkHeadCmd := exec.Command("git", "rev-parse", "HEAD")
+	checkHeadCmd.Dir = cwd
+	if err := checkHeadCmd.Run(); err != nil {
+		// No commits yet - this is a fresh repo
+		// Just stage changes so they're ready for the initial commit
+		cmd := exec.Command("git", "add", ".beads/")
+		cmd.Dir = cwd
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to stage .beads directory: %w (output: %s)", err, string(output))
+		}
+		if verbose {
+			fmt.Printf("  Staged: .beads/ directory (ready for initial commit)\n")
+		}
+		return nil
+	}
+
+	// Stage the .beads/ directory
+	cmd := exec.Command("git", "add", ".beads/")
+	cmd.Dir = cwd
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to stage .beads directory: %w (output: %s)", err, string(output))
+	}
+
+	// Check if there are any changes to commit (git add might stage nothing if already committed)
+	diffCmd := exec.Command("git", "diff", "--cached", "--exit-code")
+	diffCmd.Dir = cwd
+	diffErr := diffCmd.Run()
+
+	// diffErr is nil if no diff (nothing to commit), non-nil if there are changes
+	if diffErr != nil {
+		// There are changes to commit
+		message := "Initialize bd: create .beads directory and configuration"
+		commitCmd := exec.Command("git", "commit", "-m", message)
+		commitCmd.Dir = cwd
+		if output, err := commitCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to commit .beads directory: %w (output: %s)", err, string(output))
+		}
+		if verbose {
+			fmt.Printf("  Committed: %s\n", message)
+		}
+	} else if verbose {
+		fmt.Printf("  No new changes to commit (already tracked)\n")
+	}
+
+	return nil
 }
