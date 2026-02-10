@@ -44,7 +44,7 @@ dolt:
       enabled: true
       image:
         repository: 909418727440.dkr.ecr.us-east-1.amazonaws.com/external/dolthub/doltclusterctl
-        tag: "v0.7.0"
+        tag: "latest"
       schedule: "*/1 * * * *"
       resources:
         requests:

@@ -188,7 +188,7 @@ dolt:
       enabled: true          # Deploy CronJob to apply primary/standby labels
       image:
         repository: dolthub/doltclusterctl
-        tag: "v0.7.0"
+        tag: "latest"
         pullPolicy: IfNotPresent
       schedule: "*/1 * * * *"  # Every minute
       resources:

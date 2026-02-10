@@ -4,18 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       source_image:
-        description: 'Source image (e.g. dolthub/doltclusterctl:v0.7.0)'
-        required: true
+        description: 'Source image to mirror (e.g. dolthub/dolt-sql-server:1.81.6)'
+        required: false
         type: string
       ecr_repo:
-        description: 'ECR repository name (e.g. external/dolthub/doltclusterctl)'
-        required: true
+        description: 'ECR repository name (e.g. external/dolthub/dolt-sql-server)'
+        required: false
         type: string
       tag:
-        description: 'Tag to apply (e.g. v0.7.0)'
-        required: true
+        description: 'Tag to apply (e.g. 1.81.6)'
+        required: false
         type: string
-  # Also run on push to keep images in sync
   push:
     branches: [main]
     paths:
@@ -24,16 +23,35 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REGISTRY: 909418727440.dkr.ecr.us-east-1.amazonaws.com
+  # No tags exist — pin to commit
+  DOLTCLUSTERCTL_REF: 61a6cb65abaeafe9b414edf6efa6fe7dc91c7423
+  DOLTCLUSTERCTL_TAG: latest
 
 jobs:
-  mirror-doltclusterctl:
-    # Run on push to main (keeps image up to date) or manual dispatch
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && contains(inputs.source_image, 'doltclusterctl'))
+  build-doltclusterctl:
+    # Build from source — no published Docker image exists
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.source_image == '')
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
     steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Clone doltclusterctl
+        run: |
+          git clone https://github.com/dolthub/doltclusterctl.git
+          cd doltclusterctl
+          git checkout ${{ env.DOLTCLUSTERCTL_REF }}
+
+      - name: Build binary
+        working-directory: doltclusterctl
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o doltclusterctl .
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -43,21 +61,19 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Mirror doltclusterctl
+      - name: Build and push Docker image
+        working-directory: doltclusterctl
         run: |
-          SOURCE="${{ inputs.source_image || 'dolthub/doltclusterctl:v0.7.0' }}"
-          ECR_REPO="${{ inputs.ecr_repo || 'external/dolthub/doltclusterctl' }}"
-          TAG="${{ inputs.tag || 'v0.7.0' }}"
-
-          echo "Mirroring $SOURCE -> ${{ env.ECR_REGISTRY }}/$ECR_REPO:$TAG"
-          docker pull "$SOURCE"
-          docker tag "$SOURCE" "${{ env.ECR_REGISTRY }}/$ECR_REPO:$TAG"
-          docker push "${{ env.ECR_REGISTRY }}/$ECR_REPO:$TAG"
-          echo "Done: ${{ env.ECR_REGISTRY }}/$ECR_REPO:$TAG"
+          printf 'FROM gcr.io/distroless/static-debian12:nonroot\nCOPY doltclusterctl /usr/local/bin/doltclusterctl\nENTRYPOINT ["doltclusterctl"]\n' > Dockerfile
+          TAG="${{ env.DOLTCLUSTERCTL_TAG }}"
+          FULL_TAG="${{ env.ECR_REGISTRY }}/external/dolthub/doltclusterctl:${TAG}"
+          docker build -t "$FULL_TAG" .
+          docker push "$FULL_TAG"
+          echo "Pushed: $FULL_TAG"
 
   mirror-custom:
-    # Only for manual dispatch of non-doltclusterctl images
-    if: github.event_name == 'workflow_dispatch' && !contains(inputs.source_image, 'doltclusterctl')
+    # Mirror any Docker Hub image to ECR (manual dispatch only)
+    if: github.event_name == 'workflow_dispatch' && inputs.source_image != ''
     runs-on: ubuntu-latest
     permissions:
       id-token: write
