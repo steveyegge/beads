@@ -1,6 +1,6 @@
 apiVersion: v2
 name: bd-daemon
-description: Helm chart for the bd (beads) daemon — Dolt database, RPC daemon, Slack bot, and Redis
+description: Helm chart for the bd (beads) daemon — Dolt database, RPC daemon, Slack bot, Redis, and NATS
 type: application
 version: 0.2.0
 appVersion: "0.57.11"
@@ -10,3 +10,7 @@ dependencies:
     version: "~20.x"
     repository: oci://registry-1.docker.io/bitnamicharts
     condition: redis.enabled
+  - name: nats
+    version: "~8.x"
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: nats.enabled

@@ -132,6 +132,23 @@ spec:
             {{- end }}
             - name: HOME
               value: "/home/beads"
+            {{- if .Values.nats.enabled }}
+            # Standalone NATS — disable embedded, point to subchart service
+            - name: BD_NATS_DISABLED
+              value: "true"
+            - name: BD_NATS_URL
+              value: {{ include "bd-daemon.natsURL" . | quote }}
+            {{- if .Values.nats.auth.token }}
+            - name: BD_NATS_TOKEN
+              value: {{ .Values.nats.auth.token | quote }}
+            {{- else if and .Values.externalSecrets.enabled .Values.externalSecrets.daemonToken.remoteRef }}
+            - name: BD_NATS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bd-daemon.daemon.tokenSecretName" . }}
+                  key: token
+            {{- end }}
+            {{- end }}
             {{- if .Values.redis.enabled }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
@@ -242,6 +259,10 @@ spec:
             {{- end }}
             - name: HOME
               value: "/home/beads"
+            {{- if .Values.nats.enabled }}
+            - name: BD_NATS_URL
+              value: {{ include "bd-daemon.natsURL" . | quote }}
+            {{- end }}
           volumeMounts:
             - name: beads-data
               mountPath: /home/beads/.beads

@@ -808,16 +808,50 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		log.Info("HTTP listener enabled (Connect-RPC style API)", "addr", httpAddr)
 	}
 
-	// Start embedded NATS server by default (opt out with BD_NATS_DISABLED=true)
+	// NATS startup: three modes
+	// 1. BD_NATS_URL set → connect as client to standalone NATS
+	// 2. BD_NATS_DISABLED=true → no NATS at all
+	// 3. Default → start embedded NATS server
 	var natsServer *daemon.NATSServer
+	var externalNATS *daemon.ExternalNATSConn
 	var jsCtx nats.JetStreamContext
-	if os.Getenv("BD_NATS_DISABLED") != "true" {
+	externalNATSURL := os.Getenv("BD_NATS_URL")
+
+	if externalNATSURL != "" {
+		// Mode 1: Connect to standalone NATS server
+		token := os.Getenv("BD_NATS_TOKEN")
+		if token == "" {
+			token = os.Getenv("BD_DAEMON_TOKEN")
+		}
+		var err error
+		externalNATS, err = daemon.ConnectExternalNATS(externalNATSURL, token)
+		if err != nil {
+			log.Error("failed to connect to external NATS", "url", externalNATSURL, "error", err)
+			log.Warn("continuing without NATS - JetStream event persistence disabled")
+		} else {
+			defer externalNATS.Close()
+			log.Info("connected to standalone NATS server", "url", externalNATSURL)
+
+			jsCtx, err = externalNATS.Conn().JetStream()
+			if err != nil {
+				log.Error("failed to get JetStream context from external NATS", "error", err)
+				jsCtx = nil
+			} else {
+				if err := eventbus.EnsureStreams(jsCtx); err != nil {
+					log.Error("failed to create JetStream streams", "error", err)
+					jsCtx = nil
+				} else {
+					log.Info("JetStream streams initialized on standalone NATS")
+				}
+			}
+		}
+	} else if os.Getenv("BD_NATS_DISABLED") != "true" {
+		// Mode 3: Start embedded NATS server (default)
 		natsCfg := daemon.NATSConfigFromEnv(filepath.Join(beadsDir, ".runtime"))
 		var err error
 		natsServer, err = daemon.StartNATSServer(natsCfg)
 		if err != nil {
 			log.Error("failed to start embedded NATS server", "error", err)
-			// Non-fatal: daemon continues without NATS
 			log.Warn("continuing without NATS - JetStream event persistence disabled")
 		} else {
 			defer func() {
@@ -826,7 +860,6 @@ The daemon will now exit.`, strings.ToUpper(backend))
 			}()
 			log.Info("embedded NATS server started", "port", natsServer.Port())
 
-			// Ensure JetStream streams exist
 			jsCtx, err = natsServer.Conn().JetStream()
 			if err != nil {
 				log.Error("failed to get JetStream context", "error", err)
@@ -851,6 +884,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 			log.Info("NATS health", "status", health.Status, "jetstream", health.JetStream, "streams", health.Streams)
 		}
 	} else {
+		// Mode 2: NATS explicitly disabled
 		log.Info("NATS disabled via BD_NATS_DISABLED=true")
 	}
 
@@ -901,6 +935,19 @@ The daemon will now exit.`, strings.ToUpper(backend))
 				Connections: h.Connections,
 				JetStream:   h.JetStream,
 				Streams:     h.Streams,
+			}
+		})
+	} else if externalNATS != nil {
+		server.SetNATSHealthFn(func() rpc.NATSHealthInfo {
+			nc := externalNATS.Conn()
+			status := "connected"
+			if !nc.IsConnected() {
+				status = "disconnected"
+			}
+			return rpc.NATSHealthInfo{
+				Enabled:   true,
+				Status:    status,
+				JetStream: jsCtx != nil,
 			}
 		})
 	}

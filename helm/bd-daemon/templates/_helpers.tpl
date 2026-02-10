@@ -176,6 +176,16 @@ Dolt database directory path
 {{- end }}
 
 {{/*
+NATS URL for the event bus.
+When the NATS subchart is enabled, constructs nats://<service>:4222.
+*/}}
+{{- define "bd-daemon.natsURL" -}}
+{{- if .Values.nats.enabled -}}
+nats://{{ .Release.Name }}-nats:4222
+{{- end -}}
+{{- end }}
+
+{{/*
 Redis URL for the wisp store.
 When the Redis subchart is enabled, constructs the URL from the subchart service name.
 */}}

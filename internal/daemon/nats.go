@@ -218,6 +218,52 @@ func (n *NATSServer) RemoveConnectionInfo() {
 	os.Remove(infoPath)
 }
 
+// ExternalNATSConn wraps a client-only connection to a standalone NATS server.
+// Used when BD_NATS_URL is set (standalone NATS mode).
+type ExternalNATSConn struct {
+	conn *nats.Conn
+	url  string
+}
+
+// ConnectExternalNATS establishes a client connection to a standalone NATS
+// server at the given URL. Used instead of StartNATSServer when BD_NATS_URL
+// is set. The token is used for auth if non-empty.
+func ConnectExternalNATS(natsURL, token string) (*ExternalNATSConn, error) {
+	opts := []nats.Option{
+		nats.Name("bd-daemon"),
+		nats.MaxReconnects(-1),             // Reconnect forever
+		nats.ReconnectWait(2 * time.Second),
+	}
+	if token != "" {
+		opts = append(opts, nats.Token(token))
+	}
+
+	nc, err := nats.Connect(natsURL, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("connect to external NATS at %s: %w", natsURL, err)
+	}
+
+	return &ExternalNATSConn{conn: nc, url: natsURL}, nil
+}
+
+// Conn returns the NATS connection.
+func (e *ExternalNATSConn) Conn() *nats.Conn {
+	return e.conn
+}
+
+// URL returns the NATS server URL.
+func (e *ExternalNATSConn) URL() string {
+	return e.url
+}
+
+// Close drains and closes the connection.
+func (e *ExternalNATSConn) Close() {
+	if e.conn != nil {
+		e.conn.Drain()
+		e.conn.Close()
+	}
+}
+
 // NATSHealth represents a point-in-time health snapshot of the NATS server.
 type NATSHealth struct {
 	Status      string `json:"status"`                 // "running", "stopped", "error"
