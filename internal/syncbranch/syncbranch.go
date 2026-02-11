@@ -2,18 +2,16 @@ package syncbranch
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
-
-	// Import SQLite driver for legacy database config reads
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 const (
@@ -142,7 +140,7 @@ func IsConfigured() bool {
 // 2. sync-branch in config.yaml
 // 3. sync.branch in database config
 //
-// The dbPath parameter should be the path to the beads.db file.
+// The dbPath parameter should be the path to the database (file or directory).
 // If dbPath is empty, it will use beads.FindDatabasePath() to locate the database.
 // This function is safe to call even if the database doesn't exist (returns false in that case).
 func IsConfiguredWithDB(dbPath string) bool {
@@ -160,32 +158,38 @@ func IsConfiguredWithDB(dbPath string) bool {
 		}
 	}
 
+	// Derive beadsDir from dbPath (parent directory in both SQLite and Dolt cases)
+	beadsDir := filepath.Dir(dbPath)
+
 	// Read sync.branch from database config table
-	branch := getConfigFromDB(dbPath, ConfigKey)
+	branch := getConfigFromDB(beadsDir, ConfigKey)
 	return branch != ""
 }
 
-// getConfigFromDB reads a config value directly from the database file.
-// This is a lightweight read that doesn't require the full storage layer.
+// getConfigFromDB reads a config value from the database.
+// This is backend-aware and works with both SQLite and Dolt databases.
 // Returns empty string if the database doesn't exist or the key is not found.
-func getConfigFromDB(dbPath string, key string) string {
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+func getConfigFromDB(beadsDir string, key string) string {
+	// Check if beads directory exists
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		return ""
 	}
 
-	// Open database in read-only mode
-	// Use file: prefix as required by ncruces/go-sqlite3 driver
-	connStr := fmt.Sprintf("file:%s?mode=ro", dbPath)
-	db, err := sql.Open("sqlite3", connStr)
+	// Determine database path from config
+	cfg, _ := configfile.Load(beadsDir)
+	if cfg == nil {
+		cfg = configfile.DefaultConfig()
+	}
+	dbPath := cfg.DatabasePath(beadsDir)
+
+	ctx := context.Background()
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		return ""
 	}
-	defer db.Close()
+	defer store.Close()
 
-	// Query the config table
-	var value string
-	err = db.QueryRow(`SELECT value FROM config WHERE key = ?`, key).Scan(&value)
+	value, err := store.GetConfig(ctx, key)
 	if err != nil {
 		return ""
 	}
