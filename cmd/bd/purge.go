@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +26,11 @@ type PurgeResult struct {
 	DryRun            bool     `json:"dry_run,omitempty"`
 	PurgedIDs         []string `json:"purged_ids,omitempty"`
 }
+
+// purgeBatchSize controls the maximum number of IDs per SQL IN clause.
+// Embedded Dolt (go-mysql-server) with MaxOpenConns(1) chokes on large
+// parameter lists; 50 keeps each query well under the threshold.
+const purgeBatchSize = 50
 
 var purgeCmd = &cobra.Command{
 	Use:     "purge",
@@ -168,35 +175,47 @@ func runPurge(cmd *cobra.Command, _ []string) {
 		os.Exit(1)
 	}
 
-	// Build parameterized IN clause for all IDs
-	inClause, args := purgeBuildInClause(issueIDs)
-	// Double the args for queries that use IN twice (deps: issue_id OR depends_on_id)
-	doubledArgs := make([]interface{}, 0, len(args)*2)
-	doubledArgs = append(doubledArgs, args...)
-	doubledArgs = append(doubledArgs, args...)
-
-	// Count related data for stats
+	// Count related data for stats, batching to avoid choking embedded Dolt's
+	// go-mysql-server engine on large IN clauses.
 	var depsCount, labelsCount, eventsCount int
 
-	if err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM dependencies WHERE issue_id IN ("+inClause+") OR depends_on_id IN ("+inClause+")",
-		doubledArgs...).Scan(&depsCount); err != nil {
-		fmt.Fprintf(os.Stderr, "Error counting dependencies: %v\n", err)
-		os.Exit(1)
-	}
+	for _, batch := range purgeBatchIDs(issueIDs) {
+		inClause, args := purgeBuildInClause(batch)
 
-	if err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM labels WHERE issue_id IN ("+inClause+")",
-		args...).Scan(&labelsCount); err != nil {
-		fmt.Fprintf(os.Stderr, "Error counting labels: %v\n", err)
-		os.Exit(1)
-	}
+		// Dependencies: count rows where issue_id OR depends_on_id matches.
+		// Two separate queries to avoid doubling the parameter list.
+		var c1, c2 int
+		if err := purgeCountQuery(ctx, db,
+			"SELECT COUNT(*) FROM dependencies WHERE issue_id IN ("+inClause+")",
+			args, &c1); err != nil {
+			fmt.Fprintf(os.Stderr, "Error counting dependencies (issue_id): %v\n", err)
+			os.Exit(1)
+		}
+		if err := purgeCountQuery(ctx, db,
+			"SELECT COUNT(*) FROM dependencies WHERE depends_on_id IN ("+inClause+")",
+			args, &c2); err != nil {
+			fmt.Fprintf(os.Stderr, "Error counting dependencies (depends_on_id): %v\n", err)
+			os.Exit(1)
+		}
+		depsCount += c1 + c2
 
-	if err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM events WHERE issue_id IN ("+inClause+")",
-		args...).Scan(&eventsCount); err != nil {
-		fmt.Fprintf(os.Stderr, "Error counting events: %v\n", err)
-		os.Exit(1)
+		var lc int
+		if err := purgeCountQuery(ctx, db,
+			"SELECT COUNT(*) FROM labels WHERE issue_id IN ("+inClause+")",
+			args, &lc); err != nil {
+			fmt.Fprintf(os.Stderr, "Error counting labels: %v\n", err)
+			os.Exit(1)
+		}
+		labelsCount += lc
+
+		var ec int
+		if err := purgeCountQuery(ctx, db,
+			"SELECT COUNT(*) FROM events WHERE issue_id IN ("+inClause+")",
+			args, &ec); err != nil {
+			fmt.Fprintf(os.Stderr, "Error counting events: %v\n", err)
+			os.Exit(1)
+		}
+		eventsCount += ec
 	}
 
 	if dryRun {
@@ -228,26 +247,32 @@ func runPurge(cmd *cobra.Command, _ []string) {
 		return
 	}
 
-	// Execute purge via direct SQL.
-	// Step 1: Remove incoming dependency refs (depends_on_id has no FK CASCADE).
-	if _, err := db.ExecContext(ctx,
-		"DELETE FROM dependencies WHERE depends_on_id IN ("+inClause+")",
-		args...); err != nil {
-		fmt.Fprintf(os.Stderr, "Error removing incoming dependencies: %v\n", err)
-		os.Exit(1)
-	}
+	// Execute purge via direct SQL in batches.
+	var deletedCount int64
+	for _, batch := range purgeBatchIDs(issueIDs) {
+		inClause, args := purgeBuildInClause(batch)
 
-	// Step 2: Hard-delete issues. FK CASCADE automatically removes:
-	//   dependencies (issue_id), labels, comments, events,
-	//   export_hashes, child_counters, issue_snapshots, compaction_snapshots.
-	res, err := db.ExecContext(ctx,
-		"DELETE FROM issues WHERE id IN ("+inClause+")",
-		args...)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error purging issues: %v\n", err)
-		os.Exit(1)
+		// Step 1: Remove incoming dependency refs (depends_on_id has no FK CASCADE).
+		if _, err := db.ExecContext(ctx,
+			"DELETE FROM dependencies WHERE depends_on_id IN ("+inClause+")",
+			args...); err != nil {
+			fmt.Fprintf(os.Stderr, "Error removing incoming dependencies: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Step 2: Hard-delete issues. FK CASCADE automatically removes:
+		//   dependencies (issue_id), labels, comments, events,
+		//   export_hashes, child_counters, issue_snapshots, compaction_snapshots.
+		res, err := db.ExecContext(ctx,
+			"DELETE FROM issues WHERE id IN ("+inClause+")",
+			args...)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error purging issues: %v\n", err)
+			os.Exit(1)
+		}
+		n, _ := res.RowsAffected()
+		deletedCount += n
 	}
-	deletedCount, _ := res.RowsAffected()
 
 	// Auto-commit for Dolt
 	if commitErr := maybeAutoCommit(ctx, doltAutoCommitParams{
@@ -280,6 +305,19 @@ func runPurge(cmd *cobra.Command, _ []string) {
 	}
 }
 
+// purgeBatchIDs splits a slice of IDs into batches of purgeBatchSize.
+func purgeBatchIDs(ids []string) [][]string {
+	var batches [][]string
+	for i := 0; i < len(ids); i += purgeBatchSize {
+		end := i + purgeBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batches = append(batches, ids[i:end])
+	}
+	return batches
+}
+
 // purgeBuildInClause builds a parameterized IN clause for SQL queries.
 func purgeBuildInClause(ids []string) (string, []interface{}) {
 	placeholders := make([]string, len(ids))
@@ -289,6 +327,11 @@ func purgeBuildInClause(ids []string) (string, []interface{}) {
 		args[i] = id
 	}
 	return strings.Join(placeholders, ","), args
+}
+
+// purgeCountQuery executes a COUNT(*) query and scans into dest.
+func purgeCountQuery(ctx context.Context, db *sql.DB, query string, args []interface{}, dest *int) error {
+	return db.QueryRowContext(ctx, query, args...).Scan(dest)
 }
 
 // parseOlderThan parses a duration string like "7d", "30d" into days.
