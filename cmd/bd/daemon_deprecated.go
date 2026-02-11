@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -50,7 +49,7 @@ const (
 
 var (
 	// daemonClient is always nil. The daemon has been removed.
-	daemonClient *rpc.Client
+	daemonClient interface{}
 
 	// daemonStatus is always zero-valued. The daemon has been removed.
 	daemonStatus DaemonStatus
@@ -60,8 +59,8 @@ var (
 )
 
 // Deprecated accessor stubs for context.go compatibility.
-func getDaemonClient() *rpc.Client   { return nil }
-func setDaemonClient(_ *rpc.Client)  {}
+func getDaemonClient() interface{}   { return nil }
+func setDaemonClient(_ interface{})  {}
 func getDaemonStatus() DaemonStatus  { return DaemonStatus{} }
 func setDaemonStatus(_ DaemonStatus) {}
 func isNoDaemon() bool               { return false }
