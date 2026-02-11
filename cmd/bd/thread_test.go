@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -92,19 +94,19 @@ func TestThreadTraversal(t *testing.T) {
 
 	t.Run("findRepliesTo walks UP the thread", func(t *testing.T) {
 		// From reply2, should find reply1
-		parent := findRepliesTo(ctx, reply2.ID, nil, testStore)
+		parent := findRepliesTo(ctx, reply2.ID, testStore)
 		if parent != reply1.ID {
 			t.Errorf("findRepliesTo(reply2) = %q, want %q", parent, reply1.ID)
 		}
 
 		// From reply1, should find original
-		parent = findRepliesTo(ctx, reply1.ID, nil, testStore)
+		parent = findRepliesTo(ctx, reply1.ID, testStore)
 		if parent != original.ID {
 			t.Errorf("findRepliesTo(reply1) = %q, want %q", parent, original.ID)
 		}
 
 		// From original, should return empty (no parent)
-		parent = findRepliesTo(ctx, original.ID, nil, testStore)
+		parent = findRepliesTo(ctx, original.ID, testStore)
 		if parent != "" {
 			t.Errorf("findRepliesTo(original) = %q, want empty string", parent)
 		}
@@ -112,7 +114,7 @@ func TestThreadTraversal(t *testing.T) {
 
 	t.Run("findReplies walks DOWN the thread", func(t *testing.T) {
 		// From original, should find reply1
-		replies := findReplies(ctx, original.ID, nil, testStore)
+		replies := findReplies(ctx, original.ID, testStore)
 		if len(replies) != 1 {
 			t.Fatalf("findReplies(original) returned %d replies, want 1", len(replies))
 		}
@@ -121,7 +123,7 @@ func TestThreadTraversal(t *testing.T) {
 		}
 
 		// From reply1, should find reply2
-		replies = findReplies(ctx, reply1.ID, nil, testStore)
+		replies = findReplies(ctx, reply1.ID, testStore)
 		if len(replies) != 1 {
 			t.Fatalf("findReplies(reply1) returned %d replies, want 1", len(replies))
 		}
@@ -130,7 +132,7 @@ func TestThreadTraversal(t *testing.T) {
 		}
 
 		// From reply2, should return empty (no children)
-		replies = findReplies(ctx, reply2.ID, nil, testStore)
+		replies = findReplies(ctx, reply2.ID, testStore)
 		if len(replies) != 0 {
 			t.Errorf("findReplies(reply2) returned %d replies, want 0", len(replies))
 		}
@@ -143,7 +145,7 @@ func TestThreadTraversal(t *testing.T) {
 		visited = append(visited, current)
 
 		for {
-			parent := findRepliesTo(ctx, current, nil, testStore)
+			parent := findRepliesTo(ctx, current, testStore)
 			if parent == "" {
 				break
 			}
@@ -199,13 +201,13 @@ func TestThreadTraversalEmptyThread(t *testing.T) {
 	}
 
 	// findRepliesTo should return empty
-	parent := findRepliesTo(ctx, standalone.ID, nil, testStore)
+	parent := findRepliesTo(ctx, standalone.ID, testStore)
 	if parent != "" {
 		t.Errorf("findRepliesTo(standalone) = %q, want empty string", parent)
 	}
 
 	// findReplies should return empty slice
-	replies := findReplies(ctx, standalone.ID, nil, testStore)
+	replies := findReplies(ctx, standalone.ID, testStore)
 	if len(replies) != 0 {
 		t.Errorf("findReplies(standalone) returned %d replies, want 0", len(replies))
 	}
@@ -291,19 +293,19 @@ func TestThreadTraversalBranching(t *testing.T) {
 	}
 
 	t.Run("findRepliesTo from branches find original", func(t *testing.T) {
-		parentA := findRepliesTo(ctx, replyA.ID, nil, testStore)
+		parentA := findRepliesTo(ctx, replyA.ID, testStore)
 		if parentA != original.ID {
 			t.Errorf("findRepliesTo(replyA) = %q, want %q", parentA, original.ID)
 		}
 
-		parentB := findRepliesTo(ctx, replyB.ID, nil, testStore)
+		parentB := findRepliesTo(ctx, replyB.ID, testStore)
 		if parentB != original.ID {
 			t.Errorf("findRepliesTo(replyB) = %q, want %q", parentB, original.ID)
 		}
 	})
 
 	t.Run("findReplies from original returns both branches", func(t *testing.T) {
-		replies := findReplies(ctx, original.ID, nil, testStore)
+		replies := findReplies(ctx, original.ID, testStore)
 		if len(replies) != 2 {
 			t.Fatalf("findReplies(original) returned %d replies, want 2", len(replies))
 		}
@@ -335,13 +337,13 @@ func TestThreadTraversalNonexistentIssue(t *testing.T) {
 	ctx := context.Background()
 
 	// findRepliesTo with nonexistent ID should return empty
-	parent := findRepliesTo(ctx, "nonexistent-id", nil, testStore)
+	parent := findRepliesTo(ctx, "nonexistent-id", testStore)
 	if parent != "" {
 		t.Errorf("findRepliesTo(nonexistent) = %q, want empty string", parent)
 	}
 
 	// findReplies with nonexistent ID should return nil/empty
-	replies := findReplies(ctx, "nonexistent-id", nil, testStore)
+	replies := findReplies(ctx, "nonexistent-id", testStore)
 	if len(replies) != 0 {
 		t.Errorf("findReplies(nonexistent) returned %d replies, want 0", len(replies))
 	}
@@ -401,13 +403,13 @@ func TestThreadTraversalOnlyRepliesTo(t *testing.T) {
 	}
 
 	// findRepliesTo should NOT find msg1 (blocks dependency, not replies-to)
-	parent := findRepliesTo(ctx, msg2.ID, nil, testStore)
+	parent := findRepliesTo(ctx, msg2.ID, testStore)
 	if parent != "" {
 		t.Errorf("findRepliesTo(msg2) = %q, want empty (blocks dep should be ignored)", parent)
 	}
 
 	// findReplies from msg1 should NOT find msg2 (blocks dependency, not replies-to)
-	replies := findReplies(ctx, msg1.ID, nil, testStore)
+	replies := findReplies(ctx, msg1.ID, testStore)
 	if len(replies) != 0 {
 		t.Errorf("findReplies(msg1) returned %d replies, want 0 (blocks dep should be ignored)", len(replies))
 	}

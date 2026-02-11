@@ -11,11 +11,12 @@ var adminCmd = &cobra.Command{
 	Long: `Administrative commands for beads database maintenance.
 
 These commands are for advanced users and should be used carefully:
-  cleanup   Delete closed issues and prune expired tombstones
-  compact   Compact old closed issues to save space
-  reset     Remove all beads data and configuration
+  cleanup   Delete closed issues and prune expired tombstones (issue lifecycle)
+  compact   Compact old closed issues to save space (storage optimization)
+  reset     Remove all beads data and configuration (full reset)
 
-For routine operations, prefer 'bd doctor --fix'.`,
+For routine maintenance, prefer 'bd doctor --fix' which handles common repairs
+automatically. Use these admin commands for targeted database operations.`,
 }
 
 func init() {

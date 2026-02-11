@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -7,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
@@ -33,7 +35,7 @@ func TestSyncBranchConfigPriorityOverUpstream(t *testing.T) {
 		}
 
 		dbPath := filepath.Join(beadsDir, "beads.db")
-		testStore, err := sqlite.New(ctx, dbPath)
+		testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 		if err != nil {
 			t.Fatalf("Failed to create test database: %v", err)
 		}
@@ -122,7 +124,7 @@ func TestSyncBranchConfigPriorityOverUpstream(t *testing.T) {
 		}
 
 		dbPath := filepath.Join(beadsDir, "beads.db")
-		testStore, err := sqlite.New(ctx, dbPath)
+		testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 		if err != nil {
 			t.Fatalf("Failed to create test database: %v", err)
 		}

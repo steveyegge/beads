@@ -47,9 +47,6 @@ var (
 	flushFailureCount = 0        // Consecutive flush failures
 	lastFlushError    error      // Last flush error for debugging
 
-	// Auto-flush manager (event-driven, fixes race condition)
-	flushManager *FlushManager
-
 	// Hook runner for extensibility
 	hookRunner *hooks.Runner
 
@@ -211,6 +208,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
+
+	// Note: --no-daemon is registered in daemon_compat.go as a deprecated no-op flag.
 
 	// Add --version flag to root command (same behavior as version subcommand)
 	rootCmd.Flags().BoolP("version", "V", false, "Print version information")
@@ -605,7 +604,6 @@ var rootCmd = &cobra.Command{
 
 		// Initialize direct storage access
 		var err error
-		var needsBootstrap bool // Track if DB needs initial import (GH#b09)
 		beadsDir := filepath.Dir(dbPath)
 
 		// Detect backend from metadata.json
@@ -665,7 +663,6 @@ var rootCmd = &cobra.Command{
 				debug.Logf("read-only open failed, falling back to read-write: %v", err)
 				opts.ReadOnly = false
 				store, err = factory.NewWithOptions(rootCtx, backend, dbPath, opts)
-				needsBootstrap = true // New DB needs auto-import (GH#b09)
 			}
 		}
 
@@ -687,17 +684,6 @@ var rootCmd = &cobra.Command{
 		storeActive = true
 		storeMutex.Unlock()
 
-		// Initialize flush manager (fixes race condition in auto-flush)
-		// Skip FlushManager creation in sandbox mode - no background goroutines needed
-		// (improves Windows exit behavior and container scenarios)
-		// Skip for read-only commands - they don't write anything (GH#804)
-		// For in-process test scenarios where commands run multiple times,
-		// we create a new manager each time. Shutdown() is idempotent so
-		// PostRun can safely shutdown whichever manager is active.
-		if !sandboxMode && !useReadOnly {
-			flushManager = NewFlushManager(autoFlushEnabled, getDebounceDuration())
-		}
-
 		// Initialize hook runner
 		// dbPath is .beads/something.db, so workspace root is parent of .beads
 		if dbPath != "" {
@@ -707,27 +693,6 @@ var rootCmd = &cobra.Command{
 
 		// Warn if multiple databases detected in directory hierarchy
 		warnMultipleDatabases(dbPath)
-
-		// Auto-import if JSONL is newer than DB (e.g., after git pull)
-		// Skip for import command itself to avoid recursion
-		// Skip for delete command to prevent resurrection of deleted issues
-		// Skip if sync --dry-run to avoid modifying DB in dry-run mode
-		// Skip for read-only commands - they can't write anyway (GH#804)
-		// Exception: allow auto-import for read-only commands that fell back to
-		// read-write mode due to missing DB (needsBootstrap) - fixes GH#b09
-		if cmd.Name() != "import" && cmd.Name() != "delete" && autoImportEnabled && (!useReadOnly || needsBootstrap) {
-			// Check if this is sync command with --dry-run flag
-			if cmd.Name() == "sync" {
-				if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
-					// Skip auto-import in dry-run mode
-					debug.Logf("auto-import skipped for sync --dry-run")
-				} else {
-					autoImportIfNewer()
-				}
-			} else {
-				autoImportIfNewer()
-			}
-		}
 
 		// Load molecule templates from hierarchical catalog locations
 		// Templates are loaded after auto-import to ensure the database is up-to-date.
@@ -775,14 +740,6 @@ var rootCmd = &cobra.Command{
 				}
 			}
 			return
-		}
-
-		// Shutdown flush manager (performs final flush if needed)
-		// Skip if sync command already handled export and restore (sync.branch mode)
-		if flushManager != nil && !skipFinalFlush {
-			if err := flushManager.Shutdown(); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: flush manager shutdown error: %v\n", err)
-			}
 		}
 
 		// Dolt auto-commit: after a successful write command (and after final flush),

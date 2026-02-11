@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -6,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -16,7 +18,7 @@ func TestMigrateHashIDs(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	// Create test database with sequential IDs
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -67,7 +69,7 @@ func TestMigrateHashIDs(t *testing.T) {
 	store.Close()
 
 	// Test dry run
-	store, err = sqlite.New(context.Background(), dbPath)
+	store, err = dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to reopen database: %v", err)
 	}
@@ -104,7 +106,7 @@ func TestMigrateHashIDs(t *testing.T) {
 	store.Close()
 
 	// Test actual migration
-	store, err = sqlite.New(context.Background(), dbPath)
+	store, err = dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to reopen database: %v", err)
 	}
@@ -172,7 +174,7 @@ func TestMigrateHashIDsWithParentChild(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	// Create test database
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}

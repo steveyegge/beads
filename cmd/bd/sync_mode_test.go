@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -6,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // TestSyncModeConfig verifies sync mode configuration storage and retrieval.
@@ -22,7 +24,7 @@ func TestSyncModeConfig(t *testing.T) {
 
 	// Create store
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -94,7 +96,7 @@ func TestShouldExportJSONL(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -138,7 +140,7 @@ func TestShouldExportJSONL_UsesGetSyncMode(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -172,7 +174,7 @@ func TestShouldImportJSONL(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -213,7 +215,7 @@ func TestShouldUseDoltRemote(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}

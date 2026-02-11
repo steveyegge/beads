@@ -11,6 +11,8 @@ import (
 	"context"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -21,19 +23,19 @@ type Storage = beads.Storage
 // Use Storage.RunInTransaction() to obtain a Transaction instance.
 type Transaction = beads.Transaction
 
-// NewSQLiteStorage creates a new SQLite storage instance at the given path.
-// This function explicitly uses SQLite regardless of configuration.
-//
-// Note: This bypasses backend configuration. If your .beads directory is
-// configured to use Dolt, this will still open SQLite (and likely fail or
-// access wrong data). For most use cases, callers should use storage/factory
-// package to respect backend configuration.
+// NewSQLiteStorage is deprecated. Use NewStorage instead.
+// Retained for backward compatibility during the SQLite-to-Dolt transition.
 func NewSQLiteStorage(ctx context.Context, dbPath string) (Storage, error) {
-	return beads.NewSQLiteStorage(ctx, dbPath)
+	return NewStorage(ctx, dbPath)
+}
+
+// NewStorage creates a new storage instance at the given path using the Dolt backend.
+func NewStorage(ctx context.Context, dbPath string) (Storage, error) {
+	return factory.New(ctx, configfile.BackendDolt, dbPath)
 }
 
 // GetConfiguredBackend returns the backend type from the beads directory config.
-// Returns "sqlite" if no config exists or backend is not specified.
+// Returns "dolt" if no config exists or backend is not specified.
 func GetConfiguredBackend(beadsDir string) string {
 	return beads.GetConfiguredBackend(beadsDir)
 }

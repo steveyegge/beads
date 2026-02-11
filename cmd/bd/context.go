@@ -39,7 +39,6 @@ type CommandContext struct {
 	HookRunner *hooks.Runner
 
 	// Auto-flush state (grouped with protecting mutex)
-	FlushManager      *FlushManager
 	AutoFlushEnabled  bool
 	FlushMutex        sync.Mutex
 	StoreMutex        sync.Mutex // Protects Store access from background goroutine
@@ -244,22 +243,6 @@ func setAutoImportEnabled(enabled bool) {
 		cmdCtx.AutoImportEnabled = enabled
 	}
 	autoImportEnabled = enabled
-}
-
-// getFlushManager returns the flush manager instance.
-func getFlushManager() *FlushManager {
-	if shouldUseGlobals() {
-		return flushManager
-	}
-	return cmdCtx.FlushManager
-}
-
-// setFlushManager updates the flush manager.
-func setFlushManager(fm *FlushManager) {
-	if cmdCtx != nil {
-		cmdCtx.FlushManager = fm
-	}
-	flushManager = fm
 }
 
 // isJSONOutput returns true if JSON output mode is enabled.
@@ -509,7 +492,6 @@ func syncCommandContext() {
 	cmdCtx.HookRunner = hookRunner
 
 	// Auto-flush state
-	cmdCtx.FlushManager = flushManager
 	cmdCtx.AutoFlushEnabled = autoFlushEnabled
 	cmdCtx.StoreActive = storeActive
 	cmdCtx.FlushFailureCount = flushFailureCount

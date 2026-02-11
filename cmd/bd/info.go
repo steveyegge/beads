@@ -12,14 +12,11 @@ import (
 var infoCmd = &cobra.Command{
 	Use:     "info",
 	GroupID: "setup",
-	Short:   "Show database and daemon information",
-	Long: `Display information about the current database path and daemon status.
+	Short:   "Show database information",
+	Long: `Display information about the current database.
 
-This command helps debug issues where bd is using an unexpected database
-or daemon connection. It shows:
+This command helps debug issues where bd is using an unexpected database. It shows:
   - The absolute path to the database file
-  - Daemon connection status (daemon or direct mode)
-  - If using daemon: socket path, health status, version
   - Database statistics (issue count)
   - Schema information (with --schema flag)
   - What's new in recent versions (with --whats-new flag)
@@ -57,16 +54,7 @@ Examples:
 		// Build info structure
 		info := map[string]interface{}{
 			"database_path": absDBPath,
-			"mode":          daemonStatus.Mode,
-		}
-
-		// Direct mode
-		info["daemon_connected"] = false
-		if daemonStatus.FallbackReason != "" && daemonStatus.FallbackReason != FallbackNone {
-			info["daemon_fallback_reason"] = daemonStatus.FallbackReason
-		}
-		if daemonStatus.Detail != "" {
-			info["daemon_detail"] = daemonStatus.Detail
+			"mode":          "direct",
 		}
 
 		// Get issue count from direct store
@@ -150,16 +138,7 @@ Examples:
 		fmt.Println("\nBeads Database Information")
 		fmt.Println("===========================")
 		fmt.Printf("Database: %s\n", absDBPath)
-		fmt.Printf("Mode: %s\n", daemonStatus.Mode)
-
-		fmt.Println("\nDaemon Status:")
-		fmt.Printf("  Connected: no\n")
-		if daemonStatus.FallbackReason != "" && daemonStatus.FallbackReason != FallbackNone {
-			fmt.Printf("  Reason: %s\n", daemonStatus.FallbackReason)
-		}
-		if daemonStatus.Detail != "" {
-			fmt.Printf("  Detail: %s\n", daemonStatus.Detail)
-		}
+		fmt.Printf("Mode: direct\n")
 
 		// Show issue count
 		if count, ok := info["issue_count"].(int); ok {
@@ -234,9 +213,12 @@ type VersionChange struct {
 var versionChanges = []VersionChange{
 	{
 		Version: "0.49.6",
-		Date:    "2026-02-08",
+		Date:    "2026-02-09",
 		Changes: []string{
 			"REVERT: Embedded Dolt mode restored (removal was only intended for Gas Town, not Beads)",
+			"REMOVED: Daemon subsystem fully removed from bd CLI (Dolt replaces daemon-based sync)",
+			"REMOVED: JSONL flush/sync machinery deleted (-7,634 lines); JSONL functions are now no-ops",
+			"CLEANUP: Removed 171 dead daemonClient branches and 46 markDirtyAndScheduleFlush no-op calls",
 		},
 	},
 	{

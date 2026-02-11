@@ -4,15 +4,34 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// openStoreDB opens the beads database via the storage factory (backend-aware)
+// and returns the underlying *sql.DB for raw queries. The caller must close the
+// returned store when done.
+func openStoreDB(beadsDir string) (*sql.DB, storage.Storage, error) {
+	ctx := context.Background()
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{ReadOnly: true})
+	if err != nil {
+		return nil, nil, err
+	}
+	db := store.UnderlyingDB()
+	if db == nil {
+		_ = store.Close()
+		return nil, nil, fmt.Errorf("storage backend has no underlying database")
+	}
+	return db, store, nil
+}
 
 // CheckMergeArtifacts detects temporary git merge files in .beads directory.
 // These are created during git merges and should be cleaned up.
@@ -112,26 +131,16 @@ func readMergeArtifactPatterns(beadsDir string) ([]string, error) {
 func CheckOrphanedDependencies(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	db, store, err := openStoreDB(beadsDir)
+	if err != nil {
 		return DoctorCheck{
 			Name:    "Orphaned Dependencies",
 			Status:  "ok",
 			Message: "N/A (no database)",
 		}
 	}
-
-	// Open database read-only
-	db, err := openDBReadOnly(dbPath)
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Orphaned Dependencies",
-			Status:  "ok",
-			Message: "N/A (unable to open database)",
-		}
-	}
-	defer db.Close()
+	defer func() { _ = store.Close() }()
 
 	// Query for orphaned dependencies
 	query := `
@@ -271,25 +280,16 @@ func CheckDuplicateIssues(path string, gastownMode bool, gastownThreshold int) D
 func CheckTestPollution(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	db, store, err := openStoreDB(beadsDir)
+	if err != nil {
 		return DoctorCheck{
 			Name:    "Test Pollution",
 			Status:  "ok",
 			Message: "N/A (no database)",
 		}
 	}
-
-	db, err := openDBReadOnly(dbPath)
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Test Pollution",
-			Status:  "ok",
-			Message: "N/A (unable to open database)",
-		}
-	}
-	defer db.Close()
+	defer func() { _ = store.Close() }()
 
 	// Look for common test patterns in titles
 	query := `
@@ -334,25 +334,16 @@ func CheckTestPollution(path string) DoctorCheck {
 func CheckChildParentDependencies(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	db, store, err := openStoreDB(beadsDir)
+	if err != nil {
 		return DoctorCheck{
 			Name:    "Child-Parent Dependencies",
 			Status:  "ok",
 			Message: "N/A (no database)",
 		}
 	}
-
-	db, err := openDBReadOnly(dbPath)
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Child-Parent Dependencies",
-			Status:  "ok",
-			Message: "N/A (unable to open database)",
-		}
-	}
-	defer db.Close()
+	defer func() { _ = store.Close() }()
 
 	// Query for child→parent BLOCKING dependencies where issue_id starts with depends_on_id + "."
 	// Only matches blocking types (blocks, conditional-blocks, waits-for) that cause deadlock.
@@ -360,7 +351,7 @@ func CheckChildParentDependencies(path string) DoctorCheck {
 	query := `
 		SELECT d.issue_id, d.depends_on_id
 		FROM dependencies d
-		WHERE d.issue_id LIKE d.depends_on_id || '.%'
+		WHERE d.issue_id LIKE CONCAT(d.depends_on_id, '.%')
 		  AND d.type IN ('blocks', 'conditional-blocks', 'waits-for')
 	`
 	rows, err := db.Query(query)

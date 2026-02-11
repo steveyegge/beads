@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -11,7 +12,9 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/cmd/bd/doctor"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 func TestDoctorNoBeadsDir(t *testing.T) {
@@ -264,7 +267,7 @@ func TestCheckIDFormat(t *testing.T) {
 			name:           "sequential IDs",
 			issueIDs:       []string{"bd-1", "bd-2", "bd-3", "bd-4"},
 			createTable:    false,
-			expectedStatus: doctor.StatusWarning,
+			expectedStatus: doctor.StatusOK, // Dolt backend always returns OK (hash-ID migration is SQLite-only)
 		},
 		{
 			name:           "mixed: mostly hash IDs",
@@ -276,6 +279,8 @@ func TestCheckIDFormat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
 			// Create temporary workspace
 			tmpDir := t.TempDir()
 			beadsDir := filepath.Join(tmpDir, ".beads")
@@ -283,30 +288,30 @@ func TestCheckIDFormat(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// Create database
-			dbPath := filepath.Join(beadsDir, "beads.db")
-			db, err := sql.Open("sqlite3", dbPath)
-			if err != nil {
-				t.Fatalf("Failed to open database: %v", err)
+			// Save metadata.json so factory knows to use Dolt backend
+			cfg := configfile.DefaultConfig()
+			cfg.Backend = configfile.BackendDolt
+			if err := cfg.Save(beadsDir); err != nil {
+				t.Fatalf("Failed to save config: %v", err)
 			}
-			defer db.Close()
 
-			// Create schema
-			_, err = db.Exec(`
-				CREATE TABLE IF NOT EXISTS issues (
-					id TEXT PRIMARY KEY,
-					title TEXT NOT NULL,
-					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-				)
-			`)
+			// Create Dolt database at the canonical path the factory expects
+			dbPath := filepath.Join(beadsDir, "dolt")
+			store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 			if err != nil {
-				t.Fatalf("Failed to create issues table: %v", err)
+				t.Fatalf("Failed to create Dolt store: %v", err)
 			}
+
+			if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+				t.Fatalf("Failed to set prefix: %v", err)
+			}
+
+			db := store.UnderlyingDB()
 
 			if tt.createTable {
 				_, err = db.Exec(`
 					CREATE TABLE IF NOT EXISTS child_counters (
-						parent_id TEXT PRIMARY KEY,
+						parent_id VARCHAR(255) PRIMARY KEY,
 						last_child INTEGER NOT NULL DEFAULT 0
 					)
 				`)
@@ -315,16 +320,16 @@ func TestCheckIDFormat(t *testing.T) {
 				}
 			}
 
-			// Insert test issues
-			for i, id := range tt.issueIDs {
+			// Insert test issues with controlled IDs via raw SQL
+			for _, id := range tt.issueIDs {
 				_, err = db.Exec(
-					"INSERT INTO issues (id, title, created_at) VALUES (?, ?, datetime('now', ?||' seconds'))",
-					id, "Test issue "+id, fmt.Sprintf("+%d", i))
+					"INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, created_at, updated_at) VALUES (?, ?, '', '', '', '', 'open', 2, 'task', NOW(), NOW())",
+					id, "Test issue "+id)
 				if err != nil {
 					t.Fatalf("Failed to insert issue %s: %v", id, err)
 				}
 			}
-			db.Close()
+			store.Close()
 
 			// Run check
 			check := doctor.CheckIDFormat(tmpDir)
@@ -713,7 +718,7 @@ func TestCheckGitHooks(t *testing.T) {
 					}
 				}
 
-				check := doctor.CheckGitHooks()
+				check := doctor.CheckGitHooks(Version)
 
 				if check.Status != tc.expectedStatus {
 					t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)

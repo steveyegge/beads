@@ -38,7 +38,6 @@ type compactableStore interface {
 	UpdateIssue(ctx context.Context, issueID string, updates map[string]interface{}, actor string) error
 	ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string) error
 	AddComment(ctx context.Context, issueID, actor, comment string) error
-	MarkIssueDirty(ctx context.Context, issueID string) error
 }
 
 type summarizer interface {
@@ -154,11 +153,6 @@ func (c *Compactor) CompactTier1(ctx context.Context, issueID string) error {
 		return fmt.Errorf("failed to add compaction comment: %w", err)
 	}
 
-	// Mark dirty for export
-	if err := c.store.MarkIssueDirty(ctx, issueID); err != nil {
-		return fmt.Errorf("failed to mark dirty: %w", err)
-	}
-
 	return nil
 }
 
@@ -259,11 +253,6 @@ func (c *Compactor) CompactTier2(ctx context.Context, issueID string) error {
 	// For now, just apply the metadata update without actual summarization
 	if err := c.store.ApplyCompaction(ctx, issueID, 2, originalSize, originalSize, ""); err != nil {
 		return fmt.Errorf("failed to apply compaction metadata: %w", err)
-	}
-
-	// Mark dirty for export
-	if err := c.store.MarkIssueDirty(ctx, issueID); err != nil {
-		return fmt.Errorf("failed to mark dirty: %w", err)
 	}
 
 	return nil

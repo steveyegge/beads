@@ -162,7 +162,7 @@ Examples:
 		if compactAnalyze {
 			if err := ensureDirectMode("compact --analyze requires direct database access"); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Hint: Use --no-daemon flag to bypass daemon and access database directly\n")
+				fmt.Fprintf(os.Stderr, "Hint: Ensure a beads database is initialized (run 'bd init')\n")
 				os.Exit(1)
 			}
 			compactStore, ok := store.(storage.CompactableStorage)
@@ -178,7 +178,7 @@ Examples:
 		if compactApply {
 			if err := ensureDirectMode("compact --apply requires direct database access"); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Hint: Use --no-daemon flag to bypass daemon and access database directly\n")
+				fmt.Fprintf(os.Stderr, "Hint: Ensure a beads database is initialized (run 'bd init')\n")
 				os.Exit(1)
 			}
 			if compactID == "" {
@@ -720,11 +720,6 @@ func runCompactApply(ctx context.Context, store storage.CompactableStorage) {
 		os.Exit(1)
 	}
 
-	if err := store.MarkIssueDirty(ctx, compactID); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to mark dirty: %v\n", err)
-		os.Exit(1)
-	}
-
 	elapsed := time.Since(start)
 
 	// Prune expired tombstones from issues.jsonl
@@ -892,6 +887,24 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// progressBar renders a text-based progress bar.
+func progressBar(current, total int) string {
+	const width = 40
+	if total == 0 {
+		return "[" + string(make([]byte, width)) + "]"
+	}
+	filled := (current * width) / total
+	bar := ""
+	for i := 0; i < width; i++ {
+		if i < filled {
+			bar += "█"
+		} else {
+			bar += " "
+		}
+	}
+	return "[" + bar + "]"
 }
 
 func init() {

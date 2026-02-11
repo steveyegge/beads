@@ -4,7 +4,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,8 +11,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
@@ -319,13 +316,7 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 		os.Exit(1)
 	}
 
-	// If daemon is running, use RPC batch create (GH#719)
-	if daemonClient != nil {
-		createIssuesFromMarkdownViaDaemon(templates, filepath)
-		return
-	}
-
-	// Direct mode: ensure globals are initialized
+	// Ensure globals are initialized
 	if store == nil {
 		fmt.Fprintf(os.Stderr, "Error: database not initialized\n")
 		os.Exit(1)
@@ -404,101 +395,6 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 		}
 
 		createdIssues = append(createdIssues, issue)
-	}
-
-	// Report failures if any
-	if len(failedIssues) > 0 {
-		fmt.Fprintf(os.Stderr, "\n%s Failed to create %d issues:\n", ui.RenderFail("✗"), len(failedIssues))
-		for _, title := range failedIssues {
-			fmt.Fprintf(os.Stderr, "  - %s\n", title)
-		}
-	}
-
-	if jsonOutput {
-		outputJSON(createdIssues)
-	} else {
-		fmt.Printf("%s Created %d issues from %s:\n", ui.RenderPass("✓"), len(createdIssues), filepath)
-		for _, issue := range createdIssues {
-			fmt.Printf("  %s: %s [P%d, %s]\n", issue.ID, issue.Title, issue.Priority, issue.IssueType)
-		}
-	}
-}
-
-// createIssuesFromMarkdownViaDaemon creates issues via daemon RPC batch operation
-func createIssuesFromMarkdownViaDaemon(templates []*IssueTemplate, filepath string) {
-	createdIssues := []*types.Issue{}
-	failedIssues := []string{}
-
-	// Build batch operations for all issues
-	operations := make([]rpc.BatchOperation, 0, len(templates))
-	for _, template := range templates {
-		createArgs := &rpc.CreateArgs{
-			Title:              template.Title,
-			Description:        template.Description,
-			Design:             template.Design,
-			AcceptanceCriteria: template.AcceptanceCriteria,
-			IssueType:          string(template.IssueType),
-			Priority:           template.Priority,
-			Assignee:           template.Assignee,
-			Labels:             template.Labels,
-			Dependencies:       template.Dependencies,
-		}
-
-		argsJSON, err := json.Marshal(createArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error marshaling args for '%s': %v\n", template.Title, err)
-			failedIssues = append(failedIssues, template.Title)
-			continue
-		}
-
-		operations = append(operations, rpc.BatchOperation{
-			Operation: "create",
-			Args:      argsJSON,
-		})
-	}
-
-	// Execute batch
-	batchArgs := &rpc.BatchArgs{Operations: operations}
-	resp, err := daemonClient.Batch(batchArgs)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error executing batch create: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Parse batch response
-	var batchResp rpc.BatchResponse
-	if err := json.Unmarshal(resp.Data, &batchResp); err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing batch response: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Process results
-	for i, result := range batchResp.Results {
-		if i >= len(templates) {
-			break
-		}
-		template := templates[i]
-
-		if !result.Success {
-			fmt.Fprintf(os.Stderr, "Error creating issue '%s': %s\n", template.Title, result.Error)
-			failedIssues = append(failedIssues, template.Title)
-			continue
-		}
-
-		var issue types.Issue
-		if err := json.Unmarshal(result.Data, &issue); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: created issue '%s' but failed to parse response: %v\n", template.Title, err)
-			// Still count as success since the issue was created
-			createdIssues = append(createdIssues, &types.Issue{Title: template.Title})
-			continue
-		}
-
-		// Run create hook for each issue
-		if hookRunner != nil {
-			hookRunner.Run(hooks.EventCreate, &issue)
-		}
-
-		createdIssues = append(createdIssues, &issue)
 	}
 
 	// Report failures if any

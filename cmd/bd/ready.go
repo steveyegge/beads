@@ -55,6 +55,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		molTypeStr, _ := cmd.Flags().GetString("mol-type")
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
 		includeDeferred, _ := cmd.Flags().GetBool("include-deferred")
+		rigOverride, _ := cmd.Flags().GetString("rig")
 		var molType *types.MolType
 		if molTypeStr != "" {
 			mt := types.MolType(molTypeStr)
@@ -109,18 +110,30 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		// Direct mode
 		ctx := rootCtx
 
-		requireFreshDB(ctx)
+		// Handle --rig flag: query a different rig's database
+		activeStore := store
+		if rigOverride != "" {
+			rigStore, err := openStoreForRig(ctx, rigOverride)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			defer func() { _ = rigStore.Close() }()
+			activeStore = rigStore
+		} else {
+			requireFreshDB(ctx)
+		}
 
-		issues, err := store.GetReadyWork(ctx, filter)
+		issues, err := activeStore.GetReadyWork(ctx, filter)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		// If no ready work found, check if git has issues and auto-import
-		if len(issues) == 0 {
-			if checkAndAutoImport(ctx, store) {
+		// If no ready work found, check if git has issues and auto-import (only for local store)
+		if len(issues) == 0 && rigOverride == "" {
+			if checkAndAutoImport(ctx, activeStore) {
 				// Re-run the query after import
-				issues, err = store.GetReadyWork(ctx, filter)
+				issues, err = activeStore.GetReadyWork(ctx, filter)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
@@ -136,7 +149,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			for i, issue := range issues {
 				issueIDs[i] = issue.ID
 			}
-			commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
+			commentCounts, _ := activeStore.GetCommentCounts(ctx, issueIDs)
 			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
 			for i, issue := range issues {
 				issuesWithCounts[i] = &types.IssueWithCounts{
@@ -153,7 +166,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if len(issues) == 0 {
 			// Check if there are any open issues at all
 			hasOpenIssues := false
-			if stats, statsErr := store.GetStatistics(ctx); statsErr == nil {
+			if stats, statsErr := activeStore.GetStatistics(ctx); statsErr == nil {
 				hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
 			}
 			if hasOpenIssues {
@@ -376,6 +389,7 @@ func init() {
 	readyCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
 	readyCmd.Flags().Bool("include-deferred", false, "Include issues with future defer_until timestamps")
 	readyCmd.Flags().Bool("gated", false, "Find molecules ready for gate-resume dispatch")
+	readyCmd.Flags().String("rig", "", "Query a different rig's database (e.g., --rig gastown, --rig gt-, --rig gt)")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	rootCmd.AddCommand(blockedCmd)

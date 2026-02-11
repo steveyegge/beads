@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -8,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -20,7 +22,7 @@ func TestSqlCommand(t *testing.T) {
 		t.Fatalf("Failed to create .beads directory: %v", err)
 	}
 
-	testStore, err := sqlite.New(context.Background(), testDBPath)
+	testStore, err := dolt.New(context.Background(), &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}

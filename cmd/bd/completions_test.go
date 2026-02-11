@@ -293,16 +293,13 @@ func TestCompleteCommandInNoDbCommandsList(t *testing.T) {
 	// Save and reset global state
 	originalDBPath := dbPath
 	originalStore := store
-	originalDaemonClient := daemonClient
 	defer func() {
 		dbPath = originalDBPath
 		store = originalStore
-		daemonClient = originalDaemonClient
 	}()
 
 	store = nil
 	dbPath = ""
-	daemonClient = nil
 
 	// Capture stdout/stderr
 	oldStdout := os.Stdout

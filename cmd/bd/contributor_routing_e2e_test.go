@@ -3,8 +3,8 @@
 // These tests verify that issues are correctly routed to the planning repo
 // when the user is detected as a contributor with auto-routing enabled.
 
-//go:build integration
-// +build integration
+//go:build cgo && integration
+// +build cgo,integration
 
 package main
 
@@ -16,7 +16,8 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/routing"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -100,7 +101,7 @@ func TestContributorRoutingTracer(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		projectStore, err := sqlite.New(ctx, projectDBPath)
+		projectStore, err := dolt.New(ctx, &dolt.Config{Path: projectDBPath})
 		if err != nil {
 			t.Fatalf("failed to create project store: %v", err)
 		}
@@ -151,7 +152,7 @@ func TestContributorRoutingTracer(t *testing.T) {
 
 		// Initialize planning database and verify we can create issues there
 		planningDBPath := filepath.Join(planningBeadsDir, "beads.db")
-		planningStore, err := sqlite.New(ctx, planningDBPath)
+		planningStore, err := dolt.New(ctx, &dolt.Config{Path: planningDBPath})
 		if err != nil {
 			t.Fatalf("failed to create planning store: %v", err)
 		}
@@ -205,7 +206,7 @@ func TestBackwardCompatContributorConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -306,10 +307,10 @@ func (env *contributorRoutingEnv) cleanup() {
 }
 
 // initProjectStore initializes the project store with routing config
-func (env *contributorRoutingEnv) initProjectStore(syncMode string) *sqlite.SQLiteStorage {
+func (env *contributorRoutingEnv) initProjectStore(syncMode string) storage.Storage {
 	env.t.Helper()
 	projectDBPath := filepath.Join(env.projectDir, ".beads", "beads.db")
-	store, err := sqlite.New(env.ctx, projectDBPath)
+	store, err := dolt.New(env.ctx, &dolt.Config{Path: projectDBPath})
 	if err != nil {
 		env.t.Fatalf("failed to create project store: %v", err)
 	}
@@ -347,10 +348,10 @@ func (env *contributorRoutingEnv) initProjectStore(syncMode string) *sqlite.SQLi
 }
 
 // initPlanningStore initializes the planning store
-func (env *contributorRoutingEnv) initPlanningStore() *sqlite.SQLiteStorage {
+func (env *contributorRoutingEnv) initPlanningStore() storage.Storage {
 	env.t.Helper()
 	planningDBPath := filepath.Join(env.planningDir, ".beads", "beads.db")
-	store, err := sqlite.New(env.ctx, planningDBPath)
+	store, err := dolt.New(env.ctx, &dolt.Config{Path: planningDBPath})
 	if err != nil {
 		env.t.Fatalf("failed to create planning store: %v", err)
 	}
@@ -368,8 +369,8 @@ func verifyIssueRouting(
 	ctx context.Context,
 	routingConfig *routing.RoutingConfig,
 	userRole routing.UserRole,
-	targetStore *sqlite.SQLiteStorage,
-	otherStore *sqlite.SQLiteStorage,
+	targetStore storage.Storage,
+	otherStore storage.Storage,
 	expectedRepoPath string,
 	description string,
 ) {
@@ -663,7 +664,7 @@ func TestExplicitRepoOverride(t *testing.T) {
 	}
 
 	overrideDBPath := filepath.Join(overrideBeadsDir, "beads.db")
-	overrideStore, err := sqlite.New(env.ctx, overrideDBPath)
+	overrideStore, err := dolt.New(env.ctx, &dolt.Config{Path: overrideDBPath})
 	if err != nil {
 		t.Fatalf("failed to create override store: %v", err)
 	}
@@ -738,7 +739,7 @@ func TestBEADS_DIRPrecedence(t *testing.T) {
 	}
 
 	externalDBPath := filepath.Join(externalBeadsDir, "beads.db")
-	externalStore, err := sqlite.New(env.ctx, externalDBPath)
+	externalStore, err := dolt.New(env.ctx, &dolt.Config{Path: externalDBPath})
 	if err != nil {
 		t.Fatalf("failed to create external store: %v", err)
 	}
@@ -851,7 +852,7 @@ func TestRoutingWithAllSyncModes(t *testing.T) {
 		mode       string
 		configKey  string
 		configVal  string
-		extraCheck func(t *testing.T, store *sqlite.SQLiteStorage, ctx context.Context)
+		extraCheck func(t *testing.T, store storage.Storage, ctx context.Context)
 	}{
 		{
 			name:      "direct",
@@ -864,7 +865,7 @@ func TestRoutingWithAllSyncModes(t *testing.T) {
 			mode:      "sync-branch",
 			configKey: "sync.branch",
 			configVal: "beads-sync",
-			extraCheck: func(t *testing.T, store *sqlite.SQLiteStorage, ctx context.Context) {
+			extraCheck: func(t *testing.T, store storage.Storage, ctx context.Context) {
 				val, _ := store.GetConfig(ctx, "sync.branch")
 				if val != "beads-sync" {
 					t.Errorf("sync.branch = %q, want %q", val, "beads-sync")

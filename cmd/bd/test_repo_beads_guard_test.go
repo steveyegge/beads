@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,17 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
+
+	// Preserve Go build cache before changing HOME.
+	// On macOS, GOCACHE defaults to $HOME/Library/Caches/go-build.
+	// Changing HOME would cause tests that run `go build` (e.g., TestShow)
+	// to miss the cache and do a full CGO rebuild (~80s each).
+	if os.Getenv("GOCACHE") == "" {
+		if out, err := exec.Command("go", "env", "GOCACHE").Output(); err == nil {
+			_ = os.Setenv("GOCACHE", strings.TrimSpace(string(out)))
+		}
+	}
+
 	_ = os.Setenv("HOME", tmp)
 	_ = os.Setenv("USERPROFILE", tmp) // Windows compatibility
 	_ = os.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "xdg-config"))

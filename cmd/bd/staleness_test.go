@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -9,107 +11,9 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
-
-// TestEnsureDatabaseFresh_AutoImportsOnStale verifies that when the database
-// is stale (JSONL is newer), ensureDatabaseFresh triggers auto-import instead
-// of returning an error. This is the fix for bd-9dao.
-func TestEnsureDatabaseFresh_AutoImportsOnStale(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("Failed to create beads dir: %v", err)
-	}
-
-	testDBPath := filepath.Join(beadsDir, "bd.db")
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-
-	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer testStore.Close()
-
-	// Set prefix
-	if err := testStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
-		t.Fatalf("Failed to set prefix: %v", err)
-	}
-
-	// Set an old last_import_time to make DB appear stale
-	oldTime := time.Now().Add(-1 * time.Hour)
-	if err := testStore.SetMetadata(ctx, "last_import_time", oldTime.Format(time.RFC3339Nano)); err != nil {
-		t.Fatalf("Failed to set metadata: %v", err)
-	}
-
-	// Create JSONL with a new issue that should be auto-imported
-	jsonlIssue := &types.Issue{
-		ID:        "test-stale-auto-bd9dao",
-		Title:     "Should Auto Import on Stale DB",
-		Status:    types.StatusOpen,
-		Priority:  1,
-		IssueType: types.TypeTask,
-	}
-	f, err := os.Create(jsonlPath)
-	if err != nil {
-		t.Fatalf("Failed to create JSONL: %v", err)
-	}
-	encoder := json.NewEncoder(f)
-	if err := encoder.Encode(jsonlIssue); err != nil {
-		t.Fatalf("Failed to encode issue: %v", err)
-	}
-	f.Close()
-
-	// Save and set global state
-	oldNoAutoImport := noAutoImport
-	oldAutoImportEnabled := autoImportEnabled
-	oldStore := store
-	oldDbPath := dbPath
-	oldRootCtx := rootCtx
-	oldStoreActive := storeActive
-	oldAllowStale := allowStale
-
-	noAutoImport = false     // Allow auto-import
-	autoImportEnabled = true // Enable auto-import
-	allowStale = false       // Don't skip staleness check
-	store = testStore
-	dbPath = testDBPath
-	rootCtx = ctx
-	storeActive = true
-
-	// Ensure sync mode is git-portable so JSONL staleness check runs
-	oldSyncMode := config.GetString("sync.mode")
-	config.Set("sync.mode", "git-portable")
-
-	defer func() {
-		config.Set("sync.mode", oldSyncMode)
-		noAutoImport = oldNoAutoImport
-		autoImportEnabled = oldAutoImportEnabled
-		allowStale = oldAllowStale
-		store = oldStore
-		dbPath = oldDbPath
-		rootCtx = oldRootCtx
-		storeActive = oldStoreActive
-	}()
-
-	// Call ensureDatabaseFresh - should auto-import and return nil
-	err = ensureDatabaseFresh(ctx)
-	if err != nil {
-		t.Errorf("ensureDatabaseFresh() returned error when it should have auto-imported: %v", err)
-	}
-
-	// Verify issue was auto-imported
-	imported, err := testStore.GetIssue(ctx, "test-stale-auto-bd9dao")
-	if err != nil {
-		t.Fatalf("Failed to check for issue: %v", err)
-	}
-	if imported == nil {
-		t.Error("ensureDatabaseFresh() did not auto-import when DB was stale - bd-9dao fix failed")
-	}
-}
 
 // TestEnsureDatabaseFresh_NoAutoImportFlag verifies that when noAutoImport is
 // true, ensureDatabaseFresh returns an error instead of auto-importing.
@@ -125,7 +29,7 @@ func TestEnsureDatabaseFresh_NoAutoImportFlag(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -222,7 +126,7 @@ func TestEnsureDatabaseFresh_AllowStaleFlag(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -332,7 +236,7 @@ func TestEnsureDatabaseFresh_FreshDB(t *testing.T) {
 	f.Close()
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -402,7 +306,7 @@ func TestEnsureDatabaseFresh_DoltNativeSkipsCheck(t *testing.T) {
 	testDBPath := filepath.Join(beadsDir, "bd.db")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

@@ -125,18 +125,18 @@ func TestFindRepliesToAndReplies_WorksWithMemoryStorage(t *testing.T) {
 		t.Fatalf("AddDependency(reply2->reply1): %v", err)
 	}
 
-	if got := findRepliesTo(ctx, root.ID, nil, st); got != "" {
+	if got := findRepliesTo(ctx, root.ID, st); got != "" {
 		t.Fatalf("expected root replies-to to be empty, got %q", got)
 	}
-	if got := findRepliesTo(ctx, reply2.ID, nil, st); got != reply1.ID {
+	if got := findRepliesTo(ctx, reply2.ID, st); got != reply1.ID {
 		t.Fatalf("expected reply2 parent %q, got %q", reply1.ID, got)
 	}
 
-	rootReplies := findReplies(ctx, root.ID, nil, st)
+	rootReplies := findReplies(ctx, root.ID, st)
 	if len(rootReplies) != 1 || rootReplies[0].ID != reply1.ID {
 		t.Fatalf("expected root replies [%s], got %+v", reply1.ID, rootReplies)
 	}
-	r1Replies := findReplies(ctx, reply1.ID, nil, st)
+	r1Replies := findReplies(ctx, reply1.ID, st)
 	if len(r1Replies) != 1 || r1Replies[0].ID != reply2.ID {
 		t.Fatalf("expected reply1 replies [%s], got %+v", reply2.ID, r1Replies)
 	}

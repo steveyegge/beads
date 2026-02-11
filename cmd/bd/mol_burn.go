@@ -191,9 +191,15 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 
 	// Batch delete all wisps in one call
 	if len(wispIDs) > 0 {
-		result := burnWisps(ctx, store, wispIDs)
-		batchResult.TotalDeleted += result.DeletedCount
-		batchResult.Results = append(batchResult.Results, *result)
+		result, err := burnWisps(ctx, store, wispIDs)
+		if err != nil {
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Error burning wisps: %v\n", err)
+			}
+		} else {
+			batchResult.TotalDeleted += result.DeletedCount
+			batchResult.Results = append(batchResult.Results, *result)
+		}
 	}
 
 	// Handle persistent molecules individually (they need subgraph loading)
@@ -297,7 +303,11 @@ func burnWispMolecule(ctx context.Context, resolvedID string, dryRun, force bool
 	}
 
 	// Perform the burn
-	result := burnWisps(ctx, store, wispIDs)
+	result, err := burnWisps(ctx, store, wispIDs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error burning wisp: %v\n", err)
+		os.Exit(1)
+	}
 	result.MoleculeID = resolvedID
 
 	if jsonOutput {
@@ -376,7 +386,9 @@ func burnPersistentMolecule(ctx context.Context, resolvedID string, dryRun, forc
 }
 
 // burnWisps deletes all wisp issues without creating a digest
-func burnWisps(ctx context.Context, s storage.Storage, ids []string) *BurnResult {
+//
+//nolint:unparam // error return kept for future use and consistent API
+func burnWisps(ctx context.Context, s storage.Storage, ids []string) (*BurnResult, error) {
 	result := &BurnResult{
 		DeletedIDs: make([]string, 0, len(ids)),
 	}
@@ -391,7 +403,7 @@ func burnWisps(ctx context.Context, s storage.Storage, ids []string) *BurnResult
 		result.DeletedCount++
 	}
 
-	return result
+	return result, nil
 }
 
 func init() {

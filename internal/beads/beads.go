@@ -17,7 +17,6 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -367,25 +366,27 @@ type Storage = storage.Storage
 // Use Storage.RunInTransaction() to obtain a Transaction instance.
 type Transaction = storage.Transaction
 
-// NewSQLiteStorage opens a bd SQLite database for programmatic access.
-// This function explicitly uses SQLite regardless of configuration.
-//
-// Note: This bypasses backend configuration. If your .beads directory is
-// configured to use Dolt, this will still open SQLite (and likely fail or
-// access wrong data). For most use cases, callers should use storage/factory
-// package to respect backend configuration.
-func NewSQLiteStorage(ctx context.Context, dbPath string) (Storage, error) {
-	return sqlite.New(ctx, dbPath)
+// NewStorage opens a bd database for programmatic access.
+// Deprecated: callers should use storage/factory package to respect backend configuration.
+// This function is retained for backward compatibility but will be removed in a future release.
+func NewStorage(ctx context.Context, dbPath string) (Storage, error) {
+	// Cannot use factory here due to import cycle (beads -> factory -> beads).
+	// Callers should use storage/factory.New() directly instead.
+	return nil, fmt.Errorf("NewStorage is deprecated: use storage/factory.New() to create storage backends")
 }
 
 // GetConfiguredBackend returns the backend type from the beads directory config.
-// Returns "sqlite" if no config exists or backend is not specified.
+// Returns "dolt" if no config exists or backend is not specified.
 func GetConfiguredBackend(beadsDir string) string {
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil || cfg == nil {
-		return configfile.BackendSQLite
+		return configfile.BackendDolt
 	}
-	return cfg.GetBackend()
+	backend := cfg.GetBackend()
+	if backend == "" || backend == configfile.BackendSQLite {
+		return configfile.BackendDolt
+	}
+	return backend
 }
 
 // FindDatabasePath discovers the bd database path using bd's standard search order:
@@ -714,20 +715,9 @@ func FindAllDatabases() []DatabaseInfo {
 				// Don't fail if we can't open/query the database - it might be locked
 				// or corrupted, but we still want to detect and warn about it
 				//
-				// Note: We only count for SQLite backend. For Dolt, we skip counting
-				// due to import cycle constraints (beads package cannot import factory).
-				// Callers needing Dolt support should use storage/factory directly.
-				backend := GetConfiguredBackend(beadsDir)
-				if backend == configfile.BackendSQLite {
-					ctx := context.Background()
-					store, err := sqlite.New(ctx, dbPath)
-					if err == nil {
-						if issues, err := store.SearchIssues(ctx, "", types.IssueFilter{}); err == nil {
-							issueCount = len(issues)
-						}
-						_ = store.Close()
-					}
-				}
+				// Note: Issue counting requires storage/factory which cannot be imported
+				// here due to import cycle constraints. Callers needing issue counts
+				// should use storage/factory directly.
 
 				databases = append(databases, DatabaseInfo{
 					Path:       dbPath,

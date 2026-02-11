@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -10,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -283,8 +285,8 @@ func TestGetSyncBranch_EnvOverridesDB(t *testing.T) {
 	storeMutex.Unlock()
 	oldDBPath := dbPath
 
-	// Use an in-memory SQLite store for testing
-	testStore, err := sqlite.New(context.Background(), "file::memory:?mode=memory&cache=private")
+	// Use a temp dir for Dolt store (Dolt doesn't support :memory:)
+	testStore, err := dolt.New(context.Background(), &dolt.Config{Path: filepath.Join(t.TempDir(), "test.db")})
 	if err != nil {
 		t.Fatalf("failed to create test store: %v", err)
 	}
@@ -456,7 +458,7 @@ func TestHashBasedStalenessDetection_bd_f2f(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create store
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -777,7 +779,7 @@ func TestConcurrentEdit(t *testing.T) {
 
 	// Create database and import base state
 	testDBPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("failed to create test store: %v", err)
 	}
@@ -883,7 +885,7 @@ func TestConcurrentSyncBlocked(t *testing.T) {
 
 	// Create database
 	testDBPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, testDBPath)
+	testStore, err := dolt.New(ctx, &dolt.Config{Path: testDBPath})
 	if err != nil {
 		t.Fatalf("failed to create test store: %v", err)
 	}

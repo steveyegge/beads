@@ -16,7 +16,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -92,7 +94,7 @@ WARNING: Backup your database before running this command, even though it create
 		}
 
 		// Open database
-		store, err := sqlite.New(rootCtx, dbPath)
+		store, err := factory.New(rootCtx, configfile.BackendDolt, dbPath)
 		if err != nil {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
@@ -206,7 +208,7 @@ WARNING: Backup your database before running this command, even though it create
 }
 
 // migrateToHashIDs performs the actual migration
-func migrateToHashIDs(ctx context.Context, store *sqlite.SQLiteStorage, issues []*types.Issue, dryRun bool) (map[string]string, error) {
+func migrateToHashIDs(ctx context.Context, store storage.Storage, issues []*types.Issue, dryRun bool) (map[string]string, error) {
 	// Build dependency graph to determine top-level vs child issues
 	parentMap := make(map[string]string) // child ID → parent ID
 
@@ -308,7 +310,7 @@ func migrateToHashIDs(ctx context.Context, store *sqlite.SQLiteStorage, issues [
 
 // generateHashIDForIssue generates a hash-based ID for an issue
 func generateHashIDForIssue(prefix string, issue *types.Issue) string {
-	// Use the same algorithm as generateHashID in sqlite.go
+	// Use the same hash-based ID generation algorithm
 	// Use "system" as the actor for migration to ensure deterministic IDs
 	content := fmt.Sprintf("%s|%s|%s|%d|%d",
 		issue.Title,
