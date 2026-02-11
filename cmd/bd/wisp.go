@@ -167,6 +167,17 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 		protoID = sg.Root.ID
 	}
 
+	// If filesystem resolution failed and daemon is available, try daemon-backed
+	// formula resolution. The daemon checks the database first, which is required
+	// in K8s where there are no filesystem formula files (bd-l6qx1).
+	if subgraph == nil && daemonClient != nil {
+		sg, err := resolveAndCookFormulaViaDaemon(args[0], vars)
+		if err == nil {
+			subgraph = sg
+			protoID = sg.Root.ID
+		}
+	}
+
 	if subgraph == nil {
 		// Legacy proto path requires direct store access
 		// (formula cooking above works without store)

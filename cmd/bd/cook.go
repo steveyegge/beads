@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -290,21 +291,24 @@ func runCook(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Validate store access for persist mode
 	if flags.persist {
 		CheckReadonly("cook --persist")
-		if daemonClient != nil {
-			cookViaDaemon(flags)
-			return
-		}
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: cook --persist requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: cook --persist does not yet support daemon mode\n")
-			os.Exit(1)
-		}
 	}
 
-	// Load and resolve the formula
+	// Route through daemon when available — daemon resolves formulas from DB
+	// first, which is required in K8s where there are no filesystem formula files.
+	if daemonClient != nil {
+		cookViaDaemon(flags)
+		return
+	}
+
+	// Validate store access for persist mode (local only)
+	if flags.persist && store == nil {
+		fmt.Fprintf(os.Stderr, "Error: cook --persist requires direct database access\n")
+		os.Exit(1)
+	}
+
+	// Load and resolve the formula (filesystem search paths only)
 	resolved, err := loadAndResolveFormula(flags.formulaPath, flags.searchPaths)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -349,6 +353,9 @@ func runCook(cmd *cobra.Command, args []string) {
 }
 
 // cookViaDaemon sends a cook request to the RPC daemon (bd-wj80).
+// Handles all modes: ephemeral (default), dry-run, and persist.
+// The daemon resolves formulas from the database first, which is required
+// in K8s environments where there are no filesystem formula files.
 func cookViaDaemon(flags *cookFlags) {
 	args := &rpc.CookArgs{
 		FormulaName: flags.formulaPath,
@@ -368,10 +375,39 @@ func cookViaDaemon(flags *cookFlags) {
 		os.Exit(1)
 	}
 
-	if jsonOutput {
+	// Dry-run: daemon returns preview info
+	if result.DryRun {
+		if jsonOutput {
+			outputJSON(result)
+		} else {
+			fmt.Printf("\nDry run: would cook formula as proto %s\n", result.ProtoID)
+			if len(result.Variables) > 0 {
+				fmt.Printf("Variables: %s\n", strings.Join(result.Variables, ", "))
+			}
+			if len(result.BondPoints) > 0 {
+				fmt.Printf("Bond points: %s\n", strings.Join(result.BondPoints, ", "))
+			}
+		}
+		return
+	}
+
+	// Persist mode: proto was written to database
+	if flags.persist {
+		if jsonOutput {
+			outputJSON(result)
+		} else {
+			fmt.Printf("%s Cooked proto: %s (%d issues created)\n", ui.RenderPass("✓"), result.ProtoID, result.Created)
+		}
+		return
+	}
+
+	// Ephemeral mode (default): output the resolved formula/subgraph as JSON
+	if len(result.Subgraph) > 0 {
+		fmt.Println(string(result.Subgraph))
+	} else if jsonOutput {
 		outputJSON(result)
 	} else {
-		fmt.Printf("%s Cooked proto: %s (%d issues created)\n", ui.RenderPass("✓"), result.ProtoID, result.Created)
+		fmt.Printf("%s Cooked formula: %s\n", ui.RenderPass("✓"), result.ProtoID)
 	}
 }
 
@@ -400,6 +436,36 @@ func resolveAndCookFormula(formulaName string, searchPaths []string) (*formula.T
 // Delegates to formula.ResolveAndCookWithVars.
 func resolveAndCookFormulaWithVars(formulaName string, searchPaths []string, conditionVars map[string]string) (*formula.TemplateSubgraph, error) {
 	return formula.ResolveAndCookWithVars(formulaName, searchPaths, conditionVars)
+}
+
+// resolveAndCookFormulaViaDaemon resolves and cooks a formula using the daemon RPC.
+// The daemon resolves formulas from the database first, enabling formula resolution
+// in K8s environments without filesystem formula files (bd-l6qx1).
+func resolveAndCookFormulaViaDaemon(formulaName string, conditionVars map[string]string) (*formula.TemplateSubgraph, error) {
+	if daemonClient == nil {
+		return nil, fmt.Errorf("daemon client not available")
+	}
+
+	args := &rpc.CookArgs{
+		FormulaName: formulaName,
+		Vars:        conditionVars,
+	}
+
+	result, err := daemonClient.Cook(args)
+	if err != nil {
+		return nil, fmt.Errorf("daemon cook: %w", err)
+	}
+
+	if len(result.Subgraph) == 0 {
+		return nil, fmt.Errorf("daemon cook returned empty subgraph")
+	}
+
+	var sg formula.TemplateSubgraph
+	if err := json.Unmarshal(result.Subgraph, &sg); err != nil {
+		return nil, fmt.Errorf("parsing daemon cook subgraph: %w", err)
+	}
+
+	return &sg, nil
 }
 
 // cookFormulaToSubgraphWithVars creates an in-memory subgraph with variable info attached.

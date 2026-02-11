@@ -112,6 +112,26 @@ func runPour(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	// If filesystem resolution failed and daemon is available, try daemon-backed
+	// formula resolution (database-first, required in K8s — bd-l6qx1).
+	if subgraph == nil && daemonClient != nil {
+		sg, err := resolveAndCookFormulaViaDaemon(args[0], vars)
+		if err == nil {
+			subgraph = sg
+			protoID = sg.Root.ID
+			isFormula = true
+
+			if sg.Phase == "vapor" {
+				fmt.Fprintf(os.Stderr, "%s Formula %q recommends vapor phase (ephemeral)\n", ui.RenderWarn("⚠"), args[0])
+				fmt.Fprintf(os.Stderr, "  Consider using: bd mol wisp %s", args[0])
+				for _, v := range varFlags {
+					fmt.Fprintf(os.Stderr, " --var %s", v)
+				}
+				fmt.Fprintf(os.Stderr, "\n")
+			}
+		}
+	}
+
 	if subgraph == nil {
 		// Try to load as existing proto bead (legacy path)
 		resolvedID, err := utils.ResolvePartialID(ctx, store, args[0])
