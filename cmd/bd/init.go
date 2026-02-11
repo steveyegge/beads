@@ -702,6 +702,17 @@ variable.`,
 			}
 		}
 
+		// Initialize version tracking: create .local_version file during bd init
+		// instead of deferring it to the first bd command.
+		// This ensures no "Version Tracking" warning from bd doctor after init.
+		if useLocalBeads {
+			localVersionPath := filepath.Join(beadsDir, ".local_version")
+			if err := writeLocalVersion(localVersionPath, Version); err != nil && !quiet {
+				fmt.Fprintf(os.Stderr, "Warning: failed to initialize version tracking: %v\n", err)
+				// Non-fatal - initialization still succeeded
+			}
+		}
+
 		// Add "landing the plane" instructions to AGENTS.md and @AGENTS.md
 		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
 		if !stealth {
