@@ -148,23 +148,23 @@ func TestFindDatabaseInBeadsDir_DoltBackend(t *testing.T) {
 
 // TestGetConfiguredBackend tests the GetConfiguredBackend function
 func TestGetConfiguredBackend(t *testing.T) {
-	t.Run("no config returns sqlite", func(t *testing.T) {
+	t.Run("no config returns dolt", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		result := GetConfiguredBackend(tmpDir)
-		if result != "sqlite" {
-			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "sqlite")
+		if result != "dolt" {
+			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "dolt")
 		}
 	})
 
-	t.Run("sqlite config", func(t *testing.T) {
+	t.Run("sqlite config returns dolt", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		metadataContent := `{"backend": "sqlite"}`
 		if err := os.WriteFile(filepath.Join(tmpDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
 			t.Fatal(err)
 		}
 		result := GetConfiguredBackend(tmpDir)
-		if result != "sqlite" {
-			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "sqlite")
+		if result != "dolt" {
+			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "dolt")
 		}
 	})
 
