@@ -9,14 +9,11 @@ import (
 )
 
 // requireFreshDB checks database freshness and exits on failure.
-// Skips the check when running in daemon mode (daemon auto-imports on staleness).
 // This is the standard wrapper for read commands; use it instead of calling
 // ensureDatabaseFresh directly to avoid boilerplate.
 func requireFreshDB(ctx context.Context) {
-	if daemonClient == nil {
-		if err := ensureDatabaseFresh(ctx); err != nil {
-			FatalErrorRespectJSON("%v", err)
-		}
+	if err := ensureDatabaseFresh(ctx); err != nil {
+		FatalErrorRespectJSON("%v", err)
 	}
 }
 
@@ -65,7 +62,6 @@ func ensureDatabaseFresh(ctx context.Context) error {
 	// returning an error. This allows commands like `bd show` to work after git pull.
 	// Skip auto-import if store is read-only - it can't write anyway (GH#1089)
 	if !noAutoImport && !storeIsReadOnly {
-		autoImportIfNewer()
 		return nil
 	}
 

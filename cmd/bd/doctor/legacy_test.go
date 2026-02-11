@@ -205,6 +205,128 @@ func TestCheckLegacyBeadsSlashCommands(t *testing.T) {
 	}
 }
 
+func TestCheckLegacyMCPToolReferences(t *testing.T) {
+	tests := []struct {
+		name           string
+		fileContent    map[string]string // filename -> content
+		expectedStatus string
+		expectWarning  bool
+	}{
+		{
+			name:           "no documentation files",
+			fileContent:    map[string]string{},
+			expectedStatus: "ok",
+			expectWarning:  false,
+		},
+		{
+			name: "clean documentation without MCP references",
+			fileContent: map[string]string{
+				"AGENTS.md": "# Agents\n\nUse bd ready to see ready issues.",
+			},
+			expectedStatus: "ok",
+			expectWarning:  false,
+		},
+		{
+			name: "old MCP tool reference in AGENTS.md",
+			fileContent: map[string]string{
+				"AGENTS.md": "# Agents\n\nUse mcp__beads_beads__list to list issues.",
+			},
+			expectedStatus: "warning",
+			expectWarning:  true,
+		},
+		{
+			name: "plugin MCP tool reference in CLAUDE.md",
+			fileContent: map[string]string{
+				"CLAUDE.md": "# Claude\n\nCall mcp__plugin_beads_beads__show to see an issue.",
+			},
+			expectedStatus: "warning",
+			expectWarning:  true,
+		},
+		{
+			name: "Junie-style MCP tool reference",
+			fileContent: map[string]string{
+				"AGENTS.md": "# Agents\n\nUse mcp_beads_ready to see ready issues.",
+			},
+			expectedStatus: "warning",
+			expectWarning:  true,
+		},
+		{
+			name: "MCP reference in .claude/CLAUDE.md",
+			fileContent: map[string]string{
+				".claude/CLAUDE.md": "Call mcp__beads_beads__create to create issues.",
+			},
+			expectedStatus: "warning",
+			expectWarning:  true,
+		},
+		{
+			name: "MCP reference in claude.local.md",
+			fileContent: map[string]string{
+				"claude.local.md": "Use mcp__beads_beads__ready to find work.",
+			},
+			expectedStatus: "warning",
+			expectWarning:  true,
+		},
+		{
+			name: "MCP reference in .claude/claude.local.md",
+			fileContent: map[string]string{
+				".claude/claude.local.md": "Call mcp__plugin_beads_beads__list for issues.",
+			},
+			expectedStatus: "warning",
+			expectWarning:  true,
+		},
+		{
+			name: "multiple files with MCP references",
+			fileContent: map[string]string{
+				"AGENTS.md": "Use mcp__beads_beads__list",
+				"CLAUDE.md": "Call mcp__plugin_beads_beads__show",
+			},
+			expectedStatus: "warning",
+			expectWarning:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			// Create test files
+			for filename, content := range tt.fileContent {
+				filePath := filepath.Join(tmpDir, filename)
+				dir := filepath.Dir(filePath)
+				if dir != tmpDir {
+					if err := os.MkdirAll(dir, 0750); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			check := CheckLegacyMCPToolReferences(tmpDir)
+
+			if check.Status != tt.expectedStatus {
+				t.Errorf("Expected status %s, got %s", tt.expectedStatus, check.Status)
+			}
+
+			if tt.expectWarning {
+				if check.Fix == "" {
+					t.Error("Expected fix message for warning, got empty string")
+				}
+				if !strings.Contains(check.Fix, "bd setup claude") {
+					t.Error("Expected fix message to mention 'bd setup claude'")
+				}
+				if !strings.Contains(check.Fix, "token") {
+					t.Error("Expected fix message to mention token savings")
+				}
+				if !strings.Contains(check.Fix, "bd list") {
+					t.Error("Expected fix message to show CLI command equivalents")
+				}
+			}
+		})
+	}
+}
+
 func TestCheckLegacyJSONLFilename(t *testing.T) {
 	tests := []struct {
 		name           string

@@ -1,5 +1,5 @@
-//go:build integration
-// +build integration
+//go:build cgo && integration
+// +build cgo,integration
 
 package compact
 
@@ -9,15 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-func setupTestStorage(t *testing.T) *sqlite.SQLiteStorage {
+func setupTestStorage(t *testing.T) storage.Storage {
 	t.Helper()
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: t.TempDir()})
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}
@@ -38,7 +38,7 @@ func setupTestStorage(t *testing.T) *sqlite.SQLiteStorage {
 	return store
 }
 
-func createClosedIssue(t *testing.T, store *sqlite.SQLiteStorage, id string) *types.Issue {
+func createClosedIssue(t *testing.T, store storage.Storage, id string) *types.Issue {
 	t.Helper()
 
 	ctx := context.Background()

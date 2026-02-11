@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -6,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -17,7 +19,7 @@ func TestRepairDeps_NoOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +84,7 @@ func TestRepairDeps_FindOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,17 +121,17 @@ func TestRepairDeps_FindOrphans(t *testing.T) {
 	// Manually create orphaned dependency by directly inserting invalid reference
 	// This simulates corruption or import errors
 	db := store.UnderlyingDB()
-	_, err = db.ExecContext(ctx, "PRAGMA foreign_keys = OFF")
+	_, err = db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS=0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Insert a dependency pointing to a non-existent issue
 	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
-		VALUES (?, 'nonexistent-123', 'blocks', datetime('now'), 'test')`, i2.ID)
+		VALUES (?, 'nonexistent-123', 'blocks', NOW(), 'test')`, i2.ID)
 	if err != nil {
 		t.Fatalf("Failed to insert orphaned dependency: %v", err)
 	}
-	_, err = db.ExecContext(ctx, "PRAGMA foreign_keys = ON")
+	_, err = db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS=1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +200,7 @@ func TestRepairDeps_FixOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,18 +233,18 @@ func TestRepairDeps_FixOrphans(t *testing.T) {
 
 	// Manually create orphaned dependencies by inserting invalid references
 	db := store.UnderlyingDB()
-	db.Exec("PRAGMA foreign_keys = OFF")
+	db.Exec("SET FOREIGN_KEY_CHECKS=0")
 	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
-		VALUES (?, 'nonexistent-123', 'blocks', datetime('now'), 'test')`, i2.ID)
+		VALUES (?, 'nonexistent-123', 'blocks', NOW(), 'test')`, i2.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
-		VALUES (?, 'nonexistent-456', 'blocks', datetime('now'), 'test')`, i3.ID)
+		VALUES (?, 'nonexistent-456', 'blocks', NOW(), 'test')`, i3.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Exec("PRAGMA foreign_keys = ON")
+	db.Exec("SET FOREIGN_KEY_CHECKS=1")
 
 	// Find and fix orphans
 	allDeps, _ := store.GetAllDependencyRecords(ctx)
@@ -312,7 +314,7 @@ func TestRepairDeps_MultipleTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,18 +347,18 @@ func TestRepairDeps_MultipleTypes(t *testing.T) {
 
 	// Manually create orphaned dependencies with different types
 	db := store.UnderlyingDB()
-	db.Exec("PRAGMA foreign_keys = OFF")
+	db.Exec("SET FOREIGN_KEY_CHECKS=0")
 	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
-		VALUES (?, 'nonexistent-blocks', 'blocks', datetime('now'), 'test')`, i2.ID)
+		VALUES (?, 'nonexistent-blocks', 'blocks', NOW(), 'test')`, i2.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
-		VALUES (?, 'nonexistent-related', 'related', datetime('now'), 'test')`, i3.ID)
+		VALUES (?, 'nonexistent-related', 'related', NOW(), 'test')`, i3.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Exec("PRAGMA foreign_keys = ON")
+	db.Exec("SET FOREIGN_KEY_CHECKS=1")
 
 	// Find orphans
 	allDeps, _ := store.GetAllDependencyRecords(ctx)

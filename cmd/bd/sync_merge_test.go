@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -9,15 +11,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // setupTestStore creates a test storage with issue_prefix configured
-func setupTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
+func setupTestStore(t *testing.T, dbPath string) storage.Storage {
 	t.Helper()
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

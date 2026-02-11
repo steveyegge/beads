@@ -1,4 +1,5 @@
 //go:build cgo
+
 package dolt
 
 import (
@@ -12,7 +13,7 @@ import (
 
 // AddComment adds a comment event to an issue
 func (s *DoltStore) AddComment(ctx context.Context, issueID, actor, comment string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, comment)
 		VALUES (?, ?, ?, ?)
 	`, issueID, types.EventCommented, actor, comment)
@@ -36,7 +37,7 @@ func (s *DoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events: %w", err)
 	}
@@ -66,7 +67,7 @@ func (s *DoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([
 
 // GetAllEventsSince returns all events with ID greater than sinceID, ordered by ID ascending.
 func (s *DoltStore) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
 		FROM events
 		WHERE id > ?
@@ -117,7 +118,7 @@ func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, tex
 	}
 
 	createdAt = createdAt.UTC()
-	result, err := s.db.ExecContext(ctx, `
+	result, err := s.execContext(ctx, `
 		INSERT INTO comments (issue_id, author, text, created_at)
 		VALUES (?, ?, ?, ?)
 	`, issueID, author, text, createdAt)
@@ -128,15 +129,6 @@ func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, tex
 	id, err := result.LastInsertId()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get comment id: %w", err)
-	}
-
-	// Mark issue dirty for incremental JSONL export
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO dirty_issues (issue_id, marked_at)
-		VALUES (?, ?)
-		ON DUPLICATE KEY UPDATE marked_at = VALUES(marked_at)
-	`, issueID, time.Now().UTC()); err != nil {
-		return nil, fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
 	return &types.Comment{
@@ -150,7 +142,7 @@ func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, tex
 
 // GetIssueComments retrieves all comments for an issue
 func (s *DoltStore) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT id, issue_id, author, text, created_at
 		FROM comments
 		WHERE issue_id = ?
@@ -193,7 +185,7 @@ func (s *DoltStore) GetCommentsForIssues(ctx context.Context, issueIDs []string)
 		ORDER BY issue_id, created_at ASC
 	`, joinStrings(placeholders, ","))
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get comments: %w", err)
 	}
@@ -231,7 +223,7 @@ func (s *DoltStore) GetCommentCounts(ctx context.Context, issueIDs []string) (ma
 		GROUP BY issue_id
 	`, joinStrings(placeholders, ","))
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get comment counts: %w", err)
 	}

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -102,20 +101,10 @@ func runSlotSet(cmd *cobra.Command, args []string) error {
 
 	// Resolve agent ID
 	var agentID string
-	if daemonClient != nil {
-		resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: agentArg})
-		if err != nil {
-			return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
-		}
-		if err := json.Unmarshal(resp.Data, &agentID); err != nil {
-			return fmt.Errorf("parsing response: %w", err)
-		}
-	} else {
-		var err error
-		agentID, err = utils.ResolvePartialID(ctx, store, agentArg)
-		if err != nil {
-			return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
-		}
+	var err error
+	agentID, err = utils.ResolvePartialID(ctx, store, agentArg)
+	if err != nil {
+		return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
 	}
 
 	// Resolve bead ID - use routing for cross-beads references (e.g., hq-* from rig beads)
@@ -133,14 +122,6 @@ func runSlotSet(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to resolve bead %s: no issue found matching %q", beadArg, beadArg)
 		}
 		beadID = result.ResolvedID
-	} else if daemonClient != nil {
-		resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: beadArg})
-		if err != nil {
-			return fmt.Errorf("failed to resolve bead %s: %w", beadArg, err)
-		}
-		if err := json.Unmarshal(resp.Data, &beadID); err != nil {
-			return fmt.Errorf("parsing response: %w", err)
-		}
 	} else {
 		var err error
 		beadID, err = utils.ResolvePartialID(ctx, store, beadArg)
@@ -151,20 +132,9 @@ func runSlotSet(cmd *cobra.Command, args []string) error {
 
 	// Get current agent bead to check cardinality
 	var agent *types.Issue
-	if daemonClient != nil {
-		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
-		if err != nil {
-			return fmt.Errorf("agent bead not found: %s", agentID)
-		}
-		if err := json.Unmarshal(resp.Data, &agent); err != nil {
-			return fmt.Errorf("parsing response: %w", err)
-		}
-	} else {
-		var err error
-		agent, err = store.GetIssue(ctx, agentID)
-		if err != nil || agent == nil {
-			return fmt.Errorf("agent bead not found: %s", agentID)
-		}
+	agent, err = store.GetIssue(ctx, agentID)
+	if err != nil || agent == nil {
+		return fmt.Errorf("agent bead not found: %s", agentID)
 	}
 
 	// Verify agent bead is actually an agent
@@ -178,34 +148,15 @@ func runSlotSet(cmd *cobra.Command, args []string) error {
 	}
 
 	// Update the slot
-	if daemonClient != nil {
-		updateArgs := &rpc.UpdateArgs{ID: agentID}
-		switch slotName {
-		case "hook":
-			updateArgs.HookBead = &beadID
-		case "role":
-			updateArgs.RoleBead = &beadID
-		}
-		_, err := daemonClient.Update(updateArgs)
-		if err != nil {
-			return fmt.Errorf("failed to set slot: %w", err)
-		}
-	} else {
-		updates := map[string]interface{}{}
-		switch slotName {
-		case "hook":
-			updates["hook_bead"] = beadID
-		case "role":
-			updates["role_bead"] = beadID
-		}
-		if err := store.UpdateIssue(ctx, agentID, updates, actor); err != nil {
-			return fmt.Errorf("failed to set slot: %w", err)
-		}
+	updates := map[string]interface{}{}
+	switch slotName {
+	case "hook":
+		updates["hook_bead"] = beadID
+	case "role":
+		updates["role_bead"] = beadID
 	}
-
-	// Trigger auto-flush
-	if flushManager != nil {
-		flushManager.MarkDirty(false)
+	if err := store.UpdateIssue(ctx, agentID, updates, actor); err != nil {
+		return fmt.Errorf("failed to set slot: %w", err)
 	}
 
 	if jsonOutput {
@@ -238,38 +189,17 @@ func runSlotClear(cmd *cobra.Command, args []string) error {
 
 	// Resolve agent ID
 	var agentID string
-	if daemonClient != nil {
-		resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: agentArg})
-		if err != nil {
-			return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
-		}
-		if err := json.Unmarshal(resp.Data, &agentID); err != nil {
-			return fmt.Errorf("parsing response: %w", err)
-		}
-	} else {
-		var err error
-		agentID, err = utils.ResolvePartialID(ctx, store, agentArg)
-		if err != nil {
-			return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
-		}
+	var err error
+	agentID, err = utils.ResolvePartialID(ctx, store, agentArg)
+	if err != nil {
+		return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
 	}
 
 	// Get current agent bead to verify it's an agent
 	var agent *types.Issue
-	if daemonClient != nil {
-		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
-		if err != nil {
-			return fmt.Errorf("agent bead not found: %s", agentID)
-		}
-		if err := json.Unmarshal(resp.Data, &agent); err != nil {
-			return fmt.Errorf("parsing response: %w", err)
-		}
-	} else {
-		var err error
-		agent, err = store.GetIssue(ctx, agentID)
-		if err != nil || agent == nil {
-			return fmt.Errorf("agent bead not found: %s", agentID)
-		}
+	agent, err = store.GetIssue(ctx, agentID)
+	if err != nil || agent == nil {
+		return fmt.Errorf("agent bead not found: %s", agentID)
 	}
 
 	// Verify agent bead is actually an agent
@@ -278,35 +208,15 @@ func runSlotClear(cmd *cobra.Command, args []string) error {
 	}
 
 	// Clear the slot (set to empty string)
-	emptyStr := ""
-	if daemonClient != nil {
-		updateArgs := &rpc.UpdateArgs{ID: agentID}
-		switch slotName {
-		case "hook":
-			updateArgs.HookBead = &emptyStr
-		case "role":
-			updateArgs.RoleBead = &emptyStr
-		}
-		_, err := daemonClient.Update(updateArgs)
-		if err != nil {
-			return fmt.Errorf("failed to clear slot: %w", err)
-		}
-	} else {
-		updates := map[string]interface{}{}
-		switch slotName {
-		case "hook":
-			updates["hook_bead"] = ""
-		case "role":
-			updates["role_bead"] = ""
-		}
-		if err := store.UpdateIssue(ctx, agentID, updates, actor); err != nil {
-			return fmt.Errorf("failed to clear slot: %w", err)
-		}
+	updates := map[string]interface{}{}
+	switch slotName {
+	case "hook":
+		updates["hook_bead"] = ""
+	case "role":
+		updates["role_bead"] = ""
 	}
-
-	// Trigger auto-flush
-	if flushManager != nil {
-		flushManager.MarkDirty(false)
+	if err := store.UpdateIssue(ctx, agentID, updates, actor); err != nil {
+		return fmt.Errorf("failed to clear slot: %w", err)
 	}
 
 	if jsonOutput {
@@ -331,38 +241,17 @@ func runSlotShow(cmd *cobra.Command, args []string) error {
 
 	// Resolve agent ID
 	var agentID string
-	if daemonClient != nil {
-		resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: agentArg})
-		if err != nil {
-			return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
-		}
-		if err := json.Unmarshal(resp.Data, &agentID); err != nil {
-			return fmt.Errorf("parsing response: %w", err)
-		}
-	} else {
-		var err error
-		agentID, err = utils.ResolvePartialID(ctx, store, agentArg)
-		if err != nil {
-			return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
-		}
+	var err error
+	agentID, err = utils.ResolvePartialID(ctx, store, agentArg)
+	if err != nil {
+		return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
 	}
 
 	// Get agent bead
 	var agent *types.Issue
-	if daemonClient != nil {
-		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
-		if err != nil {
-			return fmt.Errorf("agent bead not found: %s", agentID)
-		}
-		if err := json.Unmarshal(resp.Data, &agent); err != nil {
-			return fmt.Errorf("parsing response: %w", err)
-		}
-	} else {
-		var err error
-		agent, err = store.GetIssue(ctx, agentID)
-		if err != nil || agent == nil {
-			return fmt.Errorf("agent bead not found: %s", agentID)
-		}
+	agent, err = store.GetIssue(ctx, agentID)
+	if err != nil || agent == nil {
+		return fmt.Errorf("agent bead not found: %s", agentID)
 	}
 
 	// Verify agent bead is actually an agent

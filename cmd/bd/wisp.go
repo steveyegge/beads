@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -10,8 +9,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -354,7 +351,7 @@ func runWispList(cmd *cobra.Command, args []string) {
 	showAll, _ := cmd.Flags().GetBool("all")
 
 	// Check for database connection
-	if store == nil && daemonClient == nil {
+	if store == nil {
 		if jsonOutput {
 			outputJSON(WispListResult{
 				Wisps: []WispListItem{},
@@ -368,28 +365,10 @@ func runWispList(cmd *cobra.Command, args []string) {
 
 	// Query wisps from main database using Ephemeral filter
 	ephemeralFlag := true
-	var issues []*types.Issue
-	var err error
-
-	if daemonClient != nil {
-		// Use daemon RPC
-		resp, rpcErr := daemonClient.List(&rpc.ListArgs{
-			Ephemeral: &ephemeralFlag,
-		})
-		if rpcErr != nil {
-			err = rpcErr
-		} else {
-			if jsonErr := json.Unmarshal(resp.Data, &issues); jsonErr != nil {
-				err = jsonErr
-			}
-		}
-	} else {
-		// Direct database access
-		filter := types.IssueFilter{
-			Ephemeral: &ephemeralFlag,
-		}
-		issues, err = store.SearchIssues(ctx, "", filter)
+	filter := types.IssueFilter{
+		Ephemeral: &ephemeralFlag,
 	}
+	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing wisps: %v\n", err)
 		os.Exit(1)
@@ -638,14 +617,8 @@ func runWispGC(cmd *cobra.Command, args []string) {
 
 	// Delete abandoned wisps
 	var cleanedIDs []string
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "Error: wisp gc requires SQLite storage backend\n")
-		os.Exit(1)
-	}
-
 	for _, issue := range abandoned {
-		if err := sqliteStore.DeleteIssue(ctx, issue.ID); err != nil {
+		if err := store.DeleteIssue(ctx, issue.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to delete %s: %v\n", issue.ID, err)
 			continue
 		}

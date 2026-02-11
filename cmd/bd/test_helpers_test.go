@@ -1,9 +1,13 @@
+//go:build cgo
+
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // testIDCounter ensures unique IDs across all test runs
@@ -71,7 +75,6 @@ type savedGlobals struct {
 	store            storage.Storage
 	storeActive      bool
 	autoFlushEnabled bool
-	flushManager     *FlushManager
 }
 
 // saveAndRestoreGlobals snapshots all commonly-mutated package-level globals
@@ -96,7 +99,6 @@ func saveAndRestoreGlobals(t *testing.T) *savedGlobals {
 		store:            store,
 		storeActive:      storeActive,
 		autoFlushEnabled: autoFlushEnabled,
-		flushManager:     flushManager,
 	}
 	t.Cleanup(func() {
 		dbPath = saved.dbPath
@@ -105,7 +107,6 @@ func saveAndRestoreGlobals(t *testing.T) *savedGlobals {
 		storeActive = saved.storeActive
 		storeMutex.Unlock()
 		autoFlushEnabled = saved.autoFlushEnabled
-		flushManager = saved.flushManager
 	})
 	return saved
 }
@@ -159,9 +160,9 @@ func failIfProductionDatabase(t *testing.T, dbPath string) {
 	}
 }
 
-// newTestStore creates a SQLite store with issue_prefix configured (bd-166)
+// newTestStore creates a Dolt store with issue_prefix configured (bd-166)
 // This prevents "database not initialized" errors in tests
-func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
+func newTestStore(t *testing.T, dbPath string) storage.Storage {
 	t.Helper()
 
 	// CRITICAL (bd-2c5a): Ensure we're not polluting production database
@@ -171,7 +172,7 @@ func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
 		t.Fatalf("Failed to create database directory: %v", err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
@@ -193,8 +194,8 @@ func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
 	return store
 }
 
-// newTestStoreWithPrefix creates a SQLite store with custom issue_prefix configured
-func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.SQLiteStorage {
+// newTestStoreWithPrefix creates a Dolt store with custom issue_prefix configured
+func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) storage.Storage {
 	t.Helper()
 
 	// CRITICAL (bd-2c5a): Ensure we're not polluting production database
@@ -204,7 +205,7 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.
 		t.Fatalf("Failed to create database directory: %v", err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
@@ -228,9 +229,9 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.
 
 // openExistingTestDB opens an existing database without modifying it.
 // Used in tests where the database was already created by the code under test.
-func openExistingTestDB(t *testing.T, dbPath string) (*sqlite.SQLiteStorage, error) {
+func openExistingTestDB(t *testing.T, dbPath string) (storage.Storage, error) {
 	t.Helper()
-	return sqlite.New(context.Background(), dbPath)
+	return dolt.New(context.Background(), &dolt.Config{Path: dbPath})
 }
 
 // runCommandInDir runs a command in the specified directory
@@ -249,4 +250,31 @@ func runCommandInDirWithOutput(dir string, name string, args ...string) (string,
 		return "", err
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+// captureStderr captures stderr output from fn and returns it as a string.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(done)
+	}()
+
+	fn()
+	_ = w.Close()
+	os.Stderr = old
+	<-done
+	_ = r.Close()
+
+	return buf.String()
 }

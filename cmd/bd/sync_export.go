@@ -13,20 +13,9 @@ import (
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
-	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
-)
-
-// Incremental export thresholds
-const (
-	// incrementalThreshold is the minimum total issue count to consider incremental export
-	incrementalThreshold = 1000
-	// incrementalDirtyRatio is the max ratio of dirty/total issues for incremental export
-	// If more than 20% of issues are dirty, full export is likely faster
-	incrementalDirtyRatio = 0.20
 )
 
 // ExportResult contains information needed to finalize an export after git commit.
@@ -82,28 +71,7 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 		return
 	}
 
-	// Clear dirty flags for exported issues
-	if len(result.ExportedIDs) > 0 {
-		if err := store.ClearDirtyIssuesByID(ctx, result.ExportedIDs); err != nil {
-			// Non-fatal warning
-			fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty flags: %v\n", err)
-		}
-	}
-
-	// Update export_hashes for all exported issues (GH#1278)
-	// This ensures child issues created with --parent are properly registered
-	// for integrity tracking and incremental export detection.
-	if len(result.IssueContentHashes) > 0 {
-		for issueID, contentHash := range result.IssueContentHashes {
-			if err := store.SetExportHash(ctx, issueID, contentHash); err != nil {
-				// Non-fatal warning - continue with other issues
-				fmt.Fprintf(os.Stderr, "Warning: failed to set export hash for %s: %v\n", issueID, err)
-			}
-		}
-	}
-
-	// Clear auto-flush state
-	clearAutoFlushState()
+	// Dirty tracking and auto-flush state cleared (woho.4)
 
 	// Update jsonl_content_hash metadata to enable content-based staleness detection
 	if result.ContentHash != "" {
@@ -112,12 +80,6 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 			// successful exports. System degrades gracefully to mtime-based staleness detection if metadata
 			// is unavailable. This ensures export operations always succeed even if metadata storage fails.
 			fmt.Fprintf(os.Stderr, "Warning: failed to update jsonl_content_hash: %v\n", err)
-		}
-		// Also update jsonl_file_hash for integrity validation (bd-160)
-		// This ensures validateJSONLIntegrity() won't see a hash mismatch after
-		// bd sync --flush-only runs (e.g., from pre-commit hook).
-		if err := store.SetJSONLFileHash(ctx, result.ContentHash); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to update jsonl_file_hash: %v\n", err)
 		}
 	}
 
@@ -136,12 +98,10 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 	// Use store.Path() to get the actual database location, not the JSONL directory,
 	// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
 	if result.JSONLPath != "" {
-		if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-			dbPath := sqliteStore.Path()
-			if err := TouchDatabaseFile(dbPath, result.JSONLPath); err != nil {
-				// Non-fatal warning
-				fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)
-			}
+		storePath := store.Path()
+		if err := TouchDatabaseFile(storePath, result.JSONLPath); err != nil {
+			// Non-fatal warning
+			fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)
 		}
 	}
 }
@@ -191,23 +151,6 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 func exportToJSONLDeferred(ctx context.Context, jsonlPath string) (*ExportResult, error) {
 	// Skip JSONL export in dolt-native mode (bd-zlih1)
 	if store != nil && !ShouldExportJSONL(ctx, store) {
-		return nil, nil
-	}
-
-	// If daemon is running, use RPC
-	// Note: daemon already handles its own metadata updates
-	if daemonClient != nil {
-		exportArgs := &rpc.ExportArgs{
-			JSONLPath: jsonlPath,
-		}
-		resp, err := daemonClient.Export(exportArgs)
-		if err != nil {
-			return nil, fmt.Errorf("daemon export failed: %w", err)
-		}
-		if !resp.Success {
-			return nil, fmt.Errorf("daemon export error: %s", resp.Error)
-		}
-		// Daemon handles its own metadata updates, return nil result
 		return nil, nil
 	}
 
@@ -373,11 +316,6 @@ func exportToJSONLIncrementalDeferred(ctx context.Context, jsonlPath string) (*E
 		return nil, nil
 	}
 
-	// If daemon is running, delegate to it (daemon has its own optimization)
-	if daemonClient != nil {
-		return exportToJSONLDeferred(ctx, jsonlPath)
-	}
-
 	// Ensure store is initialized
 	if err := ensureStoreActive(); err != nil {
 		return nil, fmt.Errorf("failed to initialize store: %w", err)
@@ -412,43 +350,16 @@ func exportToJSONLIncrementalDeferred(ctx context.Context, jsonlPath string) (*E
 
 // shouldUseIncrementalExport determines if incremental export would be beneficial.
 // Returns (useIncremental, dirtyIDs, error).
-func shouldUseIncrementalExport(ctx context.Context, jsonlPath string) (bool, []string, error) {
+//
+//nolint:unparam // result always false for now; incremental export support planned
+func shouldUseIncrementalExport(_ context.Context, jsonlPath string) (bool, []string, error) {
 	// Check if JSONL file exists (can't do incremental without existing file)
 	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
 		return false, nil, nil
 	}
 
-	// Get dirty issue IDs
-	dirtyIDs, err := store.GetDirtyIssues(ctx)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to get dirty issues: %w", err)
-	}
-
-	// If no dirty issues, we can skip export entirely
-	if len(dirtyIDs) == 0 {
-		return true, dirtyIDs, nil
-	}
-
-	// Get total issue count from existing JSONL (fast line count)
-	totalCount, err := countIssuesInJSONL(jsonlPath)
-	if err != nil {
-		// Can't read JSONL, fall back to full export
-		return false, nil, nil
-	}
-
-	// Check thresholds:
-	// 1. Total must be above threshold (small repos are fast enough with full export)
-	// 2. Dirty ratio must be below threshold (if most issues changed, full export is faster)
-	if totalCount < incrementalThreshold {
-		return false, nil, nil
-	}
-
-	dirtyRatio := float64(len(dirtyIDs)) / float64(totalCount)
-	if dirtyRatio > incrementalDirtyRatio {
-		return false, nil, nil
-	}
-
-	return true, dirtyIDs, nil
+	// Without dirty tracking, always fall back to full export.
+	return false, nil, nil
 }
 
 // performIncrementalExport performs the actual incremental export.

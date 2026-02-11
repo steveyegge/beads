@@ -1,4 +1,5 @@
 //go:build cgo
+
 package dolt
 
 import (
@@ -46,6 +47,31 @@ func TestIsRetryableError(t *testing.T) {
 		{
 			name:     "connection refused - retryable (server restart)",
 			err:      errors.New("dial tcp: connection refused"),
+			expected: true,
+		},
+		{
+			name:     "database is read only - retryable",
+			err:      errors.New("cannot update manifest: database is read only"),
+			expected: true,
+		},
+		{
+			name:     "Database Is Read Only (case insensitive)",
+			err:      errors.New("Database Is Read Only"),
+			expected: true,
+		},
+		{
+			name:     "lost connection - retryable (MySQL error 2013)",
+			err:      errors.New("Error 2013: Lost connection to MySQL server during query"),
+			expected: true,
+		},
+		{
+			name:     "server gone away - retryable (MySQL error 2006)",
+			err:      errors.New("Error 2006: MySQL server has gone away"),
+			expected: true,
+		},
+		{
+			name:     "i/o timeout - retryable",
+			err:      errors.New("read tcp 127.0.0.1:3307: i/o timeout"),
 			expected: true,
 		},
 		{

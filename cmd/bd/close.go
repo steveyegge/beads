@@ -1,13 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -71,179 +71,17 @@ create, update, show, or close operation).`,
 		// Resolve partial IDs first, handling cross-rig routing
 		var resolvedIDs []string
 		var routedArgs []string // IDs that need cross-repo routing (bypass daemon)
-		if daemonClient != nil {
-			for _, id := range args {
-				// Check if this ID needs routing to a different beads directory
-				if needsRouting(id) {
-					routedArgs = append(routedArgs, id)
-					continue
-				}
-				resolveArgs := &rpc.ResolveIDArgs{ID: id}
-				resp, err := daemonClient.ResolveID(resolveArgs)
+		// Direct mode - check routing for each ID
+		for _, id := range args {
+			if needsRouting(id) {
+				routedArgs = append(routedArgs, id)
+			} else {
+				resolved, err := utils.ResolvePartialID(ctx, store, id)
 				if err != nil {
 					FatalErrorRespectJSON("resolving ID %s: %v", id, err)
 				}
-				var resolvedID string
-				if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-				}
-				resolvedIDs = append(resolvedIDs, resolvedID)
+				resolvedIDs = append(resolvedIDs, resolved)
 			}
-		} else {
-			// Direct mode - check routing for each ID
-			for _, id := range args {
-				if needsRouting(id) {
-					routedArgs = append(routedArgs, id)
-				} else {
-					resolved, err := utils.ResolvePartialID(ctx, store, id)
-					if err != nil {
-						FatalErrorRespectJSON("resolving ID %s: %v", id, err)
-					}
-					resolvedIDs = append(resolvedIDs, resolved)
-				}
-			}
-		}
-
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			closedIssues := []*types.Issue{}
-			for _, id := range resolvedIDs {
-				// Get issue for template and pinned checks
-				showArgs := &rpc.ShowArgs{ID: id}
-				showResp, showErr := daemonClient.Show(showArgs)
-				if showErr == nil {
-					var issue types.Issue
-					if json.Unmarshal(showResp.Data, &issue) == nil {
-						if err := validateIssueClosable(id, &issue, force); err != nil {
-							fmt.Fprintf(os.Stderr, "%s\n", err)
-							continue
-						}
-					}
-				}
-
-				closeArgs := &rpc.CloseArgs{
-					ID:          id,
-					Reason:      reason,
-					Session:     session,
-					SuggestNext: suggestNext,
-					Force:       force,
-				}
-				resp, err := daemonClient.CloseIssue(closeArgs)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
-					continue
-				}
-
-				// Handle response based on whether SuggestNext was requested
-				if suggestNext {
-					var result rpc.CloseResult
-					if err := json.Unmarshal(resp.Data, &result); err == nil {
-						if result.Closed != nil {
-							// Run close hook
-							if hookRunner != nil {
-								hookRunner.Run(hooks.EventClose, result.Closed)
-							}
-							if jsonOutput {
-								closedIssues = append(closedIssues, result.Closed)
-							}
-						}
-						if !jsonOutput {
-							fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), id, reason)
-							// Display newly unblocked issues
-							if len(result.Unblocked) > 0 {
-								fmt.Printf("\nNewly unblocked:\n")
-								for _, issue := range result.Unblocked {
-									fmt.Printf("  • %s %q (P%d)\n", issue.ID, issue.Title, issue.Priority)
-								}
-							}
-						}
-					}
-				} else {
-					var issue types.Issue
-					if err := json.Unmarshal(resp.Data, &issue); err == nil {
-						// Run close hook
-						if hookRunner != nil {
-							hookRunner.Run(hooks.EventClose, &issue)
-						}
-						if jsonOutput {
-							closedIssues = append(closedIssues, &issue)
-						}
-					}
-					if !jsonOutput {
-						fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), id, reason)
-					}
-				}
-			}
-
-			// Handle routed IDs via direct mode (cross-rig)
-			for _, id := range routedArgs {
-				result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-					continue
-				}
-				if result == nil || result.Issue == nil {
-					if result != nil {
-						result.Close()
-					}
-					fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-					continue
-				}
-
-				if err := validateIssueClosable(result.ResolvedID, result.Issue, force); err != nil {
-					result.Close()
-					fmt.Fprintf(os.Stderr, "%s\n", err)
-					continue
-				}
-
-				// Check if issue has open blockers (GH#962)
-				if !force {
-					blocked, blockers, err := result.Store.IsBlocked(ctx, result.ResolvedID)
-					if err != nil {
-						result.Close()
-						fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
-						continue
-					}
-					if blocked && len(blockers) > 0 {
-						result.Close()
-						fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
-						continue
-					}
-				}
-
-				if err := result.Store.CloseIssue(ctx, result.ResolvedID, reason, actor, session); err != nil {
-					result.Close()
-					fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
-					continue
-				}
-
-				// Get updated issue for hook
-				closedIssue, _ := result.Store.GetIssue(ctx, result.ResolvedID)
-				if closedIssue != nil && hookRunner != nil {
-					hookRunner.Run(hooks.EventClose, closedIssue)
-				}
-
-				if jsonOutput {
-					if closedIssue != nil {
-						closedIssues = append(closedIssues, closedIssue)
-					}
-				} else {
-					fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), result.ResolvedID, reason)
-				}
-				result.Close()
-			}
-
-			// Handle --continue flag in daemon mode
-			// Note: --continue requires direct database access to walk parent-child chain
-			if continueFlag && len(closedIssues) > 0 {
-				fmt.Fprintf(os.Stderr, "\nNote: --continue requires direct database access\n")
-				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon close %s --continue\n", resolvedIDs[0])
-			}
-
-			if jsonOutput && len(closedIssues) > 0 {
-				outputJSON(closedIssues)
-			}
-			return
 		}
 
 		// Direct mode
@@ -258,6 +96,14 @@ create, update, show, or close operation).`,
 			if err := validateIssueClosable(id, issue, force); err != nil {
 				fmt.Fprintf(os.Stderr, "%s\n", err)
 				continue
+			}
+
+			// Check gate satisfaction for machine-checkable gates (GH#1467)
+			if !force {
+				if err := checkGateSatisfaction(issue); err != nil {
+					fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, err)
+					continue
+				}
 			}
 
 			// Check if issue has open blockers (GH#962)
@@ -314,6 +160,15 @@ create, update, show, or close operation).`,
 				result.Close()
 				fmt.Fprintf(os.Stderr, "%s\n", err)
 				continue
+			}
+
+			// Check gate satisfaction for machine-checkable gates (GH#1467)
+			if !force {
+				if err := checkGateSatisfaction(result.Issue); err != nil {
+					result.Close()
+					fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, err)
+					continue
+				}
 			}
 
 			// Check if issue has open blockers (GH#962)
@@ -373,11 +228,6 @@ create, update, show, or close operation).`,
 			}
 		}
 
-		// Schedule auto-flush if any issues were closed
-		if len(args) > 0 {
-			markDirtyAndScheduleFlush()
-		}
-
 		// Handle --continue flag
 		if continueFlag && len(resolvedIDs) == 1 && closedCount > 0 {
 			autoClaim := !noAuto
@@ -409,11 +259,74 @@ func init() {
 	_ = closeCmd.Flags().MarkHidden("resolution") // Hidden alias for agent/CLI ergonomics
 	closeCmd.Flags().StringP("message", "m", "", "Alias for --reason (git commit convention)")
 	_ = closeCmd.Flags().MarkHidden("message") // Hidden alias for agent/CLI ergonomics
-	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues")
+	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues or unsatisfied gates")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
 	closeCmd.Flags().Bool("suggest-next", false, "Show newly unblocked issues after closing")
 	closeCmd.Flags().String("session", "", "Claude Code session ID (or set CLAUDE_SESSION_ID env var)")
 	closeCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(closeCmd)
+}
+
+// isMachineCheckableGate returns true if the issue is a gate with a machine-checkable await type.
+func isMachineCheckableGate(issue *types.Issue) bool {
+	if issue == nil || issue.IssueType != "gate" {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(issue.AwaitType, "gh:pr"):
+		return true
+	case strings.HasPrefix(issue.AwaitType, "gh:run"):
+		return true
+	case issue.AwaitType == "timer":
+		return true
+	case issue.AwaitType == "bead":
+		return true
+	default:
+		return false
+	}
+}
+
+// checkGateSatisfaction checks whether a gate issue's condition is satisfied.
+// Returns nil if the gate is satisfied (or not a machine-checkable gate), or an error describing why it cannot be closed.
+func checkGateSatisfaction(issue *types.Issue) error {
+	if !isMachineCheckableGate(issue) {
+		return nil
+	}
+
+	var resolved bool
+	var escalated bool
+	var reason string
+	var err error
+
+	switch {
+	case strings.HasPrefix(issue.AwaitType, "gh:run"):
+		resolved, escalated, reason, err = checkGHRun(issue)
+	case strings.HasPrefix(issue.AwaitType, "gh:pr"):
+		resolved, escalated, reason, err = checkGHPR(issue)
+	case issue.AwaitType == "timer":
+		resolved, escalated, reason, err = checkTimer(issue, time.Now())
+	case issue.AwaitType == "bead":
+		resolved, reason = checkBeadGate(rootCtx, issue.AwaitID)
+		if resolved {
+			return nil
+		}
+		return fmt.Errorf("gate condition not satisfied: %s (use --force to override)", reason)
+	}
+
+	if err != nil {
+		// If we can't check the condition, allow close with a warning
+		fmt.Fprintf(os.Stderr, "Warning: could not evaluate gate condition: %v\n", err)
+		return nil
+	}
+
+	if resolved {
+		return nil
+	}
+
+	if escalated {
+		return fmt.Errorf("gate condition not satisfied: %s (use --force to override)", reason)
+	}
+
+	return fmt.Errorf("gate condition not satisfied: %s (use --force to override)", reason)
 }

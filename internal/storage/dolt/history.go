@@ -1,4 +1,5 @@
 //go:build cgo
+
 package dolt
 
 import (
@@ -73,7 +74,7 @@ type IssueHistory struct {
 
 // GetIssueHistory returns the complete history of an issue
 func (s *DoltStore) GetIssueHistory(ctx context.Context, issueID string) ([]*IssueHistory, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT
 			id, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, owner, created_by,
@@ -222,7 +223,7 @@ type DiffEntry struct {
 
 // GetDiff returns changes between two commits
 func (s *DoltStore) GetDiff(ctx context.Context, fromRef, toRef string) ([]*DiffEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT table_name, diff_type, from_commit, to_commit
 		FROM dolt_diff(?, ?)
 	`, fromRef, toRef)
@@ -329,7 +330,7 @@ type IssueDiff struct {
 // GetInternalConflicts returns any merge conflicts in the current state (internal format).
 // For the public interface, use GetConflicts which returns storage.Conflict.
 func (s *DoltStore) GetInternalConflicts(ctx context.Context) ([]*TableConflict, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.queryContext(ctx,
 		"SELECT `table`, num_conflicts FROM dolt_conflicts")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conflicts: %w", err)
@@ -372,7 +373,7 @@ func (s *DoltStore) ResolveConflicts(ctx context.Context, table string, strategy
 		return fmt.Errorf("unknown conflict resolution strategy: %s", strategy)
 	}
 
-	_, err := s.db.ExecContext(ctx, query)
+	_, err := s.execContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("failed to resolve conflicts: %w", err)
 	}

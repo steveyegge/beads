@@ -5,12 +5,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -41,41 +39,17 @@ Examples:
 
 		// Resolve partial ID
 		var fullID string
-		if daemonClient != nil {
-			resolveArgs := &rpc.ResolveIDArgs{ID: issueID}
-			resp, err := daemonClient.ResolveID(resolveArgs)
-			if err != nil {
-				FatalErrorRespectJSON("resolving issue ID %s: %v", issueID, err)
-			}
-			if err := json.Unmarshal(resp.Data, &fullID); err != nil {
-				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-			}
-		} else {
-			var err error
-			fullID, err = utils.ResolvePartialID(ctx, store, issueID)
-			if err != nil {
-				FatalErrorRespectJSON("resolving %s: %v", issueID, err)
-			}
+		var err error
+		fullID, err = utils.ResolvePartialID(ctx, store, issueID)
+		if err != nil {
+			FatalErrorRespectJSON("resolving %s: %v", issueID, err)
 		}
 
 		// Get labels for the issue
 		var labels []string
-		if daemonClient != nil {
-			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: fullID})
-			if err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
-			var issue types.Issue
-			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				FatalErrorRespectJSON("parsing response: %v", err)
-			}
-			labels = issue.Labels
-		} else {
-			var err error
-			labels, err = store.GetLabels(ctx, fullID)
-			if err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
+		labels, err = store.GetLabels(ctx, fullID)
+		if err != nil {
+			FatalErrorRespectJSON("%v", err)
 		}
 
 		// Find label matching dimension:*
@@ -150,41 +124,17 @@ The --reason flag provides context for the event bead (recommended).`,
 
 		// Resolve partial ID
 		var fullID string
-		if daemonClient != nil {
-			resolveArgs := &rpc.ResolveIDArgs{ID: issueID}
-			resp, err := daemonClient.ResolveID(resolveArgs)
-			if err != nil {
-				FatalErrorRespectJSON("resolving issue ID %s: %v", issueID, err)
-			}
-			if err := json.Unmarshal(resp.Data, &fullID); err != nil {
-				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-			}
-		} else {
-			var err error
-			fullID, err = utils.ResolvePartialID(ctx, store, issueID)
-			if err != nil {
-				FatalErrorRespectJSON("resolving %s: %v", issueID, err)
-			}
+		var err error
+		fullID, err = utils.ResolvePartialID(ctx, store, issueID)
+		if err != nil {
+			FatalErrorRespectJSON("resolving %s: %v", issueID, err)
 		}
 
 		// Get current labels to find existing dimension value
 		var labels []string
-		if daemonClient != nil {
-			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: fullID})
-			if err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
-			var issue types.Issue
-			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				FatalErrorRespectJSON("parsing response: %v", err)
-			}
-			labels = issue.Labels
-		} else {
-			var err error
-			labels, err = store.GetLabels(ctx, fullID)
-			if err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
+		labels, err = store.GetLabels(ctx, fullID)
+		if err != nil {
+			FatalErrorRespectJSON("%v", err)
 		}
 
 		// Find existing label for this dimension
@@ -229,86 +179,47 @@ The --reason flag provides context for the event bead (recommended).`,
 		}
 
 		var eventID string
-		if daemonClient != nil {
-			createArgs := &rpc.CreateArgs{
-				Parent:      fullID,
-				Title:       eventTitle,
-				Description: eventDesc,
-				IssueType:   string(types.TypeEvent),
-				Priority:    4, // Low priority for events
-				CreatedBy:   getActorWithGit(),
-			}
-			resp, err := daemonClient.Create(createArgs)
-			if err != nil {
-				FatalErrorRespectJSON("creating event: %v", err)
-			}
-			var issue types.Issue
-			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				FatalErrorRespectJSON("parsing event response: %v", err)
-			}
-			eventID = issue.ID
-		} else {
-			// Get next child ID for the event
-			childID, err := store.GetNextChildID(ctx, fullID)
-			if err != nil {
-				FatalErrorRespectJSON("generating child ID: %v", err)
-			}
-
-			event := &types.Issue{
-				ID:          childID,
-				Title:       eventTitle,
-				Description: eventDesc,
-				Status:      types.StatusClosed, // Events are immediately closed
-				Priority:    4,
-				IssueType:   types.TypeEvent,
-				CreatedBy:   getActorWithGit(),
-			}
-			if err := store.CreateIssue(ctx, event, actor); err != nil {
-				FatalErrorRespectJSON("creating event: %v", err)
-			}
-
-			// Add parent-child dependency
-			dep := &types.Dependency{
-				IssueID:     childID,
-				DependsOnID: fullID,
-				Type:        types.DepParentChild,
-			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				WarnError("failed to add parent-child dependency: %v", err)
-			}
-
-			eventID = childID
+		// Get next child ID for the event
+		childID, err := store.GetNextChildID(ctx, fullID)
+		if err != nil {
+			FatalErrorRespectJSON("generating child ID: %v", err)
 		}
+
+		event := &types.Issue{
+			ID:          childID,
+			Title:       eventTitle,
+			Description: eventDesc,
+			Status:      types.StatusClosed, // Events are immediately closed
+			Priority:    4,
+			IssueType:   types.TypeEvent,
+			CreatedBy:   getActorWithGit(),
+		}
+		if err := store.CreateIssue(ctx, event, actor); err != nil {
+			FatalErrorRespectJSON("creating event: %v", err)
+		}
+
+		// Add parent-child dependency
+		dep := &types.Dependency{
+			IssueID:     childID,
+			DependsOnID: fullID,
+			Type:        types.DepParentChild,
+		}
+		if err := store.AddDependency(ctx, dep, actor); err != nil {
+			WarnError("failed to add parent-child dependency: %v", err)
+		}
+
+		eventID = childID
 
 		// 2. Remove old label if exists
 		if oldLabel != "" {
-			if daemonClient != nil {
-				_, err := daemonClient.RemoveLabel(&rpc.LabelRemoveArgs{ID: fullID, Label: oldLabel})
-				if err != nil {
-					WarnError("failed to remove old label %s: %v", oldLabel, err)
-				}
-			} else {
-				if err := store.RemoveLabel(ctx, fullID, oldLabel, actor); err != nil {
-					WarnError("failed to remove old label %s: %v", oldLabel, err)
-				}
+			if err := store.RemoveLabel(ctx, fullID, oldLabel, actor); err != nil {
+				WarnError("failed to remove old label %s: %v", oldLabel, err)
 			}
 		}
 
 		// 3. Add new label
-		if daemonClient != nil {
-			_, err := daemonClient.AddLabel(&rpc.LabelAddArgs{ID: fullID, Label: newLabel})
-			if err != nil {
-				FatalErrorRespectJSON("adding label: %v", err)
-			}
-		} else {
-			if err := store.AddLabel(ctx, fullID, newLabel, actor); err != nil {
-				FatalErrorRespectJSON("adding label: %v", err)
-			}
-		}
-
-		// Schedule auto-flush if in direct mode
-		if daemonClient == nil {
-			markDirtyAndScheduleFlush()
+		if err := store.AddLabel(ctx, fullID, newLabel, actor); err != nil {
+			FatalErrorRespectJSON("adding label: %v", err)
 		}
 
 		if jsonOutput {
@@ -356,41 +267,17 @@ Example:
 
 		// Resolve partial ID
 		var fullID string
-		if daemonClient != nil {
-			resolveArgs := &rpc.ResolveIDArgs{ID: issueID}
-			resp, err := daemonClient.ResolveID(resolveArgs)
-			if err != nil {
-				FatalErrorRespectJSON("resolving issue ID %s: %v", issueID, err)
-			}
-			if err := json.Unmarshal(resp.Data, &fullID); err != nil {
-				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-			}
-		} else {
-			var err error
-			fullID, err = utils.ResolvePartialID(ctx, store, issueID)
-			if err != nil {
-				FatalErrorRespectJSON("resolving %s: %v", issueID, err)
-			}
+		var err error
+		fullID, err = utils.ResolvePartialID(ctx, store, issueID)
+		if err != nil {
+			FatalErrorRespectJSON("resolving %s: %v", issueID, err)
 		}
 
 		// Get labels for the issue
 		var labels []string
-		if daemonClient != nil {
-			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: fullID})
-			if err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
-			var issue types.Issue
-			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				FatalErrorRespectJSON("parsing response: %v", err)
-			}
-			labels = issue.Labels
-		} else {
-			var err error
-			labels, err = store.GetLabels(ctx, fullID)
-			if err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
+		labels, err = store.GetLabels(ctx, fullID)
+		if err != nil {
+			FatalErrorRespectJSON("%v", err)
 		}
 
 		// Extract state labels (those with colon)

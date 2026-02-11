@@ -2,14 +2,12 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -106,115 +104,6 @@ Examples:
 
 		ctx := rootCtx
 		requireFreshDB(ctx)
-
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			countArgs := &rpc.CountArgs{
-				Status:    status,
-				IssueType: issueType,
-				Assignee:  assignee,
-				GroupBy:   groupBy,
-			}
-			if cmd.Flags().Changed("priority") {
-				priority, _ := cmd.Flags().GetInt("priority")
-				countArgs.Priority = &priority
-			}
-			if len(labels) > 0 {
-				countArgs.Labels = labels
-			}
-			if len(labelsAny) > 0 {
-				countArgs.LabelsAny = labelsAny
-			}
-			if titleSearch != "" {
-				countArgs.Query = titleSearch
-			}
-			if idFilter != "" {
-				ids := utils.NormalizeLabels(strings.Split(idFilter, ","))
-				if len(ids) > 0 {
-					countArgs.IDs = ids
-				}
-			}
-
-			// Pattern matching
-			countArgs.TitleContains = titleContains
-			countArgs.DescriptionContains = descContains
-			countArgs.NotesContains = notesContains
-
-			// Date ranges
-			countArgs.CreatedAfter = createdAfter
-			countArgs.CreatedBefore = createdBefore
-			countArgs.UpdatedAfter = updatedAfter
-			countArgs.UpdatedBefore = updatedBefore
-			countArgs.ClosedAfter = closedAfter
-			countArgs.ClosedBefore = closedBefore
-
-			// Empty/null checks
-			countArgs.EmptyDescription = emptyDesc
-			countArgs.NoAssignee = noAssignee
-			countArgs.NoLabels = noLabels
-
-			// Priority range
-			if cmd.Flags().Changed("priority-min") {
-				countArgs.PriorityMin = &priorityMin
-			}
-			if cmd.Flags().Changed("priority-max") {
-				countArgs.PriorityMax = &priorityMax
-			}
-
-			resp, err := daemonClient.Count(countArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-
-			if groupBy == "" {
-				// Simple count
-				var result struct {
-					Count int `json:"count"`
-				}
-				if err := json.Unmarshal(resp.Data, &result); err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-					os.Exit(1)
-				}
-
-				if jsonOutput {
-					outputJSON(result)
-				} else {
-					fmt.Println(result.Count)
-				}
-			} else {
-				// Grouped count
-				var result struct {
-					Total  int `json:"total"`
-					Groups []struct {
-						Group string `json:"group"`
-						Count int    `json:"count"`
-					} `json:"groups"`
-				}
-				if err := json.Unmarshal(resp.Data, &result); err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-					os.Exit(1)
-				}
-
-				if jsonOutput {
-					outputJSON(result)
-				} else {
-					// Sort groups for consistent output
-					slices.SortFunc(result.Groups, func(a, b struct {
-						Group string `json:"group"`
-						Count int    `json:"count"`
-					}) int {
-						return cmp.Compare(a.Group, b.Group)
-					})
-
-					fmt.Printf("Total: %d\n\n", result.Total)
-					for _, g := range result.Groups {
-						fmt.Printf("%s: %d\n", g.Group, g.Count)
-					}
-				}
-			}
-			return
-		}
 
 		// Direct mode
 		filter := types.IssueFilter{}

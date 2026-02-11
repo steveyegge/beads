@@ -23,7 +23,6 @@ import (
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/molecules"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/memory"
@@ -37,15 +36,10 @@ const (
 )
 
 var (
-	dbPath       string
-	actor        string
-	store        storage.Storage
-	jsonOutput   bool
-	daemonStatus DaemonStatus // Tracks daemon connection state for current command
-
-	// Daemon mode
-	daemonClient *rpc.Client // RPC client when daemon is running
-	noDaemon     bool        // Force direct mode (no daemon)
+	dbPath     string
+	actor      string
+	store      storage.Storage
+	jsonOutput bool
 
 	// Signal-aware context for graceful cancellation
 	rootCtx    context.Context
@@ -58,9 +52,6 @@ var (
 	storeActive       = false    // Tracks if store is available
 	flushFailureCount = 0        // Consecutive flush failures
 	lastFlushError    error      // Last flush error for debugging
-
-	// Auto-flush manager (event-driven, fixes race condition)
-	flushManager *FlushManager
 
 	// Hook runner for extensibility
 	hookRunner *hooks.Runner
@@ -214,18 +205,19 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db)")
 	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $BD_ACTOR, git user.name, $USER)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
-	rootCmd.PersistentFlags().BoolVar(&noDaemon, "no-daemon", false, "Force direct storage mode, bypass daemon if running")
 	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
 	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
-	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables daemon and auto-sync")
+	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables auto-sync")
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&noDb, "no-db", false, "Use no-db mode: load from JSONL, no SQLite")
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
-	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on). Default from config key dolt.auto-commit")
+	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on). Default: on for embedded, off for server mode. Override via config key dolt.auto-commit")
 	rootCmd.PersistentFlags().DurationVar(&lockTimeout, "lock-timeout", 30*time.Second, "SQLite busy timeout (0 = fail immediately if locked)")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
+
+	// Note: --no-daemon is registered in daemon_compat.go as a deprecated no-op flag.
 
 	// Add --version flag to root command (same behavior as version subcommand)
 	rootCmd.Flags().BoolP("version", "V", false, "Print version information")
@@ -301,14 +293,6 @@ var rootCmd = &cobra.Command{
 				Value  interface{}
 				WasSet bool
 			}{jsonOutput, true}
-		}
-		if !cmd.Flags().Changed("no-daemon") {
-			noDaemon = config.GetBool("no-daemon")
-		} else {
-			flagOverrides["no-daemon"] = struct {
-				Value  interface{}
-				WasSet bool
-			}{noDaemon, true}
 		}
 		if !cmd.Flags().Changed("no-auto-flush") {
 			noAutoFlush = config.GetBool("no-auto-flush")
@@ -393,7 +377,6 @@ var rootCmd = &cobra.Command{
 		// signalOrchestratorActivity) to avoid spawning git subprocesses for simple commands
 		// like "bd version" that don't need database access.
 		noDbCommands := []string{
-			cmdDaemon,
 			"__complete",       // Cobra's internal completion command (shell completions work without db)
 			"__completeNoDesc", // Cobra's completion without descriptions (used by fish)
 			"bash",
@@ -428,7 +411,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Skip for root command with no subcommand (just shows help)
-		if cmd.Parent() == nil && cmdName == "bd" {
+		if cmd.Parent() == nil && cmdName == cmd.Use {
 			return
 		}
 
@@ -450,11 +433,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Performance profiling setup
-		// When --profile is enabled, force direct mode to capture actual database operations
-		// rather than just RPC serialization/network overhead. This gives accurate profiles
-		// of the storage layer, query performance, and business logic.
 		if profileEnabled {
-			noDaemon = true
 			timestamp := time.Now().Format("20060102-150405")
 			if f, _ := os.Create(fmt.Sprintf("bd-profile-%s-%s.prof", cmd.Name(), timestamp)); f != nil {
 				profileFile = f
@@ -467,8 +446,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Auto-detect sandboxed environment (Phase 2 for GH #353)
-		// Only auto-enable if user hasn't explicitly set --sandbox or --no-daemon
-		if !cmd.Flags().Changed("sandbox") && !cmd.Flags().Changed("no-daemon") {
+		if !cmd.Flags().Changed("sandbox") {
 			if isSandboxed() {
 				sandboxMode = true
 				fmt.Fprintf(os.Stderr, "ℹ️  Sandbox detected, using direct mode\n")
@@ -477,25 +455,12 @@ var rootCmd = &cobra.Command{
 
 		// If sandbox mode is set, enable all sandbox flags
 		if sandboxMode {
-			noDaemon = true
 			noAutoFlush = true
 			noAutoImport = true
 			// Use shorter lock timeout in sandbox mode unless explicitly set
 			if !cmd.Flags().Changed("lock-timeout") {
 				lockTimeout = 100 * time.Millisecond
 			}
-		}
-
-		// Force direct mode for human-only interactive commands
-		// edit: can take minutes in $EDITOR, daemon connection times out (GH #227)
-		if cmd.Name() == "edit" {
-			noDaemon = true
-		}
-
-		// GH#Resources: Resources command involves local file scanning and should run in direct mode
-		// to avoid serializing large resource lists over RPC and handle local environment correctly.
-		if cmd.Name() == "resources" || (cmd.Parent() != nil && cmd.Parent().Name() == "resources") {
-			noDaemon = true
 		}
 
 		// Set auto-flush based on flag (invert no-auto-flush)
@@ -514,7 +479,7 @@ var rootCmd = &cobra.Command{
 			// Set actor for audit trail
 			actor = getActorWithGit()
 
-			// Skip daemon and SQLite initialization - we're in memory mode
+			// Skip SQLite initialization - we're in memory mode
 			return
 		}
 
@@ -563,11 +528,24 @@ var rootCmd = &cobra.Command{
 				}
 
 				// Allow read-only commands to auto-bootstrap from JSONL (GH#b09)
-				// This enables `bd --no-daemon show` after cold-start when DB is missing
+				// This enables `bd show` after cold-start when DB is missing.
+				// IMPORTANT: Only auto-bootstrap for SQLite backend. If metadata.json says
+				// the backend is Dolt, we must NOT silently create a SQLite database —
+				// that causes Classic contamination. Error out instead so the user can
+				// fix the Dolt connection. (gt-r1nex)
 				canAutoBootstrap := false
 				if isReadOnlyCommand(cmd.Name()) && beadsDir != "" {
 					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 					if _, err := os.Stat(jsonlPath); err == nil {
+						configuredBackend := factory.GetBackendFromConfig(beadsDir)
+						if configuredBackend == configfile.BackendDolt {
+							// Dolt backend configured but database not found — don't create SQLite
+							fmt.Fprintf(os.Stderr, "Error: Dolt backend configured but database not found\n")
+							fmt.Fprintf(os.Stderr, "The .beads/metadata.json specifies backend: dolt\n")
+							fmt.Fprintf(os.Stderr, "but no Dolt database was found. Check that the Dolt server is running.\n")
+							fmt.Fprintf(os.Stderr, "\nHint: run 'bd doctor --fix' to diagnose and repair\n")
+							os.Exit(1)
+						}
 						canAutoBootstrap = true
 						debug.Logf("cold-start bootstrap: JSONL exists, allowing auto-create for %s", cmd.Name())
 					}
@@ -599,8 +577,7 @@ var rootCmd = &cobra.Command{
 					os.Exit(1)
 				}
 				// For import/setup commands, set default database path
-				// Invariant: dbPath must always be absolute for filepath.Rel() compatibility
-				// in daemon sync-branch code path. Use CanonicalizePath for OS-agnostic
+				// Invariant: dbPath must always be absolute. Use CanonicalizePath for OS-agnostic
 				// handling (symlinks, case normalization on macOS).
 				//
 				// IMPORTANT: Use FindBeadsDir() to get the correct .beads directory,
@@ -622,224 +599,6 @@ var rootCmd = &cobra.Command{
 		// Best-effort tracking - failures are silent
 		trackBdVersion()
 
-		// Initialize daemon status
-		socketPath := getSocketPath()
-		daemonStatus = DaemonStatus{
-			Mode:             "direct",
-			Connected:        false,
-			Degraded:         true,
-			SocketPath:       socketPath,
-			AutoStartEnabled: shouldAutoStartDaemon(),
-			FallbackReason:   FallbackNone,
-		}
-
-		// Doctor should always run in direct mode. It's specifically used to diagnose and
-		// repair daemon/DB issues, so attempting to connect to (or auto-start) a daemon
-		// can add noise and timeouts.
-		if cmd.Name() == "doctor" {
-			noDaemon = true
-		}
-
-		// Restore should always run in direct mode. It performs git checkouts to read
-		// historical issue data, which could conflict with daemon operations.
-		if cmd.Name() == "restore" {
-			noDaemon = true
-		}
-
-		// Wisp operations auto-bypass daemon
-		// Wisps are ephemeral (Ephemeral=true) and never exported to JSONL,
-		// so daemon can't help anyway. This reduces friction in wisp workflows.
-		if isWispOperation(cmd, args) {
-			noDaemon = true
-			daemonStatus.FallbackReason = FallbackWispOperation
-			debug.Logf("wisp operation detected, using direct mode")
-		}
-
-		// Embedded Dolt is single-process-only; never use daemon/RPC.
-		// (Dolt server mode supports multi-process and won't trigger this.)
-		// This must be checked after dbPath is resolved.
-		if !noDaemon && singleProcessOnlyBackend() {
-			noDaemon = true
-			daemonStatus.AutoStartEnabled = false
-			daemonStatus.FallbackReason = FallbackSingleProcessOnly
-			daemonStatus.Detail = "backend is single-process-only (embedded dolt): daemon mode disabled; using direct mode"
-			debug.Logf("single-process backend detected, using direct mode")
-		}
-
-		// Try to connect to daemon first (unless --no-daemon flag is set or worktree safety check fails)
-		if noDaemon {
-			// Only set FallbackFlagNoDaemon if not already set by auto-bypass logic
-			if daemonStatus.FallbackReason == FallbackNone {
-				daemonStatus.FallbackReason = FallbackFlagNoDaemon
-				debug.Logf("--no-daemon flag set, using direct mode")
-			}
-		} else if shouldDisableDaemonForWorktree() {
-			// In a git worktree without sync-branch configured - daemon is unsafe
-			// because all worktrees share the same .beads directory and the daemon
-			// would commit to whatever branch its working directory has checked out.
-			daemonStatus.FallbackReason = FallbackWorktreeSafety
-			debug.Logf("git worktree detected without sync-branch, using direct mode for safety")
-		} else {
-			// Attempt daemon connection
-			client, err := rpc.TryConnect(socketPath)
-			if err == nil && client != nil {
-				// Set expected database path for validation
-				if dbPath != "" {
-					absDBPath, _ := filepath.Abs(dbPath)
-					client.SetDatabasePath(absDBPath)
-				}
-
-				// Perform health check
-				health, healthErr := client.Health()
-				if healthErr == nil && health.Status == statusHealthy {
-					// Check version compatibility
-					if !health.Compatible {
-						debug.Logf("daemon version mismatch (daemon: %s, client: %s), restarting daemon",
-							health.Version, Version)
-						_ = client.Close()
-
-						// Kill old daemon and restart with new version
-						if restartDaemonForVersionMismatch() {
-							// Retry connection after restart
-							client, err = rpc.TryConnect(socketPath)
-							if err == nil && client != nil {
-								if dbPath != "" {
-									absDBPath, _ := filepath.Abs(dbPath)
-									client.SetDatabasePath(absDBPath)
-								}
-								health, healthErr = client.Health()
-								if healthErr == nil && health.Status == statusHealthy {
-									client.SetActor(actor)
-									daemonClient = client
-									daemonStatus.Mode = cmdDaemon
-									daemonStatus.Connected = true
-									daemonStatus.Degraded = false
-									daemonStatus.Health = health.Status
-									debug.Logf("connected to restarted daemon (version: %s)", health.Version)
-									warnWorktreeDaemon(dbPath)
-									return
-								}
-							}
-						}
-						// If restart failed, fall through to direct mode
-						daemonStatus.FallbackReason = FallbackHealthFailed
-						daemonStatus.Detail = fmt.Sprintf("version mismatch (daemon: %s, client: %s) and restart failed",
-							health.Version, Version)
-					} else {
-						// Daemon is healthy and compatible - use it
-						client.SetActor(actor)
-						daemonClient = client
-						daemonStatus.Mode = cmdDaemon
-						daemonStatus.Connected = true
-						daemonStatus.Degraded = false
-						daemonStatus.Health = health.Status
-						debug.Logf("connected to daemon at %s (health: %s)", socketPath, health.Status)
-						// Warn if using daemon with git worktrees
-						warnWorktreeDaemon(dbPath)
-						return // Skip direct storage initialization
-					}
-				} else {
-					// Health check failed or daemon unhealthy
-					_ = client.Close()
-					daemonStatus.FallbackReason = FallbackHealthFailed
-					if healthErr != nil {
-						daemonStatus.Detail = healthErr.Error()
-						debug.Logf("daemon health check failed: %v", healthErr)
-					} else {
-						daemonStatus.Health = health.Status
-						daemonStatus.Detail = health.Error
-						debug.Logf("daemon unhealthy (status=%s): %s", health.Status, health.Error)
-					}
-				}
-			} else {
-				// Connection failed
-				daemonStatus.FallbackReason = FallbackConnectFailed
-				if err != nil {
-					daemonStatus.Detail = err.Error()
-					debug.Logf("daemon connect failed at %s: %v", socketPath, err)
-				}
-			}
-
-			// Daemon not running or unhealthy - try auto-start if enabled
-			if daemonStatus.AutoStartEnabled {
-				daemonStatus.AutoStartAttempted = true
-				debug.Logf("attempting to auto-start daemon")
-				startTime := time.Now()
-				if tryAutoStartDaemon(socketPath) {
-					// Retry connection after auto-start
-					client, err := rpc.TryConnect(socketPath)
-					if err == nil && client != nil {
-						// Set expected database path for validation
-						if dbPath != "" {
-							absDBPath, _ := filepath.Abs(dbPath)
-							client.SetDatabasePath(absDBPath)
-						}
-
-						// Check health of auto-started daemon
-						health, healthErr := client.Health()
-						if healthErr == nil && health.Status == statusHealthy {
-							client.SetActor(actor)
-							daemonClient = client
-							daemonStatus.Mode = cmdDaemon
-							daemonStatus.Connected = true
-							daemonStatus.Degraded = false
-							daemonStatus.AutoStartSucceeded = true
-							daemonStatus.Health = health.Status
-							daemonStatus.FallbackReason = FallbackNone
-							elapsed := time.Since(startTime).Milliseconds()
-							debug.Logf("auto-start succeeded; connected at %s in %dms", socketPath, elapsed)
-							// Warn if using daemon with git worktrees
-							warnWorktreeDaemon(dbPath)
-							return // Skip direct storage initialization
-						} else {
-							// Auto-started daemon is unhealthy
-							_ = client.Close()
-							daemonStatus.FallbackReason = FallbackHealthFailed
-							if healthErr != nil {
-								daemonStatus.Detail = healthErr.Error()
-							} else {
-								daemonStatus.Health = health.Status
-								daemonStatus.Detail = health.Error
-							}
-							debug.Logf("auto-started daemon is unhealthy; falling back to direct mode")
-						}
-					} else {
-						// Auto-start completed but connection still failed
-						daemonStatus.FallbackReason = FallbackAutoStartFailed
-						if err != nil {
-							daemonStatus.Detail = err.Error()
-						}
-						// Check for daemon-error file to provide better error message
-						if beadsDir := filepath.Dir(socketPath); beadsDir != "" {
-							errFile := filepath.Join(beadsDir, "daemon-error")
-							// nolint:gosec // G304: errFile is derived from secure beads directory
-							if errMsg, readErr := os.ReadFile(errFile); readErr == nil && len(errMsg) > 0 {
-								fmt.Fprintf(os.Stderr, "\n%s\n", string(errMsg))
-								daemonStatus.Detail = string(errMsg)
-							}
-						}
-						debug.Logf("auto-start did not yield a running daemon; falling back to direct mode")
-					}
-				} else {
-					// Auto-start itself failed
-					daemonStatus.FallbackReason = FallbackAutoStartFailed
-					debug.Logf("auto-start failed; falling back to direct mode")
-				}
-			} else {
-				// Auto-start disabled - preserve the actual failure reason
-				// Don't override connect_failed or health_failed with auto_start_disabled
-				// This preserves important diagnostic info (daemon crashed vs not running)
-				debug.Logf("auto-start disabled by BEADS_AUTO_START_DAEMON")
-			}
-
-			// Emit BD_VERBOSE warning if falling back to direct mode
-			if os.Getenv("BD_VERBOSE") != "" {
-				emitVerboseWarning()
-			}
-
-			debug.Logf("using direct mode (reason: %s)", daemonStatus.FallbackReason)
-		}
-
 		// Check if this is a read-only command (GH#804)
 		// Read-only commands open SQLite in read-only mode to avoid modifying
 		// the database file (which breaks file watchers).
@@ -847,15 +606,12 @@ var rootCmd = &cobra.Command{
 
 		// Auto-migrate database on version bump
 		// Skip for read-only commands - they can't write anyway
-		// Do this AFTER daemon check but BEFORE opening database for main operation
-		// This ensures: 1) no daemon has DB open, 2) we don't open DB twice
 		if !useReadOnly {
-			autoMigrateOnVersionBump(dbPath)
+			autoMigrateOnVersionBump(filepath.Dir(dbPath))
 		}
 
-		// Fall back to direct storage access
+		// Initialize direct storage access
 		var err error
-		var needsBootstrap bool // Track if DB needs initial import (GH#b09)
 		beadsDir := filepath.Dir(dbPath)
 
 		// Detect backend from metadata.json
@@ -891,6 +647,20 @@ var rootCmd = &cobra.Command{
 				}
 			}
 
+			// Apply mode-aware default for dolt-auto-commit if neither flag nor
+			// config explicitly set it. Server mode defaults to OFF because the
+			// server handles commits via its own transaction lifecycle; firing
+			// DOLT_COMMIT after every write under concurrent load causes
+			// 'database is read only' errors. Embedded mode defaults to ON so
+			// each write is durably committed.
+			if strings.TrimSpace(doltAutoCommit) == "" {
+				if opts.ServerMode {
+					doltAutoCommit = string(doltAutoCommitOff)
+				} else {
+					doltAutoCommit = string(doltAutoCommitOn)
+				}
+			}
+
 			store, err = factory.NewWithOptions(rootCtx, backend, doltPath, opts)
 		} else {
 			// SQLite backend
@@ -901,7 +671,6 @@ var rootCmd = &cobra.Command{
 				debug.Logf("read-only open failed, falling back to read-write: %v", err)
 				opts.ReadOnly = false
 				store, err = factory.NewWithOptions(rootCtx, backend, dbPath, opts)
-				needsBootstrap = true // New DB needs auto-import (GH#b09)
 			}
 		}
 
@@ -923,17 +692,6 @@ var rootCmd = &cobra.Command{
 		storeActive = true
 		storeMutex.Unlock()
 
-		// Initialize flush manager (fixes race condition in auto-flush)
-		// Skip FlushManager creation in sandbox mode - no background goroutines needed
-		// (improves Windows exit behavior and container scenarios)
-		// Skip for read-only commands - they don't write anything (GH#804)
-		// For in-process test scenarios where commands run multiple times,
-		// we create a new manager each time. Shutdown() is idempotent so
-		// PostRun can safely shutdown whichever manager is active.
-		if !sandboxMode && !useReadOnly {
-			flushManager = NewFlushManager(autoFlushEnabled, getDebounceDuration())
-		}
-
 		// Initialize hook runner
 		// dbPath is .beads/something.db, so workspace root is parent of .beads
 		if dbPath != "" {
@@ -943,27 +701,6 @@ var rootCmd = &cobra.Command{
 
 		// Warn if multiple databases detected in directory hierarchy
 		warnMultipleDatabases(dbPath)
-
-		// Auto-import if JSONL is newer than DB (e.g., after git pull)
-		// Skip for import command itself to avoid recursion
-		// Skip for delete command to prevent resurrection of deleted issues
-		// Skip if sync --dry-run to avoid modifying DB in dry-run mode
-		// Skip for read-only commands - they can't write anyway (GH#804)
-		// Exception: allow auto-import for read-only commands that fell back to
-		// read-write mode due to missing DB (needsBootstrap) - fixes GH#b09
-		if cmd.Name() != "import" && cmd.Name() != "delete" && autoImportEnabled && (!useReadOnly || needsBootstrap) {
-			// Check if this is sync command with --dry-run flag
-			if cmd.Name() == "sync" {
-				if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
-					// Skip auto-import in dry-run mode
-					debug.Logf("auto-import skipped for sync --dry-run")
-				} else {
-					autoImportIfNewer()
-				}
-			} else {
-				autoImportIfNewer()
-			}
-		}
 
 		// Load molecule templates from hierarchical catalog locations
 		// Templates are loaded after auto-import to ensure the database is up-to-date.
@@ -1011,21 +748,6 @@ var rootCmd = &cobra.Command{
 				}
 			}
 			return
-		}
-
-		// Close daemon client if we're using it
-		if daemonClient != nil {
-			_ = daemonClient.Close()
-			return
-		}
-
-		// Otherwise, handle direct mode cleanup
-		// Shutdown flush manager (performs final flush if needed)
-		// Skip if sync command already handled export and restore (sync.branch mode)
-		if flushManager != nil && !skipFinalFlush {
-			if err := flushManager.Shutdown(); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: flush manager shutdown error: %v\n", err)
-			}
 		}
 
 		// Dolt auto-commit: after a successful write command (and after final flush),
@@ -1109,6 +831,13 @@ func checkBlockedEnvVars() error {
 }
 
 func main() {
+	// BD_NAME overrides the binary name in help text (e.g. BD_NAME=ops makes
+	// "ops --help" show "ops" instead of "bd"). Useful for multi-instance
+	// setups where wrapper scripts set BEADS_DIR for routing.
+	if name := os.Getenv("BD_NAME"); name != "" {
+		rootCmd.Use = name
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

@@ -1,3 +1,5 @@
+//go:build cgo
+
 package molecules
 
 import (
@@ -7,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -70,8 +72,7 @@ func TestLoader_LoadAll(t *testing.T) {
 	}
 
 	// Create a test database
-	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -144,8 +145,7 @@ func TestLoader_SkipExistingMolecules(t *testing.T) {
 	}
 
 	// Create a test database
-	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

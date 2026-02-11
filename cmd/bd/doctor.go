@@ -83,7 +83,6 @@ This command checks:
   - If Claude plugin is current (when running in Claude Code)
   - Multiple database files
   - Multiple JSONL files
-  - Daemon health (version mismatches, stale processes)
   - Database-JSONL sync status
   - File permissions
   - Circular dependencies
@@ -104,6 +103,8 @@ Export Mode (--output):
 
 Specific Check Mode (--check):
   Run a specific check in detail. Available checks:
+  - artifacts: Detect and optionally clean beads classic artifacts
+    (stale JSONL, SQLite files, cruft .beads dirs). Use with --clean.
   - pollution: Detect and optionally clean test issues from database
   - validate: Run focused data-integrity checks (duplicates, orphaned
     deps, test pollution, git conflicts). Use with --fix to auto-repair.
@@ -152,6 +153,8 @@ Examples:
   bd doctor --dry-run    # Preview what --fix would do without making changes
   bd doctor --perf       # Performance diagnostics
   bd doctor --output diagnostics.json  # Export diagnostics to file
+  bd doctor --check=artifacts           # Show classic artifacts (JSONL, SQLite, cruft dirs)
+  bd doctor --check=artifacts --clean  # Delete safe-to-delete artifacts (with confirmation)
   bd doctor --check=pollution          # Show potential test issues
   bd doctor --check=pollution --clean  # Delete test issues (with confirmation)
   bd doctor --check=validate         # Data-integrity checks only
@@ -204,9 +207,12 @@ Examples:
 			case "validate":
 				runValidateCheck(absPath)
 				return
+			case "artifacts":
+				runArtifactsCheck(absPath, doctorClean, doctorYes)
+				return
 			default:
 				fmt.Fprintf(os.Stderr, "Error: unknown check %q\n", doctorCheckFlag)
-				fmt.Fprintf(os.Stderr, "Available checks: pollution, validate\n")
+				fmt.Fprintf(os.Stderr, "Available checks: artifacts, pollution, validate\n")
 				os.Exit(1)
 			}
 		}
@@ -309,7 +315,7 @@ func runDiagnostics(path string) doctorResult {
 	}
 
 	// Check Git Hooks early (even if .beads/ doesn't exist yet)
-	hooksCheck := convertWithCategory(doctor.CheckGitHooks(), doctor.CategoryGit)
+	hooksCheck := convertWithCategory(doctor.CheckGitHooks(Version), doctor.CategoryGit)
 	result.Checks = append(result.Checks, hooksCheck)
 	// Don't fail overall check for missing hooks, just warn
 
@@ -445,28 +451,6 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 8a: Git sync setup (informational - explains why daemon might not start)
-	gitSyncCheck := convertWithCategory(doctor.CheckGitSyncSetup(path), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, gitSyncCheck)
-	// Don't fail overall check for git sync warning - beads works fine without git
-
-	// Check 8b: Daemon health
-	daemonCheck := convertWithCategory(doctor.CheckDaemonStatus(path, Version), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, daemonCheck)
-	if daemonCheck.Status == statusWarning || daemonCheck.Status == statusError {
-		result.OverallOK = false
-	}
-
-	// Check 8b: Daemon auto-sync (only warn, don't fail overall)
-	autoSyncCheck := convertWithCategory(doctor.CheckDaemonAutoSync(path), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, autoSyncCheck)
-	// Note: Don't set OverallOK = false for this - it's a performance hint, not a failure
-
-	// Check 8c: Legacy daemon config (warn about deprecated options)
-	legacyDaemonConfigCheck := convertWithCategory(doctor.CheckLegacyDaemonConfig(path), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, legacyDaemonConfigCheck)
-	// Note: Don't set OverallOK = false for this - deprecated options still work
-
 	// Federation health checks (bd-wkumz.6)
 	// Check 8d: Federation remotesapi port accessibility
 	remotesAPICheck := convertWithCategory(doctor.CheckFederationRemotesAPI(path), doctor.CategoryFederation)
@@ -491,11 +475,6 @@ func runDiagnostics(path string) doctorResult {
 	// Check 8h: Dolt init vs embedded mode mismatch
 	doltModeCheck := convertWithCategory(doctor.CheckDoltServerModeMismatch(path), doctor.CategoryFederation)
 	result.Checks = append(result.Checks, doltModeCheck)
-
-	// Check 8i: Hydrated repo daemons (warn if multi-repo hydration configured but daemons not running)
-	hydratedRepoDaemonsCheck := convertWithCategory(doctor.CheckHydratedRepoDaemons(path), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, hydratedRepoDaemonsCheck)
-	// Note: Don't set OverallOK = false for this - it's a performance/freshness hint
 
 	// Check 9: Database-JSONL sync
 	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryData)
@@ -531,17 +510,34 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, claudeCheck)
 	// Don't fail overall check for missing Claude integration, just warn
 
-	// Check 11b: Gemini CLI integration
+	// Check 11a: Claude settings file health (malformed JSON detection)
+	claudeSettingsCheck := convertWithCategory(doctor.CheckClaudeSettingsHealth(), doctor.CategoryIntegration)
+	result.Checks = append(result.Checks, claudeSettingsCheck)
+	if claudeSettingsCheck.Status == statusError {
+		result.OverallOK = false // Malformed settings is a real problem
+	}
+
+	// Check 11b: Claude hook completeness (both SessionStart and PreCompact)
+	claudeHookCheck := convertWithCategory(doctor.CheckClaudeHookCompleteness(), doctor.CategoryIntegration)
+	result.Checks = append(result.Checks, claudeHookCheck)
+	// Don't fail overall check for incomplete hooks, just warn
+
+	// Check 11c: bd prime output verification
+	bdPrimeOutputCheck := convertWithCategory(doctor.VerifyPrimeOutput(), doctor.CategoryIntegration)
+	result.Checks = append(result.Checks, bdPrimeOutputCheck)
+	// Don't fail overall check for prime output issues, just warn
+
+	// Check 11d: Gemini CLI integration
 	geminiCheck := convertWithCategory(doctor.CheckGemini(), doctor.CategoryIntegration)
 	result.Checks = append(result.Checks, geminiCheck)
 	// Don't fail overall check for missing Gemini integration, just info
 
-	// Check 11a: bd in PATH (needed for Claude hooks to work)
+	// Check 11e: bd in PATH (needed for Claude hooks to work)
 	bdPathCheck := convertWithCategory(doctor.CheckBdInPath(), doctor.CategoryIntegration)
 	result.Checks = append(result.Checks, bdPathCheck)
 	// Don't fail overall check for missing bd in PATH, just warn
 
-	// Check 11b: Documentation bd prime references match installed version
+	// Check 11f: Documentation bd prime references match installed version
 	bdPrimeDocsCheck := convertWithCategory(doctor.CheckDocumentationBdPrimeReference(path), doctor.CategoryIntegration)
 	result.Checks = append(result.Checks, bdPrimeDocsCheck)
 	// Don't fail overall check for doc mismatch, just warn
@@ -555,6 +551,11 @@ func runDiagnostics(path string) doctorResult {
 	legacyDocsCheck := convertWithCategory(doctor.CheckLegacyBeadsSlashCommands(path), doctor.CategoryMetadata)
 	result.Checks = append(result.Checks, legacyDocsCheck)
 	// Don't fail overall check for legacy docs, just warn
+
+	// Check 13a: MCP tool references in documentation
+	mcpToolRefsCheck := convertWithCategory(doctor.CheckLegacyMCPToolReferences(path), doctor.CategoryIntegration)
+	result.Checks = append(result.Checks, mcpToolRefsCheck)
+	// Don't fail overall check for MCP tool refs, just warn
 
 	// Check 14: Gitignore up to date
 	gitignoreCheck := convertWithCategory(doctor.CheckGitignore(), doctor.CategoryGit)
@@ -739,6 +740,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, doltLocksCheck)
 	// Don't fail overall check for Dolt locks, just warn
 
+	// Check 33: Classic artifacts (post-Dolt-migration cleanup)
+	classicArtifactsCheck := convertDoctorCheck(doctor.CheckClassicArtifacts(path))
+	result.Checks = append(result.Checks, classicArtifactsCheck)
+	// Don't fail overall check for classic artifacts, just warn
+
 	return result
 }
 
@@ -780,10 +786,11 @@ func exportDiagnostics(result doctorResult, outputPath string) error {
 }
 
 func printDiagnostics(result doctorResult) {
-	// Pre-calculate counts and collect issues
+	// Pre-calculate counts and collect issues grouped by category
 	checksByCategory := make(map[string][]doctorCheck)
+	issuesByCategory := make(map[string][]doctorCheck)
 	var passCount, warnCount, failCount int
-	var warnings []doctorCheck
+	hasIssues := false
 
 	for _, check := range result.Checks {
 		cat := check.Category
@@ -797,10 +804,12 @@ func printDiagnostics(result doctorResult) {
 			passCount++
 		case statusWarning:
 			warnCount++
-			warnings = append(warnings, check)
+			issuesByCategory[cat] = append(issuesByCategory[cat], check)
+			hasIssues = true
 		case statusError:
 			failCount++
-			warnings = append(warnings, check)
+			issuesByCategory[cat] = append(issuesByCategory[cat], check)
+			hasIssues = true
 		}
 	}
 
@@ -819,45 +828,92 @@ func printDiagnostics(result doctorResult) {
 		printAllChecks(checksByCategory)
 	}
 
-	// Print warnings/errors section with fixes
-	if len(warnings) > 0 {
+	// Print warnings/errors grouped by category
+	if hasIssues {
 		fmt.Println()
 
-		// Sort by severity: errors first, then warnings
-		slices.SortStableFunc(warnings, func(a, b doctorCheck) int {
-			if a.Status == statusError && b.Status != statusError {
-				return -1
+		// Walk categories in defined order, only showing those with issues
+		for _, category := range doctor.CategoryOrder {
+			issues, exists := issuesByCategory[category]
+			if !exists || len(issues) == 0 {
+				continue
 			}
-			if a.Status != statusError && b.Status == statusError {
-				return 1
-			}
-			return 0
-		})
 
-		for i, check := range warnings {
-			line := fmt.Sprintf("%s: %s", check.Name, check.Message)
-			if check.Status == statusError {
-				fmt.Printf("  %s  %s %s\n", ui.RenderFailIcon(), ui.RenderFail(fmt.Sprintf("%d.", i+1)), ui.RenderFail(line))
-			} else {
-				fmt.Printf("  %s  %s %s\n", ui.RenderWarnIcon(), ui.RenderWarn(fmt.Sprintf("%d.", i+1)), line)
+			// Sort within category: errors first, then warnings
+			slices.SortStableFunc(issues, func(a, b doctorCheck) int {
+				if a.Status == statusError && b.Status != statusError {
+					return -1
+				}
+				if a.Status != statusError && b.Status == statusError {
+					return 1
+				}
+				return 0
+			})
+
+			// Category header
+			catChecks := checksByCategory[category]
+			catPass := 0
+			for _, c := range catChecks {
+				if c.Status == statusOK {
+					catPass++
+				}
 			}
-			if check.Detail != "" {
-				fmt.Printf("        %s\n", ui.RenderMuted(check.Detail))
-			}
-			if check.Fix != "" {
-				lines := strings.Split(check.Fix, "\n")
-				for j, fixLine := range lines {
-					if j == 0 {
-						fmt.Printf("        %s%s\n", ui.MutedStyle.Render(ui.TreeLast), fixLine)
-					} else {
-						fmt.Printf("          %s\n", fixLine)
+			fmt.Printf("%s %s\n", ui.RenderCategory(category),
+				ui.RenderMuted(fmt.Sprintf("(%d/%d passed)", catPass, len(catChecks))))
+
+			for _, check := range issues {
+				line := fmt.Sprintf("%s: %s", check.Name, check.Message)
+				if check.Status == statusError {
+					fmt.Printf("  %s  %s\n", ui.RenderFailIcon(), ui.RenderFail(line))
+				} else {
+					fmt.Printf("  %s  %s\n", ui.RenderWarnIcon(), line)
+				}
+				if check.Detail != "" {
+					fmt.Printf("      %s\n", ui.RenderMuted(check.Detail))
+				}
+				if check.Fix != "" {
+					lines := strings.Split(check.Fix, "\n")
+					for j, fixLine := range lines {
+						if j == 0 {
+							fmt.Printf("      %s%s\n", ui.MutedStyle.Render(ui.TreeLast), fixLine)
+						} else {
+							fmt.Printf("        %s\n", fixLine)
+						}
 					}
 				}
 			}
+			fmt.Println()
+		}
+
+		// Handle "Other" category
+		if otherIssues, exists := issuesByCategory["Other"]; exists && len(otherIssues) > 0 {
+			fmt.Printf("%s\n", ui.RenderCategory("Other"))
+			for _, check := range otherIssues {
+				line := fmt.Sprintf("%s: %s", check.Name, check.Message)
+				if check.Status == statusError {
+					fmt.Printf("  %s  %s\n", ui.RenderFailIcon(), ui.RenderFail(line))
+				} else {
+					fmt.Printf("  %s  %s\n", ui.RenderWarnIcon(), line)
+				}
+				if check.Detail != "" {
+					fmt.Printf("      %s\n", ui.RenderMuted(check.Detail))
+				}
+				if check.Fix != "" {
+					lines := strings.Split(check.Fix, "\n")
+					for j, fixLine := range lines {
+						if j == 0 {
+							fmt.Printf("      %s%s\n", ui.MutedStyle.Render(ui.TreeLast), fixLine)
+						} else {
+							fmt.Printf("        %s\n", fixLine)
+						}
+					}
+				}
+			}
+			fmt.Println()
 		}
 
 		if !doctorVerbose {
-			fmt.Printf("\n%s\n", ui.RenderMuted("Run with --verbose to see all checks"))
+			fmt.Printf("%s\n", ui.RenderMuted("Run with --verbose to see all checks"))
 		}
 	} else {
 		fmt.Println()

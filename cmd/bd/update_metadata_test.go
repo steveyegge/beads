@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -7,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -18,7 +20,7 @@ func TestUpdateMetadataInlineJSON(t *testing.T) {
 
 	// Create storage
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}

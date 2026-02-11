@@ -1,11 +1,10 @@
 # Makefile for beads project
 
-.PHONY: all build test bench bench-quick clean install help check-up-to-date fmt fmt-check
+.PHONY: all build test test-full-cgo bench bench-quick clean install help check-up-to-date fmt fmt-check
 
 # Default target
 all: build
 
-BINARY := bd
 BUILD_DIR := .
 INSTALL_DIR := $(HOME)/.local/bin
 
@@ -18,6 +17,15 @@ INSTALL_DIR := $(HOME)/.local/bin
 #   - CGO_ENABLED=0 is fine if you only need SQLite backend (no embedded Dolt).
 #   - CGO_ENABLED=1 needs a C compiler (MinGW/MSYS2) but does NOT need ICU.
 export CGO_ENABLED := 1
+
+# When go.mod requires a newer Go version than the locally installed one,
+# GOTOOLCHAIN=auto downloads the right compiler but coverage instrumentation
+# may still use the local toolchain's compile tool, causing version mismatch.
+# Force the go.mod version to ensure all tools match.
+GO_VERSION := $(shell sed -n 's/^go //p' go.mod)
+ifneq ($(GO_VERSION),)
+export GOTOOLCHAIN := go$(GO_VERSION)
+endif
 
 # ICU4C is keg-only on macOS (Homebrew doesn't symlink it into /opt/homebrew).
 # Dolt's go-icu-regex dependency needs these paths to compile and link.
@@ -35,12 +43,12 @@ endif
 build:
 	@echo "Building bd..."
 ifeq ($(OS),Windows_NT)
-	go build -tags gms_pure_go -ldflags="-X main.Build=$$(git rev-parse --short HEAD)" -o $(BUILD_DIR)/$(BINARY) ./cmd/bd
+	go build -tags gms_pure_go -ldflags="-X main.Build=$$(git rev-parse --short HEAD)" -o $(BUILD_DIR)/bd.exe ./cmd/bd
 else
-	go build -ldflags="-X main.Build=$$(git rev-parse --short HEAD)" -o $(BUILD_DIR)/$(BINARY) ./cmd/bd
+	go build -ldflags="-X main.Build=$$(git rev-parse --short HEAD)" -o $(BUILD_DIR)/bd ./cmd/bd
 ifeq ($(shell uname),Darwin)
-	@codesign -s - -f $(BUILD_DIR)/$(BINARY) 2>/dev/null || true
-	@echo "Signed $(BINARY) for macOS"
+	@codesign -s - -f $(BUILD_DIR)/bd 2>/dev/null || true
+	@echo "Signed bd for macOS"
 endif
 endif
 
@@ -48,6 +56,12 @@ endif
 test:
 	@echo "Running tests..."
 	@TEST_COVER=1 ./scripts/test.sh
+
+# Run full CGO-enabled test suite (no skip list).
+# On macOS, auto-configures ICU include/link flags.
+test-full-cgo:
+	@echo "Running full CGO-enabled tests..."
+	@./scripts/test-cgo.sh ./...
 
 # Run performance benchmarks (10K and 20K issue databases with automatic CPU profiling)
 # Generates CPU profile: internal/storage/sqlite/bench-cpu-<timestamp>.prof
@@ -86,12 +100,18 @@ endif
 # Also creates 'beads' symlink as an alias for bd
 install: check-up-to-date build
 	@mkdir -p $(INSTALL_DIR)
-	@rm -f $(INSTALL_DIR)/$(BINARY)
-	@cp $(BUILD_DIR)/$(BINARY) $(INSTALL_DIR)/$(BINARY)
-	@echo "Installed $(BINARY) to $(INSTALL_DIR)/$(BINARY)"
+ifeq ($(OS),Windows_NT)
+	@rm -f $(INSTALL_DIR)/bd.exe
+	@cp $(BUILD_DIR)/bd.exe $(INSTALL_DIR)/bd.exe
+	@echo "Installed bd.exe to $(INSTALL_DIR)/bd.exe"
+else
+	@rm -f $(INSTALL_DIR)/bd
+	@cp $(BUILD_DIR)/bd $(INSTALL_DIR)/bd
+	@echo "Installed bd to $(INSTALL_DIR)/bd"
 	@rm -f $(INSTALL_DIR)/beads
-	@ln -s $(BINARY) $(INSTALL_DIR)/beads
-	@echo "Created 'beads' alias -> $(BINARY)"
+	@ln -s bd $(INSTALL_DIR)/beads
+	@echo "Created 'beads' alias -> bd"
+endif
 
 # Format all Go files
 fmt:
@@ -116,6 +136,7 @@ fmt-check:
 clean:
 	@echo "Cleaning..."
 	rm -f bd
+	rm -f bd.exe
 	rm -f internal/storage/sqlite/bench-cpu-*.prof
 	rm -f beads-perf-*.prof
 
@@ -124,6 +145,7 @@ help:
 	@echo "Beads Makefile targets:"
 	@echo "  make build        - Build the bd binary"
 	@echo "  make test         - Run all tests"
+	@echo "  make test-full-cgo - Run full CGO-enabled test suite"
 	@echo "  make bench        - Run performance benchmarks (generates CPU profiles)"
 	@echo "  make bench-quick  - Run quick benchmarks (shorter benchtime)"
 	@echo "  make install      - Install bd to ~/.local/bin (with codesign on macOS, includes 'beads' alias)"

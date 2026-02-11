@@ -1,5 +1,5 @@
-//go:build integration
-// +build integration
+//go:build cgo && integration
+// +build cgo,integration
 
 package beads_test
 
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // integrationTestHelper provides common test setup and assertion methods
@@ -166,7 +167,7 @@ func TestLibraryIntegration(t *testing.T) {
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	ctx := context.Background()
-	store, err := beads.NewSQLiteStorage(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: filepath.Dir(dbPath)})
 	if err != nil {
 		t.Fatalf("NewSQLiteStorage failed: %v", err)
 	}
@@ -329,7 +330,7 @@ func TestBatchCreateIssues(t *testing.T) {
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	ctx := context.Background()
-	store, err := beads.NewSQLiteStorage(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: filepath.Dir(dbPath)})
 	if err != nil {
 		t.Fatalf("NewSQLiteStorage failed: %v", err)
 	}
@@ -404,7 +405,7 @@ func TestRoundTripIssue(t *testing.T) {
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	ctx := context.Background()
-	store, err := beads.NewSQLiteStorage(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: filepath.Dir(dbPath)})
 	if err != nil {
 		t.Fatalf("NewSQLiteStorage failed: %v", err)
 	}
@@ -491,7 +492,7 @@ func TestImportWithDeletedParent(t *testing.T) {
 
 	// Phase 2: Create fresh database and import only the child
 	// (simulating scenario where parent was deleted)
-	store, err := beads.NewSQLiteStorage(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: filepath.Dir(dbPath)})
 	if err != nil {
 		t.Fatalf("NewSQLiteStorage failed: %v", err)
 	}

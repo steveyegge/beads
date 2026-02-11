@@ -1,5 +1,5 @@
-//go:build integration
-// +build integration
+//go:build cgo && integration
+// +build cgo,integration
 
 package fixtures
 
@@ -7,13 +7,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestLargeSQLite(t *testing.T) {
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -65,8 +64,7 @@ func TestXLargeSQLite(t *testing.T) {
 		t.Skip("Skipping XLarge test in short mode")
 	}
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -99,8 +97,7 @@ func TestLargeFromJSONL(t *testing.T) {
 		t.Skip("Skipping JSONL test in short mode")
 	}
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}

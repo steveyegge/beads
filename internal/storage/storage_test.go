@@ -150,30 +150,6 @@ func (m *mockStorage) GetStatistics(ctx context.Context) (*types.Statistics, err
 func (m *mockStorage) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {
 	return nil, nil
 }
-func (m *mockStorage) GetDirtyIssues(ctx context.Context) ([]string, error) {
-	return nil, nil
-}
-func (m *mockStorage) GetDirtyIssueHash(ctx context.Context, issueID string) (string, error) {
-	return "", nil
-}
-func (m *mockStorage) ClearDirtyIssuesByID(ctx context.Context, issueIDs []string) error {
-	return nil
-}
-func (m *mockStorage) GetExportHash(ctx context.Context, issueID string) (string, error) {
-	return "", nil
-}
-func (m *mockStorage) SetExportHash(ctx context.Context, issueID, contentHash string) error {
-	return nil
-}
-func (m *mockStorage) ClearAllExportHashes(ctx context.Context) error {
-	return nil
-}
-func (m *mockStorage) GetJSONLFileHash(ctx context.Context) (string, error) {
-	return "", nil
-}
-func (m *mockStorage) SetJSONLFileHash(ctx context.Context, fileHash string) error {
-	return nil
-}
 func (m *mockStorage) GetNextChildID(ctx context.Context, parentID string) (string, error) {
 	return "", nil
 }
@@ -200,6 +176,12 @@ func (m *mockStorage) SetMetadata(ctx context.Context, key, value string) error 
 }
 func (m *mockStorage) GetMetadata(ctx context.Context, key string) (string, error) {
 	return "", nil
+}
+func (m *mockStorage) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo string) (int, error) {
+	return 0, nil
+}
+func (m *mockStorage) ClearRepoMtime(ctx context.Context, repoPath string) error {
+	return nil
 }
 func (m *mockStorage) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
 	return nil
@@ -377,18 +359,6 @@ func TestInterfaceDocumentation(t *testing.T) {
 		// Verify statistics
 		_ = s.GetStatistics
 
-		// Verify dirty tracking
-		_ = s.GetDirtyIssues
-		_ = s.GetDirtyIssueHash
-		_ = s.ClearDirtyIssuesByID
-
-		// Verify export hash tracking
-		_ = s.GetExportHash
-		_ = s.SetExportHash
-		_ = s.ClearAllExportHashes
-		_ = s.GetJSONLFileHash
-		_ = s.SetJSONLFileHash
-
 		// Verify ID generation
 		_ = s.GetNextChildID
 
@@ -403,6 +373,10 @@ func TestInterfaceDocumentation(t *testing.T) {
 		// Verify metadata operations
 		_ = s.SetMetadata
 		_ = s.GetMetadata
+
+		// Verify multi-repo cleanup operations
+		_ = s.DeleteIssuesBySourceRepo
+		_ = s.ClearRepoMtime
 
 		// Verify prefix rename operations
 		_ = s.UpdateIssueID

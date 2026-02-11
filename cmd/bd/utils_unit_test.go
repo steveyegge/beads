@@ -14,9 +14,9 @@ func TestTruncateString(t *testing.T) {
 	}{
 		{"no truncation needed", "hello", 10, "hello"},
 		{"exact length", "hello", 5, "hello"},
-		{"truncate with ellipsis", "hello world", 8, "hello..."},
+		{"truncate", "hello world", 8, "hello wo"},
 		{"very short max", "hello", 3, "hel"},
-		{"max of 4", "hello world", 4, "h..."},
+		{"max of 4", "hello world", 4, "hell"},
 		{"empty string", "", 5, ""},
 		// Note: truncateString operates on bytes, not runes
 		{"unicode", "hello\u4e16\u754c", 15, "hello\u4e16\u754c"},
@@ -205,10 +205,4 @@ func TestTruncateDescription(t *testing.T) {
 func TestShowCleanupDeprecationHint(t *testing.T) {
 	// This function just prints to stdout, so we just verify it doesn't panic
 	showCleanupDeprecationHint()
-}
-
-// Test clearAutoFlushState - ensure it doesn't panic when called without initialization
-func TestClearAutoFlushState(t *testing.T) {
-	// This should not panic even if flush manager isn't initialized
-	clearAutoFlushState()
 }

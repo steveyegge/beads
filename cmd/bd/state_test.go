@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -7,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 type stateTestHelper struct {
-	s   *sqlite.SQLiteStorage
+	s   storage.Storage
 	ctx context.Context
 	t   *testing.T
 }

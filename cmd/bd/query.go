@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/query"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -129,56 +127,36 @@ Examples:
 
 		requireFreshDB(ctx)
 
-		var issues []*types.Issue
+		// Direct mode
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: no storage available\n")
+			os.Exit(1)
+		}
 
-		// Execute query
-		if daemonClient != nil {
-			// Daemon mode: use RPC with filter
-			// Convert filter to ListArgs
-			listArgs := filterToListArgs(&result.Filter)
-
-			resp, err := daemonClient.List(listArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+		// If we need predicate filtering, we may need to fetch more results
+		// to ensure we get enough after filtering
+		searchFilter := result.Filter
+		if result.RequiresPredicate && limit > 0 {
+			// Fetch more to account for predicate filtering
+			searchFilter.Limit = limit * 3
+			if searchFilter.Limit < 100 {
+				searchFilter.Limit = 100
 			}
+		}
 
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			// Direct mode
-			if store == nil {
-				fmt.Fprintf(os.Stderr, "Error: no storage available\n")
-				os.Exit(1)
-			}
+		issues, err := store.SearchIssues(ctx, "", searchFilter)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
-			// If we need predicate filtering, we may need to fetch more results
-			// to ensure we get enough after filtering
-			searchFilter := result.Filter
-			if result.RequiresPredicate && limit > 0 {
-				// Fetch more to account for predicate filtering
-				searchFilter.Limit = limit * 3
-				if searchFilter.Limit < 100 {
-					searchFilter.Limit = 100
-				}
-			}
-
-			issues, err = store.SearchIssues(ctx, "", searchFilter)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-
-			// If no issues found, check if git has issues and auto-import
-			if len(issues) == 0 {
-				if checkAndAutoImport(ctx, store) {
-					issues, err = store.SearchIssues(ctx, "", searchFilter)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-						os.Exit(1)
-					}
+		// If no issues found, check if git has issues and auto-import
+		if len(issues) == 0 {
+			if checkAndAutoImport(ctx, store) {
+				issues, err = store.SearchIssues(ctx, "", searchFilter)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
 				}
 			}
 		}
@@ -280,98 +258,6 @@ func hasExplicitStatusFilter(node query.Node) bool {
 	default:
 		return false
 	}
-}
-
-// filterToListArgs converts an IssueFilter to RPC ListArgs
-func filterToListArgs(filter *types.IssueFilter) *rpc.ListArgs {
-	args := &rpc.ListArgs{
-		Limit: filter.Limit,
-	}
-
-	if filter.Status != nil {
-		args.Status = string(*filter.Status)
-	}
-	if filter.IssueType != nil {
-		args.IssueType = string(*filter.IssueType)
-	}
-	if filter.Assignee != nil {
-		args.Assignee = *filter.Assignee
-	}
-	if len(filter.Labels) > 0 {
-		args.Labels = filter.Labels
-	}
-	if len(filter.LabelsAny) > 0 {
-		args.LabelsAny = filter.LabelsAny
-	}
-	if filter.TitleContains != "" {
-		args.TitleContains = filter.TitleContains
-	}
-	if filter.DescriptionContains != "" {
-		args.DescriptionContains = filter.DescriptionContains
-	}
-	if filter.NotesContains != "" {
-		args.NotesContains = filter.NotesContains
-	}
-	if len(filter.IDs) > 0 {
-		args.IDs = filter.IDs
-	}
-	if filter.SpecIDPrefix != "" {
-		args.SpecIDPrefix = filter.SpecIDPrefix
-	}
-	if filter.CreatedAfter != nil {
-		args.CreatedAfter = filter.CreatedAfter.Format(time.RFC3339)
-	}
-	if filter.CreatedBefore != nil {
-		args.CreatedBefore = filter.CreatedBefore.Format(time.RFC3339)
-	}
-	if filter.UpdatedAfter != nil {
-		args.UpdatedAfter = filter.UpdatedAfter.Format(time.RFC3339)
-	}
-	if filter.UpdatedBefore != nil {
-		args.UpdatedBefore = filter.UpdatedBefore.Format(time.RFC3339)
-	}
-	if filter.ClosedAfter != nil {
-		args.ClosedAfter = filter.ClosedAfter.Format(time.RFC3339)
-	}
-	if filter.ClosedBefore != nil {
-		args.ClosedBefore = filter.ClosedBefore.Format(time.RFC3339)
-	}
-	if filter.PriorityMin != nil {
-		args.PriorityMin = filter.PriorityMin
-	}
-	if filter.PriorityMax != nil {
-		args.PriorityMax = filter.PriorityMax
-	}
-	if filter.Priority != nil {
-		args.Priority = filter.Priority
-	}
-	if filter.NoAssignee {
-		args.NoAssignee = true
-	}
-	if filter.NoLabels {
-		args.NoLabels = true
-	}
-	if filter.EmptyDescription {
-		args.EmptyDescription = true
-	}
-	if filter.Pinned != nil {
-		args.Pinned = filter.Pinned
-	}
-	if filter.ParentID != nil {
-		args.ParentID = *filter.ParentID
-	}
-	if len(filter.ExcludeStatus) > 0 {
-		for _, s := range filter.ExcludeStatus {
-			args.ExcludeStatus = append(args.ExcludeStatus, string(s))
-		}
-	}
-	if len(filter.ExcludeTypes) > 0 {
-		for _, t := range filter.ExcludeTypes {
-			args.ExcludeTypes = append(args.ExcludeTypes, string(t))
-		}
-	}
-
-	return args
 }
 
 // outputQueryResults formats and displays query results

@@ -1,5 +1,4 @@
-//go:build integration
-// +build integration
+//go:build cgo && integration
 
 package main
 
@@ -114,11 +113,6 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 		store.Close()
 		store = nil
 	}
-	if daemonClient != nil {
-		daemonClient.Close()
-		daemonClient = nil
-	}
-
 	// Reset all global flags and state
 	dbPath = ""
 	actor = ""
@@ -132,11 +126,6 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	storeActive = false
 	flushFailureCount = 0
 	lastFlushError = nil
-	// Shutdown any existing FlushManager
-	if flushManager != nil {
-		_ = flushManager.Shutdown()
-		flushManager = nil
-	}
 	// Reset context state
 	rootCtx = nil
 	rootCancel = nil
@@ -877,11 +866,6 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 		store.Close()
 		store = nil
 	}
-	if daemonClient != nil {
-		daemonClient.Close()
-		daemonClient = nil
-	}
-
 	dbPath = ""
 	actor = ""
 	jsonOutput = false
@@ -894,10 +878,6 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 	storeActive = false
 	flushFailureCount = 0
 	lastFlushError = nil
-	if flushManager != nil {
-		_ = flushManager.Shutdown()
-		flushManager = nil
-	}
 	rootCtx = nil
 	rootCancel = nil
 

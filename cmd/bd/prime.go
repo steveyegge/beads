@@ -13,33 +13,13 @@ import (
 	"github.com/steveyegge/beads"
 	internalbeads "github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
-// isDaemonAutoSyncing checks if daemon is running with auto-commit and auto-push enabled.
-// Returns false if daemon is not running or check fails (fail-safe to show full protocol).
+// isDaemonAutoSyncing always returns false. The daemon has been removed.
 // This is a variable to allow stubbing in tests.
 var isDaemonAutoSyncing = func() bool {
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		return false
-	}
-
-	socketPath := filepath.Join(beadsDir, "bd.sock")
-	client, err := rpc.TryConnect(socketPath)
-	if err != nil || client == nil {
-		return false
-	}
-	defer func() { _ = client.Close() }()
-
-	status, err := client.Status()
-	if err != nil {
-		return false
-	}
-
-	// Only check auto-commit and auto-push (auto-pull is separate)
-	return status.AutoCommit && status.AutoPush
+	return false
 }
 
 var (
@@ -388,7 +368,7 @@ bd sync                     # Push to remote
 - ` + "`bd show <id>`" + ` - Detailed issue view with dependencies
 
 ### Creating & Updating
-- ` + "`bd create --title=\"...\" --type=task|bug|feature --priority=2`" + ` - New issue
+- ` + "`bd create --title=\"Summary of this issue\" --description=\"Why this issue exists and what needs to be done\" --type=task|bug|feature --priority=2`" + ` - New issue
   - Priority: 0-4 or P0-P4 (0=critical, 2=medium, 4=backlog). NOT "high"/"medium"/"low"
 - ` + "`bd update <id> --status=in_progress`" + ` - Claim work
 - ` + "`bd update <id> --assignee=username`" + ` - Assign to someone
@@ -424,8 +404,8 @@ bd update <id> --status=in_progress  # Claim it
 **Creating dependent work:**
 ` + "```bash" + `
 # Run bd create commands in parallel (use subagents for many items)
-bd create --title="Implement feature X" --type=feature
-bd create --title="Write tests for X" --type=task
+bd create --title="Implement feature X" --description="Why this issue exists and what needs to be done" --type=feature
+bd create --title="Write tests for X" --description="Why this issue exists and what needs to be done" --type=task
 bd dep add beads-yyy beads-xxx  # Tests depend on Feature (Feature blocks tests)
 ` + "```" + `
 `

@@ -233,6 +233,9 @@ var (
 	ClockSkewGrace      = types.ClockSkewGrace
 )
 
+// nowFunc returns the current time. Overridden in tests for deterministic behavior.
+var nowFunc = time.Now
+
 // isTombstone returns true if the issue has been soft-deleted
 func isTombstone(issue Issue) bool {
 	return issue.Status == StatusTombstone
@@ -262,7 +265,7 @@ func isExpiredTombstone(issue Issue, ttl time.Duration) bool {
 
 	// Check if the tombstone has exceeded its TTL
 	expirationTime := issue.DeletedAt.Add(effectiveTTL)
-	return time.Now().After(expirationTime)
+	return nowFunc().After(expirationTime)
 }
 
 func merge3Way(base, left, right []Issue, debug bool) ([]Issue, []string) {

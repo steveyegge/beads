@@ -1,4 +1,5 @@
 //go:build cgo
+
 package dolt
 
 import (
@@ -127,7 +128,7 @@ func (s *DoltStore) AddFederationPeer(ctx context.Context, peer *storage.Federat
 	}
 
 	// Upsert the peer credentials
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.execContext(ctx, `
 		INSERT INTO federation_peers (name, remote_url, username, password_encrypted, sovereignty)
 		VALUES (?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
@@ -193,7 +194,7 @@ func (s *DoltStore) GetFederationPeer(ctx context.Context, name string) (*storag
 
 // ListFederationPeers returns all configured federation peers.
 func (s *DoltStore) ListFederationPeers(ctx context.Context) ([]*storage.FederationPeer, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 		SELECT name, remote_url, username, password_encrypted, sovereignty, last_sync, created_at, updated_at
 		FROM federation_peers ORDER BY name
 	`)
@@ -236,7 +237,7 @@ func (s *DoltStore) ListFederationPeers(ctx context.Context) ([]*storage.Federat
 
 // RemoveFederationPeer removes a federation peer and its credentials.
 func (s *DoltStore) RemoveFederationPeer(ctx context.Context, name string) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM federation_peers WHERE name = ?", name)
+	result, err := s.execContext(ctx, "DELETE FROM federation_peers WHERE name = ?", name)
 	if err != nil {
 		return fmt.Errorf("failed to remove federation peer: %w", err)
 	}
@@ -255,7 +256,7 @@ func (s *DoltStore) RemoveFederationPeer(ctx context.Context, name string) error
 
 // UpdatePeerLastSync updates the last sync time for a peer.
 func (s *DoltStore) UpdatePeerLastSync(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE federation_peers SET last_sync = CURRENT_TIMESTAMP WHERE name = ?", name)
+	_, err := s.execContext(ctx, "UPDATE federation_peers SET last_sync = CURRENT_TIMESTAMP WHERE name = ?", name)
 	return err
 }
 

@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -59,45 +58,15 @@ func runMolStale(cmd *cobra.Command, args []string) {
 	unassignedOnly, _ := cmd.Flags().GetBool("unassigned")
 	showAll, _ := cmd.Flags().GetBool("all")
 
-	// Get storage (direct or daemon)
 	var result *StaleResult
 	var err error
 
-	if daemonClient != nil {
-		// Daemon mode - use RPC to get stale molecules
-		rpcResp, rpcErr := daemonClient.MolStale(&rpc.MolStaleArgs{
-			BlockingOnly:   blockingOnly,
-			UnassignedOnly: unassignedOnly,
-			ShowAll:        showAll,
-		})
-		if rpcErr != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", rpcErr)
-			os.Exit(1)
-		}
-		// Convert RPC response to local StaleResult
-		result = &StaleResult{
-			TotalCount:    rpcResp.TotalCount,
-			BlockingCount: rpcResp.BlockingCount,
-		}
-		for _, mol := range rpcResp.StaleMolecules {
-			result.StaleMolecules = append(result.StaleMolecules, &StaleMolecule{
-				ID:             mol.ID,
-				Title:          mol.Title,
-				TotalChildren:  mol.TotalChildren,
-				ClosedChildren: mol.ClosedChildren,
-				Assignee:       mol.Assignee,
-				BlockingIssues: mol.BlockingIssues,
-				BlockingCount:  mol.BlockingCount,
-			})
-		}
-	} else {
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
-		}
-
-		result, err = findStaleMolecules(ctx, store, blockingOnly, unassignedOnly, showAll)
+	if store == nil {
+		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+		os.Exit(1)
 	}
+
+	result, err = findStaleMolecules(ctx, store, blockingOnly, unassignedOnly, showAll)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

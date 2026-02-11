@@ -1200,16 +1200,21 @@ func TestMergeTombstones(t *testing.T) {
 
 // TestMerge3Way_TombstoneVsLive tests tombstone vs live issue scenarios
 func TestMerge3Way_TombstoneVsLive(t *testing.T) {
+	// Use a fixed reference time for deterministic tests (bd-eyto)
+	fixedNow := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	nowFunc = func() time.Time { return fixedNow }
+	t.Cleanup(func() { nowFunc = time.Now })
+
 	// Base issue (live)
 	baseIssue := testIssue(`{"id":"bd-abc123","title":"Original title","status":"open","priority":2,"created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z","created_by":"user1"}`)
 
-	// Recent tombstone (not expired) - create dynamically
-	recentDeletedAt := time.Now().Add(-24 * time.Hour)
+	// Recent tombstone (not expired) - use fixed reference time
+	recentDeletedAt := fixedNow.Add(-24 * time.Hour)
 	recentTombstoneJSON := `{"id":"bd-abc123","title":"Original title","status":"tombstone","priority":2,"created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"user1","deleted_at":"` + recentDeletedAt.Format(time.RFC3339) + `","deleted_by":"user2","delete_reason":"Duplicate issue","original_type":"task"}`
 	recentTombstone := testIssue(recentTombstoneJSON)
 
 	// Expired tombstone (older than TTL)
-	expiredDeletedAt := time.Now().Add(-60 * 24 * time.Hour)
+	expiredDeletedAt := fixedNow.Add(-60 * 24 * time.Hour)
 	expiredTombstoneJSON := `{"id":"bd-abc123","title":"Original title","status":"tombstone","priority":2,"created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"user1","deleted_at":"` + expiredDeletedAt.Format(time.RFC3339) + `","deleted_by":"user2","delete_reason":"Duplicate issue","original_type":"task"}`
 	expiredTombstone := testIssue(expiredTombstoneJSON)
 
@@ -1319,6 +1324,11 @@ func TestMerge3Way_TombstoneVsTombstone(t *testing.T) {
 
 // TestMerge3Way_TombstoneNoBase tests tombstone scenarios without a base
 func TestMerge3Way_TombstoneNoBase(t *testing.T) {
+	// Use a fixed reference time for deterministic tests (bd-eyto)
+	fixedNow := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	nowFunc = func() time.Time { return fixedNow }
+	t.Cleanup(func() { nowFunc = time.Now })
+
 	t.Run("tombstone added only in left", func(t *testing.T) {
 		tombstone := testIssue(`{"id":"bd-abc123","title":"New tombstone","status":"tombstone","created_at":"2024-01-01T00:00:00Z","created_by":"user1","deleted_at":"2024-01-02T00:00:00Z","deleted_by":"user1"}`)
 
@@ -1350,7 +1360,7 @@ func TestMerge3Way_TombstoneNoBase(t *testing.T) {
 	})
 
 	t.Run("tombstone in left vs live in right (no base)", func(t *testing.T) {
-		recentDeletedAt := time.Now().Add(-24 * time.Hour).Format(time.RFC3339)
+		recentDeletedAt := fixedNow.Add(-24 * time.Hour).Format(time.RFC3339)
 		recentTombstone := testIssue(`{"id":"bd-abc123","title":"Issue","status":"tombstone","created_at":"2024-01-01T00:00:00Z","created_by":"user1","deleted_at":"` + recentDeletedAt + `","deleted_by":"user1"}`)
 		live := testIssue(`{"id":"bd-abc123","title":"Issue","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"user1"}`)
 
@@ -1370,10 +1380,15 @@ func TestMerge3Way_TombstoneNoBase(t *testing.T) {
 
 // TestMerge3WayWithTTL tests the TTL-configurable merge function
 func TestMerge3WayWithTTL(t *testing.T) {
+	// Use a fixed reference time for deterministic tests (bd-eyto)
+	fixedNow := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	nowFunc = func() time.Time { return fixedNow }
+	t.Cleanup(func() { nowFunc = time.Now })
+
 	baseIssue := testIssue(`{"id":"bd-abc123","title":"Original","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"user1"}`)
 
 	// Tombstone deleted 10 days ago
-	tombstoneDeletedAt := time.Now().Add(-10 * 24 * time.Hour).Format(time.RFC3339)
+	tombstoneDeletedAt := fixedNow.Add(-10 * 24 * time.Hour).Format(time.RFC3339)
 	tombstone := testIssue(`{"id":"bd-abc123","title":"Original","status":"tombstone","created_at":"2024-01-01T00:00:00Z","created_by":"user1","deleted_at":"` + tombstoneDeletedAt + `","deleted_by":"user2"}`)
 
 	liveIssue := testIssue(`{"id":"bd-abc123","title":"Updated","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"user1"}`)
@@ -1466,9 +1481,14 @@ func TestMergeStatus_Tombstone(t *testing.T) {
 // TestMerge3Way_TombstoneWithImplicitDeletion tests bd-ki14 fix:
 // tombstones should be preserved even when the other side implicitly deleted
 func TestMerge3Way_TombstoneWithImplicitDeletion(t *testing.T) {
+	// Use a fixed reference time for deterministic tests (bd-eyto)
+	fixedNow := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	nowFunc = func() time.Time { return fixedNow }
+	t.Cleanup(func() { nowFunc = time.Now })
+
 	baseIssue := testIssue(`{"id":"bd-abc123","title":"Original","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"user1"}`)
 
-	tombstoneDeletedAt := time.Now().Add(-24 * time.Hour).Format(time.RFC3339)
+	tombstoneDeletedAt := fixedNow.Add(-24 * time.Hour).Format(time.RFC3339)
 	tombstone := testIssue(`{"id":"bd-abc123","title":"Original","status":"tombstone","created_at":"2024-01-01T00:00:00Z","created_by":"user1","deleted_at":"` + tombstoneDeletedAt + `","deleted_by":"user2","delete_reason":"Duplicate"}`)
 
 	t.Run("bd-ki14: tombstone in left preserved when right implicitly deleted", func(t *testing.T) {
@@ -1631,7 +1651,10 @@ func TestMergeIssue_TombstoneFields(t *testing.T) {
 
 // TestIsExpiredTombstone tests edge cases for the isExpiredTombstone function (bd-fmo)
 func TestIsExpiredTombstone(t *testing.T) {
-	now := time.Now()
+	// Use a fixed reference time for deterministic tests (bd-eyto)
+	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	nowFunc = func() time.Time { return now }
+	t.Cleanup(func() { nowFunc = time.Now })
 
 	// Helper to create a test issue with DeletedAt
 	makeIssue := func(status types.Status, deletedAt *time.Time) Issue {
@@ -1728,8 +1751,13 @@ func TestIsExpiredTombstone(t *testing.T) {
 // This can happen if Clone A deletes an issue, Clones B and C sync (getting tombstone),
 // then both B and C independently recreate an issue with same ID. (bd-bob)
 func TestMerge3Way_TombstoneBaseBothLiveResurrection(t *testing.T) {
+	// Use a fixed reference time for deterministic tests (bd-eyto)
+	fixedNow := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	nowFunc = func() time.Time { return fixedNow }
+	t.Cleanup(func() { nowFunc = time.Now })
+
 	// Base is a tombstone (issue was deleted)
-	deletedAt := time.Now().Add(-10 * 24 * time.Hour)
+	deletedAt := fixedNow.Add(-10 * 24 * time.Hour)
 	baseTombstone := Issue{
 		Issue: types.Issue{
 			ID:           "bd-abc123",
@@ -1857,6 +1885,11 @@ func TestMerge3Way_TombstoneBaseBothLiveResurrection(t *testing.T) {
 // When the same issue has different CreatedAt timestamp precision (e.g., with/without nanoseconds),
 // the tombstone should still win over the live version.
 func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
+	// Use a fixed reference time for deterministic tests (bd-eyto)
+	fixedNow := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	nowFunc = func() time.Time { return fixedNow }
+	t.Cleanup(func() { nowFunc = time.Now })
+
 	// This test simulates the ghost resurrection bug where timestamp precision
 	// differences caused the same issue to be treated as two different issues.
 	// The key fix (bd-ncwo) adds ID-based fallback matching when keys don't match.
@@ -1866,7 +1899,7 @@ func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
 		baseIssue := testIssue(`{"id":"bd-ghost1","title":"Original title","status":"closed","priority":2,"created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-10T00:00:00Z","created_by":"user1"}`)
 
 		// Left: tombstone with DIFFERENT timestamp precision (has microseconds)
-		deletedAt := time.Now().Add(-24 * time.Hour)
+		deletedAt := fixedNow.Add(-24 * time.Hour)
 		tombstone := Issue{
 			Issue: types.Issue{
 				ID:           "bd-ghost1",
@@ -1911,7 +1944,7 @@ func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
 
 	t.Run("tombstone wins with CreatedBy mismatch", func(t *testing.T) {
 		// Test case where CreatedBy differs (e.g., empty vs populated)
-		deletedAt := time.Now().Add(-24 * time.Hour)
+		deletedAt := fixedNow.Add(-24 * time.Hour)
 		tombstone := Issue{
 			Issue: types.Issue{
 				ID:           "bd-ghost2",

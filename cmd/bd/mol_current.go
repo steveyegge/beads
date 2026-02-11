@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -10,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -72,14 +70,8 @@ Use --limit or --range to view specific steps:
 			agent = actor // Default to current user/agent
 		}
 
-		// mol current requires direct store access for subgraph loading
 		if store == nil {
-			if daemonClient != nil {
-				fmt.Fprintf(os.Stderr, "Error: mol current requires direct database access\n")
-				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol current\n")
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			}
+			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
 			os.Exit(1)
 		}
 
@@ -254,29 +246,16 @@ func getMoleculeProgress(ctx context.Context, s storage.Storage, moleculeID stri
 
 // findInProgressMolecules finds molecules with in_progress steps for an agent
 func findInProgressMolecules(ctx context.Context, s storage.Storage, agent string) []*MoleculeProgress {
-	// Query for in_progress issues
 	var inProgressIssues []*types.Issue
 
-	if daemonClient != nil {
-		listArgs := &rpc.ListArgs{
-			Status:   "in_progress",
-			Assignee: agent,
-		}
-		resp, err := daemonClient.List(listArgs)
-		if err == nil {
-			_ = json.Unmarshal(resp.Data, &inProgressIssues)
-		}
-	} else {
-		// Direct query - search for in_progress issues
-		status := types.StatusInProgress
-		filter := types.IssueFilter{Status: &status}
-		if agent != "" {
-			filter.Assignee = &agent
-		}
-		allIssues, err := s.SearchIssues(ctx, "", filter)
-		if err == nil {
-			inProgressIssues = allIssues
-		}
+	status := types.StatusInProgress
+	filter := types.IssueFilter{Status: &status}
+	if agent != "" {
+		filter.Assignee = &agent
+	}
+	allIssues, err := s.SearchIssues(ctx, "", filter)
+	if err == nil {
+		inProgressIssues = allIssues
 	}
 
 	if len(inProgressIssues) == 0 {

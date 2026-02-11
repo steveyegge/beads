@@ -1,4 +1,5 @@
 //go:build !cgo
+
 package main
 
 import (
@@ -31,5 +32,3 @@ each maintaining their own Dolt database while sharing updates via remotes.`,
 func init() {
 	rootCmd.AddCommand(federationCmd)
 }
-
-

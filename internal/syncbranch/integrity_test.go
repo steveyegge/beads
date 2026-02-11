@@ -1,10 +1,13 @@
+//go:build cgo
+
 package syncbranch
 
 import (
 	"context"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 func TestGetStoredRemoteSHA(t *testing.T) {
@@ -88,9 +91,9 @@ func TestForcePushStatus(t *testing.T) {
 // newTestStoreIntegrity creates a test store for integrity tests
 // Note: This is a duplicate of newTestStore from syncbranch_test.go
 // but we need it here since tests are in the same package
-func newTestStoreIntegrity(t *testing.T) *sqlite.SQLiteStorage {
+func newTestStoreIntegrity(t *testing.T) storage.Storage {
 	t.Helper()
-	store, err := sqlite.New(context.Background(), "file::memory:?mode=memory&cache=private")
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}

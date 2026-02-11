@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -1558,6 +1560,11 @@ func TestDepListCrossRigRouting(t *testing.T) {
 	}
 	if err := rigStore.AddDependency(ctx, dep, "test"); err != nil {
 		t.Fatalf("Failed to add dependency: %v", err)
+	}
+
+	// Close rig store to release Dolt lock before routing opens it
+	if closer, ok := rigStore.(io.Closer); ok {
+		closer.Close()
 	}
 
 	// Create routes.jsonl in town .beads directory

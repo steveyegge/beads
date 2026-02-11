@@ -1,5 +1,4 @@
-//go:build integration
-// +build integration
+//go:build cgo && integration
 
 package main
 
@@ -13,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -228,7 +227,7 @@ func configureGit(t *testing.T, dir string) {
 	}
 }
 
-func exportIssuesToJSONL(ctx context.Context, store *sqlite.SQLiteStorage, jsonlPath string) error {
+func exportIssuesToJSONL(ctx context.Context, store storage.Storage, jsonlPath string) error {
 	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		return err
@@ -261,7 +260,7 @@ func exportIssuesToJSONL(ctx context.Context, store *sqlite.SQLiteStorage, jsonl
 	return nil
 }
 
-func importJSONLToStore(ctx context.Context, store *sqlite.SQLiteStorage, dbPath, jsonlPath string) error {
+func importJSONLToStore(ctx context.Context, store storage.Storage, dbPath, jsonlPath string) error {
 	data, err := os.ReadFile(jsonlPath)
 	if err != nil {
 		return err
@@ -307,7 +306,7 @@ func importJSONLToStore(ctx context.Context, store *sqlite.SQLiteStorage, dbPath
 	return nil
 }
 
-func verifyIssueClosed(t *testing.T, store *sqlite.SQLiteStorage, issueID string) {
+func verifyIssueClosed(t *testing.T, store storage.Storage, issueID string) {
 	issue, err := store.GetIssue(context.Background(), issueID)
 	if err != nil {
 		t.Fatalf("Failed to get issue %s: %v", issueID, err)

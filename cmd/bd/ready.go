@@ -1,15 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -59,6 +55,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		molTypeStr, _ := cmd.Flags().GetString("mol-type")
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
 		includeDeferred, _ := cmd.Flags().GetBool("include-deferred")
+		rigOverride, _ := cmd.Flags().GetString("rig")
 		var molType *types.MolType
 		if molTypeStr != "" {
 			mt := types.MolType(molTypeStr)
@@ -110,99 +107,33 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			fmt.Fprintf(os.Stderr, "Error: invalid sort policy '%s'. Valid values: hybrid, priority, oldest\n", sortPolicy)
 			os.Exit(1)
 		}
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			readyArgs := &rpc.ReadyArgs{
-				Status:          "open", // Only show open issues, not in_progress (matches bd list --ready)
-				Assignee:        assignee,
-				Unassigned:      unassigned,
-				Type:            issueType,
-				Limit:           limit,
-				SortPolicy:      sortPolicy,
-				Labels:          labels,
-				LabelsAny:       labelsAny,
-				ParentID:        parentID,
-				MolType:         molTypeStr,
-				IncludeDeferred: includeDeferred, // GH#820
-			}
-			if cmd.Flags().Changed("priority") {
-				priority, _ := cmd.Flags().GetInt("priority")
-				readyArgs.Priority = &priority
-			}
-			resp, err := daemonClient.Ready(readyArgs)
+		// Direct mode
+		ctx := rootCtx
+
+		// Handle --rig flag: query a different rig's database
+		activeStore := store
+		if rigOverride != "" {
+			rigStore, err := openStoreForRig(ctx, rigOverride)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			var issues []*types.Issue
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
-			}
-			if jsonOutput {
-				if issues == nil {
-					issues = []*types.Issue{}
-				}
-				outputJSON(issues)
-				return
-			}
-
-			// Show upgrade notification if needed
-			maybeShowUpgradeNotification()
-
-			if len(issues) == 0 {
-				// Check if there are any open issues at all
-				statsResp, statsErr := daemonClient.Stats()
-				hasOpenIssues := false
-				if statsErr == nil {
-					var stats types.Statistics
-					if json.Unmarshal(statsResp.Data, &stats) == nil {
-						hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
-					}
-				}
-				if hasOpenIssues {
-					fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
-						ui.RenderWarn("✨"))
-				} else {
-					fmt.Printf("\n%s No open issues\n\n", ui.RenderPass("✨"))
-				}
-				return
-			}
-			if prettyFormat {
-				displayPrettyList(issues, false)
-			} else {
-				fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
-				for i, issue := range issues {
-					fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
-						ui.RenderPriority(issue.Priority),
-						ui.RenderType(string(issue.IssueType)),
-						ui.RenderID(issue.ID), issue.Title)
-					if issue.EstimatedMinutes != nil {
-						fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
-					}
-					if issue.Assignee != "" {
-						fmt.Printf("   Assignee: %s\n", issue.Assignee)
-					}
-				}
-				fmt.Println()
-			}
-			return
+			defer func() { _ = rigStore.Close() }()
+			activeStore = rigStore
+		} else {
+			requireFreshDB(ctx)
 		}
-		// Direct mode
-		ctx := rootCtx
 
-		requireFreshDB(ctx)
-
-		issues, err := store.GetReadyWork(ctx, filter)
+		issues, err := activeStore.GetReadyWork(ctx, filter)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		// If no ready work found, check if git has issues and auto-import
-		if len(issues) == 0 {
-			if checkAndAutoImport(ctx, store) {
+		// If no ready work found, check if git has issues and auto-import (only for local store)
+		if len(issues) == 0 && rigOverride == "" {
+			if checkAndAutoImport(ctx, activeStore) {
 				// Re-run the query after import
-				issues, err = store.GetReadyWork(ctx, filter)
+				issues, err = activeStore.GetReadyWork(ctx, filter)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
@@ -218,7 +149,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			for i, issue := range issues {
 				issueIDs[i] = issue.ID
 			}
-			commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
+			commentCounts, _ := activeStore.GetCommentCounts(ctx, issueIDs)
 			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
 			for i, issue := range issues {
 				issuesWithCounts[i] = &types.IssueWithCounts{
@@ -235,7 +166,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if len(issues) == 0 {
 			// Check if there are any open issues at all
 			hasOpenIssues := false
-			if stats, statsErr := store.GetStatistics(ctx); statsErr == nil {
+			if stats, statsErr := activeStore.GetStatistics(ctx); statsErr == nil {
 				hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
 			}
 			if hasOpenIssues {
@@ -276,17 +207,8 @@ var blockedCmd = &cobra.Command{
 	Short: "Show blocked issues",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
-		// If daemon is running but doesn't support this command, use direct storage
 		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 		ctx := rootCtx
-		if daemonClient != nil && store == nil {
-			var err error
-			store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
-			if err != nil {
-				FatalErrorRespectJSON("failed to open database: %v", err)
-			}
-			defer func() { _ = store.Close() }()
-		}
 		parentID, _ := cmd.Flags().GetString("parent")
 		var blockedFilter types.WorkFilter
 		if parentID != "" {
@@ -330,12 +252,7 @@ func runMoleculeReady(_ *cobra.Command, molIDArg string) {
 
 	// Molecule-ready requires direct store access for subgraph loading
 	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: bd ready --mol requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon ready --mol %s\n", molIDArg)
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
+		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
 		os.Exit(1)
 	}
 
@@ -472,6 +389,7 @@ func init() {
 	readyCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
 	readyCmd.Flags().Bool("include-deferred", false, "Include issues with future defer_until timestamps")
 	readyCmd.Flags().Bool("gated", false, "Find molecules ready for gate-resume dispatch")
+	readyCmd.Flags().String("rig", "", "Query a different rig's database (e.g., --rig gastown, --rig gt-, --rig gt)")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	rootCmd.AddCommand(blockedCmd)

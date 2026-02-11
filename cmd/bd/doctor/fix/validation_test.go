@@ -19,7 +19,6 @@ func TestFixFunctions_RequireBeadsDir(t *testing.T) {
 	}{
 		{"GitHooks", GitHooks},
 		{"MergeDriver", MergeDriver},
-		{"Daemon", Daemon},
 		{"DBJSONLSync", DBJSONLSync},
 		{"DatabaseVersion", DatabaseVersion},
 		{"SchemaCompatibility", SchemaCompatibility},

@@ -1,4 +1,5 @@
 //go:build cgo
+
 package dolt
 
 import (
@@ -118,6 +119,14 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		args = append(args, pattern, pattern, pattern)
 	}
 
+	// Parent filtering: filter children by parent issue
+	// Also includes dotted-ID children (e.g., "parent.1.2" is child of "parent")
+	if filter.ParentID != nil {
+		parentID := *filter.ParentID
+		whereClauses = append(whereClauses, "(id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?) OR id LIKE CONCAT(?, '.%'))")
+		args = append(args, parentID, parentID)
+	}
+
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, "status = ?")
 		args = append(args, *filter.Status)
@@ -125,6 +134,10 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	if filter.SpecIDPrefix != "" {
 		whereClauses = append(whereClauses, "spec_id LIKE ?")
 		args = append(args, filter.SpecIDPrefix+"%")
+	}
+	if filter.SourceRepo != nil {
+		whereClauses = append(whereClauses, "source_repo = ?")
+		args = append(args, *filter.SourceRepo)
 	}
 
 	whereSQL := ""
@@ -350,15 +363,6 @@ func (t *doltTransaction) ImportIssueComment(ctx context.Context, issueID, autho
 	id, err := res.LastInsertId()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get comment id: %w", err)
-	}
-
-	// mark dirty in tx
-	if _, err := t.tx.ExecContext(ctx, `
-		INSERT INTO dirty_issues (issue_id, marked_at)
-		VALUES (?, ?)
-		ON DUPLICATE KEY UPDATE marked_at = VALUES(marked_at)
-	`, issueID, time.Now().UTC()); err != nil {
-		return nil, fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
 	return &types.Comment{ID: id, IssueID: issueID, Author: author, Text: text, CreatedAt: createdAt}, nil

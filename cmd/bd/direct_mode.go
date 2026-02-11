@@ -13,45 +13,8 @@ import (
 )
 
 // ensureDirectMode makes sure the CLI is operating in direct-storage mode.
-// If the daemon is active, it is cleanly disconnected and the shared store is opened.
-func ensureDirectMode(reason string) error {
-	if getDaemonClient() != nil {
-		if err := fallbackToDirectMode(reason); err != nil {
-			return err
-		}
-		return nil
-	}
+func ensureDirectMode(_ string) error {
 	return ensureStoreActive()
-}
-
-// fallbackToDirectMode disables the daemon client and ensures a local store is ready.
-func fallbackToDirectMode(reason string) error {
-	disableDaemonForFallback(reason)
-	return ensureStoreActive()
-}
-
-// disableDaemonForFallback closes the daemon client and updates status metadata.
-func disableDaemonForFallback(reason string) {
-	if client := getDaemonClient(); client != nil {
-		_ = client.Close()
-		setDaemonClient(nil)
-	}
-
-	ds := getDaemonStatus()
-	ds.Mode = "direct"
-	ds.Connected = false
-	ds.Degraded = true
-	if reason != "" {
-		ds.Detail = reason
-	}
-	if ds.FallbackReason == FallbackNone {
-		ds.FallbackReason = FallbackDaemonUnsupported
-	}
-	setDaemonStatus(ds)
-
-	if reason != "" {
-		debug.Logf("Debug: %s\n", reason)
-	}
 }
 
 // ensureStoreActive guarantees that a storage backend is initialized and tracked.
@@ -113,10 +76,6 @@ func ensureStoreActive() error {
 	setStore(store)
 	setStoreActive(true)
 	unlockStore()
-
-	if isAutoImportEnabled() && ShouldImportJSONL(rootCtx, store) {
-		autoImportIfNewer()
-	}
 
 	return nil
 }

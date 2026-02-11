@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -6,8 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 func TestGetVersionsSince(t *testing.T) {
@@ -343,15 +346,14 @@ func TestAutoMigrateOnVersionBump_NoUpgrade(t *testing.T) {
 	versionUpgradeDetected = false
 
 	// Should return early without doing anything
-	autoMigrateOnVersionBump("/tmp/test.db")
+	autoMigrateOnVersionBump(t.TempDir())
 
 	// Test passes if no panic occurs
 }
 
 func TestAutoMigrateOnVersionBump_NoDatabase(t *testing.T) {
-	// Create temp directory
+	// Create temp directory (no database file inside)
 	tmpDir := t.TempDir()
-	nonExistentDB := filepath.Join(tmpDir, "nonexistent.db")
 
 	// Save original state
 	origUpgradeDetected := versionUpgradeDetected
@@ -363,7 +365,7 @@ func TestAutoMigrateOnVersionBump_NoDatabase(t *testing.T) {
 	versionUpgradeDetected = true
 
 	// Should handle gracefully when database doesn't exist
-	autoMigrateOnVersionBump(nonExistentDB)
+	autoMigrateOnVersionBump(tmpDir)
 
 	// Test passes if no panic occurs
 }
@@ -381,13 +383,20 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 		previousVersion = origPreviousVersion
 	}()
 
-	// Create temp directory with unique name to avoid any possible interference
+	// Create temp directory (acts as beadsDir)
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test-migrate-version-unique.db")
+	dbName := "test-migrate.db"
+	dbPath := filepath.Join(tmpDir, dbName)
+
+	// Create metadata.json so factory.NewFromConfig can find the database
+	cfg := &configfile.Config{Database: dbName}
+	if err := cfg.Save(tmpDir); err != nil {
+		t.Fatalf("Failed to create metadata.json: %v", err)
+	}
 
 	// Create database with old version
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -407,18 +416,15 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 	previousVersion = oldVersion
 
 	// Verify dbPath before migration
-	if dbPath == "" {
-		t.Fatalf("dbPath is empty!")
-	}
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Fatalf("database doesn't exist before migration: %s", dbPath)
 	}
 
 	// Set versionUpgradeDetected immediately before calling to avoid races
 	versionUpgradeDetected = true
-	t.Logf("Calling autoMigrateOnVersionBump with dbPath=%s, versionUpgradeDetected=%v", dbPath, versionUpgradeDetected)
+	t.Logf("Calling autoMigrateOnVersionBump with beadsDir=%s, versionUpgradeDetected=%v", tmpDir, versionUpgradeDetected)
 	// Immediately call migration while flag is still true
-	autoMigrateOnVersionBump(dbPath)
+	autoMigrateOnVersionBump(tmpDir)
 
 	// Verify the flag is still true after migration
 	if !versionUpgradeDetected {
@@ -426,7 +432,7 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 	}
 
 	// Verify database version was updated
-	store, err = sqlite.New(ctx, dbPath)
+	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -444,13 +450,20 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 }
 
 func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
-	// Create temp directory
+	// Create temp directory (acts as beadsDir)
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+	dbName := "test.db"
+	dbPath := filepath.Join(tmpDir, dbName)
+
+	// Create metadata.json so factory.NewFromConfig can find the database
+	cfg := &configfile.Config{Database: dbName}
+	if err := cfg.Save(tmpDir); err != nil {
+		t.Fatalf("Failed to create metadata.json: %v", err)
+	}
 
 	// Create database with current version
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -471,10 +484,10 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 	versionUpgradeDetected = true
 
 	// Call auto-migration - should be a no-op
-	autoMigrateOnVersionBump(dbPath)
+	autoMigrateOnVersionBump(tmpDir)
 
 	// Verify database version is still current
-	store, err = sqlite.New(ctx, dbPath)
+	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -487,5 +500,130 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 
 	if currentVersion != Version {
 		t.Errorf("Database version changed unexpectedly: got %q, want %q", currentVersion, Version)
+	}
+}
+
+func TestAutoMigrateOnVersionBump_RefusesDowngrade(t *testing.T) {
+	// Test that auto-migration refuses to downgrade the database version (gt-e3uiy)
+
+	// Create temp directory (acts as beadsDir)
+	tmpDir := t.TempDir()
+	dbName := "test-downgrade.db"
+	dbPath := filepath.Join(tmpDir, dbName)
+
+	// Create metadata.json so factory.NewFromConfig can find the database
+	cfg := &configfile.Config{Database: dbName}
+	if err := cfg.Save(tmpDir); err != nil {
+		t.Fatalf("Failed to create metadata.json: %v", err)
+	}
+
+	// Create database with a NEWER version than the current binary
+	ctx := context.Background()
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+
+	newerVersion := "99.99.99" // Always newer than any real version
+	if err := store.SetMetadata(ctx, "bd_version", newerVersion); err != nil {
+		t.Fatalf("Failed to set newer version: %v", err)
+	}
+	if err := store.SetMetadata(ctx, "bd_version_max", newerVersion); err != nil {
+		t.Fatalf("Failed to set max version: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
+
+	// Save original state
+	origUpgradeDetected := versionUpgradeDetected
+	defer func() {
+		versionUpgradeDetected = origUpgradeDetected
+	}()
+
+	// Simulate version "upgrade" (actually downgrade since DB has newer version)
+	versionUpgradeDetected = true
+
+	// Call auto-migration - should refuse to downgrade
+	autoMigrateOnVersionBump(tmpDir)
+
+	// Verify database version was NOT changed (still the newer version)
+	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer store.Close()
+
+	currentVersion, err := store.GetMetadata(ctx, "bd_version")
+	if err != nil {
+		t.Fatalf("Failed to read database version: %v", err)
+	}
+
+	if currentVersion != newerVersion {
+		t.Errorf("Database version was downgraded: got %q, want %q (should refuse downgrade)", currentVersion, newerVersion)
+	}
+}
+
+func TestAutoMigrateOnVersionBump_TracksMaxVersion(t *testing.T) {
+	// Test that auto-migration tracks the max version ever applied (gt-e3uiy)
+
+	// Save original state FIRST
+	origUpgradeDetected := versionUpgradeDetected
+	origUpgradeAcknowledged := upgradeAcknowledged
+	origPreviousVersion := previousVersion
+	defer func() {
+		versionUpgradeDetected = origUpgradeDetected
+		upgradeAcknowledged = origUpgradeAcknowledged
+		previousVersion = origPreviousVersion
+	}()
+
+	// Create temp directory (acts as beadsDir)
+	tmpDir := t.TempDir()
+	dbName := "test-max-version.db"
+	dbPath := filepath.Join(tmpDir, dbName)
+
+	// Create metadata.json so factory.NewFromConfig can find the database
+	cfg := &configfile.Config{Database: dbName}
+	if err := cfg.Save(tmpDir); err != nil {
+		t.Fatalf("Failed to create metadata.json: %v", err)
+	}
+
+	// Create database with an older version
+	ctx := context.Background()
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+
+	oldVersion := "0.1.0"
+	if err := store.SetMetadata(ctx, "bd_version", oldVersion); err != nil {
+		t.Fatalf("Failed to set old version: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
+
+	// Simulate version upgrade
+	versionUpgradeDetected = true
+	upgradeAcknowledged = false
+	previousVersion = oldVersion
+
+	// Call auto-migration
+	autoMigrateOnVersionBump(tmpDir)
+
+	// Verify max version was set
+	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer store.Close()
+
+	maxVersion, err := store.GetMetadata(ctx, "bd_version_max")
+	if err != nil {
+		t.Fatalf("Failed to read max version: %v", err)
+	}
+
+	if maxVersion != Version {
+		t.Errorf("Max version not set: got %q, want %q", maxVersion, Version)
 	}
 }

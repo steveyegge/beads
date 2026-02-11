@@ -34,9 +34,6 @@ type MemoryStorage struct {
 	// Indexes for O(1) lookups
 	externalRefToID map[string]string // ExternalRef -> IssueID
 
-	// For tracking
-	dirty map[string]bool // IssueIDs that have been modified
-
 	jsonlPath string // Path to source JSONL file (for reference)
 	closed    bool
 }
@@ -53,7 +50,6 @@ func New(jsonlPath string) *MemoryStorage {
 		metadata:        make(map[string]string),
 		counters:        make(map[string]int),
 		externalRefToID: make(map[string]string),
-		dirty:           make(map[string]bool),
 		jsonlPath:       jsonlPath,
 	}
 }
@@ -228,8 +224,6 @@ func (m *MemoryStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 
 	// Store issue
 	m.issues[issue.ID] = issue
-	m.dirty[issue.ID] = true
-
 	// Index external ref for O(1) lookup
 	if issue.ExternalRef != nil && *issue.ExternalRef != "" {
 		m.externalRefToID[*issue.ExternalRef] = issue.ID
@@ -302,7 +296,6 @@ func (m *MemoryStorage) CreateIssues(ctx context.Context, issues []*types.Issue,
 	// Store all issues
 	for _, issue := range issues {
 		m.issues[issue.ID] = issue
-		m.dirty[issue.ID] = true
 
 		// Index external ref for O(1) lookup
 		if issue.ExternalRef != nil && *issue.ExternalRef != "" {
@@ -482,8 +475,6 @@ func (m *MemoryStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		}
 	}
 
-	m.dirty[id] = true
-
 	// Record event
 	eventType := types.EventUpdated
 	if status, hasStatus := updates["status"]; hasStatus {
@@ -539,8 +530,6 @@ func (m *MemoryStorage) ClaimIssue(ctx context.Context, id string, actor string)
 	issue.Status = types.StatusInProgress
 	issue.UpdatedAt = now
 
-	m.dirty[id] = true
-
 	// Record claim event
 	event := &types.Event{
 		IssueID:   id,
@@ -571,9 +560,6 @@ func (m *MemoryStorage) CreateTombstone(ctx context.Context, id string, actor st
 	issue.DeletedBy = actor
 	issue.DeleteReason = reason
 	issue.UpdatedAt = now
-
-	// Mark as dirty for export
-	m.dirty[id] = true
 
 	// Record tombstone creation event
 	event := &types.Event{
@@ -612,7 +598,6 @@ func (m *MemoryStorage) DeleteIssue(ctx context.Context, id string) error {
 	delete(m.labels, id)
 	delete(m.events, id)
 	delete(m.comments, id)
-	delete(m.dirty, id)
 
 	return nil
 }
@@ -718,6 +703,7 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 		}
 
 		// Parent filtering (bd-yqhh): filter children by parent issue
+		// Also includes dotted-ID children (e.g., "parent.1.2" is child of "parent")
 		if filter.ParentID != nil {
 			isChild := false
 			for _, dep := range m.dependencies[issue.ID] {
@@ -726,9 +712,45 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 					break
 				}
 			}
+			// Also check dotted-ID naming convention
+			if !isChild && strings.HasPrefix(issue.ID, *filter.ParentID+".") {
+				isChild = true
+			}
 			if !isChild {
 				continue
 			}
+		}
+
+		// Date range filters
+		if filter.CreatedAfter != nil && !issue.CreatedAt.After(*filter.CreatedAfter) {
+			continue
+		}
+		if filter.CreatedBefore != nil && !issue.CreatedAt.Before(*filter.CreatedBefore) {
+			continue
+		}
+		if filter.UpdatedAfter != nil && !issue.UpdatedAt.After(*filter.UpdatedAfter) {
+			continue
+		}
+		if filter.UpdatedBefore != nil && !issue.UpdatedAt.Before(*filter.UpdatedBefore) {
+			continue
+		}
+		if filter.ClosedAfter != nil && (issue.ClosedAt == nil || !issue.ClosedAt.After(*filter.ClosedAfter)) {
+			continue
+		}
+		if filter.ClosedBefore != nil && (issue.ClosedAt == nil || !issue.ClosedAt.Before(*filter.ClosedBefore)) {
+			continue
+		}
+		if filter.DeferAfter != nil && (issue.DeferUntil == nil || !issue.DeferUntil.After(*filter.DeferAfter)) {
+			continue
+		}
+		if filter.DeferBefore != nil && (issue.DeferUntil == nil || !issue.DeferUntil.Before(*filter.DeferBefore)) {
+			continue
+		}
+		if filter.DueAfter != nil && (issue.DueAt == nil || !issue.DueAt.After(*filter.DueAfter)) {
+			continue
+		}
+		if filter.DueBefore != nil && (issue.DueAt == nil || !issue.DueAt.Before(*filter.DueBefore)) {
+			continue
 		}
 
 		// Copy issue and attach metadata
@@ -780,7 +802,6 @@ func (m *MemoryStorage) AddDependency(ctx context.Context, dep *types.Dependency
 	}
 
 	m.dependencies[dep.IssueID] = append(m.dependencies[dep.IssueID], dep)
-	m.dirty[dep.IssueID] = true
 
 	return nil
 }
@@ -800,7 +821,6 @@ func (m *MemoryStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 	}
 
 	m.dependencies[issueID] = newDeps
-	m.dirty[issueID] = true
 
 	return nil
 }
@@ -960,42 +980,6 @@ func (m *MemoryStorage) GetDependencyRecordsForIssues(ctx context.Context, issue
 	return result, nil
 }
 
-// GetDirtyIssueHash returns the hash for dirty issue tracking
-func (m *MemoryStorage) GetDirtyIssueHash(ctx context.Context, issueID string) (string, error) {
-	// Memory storage doesn't track dirty hashes, return empty string
-	return "", nil
-}
-
-// GetExportHash returns the hash for export tracking
-func (m *MemoryStorage) GetExportHash(ctx context.Context, issueID string) (string, error) {
-	// Memory storage doesn't track export hashes, return empty string
-	return "", nil
-}
-
-// SetExportHash sets the hash for export tracking
-func (m *MemoryStorage) SetExportHash(ctx context.Context, issueID, hash string) error {
-	// Memory storage doesn't track export hashes, no-op
-	return nil
-}
-
-// ClearAllExportHashes clears all export hashes
-func (m *MemoryStorage) ClearAllExportHashes(ctx context.Context) error {
-	// Memory storage doesn't track export hashes, no-op
-	return nil
-}
-
-// GetJSONLFileHash gets the JSONL file hash
-func (m *MemoryStorage) GetJSONLFileHash(ctx context.Context) (string, error) {
-	// Memory storage doesn't track JSONL file hashes, return empty string
-	return "", nil
-}
-
-// SetJSONLFileHash sets the JSONL file hash
-func (m *MemoryStorage) SetJSONLFileHash(ctx context.Context, fileHash string) error {
-	// Memory storage doesn't track JSONL file hashes, no-op
-	return nil
-}
-
 // GetDependencyTree gets the dependency tree for an issue
 func (m *MemoryStorage) GetDependencyTree(ctx context.Context, issueID string, maxDepth int, showAllPaths bool, reverse bool) ([]*types.TreeNode, error) {
 	// Get the root issue first
@@ -1071,7 +1055,15 @@ func (m *MemoryStorage) AddLabel(ctx context.Context, issueID, label, actor stri
 	}
 
 	m.labels[issueID] = append(m.labels[issueID], label)
-	m.dirty[issueID] = true
+
+	comment := "Added label: " + label
+	m.events[issueID] = append(m.events[issueID], &types.Event{
+		IssueID:   issueID,
+		EventType: types.EventLabelAdded,
+		Actor:     actor,
+		Comment:   &comment,
+		CreatedAt: time.Now(),
+	})
 
 	return nil
 }
@@ -1090,7 +1082,15 @@ func (m *MemoryStorage) RemoveLabel(ctx context.Context, issueID, label, actor s
 	}
 
 	m.labels[issueID] = newLabels
-	m.dirty[issueID] = true
+
+	comment := "Removed label: " + label
+	m.events[issueID] = append(m.events[issueID], &types.Event{
+		IssueID:   issueID,
+		EventType: types.EventLabelRemoved,
+		Actor:     actor,
+		Comment:   &comment,
+		CreatedAt: time.Now(),
+	})
 
 	return nil
 }
@@ -1560,7 +1560,6 @@ func (m *MemoryStorage) AddIssueComment(ctx context.Context, issueID, author, te
 	}
 
 	m.comments[issueID] = append(m.comments[issueID], comment)
-	m.dirty[issueID] = true
 
 	return comment, nil
 }
@@ -1578,7 +1577,6 @@ func (m *MemoryStorage) ImportIssueComment(ctx context.Context, issueID, author,
 	}
 
 	m.comments[issueID] = append(m.comments[issueID], comment)
-	m.dirty[issueID] = true
 
 	return comment, nil
 }
@@ -1721,30 +1719,6 @@ func (m *MemoryStorage) countEpicsEligibleForClosure() int {
 		}
 	}
 	return count
-}
-
-// Dirty tracking
-func (m *MemoryStorage) GetDirtyIssues(ctx context.Context) ([]string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var dirtyIDs []string
-	for id := range m.dirty {
-		dirtyIDs = append(dirtyIDs, id)
-	}
-
-	return dirtyIDs, nil
-}
-
-func (m *MemoryStorage) ClearDirtyIssuesByID(ctx context.Context, issueIDs []string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for _, id := range issueIDs {
-		delete(m.dirty, id)
-	}
-
-	return nil
 }
 
 // ID Generation
@@ -1962,11 +1936,32 @@ func (m *MemoryStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 
 // REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs
 
-// MarkIssueDirty marks an issue as dirty for export
-func (m *MemoryStorage) MarkIssueDirty(ctx context.Context, issueID string) error {
+// DeleteIssuesBySourceRepo removes all issues from a specific source repository.
+func (m *MemoryStorage) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.dirty[issueID] = true
+	var toDelete []string
+	for id, issue := range m.issues {
+		if issue.SourceRepo == sourceRepo {
+			toDelete = append(toDelete, id)
+		}
+	}
+
+	for _, id := range toDelete {
+		delete(m.issues, id)
+		delete(m.dependencies, id)
+		delete(m.labels, id)
+		delete(m.events, id)
+		delete(m.comments, id)
+
+		delete(m.externalRefToID, id)
+	}
+
+	return len(toDelete), nil
+}
+
+// ClearRepoMtime is a no-op for MemoryStorage (no mtime cache).
+func (m *MemoryStorage) ClearRepoMtime(ctx context.Context, repoPath string) error {
 	return nil
 }

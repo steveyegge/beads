@@ -1,4 +1,5 @@
 //go:build cgo
+
 package dolt
 
 import (
@@ -9,13 +10,22 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// UpdateIssueID updates an issue ID and all its references
+// UpdateIssueID updates an issue ID and all its references.
+// Disables FK checks to allow updating the primary key in issues while
+// child tables (dependencies, etc.) still reference the old ID.
 func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	// Disable foreign key checks to allow PK update on issues table
+	// (child tables like dependencies, events, etc. reference issues.id)
+	_, err = tx.ExecContext(ctx, `SET FOREIGN_KEY_CHECKS = 0`)
+	if err != nil {
+		return fmt.Errorf("failed to disable foreign key checks: %w", err)
+	}
 
 	// Update the issue itself
 	result, err := tx.ExecContext(ctx, `
@@ -64,20 +74,28 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 		return fmt.Errorf("failed to update comments: %w", err)
 	}
 
-	// Update dirty_issues
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO dirty_issues (issue_id, marked_at)
-		VALUES (?, ?)
-		ON DUPLICATE KEY UPDATE marked_at = VALUES(marked_at)
-	`, newID, time.Now().UTC())
+	// Update references in issue_snapshots
+	_, err = tx.ExecContext(ctx, `UPDATE issue_snapshots SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
 	if err != nil {
-		return fmt.Errorf("failed to mark issue dirty: %w", err)
+		return fmt.Errorf("failed to update issue_snapshots: %w", err)
 	}
 
-	// Delete old dirty entry
-	_, err = tx.ExecContext(ctx, `DELETE FROM dirty_issues WHERE issue_id = ?`, oldID)
+	// Update references in compaction_snapshots
+	_, err = tx.ExecContext(ctx, `UPDATE compaction_snapshots SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
 	if err != nil {
-		return fmt.Errorf("failed to delete old dirty entry: %w", err)
+		return fmt.Errorf("failed to update compaction_snapshots: %w", err)
+	}
+
+	// Update references in export_hashes
+	_, err = tx.ExecContext(ctx, `UPDATE export_hashes SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update export_hashes: %w", err)
+	}
+
+	// Update references in child_counters
+	_, err = tx.ExecContext(ctx, `UPDATE child_counters SET parent_id = ? WHERE parent_id = ?`, newID, oldID)
+	if err != nil {
+		return fmt.Errorf("failed to update child_counters: %w", err)
 	}
 
 	// Record rename event
@@ -87,6 +105,12 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 	`, newID, actor, oldID, newID)
 	if err != nil {
 		return fmt.Errorf("failed to record rename event: %w", err)
+	}
+
+	// Re-enable foreign key checks before commit
+	_, err = tx.ExecContext(ctx, `SET FOREIGN_KEY_CHECKS = 1`)
+	if err != nil {
+		return fmt.Errorf("failed to re-enable foreign key checks: %w", err)
 	}
 
 	return tx.Commit()

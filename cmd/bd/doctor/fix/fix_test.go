@@ -106,17 +106,6 @@ func TestMergeDriver_Validation(t *testing.T) {
 	})
 }
 
-// TestDaemon_Validation tests Daemon validation
-func TestDaemon_Validation(t *testing.T) {
-	t.Run("no socket - nothing to do", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-		err := Daemon(dir)
-		if err != nil {
-			t.Errorf("expected no error when no socket exists, got: %v", err)
-		}
-	})
-}
-
 // TestDBJSONLSync_Validation tests DBJSONLSync validation
 func TestDBJSONLSync_Validation(t *testing.T) {
 	t.Run("no database - nothing to do", func(t *testing.T) {

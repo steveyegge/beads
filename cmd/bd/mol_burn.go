@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -228,9 +228,6 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 		})
 	}
 
-	// Schedule auto-flush
-	markDirtyAndScheduleFlush()
-
 	if jsonOutput {
 		outputJSON(batchResult)
 		return
@@ -313,9 +310,6 @@ func burnWispMolecule(ctx context.Context, resolvedID string, dryRun, force bool
 	}
 	result.MoleculeID = resolvedID
 
-	// Schedule auto-flush
-	markDirtyAndScheduleFlush()
-
 	if jsonOutput {
 		outputJSON(result)
 		return
@@ -392,19 +386,15 @@ func burnPersistentMolecule(ctx context.Context, resolvedID string, dryRun, forc
 }
 
 // burnWisps deletes all wisp issues without creating a digest
-func burnWisps(ctx context.Context, s interface{}, ids []string) (*BurnResult, error) {
-	// Type assert to SQLite storage for delete access
-	sqliteStore, ok := s.(*sqlite.SQLiteStorage)
-	if !ok {
-		return nil, fmt.Errorf("burn requires SQLite storage backend")
-	}
-
+//
+//nolint:unparam // error return kept for future use and consistent API
+func burnWisps(ctx context.Context, s storage.Storage, ids []string) (*BurnResult, error) {
 	result := &BurnResult{
 		DeletedIDs: make([]string, 0, len(ids)),
 	}
 
 	for _, id := range ids {
-		if err := sqliteStore.DeleteIssue(ctx, id); err != nil {
+		if err := s.DeleteIssue(ctx, id); err != nil {
 			// Log but continue - try to delete as many as possible
 			fmt.Fprintf(os.Stderr, "Warning: failed to delete %s: %v\n", id, err)
 			continue

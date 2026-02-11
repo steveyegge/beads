@@ -15,7 +15,6 @@
 // Connection modes:
 //   - Embedded: No server required, database/sql interface via dolthub/driver
 //   - Server: Connect to running dolt sql-server for multi-writer scenarios
-//
 package dolt
 
 import (
@@ -128,6 +127,24 @@ func isRetryableError(err error) bool {
 	if strings.Contains(errStr, "connection refused") {
 		return true
 	}
+	// Dolt read-only mode: under load, Dolt may enter read-only mode with
+	// "cannot update manifest: database is read only". This clears after
+	// a server restart, so it's worth retrying.
+	if strings.Contains(errStr, "database is read only") {
+		return true
+	}
+	// MySQL error 2013: mid-query disconnect
+	if strings.Contains(errStr, "lost connection") {
+		return true
+	}
+	// MySQL error 2006: idle connection timeout
+	if strings.Contains(errStr, "gone away") {
+		return true
+	}
+	// Go net package timeout on read/write
+	if strings.Contains(errStr, "i/o timeout") {
+		return true
+	}
 	return false
 }
 
@@ -149,6 +166,37 @@ func (s *DoltStore) withRetry(ctx context.Context, op func() error) error {
 		}
 		return nil
 	}, backoff.WithContext(bo, ctx))
+}
+
+// execContext wraps s.db.ExecContext with server-mode retry for transient errors.
+func (s *DoltStore) execContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	var result sql.Result
+	err := s.withRetry(ctx, func() error {
+		var execErr error
+		result, execErr = s.db.ExecContext(ctx, query, args...)
+		return execErr
+	})
+	return result, err
+}
+
+// queryContext wraps s.db.QueryContext with server-mode retry for transient errors.
+func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	var rows *sql.Rows
+	err := s.withRetry(ctx, func() error {
+		var queryErr error
+		rows, queryErr = s.db.QueryContext(ctx, query, args...)
+		return queryErr
+	})
+	return rows, err
+}
+
+// queryRowContext wraps s.db.QueryRowContext with server-mode retry for transient errors.
+// The scan function receives the *sql.Row and should call .Scan() on it.
+func (s *DoltStore) queryRowContext(ctx context.Context, scan func(*sql.Row) error, query string, args ...any) error {
+	return s.withRetry(ctx, func() error {
+		row := s.db.QueryRowContext(ctx, query, args...)
+		return scan(row)
+	})
 }
 
 // New creates a new Dolt storage backend
@@ -350,8 +398,17 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 		if _, err := db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", bdBranch); err != nil {
-			_ = store.Close()
-			return nil, fmt.Errorf("failed to checkout Dolt branch %s: %w", bdBranch, err)
+			// Branch doesn't exist — auto-create from current branch, then checkout.
+			// This makes polecats self-healing: they create their own branches
+			// if Gas Town hasn't pre-created them (race condition, cleanup, etc.).
+			if _, createErr := db.ExecContext(ctx, "CALL DOLT_BRANCH(?)", bdBranch); createErr != nil {
+				_ = store.Close()
+				return nil, fmt.Errorf("failed to create Dolt branch %s: %w (checkout error: %v)", bdBranch, createErr, err)
+			}
+			if _, coErr := db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", bdBranch); coErr != nil {
+				_ = store.Close()
+				return nil, fmt.Errorf("failed to checkout Dolt branch %s after creation: %w", bdBranch, coErr)
+			}
 		}
 		store.branch = bdBranch
 	}

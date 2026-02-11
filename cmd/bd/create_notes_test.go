@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -6,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -134,75 +135,6 @@ func TestCreateWithNotes(t *testing.T) {
 
 		if retrieved.Notes != specialNotes {
 			t.Errorf("notes mismatch.\nExpected: %q\nGot: %q", specialNotes, retrieved.Notes)
-		}
-	})
-}
-
-// TestCreateWithNotesRPC verifies notes field works via RPC protocol
-func TestCreateWithNotesRPC(t *testing.T) {
-	tmpDir := t.TempDir()
-	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
-	s := newTestStore(t, testDB)
-	ctx := context.Background()
-
-	t.Run("RPC_CreateArgs_WithNotes", func(t *testing.T) {
-		// Test that CreateArgs properly includes Notes field
-		args := &rpc.CreateArgs{
-			Title:       "RPC test issue",
-			Description: "Testing RPC mode",
-			Notes:       "RPC notes field",
-			Priority:    1,
-			IssueType:   "task",
-		}
-
-		// Verify the struct has the Notes field populated
-		if args.Notes != "RPC notes field" {
-			t.Errorf("expected Notes field 'RPC notes field', got %q", args.Notes)
-		}
-	})
-
-	t.Run("RPC_CreateIssue_WithNotes", func(t *testing.T) {
-		// Simulate what the RPC handler does
-		createArgs := &rpc.CreateArgs{
-			Title:              "RPC created issue",
-			Description:        "Created via RPC",
-			Design:             "RPC design",
-			AcceptanceCriteria: "RPC acceptance",
-			Notes:              "RPC implementation notes",
-			Priority:           2,
-			IssueType:          "feature",
-			Assignee:           "rpcuser",
-		}
-
-		// Create issue as RPC handler would
-		issue := &types.Issue{
-			Title:              createArgs.Title,
-			Description:        createArgs.Description,
-			Design:             createArgs.Design,
-			AcceptanceCriteria: createArgs.AcceptanceCriteria,
-			Notes:              createArgs.Notes,
-			Priority:           createArgs.Priority,
-			IssueType:          types.IssueType(createArgs.IssueType),
-			Assignee:           createArgs.Assignee,
-			Status:             types.StatusOpen,
-			CreatedAt:          time.Now(),
-		}
-
-		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
-			t.Fatalf("failed to create issue via RPC simulation: %v", err)
-		}
-
-		// Retrieve and verify
-		retrieved, err := s.GetIssue(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("failed to retrieve issue: %v", err)
-		}
-
-		if retrieved.Notes != "RPC implementation notes" {
-			t.Errorf("expected notes 'RPC implementation notes', got %q", retrieved.Notes)
-		}
-		if retrieved.Description != "Created via RPC" {
-			t.Errorf("expected description 'Created via RPC', got %q", retrieved.Description)
 		}
 	})
 }

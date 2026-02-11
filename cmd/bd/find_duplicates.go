@@ -107,12 +107,6 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) {
 	var issues []*types.Issue
 	var err error
 
-	if daemonClient != nil {
-		fmt.Fprintf(os.Stderr, "Error: find-duplicates not yet supported in daemon mode\n")
-		fmt.Fprintf(os.Stderr, "Use: bd --no-daemon find-duplicates\n")
-		os.Exit(1)
-	}
-
 	issues, err = store.SearchIssues(ctx, "", filter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error fetching issues: %v\n", err)
