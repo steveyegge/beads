@@ -34,6 +34,8 @@ var (
 	graphCompact bool
 	graphBox     bool
 	graphAll     bool
+	graphDOT     bool
+	graphHTML    bool
 )
 
 var graphCmd = &cobra.Command{
@@ -50,13 +52,22 @@ With --all, shows all open issues grouped by connected component.
 Display formats:
   --box (default)  ASCII boxes showing layers, more detailed
   --compact        Tree format, one line per issue, more scannable
+  --dot            Graphviz DOT format (pipe to dot -Tsvg > graph.svg)
+  --html           Self-contained interactive HTML with D3.js visualization
 
 The graph shows execution order:
 - Layer 0 / leftmost = no dependencies (can start immediately)
 - Higher layers depend on lower layers
 - Nodes in the same layer can run in parallel
 
-Status icons: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred`,
+Status icons: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred
+
+Examples:
+  bd graph issue-id              # ASCII box visualization
+  bd graph --dot issue-id | dot -Tsvg > graph.svg  # SVG via Graphviz
+  bd graph --dot issue-id | dot -Tpng > graph.png  # PNG via Graphviz
+  bd graph --html issue-id > graph.html  # Interactive browser view
+  bd graph --all --html > all.html       # All issues, interactive`,
 	Args: cobra.RangeArgs(0, 1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
@@ -99,12 +110,16 @@ Status icons: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred`,
 			// Render all subgraphs
 			for i, subgraph := range subgraphs {
 				layout := computeLayout(subgraph)
-				if graphCompact {
+				if graphDOT {
+					renderGraphDOT(layout, subgraph)
+				} else if graphHTML {
+					renderGraphHTML(layout, subgraph)
+				} else if graphCompact {
 					renderGraphCompact(layout, subgraph)
 				} else {
 					renderGraph(layout, subgraph)
 				}
-				if i < len(subgraphs)-1 {
+				if !graphDOT && !graphHTML && i < len(subgraphs)-1 {
 					fmt.Println(strings.Repeat("─", 60))
 				}
 			}
@@ -137,8 +152,12 @@ Status icons: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred`,
 			return
 		}
 
-		// Render graph - compact tree format or box format (default)
-		if graphCompact {
+		// Render graph in selected format
+		if graphDOT {
+			renderGraphDOT(layout, subgraph)
+		} else if graphHTML {
+			renderGraphHTML(layout, subgraph)
+		} else if graphCompact {
 			renderGraphCompact(layout, subgraph)
 		} else {
 			renderGraph(layout, subgraph)
@@ -150,6 +169,8 @@ func init() {
 	graphCmd.Flags().BoolVar(&graphAll, "all", false, "Show graph for all open issues")
 	graphCmd.Flags().BoolVar(&graphCompact, "compact", false, "Tree format, one line per issue, more scannable")
 	graphCmd.Flags().BoolVar(&graphBox, "box", true, "ASCII boxes showing layers (default)")
+	graphCmd.Flags().BoolVar(&graphDOT, "dot", false, "Output Graphviz DOT format (pipe to: dot -Tsvg > graph.svg)")
+	graphCmd.Flags().BoolVar(&graphHTML, "html", false, "Output self-contained interactive HTML (redirect to file)")
 	graphCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(graphCmd)
 }
