@@ -116,45 +116,6 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-// EnvGetResponse is returned by GET /api/v1/env/:key.
-type EnvGetResponse struct {
-	Key    string  `json:"key"`
-	Value  *string `json:"value"`
-	Source string  `json:"source"`
-}
-
-// EnvPutRequest is the body for PUT /api/v1/env/:key.
-type EnvPutRequest struct {
-	Value string `json:"value"`
-}
-
-// EnvPutResponse is returned by PUT/DELETE /api/v1/env/:key.
-type EnvPutResponse struct {
-	Key     string `json:"key"`
-	Updated bool   `json:"updated"`
-}
-
-// EnvListResponse is returned by GET /api/v1/env.
-type EnvListResponse struct {
-	Vars    map[string]string `json:"vars"`
-	Pending map[string]string `json:"pending"`
-}
-
-// CwdResponse is returned by GET /api/v1/session/cwd.
-type CwdResponse struct {
-	Cwd string `json:"cwd"`
-}
-
-// SessionInfo contains metadata about an agent session.
-type SessionInfo struct {
-	SessionID string `json:"session_id"`
-	PID       int    `json:"pid"`
-	Uptime    int64  `json:"uptime_secs"`
-	Ready     bool   `json:"ready"`
-	AgentType string `json:"agent_type"`
-	Backend   string `json:"backend"`
-}
-
 // Agent state constants matching Coop's agent state enum.
 const (
 	StateStarting        = "starting"

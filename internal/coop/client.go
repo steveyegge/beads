@@ -168,70 +168,6 @@ func (c *Client) SendInput(ctx context.Context, text string, enter bool) (*Input
 	return &resp, nil
 }
 
-// Shutdown requests the Coop sidecar to shut down gracefully.
-// This replaces tmux kill-session for Coop-backed agents.
-func (c *Client) Shutdown(ctx context.Context) error {
-	return c.postJSON(ctx, "/api/v1/shutdown", nil, nil)
-}
-
-// IsAgentRunning returns true if the agent process is actively running
-// (not exited or crashed). Uses the agent state endpoint.
-func (c *Client) IsAgentRunning(ctx context.Context) (bool, error) {
-	resp, err := c.AgentState(ctx)
-	if err != nil {
-		// If Coop returns EXITED error, the agent is not running.
-		if cerr, ok := err.(*CoopError); ok && cerr.IsExited() {
-			return false, nil
-		}
-		return false, err
-	}
-	return resp.State != StateExited && resp.State != "crashed", nil
-}
-
-// --- Environment & CWD ---
-
-// GetEnvironment reads a single environment variable. Checks pending
-// overrides first, then falls back to the child process /proc environ.
-func (c *Client) GetEnvironment(ctx context.Context, key string) (string, error) {
-	var resp EnvGetResponse
-	if err := c.getJSON(ctx, "/api/v1/env/"+key, &resp); err != nil {
-		return "", err
-	}
-	if resp.Value == nil {
-		return "", nil
-	}
-	return *resp.Value, nil
-}
-
-// SetEnvironment stores a pending environment variable override. The value
-// is applied on the next session switch.
-func (c *Client) SetEnvironment(ctx context.Context, key, value string) error {
-	return c.putJSON(ctx, "/api/v1/env/"+key, EnvPutRequest{Value: value}, nil)
-}
-
-// DeleteEnvironment removes a pending environment variable override.
-func (c *Client) DeleteEnvironment(ctx context.Context, key string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/api/v1/env/"+key, nil, nil)
-}
-
-// ListEnvironment returns all child process env vars and pending overrides.
-func (c *Client) ListEnvironment(ctx context.Context) (*EnvListResponse, error) {
-	var resp EnvListResponse
-	if err := c.getJSON(ctx, "/api/v1/env", &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// GetWorkingDirectory returns the child process working directory.
-func (c *Client) GetWorkingDirectory(ctx context.Context) (string, error) {
-	var resp CwdResponse
-	if err := c.getJSON(ctx, "/api/v1/session/cwd", &resp); err != nil {
-		return "", err
-	}
-	return resp.Cwd, nil
-}
-
 // --- HTTP helpers ---
 
 // CoopError is returned when the Coop API returns an error status code.
@@ -320,46 +256,6 @@ func (c *Client) getText(ctx context.Context, path string) (string, error) {
 		return "", fmt.Errorf("coop: GET %s: read: %w", path, err)
 	}
 	return string(data), nil
-}
-
-func (c *Client) putJSON(ctx context.Context, path string, body interface{}, out interface{}) error {
-	return c.doJSON(ctx, http.MethodPut, path, body, out)
-}
-
-func (c *Client) doJSON(ctx context.Context, method, path string, body interface{}, out interface{}) error {
-	var reqBody io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("coop: marshal: %w", err)
-		}
-		reqBody = bytes.NewReader(data)
-	}
-
-	req, err := c.newRequest(ctx, method, path, reqBody)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("coop: %s %s: %w", method, path, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return c.parseError(resp)
-	}
-
-	if out != nil {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			return fmt.Errorf("coop: %s %s: decode: %w", method, path, err)
-		}
-	}
-	return nil
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, body interface{}, out interface{}) error {
