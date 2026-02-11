@@ -45,6 +45,18 @@ brew install beads
 - ✅ No need to install Go
 - ✅ Handles PATH setup automatically
 
+### [Mise-en-place](https://mise.jdx.dev)  (macOS/Linux/Windows)
+
+```bash
+mise install -g steveyegge/github:beads
+```
+
+**Why Mise?**
+- ✅ Same as Homebrew: simple, updates via `mise up`, works without Go, handles PATH
+- ✅ Supports all platforms
+- ✅ Always latest release
+- ✅ May optionally use different version for specific projects
+
 ### Quick Install Script (All Platforms)
 
 ```bash
