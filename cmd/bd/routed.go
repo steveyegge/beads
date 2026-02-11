@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -103,6 +104,28 @@ func resolveAndGetFromStore(ctx context.Context, s storage.Storage, id string, r
 		Routed:     routed,
 		ResolvedID: resolvedID,
 	}, nil
+}
+
+// openStoreForRig opens a read-only storage connection to a different rig's database.
+// The rigOrPrefix parameter accepts any format: "beads", "bd-", "bd", etc.
+// Returns the opened storage (caller must close) or an error.
+func openStoreForRig(ctx context.Context, rigOrPrefix string) (storage.Storage, error) {
+	townBeadsDir, err := findTownBeadsDir()
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve rig: %v", err)
+	}
+
+	targetBeadsDir, _, err := routing.ResolveBeadsDirForRig(rigOrPrefix, townBeadsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	targetStore, err := factory.NewFromConfigWithOptions(ctx, targetBeadsDir, factory.Options{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open rig %q database: %v", rigOrPrefix, err)
+	}
+
+	return targetStore, nil
 }
 
 // getIssueWithRouting tries to get an issue from the local store first,

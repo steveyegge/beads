@@ -607,21 +607,34 @@ var listCmd = &cobra.Command{
 		}
 
 		ctx := rootCtx
-		requireFreshDB(ctx)
+
+		// Handle --rig flag: query a different rig's database
+		rigOverride, _ := cmd.Flags().GetString("rig")
+		activeStore := store
+		if rigOverride != "" {
+			rigStore, err := openStoreForRig(ctx, rigOverride)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			defer func() { _ = rigStore.Close() }()
+			activeStore = rigStore
+		} else {
+			requireFreshDB(ctx)
+		}
 
 		// Direct mode
-		// ctx already created above for staleness check
-		issues, err := store.SearchIssues(ctx, "", filter)
+		issues, err := activeStore.SearchIssues(ctx, "", filter)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
-		// If no issues found, check if git has issues and auto-import
-		if len(issues) == 0 {
-			if checkAndAutoImport(ctx, store) {
+		// If no issues found, check if git has issues and auto-import (only for local store)
+		if len(issues) == 0 && rigOverride == "" {
+			if checkAndAutoImport(ctx, activeStore) {
 				// Re-run the query after import
-				issues, err = store.SearchIssues(ctx, "", filter)
+				issues, err = activeStore.SearchIssues(ctx, "", filter)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
@@ -634,7 +647,7 @@ var listCmd = &cobra.Command{
 
 		// Handle watch mode (GH#654) - must be before other output modes
 		if watchMode {
-			watchIssues(ctx, store, filter, sortBy, reverse)
+			watchIssues(ctx, activeStore, filter, sortBy, reverse)
 			return
 		}
 
@@ -642,7 +655,7 @@ var listCmd = &cobra.Command{
 		if prettyFormat {
 			// Special handling for --tree --parent combination (hierarchical descendants)
 			if parentID != "" {
-				treeIssues, err := getHierarchicalChildren(ctx, store, "", 0, parentID)
+				treeIssues, err := getHierarchicalChildren(ctx, activeStore, "", 0, parentID)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
@@ -654,14 +667,14 @@ var listCmd = &cobra.Command{
 				}
 
 				// Load dependencies for tree structure
-				allDeps, _ := store.GetAllDependencyRecords(ctx)
+				allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
 				displayPrettyListWithDeps(treeIssues, false, allDeps)
 				return
 			}
 
 			// Regular tree display (no parent filter)
 			// Load dependencies for tree structure
-			allDeps, _ := store.GetAllDependencyRecords(ctx)
+			allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
 			displayPrettyListWithDeps(issues, false, allDeps)
 			// Show truncation hint if we hit the limit (GH#788)
 			if effectiveLimit > 0 && len(issues) == effectiveLimit {
@@ -672,7 +685,7 @@ var listCmd = &cobra.Command{
 
 		// Handle format flag
 		if formatStr != "" {
-			if err := outputFormattedList(ctx, store, issues, formatStr); err != nil {
+			if err := outputFormattedList(ctx, activeStore, issues, formatStr); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -685,10 +698,10 @@ var listCmd = &cobra.Command{
 			for i, issue := range issues {
 				issueIDs[i] = issue.ID
 			}
-			labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
-			depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
-			allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
-			commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
+			labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
+			depCounts, _ := activeStore.GetDependencyCounts(ctx, issueIDs)
+			allDeps, _ := activeStore.GetDependencyRecordsForIssues(ctx, issueIDs)
+			commentCounts, _ := activeStore.GetCommentCounts(ctx, issueIDs)
 
 			// Populate labels and dependencies for JSON output
 			for _, issue := range issues {
@@ -722,10 +735,10 @@ var listCmd = &cobra.Command{
 		for i, issue := range issues {
 			issueIDs[i] = issue.ID
 		}
-		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
+		labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
 
 		// Load dependencies for blocking info display
-		allDepsForList, _ := store.GetAllDependencyRecords(ctx)
+		allDepsForList, _ := activeStore.GetAllDependencyRecords(ctx)
 		blockedByMap, blocksMap, _ := buildBlockingMaps(allDepsForList)
 
 		// Build output in buffer for pager support (bd-jdz3)
@@ -848,6 +861,9 @@ func init() {
 
 	// Ready filter: show only issues ready to be worked on (bd-ihu31)
 	listCmd.Flags().Bool("ready", false, "Show only ready issues (status=open, excludes hooked/in_progress/blocked/deferred)")
+
+	// Cross-rig routing: query a different rig's database (bd-rgdjr)
+	listCmd.Flags().String("rig", "", "Query a different rig's database (e.g., --rig gastown, --rig gt-, --rig gt)")
 
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(listCmd)
