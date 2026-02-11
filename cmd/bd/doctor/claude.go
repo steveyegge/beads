@@ -18,6 +18,7 @@ func CheckClaude() DoctorCheck {
 	hasPlugin := isBeadsPluginInstalled()
 	hasMCP := isMCPServerInstalled()
 	hasHooks := hasClaudeHooks()
+	inClaudeCode := os.Getenv("CLAUDECODE") == "1"
 
 	// Plugin now provides hooks directly via plugin.json, so if plugin is installed
 	// we consider hooks to be available (plugin hooks + any user-configured hooks)
@@ -59,7 +60,16 @@ func CheckClaude() DoctorCheck {
 				"\n" +
 				"See: bd setup claude --help",
 		}
+	} else if !inClaudeCode {
+		// Not in Claude Code - skip plugin suggestion
+		return DoctorCheck{
+			Name:    "Claude Integration",
+			Status:  "ok",
+			Message: "CLI-only mode",
+			Detail:  "To enable Claude integration, run bd setup claude",
+		}
 	} else {
+		// In Claude Code but plugin not installed
 		return DoctorCheck{
 			Name:    "Claude Integration",
 			Status:  "warning",
