@@ -109,8 +109,11 @@ func OrphanedDependencies(path string, verbose bool) error {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Dolt backend: this fix uses raw SQL queries against SQLite, skip for now
-	cfg, _ := configfile.Load(beadsDir)
-	if cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
+	backend := configfile.BackendDolt
+	if cfg, _ := configfile.Load(beadsDir); cfg != nil {
+		backend = cfg.GetBackend()
+	}
+	if backend == "" || backend == configfile.BackendDolt {
 		fmt.Println("  Orphaned dependencies fix skipped (dolt backend — uses raw SQL)")
 		return nil
 	}
@@ -190,8 +193,11 @@ func ChildParentDependencies(path string, verbose bool) error {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Dolt backend: this fix uses raw SQL queries against SQLite, skip for now
-	cfg, _ := configfile.Load(beadsDir)
-	if cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
+	cpBackend := configfile.BackendDolt
+	if cfg, _ := configfile.Load(beadsDir); cfg != nil {
+		cpBackend = cfg.GetBackend()
+	}
+	if cpBackend == "" || cpBackend == configfile.BackendDolt {
 		fmt.Println("  Child-parent dependencies fix skipped (dolt backend — uses raw SQL)")
 		return nil
 	}

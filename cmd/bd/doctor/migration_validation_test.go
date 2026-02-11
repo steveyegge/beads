@@ -29,7 +29,7 @@ func insertIssueDirectly(t *testing.T, store storage.Storage, id string) {
 	t.Helper()
 	db := store.UnderlyingDB()
 	_, err := db.Exec(
-		"INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at) VALUES (?, ?, 'open', 2, 'task', datetime('now'), datetime('now'))",
+		"INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, created_at, updated_at) VALUES (?, ?, '', '', '', '', 'open', 2, 'task', NOW(), NOW())",
 		id, "Test issue "+id,
 	)
 	if err != nil {
@@ -252,36 +252,10 @@ func TestCheckMigrationCompletionResult_NoBeadsDir(t *testing.T) {
 }
 
 func TestCheckMigrationCompletionResult_NotDoltBackend(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bd-migration-validation-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("failed to create .beads: %v", err)
-	}
-
-	// Create JSONL (SQLite backend by default)
-	jsonl := `{"id":"bd-001","title":"Test 1"}`
-	if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), []byte(jsonl), 0644); err != nil {
-		t.Fatalf("failed to create JSONL: %v", err)
-	}
-
-	check, result := CheckMigrationCompletion(tmpDir)
-
-	if check.Status != StatusError {
-		t.Errorf("status = %q, want %q", check.Status, StatusError)
-	}
-
-	if result.Ready {
-		t.Error("expected result.Ready = false for non-Dolt backend")
-	}
-
-	if len(result.Errors) == 0 {
-		t.Error("expected errors in result")
-	}
+	// Skip: the default backend is now always "dolt" and there's no way to
+	// configure a non-Dolt backend. The code path this test was exercising
+	// (Backend != "dolt") is unreachable after the migration completed.
+	t.Skip("non-Dolt backend path is unreachable: default backend is always dolt")
 }
 
 func TestCheckDoltLocks_NotDoltBackend(t *testing.T) {
