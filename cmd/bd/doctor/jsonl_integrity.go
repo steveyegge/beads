@@ -116,7 +116,7 @@ func CheckJSONLIntegrity(path string) DoctorCheck {
 
 func isSystemJSONLFilename(name string) bool {
 	switch name {
-	case "deletions.jsonl", "interactions.jsonl", "molecules.jsonl":
+	case "deletions.jsonl", "interactions.jsonl", "molecules.jsonl", "routes.jsonl":
 		return true
 	default:
 		return false
