@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -160,27 +159,54 @@ func runPurge(cmd *cobra.Command, _ []string) {
 		issueIDs[i] = issue.ID
 	}
 
-	// Type assert to BatchDeleter
-	d, ok := store.(storage.BatchDeleter)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "Error: storage backend does not support batch deletion\n")
+	// Use direct SQL via UnderlyingDB to avoid the slow recursive dependency
+	// traversal in DeleteIssues.findAllDependentsRecursiveTx (N+1 BFS queries
+	// inside a Dolt transaction hang with hundreds of IDs).
+	db := store.UnderlyingDB()
+	if db == nil {
+		fmt.Fprintf(os.Stderr, "Error: underlying database not available\n")
+		os.Exit(1)
+	}
+
+	// Build parameterized IN clause for all IDs
+	inClause, args := purgeBuildInClause(issueIDs)
+	// Double the args for queries that use IN twice (deps: issue_id OR depends_on_id)
+	doubledArgs := make([]interface{}, 0, len(args)*2)
+	doubledArgs = append(doubledArgs, args...)
+	doubledArgs = append(doubledArgs, args...)
+
+	// Count related data for stats
+	var depsCount, labelsCount, eventsCount int
+
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM dependencies WHERE issue_id IN ("+inClause+") OR depends_on_id IN ("+inClause+")",
+		doubledArgs...).Scan(&depsCount); err != nil {
+		fmt.Fprintf(os.Stderr, "Error counting dependencies: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM labels WHERE issue_id IN ("+inClause+")",
+		args...).Scan(&labelsCount); err != nil {
+		fmt.Fprintf(os.Stderr, "Error counting labels: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM events WHERE issue_id IN ("+inClause+")",
+		args...).Scan(&eventsCount); err != nil {
+		fmt.Fprintf(os.Stderr, "Error counting events: %v\n", err)
 		os.Exit(1)
 	}
 
 	if dryRun {
-		// Preview mode
-		result, err := d.DeleteIssues(ctx, issueIDs, true, false, true)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error previewing purge: %v\n", err)
-			os.Exit(1)
-		}
-
+		// Preview mode — stats only, no mutations
 		if jsonOutput {
 			outputJSON(PurgeResult{
-				PurgedCount:       result.DeletedCount,
-				DependenciesCount: result.DependenciesCount,
-				LabelsCount:       result.LabelsCount,
-				EventsCount:       result.EventsCount,
+				PurgedCount:       len(issueIDs),
+				DependenciesCount: depsCount,
+				LabelsCount:       labelsCount,
+				EventsCount:       eventsCount,
 				SkippedPinned:     pinnedCount,
 				Pattern:           pattern,
 				OlderThanDays:     olderThanDays,
@@ -189,9 +215,9 @@ func runPurge(cmd *cobra.Command, _ []string) {
 			})
 		} else {
 			fmt.Println(ui.RenderWarn("DRY RUN - no changes will be made"))
-			fmt.Printf("\nWould purge: %d closed ephemeral bead(s)\n", result.DeletedCount)
+			fmt.Printf("\nWould purge: %d closed ephemeral bead(s)\n", len(issueIDs))
 			fmt.Printf("Would remove: %d dependencies, %d labels, %d events\n",
-				result.DependenciesCount, result.LabelsCount, result.EventsCount)
+				depsCount, labelsCount, eventsCount)
 			if pattern != "" {
 				fmt.Printf("Pattern: %s\n", pattern)
 			}
@@ -202,42 +228,67 @@ func runPurge(cmd *cobra.Command, _ []string) {
 		return
 	}
 
-	// Execute purge: cascade=true, force=true, dryRun=false
-	result, err := d.DeleteIssues(ctx, issueIDs, true, true, false)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error purging: %v\n", err)
+	// Execute purge via direct SQL.
+	// Step 1: Remove incoming dependency refs (depends_on_id has no FK CASCADE).
+	if _, err := db.ExecContext(ctx,
+		"DELETE FROM dependencies WHERE depends_on_id IN ("+inClause+")",
+		args...); err != nil {
+		fmt.Fprintf(os.Stderr, "Error removing incoming dependencies: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Step 2: Hard-delete issues. FK CASCADE automatically removes:
+	//   dependencies (issue_id), labels, comments, events,
+	//   export_hashes, child_counters, issue_snapshots, compaction_snapshots.
+	res, err := db.ExecContext(ctx,
+		"DELETE FROM issues WHERE id IN ("+inClause+")",
+		args...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error purging issues: %v\n", err)
+		os.Exit(1)
+	}
+	deletedCount, _ := res.RowsAffected()
 
 	// Auto-commit for Dolt
 	if commitErr := maybeAutoCommit(ctx, doltAutoCommitParams{
 		Command:         "purge",
 		IssueIDs:        issueIDs,
-		MessageOverride: fmt.Sprintf("bd: purge %d closed ephemeral bead(s)", result.DeletedCount),
+		MessageOverride: fmt.Sprintf("bd: purge %d closed ephemeral bead(s)", deletedCount),
 	}); commitErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: auto-commit failed: %v\n", commitErr)
 	}
 
 	if jsonOutput {
 		outputJSON(PurgeResult{
-			PurgedCount:       result.DeletedCount,
-			DependenciesCount: result.DependenciesCount,
-			LabelsCount:       result.LabelsCount,
-			EventsCount:       result.EventsCount,
+			PurgedCount:       int(deletedCount),
+			DependenciesCount: depsCount,
+			LabelsCount:       labelsCount,
+			EventsCount:       eventsCount,
 			SkippedPinned:     pinnedCount,
 			Pattern:           pattern,
 			OlderThanDays:     olderThanDays,
 			PurgedIDs:         issueIDs,
 		})
 	} else {
-		fmt.Printf("%s Purged %d closed ephemeral bead(s)\n", ui.RenderPass("✓"), result.DeletedCount)
-		fmt.Printf("  Removed %d dependency link(s)\n", result.DependenciesCount)
-		fmt.Printf("  Removed %d label(s)\n", result.LabelsCount)
-		fmt.Printf("  Removed %d event(s)\n", result.EventsCount)
+		fmt.Printf("%s Purged %d closed ephemeral bead(s)\n", ui.RenderPass("✓"), deletedCount)
+		fmt.Printf("  Removed %d dependency link(s)\n", depsCount)
+		fmt.Printf("  Removed %d label(s)\n", labelsCount)
+		fmt.Printf("  Removed %d event(s)\n", eventsCount)
 		if pinnedCount > 0 {
 			fmt.Printf("  Skipped %d pinned bead(s)\n", pinnedCount)
 		}
 	}
+}
+
+// purgeBuildInClause builds a parameterized IN clause for SQL queries.
+func purgeBuildInClause(ids []string) (string, []interface{}) {
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return strings.Join(placeholders, ","), args
 }
 
 // parseOlderThan parses a duration string like "7d", "30d" into days.
