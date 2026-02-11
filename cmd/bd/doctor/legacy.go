@@ -353,6 +353,15 @@ func CheckDatabaseConfig(repoPath string) DoctorCheck {
 		}
 	}
 
+	// Dolt backend stores data on the server — no local .db or .jsonl files expected
+	if cfg.GetBackend() == configfile.BackendDolt {
+		return DoctorCheck{
+			Name:    "Database Config",
+			Status:  "ok",
+			Message: "Dolt backend (data on server)",
+		}
+	}
+
 	var issues []string
 
 	// Check if configured database exists
