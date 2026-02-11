@@ -18,7 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 // testIDCounter ensures unique IDs across all test runs
@@ -160,7 +160,7 @@ func failIfProductionDatabase(t *testing.T, dbPath string) {
 	}
 }
 
-// newTestStore creates a Dolt store with issue_prefix configured (bd-166)
+// newTestStore creates a SQLite store with issue_prefix configured (bd-166)
 // This prevents "database not initialized" errors in tests
 func newTestStore(t *testing.T, dbPath string) storage.Storage {
 	t.Helper()
@@ -172,7 +172,7 @@ func newTestStore(t *testing.T, dbPath string) storage.Storage {
 		t.Fatalf("Failed to create database directory: %v", err)
 	}
 
-	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
@@ -194,7 +194,7 @@ func newTestStore(t *testing.T, dbPath string) storage.Storage {
 	return store
 }
 
-// newTestStoreWithPrefix creates a Dolt store with custom issue_prefix configured
+// newTestStoreWithPrefix creates a SQLite store with custom issue_prefix configured
 func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) storage.Storage {
 	t.Helper()
 
@@ -205,7 +205,7 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) storage.
 		t.Fatalf("Failed to create database directory: %v", err)
 	}
 
-	store, err := dolt.New(context.Background(), &dolt.Config{Path: dbPath})
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
@@ -231,7 +231,7 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) storage.
 // Used in tests where the database was already created by the code under test.
 func openExistingTestDB(t *testing.T, dbPath string) (storage.Storage, error) {
 	t.Helper()
-	return dolt.New(context.Background(), &dolt.Config{Path: dbPath})
+	return sqlite.New(context.Background(), dbPath)
 }
 
 // runCommandInDir runs a command in the specified directory

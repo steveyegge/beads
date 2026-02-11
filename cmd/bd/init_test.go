@@ -15,7 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 func TestInitCommand(t *testing.T) {
@@ -1802,14 +1802,14 @@ func TestInitRedirect(t *testing.T) {
 		}
 
 		canonicalDBPath := filepath.Join(canonicalBeadsDir, "beads.db")
-		store, err := dolt.New(context.Background(), &dolt.Config{Path: canonicalDBPath})
+		sqliteStore, err := sqlite.New(context.Background(), canonicalDBPath)
 		if err != nil {
 			t.Fatalf("Failed to create canonical database: %v", err)
 		}
-		if err := store.SetConfig(context.Background(), "issue_prefix", "existing"); err != nil {
+		if err := sqliteStore.SetConfig(context.Background(), "issue_prefix", "existing"); err != nil {
 			t.Fatalf("Failed to set prefix in canonical database: %v", err)
 		}
-		store.Close()
+		sqliteStore.Close()
 
 		projectDir := filepath.Join(tmpDir, "project")
 		projectBeadsDir := filepath.Join(projectDir, ".beads")
@@ -1909,7 +1909,7 @@ func TestInitBEADS_DIR(t *testing.T) {
 		cwdBeadsDir := filepath.Join(tmpDir, "cwd", ".beads")
 		os.MkdirAll(cwdBeadsDir, 0755)
 		cwdDBPath := filepath.Join(cwdBeadsDir, beads.CanonicalDatabaseName)
-		store, err := dolt.New(context.Background(), &dolt.Config{Path: cwdDBPath})
+		store, err := sqlite.New(context.Background(), cwdDBPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1941,7 +1941,7 @@ func TestInitBEADS_DIR(t *testing.T) {
 		beadsDirPath := filepath.Join(tmpDir, "external", ".beads")
 		os.MkdirAll(beadsDirPath, 0755)
 		testDBPath := filepath.Join(beadsDirPath, beads.CanonicalDatabaseName)
-		store, err := dolt.New(context.Background(), &dolt.Config{Path: testDBPath})
+		store, err := sqlite.New(context.Background(), testDBPath)
 		if err != nil {
 			t.Fatal(err)
 		}

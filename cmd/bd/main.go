@@ -47,6 +47,9 @@ var (
 	flushFailureCount = 0        // Consecutive flush failures
 	lastFlushError    error      // Last flush error for debugging
 
+	// Auto-flush manager (event-driven, fixes race condition)
+	flushManager *FlushManager
+
 	// Hook runner for extensibility
 	hookRunner *hooks.Runner
 

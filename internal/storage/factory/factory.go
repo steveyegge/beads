@@ -8,6 +8,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 // BackendFactory is a function that creates a storage backend
@@ -27,15 +28,16 @@ type Options struct {
 	LockTimeout time.Duration
 
 	// Dolt server mode options (federation)
-	ServerMode  bool          // Connect to dolt sql-server instead of embedded
-	ServerHost  string        // Server host (default: 127.0.0.1)
-	ServerPort  int           // Server port (default: 3307)
+	ServerMode bool   // Connect to dolt sql-server instead of embedded
+	ServerHost string // Server host (default: 127.0.0.1)
+	ServerPort int    // Server port (default: 3307)
 	ServerUser  string        // MySQL user (default: root)
 	Database    string        // Database name for Dolt server mode (default: beads)
 	OpenTimeout time.Duration // Advisory lock timeout for embedded dolt (0 = no lock)
 }
 
 // New creates a storage backend based on the backend type.
+// For SQLite, path should be the full path to the .db file.
 // For Dolt, path should be the directory containing the Dolt database.
 func New(ctx context.Context, backend, path string) (storage.Storage, error) {
 	return NewWithOptions(ctx, backend, path, Options{})
@@ -43,17 +45,29 @@ func New(ctx context.Context, backend, path string) (storage.Storage, error) {
 
 // NewWithOptions creates a storage backend with the specified options.
 func NewWithOptions(ctx context.Context, backend, path string, opts Options) (storage.Storage, error) {
-	// Default to dolt backend
-	if backend == "" || backend == "sqlite" {
-		backend = configfile.BackendDolt
+	switch backend {
+	case configfile.BackendSQLite, "":
+		if opts.ReadOnly {
+			if opts.LockTimeout > 0 {
+				return sqlite.NewReadOnlyWithTimeout(ctx, path, opts.LockTimeout)
+			}
+			return sqlite.NewReadOnly(ctx, path)
+		}
+		if opts.LockTimeout > 0 {
+			return sqlite.NewWithTimeout(ctx, path, opts.LockTimeout)
+		}
+		return sqlite.New(ctx, path)
+	default:
+		// Check if backend is registered (e.g., dolt with CGO)
+		if factory, ok := backendRegistry[backend]; ok {
+			return factory(ctx, path, opts)
+		}
+		// Provide helpful error for dolt on systems without CGO
+		if backend == configfile.BackendDolt {
+			return nil, fmt.Errorf("dolt backend requires CGO (not available on this build); use sqlite backend or install from pre-built binaries")
+		}
+		return nil, fmt.Errorf("unknown storage backend: %s (supported: sqlite, dolt)", backend)
 	}
-	if factory, ok := backendRegistry[backend]; ok {
-		return factory(ctx, path, opts)
-	}
-	if backend == configfile.BackendDolt {
-		return nil, fmt.Errorf("dolt backend requires CGO (not available on this build); install from pre-built binaries")
-	}
-	return nil, fmt.Errorf("unknown storage backend: %s (supported: dolt)", backend)
 }
 
 // NewFromConfig creates a storage backend based on the metadata.json configuration.
@@ -73,12 +87,9 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 	}
 
 	backend := cfg.GetBackend()
-	// Treat sqlite configs as dolt (migration complete)
-	if backend == configfile.BackendSQLite {
-		backend = configfile.BackendDolt
-	}
-
 	switch backend {
+	case configfile.BackendSQLite:
+		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
 	case configfile.BackendDolt:
 		// Merge Dolt server mode config into options (config provides defaults, opts can override)
 		if cfg.IsDoltServerMode() {
@@ -106,12 +117,7 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 func GetBackendFromConfig(beadsDir string) string {
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil || cfg == nil {
-		return configfile.BackendDolt
+		return configfile.BackendSQLite
 	}
-	backend := cfg.GetBackend()
-	// Treat sqlite as dolt (migration complete)
-	if backend == "" || backend == configfile.BackendSQLite {
-		return configfile.BackendDolt
-	}
-	return backend
+	return cfg.GetBackend()
 }

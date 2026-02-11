@@ -28,10 +28,11 @@ var ErrAlreadyClaimed = errors.New("issue already claimed")
 //   - If the callback function panics, the transaction is rolled back
 //   - On successful return from the callback, the transaction is committed
 //
-// # Backend Specifics
+// # SQLite Specifics
 //
-//   - Uses appropriate locking strategy for the backend
-//   - Transactions are serialized to prevent deadlocks
+//   - Uses BEGIN IMMEDIATE mode to acquire write lock early
+//   - This prevents deadlocks when multiple operations compete for the same lock
+//   - IMMEDIATE mode serializes concurrent transactions properly
 //
 // # Example Usage
 //
@@ -152,6 +153,20 @@ type Storage interface {
 	// Molecule progress (efficient for large molecules)
 	GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error)
 
+	// Dirty tracking (for incremental JSONL export)
+	GetDirtyIssues(ctx context.Context) ([]string, error)
+	GetDirtyIssueHash(ctx context.Context, issueID string) (string, error) // For timestamp-only dedup (bd-164)
+	ClearDirtyIssuesByID(ctx context.Context, issueIDs []string) error
+
+	// Export hash tracking (for timestamp-only dedup, bd-164)
+	GetExportHash(ctx context.Context, issueID string) (string, error)
+	SetExportHash(ctx context.Context, issueID, contentHash string) error
+	ClearAllExportHashes(ctx context.Context) error
+
+	// JSONL file integrity (bd-160)
+	GetJSONLFileHash(ctx context.Context) (string, error)
+	SetJSONLFileHash(ctx context.Context, fileHash string) error
+
 	// ID Generation
 	GetNextChildID(ctx context.Context, parentID string) (string, error)
 
@@ -185,7 +200,7 @@ type Storage interface {
 	//   - If fn returns nil, the transaction is committed
 	//   - If fn returns an error, the transaction is rolled back
 	//   - If fn panics, the transaction is rolled back and the panic is re-raised
-	//   - Uses appropriate transaction isolation for the backend
+	//   - Uses BEGIN IMMEDIATE for SQLite to acquire write lock early
 	//
 	// Example:
 	//   err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
@@ -217,12 +232,12 @@ type Storage interface {
 
 // Config holds database configuration
 type Config struct {
-	Backend string // "dolt"
+	Backend string // "sqlite" or "postgres"
 
-	// Dolt config
-	Path string // database directory path
+	// SQLite config
+	Path string // database file path
 
-	// Server mode config
+	// PostgreSQL config
 	Host     string
 	Port     int
 	Database string
@@ -253,6 +268,9 @@ type CompactableStorage interface {
 	// ApplyCompaction updates the compaction metadata for an issue after compaction.
 	// Sets compaction_level, compacted_at, compacted_at_commit, and original_size fields.
 	ApplyCompaction(ctx context.Context, issueID string, level int, originalSize int, compressedSize int, commitHash string) error
+
+	// MarkIssueDirty marks an issue as needing export to JSONL.
+	MarkIssueDirty(ctx context.Context, issueID string) error
 }
 
 // MultiRepoStorage extends Storage with multi-repo sync capabilities.

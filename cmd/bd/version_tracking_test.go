@@ -10,7 +10,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 func TestGetVersionsSince(t *testing.T) {
@@ -396,7 +396,7 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 
 	// Create database with old version
 	ctx := context.Background()
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 	}
 
 	// Verify database version was updated
-	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err = sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -463,7 +463,7 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 
 	// Create database with current version
 	ctx := context.Background()
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 	autoMigrateOnVersionBump(tmpDir)
 
 	// Verify database version is still current
-	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err = sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestAutoMigrateOnVersionBump_RefusesDowngrade(t *testing.T) {
 
 	// Create database with a NEWER version than the current binary
 	ctx := context.Background()
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -548,7 +548,7 @@ func TestAutoMigrateOnVersionBump_RefusesDowngrade(t *testing.T) {
 	autoMigrateOnVersionBump(tmpDir)
 
 	// Verify database version was NOT changed (still the newer version)
-	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err = sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -590,7 +590,7 @@ func TestAutoMigrateOnVersionBump_TracksMaxVersion(t *testing.T) {
 
 	// Create database with an older version
 	ctx := context.Background()
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -612,7 +612,7 @@ func TestAutoMigrateOnVersionBump_TracksMaxVersion(t *testing.T) {
 	autoMigrateOnVersionBump(tmpDir)
 
 	// Verify max version was set
-	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err = sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}

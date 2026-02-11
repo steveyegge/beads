@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/steveyegge/beads/internal/importer"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -70,7 +71,7 @@ func TestGetPrefixList(t *testing.T) {
 		"test":   1,
 	}
 
-	result := getPrefixList(prefixMap)
+	result := importer.GetPrefixList(prefixMap)
 
 	// Should have 3 entries
 	if len(result) != 3 {

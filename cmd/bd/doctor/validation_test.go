@@ -8,10 +8,23 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// setupDoltTestDir creates a beads dir with metadata.json pointing to dolt backend
+// and returns the dolt store path. Tests that use dolt.New() directly need this
+// so that the factory (used by doctor checks) can find the database.
+func setupDoltTestDir(t *testing.T, beadsDir string) string {
+	t.Helper()
+	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendDolt
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Failed to save config: %v", err)
+	}
+	return filepath.Join(beadsDir, "dolt")
+}
 
 // TestCheckDuplicateIssues_ClosedIssuesExcluded verifies that closed issues
 // are not flagged as duplicates (bug fix: bd-sali).
@@ -24,7 +37,7 @@ func TestCheckDuplicateIssues_ClosedIssuesExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	dbPath := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
 	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
@@ -73,7 +86,7 @@ func TestCheckDuplicateIssues_OpenDuplicatesDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	dbPath := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
 	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
@@ -121,7 +134,7 @@ func TestCheckDuplicateIssues_DifferentDesignNotDuplicate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	dbPath := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
 	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
@@ -168,7 +181,7 @@ func TestCheckDuplicateIssues_MixedOpenClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	dbPath := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
 	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
@@ -222,7 +235,7 @@ func TestCheckDuplicateIssues_TombstonesExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	dbPath := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
 	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
@@ -286,7 +299,7 @@ func TestCheckDuplicateIssues_GastownUnderThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	dbPath := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
 	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
@@ -337,7 +350,7 @@ func TestCheckDuplicateIssues_GastownOverThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	dbPath := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
 	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
@@ -386,7 +399,7 @@ func TestCheckDuplicateIssues_GastownCustomThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	dbPath := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
 	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
@@ -436,7 +449,7 @@ func TestCheckDuplicateIssues_NonGastownMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	dbPath := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
 	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
