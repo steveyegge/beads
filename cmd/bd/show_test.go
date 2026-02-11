@@ -36,7 +36,7 @@ func TestShow(t *testing.T) {
 
 		// Create issue with external ref
 		// Use --repo . to override auto-routing and create in the test directory
-		createCmd := exec.Command(tmpBin, "--no-daemon", "create", "External ref test", "-p", "1",
+		createCmd := exec.Command(tmpBin, "create", "External ref test", "-p", "1",
 			"--external-ref", "https://example.com/spec.md", "--json", "--repo", ".")
 		createCmd.Dir = tmpDir
 		createOut, err := createCmd.CombinedOutput()
@@ -51,7 +51,7 @@ func TestShow(t *testing.T) {
 		id := issue["id"].(string)
 
 		// Show the issue and verify external ref is displayed
-		showCmd := exec.Command(tmpBin, "--no-daemon", "show", id)
+		showCmd := exec.Command(tmpBin, "show", id)
 		showCmd.Dir = tmpDir
 		showOut, err := showCmd.CombinedOutput()
 		if err != nil {
@@ -81,7 +81,7 @@ func TestShow(t *testing.T) {
 
 		// Create issue WITHOUT external ref
 		// Use --repo . to override auto-routing and create in the test directory
-		createCmd := exec.Command(tmpBin, "--no-daemon", "create", "No ref test", "-p", "1", "--json", "--repo", ".")
+		createCmd := exec.Command(tmpBin, "create", "No ref test", "-p", "1", "--json", "--repo", ".")
 		createCmd.Dir = tmpDir
 		createOut, err := createCmd.CombinedOutput()
 		if err != nil {
@@ -95,7 +95,7 @@ func TestShow(t *testing.T) {
 		id := issue["id"].(string)
 
 		// Show the issue - should NOT contain External Ref line
-		showCmd := exec.Command(tmpBin, "--no-daemon", "show", id)
+		showCmd := exec.Command(tmpBin, "show", id)
 		showCmd.Dir = tmpDir
 		showOut, err := showCmd.CombinedOutput()
 		if err != nil {
@@ -121,7 +121,7 @@ func TestShow(t *testing.T) {
 		}
 
 		// Create an issue
-		createCmd := exec.Command(tmpBin, "--no-daemon", "create", "ID flag test", "-p", "1", "--json", "--repo", ".")
+		createCmd := exec.Command(tmpBin, "create", "ID flag test", "-p", "1", "--json", "--repo", ".")
 		createCmd.Dir = tmpDir
 		createOut, err := createCmd.CombinedOutput()
 		if err != nil {
@@ -135,7 +135,7 @@ func TestShow(t *testing.T) {
 		id := issue["id"].(string)
 
 		// Test 1: Using --id flag works
-		showCmd := exec.Command(tmpBin, "--no-daemon", "show", "--id="+id, "--short")
+		showCmd := exec.Command(tmpBin, "show", "--id="+id, "--short")
 		showCmd.Dir = tmpDir
 		showOut, err := showCmd.CombinedOutput()
 		if err != nil {
@@ -146,7 +146,7 @@ func TestShow(t *testing.T) {
 		}
 
 		// Test 2: Multiple --id flags work
-		showCmd2 := exec.Command(tmpBin, "--no-daemon", "show", "--id="+id, "--id="+id, "--short")
+		showCmd2 := exec.Command(tmpBin, "show", "--id="+id, "--id="+id, "--short")
 		showCmd2.Dir = tmpDir
 		showOut2, err := showCmd2.CombinedOutput()
 		if err != nil {
@@ -158,7 +158,7 @@ func TestShow(t *testing.T) {
 		}
 
 		// Test 3: Combining positional and --id flag
-		showCmd3 := exec.Command(tmpBin, "--no-daemon", "show", id, "--id="+id, "--short")
+		showCmd3 := exec.Command(tmpBin, "show", id, "--id="+id, "--short")
 		showCmd3.Dir = tmpDir
 		showOut3, err := showCmd3.CombinedOutput()
 		if err != nil {
@@ -170,7 +170,7 @@ func TestShow(t *testing.T) {
 		}
 
 		// Test 4: No args at all should fail
-		showCmd4 := exec.Command(tmpBin, "--no-daemon", "show")
+		showCmd4 := exec.Command(tmpBin, "show")
 		showCmd4.Dir = tmpDir
 		_, err = showCmd4.CombinedOutput()
 		if err == nil {
@@ -191,7 +191,7 @@ func TestShow(t *testing.T) {
 		}
 
 		// Show nonexistent issue should exit non-zero
-		showCmd := exec.Command(tmpBin, "--no-daemon", "show", "test-nonexistent")
+		showCmd := exec.Command(tmpBin, "show", "test-nonexistent")
 		showCmd.Dir = tmpDir
 		_, err := showCmd.CombinedOutput()
 		if err == nil {
@@ -213,7 +213,7 @@ func TestShow(t *testing.T) {
 
 		// Show nonexistent issue with --json should exit non-zero
 		// and output structured JSON error to stdout (not empty stdout)
-		showCmd := exec.Command(tmpBin, "--no-daemon", "show", "test-nonexistent", "--json")
+		showCmd := exec.Command(tmpBin, "show", "test-nonexistent", "--json")
 		showCmd.Dir = tmpDir
 		var stdout, stderr strings.Builder
 		showCmd.Stdout = &stdout

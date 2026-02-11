@@ -26,11 +26,6 @@ func runBDForCoverage(t *testing.T, dir string, args ...string) (stdout string, 
 	cliCoverageMutex.Lock()
 	defer cliCoverageMutex.Unlock()
 
-	// Add --no-daemon to all commands except init.
-	if len(args) > 0 && args[0] != "init" {
-		args = append([]string{"--no-daemon"}, args...)
-	}
-
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	oldDir, _ := os.Getwd()

@@ -44,9 +44,6 @@ func mkTmpDirInTmp(t *testing.T, prefix string) string {
 func runBDSideDB(t *testing.T, exe, dir, dbPath string, args ...string) (string, error) {
 	t.Helper()
 	fullArgs := []string{"--db", dbPath}
-	if len(args) > 0 && args[0] != "init" {
-		fullArgs = append(fullArgs, "--no-daemon")
-	}
 	fullArgs = append(fullArgs, args...)
 
 	cmd := exec.Command(exe, fullArgs...)

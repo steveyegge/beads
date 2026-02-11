@@ -366,9 +366,6 @@ func startDaemonForChaosTest(t *testing.T, bdExe, ws, dbPath string) *exec.Cmd {
 
 func runBDWithEnv(ctx context.Context, exe, dir, dbPath string, env map[string]string, args ...string) (string, error) {
 	fullArgs := []string{"--db", dbPath}
-	if len(args) > 0 && args[0] != "init" {
-		fullArgs = append(fullArgs, "--no-daemon")
-	}
 	fullArgs = append(fullArgs, args...)
 
 	cmd := exec.CommandContext(ctx, exe, fullArgs...)
