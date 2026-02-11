@@ -909,6 +909,14 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		log.Info("JetStream connected to event bus - events will be persisted")
 	}
 
+	// Wire bus reference into StopLoopDetector for JetStream publishing (bd-5r1cw).
+	for _, h := range bus.Handlers() {
+		if sld, ok := h.(*eventbus.StopLoopDetector); ok {
+			sld.SetBus(bus)
+			break
+		}
+	}
+
 	// Load persisted external handlers from config table (bd-4q86.1)
 	if store != nil {
 		allCfg, cfgErr := store.GetAllConfig(context.Background())

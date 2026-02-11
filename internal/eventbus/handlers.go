@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -40,6 +41,13 @@ func (h *StopDecisionHandler) Handles() []EventType { return []EventType{EventSt
 func (h *StopDecisionHandler) Priority() int        { return 15 }
 
 func (h *StopDecisionHandler) Handle(ctx context.Context, event *Event, result *Result) error {
+	// If StopLoopDetector (priority 14) detected a loop, skip blocking entirely.
+	// The detector sets stop_loop_break=true in event.Raw to signal this.
+	if stopLoopBreakSet(event) {
+		log.Printf("stop-decision: skipping — stop loop break active")
+		return nil
+	}
+
 	// Pass stop_hook_active flag through to the stop-check command so it can
 	// decide how to handle re-entry (e.g., skip polling, check for agent decision).
 	// We no longer skip the handler entirely on re-entry because the agent may
@@ -90,6 +98,23 @@ func (h *StopDecisionHandler) Handle(ctx context.Context, event *Event, result *
 type stopCheckResponse struct {
 	Decision string `json:"decision"`
 	Reason   string `json:"reason,omitempty"`
+}
+
+// stopLoopBreakSet checks if StopLoopDetector set the loop-break flag.
+func stopLoopBreakSet(event *Event) bool {
+	if len(event.Raw) == 0 {
+		return false
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(event.Raw, &raw); err != nil {
+		return false
+	}
+	v, ok := raw["stop_loop_break"]
+	if !ok {
+		return false
+	}
+	b, ok := v.(bool)
+	return ok && b
 }
 
 // GateHandler evaluates session gates on Stop and PreToolUse hooks.
@@ -219,6 +244,7 @@ func findBDBinary() (string, error) {
 func DefaultHandlers() []Handler {
 	handlers := []Handler{
 		&PrimeHandler{},        // 10
+		&StopLoopDetector{},    // 14 — must run before StopDecisionHandler to break loops
 		&StopDecisionHandler{}, // 15
 		&GateHandler{},         // 20
 		&DecisionHandler{},     // 30
