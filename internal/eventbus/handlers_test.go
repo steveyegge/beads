@@ -10,8 +10,8 @@ import (
 
 func TestDefaultHandlers(t *testing.T) {
 	handlers := DefaultHandlers()
-	if len(handlers) != 7 {
-		t.Fatalf("expected 7 default handlers, got %d", len(handlers))
+	if len(handlers) != 8 {
+		t.Fatalf("expected 8 default handlers, got %d", len(handlers))
 	}
 
 	// Verify IDs
@@ -43,6 +43,9 @@ func TestDefaultHandlers(t *testing.T) {
 	}
 	if !ids["oj-step"] {
 		t.Error("missing oj-step handler")
+	}
+	if !ids["mail-nudge"] {
+		t.Error("missing mail-nudge handler")
 	}
 }
 
@@ -141,8 +144,8 @@ func TestBusWithDefaultHandlers(t *testing.T) {
 		bus.Register(h)
 	}
 
-	if len(bus.Handlers()) != 7 {
-		t.Errorf("expected 7 handlers, got %d", len(bus.Handlers()))
+	if len(bus.Handlers()) != 8 {
+		t.Errorf("expected 8 handlers, got %d", len(bus.Handlers()))
 	}
 }
 
