@@ -1,3 +1,5 @@
+//go:build cgo
+
 package doctor
 
 import (
@@ -7,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -25,7 +27,7 @@ func TestCheckDuplicateIssues_ClosedIssuesExcluded(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -74,7 +76,7 @@ func TestCheckDuplicateIssues_OpenDuplicatesDetected(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -122,7 +124,7 @@ func TestCheckDuplicateIssues_DifferentDesignNotDuplicate(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -169,7 +171,7 @@ func TestCheckDuplicateIssues_MixedOpenClosed(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -223,7 +225,7 @@ func TestCheckDuplicateIssues_TombstonesExcluded(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -287,7 +289,7 @@ func TestCheckDuplicateIssues_GastownUnderThreshold(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -338,7 +340,7 @@ func TestCheckDuplicateIssues_GastownOverThreshold(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -387,7 +389,7 @@ func TestCheckDuplicateIssues_GastownCustomThreshold(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -437,7 +439,7 @@ func TestCheckDuplicateIssues_NonGastownMode(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

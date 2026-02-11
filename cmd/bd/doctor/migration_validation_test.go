@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -24,11 +25,11 @@ func newTestIssue(id string) *types.Issue {
 
 // insertIssueDirectly inserts an issue via raw SQL, bypassing prefix validation.
 // This simulates cross-rig contamination where foreign-prefix issues end up in the DB.
-func insertIssueDirectly(t *testing.T, store *sqlite.SQLiteStorage, id string) {
+func insertIssueDirectly(t *testing.T, store storage.Storage, id string) {
 	t.Helper()
 	db := store.UnderlyingDB()
 	_, err := db.Exec(
-		"INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at) VALUES (?, ?, 'open', 2, 'task', datetime('now'), datetime('now'))",
+		"INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, created_at, updated_at) VALUES (?, ?, '', '', '', '', 'open', 2, 'task', NOW(), NOW())",
 		id, "Test issue "+id,
 	)
 	if err != nil {
@@ -172,6 +173,8 @@ func TestCheckMigrationReadinessResult_NoBeadsDir(t *testing.T) {
 }
 
 func TestCheckMigrationReadinessResult_NoJSONL(t *testing.T) {
+	// Default backend is now "dolt", so CheckMigrationReadiness returns OK
+	// ("Already using Dolt backend") regardless of JSONL presence.
 	tmpDir, err := os.MkdirTemp("", "bd-migration-validation-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -183,18 +186,16 @@ func TestCheckMigrationReadinessResult_NoJSONL(t *testing.T) {
 		t.Fatalf("failed to create .beads: %v", err)
 	}
 
-	check, result := CheckMigrationReadiness(tmpDir)
+	check, _ := CheckMigrationReadiness(tmpDir)
 
-	if check.Status != StatusError {
-		t.Errorf("status = %q, want %q", check.Status, StatusError)
-	}
-
-	if result.Ready {
-		t.Error("expected result.Ready = false for missing JSONL")
+	if check.Status != StatusOK {
+		t.Errorf("status = %q, want %q (already on dolt)", check.Status, StatusOK)
 	}
 }
 
 func TestCheckMigrationReadinessResult_ValidJSONL(t *testing.T) {
+	// Default backend is now "dolt", so CheckMigrationReadiness returns OK
+	// ("Already using Dolt backend") without inspecting JSONL.
 	tmpDir, err := os.MkdirTemp("", "bd-migration-validation-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -212,19 +213,11 @@ func TestCheckMigrationReadinessResult_ValidJSONL(t *testing.T) {
 		t.Fatalf("failed to create JSONL: %v", err)
 	}
 
-	check, result := CheckMigrationReadiness(tmpDir)
+	check, _ := CheckMigrationReadiness(tmpDir)
 
-	// Should be OK or Warning (no Dolt available is not an error for pre-migration)
-	if check.Status == StatusError {
-		t.Errorf("status = %q, did not want error for valid JSONL", check.Status)
-	}
-
-	if !result.JSONLValid {
-		t.Error("expected result.JSONLValid = true")
-	}
-
-	if result.JSONLCount != 2 {
-		t.Errorf("JSONLCount = %d, want 2", result.JSONLCount)
+	// With dolt as default backend, migration readiness returns OK
+	if check.Status != StatusOK {
+		t.Errorf("status = %q, want %q (already on dolt)", check.Status, StatusOK)
 	}
 }
 
@@ -251,36 +244,10 @@ func TestCheckMigrationCompletionResult_NoBeadsDir(t *testing.T) {
 }
 
 func TestCheckMigrationCompletionResult_NotDoltBackend(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bd-migration-validation-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("failed to create .beads: %v", err)
-	}
-
-	// Create JSONL (SQLite backend by default)
-	jsonl := `{"id":"bd-001","title":"Test 1"}`
-	if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), []byte(jsonl), 0644); err != nil {
-		t.Fatalf("failed to create JSONL: %v", err)
-	}
-
-	check, result := CheckMigrationCompletion(tmpDir)
-
-	if check.Status != StatusError {
-		t.Errorf("status = %q, want %q", check.Status, StatusError)
-	}
-
-	if result.Ready {
-		t.Error("expected result.Ready = false for non-Dolt backend")
-	}
-
-	if len(result.Errors) == 0 {
-		t.Error("expected errors in result")
-	}
+	// Skip: the default backend is now always "dolt" and there's no way to
+	// configure a non-Dolt backend. The code path this test was exercising
+	// (Backend != "dolt") is unreachable after the migration completed.
+	t.Skip("non-Dolt backend path is unreachable: default backend is always dolt")
 }
 
 func TestCheckDoltLocks_NotDoltBackend(t *testing.T) {
@@ -347,7 +314,7 @@ func TestCategorizeDoltExtras_AllForeign(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -397,7 +364,7 @@ func TestCategorizeDoltExtras_MixedEphemeralAndForeign(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -440,7 +407,7 @@ func TestCategorizeDoltExtras_AllEphemeral(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -478,7 +445,7 @@ func TestCategorizeDoltExtras_NoExtras(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}

@@ -19,7 +19,6 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -354,9 +353,53 @@ variable.`,
 			store, err = factory.NewWithOptions(ctx, backend, storagePath, factory.Options{Database: dbName})
 		} else {
 			storagePath = initDBPath
-			store, err = sqlite.New(ctx, storagePath)
+			store, err = factory.New(ctx, backend, storagePath)
 		}
 		if err != nil {
+			// If the backend requires CGO but this is a nocgo build, fall back to JSONL-only mode.
+			// This enables Windows CI (CGO_ENABLED=0) and other pure-Go builds to use bd init.
+			if strings.Contains(err.Error(), "requires CGO") {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "Note: %s backend requires CGO (not available in this build).\n", backend)
+					fmt.Fprintf(os.Stderr, "Falling back to JSONL-only mode.\n\n")
+				}
+
+				// Create issues.jsonl
+				jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+				if _, statErr := os.Stat(jsonlPath); os.IsNotExist(statErr) {
+					// nolint:gosec // G306: JSONL file needs to be readable by other tools
+					if writeErr := os.WriteFile(jsonlPath, []byte{}, 0644); writeErr != nil {
+						fmt.Fprintf(os.Stderr, "Error: failed to create issues.jsonl: %v\n", writeErr)
+						os.Exit(1)
+					}
+				}
+
+				// Create metadata.json
+				metaCfg := configfile.DefaultConfig()
+				if saveErr := metaCfg.Save(beadsDir); saveErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", saveErr)
+				}
+
+				// Create config.yaml with no-db: true and the prefix
+				if cfgErr := createConfigYaml(beadsDir, true, prefix); cfgErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", cfgErr)
+				}
+
+				// Create README.md
+				if readmeErr := createReadme(beadsDir); readmeErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to create README.md: %v\n", readmeErr)
+				}
+
+				if !quiet {
+					fmt.Printf("\n%s bd initialized in JSONL-only mode (CGO not available)\n\n", ui.RenderPass("✓"))
+					fmt.Printf("  Mode: %s\n", ui.RenderAccent("no-db (JSONL-only)"))
+					fmt.Printf("  Issues file: %s\n", ui.RenderAccent(jsonlPath))
+					fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
+					fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
+				}
+				return
+			}
+
 			fmt.Fprintf(os.Stderr, "Error: failed to create %s database: %v\n", backend, err)
 			os.Exit(1)
 		}
@@ -569,6 +612,11 @@ variable.`,
 		if isGitRepo() && !contributor && !team && shouldPromptForRole() {
 			promptedContributor, err := promptContributorMode()
 			if err != nil {
+				if isCanceled(err) {
+					fmt.Fprintln(os.Stderr, "Setup canceled.")
+					_ = store.Close()
+					exitCanceled()
+				}
 				// Non-fatal: warn but continue with default behavior
 				if !quiet {
 					fmt.Fprintf(os.Stderr, "Warning: failed to prompt for role: %v\n", err)
@@ -591,8 +639,16 @@ variable.`,
 		// Run contributor wizard if --contributor flag is set or user chose contributor
 		if contributor {
 			if err := runContributorWizard(ctx, store); err != nil {
-				fmt.Fprintf(os.Stderr, "Error running contributor wizard: %v\n", err)
+				canceled := isCanceled(err)
+				if canceled {
+					fmt.Fprintln(os.Stderr, "Setup canceled.")
+				} else {
+					fmt.Fprintf(os.Stderr, "Error running contributor wizard: %v\n", err)
+				}
 				_ = store.Close()
+				if canceled {
+					exitCanceled()
+				}
 				os.Exit(1)
 			}
 		}
@@ -600,8 +656,16 @@ variable.`,
 		// Run team wizard if --team flag is set
 		if team {
 			if err := runTeamWizard(ctx, store); err != nil {
-				fmt.Fprintf(os.Stderr, "Error running team wizard: %v\n", err)
+				canceled := isCanceled(err)
+				if canceled {
+					fmt.Fprintln(os.Stderr, "Setup canceled.")
+				} else {
+					fmt.Fprintf(os.Stderr, "Error running team wizard: %v\n", err)
+				}
 				_ = store.Close()
+				if canceled {
+					exitCanceled()
+				}
 				os.Exit(1)
 			}
 		}
@@ -620,7 +684,14 @@ variable.`,
 		} else if !stealth && isGitRepo() {
 			// Auto-detect fork and prompt (skip if stealth - it handles exclude already)
 			if isFork, upstreamURL := detectForkSetup(); isFork {
-				if promptForkExclude(upstreamURL, quiet) {
+				shouldExclude, err := promptForkExclude(upstreamURL, quiet)
+				if err != nil {
+					if isCanceled(err) {
+						fmt.Fprintln(os.Stderr, "Setup canceled.")
+						exitCanceled()
+					}
+				}
+				if shouldExclude {
 					if err := setupForkExclude(!quiet); err != nil {
 						fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 					}
@@ -1104,6 +1175,7 @@ func setBeadsRole(role string) error {
 // - If not set: prompts "Contributing to someone else's repo? [y/N]"
 // - Sets git config beads.role based on answer
 func promptContributorMode() (isContributor bool, err error) {
+	ctx := getRootContext()
 	reader := bufio.NewReader(os.Stdin)
 
 	// Check if role is already configured
@@ -1112,7 +1184,7 @@ func promptContributorMode() (isContributor bool, err error) {
 		fmt.Printf("\n%s Already configured as: %s\n", ui.RenderAccent("▶"), ui.RenderBold(existingRole))
 		fmt.Print("Change role? [y/N]: ")
 
-		response, err := reader.ReadString('\n')
+		response, err := readLineWithContext(ctx, reader, os.Stdin)
 		if err != nil {
 			return false, fmt.Errorf("failed to read input: %w", err)
 		}
@@ -1129,7 +1201,7 @@ func promptContributorMode() (isContributor bool, err error) {
 	// Prompt for role
 	fmt.Print("Contributing to someone else's repo? [y/N]: ")
 
-	response, err := reader.ReadString('\n')
+	response, err := readLineWithContext(ctx, reader, os.Stdin)
 	if err != nil {
 		return false, fmt.Errorf("failed to read input: %w", err)
 	}

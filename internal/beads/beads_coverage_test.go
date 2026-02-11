@@ -148,23 +148,23 @@ func TestFindDatabaseInBeadsDir_DoltBackend(t *testing.T) {
 
 // TestGetConfiguredBackend tests the GetConfiguredBackend function
 func TestGetConfiguredBackend(t *testing.T) {
-	t.Run("no config returns sqlite", func(t *testing.T) {
+	t.Run("no config returns dolt", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		result := GetConfiguredBackend(tmpDir)
-		if result != "sqlite" {
-			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "sqlite")
+		if result != "dolt" {
+			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "dolt")
 		}
 	})
 
-	t.Run("sqlite config", func(t *testing.T) {
+	t.Run("sqlite config returns dolt", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		metadataContent := `{"backend": "sqlite"}`
 		if err := os.WriteFile(filepath.Join(tmpDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
 			t.Fatal(err)
 		}
 		result := GetConfiguredBackend(tmpDir)
-		if result != "sqlite" {
-			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "sqlite")
+		if result != "dolt" {
+			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "dolt")
 		}
 	})
 
@@ -625,19 +625,13 @@ func TestFindBeadsDir_BEADS_DIR_WithProjectFiles(t *testing.T) {
 	}
 }
 
-// TestNewSQLiteStorage_Unit tests NewSQLiteStorage creates and opens a database
-func TestNewSQLiteStorage_Unit(t *testing.T) {
+// TestNewStorage_Unit tests that deprecated NewStorage returns an error directing callers to factory.New
+func TestNewStorage_Unit(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	store, err := NewSQLiteStorage(t.Context(), dbPath)
-	if err != nil {
-		t.Fatalf("NewSQLiteStorage() returned error: %v", err)
-	}
-	defer store.Close()
-
-	// Verify store is usable
-	if store == nil {
-		t.Fatal("NewSQLiteStorage() returned nil store")
+	_, err := NewStorage(t.Context(), dbPath)
+	if err == nil {
+		t.Fatal("NewStorage() should return an error (deprecated)")
 	}
 }

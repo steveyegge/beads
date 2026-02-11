@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build cgo && e2e
 
 package main
 
@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -129,11 +129,6 @@ func runBDForCoverage(t *testing.T, dir string, args ...string) (stdout string, 
 		store.Close()
 		store = nil
 	}
-	if daemonClient != nil {
-		daemonClient.Close()
-		daemonClient = nil
-	}
-
 	// Reset all global flags and state (keep aligned with integration cli_fast_test).
 	dbPath = ""
 	actor = ""
@@ -147,10 +142,6 @@ func runBDForCoverage(t *testing.T, dir string, args ...string) (stdout string, 
 	storeActive = false
 	flushFailureCount = 0
 	lastFlushError = nil
-	if flushManager != nil {
-		_ = flushManager.Shutdown()
-		flushManager = nil
-	}
 	rootCtx = nil
 	rootCancel = nil
 
@@ -309,9 +300,9 @@ func TestCoverage_TemplateAndPinnedProtections(t *testing.T) {
 
 	// Insert a template issue directly and verify update/close protect it.
 	dbFile := filepath.Join(dir, ".beads", "beads.db")
-	s, err := sqlite.New(context.Background(), dbFile)
+	s, err := dolt.New(context.Background(), &dolt.Config{Path: dbFile})
 	if err != nil {
-		t.Fatalf("sqlite.New: %v", err)
+		t.Fatalf("dolt.New: %v", err)
 	}
 	ctx := context.Background()
 	template := &types.Issue{
@@ -346,9 +337,9 @@ func TestCoverage_TemplateAndPinnedProtections(t *testing.T) {
 		t.Fatalf("expected 1 issue from show, got %d", len(showDetails))
 	}
 	// Re-open the DB after running the CLI to confirm is_template persisted.
-	s2, err := sqlite.New(context.Background(), dbFile)
+	s2, err := dolt.New(context.Background(), &dolt.Config{Path: dbFile})
 	if err != nil {
-		t.Fatalf("sqlite.New (reopen): %v", err)
+		t.Fatalf("dolt.New (reopen): %v", err)
 	}
 	postShow, err := s2.GetIssue(context.Background(), template.ID)
 	_ = s2.Close()
@@ -385,9 +376,9 @@ func TestCoverage_ShowThread(t *testing.T) {
 	runBDForCoverage(t, dir, "init", "--prefix", "test", "--quiet")
 
 	dbFile := filepath.Join(dir, ".beads", "beads.db")
-	s, err := sqlite.New(context.Background(), dbFile)
+	s, err := dolt.New(context.Background(), &dolt.Config{Path: dbFile})
 	if err != nil {
-		t.Fatalf("sqlite.New: %v", err)
+		t.Fatalf("dolt.New: %v", err)
 	}
 	ctx := context.Background()
 

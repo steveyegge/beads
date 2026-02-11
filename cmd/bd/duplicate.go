@@ -96,11 +96,6 @@ func runDuplicate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to mark as duplicate: %w", err)
 	}
 
-	// Trigger auto-flush
-	if flushManager != nil {
-		flushManager.MarkDirty(false)
-	}
-
 	if jsonOutput {
 		result := map[string]interface{}{
 			"duplicate": duplicateID,
@@ -152,11 +147,6 @@ func runSupersede(cmd *cobra.Command, args []string) error {
 	}
 	if err := store.UpdateIssue(ctx, oldID, updates, actor); err != nil {
 		return fmt.Errorf("failed to mark as superseded: %w", err)
-	}
-
-	// Trigger auto-flush
-	if flushManager != nil {
-		flushManager.MarkDirty(false)
 	}
 
 	if jsonOutput {

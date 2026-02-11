@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -6,12 +8,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 type labelTestHelper struct {
-	s   *sqlite.SQLiteStorage
+	s   storage.Storage
 	ctx context.Context
 	t   *testing.T
 }

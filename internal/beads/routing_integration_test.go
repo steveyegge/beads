@@ -1,5 +1,5 @@
-//go:build integration
-// +build integration
+//go:build cgo && integration
+// +build cgo,integration
 
 package beads_test
 
@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/routing"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 func TestRoutingIntegration(t *testing.T) {
@@ -144,8 +144,7 @@ func TestMultiRepoEndToEnd(t *testing.T) {
 	}
 
 	// Initialize database
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	store, err := sqlite.New(context.Background(), dbPath)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: beadsDir})
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}

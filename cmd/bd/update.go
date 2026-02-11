@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -119,33 +118,29 @@ create, update, show, or close operation).`,
 			issueType, _ := cmd.Flags().GetString("type")
 			// Normalize aliases (e.g., "enhancement" -> "feature") before validating
 			issueType = utils.NormalizeIssueType(issueType)
-			// In daemon mode, skip client-side type pre-validation.
-			// The daemon validates authoritatively with database access (GH#1499).
-			if daemonClient == nil {
-				var customTypes []string
-				if store != nil {
-					ct, err := store.GetCustomTypes(cmd.Context())
-					if err != nil {
-						// Log DB error but continue with YAML fallback (GH#1499 bd-2ll)
-						if !jsonOutput {
-							fmt.Fprintf(os.Stderr, "%s Failed to get custom types from DB: %v (falling back to config.yaml)\n",
-								ui.RenderWarn("!"), err)
-						}
-					} else {
-						customTypes = ct
+			var customTypes []string
+			if store != nil {
+				ct, err := store.GetCustomTypes(cmd.Context())
+				if err != nil {
+					// Log DB error but continue with YAML fallback (GH#1499 bd-2ll)
+					if !jsonOutput {
+						fmt.Fprintf(os.Stderr, "%s Failed to get custom types from DB: %v (falling back to config.yaml)\n",
+							ui.RenderWarn("!"), err)
 					}
+				} else {
+					customTypes = ct
 				}
-				// Fallback to config.yaml when store returns no custom types.
-				if len(customTypes) == 0 {
-					customTypes = config.GetCustomTypesFromYAML()
+			}
+			// Fallback to config.yaml when store returns no custom types.
+			if len(customTypes) == 0 {
+				customTypes = config.GetCustomTypesFromYAML()
+			}
+			if !types.IssueType(issueType).IsValidWithCustom(customTypes) {
+				validTypes := "bug, feature, task, epic, chore"
+				if len(customTypes) > 0 {
+					validTypes += ", " + joinStrings(customTypes, ", ")
 				}
-				if !types.IssueType(issueType).IsValidWithCustom(customTypes) {
-					validTypes := "bug, feature, task, epic, chore"
-					if len(customTypes) > 0 {
-						validTypes += ", " + joinStrings(customTypes, ", ")
-					}
-					FatalErrorRespectJSON("invalid issue type %q. Valid types: %s", issueType, validTypes)
-				}
+				FatalErrorRespectJSON("invalid issue type %q. Valid types: %s", issueType, validTypes)
 			}
 			updates["issue_type"] = issueType
 		}
@@ -249,285 +244,6 @@ create, update, show, or close operation).`,
 
 		ctx := rootCtx
 
-		// Resolve partial IDs first, checking for cross-rig routing
-		var resolvedIDs []string
-		var routedArgs []string // IDs that need cross-repo routing (bypass daemon)
-		if daemonClient != nil {
-			// In daemon mode, resolve via RPC - but check routing first
-			for _, id := range args {
-				// Check if this ID needs routing to a different beads directory
-				if needsRouting(id) {
-					routedArgs = append(routedArgs, id)
-					continue
-				}
-				resolveArgs := &rpc.ResolveIDArgs{ID: id}
-				resp, err := daemonClient.ResolveID(resolveArgs)
-				if err != nil {
-					FatalErrorRespectJSON("resolving ID %s: %v", id, err)
-				}
-				var resolvedID string
-				if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
-				}
-				resolvedIDs = append(resolvedIDs, resolvedID)
-			}
-		}
-		// Note: Direct mode (no daemon) uses resolveAndGetIssueWithRouting in the loop below
-
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			updatedIssues := []*types.Issue{}
-			var firstUpdatedID string // Track first successful update for last-touched
-			for _, id := range resolvedIDs {
-				updateArgs := &rpc.UpdateArgs{ID: id}
-
-				// Map updates to RPC args
-				if status, ok := updates["status"].(string); ok {
-					updateArgs.Status = &status
-				}
-				if priority, ok := updates["priority"].(int); ok {
-					updateArgs.Priority = &priority
-				}
-				if title, ok := updates["title"].(string); ok {
-					updateArgs.Title = &title
-				}
-				if assignee, ok := updates["assignee"].(string); ok {
-					updateArgs.Assignee = &assignee
-				}
-				if description, ok := updates["description"].(string); ok {
-					updateArgs.Description = &description
-				}
-				if design, ok := updates["design"].(string); ok {
-					updateArgs.Design = &design
-				}
-				if notes, ok := updates["notes"].(string); ok {
-					updateArgs.Notes = &notes
-				}
-				if appendNotes, ok := updates["append_notes"].(string); ok {
-					// Fetch existing issue to get current notes
-					showArgs := &rpc.ShowArgs{ID: id}
-					resp, err := daemonClient.Show(showArgs)
-					if err == nil {
-						var existingIssue types.Issue
-						if err := json.Unmarshal(resp.Data, &existingIssue); err == nil {
-							combined := existingIssue.Notes
-							if combined != "" {
-								combined += "\n"
-							}
-							combined += appendNotes
-							updateArgs.Notes = &combined
-						}
-					}
-				}
-				if acceptanceCriteria, ok := updates["acceptance_criteria"].(string); ok {
-					updateArgs.AcceptanceCriteria = &acceptanceCriteria
-				}
-				if externalRef, ok := updates["external_ref"].(string); ok {
-					updateArgs.ExternalRef = &externalRef
-				}
-				if specID, ok := updates["spec_id"].(string); ok {
-					updateArgs.SpecID = &specID
-				}
-				if estimate, ok := updates["estimated_minutes"].(int); ok {
-					updateArgs.EstimatedMinutes = &estimate
-				}
-				if issueType, ok := updates["issue_type"].(string); ok {
-					updateArgs.IssueType = &issueType
-				}
-				if addLabels, ok := updates["add_labels"].([]string); ok {
-					updateArgs.AddLabels = addLabels
-				}
-				if removeLabels, ok := updates["remove_labels"].([]string); ok {
-					updateArgs.RemoveLabels = removeLabels
-				}
-				if setLabels, ok := updates["set_labels"].([]string); ok {
-					updateArgs.SetLabels = setLabels
-				}
-				if issueType, ok := updates["issue_type"].(string); ok {
-					updateArgs.IssueType = &issueType
-				}
-				if parent, ok := updates["parent"].(string); ok {
-					updateArgs.Parent = &parent
-				}
-				// Gate fields (bd-z6kw)
-				if awaitID, ok := updates["await_id"].(string); ok {
-					updateArgs.AwaitID = &awaitID
-				}
-				// Time-based scheduling (GH#820)
-				if dueAt, ok := updates["due_at"].(time.Time); ok {
-					s := dueAt.Format(time.RFC3339)
-					updateArgs.DueAt = &s
-				} else if updates["due_at"] == nil && cmd.Flags().Changed("due") {
-					// Explicit clear
-					empty := ""
-					updateArgs.DueAt = &empty
-				}
-				if deferUntil, ok := updates["defer_until"].(time.Time); ok {
-					s := deferUntil.Format(time.RFC3339)
-					updateArgs.DeferUntil = &s
-				} else if updates["defer_until"] == nil && cmd.Flags().Changed("defer") {
-					// Explicit clear
-					empty := ""
-					updateArgs.DeferUntil = &empty
-				}
-				// Ephemeral/persistent
-				if wisp, ok := updates["wisp"].(bool); ok {
-					updateArgs.Ephemeral = &wisp
-				}
-				// Metadata (GH#1413)
-				if metadata, ok := updates["metadata"].(json.RawMessage); ok {
-					metadataStr := string(metadata)
-					updateArgs.Metadata = &metadataStr
-				}
-
-				// Set claim flag for atomic claim operation
-				updateArgs.Claim = claimFlag
-
-				resp, err := daemonClient.Update(updateArgs)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
-					continue
-				}
-
-				var issue types.Issue
-				if err := json.Unmarshal(resp.Data, &issue); err == nil {
-					// Run update hook
-					if hookRunner != nil {
-						hookRunner.Run(hooks.EventUpdate, &issue)
-					}
-					if jsonOutput {
-						updatedIssues = append(updatedIssues, &issue)
-					}
-				}
-				if !jsonOutput {
-					fmt.Printf("%s Updated issue: %s\n", ui.RenderPass("✓"), id)
-				}
-
-				// Track first successful update for last-touched
-				if firstUpdatedID == "" {
-					firstUpdatedID = id
-				}
-			}
-
-			// Handle routed IDs via direct mode (bypass daemon)
-			for _, id := range routedArgs {
-				result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-				if err != nil {
-					if result != nil {
-						result.Close()
-					}
-					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-					continue
-				}
-				if result == nil || result.Issue == nil {
-					if result != nil {
-						result.Close()
-					}
-					fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-					continue
-				}
-				issue := result.Issue
-				issueStore := result.Store
-
-				if err := validateIssueUpdatable(id, issue); err != nil {
-					fmt.Fprintf(os.Stderr, "%s\n", err)
-					result.Close()
-					continue
-				}
-
-				// Handle claim operation atomically
-				if claimFlag {
-					if issue.Assignee != "" {
-						fmt.Fprintf(os.Stderr, "Error claiming %s: already claimed by %s\n", id, issue.Assignee)
-						result.Close()
-						continue
-					}
-					claimUpdates := map[string]interface{}{
-						"assignee": actor,
-						"status":   "in_progress",
-					}
-					if err := issueStore.UpdateIssue(ctx, result.ResolvedID, claimUpdates, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)
-						result.Close()
-						continue
-					}
-				}
-
-				// Apply regular field updates if any
-				regularUpdates := make(map[string]interface{})
-				for k, v := range updates {
-					if k != "add_labels" && k != "remove_labels" && k != "set_labels" && k != "parent" && k != "append_notes" {
-						regularUpdates[k] = v
-					}
-				}
-				// Handle append_notes: combine existing notes with new content
-				if appendNotes, ok := updates["append_notes"].(string); ok {
-					combined := issue.Notes
-					if combined != "" {
-						combined += "\n"
-					}
-					combined += appendNotes
-					regularUpdates["notes"] = combined
-				}
-				if len(regularUpdates) > 0 {
-					if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
-						result.Close()
-						continue
-					}
-				}
-
-				// Handle label operations
-				var setLabels, addLabels, removeLabels []string
-				if v, ok := updates["set_labels"].([]string); ok {
-					setLabels = v
-				}
-				if v, ok := updates["add_labels"].([]string); ok {
-					addLabels = v
-				}
-				if v, ok := updates["remove_labels"].([]string); ok {
-					removeLabels = v
-				}
-				if len(setLabels) > 0 || len(addLabels) > 0 || len(removeLabels) > 0 {
-					if err := applyLabelUpdates(ctx, issueStore, result.ResolvedID, actor, setLabels, addLabels, removeLabels); err != nil {
-						fmt.Fprintf(os.Stderr, "Error updating labels for %s: %v\n", id, err)
-						result.Close()
-						continue
-					}
-				}
-
-				// Run update hook
-				updatedIssue, _ := issueStore.GetIssue(ctx, result.ResolvedID)
-				if updatedIssue != nil && hookRunner != nil {
-					hookRunner.Run(hooks.EventUpdate, updatedIssue)
-				}
-
-				if jsonOutput {
-					if updatedIssue != nil {
-						updatedIssues = append(updatedIssues, updatedIssue)
-					}
-				} else {
-					fmt.Printf("%s Updated issue: %s\n", ui.RenderPass("✓"), result.ResolvedID)
-				}
-
-				if firstUpdatedID == "" {
-					firstUpdatedID = result.ResolvedID
-				}
-				result.Close()
-			}
-
-			if jsonOutput && len(updatedIssues) > 0 {
-				outputJSON(updatedIssues)
-			}
-
-			// Set last touched after all updates complete
-			if firstUpdatedID != "" {
-				SetLastTouchedID(firstUpdatedID)
-			}
-			return
-		}
-
-		// Direct mode - use routed resolution for cross-repo lookups
 		updatedIssues := []*types.Issue{}
 		var firstUpdatedID string // Track first successful update for last-touched
 		for _, id := range args {

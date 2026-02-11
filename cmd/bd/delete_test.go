@@ -1,5 +1,5 @@
-//go:build integration
-// +build integration
+//go:build cgo && integration
+// +build cgo,integration
 
 package main
 
@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -201,7 +201,7 @@ func TestBulkDeleteNoResurrection(t *testing.T) {
 	}
 }
 
-func exportToJSONLTest(t *testing.T, s *sqlite.SQLiteStorage, jsonlPath string) {
+func exportToJSONLTest(t *testing.T, s storage.Storage, jsonlPath string) {
 	t.Helper()
 	ctx := context.Background()
 	issues, err := s.SearchIssues(ctx, "", types.IssueFilter{})

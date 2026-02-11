@@ -340,6 +340,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.PatrolPollution(path)
 		case "Lock Files":
 			err = fix.StaleLockFiles(path)
+		case "Classic Artifacts":
+			err = fix.ClassicArtifacts(path)
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)

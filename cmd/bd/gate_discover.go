@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -204,45 +203,20 @@ func workflowNameMatches(hint, workflowName, runName string) bool {
 func findPendingGates() ([]*types.Issue, error) {
 	var gates []*types.Issue
 
-	if daemonClient != nil {
-		listArgs := &rpc.ListArgs{
-			IssueType:     "gate",
-			ExcludeStatus: []string{"closed"},
-		}
+	gateType := types.IssueType("gate")
+	filter := types.IssueFilter{
+		IssueType:     &gateType,
+		ExcludeStatus: []types.Status{types.StatusClosed},
+	}
 
-		resp, err := daemonClient.List(listArgs)
-		if err != nil {
-			return nil, fmt.Errorf("list gates: %w", err)
-		}
+	allGates, err := store.SearchIssues(rootCtx, "", filter)
+	if err != nil {
+		return nil, fmt.Errorf("search gates: %w", err)
+	}
 
-		var allGates []*types.Issue
-		if err := json.Unmarshal(resp.Data, &allGates); err != nil {
-			return nil, fmt.Errorf("parse gates: %w", err)
-		}
-
-		// Filter to gh:run gates that need discovery
-		for _, g := range allGates {
-			if needsDiscovery(g) {
-				gates = append(gates, g)
-			}
-		}
-	} else {
-		// Direct mode
-		gateType := types.IssueType("gate")
-		filter := types.IssueFilter{
-			IssueType:     &gateType,
-			ExcludeStatus: []types.Status{types.StatusClosed},
-		}
-
-		allGates, err := store.SearchIssues(rootCtx, "", filter)
-		if err != nil {
-			return nil, fmt.Errorf("search gates: %w", err)
-		}
-
-		for _, g := range allGates {
-			if needsDiscovery(g) {
-				gates = append(gates, g)
-			}
+	for _, g := range allGates {
+		if needsDiscovery(g) {
+			gates = append(gates, g)
 		}
 	}
 
@@ -391,27 +365,11 @@ func matchGateToRun(gate *types.Issue, runs []GHWorkflowRun, maxAge time.Duratio
 
 // updateGateAwaitID updates a gate's await_id field
 func updateGateAwaitID(_ interface{}, gateID, runID string) error {
-	if daemonClient != nil {
-		updateArgs := &rpc.UpdateArgs{
-			ID:      gateID,
-			AwaitID: &runID,
-		}
-
-		resp, err := daemonClient.Update(updateArgs)
-		if err != nil {
-			return err
-		}
-		if !resp.Success {
-			return fmt.Errorf("%s", resp.Error)
-		}
-	} else {
-		updates := map[string]interface{}{
-			"await_id": runID,
-		}
-		if err := store.UpdateIssue(rootCtx, gateID, updates, actor); err != nil {
-			return err
-		}
+	updates := map[string]interface{}{
+		"await_id": runID,
 	}
-
+	if err := store.UpdateIssue(rootCtx, gateID, updates, actor); err != nil {
+		return err
+	}
 	return nil
 }

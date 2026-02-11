@@ -8,7 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -42,7 +43,7 @@ func issueIDCompletion(cmd *cobra.Command, args []string, toComplete string) ([]
 		if lockTimeout > 0 {
 			timeout = lockTimeout
 		}
-		currentStore, err = sqlite.NewReadOnlyWithTimeout(ctx, currentDBPath, timeout)
+		currentStore, err = factory.NewWithOptions(ctx, configfile.BackendDolt, currentDBPath, factory.Options{ReadOnly: true, LockTimeout: timeout})
 		if err != nil {
 			// If we can't open database, return empty completion
 			return nil, cobra.ShellCompDirectiveNoFileComp

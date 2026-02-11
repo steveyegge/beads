@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/gitlab"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -113,7 +114,7 @@ func getGitLabConfigValue(ctx context.Context, key string) string {
 			return value
 		}
 	} else if dbPath != "" {
-		tempStore, err := sqlite.NewWithTimeout(ctx, dbPath, 5*time.Second)
+		tempStore, err := factory.NewWithOptions(ctx, configfile.BackendDolt, dbPath, factory.Options{LockTimeout: 5 * time.Second})
 		if err == nil {
 			defer func() { _ = tempStore.Close() }()
 			value, _ := tempStore.GetConfig(ctx, key)

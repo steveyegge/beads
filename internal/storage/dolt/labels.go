@@ -18,6 +18,14 @@ func (s *DoltStore) AddLabel(ctx context.Context, issueID, label, actor string) 
 	if err != nil {
 		return fmt.Errorf("failed to add label: %w", err)
 	}
+	comment := "Added label: " + label
+	_, err = s.execContext(ctx, `
+		INSERT INTO events (issue_id, event_type, actor, comment)
+		VALUES (?, ?, ?, ?)
+	`, issueID, types.EventLabelAdded, actor, comment)
+	if err != nil {
+		return fmt.Errorf("failed to record label event: %w", err)
+	}
 	return nil
 }
 
@@ -28,6 +36,14 @@ func (s *DoltStore) RemoveLabel(ctx context.Context, issueID, label, actor strin
 	`, issueID, label)
 	if err != nil {
 		return fmt.Errorf("failed to remove label: %w", err)
+	}
+	comment := "Removed label: " + label
+	_, err = s.execContext(ctx, `
+		INSERT INTO events (issue_id, event_type, actor, comment)
+		VALUES (?, ?, ?, ?)
+	`, issueID, types.EventLabelRemoved, actor, comment)
+	if err != nil {
+		return fmt.Errorf("failed to record label event: %w", err)
 	}
 	return nil
 }
@@ -101,14 +117,26 @@ func (s *DoltStore) GetIssuesByLabel(ctx context.Context, label string) ([]*type
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issues by label: %w", err)
 	}
-	defer rows.Close()
 
-	var issues []*types.Issue
+	// Collect IDs first, then close rows before fetching full issues.
+	// This avoids connection pool deadlock when MaxOpenConns=1 (embedded dolt).
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("failed to scan issue id: %w", err)
 		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	var issues []*types.Issue
+	for _, id := range ids {
 		issue, err := s.GetIssue(ctx, id)
 		if err != nil {
 			return nil, err
@@ -117,5 +145,5 @@ func (s *DoltStore) GetIssuesByLabel(ctx context.Context, label string) ([]*type
 			issues = append(issues, issue)
 		}
 	}
-	return issues, rows.Err()
+	return issues, nil
 }

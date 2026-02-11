@@ -227,6 +227,30 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at < ? AND status != ?")
 		args = append(args, time.Now().UTC().Format(time.RFC3339), types.StatusClosed)
 	}
+	if filter.ClosedAfter != nil {
+		whereClauses = append(whereClauses, "closed_at > ?")
+		args = append(args, filter.ClosedAfter.Format(time.RFC3339))
+	}
+	if filter.ClosedBefore != nil {
+		whereClauses = append(whereClauses, "closed_at < ?")
+		args = append(args, filter.ClosedBefore.Format(time.RFC3339))
+	}
+	if filter.DeferAfter != nil {
+		whereClauses = append(whereClauses, "defer_until > ?")
+		args = append(args, filter.DeferAfter.Format(time.RFC3339))
+	}
+	if filter.DeferBefore != nil {
+		whereClauses = append(whereClauses, "defer_until < ?")
+		args = append(args, filter.DeferBefore.Format(time.RFC3339))
+	}
+	if filter.DueAfter != nil {
+		whereClauses = append(whereClauses, "due_at > ?")
+		args = append(args, filter.DueAfter.Format(time.RFC3339))
+	}
+	if filter.DueBefore != nil {
+		whereClauses = append(whereClauses, "due_at < ?")
+		args = append(args, filter.DueBefore.Format(time.RFC3339))
+	}
 
 	whereSQL := ""
 	if len(whereClauses) > 0 {
@@ -260,8 +284,18 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	whereClauses := []string{"status = 'open'", "(ephemeral = 0 OR ephemeral IS NULL)"}
+	// Status filtering: default to open OR in_progress (matches memory storage)
+	var statusClause string
+	if filter.Status != "" {
+		statusClause = "status = ?"
+	} else {
+		statusClause = "status IN ('open', 'in_progress')"
+	}
+	whereClauses := []string{statusClause, "(ephemeral = 0 OR ephemeral IS NULL)"}
 	args := []interface{}{}
+	if filter.Status != "" {
+		args = append(args, string(filter.Status))
+	}
 
 	if filter.Priority != nil {
 		whereClauses = append(whereClauses, "priority = ?")
@@ -272,9 +306,16 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		whereClauses = append(whereClauses, "id IN (SELECT id FROM issues WHERE issue_type = ?)")
 		args = append(args, filter.Type)
 	}
-	if filter.Assignee != nil {
+	// Unassigned takes precedence over Assignee filter (matches memory storage)
+	if filter.Unassigned {
+		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
+	} else if filter.Assignee != nil {
 		whereClauses = append(whereClauses, "assignee = ?")
 		args = append(args, *filter.Assignee)
+	}
+	// Exclude future-deferred issues unless IncludeDeferred is set
+	if !filter.IncludeDeferred {
+		whereClauses = append(whereClauses, "(defer_until IS NULL OR defer_until <= NOW())")
 	}
 	if len(filter.Labels) > 0 {
 		for _, label := range filter.Labels {
@@ -409,43 +450,57 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
 	rows, err := s.queryContext(ctx, `
 		SELECT e.id,
-		       (SELECT COUNT(*) FROM dependencies d JOIN issues c ON d.issue_id = c.id
-		        WHERE d.depends_on_id = e.id AND d.type = 'parent-child') as total_children,
-		       (SELECT COUNT(*) FROM dependencies d JOIN issues c ON d.issue_id = c.id
-		        WHERE d.depends_on_id = e.id AND d.type = 'parent-child' AND c.status = 'closed') as closed_children
+		       COUNT(d.issue_id) as total_children,
+		       COUNT(CASE WHEN c.status = 'closed' THEN 1 END) as closed_children
 		FROM issues e
+		LEFT JOIN dependencies d ON d.depends_on_id = e.id AND d.type = 'parent-child'
+		LEFT JOIN issues c ON d.issue_id = c.id
 		WHERE e.issue_type = 'epic'
 		  AND e.status != 'closed'
 		  AND e.status != 'tombstone'
-		HAVING total_children > 0 AND total_children = closed_children
+		GROUP BY e.id
+		HAVING total_children > 0
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get epics eligible for closure: %w", err)
 	}
 	defer rows.Close()
 
-	var results []*types.EpicStatus
+	// Collect IDs first, then close rows before fetching full issues.
+	// This avoids connection pool deadlock when MaxOpenConns=1 (embedded dolt).
+	type epicInfo struct {
+		id            string
+		total, closed int
+	}
+	var epics []epicInfo
 	for rows.Next() {
-		var id string
-		var total, closed int
-		if err := rows.Scan(&id, &total, &closed); err != nil {
+		var info epicInfo
+		if err := rows.Scan(&info.id, &info.total, &info.closed); err != nil {
 			return nil, err
 		}
+		epics = append(epics, info)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_ = rows.Close()
 
-		issue, err := s.GetIssue(ctx, id)
+	var results []*types.EpicStatus
+	for _, info := range epics {
+		issue, err := s.GetIssue(ctx, info.id)
 		if err != nil || issue == nil {
 			continue
 		}
 
 		results = append(results, &types.EpicStatus{
 			Epic:             issue,
-			TotalChildren:    total,
-			ClosedChildren:   closed,
-			EligibleForClose: total > 0 && total == closed,
+			TotalChildren:    info.total,
+			ClosedChildren:   info.closed,
+			EligibleForClose: info.total > 0 && info.total == info.closed,
 		})
 	}
 
-	return results, rows.Err()
+	return results, nil
 }
 
 // GetStaleIssues returns issues that haven't been updated recently

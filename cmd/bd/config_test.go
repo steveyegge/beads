@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -9,7 +11,8 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 func TestConfigCommands(t *testing.T) {
@@ -198,14 +201,14 @@ func TestYamlOnlyConfigWithoutDatabase(t *testing.T) {
 }
 
 // setupTestDB creates a temporary test database
-func setupTestDB(t *testing.T) (*sqlite.SQLiteStorage, func()) {
+func setupTestDB(t *testing.T) (storage.Storage, func()) {
 	tmpDir, err := os.MkdirTemp("", "bd-test-config-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
 	testDB := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDB)
+	store, err := dolt.New(context.Background(), &dolt.Config{Path: testDB})
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create test database: %v", err)

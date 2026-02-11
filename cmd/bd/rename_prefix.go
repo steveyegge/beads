@@ -4,19 +4,18 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
-	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -82,18 +81,8 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		// Get JSONL path for sync operations
 		jsonlPath := findJSONLPath()
 
-		// If sync-branch is configured, pull latest remote issues first
-		// This ensures we have all issues from remote before renaming
-		if !dryRun && syncbranch.IsConfigured() {
-			silentLog := newSilentLogger()
-			pulled, err := syncBranchPull(ctx, store, silentLog)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to pull sync-branch: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Continue anyway? Issues from remote may be missing.\n")
-			} else if pulled {
-				fmt.Printf("Pulled latest issues from sync-branch\n")
-			}
-		}
+		// Sync-branch pull was previously handled by the daemon.
+		// With daemon removed, sync-branch operations are handled by bd sync.
 
 		// Force import from JSONL to ensure DB has all issues before rename
 		// This prevents data loss if JSONL has issues from other workspaces
@@ -210,25 +199,13 @@ NOTE: This is a rare operation. Most users never need this command.`,
 			// Clear metadata hashes so integrity check doesn't fail
 			_ = store.SetMetadata(ctx, "jsonl_content_hash", "")
 			_ = store.SetMetadata(ctx, "export_hashes", "")
-			_ = store.SetJSONLFileHash(ctx, "")
 
-			// Get all renamed issues from DB and export directly
-			renamedIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to get issues for export: %v\n", err)
+			// Export renamed issues directly to JSONL
+			if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to export: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Run 'bd export --force' to update JSONL\n")
 			} else {
-				// Get dependencies for each issue
-				for _, issue := range renamedIssues {
-					deps, _ := store.GetDependencyRecords(ctx, issue.ID)
-					issue.Dependencies = deps
-				}
-				// Write directly to JSONL
-				if _, err := writeJSONLAtomic(jsonlPath, renamedIssues); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to export: %v\n", err)
-					fmt.Fprintf(os.Stderr, "Run 'bd export --force' to update JSONL\n")
-				} else {
-					fmt.Printf("Updated %s with new IDs\n", jsonlPath)
-				}
+				fmt.Printf("Updated %s with new IDs\n", jsonlPath)
 			}
 		}
 
@@ -437,25 +414,13 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 		// Clear metadata hashes so integrity check doesn't fail
 		_ = st.SetMetadata(ctx, "jsonl_content_hash", "")
 		_ = st.SetMetadata(ctx, "export_hashes", "")
-		_ = st.SetJSONLFileHash(ctx, "")
 
-		// Get all renamed issues from DB and export directly
-		renamedIssues, err := st.SearchIssues(ctx, "", types.IssueFilter{})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to get issues for export: %v\n", err)
+		// Export renamed issues directly to JSONL
+		if err := exportToJSONLWithStore(ctx, st, jsonlPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to export: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Run 'bd export --force' to update JSONL\n")
 		} else {
-			// Get dependencies for each issue
-			for _, issue := range renamedIssues {
-				deps, _ := st.GetDependencyRecords(ctx, issue.ID)
-				issue.Dependencies = deps
-			}
-			// Write directly to JSONL
-			if _, err := writeJSONLAtomic(jsonlPath, renamedIssues); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to export: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Run 'bd export --force' to update JSONL\n")
-			} else {
-				fmt.Printf("Updated %s with new IDs\n", jsonlPath)
-			}
+			fmt.Printf("Updated %s with new IDs\n", jsonlPath)
 		}
 	}
 
@@ -529,28 +494,36 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 	return nil
 }
 
-// generateRepairHashID generates a hash-based ID for an issue during repair
-// Uses the sqlite.GenerateIssueID function but also checks usedIDs for batch collision avoidance
-func generateRepairHashID(ctx context.Context, conn *sql.Conn, prefix string, issue *types.Issue, actor string, usedIDs map[string]bool) (string, error) {
-	// Try to generate a unique ID using the standard generation function
-	// This handles collision detection against existing database IDs
-	newID, err := sqlite.GenerateIssueID(ctx, conn, prefix, issue, actor)
-	if err != nil {
-		return "", err
-	}
+// generateRepairHashID generates a hash-based ID for an issue during repair.
+// Uses content hashing and checks usedIDs for batch collision avoidance.
+func generateRepairHashID(_ context.Context, _ *sql.Conn, prefix string, issue *types.Issue, actor string, usedIDs map[string]bool) (string, error) {
+	// Generate a hash ID from issue content (same approach as generateHashIDForIssue)
+	content := fmt.Sprintf("%s|%s|%s|%d|%d",
+		issue.Title,
+		issue.Description,
+		actor,
+		issue.CreatedAt.UnixNano(),
+		0, // nonce
+	)
+	h := sha256.Sum256([]byte(content))
+	shortHash := hex.EncodeToString(h[:4]) // 4 bytes = 8 hex chars
+	newID := fmt.Sprintf("%s-%s", prefix, shortHash)
 
 	// Check if this ID was already used in this batch
-	// If so, we need to generate a new one with a different timestamp
+	// If so, we need to generate a new one with a different nonce
 	attempts := 0
 	for usedIDs[newID] && attempts < 100 {
-		// Slightly modify the creation time to get a different hash
-		modifiedIssue := *issue
-		modifiedIssue.CreatedAt = issue.CreatedAt.Add(time.Duration(attempts+1) * time.Nanosecond)
-		newID, err = sqlite.GenerateIssueID(ctx, conn, prefix, &modifiedIssue, actor)
-		if err != nil {
-			return "", err
-		}
 		attempts++
+		content = fmt.Sprintf("%s|%s|%s|%d|%d",
+			issue.Title,
+			issue.Description,
+			actor,
+			issue.CreatedAt.UnixNano(),
+			attempts,
+		)
+		h = sha256.Sum256([]byte(content))
+		shortHash = hex.EncodeToString(h[:4])
+		newID = fmt.Sprintf("%s-%s", prefix, shortHash)
 	}
 
 	if usedIDs[newID] {

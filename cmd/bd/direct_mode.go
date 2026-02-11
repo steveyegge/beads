@@ -17,12 +17,6 @@ func ensureDirectMode(_ string) error {
 	return ensureStoreActive()
 }
 
-// fallbackToDirectMode ensures a local store is ready.
-// With the daemon removed, this simply ensures the store is active.
-func fallbackToDirectMode(_ string) error {
-	return ensureStoreActive()
-}
-
 // ensureStoreActive guarantees that a storage backend is initialized and tracked.
 // Uses the factory to respect metadata.json backend configuration (SQLite, Dolt embedded, or Dolt server).
 func ensureStoreActive() error {
@@ -82,10 +76,6 @@ func ensureStoreActive() error {
 	setStore(store)
 	setStoreActive(true)
 	unlockStore()
-
-	if isAutoImportEnabled() && ShouldImportJSONL(rootCtx, store) {
-		autoImportIfNewer()
-	}
 
 	return nil
 }

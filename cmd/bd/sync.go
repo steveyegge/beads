@@ -7,12 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
@@ -161,22 +161,7 @@ The --full flag provides the legacy full sync behavior for backwards compatibili
 			noPush = config.GetBool("no-push")
 		}
 
-		// Force direct mode for sync operations.
-		// This prevents stale daemon SQLite connections from corrupting exports.
-		// If the daemon was running but its database file was deleted and recreated
-		// (e.g., during recovery), the daemon's SQLite connection points to the old
-		// (deleted) file, causing export to return incomplete/corrupt data.
-		// Using direct mode ensures we always read from the current database file.
-		//
-		// GH#984: Must use fallbackToDirectMode() instead of just closing daemon.
-		// When connected to daemon, PersistentPreRun skips store initialization.
-		// Just closing daemon leaves store=nil, causing "no database store available"
-		// errors in post-checkout hook's `bd sync --import-only`.
-
-		// Initialize local store after daemon disconnect.
-		// When daemon was connected, PersistentPreRun returns early without initializing
-		// the store global. Commands like --import-only need the store, so we must
-		// initialize it here after closing the daemon connection.
+		// Ensure direct store is active for sync operations.
 		if err := ensureStoreActive(); err != nil {
 			FatalError("failed to initialize store: %v", err)
 		}
@@ -698,8 +683,7 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 
 // writeMergedStateToJSONL writes merged issues to JSONL file
 func writeMergedStateToJSONL(path string, issues []*beads.Issue) error {
-	tempID := tempFileCounter.Add(1)
-	tempPath := fmt.Sprintf("%s.tmp.%d.%d", path, os.Getpid(), tempID)
+	tempPath := fmt.Sprintf("%s.tmp.%d.%d", path, os.Getpid(), time.Now().UnixNano())
 	file, err := os.Create(tempPath) //nolint:gosec // path is trusted internal beads path
 	if err != nil {
 		return err
@@ -729,7 +713,7 @@ func writeMergedStateToJSONL(path string, issues []*beads.Issue) error {
 // - dolt-native: Commit and push to Dolt remote (skip JSONL)
 // - belt-and-suspenders: Both JSONL export and Dolt push
 // Does NOT stage or commit to git - that's the user's job.
-func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) error {
+func doExportSync(ctx context.Context, jsonlPath string, _, dryRun bool) error {
 	if err := ensureStoreActive(); err != nil {
 		return fmt.Errorf("failed to initialize store: %w", err)
 	}
@@ -785,17 +769,6 @@ func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) err
 	if shouldExportJSONL {
 		fmt.Println("Exporting beads to JSONL...")
 
-		// Get count of dirty (changed) issues for incremental tracking
-		var changedCount int
-		if !force {
-			dirtyIDs, err := store.GetDirtyIssues(ctx)
-			if err != nil {
-				debug.Logf("warning: failed to get dirty issues: %v", err)
-			} else {
-				changedCount = len(dirtyIDs)
-			}
-		}
-
 		// Export to JSONL (uses incremental export for large repos)
 		result, err := exportToJSONLIncrementalDeferred(ctx, jsonlPath)
 		if err != nil {
@@ -811,11 +784,7 @@ func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) err
 			totalCount = len(result.ExportedIDs)
 		}
 
-		if changedCount > 0 && !force {
-			fmt.Printf("✓ Exported %d issues (%d changed since last sync)\n", totalCount, changedCount)
-		} else {
-			fmt.Printf("✓ Exported %d issues\n", totalCount)
-		}
+		fmt.Printf("✓ Exported %d issues\n", totalCount)
 		fmt.Printf("✓ %s updated\n", jsonlPath)
 	}
 
