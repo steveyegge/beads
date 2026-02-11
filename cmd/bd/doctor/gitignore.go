@@ -81,8 +81,19 @@ var requiredPatterns = []string{
 func CheckGitignore() DoctorCheck {
 	gitignorePath := filepath.Join(".beads", ".gitignore")
 
+	// If a redirect exists, check the gitignore at the redirect target instead
+	redirectPath := filepath.Join(".beads", "redirect")
+	if data, err := os.ReadFile(redirectPath); err == nil { // #nosec G304 -- path is hardcoded
+		target := strings.TrimSpace(string(data))
+		if target != "" {
+			cwd, _ := os.Getwd()
+			resolvedTarget := filepath.Clean(filepath.Join(cwd, target))
+			gitignorePath = filepath.Join(resolvedTarget, ".gitignore")
+		}
+	}
+
 	// Check if file exists
-	content, err := os.ReadFile(gitignorePath) // #nosec G304 -- path is hardcoded
+	content, err := os.ReadFile(gitignorePath) // #nosec G304 -- path is constructed from known parts
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Gitignore",
@@ -350,6 +361,18 @@ func CheckRedirectTargetValid() DoctorCheck {
 	}
 
 	// Check for valid beads database in target
+	// First check for Dolt backend via metadata.json — Dolt server mode has no local .db file
+	metadataPath := filepath.Join(resolvedTarget, "metadata.json")
+	metadataData, metaErr := os.ReadFile(metadataPath) // #nosec G304 -- constructed from known path
+	if metaErr == nil && strings.Contains(string(metadataData), `"backend"`) &&
+		strings.Contains(string(metadataData), `"dolt"`) {
+		return DoctorCheck{
+			Name:    "Redirect Target Valid",
+			Status:  StatusOK,
+			Message: fmt.Sprintf("Redirect target valid (dolt backend): %s", resolvedTarget),
+		}
+	}
+
 	dbPath := filepath.Join(resolvedTarget, "beads.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		// Also check for any .db file
