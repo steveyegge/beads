@@ -207,6 +207,21 @@ func (m *mockStorage) UnderlyingDB() *sql.DB {
 func (m *mockStorage) UnderlyingConn(ctx context.Context) (*sql.Conn, error) {
 	return nil, nil
 }
+func (m *mockStorage) SaveResource(ctx context.Context, resource *types.Resource) error {
+	return nil
+}
+func (m *mockStorage) GetResource(ctx context.Context, identifier string) (*types.Resource, error) {
+	return nil, nil
+}
+func (m *mockStorage) ListResources(ctx context.Context, filter types.ResourceFilter) ([]*types.Resource, error) {
+	return nil, nil
+}
+func (m *mockStorage) DeleteResource(ctx context.Context, identifier string) error {
+	return nil
+}
+func (m *mockStorage) SyncResources(ctx context.Context, source string, resources []*types.Resource) error {
+	return nil
+}
 
 // mockTransaction is a minimal mock for Transaction interface testing.
 type mockTransaction struct{}

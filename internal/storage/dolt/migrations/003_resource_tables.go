@@ -81,13 +81,16 @@ func MigrateResourceTables(db *sql.DB) error {
 	}
 
 	// Add indexes
-	_, err = db.Exec(`
-		CREATE INDEX idx_resources_type ON resources(type_id);
-		CREATE INDEX idx_resources_identifier ON resources(identifier);
-		CREATE INDEX idx_resource_tags_tag ON resource_tags(tag);
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create indexes: %w", err)
+	indexes := []string{
+		"CREATE INDEX idx_resources_type ON resources(type_id)",
+		"CREATE INDEX idx_resources_identifier ON resources(identifier)",
+		"CREATE INDEX idx_resource_tags_tag ON resource_tags(tag)",
+	}
+	for _, idx := range indexes {
+		_, err = db.Exec(idx)
+		if err != nil {
+			return fmt.Errorf("failed to create index: %w", err)
+		}
 	}
 
 	return nil

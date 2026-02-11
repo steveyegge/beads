@@ -30,11 +30,12 @@ const (
 
 // Client provides methods to interact with the Linear GraphQL API.
 type Client struct {
-	APIKey     string
-	TeamID     string
-	ProjectID  string // Optional: filter issues to a specific project
-	Endpoint   string // GraphQL endpoint URL (defaults to DefaultAPIEndpoint)
-	HTTPClient *http.Client
+	APIKey          string
+	TeamID          string
+	ProjectID       string
+	Endpoint        string
+	HTTPClient      *http.Client
+	enableSubIssues bool
 }
 
 // GraphQLRequest represents a GraphQL request payload.
@@ -166,7 +167,6 @@ type IssueUpdateResponse struct {
 		Issue   Issue `json:"issue"`
 	} `json:"issueUpdate"`
 }
-
 
 // Project represents a project in Linear.
 type Project struct {

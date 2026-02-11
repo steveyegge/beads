@@ -116,6 +116,7 @@ func NewClient(apiKey, teamID string) *Client {
 		HTTPClient: &http.Client{
 			Timeout: DefaultTimeout,
 		},
+		enableSubIssues: true, // Enable sub-issues by default for parent-child support
 	}
 }
 
@@ -123,11 +124,12 @@ func NewClient(apiKey, teamID string) *Client {
 // This is useful for testing with mock servers or connecting to self-hosted instances.
 func (c *Client) WithEndpoint(endpoint string) *Client {
 	return &Client{
-		APIKey:     c.APIKey,
-		TeamID:     c.TeamID,
-		ProjectID:  c.ProjectID,
-		Endpoint:   endpoint,
-		HTTPClient: c.HTTPClient,
+		APIKey:          c.APIKey,
+		TeamID:          c.TeamID,
+		ProjectID:       c.ProjectID,
+		Endpoint:        endpoint,
+		HTTPClient:      c.HTTPClient,
+		enableSubIssues: c.enableSubIssues,
 	}
 }
 
@@ -135,11 +137,12 @@ func (c *Client) WithEndpoint(endpoint string) *Client {
 // This is useful for testing or customizing timeouts and transport settings.
 func (c *Client) WithHTTPClient(httpClient *http.Client) *Client {
 	return &Client{
-		APIKey:     c.APIKey,
-		TeamID:     c.TeamID,
-		ProjectID:  c.ProjectID,
-		Endpoint:   c.Endpoint,
-		HTTPClient: httpClient,
+		APIKey:          c.APIKey,
+		TeamID:          c.TeamID,
+		ProjectID:       c.ProjectID,
+		Endpoint:        c.Endpoint,
+		HTTPClient:      httpClient,
+		enableSubIssues: c.enableSubIssues,
 	}
 }
 
@@ -147,11 +150,25 @@ func (c *Client) WithHTTPClient(httpClient *http.Client) *Client {
 // When set, FetchIssues and FetchIssuesSince will only return issues belonging to this project.
 func (c *Client) WithProjectID(projectID string) *Client {
 	return &Client{
-		APIKey:     c.APIKey,
-		TeamID:     c.TeamID,
-		ProjectID:  projectID,
-		Endpoint:   c.Endpoint,
-		HTTPClient: c.HTTPClient,
+		APIKey:          c.APIKey,
+		TeamID:          c.TeamID,
+		ProjectID:       projectID,
+		Endpoint:        c.Endpoint,
+		HTTPClient:      c.HTTPClient,
+		enableSubIssues: c.enableSubIssues,
+	}
+}
+
+// WithSubIssuesEnabled returns a new client with sub-issues feature flag set.
+// This is required for parent-child issue linking via the GraphQL API.
+func (c *Client) WithSubIssuesEnabled(enabled bool) *Client {
+	return &Client{
+		APIKey:          c.APIKey,
+		TeamID:          c.TeamID,
+		ProjectID:       c.ProjectID,
+		Endpoint:        c.Endpoint,
+		HTTPClient:      c.HTTPClient,
+		enableSubIssues: enabled,
 	}
 }
 
@@ -172,6 +189,9 @@ func (c *Client) Execute(ctx context.Context, req *GraphQLRequest) (json.RawMess
 
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", c.APIKey)
+		if c.enableSubIssues {
+			httpReq.Header.Set("GraphQL-Features", "sub_issues")
+		}
 
 		resp, err := c.HTTPClient.Do(httpReq)
 		if err != nil {
