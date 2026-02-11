@@ -40,6 +40,28 @@ func TestSubjectForDecisionEvent(t *testing.T) {
 	}
 }
 
+// TestSubjectForDecisionEventScoped verifies scoped decision event subjects.
+func TestSubjectForDecisionEventScoped(t *testing.T) {
+	tests := []struct {
+		eventType   EventType
+		requestedBy string
+		want        string
+	}{
+		{EventDecisionCreated, "agent-123", "decisions.agent-123.DecisionCreated"},
+		{EventDecisionResponded, "8DF460B1", "decisions.8DF460B1.DecisionResponded"},
+		{EventDecisionEscalated, "", "decisions._global.DecisionEscalated"},
+		{EventDecisionExpired, "", "decisions._global.DecisionExpired"},
+		{EventDecisionCreated, "", "decisions._global.DecisionCreated"},
+	}
+	for _, tt := range tests {
+		got := SubjectForDecisionEvent(tt.eventType, tt.requestedBy)
+		if got != tt.want {
+			t.Errorf("SubjectForDecisionEvent(%s, %q) = %q, want %q",
+				tt.eventType, tt.requestedBy, got, tt.want)
+		}
+	}
+}
+
 func TestEnsureStreamsCreatesDecisionStream(t *testing.T) {
 	_, js, cleanup := startTestNATS(t)
 	defer cleanup()

@@ -53,6 +53,9 @@ const (
 // SubjectForEvent returns the NATS subject for a given event type.
 // Hook events use "hooks.<type>"; decision events use "decisions.<type>";
 // OJ events use "oj.<type>"; mutation events use "mutations.<type>".
+//
+// For decision events without a requestedBy scope, use SubjectForDecisionEvent
+// instead to include agent-scoped routing.
 func SubjectForEvent(eventType EventType) string {
 	if eventType.IsDecisionEvent() {
 		return SubjectDecisionPrefix + string(eventType)
@@ -73,6 +76,19 @@ func SubjectForEvent(eventType EventType) string {
 		return SubjectConfigPrefix + string(eventType)
 	}
 	return SubjectHookPrefix + string(eventType)
+}
+
+// SubjectForDecisionEvent returns a scoped NATS subject for a decision event.
+// When requestedBy is non-empty, the subject is "decisions.<requestedBy>.<EventType>"
+// so that agents can subscribe to only their own decisions via "decisions.<id>.>".
+// When requestedBy is empty, falls back to "decisions._global.<EventType>".
+// Subscribers using the wildcard "decisions.>" still receive all decision events.
+func SubjectForDecisionEvent(eventType EventType, requestedBy string) string {
+	scope := "_global"
+	if requestedBy != "" {
+		scope = requestedBy
+	}
+	return SubjectDecisionPrefix + scope + "." + string(eventType)
 }
 
 // EnsureStreams creates the required JetStream streams if they don't already

@@ -109,6 +109,18 @@ func (b *Bus) Dispatch(ctx context.Context, event *Event) (*Result, error) {
 func (b *Bus) publishToJetStream(js nats.JetStreamContext, event *Event) {
 	subject := SubjectForEvent(event.Type)
 
+	// For decision events, extract requested_by from the payload to build a
+	// scoped subject (decisions.<requestedBy>.<EventType>). This allows agents
+	// to subscribe only to their own decisions. (beads-bug-agents_receive_other_agents_decision)
+	if event.Type.IsDecisionEvent() && len(event.Raw) > 0 {
+		var peek struct {
+			RequestedBy string `json:"requested_by"`
+		}
+		if json.Unmarshal(event.Raw, &peek) == nil {
+			subject = SubjectForDecisionEvent(event.Type, peek.RequestedBy)
+		}
+	}
+
 	// Use the raw JSON if available, otherwise marshal the event.
 	var data []byte
 	if len(event.Raw) > 0 {

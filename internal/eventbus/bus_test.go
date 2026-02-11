@@ -977,7 +977,8 @@ func TestDecisionEventPublishesToJetStream(t *testing.T) {
 		t.Fatalf("expected JetStream decision message: %v", err)
 	}
 
-	expectedSubject := SubjectForEvent(EventDecisionCreated)
+	// No RequestedBy → scoped to _global
+	expectedSubject := SubjectForDecisionEvent(EventDecisionCreated, "")
 	if msg.Subject != expectedSubject {
 		t.Errorf("expected subject %q, got %q", expectedSubject, msg.Subject)
 	}
@@ -988,6 +989,107 @@ func TestDecisionEventPublishesToJetStream(t *testing.T) {
 	}
 	if decoded.DecisionID != "js-test-decision" {
 		t.Errorf("expected decision_id %q, got %q", "js-test-decision", decoded.DecisionID)
+	}
+}
+
+// TestDecisionEventScopedByRequestedBy verifies that decision events with a
+// RequestedBy field are published to a scoped NATS subject, allowing agents
+// to subscribe only to their own decisions. (beads-bug-agents_receive_other_agents_decision)
+func TestDecisionEventScopedByRequestedBy(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+	EnsureStreams(js)
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	agentID := "8DF460B1-7B59-4FC2-9680-EE7C571C959F"
+
+	// Subscribe to only this agent's decisions
+	scopedSub, err := js.SubscribeSync(SubjectDecisionPrefix+agentID+".>", nats.DeliverNew())
+	if err != nil {
+		t.Fatalf("scoped subscribe: %v", err)
+	}
+	// Subscribe to all decisions (like the Slack bot does)
+	allSub, err := js.SubscribeSync(SubjectDecisionPrefix+">", nats.DeliverNew())
+	if err != nil {
+		t.Fatalf("wildcard subscribe: %v", err)
+	}
+
+	payload := DecisionEventPayload{
+		DecisionID:  "scoped-test",
+		Question:    "Deploy?",
+		RequestedBy: agentID,
+		Options:     2,
+	}
+	payloadJSON, _ := json.Marshal(payload)
+
+	_, err = bus.Dispatch(context.Background(), &Event{
+		Type: EventDecisionCreated,
+		Raw:  payloadJSON,
+	})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	// Scoped subscriber should receive it
+	msg, err := scopedSub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected scoped message: %v", err)
+	}
+	expectedSubject := SubjectForDecisionEvent(EventDecisionCreated, agentID)
+	if msg.Subject != expectedSubject {
+		t.Errorf("scoped subject = %q, want %q", msg.Subject, expectedSubject)
+	}
+
+	// Wildcard subscriber should also receive it
+	msg2, err := allSub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected wildcard message: %v", err)
+	}
+	if msg2.Subject != expectedSubject {
+		t.Errorf("wildcard subject = %q, want %q", msg2.Subject, expectedSubject)
+	}
+}
+
+// TestDecisionEventScopingIsolation verifies that an agent subscribed to its own
+// decision subject does NOT receive decisions requested by other agents.
+func TestDecisionEventScopingIsolation(t *testing.T) {
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+	EnsureStreams(js)
+
+	bus := New()
+	bus.SetJetStream(js)
+
+	agentA := "agent-A"
+	agentB := "agent-B"
+
+	// Agent A subscribes only to its own decisions
+	subA, err := js.SubscribeSync(SubjectDecisionPrefix+agentA+".>", nats.DeliverNew())
+	if err != nil {
+		t.Fatalf("subscribe agent-A: %v", err)
+	}
+
+	// Publish a decision for agent B
+	payloadB := DecisionEventPayload{
+		DecisionID:  "b-decision",
+		Question:    "Continue?",
+		RequestedBy: agentB,
+	}
+	rawB, _ := json.Marshal(payloadB)
+	_, err = bus.Dispatch(context.Background(), &Event{
+		Type: EventDecisionResponded,
+		Raw:  rawB,
+	})
+	if err != nil {
+		t.Fatalf("dispatch B: %v", err)
+	}
+
+	// Agent A should NOT receive agent B's decision
+	_, err = subA.NextMsg(200 * time.Millisecond)
+	if err == nil {
+		t.Error("agent A received agent B's decision — scoping is broken")
 	}
 }
 
