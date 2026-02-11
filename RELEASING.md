@@ -68,6 +68,7 @@ Before starting a release:
 - [ ] All tests passing (`go test ./...`)
 - [ ] npm package tests passing (`cd npm-package && npm run test:all`)
 - [ ] **CHANGELOG.md updated with release notes** (see format below)
+- [ ] Run the release candidate playbook in [docs/RELEASE_CANDIDATE_PLAYBOOK.md](docs/RELEASE_CANDIDATE_PLAYBOOK.md)
 - [ ] No uncommitted changes
 - [ ] On `main` branch and up to date with origin
 
