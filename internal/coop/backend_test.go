@@ -3,6 +3,7 @@ package coop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -143,5 +144,264 @@ func TestGetSessionName(t *testing.T) {
 				t.Errorf("GetSessionName(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCoopSessionBackendKillSession(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v1/shutdown" {
+			t.Errorf("path = %q, want /api/v1/shutdown", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	backend := NewCoopSessionBackend(srv.URL)
+	err := backend.KillSession(context.Background(), "ignored")
+	if err != nil {
+		t.Fatalf("KillSession error: %v", err)
+	}
+}
+
+func TestCoopSessionBackendNewSessionNotSupported(t *testing.T) {
+	backend := NewCoopSessionBackend("http://localhost:3000")
+	err := backend.NewSession(context.Background(), "test", "echo hello")
+	if !errors.Is(err, ErrNotSupported) {
+		t.Errorf("NewSession error = %v, want ErrNotSupported", err)
+	}
+}
+
+func TestCoopSessionBackendIsAgentRunning(t *testing.T) {
+	tests := []struct {
+		name  string
+		state string
+		want  bool
+	}{
+		{"working", StateWorking, true},
+		{"idle", StateWaitingForInput, true},
+		{"exited", StateExited, false},
+		{"starting", StateStarting, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(AgentStateResponse{
+					State:     tt.state,
+					AgentType: "claude",
+				})
+			}))
+			defer srv.Close()
+
+			backend := NewCoopSessionBackend(srv.URL)
+			got, err := backend.IsAgentRunning(context.Background(), "ignored")
+			if err != nil {
+				t.Fatalf("IsAgentRunning error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("IsAgentRunning = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCoopSessionBackendIsAgentRunningExitedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Code:    "EXITED",
+			Message: "child process exited",
+		})
+	}))
+	defer srv.Close()
+
+	backend := NewCoopSessionBackend(srv.URL)
+	got, err := backend.IsAgentRunning(context.Background(), "ignored")
+	if err != nil {
+		t.Fatalf("IsAgentRunning error: %v", err)
+	}
+	if got {
+		t.Error("expected IsAgentRunning = false for EXITED error")
+	}
+}
+
+func TestCoopSessionBackendGetSessionInfo(t *testing.T) {
+	pid := 12345
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(HealthResponse{
+			Status:    "running",
+			PID:       &pid,
+			UptimeSec: 3600,
+			AgentType: "claude",
+		})
+	}))
+	defer srv.Close()
+
+	backend := NewCoopSessionBackend(srv.URL)
+	info, err := backend.GetSessionInfo(context.Background(), "ignored")
+	if err != nil {
+		t.Fatalf("GetSessionInfo error: %v", err)
+	}
+	if info.PID != 12345 {
+		t.Errorf("PID = %d, want 12345", info.PID)
+	}
+	if info.Uptime != 3600 {
+		t.Errorf("Uptime = %d, want 3600", info.Uptime)
+	}
+	if !info.Ready {
+		t.Error("Ready = false, want true")
+	}
+	if info.AgentType != "claude" {
+		t.Errorf("AgentType = %q, want claude", info.AgentType)
+	}
+	if info.Backend != "coop" {
+		t.Errorf("Backend = %q, want coop", info.Backend)
+	}
+}
+
+func TestCoopSessionBackendGetSessionInfoExited(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(HealthResponse{
+			Status:    "exited",
+			UptimeSec: 100,
+		})
+	}))
+	defer srv.Close()
+
+	backend := NewCoopSessionBackend(srv.URL)
+	info, err := backend.GetSessionInfo(context.Background(), "ignored")
+	if err != nil {
+		t.Fatalf("GetSessionInfo error: %v", err)
+	}
+	if info.Ready {
+		t.Error("Ready = true, want false for exited status")
+	}
+	if info.PID != 0 {
+		t.Errorf("PID = %d, want 0 for nil PID", info.PID)
+	}
+}
+
+func TestCoopSessionBackendGetAgentState(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(AgentStateResponse{
+			State:     StateWaitingForInput,
+			AgentType: "claude",
+		})
+	}))
+	defer srv.Close()
+
+	backend := NewCoopSessionBackend(srv.URL)
+	state, err := backend.GetAgentState(context.Background(), "ignored")
+	if err != nil {
+		t.Fatalf("GetAgentState error: %v", err)
+	}
+	if state != StateWaitingForInput {
+		t.Errorf("state = %q, want %q", state, StateWaitingForInput)
+	}
+}
+
+func TestCoopSessionBackendSetEnvironment(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody EnvPutRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		json.NewEncoder(w).Encode(EnvPutResponse{Key: "MY_VAR", Updated: true})
+	}))
+	defer srv.Close()
+
+	backend := NewCoopSessionBackend(srv.URL)
+	err := backend.SetEnvironment(context.Background(), "ignored", "MY_VAR", "hello")
+	if err != nil {
+		t.Fatalf("SetEnvironment error: %v", err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %s, want PUT", gotMethod)
+	}
+	if gotPath != "/api/v1/env/MY_VAR" {
+		t.Errorf("path = %q, want /api/v1/env/MY_VAR", gotPath)
+	}
+	if gotBody.Value != "hello" {
+		t.Errorf("body.value = %q, want hello", gotBody.Value)
+	}
+}
+
+func TestCoopSessionBackendGetEnvironment(t *testing.T) {
+	val := "world"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/env/MY_VAR" {
+			t.Errorf("path = %q, want /api/v1/env/MY_VAR", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(EnvGetResponse{Key: "MY_VAR", Value: &val, Source: "pending"})
+	}))
+	defer srv.Close()
+
+	backend := NewCoopSessionBackend(srv.URL)
+	got, err := backend.GetEnvironment(context.Background(), "ignored", "MY_VAR")
+	if err != nil {
+		t.Fatalf("GetEnvironment error: %v", err)
+	}
+	if got != "world" {
+		t.Errorf("GetEnvironment = %q, want world", got)
+	}
+}
+
+func TestCoopSessionBackendGetEnvironmentNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(EnvGetResponse{Key: "MISSING", Value: nil, Source: "child"})
+	}))
+	defer srv.Close()
+
+	backend := NewCoopSessionBackend(srv.URL)
+	got, err := backend.GetEnvironment(context.Background(), "ignored", "MISSING")
+	if err != nil {
+		t.Fatalf("GetEnvironment error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("GetEnvironment = %q, want empty string for missing var", got)
+	}
+}
+
+func TestCoopSessionBackendGetWorkingDirectory(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/session/cwd" {
+			t.Errorf("path = %q, want /api/v1/session/cwd", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(CwdResponse{Cwd: "/home/agent/workspace"})
+	}))
+	defer srv.Close()
+
+	backend := NewCoopSessionBackend(srv.URL)
+	got, err := backend.GetWorkingDirectory(context.Background(), "ignored")
+	if err != nil {
+		t.Fatalf("GetWorkingDirectory error: %v", err)
+	}
+	if got != "/home/agent/workspace" {
+		t.Errorf("GetWorkingDirectory = %q, want /home/agent/workspace", got)
+	}
+}
+
+func TestCoopSessionBackendSendKeysRaw(t *testing.T) {
+	var gotBody InputRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		json.NewEncoder(w).Encode(InputResponse{BytesWritten: 5})
+	}))
+	defer srv.Close()
+
+	backend := NewCoopSessionBackend(srv.URL)
+	err := backend.SendKeysRaw(context.Background(), "ignored", "hello")
+	if err != nil {
+		t.Fatalf("SendKeysRaw error: %v", err)
+	}
+	if gotBody.Text != "hello" {
+		t.Errorf("text = %q, want hello", gotBody.Text)
+	}
+	if gotBody.Enter {
+		t.Error("Enter should be false for raw keys")
 	}
 }

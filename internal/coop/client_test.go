@@ -392,4 +392,78 @@ func TestCoopErrorString(t *testing.T) {
 	}
 }
 
+func TestShutdown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v1/shutdown" {
+			t.Errorf("path = %q, want /api/v1/shutdown", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	err := c.Shutdown(context.Background())
+	if err != nil {
+		t.Fatalf("Shutdown error: %v", err)
+	}
+}
+
+func TestIsAgentRunning(t *testing.T) {
+	tests := []struct {
+		name  string
+		state string
+		want  bool
+	}{
+		{"working", StateWorking, true},
+		{"idle", StateWaitingForInput, true},
+		{"starting", StateStarting, true},
+		{"exited", StateExited, false},
+		{"crashed", "crashed", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(AgentStateResponse{
+					State:     tt.state,
+					AgentType: "claude",
+				})
+			}))
+			defer srv.Close()
+
+			c := NewClient(srv.URL)
+			got, err := c.IsAgentRunning(context.Background())
+			if err != nil {
+				t.Fatalf("IsAgentRunning error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("IsAgentRunning = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsAgentRunningExitedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Code:    "EXITED",
+			Message: "child process exited",
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	got, err := c.IsAgentRunning(context.Background())
+	if err != nil {
+		t.Fatalf("IsAgentRunning error: %v", err)
+	}
+	if got {
+		t.Error("expected IsAgentRunning = false for EXITED error")
+	}
+}
+
 func intPtr(i int) *int { return &i }
