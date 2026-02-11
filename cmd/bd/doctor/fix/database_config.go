@@ -108,6 +108,7 @@ func findActualJSONLFile(beadsDir string) string {
 			name == "deletions.jsonl" ||
 			name == "interactions.jsonl" ||
 			name == "molecules.jsonl" ||
+			name == "routes.jsonl" ||
 			// Git merge conflict artifacts (e.g., issues.base.jsonl, issues.left.jsonl)
 			strings.Contains(lowerName, ".base.jsonl") ||
 			strings.Contains(lowerName, ".left.jsonl") ||
@@ -135,7 +136,7 @@ func findActualJSONLFile(beadsDir string) string {
 
 func isSystemJSONLFilename(name string) bool {
 	switch name {
-	case "deletions.jsonl", "interactions.jsonl", "molecules.jsonl":
+	case "deletions.jsonl", "interactions.jsonl", "molecules.jsonl", "routes.jsonl":
 		return true
 	default:
 		return false
