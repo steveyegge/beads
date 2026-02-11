@@ -173,6 +173,8 @@ func TestCheckMigrationReadinessResult_NoBeadsDir(t *testing.T) {
 }
 
 func TestCheckMigrationReadinessResult_NoJSONL(t *testing.T) {
+	// Default backend is now "dolt", so CheckMigrationReadiness returns OK
+	// ("Already using Dolt backend") regardless of JSONL presence.
 	tmpDir, err := os.MkdirTemp("", "bd-migration-validation-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -184,18 +186,16 @@ func TestCheckMigrationReadinessResult_NoJSONL(t *testing.T) {
 		t.Fatalf("failed to create .beads: %v", err)
 	}
 
-	check, result := CheckMigrationReadiness(tmpDir)
+	check, _ := CheckMigrationReadiness(tmpDir)
 
-	if check.Status != StatusError {
-		t.Errorf("status = %q, want %q", check.Status, StatusError)
-	}
-
-	if result.Ready {
-		t.Error("expected result.Ready = false for missing JSONL")
+	if check.Status != StatusOK {
+		t.Errorf("status = %q, want %q (already on dolt)", check.Status, StatusOK)
 	}
 }
 
 func TestCheckMigrationReadinessResult_ValidJSONL(t *testing.T) {
+	// Default backend is now "dolt", so CheckMigrationReadiness returns OK
+	// ("Already using Dolt backend") without inspecting JSONL.
 	tmpDir, err := os.MkdirTemp("", "bd-migration-validation-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -213,19 +213,11 @@ func TestCheckMigrationReadinessResult_ValidJSONL(t *testing.T) {
 		t.Fatalf("failed to create JSONL: %v", err)
 	}
 
-	check, result := CheckMigrationReadiness(tmpDir)
+	check, _ := CheckMigrationReadiness(tmpDir)
 
-	// Should be OK or Warning (no Dolt available is not an error for pre-migration)
-	if check.Status == StatusError {
-		t.Errorf("status = %q, did not want error for valid JSONL", check.Status)
-	}
-
-	if !result.JSONLValid {
-		t.Error("expected result.JSONLValid = true")
-	}
-
-	if result.JSONLCount != 2 {
-		t.Errorf("JSONLCount = %d, want 2", result.JSONLCount)
+	// With dolt as default backend, migration readiness returns OK
+	if check.Status != StatusOK {
+		t.Errorf("status = %q, want %q (already on dolt)", check.Status, StatusOK)
 	}
 }
 
