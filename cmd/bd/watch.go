@@ -7,7 +7,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/rpc"
 )
 
@@ -171,7 +173,65 @@ func runWatchDecisionMode() error {
 }
 
 // runWatchRawMode streams all events to stdout (no condition matching).
+// Transport preference: NATS > SSE.
 func runWatchRawMode() error {
+	// Try NATS first.
+	if err := runWatchRawNATS(); err == nil {
+		return nil
+	}
+
+	// Fall back to SSE.
+	return runWatchRawSSE()
+}
+
+// runWatchRawNATS streams mutations via NATS JetStream.
+func runWatchRawNATS() error {
+	nc, js, err := connectWatchNATS()
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(rootCtx, watchTimeout)
+	defer cancel()
+
+	// Build subject from --type flag.
+	subject := eventbus.SubjectMutationPrefix + ">"
+	if watchType != "" {
+		if suffix := watchMutationSubject(watchType); suffix != "" {
+			subject = eventbus.SubjectMutationPrefix + suffix
+		}
+	}
+
+	sub, err := js.Subscribe(subject, func(msg *nats.Msg) {
+		var payload eventbus.MutationEventPayload
+		if err := json.Unmarshal(msg.Data, &payload); err != nil {
+			_ = msg.Ack()
+			return
+		}
+
+		if watchJSON {
+			fmt.Println(string(msg.Data))
+		} else {
+			fmt.Fprintf(os.Stdout, "[%s] %s %s %s\n",
+				payload.Timestamp,
+				payload.Type,
+				payload.IssueID,
+				payload.Title)
+		}
+		_ = msg.Ack()
+	}, nats.DeliverNew(), nats.AckExplicit())
+	if err != nil {
+		return fmt.Errorf("subscribe: %w", err)
+	}
+	defer func() { _ = sub.Unsubscribe() }()
+
+	<-ctx.Done()
+	return nil
+}
+
+// runWatchRawSSE streams mutations via SSE (fallback).
+func runWatchRawSSE() error {
 	baseURL, token, err := resolveSSEEndpoint()
 	if err != nil {
 		return fmt.Errorf("cannot connect to SSE endpoint: %w", err)

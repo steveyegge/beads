@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/nats-io/nats.go"
+	"github.com/steveyegge/beads/internal/daemon"
+	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -74,17 +79,189 @@ func toJSON(evt rpc.MutationEvent) *MutationEventJSON {
 }
 
 // awaitEvent watches for a mutation event matching the given conditions.
-// Uses SSE if an HTTP endpoint is available, otherwise falls back to polling.
+// Transport preference: NATS JetStream > SSE > polling.
 // Returns the matching result, or a timeout/canceled result.
 func awaitEvent(ctx context.Context, client *rpc.Client, opts AwaitOpts) (*WatchResult, error) {
-	// Try SSE-based watching first
+	// Try NATS JetStream first (durable, no dropped events).
+	nc, js, natsErr := connectWatchNATS()
+	if natsErr == nil {
+		defer nc.Close()
+		return awaitEventNATS(ctx, client, js, opts)
+	}
+
+	// Try SSE-based watching.
 	baseURL, token, sseErr := resolveSSEEndpoint()
 	if sseErr == nil {
 		return awaitEventSSE(ctx, client, baseURL, token, opts)
 	}
 
-	// SSE not available — fall back to polling
+	// Fall back to polling.
 	return awaitEventPolling(ctx, client, opts)
+}
+
+// connectWatchNATS resolves the NATS URL and connects.
+// Resolution order: BD_NATS_URL env > daemon query > BD_NATS_PORT env > localhost:4222.
+func connectWatchNATS() (*nats.Conn, nats.JetStreamContext, error) {
+	var natsURL string
+
+	if envURL := os.Getenv("BD_NATS_URL"); envURL != "" {
+		natsURL = envURL
+	} else if daemonClient != nil {
+		resp, err := daemonClient.Execute(rpc.OpBusStatus, nil)
+		if err == nil && resp.Success {
+			var result rpc.BusStatusResult
+			if err := json.Unmarshal(resp.Data, &result); err == nil && result.NATSEnabled {
+				natsURL = fmt.Sprintf("nats://127.0.0.1:%d", result.NATSPort)
+			}
+		}
+	}
+
+	// If daemon reports NATS disabled and no explicit URL, fail fast.
+	if natsURL == "" {
+		if os.Getenv("BD_NATS_URL") == "" && os.Getenv("BD_NATS_PORT") == "" {
+			return nil, nil, fmt.Errorf("NATS not enabled on daemon")
+		}
+		port := os.Getenv("BD_NATS_PORT")
+		if port == "" {
+			port = fmt.Sprintf("%d", daemon.DefaultNATSPort)
+		}
+		natsURL = fmt.Sprintf("nats://127.0.0.1:%s", port)
+	}
+
+	natsToken := os.Getenv("BD_DAEMON_TOKEN")
+
+	connectOpts := []nats.Option{
+		nats.Name("bd-watch"),
+		nats.Timeout(2 * time.Second),  // Connect timeout — fail fast to SSE/polling fallback
+		nats.ReconnectWait(2 * time.Second),
+		nats.MaxReconnects(3),
+	}
+	if natsToken != "" {
+		connectOpts = append(connectOpts, nats.Token(natsToken))
+	}
+
+	// WebSocket URL path extraction (same pattern as bus_subscribe.go).
+	if strings.HasPrefix(natsURL, "ws://") || strings.HasPrefix(natsURL, "wss://") {
+		if u, err := url.Parse(natsURL); err == nil && u.Path != "" && u.Path != "/" {
+			connectOpts = append(connectOpts, nats.ProxyPath(u.Path))
+			u.Path = ""
+			natsURL = u.String()
+		}
+	}
+
+	nc, err := nats.Connect(natsURL, connectOpts...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connect to NATS: %w", err)
+	}
+
+	js, err := nc.JetStream()
+	if err != nil {
+		nc.Close()
+		return nil, nil, fmt.Errorf("JetStream context: %w", err)
+	}
+
+	return nc, js, nil
+}
+
+// payloadToMutationEvent converts a NATS MutationEventPayload to an rpc.MutationEvent.
+func payloadToMutationEvent(p eventbus.MutationEventPayload) rpc.MutationEvent {
+	ts, _ := time.Parse(time.RFC3339Nano, p.Timestamp)
+	return rpc.MutationEvent{
+		Type:      p.Type,
+		IssueID:   p.IssueID,
+		Title:     p.Title,
+		Assignee:  p.Assignee,
+		Actor:     p.Actor,
+		Timestamp: ts,
+		OldStatus: p.OldStatus,
+		NewStatus: p.NewStatus,
+		ParentID:  p.ParentID,
+		IssueType: p.IssueType,
+		Labels:    p.Labels,
+		AwaitType: p.AwaitType,
+	}
+}
+
+// watchMutationSubject maps a mutation type string (e.g. "create") to the
+// NATS subject suffix (e.g. "MutationCreate"). Returns "" if unknown.
+func watchMutationSubject(mutType string) string {
+	switch mutType {
+	case rpc.MutationCreate:
+		return string(eventbus.EventMutationCreate)
+	case rpc.MutationUpdate:
+		return string(eventbus.EventMutationUpdate)
+	case rpc.MutationDelete:
+		return string(eventbus.EventMutationDelete)
+	case rpc.MutationComment:
+		return string(eventbus.EventMutationComment)
+	case rpc.MutationStatus:
+		return string(eventbus.EventMutationStatus)
+	default:
+		return ""
+	}
+}
+
+// awaitEventNATS watches via NATS JetStream subscription.
+func awaitEventNATS(ctx context.Context, client *rpc.Client, js nats.JetStreamContext, opts AwaitOpts) (*WatchResult, error) {
+	// Build subject filter from matcher conditions.
+	// If there's an exact type match, subscribe to that specific subject.
+	// Otherwise subscribe to all mutations.
+	subject := eventbus.SubjectMutationPrefix + ">"
+	for _, c := range opts.Matcher.Conditions {
+		if c.Field == "type" && c.Op == OpEqual {
+			if suffix := watchMutationSubject(c.Value); suffix != "" {
+				subject = eventbus.SubjectMutationPrefix + suffix
+			}
+			break
+		}
+	}
+
+	// Channel to receive matching events.
+	matchCh := make(chan rpc.MutationEvent, 1)
+
+	sub, err := js.Subscribe(subject, func(msg *nats.Msg) {
+		var payload eventbus.MutationEventPayload
+		if err := json.Unmarshal(msg.Data, &payload); err != nil {
+			_ = msg.Ack()
+			return
+		}
+
+		evt := payloadToMutationEvent(payload)
+
+		if !opts.Matcher.IsEmpty() && !opts.Matcher.Matches(evt) {
+			_ = msg.Ack()
+			return
+		}
+
+		// Non-blocking send — first match wins.
+		select {
+		case matchCh <- evt:
+		default:
+		}
+		_ = msg.Ack()
+	}, nats.DeliverNew(), nats.AckExplicit())
+	if err != nil {
+		return nil, fmt.Errorf("subscribe to %s: %w", subject, err)
+	}
+	defer func() { _ = sub.Unsubscribe() }()
+
+	select {
+	case evt := <-matchCh:
+		result := &WatchResult{
+			Matched: true,
+			Event:   toJSON(evt),
+		}
+		if opts.DecisionID != "" && client != nil {
+			enrichDecision(client, opts.DecisionID, result)
+		}
+		return result, nil
+
+	case <-ctx.Done():
+		if ctx.Err() == context.DeadlineExceeded {
+			return &WatchResult{TimedOut: true}, nil
+		}
+		return &WatchResult{Canceled: true}, nil
+	}
 }
 
 // awaitEventSSE watches via SSE stream.
