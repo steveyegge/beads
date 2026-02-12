@@ -42,3 +42,12 @@ jobs:
           args: release --clean --config .goreleaser.fork.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger agent image rebuild
+        if: success()
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GASTOWN_DISPATCH_TOKEN }}
+          repository: groblegark/gastown
+          event-type: beads-release
+          client-payload: '{"tag": "${{ github.ref_name }}"}'
