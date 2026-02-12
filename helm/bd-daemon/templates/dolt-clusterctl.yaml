@@ -65,6 +65,14 @@ spec:
         spec:
           serviceAccountName: {{ $fullname }}-clusterctl
           restartPolicy: Never
+          {{- with .Values.dolt.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.dolt.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           containers:
             - name: clusterctl
               image: "{{ .Values.dolt.cluster.clusterctl.image.repository }}:{{ .Values.dolt.cluster.clusterctl.image.tag }}"
