@@ -762,15 +762,16 @@ func (s *DoltStore) Push(ctx context.Context) error {
 // Pull pulls changes from the remote
 func (s *DoltStore) Pull(ctx context.Context) error {
 	if s.remoteUser != "" {
-		// Authenticated pull (e.g., Hosted Dolt requires --user flag)
-		_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL('--user', ?, ?)", s.remoteUser, s.remote)
+		// Authenticated pull with explicit branch (Hosted Dolt requires --user flag,
+		// and branch must be explicit since tracking may not be configured)
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
 		if err != nil {
-			return fmt.Errorf("failed to pull from %s: %w", s.remote, err)
+			return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
 		}
 	} else {
-		_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?)", s.remote)
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch)
 		if err != nil {
-			return fmt.Errorf("failed to pull from %s: %w", s.remote, err)
+			return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
 		}
 	}
 	return nil
