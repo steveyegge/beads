@@ -742,6 +742,20 @@ func doExportSync(ctx context.Context, jsonlPath string, _, dryRun bool) error {
 			// belt-and-suspenders: warn but continue with JSONL
 			fmt.Println("⚠ Dolt remote not available, falling back to JSONL-only")
 		} else {
+			// Pull from remote first (dolt-native mode: remote is source of truth)
+			fmt.Println("→ Pulling from Dolt remote...")
+			if err := rs.Pull(ctx); err != nil {
+				if strings.Contains(err.Error(), "remote") {
+					fmt.Println("⚠ No Dolt remote configured, skipping pull")
+				} else if strings.Contains(err.Error(), "up to date") || strings.Contains(err.Error(), "nothing to merge") {
+					fmt.Println("✓ Already up to date")
+				} else {
+					return fmt.Errorf("dolt pull failed: %w", err)
+				}
+			} else {
+				fmt.Println("✓ Pulled from Dolt remote")
+			}
+
 			fmt.Println("→ Committing to Dolt...")
 			// We are explicitly creating a Dolt commit inside sync; avoid redundant auto-commit in PersistentPostRun.
 			commandDidExplicitDoltCommit = true
