@@ -58,6 +58,8 @@ type DoltStore struct {
 	committerName  string
 	committerEmail string
 	remote         string // Default remote for push/pull
+	remoteUser     string // Remote user for authenticated push/pull (Hosted Dolt)
+	remotePassword string // Remote password for authenticated push/pull
 	branch         string // Current branch
 }
 
@@ -67,6 +69,8 @@ type Config struct {
 	CommitterName  string        // Git-style committer name
 	CommitterEmail string        // Git-style committer email
 	Remote         string        // Default remote name (e.g., "origin")
+	RemoteUser     string        // Remote user for authenticated push/pull (e.g., Hosted Dolt)
+	RemotePassword string        // Remote password (can also set via DOLT_REMOTE_PASSWORD env var)
 	Database       string        // Database name within Dolt (default: "beads")
 	ReadOnly       bool          // Open in read-only mode (skip schema init)
 	OpenTimeout    time.Duration // Advisory lock timeout (0 = no advisory lock)
@@ -225,6 +229,13 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	if cfg.Remote == "" {
 		cfg.Remote = "origin"
 	}
+	// Remote authentication: check env vars if not set in config
+	if cfg.RemoteUser == "" {
+		cfg.RemoteUser = os.Getenv("DOLT_REMOTE_USER")
+	}
+	if cfg.RemotePassword == "" {
+		cfg.RemotePassword = os.Getenv("DOLT_REMOTE_PASSWORD")
+	}
 
 	// Server mode defaults
 	if cfg.ServerMode {
@@ -374,6 +385,8 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		committerName:     cfg.CommitterName,
 		committerEmail:    cfg.CommitterEmail,
 		remote:            cfg.Remote,
+		remoteUser:        cfg.RemoteUser,
+		remotePassword:    cfg.RemotePassword,
 		branch:            "main",
 		readOnly:          cfg.ReadOnly,
 		serverMode:        cfg.ServerMode,
@@ -731,18 +744,34 @@ func (s *DoltStore) Commit(ctx context.Context, message string) error {
 
 // Push pushes commits to the remote
 func (s *DoltStore) Push(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch)
-	if err != nil {
-		return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
+	if s.remoteUser != "" {
+		// Authenticated push (e.g., Hosted Dolt requires --user flag)
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
+		if err != nil {
+			return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
+		}
+	} else {
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch)
+		if err != nil {
+			return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
+		}
 	}
 	return nil
 }
 
 // Pull pulls changes from the remote
 func (s *DoltStore) Pull(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?)", s.remote)
-	if err != nil {
-		return fmt.Errorf("failed to pull from %s: %w", s.remote, err)
+	if s.remoteUser != "" {
+		// Authenticated pull (e.g., Hosted Dolt requires --user flag)
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL('--user', ?, ?)", s.remoteUser, s.remote)
+		if err != nil {
+			return fmt.Errorf("failed to pull from %s: %w", s.remote, err)
+		}
+	} else {
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?)", s.remote)
+		if err != nil {
+			return fmt.Errorf("failed to pull from %s: %w", s.remote, err)
+		}
 	}
 	return nil
 }

@@ -35,6 +35,10 @@ type Options struct {
 	ServerTLS   bool          // Enable TLS for MySQL connections (required by Hosted Dolt)
 	Database    string        // Database name for Dolt server mode (default: beads)
 	OpenTimeout time.Duration // Advisory lock timeout for embedded dolt (0 = no lock)
+
+	// Remote authentication for push/pull (Hosted Dolt)
+	RemoteUser     string // User for authenticated push/pull
+	RemotePassword string // Password for authenticated push/pull
 }
 
 // New creates a storage backend based on the backend type.
