@@ -32,7 +32,9 @@ func mockAgentServer(state AgentStateResponse) *httptest.Server {
 func TestAgentMonitorAddRemove(t *testing.T) {
 	m := NewAgentMonitor(DefaultMonitorConfig())
 
-	m.AddAgent(AgentInfo{AgentID: "gt-test-polecat-nux", PodIP: "10.0.1.5"})
+	if err := m.AddAgent(AgentInfo{AgentID: "gt-test-polecat-nux", PodIP: "10.0.1.5"}); err != nil {
+		t.Fatalf("AddAgent with PodIP: %v", err)
+	}
 	if m.GetBackend("gt-test-polecat-nux") == nil {
 		t.Error("expected backend after AddAgent")
 	}
@@ -40,9 +42,9 @@ func TestAgentMonitorAddRemove(t *testing.T) {
 		t.Errorf("expected coop backend for agent with PodIP")
 	}
 
-	m.AddAgent(AgentInfo{AgentID: "gt-local-crew-dev"})
-	if m.GetBackend("gt-local-crew-dev").Name() != "tmux" {
-		t.Errorf("expected tmux backend for agent without PodIP")
+	// AddAgent without PodIP should fail
+	if err := m.AddAgent(AgentInfo{AgentID: "gt-local-crew-dev"}); err == nil {
+		t.Error("expected error when AddAgent without PodIP")
 	}
 
 	m.RemoveAgent("gt-test-polecat-nux")
@@ -280,19 +282,6 @@ func TestAgentMonitorNudgeUnknownAgent(t *testing.T) {
 	_, err := m.NudgeAgent(context.Background(), "nonexistent", "hello")
 	if err == nil {
 		t.Error("expected error for unknown agent")
-	}
-}
-
-func TestAgentMonitorNudgeTmuxBackend(t *testing.T) {
-	m := NewAgentMonitor(DefaultMonitorConfig())
-	m.agents["local-agent"] = &monitoredAgent{
-		info:    AgentInfo{AgentID: "local-agent"},
-		backend: &TmuxBackend{},
-	}
-
-	_, err := m.NudgeAgent(context.Background(), "local-agent", "hello")
-	if err == nil {
-		t.Error("expected error: nudge not supported via tmux")
 	}
 }
 

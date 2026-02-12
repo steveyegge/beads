@@ -1,15 +1,13 @@
 package coop
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
-// SessionBackend abstracts terminal session operations. Implementations
-// include TmuxBackend (local tmux) and CoopSessionBackend (Coop HTTP API).
+// SessionBackend abstracts terminal session operations. The canonical
+// implementation is CoopSessionBackend (Coop HTTP API).
 type SessionBackend interface {
 	// HasSession returns true if the agent's terminal session is alive.
 	HasSession(ctx context.Context, session string) (bool, error)
@@ -24,35 +22,6 @@ type SessionBackend interface {
 	// Name returns a human-readable backend name for status display.
 	Name() string
 }
-
-// TmuxBackend implements SessionBackend using local tmux commands.
-// This is the legacy backend used when agents run as local tmux sessions.
-type TmuxBackend struct{}
-
-func (b *TmuxBackend) HasSession(ctx context.Context, session string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", session)
-	err := cmd.Run()
-	return err == nil, nil
-}
-
-func (b *TmuxBackend) CapturePane(ctx context.Context, session string, lines int) (string, error) {
-	scrollback := fmt.Sprintf("-%d", lines)
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", session, "-p", "-S", scrollback)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("capture failed: %s", stderr.String())
-	}
-	return stdout.String(), nil
-}
-
-func (b *TmuxBackend) AgentState(_ context.Context, _ string) (*AgentStateResponse, error) {
-	return nil, nil // tmux cannot classify agent state
-}
-
-func (b *TmuxBackend) Name() string { return "tmux" }
 
 // CoopSessionBackend implements SessionBackend using the Coop HTTP API.
 // Each instance wraps a Client pointing at a specific Coop sidecar.
@@ -82,19 +51,18 @@ func (b *CoopSessionBackend) AgentState(ctx context.Context, _ string) (*AgentSt
 
 func (b *CoopSessionBackend) Name() string { return "coop" }
 
-// ResolveBackend returns the appropriate SessionBackend for a given agent
-// session. If podIP is non-empty, it returns a CoopSessionBackend pointing
-// at the Coop sidecar on that pod; otherwise it returns the TmuxBackend.
-// coopPort is the port Coop listens on (default 3000).
-func ResolveBackend(podIP string, coopPort int, opts ...Option) SessionBackend {
+// ResolveBackend returns a CoopSessionBackend pointing at the Coop sidecar
+// on the given pod. podIP must be non-empty — all agents run in K8s pods
+// with Coop sidecars. coopPort is the port Coop listens on (default 3000).
+func ResolveBackend(podIP string, coopPort int, opts ...Option) (SessionBackend, error) {
 	if podIP == "" {
-		return &TmuxBackend{}
+		return nil, fmt.Errorf("podIP is required: all agents must have a Coop sidecar")
 	}
 	if coopPort <= 0 {
 		coopPort = 3000
 	}
 	baseURL := fmt.Sprintf("http://%s:%d", podIP, coopPort)
-	return NewCoopSessionBackend(baseURL, opts...)
+	return NewCoopSessionBackend(baseURL, opts...), nil
 }
 
 // GetSessionName converts a RequestedBy agent path to a tmux session name.

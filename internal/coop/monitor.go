@@ -12,8 +12,8 @@ import (
 // session backend. This is typically populated from agent bead fields.
 type AgentInfo struct {
 	AgentID       string
-	PodIP         string // empty means local tmux
-	ScreenSession string // tmux session name (for TmuxBackend)
+	PodIP         string // Coop sidecar pod IP (required)
+	ScreenSession string // session name (used for session path derivation)
 	RoleType      string // polecat, crew, witness, etc.
 	Rig           string
 }
@@ -121,10 +121,13 @@ func NewAgentMonitor(config MonitorConfig, opts ...Option) *AgentMonitor {
 	}
 }
 
-// AddAgent registers an agent for monitoring. The appropriate SessionBackend
-// is resolved automatically based on the agent's PodIP.
-func (m *AgentMonitor) AddAgent(info AgentInfo) {
-	backend := ResolveBackend(info.PodIP, m.config.CoopPort, m.opts...)
+// AddAgent registers an agent for monitoring. A CoopSessionBackend is
+// created using the agent's PodIP. Returns an error if PodIP is empty.
+func (m *AgentMonitor) AddAgent(info AgentInfo) error {
+	backend, err := ResolveBackend(info.PodIP, m.config.CoopPort, m.opts...)
+	if err != nil {
+		return fmt.Errorf("cannot monitor agent %s: %w", info.AgentID, err)
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -132,6 +135,7 @@ func (m *AgentMonitor) AddAgent(info AgentInfo) {
 		info:    info,
 		backend: backend,
 	}
+	return nil
 }
 
 // RemoveAgent stops monitoring an agent.
@@ -224,7 +228,6 @@ func (m *AgentMonitor) pollAgent(ctx context.Context, a *monitoredAgent) []Monit
 		}}
 	}
 
-	// tmux backend returns nil state (no classification)
 	if state == nil {
 		return nil
 	}

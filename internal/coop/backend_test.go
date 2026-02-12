@@ -79,40 +79,28 @@ func TestCoopSessionBackendName(t *testing.T) {
 	}
 }
 
-func TestTmuxBackendName(t *testing.T) {
-	backend := &TmuxBackend{}
-	if backend.Name() != "tmux" {
-		t.Errorf("Name() = %q, want tmux", backend.Name())
-	}
-}
-
-func TestTmuxBackendAgentStateReturnsNil(t *testing.T) {
-	backend := &TmuxBackend{}
-	state, err := backend.AgentState(context.Background(), "test")
-	if err != nil {
-		t.Fatalf("AgentState error: %v", err)
-	}
-	if state != nil {
-		t.Errorf("expected nil state from tmux backend, got %+v", state)
-	}
-}
-
-func TestResolveBackendTmux(t *testing.T) {
-	backend := ResolveBackend("", 0)
-	if backend.Name() != "tmux" {
-		t.Errorf("expected tmux backend for empty podIP, got %q", backend.Name())
+func TestResolveBackendRequiresPodIP(t *testing.T) {
+	_, err := ResolveBackend("", 0)
+	if err == nil {
+		t.Error("expected error for empty podIP")
 	}
 }
 
 func TestResolveBackendCoop(t *testing.T) {
-	backend := ResolveBackend("10.0.1.5", 3000)
+	backend, err := ResolveBackend("10.0.1.5", 3000)
+	if err != nil {
+		t.Fatalf("ResolveBackend error: %v", err)
+	}
 	if backend.Name() != "coop" {
 		t.Errorf("expected coop backend for podIP, got %q", backend.Name())
 	}
 }
 
 func TestResolveBackendDefaultPort(t *testing.T) {
-	backend := ResolveBackend("10.0.1.5", 0)
+	backend, err := ResolveBackend("10.0.1.5", 0)
+	if err != nil {
+		t.Fatalf("ResolveBackend error: %v", err)
+	}
 	if backend.Name() != "coop" {
 		t.Errorf("expected coop backend, got %q", backend.Name())
 	}

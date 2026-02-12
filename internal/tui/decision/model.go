@@ -78,7 +78,7 @@ type Model struct {
 	peekSessionName string
 	peekViewport    viewport.Model
 
-	// Session backend for terminal peek (tmux or coop)
+	// Session backend for terminal peek (coop only, set via SetBackend)
 	backend coop.SessionBackend
 
 	// Polling
@@ -102,7 +102,6 @@ func New() *Model {
 		detailViewport: viewport.New(0, 0),
 		peekViewport:   viewport.New(0, 0),
 		filter:         "all",
-		backend:        &coop.TmuxBackend{},
 		done:           make(chan struct{}),
 	}
 }
@@ -300,9 +299,14 @@ func getSessionName(requestedBy string) (string, error) {
 }
 
 // captureTerminal captures the content of an agent's terminal using the
-// configured session backend (tmux or coop).
+// configured Coop session backend.
 func (m *Model) captureTerminal(sessionName string) tea.Cmd {
 	backend := m.backend
+	if backend == nil {
+		return func() tea.Msg {
+			return peekMsg{sessionName: sessionName, err: fmt.Errorf("no session backend configured (use SetBackend)")}
+		}
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -420,6 +424,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				sessionName, err := getSessionName(d.RequestedBy)
 				if err != nil {
 					m.status = fmt.Sprintf("Cannot peek: %v", err)
+				} else if m.backend == nil {
+					m.status = "Cannot peek: no session backend configured"
 				} else {
 					m.status = fmt.Sprintf("Peeking at %s via %s...", sessionName, m.backend.Name())
 					cmds = append(cmds, m.captureTerminal(sessionName))
