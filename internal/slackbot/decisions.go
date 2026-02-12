@@ -252,6 +252,29 @@ func (dc *DecisionClient) Cancel(ctx context.Context, issueID string) error {
 	return nil
 }
 
+// AddComment adds a comment to a decision bead.
+func (dc *DecisionClient) AddComment(ctx context.Context, issueID, author, text string) error {
+	_, err := dc.getClient().AddComment(&rpc.CommentAddArgs{
+		ID:     issueID,
+		Author: author,
+		Text:   text,
+	})
+	if err != nil && isBrokenPipe(err) {
+		if rerr := dc.reconnect(); rerr != nil {
+			return fmt.Errorf("add comment %s (reconnect failed): %w", issueID, rerr)
+		}
+		_, err = dc.getClient().AddComment(&rpc.CommentAddArgs{
+			ID:     issueID,
+			Author: author,
+			Text:   text,
+		})
+	}
+	if err != nil {
+		return fmt.Errorf("add comment %s: %w", issueID, err)
+	}
+	return nil
+}
+
 // convertDecisionResponse maps an rpc.DecisionResponse to the unified Decision type.
 func convertDecisionResponse(resp *rpc.DecisionResponse) Decision {
 	d := Decision{}

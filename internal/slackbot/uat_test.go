@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
 )
 
 // ---------- Mock Slack API ----------
@@ -197,6 +198,12 @@ type mockDecisionProvider struct {
 	mu        sync.Mutex
 	decisions map[string]*Decision
 	resolved  map[string]resolveCall
+	comments  map[string][]commentCall
+}
+
+type commentCall struct {
+	Author string
+	Text   string
 }
 
 type resolveCall struct {
@@ -210,6 +217,7 @@ func newMockDecisionProvider() *mockDecisionProvider {
 	return &mockDecisionProvider{
 		decisions: make(map[string]*Decision),
 		resolved:  make(map[string]resolveCall),
+		comments:  make(map[string][]commentCall),
 	}
 }
 
@@ -295,6 +303,22 @@ func (m *mockDecisionProvider) Cancel(_ context.Context, issueID string) error {
 	}
 	d.Resolved = true
 	return nil
+}
+
+func (m *mockDecisionProvider) AddComment(_ context.Context, issueID, author, text string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.decisions[issueID]; !ok {
+		return fmt.Errorf("decision %s not found", issueID)
+	}
+	m.comments[issueID] = append(m.comments[issueID], commentCall{Author: author, Text: text})
+	return nil
+}
+
+func (m *mockDecisionProvider) getComments(issueID string) []commentCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.comments[issueID]
 }
 
 func (m *mockDecisionProvider) getResolveCall(issueID string) (resolveCall, bool) {
@@ -2382,6 +2406,232 @@ func TestUAT_ButtonClick_DismissRemovesMessage(t *testing.T) {
 }
 
 // ==========================================================================
+// ==========================================================================
+// UAT Thread Reply: Thread reply forwarding to agents
+// ==========================================================================
+
+// TestUAT_ThreadReply_PendingDecision_ResolvesWithText verifies that a thread
+// reply on a pending decision resolves it with the reply text.
+func TestUAT_ThreadReply_PendingDecision_ResolvesWithText(t *testing.T) {
+	mockSlack := newMockSlackAPI()
+	mockDecisions := newMockDecisionProvider()
+
+	bot := &Bot{
+		client:           mockSlack,
+		decisions:        mockDecisions,
+		channelID:        "C_DEFAULT",
+		botUserID:        "UBOTTEST",
+		decisionMessages: make(map[string]messageInfo),
+	}
+
+	// Create a pending decision and track its message.
+	mockDecisions.AddDecision(Decision{
+		ID:          "bd-thread1",
+		Question:    "Deploy to prod?",
+		RequestedBy: "gastown/polecats/furiosa",
+		Options: []DecisionOption{
+			{ID: "yes", Label: "Yes"},
+			{ID: "no", Label: "No"},
+		},
+	})
+
+	// Simulate the bot posting the decision and tracking it.
+	decisionTS := "1234567890.000100"
+	bot.decisionMessages["bd-thread1"] = messageInfo{
+		channelID: "C_DEFAULT",
+		timestamp: decisionTS,
+		agent:     "gastown/polecats/furiosa",
+	}
+
+	// Simulate a human thread reply.
+	ev := &slackevents.MessageEvent{
+		User:            "U_HUMAN",
+		Channel:         "C_DEFAULT",
+		Text:            "Yes, go ahead and deploy",
+		ThreadTimeStamp: decisionTS,
+	}
+	bot.handleThreadReply(ev)
+
+	// Decision should be resolved.
+	rc, ok := mockDecisions.getResolveCall("bd-thread1")
+	if !ok {
+		t.Fatal("expected decision to be resolved via thread reply")
+	}
+	if !strings.Contains(rc.Text, "Yes, go ahead and deploy") {
+		t.Errorf("resolve text should contain reply, got: %s", rc.Text)
+	}
+	if rc.ResolvedBy != "slack:U_HUMAN" {
+		t.Errorf("resolvedBy = %q, want slack:U_HUMAN", rc.ResolvedBy)
+	}
+
+	// Bot should have posted a confirmation reply in the thread.
+	found := false
+	for _, msg := range mockSlack.PostedMessages {
+		_, vals, _ := slack.UnsafeApplyMsgOptions("", "C_DEFAULT", "", msg.Options...)
+		text := vals.Get("text")
+		if strings.Contains(text, "Reply forwarded") && strings.Contains(text, "furiosa") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected confirmation thread reply mentioning the agent")
+	}
+}
+
+// TestUAT_ThreadReply_ResolvedDecision_AddsComment verifies that a thread
+// reply on an already-resolved decision adds a comment instead of resolving.
+func TestUAT_ThreadReply_ResolvedDecision_AddsComment(t *testing.T) {
+	mockSlack := newMockSlackAPI()
+	mockDecisions := newMockDecisionProvider()
+
+	bot := &Bot{
+		client:           mockSlack,
+		decisions:        mockDecisions,
+		channelID:        "C_DEFAULT",
+		botUserID:        "UBOTTEST",
+		decisionMessages: make(map[string]messageInfo),
+	}
+
+	// Create an already-resolved decision.
+	mockDecisions.AddDecision(Decision{
+		ID:          "bd-thread2",
+		Question:    "Which DB?",
+		RequestedBy: "gastown/crew/max",
+		Resolved:    true,
+		ResolvedBy:  "slack:U_EARLIER",
+	})
+
+	decisionTS := "1234567890.000200"
+	bot.decisionMessages["bd-thread2"] = messageInfo{
+		channelID: "C_DEFAULT",
+		timestamp: decisionTS,
+		agent:     "gastown/crew/max",
+	}
+
+	// Simulate a follow-up thread reply on resolved decision.
+	ev := &slackevents.MessageEvent{
+		User:            "U_FOLLOWUP",
+		Channel:         "C_DEFAULT",
+		Text:            "Actually, use PostgreSQL instead",
+		ThreadTimeStamp: decisionTS,
+	}
+	bot.handleThreadReply(ev)
+
+	// Decision should NOT be re-resolved.
+	if _, ok := mockDecisions.getResolveCall("bd-thread2"); ok {
+		t.Error("resolved decision should not be re-resolved via thread reply")
+	}
+
+	// Comment should be added.
+	comments := mockDecisions.getComments("bd-thread2")
+	if len(comments) == 0 {
+		t.Fatal("expected comment to be added on resolved decision")
+	}
+	if !strings.Contains(comments[0].Text, "Actually, use PostgreSQL instead") {
+		t.Errorf("comment text should contain reply, got: %s", comments[0].Text)
+	}
+	if comments[0].Author != "slack:U_FOLLOWUP" {
+		t.Errorf("comment author = %q, want slack:U_FOLLOWUP", comments[0].Author)
+	}
+
+	// Bot should have posted a comment confirmation in thread.
+	found := false
+	for _, msg := range mockSlack.PostedMessages {
+		_, vals, _ := slack.UnsafeApplyMsgOptions("", "C_DEFAULT", "", msg.Options...)
+		text := vals.Get("text")
+		if strings.Contains(text, "comment") && strings.Contains(text, "bd-thread2") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected comment confirmation thread reply")
+	}
+}
+
+// TestUAT_ThreadReply_BotIgnoresOwnMessages ensures bot doesn't process its own replies.
+func TestUAT_ThreadReply_BotIgnoresOwnMessages(t *testing.T) {
+	mockSlack := newMockSlackAPI()
+	mockDecisions := newMockDecisionProvider()
+
+	bot := &Bot{
+		client:           mockSlack,
+		decisions:        mockDecisions,
+		channelID:        "C_DEFAULT",
+		botUserID:        "UBOTTEST",
+		decisionMessages: make(map[string]messageInfo),
+	}
+
+	mockDecisions.AddDecision(Decision{
+		ID:          "bd-thread3",
+		Question:    "Approve?",
+		RequestedBy: "gastown/polecats/furiosa",
+	})
+
+	decisionTS := "1234567890.000300"
+	bot.decisionMessages["bd-thread3"] = messageInfo{
+		channelID: "C_DEFAULT",
+		timestamp: decisionTS,
+	}
+
+	// Bot's own message in thread.
+	ev := &slackevents.MessageEvent{
+		User:            "UBOTTEST",
+		Channel:         "C_DEFAULT",
+		Text:            "Reply forwarded to agent",
+		ThreadTimeStamp: decisionTS,
+	}
+	bot.handleThreadReply(ev)
+
+	// Nothing should happen.
+	if _, ok := mockDecisions.getResolveCall("bd-thread3"); ok {
+		t.Error("bot should not resolve from its own messages")
+	}
+	if len(mockDecisions.getComments("bd-thread3")) > 0 {
+		t.Error("bot should not add comments from its own messages")
+	}
+}
+
+// TestUAT_ThreadReply_EmptyTextIgnored ensures empty replies are silently ignored.
+func TestUAT_ThreadReply_EmptyTextIgnored(t *testing.T) {
+	mockSlack := newMockSlackAPI()
+	mockDecisions := newMockDecisionProvider()
+
+	bot := &Bot{
+		client:           mockSlack,
+		decisions:        mockDecisions,
+		channelID:        "C_DEFAULT",
+		botUserID:        "UBOTTEST",
+		decisionMessages: make(map[string]messageInfo),
+	}
+
+	mockDecisions.AddDecision(Decision{
+		ID:          "bd-thread4",
+		Question:    "Approve?",
+		RequestedBy: "gastown/polecats/furiosa",
+	})
+
+	decisionTS := "1234567890.000400"
+	bot.decisionMessages["bd-thread4"] = messageInfo{
+		channelID: "C_DEFAULT",
+		timestamp: decisionTS,
+	}
+
+	// Empty/whitespace reply.
+	ev := &slackevents.MessageEvent{
+		User:            "U_HUMAN",
+		Channel:         "C_DEFAULT",
+		Text:            "   ",
+		ThreadTimeStamp: decisionTS,
+	}
+	bot.handleThreadReply(ev)
+
+	if _, ok := mockDecisions.getResolveCall("bd-thread4"); ok {
+		t.Error("empty reply should not resolve decision")
+	}
+}
+
 // UAT Epic: Epic/convoy-based channel routing
 // ==========================================================================
 

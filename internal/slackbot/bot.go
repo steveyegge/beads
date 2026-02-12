@@ -2185,8 +2185,65 @@ func (b *Bot) handleThreadReply(ev *slackevents.MessageEvent) {
 		}
 	}
 
-	log.Printf("slackbot: thread reply from %s on decision %s (agent: %s)",
-		userName, decisionID, decision.RequestedBy)
+	text := strings.TrimSpace(ev.Text)
+	if text == "" {
+		return
+	}
+
+	resolvedBy := fmt.Sprintf("slack:%s", ev.User)
+	attribution := fmt.Sprintf("Thread reply from %s via Slack", userName)
+
+	if !decision.Resolved {
+		// Pending decision: resolve with the reply text.
+		fullText := text + "\n\n— " + attribution
+		_, err := b.decisions.ResolveWithText(ctx, decisionID, fullText, resolvedBy)
+		if err != nil {
+			log.Printf("slackbot: thread reply resolve %s failed: %v", decisionID, err)
+			b.postThreadReply(ev.Channel, ev.ThreadTimeStamp,
+				fmt.Sprintf("Failed to forward reply to agent: %v", err))
+			return
+		}
+		log.Printf("slackbot: thread reply from %s resolved decision %s (agent: %s)",
+			userName, decisionID, decision.RequestedBy)
+		b.postThreadReply(ev.Channel, ev.ThreadTimeStamp,
+			fmt.Sprintf(":white_check_mark: Reply forwarded to *%s* — decision resolved.", decision.RequestedBy))
+
+		// Update the original decision message to show resolved state.
+		b.decisionMessagesMu.RLock()
+		msgInfo, ok := b.decisionMessages[decisionID]
+		b.decisionMessagesMu.RUnlock()
+		if ok {
+			updated, _ := b.decisions.GetDecision(ctx, decisionID)
+			if updated != nil {
+				b.updateMessageAsResolved(msgInfo.channelID, msgInfo.timestamp, updated, ev.User)
+			}
+		}
+	} else {
+		// Already resolved: add a comment so the agent sees it.
+		commentText := fmt.Sprintf("[Slack thread reply] %s\n\n— %s", text, attribution)
+		err := b.decisions.AddComment(ctx, decisionID, resolvedBy, commentText)
+		if err != nil {
+			log.Printf("slackbot: thread reply comment on %s failed: %v", decisionID, err)
+			b.postThreadReply(ev.Channel, ev.ThreadTimeStamp,
+				fmt.Sprintf("Failed to forward reply: %v", err))
+			return
+		}
+		log.Printf("slackbot: thread reply from %s added comment on resolved decision %s",
+			userName, decisionID)
+		b.postThreadReply(ev.Channel, ev.ThreadTimeStamp,
+			fmt.Sprintf(":speech_balloon: Reply added as comment on *%s* (decision already resolved).", decisionID))
+	}
+}
+
+// postThreadReply posts a message in a Slack thread.
+func (b *Bot) postThreadReply(channelID, threadTS, text string) {
+	_, _, err := b.client.PostMessage(channelID,
+		slack.MsgOptionText(text, false),
+		slack.MsgOptionTS(threadTS),
+	)
+	if err != nil {
+		log.Printf("slackbot: failed to post thread reply in %s: %v", channelID, err)
+	}
 }
 
 func (b *Bot) getDecisionByThread(channelID, threadTS string) string {

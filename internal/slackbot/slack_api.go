@@ -38,4 +38,5 @@ type DecisionProvider interface {
 	Resolve(ctx context.Context, issueID string, chosenIndex int, rationale, resolvedBy string) (*Decision, error)
 	ResolveWithText(ctx context.Context, issueID, text, resolvedBy string) (*Decision, error)
 	Cancel(ctx context.Context, issueID string) error
+	AddComment(ctx context.Context, issueID, author, text string) error
 }
