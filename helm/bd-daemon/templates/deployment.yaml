@@ -47,7 +47,6 @@ spec:
             - start
             - --foreground
             - --local
-            - --tcp-addr={{ .Values.daemon.tcp.addr | default ":9876" }}
             - --log-level={{ .Values.daemon.logLevel }}
             {{- if .Values.daemon.logJSON }}
             - --log-json
