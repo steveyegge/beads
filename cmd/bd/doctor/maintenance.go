@@ -31,17 +31,7 @@ import (
 const largeClosedIssuesThreshold = 10000
 
 func CheckStaleClosedIssues(path string) DoctorCheck {
-	backend, beadsDir := getBackendAndBeadsDir(path)
-
-	// Dolt backend: this check uses SQLite-specific queries, skip for now
-	if backend == configfile.BackendDolt {
-		return DoctorCheck{
-			Name:     "Stale Closed Issues",
-			Status:   StatusOK,
-			Message:  "N/A (dolt backend)",
-			Category: CategoryMaintenance,
-		}
-	}
+	_, beadsDir := getBackendAndBeadsDir(path)
 
 	// Load config and check if this check is enabled
 	cfg, err := configfile.Load(beadsDir)
@@ -207,17 +197,7 @@ func CheckExpiredTombstones(path string) DoctorCheck {
 // CheckStaleMolecules detects complete-but-unclosed molecules.
 // A molecule is stale if all children are closed but the root is still open.
 func CheckStaleMolecules(path string) DoctorCheck {
-	backend, beadsDir := getBackendAndBeadsDir(path)
-
-	// Dolt backend: this check uses SQLite-specific queries, skip for now
-	if backend == configfile.BackendDolt {
-		return DoctorCheck{
-			Name:     "Stale Molecules",
-			Status:   StatusOK,
-			Message:  "N/A (dolt backend)",
-			Category: CategoryMaintenance,
-		}
-	}
+	_, beadsDir := getBackendAndBeadsDir(path)
 
 	// Open database using factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 	ctx := context.Background()
