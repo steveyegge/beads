@@ -175,7 +175,12 @@ func runWatchDecisionMode() error {
 // runWatchRawMode streams all events to stdout (no condition matching).
 // Transport preference: NATS > SSE.
 func runWatchRawMode() error {
-	// Try NATS first.
+	if isRemoteDaemon() {
+		// Remote daemon: SSE is the primary path (JetStream-backed on server).
+		return runWatchRawSSE()
+	}
+
+	// Local/in-cluster: try NATS direct first.
 	if err := runWatchRawNATS(); err == nil {
 		return nil
 	}

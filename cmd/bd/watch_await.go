@@ -79,17 +79,31 @@ func toJSON(evt rpc.MutationEvent) *MutationEventJSON {
 }
 
 // awaitEvent watches for a mutation event matching the given conditions.
-// Transport preference: NATS JetStream > SSE > polling.
+// Transport preference depends on daemon location:
+//   - Remote daemon (HTTP): SSE first (JetStream-backed on server), then polling
+//   - Local daemon: NATS JetStream first, then SSE, then polling
+//
 // Returns the matching result, or a timeout/canceled result.
 func awaitEvent(ctx context.Context, client *rpc.Client, opts AwaitOpts) (*WatchResult, error) {
-	// Try NATS JetStream first (durable, no dropped events).
+	if isRemoteDaemon() {
+		// Remote daemon: SSE is the primary path (server relays from JetStream).
+		// Direct NATS requires port-forwarding and isn't practical for CLI users.
+		baseURL, token, sseErr := resolveSSEEndpoint()
+		if sseErr == nil {
+			return awaitEventSSE(ctx, client, baseURL, token, opts)
+		}
+		// Fall back to polling for remote.
+		return awaitEventPolling(ctx, client, opts)
+	}
+
+	// Local/in-cluster: try NATS direct first (lowest latency).
 	nc, js, natsErr := connectWatchNATS()
 	if natsErr == nil {
 		defer nc.Close()
 		return awaitEventNATS(ctx, client, js, opts)
 	}
 
-	// Try SSE-based watching.
+	// Try SSE.
 	baseURL, token, sseErr := resolveSSEEndpoint()
 	if sseErr == nil {
 		return awaitEventSSE(ctx, client, baseURL, token, opts)

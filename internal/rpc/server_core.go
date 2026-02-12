@@ -460,6 +460,13 @@ func (s *Server) SetBus(bus *eventbus.Bus) {
 	s.bus = bus
 }
 
+// GetBus returns the event bus, or nil if not configured.
+func (s *Server) GetBus() *eventbus.Bus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.bus
+}
+
 // NATSHealthInfo contains NATS health data for bus_status reporting.
 // This avoids importing the daemon package from rpc (no circular deps).
 type NATSHealthInfo struct {

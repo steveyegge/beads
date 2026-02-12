@@ -43,6 +43,13 @@ func (b *Bus) JetStreamEnabled() bool {
 	return b.js != nil
 }
 
+// JetStream returns the JetStream context, or nil if not configured.
+func (b *Bus) JetStream() nats.JetStreamContext {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.js
+}
+
 // Register adds a handler to the bus. Handlers are sorted by priority on
 // each Dispatch call, so registration order does not matter.
 func (b *Bus) Register(h Handler) {
