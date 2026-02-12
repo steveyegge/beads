@@ -164,15 +164,13 @@ Examples:
 		if store == nil {
 			if rpc.GetDaemonHost() != "" {
 				FatalErrorRespectJSON("swarm commands require direct database access, which is not available when BD_DAEMON_HOST is set")
-			} else if daemonClient != nil {
+			} else {
 				var err error
 				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
 				defer func() { _ = store.Close() }()
-			} else {
-				FatalErrorRespectJSON("no database connection")
 			}
 		}
 
@@ -633,15 +631,13 @@ Examples:
 		if store == nil {
 			if rpc.GetDaemonHost() != "" {
 				FatalErrorRespectJSON("swarm commands require direct database access, which is not available when BD_DAEMON_HOST is set")
-			} else if daemonClient != nil {
+			} else {
 				var err error
 				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
 				defer func() { _ = store.Close() }()
-			} else {
-				FatalErrorRespectJSON("no database connection")
 			}
 		}
 
@@ -930,15 +926,13 @@ Examples:
 		if store == nil {
 			if rpc.GetDaemonHost() != "" {
 				FatalErrorRespectJSON("swarm commands require direct database access, which is not available when BD_DAEMON_HOST is set")
-			} else if daemonClient != nil {
+			} else {
 				var err error
 				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
 				defer func() { _ = store.Close() }()
-			} else {
-				FatalErrorRespectJSON("no database connection")
 			}
 		}
 
@@ -1115,15 +1109,13 @@ Examples:
 		if store == nil {
 			if rpc.GetDaemonHost() != "" {
 				FatalErrorRespectJSON("swarm commands require direct database access, which is not available when BD_DAEMON_HOST is set")
-			} else if daemonClient != nil {
+			} else {
 				var err error
 				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
 				defer func() { _ = store.Close() }()
-			} else {
-				FatalErrorRespectJSON("no database connection")
 			}
 		}
 

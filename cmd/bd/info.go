@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -62,112 +61,32 @@ Examples:
 			"mode":          daemonStatus.Mode,
 		}
 
-		// Add daemon details if connected
-		if daemonClient != nil {
-			info["daemon_connected"] = true
-			info["socket_path"] = daemonStatus.SocketPath
+		// Add daemon details (daemon is always connected)
+		info["daemon_connected"] = true
+		info["socket_path"] = daemonStatus.SocketPath
 
-			// Get daemon health
-			health, err := daemonClient.Health()
-			if err == nil {
-				info["daemon_version"] = health.Version
-				info["daemon_status"] = health.Status
-				info["daemon_compatible"] = health.Compatible
-				info["daemon_uptime"] = health.Uptime
-			}
+		// Get daemon health
+		health, err := daemonClient.Health()
+		if err == nil {
+			info["daemon_version"] = health.Version
+			info["daemon_status"] = health.Status
+			info["daemon_compatible"] = health.Compatible
+			info["daemon_uptime"] = health.Uptime
+		}
 
-			// Get issue count from daemon
-			resp, err := daemonClient.Stats()
-			if err == nil {
-				var stats types.Statistics
-				if jsonErr := json.Unmarshal(resp.Data, &stats); jsonErr == nil {
-					info["issue_count"] = stats.TotalIssues
-				}
-			}
-		} else {
-			// Direct mode
-			info["daemon_connected"] = false
-			if daemonStatus.Detail != "" {
-				info["daemon_detail"] = daemonStatus.Detail
-			}
-
-			// Get issue count from direct store
-			if store != nil {
-				ctx := rootCtx
-
-				// Check database freshness before reading
-				// Skip check when using daemon (daemon auto-imports on staleness)
-				if daemonClient == nil {
-					if err := ensureDatabaseFresh(ctx); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-						os.Exit(1)
-					}
-				}
-
-				filter := types.IssueFilter{}
-				issues, err := store.SearchIssues(ctx, "", filter)
-				if err == nil {
-					info["issue_count"] = len(issues)
-				}
+		// Get issue count from daemon
+		resp, err := daemonClient.Stats()
+		if err == nil {
+			var stats types.Statistics
+			if jsonErr := json.Unmarshal(resp.Data, &stats); jsonErr == nil {
+				info["issue_count"] = stats.TotalIssues
 			}
 		}
 
-		// Add config to info output
-		if store != nil {
-			ctx := rootCtx
-			configMap, err := store.GetAllConfig(ctx)
-			if err == nil && len(configMap) > 0 {
-				info["config"] = configMap
-			}
-		}
-
-		// Add schema information if requested
-		if schemaFlag && store != nil {
-			ctx := rootCtx
-
-			// Get schema version
-			schemaVersion, err := store.GetMetadata(ctx, "bd_version")
-			if err != nil {
-				schemaVersion = "unknown"
-			}
-
-			// Get tables
-			tables := []string{"issues", "dependencies", "labels", "config", "metadata"}
-
-			// Get config
-			configMap := make(map[string]string)
-			prefix, _ := store.GetConfig(ctx, "issue_prefix")
-			if prefix != "" {
-				configMap["issue_prefix"] = prefix
-			}
-
-			// Get sample issue IDs
-			filter := types.IssueFilter{}
-			issues, err := store.SearchIssues(ctx, "", filter)
-			sampleIDs := []string{}
-			detectedPrefix := ""
-			if err == nil && len(issues) > 0 {
-				// Get first 3 issue IDs as samples
-				maxSamples := 3
-				if len(issues) < maxSamples {
-					maxSamples = len(issues)
-				}
-				for i := 0; i < maxSamples; i++ {
-					sampleIDs = append(sampleIDs, issues[i].ID)
-				}
-				// Detect prefix from first issue
-				if len(issues) > 0 {
-					detectedPrefix = extractPrefix(issues[0].ID)
-				}
-			}
-
-			info["schema"] = map[string]interface{}{
-				"tables":           tables,
-				"schema_version":   schemaVersion,
-				"config":           configMap,
-				"sample_issue_ids": sampleIDs,
-				"detected_prefix":  detectedPrefix,
-			}
+		// Get config from daemon
+		configResp, err := daemonClient.ConfigList()
+		if err == nil && len(configResp.Config) > 0 {
+			info["config"] = configResp.Config
 		}
 
 		// JSON output
@@ -182,28 +101,20 @@ Examples:
 		fmt.Printf("Database: %s\n", absDBPath)
 		fmt.Printf("Mode: %s\n", daemonStatus.Mode)
 
-		if daemonClient != nil {
-			fmt.Println("\nDaemon Status:")
-			fmt.Printf("  Connected: yes\n")
-			fmt.Printf("  Socket: %s\n", daemonStatus.SocketPath)
+		fmt.Println("\nDaemon Status:")
+		fmt.Printf("  Connected: yes\n")
+		fmt.Printf("  Socket: %s\n", daemonStatus.SocketPath)
 
-			health, err := daemonClient.Health()
-			if err == nil {
-				fmt.Printf("  Version: %s\n", health.Version)
-				fmt.Printf("  Health: %s\n", health.Status)
-				if health.Compatible {
-					fmt.Printf("  Compatible: ✓ yes\n")
-				} else {
-					fmt.Printf("  Compatible: ✗ no (restart recommended)\n")
-				}
-				fmt.Printf("  Uptime: %.1fs\n", health.Uptime)
+		health2, err := daemonClient.Health()
+		if err == nil {
+			fmt.Printf("  Version: %s\n", health2.Version)
+			fmt.Printf("  Health: %s\n", health2.Status)
+			if health2.Compatible {
+				fmt.Printf("  Compatible: yes\n")
+			} else {
+				fmt.Printf("  Compatible: no (restart recommended)\n")
 			}
-		} else {
-			fmt.Println("\nDaemon Status:")
-			fmt.Printf("  Connected: no\n")
-			if daemonStatus.Detail != "" {
-				fmt.Printf("  Detail: %s\n", daemonStatus.Detail)
-			}
+			fmt.Printf("  Uptime: %.1fs\n", health2.Uptime)
 		}
 
 		// Show issue count
@@ -211,21 +122,10 @@ Examples:
 			fmt.Printf("\nIssue Count: %d\n", count)
 		}
 
-		// Show schema information if requested
+		// Show schema information if requested (requires daemon)
 		if schemaFlag {
-			if schemaInfo, ok := info["schema"].(map[string]interface{}); ok {
-				fmt.Println("\nSchema Information:")
-				fmt.Printf("  Tables: %v\n", schemaInfo["tables"])
-				if version, ok := schemaInfo["schema_version"].(string); ok {
-					fmt.Printf("  Schema Version: %s\n", version)
-				}
-				if prefix, ok := schemaInfo["detected_prefix"].(string); ok && prefix != "" {
-					fmt.Printf("  Detected Prefix: %s\n", prefix)
-				}
-				if samples, ok := schemaInfo["sample_issue_ids"].([]string); ok && len(samples) > 0 {
-					fmt.Printf("  Sample Issues: %v\n", samples)
-				}
-			}
+			fmt.Println("\nSchema Information:")
+			fmt.Println("  (--schema requires direct store access, use daemon stats instead)")
 		}
 
 		// Check git hooks status

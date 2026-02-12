@@ -76,32 +76,8 @@ Examples:
 		value := args[1]
 		storageKey := kvPrefix + key
 
-		// Use daemon RPC when available (bd-hdq5)
-		if daemonClient != nil {
-			runKVSetViaDaemon(key, storageKey, value)
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-			os.Exit(1)
-		}
-
-		ctx := rootCtx
-		if err := store.SetConfig(ctx, storageKey, value); err != nil {
-			FatalErrorRespectJSON("setting key: %v", err)
-		}
-
-		if jsonOutput {
-			outputJSON(map[string]string{
-				"key":   key,
-				"value": value,
-			})
-		} else {
-			fmt.Printf("Set %s = %s\n", key, value)
-		}
+		// Use daemon RPC (bd-hdq5)
+		runKVSetViaDaemon(key, storageKey, value)
 	},
 }
 
@@ -142,43 +118,8 @@ Examples:
 		key := args[0]
 		storageKey := kvPrefix + key
 
-		// Use daemon RPC when available (bd-hdq5)
-		if daemonClient != nil {
-			runKVGetViaDaemon(key, storageKey)
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-			os.Exit(1)
-		}
-
-		ctx := rootCtx
-		value, err := store.GetConfig(ctx, storageKey)
-		if err != nil {
-			FatalErrorRespectJSON("getting key: %v", err)
-		}
-
-		if jsonOutput {
-			result := map[string]interface{}{
-				"key":   key,
-				"value": value,
-				"found": value != "",
-			}
-			outputJSON(result)
-			if value == "" {
-				os.Exit(1)
-			}
-		} else {
-			if value == "" {
-				fmt.Fprintf(os.Stderr, "%s (not set)\n", key)
-				os.Exit(1)
-			} else {
-				fmt.Printf("%s\n", value)
-			}
-		}
+		// Use daemon RPC (bd-hdq5)
+		runKVGetViaDaemon(key, storageKey)
 	},
 }
 
@@ -233,32 +174,8 @@ Examples:
 		}
 		storageKey := kvPrefix + key
 
-		// Use daemon RPC when available (bd-hdq5)
-		if daemonClient != nil {
-			runKVClearViaDaemon(key, storageKey)
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-			os.Exit(1)
-		}
-
-		ctx := rootCtx
-		if err := store.DeleteConfig(ctx, storageKey); err != nil {
-			FatalErrorRespectJSON("deleting key: %v", err)
-		}
-
-		if jsonOutput {
-			outputJSON(map[string]string{
-				"key":     key,
-				"deleted": "true",
-			})
-		} else {
-			fmt.Printf("Cleared %s\n", key)
-		}
+		// Use daemon RPC (bd-hdq5)
+		runKVClearViaDaemon(key, storageKey)
 	},
 }
 
@@ -294,26 +211,8 @@ Examples:
   bd kv list
   bd kv list --json`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Use daemon RPC when available (bd-hdq5)
-		if daemonClient != nil {
-			runKVListViaDaemon()
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-			os.Exit(1)
-		}
-
-		ctx := rootCtx
-		allConfig, err := store.GetAllConfig(ctx)
-		if err != nil {
-			FatalErrorRespectJSON("listing keys: %v", err)
-		}
-
-		printKVList(allConfig)
+		// Use daemon RPC (bd-hdq5)
+		runKVListViaDaemon()
 	},
 }
 

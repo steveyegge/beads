@@ -44,8 +44,6 @@ func runDecisionList(cmd *cobra.Command, args []string) {
 	showAll, _ := cmd.Flags().GetBool("all")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 
-	ctx := rootCtx
-
 	// Enrich with issue data
 	type enrichedDecision struct {
 		*types.DecisionPoint
@@ -55,71 +53,33 @@ func runDecisionList(cmd *cobra.Command, args []string) {
 
 	var decisions []enrichedDecision
 
-	// Prefer daemon RPC when available
-	if daemonClient != nil {
-		listArgs := &rpc.DecisionListArgs{
-			All: showAll,
-		}
-		result, err := daemonClient.DecisionList(listArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing decisions via daemon: %v\n", err)
-			os.Exit(1)
-		}
+	requireDaemon("decision list")
 
-		// Convert from RPC response to enrichedDecision
-		for _, dr := range result.Decisions {
-			ed := enrichedDecision{
-				DecisionPoint: dr.Decision,
-				Issue:         dr.Issue,
-			}
-
-			// Parse options
-			if dr.Decision != nil && dr.Decision.Options != "" {
-				var opts []types.DecisionOption
-				if err := json.Unmarshal([]byte(dr.Decision.Options), &opts); err == nil {
-					ed.Options = opts
-				}
-			}
-
-			decisions = append(decisions, ed)
-		}
-	} else if store != nil {
-		// Fallback to direct storage access
-		pendingDecisions, err := store.ListPendingDecisions(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing decisions: %v\n", err)
-			os.Exit(1)
-		}
-
-		// For now, we only have ListPendingDecisions
-		// TODO: Add ListAllDecisions when --all is needed (requires storage method)
-		if showAll {
-			// Warn user that --all is not yet fully implemented
-			fmt.Fprintf(os.Stderr, "Note: --all flag currently only shows pending decisions (full history not yet implemented)\n\n")
-		}
-
-		for _, dp := range pendingDecisions {
-			ed := enrichedDecision{DecisionPoint: dp}
-
-			// Get associated issue
-			issue, err := store.GetIssue(ctx, dp.IssueID)
-			if err == nil && issue != nil {
-				ed.Issue = issue
-			}
-
-			// Parse options
-			if dp.Options != "" {
-				var opts []types.DecisionOption
-				if err := json.Unmarshal([]byte(dp.Options), &opts); err == nil {
-					ed.Options = opts
-				}
-			}
-
-			decisions = append(decisions, ed)
-		}
-	} else {
-		fmt.Fprintf(os.Stderr, "Error: no database connection (neither daemon nor local store available)\n")
+	listArgs := &rpc.DecisionListArgs{
+		All: showAll,
+	}
+	result, err := daemonClient.DecisionList(listArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing decisions via daemon: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Convert from RPC response to enrichedDecision
+	for _, dr := range result.Decisions {
+		ed := enrichedDecision{
+			DecisionPoint: dr.Decision,
+			Issue:         dr.Issue,
+		}
+
+		// Parse options
+		if dr.Decision != nil && dr.Decision.Options != "" {
+			var opts []types.DecisionOption
+			if err := json.Unmarshal([]byte(dr.Decision.Options), &opts); err == nil {
+				ed.Options = opts
+			}
+		}
+
+		decisions = append(decisions, ed)
 	}
 
 	// JSON output

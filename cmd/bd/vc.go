@@ -34,18 +34,17 @@ NOTE: VC operations require direct database access and do not work with
 // through the daemon RPC proxy. This function closes any daemon connection
 // and initializes the store directly.
 func ensureDirectStorageForVC() {
-	if daemonClient != nil {
-		debug.Logf("vc command forcing direct mode (closes daemon connection)")
-		_ = daemonClient.Close()
-		daemonClient = nil
+	// VC commands require direct storage access. Close daemon connection.
+	debug.Logf("vc command forcing direct mode (closes daemon connection)")
+	_ = daemonClient.Close()
+	daemonClient = nil
 
-		dbDir := filepath.Dir(dbPath)
-		var err error
-		store, err = factory.NewFromConfig(rootCtx, dbDir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-			os.Exit(1)
-		}
+	dbDir := filepath.Dir(dbPath)
+	var err error
+	store, err = factory.NewFromConfig(rootCtx, dbDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+		os.Exit(1)
 	}
 }
 

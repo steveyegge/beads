@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,7 +10,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // adviceEditCmd modifies an existing advice bead
@@ -90,50 +88,26 @@ func runAdviceEdit(cmd *cobra.Command, args []string) {
 		FatalError("at least one edit flag must be provided (e.g., --title, --description, --add-label, --priority)")
 	}
 
-	// Ensure store is initialized
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	ctx := rootCtx
-
-	// Resolve partial ID
+	// Resolve partial ID via daemon RPC
 	var resolvedID string
-	if daemonClient != nil {
-		resolveArgs := &rpc.ResolveIDArgs{ID: id}
-		resp, err := daemonClient.ResolveID(resolveArgs)
-		if err != nil {
-			FatalError("resolving ID %s: %v", id, err)
-		}
-		if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-			FatalError("unmarshaling resolved ID: %v", err)
-		}
-	} else {
-		resolved, err := utils.ResolvePartialID(ctx, store, id)
-		if err != nil {
-			FatalError("resolving ID %s: %v", id, err)
-		}
-		resolvedID = resolved
+	resolveArgs := &rpc.ResolveIDArgs{ID: id}
+	resolveResp, err := daemonClient.ResolveID(resolveArgs)
+	if err != nil {
+		FatalError("resolving ID %s: %v", id, err)
+	}
+	if err := json.Unmarshal(resolveResp.Data, &resolvedID); err != nil {
+		FatalError("unmarshaling resolved ID: %v", err)
 	}
 
 	// Fetch the existing issue and verify it is advice
 	var issue *types.Issue
-	if daemonClient != nil {
-		showArgs := &rpc.ShowArgs{ID: resolvedID}
-		resp, err := daemonClient.Show(showArgs)
-		if err != nil {
-			FatalError("getting issue %s: %v", resolvedID, err)
-		}
-		if err := json.Unmarshal(resp.Data, &issue); err != nil {
-			FatalError("parsing issue: %v", err)
-		}
-	} else {
-		var err error
-		issue, err = store.GetIssue(ctx, resolvedID)
-		if err != nil {
-			FatalError("getting issue %s: %v", resolvedID, err)
-		}
+	showArgs := &rpc.ShowArgs{ID: resolvedID}
+	showResp, err := daemonClient.Show(showArgs)
+	if err != nil {
+		FatalError("getting issue %s: %v", resolvedID, err)
+	}
+	if err := json.Unmarshal(showResp.Data, &issue); err != nil {
+		FatalError("parsing issue: %v", err)
 	}
 
 	if issue == nil {
@@ -200,150 +174,69 @@ func runAdviceEdit(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// If daemon is running, use RPC
-	if daemonClient != nil {
-		updateArgs := &rpc.UpdateArgs{ID: resolvedID}
-
-		if cmd.Flags().Changed("title") {
-			title, _ := cmd.Flags().GetString("title")
-			updateArgs.Title = &title
-		}
-		if cmd.Flags().Changed("description") {
-			description, _ := cmd.Flags().GetString("description")
-			updateArgs.Description = &description
-		}
-		if cmd.Flags().Changed("priority") {
-			priority, _ := cmd.Flags().GetInt("priority")
-			updateArgs.Priority = &priority
-		}
-
-		// Hook fields
-		if cmd.Flags().Changed("hook-command") {
-			hookCommand, _ := cmd.Flags().GetString("hook-command")
-			updateArgs.AdviceHookCommand = &hookCommand
-		}
-		if cmd.Flags().Changed("hook-trigger") {
-			hookTrigger, _ := cmd.Flags().GetString("hook-trigger")
-			updateArgs.AdviceHookTrigger = &hookTrigger
-		}
-		if cmd.Flags().Changed("hook-timeout") {
-			hookTimeout, _ := cmd.Flags().GetInt("hook-timeout")
-			if hookTimeout != -1 {
-				updateArgs.AdviceHookTimeout = &hookTimeout
-			}
-		}
-		if cmd.Flags().Changed("hook-on-failure") {
-			hookOnFailure, _ := cmd.Flags().GetString("hook-on-failure")
-			updateArgs.AdviceHookOnFailure = &hookOnFailure
-		}
-
-		// Labels via UpdateArgs
-		if len(addLabels) > 0 {
-			updateArgs.AddLabels = addLabels
-		}
-		if len(removeLabels) > 0 {
-			updateArgs.RemoveLabels = removeLabels
-		}
-
-		resp, err := daemonClient.Update(updateArgs)
-		if err != nil {
-			FatalError("updating advice: %v", err)
-		}
-
-		var updatedIssue types.Issue
-		if err := json.Unmarshal(resp.Data, &updatedIssue); err != nil {
-			FatalError("parsing updated issue: %v", err)
-		}
-
-		// Run update hook
-		if hookRunner != nil {
-			hookRunner.Run(hooks.EventUpdate, &updatedIssue)
-		}
-
-		if jsonOutput {
-			fmt.Println(string(resp.Data))
-		} else {
-			printAdviceEdited(&updatedIssue, addLabels, removeLabels)
-		}
-
-		SetLastTouchedID(resolvedID)
-		return
-	}
-
-	// Direct mode
-	updates := make(map[string]interface{})
+	// Use RPC to update (daemon is always connected)
+	updateArgs := &rpc.UpdateArgs{ID: resolvedID}
 
 	if cmd.Flags().Changed("title") {
 		title, _ := cmd.Flags().GetString("title")
-		updates["title"] = title
+		updateArgs.Title = &title
 	}
 	if cmd.Flags().Changed("description") {
 		description, _ := cmd.Flags().GetString("description")
-		updates["description"] = description
+		updateArgs.Description = &description
 	}
 	if cmd.Flags().Changed("priority") {
 		priority, _ := cmd.Flags().GetInt("priority")
-		updates["priority"] = priority
+		updateArgs.Priority = &priority
 	}
 
 	// Hook fields
 	if cmd.Flags().Changed("hook-command") {
 		hookCommand, _ := cmd.Flags().GetString("hook-command")
-		updates["advice_hook_command"] = hookCommand
+		updateArgs.AdviceHookCommand = &hookCommand
 	}
 	if cmd.Flags().Changed("hook-trigger") {
 		hookTrigger, _ := cmd.Flags().GetString("hook-trigger")
-		updates["advice_hook_trigger"] = hookTrigger
+		updateArgs.AdviceHookTrigger = &hookTrigger
 	}
 	if cmd.Flags().Changed("hook-timeout") {
 		hookTimeout, _ := cmd.Flags().GetInt("hook-timeout")
 		if hookTimeout != -1 {
-			updates["advice_hook_timeout"] = hookTimeout
+			updateArgs.AdviceHookTimeout = &hookTimeout
 		}
 	}
 	if cmd.Flags().Changed("hook-on-failure") {
 		hookOnFailure, _ := cmd.Flags().GetString("hook-on-failure")
-		updates["advice_hook_on_failure"] = hookOnFailure
+		updateArgs.AdviceHookOnFailure = &hookOnFailure
 	}
 
-	// Apply field updates
-	if len(updates) > 0 {
-		if err := store.UpdateIssue(ctx, resolvedID, updates, actor); err != nil {
-			FatalError("updating advice: %v", err)
-		}
+	// Labels via UpdateArgs
+	if len(addLabels) > 0 {
+		updateArgs.AddLabels = addLabels
+	}
+	if len(removeLabels) > 0 {
+		updateArgs.RemoveLabels = removeLabels
 	}
 
-	// Apply label operations
-	if len(addLabels) > 0 || len(removeLabels) > 0 {
-		for _, label := range addLabels {
-			if err := store.AddLabel(ctx, resolvedID, label, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to add label %s: %v\n", label, err)
-			}
-		}
-		for _, label := range removeLabels {
-			if err := store.RemoveLabel(ctx, resolvedID, label, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to remove label %s: %v\n", label, err)
-			}
-		}
-	}
-
-	markDirtyAndScheduleFlush()
-
-	// Get updated issue for output and hooks
-	updatedIssue, err := store.GetIssue(ctx, resolvedID)
+	updateResp, err := daemonClient.Update(updateArgs)
 	if err != nil {
-		FatalError("fetching updated advice: %v", err)
+		FatalError("updating advice: %v", err)
+	}
+
+	var updatedIssue types.Issue
+	if err := json.Unmarshal(updateResp.Data, &updatedIssue); err != nil {
+		FatalError("parsing updated issue: %v", err)
 	}
 
 	// Run update hook
-	if updatedIssue != nil && hookRunner != nil {
-		hookRunner.Run(hooks.EventUpdate, updatedIssue)
+	if hookRunner != nil {
+		hookRunner.Run(hooks.EventUpdate, &updatedIssue)
 	}
 
 	if jsonOutput {
-		outputJSON(updatedIssue)
+		fmt.Println(string(updateResp.Data))
 	} else {
-		printAdviceEdited(updatedIssue, addLabels, removeLabels)
+		printAdviceEdited(&updatedIssue, addLabels, removeLabels)
 	}
 
 	SetLastTouchedID(resolvedID)

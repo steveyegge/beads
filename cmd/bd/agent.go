@@ -789,29 +789,16 @@ func runAgentBackfillLabels(cmd *cobra.Command, args []string) error {
 		CheckReadonly("agent backfill-labels")
 	}
 
-	ctx := rootCtx
-
-	// List all agent beads (by gt:agent label)
+	// List all agent beads (by gt:agent label) via daemon RPC
 	var agents []*types.Issue
-	if daemonClient != nil {
-		resp, err := daemonClient.List(&rpc.ListArgs{
-			Labels: []string{"gt:agent"},
-		})
-		if err != nil {
-			return fmt.Errorf("failed to list agents: %w", err)
-		}
-		if err := json.Unmarshal(resp.Data, &agents); err != nil {
-			return fmt.Errorf("parsing response: %w", err)
-		}
-	} else {
-		filter := types.IssueFilter{
-			Labels: []string{"gt:agent"},
-		}
-		var err error
-		agents, err = store.SearchIssues(ctx, "", filter)
-		if err != nil {
-			return fmt.Errorf("failed to list agents: %w", err)
-		}
+	resp, err := daemonClient.List(&rpc.ListArgs{
+		Labels: []string{"gt:agent"},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list agents: %w", err)
+	}
+	if err := json.Unmarshal(resp.Data, &agents); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
 	}
 
 	if len(agents) == 0 {
@@ -854,17 +841,12 @@ func runAgentBackfillLabels(cmd *cobra.Command, args []string) error {
 
 		// Check if labels already exist
 		var existingLabels []string
-		if daemonClient != nil {
-			// Use show to get full issue with labels
-			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agent.ID})
-			if err == nil {
-				var fullAgent types.Issue
-				if err := json.Unmarshal(resp.Data, &fullAgent); err == nil {
-					existingLabels = fullAgent.Labels
-				}
+		showResp, err := daemonClient.Show(&rpc.ShowArgs{ID: agent.ID})
+		if err == nil {
+			var fullAgent types.Issue
+			if err := json.Unmarshal(showResp.Data, &fullAgent); err == nil {
+				existingLabels = fullAgent.Labels
 			}
-		} else {
-			existingLabels, _ = store.GetLabels(ctx, agent.ID)
 		}
 
 		// Determine which labels need to be added
@@ -899,31 +881,17 @@ func runAgentBackfillLabels(cmd *cobra.Command, args []string) error {
 
 		// Update fields if needed
 		if needsFieldUpdate {
-			updates := map[string]interface{}{}
+			updateArgs := &rpc.UpdateArgs{ID: agent.ID}
 			if roleType != "" && agent.RoleType == "" {
-				updates["role_type"] = roleType
+				rt := roleType
+				updateArgs.RoleType = &rt
 			}
 			if rig != "" && agent.Rig == "" {
-				updates["rig"] = rig
+				r := rig
+				updateArgs.Rig = &r
 			}
-
-			if daemonClient != nil {
-				updateArgs := &rpc.UpdateArgs{ID: agent.ID}
-				if _, ok := updates["role_type"]; ok {
-					rt := roleType
-					updateArgs.RoleType = &rt
-				}
-				if _, ok := updates["rig"]; ok {
-					r := rig
-					updateArgs.Rig = &r
-				}
-				if _, err := daemonClient.Update(updateArgs); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to update fields for %s: %v\n", agent.ID, err)
-				}
-			} else {
-				if err := store.UpdateIssue(ctx, agent.ID, updates, actor); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to update fields for %s: %v\n", agent.ID, err)
-				}
+			if _, err := daemonClient.Update(updateArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update fields for %s: %v\n", agent.ID, err)
 			}
 		}
 
@@ -937,21 +905,12 @@ func runAgentBackfillLabels(cmd *cobra.Command, args []string) error {
 		}
 
 		if len(labelsToAdd) > 0 {
-			if daemonClient != nil {
-				// Use BatchAddLabels for atomic multi-label add
-				if _, err := daemonClient.BatchAddLabels(&rpc.BatchAddLabelsArgs{
-					IssueID: agent.ID,
-					Labels:  labelsToAdd,
-				}); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to add labels to %s: %v\n", agent.ID, err)
-				}
-			} else {
-				// Direct store access - add labels individually
-				for _, label := range labelsToAdd {
-					if err := store.AddLabel(ctx, agent.ID, label, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, agent.ID, err)
-					}
-				}
+			// Use BatchAddLabels for atomic multi-label add
+			if _, err := daemonClient.BatchAddLabels(&rpc.BatchAddLabelsArgs{
+				IssueID: agent.ID,
+				Labels:  labelsToAdd,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to add labels to %s: %v\n", agent.ID, err)
 			}
 		}
 
@@ -995,7 +954,7 @@ func resolveAgentID(ctx context.Context, agentArg string) (*agentResolution, boo
 	}
 	notFound := false
 
-	if (!res.SkipRouting && needsRouting(agentArg)) || daemonClient == nil {
+	if !res.SkipRouting && needsRouting(agentArg) {
 		var err error
 		res.RoutedResult, err = resolveAndGetIssueWithRouting(ctx, store, agentArg)
 		if err != nil {
@@ -1022,7 +981,7 @@ func resolveAgentID(ctx context.Context, agentArg string) (*agentResolution, boo
 			notFound = true
 			res.AgentID = agentArg
 		}
-	} else if daemonClient != nil {
+	} else {
 		resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: agentArg})
 		if err != nil {
 			if strings.Contains(err.Error(), "no issue found matching") {
@@ -1050,9 +1009,9 @@ func (r *agentResolution) Close() {
 }
 
 // useDaemon returns true if the daemon should be used for RPC operations
-// (i.e., daemon is available and the ID doesn't need cross-rig routing).
+// (i.e., the ID doesn't need cross-rig routing). Daemon is always connected.
 func (r *agentResolution) useDaemon(agentArg string) bool {
-	return daemonClient != nil && (r.SkipRouting || !needsRouting(agentArg))
+	return r.SkipRouting || !needsRouting(agentArg)
 }
 
 // getAgentWithLabels fetches the agent issue and its labels from the appropriate source.

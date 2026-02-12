@@ -11,10 +11,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/eventbus"
-	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -166,55 +163,31 @@ The human will pick which direction to go, or provide custom instructions.`
 func loadStopDecisionConfig(ctx context.Context) *stopDecisionConfig {
 	var mergedData map[string]interface{}
 
-	if daemonClient != nil {
-		// Use daemon to get merged config
-		listArgs := &rpc.ListArgs{
-			IssueType: "config",
-			Labels:    []string{"config:claude-hooks"},
-			Limit:     200,
-		}
-		resp, err := daemonClient.List(listArgs)
-		if err != nil {
-			return nil
-		}
-
-		var issues []*types.IssueWithCounts
-		if resp.Data != nil {
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				return nil
-			}
-		}
-
-		// Find the global config bead and extract metadata
-		for _, iwc := range issues {
-			if iwc.Issue.Metadata != nil {
-				if err := json.Unmarshal(iwc.Issue.Metadata, &mergedData); err == nil {
-					break
-				}
-			}
-		}
-	} else if store != nil {
-		// Direct store access
-		issueType := types.IssueType("config")
-		filter := types.IssueFilter{
-			IssueType: &issueType,
-			Labels:    []string{"config:claude-hooks"},
-			Limit:     200,
-		}
-		issues, err := store.SearchIssues(ctx, "", filter)
-		if err != nil || len(issues) == 0 {
-			return nil
-		}
-
-		for _, issue := range issues {
-			if issue.Metadata != nil {
-				if err := json.Unmarshal(issue.Metadata, &mergedData); err == nil {
-					break
-				}
-			}
-		}
-	} else {
+	// Use daemon to get merged config
+	listArgs := &rpc.ListArgs{
+		IssueType: "config",
+		Labels:    []string{"config:claude-hooks"},
+		Limit:     200,
+	}
+	resp, err := daemonClient.List(listArgs)
+	if err != nil {
 		return nil
+	}
+
+	var issues []*types.IssueWithCounts
+	if resp.Data != nil {
+		if err := json.Unmarshal(resp.Data, &issues); err != nil {
+			return nil
+		}
+	}
+
+	// Find the global config bead and extract metadata
+	for _, iwc := range issues {
+		if iwc.Issue.Metadata != nil {
+			if err := json.Unmarshal(iwc.Issue.Metadata, &mergedData); err == nil {
+				break
+			}
+		}
 	}
 
 	if mergedData == nil {
@@ -242,114 +215,21 @@ func loadStopDecisionConfig(ctx context.Context) *stopDecisionConfig {
 }
 
 // createStopDecision creates a decision point for the stop check.
-func createStopDecision(ctx context.Context, prompt string, options []types.DecisionOption, urgency, defaultOption string, timeout time.Duration) (string, error) {
-	now := time.Now()
-
-	optionsJSON, err := json.Marshal(options)
-	if err != nil {
-		return "", fmt.Errorf("marshaling options: %w", err)
-	}
-
-	if daemonClient != nil {
-		createArgs := &rpc.DecisionCreateArgs{
-			Prompt:        prompt,
-			Options:       options,
-			DefaultOption: defaultOption,
-			MaxIterations: 1,
-			RequestedBy:   "stop-hook",
-		}
-
-		result, err := daemonClient.DecisionCreate(createArgs)
-		if err != nil {
-			return "", fmt.Errorf("daemon decision create: %w", err)
-		}
-
-		return result.Decision.IssueID, nil
-	}
-
-	if store == nil {
-		return "", fmt.Errorf("no database connection available")
-	}
-
-	// Generate decision ID
-	prefix, err := store.GetConfig(ctx, "issue_prefix")
-	if err != nil || prefix == "" {
-		prefix = "hq"
-	}
-	var decisionID string
-	for nonce := 0; nonce < 100; nonce++ {
-		candidateID := idgen.GenerateHashID(prefix, prompt, "", actor, now, 6, nonce)
-		issue, err := store.GetIssue(ctx, candidateID)
-		if err != nil {
-			return "", fmt.Errorf("checking issue existence: %w", err)
-		}
-		if issue == nil {
-			decisionID = candidateID
-			break
-		}
-	}
-	if decisionID == "" {
-		return "", fmt.Errorf("failed to generate unique decision ID")
-	}
-
-	// Create gate issue + decision point in a transaction
-	gateIssue := &types.Issue{
-		ID:        decisionID,
-		Title:     truncateTitle(prompt, 100),
-		IssueType: types.IssueType("gate"),
-		Status:    types.StatusOpen,
-		Priority:  1,
-		AwaitType: "decision",
-		Timeout:   timeout,
-		Labels:    []string{"gt:decision", "decision:pending", "urgency:" + urgency, "stop-decision"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	decisionPoint := &types.DecisionPoint{
+func createStopDecision(_ context.Context, prompt string, options []types.DecisionOption, _, defaultOption string, _ time.Duration) (string, error) {
+	createArgs := &rpc.DecisionCreateArgs{
 		Prompt:        prompt,
-		Options:       string(optionsJSON),
+		Options:       options,
 		DefaultOption: defaultOption,
-		Iteration:     1,
 		MaxIterations: 1,
-		CreatedAt:     now,
 		RequestedBy:   "stop-hook",
-		Urgency:       urgency,
 	}
 
-	err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
-		if err := tx.CreateIssue(ctx, gateIssue, actor); err != nil {
-			return fmt.Errorf("creating gate issue: %w", err)
-		}
-
-		decisionID = gateIssue.ID
-		decisionPoint.IssueID = decisionID
-
-		for _, label := range gateIssue.Labels {
-			if err := tx.AddLabel(ctx, decisionID, label, actor); err != nil {
-				return fmt.Errorf("adding label %s: %w", label, err)
-			}
-		}
-
-		if err := tx.CreateDecisionPoint(ctx, decisionPoint); err != nil {
-			return fmt.Errorf("creating decision point: %w", err)
-		}
-
-		return nil
-	})
-
+	result, err := daemonClient.DecisionCreate(createArgs)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("daemon decision create: %w", err)
 	}
 
-	markDirtyAndScheduleFlush()
-
-	// Trigger decision create hook
-	if hookRunner != nil {
-		_ = hookRunner.RunDecisionSync(hooks.EventDecisionCreate, decisionPoint, nil, "stop-hook")
-	}
-
-	return decisionID, nil
+	return result.Decision.IssueID, nil
 }
 
 // pollStopDecision waits for a decision response using NATS event bus if available,
@@ -517,57 +397,30 @@ func awaitDecisionOnJetStream(ctx context.Context, js nats.JetStreamContext, dec
 // Important: checks decision point response BEFORE issue status, because
 // bd decision respond both records the response AND closes the gate issue.
 func checkDecisionResponse(ctx context.Context, decisionID string) (*types.DecisionPoint, string, string, bool, error) {
-	if daemonClient != nil {
-		// Check decision point response via RPC (works when store is nil,
-		// e.g., local bd connected to remote daemon).
-		getArgs := &rpc.DecisionGetArgs{IssueID: decisionID}
-		result, err := daemonClient.DecisionGet(getArgs)
-		if err == nil && result != nil && result.Decision != nil {
-			dp := result.Decision
-			if dp.RespondedAt != nil {
-				return dp, dp.SelectedOption, decisionResponseText(dp), true, nil
-			}
+	// Check decision point response via RPC
+	getArgs := &rpc.DecisionGetArgs{IssueID: decisionID}
+	result, err := daemonClient.DecisionGet(getArgs)
+	if err == nil && result != nil && result.Decision != nil {
+		dp := result.Decision
+		if dp.RespondedAt != nil {
+			return dp, dp.SelectedOption, decisionResponseText(dp), true, nil
 		}
-
-		// Then check if issue is closed/canceled (without a response = canceled).
-		showArgs := &rpc.ShowArgs{ID: decisionID}
-		resp, err := daemonClient.Show(showArgs)
-		if err != nil {
-			return nil, "", "", false, err
-		}
-
-		var issue types.Issue
-		if err := json.Unmarshal(resp.Data, &issue); err != nil {
-			return nil, "", "", false, err
-		}
-
-		if issue.Status == types.StatusClosed {
-			return nil, "", "", true, nil // closed without response = canceled
-		}
-
-		return nil, "", "", false, nil
 	}
 
-	if store == nil {
-		return nil, "", "", false, fmt.Errorf("no database connection")
-	}
-
-	// Check decision point response first.
-	dp, err := store.GetDecisionPoint(ctx, decisionID)
+	// Then check if issue is closed/canceled (without a response = canceled).
+	showArgs := &rpc.ShowArgs{ID: decisionID}
+	resp, err := daemonClient.Show(showArgs)
 	if err != nil {
 		return nil, "", "", false, err
 	}
-	if dp != nil && dp.RespondedAt != nil {
-		return dp, dp.SelectedOption, decisionResponseText(dp), true, nil
-	}
 
-	// Then check if issue was closed without a response (canceled).
-	issue, err := store.GetIssue(ctx, decisionID)
-	if err != nil {
+	var issue types.Issue
+	if err := json.Unmarshal(resp.Data, &issue); err != nil {
 		return nil, "", "", false, err
 	}
-	if issue != nil && issue.Status == types.StatusClosed {
-		return nil, "", "", true, nil
+
+	if issue.Status == types.StatusClosed {
+		return nil, "", "", true, nil // closed without response = canceled
 	}
 
 	return nil, "", "", false, nil
@@ -626,24 +479,14 @@ func pollForAgentDecision(ctx context.Context, actorTag string, timeout, pollInt
 func findPendingAgentDecision(ctx context.Context, actorTag string) (*types.DecisionPoint, error) {
 	var decisions []*types.DecisionPoint
 
-	if daemonClient != nil {
-		// Only check pending (unresponded) decisions
-		listArgs := &rpc.DecisionListArgs{All: false}
-		resp, err := daemonClient.DecisionList(listArgs)
-		if err != nil {
-			return nil, fmt.Errorf("daemon decision list: %w", err)
-		}
-		for _, dr := range resp.Decisions {
-			decisions = append(decisions, dr.Decision)
-		}
-	} else if store != nil {
-		var err error
-		decisions, err = store.ListPendingDecisions(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("list pending decisions: %w", err)
-		}
-	} else {
-		return nil, fmt.Errorf("no database connection")
+	// Only check pending (unresponded) decisions via daemon RPC
+	listArgs := &rpc.DecisionListArgs{All: false}
+	listResp, err := daemonClient.DecisionList(listArgs)
+	if err != nil {
+		return nil, fmt.Errorf("daemon decision list: %w", err)
+	}
+	for _, dr := range listResp.Decisions {
+		decisions = append(decisions, dr.Decision)
 	}
 
 	// Filter: not created by stop-hook, has a RequestedBy value,
@@ -684,44 +527,21 @@ func getStopSessionTag() string {
 func findUnclosedStopDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
 	var decisions []*types.DecisionPoint
 
-	if daemonClient != nil {
-		// List all decisions (including resolved) to find stop-hook ones
-		listArgs := &rpc.DecisionListArgs{All: true}
-		resp, err := daemonClient.DecisionList(listArgs)
-		if err != nil {
-			return nil, fmt.Errorf("daemon decision list: %w", err)
+	// List all decisions (including resolved) to find stop-hook ones via daemon RPC
+	allListArgs := &rpc.DecisionListArgs{All: true}
+	allResp, err := daemonClient.DecisionList(allListArgs)
+	if err != nil {
+		return nil, fmt.Errorf("daemon decision list: %w", err)
+	}
+	for _, dr := range allResp.Decisions {
+		dp := dr.Decision
+		if dp.RequestedBy != "stop-hook" {
+			continue
 		}
-		for _, dr := range resp.Decisions {
-			dp := dr.Decision
-			if dp.RequestedBy != "stop-hook" {
-				continue
-			}
-			// Only include if the gate issue is still open
-			if dr.Issue != nil && dr.Issue.Status != types.StatusClosed {
-				decisions = append(decisions, dp)
-			}
+		// Only include if the gate issue is still open
+		if dr.Issue != nil && dr.Issue.Status != types.StatusClosed {
+			decisions = append(decisions, dp)
 		}
-	} else if store != nil {
-		// Get all pending decisions first, then check for resolved stop-hook ones
-		pending, err := store.ListPendingDecisions(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("list pending decisions: %w", err)
-		}
-		for _, dp := range pending {
-			if dp.RequestedBy != "stop-hook" {
-				continue
-			}
-			// Check if the gate issue is still open
-			issue, err := store.GetIssue(ctx, dp.IssueID)
-			if err != nil {
-				continue
-			}
-			if issue != nil && issue.Status != types.StatusClosed {
-				decisions = append(decisions, dp)
-			}
-		}
-	} else {
-		return nil, fmt.Errorf("no database connection")
 	}
 
 	return decisions, nil

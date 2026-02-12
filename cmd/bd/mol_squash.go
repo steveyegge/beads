@@ -63,107 +63,13 @@ type SquashResult struct {
 func runMolSquash(cmd *cobra.Command, args []string) {
 	CheckReadonly("mol squash")
 
-	ctx := rootCtx
-
 	// Parse flags early
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	keepChildren, _ := cmd.Flags().GetBool("keep-children")
 	summary, _ := cmd.Flags().GetString("summary")
 
-	// Use daemon RPC when available (gt-as9kdm)
-	if daemonClient != nil {
-		runMolSquashViaDaemon(args[0], dryRun, keepChildren, summary)
-		return
-	}
-
-	// Fallback to direct store access
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-		fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-		os.Exit(1)
-	}
-
-	// Resolve molecule ID in main store
-	// Load the molecule subgraph (prefer daemon RPC per gt-as9kdm)
-	subgraph, err := loadSubgraphPreferDaemon(ctx, args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Filter to only ephemeral children (exclude root)
-	var wispChildren []*types.Issue
-	for _, issue := range subgraph.Issues {
-		if issue.ID == subgraph.Root.ID {
-			continue // Skip root
-		}
-		if issue.Ephemeral {
-			wispChildren = append(wispChildren, issue)
-		}
-	}
-
-	if len(wispChildren) == 0 {
-		if jsonOutput {
-			outputJSON(SquashResult{
-				MoleculeID:    subgraph.Root.ID,
-				SquashedCount: 0,
-			})
-		} else {
-			fmt.Printf("No ephemeral children found for molecule %s\n", subgraph.Root.ID)
-		}
-		return
-	}
-
-	if dryRun {
-		fmt.Printf("\nDry run: would squash %d ephemeral children of %s\n\n", len(wispChildren), subgraph.Root.ID)
-		fmt.Printf("Root: %s\n", subgraph.Root.Title)
-		fmt.Printf("\nWisp children to squash:\n")
-		for _, issue := range wispChildren {
-			status := string(issue.Status)
-			fmt.Printf("  - [%s] %s (%s)\n", status, issue.Title, issue.ID)
-		}
-		fmt.Printf("\nDigest preview:\n")
-		digest := generateDigest(subgraph.Root, wispChildren)
-		// Show first 500 chars of digest
-		if len(digest) > 500 {
-			fmt.Printf("%s...\n", digest[:500])
-		} else {
-			fmt.Printf("%s\n", digest)
-		}
-		if keepChildren {
-			fmt.Printf("\n--keep-children: children would NOT be deleted\n")
-		} else {
-			fmt.Printf("\nChildren would be deleted after digest creation.\n")
-		}
-		return
-	}
-
-	// Perform the squash
-	result, err := squashMolecule(ctx, store, subgraph.Root, wispChildren, keepChildren, summary, actor)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error squashing molecule: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Schedule auto-flush
-	markDirtyAndScheduleFlush()
-
-	if jsonOutput {
-		outputJSON(result)
-		return
-	}
-
-	fmt.Printf("%s Squashed molecule: %d children → 1 digest\n", ui.RenderPass("✓"), result.SquashedCount)
-	fmt.Printf("  Digest ID: %s\n", result.DigestID)
-	if result.DeletedCount > 0 {
-		fmt.Printf("  Deleted: %d wisps\n", result.DeletedCount)
-	} else if result.KeptChildren {
-		fmt.Printf("  Children preserved (--keep-children)\n")
-	}
+	requireDaemon("mol squash")
+	runMolSquashViaDaemon(args[0], dryRun, keepChildren, summary)
 }
 
 // generateDigest creates a summary from the molecule execution

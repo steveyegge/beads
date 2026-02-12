@@ -139,66 +139,38 @@ func runAgentAttach(cmd *cobra.Command, args []string) error {
 	return client.Attach(ctx, opts)
 }
 
-// resolveAgentPodInfo looks up an agent's pod information via daemon or direct store.
+// resolveAgentPodInfo looks up an agent's pod information via daemon RPC.
 func resolveAgentPodInfo(ctx context.Context, agentArg string) (*rpc.AgentPodInfo, error) {
-	if daemonClient != nil {
-		// Try pod-list first for full pod info
-		result, err := daemonClient.AgentPodList(&rpc.AgentPodListArgs{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to list agent pods: %w", err)
-		}
-		for _, a := range result.Agents {
-			if a.AgentID == agentArg {
-				return &a, nil
-			}
-		}
-
-		// Try resolving the ID (might be a prefix)
-		resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: agentArg})
-		if err != nil {
-			return nil, fmt.Errorf("agent not found: %s", agentArg)
-		}
-		var resolvedID string
-		if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-			return nil, fmt.Errorf("parsing response: %w", err)
-		}
-
-		// Check again with resolved ID
-		for _, a := range result.Agents {
-			if a.AgentID == resolvedID {
-				return &a, nil
-			}
-		}
-
-		// Agent exists but has no pod
-		return &rpc.AgentPodInfo{AgentID: resolvedID}, nil
-	}
-
-	// Direct store fallback
-	res, notFound, err := resolveAgentID(ctx, agentArg)
+	// Try pod-list first for full pod info
+	result, err := daemonClient.AgentPodList(&rpc.AgentPodListArgs{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list agent pods: %w", err)
 	}
-	defer res.Close()
-	if notFound {
+	for _, a := range result.Agents {
+		if a.AgentID == agentArg {
+			return &a, nil
+		}
+	}
+
+	// Try resolving the ID (might be a prefix)
+	resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: agentArg})
+	if err != nil {
 		return nil, fmt.Errorf("agent not found: %s", agentArg)
 	}
-
-	agent, _, err := res.getAgentWithLabels(ctx, agentArg)
-	if err != nil {
-		return nil, err
+	var resolvedID string
+	if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
 	}
 
-	return &rpc.AgentPodInfo{
-		AgentID:       res.AgentID,
-		PodName:       agent.PodName,
-		PodIP:         agent.PodIP,
-		PodNode:       agent.PodNode,
-		PodStatus:     agent.PodStatus,
-		ScreenSession: agent.ScreenSession,
-		Rig:           agent.Rig,
-		RoleType:      agent.RoleType,
-	}, nil
+	// Check again with resolved ID
+	for _, a := range result.Agents {
+		if a.AgentID == resolvedID {
+			return &a, nil
+		}
+	}
+
+	// Agent exists but has no pod
+	return &rpc.AgentPodInfo{AgentID: resolvedID}, nil
 }
 
 // findFreePort returns an available port on localhost.

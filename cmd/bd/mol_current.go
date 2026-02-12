@@ -14,7 +14,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // LargeMoleculeThreshold is the step count above which we show summary instead of full list.
@@ -61,7 +60,6 @@ Use --limit or --range to view specific steps:
   bd mol current <id> --range 100-150  # Show steps 100-150`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		ctx := rootCtx
 		forAgent, _ := cmd.Flags().GetString("for")
 		limit, _ := cmd.Flags().GetInt("limit")
 		rangeStr, _ := cmd.Flags().GetString("range")
@@ -83,97 +81,8 @@ Use --limit or --range to view specific steps:
 			}
 		}
 
-		// Use daemon RPC when available (bd-fwsa)
-		if daemonClient != nil {
-			runMolCurrentViaDaemon(args, agent, limit, rangeStart, rangeEnd)
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-			os.Exit(1)
-		}
-
-		// Determine if user explicitly requested steps
-		explicitSteps := limit > 0 || rangeStr != ""
-
-		var molecules []*MoleculeProgress
-
-		if len(args) == 1 {
-			// Explicit molecule ID given
-			moleculeID, err := utils.ResolvePartialID(ctx, store, args[0])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: molecule '%s' not found\n", args[0])
-				os.Exit(1)
-			}
-
-			// Check child count first for large molecule detection
-			stats, err := store.GetMoleculeProgress(ctx, moleculeID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-				os.Exit(1)
-			}
-
-			// If large molecule and no explicit flags, show summary
-			if stats.Total > LargeMoleculeThreshold && !explicitSteps && !jsonOutput {
-				printLargeMoleculeSummary(stats)
-				return
-			}
-
-			progress, err := getMoleculeProgress(ctx, store, moleculeID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Apply limit or range filtering
-			if rangeStr != "" {
-				progress.Steps = filterStepsByRange(progress.Steps, rangeStart, rangeEnd)
-			} else if limit > 0 && len(progress.Steps) > limit {
-				progress.Steps = progress.Steps[:limit]
-			}
-
-			molecules = append(molecules, progress)
-		} else {
-			// Infer from in_progress issues
-			molecules = findInProgressMolecules(ctx, store, agent)
-
-			// Fallback: check for hooked issues with bonded molecules
-			if len(molecules) == 0 {
-				molecules = findHookedMolecules(ctx, store, agent)
-			}
-
-			if len(molecules) == 0 {
-				if jsonOutput {
-					outputJSON([]interface{}{})
-					return
-				}
-				fmt.Printf("No molecules in progress")
-				if agent != "" {
-					fmt.Printf(" for %s", agent)
-				}
-				fmt.Println(".")
-				fmt.Println("\nTo start work on a molecule:")
-				fmt.Println("  bd mol pour <proto-id>      # Instantiate a molecule from template")
-				fmt.Println("  bd update <step-id> --status in_progress  # Claim a step")
-				return
-			}
-		}
-
-		if jsonOutput {
-			outputJSON(molecules)
-			return
-		}
-
-		// Human-readable output
-		for i, mol := range molecules {
-			if i > 0 {
-				fmt.Println()
-			}
-			printMoleculeProgress(mol)
-		}
+		requireDaemon("mol current")
+		runMolCurrentViaDaemon(args, agent, limit, rangeStart, rangeEnd)
 	},
 }
 
@@ -259,26 +168,13 @@ func findInProgressMolecules(ctx context.Context, s storage.Storage, agent strin
 	// Query for in_progress issues
 	var inProgressIssues []*types.Issue
 
-	if daemonClient != nil {
-		listArgs := &rpc.ListArgs{
-			Status:   "in_progress",
-			Assignee: agent,
-		}
-		resp, err := daemonClient.List(listArgs)
-		if err == nil {
-			_ = json.Unmarshal(resp.Data, &inProgressIssues)
-		}
-	} else {
-		// Direct query - search for in_progress issues
-		status := types.StatusInProgress
-		filter := types.IssueFilter{Status: &status}
-		if agent != "" {
-			filter.Assignee = &agent
-		}
-		allIssues, err := s.SearchIssues(ctx, "", filter)
-		if err == nil {
-			inProgressIssues = allIssues
-		}
+	listArgs := &rpc.ListArgs{
+		Status:   "in_progress",
+		Assignee: agent,
+	}
+	resp, err := daemonClient.List(listArgs)
+	if err == nil {
+		_ = json.Unmarshal(resp.Data, &inProgressIssues)
 	}
 
 	if len(inProgressIssues) == 0 {

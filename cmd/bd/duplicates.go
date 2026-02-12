@@ -29,12 +29,10 @@ Example:
 		if autoMerge && !dryRun {
 			CheckReadonly("duplicates --auto-merge")
 		}
-		// Check daemon mode - not supported yet (merge command limitation)
+		// Not supported in daemon mode (merge command limitation)
 		// TODO: Add daemon RPC support for duplicates per gt-as9kdm (see also bd-190)
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: duplicates command not yet supported in daemon mode\n")
-			os.Exit(1)
-		}
+		fmt.Fprintf(os.Stderr, "Error: duplicates command not yet supported in daemon mode\n")
+		os.Exit(1)
 		// Use global jsonOutput set by PersistentPreRun
 		ctx := rootCtx
 

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -144,153 +143,20 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 // This enables atomic sync where metadata is only updated after git commit.
 // See GH#885 for the atomicity gap this fixes.
 func exportToJSONLDeferred(ctx context.Context, jsonlPath string) (*ExportResult, error) {
-	// If daemon is running, use RPC
+	// Use daemon RPC for export
 	// Note: daemon already handles its own metadata updates
-	if daemonClient != nil {
-		exportArgs := &rpc.ExportArgs{
-			JSONLPath: jsonlPath,
-		}
-		resp, err := daemonClient.Export(exportArgs)
-		if err != nil {
-			return nil, fmt.Errorf("daemon export failed: %w", err)
-		}
-		if !resp.Success {
-			return nil, fmt.Errorf("daemon export error: %s", resp.Error)
-		}
-		// Daemon handles its own metadata updates, return nil result
-		return nil, nil
+	exportArgs := &rpc.ExportArgs{
+		JSONLPath: jsonlPath,
 	}
-
-	// Direct mode: access store directly
-	// Ensure store is initialized
-	if err := ensureStoreActive(); err != nil {
-		return nil, fmt.Errorf("failed to initialize store: %w", err)
-	}
-
-	// Get all issues including tombstones for sync propagation (bd-rp4o fix)
-	// Tombstones must be exported so they propagate to other clones and prevent resurrection
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
+	resp, err := daemonClient.Export(exportArgs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get issues: %w", err)
+		return nil, fmt.Errorf("daemon export failed: %w", err)
 	}
-
-	// Safety check: prevent exporting empty database over non-empty JSONL
-	// This blocks the catastrophic case where an empty/corrupted DB would overwrite
-	// a valid JSONL. For staleness handling, use --pull-first which provides
-	// structural protection via 3-way merge.
-	if len(issues) == 0 {
-		existingCount, countErr := countIssuesInJSONL(jsonlPath)
-		if countErr != nil {
-			// If we can't read the file, it might not exist yet, which is fine
-			if !os.IsNotExist(countErr) {
-				fmt.Fprintf(os.Stderr, "Warning: failed to read existing JSONL: %v\n", countErr)
-			}
-		} else if existingCount > 0 {
-			return nil, fmt.Errorf("refusing to export empty database over non-empty JSONL file (database: 0 issues, JSONL: %d issues)", existingCount)
-		}
+	if !resp.Success {
+		return nil, fmt.Errorf("daemon export error: %s", resp.Error)
 	}
-
-	// Filter out wisps - they should never be exported to JSONL
-	// Wisps exist only in SQLite and are shared via .beads/redirect, not JSONL.
-	// This prevents "zombie" issues that resurrect after mol squash deletes them.
-	filteredIssues := make([]*types.Issue, 0, len(issues))
-	for _, issue := range issues {
-		if issue.Ephemeral {
-			continue
-		}
-		filteredIssues = append(filteredIssues, issue)
-	}
-	issues = filteredIssues
-
-	// Sort by ID for consistent output
-	slices.SortFunc(issues, func(a, b *types.Issue) int {
-		return cmp.Compare(a.ID, b.ID)
-	})
-
-	// Populate dependencies for all issues (avoid N+1)
-	allDeps, err := store.GetAllDependencyRecords(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get dependencies: %w", err)
-	}
-	for _, issue := range issues {
-		issue.Dependencies = allDeps[issue.ID]
-	}
-
-	// Populate labels for all issues (batch to avoid N+1 queries)
-	issueIDs := make([]string, len(issues))
-	for i, issue := range issues {
-		issueIDs[i] = issue.ID
-	}
-	allLabels, err := store.GetLabelsForIssues(ctx, issueIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get labels: %w", err)
-	}
-	for _, issue := range issues {
-		issue.Labels = allLabels[issue.ID]
-	}
-
-	// Populate comments for all issues (batch to avoid N+1 queries)
-	allComments, err := store.GetCommentsForIssues(ctx, issueIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get comments: %w", err)
-	}
-	for _, issue := range issues {
-		issue.Comments = allComments[issue.ID]
-	}
-
-	// Create temp file for atomic write
-	dir := filepath.Dir(jsonlPath)
-	base := filepath.Base(jsonlPath)
-	tempFile, err := os.CreateTemp(dir, base+".tmp.*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tempPath := tempFile.Name()
-	defer func() {
-		_ = tempFile.Close()
-		_ = os.Remove(tempPath)
-	}()
-
-	// Write JSONL and collect content hashes (GH#1278)
-	encoder := json.NewEncoder(tempFile)
-	exportedIDs := make([]string, 0, len(issues))
-	issueContentHashes := make(map[string]string, len(issues))
-	for _, issue := range issues {
-		if err := encoder.Encode(issue); err != nil {
-			return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
-		}
-		exportedIDs = append(exportedIDs, issue.ID)
-		// Collect content hash for export_hashes table
-		if issue.ContentHash != "" {
-			issueContentHashes[issue.ID] = issue.ContentHash
-		}
-	}
-
-	// Close temp file before rename (error checked implicitly by Rename success)
-	_ = tempFile.Close()
-
-	// Atomic replace
-	if err := os.Rename(tempPath, jsonlPath); err != nil {
-		return nil, fmt.Errorf("failed to replace JSONL file: %w", err)
-	}
-
-	// Set appropriate file permissions (0600: rw-------)
-	if err := os.Chmod(jsonlPath, 0600); err != nil {
-		// Non-fatal warning
-		fmt.Fprintf(os.Stderr, "Warning: failed to set file permissions: %v\n", err)
-	}
-
-	// Compute hash and time for the result (but don't update metadata yet)
-	contentHash, _ := computeJSONLHash(jsonlPath)
-	exportTime := time.Now().Format(time.RFC3339Nano)
-
-	return &ExportResult{
-		JSONLPath:          jsonlPath,
-		ExportedIDs:        exportedIDs,
-		ContentHash:        contentHash,
-		ExportTime:         exportTime,
-		IssueContentHashes: issueContentHashes,
-	}, nil
+	// Daemon handles its own metadata updates, return nil result
+	return nil, nil
 }
 
 // exportToJSONLIncrementalDeferred performs incremental export for large repos.
@@ -300,41 +166,8 @@ func exportToJSONLDeferred(ctx context.Context, jsonlPath string) (*ExportResult
 //
 // Returns the export result for deferred finalization (same as exportToJSONLDeferred).
 func exportToJSONLIncrementalDeferred(ctx context.Context, jsonlPath string) (*ExportResult, error) {
-	// If daemon is running, delegate to it (daemon has its own optimization)
-	if daemonClient != nil {
-		return exportToJSONLDeferred(ctx, jsonlPath)
-	}
-
-	// Ensure store is initialized
-	if err := ensureStoreActive(); err != nil {
-		return nil, fmt.Errorf("failed to initialize store: %w", err)
-	}
-
-	// Check if incremental export would be beneficial
-	useIncremental, dirtyIDs, err := shouldUseIncrementalExport(ctx, jsonlPath)
-	if err != nil {
-		// On error checking, fall back to full export
-		return exportToJSONLDeferred(ctx, jsonlPath)
-	}
-
-	if !useIncremental {
-		return exportToJSONLDeferred(ctx, jsonlPath)
-	}
-
-	// No dirty issues means nothing to export
-	if len(dirtyIDs) == 0 {
-		// Still need to return a valid result for idempotency
-		contentHash, _ := computeJSONLHash(jsonlPath)
-		return &ExportResult{
-			JSONLPath:   jsonlPath,
-			ExportedIDs: []string{},
-			ContentHash: contentHash,
-			ExportTime:  time.Now().Format(time.RFC3339Nano),
-		}, nil
-	}
-
-	// Perform incremental export
-	return performIncrementalExport(ctx, jsonlPath, dirtyIDs)
+	// Delegate to daemon (daemon has its own optimization)
+	return exportToJSONLDeferred(ctx, jsonlPath)
 }
 
 // shouldUseIncrementalExport determines if incremental export would be beneficial.

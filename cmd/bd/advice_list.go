@@ -68,106 +68,55 @@ func runAdviceList(cmd *cobra.Command, args []string) {
 	showAll, _ := cmd.Flags().GetBool("all")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 
-	// Convert --for to subscriptions (auto-subscribe to agent's context labels)
-	// Note: buildAgentSubscriptions may need store access for native fields,
-	// but we defer that to after we have issues (for filtering)
-	if forAgent != "" && daemonClient == nil {
-		// Only build subscriptions now if we have direct store access
-		// (buildAgentSubscriptions may query the store for agent bead)
-		subscriptions = buildAgentSubscriptions(forAgent, subscriptions)
-	}
-
-	ctx := rootCtx
-
 	var issues []*types.Issue
 	var labelsMap map[string][]string
 
-	// If daemon is running, use RPC (fixes gt-w1vin0)
-	if daemonClient != nil {
-		// Build list args for advice type
-		listArgs := &rpc.ListArgs{
-			IssueType: "advice",
-		}
+	// Use RPC (daemon is always connected)
+	listArgs := &rpc.ListArgs{
+		IssueType: "advice",
+	}
 
-		// Add status filter unless --all
-		if !showAll {
-			listArgs.Status = "open"
-		}
+	// Add status filter unless --all
+	if !showAll {
+		listArgs.Status = "open"
+	}
 
-		// Add label filters if specified
-		if len(labels) > 0 {
-			listArgs.LabelsAny = labels // OR semantics for label filtering
-		}
+	// Add label filters if specified
+	if len(labels) > 0 {
+		listArgs.LabelsAny = labels // OR semantics for label filtering
+	}
 
-		resp, err := daemonClient.List(listArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+	resp, err := daemonClient.List(listArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
-		if !resp.Success {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
-			os.Exit(1)
-		}
+	if !resp.Success {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
+		os.Exit(1)
+	}
 
-		// Parse response as IssueWithCounts (standard daemon response format)
-		var issuesWithCounts []*types.IssueWithCounts
-		if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
-			FatalError("parsing response: %v", err)
-		}
+	// Parse response as IssueWithCounts (standard daemon response format)
+	var issuesWithCounts []*types.IssueWithCounts
+	if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
+		FatalError("parsing response: %v", err)
+	}
 
-		// Extract issues and build labels map from embedded labels
-		issues = make([]*types.Issue, len(issuesWithCounts))
-		labelsMap = make(map[string][]string)
-		for i, iwc := range issuesWithCounts {
-			issues[i] = iwc.Issue
-			// Labels are embedded in the issue from daemon response
-			if iwc.Issue != nil && len(iwc.Issue.Labels) > 0 {
-				labelsMap[iwc.Issue.ID] = iwc.Issue.Labels
-			}
+	// Extract issues and build labels map from embedded labels
+	issues = make([]*types.Issue, len(issuesWithCounts))
+	labelsMap = make(map[string][]string)
+	for i, iwc := range issuesWithCounts {
+		issues[i] = iwc.Issue
+		// Labels are embedded in the issue from daemon response
+		if iwc.Issue != nil && len(iwc.Issue.Labels) > 0 {
+			labelsMap[iwc.Issue.ID] = iwc.Issue.Labels
 		}
+	}
 
-		// Build subscriptions now if --for was specified
-		// We need to do this after getting issues because buildAgentSubscriptions
-		// may need store access for native fields. With daemon, we skip that lookup.
-		if forAgent != "" {
-			subscriptions = buildAgentSubscriptionsWithoutStore(forAgent, subscriptions)
-		}
-	} else {
-		// Direct mode: ensure store is initialized
-		if err := ensureStoreActive(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Build filter for advice type
-		adviceType := types.IssueType("advice")
-		filter := types.IssueFilter{
-			IssueType: &adviceType,
-		}
-
-		// Add status filter unless --all
-		if !showAll {
-			openStatus := types.StatusOpen
-			filter.Status = &openStatus
-		}
-
-		// Search for advice issues
-		var err error
-		issues, err = store.SearchIssues(ctx, "", filter)
-		if err != nil {
-			FatalError("searching advice: %v", err)
-		}
-
-		// Get labels for all issues (always needed now for filtering)
-		issueIDs := make([]string, len(issues))
-		for i, issue := range issues {
-			issueIDs[i] = issue.ID
-		}
-		labelsMap, err = store.GetLabelsForIssues(ctx, issueIDs)
-		if err != nil {
-			FatalError("getting labels: %v", err)
-		}
+	// Build subscriptions now if --for was specified
+	if forAgent != "" {
+		subscriptions = buildAgentSubscriptionsWithoutStore(forAgent, subscriptions)
 	}
 
 	// Apply filtering based on labels/subscriptions
@@ -175,16 +124,9 @@ func runAdviceList(cmd *cobra.Command, args []string) {
 
 	for _, issue := range issues {
 		// Label-based filtering (--label flag)
-		// Skip if daemon already filtered by labels
-		if len(labels) > 0 && daemonClient != nil {
-			// Daemon already applied LabelsAny filter, include all
-			filtered = append(filtered, issue)
-			continue
-		}
+		// Daemon already applied LabelsAny filter, include all
 		if len(labels) > 0 {
-			if matchesAnyLabel(labelsMap[issue.ID], labels) {
-				filtered = append(filtered, issue)
-			}
+			filtered = append(filtered, issue)
 			continue
 		}
 

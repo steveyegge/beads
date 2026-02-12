@@ -429,62 +429,11 @@ func hookPreCommit() int {
 //
 // bd-ma0s.6: Routes GetCurrentCommit and Diff through daemon RPC when available.
 func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
-	ctx := context.Background()
-
 	// Load previous export state for this worktree
 	prevState, _ := loadExportState(beadsDir, worktreeRoot)
 
-	// bd-ma0s.6: Use daemon RPC for versioned operations when available
-	if daemonClient != nil {
-		return hookPreCommitDoltViaDaemon(beadsDir, worktreeRoot, prevState)
-	}
-
-	// Create storage from config
-	store, err := factory.NewFromConfig(ctx, beadsDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not open database: %v\n", err)
-		return 0
-	}
-	defer func() { _ = store.Close() }()
-
-	// Check if store supports versioned operations (required for Dolt)
-	vs, ok := storage.AsVersioned(store)
-	if !ok {
-		// Fall back to full export if not versioned
-		doExportAndSaveState(ctx, beadsDir, worktreeRoot, "")
-		return 0
-	}
-
-	// Get current Dolt commit hash
-	currentDoltCommit, err := vs.GetCurrentCommit(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not get Dolt commit: %v\n", err)
-		// Fall back to full export without commit tracking
-		doExportAndSaveState(ctx, beadsDir, worktreeRoot, "")
-		return 0
-	}
-
-	// Check if we've already exported for this Dolt commit (idempotency)
-	if prevState != nil && prevState.LastExportCommit == currentDoltCommit {
-		// Already exported for this commit, skip
-		return 0
-	}
-
-	// Check if there are actual changes to export (optimization)
-	if prevState != nil && prevState.LastExportCommit != "" {
-		hasChanges, err := hasDoltChanges(ctx, vs, prevState.LastExportCommit, currentDoltCommit)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not check for changes: %v\n", err)
-			// Continue with export to be safe
-		} else if !hasChanges {
-			// No changes, but update state to track new commit
-			updateExportStateCommit(beadsDir, worktreeRoot, currentDoltCommit)
-			return 0
-		}
-	}
-
-	doExportAndSaveState(ctx, beadsDir, worktreeRoot, currentDoltCommit)
-	return 0
+	// Use daemon RPC for versioned operations (bd-ma0s.6)
+	return hookPreCommitDoltViaDaemon(beadsDir, worktreeRoot, prevState)
 }
 
 // hookPreCommitDoltViaDaemon implements pre-commit for Dolt backend using daemon RPC.
@@ -671,105 +620,8 @@ func hookPostMerge(args []string) int {
 //
 // bd-ma0s.6: Routes Branch/Checkout/Merge/Commit/DeleteBranch through daemon RPC when available.
 func hookPostMergeDolt(beadsDir string) int {
-	// bd-ma0s.6: Use daemon RPC for VCS operations when available
-	if daemonClient != nil {
-		return hookPostMergeDoltViaDaemon(beadsDir)
-	}
-
-	ctx := context.Background()
-
-	// Create storage from config
-	store, err := factory.NewFromConfig(ctx, beadsDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not open database: %v\n", err)
-		return 0
-	}
-	defer func() { _ = store.Close() }()
-
-	// Check if Dolt store supports version control operations
-	doltStore, ok := store.(interface {
-		Branch(ctx context.Context, name string) error
-		Checkout(ctx context.Context, branch string) error
-		Merge(ctx context.Context, branch string) ([]storage.Conflict, error)
-		Commit(ctx context.Context, message string) error
-		CurrentBranch(ctx context.Context) (string, error)
-		DeleteBranch(ctx context.Context, branch string) error
-	})
-	if !ok {
-		// Not a Dolt store with version control, use regular import
-		cmd := exec.Command("bd", "sync", "--import-only", "--no-git-history", "--no-daemon")
-		_ = cmd.Run()
-		return 0
-	}
-
-	// Get current branch
-	currentBranch, err := doltStore.CurrentBranch(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not get current branch: %v\n", err)
-		return 0
-	}
-
-	// Create import branch
-	importBranch := "jsonl-import-" + time.Now().Format("20060102-150405")
-	if err := doltStore.Branch(ctx, importBranch); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not create import branch: %v\n", err)
-		return 0
-	}
-
-	// Checkout import branch
-	if err := doltStore.Checkout(ctx, importBranch); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not checkout import branch: %v\n", err)
-		return 0
-	}
-
-	// Import JSONL to the import branch
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	if err := importFromJSONLToStore(ctx, store, jsonlPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not import JSONL: %v\n", err)
-		// Checkout back to original branch
-		_ = doltStore.Checkout(ctx, currentBranch)
-		return 0
-	}
-
-	// Commit changes on import branch
-	// This hook flow commits to Dolt explicitly; avoid redundant auto-commit in PersistentPostRun.
-	commandDidExplicitDoltCommit = true
-	if err := doltStore.Commit(ctx, "Import from JSONL"); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not commit import: %v\n", err)
-	}
-
-	// Checkout back to original branch
-	if err := doltStore.Checkout(ctx, currentBranch); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not checkout original branch: %v\n", err)
-		return 0
-	}
-
-	// Merge import branch (Dolt provides cell-level merge)
-	conflicts, err := doltStore.Merge(ctx, importBranch)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not merge import branch: %v\n", err)
-		return 0
-	}
-	if len(conflicts) > 0 {
-		fmt.Fprintf(os.Stderr, "Warning: %d conflict(s) detected during Dolt merge; resolve with 'bd federation conflicts' or Dolt conflict tooling\n", len(conflicts))
-		// Best-effort: still return 0 to avoid blocking git merge, consistent with other hook warnings.
-	}
-
-	// Commit the merge
-	// Still part of explicit hook commit flow.
-	commandDidExplicitDoltCommit = true
-	if err := doltStore.Commit(ctx, "Merge JSONL import"); err != nil {
-		// May fail if nothing to commit (fast-forward merge)
-		// This is expected, not an error
-	}
-
-	// Clean up import branch
-	if err := doltStore.DeleteBranch(ctx, importBranch); err != nil {
-		// Non-fatal - branch cleanup is best-effort
-		fmt.Fprintf(os.Stderr, "Warning: could not delete import branch %s: %v\n", importBranch, err)
-	}
-
-	return 0
+	// Use daemon RPC for VCS operations (bd-ma0s.6)
+	return hookPostMergeDoltViaDaemon(beadsDir)
 }
 
 // hookPostMergeDoltViaDaemon implements post-merge for Dolt backend using daemon RPC.

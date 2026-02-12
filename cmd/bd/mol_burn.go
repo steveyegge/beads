@@ -55,37 +55,12 @@ type BatchBurnResult struct {
 func runMolBurn(cmd *cobra.Command, args []string) {
 	CheckReadonly("mol burn")
 
-	ctx := rootCtx
-
 	// Parse flags early
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	force, _ := cmd.Flags().GetBool("force")
 
-	// Use daemon RPC when available (gt-as9kdm)
-	if daemonClient != nil {
-		runMolBurnViaDaemon(args, dryRun, force)
-		return
-	}
-
-	// Fallback to direct store access
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-		fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-		os.Exit(1)
-	}
-
-	// Single ID: use original logic for backward compatibility
-	if len(args) == 1 {
-		burnSingleMolecule(ctx, args[0], dryRun, force)
-		return
-	}
-
-	// Multiple IDs: batch mode for efficiency
-	burnMultipleMolecules(ctx, args, dryRun, force)
+	requireDaemon("mol burn")
+	runMolBurnViaDaemon(args, dryRun, force)
 }
 
 // burnSingleMolecule handles the single molecule case (original behavior)

@@ -295,61 +295,8 @@ func runCook(cmd *cobra.Command, args []string) {
 		CheckReadonly("cook --persist")
 	}
 
-	// Route through daemon when available — daemon resolves formulas from DB
-	// first, which is required in K8s where there are no filesystem formula files.
-	if daemonClient != nil {
-		cookViaDaemon(flags)
-		return
-	}
-
-	// Validate store access for persist mode (local only)
-	if flags.persist && store == nil {
-		fmt.Fprintf(os.Stderr, "Error: cook --persist requires direct database access\n")
-		os.Exit(1)
-	}
-
-	// Load and resolve the formula (filesystem search paths only)
-	resolved, err := loadAndResolveFormula(flags.formulaPath, flags.searchPaths)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Apply prefix to proto ID if specified
-	protoID := resolved.Formula
-	if flags.prefix != "" {
-		protoID = flags.prefix + resolved.Formula
-	}
-
-	// Extract variables and bond points
-	vars := formula.ExtractVariables(resolved)
-	var bondPoints []string
-	if resolved.Compose != nil {
-		for _, bp := range resolved.Compose.BondPoints {
-			bondPoints = append(bondPoints, bp.ID)
-		}
-	}
-
-	// Handle dry-run mode
-	if flags.dryRun {
-		outputCookDryRun(resolved, protoID, flags.runtimeMode, flags.inputVars, vars, bondPoints)
-		return
-	}
-
-	// Handle ephemeral mode (default)
-	if !flags.persist {
-		if err := outputCookEphemeral(resolved, flags.runtimeMode, flags.inputVars, vars); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Handle persist mode
-	if err := persistCookFormula(rootCtx, resolved, protoID, flags.force, vars, bondPoints); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	requireDaemon("cook")
+	cookViaDaemon(flags)
 }
 
 // cookViaDaemon sends a cook request to the RPC daemon (bd-wj80).

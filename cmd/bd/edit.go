@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var editCmd = &cobra.Command{
@@ -31,17 +30,8 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("edit")
+		requireDaemon("edit")
 		id := args[0]
-		ctx := rootCtx
-
-		// Resolve partial ID if in direct mode
-		if daemonClient == nil {
-			fullID, err := utils.ResolvePartialID(ctx, store, id)
-			if err != nil {
-				FatalErrorRespectJSON("resolving %s: %v", id, err)
-			}
-			id = fullID
-		}
 
 		// Determine which field to edit
 		fieldToEdit := "description"
@@ -77,27 +67,16 @@ Examples:
 		var issue *types.Issue
 		var err error
 
-		if daemonClient != nil {
-			// Daemon mode
-			showArgs := &rpc.ShowArgs{ID: id}
-			resp, err := daemonClient.Show(showArgs)
-			if err != nil {
-				FatalErrorRespectJSON("fetching issue %s: %v", id, err)
-			}
+		// Fetch issue via daemon RPC
+		showArgs := &rpc.ShowArgs{ID: id}
+		resp, err := daemonClient.Show(showArgs)
+		if err != nil {
+			FatalErrorRespectJSON("fetching issue %s: %v", id, err)
+		}
 
-			issue = &types.Issue{}
-			if err := json.Unmarshal(resp.Data, issue); err != nil {
-				FatalErrorRespectJSON("parsing issue data: %v", err)
-			}
-		} else {
-			// Direct mode
-			issue, err = store.GetIssue(ctx, id)
-			if err != nil {
-				FatalErrorRespectJSON("fetching issue %s: %v", id, err)
-			}
-			if issue == nil {
-				FatalErrorRespectJSON("issue %s not found", id)
-			}
+		issue = &types.Issue{}
+		if err := json.Unmarshal(resp.Data, issue); err != nil {
+			FatalErrorRespectJSON("parsing issue data: %v", err)
 		}
 
 		// Get the current field value
@@ -162,38 +141,25 @@ Examples:
 			FatalErrorRespectJSON("title cannot be empty")
 		}
 
-		// Update the issue
-		updates := map[string]interface{}{
-			fieldToEdit: newValue,
+		// Update via daemon RPC
+		updateArgs := &rpc.UpdateArgs{ID: id}
+
+		switch fieldToEdit {
+		case "title":
+			updateArgs.Title = &newValue
+		case "description":
+			updateArgs.Description = &newValue
+		case "design":
+			updateArgs.Design = &newValue
+		case "notes":
+			updateArgs.Notes = &newValue
+		case "acceptance_criteria":
+			updateArgs.AcceptanceCriteria = &newValue
 		}
 
-		if daemonClient != nil {
-			// Daemon mode
-			updateArgs := &rpc.UpdateArgs{ID: id}
-
-			switch fieldToEdit {
-			case "title":
-				updateArgs.Title = &newValue
-			case "description":
-				updateArgs.Description = &newValue
-			case "design":
-				updateArgs.Design = &newValue
-			case "notes":
-				updateArgs.Notes = &newValue
-			case "acceptance_criteria":
-				updateArgs.AcceptanceCriteria = &newValue
-			}
-
-			_, err := daemonClient.Update(updateArgs)
-			if err != nil {
-				FatalErrorRespectJSON("updating issue: %v", err)
-			}
-		} else {
-			// Direct mode
-			if err := store.UpdateIssue(ctx, id, updates, actor); err != nil {
-				FatalErrorRespectJSON("updating issue: %v", err)
-			}
-			markDirtyAndScheduleFlush()
+		_, err = daemonClient.Update(updateArgs)
+		if err != nil {
+			FatalErrorRespectJSON("updating issue: %v", err)
 		}
 
 		fieldName := strings.ReplaceAll(fieldToEdit, "_", " ")

@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var molProgressCmd = &cobra.Command{
@@ -34,82 +33,8 @@ Example:
   bd mol progress bd-hanoi-xyz`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		ctx := rootCtx
-
-		// Use daemon RPC when available (bd-ck35)
-		if daemonClient != nil {
-			runMolProgressViaDaemon(args)
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: mol progress requires direct database access or daemon connection\n")
-			os.Exit(1)
-		}
-
-		var moleculeID string
-		if len(args) == 1 {
-			// Explicit molecule ID given
-			resolved, err := utils.ResolvePartialID(ctx, store, args[0])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: molecule '%s' not found\n", args[0])
-				os.Exit(1)
-			}
-			moleculeID = resolved
-		} else {
-			// Infer from in_progress work - use lightweight discovery
-			moleculeIDs := findInProgressMoleculeIDs(ctx, store, actor)
-			if len(moleculeIDs) == 0 {
-				if jsonOutput {
-					outputJSON([]interface{}{})
-					return
-				}
-				fmt.Println("No molecules in progress.")
-				fmt.Println("\nUse: bd mol progress <molecule-id>")
-				return
-			}
-			// Show progress for first molecule
-			moleculeID = moleculeIDs[0]
-		}
-
-		stats, err := store.GetMoleculeProgress(ctx, moleculeID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		if jsonOutput {
-			// Add computed fields for JSON output
-			output := map[string]interface{}{
-				"molecule_id":     stats.MoleculeID,
-				"molecule_title":  stats.MoleculeTitle,
-				"total":           stats.Total,
-				"completed":       stats.Completed,
-				"in_progress":     stats.InProgress,
-				"current_step_id": stats.CurrentStepID,
-			}
-			if stats.Total > 0 {
-				output["percent"] = float64(stats.Completed) * 100 / float64(stats.Total)
-			}
-			if stats.FirstClosed != nil && stats.LastClosed != nil && stats.Completed > 1 {
-				duration := stats.LastClosed.Sub(*stats.FirstClosed)
-				if duration > 0 {
-					rate := float64(stats.Completed-1) / duration.Hours()
-					output["rate_per_hour"] = rate
-					remaining := stats.Total - stats.Completed
-					if rate > 0 {
-						etaHours := float64(remaining) / rate
-						output["eta_hours"] = etaHours
-					}
-				}
-			}
-			outputJSON(output)
-			return
-		}
-
-		// Human-readable output
-		printMoleculeProgressStats(stats)
+		requireDaemon("mol progress")
+		runMolProgressViaDaemon(args)
 	},
 }
 

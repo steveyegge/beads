@@ -3,14 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // adviceRemoveCmd removes an advice bead
@@ -50,50 +48,26 @@ func runAdviceRemove(cmd *cobra.Command, args []string) {
 	reason, _ := cmd.Flags().GetString("reason")
 	permanentDelete, _ := cmd.Flags().GetBool("delete")
 
-	// Ensure store is initialized
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	ctx := rootCtx
-
-	// Resolve partial ID
+	// Resolve partial ID via daemon RPC
 	var resolvedID string
-	if daemonClient != nil {
-		resolveArgs := &rpc.ResolveIDArgs{ID: id}
-		resp, err := daemonClient.ResolveID(resolveArgs)
-		if err != nil {
-			FatalError("resolving ID %s: %v", id, err)
-		}
-		if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-			FatalError("unmarshaling resolved ID: %v", err)
-		}
-	} else {
-		resolved, err := utils.ResolvePartialID(ctx, store, id)
-		if err != nil {
-			FatalError("resolving ID %s: %v", id, err)
-		}
-		resolvedID = resolved
+	resolveArgs := &rpc.ResolveIDArgs{ID: id}
+	resolveResp, err := daemonClient.ResolveID(resolveArgs)
+	if err != nil {
+		FatalError("resolving ID %s: %v", id, err)
+	}
+	if err := json.Unmarshal(resolveResp.Data, &resolvedID); err != nil {
+		FatalError("unmarshaling resolved ID: %v", err)
 	}
 
 	// Verify it's an advice issue
 	var issue *types.Issue
-	if daemonClient != nil {
-		showArgs := &rpc.ShowArgs{ID: resolvedID}
-		resp, err := daemonClient.Show(showArgs)
-		if err != nil {
-			FatalError("getting issue %s: %v", resolvedID, err)
-		}
-		if err := json.Unmarshal(resp.Data, &issue); err != nil {
-			FatalError("parsing issue: %v", err)
-		}
-	} else {
-		var err error
-		issue, err = store.GetIssue(ctx, resolvedID)
-		if err != nil {
-			FatalError("getting issue %s: %v", resolvedID, err)
-		}
+	showArgs := &rpc.ShowArgs{ID: resolvedID}
+	showResp, err := daemonClient.Show(showArgs)
+	if err != nil {
+		FatalError("getting issue %s: %v", resolvedID, err)
+	}
+	if err := json.Unmarshal(showResp.Data, &issue); err != nil {
+		FatalError("parsing issue: %v", err)
 	}
 
 	if issue == nil {
@@ -106,16 +80,10 @@ func runAdviceRemove(cmd *cobra.Command, args []string) {
 
 	// Handle permanent delete
 	if permanentDelete {
-		if daemonClient != nil {
-			deleteArgs := &rpc.DeleteArgs{IDs: []string{resolvedID}}
-			_, err := daemonClient.Delete(deleteArgs)
-			if err != nil {
-				FatalError("deleting advice: %v", err)
-			}
-		} else {
-			if err := store.DeleteIssue(ctx, resolvedID); err != nil {
-				FatalError("deleting advice: %v", err)
-			}
+		deleteArgs := &rpc.DeleteArgs{IDs: []string{resolvedID}}
+		_, err := daemonClient.Delete(deleteArgs)
+		if err != nil {
+			FatalError("deleting advice: %v", err)
 		}
 
 		markDirtyAndScheduleFlush()
@@ -131,47 +99,26 @@ func runAdviceRemove(cmd *cobra.Command, args []string) {
 	}
 
 	// Close the advice issue
-	if daemonClient != nil {
-		closeArgs := &rpc.CloseArgs{
-			ID:     resolvedID,
-			Reason: reason,
-		}
-		resp, err := daemonClient.CloseIssue(closeArgs)
-		if err != nil {
-			FatalError("closing advice: %v", err)
-		}
+	closeArgs := &rpc.CloseArgs{
+		ID:     resolvedID,
+		Reason: reason,
+	}
+	closeResp, err := daemonClient.CloseIssue(closeArgs)
+	if err != nil {
+		FatalError("closing advice: %v", err)
+	}
 
-		var closedIssue types.Issue
-		if err := json.Unmarshal(resp.Data, &closedIssue); err == nil {
-			if hookRunner != nil {
-				hookRunner.Run(hooks.EventClose, &closedIssue)
-			}
+	var closedIssue types.Issue
+	if err := json.Unmarshal(closeResp.Data, &closedIssue); err == nil {
+		if hookRunner != nil {
+			hookRunner.Run(hooks.EventClose, &closedIssue)
 		}
+	}
 
-		if jsonOutput {
-			fmt.Println(string(resp.Data))
-		} else {
-			fmt.Printf("%s Removed advice: %s (%s)\n", ui.RenderPass("✓"), ui.RenderID(resolvedID), reason)
-		}
+	if jsonOutput {
+		fmt.Println(string(closeResp.Data))
 	} else {
-		// Direct mode
-		if err := store.CloseIssue(ctx, resolvedID, reason, actor, ""); err != nil {
-			FatalError("closing advice: %v", err)
-		}
-
-		markDirtyAndScheduleFlush()
-
-		// Get updated issue for hook
-		closedIssue, _ := store.GetIssue(ctx, resolvedID)
-		if closedIssue != nil && hookRunner != nil {
-			hookRunner.Run(hooks.EventClose, closedIssue)
-		}
-
-		if jsonOutput {
-			outputJSON(closedIssue)
-		} else {
-			fmt.Printf("%s Removed advice: %s (%s)\n", ui.RenderPass("✓"), ui.RenderID(resolvedID), reason)
-		}
+		fmt.Printf("%s Removed advice: %s (%s)\n", ui.RenderPass("✓"), ui.RenderID(resolvedID), reason)
 	}
 
 	SetLastTouchedID(resolvedID)

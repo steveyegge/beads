@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
@@ -20,29 +19,10 @@ func initRouteQuerier() {
 // Uses the global daemonClient if available (handles BD_DAEMON_HOST case),
 // otherwise falls back to creating a local connection.
 func queryRoutesFromDaemon(beadsDir string) ([]routing.Route, error) {
-	var client *rpc.Client
-	var closeClient bool
-
-	// First, try to use the existing global daemon client.
-	// This handles the BD_DAEMON_HOST case where we're connected to a remote daemon.
-	if daemonClient != nil {
-		client = daemonClient
-		closeClient = false // Don't close the global client
-	} else {
-		// No global client - try to connect to local daemon
-		socketPath := filepath.Join(beadsDir, "bd.sock")
-		var err error
-		client, err = rpc.TryConnectAuto(socketPath)
-		if err != nil || client == nil {
-			// Daemon not available - not an error, just fall back to file
-			return nil, nil
-		}
-		closeClient = true
+	if daemonClient == nil {
+		return nil, nil
 	}
-
-	if closeClient {
-		defer client.Close()
-	}
+	client := daemonClient
 
 	// Query for route beads (type=route, status=open)
 	resp, err := client.List(&rpc.ListArgs{

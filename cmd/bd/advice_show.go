@@ -3,14 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // adviceShowCmd shows details of an advice bead
@@ -36,81 +34,42 @@ func init() {
 
 func runAdviceShow(cmd *cobra.Command, args []string) {
 	id := args[0]
-	ctx := rootCtx
 
 	var issue *types.Issue
 	var issueLabels []string
 	var resolvedID string
 
-	// Prefer daemon RPC when available
-	if daemonClient != nil {
-		// Resolve partial ID via daemon
-		resolveArgs := &rpc.ResolveIDArgs{ID: id}
-		resp, err := daemonClient.ResolveID(resolveArgs)
-		if err != nil {
-			FatalError("resolving ID %s: %v", id, err)
-		}
-		if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-			FatalError("unmarshaling resolved ID: %v", err)
-		}
-
-		// Fetch the issue via daemon
-		showArgs := &rpc.ShowArgs{ID: resolvedID}
-		showResp, err := daemonClient.Show(showArgs)
-		if err != nil {
-			FatalError("getting issue %s: %v", resolvedID, err)
-		}
-		if err := json.Unmarshal(showResp.Data, &issue); err != nil {
-			FatalError("parsing issue: %v", err)
-		}
-
-		if issue == nil {
-			FatalError("issue %s not found", resolvedID)
-		}
-
-		// Verify it's an advice issue
-		if issue.IssueType != types.IssueType("advice") {
-			FatalError("issue %s is not an advice bead (type: %s)", resolvedID, issue.IssueType)
-		}
-
-		// Labels are embedded in daemon response
-		issueLabels = issue.Labels
-
-	} else {
-		// Direct mode: ensure store is initialized
-		if err := ensureStoreActive(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Resolve partial ID
-		var err error
-		resolvedID, err = utils.ResolvePartialID(ctx, store, id)
-		if err != nil {
-			FatalError("resolving ID %s: %v", id, err)
-		}
-
-		// Get the issue
-		issue, err = store.GetIssue(ctx, resolvedID)
-		if err != nil {
-			FatalError("getting issue %s: %v", resolvedID, err)
-		}
-		if issue == nil {
-			FatalError("issue %s not found", resolvedID)
-		}
-
-		// Verify it's an advice issue
-		if issue.IssueType != types.IssueType("advice") {
-			FatalError("issue %s is not an advice bead (type: %s)", resolvedID, issue.IssueType)
-		}
-
-		// Get labels via store
-		labelsMap, err := store.GetLabelsForIssues(ctx, []string{resolvedID})
-		if err != nil {
-			FatalError("getting labels: %v", err)
-		}
-		issueLabels = labelsMap[resolvedID]
+	// Resolve partial ID via daemon RPC
+	resolveArgs := &rpc.ResolveIDArgs{ID: id}
+	resp, err := daemonClient.ResolveID(resolveArgs)
+	if err != nil {
+		FatalError("resolving ID %s: %v", id, err)
 	}
+	if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
+		FatalError("unmarshaling resolved ID: %v", err)
+	}
+
+	// Fetch the issue via daemon
+	showArgs := &rpc.ShowArgs{ID: resolvedID}
+	showResp, err := daemonClient.Show(showArgs)
+	if err != nil {
+		FatalError("getting issue %s: %v", resolvedID, err)
+	}
+	if err := json.Unmarshal(showResp.Data, &issue); err != nil {
+		FatalError("parsing issue: %v", err)
+	}
+
+	if issue == nil {
+		FatalError("issue %s not found", resolvedID)
+	}
+
+	// Verify it's an advice issue
+	if issue.IssueType != types.IssueType("advice") {
+		FatalError("issue %s is not an advice bead (type: %s)", resolvedID, issue.IssueType)
+	}
+
+	// Labels are embedded in daemon response
+	issueLabels = issue.Labels
 
 	SetLastTouchedID(resolvedID)
 

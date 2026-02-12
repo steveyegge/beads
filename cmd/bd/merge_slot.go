@@ -120,8 +120,8 @@ func getMergeSlotID() string {
 	// First try config.yaml (issue-prefix)
 	if configPrefix := config.GetString("issue-prefix"); configPrefix != "" {
 		prefix = strings.TrimSuffix(configPrefix, "-")
-	} else if daemonClient != nil {
-		// Daemon mode - use RPC to get config
+	} else {
+		// Use RPC to get config
 		if configResp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "issue_prefix"}); err == nil && configResp.Value != "" {
 			prefix = strings.TrimSuffix(configResp.Value, "-")
 		}

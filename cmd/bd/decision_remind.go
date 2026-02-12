@@ -6,12 +6,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // decisionRemindCmd sends a reminder for a pending decision point
@@ -45,95 +41,8 @@ func runDecisionRemind(cmd *cobra.Command, args []string) {
 	decisionID := args[0]
 	force, _ := cmd.Flags().GetBool("force")
 
-	// Use daemon if available
-	if daemonClient != nil {
-		remindViaDaemon(decisionID, force)
-		return
-	}
-
-	// Direct mode
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	ctx := rootCtx
-
-	// Resolve partial ID
-	resolvedID, err := utils.ResolvePartialID(ctx, store, decisionID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Get the issue to verify it's a decision gate
-	issue, err := store.GetIssue(ctx, resolvedID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting issue: %v\n", err)
-		os.Exit(1)
-	}
-	if issue == nil {
-		fmt.Fprintf(os.Stderr, "Error: issue %s not found\n", resolvedID)
-		os.Exit(1)
-	}
-
-	// Verify it's a decision gate
-	if issue.IssueType != types.IssueType("gate") || issue.AwaitType != "decision" {
-		fmt.Fprintf(os.Stderr, "Error: %s is not a decision point (type=%s, await_type=%s)\n",
-			resolvedID, issue.IssueType, issue.AwaitType)
-		os.Exit(1)
-	}
-
-	// Get the decision point data
-	dp, err := store.GetDecisionPoint(ctx, resolvedID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting decision point: %v\n", err)
-		os.Exit(1)
-	}
-	if dp == nil {
-		fmt.Fprintf(os.Stderr, "Error: no decision point data for %s\n", resolvedID)
-		os.Exit(1)
-	}
-
-	// Check if already responded
-	if dp.RespondedAt != nil {
-		fmt.Fprintf(os.Stderr, "Error: decision %s already responded at %s\n",
-			resolvedID, dp.RespondedAt.Format("2006-01-02 15:04"))
-		os.Exit(1)
-	}
-
-	// Get max_reminders from config
-	maxReminders := config.GetDecisionMaxReminders()
-
-	// Check reminder limit
-	if dp.ReminderCount >= maxReminders && !force {
-		fmt.Fprintf(os.Stderr, "Error: decision %s has reached max reminders (%d/%d)\n",
-			resolvedID, dp.ReminderCount, maxReminders)
-		fmt.Fprintf(os.Stderr, "  Use --force to send reminder anyway\n")
-		os.Exit(1)
-	}
-
-	// Increment reminder count
-	dp.ReminderCount++
-
-	if err := store.UpdateDecisionPoint(ctx, dp); err != nil {
-		fmt.Fprintf(os.Stderr, "Error updating decision point: %v\n", err)
-		os.Exit(1)
-	}
-
-	markDirtyAndScheduleFlush()
-
-	// Emit escalation event when reminder count reaches max.
-	if dp.ReminderCount >= maxReminders {
-		emitDecisionEvent(eventbus.EventDecisionEscalated, eventbus.DecisionEventPayload{
-			DecisionID:  resolvedID,
-			Question:    dp.Prompt,
-			Urgency:     dp.Urgency,
-			RequestedBy: dp.RequestedBy,
-		})
-	}
-
-	printRemindResult(resolvedID, dp.ReminderCount, maxReminders, dp.Prompt)
+	requireDaemon("decision remind")
+	remindViaDaemon(decisionID, force)
 }
 
 // remindViaDaemon sends a decision reminder via the RPC daemon

@@ -3,13 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -191,114 +188,39 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 		FatalError("--hook-command requires --hook-trigger")
 	}
 
-	ctx := rootCtx
-
-	// If daemon is running, use RPC
-	if daemonClient != nil {
-		createArgs := &rpc.CreateArgs{
-			Title:               title,
-			Description:         description,
-			IssueType:           "advice",
-			Priority:            priority,
-			Labels:              labels,
-			// NOTE: Targeting now via labels (rig:X, role:Y, agent:Z, global)
-			AdviceHookCommand:   hookCommand,
-			AdviceHookTrigger:   hookTrigger,
-			AdviceHookTimeout:   hookTimeout,
-			AdviceHookOnFailure: hookOnFailure,
-		}
-
-		resp, err := daemonClient.Create(createArgs)
-		if err != nil {
-			FatalError("%v", err)
-		}
-
-		var issue types.Issue
-		if err := json.Unmarshal(resp.Data, &issue); err != nil {
-			FatalError("parsing response: %v", err)
-		}
-
-		// Run create hook
-		if hookRunner != nil {
-			hookRunner.Run(hooks.EventCreate, &issue)
-		}
-
-		if jsonOutput {
-			fmt.Println(string(resp.Data))
-		} else {
-			printAdviceCreatedWithLabels(&issue, labels)
-		}
-
-		SetLastTouchedID(issue.ID)
-		return
-	}
-
-	// Direct mode - ensure store is initialized before direct access
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Direct mode - generate ID and create issue
-	prefix, _ := store.GetConfig(ctx, "issue_prefix")
-	if prefix == "" {
-		prefix = "bd"
-	}
-
-	// Generate semantic ID for advice
-	now := time.Now()
-	issueID := idgen.GenerateHashID(prefix, title, "advice", actor, now, 6, 0)
-
-	// Check for collision
-	for i := 1; i <= 100; i++ {
-		existing, err := store.GetIssue(ctx, issueID)
-		if err != nil {
-			FatalError("checking for ID collision: %v", err)
-		}
-		if existing == nil {
-			break
-		}
-		issueID = idgen.GenerateHashID(prefix, title, "advice", actor, now, 6, i)
-	}
-
-	issue := &types.Issue{
-		ID:                  issueID,
+	// Use RPC (daemon is always connected)
+	createArgs := &rpc.CreateArgs{
 		Title:               title,
 		Description:         description,
-		Status:              types.StatusOpen,
+		IssueType:           "advice",
 		Priority:            priority,
-		IssueType:           types.IssueType("advice"),
+		Labels:              labels,
 		// NOTE: Targeting now via labels (rig:X, role:Y, agent:Z, global)
 		AdviceHookCommand:   hookCommand,
 		AdviceHookTrigger:   hookTrigger,
 		AdviceHookTimeout:   hookTimeout,
 		AdviceHookOnFailure: hookOnFailure,
-		CreatedBy:           getActorWithGit(),
-		Owner:               getOwner(),
 	}
 
-	if err := store.CreateIssue(ctx, issue, actor); err != nil {
-		FatalError("creating advice: %v", err)
+	resp, err := daemonClient.Create(createArgs)
+	if err != nil {
+		FatalError("%v", err)
 	}
 
-	// Add labels
-	for _, label := range labels {
-		if err := store.AddLabel(ctx, issueID, label, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add label %s: %v\n", label, err)
-		}
+	var issue types.Issue
+	if err := json.Unmarshal(resp.Data, &issue); err != nil {
+		FatalError("parsing response: %v", err)
 	}
-
-	markDirtyAndScheduleFlush()
 
 	// Run create hook
 	if hookRunner != nil {
-		hookRunner.Run(hooks.EventCreate, issue)
+		hookRunner.Run(hooks.EventCreate, &issue)
 	}
 
 	if jsonOutput {
-		outputJSON(issue)
+		fmt.Println(string(resp.Data))
 	} else {
-		printAdviceCreatedWithLabels(issue, labels)
+		printAdviceCreatedWithLabels(&issue, labels)
 	}
 
 	SetLastTouchedID(issue.ID)

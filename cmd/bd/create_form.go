@@ -342,51 +342,34 @@ func runCreateForm(cmd *cobra.Command) {
 	// Parse the form input
 	fv := parseCreateFormInput(raw)
 
-	// If daemon is running, use RPC
-	if daemonClient != nil {
-		createArgs := &rpc.CreateArgs{
-			Title:              fv.Title,
-			Description:        fv.Description,
-			IssueType:          fv.IssueType,
-			Priority:           fv.Priority,
-			Design:             fv.Design,
-			AcceptanceCriteria: fv.AcceptanceCriteria,
-			Assignee:           fv.Assignee,
-			ExternalRef:        fv.ExternalRef,
-			Labels:             fv.Labels,
-			Dependencies:       fv.Dependencies,
-		}
+	requireDaemon("create-form")
 
-		resp, err := daemonClient.Create(createArgs)
-		if err != nil {
-			FatalError("%v", err)
-		}
-
-		if jsonOutput {
-			fmt.Println(string(resp.Data))
-		} else {
-			var issue types.Issue
-			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				FatalError("parsing response: %v", err)
-			}
-			printCreatedIssue(&issue)
-		}
-		return
+	createArgs := &rpc.CreateArgs{
+		Title:              fv.Title,
+		Description:        fv.Description,
+		IssueType:          fv.IssueType,
+		Priority:           fv.Priority,
+		Design:             fv.Design,
+		AcceptanceCriteria: fv.AcceptanceCriteria,
+		Assignee:           fv.Assignee,
+		ExternalRef:        fv.ExternalRef,
+		Labels:             fv.Labels,
+		Dependencies:       fv.Dependencies,
 	}
 
-	// Direct mode - use the extracted creation function
-	issue, err := CreateIssueFromFormValues(rootCtx, store, fv, actor)
+	resp, err := daemonClient.Create(createArgs)
 	if err != nil {
 		FatalError("%v", err)
 	}
 
-	// Schedule auto-flush
-	markDirtyAndScheduleFlush()
-
 	if jsonOutput {
-		outputJSON(issue)
+		fmt.Println(string(resp.Data))
 	} else {
-		printCreatedIssue(issue)
+		var issue types.Issue
+		if err := json.Unmarshal(resp.Data, &issue); err != nil {
+			FatalError("parsing response: %v", err)
+		}
+		printCreatedIssue(&issue)
 	}
 }
 

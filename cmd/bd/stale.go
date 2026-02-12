@@ -30,53 +30,22 @@ This helps identify:
 			fmt.Fprintf(os.Stderr, "Error: invalid status '%s'. Valid values: open, in_progress, blocked, deferred\n", status)
 			os.Exit(1)
 		}
-		filter := types.StaleFilter{
+
+		requireDaemon("stale")
+
+		staleArgs := &rpc.StaleArgs{
 			Days:   days,
 			Status: status,
 			Limit:  limit,
 		}
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			staleArgs := &rpc.StaleArgs{
-				Days:   days,
-				Status: status,
-				Limit:  limit,
-			}
-			resp, err := daemonClient.Stale(staleArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			var issues []*types.Issue
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
-			}
-			if jsonOutput {
-				if issues == nil {
-					issues = []*types.Issue{}
-				}
-				outputJSON(issues)
-				return
-			}
-			displayStaleIssues(issues, days)
-			return
-		}
-		// Direct mode
-		ctx := rootCtx
-
-		// Check database freshness before reading (bd-2q6d, bd-c4rq)
-		// Skip check when using daemon (daemon auto-imports on staleness)
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		issues, err := store.GetStaleIssues(ctx, filter)
+		resp, err := daemonClient.Stale(staleArgs)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		var issues []*types.Issue
+		if err := json.Unmarshal(resp.Data, &issues); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 			os.Exit(1)
 		}
 		if jsonOutput {

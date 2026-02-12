@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/compact"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -109,16 +107,7 @@ Examples:
 
 		// Handle compact stats first
 		if compactStats {
-			if daemonClient != nil {
-				runCompactStatsRPC()
-			} else {
-				sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-				if !ok {
-					fmt.Fprintf(os.Stderr, "Error: compact requires SQLite storage\n")
-					os.Exit(1)
-				}
-				runCompactStats(ctx, sqliteStore)
-			}
+			runCompactStatsRPC()
 			return
 		}
 
@@ -222,43 +211,9 @@ Examples:
 				os.Exit(1)
 			}
 
-			// Use RPC if daemon available, otherwise direct mode
-			if daemonClient != nil {
-				runCompactRPC(ctx)
-				return
-			}
-
-			// Fallback to direct mode
-			apiKey := os.Getenv("ANTHROPIC_API_KEY")
-			if apiKey == "" && !compactDryRun {
-				fmt.Fprintf(os.Stderr, "Error: --auto mode requires ANTHROPIC_API_KEY environment variable\n")
-				os.Exit(1)
-			}
-
-			sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-			if !ok {
-				fmt.Fprintf(os.Stderr, "Error: compact requires SQLite storage\n")
-				os.Exit(1)
-			}
-
-			config := &compact.Config{
-				APIKey:      apiKey,
-				Concurrency: compactWorkers,
-				DryRun:      compactDryRun,
-			}
-
-			compactor, err := compact.New(sqliteStore, apiKey, config)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to create compactor: %v\n", err)
-				os.Exit(1)
-			}
-
-			if compactID != "" {
-				runCompactSingle(ctx, compactor, sqliteStore, compactID)
-				return
-			}
-
-			runCompactAll(ctx, compactor, sqliteStore)
+			// Use RPC (daemon is always connected)
+			runCompactRPC(ctx)
+			return
 		}
 	},
 }
@@ -794,107 +749,8 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 // runCompactDolt runs Dolt garbage collection on the .beads/dolt directory.
 // bd-ma0s.6: Routes through AdminGC RPC when daemon is available.
 func runCompactDolt() {
-	// bd-ma0s.6: Route through daemon RPC when available
-	if daemonClient != nil {
-		runCompactDoltRPC()
-		return
-	}
-
-	start := time.Now()
-
-	// Find beads directory
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		fmt.Fprintf(os.Stderr, "Error: could not find .beads directory\n")
-		os.Exit(1)
-	}
-
-	// Check for dolt directory
-	doltPath := filepath.Join(beadsDir, "dolt")
-	if _, err := os.Stat(doltPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: Dolt directory not found at %s\n", doltPath)
-		fmt.Fprintf(os.Stderr, "Hint: --dolt flag is only for repositories using the Dolt backend\n")
-		os.Exit(1)
-	}
-
-	// Check if dolt command is available
-	if _, err := exec.LookPath("dolt"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: dolt command not found in PATH\n")
-		fmt.Fprintf(os.Stderr, "Hint: install Dolt from https://github.com/dolthub/dolt\n")
-		os.Exit(1)
-	}
-
-	// Get size before GC
-	sizeBefore, err := getDirSize(doltPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not calculate directory size: %v\n", err)
-		sizeBefore = 0
-	}
-
-	if compactDryRun {
-		if jsonOutput {
-			output := map[string]interface{}{
-				"dry_run":      true,
-				"dolt_path":    doltPath,
-				"size_before":  sizeBefore,
-				"size_display": formatBytes(sizeBefore),
-			}
-			outputJSON(output)
-			return
-		}
-		fmt.Printf("DRY RUN - Dolt garbage collection\n\n")
-		fmt.Printf("Dolt directory: %s\n", doltPath)
-		fmt.Printf("Current size: %s\n", formatBytes(sizeBefore))
-		fmt.Printf("\nRun without --dry-run to perform garbage collection.\n")
-		return
-	}
-
-	if !jsonOutput {
-		fmt.Printf("Running Dolt garbage collection...\n")
-	}
-
-	// Run dolt gc
-	cmd := exec.Command("dolt", "gc") // #nosec G204 -- fixed command, no user input
-	cmd.Dir = doltPath
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: dolt gc failed: %v\n", err)
-		if len(output) > 0 {
-			fmt.Fprintf(os.Stderr, "Output: %s\n", string(output))
-		}
-		os.Exit(1)
-	}
-
-	// Get size after GC
-	sizeAfter, err := getDirSize(doltPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not calculate directory size after GC: %v\n", err)
-		sizeAfter = 0
-	}
-
-	elapsed := time.Since(start)
-	freed := sizeBefore - sizeAfter
-	if freed < 0 {
-		freed = 0 // GC may not always reduce size
-	}
-
-	if jsonOutput {
-		result := map[string]interface{}{
-			"success":          true,
-			"dolt_path":        doltPath,
-			"size_before":      sizeBefore,
-			"size_after":       sizeAfter,
-			"freed_bytes":      freed,
-			"freed_display":    formatBytes(freed),
-			"elapsed_ms":       elapsed.Milliseconds(),
-		}
-		outputJSON(result)
-		return
-	}
-
-	fmt.Printf("✓ Dolt garbage collection complete\n")
-	fmt.Printf("  %s → %s (freed %s)\n", formatBytes(sizeBefore), formatBytes(sizeAfter), formatBytes(freed))
-	fmt.Printf("  Time: %v\n", elapsed)
+	// Route through daemon RPC (daemon is always connected)
+	runCompactDoltRPC()
 }
 
 // runCompactDoltRPC runs Dolt garbage collection via daemon AdminGC RPC.

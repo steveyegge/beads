@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,10 +11,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/eventbus"
 	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/notification"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -185,134 +182,30 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	var gateIssue *types.Issue
 	now := time.Now()
 
-	// Prefer daemon RPC when available
-	if daemonClient != nil {
-		createArgs := &rpc.DecisionCreateArgs{
-			Prompt:        prompt,
-			Options:       options,
-			DefaultOption: defaultOption,
-			MaxIterations: maxIterations,
-			RequestedBy:   requestedBy,
-			Context:       decisionContext,
-			Parent:        parent,
-			Blocks:        blocks,
-			Predecessor:   predecessor,
-			Urgency:       urgency,
-		}
+	requireDaemon("decision create")
 
-		result, err := daemonClient.DecisionCreate(createArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating decision via daemon: %v\n", err)
-			os.Exit(1)
-		}
+	createArgs := &rpc.DecisionCreateArgs{
+		Prompt:        prompt,
+		Options:       options,
+		DefaultOption: defaultOption,
+		MaxIterations: maxIterations,
+		RequestedBy:   requestedBy,
+		Context:       decisionContext,
+		Parent:        parent,
+		Blocks:        blocks,
+		Predecessor:   predecessor,
+		Urgency:       urgency,
+	}
 
-		decisionPoint = result.Decision
-		gateIssue = result.Issue
-		decisionID = decisionPoint.IssueID
-	} else if store != nil {
-		// Fallback to direct storage access (full feature support)
-		var err error
-		// Generate decision point ID
-		decisionID, err = generateDecisionID(ctx, parent, prompt)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error generating ID: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Create the gate issue
-		// Note: We add gt:decision and decision:pending labels so that decisions
-		// show up in 'gt decision list' and 'gt decision watch' (hq-3q571)
-		gateIssue = &types.Issue{
-			ID:        decisionID, // May be empty - CreateIssue will generate
-			Title:     truncateTitle(prompt, 100),
-			IssueType: types.IssueType("gate"),
-			Status:    types.StatusOpen,
-			Priority:  2,
-			AwaitType: "decision",
-			Timeout:   timeout,
-			Labels:    []string{"gt:decision", "decision:pending", "urgency:" + urgency},
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
-
-		// Create the decision point record (IssueID set after CreateIssue)
-		decisionPoint = &types.DecisionPoint{
-			Prompt:        prompt,
-			Context:       decisionContext,
-			Options:       optionsJSON,
-			DefaultOption: defaultOption,
-			Iteration:     1,
-			MaxIterations: maxIterations,
-			CreatedAt:     now,
-			RequestedBy:   requestedBy,
-			Urgency:       urgency,
-			PriorID:       predecessor,
-			ParentBeadID:  parent,
-		}
-
-		// Use transaction to create both atomically
-		err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
-			// Create the gate issue (generates ID if empty)
-			if err := tx.CreateIssue(ctx, gateIssue, actor); err != nil {
-				return fmt.Errorf("creating gate issue: %w", err)
-			}
-
-			// Now gateIssue.ID is populated (either provided or generated)
-			decisionID = gateIssue.ID
-			decisionPoint.IssueID = decisionID
-
-			// Add labels for gt decision integration (hq-3q571)
-			// Labels are stored in a separate table, so we must add them explicitly
-			for _, label := range gateIssue.Labels {
-				if err := tx.AddLabel(ctx, decisionID, label, actor); err != nil {
-					return fmt.Errorf("adding label %s: %w", label, err)
-				}
-			}
-
-			// Create the decision point record
-			if err := tx.CreateDecisionPoint(ctx, decisionPoint); err != nil {
-				return fmt.Errorf("creating decision point: %w", err)
-			}
-
-			// Add parent-child dependency if parent specified
-			if parent != "" {
-				dep := &types.Dependency{
-					IssueID:     decisionID,
-					DependsOnID: parent,
-					Type:        types.DepParentChild,
-					CreatedAt:   now,
-				}
-				if err := tx.AddDependency(ctx, dep, actor); err != nil {
-					return fmt.Errorf("adding parent dependency: %w", err)
-				}
-			}
-
-			// Add blocks dependency if specified
-			if blocks != "" {
-				dep := &types.Dependency{
-					IssueID:     blocks,
-					DependsOnID: decisionID,
-					Type:        types.DepBlocks,
-					CreatedAt:   now,
-				}
-				if err := tx.AddDependency(ctx, dep, actor); err != nil {
-					return fmt.Errorf("adding blocks dependency: %w", err)
-				}
-			}
-
-			return nil
-		})
-
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		markDirtyAndScheduleFlush()
-	} else {
-		fmt.Fprintf(os.Stderr, "Error: no database connection (neither daemon nor local store available)\n")
+	result, err := daemonClient.DecisionCreate(createArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating decision via daemon: %v\n", err)
 		os.Exit(1)
 	}
+
+	decisionPoint = result.Decision
+	gateIssue = result.Issue
+	decisionID = decisionPoint.IssueID
 
 	// Trigger decision create hook (hq-e0adf6.4)
 	// Use RunDecisionSync to ensure hook completes before program exits
@@ -454,44 +347,6 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 			}
 		}
 	}
-}
-
-// generateDecisionID creates an ID for the decision point
-func generateDecisionID(ctx context.Context, parent, prompt string) (string, error) {
-	if parent != "" {
-		// Find next available decision suffix under parent
-		// Format: parent.decision-N
-		for i := 1; i <= 100; i++ {
-			candidateID := fmt.Sprintf("%s.decision-%d", parent, i)
-			issue, err := store.GetIssue(ctx, candidateID)
-			if err != nil {
-				return "", fmt.Errorf("checking issue existence: %w", err)
-			}
-			if issue == nil {
-				// Issue doesn't exist, use this ID
-				return candidateID, nil
-			}
-		}
-		return "", fmt.Errorf("too many decisions under parent %s", parent)
-	}
-
-	// No parent - generate a root-level decision ID with collision avoidance
-	prefix, err := store.GetConfig(ctx, "issue_prefix")
-	if err != nil || prefix == "" {
-		prefix = "hq" // fallback default (without trailing dash - GenerateHashID adds it)
-	}
-	now := time.Now()
-	for nonce := 0; nonce < 100; nonce++ {
-		candidateID := idgen.GenerateHashID(prefix, prompt, "", actor, now, 6, nonce)
-		issue, err := store.GetIssue(ctx, candidateID)
-		if err != nil {
-			return "", fmt.Errorf("checking issue existence: %w", err)
-		}
-		if issue == nil {
-			return candidateID, nil
-		}
-	}
-	return "", fmt.Errorf("failed to generate unique decision ID after 100 attempts")
 }
 
 

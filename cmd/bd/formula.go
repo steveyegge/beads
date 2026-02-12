@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,7 +14,6 @@ import (
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -225,71 +223,25 @@ func runFormulaList(cmd *cobra.Command, args []string) {
 	}
 }
 
-// listFormulasFromDB queries the database for formula-type issues.
-// Uses daemon RPC when available, falls back to direct store access.
+// listFormulasFromDB queries the database for formula-type issues via daemon RPC.
 func listFormulasFromDB(typeFilter string) []FormulaListEntry {
-	// Use daemon RPC if available (required for remote BD_DAEMON_HOST)
-	if daemonClient != nil {
-		args := &rpc.FormulaListArgs{
-			Type: typeFilter,
-		}
-		result, err := daemonClient.FormulaList(args)
-		if err != nil {
-			return nil
-		}
-		var entries []FormulaListEntry
-		for _, f := range result.Formulas {
-			entries = append(entries, FormulaListEntry{
-				Name:        f.Name,
-				Type:        f.Type,
-				Description: truncateDescription(f.Description, 60),
-				Source:      f.Source,
-				Vars:        0, // RPC summary doesn't include step/var counts
-			})
-		}
-		return entries
+	args := &rpc.FormulaListArgs{
+		Type: typeFilter,
 	}
-
-	// Direct store access (local mode)
-	s := getStore()
-	if s == nil {
-		return nil
-	}
-
-	ctx := context.Background()
-	filter := types.IssueFilter{
-		IssueType: func() *types.IssueType { t := types.TypeFormula; return &t }(),
-	}
-	issues, err := s.SearchIssues(ctx, "", filter)
+	result, err := daemonClient.FormulaList(args)
 	if err != nil {
 		return nil
 	}
-
 	var entries []FormulaListEntry
-	for _, issue := range issues {
-		if issue.Status == types.StatusClosed {
-			continue
-		}
-
-		f, err := formula.IssueToFormula(issue)
-		if err != nil {
-			continue
-		}
-
-		if typeFilter != "" && string(f.Type) != typeFilter {
-			continue
-		}
-
+	for _, f := range result.Formulas {
 		entries = append(entries, FormulaListEntry{
-			Name:        f.Formula,
-			Type:        string(f.Type),
+			Name:        f.Name,
+			Type:        f.Type,
 			Description: truncateDescription(f.Description, 60),
 			Source:      f.Source,
-			Steps:       countSteps(f.Steps),
-			Vars:        len(f.Vars),
+			Vars:        0, // RPC summary doesn't include step/var counts
 		})
 	}
-
 	return entries
 }
 
@@ -497,14 +449,8 @@ func runFormulaShow(cmd *cobra.Command, args []string) {
 
 	// Fall back to filesystem
 	if f == nil {
-		// Create parser with storage backend for dual-read
-		s := getStore()
-		var parser *formula.Parser
-		if s != nil {
-			parser = formula.NewParserWithStorage(s, getFormulaSearchPaths()...)
-		} else {
-			parser = formula.NewParser(getFormulaSearchPaths()...)
-		}
+		// Create parser from filesystem search paths
+		parser := formula.NewParser(getFormulaSearchPaths()...)
 
 		var err error
 		f, err = parser.LoadByName(name)
@@ -669,66 +615,24 @@ func runFormulaShow(cmd *cobra.Command, args []string) {
 	fmt.Println()
 }
 
-// loadFormulaFromDBForShow tries to load a formula from the database.
-// Returns nil if the formula is not found in DB or DB is not available.
-// Uses daemon RPC when available, falls back to direct store access.
+// loadFormulaFromDBForShow tries to load a formula from the database via daemon RPC.
+// Returns nil if the formula is not found in DB or daemon is not available.
 func loadFormulaFromDBForShow(nameOrID string) *formula.Formula {
-	// Use daemon RPC if available (required for remote BD_DAEMON_HOST)
-	if daemonClient != nil {
-		args := &rpc.FormulaGetArgs{}
-		if strings.Contains(nameOrID, "-formula-") {
-			args.ID = nameOrID
-		} else {
-			args.Name = nameOrID
-		}
-		result, err := daemonClient.FormulaGet(args)
-		if err != nil {
-			return nil
-		}
-		var f formula.Formula
-		if err := json.Unmarshal(result.Formula, &f); err != nil {
-			return nil
-		}
-		return &f
+	args := &rpc.FormulaGetArgs{}
+	if strings.Contains(nameOrID, "-formula-") {
+		args.ID = nameOrID
+	} else {
+		args.Name = nameOrID
 	}
-
-	// Direct store access (local mode)
-	s := getStore()
-	if s == nil {
-		return nil
-	}
-
-	ctx := context.Background()
-
-	// Try direct ID lookup first (for bead IDs like gt-formula-xxx)
-	if strings.Contains(nameOrID, "-formula-") || strings.Contains(nameOrID, "-") {
-		issue, err := s.GetIssue(ctx, nameOrID)
-		if err == nil && issue != nil && issue.IssueType == types.TypeFormula {
-			f, err := formula.IssueToFormula(issue)
-			if err == nil {
-				return f
-			}
-		}
-	}
-
-	// Try searching by name (title match)
-	filter := types.IssueFilter{
-		IssueType: func() *types.IssueType { t := types.TypeFormula; return &t }(),
-	}
-	issues, err := s.SearchIssues(ctx, nameOrID, filter)
+	result, err := daemonClient.FormulaGet(args)
 	if err != nil {
 		return nil
 	}
-	for _, issue := range issues {
-		if issue.Title == nameOrID && issue.Status != types.StatusClosed {
-			f, err := formula.IssueToFormula(issue)
-			if err == nil {
-				return f
-			}
-		}
+	var f formula.Formula
+	if err := json.Unmarshal(result.Formula, &f); err != nil {
+		return nil
 	}
-
-	return nil
+	return &f
 }
 
 // getFormulaSearchPaths returns the formula search paths in priority order.
@@ -1282,8 +1186,10 @@ func loadFormulaByNameOrPath(nameOrPath string) (*formula.Formula, error) {
 	return parser.LoadByName(nameOrPath)
 }
 
-// saveFormulaToDB saves a formula to the database via daemon or direct storage.
+// saveFormulaToDB saves a formula to the database via daemon RPC.
 func saveFormulaToDB(f *formula.Formula) (*rpc.FormulaSaveResult, error) {
+	requireDaemon("formula import")
+
 	formulaJSON, err := json.Marshal(f)
 	if err != nil {
 		return nil, fmt.Errorf("serializing formula: %w", err)
@@ -1294,63 +1200,7 @@ func saveFormulaToDB(f *formula.Formula) (*rpc.FormulaSaveResult, error) {
 		Force:   importForce,
 	}
 
-	if daemonClient != nil {
-		return daemonClient.FormulaSave(saveArgs)
-	}
-
-	// Direct mode: use storage directly
-	if store == nil {
-		return nil, fmt.Errorf("no database connection (set BD_DAEMON_HOST or run in a beads directory)")
-	}
-
-	ctx := rootCtx
-
-	// Get prefix
-	idPrefix := ""
-	if p, err := store.GetConfig(ctx, "issue_prefix"); err == nil && p != "" {
-		idPrefix = p + "-"
-	}
-
-	issue, labels, err := formula.FormulaToIssue(f, idPrefix)
-	if err != nil {
-		return nil, fmt.Errorf("converting formula to issue: %w", err)
-	}
-
-	if issue.Status == "" {
-		issue.Status = "open"
-	}
-
-	// Check if exists
-	existing, _ := store.GetIssue(ctx, issue.ID)
-	created := existing == nil
-
-	if existing != nil {
-		if !importForce {
-			return nil, fmt.Errorf("formula %q already exists as %s (use --force to overwrite)", f.Formula, issue.ID)
-		}
-		updates := map[string]interface{}{
-			"title":       issue.Title,
-			"description": issue.Description,
-			"metadata":    issue.Metadata,
-		}
-		if err := store.UpdateIssue(ctx, existing.ID, updates, actor); err != nil {
-			return nil, fmt.Errorf("updating formula: %w", err)
-		}
-	} else {
-		if err := store.CreateIssue(ctx, issue, actor); err != nil {
-			return nil, fmt.Errorf("creating formula: %w", err)
-		}
-	}
-
-	for _, label := range labels {
-		_ = store.AddLabel(ctx, issue.ID, label, actor)
-	}
-
-	return &rpc.FormulaSaveResult{
-		ID:      issue.ID,
-		Name:    f.Formula,
-		Created: created,
-	}, nil
+	return daemonClient.FormulaSave(saveArgs)
 }
 
 func init() {

@@ -10,7 +10,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // decisionShowCmd shows details of a decision point
@@ -35,7 +34,6 @@ func init() {
 
 func runDecisionShow(cmd *cobra.Command, args []string) {
 	decisionID := args[0]
-	ctx := rootCtx
 
 	var issue *types.Issue
 	var dp *types.DecisionPoint
@@ -43,94 +41,39 @@ func runDecisionShow(cmd *cobra.Command, args []string) {
 	var blockedIssues []*types.Issue
 	var resolvedID string
 
-	// Prefer daemon RPC when available
-	if daemonClient != nil {
-		// Use daemon to get decision
-		getArgs := &rpc.DecisionGetArgs{
-			IssueID: decisionID,
-		}
-		result, err := daemonClient.DecisionGet(getArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting decision via daemon: %v\n", err)
-			os.Exit(1)
-		}
+	requireDaemon("decision show")
 
-		if result.Decision == nil {
-			fmt.Fprintf(os.Stderr, "Error: no decision point data for %s\n", decisionID)
-			os.Exit(1)
-		}
-
-		dp = result.Decision
-		issue = result.Issue
-		resolvedID = dp.IssueID
-
-		// Verify it's a decision gate
-		if issue != nil && (issue.IssueType != types.IssueType("gate") || issue.AwaitType != "decision") {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a decision point (type=%s, await_type=%s)\n",
-				resolvedID, issue.IssueType, issue.AwaitType)
-			os.Exit(1)
-		}
-
-		// Parse options
-		if dp.Options != "" {
-			if err := json.Unmarshal([]byte(dp.Options), &options); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not parse options: %v\n", err)
-			}
-		}
-
-		// Note: blocked issues not available via daemon RPC yet
-		// Could add a separate RPC call for dependents if needed
-	} else if store != nil {
-		// Fallback to direct storage access
-		var err error
-		// Resolve partial ID
-		resolvedID, err = utils.ResolvePartialID(ctx, store, decisionID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Get the issue
-		issue, err = store.GetIssue(ctx, resolvedID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting issue: %v\n", err)
-			os.Exit(1)
-		}
-		if issue == nil {
-			fmt.Fprintf(os.Stderr, "Error: issue %s not found\n", resolvedID)
-			os.Exit(1)
-		}
-
-		// Verify it's a decision gate
-		if issue.IssueType != types.IssueType("gate") || issue.AwaitType != "decision" {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a decision point (type=%s, await_type=%s)\n",
-				resolvedID, issue.IssueType, issue.AwaitType)
-			os.Exit(1)
-		}
-
-		// Get the decision point data
-		dp, err = store.GetDecisionPoint(ctx, resolvedID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting decision point: %v\n", err)
-			os.Exit(1)
-		}
-		if dp == nil {
-			fmt.Fprintf(os.Stderr, "Error: no decision point data for %s\n", resolvedID)
-			os.Exit(1)
-		}
-
-		// Parse options
-		if dp.Options != "" {
-			if err := json.Unmarshal([]byte(dp.Options), &options); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not parse options: %v\n", err)
-			}
-		}
-
-		// Get issues that depend on this decision (will be unblocked when resolved)
-		blockedIssues, _ = store.GetDependents(ctx, resolvedID)
-	} else {
-		fmt.Fprintf(os.Stderr, "Error: no database connection (neither daemon nor local store available)\n")
+	// Use daemon to get decision
+	getArgs := &rpc.DecisionGetArgs{
+		IssueID: decisionID,
+	}
+	result, err := daemonClient.DecisionGet(getArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting decision via daemon: %v\n", err)
 		os.Exit(1)
+	}
+
+	if result.Decision == nil {
+		fmt.Fprintf(os.Stderr, "Error: no decision point data for %s\n", decisionID)
+		os.Exit(1)
+	}
+
+	dp = result.Decision
+	issue = result.Issue
+	resolvedID = dp.IssueID
+
+	// Verify it's a decision gate
+	if issue != nil && (issue.IssueType != types.IssueType("gate") || issue.AwaitType != "decision") {
+		fmt.Fprintf(os.Stderr, "Error: %s is not a decision point (type=%s, await_type=%s)\n",
+			resolvedID, issue.IssueType, issue.AwaitType)
+		os.Exit(1)
+	}
+
+	// Parse options
+	if dp.Options != "" {
+		if err := json.Unmarshal([]byte(dp.Options), &options); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not parse options: %v\n", err)
+		}
 	}
 
 	// JSON output

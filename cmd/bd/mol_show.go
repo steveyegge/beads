@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var (
@@ -32,46 +31,23 @@ Example:
   bd mol show bd-patrol --parallel`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		ctx := rootCtx
+		requireDaemon("mol show")
 
-		var subgraph *MoleculeSubgraph
-		var err error
+		// Resolve ID via daemon
+		resolveResp, resolveErr := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: args[0]})
+		if resolveErr != nil {
+			fmt.Fprintf(os.Stderr, "Error resolving molecule ID: %v\n", resolveErr)
+			os.Exit(1)
+		}
+		var resolvedID string
+		if err := json.Unmarshal(resolveResp.Data, &resolvedID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing resolved ID: %v\n", err)
+			os.Exit(1)
+		}
 
-		// Try daemon RPC first (preferred per gt-as9kdm)
-		if daemonClient != nil {
-			// Resolve ID via daemon
-			resolveResp, resolveErr := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: args[0]})
-			if resolveErr != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving molecule ID: %v\n", resolveErr)
-				os.Exit(1)
-			}
-			var resolvedID string
-			if err := json.Unmarshal(resolveResp.Data, &resolvedID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing resolved ID: %v\n", err)
-				os.Exit(1)
-			}
-
-			subgraph, err = loadTemplateSubgraphViaDaemon(daemonClient, resolvedID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading molecule via daemon: %v\n", err)
-				os.Exit(1)
-			}
-		} else if store != nil {
-			// Fall back to direct store access
-			moleculeID, resolveErr := utils.ResolvePartialID(ctx, store, args[0])
-			if resolveErr != nil {
-				fmt.Fprintf(os.Stderr, "Error: molecule '%s' not found\n", args[0])
-				os.Exit(1)
-			}
-
-			subgraph, err = loadTemplateSubgraph(ctx, store, moleculeID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: ensure beads daemon is running or database exists\n")
+		subgraph, err := loadTemplateSubgraphViaDaemon(daemonClient, resolvedID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading molecule via daemon: %v\n", err)
 			os.Exit(1)
 		}
 

@@ -15,7 +15,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // GraphNode represents a node in the rendered graph
@@ -75,10 +74,10 @@ Status icons: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred`,
 			os.Exit(1)
 		}
 
-		// If daemon is running but doesn't support this command, use direct storage.
+		// If store is not available, open one for graph rendering.
 		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix).
 		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
-		if daemonClient != nil && store == nil && rpc.GetDaemonHost() == "" {
+		if store == nil && rpc.GetDaemonHost() == "" {
 			var err error
 			store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 			if err != nil {
@@ -128,24 +127,15 @@ Status icons: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred`,
 
 		// Single issue mode
 		var issueID string
-		if daemonClient != nil {
-			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
-			resp, err := daemonClient.ResolveID(resolveArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: issue '%s' not found\n", args[0])
-				os.Exit(1)
-			}
-			if err := json.Unmarshal(resp.Data, &issueID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			var err error
-			issueID, err = utils.ResolvePartialID(ctx, store, args[0])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: issue '%s' not found\n", args[0])
-				os.Exit(1)
-			}
+		resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
+		resp, err := daemonClient.ResolveID(resolveArgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: issue '%s' not found\n", args[0])
+			os.Exit(1)
+		}
+		if err := json.Unmarshal(resp.Data, &issueID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
 
 		// Load the subgraph

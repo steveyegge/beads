@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var deferCmd = &cobra.Command{
@@ -33,6 +32,7 @@ Examples:
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("defer")
+		requireDaemon("defer")
 
 		// Parse --until flag (GH#820)
 		var deferUntil *time.Time
@@ -46,111 +46,51 @@ Examples:
 			deferUntil = &t
 		}
 
-		ctx := rootCtx
-
-		// Resolve partial IDs first
+		// Resolve partial IDs via daemon
 		var resolvedIDs []string
-		if daemonClient != nil {
-			for _, id := range args {
-				resolveArgs := &rpc.ResolveIDArgs{ID: id}
-				resp, err := daemonClient.ResolveID(resolveArgs)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving ID %s: %v\n", id, err)
-					os.Exit(1)
-				}
-				var resolvedID string
-				if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-					fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-					os.Exit(1)
-				}
-				resolvedIDs = append(resolvedIDs, resolvedID)
-			}
-		} else {
-			var err error
-			resolvedIDs, err = utils.ResolvePartialIDs(ctx, store, args)
+		for _, id := range args {
+			resolveArgs := &rpc.ResolveIDArgs{ID: id}
+			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error resolving ID %s: %v\n", id, err)
 				os.Exit(1)
 			}
+			var resolvedID string
+			if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+				os.Exit(1)
+			}
+			resolvedIDs = append(resolvedIDs, resolvedID)
 		}
 
 		deferredIssues := []*types.Issue{}
 
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			for _, id := range resolvedIDs {
-				status := string(types.StatusDeferred)
-				updateArgs := &rpc.UpdateArgs{
-					ID:     id,
-					Status: &status,
-				}
-				// Add defer_until if --until specified (GH#820)
-				if deferUntil != nil {
-					s := deferUntil.Format(time.RFC3339)
-					updateArgs.DeferUntil = &s
-				}
-
-				resp, err := daemonClient.Update(updateArgs)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error deferring %s: %v\n", id, err)
-					continue
-				}
-
-				if jsonOutput {
-					var issue types.Issue
-					if err := json.Unmarshal(resp.Data, &issue); err == nil {
-						deferredIssues = append(deferredIssues, &issue)
-					}
-				} else {
-					fmt.Printf("%s Deferred %s\n", ui.RenderAccent("*"), id)
-				}
-			}
-
-			if jsonOutput && len(deferredIssues) > 0 {
-				outputJSON(deferredIssues)
-			}
-			return
-		}
-
-		// Fall back to direct storage access
-		if store == nil {
-			fmt.Fprintln(os.Stderr, "Error: database not initialized")
-			os.Exit(1)
-		}
-
-		for _, id := range args {
-			fullID, err := utils.ResolvePartialID(ctx, store, id)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-				continue
-			}
-
-			updates := map[string]interface{}{
-				"status": string(types.StatusDeferred),
+		for _, id := range resolvedIDs {
+			status := string(types.StatusDeferred)
+			updateArgs := &rpc.UpdateArgs{
+				ID:     id,
+				Status: &status,
 			}
 			// Add defer_until if --until specified (GH#820)
 			if deferUntil != nil {
-				updates["defer_until"] = *deferUntil
+				s := deferUntil.Format(time.RFC3339)
+				updateArgs.DeferUntil = &s
 			}
 
-			if err := store.UpdateIssue(ctx, fullID, updates, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Error deferring %s: %v\n", fullID, err)
+			resp, err := daemonClient.Update(updateArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error deferring %s: %v\n", id, err)
 				continue
 			}
 
 			if jsonOutput {
-				issue, _ := store.GetIssue(ctx, fullID)
-				if issue != nil {
-					deferredIssues = append(deferredIssues, issue)
+				var issue types.Issue
+				if err := json.Unmarshal(resp.Data, &issue); err == nil {
+					deferredIssues = append(deferredIssues, &issue)
 				}
 			} else {
-				fmt.Printf("%s Deferred %s\n", ui.RenderAccent("*"), fullID)
+				fmt.Printf("%s Deferred %s\n", ui.RenderAccent("*"), id)
 			}
-		}
-
-		// Schedule auto-flush if any issues were deferred
-		if len(args) > 0 {
-			markDirtyAndScheduleFlush()
 		}
 
 		if jsonOutput && len(deferredIssues) > 0 {

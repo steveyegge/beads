@@ -119,7 +119,6 @@ var createCmd = &cobra.Command{
 		waitsFor, _ := cmd.Flags().GetString("waits-for")
 		waitsForGate, _ := cmd.Flags().GetString("waits-for-gate")
 		forceCreate, _ := cmd.Flags().GetBool("force")
-		repoOverride, _ := cmd.Flags().GetString("repo")
 		rigOverride, _ := cmd.Flags().GetString("rig")
 		prefixOverride, _ := cmd.Flags().GetString("prefix")
 		wisp, _ := cmd.Flags().GetBool("ephemeral")
@@ -345,105 +344,15 @@ var createCmd = &cobra.Command{
 
 		// Use global jsonOutput set by PersistentPreRun
 
-		// Determine target repository using routing logic
-		repoPath := "." // default to current directory
-		if cmd.Flags().Changed("repo") {
-			// Explicit --repo flag overrides auto-routing
-			repoPath = repoOverride
-		} else {
-			// Auto-routing based on user role
-			userRole, err := routing.DetectUserRole(".")
-			if err != nil {
-				debug.Logf("Warning: failed to detect user role: %v\n", err)
-			}
-
-			// Build routing config with backward compatibility for legacy contributor.* keys
-			routingMode := config.GetString("routing.mode")
-			contributorRepo := config.GetString("routing.contributor")
-
-			// NFR-001: Backward compatibility - fall back to legacy contributor.* keys
-			if routingMode == "" {
-				if config.GetString("contributor.auto_route") == "true" {
-					routingMode = "auto"
-				}
-			}
-			if contributorRepo == "" {
-				contributorRepo = config.GetString("contributor.planning_repo")
-			}
-
-			routingConfig := &routing.RoutingConfig{
-				Mode:             routingMode,
-				DefaultRepo:      config.GetString("routing.default"),
-				MaintainerRepo:   config.GetString("routing.maintainer"),
-				ContributorRepo:  contributorRepo,
-				ExplicitOverride: repoOverride,
-			}
-
-			repoPath = routing.DetermineTargetRepo(routingConfig, userRole, ".")
-		}
-
-		// Switch to target repo for multi-repo support (bd-6x6g)
-		// When routing to a different repo, we bypass daemon mode and use direct storage
-		var targetStore storage.Storage
-		if repoPath != "." {
-			targetBeadsDir := routing.ExpandPath(repoPath)
-			debug.Logf("DEBUG: Routing to target repo: %s\n", targetBeadsDir)
-
-			// Ensure target beads directory exists with prefix inheritance
-			if err := ensureBeadsDirForPath(rootCtx, targetBeadsDir, store); err != nil {
-				FatalError("failed to initialize target repo: %v", err)
-			}
-
-			// Open new store for target repo using factory to respect backend config
-			targetBeadsDirPath := filepath.Join(targetBeadsDir, ".beads")
-			var err error
-			targetStore, err = factory.NewFromConfig(rootCtx, targetBeadsDirPath)
-			if err != nil {
-				FatalError("failed to open target store: %v", err)
-			}
-
-			// Close the original store before replacing it (it won't be used anymore)
-			// Note: We don't defer-close targetStore here because PersistentPostRun
-			// will close whatever store is assigned to the global `store` variable.
-			// This fixes the "database is closed" error during auto-flush (GH#routing-close-bug).
-			if store != nil {
-				_ = store.Close()
-			}
-
-			// Replace store for remainder of create operation
-			// This also bypasses daemon mode since daemon owns the current repo's store
-			store = targetStore
-			daemonClient = nil // Bypass daemon for routed issues (T013)
-		}
+		requireDaemon("create")
 
 		// Check for conflicting flags
 		if explicitID != "" && parentID != "" {
 			FatalError("cannot specify both --id and --parent flags")
 		}
 
-		// If parent is specified, generate child ID
-		// In daemon mode, the parent will be sent to the RPC handler
-		// In direct mode, we generate the child ID here
-		if parentID != "" && daemonClient == nil {
-			ctx := rootCtx
-			// Validate parent exists before generating child ID
-			// Use routing-aware lookup to support cross-repo parent references
-			result, err := resolveAndGetIssueWithRouting(ctx, store, parentID)
-			if err != nil {
-				FatalError("failed to check parent issue: %v", err)
-			}
-			if result == nil || result.Issue == nil {
-				FatalError("parent issue %s not found", parentID)
-			}
-			defer result.Close()
-
-			// Use the routed store for GetNextChildID to ensure consistent child ID generation
-			childID, err := result.Store.GetNextChildID(ctx, result.ResolvedID)
-			if err != nil {
-				FatalError("%v", err)
-			}
-			explicitID = childID // Set as explicit ID for the rest of the flow
-		}
+		// If parent is specified, the parent ID is sent to the daemon RPC handler
+		// which generates the child ID server-side.
 
 		// Validate explicit ID format if provided
 		if explicitID != "" {
@@ -466,352 +375,93 @@ var createCmd = &cobra.Command{
 				}
 			}
 
-			// Validate prefix matches database prefix
-			ctx := rootCtx
-
-			// Get database prefix and allowed prefixes from config
+			// Get database prefix and allowed prefixes from config via daemon RPC
 			var dbPrefix, allowedPrefixes string
-			if daemonClient != nil {
-				// Daemon mode - use RPC to get config
-				configResp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "issue_prefix"})
-				if err == nil {
-					dbPrefix = configResp.Value
-				}
-				// Also get allowed_prefixes for multi-prefix support (e.g., Gas Town)
-				allowedResp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "allowed_prefixes"})
-				if err == nil {
-					allowedPrefixes = allowedResp.Value
-				}
-				// If error, continue without validation (non-fatal)
-			} else {
-				// Direct mode - check config
-				dbPrefix, _ = store.GetConfig(ctx, "issue_prefix")
-				allowedPrefixes, _ = store.GetConfig(ctx, "allowed_prefixes")
+			configResp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "issue_prefix"})
+			if err == nil {
+				dbPrefix = configResp.Value
 			}
+			// Also get allowed_prefixes for multi-prefix support (e.g., Gas Town)
+			allowedResp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "allowed_prefixes"})
+			if err == nil {
+				allowedPrefixes = allowedResp.Value
+			}
+			// If error, continue without validation (non-fatal)
 
 			if err := validation.ValidatePrefixWithAllowed(requestedPrefix, dbPrefix, allowedPrefixes, forceCreate); err != nil {
 				FatalError("%v", err)
 			}
 		}
 
-		var externalRefPtr *string
-		if externalRef != "" {
-			externalRefPtr = &externalRef
-		}
-
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			// Generate semantic ID if no explicit ID provided
-			rpcID := explicitID
-			if rpcID == "" && parentID == "" { // Don't generate semantic ID for child issues
-				// Get prefix via RPC since store may be nil in daemon mode
-				prefix := "bd" // Default prefix
-				if resp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "prefix"}); err == nil && resp.Value != "" {
-					prefix = resp.Value
-				}
-				// Skip client-side semantic ID generation in daemon mode - let server handle it
-				// The server's storage layer will generate an ID if rpcID is empty
-				rpcID = "" // Let daemon generate ID
-				_ = prefix // Prefix fetched for future use when server supports semantic IDs
-			}
-
-			// Check local (pre-redirect) config.yaml for rig-specific issue-prefix.
-			// This takes priority over the daemon's global prefix because each rig
-			// has its own prefix (e.g., od- for oddjobs, bv- for beads_viewer).
-			// Without this, all rigs using the same daemon would get the daemon's
-			// default prefix (gt-). (gt-wnbjj8.3)
-			localPrefix := findLocalIssuePrefix()
-			debug.Logf("create: localPrefix=%q from findLocalIssuePrefix()\n", localPrefix)
-
-			createArgs := &rpc.CreateArgs{
-				ID:                 rpcID,
-				Parent:             parentID,
-				Title:              title,
-				Description:        description,
-				IssueType:          issueType,
-				Priority:           priority,
-				Design:             design,
-				AcceptanceCriteria: acceptance,
-				Notes:              notes,
-				Assignee:           assignee,
-				ExternalRef:        externalRef,
-				EstimatedMinutes:   estimatedMinutes,
-				Labels:             labels,
-				Dependencies:       deps,
-				WaitsFor:           waitsFor,
-				WaitsForGate:       waitsForGate,
-				Ephemeral:          wisp,
-				Pinned:             pinned,
-				AutoClose:          autoClose,
-				CreatedBy:          getActorWithGit(),
-				Owner:              getOwner(),
-				MolType:            string(molType),
-				RoleType:           roleType,
-				Rig:                agentRig,
-				EventCategory:      eventCategory,
-				EventActor:         eventActor,
-				EventTarget:        eventTarget,
-				EventPayload:       eventPayload,
-				DueAt:              formatTimeForRPC(dueAt),
-				DeferUntil:         formatTimeForRPC(deferUntil),
-				Prefix:             localPrefix,
-				// NOTE: Advice targeting now uses labels
-			}
-
-			resp, err := daemonClient.Create(createArgs)
-			if err != nil {
-				FatalError("%v", err)
-			}
-
-			// Parse response to get issue for hook
-			var issue types.Issue
-			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				FatalError("parsing response: %v", err)
-			}
-
-			// Run create hook
-			if hookRunner != nil {
-				hookRunner.Run(hooks.EventCreate, &issue)
-			}
-
-			if jsonOutput {
-				fmt.Println(string(resp.Data))
-			} else if silent {
-				fmt.Println(issue.ID)
-			} else {
-				fmt.Printf("%s Created issue: %s\n", ui.RenderPass("✓"), issue.ID)
-				fmt.Printf("  Title: %s\n", issue.Title)
-				fmt.Printf("  Priority: P%d\n", issue.Priority)
-				fmt.Printf("  Status: %s\n", issue.Status)
-			}
-
-			// Track as last touched issue
-			SetLastTouchedID(issue.ID)
-			return
-		}
-
-		// Direct mode
-		ctx := rootCtx
-
+		// Use daemon RPC to create
 		// Generate semantic ID if no explicit ID provided
-		issueID := explicitID
-		if issueID == "" {
-			prefix, _ := store.GetConfig(ctx, "issue_prefix")
-			if prefix == "" {
-				prefix = "bd" // Default prefix
-			}
-			issueID = generateSemanticID(ctx, store, prefix, issueType, title)
+		rpcID := explicitID
+		if rpcID == "" && parentID == "" { // Don't generate semantic ID for child issues
+			// Skip client-side semantic ID generation - let server handle it
+			rpcID = "" // Let daemon generate ID
 		}
 
-		issue := &types.Issue{
-			ID:                 issueID,
+		// Check local (pre-redirect) config.yaml for rig-specific issue-prefix.
+		// This takes priority over the daemon's global prefix because each rig
+		// has its own prefix (e.g., od- for oddjobs, bv- for beads_viewer).
+		// Without this, all rigs using the same daemon would get the daemon's
+		// default prefix (gt-). (gt-wnbjj8.3)
+		localPrefix := findLocalIssuePrefix()
+		debug.Logf("create: localPrefix=%q from findLocalIssuePrefix()\n", localPrefix)
+
+		createArgs := &rpc.CreateArgs{
+			ID:                 rpcID,
+			Parent:             parentID,
 			Title:              title,
 			Description:        description,
+			IssueType:          issueType,
+			Priority:           priority,
 			Design:             design,
 			AcceptanceCriteria: acceptance,
 			Notes:              notes,
-			Status:             types.StatusOpen,
-			Priority:           priority,
-			IssueType:          types.IssueType(issueType).Normalize(),
 			Assignee:           assignee,
-			ExternalRef:        externalRefPtr,
+			ExternalRef:        externalRef,
 			EstimatedMinutes:   estimatedMinutes,
+			Labels:             labels,
+			Dependencies:       deps,
+			WaitsFor:           waitsFor,
+			WaitsForGate:       waitsForGate,
 			Ephemeral:          wisp,
 			Pinned:             pinned,
 			AutoClose:          autoClose,
 			CreatedBy:          getActorWithGit(),
 			Owner:              getOwner(),
-			MolType:            molType,
+			MolType:            string(molType),
 			RoleType:           roleType,
 			Rig:                agentRig,
-			EventKind:          eventCategory,
-			Actor:              eventActor,
-			Target:             eventTarget,
-			Payload:            eventPayload,
-			DueAt:              dueAt,
-			DeferUntil:         deferUntil,
+			EventCategory:      eventCategory,
+			EventActor:         eventActor,
+			EventTarget:        eventTarget,
+			EventPayload:       eventPayload,
+			DueAt:              formatTimeForRPC(dueAt),
+			DeferUntil:         formatTimeForRPC(deferUntil),
+			Prefix:             localPrefix,
 			// NOTE: Advice targeting now uses labels
 		}
 
-		// Check if any dependencies are discovered-from type
-		// If so, inherit source_repo from the parent issue
-		var discoveredFromParentID string
-		for _, depSpec := range deps {
-			depSpec = strings.TrimSpace(depSpec)
-			if depSpec == "" {
-				continue
-			}
-
-			var depType types.DependencyType
-			var dependsOnID string
-
-			if strings.Contains(depSpec, ":") {
-				parts := strings.SplitN(depSpec, ":", 2)
-				if len(parts) == 2 {
-					depType = types.DependencyType(strings.TrimSpace(parts[0]))
-					dependsOnID = strings.TrimSpace(parts[1])
-
-					if depType == types.DepDiscoveredFrom && dependsOnID != "" {
-						discoveredFromParentID = dependsOnID
-						break
-					}
-				}
-			}
-		}
-
-		// If we found a discovered-from dependency, inherit source_repo from parent
-		if discoveredFromParentID != "" {
-			parentIssue, err := store.GetIssue(ctx, discoveredFromParentID)
-			if err == nil && parentIssue.SourceRepo != "" {
-				issue.SourceRepo = parentIssue.SourceRepo
-			}
-			// If error getting parent or parent has no source_repo, continue with default
-		}
-
-		if err := store.CreateIssue(ctx, issue, actor); err != nil {
+		resp, err := daemonClient.Create(createArgs)
+		if err != nil {
 			FatalError("%v", err)
 		}
 
-		// If parent was specified, add parent-child dependency
-		if parentID != "" {
-			dep := &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: parentID,
-				Type:        types.DepParentChild,
-			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				WarnError("failed to add parent-child dependency %s -> %s: %v", issue.ID, parentID, err)
-			}
-		}
-
-		// Add labels if specified
-		for _, label := range labels {
-			if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
-				WarnError("failed to add label %s: %v", label, err)
-			}
-		}
-
-		// Auto-add role_type/rig labels for agent beads (enables filtering queries)
-		// Check for gt:agent label to identify agent beads (Gas Town separation)
-		hasAgentLabel := false
-		for _, l := range labels {
-			if l == "gt:agent" {
-				hasAgentLabel = true
-				break
-			}
-		}
-		if hasAgentLabel {
-			if issue.RoleType != "" {
-				agentLabel := "role_type:" + issue.RoleType
-				if err := store.AddLabel(ctx, issue.ID, agentLabel, actor); err != nil {
-					WarnError("failed to add role_type label: %v", err)
-				}
-			}
-			if issue.Rig != "" {
-				rigLabel := "rig:" + issue.Rig
-				if err := store.AddLabel(ctx, issue.ID, rigLabel, actor); err != nil {
-					WarnError("failed to add rig label: %v", err)
-				}
-			}
-		}
-
-		// Validate type schema if one exists for this issue type (gt-pozvwr.6)
-		if schema, err := store.GetTypeSchema(ctx, string(issue.IssueType)); err == nil && schema != nil {
-			if err := issue.ValidateAgainstSchema(schema, labels); err != nil {
-				FatalError("%v", err)
-			}
-		}
-
-		// Add dependencies if specified (format: type:id or just id for default "blocks" type)
-		for _, depSpec := range deps {
-			// Skip empty specs (e.g., from trailing commas)
-			depSpec = strings.TrimSpace(depSpec)
-			if depSpec == "" {
-				continue
-			}
-
-			var depType types.DependencyType
-			var dependsOnID string
-
-			// Parse format: "type:id" or just "id" (defaults to "blocks")
-			if strings.Contains(depSpec, ":") {
-				parts := strings.SplitN(depSpec, ":", 2)
-				if len(parts) != 2 {
-					WarnError("invalid dependency format '%s', expected 'type:id' or 'id'", depSpec)
-					continue
-				}
-				depType = types.DependencyType(strings.TrimSpace(parts[0]))
-				dependsOnID = strings.TrimSpace(parts[1])
-			} else {
-				// Default to "blocks" if no type specified
-				depType = types.DepBlocks
-				dependsOnID = depSpec
-			}
-
-			// Validate dependency type
-			if !depType.IsValid() {
-				WarnError("invalid dependency type '%s' (valid: blocks, related, parent-child, discovered-from)", depType)
-				continue
-			}
-
-			// Add the dependency
-			dep := &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: dependsOnID,
-				Type:        depType,
-			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				WarnError("failed to add dependency %s -> %s: %v", issue.ID, dependsOnID, err)
-			}
-		}
-
-		// Add waits-for dependency if specified
-		if waitsFor != "" {
-			// Validate gate type
-			gate := waitsForGate
-			if gate == "" {
-				gate = types.WaitsForAllChildren
-			}
-			if gate != types.WaitsForAllChildren && gate != types.WaitsForAnyChildren {
-				FatalError("invalid --waits-for-gate value '%s' (valid: all-children, any-children)", gate)
-			}
-
-			// Create metadata JSON
-			meta := types.WaitsForMeta{
-				Gate: gate,
-			}
-			metaJSON, err := json.Marshal(meta)
-			if err != nil {
-				FatalError("failed to serialize waits-for metadata: %v", err)
-			}
-
-			dep := &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: waitsFor,
-				Type:        types.DepWaitsFor,
-				Metadata:    string(metaJSON),
-			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				WarnError("failed to add waits-for dependency %s -> %s: %v", issue.ID, waitsFor, err)
-			}
-		}
-
-		// Schedule auto-flush
-		markDirtyAndScheduleFlush()
-
-		// If issue was routed to a different repo, flush its JSONL immediately
-		// so the issue appears in bd list when hydration is enabled (bd-fix-routing)
-		if repoPath != "." {
-			flushRoutedRepo(targetStore, repoPath)
+		// Parse response to get issue for hook
+		var issue types.Issue
+		if err := json.Unmarshal(resp.Data, &issue); err != nil {
+			FatalError("parsing response: %v", err)
 		}
 
 		// Run create hook
 		if hookRunner != nil {
-			hookRunner.Run(hooks.EventCreate, issue)
+			hookRunner.Run(hooks.EventCreate, &issue)
 		}
 
 		if jsonOutput {
-			outputJSON(issue)
+			fmt.Println(string(resp.Data))
 		} else if silent {
 			fmt.Println(issue.ID)
 		} else {
@@ -819,9 +469,6 @@ var createCmd = &cobra.Command{
 			fmt.Printf("  Title: %s\n", issue.Title)
 			fmt.Printf("  Priority: P%d\n", issue.Priority)
 			fmt.Printf("  Status: %s\n", issue.Status)
-
-			// Show tip after successful create (direct mode only)
-			maybeShowTip(store)
 		}
 
 		// Track as last touched issue
@@ -1023,165 +670,9 @@ func init() {
 // createInRig creates an issue in a different rig using --rig flag or auto-routing.
 // This bypasses the normal daemon/direct flow and directly creates in the target rig.
 func createInRig(cmd *cobra.Command, rigName, explicitID, parentID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp, pinned, autoClose bool) {
-	ctx := rootCtx
-
-	// When daemon is available, use RPC with TargetRig (gt-oasyjm.1 - routes in beads)
+	// Use daemon RPC with TargetRig (gt-oasyjm.1 - routes in beads)
 	// This enables cross-rig creation to work with remote daemon via HTTP
-	if daemonClient != nil {
-		createInRigViaDaemon(cmd, rigName, explicitID, parentID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
-		return
-	}
-
-	// Fallback: Direct storage access (for local development without daemon)
-	// When BD_DAEMON_HOST is set, direct storage access to target rig is blocked (bd-ma0s.1).
-	if rpc.GetDaemonHost() != "" {
-		FatalError("--rig flag requires direct database access, which is not available when BD_DAEMON_HOST is set.\n" +
-			"Hint: run bd create from the target rig's directory, or unset BD_DAEMON_HOST for local access")
-	}
-
-	// Find the town-level beads directory (where routes.jsonl lives)
-	townBeadsDir, err := findTownBeadsDir()
-	if err != nil {
-		FatalError("cannot use --rig: %v", err)
-	}
-
-	// Resolve the target rig's beads directory and prefix
-	targetBeadsDir, targetPrefix, err := routing.ResolveBeadsDirForRig(rigName, townBeadsDir)
-	if err != nil {
-		FatalError("%v", err)
-	}
-
-	// Open storage for the target rig using factory to respect backend config
-	targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
-	if err != nil {
-		FatalError("failed to open rig %q database: %v", rigName, err)
-	}
-	defer func() {
-		if err := targetStore.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to close rig database: %v\n", err)
-		}
-	}()
-
-	// Auto-fix missing issue_prefix: if database config is missing but config.yaml has it,
-	// populate the database config (fixes hq-8af330.15)
-	if existingPrefix, _ := targetStore.GetConfig(ctx, "issue_prefix"); existingPrefix == "" {
-		// Try to get prefix from config.yaml in target beads directory
-		if cfgPrefix := readIssuePrefixFromConfig(targetBeadsDir); cfgPrefix != "" {
-			if err := targetStore.SetConfig(ctx, "issue_prefix", cfgPrefix); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to auto-set issue_prefix from config.yaml: %v\n", err)
-			}
-		}
-	}
-
-	// Prepare prefix override from routes.jsonl for cross-rig creation
-	// Strip trailing hyphen - database stores prefix without it (e.g., "aops" not "aops-")
-	var prefixOverride string
-	if targetPrefix != "" {
-		prefixOverride = strings.TrimSuffix(targetPrefix, "-")
-	}
-
-	var externalRefPtr *string
-	if externalRef != "" {
-		externalRefPtr = &externalRef
-	}
-
-	// Extract event-specific flags (bd-xwvo fix)
-	eventCategory, _ := cmd.Flags().GetString("event-category")
-	eventActor, _ := cmd.Flags().GetString("event-actor")
-	eventTarget, _ := cmd.Flags().GetString("event-target")
-	eventPayload, _ := cmd.Flags().GetString("event-payload")
-
-	// Extract molecule/agent flags (bd-xwvo fix)
-	molTypeStr, _ := cmd.Flags().GetString("mol-type")
-	var molType types.MolType
-	if molTypeStr != "" {
-		molType = types.MolType(molTypeStr)
-	}
-	roleType, _ := cmd.Flags().GetString("role-type")
-	agentRig, _ := cmd.Flags().GetString("agent-rig")
-
-	// NOTE: Advice targeting flags removed - use labels instead
-
-	// Extract time-based scheduling flags (bd-xwvo fix)
-	var dueAt *time.Time
-	dueStr, _ := cmd.Flags().GetString("due")
-	if dueStr != "" {
-		t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
-		if err != nil {
-			FatalError("invalid --due format %q", dueStr)
-		}
-		dueAt = &t
-	}
-
-	var deferUntil *time.Time
-	deferStr, _ := cmd.Flags().GetString("defer")
-	if deferStr != "" {
-		t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
-		if err != nil {
-			FatalError("invalid --defer format %q", deferStr)
-		}
-		deferUntil = &t
-	}
-
-	// Create issue with explicit ID if provided, otherwise CreateIssue will generate one
-	issue := &types.Issue{
-		ID:                 explicitID, // Set explicit ID if provided (empty string if not)
-		Title:              title,
-		Description:        description,
-		Design:             design,
-		AcceptanceCriteria: acceptance,
-		Notes:              notes,
-		Status:             types.StatusOpen,
-		Priority:           priority,
-		IssueType:          types.IssueType(issueType).Normalize(),
-		Assignee:           assignee,
-		ExternalRef:        externalRefPtr,
-		Ephemeral:          wisp,
-		Pinned:             pinned,
-		AutoClose:          autoClose,
-		CreatedBy:          getActorWithGit(),
-		Owner:              getOwner(),
-		// Event fields (bd-xwvo fix)
-		EventKind: eventCategory,
-		Actor:     eventActor,
-		Target:    eventTarget,
-		Payload:   eventPayload,
-		// Molecule/agent fields (bd-xwvo fix)
-		MolType:  molType,
-		RoleType: roleType,
-		Rig:      agentRig,
-		// Time scheduling fields (bd-xwvo fix)
-		DueAt:      dueAt,
-		DeferUntil: deferUntil,
-		// NOTE: Advice targeting uses labels now
-		// Cross-rig routing: use route prefix instead of database config
-		PrefixOverride: prefixOverride,
-	}
-
-	if err := targetStore.CreateIssue(ctx, issue, actor); err != nil {
-		FatalError("failed to create issue in rig %q: %v", rigName, err)
-	}
-
-	// Add labels if specified
-	for _, label := range labels {
-		if err := targetStore.AddLabel(ctx, issue.ID, label, actor); err != nil {
-			WarnError("failed to add label %s: %v", label, err)
-		}
-	}
-
-	// Get silent flag
-	silent, _ := cmd.Flags().GetBool("silent")
-
-	if jsonOutput {
-		outputJSON(issue)
-	} else if silent {
-		fmt.Println(issue.ID)
-	} else {
-		fmt.Printf("%s Created issue in rig %q: %s\n", ui.RenderPass("✓"), rigName, issue.ID)
-		fmt.Printf("  Title: %s\n", issue.Title)
-		fmt.Printf("  Priority: P%d\n", issue.Priority)
-		fmt.Printf("  Status: %s\n", issue.Status)
-	}
+	createInRigViaDaemon(cmd, rigName, explicitID, parentID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
 }
 
 // createInRigViaDaemon creates an issue in a different rig using daemon RPC with TargetRig.

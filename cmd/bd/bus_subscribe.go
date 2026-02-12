@@ -56,7 +56,7 @@ func runBusSubscribe(cmd *cobra.Command, args []string) error {
 		natsURL = flagURL
 	} else if envURL := os.Getenv("BD_NATS_URL"); envURL != "" {
 		natsURL = envURL
-	} else if daemonClient != nil {
+	} else {
 		resp, err := daemonClient.Execute(rpc.OpBusStatus, nil)
 		if err == nil && resp.Success {
 			var result rpc.BusStatusResult

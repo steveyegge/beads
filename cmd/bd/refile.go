@@ -5,10 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -39,131 +36,8 @@ Examples:
 
 		keepOpen, _ := cmd.Flags().GetBool("keep-open")
 
-		// Use daemon if available (bd-wj80)
-		if daemonClient != nil {
-			refileViaDaemon(sourceID, targetRig, keepOpen)
-			return
-		}
-
-		ctx := rootCtx
-
-		// Step 1: Get the source issue (via routing if needed)
-		result, err := resolveAndGetIssueWithRouting(ctx, store, sourceID)
-		if err != nil {
-			FatalError("failed to find source issue: %v", err)
-		}
-		if result == nil || result.Issue == nil {
-			FatalError("source issue %s not found", sourceID)
-		}
-		defer result.Close()
-
-		sourceIssue := result.Issue
-		resolvedSourceID := result.ResolvedID
-
-		// Warn if source issue is already closed
-		if sourceIssue.Status == types.StatusClosed {
-			fmt.Fprintf(os.Stderr, "%s Source issue %s is already closed\n", ui.RenderWarn("⚠"), resolvedSourceID)
-		}
-
-		// Step 2: Find the town-level beads directory
-		townBeadsDir, err := findTownBeadsDir()
-		if err != nil {
-			FatalError("cannot refile: %v", err)
-		}
-
-		// Step 3: Resolve the target rig's beads directory
-		targetBeadsDir, targetPrefix, err := routing.ResolveBeadsDirForRig(targetRig, townBeadsDir)
-		if err != nil {
-			FatalError("%v", err)
-		}
-
-		// Check we're not refiling to the same rig
-		sourcePrefix := routing.ExtractPrefix(resolvedSourceID)
-		if sourcePrefix == targetPrefix {
-			FatalError("source issue %s is already in rig %q", resolvedSourceID, targetRig)
-		}
-
-		// Step 4: Open storage for the target rig
-		// Guard: direct storage is blocked when BD_DAEMON_HOST is set (bd-ma0s.1)
-		if rpc.GetDaemonHost() != "" {
-			FatalError("refile requires direct database access to target rig, which is not available when BD_DAEMON_HOST is set")
-		}
-targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
-		if err != nil {
-			FatalError("failed to open target rig database: %v", err)
-		}
-		defer func() {
-			if err := targetStore.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to close target rig database: %v\n", err)
-			}
-		}()
-
-		// Step 5: Create the new issue in target rig (copy all fields)
-		newIssue := &types.Issue{
-			// Don't copy ID - let target rig generate new one
-			Title:              sourceIssue.Title,
-			Description:        sourceIssue.Description,
-			Design:             sourceIssue.Design,
-			AcceptanceCriteria: sourceIssue.AcceptanceCriteria,
-			Status:             types.StatusOpen, // Always start as open
-			Priority:           sourceIssue.Priority,
-			IssueType:          sourceIssue.IssueType,
-			Assignee:           sourceIssue.Assignee,
-			ExternalRef:        sourceIssue.ExternalRef,
-			EstimatedMinutes:   sourceIssue.EstimatedMinutes,
-			SourceRepo:         sourceIssue.SourceRepo,
-			Ephemeral:          sourceIssue.Ephemeral,
-			MolType:            sourceIssue.MolType,
-			RoleType:           sourceIssue.RoleType,
-			Rig:                sourceIssue.Rig,
-			CreatedBy:          actor,
-		}
-
-		// Append refiled note to description
-		if newIssue.Description != "" {
-			newIssue.Description += "\n\n"
-		}
-		newIssue.Description += fmt.Sprintf("(Refiled from %s)", resolvedSourceID)
-
-		if err := targetStore.CreateIssue(ctx, newIssue, actor); err != nil {
-			FatalError("failed to create issue in target rig: %v", err)
-		}
-
-		// Step 6: Copy labels if any
-		labels, err := result.Store.GetLabels(ctx, resolvedSourceID)
-		if err == nil && len(labels) > 0 {
-			for _, label := range labels {
-				if err := targetStore.AddLabel(ctx, newIssue.ID, label, actor); err != nil {
-					WarnError("failed to copy label %s: %v", label, err)
-				}
-			}
-		}
-
-		// Step 7: Close the source issue (unless --keep-open)
-		if !keepOpen {
-			closeReason := fmt.Sprintf("Refiled to %s", newIssue.ID)
-			if err := result.Store.CloseIssue(ctx, resolvedSourceID, closeReason, actor, ""); err != nil {
-				WarnError("failed to close source issue: %v", err)
-			}
-			// Schedule auto-flush if source was local store
-			if !result.Routed {
-				markDirtyAndScheduleFlush()
-			}
-		}
-
-		// Output
-		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"source": resolvedSourceID,
-				"target": newIssue.ID,
-				"closed": !keepOpen,
-			})
-		} else {
-			fmt.Printf("%s Refiled %s → %s\n", ui.RenderPass("✓"), resolvedSourceID, newIssue.ID)
-			if !keepOpen {
-				fmt.Printf("  Source issue closed\n")
-			}
-		}
+		requireDaemon("refile")
+		refileViaDaemon(sourceID, targetRig, keepOpen)
 	},
 }
 

@@ -71,8 +71,6 @@ func runGateDiscover(cmd *cobra.Command, args []string) {
 	limit, _ := cmd.Flags().GetInt("limit")
 	maxAge, _ := cmd.Flags().GetDuration("max-age")
 
-	ctx := rootCtx
-
 	// Step 1: Find open gh:run gates without await_id
 	gates, err := findPendingGates()
 	if err != nil {
@@ -129,7 +127,7 @@ func runGateDiscover(cmd *cobra.Command, args []string) {
 		}
 
 		// Step 4: Update gate with discovered run ID
-		if err := updateGateAwaitID(ctx, gate.ID, runIDStr); err != nil {
+		if err := updateGateAwaitID(nil, gate.ID, runIDStr); err != nil {
 			fmt.Fprintf(os.Stderr, "  %s %s - update failed: %v\n",
 				ui.RenderFail("✗"), ui.RenderID(gate.ID), err)
 			continue
@@ -202,47 +200,28 @@ func workflowNameMatches(hint, workflowName, runName string) bool {
 // findPendingGates returns open gh:run gates that need run ID discovery.
 // This includes gates with empty AwaitID OR non-numeric AwaitID (workflow name hint).
 func findPendingGates() ([]*types.Issue, error) {
+	requireDaemon("gate discover")
+
+	listArgs := &rpc.ListArgs{
+		IssueType:     "gate",
+		ExcludeStatus: []string{"closed"},
+	}
+
+	resp, err := daemonClient.List(listArgs)
+	if err != nil {
+		return nil, fmt.Errorf("list gates: %w", err)
+	}
+
+	var allGates []*types.Issue
+	if err := json.Unmarshal(resp.Data, &allGates); err != nil {
+		return nil, fmt.Errorf("parse gates: %w", err)
+	}
+
+	// Filter to gh:run gates that need discovery
 	var gates []*types.Issue
-
-	if daemonClient != nil {
-		listArgs := &rpc.ListArgs{
-			IssueType: "gate",
-			ExcludeStatus: []string{"closed"},
-		}
-
-		resp, err := daemonClient.List(listArgs)
-		if err != nil {
-			return nil, fmt.Errorf("list gates: %w", err)
-		}
-
-		var allGates []*types.Issue
-		if err := json.Unmarshal(resp.Data, &allGates); err != nil {
-			return nil, fmt.Errorf("parse gates: %w", err)
-		}
-
-		// Filter to gh:run gates that need discovery
-		for _, g := range allGates {
-			if needsDiscovery(g) {
-				gates = append(gates, g)
-			}
-		}
-	} else {
-		// Direct mode
-		gateType := types.IssueType("gate")
-		filter := types.IssueFilter{
-			IssueType: &gateType,
-			ExcludeStatus: []types.Status{types.StatusClosed},
-		}
-
-		allGates, err := store.SearchIssues(rootCtx, "", filter)
-		if err != nil {
-			return nil, fmt.Errorf("search gates: %w", err)
-		}
-
-		for _, g := range allGates {
-			if needsDiscovery(g) {
-				gates = append(gates, g)
-			}
+	for _, g := range allGates {
+		if needsDiscovery(g) {
+			gates = append(gates, g)
 		}
 	}
 
@@ -391,27 +370,17 @@ func matchGateToRun(gate *types.Issue, runs []GHWorkflowRun, maxAge time.Duratio
 
 // updateGateAwaitID updates a gate's await_id field
 func updateGateAwaitID(_ interface{}, gateID, runID string) error {
-	if daemonClient != nil {
-		updateArgs := &rpc.UpdateArgs{
-			ID:      gateID,
-			AwaitID: &runID,
-		}
+	updateArgs := &rpc.UpdateArgs{
+		ID:      gateID,
+		AwaitID: &runID,
+	}
 
-		resp, err := daemonClient.Update(updateArgs)
-		if err != nil {
-			return err
-		}
-		if !resp.Success {
-			return fmt.Errorf("%s", resp.Error)
-		}
-	} else {
-		updates := map[string]interface{}{
-			"await_id": runID,
-		}
-		if err := store.UpdateIssue(rootCtx, gateID, updates, actor); err != nil {
-			return err
-		}
-		markDirtyAndScheduleFlush()
+	resp, err := daemonClient.Update(updateArgs)
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("%s", resp.Error)
 	}
 
 	return nil

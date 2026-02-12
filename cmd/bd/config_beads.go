@@ -131,66 +131,27 @@ func runConfigListBeads(cmd *cobra.Command, _ []string) {
 
 	configType := "config"
 
-	if daemonClient != nil {
-		listArgs := &rpc.ListArgs{
-			IssueType: configType,
-			Labels:    labels,
-			Limit:     200,
-		}
-		resp, err := daemonClient.List(listArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		var issues []*types.IssueWithCounts
-		if resp.Data != nil {
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		if jsonOutput {
-			outputJSON(issues)
-			return
-		}
-
-		printConfigBeadsList(issues)
-		return
-	}
-
-	// Direct store access
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-		fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-		os.Exit(1)
-	}
-
-	ctx := rootCtx
-	issueType := types.IssueType(configType)
-	filter := types.IssueFilter{
-		IssueType: &issueType,
+	// Use daemon RPC
+	requireDaemon("config list-beads")
+	listArgs := &rpc.ListArgs{
+		IssueType: configType,
 		Labels:    labels,
 		Limit:     200,
 	}
-
-	issues, err := store.SearchIssues(ctx, "", filter)
+	listResp, err := daemonClient.List(listArgs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing config beads: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	var issues []*types.Issue
+	if err := json.Unmarshal(listResp.Data, &issues); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 		os.Exit(1)
 	}
 
 	if jsonOutput {
-		// Populate labels for JSON output
-		issueIDs := make([]string, len(issues))
-		for i, issue := range issues {
-			issueIDs[i] = issue.ID
-		}
-		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
-		for _, issue := range issues {
-			issue.Labels = labelsMap[issue.ID]
-		}
+		// Labels are already populated from the daemon List RPC
 		outputJSON(issues)
 		return
 	}
@@ -206,14 +167,13 @@ func runConfigListBeads(cmd *cobra.Command, _ []string) {
 
 	fmt.Printf("\nConfig Beads (%d):\n", len(issues))
 	for _, issue := range issues {
-		issueLabels, _ := store.GetLabels(ctx, issue.ID)
 		metaPreview := ""
 		if issue.Metadata != nil {
 			metaPreview = truncateConfigMeta(string(issue.Metadata), 60)
 		}
 
-		scopeStr := extractScopeFromLabels(issueLabels)
-		categoryStr := extractCategoryFromLabels(issueLabels)
+		scopeStr := extractScopeFromLabels(issue.Labels)
+		categoryStr := extractCategoryFromLabels(issue.Labels)
 
 		fmt.Printf("  %s  %s\n", issue.ID, issue.Title)
 		if categoryStr != "" {
@@ -285,49 +245,26 @@ func runConfigShowBead(cmd *cobra.Command, args []string) {
 	}
 
 	// Show a single config bead by ID
-	if daemonClient != nil {
-		showArgs := &rpc.ShowArgs{ID: idOrCategory}
-		resp, err := daemonClient.Show(showArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		var issue types.Issue
-		if err := json.Unmarshal(resp.Data, &issue); err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-			os.Exit(1)
-		}
-
-		if jsonOutput {
-			outputJSON(issue)
-			return
-		}
-
-		printConfigBead(&issue)
-		return
-	}
-
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-		os.Exit(1)
-	}
-
-	ctx := rootCtx
-	issue, err := store.GetIssue(ctx, idOrCategory)
+	requireDaemon("config show-bead")
+	showArgs := &rpc.ShowArgs{ID: idOrCategory}
+	resp, err := daemonClient.Show(showArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	issue.Labels, _ = store.GetLabels(ctx, issue.ID)
+	var issue types.Issue
+	if err := json.Unmarshal(resp.Data, &issue); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
+		os.Exit(1)
+	}
 
 	if jsonOutput {
 		outputJSON(issue)
 		return
 	}
 
-	printConfigBead(issue)
+	printConfigBead(&issue)
 }
 
 // runConfigShowMerged shows merged config for a category across scopes.
@@ -336,58 +273,32 @@ func runConfigShowMerged(category, scopeStr string) {
 	scopeLabels := parseScopeLabels(scopeStr)
 
 	// Query all config beads for this category
+	requireDaemon("config show-bead --merged")
 	configType := "config"
 	labels := []string{"config:" + category}
 
 	var allIssues []*types.Issue
 
-	if daemonClient != nil {
-		listArgs := &rpc.ListArgs{
-			IssueType: configType,
-			Labels:    labels,
-			Limit:     200,
-		}
-		resp, err := daemonClient.List(listArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	listArgs := &rpc.ListArgs{
+		IssueType: configType,
+		Labels:    labels,
+		Limit:     200,
+	}
+	listResp, err := daemonClient.List(listArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	var issues []*types.IssueWithCounts
+	if listResp.Data != nil {
+		if err := json.Unmarshal(listResp.Data, &issues); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 			os.Exit(1)
 		}
-
-		var issues []*types.IssueWithCounts
-		if resp.Data != nil {
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
-			}
-		}
-		for _, iwc := range issues {
-			allIssues = append(allIssues, iwc.Issue)
-		}
-	} else {
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			os.Exit(1)
-		}
-
-		ctx := rootCtx
-		issueType := types.IssueType(configType)
-		filter := types.IssueFilter{
-			IssueType: &issueType,
-			Labels:    labels,
-			Limit:     200,
-		}
-
-		var err error
-		allIssues, err = store.SearchIssues(ctx, "", filter)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing config beads: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Populate labels for each issue
-		for _, issue := range allIssues {
-			issue.Labels, _ = store.GetLabels(ctx, issue.ID)
-		}
+	}
+	for _, iwc := range issues {
+		allIssues = append(allIssues, iwc.Issue)
 	}
 
 	// Filter to applicable scopes and score
@@ -467,6 +378,8 @@ func runConfigSetBead(cmd *cobra.Command, _ []string) {
 		os.Exit(1)
 	}
 
+	requireDaemon("config set-bead")
+
 	// Generate ID from category+scope
 	beadID := generateConfigBeadID(category, scope)
 
@@ -476,98 +389,26 @@ func runConfigSetBead(cmd *cobra.Command, _ []string) {
 	// Build complete label set
 	allLabels := append([]string{"config:" + category}, scopeLabelsSlice...)
 
-	if daemonClient != nil {
-		// Try to show existing bead first
-		showArgs := &rpc.ShowArgs{ID: beadID}
-		resp, err := daemonClient.Show(showArgs)
+	// Try to show existing bead first
+	showArgs := &rpc.ShowArgs{ID: beadID}
+	showResp, err := daemonClient.Show(showArgs)
 
-		if err == nil && resp.Success {
-			// Update existing bead
-			titleStr := title
-			rigStr := rigField
-			updateArgs := &rpc.UpdateArgs{
-				ID:        beadID,
-				Title:     &titleStr,
-				Rig:       &rigStr,
-				AddLabels: allLabels,
-				Metadata:  &metadataJSON,
-			}
-			_, err := daemonClient.Update(updateArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error updating config bead: %v\n", err)
-				os.Exit(1)
-			}
-
-			if jsonOutput {
-				outputJSON(map[string]string{
-					"id":     beadID,
-					"action": "updated",
-					"title":  title,
-				})
-			} else {
-				fmt.Printf("Updated config bead: %s\n", beadID)
-			}
-			return
-		}
-
-		// Create new bead
-		// Config beads use "hq-cfg-" prefix regardless of daemon's configured prefix.
-		// Set Prefix="hq" so PrefixOverride skips prefix validation on the server.
-		createArgs := &rpc.CreateArgs{
+	if err == nil && showResp.Success {
+		// Update existing bead
+		titleStr := title
+		rigStr := rigField
+		updateArgs := &rpc.UpdateArgs{
 			ID:        beadID,
-			Title:     title,
-			IssueType: "config",
-			Labels:    allLabels,
-			Rig:       rigField,
-			Metadata:  metadataJSON,
-			Prefix:    "hq",
+			Title:     &titleStr,
+			Rig:       &rigStr,
+			AddLabels: allLabels,
+			Metadata:  &metadataJSON,
 		}
-		_, err = daemonClient.Create(createArgs)
+		_, err := daemonClient.Update(updateArgs)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating config bead: %v\n", err)
-			os.Exit(1)
-		}
-
-		if jsonOutput {
-			outputJSON(map[string]string{
-				"id":     beadID,
-				"action": "created",
-				"title":  title,
-			})
-		} else {
-			fmt.Printf("Created config bead: %s\n", beadID)
-		}
-		return
-	}
-
-	// Direct store access
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-		os.Exit(1)
-	}
-
-	ctx := rootCtx
-
-	// Check if bead already exists
-	existing, err := store.GetIssue(ctx, beadID)
-	if err == nil && existing != nil {
-		// Update existing
-		updates := map[string]interface{}{
-			"title":    title,
-			"rig":      rigField,
-			"metadata": string(metadataJSON),
-		}
-		if err := store.UpdateIssue(ctx, beadID, updates, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Error updating config bead: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Ensure labels are set
-		for _, label := range allLabels {
-			_ = store.AddLabel(ctx, beadID, label, actor)
-		}
-
-		markDirtyAndScheduleFlush()
 
 		if jsonOutput {
 			outputJSON(map[string]string{
@@ -582,28 +423,22 @@ func runConfigSetBead(cmd *cobra.Command, _ []string) {
 	}
 
 	// Create new bead
-	issue := &types.Issue{
+	// Config beads use "hq-cfg-" prefix regardless of daemon's configured prefix.
+	// Set Prefix="hq" so PrefixOverride skips prefix validation on the server.
+	createArgs := &rpc.CreateArgs{
 		ID:        beadID,
 		Title:     title,
 		IssueType: "config",
-		Status:    types.StatusOpen,
+		Labels:    allLabels,
 		Rig:       rigField,
 		Metadata:  metadataJSON,
+		Prefix:    "hq",
 	}
-
-	if err := store.CreateIssue(ctx, issue, actor); err != nil {
+	_, err = daemonClient.Create(createArgs)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating config bead: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Add labels
-	for _, label := range allLabels {
-		if err := store.AddLabel(ctx, beadID, label, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add label %s: %v\n", label, err)
-		}
-	}
-
-	markDirtyAndScheduleFlush()
 
 	if jsonOutput {
 		outputJSON(map[string]string{

@@ -93,26 +93,25 @@ NOTE: Import requires direct database access. When using a remote daemon
 		// and stopping the daemon would break the parent sync's connection.
 		// The daemon-stale-DB issue is addressed separately by
 		// having sync use --no-daemon mode for consistency.
-		if daemonClient != nil {
-			debug.Logf("Debug: import command forcing direct mode (closes daemon connection)\n")
-			_ = daemonClient.Close()
-			daemonClient = nil
+		// Import requires direct database access. Close daemon connection.
+		debug.Logf("Debug: import command forcing direct mode (closes daemon connection)\n")
+		_ = daemonClient.Close()
+		daemonClient = nil
 
-			var err error
-			beadsDir := filepath.Dir(dbPath)
-			store, err = factory.NewFromConfigWithOptions(rootCtx, beadsDir, factory.Options{
-				LockTimeout: lockTimeout,
-			})
-			if err != nil {
-				// Check for fresh clone scenario
-				if handleFreshCloneError(err, beadsDir) {
-					os.Exit(1)
-				}
-				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+		var err error
+		beadsDir := filepath.Dir(dbPath)
+		store, err = factory.NewFromConfigWithOptions(rootCtx, beadsDir, factory.Options{
+			LockTimeout: lockTimeout,
+		})
+		if err != nil {
+			// Check for fresh clone scenario
+			if handleFreshCloneError(err, beadsDir) {
 				os.Exit(1)
 			}
-			defer func() { _ = store.Close() }()
+			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+			os.Exit(1)
 		}
+		defer func() { _ = store.Close() }()
 
 		// We'll check if database needs initialization after reading the JSONL
 		// so we can detect the prefix from the imported issues

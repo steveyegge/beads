@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -136,9 +135,7 @@ Examples:
 func runWispCreate(cmd *cobra.Command, args []string) {
 	CheckReadonly("wisp create")
 
-	ctx := rootCtx
-
-	// Parse flags early so we can check dry-run before requiring store
+	// Parse flags early so we can check dry-run before requiring daemon
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	varFlags, _ := cmd.Flags().GetStringArray("var")
 
@@ -170,7 +167,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 	// If filesystem resolution failed and daemon is available, try daemon-backed
 	// formula resolution. The daemon checks the database first, which is required
 	// in K8s where there are no filesystem formula files (bd-l6qx1).
-	if subgraph == nil && daemonClient != nil {
+	if subgraph == nil {
 		sg, err := resolveAndCookFormulaViaDaemon(args[0], vars)
 		if err == nil {
 			subgraph = sg
@@ -179,73 +176,9 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 	}
 
 	if subgraph == nil {
-		// Legacy proto path requires direct store access
-		// (formula cooking above works without store)
-		// TODO: Add daemon RPC support for legacy proto lookup per gt-as9kdm
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: formula '%s' not found\n", args[0])
-			fmt.Fprintf(os.Stderr, "Hint: run 'bd formula list' to see available formulas\n")
-			fmt.Fprintf(os.Stderr, "Hint: legacy proto beads require direct database access\n")
-			os.Exit(1)
-		}
-
-		// Resolve proto ID (legacy path)
-		protoID = args[0]
-		// Try to resolve partial ID if it doesn't look like a full ID
-		if !strings.HasPrefix(protoID, "bd-") && !strings.HasPrefix(protoID, "gt-") && !strings.HasPrefix(protoID, "mol-") {
-			// Might be a partial ID, try to resolve
-			if resolved, err := resolvePartialIDDirect(ctx, protoID); err == nil {
-				protoID = resolved
-			}
-		}
-
-		// Check if it's a named molecule (mol-xxx) - look up in catalog
-		if strings.HasPrefix(protoID, "mol-") {
-			// Find the proto by name
-			issues, err := store.SearchIssues(ctx, "", types.IssueFilter{
-				Labels: []string{MoleculeLabel},
-			})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error searching for proto: %v\n", err)
-				os.Exit(1)
-			}
-			found := false
-			for _, issue := range issues {
-				if strings.Contains(issue.Title, protoID) || issue.ID == protoID {
-					protoID = issue.ID
-					found = true
-					break
-				}
-			}
-			if !found {
-				fmt.Fprintf(os.Stderr, "Error: '%s' not found as formula or proto\n", args[0])
-				fmt.Fprintf(os.Stderr, "Hint: run 'bd formula list' to see available formulas\n")
-				os.Exit(1)
-			}
-		}
-
-		// Load the proto
-		// Note: GetIssue returns (nil, nil) for not-found, so check both
-		protoIssue, err := store.GetIssue(ctx, protoID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading proto %s: %v\n", protoID, err)
-			os.Exit(1)
-		}
-		if protoIssue == nil {
-			fmt.Fprintf(os.Stderr, "Error: proto not found: %s\n", protoID)
-			os.Exit(1)
-		}
-		if !isProtoIssue(protoIssue) {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a proto (missing '%s' label)\n", protoID, MoleculeLabel)
-			os.Exit(1)
-		}
-
-		// Load the proto subgraph (prefer daemon RPC per gt-as9kdm)
-		subgraph, err = loadSubgraphPreferDaemon(ctx, protoID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading proto: %v\n", err)
-			os.Exit(1)
-		}
+		fmt.Fprintf(os.Stderr, "Error: formula '%s' not found\n", args[0])
+		fmt.Fprintf(os.Stderr, "Hint: run 'bd formula list' to see available formulas\n")
+		os.Exit(1)
 	}
 
 	// Apply variable defaults from formula
@@ -285,24 +218,12 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	var result *InstantiateResult
 
-	// Prefer daemon RPC for wisp creation (gt-t8fv03 fix)
-	if daemonClient != nil {
-		var err error
-		result, err = cloneSubgraphViaDaemon(daemonClient, subgraph, cloneOpts)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating wisp via daemon: %v\n", err)
-			os.Exit(1)
-		}
-	} else if store != nil {
-		// Fallback: direct store access (for local development without daemon)
-		var err error
-		result, err = spawnMolecule(ctx, store, subgraph, vars, "", actor, true, types.IDPrefixWisp)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating wisp: %v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		fmt.Fprintf(os.Stderr, "Error: no database connection (neither daemon nor local store available)\n")
+	// Create wisp via daemon RPC
+	requireDaemon("wisp create")
+	var err2 error
+	result, err2 = cloneSubgraphViaDaemon(daemonClient, subgraph, cloneOpts)
+	if err2 != nil {
+		fmt.Fprintf(os.Stderr, "Error creating wisp via daemon: %v\n", err2)
 		os.Exit(1)
 	}
 
@@ -336,29 +257,6 @@ func isProtoIssue(issue *types.Issue) bool {
 	return false
 }
 
-// resolvePartialIDDirect resolves a partial ID directly from store
-func resolvePartialIDDirect(ctx context.Context, partial string) (string, error) {
-	// Try direct lookup first
-	// Note: GetIssue returns (nil, nil) for not-found, so check both
-	if issue, err := store.GetIssue(ctx, partial); err == nil && issue != nil {
-		return issue.ID, nil
-	}
-	// Search by prefix
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{
-		IDs: []string{partial + "*"},
-	})
-	if err != nil {
-		return "", err
-	}
-	if len(issues) == 1 {
-		return issues[0].ID, nil
-	}
-	if len(issues) > 1 {
-		return "", fmt.Errorf("ambiguous ID: %s matches %d issues", partial, len(issues))
-	}
-	return "", fmt.Errorf("not found: %s", partial)
-}
-
 var wispListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all wisps in current context",
@@ -386,48 +284,21 @@ Examples:
 }
 
 func runWispList(cmd *cobra.Command, args []string) {
-	ctx := rootCtx
+	requireDaemon("wisp list")
 
 	showAll, _ := cmd.Flags().GetBool("all")
 
-	// Check for database connection
-	if store == nil && daemonClient == nil {
-		if jsonOutput {
-			outputJSON(WispListResult{
-				Wisps: []WispListItem{},
-				Count: 0,
-			})
-		} else {
-			fmt.Println("No database connection")
-		}
-		return
-	}
-
 	// Query wisps from main database using Ephemeral filter
 	ephemeralFlag := true
-	var issues []*types.Issue
-	var err error
-
-	if daemonClient != nil {
-		// Use daemon RPC
-		resp, rpcErr := daemonClient.List(&rpc.ListArgs{
-			Ephemeral: &ephemeralFlag,
-		})
-		if rpcErr != nil {
-			err = rpcErr
-		} else {
-			if jsonErr := json.Unmarshal(resp.Data, &issues); jsonErr != nil {
-				err = jsonErr
-			}
-		}
-	} else {
-		// Direct database access
-		filter := types.IssueFilter{
-			Ephemeral: &ephemeralFlag,
-		}
-		issues, err = store.SearchIssues(ctx, "", filter)
-	}
+	resp, err := daemonClient.List(&rpc.ListArgs{
+		Ephemeral: &ephemeralFlag,
+	})
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing wisps: %v\n", err)
+		os.Exit(1)
+	}
+	var issues []*types.Issue
+	if err := json.Unmarshal(resp.Data, &issues); err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing wisps: %v\n", err)
 		os.Exit(1)
 	}
@@ -586,8 +457,7 @@ type WispGCResult struct {
 
 func runWispGC(cmd *cobra.Command, args []string) {
 	CheckReadonly("wisp gc")
-
-	ctx := rootCtx
+	requireDaemon("wisp gc")
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	ageStr, _ := cmd.Flags().GetString("age")
@@ -604,25 +474,18 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Wisp gc requires direct store access for deletion - ensure store is active even when daemon connected
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-		os.Exit(1)
-	}
-
-	// Query wisps from main database using Ephemeral filter
+	// Query wisps from daemon using Ephemeral filter
 	ephemeralFlag := true
-	filter := types.IssueFilter{
+	resp, err := daemonClient.List(&rpc.ListArgs{
 		Ephemeral: &ephemeralFlag,
-	}
-	issues, err := store.SearchIssues(ctx, "", filter)
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing wisps: %v\n", err)
+		os.Exit(1)
+	}
+	var issues []*types.Issue
+	if err := json.Unmarshal(resp.Data, &issues); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing wisps: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -677,10 +540,11 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Delete abandoned wisps (DeleteIssue is on Storage interface - works with SQLite and Dolt)
+	// Delete abandoned wisps via daemon RPC
 	var cleanedIDs []string
 	for _, issue := range abandoned {
-		if err := store.DeleteIssue(ctx, issue.ID); err != nil {
+		_, err := daemonClient.Delete(&rpc.DeleteArgs{IDs: []string{issue.ID}})
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to delete %s: %v\n", issue.ID, err)
 			continue
 		}

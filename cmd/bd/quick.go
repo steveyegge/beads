@@ -39,50 +39,24 @@ Example:
 			FatalError("%v", err)
 		}
 
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			createArgs := &rpc.CreateArgs{
-				Title:     title,
-				Priority:  priority,
-				IssueType: issueType,
-				Labels:    labels,
-			}
+		requireDaemon("quick create")
 
-			resp, err := daemonClient.Create(createArgs)
-			if err != nil {
-				FatalError("%v", err)
-			}
-
-			var issue types.Issue
-			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				FatalError("parsing response: %v", err)
-			}
-			fmt.Println(issue.ID)
-			return
-		}
-
-		// Direct mode
-		issue := &types.Issue{
+		createArgs := &rpc.CreateArgs{
 			Title:     title,
-			Status:    types.StatusOpen,
 			Priority:  priority,
-			IssueType: types.IssueType(issueType).Normalize(),
+			IssueType: issueType,
+			Labels:    labels,
 		}
 
-		ctx := rootCtx
-		if err := store.CreateIssue(ctx, issue, actor); err != nil {
+		resp, err := daemonClient.Create(createArgs)
+		if err != nil {
 			FatalError("%v", err)
 		}
 
-		// Add labels if specified (silently ignore failures)
-		for _, label := range labels {
-			_ = store.AddLabel(ctx, issue.ID, label, actor)
+		var issue types.Issue
+		if err := json.Unmarshal(resp.Data, &issue); err != nil {
+			FatalError("parsing response: %v", err)
 		}
-
-		// Schedule auto-flush
-		markDirtyAndScheduleFlush()
-
-		// Output only the ID
 		fmt.Println(issue.ID)
 	},
 }

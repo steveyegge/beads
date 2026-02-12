@@ -580,45 +580,20 @@ func showIssueRefs(ctx context.Context, args []string, resolvedIDs []string, rou
 		return processIssue(resolvedID, directResult.Store)
 	})
 
-	// Handle resolved IDs (daemon mode) - use Show RPC which returns IssueDetails with Dependents
-	if daemonClient != nil {
-		for _, id := range resolvedIDs {
-			showArgs := &rpc.ShowArgs{ID: id}
-			resp, err := daemonClient.Show(showArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
-				continue
-			}
-			var details types.IssueDetails
-			if err := json.Unmarshal(resp.Data, &details); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response for %s: %v\n", id, err)
-				continue
-			}
-			allRefs[id] = details.Dependents
+	// Handle resolved IDs - use Show RPC which returns IssueDetails with Dependents
+	for _, id := range resolvedIDs {
+		showArgs := &rpc.ShowArgs{ID: id}
+		resp, err := daemonClient.Show(showArgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
+			continue
 		}
-	} else {
-		// Direct mode - process each arg
-		for _, id := range args {
-			if containsStr(routedArgs, id) {
-				continue // Already processed above
-			}
-			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-				continue
-			}
-			if result == nil || result.Issue == nil {
-				if result != nil {
-					result.Close()
-				}
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-				continue
-			}
-			if err := processIssue(result.ResolvedID, result.Store); err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting refs for %s: %v\n", id, err)
-			}
-			result.Close()
+		var details types.IssueDetails
+		if err := json.Unmarshal(resp.Data, &details); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing response for %s: %v\n", id, err)
+			continue
 		}
+		allRefs[id] = details.Dependents
 	}
 
 	// Output results
@@ -789,52 +764,27 @@ func showIssueChildren(ctx context.Context, args []string, resolvedIDs []string,
 		return processIssue(resolvedID, directResult.Store)
 	})
 
-	// Handle resolved IDs (daemon mode) - use Show RPC which returns IssueDetails with Dependents
-	if daemonClient != nil {
-		for _, id := range resolvedIDs {
-			showArgs := &rpc.ShowArgs{ID: id}
-			resp, err := daemonClient.Show(showArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
-				continue
-			}
-			var details types.IssueDetails
-			if err := json.Unmarshal(resp.Data, &details); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response for %s: %v\n", id, err)
-				continue
-			}
-			// Filter dependents for parent-child relationships
-			if _, exists := allChildren[id]; !exists {
-				allChildren[id] = []*types.IssueWithDependencyMetadata{}
-			}
-			for _, dep := range details.Dependents {
-				if dep.DependencyType == types.DepParentChild {
-					allChildren[id] = append(allChildren[id], dep)
-				}
-			}
+	// Handle resolved IDs - use Show RPC which returns IssueDetails with Dependents
+	for _, id := range resolvedIDs {
+		showArgs := &rpc.ShowArgs{ID: id}
+		resp, err := daemonClient.Show(showArgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
+			continue
 		}
-	} else {
-		// Direct mode - process each arg
-		for _, id := range args {
-			if containsStr(routedArgs, id) {
-				continue // Already processed above
+		var details types.IssueDetails
+		if err := json.Unmarshal(resp.Data, &details); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing response for %s: %v\n", id, err)
+			continue
+		}
+		// Filter dependents for parent-child relationships
+		if _, exists := allChildren[id]; !exists {
+			allChildren[id] = []*types.IssueWithDependencyMetadata{}
+		}
+		for _, dep := range details.Dependents {
+			if dep.DependencyType == types.DepParentChild {
+				allChildren[id] = append(allChildren[id], dep)
 			}
-			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-				continue
-			}
-			if result == nil || result.Issue == nil {
-				if result != nil {
-					result.Close()
-				}
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-				continue
-			}
-			if err := processIssue(result.ResolvedID, result.Store); err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting children for %s: %v\n", id, err)
-			}
-			result.Close()
 		}
 	}
 

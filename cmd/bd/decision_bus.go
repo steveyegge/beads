@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -21,28 +20,19 @@ func emitDecisionEvent(eventType eventbus.EventType, payload eventbus.DecisionEv
 		return
 	}
 
-	// Prefer daemon RPC.
-	if daemonClient != nil {
-		emitArgs := &rpc.BusEmitArgs{
-			HookType:  string(eventType),
-			EventJSON: payloadJSON,
-		}
-		resp, err := daemonClient.Execute(rpc.OpBusEmit, emitArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "bus: daemon RPC for %s failed: %v\n", eventType, err)
-		} else if !resp.Success {
-			fmt.Fprintf(os.Stderr, "bus: daemon error for %s: %s\n", eventType, resp.Error)
-		}
+	if daemonClient == nil {
+		fmt.Fprintf(os.Stderr, "bus: daemon not connected, cannot emit %s\n", eventType)
 		return
 	}
 
-	// Fallback: local dispatch (no handlers = fire-and-forget to JetStream if configured).
-	bus := eventbus.New()
-	event := &eventbus.Event{
-		Type: eventType,
-		Raw:  payloadJSON,
+	emitArgs := &rpc.BusEmitArgs{
+		HookType:  string(eventType),
+		EventJSON: payloadJSON,
 	}
-	if _, err := bus.Dispatch(context.Background(), event); err != nil {
-		fmt.Fprintf(os.Stderr, "bus: local dispatch for %s failed: %v\n", eventType, err)
+	resp, err := daemonClient.Execute(rpc.OpBusEmit, emitArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bus: daemon RPC for %s failed: %v\n", eventType, err)
+	} else if !resp.Success {
+		fmt.Fprintf(os.Stderr, "bus: daemon error for %s: %s\n", eventType, resp.Error)
 	}
 }

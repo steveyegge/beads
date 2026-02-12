@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -38,52 +37,29 @@ Examples:
 
 func runShip(cmd *cobra.Command, args []string) {
 	CheckReadonly("ship")
+	requireDaemon("ship")
 
 	capability := args[0]
 	force, _ := cmd.Flags().GetBool("force")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
-	ctx := rootCtx
-
 	// Find issue with export:<capability> label
 	exportLabel := "export:" + capability
 	providesLabel := "provides:" + capability
 
-	var issues []*types.Issue
-	var err error
-
-	// Ship requires direct store access for label operations
-	// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix).
-	// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
-	if daemonClient != nil && store == nil && rpc.GetDaemonHost() == "" {
-store, err = factory.NewFromConfig(ctx, getBeadsDir())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-			os.Exit(1)
-		}
-		defer func() { _ = store.Close() }()
+	// Use RPC to list issues with the export label
+	listArgs := &rpc.ListArgs{
+		LabelsAny: []string{exportLabel},
 	}
-
-	if daemonClient != nil {
-		// Use RPC to list issues with the export label
-		listArgs := &rpc.ListArgs{
-			LabelsAny: []string{exportLabel},
-		}
-		resp, err := daemonClient.List(listArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing issues: %v\n", err)
-			os.Exit(1)
-		}
-		if err := json.Unmarshal(resp.Data, &issues); err != nil {
-			fmt.Fprintf(os.Stderr, "Error unmarshaling issues: %v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		issues, err = store.GetIssuesByLabel(ctx, exportLabel)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing issues: %v\n", err)
-			os.Exit(1)
-		}
+	resp, err := daemonClient.List(listArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing issues: %v\n", err)
+		os.Exit(1)
+	}
+	var issues []*types.Issue
+	if err := json.Unmarshal(resp.Data, &issues); err != nil {
+		fmt.Fprintf(os.Stderr, "Error unmarshaling issues: %v\n", err)
+		os.Exit(1)
 	}
 
 	if len(issues) == 0 {
@@ -110,14 +86,9 @@ store, err = factory.NewFromConfig(ctx, getBeadsDir())
 		os.Exit(1)
 	}
 
-	// Check if already shipped (use direct store access)
+	// Check if already shipped (labels are on the issue from List RPC)
 	hasProvides := false
-	labels, err := store.GetLabels(ctx, issue.ID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting labels: %v\n", err)
-		os.Exit(1)
-	}
-	for _, l := range labels {
+	for _, l := range issue.Labels {
 		if l == providesLabel {
 			hasProvides = true
 			break
@@ -153,12 +124,15 @@ store, err = factory.NewFromConfig(ctx, getBeadsDir())
 		return
 	}
 
-	// Add provides:<capability> label (use direct store access)
-	if err := store.AddLabel(ctx, issue.ID, providesLabel, actor); err != nil {
+	// Add provides:<capability> label via daemon
+	_, err = daemonClient.AddLabel(&rpc.LabelAddArgs{
+		ID:    issue.ID,
+		Label: providesLabel,
+	})
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error adding label: %v\n", err)
 		os.Exit(1)
 	}
-	markDirtyAndScheduleFlush()
 
 	if jsonOutput {
 		outputJSON(map[string]interface{}{

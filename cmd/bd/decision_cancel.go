@@ -4,13 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // decisionCancelCmd cancels a pending decision point without a response
@@ -53,94 +50,8 @@ func runDecisionCancel(cmd *cobra.Command, args []string) {
 	reason, _ := cmd.Flags().GetString("reason")
 	canceledBy, _ := cmd.Flags().GetString("by")
 
-	// Use daemon if available
-	if daemonClient != nil {
-		cancelViaDaemon(decisionID, reason, canceledBy)
-		return
-	}
-
-	// Direct mode
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	ctx := rootCtx
-
-	// Resolve partial ID
-	resolvedID, err := utils.ResolvePartialID(ctx, store, decisionID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Get the issue to verify it's a decision gate
-	issue, err := store.GetIssue(ctx, resolvedID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting issue: %v\n", err)
-		os.Exit(1)
-	}
-	if issue == nil {
-		fmt.Fprintf(os.Stderr, "Error: issue %s not found\n", resolvedID)
-		os.Exit(1)
-	}
-
-	// Verify it's a decision gate
-	if issue.IssueType != types.IssueType("gate") || issue.AwaitType != "decision" {
-		fmt.Fprintf(os.Stderr, "Error: %s is not a decision point (type=%s, await_type=%s)\n",
-			resolvedID, issue.IssueType, issue.AwaitType)
-		os.Exit(1)
-	}
-
-	// Get the decision point data
-	dp, err := store.GetDecisionPoint(ctx, resolvedID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting decision point: %v\n", err)
-		os.Exit(1)
-	}
-	if dp == nil {
-		fmt.Fprintf(os.Stderr, "Error: no decision point data for %s\n", resolvedID)
-		os.Exit(1)
-	}
-
-	// Check if already responded
-	if dp.RespondedAt != nil {
-		fmt.Fprintf(os.Stderr, "Error: decision %s already responded at %s by %s\n",
-			resolvedID, dp.RespondedAt.Format("2006-01-02 15:04"), dp.RespondedBy)
-		if dp.SelectedOption != "" {
-			fmt.Fprintf(os.Stderr, "  Selected: %s\n", dp.SelectedOption)
-		}
-		os.Exit(1)
-	}
-
-	// Update decision point to mark as canceled
-	now := time.Now()
-	dp.RespondedAt = &now
-	dp.RespondedBy = canceledBy
-	dp.SelectedOption = "_canceled"
-	if reason != "" {
-		dp.ResponseText = reason
-	}
-
-	if err := store.UpdateDecisionPoint(ctx, dp); err != nil {
-		fmt.Fprintf(os.Stderr, "Error updating decision point: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Close the gate issue
-	closeReason := "Decision canceled"
-	if reason != "" {
-		closeReason = fmt.Sprintf("Decision canceled: %s", reason)
-	}
-
-	if err := store.CloseIssue(ctx, resolvedID, closeReason, actor, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Error closing gate: %v\n", err)
-		os.Exit(1)
-	}
-
-	markDirtyAndScheduleFlush()
-
-	printCancelResult(resolvedID, reason, canceledBy, now.Format(time.RFC3339), dp.Prompt)
+	requireDaemon("decision cancel")
+	cancelViaDaemon(decisionID, reason, canceledBy)
 }
 
 // cancelViaDaemon cancels a decision via the RPC daemon

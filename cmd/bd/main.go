@@ -862,68 +862,8 @@ var rootCmd = &cobra.Command{
 		syncCommandContext()
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
-		// Close daemon client if we're using it
-		if daemonClient != nil {
-			_ = daemonClient.Close()
-			return
-		}
-
-		// Otherwise, handle direct mode cleanup
-		// Shutdown flush manager (performs final flush if needed)
-		// Skip if sync command already handled export and restore (sync.branch mode)
-		if flushManager != nil && !skipFinalFlush {
-			if err := flushManager.Shutdown(); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: flush manager shutdown error: %v\n", err)
-			}
-		}
-
-		// Dolt auto-commit: after a successful write command (and after final flush),
-		// create a Dolt commit so changes don't remain only in the working set.
-		if commandDidWrite.Load() && !commandDidExplicitDoltCommit {
-			if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: dolt auto-commit failed: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		// Tip metadata auto-commit: if a tip was shown, create a separate Dolt commit for the
-		// tip_*_last_shown metadata updates. This may happen even for otherwise read-only commands.
-		if commandDidWriteTipMetadata && len(commandTipIDsShown) > 0 {
-			// Only applies when dolt auto-commit is enabled and backend is versioned (Dolt).
-			if mode, err := getDoltAutoCommitMode(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
-				os.Exit(1)
-			} else if mode == doltAutoCommitOn {
-				// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
-				for tipID := range commandTipIDsShown {
-					key := fmt.Sprintf("tip_%s_last_shown", tipID)
-					value := time.Now().Format(time.RFC3339)
-					if err := store.SetMetadata(rootCtx, key, value); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
-						os.Exit(1)
-					}
-				}
-
-				ids := make([]string, 0, len(commandTipIDsShown))
-				for tipID := range commandTipIDsShown {
-					ids = append(ids, tipID)
-				}
-				msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
-				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
-					os.Exit(1)
-				}
-			}
-		}
-
-		// Signal that store is closing (prevents background flush from accessing closed store)
-		storeMutex.Lock()
-		storeActive = false
-		storeMutex.Unlock()
-
-		if store != nil {
-			_ = store.Close()
-		}
+		// Close daemon client
+		_ = daemonClient.Close()
 		if profileFile != nil {
 			pprof.StopCPUProfile()
 			_ = profileFile.Close()

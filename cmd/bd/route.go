@@ -100,43 +100,20 @@ func runRouteMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check for existing route beads to avoid duplicates
-	ctx := cmd.Context()
+	requireDaemon("route migrate")
 	existingRoutes := make(map[string]bool)
 
-	// Query existing route beads - use daemon if available
-	if daemonClient != nil {
-		listArgs := &rpc.ListArgs{
-			IssueType: "route",
-			Status:    "open",
-		}
-		resp, err := daemonClient.List(listArgs)
-		if err == nil {
-			var issues []*types.IssueWithCounts
-			if json.Unmarshal(resp.Data, &issues) == nil {
-				for _, iwc := range issues {
-					route := routing.ParseRouteFromTitle(iwc.Issue.Title)
-					if route.Prefix != "" {
-						existingRoutes[route.Prefix] = true
-					}
-				}
-			}
-		}
-	} else {
-		// Direct mode fallback - ensure store is active
-		if err := ensureStoreActive(); err != nil {
-			return fmt.Errorf("failed to initialize storage: %w", err)
-		}
-		store := getStore()
-		if store == nil {
-			return fmt.Errorf("no database connection")
-		}
-		filter := types.IssueFilter{}
-		issueType := types.IssueType("route")
-		filter.IssueType = &issueType
-		existing, err := store.SearchIssues(ctx, "", filter)
-		if err == nil {
-			for _, issue := range existing {
-				route := routing.ParseRouteFromTitle(issue.Title)
+	// Query existing route beads via daemon
+	listArgs := &rpc.ListArgs{
+		IssueType: "route",
+		Status:    "open",
+	}
+	resp, err := daemonClient.List(listArgs)
+	if err == nil {
+		var issues []*types.IssueWithCounts
+		if json.Unmarshal(resp.Data, &issues) == nil {
+			for _, iwc := range issues {
+				route := routing.ParseRouteFromTitle(iwc.Issue.Title)
 				if route.Prefix != "" {
 					existingRoutes[route.Prefix] = true
 				}
@@ -179,50 +156,27 @@ func runRouteMigrate(cmd *cobra.Command, args []string) error {
 		title := fmt.Sprintf("%s → %s", r.Prefix, r.Path)
 		description := fmt.Sprintf("Route for prefix %s to path %s", r.Prefix, r.Path)
 
+		// Create route bead via daemon RPC
 		var createdID string
-		if daemonClient != nil {
-			// Daemon mode - use RPC
-			createArgs := &rpc.CreateArgs{
-				Title:       title,
-				Description: description,
-				IssueType:   "route",
-				Priority:    2,
-			}
-			resp, err := daemonClient.Create(createArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "  Error creating route bead for %s: %v\n", r.Prefix, err)
-				continue
-			}
-			var result struct {
-				ID string `json:"id"`
-			}
-			if err := json.Unmarshal(resp.Data, &result); err != nil {
-				fmt.Fprintf(os.Stderr, "  Error parsing response for %s: %v\n", r.Prefix, err)
-				continue
-			}
-			createdID = result.ID
-		} else {
-			// Direct mode fallback
-			if err := ensureStoreActive(); err != nil {
-				return fmt.Errorf("failed to initialize storage: %w", err)
-			}
-			store := getStore()
-			if store == nil {
-				return fmt.Errorf("no database connection")
-			}
-			issue := &types.Issue{
-				Title:       title,
-				Description: description,
-				IssueType:   types.IssueType("route"),
-				Status:      types.StatusOpen,
-				Priority:    2,
-			}
-			if err := store.CreateIssue(ctx, issue, getActor()); err != nil {
-				fmt.Fprintf(os.Stderr, "  Error creating route bead for %s: %v\n", r.Prefix, err)
-				continue
-			}
-			createdID = issue.ID
+		createArgs := &rpc.CreateArgs{
+			Title:       title,
+			Description: description,
+			IssueType:   "route",
+			Priority:    2,
 		}
+		createResp, err := daemonClient.Create(createArgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  Error creating route bead for %s: %v\n", r.Prefix, err)
+			continue
+		}
+		var createResult struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(createResp.Data, &createResult); err != nil {
+			fmt.Fprintf(os.Stderr, "  Error parsing response for %s: %v\n", r.Prefix, err)
+			continue
+		}
+		createdID = createResult.ID
 
 		fmt.Printf("  Created %s: %s\n", createdID, title)
 		existingRoutes[r.Prefix] = true

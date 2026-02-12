@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // decisionAwaitCmd waits for a decision point to be responded
@@ -71,21 +69,9 @@ type AwaitResponse struct {
 
 func runDecisionAwait(cmd *cobra.Command, args []string) {
 	decisionID := args[0]
-	ctx := rootCtx
 
-	// Route to daemon or direct store
-	// Use global daemonClient directly (not getDaemonClient()) because PersistentPreRun
-	// sets the global but not cmdCtx.DaemonClient. Matches pattern in decision_list.go.
-	if daemonClient != nil {
-		runDecisionAwaitDaemon(daemonClient, decisionID)
-	} else {
-		// Need local store for direct mode
-		if err := ensureStoreActive(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(3)
-		}
-		runDecisionAwaitDirect(ctx, decisionID)
-	}
+	requireDaemon("decision await")
+	runDecisionAwaitDaemon(daemonClient, decisionID)
 }
 
 // runDecisionAwaitDaemon uses the shared awaitDecision loop (SSE+polling)
@@ -149,114 +135,6 @@ func runDecisionAwaitDaemon(client *rpc.Client, decisionID string) {
 	}
 
 	os.Exit(exitCode)
-}
-
-// runDecisionAwaitDirect polls the local store directly for decision resolution.
-func runDecisionAwaitDirect(ctx context.Context, decisionID string) {
-	// Resolve partial ID
-	resolvedID, err := utils.ResolvePartialID(ctx, store, decisionID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(3)
-	}
-
-	// Verify it's a decision gate
-	issue, err := store.GetIssue(ctx, resolvedID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting issue: %v\n", err)
-		os.Exit(3)
-	}
-	if issue == nil {
-		fmt.Fprintf(os.Stderr, "Error: issue %s not found\n", resolvedID)
-		os.Exit(3)
-	}
-	if issue.IssueType != types.IssueType("gate") || issue.AwaitType != "decision" {
-		fmt.Fprintf(os.Stderr, "Error: %s is not a decision point\n", resolvedID)
-		os.Exit(3)
-	}
-
-	// Check if already responded
-	dp, err := store.GetDecisionPoint(ctx, resolvedID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting decision point: %v\n", err)
-		os.Exit(3)
-	}
-	if dp == nil {
-		fmt.Fprintf(os.Stderr, "Error: no decision point data for %s\n", resolvedID)
-		os.Exit(3)
-	}
-
-	// If already responded, return immediately
-	if dp.RespondedAt != nil {
-		outputAwaitResponse(resolvedID, dp, false)
-		os.Exit(0)
-	}
-
-	// Check if already canceled/closed
-	if issue.Status == types.StatusClosed {
-		resp := AwaitResponse{
-			ID:        resolvedID,
-			Canceled: true,
-		}
-		outputJSON(resp)
-		os.Exit(2)
-	}
-
-	// Start polling
-	deadline := time.Now().Add(awaitTimeout)
-	ticker := time.NewTicker(awaitPollInterval)
-	defer ticker.Stop()
-
-	fmt.Fprintf(os.Stderr, "Waiting for response to %s (timeout: %s)...\n", resolvedID, awaitTimeout)
-
-	for {
-		select {
-		case <-ticker.C:
-			// Refresh the decision point
-			dp, err = store.GetDecisionPoint(ctx, resolvedID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error polling decision: %v\n", err)
-				continue
-			}
-
-			// Check if responded
-			if dp.RespondedAt != nil {
-				outputAwaitResponse(resolvedID, dp, false)
-				os.Exit(0)
-			}
-
-			// Check if canceled
-			issue, _ = store.GetIssue(ctx, resolvedID)
-			if issue != nil && issue.Status == types.StatusClosed {
-				resp := AwaitResponse{
-					ID:        resolvedID,
-					Canceled: true,
-				}
-				outputJSON(resp)
-				os.Exit(2)
-			}
-
-			// Check timeout
-			if time.Now().After(deadline) {
-				resp := AwaitResponse{
-					ID:       resolvedID,
-					TimedOut: true,
-				}
-				outputJSON(resp)
-				fmt.Fprintf(os.Stderr, "Timeout waiting for response\n")
-				os.Exit(1)
-			}
-
-		case <-ctx.Done():
-			// Context canceled
-			resp := AwaitResponse{
-				ID:        resolvedID,
-				Canceled: true,
-			}
-			outputJSON(resp)
-			os.Exit(2)
-		}
-	}
 }
 
 func outputAwaitResponse(id string, dp *types.DecisionPoint, timedOut bool) {

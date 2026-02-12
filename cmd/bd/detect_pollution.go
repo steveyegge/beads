@@ -45,12 +45,10 @@ EXAMPLES:
 
 NOTE: Review detected issues carefully before using --clean. False positives are possible.`,
 	Run: func(cmd *cobra.Command, _ []string) {
-		// Check daemon mode - not supported yet (uses direct storage access)
+		// Not supported in daemon mode (uses direct storage access)
 		// TODO: Add daemon RPC support for detect-pollution per gt-as9kdm
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: detect-pollution command not yet supported in daemon mode\n")
-			os.Exit(1)
-		}
+		fmt.Fprintf(os.Stderr, "Error: detect-pollution command not yet supported in daemon mode\n")
+		os.Exit(1)
 
 		clean, _ := cmd.Flags().GetBool("clean")
 		yes, _ := cmd.Flags().GetBool("yes")

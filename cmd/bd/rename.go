@@ -1,14 +1,11 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -51,54 +48,8 @@ func runRename(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid new ID format %q: must be prefix-suffix (e.g., bd-dolt)", newID)
 	}
 
-	// Use daemon if available
-	if daemonClient != nil {
-		return renameViaDaemon(oldID, newID)
-	}
-
-	// Direct mode
-	ctx := context.Background()
-	if err := ensureStoreActive(); err != nil {
-		return fmt.Errorf("failed to get storage: %w", err)
-	}
-
-	// Check if old issue exists
-	oldIssue, err := store.GetIssue(ctx, oldID)
-	if err != nil {
-		return fmt.Errorf("failed to get issue %s: %w", oldID, err)
-	}
-	if oldIssue == nil {
-		return fmt.Errorf("issue %s not found", oldID)
-	}
-
-	// Check if new ID already exists
-	existing, err := store.GetIssue(ctx, newID)
-	if err != nil {
-		return fmt.Errorf("failed to check for existing issue: %w", err)
-	}
-	if existing != nil {
-		return fmt.Errorf("issue %s already exists", newID)
-	}
-
-	// Update the issue ID
-	oldIssue.ID = newID
-	actor := getActorWithGit()
-	if err := store.UpdateIssueID(ctx, oldID, newID, oldIssue, actor); err != nil {
-		return fmt.Errorf("failed to rename issue: %w", err)
-	}
-
-	// Update references in other issues
-	if err := updateReferencesInAllIssues(ctx, store, oldID, newID, actor); err != nil {
-		// Non-fatal - the primary rename succeeded
-		fmt.Printf("Warning: failed to update some references: %v\n", err)
-	}
-
-	fmt.Printf("Renamed %s -> %s\n", ui.RenderWarn(oldID), ui.RenderAccent(newID))
-
-	// Schedule auto-flush
-	markDirtyAndScheduleFlush()
-
-	return nil
+	requireDaemon("rename")
+	return renameViaDaemon(oldID, newID)
 }
 
 // renameViaDaemon renames an issue via the RPC daemon
@@ -121,53 +72,3 @@ func renameViaDaemon(oldID, newID string) error {
 	return nil
 }
 
-// updateReferencesInAllIssues updates text references to the old ID in all issues
-func updateReferencesInAllIssues(ctx context.Context, store storage.Storage, oldID, newID, actor string) error {
-	// Get all issues
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-	if err != nil {
-		return fmt.Errorf("failed to list issues: %w", err)
-	}
-
-	// Pattern to match the old ID as a word boundary
-	oldPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(oldID) + `\b`)
-
-	for _, issue := range issues {
-		if issue.ID == newID {
-			continue // Skip the renamed issue itself
-		}
-
-		updated := false
-		updates := make(map[string]interface{})
-
-		// Check and update each text field
-		if oldPattern.MatchString(issue.Title) {
-			updates["title"] = oldPattern.ReplaceAllString(issue.Title, newID)
-			updated = true
-		}
-		if oldPattern.MatchString(issue.Description) {
-			updates["description"] = oldPattern.ReplaceAllString(issue.Description, newID)
-			updated = true
-		}
-		if oldPattern.MatchString(issue.Design) {
-			updates["design"] = oldPattern.ReplaceAllString(issue.Design, newID)
-			updated = true
-		}
-		if oldPattern.MatchString(issue.Notes) {
-			updates["notes"] = oldPattern.ReplaceAllString(issue.Notes, newID)
-			updated = true
-		}
-		if oldPattern.MatchString(issue.AcceptanceCriteria) {
-			updates["acceptance_criteria"] = oldPattern.ReplaceAllString(issue.AcceptanceCriteria, newID)
-			updated = true
-		}
-
-		if updated {
-			if err := store.UpdateIssue(ctx, issue.ID, updates, actor); err != nil {
-				return fmt.Errorf("failed to update references in %s: %w", issue.ID, err)
-			}
-		}
-	}
-
-	return nil
-}

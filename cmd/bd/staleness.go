@@ -12,8 +12,8 @@ import (
 // If JSONL is newer than database, refuses to operate with an error message.
 // This prevents users from making decisions based on stale/incomplete data.
 //
-// NOTE: Callers must check if daemonClient != nil and skip calling this function
-// when running in daemon mode (daemon auto-imports on staleness).
+// NOTE: This function is only used in direct mode (non-daemon) contexts.
+// In daemon mode, the daemon auto-imports on staleness.
 //
 // Implements bd-2q6d: All read operations should validate database freshness.
 // Implements bd-c4rq: Daemon check moved to call sites to avoid function call overhead.

@@ -13,7 +13,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // decisionRespondCmd records a human response to a decision point
@@ -69,8 +68,6 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 	respondedBy, _ := cmd.Flags().GetString("by")
 	acceptGuidance, _ := cmd.Flags().GetBool("accept-guidance")
 
-	ctx := rootCtx
-
 	// Must provide either --select or --text
 	if selectOpt == "" && textResponse == "" {
 		fmt.Fprintf(os.Stderr, "Error: must provide --select and/or --text\n")
@@ -83,7 +80,6 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	var issue *types.Issue
 	var dp *types.DecisionPoint
 	var options []types.DecisionOption
 	var resolvedID string
@@ -97,170 +93,35 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 	var iterationResult *decision.IterationResult
 	var iterationErr error
 
-	// Prefer daemon RPC when available
-	if daemonClient != nil {
-		// Build guidance field for iteration if needed
-		guidance := ""
-		if shouldIterate {
-			guidance = textResponse
-		}
+	requireDaemon("decision respond")
 
-		resolveArgs := &rpc.DecisionResolveArgs{
-			IssueID:        decisionID,
-			SelectedOption: selectOpt,
-			ResponseText:   textResponse,
-			RespondedBy:    respondedBy,
-			Guidance:       guidance,
-		}
-		result, err := daemonClient.DecisionResolve(resolveArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving decision via daemon: %v\n", err)
-			os.Exit(1)
-		}
+	// Build guidance field for iteration if needed
+	guidance := ""
+	if shouldIterate {
+		guidance = textResponse
+	}
 
-		dp = result.Decision
-		issue = result.Issue
-		resolvedID = dp.IssueID
-
-		// Parse options for output
-		if dp.Options != "" {
-			if err := json.Unmarshal([]byte(dp.Options), &options); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not parse options: %v\n", err)
-			}
-		}
-
-		// Note: The daemon handles gate closing and label updates
-		// Iteration support may need to be added to daemon in future
-	} else if store != nil {
-		// Fallback to direct storage access
-		var err error
-		// Resolve partial ID
-		resolvedID, err = utils.ResolvePartialID(ctx, store, decisionID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Get the issue to verify it's a decision gate
-		issue, err = store.GetIssue(ctx, resolvedID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting issue: %v\n", err)
-			os.Exit(1)
-		}
-		if issue == nil {
-			fmt.Fprintf(os.Stderr, "Error: issue %s not found\n", resolvedID)
-			os.Exit(1)
-		}
-
-		// Verify it's a decision gate
-		if issue.IssueType != types.IssueType("gate") || issue.AwaitType != "decision" {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a decision point (type=%s, await_type=%s)\n",
-				resolvedID, issue.IssueType, issue.AwaitType)
-			os.Exit(1)
-		}
-
-		// Get the decision point data
-		dp, err = store.GetDecisionPoint(ctx, resolvedID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting decision point: %v\n", err)
-			os.Exit(1)
-		}
-		if dp == nil {
-			fmt.Fprintf(os.Stderr, "Error: no decision point data for %s\n", resolvedID)
-			os.Exit(1)
-		}
-
-		// Check if already responded
-		if dp.RespondedAt != nil {
-			fmt.Fprintf(os.Stderr, "Error: decision %s already responded at %s by %s\n",
-				resolvedID, dp.RespondedAt.Format(time.RFC3339), dp.RespondedBy)
-			if dp.SelectedOption != "" {
-				fmt.Fprintf(os.Stderr, "  Selected: %s\n", dp.SelectedOption)
-			}
-			if dp.ResponseText != "" {
-				fmt.Fprintf(os.Stderr, "  Text: %s\n", dp.ResponseText)
-			}
-			os.Exit(1)
-		}
-
-		// If --select provided, validate the option exists
-		if dp.Options != "" {
-			if err := json.Unmarshal([]byte(dp.Options), &options); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing options: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		if selectOpt != "" {
-			found := false
-			for _, opt := range options {
-				if opt.ID == selectOpt {
-					found = true
-					break
-				}
-			}
-			if !found {
-				fmt.Fprintf(os.Stderr, "Error: option '%s' not found\n", selectOpt)
-				fmt.Fprintf(os.Stderr, "Available options:\n")
-				for _, opt := range options {
-					fmt.Fprintf(os.Stderr, "  [%s] %s\n", opt.ID, opt.Label)
-				}
-				os.Exit(1)
-			}
-		}
-
-		// Update the decision point
-		dp.RespondedAt = &now
-		dp.RespondedBy = respondedBy
-		if selectOpt != "" {
-			dp.SelectedOption = selectOpt
-		}
-		if textResponse != "" {
-			dp.ResponseText = textResponse
-		}
-
-		if err := store.UpdateDecisionPoint(ctx, dp); err != nil {
-			fmt.Fprintf(os.Stderr, "Error updating decision point: %v\n", err)
-			os.Exit(1)
-		}
-
-		if shouldCloseGate {
-			// Close the gate issue
-			reason := "Decision resolved"
-			if selectOpt != "" {
-				// Find the label for the selected option
-				for _, opt := range options {
-					if opt.ID == selectOpt {
-						reason = fmt.Sprintf("Selected: %s", opt.Label)
-						break
-					}
-				}
-			} else if acceptGuidance {
-				reason = "Guidance accepted"
-			}
-
-			if err := store.CloseIssue(ctx, resolvedID, reason, actor, ""); err != nil {
-				fmt.Fprintf(os.Stderr, "Error closing gate: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Update labels to sync with gt decision system (hq-3q571)
-			// Remove decision:pending and add decision:resolved
-			if err := store.RemoveLabel(ctx, resolvedID, "decision:pending", actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to remove decision:pending label: %v\n", err)
-			}
-			if err := store.AddLabel(ctx, resolvedID, "decision:resolved", actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to add decision:resolved label: %v\n", err)
-			}
-		} else if shouldIterate {
-			// Trigger iterative refinement (hq-946577.23)
-			iterationResult, iterationErr = decision.CreateNextIteration(ctx, store, dp, issue, textResponse, respondedBy, actor)
-		}
-
-		markDirtyAndScheduleFlush()
-	} else {
-		fmt.Fprintf(os.Stderr, "Error: no database connection (neither daemon nor local store available)\n")
+	resolveArgs := &rpc.DecisionResolveArgs{
+		IssueID:        decisionID,
+		SelectedOption: selectOpt,
+		ResponseText:   textResponse,
+		RespondedBy:    respondedBy,
+		Guidance:       guidance,
+	}
+	result, err := daemonClient.DecisionResolve(resolveArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving decision via daemon: %v\n", err)
 		os.Exit(1)
+	}
+
+	dp = result.Decision
+	resolvedID = dp.IssueID
+
+	// Parse options for output
+	if dp.Options != "" {
+		if err := json.Unmarshal([]byte(dp.Options), &options); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not parse options: %v\n", err)
+		}
 	}
 
 	// Trigger decision respond hook (hq-e0adf6.4)

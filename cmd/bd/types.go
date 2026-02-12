@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -40,58 +39,8 @@ Examples:
   bd types --json       # Output as JSON
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Use daemon RPC when available (bd-s091)
-		if daemonClient != nil {
-			runTypesViaDaemon()
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-			os.Exit(1)
-		}
-
-		// Get custom types from config
-		var customTypes []string
-		ctx := context.Background()
-		if ct, err := store.GetCustomTypes(ctx); err == nil {
-			customTypes = ct
-		}
-
-		if jsonOutput {
-			result := struct {
-				CoreTypes   []typeInfo `json:"core_types"`
-				CustomTypes []string   `json:"custom_types,omitempty"`
-			}{}
-
-			for _, t := range coreWorkTypes {
-				result.CoreTypes = append(result.CoreTypes, typeInfo{
-					Name:        string(t.Type),
-					Description: t.Description,
-				})
-			}
-			result.CustomTypes = customTypes
-			outputJSON(result)
-			return
-		}
-
-		// Text output
-		fmt.Println("Core work types (built-in):")
-		for _, t := range coreWorkTypes {
-			fmt.Printf("  %-14s %s\n", t.Type, t.Description)
-		}
-
-		if len(customTypes) > 0 {
-			fmt.Println("\nConfigured custom types:")
-			for _, t := range customTypes {
-				fmt.Printf("  %s\n", t)
-			}
-		} else {
-			fmt.Println("\nNo custom types configured.")
-			fmt.Println("Configure with: bd config set types.custom \"type1,type2,...\"")
-		}
+		// Use daemon RPC (bd-s091)
+		runTypesViaDaemon()
 	},
 }
 
@@ -140,24 +89,14 @@ Examples:
 			Description:    description,
 		}
 
-		ctx := context.Background()
-
-		if daemonClient != nil {
-			// Store via daemon config set
-			data, err := json.Marshal(schema)
-			if err != nil {
-				FatalError("failed to serialize schema: %v", err)
-			}
-			key := types.TypeSchemaConfigPrefix + typeName
-			if _, err := daemonClient.ConfigSet(&rpc.ConfigSetArgs{Key: key, Value: string(data)}); err != nil {
-				FatalError("failed to set type schema: %v", err)
-			}
-		} else if store != nil {
-			if err := store.SetTypeSchema(ctx, typeName, schema); err != nil {
-				FatalError("failed to set type schema: %v", err)
-			}
-		} else {
-			FatalError("no database connection available")
+		// Store via daemon config set
+		data, err := json.Marshal(schema)
+		if err != nil {
+			FatalError("failed to serialize schema: %v", err)
+		}
+		key := types.TypeSchemaConfigPrefix + typeName
+		if _, err := daemonClient.ConfigSet(&rpc.ConfigSetArgs{Key: key, Value: string(data)}); err != nil {
+			FatalError("failed to set type schema: %v", err)
 		}
 
 		if jsonOutput {
@@ -190,24 +129,17 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		typeName := args[0]
-		ctx := context.Background()
 
 		var schema *types.TypeSchema
 		var err error
 
-		if daemonClient != nil {
-			// Read via daemon config get
-			key := types.TypeSchemaConfigPrefix + typeName
-			var resp *rpc.GetConfigResponse
-			resp, err = daemonClient.GetConfig(&rpc.GetConfigArgs{Key: key})
-			if err == nil && resp != nil && resp.Value != "" {
-				schema = &types.TypeSchema{}
-				err = json.Unmarshal([]byte(resp.Value), schema)
-			}
-		} else if store != nil {
-			schema, err = store.GetTypeSchema(ctx, typeName)
-		} else {
-			FatalError("no database connection available")
+		// Read via daemon config get
+		key := types.TypeSchemaConfigPrefix + typeName
+		var resp *rpc.GetConfigResponse
+		resp, err = daemonClient.GetConfig(&rpc.GetConfigArgs{Key: key})
+		if err == nil && resp != nil && resp.Value != "" {
+			schema = &types.TypeSchema{}
+			err = json.Unmarshal([]byte(resp.Value), schema)
 		}
 
 		if err != nil {

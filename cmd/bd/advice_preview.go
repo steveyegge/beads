@@ -82,77 +82,40 @@ func runAdvicePreview(cmd *cobra.Command, args []string) {
 	forAgent, _ := cmd.Flags().GetString("for")
 	rawMode, _ := cmd.Flags().GetBool("raw")
 
-	// Build subscriptions
-	var subscriptions []string
-	if daemonClient != nil {
-		subscriptions = buildAgentSubscriptionsWithoutStore(forAgent, nil)
-	} else {
-		subscriptions = buildAgentSubscriptions(forAgent, nil)
-	}
-
-	ctx := rootCtx
+	// Build subscriptions (daemon is always connected)
+	subscriptions := buildAgentSubscriptionsWithoutStore(forAgent, nil)
 
 	var issues []*types.Issue
 	var labelsMap map[string][]string
 
-	// Fetch all open advice (same pattern as advice list)
-	if daemonClient != nil {
-		listArgs := &rpc.ListArgs{
-			IssueType: "advice",
-			Status:    "open",
-		}
+	// Fetch all open advice via RPC
+	listArgs := &rpc.ListArgs{
+		IssueType: "advice",
+		Status:    "open",
+	}
 
-		resp, err := daemonClient.List(listArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+	resp, err := daemonClient.List(listArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
-		if !resp.Success {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
-			os.Exit(1)
-		}
+	if !resp.Success {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
+		os.Exit(1)
+	}
 
-		var issuesWithCounts []*types.IssueWithCounts
-		if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
-			FatalError("parsing response: %v", err)
-		}
+	var issuesWithCounts []*types.IssueWithCounts
+	if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
+		FatalError("parsing response: %v", err)
+	}
 
-		issues = make([]*types.Issue, len(issuesWithCounts))
-		labelsMap = make(map[string][]string)
-		for i, iwc := range issuesWithCounts {
-			issues[i] = iwc.Issue
-			if iwc.Issue != nil && len(iwc.Issue.Labels) > 0 {
-				labelsMap[iwc.Issue.ID] = iwc.Issue.Labels
-			}
-		}
-	} else {
-		// Direct mode
-		if err := ensureStoreActive(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		adviceType := types.IssueType("advice")
-		openStatus := types.StatusOpen
-		filter := types.IssueFilter{
-			IssueType: &adviceType,
-			Status:    &openStatus,
-		}
-
-		var err error
-		issues, err = store.SearchIssues(ctx, "", filter)
-		if err != nil {
-			FatalError("searching advice: %v", err)
-		}
-
-		issueIDs := make([]string, len(issues))
-		for i, issue := range issues {
-			issueIDs[i] = issue.ID
-		}
-		labelsMap, err = store.GetLabelsForIssues(ctx, issueIDs)
-		if err != nil {
-			FatalError("getting labels: %v", err)
+	issues = make([]*types.Issue, len(issuesWithCounts))
+	labelsMap = make(map[string][]string)
+	for i, iwc := range issuesWithCounts {
+		issues[i] = iwc.Issue
+		if iwc.Issue != nil && len(iwc.Issue.Labels) > 0 {
+			labelsMap[iwc.Issue.ID] = iwc.Issue.Labels
 		}
 	}
 

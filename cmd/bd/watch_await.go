@@ -120,7 +120,7 @@ func connectWatchNATS() (*nats.Conn, nats.JetStreamContext, error) {
 
 	if envURL := os.Getenv("BD_NATS_URL"); envURL != "" {
 		natsURL = envURL
-	} else if daemonClient != nil {
+	} else {
 		resp, err := daemonClient.Execute(rpc.OpBusStatus, nil)
 		if err == nil && resp.Success {
 			var result rpc.BusStatusResult

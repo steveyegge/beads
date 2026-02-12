@@ -48,62 +48,8 @@ Examples:
 }
 
 func runMolReadyGated(cmd *cobra.Command, args []string) {
-	ctx := rootCtx
-
-	// Use daemon RPC when available (bd-2n56)
-	if daemonClient != nil {
-		runMolReadyGatedViaDaemon()
-		return
-	}
-
-	// Fallback to direct store access
-	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-		fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-		os.Exit(1)
-	}
-
-	// Find gate-ready molecules
-	molecules, err := findGateReadyMolecules(ctx, store)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if jsonOutput {
-		output := GatedReadyOutput{
-			Molecules: molecules,
-			Count:     len(molecules),
-		}
-		if output.Molecules == nil {
-			output.Molecules = []*GatedMolecule{}
-		}
-		outputJSON(output)
-		return
-	}
-
-	// Human-readable output
-	if len(molecules) == 0 {
-		fmt.Printf("\n%s No molecules ready for gate-resume dispatch\n\n", ui.RenderWarn(""))
-		return
-	}
-
-	fmt.Printf("\n%s Molecules ready for gate-resume dispatch (%d):\n\n",
-		ui.RenderAccent(""), len(molecules))
-
-	for i, mol := range molecules {
-		fmt.Printf("%d. %s: %s\n", i+1, ui.RenderID(mol.MoleculeID), mol.MoleculeTitle)
-		if mol.ClosedGate != nil {
-			fmt.Printf("   Gate closed: %s (%s)\n", mol.ClosedGate.ID, mol.ClosedGate.AwaitType)
-		}
-		if mol.ReadyStep != nil {
-			fmt.Printf("   Ready step: %s - %s\n", mol.ReadyStep.ID, mol.ReadyStep.Title)
-		}
-		fmt.Println()
-	}
-
-	fmt.Println("To dispatch a molecule:")
-	fmt.Println("  gt sling <agent> --mol <molecule-id>")
+	requireDaemon("mol ready --gated")
+	runMolReadyGatedViaDaemon()
 }
 
 // runMolReadyGatedViaDaemon executes mol ready --gated via daemon RPC (bd-2n56)
