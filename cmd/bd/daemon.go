@@ -787,13 +787,13 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	externalNATSURL := os.Getenv("BD_NATS_URL")
 
 	if externalNATSURL != "" {
-		// Mode 1: Connect to standalone NATS server
+		// Mode 1: Connect to standalone NATS server (with retry)
 		token := os.Getenv("BD_NATS_TOKEN")
 		if token == "" {
 			token = os.Getenv("BD_DAEMON_TOKEN")
 		}
 		var err error
-		externalNATS, err = daemon.ConnectExternalNATS(externalNATSURL, token)
+		externalNATS, err = waitForExternalNATS(ctx, externalNATSURL, token, log)
 		if err != nil {
 			log.Error("failed to connect to external NATS", "url", externalNATSURL, "error", err)
 			log.Warn("continuing without NATS - JetStream event persistence disabled")
@@ -1315,6 +1315,41 @@ func hydrateDeployConfig(ctx context.Context, store storage.Storage, log daemonL
 	if hydrated > 0 {
 		log.Info("deploy config hydrated from database", "count", hydrated)
 	}
+}
+
+// waitForExternalNATS retries connecting to a standalone NATS server.
+// In K8s, the NATS pod may not be ready when the daemon starts (e.g., NATS
+// StatefulSet still initializing). This mirrors the waitForStore retry pattern.
+// Configurable via BD_NATS_CONNECT_RETRIES (default: 15, ~30s total).
+func waitForExternalNATS(ctx context.Context, natsURL, token string, log daemonLogger) (*daemon.ExternalNATSConn, error) {
+	maxAttempts := getEnvInt("BD_NATS_CONNECT_RETRIES", 15)
+	retryInterval := 2 * time.Second
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		conn, err := daemon.ConnectExternalNATS(natsURL, token)
+		if err == nil {
+			if attempt > 1 {
+				log.Info("connected to external NATS after retry", "url", natsURL, "attempts", attempt)
+			}
+			return conn, nil
+		}
+		lastErr = err
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		log.Info("waiting for external NATS", "url", natsURL, "attempt", attempt, "max", maxAttempts, "error", err)
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context canceled while waiting for NATS: %w", ctx.Err())
+		case <-time.After(retryInterval):
+		}
+	}
+
+	return nil, fmt.Errorf("NATS not reachable after %d attempts: %w", maxAttempts, lastErr)
 }
 
 // waitForStore retries opening the database store with exponential backoff.
