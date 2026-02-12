@@ -291,7 +291,7 @@ func openAnyDB(beadsDir string) (*sql.DB, bool, error) {
 
 	// Verify the connection actually works
 	if err := db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, false, fmt.Errorf("no SQLite database and dolt server not reachable at %s:%d: %w", host, port, err)
 	}
 
