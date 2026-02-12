@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
@@ -551,6 +552,15 @@ variable.`,
 			}
 		}
 
+		// Initialize last_import_time metadata to mark the database as synced.
+		// This prevents bd doctor from reporting "No last_import_time recorded in database"
+		// after init completes. Sets the metadata to current time in RFC3339 format.
+		// (mybd-9gw: sync divergence fix)
+		if err := store.SetMetadata(ctx, "last_import_time", time.Now().Format(time.RFC3339)); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to initialize last_import_time: %v\n", err)
+			// Non-fatal - continue anyway
+		}
+
 		// Import issues on init:
 		// - SQLite backend: import from git history or local JSONL (existing behavior).
 		// - Dolt backend: do NOT run SQLite import code. Dolt bootstraps itself from
@@ -613,6 +623,16 @@ variable.`,
 				}
 			} else if promptedContributor {
 				contributor = true // Triggers contributor wizard below
+			}
+		} else if isGitRepo() {
+			// If prompt was skipped (non-interactive or CI environment),
+			// ensure beads.role is set to avoid "not configured" warning
+			// during diagnostics. Only set if not already configured.
+			if _, hasRole := getBeadsRole(); !hasRole {
+				// Default to maintainer for non-interactive environments
+				if err := setBeadsRole("maintainer"); err != nil && !quiet {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set default beads.role: %v\n", err)
+				}
 			}
 		}
 
@@ -753,10 +773,30 @@ variable.`,
 			}
 		}
 
+		// Initialize version tracking: create .local_version file during bd init
+		// instead of deferring it to the first bd command.
+		// This ensures no "Version Tracking" warning from bd doctor after init.
+		if useLocalBeads {
+			localVersionPath := filepath.Join(beadsDir, ".local_version")
+			if err := writeLocalVersion(localVersionPath, Version); err != nil && !quiet {
+				fmt.Fprintf(os.Stderr, "Warning: failed to initialize version tracking: %v\n", err)
+				// Non-fatal - initialization still succeeded
+			}
+		}
+
 		// Add "landing the plane" instructions to AGENTS.md and @AGENTS.md
 		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
 		if !stealth {
 			addLandingThePlaneInstructions(!quiet)
+		}
+
+		// Check for missing git upstream and warn if not configured
+		if isGitRepo() && !quiet {
+			if !gitHasUpstream() {
+				fmt.Fprintf(os.Stderr, "\n%s Git upstream not configured\n", ui.RenderWarn("⚠"))
+				fmt.Fprintf(os.Stderr, "  For sync workflows, set your upstream with:\n")
+				fmt.Fprintf(os.Stderr, "  %s\n\n", ui.RenderAccent("git remote add upstream <repo-url>"))
+			}
 		}
 
 		// Skip output if quiet mode
