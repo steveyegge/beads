@@ -657,6 +657,16 @@ func (s *Server) handleCreate(req *Request) Response {
 		waitsForMeta = string(metaJSON)
 	}
 
+	// Validate sidecar metadata if present (bd-pkvvi.1)
+	if len(createArgs.Metadata) > 0 {
+		if err := ValidateSidecarMetadataJSON(createArgs.Metadata); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid sidecar metadata: %v", err),
+			}
+		}
+	}
+
 	// Wrap all writes in a single transaction to prevent FK constraint violations
 	// when creating issues with dependencies and labels (hq-7yh6lz)
 	actor := s.reqActor(req)
@@ -908,6 +918,16 @@ func (s *Server) handleUpdate(req *Request) Response {
 		return Response{
 			Success: false,
 			Error:   err.Error(),
+		}
+	}
+
+	// Validate sidecar metadata if present (bd-pkvvi.1)
+	if updateArgs.Metadata != nil {
+		if err := ValidateSidecarMetadataJSON(*updateArgs.Metadata); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid sidecar metadata: %v", err),
+			}
 		}
 	}
 

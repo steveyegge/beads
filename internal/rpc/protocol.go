@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -2191,4 +2193,78 @@ type VersionedDiffEntryRPC struct {
 // VersionedDiffResult represents the result of a versioned_diff operation.
 type VersionedDiffResult struct {
 	Entries []VersionedDiffEntryRPC `json:"entries"`
+}
+
+// Sidecar metadata keys (used by K8s agent pods for toolchain sidecars)
+const (
+	MetaSidecarProfile         = "sidecar_profile"
+	MetaSidecarImage           = "sidecar_image"
+	MetaSidecarResourcesCPU    = "sidecar_resources_cpu"
+	MetaSidecarResourcesMemory = "sidecar_resources_memory"
+)
+
+// ValidSidecarProfiles are the allowed values for sidecar_profile metadata.
+var ValidSidecarProfiles = map[string]bool{
+	"toolchain-full":    true,
+	"toolchain-minimal": true,
+	"none":              true,
+}
+
+// k8sQuantityRe matches Kubernetes resource quantity formats (e.g., "500m", "1", "2Gi", "512Mi").
+var k8sQuantityRe = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?(m|k|M|G|T|P|E|Ki|Mi|Gi|Ti|Pi|Ei)?$`)
+
+// ValidateSidecarMetadata validates sidecar-related metadata keys.
+// Returns an error if values are invalid. Non-sidecar keys are ignored.
+func ValidateSidecarMetadata(meta map[string]string) error {
+	if profile, ok := meta[MetaSidecarProfile]; ok {
+		if !ValidSidecarProfiles[profile] {
+			return fmt.Errorf("invalid sidecar_profile %q: must be one of toolchain-full, toolchain-minimal, none", profile)
+		}
+	}
+	if image, ok := meta[MetaSidecarImage]; ok {
+		if image == "" {
+			return fmt.Errorf("sidecar_image cannot be empty")
+		}
+		if !strings.Contains(image, "/") {
+			return fmt.Errorf("sidecar_image %q must include a registry prefix (e.g., ghcr.io/org/image:tag)", image)
+		}
+	}
+	if cpu, ok := meta[MetaSidecarResourcesCPU]; ok {
+		if !k8sQuantityRe.MatchString(cpu) {
+			return fmt.Errorf("invalid sidecar_resources_cpu %q: must be a Kubernetes quantity (e.g., 500m, 1, 2)", cpu)
+		}
+	}
+	if mem, ok := meta[MetaSidecarResourcesMemory]; ok {
+		if !k8sQuantityRe.MatchString(mem) {
+			return fmt.Errorf("invalid sidecar_resources_memory %q: must be a Kubernetes quantity (e.g., 512Mi, 1Gi, 2Gi)", mem)
+		}
+	}
+	return nil
+}
+
+// hasSidecarKeys returns true if the metadata map contains any sidecar-prefixed keys.
+func hasSidecarKeys(meta map[string]string) bool {
+	for k := range meta {
+		if strings.HasPrefix(k, "sidecar_") {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateSidecarMetadataJSON validates sidecar metadata from a json.RawMessage.
+// If the metadata doesn't contain sidecar keys, it returns nil (no validation needed).
+func ValidateSidecarMetadataJSON(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var meta map[string]string
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		// Metadata is not a flat string map — can't validate sidecar keys, skip
+		return nil
+	}
+	if !hasSidecarKeys(meta) {
+		return nil
+	}
+	return ValidateSidecarMetadata(meta)
 }
