@@ -1,0 +1,711 @@
+# Current Status (2026-02-12)
+
+## Completed Epics (all pushed to main)
+
+| Epic | Commits | Status |
+|------|---------|--------|
+| bd-4i0j8 — Credential lifecycle chain | 855d11e, 376a025, c3b2cb0 | CLOSED |
+| bd-5xbsa — Terminal multiplexer | 376a025, c3b2cb0, 05bc391 | CLOSED |
+
+## Completed Commits
+
+| Commit | Repo | Change |
+|--------|------|--------|
+| 855d11e | coop | NATS credential publishing + WS credential events |
+| 376a025 | coop | Auth banner, device code flow, Multiplexer core |
+| c3b2cb0 | coop | CLI cred, /ws/mux endpoint, mux wiring, mux HTTP |
+| 05bc391 | coop | Multi-pane dashboard UI at /mux |
+| 70570c52 | gastown | Daemon credential watcher (NATS subscription) |
+
+## Active Work
+
+- **Next**: Helm chart for deploying broker coop + multiplexer to K8s (see below)
+- **Later**: Standalone coop-broker Helm chart in coop repo
+
+## Key Architecture Notes
+
+- Coop is 1:1 (one process, one PTY session, one agent)
+- The broker coop instance has PodRegistry tracking all agent pods
+- Multiplexer (broker/mux.rs) connects to each pod's WS, caches state/screen
+- MuxEvent tagged enum: State, Screen, Credential, PodOnline, PodOffline
+- CredentialBroker manages per-account OAuth refresh loops
+- CredentialEvent: Refreshed, RefreshFailed, ReauthRequired
+- Device code flow: POST /api/v1/credentials/reauth → polls RFC 8628
+- Screen snapshots ~2KB vs raw PTY ~133KB — use snapshots for mux
+- Broker mode activates when `credentials` section present in agent config JSON
+- Agent pods register with broker via POST /api/v1/broker/register
+
+## Build Commands
+```
+cd ~/coop && RUSTC_WRAPPER="" cargo check   # sccache broken, use RUSTC_WRAPPER=""
+cd ~/gastown && go build ./...
+```
+
+---
+
+# Credential Lifecycle Chain — OAuth Recovery for K8s Agent Pods
+
+## Problem
+
+When an OAuth refresh token expires permanently (`invalid_grant`), agent pods in K8s
+become unable to authenticate. The credential broker in coop detects this (marks the
+account `Revoked`) but has no way to:
+1. Notify the user via the terminal UI
+2. Trigger a re-authentication flow
+3. Inform the gastown controller to coordinate pod restarts after re-auth
+
+The mayor pod in gastown-next is currently broken with this exact failure —
+refresh loop failing every 5 minutes, no user-visible indication.
+
+## Existing Infrastructure
+
+- **CredentialBroker** (`coop/crates/cli/src/credential.rs`): Detects `invalid_grant`,
+  broadcasts `CredentialEvent::RefreshFailed` via tokio broadcast channel
+- **NatsPublisher** (`coop/crates/cli/src/transport/nats_pub.rs`): Publishes
+  `coop.events.state` and `coop.events.stop` to NATS — but NOT credential events
+- **terminal.html** (`coop/crates/cli/src/transport/terminal.html`): Already handles
+  `oauth_login` setup prompts (lines 858-871) with Copy URL / Open URL buttons
+- **Distributor** (`coop/crates/cli/src/broker/distributor.rs`): Pushes refreshed
+  tokens to pods, but explicitly ignores `RefreshFailed`
+- **Controller** (gastown): Polling-based reconciliation, no NATS subscription
+
+## Existing Beads Issues
+
+- bd-tvtbv — Credential broker epic (parent, in_progress)
+- bd-hqhti — Auth failure UI in coop terminal.html (open)
+- bd-8ppck — OAuth device code flow in coop (open)
+- bd-w408x — Slack alerts for credential failures (open)
+- bd-2pzja — OAuth refresh daemon (closed/done)
+- bd-ugsuj — Multi-pod token distribution (closed/done)
+- bd-tytuu — Agent pod registration (closed/done)
+
+## Plan: 6 Changes
+
+### Change 1: Publish CredentialEvent to NATS
+**Files**: `coop/crates/cli/src/transport/nats_pub.rs`, `coop/crates/cli/src/run.rs`
+**Subject**: `{prefix}.credential` (e.g. `coop.events.credential`)
+
+- Add third broadcast receiver to `NatsPublisher::run()`: `cred_rx: broadcast::Receiver<CredentialEvent>`
+- Serialize and publish credential events to `{prefix}.credential`
+- Wire in `run.rs`: subscribe to broker's credential broadcast, pass to NatsPublisher
+- Payload: `{ "type": "refresh_failed", "account": "...", "error": "invalid_grant", "ts": "..." }`
+
+### Change 2: Push Credential Status to WebSocket Clients
+**Files**: `coop/crates/cli/src/transport/ws_msg.rs`, `coop/crates/cli/src/transport/ws.rs`
+
+- Add `ServerMessage::CredentialStatus { account, status, error }` variant
+- Add `credentials` to `SubscriptionFlags`
+- In WebSocket handler: subscribe to broker's credential broadcast, forward to clients
+  that have the `credentials` flag set
+- Also add `ServerMessage::CredentialReauthRequired { account, auth_url, user_code }`
+  for when device code flow is initiated
+
+### Change 3: Auth Alert Banner in terminal.html
+**Files**: `coop/crates/cli/src/transport/terminal.html`
+**Depends on**: Change 2
+
+- Add persistent red banner at top of terminal when credential status is `revoked`
+- Banner text: "Authentication expired for {account} — Re-authenticate to continue"
+- Button: "Re-authenticate" → sends WebSocket message to trigger device code flow
+- On `credential:reauth_required` event: show auth URL + user code in banner
+  (reuse existing oauth_login UI pattern from lines 858-871)
+- Banner auto-dismisses when credential status returns to `healthy`
+- Subscribe to `credentials` in WebSocket query string
+
+### Change 4: OAuth Device Code Flow (RFC 8628)
+**Files**: `coop/crates/cli/src/credential.rs`, `coop/crates/cli/src/transport/http/credential.rs`
+**Depends on**: Change 2
+
+- Add `POST /api/v1/credentials/reauth` endpoint
+- When called: initiate OAuth device code flow for the specified account
+- Return `{ "auth_url": "...", "user_code": "...", "expires_in": 900 }`
+- Broadcast `CredentialEvent::ReauthRequired { account, auth_url, user_code }` so
+  terminal UI and NATS both receive it
+- Poll the token endpoint per RFC 8628 until user completes auth or timeout
+- On success: update broker state, broadcast `CredentialEvent::Refreshed`,
+  distributor pushes new tokens to all pods
+- Add `CredentialEvent::ReauthRequired` variant to the enum
+
+### Change 5: Controller Subscribes to NATS Credential Events
+**Files**: `gastown/internal/controller/` (new NATS subscription)
+**Depends on**: Change 1
+
+- Controller subscribes to `coop.events.credential` via NATS
+- On `refresh_failed`: mark agent as needing re-auth in controller state
+- On `refreshed` (after successful re-auth): trigger pod restart to pick up new tokens
+- This replaces the need for manual `kubectl delete pod` after re-auth
+- Consider: should controller also expose this via its own API for `gt crew status`?
+
+### Change 6: CLI Credential Management UX (`coop cred`)
+**Files**: `coop/crates/cli/src/main.rs`, new `coop/crates/cli/src/cred.rs`,
+  `coop/crates/cli/src/transport/http/credential.rs`
+**Depends on**: Change 4
+
+- Add `coop cred` subcommand group to main.rs CLI:
+  - `coop cred list` — show all accounts with status (healthy/expired/revoked/static),
+    last refresh time, token expiry. Talks to `GET /api/v1/credentials/status`
+  - `coop cred add <account>` — add a new OAuth account, initiate device code flow.
+    New endpoint: `POST /api/v1/credentials/add`
+  - `coop cred remove <account>` — remove an account from the broker.
+    New endpoint: `DELETE /api/v1/credentials/{account}`
+  - `coop cred reauth <account>` — trigger device code re-auth for revoked/expired.
+    Talks to `POST /api/v1/credentials/reauth` (from Change 4)
+  - `coop cred status` — detailed view: per-account refresh history, error messages
+- All subcommands connect to coop's HTTP API (like `coop attach` connects to WS)
+- Critical for SSH-only access to K8s nodes where browser UI isn't available
+- Device code flow output: print auth URL + user code to terminal, poll until complete
+- Currently coop has 3 subcommands (attach, open, send) — this adds a 4th group
+
+## Implementation Order
+
+1. **Change 1** (NATS credential publishing) — unblocks Change 5
+2. **Change 2** (WebSocket credential events) — unblocks Changes 3 and 4
+3. **Change 3** (terminal UI banner) — user-visible, depends on Change 2
+4. **Change 4** (device code flow) — the actual fix, depends on Change 2
+5. **Change 5** (controller subscription) — automation, depends on Change 1
+6. **Change 6** (CLI credential UX) — operator tooling, depends on Change 4
+
+Changes 1 and 2 can be done in parallel. Changes 3 and 4 can be done in parallel
+after Change 2. Change 5 can start after Change 1. Change 6 starts after Change 4
+(needs the reauth endpoint and device code machinery).
+
+## Notes
+
+- The terminal.html already has the UI pattern for oauth_login — Change 3 mostly
+  reuses that pattern but triggers it reactively instead of at setup time
+- The distributor already handles pushing refreshed tokens to pods — Change 4 just
+  needs to produce a Refreshed event and the existing machinery handles distribution
+- Change 5 is the only one in the gastown repo; Changes 1-5 are all in coop
+- Change 6 provides CLI parity with the browser UI (Change 3) — both are entry
+  points to the same device code flow (Change 4)
+- Multiple accounts: the broker already manages per-account refresh loops, so the
+  CLI just needs to enumerate and target them individually
+
+---
+
+# Terminal Multiplexer — Multi-Agent View via Broker Coop
+
+## Problem
+
+With N agent pods running, an operator currently needs N browser tabs or N
+`coop attach` sessions to monitor them. There's no single-pane-of-glass view
+showing all agents' state and terminal output simultaneously. Network cost
+scales linearly with agent count.
+
+## Key Insight: The Broker Coop Already Knows About All Pods
+
+The credential broker coop instance (`PodRegistry`) already:
+- Tracks all registered agent pods with their `coop_url`
+- Health-checks them every 30s
+- Distributes credentials to them
+
+Adding terminal multiplexing to the same process is natural — one daemon,
+one auth context, one browser connection.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Broker Coop (single instance)                      │
+│                                                     │
+│  PodRegistry ─── pod-1 (coop_url: http://10.0.0.1) │
+│              ├── pod-2 (coop_url: http://10.0.0.2)  │
+│              └── pod-3 (coop_url: http://10.0.0.3)  │
+│                                                     │
+│  Multiplexer                                      │
+│  ├── PodStream(pod-1): WS → state, screen, creds   │
+│  ├── PodStream(pod-2): WS → state, screen, creds   │
+│  └── PodStream(pod-3): WS → state, screen, creds   │
+│                                                     │
+│  Multiplexed WS endpoint: /ws/mux                   │
+│  ├── client subscribes: ?pods=all&subscribe=state   │
+│  ├── messages tagged with pod_name                  │
+│  └── single connection for N pods                   │
+│                                                     │
+│  Multi-pane terminal UI: /mux                       │
+│  └── Grid of agent terminals + state badges         │
+└─────────────────────────────────────────────────────┘
+```
+
+## Current Coop Architecture (Single-Session)
+
+- `Store` has single `TerminalState`, `Screen`, `RingBuffer`
+- WS messages have no session/pod routing — all implicitly target the one session
+- `SubscriptionFlags`: pty, screen, state, hooks, messages, transcripts, usage
+- Each pod coop exposes: `GET /api/v1/screen`, WS `?subscribe=screen,state`
+- gRPC: `StreamScreen`, `StreamAgent` — per-pod, no aggregation
+- Screen snapshots are ~2KB JSON (80x24) vs ~133KB for raw PTY — 100x cheaper
+
+## Design: Multiplexer
+
+### Core Concept
+
+The broker maintains a persistent WS connection to each registered pod's coop.
+It subscribes to `screen,state,credentials` on each. Incoming events are tagged
+with the pod name and fanned out to any connected multiplexed clients.
+
+### Data Flow
+
+```
+Pod coop WS → Multiplexer → Multiplexed WS → Browser
+                  ↓
+              Screen cache (latest snapshot per pod)
+              State cache (latest agent state per pod)
+```
+
+### Naming: `Multiplexer`, not `AggregatorHub`
+
+The struct is `Multiplexer` in `broker/mux.rs`. It multiplexes N pod streams
+into one connection — that's what it does, no need to dress it up.
+
+### Bandwidth Optimization
+
+1. **Screen snapshots, not raw PTY** — 2KB per pod per update vs 133KB
+2. **Debounced fan-out** — aggregate updates into batches (e.g. every 200ms)
+3. **Diff encoding** — only send changed lines per pod (optional, future)
+4. **Selective subscription** — client can subscribe to specific pods or all
+5. **Throttled updates for background pods** — full-speed only for focused pod
+
+### Module: `coop/crates/cli/src/broker/mux.rs`
+
+```
+Multiplexer {
+    registry: Arc<PodRegistry>,
+    event_tx: broadcast::Sender<MuxEvent>,
+    cache: Arc<RwLock<HashMap<String, PodCache>>>,
+    streams: RwLock<HashMap<String, PodStreamHandle>>,
+}
+
+MuxEvent (tagged enum):
+    State { pod, prev, next, seq },
+    Screen { pod, lines, cols, rows },
+    Credential { pod, account, status, error },
+    PodOnline { pod, coop_url },
+    PodOffline { pod },
+```
+
+### New WS Endpoint: `/ws/mux`
+
+- Query: `?subscribe=screen,state,credentials&pods=all` (or `pods=pod-1,pod-2`)
+- All ServerMessages wrapped with `pod` field: `{ "pod": "mayor", "event": "screen", ... }`
+- Client can send input to specific pod: `{ "event": "input:send", "pod": "mayor", "text": "..." }`
+- Reuses existing auth mechanism
+
+### New HTTP Endpoints
+
+- `GET /api/v1/mux/pods` — list all pods with cached state summary
+- `GET /api/v1/mux/pods/{name}/screen` — cached screen snapshot for a pod
+- `POST /api/v1/mux/pods/{name}/nudge` — proxy nudge to a specific pod
+
+### New UI: `/mux` (multi-pane terminal)
+
+- Grid layout: each pod gets a tile showing:
+  - Agent name + state badge (colored: green=working, yellow=idle, red=error)
+  - Miniature screen preview (reduced font, last N lines)
+  - Credential status indicator
+  - Click to expand to full terminal (routes input to that pod)
+- Responsive: auto-tiles based on window size
+- Header bar: total pods, healthy count, credential alerts
+- Uses same xterm.js as terminal.html but with multiple instances
+
+## Plan: 4 Changes
+
+### Mux Change 1: Multiplexer
+**Files**: new `coop/crates/cli/src/broker/mux.rs`, `coop/crates/cli/src/broker.rs`
+
+- `Multiplexer` maintains WS connections to all registered pods
+- Subscribes to `screen,state,credentials` on each pod's WS
+- Caches latest screen snapshot and agent state per pod
+- Broadcasts `MuxEvent`s on internal channel
+- Reacts to PodRegistry changes (new pod → connect, removed pod → disconnect)
+- Reconnects on WS drops with exponential backoff
+
+### Mux Change 2: Multiplexed WS Endpoint
+**Files**: new `coop/crates/cli/src/transport/ws_mux.rs`, `coop/crates/cli/src/transport/http.rs`
+
+- `/ws/mux` endpoint with pod-tagged message envelope
+- Subscription filtering by pod name and event type
+- Input routing: client sends `{ "pod": "X", "event": "input:send", ... }` →
+  broker proxies to pod X's HTTP API
+- Initial state: on connect, send cached state+screen for all subscribed pods
+
+### Mux Change 3: Multi-Pane Terminal UI
+**Files**: new `coop/crates/cli/src/transport/mux.html` (served at `/mux`)
+
+- Grid of xterm.js instances, one per pod
+- State badges, credential indicators
+- Click-to-focus for input routing
+- Auto-scales tile count based on window size
+- Reuses terminal.html patterns (sidebar, oauth_login, etc.)
+
+### Mux Change 4: Wire Multiplexer into Broker Startup
+**Files**: `coop/crates/cli/src/run.rs`
+
+- When `broker_registry` is present, create and spawn `Multiplexer`
+- Pass `PodRegistry` reference so hub reacts to registration/deregistration
+- Mount `/ws/mux`, `/mux`, and `/api/v1/mux/*` routes
+- Hub lifecycle tied to shutdown token
+
+## Implementation Order
+
+1. **Mux Change 1** (Multiplexer) — core infrastructure
+2. **Mux Change 4** (wiring) — can develop alongside Change 1
+3. **Mux Change 2** (WS endpoint) — depends on Change 1
+4. **Mux Change 3** (UI) — depends on Change 2
+
+## Integration with Credential Lifecycle
+
+- Multiplexer subscribes to `credentials` on each pod → surfaces per-pod
+  credential status in the mux view
+- Credential alert banner in mux UI shows which pods have auth issues
+- `coop cred reauth` triggers re-auth on broker → distributor pushes to all pods →
+  mux view shows status updating in real-time
+
+## Bandwidth Estimate (10 agents)
+
+- Screen snapshots: 10 pods × 2KB × 5 updates/sec = 100KB/s (manageable)
+- With debouncing to 200ms batches: ~50KB/s
+- With diff encoding (future): ~10KB/s
+- Compare: 10 separate raw PTY streams = ~1.3MB/s
+
+---
+
+# Helm Chart: Broker Coop + Multiplexer Deployment
+
+## Problem
+
+The credential broker and terminal multiplexer code is fully implemented in coop,
+but there's nothing to actually deploy it to K8s. The gastown-next cluster has:
+- `bd-daemon` (Dolt + daemon + NATS + Redis) via gastown chart
+- `agent-controller` (manages agent pod lifecycle) via gastown chart
+- Individual `agent-pod` deployments (each running coop as main process)
+
+Missing: a **broker coop instance** — a standalone coop process running in broker
+mode that owns credential refresh, distributes tokens, and multiplexes terminals.
+
+## Current State
+
+### What Exists
+
+- **gastown chart** (`~/gastown/helm/gastown/`) deploys:
+  - Dolt SQL server (StatefulSet)
+  - bd-daemon (Deployment + Service)
+  - NATS (StatefulSet via subchart)
+  - Redis (optional)
+  - Slack bot (sidecar in daemon pod)
+  - Agent controller (Deployment, optional)
+  - Git mirrors (Deployment + PVC per rig, optional)
+
+- **agent-pod chart** (`~/gastown/helm/agent-pod/`) deploys:
+  - Single agent pod (Deployment)
+  - Service (ClusterIP, port 9400)
+  - PVC for workspace
+  - ExternalSecrets for API key + git creds
+  - Coop runs as main process: `coop --agent=claude --port 8080 --health-port 9090`
+
+- **Agent controller** already sets on agent pods:
+  - `COOP_NATS_URL` and `COOP_NATS_TOKEN` for NATS event bus
+  - `COOP_AUTH_TOKEN` for coop API auth
+  - But does NOT set any broker URL or trigger broker registration
+
+- **Coop broker mode** activates when `--agent-config` JSON has a `credentials`
+  section. This creates CredentialBroker + PodRegistry + Multiplexer.
+
+### What's Missing
+
+1. No Deployment for the broker coop process
+2. No Service exposing broker HTTP/WS endpoints
+3. No Ingress for browser access to `/mux` dashboard
+4. No ConfigMap with broker agent-config JSON (credentials section)
+5. No ExternalSecret for OAuth refresh tokens
+6. Agent pods don't know the broker URL, can't auto-register
+7. Agent controller doesn't set `COOP_BROKER_URL` env var on pods
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  gastown-next namespace                                     │
+│                                                             │
+│  ┌─────────────┐    ┌──────────────────────────────────┐   │
+│  │ bd-daemon   │    │ coop-broker (NEW)                 │   │
+│  │  Dolt       │    │  coop --agent-config broker.json  │   │
+│  │  NATS ◄─────┼────┤  --port 8080 --health-port 9090  │   │
+│  │  daemon     │    │                                   │   │
+│  └─────────────┘    │  Endpoints:                       │   │
+│                     │   /mux            → dashboard UI   │   │
+│                     │   /ws/mux         → multiplexed WS │   │
+│                     │   /api/v1/mux/*   → pod state API  │   │
+│                     │   /api/v1/broker/* → registration   │   │
+│                     │   /api/v1/cred/*  → credential API │   │
+│                     └──────┬───────────────────────────┘   │
+│                            │ WS connections                 │
+│         ┌──────────────────┼──────────────────┐             │
+│         ▼                  ▼                  ▼             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │ agent-pod-1 │  │ agent-pod-2 │  │ agent-pod-3 │        │
+│  │ (mayor)     │  │ (crew-dev)  │  │ (crew-ops)  │        │
+│  │ coop :8080  │  │ coop :8080  │  │ coop :8080  │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘        │
+│     registers ──────────► broker on startup                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Plan: 6 Changes
+
+### Change 1: Broker Coop Deployment in Gastown Chart
+**Files**: new `gastown/helm/gastown/templates/coop-broker/deployment.yaml`
+
+New Deployment template, gated on `.Values.coopBroker.enabled`:
+
+- **Container**: coop image with args:
+  ```
+  coop --agent-config /etc/coop-broker/config.json
+       --port 8080 --health-port 9090
+       --nats-url $(NATS_URL) --nats-token $(NATS_TOKEN)
+       -- sleep infinity
+  ```
+  (`sleep infinity` as the child process — broker doesn't manage an agent,
+  it just runs the HTTP/WS server. The child command is required by coop's
+  session loop but never does anything meaningful in broker mode.)
+
+- **Env vars**:
+  - `NATS_URL` → auto-wired from bd-daemon NATS service
+  - `NATS_TOKEN` → from secret (same as daemon token or separate)
+  - `COOP_AUTH_TOKEN` → broker API auth token (from ExternalSecret)
+
+- **Volume mounts**:
+  - ConfigMap at `/etc/coop-broker/` (agent-config JSON with credentials section)
+  - Secret for OAuth refresh tokens (mounted or injected via env)
+
+- **Probes**:
+  - startup: `GET /api/v1/health` port 9090
+  - liveness: `GET /api/v1/health` port 9090
+  - readiness: `GET /api/v1/ready` port 9090
+
+- **Resources**: light — no PTY, no agent. 100m CPU / 256Mi memory.
+
+- **Replicas**: 1 (singleton — refresh token is single-writer)
+
+- **Strategy**: `Recreate` (only one broker at a time to avoid refresh races)
+
+### Change 2: Broker Coop Service + Ingress
+**Files**: new `gastown/helm/gastown/templates/coop-broker/service.yaml`,
+  new `gastown/helm/gastown/templates/coop-broker/ingress.yaml`
+
+**Service** (ClusterIP):
+- Port 8080 → targetPort 8080 (HTTP + WS)
+- Port 9090 → targetPort 9090 (health)
+- Named `{{ .Release.Name }}-coop-broker`
+
+**IngressRoute** (Traefik, optional, gated on `.Values.coopBroker.ingress.enabled`):
+- Host: `mux.{{ .Values.coopBroker.ingress.host }}` or configurable
+- Routes: `/` → broker service port 8080
+- Middleware: IP whitelist (reuse existing `ingress.ipWhitelist` pattern)
+- WebSocket: ensure Traefik allows WS upgrade on `/ws/mux`
+
+### Change 3: Broker Agent Config ConfigMap
+**Files**: new `gastown/helm/gastown/templates/coop-broker/configmap.yaml`
+
+ConfigMap with `config.json` containing the `credentials` section that
+activates broker mode in coop:
+
+```json
+{
+  "credentials": {
+    "accounts": [
+      {
+        "name": "{{ .Values.coopBroker.credentials.accountName }}",
+        "provider": "claude",
+        "token_url": "https://platform.claude.com/oauth/token",
+        "client_id": "{{ .Values.coopBroker.credentials.clientId }}",
+        "device_auth_url": "https://platform.claude.com/oauth/device/code",
+        "static": false,
+        "refresh_margin_secs": 300
+      }
+    ]
+  }
+}
+```
+
+Values allow overriding provider, token_url, etc. for different OAuth
+providers (Anthropic API vs Claude Max vs Corp).
+
+### Change 4: Broker ExternalSecret for OAuth Tokens
+**Files**: new `gastown/helm/gastown/templates/coop-broker/external-secret.yaml`
+
+ExternalSecret that syncs the OAuth refresh token from AWS Secrets Manager
+into a K8s Secret. The broker coop reads this on startup to bootstrap
+the credential refresh loop.
+
+- Secret name: `{{ .Release.Name }}-coop-broker-credentials`
+- Keys: `refresh_token`, `access_token` (optional, for initial bootstrap)
+- Mounted as env vars or file at `/etc/coop-broker/credentials/`
+
+Also: an ExternalSecret for the broker auth token (the token agent pods
+use to authenticate with the broker API).
+
+### Change 5: Agent Pod Auto-Registration with Broker
+**Files**: `gastown/helm/agent-pod/templates/deployment.yaml`,
+  `gastown/helm/agent-pod/values.yaml`,
+  `gastown/controller/internal/podmanager/manager.go`
+
+Two integration points so agent pods discover and register with the broker:
+
+**A. Helm chart level** (for manually deployed agent-pods):
+- New values: `coopBroker.url`, `coopBroker.authToken`
+- If set, add env vars to agent container:
+  - `COOP_BROKER_URL` → e.g., `http://gastown-next-coop-broker:8080`
+  - `COOP_BROKER_TOKEN` → from secret ref
+- Entrypoint script: after coop starts, curl broker registration:
+  ```bash
+  # Register with broker (background, non-blocking)
+  if [ -n "$COOP_BROKER_URL" ]; then
+    (sleep 10 && curl -s -X POST "$COOP_BROKER_URL/api/v1/broker/register" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $COOP_BROKER_TOKEN" \
+      -d "{\"name\":\"$HOSTNAME\",\"coop_url\":\"http://$(hostname -i):8080\"}" \
+    ) &
+  fi
+  ```
+
+**B. Agent controller level** (for dynamically spawned pods):
+- Add `COOP_BROKER_URL` and `COOP_BROKER_TOKEN` env vars to agent pods
+  in `buildEnvVars()` when `coopBroker.url` is configured
+- Source broker URL from `agentController.coopBrokerURL` in gastown values
+- Token from `agentController.coopBrokerTokenSecret`
+
+**C. Coop-side auto-registration** (stretch — cleaner than shell script):
+- Add env var `COOP_BROKER_URL` support to coop's run.rs
+- On startup, if env var set and broker mode is NOT enabled (i.e., this is
+  an agent pod, not the broker itself), POST self-registration automatically
+- This eliminates the entrypoint curl hack
+
+### Change 6: Values + Helpers
+**Files**: `gastown/helm/gastown/values.yaml`,
+  `gastown/helm/gastown/templates/_helpers.tpl`
+
+New values block:
+```yaml
+coopBroker:
+  enabled: false
+
+  image:
+    repository: ghcr.io/groblegark/coop
+    tag: "latest"
+    pullPolicy: Always
+
+  replicaCount: 1
+
+  # Auth token for broker API (agent pods use this to register)
+  authTokenSecret: ""
+
+  # OAuth credential configuration
+  credentials:
+    accountName: "claude-max"
+    provider: "claude"
+    clientId: ""
+    tokenUrl: "https://platform.claude.com/oauth/token"
+    deviceAuthUrl: "https://platform.claude.com/oauth/device/code"
+    refreshMarginSecs: 300
+
+  # ExternalSecret for OAuth refresh token
+  externalSecret:
+    enabled: true
+    secretStoreName: "aws-secretsmanager"
+    secretStoreKind: ClusterSecretStore
+    refreshInterval: "15m"
+    remoteRef: ""
+    refreshTokenProperty: "refresh_token"
+
+  # Ingress (Traefik IngressRoute)
+  ingress:
+    enabled: false
+    host: ""
+    ipWhitelist:
+      enabled: false
+      sourceRange: []
+
+  # Service
+  service:
+    type: ClusterIP
+    port: 8080
+    healthPort: 9090
+
+  # Resources (light — no PTY, no agent)
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Pod scheduling
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+```
+
+Extend `agentController` values:
+```yaml
+agentController:
+  # ... existing ...
+  coopBrokerURL: ""           # e.g., http://gastown-next-coop-broker:8080
+  coopBrokerTokenSecret: ""   # K8s secret name with broker auth token
+```
+
+Helpers in `_helpers.tpl`:
+- `gastown.coopBroker.fullname` → `{{ .Release.Name }}-coop-broker`
+- `gastown.coopBroker.labels` / `selectorLabels`
+
+## Implementation Order
+
+1. **Change 6** (values + helpers) — defines the schema, unblocks everything
+2. **Change 1** (deployment) — the core broker process
+3. **Change 3** (configmap) — broker config, needed by deployment
+4. **Change 4** (external-secret) — credentials, needed by deployment
+5. **Change 2** (service + ingress) — network access
+6. **Change 5** (agent registration) — wires pods to broker
+
+Changes 1-4 can be done in parallel after Change 6.
+Change 5 can start after Change 2 (needs the service name for URL).
+
+## Open Questions
+
+1. **Child command for broker mode**: Coop requires a child process. Currently
+   using `sleep infinity`. Should we add a `--broker-only` flag to coop that
+   skips spawning a child process entirely? (Cleaner, avoids zombie sleep.)
+
+2. **Refresh token bootstrap**: How does the initial refresh token get into
+   AWS Secrets Manager? Currently `scripts/sync-claude-credentials.sh` copies
+   from laptop `~/.claude/.credentials.json`. We should document this flow
+   or automate it via `coop cred add`.
+
+3. **Multiple accounts**: The broker supports multiple OAuth accounts (e.g.,
+   personal + work). Do we need multiple ExternalSecrets, or one secret with
+   multiple keys? For now, plan assumes single account.
+
+4. **Standalone chart (future)**: When extracting to `coop/helm/coop-broker/`,
+   it should be a self-contained chart with its own NATS dependency (or
+   configurable external NATS URL). The gastown chart version would then
+   become a thin wrapper or alias.
+
+## Deployment Example
+
+```bash
+# gastown-next values overlay
+helm upgrade gastown-next gastown/helm/gastown \
+  --set coopBroker.enabled=true \
+  --set coopBroker.image.tag=0.2.0 \
+  --set coopBroker.credentials.clientId=abc123 \
+  --set coopBroker.externalSecret.remoteRef=gastown-next/claude-credentials \
+  --set coopBroker.ingress.enabled=true \
+  --set coopBroker.ingress.host=gastown-next.internal \
+  --set agentController.coopBrokerURL=http://gastown-next-coop-broker:8080
+
+# Verify
+kubectl get pods -l app.kubernetes.io/component=coop-broker
+curl http://gastown-next-coop-broker:8080/api/v1/mux/pods
+# Open browser: https://mux.gastown-next.internal/mux
+```
