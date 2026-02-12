@@ -1,0 +1,115 @@
+{{- if .Values.dolt.statefulSet.enabled }}
+{{- if .Values.dolt.persistence.enabled }}
+{{- $fullname := include "bd-daemon.dolt.fullname" . }}
+# Pre-upgrade hook: delete the Dolt StatefulSet with --cascade=orphan when
+# immutable fields (volumeClaimTemplates) change. Kubernetes forbids in-place
+# updates to VCT specs, so we must delete and let Helm recreate the STS.
+# Pods are preserved by --cascade=orphan and adopted by the new STS.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-sts-upgrade
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-sts-upgrade
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-sts-upgrade
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-sts-upgrade
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}-sts-upgrade
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-sts-upgrade
+  labels:
+    {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 30
+  template:
+    metadata:
+      labels:
+        {{- include "bd-daemon.dolt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: sts-upgrade
+    spec:
+      serviceAccountName: {{ $fullname }}-sts-upgrade
+      restartPolicy: Never
+      {{- with .Values.dolt.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dolt.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: sts-upgrade
+          image: bitnami/kubectl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              STS_NAME="{{ $fullname }}"
+              NS="{{ .Release.Namespace }}"
+
+              echo "Checking StatefulSet $STS_NAME in $NS..."
+              if ! kubectl get statefulset "$STS_NAME" -n "$NS" >/dev/null 2>&1; then
+                echo "StatefulSet does not exist yet, nothing to do"
+                exit 0
+              fi
+
+              # Compare the desired VCT spec hash with the current annotation
+              DESIRED_HASH="{{ include "bd-daemon.dolt.vctHash" . }}"
+              CURRENT_HASH=$(kubectl get statefulset "$STS_NAME" -n "$NS" \
+                -o jsonpath='{.metadata.annotations.bd-daemon/vct-hash}' 2>/dev/null || echo "")
+
+              if [ "$DESIRED_HASH" = "$CURRENT_HASH" ]; then
+                echo "VCT spec unchanged (hash: $DESIRED_HASH), no action needed"
+                exit 0
+              fi
+
+              echo "VCT spec changed (current: ${CURRENT_HASH:-none}, desired: $DESIRED_HASH)"
+              echo "Deleting StatefulSet with --cascade=orphan to preserve pods..."
+              kubectl delete statefulset "$STS_NAME" -n "$NS" --cascade=orphan
+              echo "StatefulSet deleted, Helm will recreate it with updated VCT spec"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+{{- end }}
+{{- end }}

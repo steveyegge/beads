@@ -5,6 +5,8 @@ metadata:
   name: {{ include "bd-daemon.dolt.fullname" . }}
   labels:
     {{- include "bd-daemon.dolt.labels" . | nindent 4 }}
+  annotations:
+    bd-daemon/vct-hash: {{ include "bd-daemon.dolt.vctHash" . | quote }}
 spec:
   {{- $clusterEnabled := and .Values.dolt.cluster.enabled (gt (.Values.dolt.cluster.replicas | default 1 | int) 1) }}
   serviceName: {{ include "bd-daemon.dolt.fullname" . }}{{- if $clusterEnabled }}-headless{{- end }}
@@ -60,6 +62,13 @@ spec:
               readOnly: true
             - name: config
               mountPath: /etc/dolt
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
         {{- end }}
         {{- if not (and .Values.dolt.s3.enabled .Values.dolt.s3.sync.pullOnStartup) }}
         - name: dolt-init

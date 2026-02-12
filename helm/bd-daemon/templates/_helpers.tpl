@@ -176,6 +176,15 @@ Dolt database directory path
 {{- end }}
 
 {{/*
+VCT (volumeClaimTemplate) hash for the Dolt StatefulSet.
+Used by the pre-upgrade hook to detect immutable spec changes
+and delete the STS with --cascade=orphan before Helm recreates it.
+*/}}
+{{- define "bd-daemon.dolt.vctHash" -}}
+{{- printf "%s-%s-%s" (.Values.dolt.persistence.accessMode | default "ReadWriteOnce") (.Values.dolt.persistence.storageClass | default "gp2") (.Values.dolt.persistence.size | default "10Gi") | sha256sum | trunc 12 }}
+{{- end }}
+
+{{/*
 NATS URL for the event bus.
 When NATS is enabled, constructs nats://<service>:4222.
 */}}
