@@ -1,7 +1,6 @@
 # Binaries
 /beads
 /bd
-/agent-controller
 *.exe
 *.dll
 *.so
