@@ -87,9 +87,6 @@ Examples:
 		} else {
 			// Direct mode
 			info["daemon_connected"] = false
-			if daemonStatus.FallbackReason != "" && daemonStatus.FallbackReason != FallbackNone {
-				info["daemon_fallback_reason"] = daemonStatus.FallbackReason
-			}
 			if daemonStatus.Detail != "" {
 				info["daemon_detail"] = daemonStatus.Detail
 			}
@@ -204,9 +201,6 @@ Examples:
 		} else {
 			fmt.Println("\nDaemon Status:")
 			fmt.Printf("  Connected: no\n")
-			if daemonStatus.FallbackReason != "" && daemonStatus.FallbackReason != FallbackNone {
-				fmt.Printf("  Reason: %s\n", daemonStatus.FallbackReason)
-			}
 			if daemonStatus.Detail != "" {
 				fmt.Printf("  Detail: %s\n", daemonStatus.Detail)
 			}

@@ -75,8 +75,8 @@ create, update, show, or close operation).`,
 		resolvedIDs := batch.ResolvedIDs
 		routedArgs := batch.RoutedArgs
 
-		// If daemon is running, use RPC
-		if daemonClient != nil {
+		requireDaemon("close")
+		{
 			closedIssues := []*types.Issue{}
 			for _, id := range resolvedIDs {
 				// Get issue for template and pinned checks
@@ -233,139 +233,6 @@ create, update, show, or close operation).`,
 			if jsonOutput && len(closedIssues) > 0 {
 				outputJSON(closedIssues)
 			}
-			return
-		}
-
-		// Direct mode
-		closedIssues := []*types.Issue{}
-		closedCount := 0
-
-		// Handle local IDs
-		for _, id := range resolvedIDs {
-			// Get issue for checks
-			issue, _ := store.GetIssue(ctx, id)
-
-			if err := validateIssueClosable(id, issue, force); err != nil {
-				fmt.Fprintf(os.Stderr, "%s\n", err)
-				continue
-			}
-
-			// Check if issue has open blockers (GH#962)
-			if !force {
-				blocked, blockers, err := store.IsBlocked(ctx, id)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
-					continue
-				}
-				if blocked && len(blockers) > 0 {
-					fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
-					continue
-				}
-			}
-
-			if err := store.CloseIssue(ctx, id, reason, actor, session); err != nil {
-				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
-				continue
-			}
-
-			closedCount++
-
-			// Run close hook
-			closedIssue, _ := store.GetIssue(ctx, id)
-			if closedIssue != nil && hookRunner != nil {
-				hookRunner.Run(hooks.EventClose, closedIssue)
-			}
-
-			if jsonOutput {
-				if closedIssue != nil {
-					closedIssues = append(closedIssues, closedIssue)
-				}
-			} else {
-				fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), id, reason)
-			}
-		}
-
-		// Handle routed IDs via centralized routing (bd-z344)
-		forEachRoutedID(ctx, store, routedArgs, func(resolvedID string, routedClient *rpc.Client, directResult *RoutedResult) error {
-			issueStore := directResult.Store
-			issue := directResult.Issue
-			// Note: in direct mode, routedClient is always nil — forEachRoutedID
-			// falls through to resolveAndGetIssueWithRouting for all IDs.
-
-			if err := validateIssueClosable(resolvedID, issue, force); err != nil {
-				return err
-			}
-			if !force {
-				blocked, blockers, err := issueStore.IsBlocked(ctx, resolvedID)
-				if err != nil {
-					return err
-				}
-				if blocked && len(blockers) > 0 {
-					return fmt.Errorf("cannot close %s: blocked by open issues %v (use --force to override)", resolvedID, blockers)
-				}
-			}
-			if err := issueStore.CloseIssue(ctx, resolvedID, reason, actor, session); err != nil {
-				return err
-			}
-			closedCount++
-			closedIssue, _ := issueStore.GetIssue(ctx, resolvedID)
-			if closedIssue != nil && hookRunner != nil {
-				hookRunner.Run(hooks.EventClose, closedIssue)
-			}
-			if jsonOutput {
-				if closedIssue != nil {
-					closedIssues = append(closedIssues, closedIssue)
-				}
-			} else {
-				fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), resolvedID, reason)
-			}
-			return nil
-		})
-
-		// Handle --suggest-next flag in direct mode
-		if suggestNext && len(resolvedIDs) == 1 && closedCount > 0 {
-			unblocked, err := store.GetNewlyUnblockedByClose(ctx, resolvedIDs[0])
-			if err == nil && len(unblocked) > 0 {
-				if jsonOutput {
-					outputJSON(map[string]interface{}{
-						"closed":    closedIssues,
-						"unblocked": unblocked,
-					})
-					return
-				}
-				fmt.Printf("\nNewly unblocked:\n")
-				for _, issue := range unblocked {
-					fmt.Printf("  • %s %q (P%d)\n", issue.ID, issue.Title, issue.Priority)
-				}
-			}
-		}
-
-		// Schedule auto-flush if any issues were closed
-		if len(args) > 0 {
-			markDirtyAndScheduleFlush()
-		}
-
-		// Handle --continue flag
-		if continueFlag && len(resolvedIDs) == 1 && closedCount > 0 {
-			autoClaim := !noAuto
-			result, err := AdvanceToNextStep(ctx, store, resolvedIDs[0], autoClaim, actor)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not advance to next step: %v\n", err)
-			} else if result != nil {
-				if jsonOutput {
-					// Include continue result in JSON output
-					outputJSON(map[string]interface{}{
-						"closed":   closedIssues,
-						"continue": result,
-					})
-					return
-				}
-				PrintContinueResult(result)
-			}
-		}
-
-		if jsonOutput && len(closedIssues) > 0 {
-			outputJSON(closedIssues)
 		}
 	},
 }

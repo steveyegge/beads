@@ -21,28 +21,21 @@ var epicStatusCmd = &cobra.Command{
 To see only epics eligible for closure, use:
   bd epic close-eligible --dry-run`,
 	Run: func(cmd *cobra.Command, args []string) {
+		requireDaemon("epic status")
+
 		// Use global jsonOutput set by PersistentPreRun
 		var epics []*types.EpicStatus
-		var err error
-		if daemonClient != nil {
-			resp, err := daemonClient.EpicStatus(&rpc.EpicStatusArgs{
-				EligibleOnly: false,
-			})
-			if err != nil {
-				FatalErrorRespectJSON("communicating with daemon: %v", err)
-			}
-			if !resp.Success {
-				FatalErrorRespectJSON("getting epic status: %s", resp.Error)
-			}
-			if err := json.Unmarshal(resp.Data, &epics); err != nil {
-				FatalErrorRespectJSON("parsing response: %v", err)
-			}
-		} else {
-			ctx := rootCtx
-			epics, err = store.GetEpicsEligibleForClosure(ctx)
-			if err != nil {
-				FatalErrorRespectJSON("getting epic status: %v", err)
-			}
+		resp, err := daemonClient.EpicStatus(&rpc.EpicStatusArgs{
+			EligibleOnly: false,
+		})
+		if err != nil {
+			FatalErrorRespectJSON("communicating with daemon: %v", err)
+		}
+		if !resp.Success {
+			FatalErrorRespectJSON("getting epic status: %s", resp.Error)
+		}
+		if err := json.Unmarshal(resp.Data, &epics); err != nil {
+			FatalErrorRespectJSON("parsing response: %v", err)
 		}
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
@@ -90,32 +83,21 @@ var closeEligibleEpicsCmd = &cobra.Command{
 		if !dryRun {
 			CheckReadonly("epic close-eligible")
 		}
+		requireDaemon("epic close-eligible")
+
 		// Use global jsonOutput set by PersistentPreRun
 		var eligibleEpics []*types.EpicStatus
-		if daemonClient != nil {
-			resp, err := daemonClient.EpicStatus(&rpc.EpicStatusArgs{
-				EligibleOnly: true,
-			})
-			if err != nil {
-				FatalErrorRespectJSON("communicating with daemon: %v", err)
-			}
-			if !resp.Success {
-				FatalErrorRespectJSON("getting eligible epics: %s", resp.Error)
-			}
-			if err := json.Unmarshal(resp.Data, &eligibleEpics); err != nil {
-				FatalErrorRespectJSON("parsing response: %v", err)
-			}
-		} else {
-			ctx := rootCtx
-			epics, err := store.GetEpicsEligibleForClosure(ctx)
-			if err != nil {
-				FatalErrorRespectJSON("getting eligible epics: %v", err)
-			}
-			for _, epic := range epics {
-				if epic.EligibleForClose {
-					eligibleEpics = append(eligibleEpics, epic)
-				}
-			}
+		resp, err := daemonClient.EpicStatus(&rpc.EpicStatusArgs{
+			EligibleOnly: true,
+		})
+		if err != nil {
+			FatalErrorRespectJSON("communicating with daemon: %v", err)
+		}
+		if !resp.Success {
+			FatalErrorRespectJSON("getting eligible epics: %s", resp.Error)
+		}
+		if err := json.Unmarshal(resp.Data, &eligibleEpics); err != nil {
+			FatalErrorRespectJSON("parsing response: %v", err)
 		}
 		if len(eligibleEpics) == 0 {
 			if !jsonOutput {
@@ -140,31 +122,22 @@ var closeEligibleEpicsCmd = &cobra.Command{
 			}
 			return
 		}
-		// Actually close the epics
+		// Actually close the epics via daemon RPC
 		closedIDs := []string{}
 		for _, epicStatus := range eligibleEpics {
-			if daemonClient != nil {
-				resp, err := daemonClient.CloseIssue(&rpc.CloseArgs{
-					ID:     epicStatus.Epic.ID,
-					Reason: "All children completed",
-				})
-				if err != nil || !resp.Success {
-					errMsg := ""
-					if err != nil {
-						errMsg = err.Error()
-					} else if !resp.Success {
-						errMsg = resp.Error
-					}
-					fmt.Fprintf(os.Stderr, "Error closing %s: %s\n", epicStatus.Epic.ID, errMsg)
-					continue
+			closeResp, closeErr := daemonClient.CloseIssue(&rpc.CloseArgs{
+				ID:     epicStatus.Epic.ID,
+				Reason: "All children completed",
+			})
+			if closeErr != nil || !closeResp.Success {
+				errMsg := ""
+				if closeErr != nil {
+					errMsg = closeErr.Error()
+				} else if !closeResp.Success {
+					errMsg = closeResp.Error
 				}
-			} else {
-				ctx := rootCtx
-				err := store.CloseIssue(ctx, epicStatus.Epic.ID, "All children completed", "system", "")
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", epicStatus.Epic.ID, err)
-					continue
-				}
+				fmt.Fprintf(os.Stderr, "Error closing %s: %s\n", epicStatus.Epic.ID, errMsg)
+				continue
 			}
 			closedIDs = append(closedIDs, epicStatus.Epic.ID)
 		}

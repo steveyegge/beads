@@ -234,8 +234,9 @@ create, update, show, or close operation).`,
 		resolvedIDs := batch.ResolvedIDs
 		routedArgs := batch.RoutedArgs
 
-		// If daemon is running, use RPC
-		if daemonClient != nil {
+		// Use daemon RPC
+		requireDaemon("update")
+		{
 			updatedIssues := []*types.Issue{}
 			var firstUpdatedID string // Track first successful update for last-touched
 			for _, id := range resolvedIDs {
@@ -372,94 +373,6 @@ create, update, show, or close operation).`,
 			if firstUpdatedID != "" {
 				SetLastTouchedID(firstUpdatedID)
 			}
-			return
-		}
-
-		// Direct mode - use routed resolution for cross-repo lookups
-		updatedIssues := []*types.Issue{}
-		var firstUpdatedID string // Track first successful update for last-touched
-		for _, id := range args {
-			// Resolve and get issue with routing (e.g., gt-xyz routes to gastown)
-			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-			if err != nil {
-				if result != nil {
-					result.Close()
-				}
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-				continue
-			}
-			if result == nil || result.Issue == nil {
-				if result != nil {
-					result.Close()
-				}
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-				continue
-			}
-			issue := result.Issue
-			issueStore := result.Store
-
-			if err := validateIssueUpdatable(id, issue); err != nil {
-				fmt.Fprintf(os.Stderr, "%s\n", err)
-				result.Close()
-				continue
-			}
-
-			// Handle claim operation atomically
-			if claimFlag {
-				if issue.Assignee != "" {
-					fmt.Fprintf(os.Stderr, "Error claiming %s: already claimed by %s\n", id, issue.Assignee)
-					result.Close()
-					continue
-				}
-				claimUpdates := map[string]interface{}{
-					"assignee": actor,
-					"status":   "in_progress",
-				}
-				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, claimUpdates, actor); err != nil {
-					fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)
-					result.Close()
-					continue
-				}
-			}
-
-			// Apply field updates, labels, and parent reparenting via centralized helper (bd-z344)
-			if err := applyDirectUpdates(ctx, issueStore, result.ResolvedID, issue, updates, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
-				result.Close()
-				continue
-			}
-
-			updatedIssue, _ := issueStore.GetIssue(ctx, result.ResolvedID)
-			if updatedIssue != nil && hookRunner != nil {
-				hookRunner.Run(hooks.EventUpdate, updatedIssue)
-			}
-
-			if jsonOutput {
-				if updatedIssue != nil {
-					updatedIssues = append(updatedIssues, updatedIssue)
-				}
-			} else {
-				fmt.Printf("%s Updated issue: %s\n", ui.RenderPass("✓"), result.ResolvedID)
-			}
-
-			if firstUpdatedID == "" {
-				firstUpdatedID = result.ResolvedID
-			}
-			result.Close()
-		}
-
-		// Set last touched after all updates complete
-		if firstUpdatedID != "" {
-			SetLastTouchedID(firstUpdatedID)
-		}
-
-		// Schedule auto-flush if any issues were updated
-		if len(args) > 0 {
-			markDirtyAndScheduleFlush()
-		}
-
-		if jsonOutput && len(updatedIssues) > 0 {
-			outputJSON(updatedIssues)
 		}
 	},
 }

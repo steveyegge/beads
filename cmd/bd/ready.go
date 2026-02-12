@@ -104,8 +104,8 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			fmt.Fprintf(os.Stderr, "Error: invalid sort policy '%s'. Valid values: hybrid, priority, oldest\n", sortPolicy)
 			os.Exit(1)
 		}
-		// If daemon is running, use RPC
-		if daemonClient != nil {
+		requireDaemon("ready")
+		{
 			readyArgs := &rpc.ReadyArgs{
 				Assignee:        assignee,
 				Unassigned:      unassigned,
@@ -186,95 +186,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				}
 				fmt.Println()
 			}
-			return
 		}
-		// Direct mode
-		ctx := rootCtx
-
-		// Check database freshness before reading
-		// Skip check when using daemon (daemon auto-imports on staleness)
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		issues, err := store.GetReadyWork(ctx, filter)
-		if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-		}
-	// If no ready work found, check if git has issues and auto-import
-	if len(issues) == 0 {
-		if checkAndAutoImport(ctx, store) {
-			// Re-run the query after import
-			issues, err = store.GetReadyWork(ctx, filter)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
-	}
-
-		// Apply skill filtering if requested
-		if withSkills {
-			agentID := getActor()
-			issues, err = filterByAgentSkills(issues, agentID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: skill filtering failed: %v\n", err)
-				// Continue with unfiltered list
-			}
-		}
-
-		if jsonOutput {
-			// Always output array, even if empty
-			if issues == nil {
-				issues = []*types.Issue{}
-			}
-			outputJSON(issues)
-			return
-		}
-		// Show upgrade notification if needed
-		maybeShowUpgradeNotification()
-
-		if len(issues) == 0 {
-			// Check if there are any open issues at all
-			hasOpenIssues := false
-			if stats, statsErr := store.GetStatistics(ctx); statsErr == nil {
-				hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
-			}
-			if hasOpenIssues {
-				fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
-					ui.RenderWarn("✨"))
-			} else {
-				fmt.Printf("\n%s No open issues\n\n", ui.RenderPass("✨"))
-			}
-			// Show tip even when no ready work found
-			maybeShowTip(store)
-			return
-		}
-		if prettyFormat {
-			displayPrettyList(issues, false)
-		} else {
-			fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
-			for i, issue := range issues {
-				fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
-					ui.RenderPriority(issue.Priority),
-					ui.RenderType(string(issue.IssueType)),
-					ui.RenderID(issue.ID), issue.Title)
-				if issue.EstimatedMinutes != nil {
-					fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
-				}
-				if issue.Assignee != "" {
-					fmt.Printf("   Assignee: %s\n", issue.Assignee)
-				}
-			}
-			fmt.Println()
-		}
-
-		// Show tip after successful ready (direct mode only)
-		maybeShowTip(store)
 	},
 }
 var blockedCmd = &cobra.Command{
@@ -284,11 +196,9 @@ var blockedCmd = &cobra.Command{
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
 		parentID, _ := cmd.Flags().GetString("parent")
 
+		requireDaemon("blocked")
 		var blocked []*types.BlockedIssue
-		var err error
-
-		// Prefer daemon if available
-		if daemonClient != nil {
+		{
 			blockedArgs := &rpc.BlockedArgs{}
 			if parentID != "" {
 				blockedArgs.ParentID = parentID
@@ -306,21 +216,6 @@ var blockedCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: failed to parse response: %v\n", err)
 				os.Exit(1)
 			}
-		} else if store != nil {
-			// Fall back to direct storage if no daemon
-			ctx := rootCtx
-			var blockedFilter types.WorkFilter
-			if parentID != "" {
-				blockedFilter.ParentID = &parentID
-			}
-			blocked, err = store.GetBlockedIssues(ctx, blockedFilter)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no daemon or storage available\n")
-			os.Exit(1)
 		}
 		if jsonOutput {
 			// Always output array, even if empty

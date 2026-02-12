@@ -72,20 +72,9 @@ Examples:
 
 		// Get statistics
 		var stats *types.Statistics
-		var err error
 
-		// Check database freshness before reading (bd-2q6d, bd-c4rq)
-		// Skip check when using daemon (daemon auto-imports on staleness)
-		ctx := rootCtx
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		// If daemon is running, use RPC
-		if daemonClient != nil {
+		requireDaemon("status")
+		{
 			resp, rpcErr := daemonClient.Stats()
 			if rpcErr != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", rpcErr)
@@ -94,14 +83,6 @@ Examples:
 
 			if err := json.Unmarshal(resp.Data, &stats); err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			// Direct mode
-			ctx := rootCtx
-			stats, err = store.GetStatistics(ctx)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		}

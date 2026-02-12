@@ -316,28 +316,19 @@ func TestDaemonAutostart_EmitVerboseWarning(t *testing.T) {
 	defer func() { daemonStatus = old }()
 
 	daemonStatus.SocketPath = "/tmp/bd.sock"
-	for _, tt := range []struct {
-		reason      string
-		shouldWrite bool
-	}{
-		{FallbackConnectFailed, true},
-		{FallbackHealthFailed, true},
-		{FallbackAutoStartDisabled, true},
-		{FallbackAutoStartFailed, true},
-		{FallbackDaemonUnsupported, true},
-		{FallbackWorktreeSafety, false},
-		{FallbackFlagNoDaemon, false},
-	} {
-		t.Run(tt.reason, func(t *testing.T) {
-			daemonStatus.FallbackReason = tt.reason
-			out := captureStderr(t, emitVerboseWarning)
-			if tt.shouldWrite && out == "" {
-				t.Fatalf("expected output")
-			}
-			if !tt.shouldWrite && out != "" {
-				t.Fatalf("expected no output, got %q", out)
-			}
-		})
+
+	// With detail set, should emit a warning
+	daemonStatus.Detail = "connect_failed"
+	out := captureStderr(t, emitVerboseWarning)
+	if out == "" {
+		t.Fatal("expected output when Detail is set")
+	}
+
+	// With no detail, should be silent
+	daemonStatus.Detail = ""
+	out = captureStderr(t, emitVerboseWarning)
+	if out != "" {
+		t.Fatalf("expected no output when Detail is empty, got %q", out)
 	}
 }
 

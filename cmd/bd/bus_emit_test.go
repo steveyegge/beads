@@ -178,7 +178,7 @@ func TestOutputEmitResult_BlockWritesStderr(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// runBusEmit local fallback tests
+// runBusEmit tests
 // ---------------------------------------------------------------------------
 
 // newBusEmitCmd creates a minimal cobra command wired to runBusEmit, with the
@@ -209,101 +209,6 @@ func TestRunBusEmit_MissingHookFlag(t *testing.T) {
 	}
 }
 
-func TestRunBusEmit_LocalFallbackPassthrough(t *testing.T) {
-	// Save and restore globals.
-	oldClient := daemonClient
-	daemonClient = nil
-	defer func() { daemonClient = oldClient }()
-
-	oldStdin := os.Stdin
-	defer func() { os.Stdin = oldStdin }()
-
-	oldStdout := os.Stdout
-	defer func() { os.Stdout = oldStdout }()
-
-	// Provide valid JSON on stdin.
-	stdinJSON := `{"session_id":"test-session","cwd":"/tmp"}`
-	stdinR, stdinW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := stdinW.WriteString(stdinJSON); err != nil {
-		t.Fatal(err)
-	}
-	stdinW.Close()
-	os.Stdin = stdinR
-
-	// Capture stdout.
-	stdoutR, stdoutW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = stdoutW
-
-	cmd := newBusEmitCmd()
-	cmd.SetArgs([]string{"--hook", "SessionStart"})
-	if err := cmd.Execute(); err != nil {
-		os.Stdout = oldStdout
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	stdoutW.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(stdoutR); err != nil {
-		t.Fatal(err)
-	}
-	got := buf.String()
-	// Local bus with no handlers → passthrough → no inject, no warnings, no block.
-	if got != "" {
-		t.Errorf("stdout = %q, want empty (passthrough)", got)
-	}
-}
-
-func TestRunBusEmit_LocalFallbackEmptyStdin(t *testing.T) {
-	// Save and restore globals.
-	oldClient := daemonClient
-	daemonClient = nil
-	defer func() { daemonClient = oldClient }()
-
-	oldStdin := os.Stdin
-	defer func() { os.Stdin = oldStdin }()
-
-	oldStdout := os.Stdout
-	defer func() { os.Stdout = oldStdout }()
-
-	// Empty stdin.
-	stdinR, stdinW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stdinW.Close()
-	os.Stdin = stdinR
-
-	// Capture stdout.
-	stdoutR, stdoutW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = stdoutW
-
-	cmd := newBusEmitCmd()
-	cmd.SetArgs([]string{"--hook", "PreToolUse"})
-	if err := cmd.Execute(); err != nil {
-		os.Stdout = oldStdout
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	stdoutW.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(stdoutR); err != nil {
-		t.Fatal(err)
-	}
-	got := buf.String()
-	if got != "" {
-		t.Errorf("stdout = %q, want empty (empty stdin passthrough)", got)
-	}
-}
+// Local fallback tests removed: bus_emit now requires daemon (requireDaemon call).
+// The old TestRunBusEmit_LocalFallbackPassthrough and TestRunBusEmit_LocalFallbackEmptyStdin
+// tests are no longer valid since there is no local dispatch path.

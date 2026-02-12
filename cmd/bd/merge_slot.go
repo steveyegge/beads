@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // mergeSlotCmd is the parent command for merge-slot operations
@@ -126,77 +125,44 @@ func getMergeSlotID() string {
 		if configResp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "issue_prefix"}); err == nil && configResp.Value != "" {
 			prefix = strings.TrimSuffix(configResp.Value, "-")
 		}
-	} else if store != nil {
-		// Direct mode - check database config
-		if dbPrefix, err := store.GetConfig(rootCtx, "issue_prefix"); err == nil && dbPrefix != "" {
-			prefix = strings.TrimSuffix(dbPrefix, "-")
-		}
 	}
 	return prefix + "-merge-slot"
 }
 
 func runMergeSlotCreate(cmd *cobra.Command, args []string) error {
 	CheckReadonly("merge-slot create")
+	requireDaemon("merge-slot create")
 
 	slotID := getMergeSlotID()
-	ctx := rootCtx
 
 	// Check if slot already exists
-	var existing *types.Issue
-	if daemonClient != nil {
-		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: slotID})
-		if err == nil && resp.Success {
-			if uerr := json.Unmarshal(resp.Data, &existing); uerr == nil {
-				fmt.Printf("Merge slot already exists: %s\n", slotID)
-				return nil
-			}
-		}
-	} else {
-		existing, _ = store.GetIssue(ctx, slotID)
-		if existing != nil {
+	resp, err := daemonClient.Show(&rpc.ShowArgs{ID: slotID})
+	if err == nil && resp.Success {
+		var existing *types.Issue
+		if uerr := json.Unmarshal(resp.Data, &existing); uerr == nil {
 			fmt.Printf("Merge slot already exists: %s\n", slotID)
 			return nil
 		}
 	}
 
-	// Create the merge slot bead
+	// Create the merge slot bead via daemon RPC
 	title := "Merge Slot"
 	description := "Exclusive access slot for serialized conflict resolution in the merge queue."
 
-	if daemonClient != nil {
-		createArgs := &rpc.CreateArgs{
-			ID:          slotID,
-			Title:       title,
-			Description: description,
-			IssueType:   string(types.TypeTask), // Use task type; gt:slot label marks it as slot
-			Priority:    0,                      // P0 - system infrastructure
-			Labels:      []string{"gt:slot"},   // Gas Town slot label
-		}
-		resp, err := daemonClient.Create(createArgs)
-		if err != nil {
-			return fmt.Errorf("failed to create merge slot: %w", err)
-		}
-		if !resp.Success {
-			return fmt.Errorf("failed to create merge slot: %s", resp.Error)
-		}
-	} else {
-		issue := &types.Issue{
-			ID:          slotID,
-			Title:       title,
-			Description: description,
-			IssueType:   types.TypeTask, // Use task type; gt:slot label marks it as slot
-			Status:      types.StatusOpen,
-			Priority:    0,
-		}
-		if err := store.CreateIssue(ctx, issue, actor); err != nil {
-			return fmt.Errorf("failed to create merge slot: %w", err)
-		}
-		// Add gt:slot label to mark as slot bead
-		if err := store.AddLabel(ctx, slotID, "gt:slot", actor); err != nil {
-			// Non-fatal: log warning but don't fail creation
-			fmt.Fprintf(os.Stderr, "warning: failed to add gt:slot label: %v\n", err)
-		}
-		markDirtyAndScheduleFlush()
+	createArgs := &rpc.CreateArgs{
+		ID:          slotID,
+		Title:       title,
+		Description: description,
+		IssueType:   string(types.TypeTask), // Use task type; gt:slot label marks it as slot
+		Priority:    0,                      // P0 - system infrastructure
+		Labels:      []string{"gt:slot"},   // Gas Town slot label
+	}
+	resp, err = daemonClient.Create(createArgs)
+	if err != nil {
+		return fmt.Errorf("failed to create merge slot: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("failed to create merge slot: %s", resp.Error)
 	}
 
 	if jsonOutput {
@@ -214,52 +180,33 @@ func runMergeSlotCreate(cmd *cobra.Command, args []string) error {
 }
 
 func runMergeSlotCheck(cmd *cobra.Command, args []string) error {
-	slotID := getMergeSlotID()
-	ctx := rootCtx
+	requireDaemon("merge-slot check")
 
-	// Get the slot bead
+	slotID := getMergeSlotID()
+
+	// Get the slot bead via daemon RPC
 	var slot *types.Issue
-	if daemonClient != nil {
-		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: slotID})
-		if err != nil {
-			if jsonOutput {
-				result := map[string]interface{}{
-					"id":        slotID,
-					"available": false,
-					"error":     "not found",
-				}
-				encoder := json.NewEncoder(os.Stdout)
-				encoder.SetIndent("", "  ")
-				return encoder.Encode(result)
+	resp, err := daemonClient.Show(&rpc.ShowArgs{ID: slotID})
+	if err != nil {
+		if jsonOutput {
+			result := map[string]interface{}{
+				"id":        slotID,
+				"available": false,
+				"error":     "not found",
 			}
-			fmt.Printf("Merge slot not found: %s\n", slotID)
-			fmt.Printf("Run 'bd merge-slot create' to create one.\n")
-			return nil
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(result)
 		}
-		var details types.IssueDetails
-		if uerr := json.Unmarshal(resp.Data, &details); uerr != nil {
-			return fmt.Errorf("parsing response: %w", uerr)
-		}
-		slot = &details.Issue
-	} else {
-		var err error
-		slot, err = store.GetIssue(ctx, slotID)
-		if err != nil || slot == nil {
-			if jsonOutput {
-				result := map[string]interface{}{
-					"id":        slotID,
-					"available": false,
-					"error":     "not found",
-				}
-				encoder := json.NewEncoder(os.Stdout)
-				encoder.SetIndent("", "  ")
-				return encoder.Encode(result)
-			}
-			fmt.Printf("Merge slot not found: %s\n", slotID)
-			fmt.Printf("Run 'bd merge-slot create' to create one.\n")
-			return nil
-		}
+		fmt.Printf("Merge slot not found: %s\n", slotID)
+		fmt.Printf("Run 'bd merge-slot create' to create one.\n")
+		return nil
 	}
+	var details types.IssueDetails
+	if uerr := json.Unmarshal(resp.Data, &details); uerr != nil {
+		return fmt.Errorf("parsing response: %w", uerr)
+	}
+	slot = &details.Issue
 
 	available := slot.Status == types.StatusOpen
 	holder := slot.Holder
@@ -296,9 +243,9 @@ func runMergeSlotCheck(cmd *cobra.Command, args []string) error {
 
 func runMergeSlotAcquire(cmd *cobra.Command, args []string) error {
 	CheckReadonly("merge-slot acquire")
+	requireDaemon("merge-slot acquire")
 
 	slotID := getMergeSlotID()
-	ctx := rootCtx
 
 	// Determine holder
 	holder := mergeSlotHolder
@@ -309,39 +256,26 @@ func runMergeSlotAcquire(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no holder specified; use --holder or set BD_ACTOR env var")
 	}
 
-	// Get the slot bead
+	// Get the slot bead via daemon RPC
 	var slot *types.Issue
-	if daemonClient != nil {
-		// Try to resolve the slot ID first
-		resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: slotID})
-		if err != nil {
-			return fmt.Errorf("merge slot not found: %s (run 'bd merge-slot create' first)", slotID)
-		}
-		var resolvedID string
-		if uerr := json.Unmarshal(resp.Data, &resolvedID); uerr != nil {
-			return fmt.Errorf("parsing response: %w", uerr)
-		}
-
-		showResp, showErr := daemonClient.Show(&rpc.ShowArgs{ID: resolvedID})
-		if showErr != nil {
-			return fmt.Errorf("merge slot not found: %s", slotID)
-		}
-		var details types.IssueDetails
-		if uerr := json.Unmarshal(showResp.Data, &details); uerr != nil {
-			return fmt.Errorf("parsing response: %w", uerr)
-		}
-		slot = &details.Issue
-	} else {
-		var err error
-		resolvedID, err := utils.ResolvePartialID(ctx, store, slotID)
-		if err != nil {
-			return fmt.Errorf("merge slot not found: %s (run 'bd merge-slot create' first)", slotID)
-		}
-		slot, err = store.GetIssue(ctx, resolvedID)
-		if err != nil || slot == nil {
-			return fmt.Errorf("merge slot not found: %s", slotID)
-		}
+	resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: slotID})
+	if err != nil {
+		return fmt.Errorf("merge slot not found: %s (run 'bd merge-slot create' first)", slotID)
 	}
+	var resolvedID string
+	if uerr := json.Unmarshal(resp.Data, &resolvedID); uerr != nil {
+		return fmt.Errorf("parsing response: %w", uerr)
+	}
+
+	showResp, showErr := daemonClient.Show(&rpc.ShowArgs{ID: resolvedID})
+	if showErr != nil {
+		return fmt.Errorf("merge slot not found: %s", slotID)
+	}
+	var details types.IssueDetails
+	if uerr := json.Unmarshal(showResp.Data, &details); uerr != nil {
+		return fmt.Errorf("parsing response: %w", uerr)
+	}
+	slot = &details.Issue
 
 	// Check slot availability
 	if slot.Status != types.StatusOpen {
@@ -358,23 +292,12 @@ func runMergeSlotAcquire(cmd *cobra.Command, args []string) error {
 
 			if !alreadyWaiting {
 				newWaiters := append(slot.Waiters, holder)
-				if daemonClient != nil {
-					updateArgs := &rpc.UpdateArgs{
-						ID:      slot.ID,
-						Waiters: newWaiters,
-					}
-					_, err := daemonClient.Update(updateArgs)
-					if err != nil {
-						return fmt.Errorf("failed to add waiter: %w", err)
-					}
-				} else {
-					updates := map[string]interface{}{
-						"waiters": newWaiters,
-					}
-					if err := store.UpdateIssue(ctx, slot.ID, updates, actor); err != nil {
-						return fmt.Errorf("failed to add waiter: %w", err)
-					}
-					markDirtyAndScheduleFlush()
+				updateArgs := &rpc.UpdateArgs{
+					ID:      slot.ID,
+					Waiters: newWaiters,
+				}
+				if _, err := daemonClient.Update(updateArgs); err != nil {
+					return fmt.Errorf("failed to add waiter: %w", err)
 				}
 			}
 
@@ -412,27 +335,15 @@ func runMergeSlotAcquire(cmd *cobra.Command, args []string) error {
 		os.Exit(1) // Exit with error to indicate slot not acquired
 	}
 
-	// Slot is available - acquire it
+	// Slot is available - acquire it via daemon RPC
 	inProgressStatus := string(types.StatusInProgress)
-	if daemonClient != nil {
-		updateArgs := &rpc.UpdateArgs{
-			ID:     slot.ID,
-			Status: &inProgressStatus,
-			Holder: &holder,
-		}
-		_, err := daemonClient.Update(updateArgs)
-		if err != nil {
-			return fmt.Errorf("failed to acquire slot: %w", err)
-		}
-	} else {
-		updates := map[string]interface{}{
-			"status": types.StatusInProgress,
-			"holder": holder,
-		}
-		if err := store.UpdateIssue(ctx, slot.ID, updates, actor); err != nil {
-			return fmt.Errorf("failed to acquire slot: %w", err)
-		}
-		markDirtyAndScheduleFlush()
+	updateArgs := &rpc.UpdateArgs{
+		ID:     slot.ID,
+		Status: &inProgressStatus,
+		Holder: &holder,
+	}
+	if _, err := daemonClient.Update(updateArgs); err != nil {
+		return fmt.Errorf("failed to acquire slot: %w", err)
 	}
 
 	if jsonOutput {
@@ -453,29 +364,21 @@ func runMergeSlotAcquire(cmd *cobra.Command, args []string) error {
 
 func runMergeSlotRelease(cmd *cobra.Command, args []string) error {
 	CheckReadonly("merge-slot release")
+	requireDaemon("merge-slot release")
 
 	slotID := getMergeSlotID()
-	ctx := rootCtx
 
-	// Get the slot bead
+	// Get the slot bead via daemon RPC
 	var slot *types.Issue
-	if daemonClient != nil {
-		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: slotID})
-		if err != nil {
-			return fmt.Errorf("merge slot not found: %s", slotID)
-		}
-		var details types.IssueDetails
-		if uerr := json.Unmarshal(resp.Data, &details); uerr != nil {
-			return fmt.Errorf("parsing response: %w", uerr)
-		}
-		slot = &details.Issue
-	} else {
-		var err error
-		slot, err = store.GetIssue(ctx, slotID)
-		if err != nil || slot == nil {
-			return fmt.Errorf("merge slot not found: %s", slotID)
-		}
+	resp, err := daemonClient.Show(&rpc.ShowArgs{ID: slotID})
+	if err != nil {
+		return fmt.Errorf("merge slot not found: %s", slotID)
 	}
+	var details types.IssueDetails
+	if uerr := json.Unmarshal(resp.Data, &details); uerr != nil {
+		return fmt.Errorf("parsing response: %w", uerr)
+	}
+	slot = &details.Issue
 
 	// Verify holder if specified
 	if mergeSlotHolder != "" && slot.Holder != mergeSlotHolder {
@@ -501,28 +404,16 @@ func runMergeSlotRelease(cmd *cobra.Command, args []string) error {
 	previousHolder := slot.Holder
 	waiters := slot.Waiters
 
-	// Release the slot
+	// Release the slot via daemon RPC
 	openStatus := string(types.StatusOpen)
 	emptyHolder := ""
-	if daemonClient != nil {
-		updateArgs := &rpc.UpdateArgs{
-			ID:     slot.ID,
-			Status: &openStatus,
-			Holder: &emptyHolder,
-		}
-		_, err := daemonClient.Update(updateArgs)
-		if err != nil {
-			return fmt.Errorf("failed to release slot: %w", err)
-		}
-	} else {
-		updates := map[string]interface{}{
-			"status": types.StatusOpen,
-			"holder": "",
-		}
-		if err := store.UpdateIssue(ctx, slot.ID, updates, actor); err != nil {
-			return fmt.Errorf("failed to release slot: %w", err)
-		}
-		markDirtyAndScheduleFlush()
+	updateArgs := &rpc.UpdateArgs{
+		ID:     slot.ID,
+		Status: &openStatus,
+		Holder: &emptyHolder,
+	}
+	if _, err := daemonClient.Update(updateArgs); err != nil {
+		return fmt.Errorf("failed to release slot: %w", err)
 	}
 
 	if jsonOutput {

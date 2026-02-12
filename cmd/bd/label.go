@@ -1,7 +1,6 @@
 // Package main implements the bd CLI label management commands.
 package main
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 var labelCmd = &cobra.Command{
 	Use:     "label",
@@ -26,62 +24,35 @@ func addLabelsToIssue(issueID string, labels []string, jsonOut bool) error {
 		return nil
 	}
 
-	ctx := rootCtx
-
-	if daemonClient != nil {
-		// Use BatchAddLabels for atomic multi-label add
-		result, err := daemonClient.BatchAddLabels(&rpc.BatchAddLabelsArgs{
-			IssueID: issueID,
-			Labels:  labels,
-		})
-		if err != nil {
-			return err
-		}
-		if jsonOut {
-			outputJSON(map[string]interface{}{
-				"status":       "added",
-				"issue_id":     issueID,
-				"labels":       labels,
-				"labels_added": result.LabelsAdded,
-			})
-		} else if result.LabelsAdded > 0 {
-			fmt.Printf("%s Added %d labels to %s\n", ui.RenderPass("✓"), result.LabelsAdded, issueID)
-		}
-		return nil
+	requireDaemon("label add")
+	// Use BatchAddLabels for atomic multi-label add
+	result, err := daemonClient.BatchAddLabels(&rpc.BatchAddLabelsArgs{
+		IssueID: issueID,
+		Labels:  labels,
+	})
+	if err != nil {
+		return err
 	}
-
-	// Direct store access - add labels individually
-	for _, label := range labels {
-		if err := store.AddLabel(ctx, issueID, label, actor); err != nil {
-			return fmt.Errorf("adding label %q: %w", label, err)
-		}
-	}
-	markDirtyAndScheduleFlush()
 	if jsonOut {
 		outputJSON(map[string]interface{}{
 			"status":       "added",
 			"issue_id":     issueID,
 			"labels":       labels,
-			"labels_added": len(labels),
+			"labels_added": result.LabelsAdded,
 		})
-	} else {
-		fmt.Printf("%s Added %d labels to %s\n", ui.RenderPass("✓"), len(labels), issueID)
+	} else if result.LabelsAdded > 0 {
+		fmt.Printf("%s Added %d labels to %s\n", ui.RenderPass("✓"), result.LabelsAdded, issueID)
 	}
 	return nil
 }
 
 // Helper function to process label operations for multiple issues
 func processBatchLabelOperation(issueIDs []string, label string, operation string, jsonOut bool,
-	daemonFunc func(string, string) error, storeFunc func(context.Context, string, string, string) error) {
-	ctx := rootCtx
+	daemonFunc func(string, string) error) {
+	requireDaemon("label " + operation)
 	results := []map[string]interface{}{}
 	for _, issueID := range issueIDs {
-		var err error
-		if daemonClient != nil {
-			err = daemonFunc(issueID, label)
-		} else {
-			err = storeFunc(ctx, issueID, label, actor)
-		}
+		err := daemonFunc(issueID, label)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error %s label %s %s: %v\n", operation, operation, issueID, err)
 			continue
@@ -102,9 +73,6 @@ func processBatchLabelOperation(issueIDs []string, label string, operation strin
 			fmt.Printf("%s %s label '%s' %s %s\n", ui.RenderPass("✓"), verb, label, prep, issueID)
 		}
 	}
-	if len(issueIDs) > 0 && daemonClient == nil {
-		markDirtyAndScheduleFlush()
-	}
 	if jsonOut && len(results) > 0 {
 		outputJSON(results)
 	}
@@ -122,30 +90,21 @@ var labelAddCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("label add")
 		// Use global jsonOutput set by PersistentPreRun
+		requireDaemon("label add")
 		issueIDs, label := parseLabelArgs(args)
-		// Resolve partial IDs
-		ctx := rootCtx
+		// Resolve partial IDs via daemon
 		resolvedIDs := make([]string, 0, len(issueIDs))
 		for _, id := range issueIDs {
+			resolveArgs := &rpc.ResolveIDArgs{ID: id}
+			resp, err := daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				continue
+			}
 			var fullID string
-			var err error
-			if daemonClient != nil {
-				resolveArgs := &rpc.ResolveIDArgs{ID: id}
-				resp, err := daemonClient.ResolveID(resolveArgs)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-					continue
-				}
-				if err := json.Unmarshal(resp.Data, &fullID); err != nil {
-					fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-					continue
-				}
-			} else {
-				fullID, err = utils.ResolvePartialID(ctx, store, id)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-					continue
-				}
+			if err := json.Unmarshal(resp.Data, &fullID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+				continue
 			}
 			resolvedIDs = append(resolvedIDs, fullID)
 		}
@@ -161,9 +120,6 @@ var labelAddCmd = &cobra.Command{
 			func(issueID, lbl string) error {
 				_, err := daemonClient.AddLabel(&rpc.LabelAddArgs{ID: issueID, Label: lbl})
 				return err
-			},
-			func(ctx context.Context, issueID, lbl, act string) error {
-				return store.AddLabel(ctx, issueID, lbl, act)
 			})
 	},
 }
@@ -175,30 +131,21 @@ var labelRemoveCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("label remove")
 		// Use global jsonOutput set by PersistentPreRun
+		requireDaemon("label remove")
 		issueIDs, label := parseLabelArgs(args)
-		// Resolve partial IDs
-		ctx := rootCtx
+		// Resolve partial IDs via daemon
 		resolvedIDs := make([]string, 0, len(issueIDs))
 		for _, id := range issueIDs {
+			resolveArgs := &rpc.ResolveIDArgs{ID: id}
+			resp, err := daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				continue
+			}
 			var fullID string
-			var err error
-			if daemonClient != nil {
-				resolveArgs := &rpc.ResolveIDArgs{ID: id}
-				resp, err := daemonClient.ResolveID(resolveArgs)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-					continue
-				}
-				if err := json.Unmarshal(resp.Data, &fullID); err != nil {
-					fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-					continue
-				}
-			} else {
-				fullID, err = utils.ResolvePartialID(ctx, store, id)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-					continue
-				}
+			if err := json.Unmarshal(resp.Data, &fullID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+				continue
 			}
 			resolvedIDs = append(resolvedIDs, fullID)
 		}
@@ -207,9 +154,6 @@ var labelRemoveCmd = &cobra.Command{
 			func(issueID, lbl string) error {
 				_, err := daemonClient.RemoveLabel(&rpc.LabelRemoveArgs{ID: issueID, Label: lbl})
 				return err
-			},
-			func(ctx context.Context, issueID, lbl, act string) error {
-				return store.RemoveLabel(ctx, issueID, lbl, act)
 			})
 	},
 }
@@ -219,10 +163,10 @@ var labelListCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun
-		ctx := rootCtx
-		// Resolve partial ID first
+		requireDaemon("label list")
+		// Resolve partial ID via daemon
 		var issueID string
-		if daemonClient != nil {
+		{
 			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
 			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
@@ -231,16 +175,9 @@ var labelListCmd = &cobra.Command{
 			if err := json.Unmarshal(resp.Data, &issueID); err != nil {
 				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 			}
-		} else {
-			var err error
-			issueID, err = utils.ResolvePartialID(ctx, store, args[0])
-			if err != nil {
-				FatalErrorRespectJSON("resolving %s: %v", args[0], err)
-			}
 		}
 		var labels []string
-		// Use daemon if available
-		if daemonClient != nil {
+		{
 			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: issueID})
 			if err != nil {
 				FatalErrorRespectJSON("%v", err)
@@ -250,13 +187,6 @@ var labelListCmd = &cobra.Command{
 				FatalErrorRespectJSON("parsing response: %v", err)
 			}
 			labels = issue.Labels
-		} else {
-			// Direct mode
-			var err error
-			labels, err = store.GetLabels(ctx, issueID)
-			if err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
 		}
 		if jsonOutput {
 			// Always output array, even if empty
@@ -282,11 +212,9 @@ var labelListAllCmd = &cobra.Command{
 	Short: "List all unique labels in the database",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun
-		ctx := rootCtx
+		requireDaemon("label list-all")
 		var issues []*types.Issue
-		var err error
-		// Use daemon if available
-		if daemonClient != nil {
+		{
 			resp, err := daemonClient.List(&rpc.ListArgs{})
 			if err != nil {
 				FatalErrorRespectJSON("%v", err)
@@ -294,30 +222,13 @@ var labelListAllCmd = &cobra.Command{
 			if err := json.Unmarshal(resp.Data, &issues); err != nil {
 				FatalErrorRespectJSON("parsing response: %v", err)
 			}
-		} else {
-			// Direct mode
-			issues, err = store.SearchIssues(ctx, "", types.IssueFilter{})
-			if err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
 		}
 		// Collect unique labels with counts
 		labelCounts := make(map[string]int)
 		for _, issue := range issues {
-			if daemonClient != nil {
-				// Labels are already in the issue from daemon
-				for _, label := range issue.Labels {
-					labelCounts[label]++
-				}
-			} else {
-				// Direct mode - need to fetch labels
-				labels, err := store.GetLabels(ctx, issue.ID)
-				if err != nil {
-					FatalErrorRespectJSON("getting labels for %s: %v", issue.ID, err)
-				}
-				for _, label := range labels {
-					labelCounts[label]++
-				}
+			// Labels are already in the issue from daemon
+			for _, label := range issue.Labels {
+				labelCounts[label]++
 			}
 		}
 		if len(labelCounts) == 0 {

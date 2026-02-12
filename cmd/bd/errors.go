@@ -92,3 +92,11 @@ func CheckReadonly(operation string) {
 		FatalError("operation '%s' is not allowed in read-only mode", operation)
 	}
 }
+
+// requireDaemon exits with an error if the daemon client is not connected.
+// Call this at the start of commands that require the daemon RPC connection.
+func requireDaemon(operation string) {
+	if daemonClient == nil {
+		FatalErrorRespectJSON("'%s' requires a running daemon (no direct mode fallback)", operation)
+	}
+}

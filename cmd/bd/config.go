@@ -88,42 +88,8 @@ var configSetCmd = &cobra.Command{
 			return
 		}
 
-		// Use daemon RPC when available (bd-wmil)
-		if daemonClient != nil {
-			runConfigSetViaDaemon(key, value)
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-			os.Exit(1)
-		}
-
-		ctx := rootCtx
-
-		// Special handling for sync.branch to apply validation
-		if strings.TrimSpace(key) == syncbranch.ConfigKey {
-			if err := syncbranch.Set(ctx, store, value); err != nil {
-				fmt.Fprintf(os.Stderr, "Error setting config: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			if err := store.SetConfig(ctx, key, value); err != nil {
-				fmt.Fprintf(os.Stderr, "Error setting config: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		if jsonOutput {
-			outputJSON(map[string]string{
-				"key":   key,
-				"value": value,
-			})
-		} else {
-			fmt.Printf("Set %s = %s\n", key, value)
-		}
+		requireDaemon("config set")
+		runConfigSetViaDaemon(key, value)
 	},
 }
 
@@ -178,47 +144,8 @@ var configGetCmd = &cobra.Command{
 			return
 		}
 
-		// Use daemon RPC when available (bd-wmil)
-		if daemonClient != nil {
-			runConfigGetViaDaemon(key)
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-			os.Exit(1)
-		}
-
-		ctx := rootCtx
-		var value string
-		var err error
-
-		// Special handling for sync.branch to support env var override
-		if strings.TrimSpace(key) == syncbranch.ConfigKey {
-			value, err = syncbranch.Get(ctx, store)
-		} else {
-			value, err = store.GetConfig(ctx, key)
-		}
-
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting config: %v\n", err)
-			os.Exit(1)
-		}
-
-		if jsonOutput {
-			outputJSON(map[string]string{
-				"key":   key,
-				"value": value,
-			})
-		} else {
-			if value == "" {
-				fmt.Printf("%s (not set)\n", key)
-			} else {
-				fmt.Printf("%s\n", value)
-			}
-		}
+		requireDaemon("config get")
+		runConfigGetViaDaemon(key)
 	},
 }
 
@@ -252,27 +179,8 @@ var configListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all configuration",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Use daemon RPC when available (bd-wmil)
-		if daemonClient != nil {
-			runConfigListViaDaemon()
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-			os.Exit(1)
-		}
-
-		ctx := rootCtx
-		cfg, err := store.GetAllConfig(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing config: %v\n", err)
-			os.Exit(1)
-		}
-
-		printConfigList(cfg)
+		requireDaemon("config list")
+		runConfigListViaDaemon()
 	},
 }
 
@@ -346,32 +254,8 @@ var configUnsetCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		key := args[0]
 
-		// Use daemon RPC when available (bd-wmil)
-		if daemonClient != nil {
-			runConfigUnsetViaDaemon(key)
-			return
-		}
-
-		// Fallback to direct store access
-		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			fmt.Fprintf(os.Stderr, "Hint: start the daemon with 'bd daemon start' or run in a beads workspace\n")
-			os.Exit(1)
-		}
-
-		ctx := rootCtx
-		if err := store.DeleteConfig(ctx, key); err != nil {
-			fmt.Fprintf(os.Stderr, "Error deleting config: %v\n", err)
-			os.Exit(1)
-		}
-
-		if jsonOutput {
-			outputJSON(map[string]string{
-				"key": key,
-			})
-		} else {
-			fmt.Printf("Unset %s\n", key)
-		}
+		requireDaemon("config unset")
+		runConfigUnsetViaDaemon(key)
 	},
 }
 
@@ -656,26 +540,16 @@ Examples:
   bd config dump --format=docker-env     # Docker --env flags
   bd config dump --format=configmap-yaml # K8s ConfigMap YAML`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Get all config values
+		requireDaemon("config dump")
+		// Get all config values via daemon
 		var cfg map[string]string
-		if daemonClient != nil {
+		{
 			result, err := daemonClient.ConfigList()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 			cfg = result.Config
-		} else if store != nil {
-			ctx := rootCtx
-			var err error
-			cfg, err = store.GetAllConfig(ctx)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error listing config: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-			os.Exit(1)
 		}
 
 		// Filter to deploy.* keys and map to env vars
@@ -799,22 +673,13 @@ Examples:
 			return
 		}
 
-		// Write each value
+		requireDaemon("config seed")
+		// Write each value via daemon
 		for _, e := range entries {
-			if daemonClient != nil {
-				setArgs := &rpc.ConfigSetArgs{Key: e.Key, Value: e.Value}
-				if _, err := daemonClient.ConfigSet(setArgs); err != nil {
-					fmt.Fprintf(os.Stderr, "Error setting %s: %v\n", e.Key, err)
-					continue
-				}
-			} else if store != nil {
-				if err := store.SetConfig(rootCtx, e.Key, e.Value); err != nil {
-					fmt.Fprintf(os.Stderr, "Error setting %s: %v\n", e.Key, err)
-					continue
-				}
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: no database connection available\n")
-				os.Exit(1)
+			setArgs := &rpc.ConfigSetArgs{Key: e.Key, Value: e.Value}
+			if _, err := daemonClient.ConfigSet(setArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "Error setting %s: %v\n", e.Key, err)
+				continue
 			}
 			fmt.Printf("Set %s = %q (from %s)\n", e.Key, e.Value, e.EnvVar)
 		}

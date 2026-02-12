@@ -49,10 +49,9 @@ var templateListCmd = &cobra.Command{
 	Short:      "List available templates",
 	Deprecated: "use 'bd formula list' instead (will be removed in v1.0.0)",
 	Run: func(cmd *cobra.Command, args []string) {
-		ctx := rootCtx
+		requireDaemon("template list")
 		var beadsTemplates []*types.Issue
-
-		if daemonClient != nil {
+		{
 			resp, err := daemonClient.List(&rpc.ListArgs{})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error loading templates: %v\n", err)
@@ -69,16 +68,6 @@ var templateListCmd = &cobra.Command{
 					}
 				}
 			}
-		} else if store != nil {
-			var err error
-			beadsTemplates, err = store.GetIssuesByLabel(ctx, BeadsTemplateLabel)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading templates: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
 		}
 
 		if jsonOutput {
@@ -115,10 +104,9 @@ var templateShowCmd = &cobra.Command{
 	Deprecated: "use 'bd mol show' instead (will be removed in v1.0.0)",
 	Args:       cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		ctx := rootCtx
+		requireDaemon("template show")
 		var templateID string
-
-		if daemonClient != nil {
+		{
 			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
 			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
@@ -129,26 +117,12 @@ var templateShowCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-		} else if store != nil {
-			var err error
-			templateID, err = utils.ResolvePartialID(ctx, store, args[0])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: template '%s' not found\n", args[0])
-				os.Exit(1)
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
 		}
 
 		// Load and show Beads template
 		var subgraph *TemplateSubgraph
 		var err error
-		if daemonClient != nil {
-			subgraph, err = loadTemplateSubgraphViaDaemon(daemonClient, templateID)
-		} else {
-			subgraph, err = loadTemplateSubgraph(ctx, store, templateID)
-		}
+		subgraph, err = loadTemplateSubgraphViaDaemon(daemonClient, templateID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading template: %v\n", err)
 			os.Exit(1)
@@ -203,7 +177,6 @@ Example:
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("template instantiate")
 
-		ctx := rootCtx
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		varFlags, _ := cmd.Flags().GetStringArray("var")
 		assignee, _ := cmd.Flags().GetString("assignee")
@@ -220,8 +193,9 @@ Example:
 		}
 
 		// Resolve template ID
+		requireDaemon("template instantiate")
 		var templateID string
-		if daemonClient != nil {
+		{
 			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
 			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
@@ -232,26 +206,12 @@ Example:
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-		} else if store != nil {
-			var err error
-			templateID, err = utils.ResolvePartialID(ctx, store, args[0])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving template ID %s: %v\n", args[0], err)
-				os.Exit(1)
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
 		}
 
 		// Load the template subgraph
 		var subgraph *TemplateSubgraph
 		var err error
-		if daemonClient != nil {
-			subgraph, err = loadTemplateSubgraphViaDaemon(daemonClient, templateID)
-		} else {
-			subgraph, err = loadTemplateSubgraph(ctx, store, templateID)
-		}
+		subgraph, err = loadTemplateSubgraphViaDaemon(daemonClient, templateID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading template: %v\n", err)
 			os.Exit(1)
@@ -299,11 +259,7 @@ Example:
 			Ephemeral:     false,
 		}
 		var result *InstantiateResult
-		if daemonClient != nil {
-			result, err = cloneSubgraphViaDaemon(daemonClient, subgraph, opts)
-		} else {
-			result, err = cloneSubgraph(ctx, store, subgraph, opts)
-		}
+		result, err = cloneSubgraphViaDaemon(daemonClient, subgraph, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error instantiating template: %v\n", err)
 			os.Exit(1)
@@ -340,33 +296,19 @@ func init() {
 // loadSubgraphPreferDaemon loads a template subgraph, preferring daemon RPC over direct store.
 // Per epic gt-as9kdm, we want to eliminate direct DB connections.
 // This function handles ID resolution and falls back to direct store if daemon unavailable.
-func loadSubgraphPreferDaemon(ctx context.Context, issueID string) (*TemplateSubgraph, error) {
-	// Try daemon RPC first (preferred)
-	if daemonClient != nil {
-		// Resolve ID via daemon
-		resolveResp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: issueID})
-		if err != nil {
-			return nil, fmt.Errorf("resolving ID via daemon: %w", err)
-		}
-		var resolvedID string
-		if err := json.Unmarshal(resolveResp.Data, &resolvedID); err != nil {
-			return nil, fmt.Errorf("parsing resolved ID: %w", err)
-		}
-
-		return loadTemplateSubgraphViaDaemon(daemonClient, resolvedID)
-	}
-
-	// Fall back to direct store
-	if store == nil {
-		return nil, fmt.Errorf("no database connection available")
-	}
-
-	resolvedID, err := utils.ResolvePartialID(ctx, store, issueID)
+func loadSubgraphPreferDaemon(_ context.Context, issueID string) (*TemplateSubgraph, error) {
+	requireDaemon("template")
+	// Resolve ID via daemon
+	resolveResp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: issueID})
 	if err != nil {
-		return nil, fmt.Errorf("resolving ID: %w", err)
+		return nil, fmt.Errorf("resolving ID via daemon: %w", err)
+	}
+	var resolvedID string
+	if err := json.Unmarshal(resolveResp.Data, &resolvedID); err != nil {
+		return nil, fmt.Errorf("parsing resolved ID: %w", err)
 	}
 
-	return loadTemplateSubgraph(ctx, store, resolvedID)
+	return loadTemplateSubgraphViaDaemon(daemonClient, resolvedID)
 }
 
 // loadTemplateSubgraph loads a template epic and all its descendants

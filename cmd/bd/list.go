@@ -730,7 +730,6 @@ var listCmd = &cobra.Command{
 		issueType = util.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
 		limit, _ := cmd.Flags().GetInt("limit")
 		allFlag, _ := cmd.Flags().GetBool("all")
-		formatStr, _ := cmd.Flags().GetString("format")
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		titleSearch, _ := cmd.Flags().GetString("title")
@@ -1071,18 +1070,9 @@ var listCmd = &cobra.Command{
 			return
 		}
 
-		// Check database freshness before reading
-		// Skip check when using daemon (daemon auto-imports on staleness)
 		ctx := rootCtx
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		// If daemon is running, use RPC
-		if daemonClient != nil {
+		requireDaemon("list")
+		{
 			// Determine effective status for RPC (--ready overrides to "open")
 			effectiveStatus := status
 			if readyFlag {
@@ -1414,209 +1404,7 @@ var listCmd = &cobra.Command{
 			if effectiveLimit > 0 && len(issues) == effectiveLimit {
 				fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", effectiveLimit)
 			}
-			return
 		}
-
-		// Direct mode
-		// ctx already created above for staleness check
-		var issues []*types.Issue
-		var err error
-		if readyFlag {
-			// Use GetReadyWork for consistent results with bd ready (gt-w676pl.2)
-			workFilter := types.WorkFilter{
-				Type:       issueType,
-				Limit:      effectiveLimit,
-				Labels:     labels,
-				LabelsAny:  labelsAny,
-			}
-			if cmd.Flags().Changed("priority") {
-				priorityStr, _ := cmd.Flags().GetString("priority")
-				priority, parseErr := validation.ValidatePriority(priorityStr)
-				if parseErr != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", parseErr)
-					os.Exit(1)
-				}
-				workFilter.Priority = &priority
-			}
-			if assignee != "" {
-				workFilter.Assignee = &assignee
-			}
-			if parentID != "" {
-				workFilter.ParentID = &parentID
-			}
-			issues, err = store.GetReadyWork(ctx, workFilter)
-		} else {
-			issues, err = store.SearchIssues(ctx, "", filter)
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		// If no issues found, check if git has issues and auto-import
-		if len(issues) == 0 {
-			if checkAndAutoImport(ctx, store) {
-				// Re-run the query after import
-				if readyFlag {
-					workFilter := types.WorkFilter{
-						Type:      issueType,
-						Limit:     effectiveLimit,
-						Labels:    labels,
-						LabelsAny: labelsAny,
-					}
-					issues, err = store.GetReadyWork(ctx, workFilter)
-				} else {
-					issues, err = store.SearchIssues(ctx, "", filter)
-				}
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-			}
-		}
-
-		// Apply sorting
-		sortIssues(issues, sortBy, reverse)
-
-		// Handle watch mode (GH#654) - must be before other output modes
-		if watchMode {
-			watchIssues(ctx, store, filter, sortBy, reverse)
-			return
-		}
-
-		// Handle pretty format (GH#654)
-		if prettyFormat {
-			// Special handling for --tree --parent combination (hierarchical descendants)
-			if parentID != "" {
-				treeIssues, err := getHierarchicalChildren(ctx, store, "", 0, parentID)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-
-				if len(treeIssues) == 0 {
-					fmt.Printf("Issue '%s' has no children\n", parentID)
-					return
-				}
-
-				// Load dependencies for tree structure
-				allDeps, _ := store.GetAllDependencyRecords(ctx)
-				// Fetch epic progress for display
-				progressMap := getEpicProgressForIssues(ctx, store, "", 0, treeIssues)
-				displayPrettyListWithDeps(treeIssues, false, allDeps, progressMap)
-				return
-			}
-
-			// Regular tree display (no parent filter)
-			// Load dependencies for tree structure
-			allDeps, _ := store.GetAllDependencyRecords(ctx)
-			// Fetch epic progress for display
-			progressMap := getEpicProgressForIssues(ctx, store, "", 0, issues)
-			displayPrettyListWithDeps(issues, false, allDeps, progressMap)
-			// Show truncation hint if we hit the limit (GH#788)
-			if effectiveLimit > 0 && len(issues) == effectiveLimit {
-				fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", effectiveLimit)
-			}
-			return
-		}
-
-		// Handle format flag
-		if formatStr != "" {
-			if err := outputFormattedList(ctx, store, issues, formatStr); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			return
-		}
-
-		if jsonOutput {
-			// Get labels and dependency counts in bulk (single query instead of N queries)
-			issueIDs := make([]string, len(issues))
-			for i, issue := range issues {
-				issueIDs[i] = issue.ID
-			}
-			labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
-			depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
-			allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
-
-			// Populate labels and dependencies for JSON output
-			for _, issue := range issues {
-				issue.Labels = labelsMap[issue.ID]
-				issue.Dependencies = allDeps[issue.ID]
-			}
-
-			// Build response with counts
-			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
-			for i, issue := range issues {
-				counts := depCounts[issue.ID]
-				if counts == nil {
-					counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
-				}
-				issuesWithCounts[i] = &types.IssueWithCounts{
-					Issue:           issue,
-					DependencyCount: counts.DependencyCount,
-					DependentCount:  counts.DependentCount,
-				}
-			}
-			outputJSON(issuesWithCounts)
-			return
-		}
-
-		// Show upgrade notification if needed
-		maybeShowUpgradeNotification()
-
-		// Load labels in bulk for display
-		issueIDs := make([]string, len(issues))
-		for i, issue := range issues {
-			issueIDs[i] = issue.ID
-		}
-		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
-
-		// Fetch epic progress for display
-		progressMap := getEpicProgressForIssues(ctx, store, "", 0, issues)
-
-		// Load dependencies for blocking info display
-		allDepsForList, _ := store.GetAllDependencyRecords(ctx)
-		blockedByMap, blocksMap := buildBlockingMaps(allDepsForList)
-
-		// Build output in buffer for pager support (bd-jdz3)
-		var buf strings.Builder
-		if ui.IsAgentMode() {
-			// Agent mode: ultra-compact, no colors, no pager
-			for _, issue := range issues {
-				formatAgentIssue(&buf, issue, blockedByMap[issue.ID], blocksMap[issue.ID])
-			}
-			fmt.Print(buf.String())
-			return
-		} else if longFormat {
-			// Long format: multi-line with details
-			buf.WriteString(fmt.Sprintf("\nFound %d issues:\n\n", len(issues)))
-			for _, issue := range issues {
-				labels := labelsMap[issue.ID]
-				formatIssueLong(&buf, issue, labels)
-			}
-		} else {
-			// Compact format: one line per issue
-			for _, issue := range issues {
-				labels := labelsMap[issue.ID]
-				formatIssueCompact(&buf, issue, labels, progressMap, blockedByMap[issue.ID], blocksMap[issue.ID])
-			}
-		}
-
-		// Output with pager support
-		if err := ui.ToPager(buf.String(), ui.PagerOptions{NoPager: noPager}); err != nil {
-			if _, writeErr := fmt.Fprint(os.Stdout, buf.String()); writeErr != nil {
-				fmt.Fprintf(os.Stderr, "Error writing output: %v\n", writeErr)
-			}
-		}
-
-		// Show truncation hint if we hit the limit (GH#788)
-		if effectiveLimit > 0 && len(issues) == effectiveLimit {
-			fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", effectiveLimit)
-		}
-
-		// Show tip after successful list (direct mode only)
-		maybeShowTip(store)
 	},
 }
 

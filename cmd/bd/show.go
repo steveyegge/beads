@@ -54,13 +54,7 @@ var showCmd = &cobra.Command{
 			return
 		}
 
-		// Check database freshness before reading
-		// Skip check when using daemon (daemon auto-imports on staleness)
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
-		}
+		// Daemon auto-imports on staleness, so freshness check not needed
 
 		// Resolve partial IDs, splitting into local vs routed
 		batch, err := resolveIDsWithRouting(ctx, store, daemonClient, args)
@@ -72,19 +66,9 @@ var showCmd = &cobra.Command{
 
 		// Handle --thread flag: show full conversation thread
 		if showThread {
-			if daemonClient != nil && len(resolvedIDs) > 0 {
+			if len(resolvedIDs) > 0 {
 				showMessageThread(ctx, resolvedIDs[0], jsonOutput)
 				return
-			} else if len(args) > 0 {
-				// Direct mode - resolve first arg with routing
-				result, err := resolveAndGetIssueWithRouting(ctx, store, args[0])
-				if result != nil {
-					defer result.Close()
-				}
-				if err == nil && result != nil && result.ResolvedID != "" {
-					showMessageThread(ctx, result.ResolvedID, jsonOutput)
-					return
-				}
 			}
 		}
 
@@ -100,8 +84,9 @@ var showCmd = &cobra.Command{
 			return
 		}
 
-		// If daemon is running, use RPC (but fall back to direct mode for routed IDs)
-		if daemonClient != nil {
+		// Use daemon RPC
+		requireDaemon("show")
+		{
 			allDetails := []interface{}{}
 			displayIdx := 0
 
@@ -382,223 +367,6 @@ var showCmd = &cobra.Command{
 			} else if len(routedArgs) > 0 {
 				SetLastTouchedID(routedArgs[0])
 			}
-			return
-		}
-
-		// Direct mode - use routed resolution for cross-repo lookups
-		allDetails := []interface{}{}
-		for idx, id := range args {
-			// Resolve and get issue with routing (e.g., gt-xyz routes to gastown)
-			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
-			if err != nil {
-				if result != nil {
-					result.Close()
-				}
-				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
-				continue
-			}
-			if result == nil || result.Issue == nil {
-				if result != nil {
-					result.Close()
-				}
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-				continue
-			}
-			issue := result.Issue
-			issueStore := result.Store // Use the store that contains this issue
-			// Note: result.Close() called at end of loop iteration
-
-			if shortMode {
-				fmt.Println(formatShortIssue(issue))
-				result.Close()
-				continue
-			}
-
-			if jsonOutput {
-				// Include labels, dependencies (with metadata), dependents (with metadata), and comments in JSON output
-				details := &types.IssueDetails{Issue: *issue}
-				details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
-
-				details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
-				details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)
-
-				details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID)
-				// Compute parent from dependencies
-				for _, dep := range details.Dependencies {
-					if dep.DependencyType == types.DepParentChild {
-						details.Parent = &dep.ID
-						break
-					}
-				}
-				allDetails = append(allDetails, details)
-				result.Close() // Close before continuing to next iteration
-				continue
-			}
-
-			if idx > 0 {
-				fmt.Println("\n" + ui.RenderMuted(strings.Repeat("─", 60)))
-			}
-
-			// Tufte-aligned header: STATUS_ICON ID · Title   [Priority · STATUS]
-			fmt.Printf("\n%s\n", formatIssueHeader(issue))
-
-			// Metadata: Owner · Type | Created · Updated
-			fmt.Println(formatIssueMetadata(issue))
-
-			// Compaction info (if applicable)
-			if issue.CompactionLevel > 0 {
-				fmt.Println()
-				if issue.OriginalSize > 0 {
-					currentSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
-					saved := issue.OriginalSize - currentSize
-					if saved > 0 {
-						reduction := float64(saved) / float64(issue.OriginalSize) * 100
-						fmt.Printf("📊 %d → %d bytes (%.0f%% reduction)\n",
-							issue.OriginalSize, currentSize, reduction)
-					}
-				}
-			}
-
-			// Content sections
-			if issue.Description != "" {
-				fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
-			}
-			if issue.Design != "" {
-				fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESIGN"), ui.RenderMarkdown(issue.Design))
-			}
-			if issue.Notes != "" {
-				fmt.Printf("\n%s\n%s\n", ui.RenderBold("NOTES"), ui.RenderMarkdown(issue.Notes))
-			}
-			if issue.AcceptanceCriteria != "" {
-				fmt.Printf("\n%s\n%s\n", ui.RenderBold("ACCEPTANCE CRITERIA"), ui.RenderMarkdown(issue.AcceptanceCriteria))
-			}
-
-			// Show labels
-			labels, _ := issueStore.GetLabels(ctx, issue.ID)
-			if len(labels) > 0 {
-				fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(labels, ", "))
-			}
-
-			// Show dependencies - grouped by dependency type for clarity
-			depsWithMeta, _ := issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
-			if len(depsWithMeta) > 0 {
-				// Group by dependency type
-				var blocks, parent, related, discovered []*types.IssueWithDependencyMetadata
-				for _, dep := range depsWithMeta {
-					switch dep.DependencyType {
-					case types.DepBlocks:
-						blocks = append(blocks, dep)
-					case types.DepParentChild:
-						parent = append(parent, dep)
-					case types.DepRelated:
-						related = append(related, dep)
-					case types.DepDiscoveredFrom:
-						discovered = append(discovered, dep)
-					default:
-						blocks = append(blocks, dep) // Default to blocks
-					}
-				}
-
-				if len(parent) > 0 {
-					fmt.Printf("\n%s\n", ui.RenderBold("PARENT"))
-					for _, dep := range parent {
-						fmt.Println(formatDependencyLine("↑", dep))
-					}
-				}
-				if len(blocks) > 0 {
-					fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
-					for _, dep := range blocks {
-						fmt.Println(formatDependencyLine("→", dep))
-					}
-				}
-				if len(related) > 0 {
-					fmt.Printf("\n%s\n", ui.RenderBold("RELATED"))
-					for _, dep := range related {
-						fmt.Println(formatDependencyLine("↔", dep))
-					}
-				}
-				if len(discovered) > 0 {
-					fmt.Printf("\n%s\n", ui.RenderBold("DISCOVERED FROM"))
-					for _, dep := range discovered {
-						fmt.Println(formatDependencyLine("◊", dep))
-					}
-				}
-			}
-
-			// Show dependents - grouped by dependency type for clarity
-			dependentsWithMeta, _ := issueStore.GetDependentsWithMetadata(ctx, issue.ID)
-			if len(dependentsWithMeta) > 0 {
-				// Group by dependency type
-				var blocks, children, related, discovered []*types.IssueWithDependencyMetadata
-				for _, dep := range dependentsWithMeta {
-					switch dep.DependencyType {
-					case types.DepBlocks:
-						blocks = append(blocks, dep)
-					case types.DepParentChild:
-						children = append(children, dep)
-					case types.DepRelated:
-						related = append(related, dep)
-					case types.DepDiscoveredFrom:
-						discovered = append(discovered, dep)
-					default:
-						blocks = append(blocks, dep) // Default to blocks
-					}
-				}
-
-				if len(children) > 0 {
-					fmt.Printf("\n%s\n", ui.RenderBold("CHILDREN"))
-					for _, dep := range children {
-						fmt.Println(formatDependencyLine("↳", dep))
-					}
-				}
-				if len(blocks) > 0 {
-					fmt.Printf("\n%s\n", ui.RenderBold("BLOCKS"))
-					for _, dep := range blocks {
-						fmt.Println(formatDependencyLine("←", dep))
-					}
-				}
-				if len(related) > 0 {
-					fmt.Printf("\n%s\n", ui.RenderBold("RELATED"))
-					for _, dep := range related {
-						fmt.Println(formatDependencyLine("↔", dep))
-					}
-				}
-				if len(discovered) > 0 {
-					fmt.Printf("\n%s\n", ui.RenderBold("DISCOVERED"))
-					for _, dep := range discovered {
-						fmt.Println(formatDependencyLine("◊", dep))
-					}
-				}
-			}
-
-			// Show comments
-			comments, _ := issueStore.GetIssueComments(ctx, issue.ID)
-			if len(comments) > 0 {
-				fmt.Printf("\n%s\n", ui.RenderBold("COMMENTS"))
-				for _, comment := range comments {
-					fmt.Printf("  %s %s\n", ui.RenderMuted(formatTime(comment.CreatedAt)), comment.Author)
-					rendered := ui.RenderMarkdown(comment.Text)
-					// TrimRight removes trailing newlines that Glamour adds, preventing extra blank lines
-					for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
-						fmt.Printf("    %s\n", line)
-					}
-				}
-			}
-
-			fmt.Println()
-			result.Close() // Close routed storage after each iteration
-		}
-
-		if jsonOutput && len(allDetails) > 0 {
-			outputJSON(allDetails)
-		} else if len(allDetails) > 0 {
-			// Show tip after successful show (non-JSON mode)
-			maybeShowTip(store)
-		}
-
-		// Track first shown issue as last touched
-		if len(args) > 0 {
-			SetLastTouchedID(args[0])
 		}
 	},
 }

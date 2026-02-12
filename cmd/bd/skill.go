@@ -12,10 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var skillCmd = &cobra.Command{
@@ -260,7 +258,6 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 	CheckReadonly("skill create")
 
 	skillName := args[0]
-	ctx := rootCtx
 
 	// Normalize skill name (lowercase, hyphens for spaces)
 	skillName = strings.ToLower(strings.ReplaceAll(skillName, " ", "-"))
@@ -289,66 +286,14 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 		skillContent = string(content)
 	}
 
-	// Use daemon if available
-	if daemonClient != nil {
-		createArgs := &rpc.CreateArgs{
-			ID:              skillID,
-			Title:           title,
-			Description:     skillDescription,
-			IssueType:       string(types.IssueType("skill")),
-			Priority:        2,
-			Pinned:          true, // Skills are pinned by default
-			SkillName:       skillName,
-			SkillVersion:    skillVersion,
-			SkillCategory:   skillCategory,
-			SkillInputs:     skillInputs,
-			SkillOutputs:    skillOutputs,
-			SkillExamples:   skillExamples,
-			ClaudeSkillPath: skillClaudePath,
-			SkillContent:    skillContent,
-		}
-		resp, err := daemonClient.Create(createArgs)
-		if err != nil {
-			return fmt.Errorf("failed to create skill via daemon: %w", err)
-		}
-		if !resp.Success {
-			return fmt.Errorf("failed to create skill: %s", resp.Error)
-		}
-
-		// Parse response for output
-		var issue types.Issue
-		if err := json.Unmarshal(resp.Data, &issue); err != nil {
-			return fmt.Errorf("parsing create response: %w", err)
-		}
-
-		if jsonOutput {
-			output := map[string]interface{}{
-				"id":             issue.ID,
-				"skill_name":     skillName,
-				"skill_version":  skillVersion,
-				"skill_category": skillCategory,
-			}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(output)
-		}
-
-		fmt.Printf("Created skill: %s\n", ui.RenderID(issue.ID))
-		return nil
-	}
-
-	// Fall back to direct storage
-	if store == nil {
-		return fmt.Errorf("database not initialized - run 'bd init' first or start daemon")
-	}
-
-	issue := &types.Issue{
-		ID:          skillID,
-		Title:       title,
-		Description: skillDescription,
-		IssueType:   types.IssueType("skill"),
-		Status:      types.StatusPinned,
-		Priority:    2,
+	requireDaemon("skill create")
+	createArgs := &rpc.CreateArgs{
+		ID:              skillID,
+		Title:           title,
+		Description:     skillDescription,
+		IssueType:       string(types.IssueType("skill")),
+		Priority:        2,
+		Pinned:          true, // Skills are pinned by default
 		SkillName:       skillName,
 		SkillVersion:    skillVersion,
 		SkillCategory:   skillCategory,
@@ -358,15 +303,23 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 		ClaudeSkillPath: skillClaudePath,
 		SkillContent:    skillContent,
 	}
+	resp, err := daemonClient.Create(createArgs)
+	if err != nil {
+		return fmt.Errorf("failed to create skill via daemon: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("failed to create skill: %s", resp.Error)
+	}
 
-	actor := getActor()
-	if err := store.CreateIssue(ctx, issue, actor); err != nil {
-		return fmt.Errorf("failed to create skill: %w", err)
+	// Parse response for output
+	var issue types.Issue
+	if err := json.Unmarshal(resp.Data, &issue); err != nil {
+		return fmt.Errorf("parsing create response: %w", err)
 	}
 
 	if jsonOutput {
 		output := map[string]interface{}{
-			"id":             skillID,
+			"id":             issue.ID,
 			"skill_name":     skillName,
 			"skill_version":  skillVersion,
 			"skill_category": skillCategory,
@@ -376,13 +329,12 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 		return enc.Encode(output)
 	}
 
-	fmt.Printf("Created skill: %s\n", ui.RenderID(skillID))
+	fmt.Printf("Created skill: %s\n", ui.RenderID(issue.ID))
 	return nil
 }
 
 func runSkillShow(cmd *cobra.Command, args []string) error {
 	skillArg := args[0]
-	ctx := rootCtx
 
 	// Normalize skill ID - accept full ID, skill name, or hq-skill- prefix
 	skillID := skillArg
@@ -390,9 +342,10 @@ func runSkillShow(cmd *cobra.Command, args []string) error {
 		skillID = "skill-" + skillID
 	}
 
-	// Get skill via daemon or direct storage
+	// Get skill via daemon
+	requireDaemon("skill show")
 	var issue *types.Issue
-	if daemonClient != nil {
+	{
 		showArgs := &rpc.ShowArgs{ID: skillID}
 		resp, err := daemonClient.Show(showArgs)
 		if err != nil {
@@ -403,15 +356,6 @@ func runSkillShow(cmd *cobra.Command, args []string) error {
 		}
 		if err := json.Unmarshal(resp.Data, &issue); err != nil {
 			return fmt.Errorf("parsing show response: %w", err)
-		}
-	} else {
-		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
-			var err error
-			issue, err = s.GetIssue(ctx, skillID)
-			return err
-		})
-		if err != nil {
-			return fmt.Errorf("skill not found: %s", skillID)
 		}
 	}
 
@@ -454,11 +398,10 @@ func runSkillShow(cmd *cobra.Command, args []string) error {
 }
 
 func runSkillList(cmd *cobra.Command, args []string) error {
-	ctx := rootCtx
-
 	// Get all skills using List with skill type filter
+	requireDaemon("skill list")
 	var issues []*types.Issue
-	if daemonClient != nil {
+	{
 		listArgs := &rpc.ListArgs{
 			IssueType: string(types.IssueType("skill")),
 		}
@@ -468,19 +411,6 @@ func runSkillList(cmd *cobra.Command, args []string) error {
 		}
 		if err := json.Unmarshal(resp.Data, &issues); err != nil {
 			return fmt.Errorf("failed to decode skills: %w", err)
-		}
-	} else {
-		skillType := types.IssueType("skill")
-		filter := types.IssueFilter{
-			IssueType: &skillType,
-		}
-		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
-			var err error
-			issues, err = s.SearchIssues(ctx, "", filter)
-			return err
-		})
-		if err != nil {
-			return fmt.Errorf("failed to list skills: %w", err)
 		}
 	}
 
@@ -557,6 +487,7 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve IDs
+	requireDaemon("skill add")
 	var agentID, resolvedSkillID string
 
 	// Check if agent ID looks like a Gas Town path (contains /)
@@ -572,7 +503,7 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 		if err := ensureAgentBeadExists(ctx, agentID); err != nil {
 			return fmt.Errorf("failed to ensure agent bead exists: %w", err)
 		}
-	} else if daemonClient != nil {
+	} else {
 		// Resolve agent ID
 		resolveArgs := &rpc.ResolveIDArgs{ID: agentArg}
 		resp, err := daemonClient.ResolveID(resolveArgs)
@@ -582,19 +513,10 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(resp.Data, &agentID); err != nil {
 			return fmt.Errorf("unmarshaling resolved ID: %w", err)
 		}
-	} else {
-		if store == nil {
-			return fmt.Errorf("database not initialized - run 'bd init' first")
-		}
-		var err error
-		agentID, err = utils.ResolvePartialID(ctx, store, agentArg)
-		if err != nil {
-			return fmt.Errorf("resolving agent ID %s: %w", agentArg, err)
-		}
 	}
 
 	// Resolve skill ID
-	if daemonClient != nil {
+	{
 		resolveArgs := &rpc.ResolveIDArgs{ID: skillID}
 		resp, err := daemonClient.ResolveID(resolveArgs)
 		if err != nil {
@@ -603,30 +525,10 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(resp.Data, &resolvedSkillID); err != nil {
 			return fmt.Errorf("unmarshaling resolved ID: %w", err)
 		}
-	} else {
-		if store == nil {
-			return fmt.Errorf("database not initialized - run 'bd init' first")
-		}
-		var err error
-		resolvedSkillID, err = utils.ResolvePartialID(ctx, store, skillID)
-		if err != nil {
-			return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
-		}
-	}
-
-	// Verify skill exists and is a skill type
-	if store != nil {
-		skill, err := store.GetIssue(ctx, resolvedSkillID)
-		if err != nil {
-			return fmt.Errorf("skill not found: %s", resolvedSkillID)
-		}
-		if skill.IssueType != types.IssueType("skill") {
-			return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
-		}
 	}
 
 	// Create provides-skill dependency edge (agent -> skill)
-	if daemonClient != nil {
+	{
 		depArgs := &rpc.DepAddArgs{
 			FromID:  agentID,
 			ToID:    resolvedSkillID,
@@ -636,16 +538,6 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to add skill: %w", err)
 		}
-	} else {
-		dep := &types.Dependency{
-			IssueID:     agentID,
-			DependsOnID: resolvedSkillID,
-			Type:        types.DepProvidesSkill,
-		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			return fmt.Errorf("failed to add skill: %w", err)
-		}
-		markDirtyAndScheduleFlush()
 	}
 
 	if jsonOutput {
@@ -669,7 +561,6 @@ func runSkillRequire(cmd *cobra.Command, args []string) error {
 
 	issueArg := args[0]
 	skillArg := args[1]
-	ctx := rootCtx
 
 	// Normalize skill ID
 	skillID := skillArg
@@ -678,9 +569,9 @@ func runSkillRequire(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve IDs
+	requireDaemon("skill require")
 	var issueID, resolvedSkillID string
-
-	if daemonClient != nil {
+	{
 		// Resolve issue ID
 		resolveArgs := &rpc.ResolveIDArgs{ID: issueArg}
 		resp, err := daemonClient.ResolveID(resolveArgs)
@@ -700,35 +591,10 @@ func runSkillRequire(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(resp.Data, &resolvedSkillID); err != nil {
 			return fmt.Errorf("unmarshaling resolved ID: %w", err)
 		}
-	} else {
-		if store == nil {
-			return fmt.Errorf("database not initialized - run 'bd init' first")
-		}
-		var err error
-		issueID, err = utils.ResolvePartialID(ctx, store, issueArg)
-		if err != nil {
-			return fmt.Errorf("resolving issue ID %s: %w", issueArg, err)
-		}
-
-		resolvedSkillID, err = utils.ResolvePartialID(ctx, store, skillID)
-		if err != nil {
-			return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
-		}
-	}
-
-	// Verify skill exists and is a skill type
-	if store != nil {
-		skill, err := store.GetIssue(ctx, resolvedSkillID)
-		if err != nil {
-			return fmt.Errorf("skill not found: %s", resolvedSkillID)
-		}
-		if skill.IssueType != types.IssueType("skill") {
-			return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
-		}
 	}
 
 	// Create requires-skill dependency edge (issue -> skill)
-	if daemonClient != nil {
+	{
 		depArgs := &rpc.DepAddArgs{
 			FromID:  issueID,
 			ToID:    resolvedSkillID,
@@ -738,16 +604,6 @@ func runSkillRequire(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to add skill requirement: %w", err)
 		}
-	} else {
-		dep := &types.Dependency{
-			IssueID:     issueID,
-			DependsOnID: resolvedSkillID,
-			Type:        types.DepRequiresSkill,
-		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			return fmt.Errorf("failed to add skill requirement: %w", err)
-		}
-		markDirtyAndScheduleFlush()
 	}
 
 	if jsonOutput {
@@ -768,7 +624,6 @@ func runSkillRequire(cmd *cobra.Command, args []string) error {
 // runSkillProviders lists agents that provide a skill
 func runSkillProviders(cmd *cobra.Command, args []string) error {
 	skillArg := args[0]
-	ctx := rootCtx
 
 	// Normalize skill ID
 	skillID := skillArg
@@ -776,32 +631,34 @@ func runSkillProviders(cmd *cobra.Command, args []string) error {
 		skillID = "skill-" + skillID
 	}
 
+	requireDaemon("skill providers")
 	var resolvedSkillID string
 	var skill *types.Issue
 	var dependents []*types.IssueWithDependencyMetadata
-	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+	{
 		// Resolve skill ID
-		var err error
-		resolvedSkillID, err = utils.ResolvePartialID(ctx, s, skillID)
+		resolveResp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: skillID})
 		if err != nil {
 			return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
 		}
+		if err := json.Unmarshal(resolveResp.Data, &resolvedSkillID); err != nil {
+			return fmt.Errorf("parsing resolved ID: %w", err)
+		}
 
-		// Verify it's a skill
-		skill, err = s.GetIssue(ctx, resolvedSkillID)
+		// Get skill details (includes dependents)
+		showResp, err := daemonClient.Show(&rpc.ShowArgs{ID: resolvedSkillID})
 		if err != nil {
 			return fmt.Errorf("skill not found: %s", resolvedSkillID)
 		}
+		var details types.IssueDetails
+		if err := json.Unmarshal(showResp.Data, &details); err != nil {
+			return fmt.Errorf("parsing show response: %w", err)
+		}
+		skill = &details.Issue
 		if skill.IssueType != types.IssueType("skill") {
 			return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
 		}
-
-		// Get dependents with provides-skill type
-		dependents, err = s.GetDependentsWithMetadata(ctx, resolvedSkillID)
-		return err
-	})
-	if err != nil {
-		return err
+		dependents = details.Dependents
 	}
 
 	// Filter to only provides-skill edges
@@ -836,31 +693,32 @@ func runSkillProviders(cmd *cobra.Command, args []string) error {
 // runSkillRequired lists skills required by an issue
 func runSkillRequired(cmd *cobra.Command, args []string) error {
 	issueArg := args[0]
-	ctx := rootCtx
 
+	requireDaemon("skill required")
 	var issueID string
 	var issue *types.Issue
 	var deps []*types.IssueWithDependencyMetadata
-	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+	{
 		// Resolve issue ID
-		var err error
-		issueID, err = utils.ResolvePartialID(ctx, s, issueArg)
+		resolveResp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: issueArg})
 		if err != nil {
 			return fmt.Errorf("resolving issue ID %s: %w", issueArg, err)
 		}
+		if err := json.Unmarshal(resolveResp.Data, &issueID); err != nil {
+			return fmt.Errorf("parsing resolved ID: %w", err)
+		}
 
-		// Get the issue to display its title
-		issue, err = s.GetIssue(ctx, issueID)
+		// Get the issue with dependencies
+		showResp, err := daemonClient.Show(&rpc.ShowArgs{ID: issueID})
 		if err != nil {
 			return fmt.Errorf("issue not found: %s", issueID)
 		}
-
-		// Get dependencies with requires-skill type
-		deps, err = s.GetDependenciesWithMetadata(ctx, issueID)
-		return err
-	})
-	if err != nil {
-		return err
+		var details types.IssueDetails
+		if err := json.Unmarshal(showResp.Data, &details); err != nil {
+			return fmt.Errorf("parsing show response: %w", err)
+		}
+		issue = &details.Issue
+		deps = details.Dependencies
 	}
 
 	// Filter to only requires-skill edges
@@ -895,7 +753,6 @@ func runSkillRequired(cmd *cobra.Command, args []string) error {
 // runSkillLoad loads and displays a skill's SKILL.md content
 func runSkillLoad(cmd *cobra.Command, args []string) error {
 	skillArg := args[0]
-	ctx := rootCtx
 
 	// Normalize skill ID
 	skillID := skillArg
@@ -903,28 +760,30 @@ func runSkillLoad(cmd *cobra.Command, args []string) error {
 		skillID = "skill-" + skillID
 	}
 
+	requireDaemon("skill load")
 	var resolvedSkillID string
 	var skill *types.Issue
-	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+	{
 		// Resolve skill ID
-		var err error
-		resolvedSkillID, err = utils.ResolvePartialID(ctx, s, skillID)
+		resolveResp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: skillID})
 		if err != nil {
 			return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
 		}
+		if err := json.Unmarshal(resolveResp.Data, &resolvedSkillID); err != nil {
+			return fmt.Errorf("parsing resolved ID: %w", err)
+		}
 
 		// Get the skill
-		skill, err = s.GetIssue(ctx, resolvedSkillID)
+		showResp, err := daemonClient.Show(&rpc.ShowArgs{ID: resolvedSkillID})
 		if err != nil {
 			return fmt.Errorf("skill not found: %s", resolvedSkillID)
+		}
+		if err := json.Unmarshal(showResp.Data, &skill); err != nil {
+			return fmt.Errorf("parsing show response: %w", err)
 		}
 		if skill.IssueType != types.IssueType("skill") {
 			return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
 		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
 
 	// Prefer skill_content (new) over claude_skill_path (deprecated)
@@ -1045,8 +904,6 @@ func runSkillLoad(cmd *cobra.Command, args []string) error {
 
 // runSkillPrime outputs skill content for the current agent's skills
 func runSkillPrime(cmd *cobra.Command, args []string) error {
-	ctx := rootCtx
-
 	// Get agent ID - prefer cmdCtx.Actor but fall back to global actor
 	// (daemon mode returns early before syncCommandContext, so cmdCtx.Actor may be empty)
 	agentID := getActor()
@@ -1067,82 +924,43 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 	skillIDSet := make(map[string]bool) // Dedupe skills
 	var hookBeadID string
 
-	// Use daemon RPC if available (for Dolt backend support)
-	if daemonClient != nil {
-		for _, pattern := range agentPatterns {
-			showArgs := &rpc.ShowArgs{ID: pattern}
-			resp, err := daemonClient.Show(showArgs)
-			if err != nil || !resp.Success {
-				continue
-			}
-			var details types.IssueDetails
-			if err := json.Unmarshal(resp.Data, &details); err != nil {
-				continue
-			}
-			// Get skills this agent provides
-			for _, dep := range details.Dependencies {
-				if dep.DependencyType == types.DepProvidesSkill {
-					skillIDSet[dep.ID] = true
-				}
-			}
-			// Get hook_bead from agent (stored in HookBead field)
-			if details.Issue.HookBead != "" {
-				hookBeadID = details.Issue.HookBead
-			}
-			break // Found agent, stop searching patterns
+	requireDaemon("skill prime")
+	for _, pattern := range agentPatterns {
+		showArgs := &rpc.ShowArgs{ID: pattern}
+		resp, err := daemonClient.Show(showArgs)
+		if err != nil || !resp.Success {
+			continue
 		}
+		var details types.IssueDetails
+		if err := json.Unmarshal(resp.Data, &details); err != nil {
+			continue
+		}
+		// Get skills this agent provides
+		for _, dep := range details.Dependencies {
+			if dep.DependencyType == types.DepProvidesSkill {
+				skillIDSet[dep.ID] = true
+			}
+		}
+		// Get hook_bead from agent (stored in HookBead field)
+		if details.Issue.HookBead != "" {
+			hookBeadID = details.Issue.HookBead
+		}
+		break // Found agent, stop searching patterns
+	}
 
-		// Also get skills required by hooked work (if any)
-		if hookBeadID != "" {
-			showArgs := &rpc.ShowArgs{ID: hookBeadID}
-			resp, err := daemonClient.Show(showArgs)
-			if err == nil && resp.Success {
-				var workDetails types.IssueDetails
-				if err := json.Unmarshal(resp.Data, &workDetails); err == nil {
-					for _, dep := range workDetails.Dependencies {
-						if dep.DependencyType == types.DepRequiresSkill {
-							skillIDSet[dep.ID] = true
-						}
-					}
-				}
-			}
-		}
-	} else {
-		// Direct mode: use withStorage
-		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
-			for _, pattern := range agentPatterns {
-				deps, err := s.GetDependenciesWithMetadata(ctx, pattern)
-				if err != nil {
-					continue
-				}
-				for _, dep := range deps {
-					if dep.DependencyType == types.DepProvidesSkill {
+	// Also get skills required by hooked work (if any)
+	if hookBeadID != "" {
+		showArgs := &rpc.ShowArgs{ID: hookBeadID}
+		resp, err := daemonClient.Show(showArgs)
+		if err == nil && resp.Success {
+			var workDetails types.IssueDetails
+			if err := json.Unmarshal(resp.Data, &workDetails); err == nil {
+				for _, dep := range workDetails.Dependencies {
+					if dep.DependencyType == types.DepRequiresSkill {
 						skillIDSet[dep.ID] = true
 					}
 				}
-				// Get hook_bead from agent
-				agent, err := s.GetIssue(ctx, pattern)
-				if err == nil && agent.HookBead != "" {
-					hookBeadID = agent.HookBead
-				}
-				break // Found agent, stop searching
 			}
-
-			// Also get skills required by hooked work (if any)
-			if hookBeadID != "" {
-				workDeps, err := s.GetDependenciesWithMetadata(ctx, hookBeadID)
-				if err == nil {
-					for _, dep := range workDeps {
-						if dep.DependencyType == types.DepRequiresSkill {
-							skillIDSet[dep.ID] = true
-						}
-					}
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return nil // Silently fail for prime
 		}
 	}
 
@@ -1162,68 +980,35 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 		Content string
 	}
 
-	if daemonClient != nil {
-		// Use daemon RPC
-		for _, skillID := range agentSkillIDs {
-			showArgs := &rpc.ShowArgs{ID: skillID}
-			resp, err := daemonClient.Show(showArgs)
-			if err != nil || !resp.Success {
-				continue
-			}
-			var details types.IssueDetails
-			if err := json.Unmarshal(resp.Data, &details); err != nil {
-				continue
-			}
-			skill := &details.Issue
-			if skill.IssueType != types.IssueType("skill") {
-				continue
-			}
-			// Prefer SkillContent (new), fall back to ClaudeSkillPath (deprecated)
-			var content string
-			if skill.SkillContent != "" {
-				content = skill.SkillContent
-			} else if skill.ClaudeSkillPath != "" {
-				content = loadSkillFile(skill.ClaudeSkillPath)
-			}
-			if content != "" {
-				loadedSkills = append(loadedSkills, struct {
-					Name    string
-					Content string
-				}{
-					Name:    skill.SkillName,
-					Content: content,
-				})
-			}
+	for _, skillID := range agentSkillIDs {
+		showArgs := &rpc.ShowArgs{ID: skillID}
+		resp, err := daemonClient.Show(showArgs)
+		if err != nil || !resp.Success {
+			continue
 		}
-	} else {
-		// Direct mode: use withStorage
-		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
-			for _, skillID := range agentSkillIDs {
-				skill, err := s.GetIssue(ctx, skillID)
-				if err != nil || skill.IssueType != types.IssueType("skill") {
-					continue
-				}
-				// Prefer SkillContent (new), fall back to ClaudeSkillPath (deprecated)
-				var content string
-				if skill.SkillContent != "" {
-					content = skill.SkillContent
-				} else if skill.ClaudeSkillPath != "" {
-					content = loadSkillFile(skill.ClaudeSkillPath)
-				}
-				if content != "" {
-					loadedSkills = append(loadedSkills, struct {
-						Name    string
-						Content string
-					}{
-						Name:    skill.SkillName,
-						Content: content,
-					})
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return nil // Silently fail for prime
+		var details types.IssueDetails
+		if err := json.Unmarshal(resp.Data, &details); err != nil {
+			continue
+		}
+		skill := &details.Issue
+		if skill.IssueType != types.IssueType("skill") {
+			continue
+		}
+		// Prefer SkillContent (new), fall back to ClaudeSkillPath (deprecated)
+		var content string
+		if skill.SkillContent != "" {
+			content = skill.SkillContent
+		} else if skill.ClaudeSkillPath != "" {
+			content = loadSkillFile(skill.ClaudeSkillPath)
+		}
+		if content != "" {
+			loadedSkills = append(loadedSkills, struct {
+				Name    string
+				Content string
+			}{
+				Name:    skill.SkillName,
+				Content: content,
+			})
 		}
 	}
 
@@ -1280,8 +1065,6 @@ func loadSkillFile(skillPath string) string {
 
 // runSkillSync syncs beads skills to .claude/skills/ for Claude Code discovery
 func runSkillSync(cmd *cobra.Command, args []string) error {
-	ctx := rootCtx
-
 	// Find repo root (where .claude should be)
 	repoRoot := ""
 	if cwd, err := os.Getwd(); err == nil {
@@ -1335,25 +1118,25 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 			"agent-" + agentID,
 		}
 
-		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
-			for _, pattern := range agentPatterns {
-				deps, err := s.GetDependenciesWithMetadata(ctx, pattern)
-				if err != nil {
-					continue
-				}
-				for _, dep := range deps {
-					if dep.DependencyType == types.DepProvidesSkill {
-						allowedSkillIDs[dep.ID] = true
-					}
-				}
-				if len(allowedSkillIDs) > 0 {
-					break
+		requireDaemon("skill sync")
+		for _, pattern := range agentPatterns {
+			showArgs := &rpc.ShowArgs{ID: pattern}
+			resp, err := daemonClient.Show(showArgs)
+			if err != nil || !resp.Success {
+				continue
+			}
+			var details types.IssueDetails
+			if err := json.Unmarshal(resp.Data, &details); err != nil {
+				continue
+			}
+			for _, dep := range details.Dependencies {
+				if dep.DependencyType == types.DepProvidesSkill {
+					allowedSkillIDs[dep.ID] = true
 				}
 			}
-			return nil
-		})
-		if err != nil {
-			return fmt.Errorf("failed to get agent skills: %w", err)
+			if len(allowedSkillIDs) > 0 {
+				break
+			}
 		}
 
 		// TODO: Also get skills required by hooked work (requires-skill edges)
@@ -1366,7 +1149,7 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 
 	// Get all skills
 	var skills []*types.Issue
-	if daemonClient != nil {
+	{
 		listArgs := &rpc.ListArgs{
 			IssueType: string(types.IssueType("skill")),
 		}
@@ -1376,19 +1159,6 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 		}
 		if err := json.Unmarshal(resp.Data, &skills); err != nil {
 			return fmt.Errorf("failed to decode skills: %w", err)
-		}
-	} else {
-		skillType := types.IssueType("skill")
-		filter := types.IssueFilter{
-			IssueType: &skillType,
-		}
-		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
-			var err error
-			skills, err = s.SearchIssues(ctx, "", filter)
-			return err
-		})
-		if err != nil {
-			return fmt.Errorf("failed to list skills: %w", err)
 		}
 	}
 
@@ -1512,17 +1282,12 @@ func findSkillFile(skillPath, repoRoot string) string {
 // orphaned since dependencies are keyed by issue ID.
 func ensureAgentBeadExists(ctx context.Context, agentPath string) error {
 	// Check if agent bead already exists
+	requireDaemon("skill add")
 	var exists bool
-	if daemonClient != nil {
+	{
 		showArgs := &rpc.ShowArgs{ID: agentPath}
 		resp, err := daemonClient.Show(showArgs)
 		exists = err == nil && resp.Success
-	} else if store != nil {
-		agent, err := store.GetIssue(ctx, agentPath)
-		exists = err == nil && agent != nil
-	} else {
-		// No storage available, skip check (dependency will be in-memory only)
-		return nil
 	}
 
 	if exists {
@@ -1546,7 +1311,7 @@ func ensureAgentBeadExists(ctx context.Context, agentPath string) error {
 		Priority:    2,
 	}
 
-	if daemonClient != nil {
+	{
 		createArgs := &rpc.CreateArgs{
 			ID:          issue.ID,
 			Title:       issue.Title,
@@ -1562,12 +1327,6 @@ func ensureAgentBeadExists(ctx context.Context, agentPath string) error {
 		if !resp.Success {
 			return fmt.Errorf("failed to create agent bead: %s", resp.Error)
 		}
-	} else if store != nil {
-		actor := getActor()
-		if err := store.CreateIssue(ctx, issue, actor); err != nil {
-			return fmt.Errorf("failed to create agent bead: %w", err)
-		}
-		markDirtyAndScheduleFlush()
 	}
 
 	if !quietFlag {
@@ -1699,10 +1458,11 @@ func runSkillTest(cmd *cobra.Command, args []string) error {
 	fmt.Println("Step 1: Checking e2e-test skill...")
 	skillID := "skill-e2e-test"
 
+	requireDaemon("skill test")
 	var skillExists bool
-	if store != nil {
-		_, err := store.GetIssue(ctx, skillID)
-		skillExists = err == nil
+	{
+		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: skillID})
+		skillExists = err == nil && resp.Success
 	}
 
 	if !skillExists {
@@ -1713,27 +1473,29 @@ func runSkillTest(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("e2e-test skill file not found at %s", skillPath)
 		}
 
-		issue := &types.Issue{
+		createArgs := &rpc.CreateArgs{
 			ID:              skillID,
 			Title:           "E2e Test",
 			Description:     "Test skill for validating skill integration end-to-end",
-			IssueType:       types.IssueType("skill"),
-			Status:          types.StatusPinned,
+			IssueType:       string(types.IssueType("skill")),
 			Priority:        2,
+			Pinned:          true,
 			SkillName:       "e2e-test",
 			SkillVersion:    "1.0.0",
 			SkillCategory:   "testing",
 			ClaudeSkillPath: skillPath,
 		}
-		if store != nil {
-			actor := getActor()
-			if err := store.CreateIssue(ctx, issue, actor); err != nil {
-				fmt.Printf("  Warning: Could not create skill bead: %v\n", err)
+		resp, err := daemonClient.Create(createArgs)
+		if err != nil || !resp.Success {
+			errMsg := ""
+			if err != nil {
+				errMsg = err.Error()
 			} else {
-				fmt.Printf("  %s Created skill bead: %s\n", ui.RenderPass("✓"), skillID)
+				errMsg = resp.Error
 			}
+			fmt.Printf("  Warning: Could not create skill bead: %s\n", errMsg)
 		} else {
-			fmt.Println("  Note: No database, skill bead not persisted")
+			fmt.Printf("  %s Created skill bead: %s\n", ui.RenderPass("✓"), skillID)
 		}
 	} else {
 		fmt.Printf("  %s e2e-test skill exists\n", ui.RenderPass("✓"))

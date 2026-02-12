@@ -137,7 +137,7 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	dbPath = ""
 	actor = ""
 	jsonOutput = false
-	daemonStatus.FallbackReason = FallbackNone // replaces noDaemon = false
+	daemonStatus.Detail = "" // reset daemon status
 	noAutoFlush = false
 	noAutoImport = false
 	autoFlushEnabled = true
@@ -899,7 +899,7 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 	dbPath = ""
 	actor = ""
 	jsonOutput = false
-	daemonStatus.FallbackReason = FallbackNone // replaces noDaemon = false
+	daemonStatus.Detail = "" // reset daemon status
 	noAutoFlush = false
 	noAutoImport = false
 	autoFlushEnabled = true

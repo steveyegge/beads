@@ -7,10 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var relateCmd = &cobra.Command{
@@ -65,11 +63,10 @@ func init() {
 func runRelate(cmd *cobra.Command, args []string) error {
 	CheckReadonly("relate")
 
-	ctx := rootCtx
-
 	// Resolve partial IDs
+	requireDaemon("relate")
 	var id1, id2 string
-	if daemonClient != nil {
+	{
 		resp1, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: args[0]})
 		if err != nil {
 			return fmt.Errorf("failed to resolve %s: %w", args[0], err)
@@ -84,16 +81,6 @@ func runRelate(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(resp2.Data, &id2); err != nil {
 			return fmt.Errorf("parsing response: %w", err)
 		}
-	} else {
-		var err error
-		id1, err = utils.ResolvePartialID(ctx, store, args[0])
-		if err != nil {
-			return fmt.Errorf("failed to resolve %s: %w", args[0], err)
-		}
-		id2, err = utils.ResolvePartialID(ctx, store, args[1])
-		if err != nil {
-			return fmt.Errorf("failed to resolve %s: %w", args[1], err)
-		}
 	}
 
 	if id1 == id2 {
@@ -102,7 +89,7 @@ func runRelate(cmd *cobra.Command, args []string) error {
 
 	// Get both issues
 	var issue1, issue2 *types.Issue
-	if daemonClient != nil {
+	{
 		resp1, err := daemonClient.Show(&rpc.ShowArgs{ID: id1})
 		if err != nil {
 			return fmt.Errorf("failed to get issue %s: %w", id1, err)
@@ -117,16 +104,6 @@ func runRelate(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(resp2.Data, &issue2); err != nil {
 			return fmt.Errorf("parsing response: %w", err)
 		}
-	} else {
-		var err error
-		issue1, err = store.GetIssue(ctx, id1)
-		if err != nil {
-			return fmt.Errorf("failed to get issue %s: %w", id1, err)
-		}
-		issue2, err = store.GetIssue(ctx, id2)
-		if err != nil {
-			return fmt.Errorf("failed to get issue %s: %w", id2, err)
-		}
 	}
 
 	if issue1 == nil {
@@ -138,36 +115,11 @@ func runRelate(cmd *cobra.Command, args []string) error {
 
 	// Add relates-to dependency: id1 -> id2 (bidirectional, so also id2 -> id1)
 	// Per Decision 004, relates-to links are now stored in dependencies table
-	if daemonClient != nil {
-		// Use atomic bidirectional relation add (both directions in single transaction)
+	{
 		_, err := daemonClient.AddBidirectionalRelation(&rpc.DepAddBidirectionalArgs{
 			ID1:     id1,
 			ID2:     id2,
 			DepType: string(types.DepRelatesTo),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to add relates-to %s <-> %s: %w", id1, id2, err)
-		}
-	} else {
-		// Add both directions atomically in a transaction
-		err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
-			dep1 := &types.Dependency{
-				IssueID:     id1,
-				DependsOnID: id2,
-				Type:        types.DepRelatesTo,
-			}
-			if err := tx.AddDependency(ctx, dep1, actor); err != nil {
-				return fmt.Errorf("adding %s -> %s: %w", id1, id2, err)
-			}
-			dep2 := &types.Dependency{
-				IssueID:     id2,
-				DependsOnID: id1,
-				Type:        types.DepRelatesTo,
-			}
-			if err := tx.AddDependency(ctx, dep2, actor); err != nil {
-				return fmt.Errorf("adding %s -> %s: %w", id2, id1, err)
-			}
-			return nil
 		})
 		if err != nil {
 			return fmt.Errorf("failed to add relates-to %s <-> %s: %w", id1, id2, err)
@@ -197,11 +149,10 @@ func runRelate(cmd *cobra.Command, args []string) error {
 func runUnrelate(cmd *cobra.Command, args []string) error {
 	CheckReadonly("unrelate")
 
-	ctx := rootCtx
-
 	// Resolve partial IDs
+	requireDaemon("unrelate")
 	var id1, id2 string
-	if daemonClient != nil {
+	{
 		resp1, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: args[0]})
 		if err != nil {
 			return fmt.Errorf("failed to resolve %s: %w", args[0], err)
@@ -216,21 +167,11 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(resp2.Data, &id2); err != nil {
 			return fmt.Errorf("parsing response: %w", err)
 		}
-	} else {
-		var err error
-		id1, err = utils.ResolvePartialID(ctx, store, args[0])
-		if err != nil {
-			return fmt.Errorf("failed to resolve %s: %w", args[0], err)
-		}
-		id2, err = utils.ResolvePartialID(ctx, store, args[1])
-		if err != nil {
-			return fmt.Errorf("failed to resolve %s: %w", args[1], err)
-		}
 	}
 
 	// Get both issues
 	var issue1, issue2 *types.Issue
-	if daemonClient != nil {
+	{
 		resp1, err := daemonClient.Show(&rpc.ShowArgs{ID: id1})
 		if err != nil {
 			return fmt.Errorf("failed to get issue %s: %w", id1, err)
@@ -245,16 +186,6 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(resp2.Data, &issue2); err != nil {
 			return fmt.Errorf("parsing response: %w", err)
 		}
-	} else {
-		var err error
-		issue1, err = store.GetIssue(ctx, id1)
-		if err != nil {
-			return fmt.Errorf("failed to get issue %s: %w", id1, err)
-		}
-		issue2, err = store.GetIssue(ctx, id2)
-		if err != nil {
-			return fmt.Errorf("failed to get issue %s: %w", id2, err)
-		}
 	}
 
 	if issue1 == nil {
@@ -266,26 +197,11 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 
 	// Remove relates-to dependency in both directions
 	// Per Decision 004, relates-to links are now stored in dependencies table
-	if daemonClient != nil {
-		// Use atomic bidirectional relation remove (both directions in single transaction)
+	{
 		_, err := daemonClient.RemoveBidirectionalRelation(&rpc.DepRemoveBidirectionalArgs{
 			ID1:     id1,
 			ID2:     id2,
 			DepType: string(types.DepRelatesTo),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to remove relates-to %s <-> %s: %w", id1, id2, err)
-		}
-	} else {
-		// Remove both directions atomically in a transaction
-		err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
-			if err := tx.RemoveDependency(ctx, id1, id2, actor); err != nil {
-				return fmt.Errorf("removing %s -> %s: %w", id1, id2, err)
-			}
-			if err := tx.RemoveDependency(ctx, id2, id1, actor); err != nil {
-				return fmt.Errorf("removing %s -> %s: %w", id2, id1, err)
-			}
-			return nil
 		})
 		if err != nil {
 			return fmt.Errorf("failed to remove relates-to %s <-> %s: %w", id1, id2, err)

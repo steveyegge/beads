@@ -172,18 +172,8 @@ Examples:
 			filter.PriorityMax = &priorityMax
 		}
 
-		ctx := rootCtx
-
-		// Check database freshness before reading (skip when using daemon)
-		if daemonClient == nil {
-			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		// If daemon is running, use RPC
-		if daemonClient != nil {
+		requireDaemon("search")
+		{
 			listArgs := &rpc.ListArgs{
 				Query:     query, // This will search title/description/id with OR logic
 				Status:    status,
@@ -250,82 +240,7 @@ Examples:
 			sortIssues(issues, sortBy, reverse)
 
 			outputSearchResults(issues, query, longFormat)
-			return
 		}
-
-		// Direct mode - search using store
-		// The query parameter in SearchIssues already searches across title, description, and id
-		issues, err := store.SearchIssues(ctx, query, filter)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		// If no issues found, check if git has issues and auto-import
-		if len(issues) == 0 {
-			if checkAndAutoImport(ctx, store) {
-				// Re-run the search after import
-				issues, err = store.SearchIssues(ctx, query, filter)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-			}
-		}
-
-		// Apply sorting
-		sortIssues(issues, sortBy, reverse)
-
-		if jsonOutput {
-			// Get labels and dependency counts
-			issueIDs := make([]string, len(issues))
-			for i, issue := range issues {
-				issueIDs[i] = issue.ID
-			}
-			labelsMap, err := store.GetLabelsForIssues(ctx, issueIDs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to get labels: %v\n", err)
-				labelsMap = make(map[string][]string)
-			}
-			depCounts, err := store.GetDependencyCounts(ctx, issueIDs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to get dependency counts: %v\n", err)
-				depCounts = make(map[string]*types.DependencyCounts)
-			}
-
-			// Populate labels
-			for _, issue := range issues {
-				issue.Labels = labelsMap[issue.ID]
-			}
-
-			// Build response with counts
-			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
-			for i, issue := range issues {
-				counts := depCounts[issue.ID]
-				if counts == nil {
-					counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
-				}
-				issuesWithCounts[i] = &types.IssueWithCounts{
-					Issue:           issue,
-					DependencyCount: counts.DependencyCount,
-					DependentCount:  counts.DependentCount,
-				}
-			}
-			outputJSON(issuesWithCounts)
-			return
-		}
-
-		// Load labels for display
-		issueIDs := make([]string, len(issues))
-		for i, issue := range issues {
-			issueIDs[i] = issue.ID
-		}
-		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
-		for _, issue := range issues {
-			issue.Labels = labelsMap[issue.ID]
-		}
-
-		outputSearchResults(issues, query, longFormat)
 	},
 }
 

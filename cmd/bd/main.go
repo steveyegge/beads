@@ -562,11 +562,10 @@ var rootCmd = &cobra.Command{
 		// Initialize daemon status
 		socketPath := getSocketPath()
 		daemonStatus = DaemonStatus{
-			Mode:           "direct",
-			Connected:      false,
-			Degraded:       true,
-			SocketPath:     socketPath,
-			FallbackReason: FallbackNone,
+			Mode:       "direct",
+			Connected:  false,
+			Degraded:   true,
+			SocketPath: socketPath,
 		}
 
 		// Doctor should always run in direct mode. It's specifically used to diagnose and
@@ -593,16 +592,12 @@ var rootCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Hint: unset BD_DAEMON_HOST to use local mode, or run the command without --profile\n")
 				os.Exit(1)
 			}
-			// Only set FallbackFlagNoDaemon if not already set by auto-bypass logic
-			if daemonStatus.FallbackReason == FallbackNone {
-				daemonStatus.FallbackReason = FallbackFlagNoDaemon
-				debug.Logf("direct mode forced for this command")
-			}
+			debug.Logf("direct mode forced for this command")
 		} else if shouldDisableDaemonForWorktree() {
 			// In a git worktree without sync-branch configured - daemon is unsafe
 			// because all worktrees share the same .beads directory and the daemon
 			// would commit to whatever branch its working directory has checked out.
-			daemonStatus.FallbackReason = FallbackWorktreeSafety
+			daemonStatus.Detail = "git worktree without sync-branch"
 			debug.Logf("git worktree detected without sync-branch, using direct mode for safety")
 		} else {
 			// Attempt daemon connection (auto-selects TCP via BD_DAEMON_HOST or local Unix socket)
@@ -648,7 +643,6 @@ var rootCmd = &cobra.Command{
 							}
 						}
 						// If restart failed, fall through to direct mode
-						daemonStatus.FallbackReason = FallbackHealthFailed
 						daemonStatus.Detail = fmt.Sprintf("version mismatch (daemon: %s, client: %s) and restart failed",
 							health.Version, Version)
 					} else {
@@ -676,7 +670,6 @@ var rootCmd = &cobra.Command{
 				} else {
 					// Health check failed or daemon unhealthy
 					_ = client.Close()
-					daemonStatus.FallbackReason = FallbackHealthFailed
 					if healthErr != nil {
 						daemonStatus.Detail = healthErr.Error()
 						debug.Logf("daemon health check failed: %v", healthErr)
@@ -688,7 +681,6 @@ var rootCmd = &cobra.Command{
 				}
 			} else {
 				// Connection failed
-				daemonStatus.FallbackReason = FallbackConnectFailed
 				if err != nil {
 					daemonStatus.Detail = err.Error()
 					debug.Logf("daemon connect failed at %s: %v", socketPath, err)
@@ -707,7 +699,7 @@ var rootCmd = &cobra.Command{
 			}
 
 			// Daemon not available - log the reason and continue to direct storage fallback
-			debug.Logf("daemon not available (reason: %s)", daemonStatus.FallbackReason)
+			debug.Logf("daemon not available (detail: %s)", daemonStatus.Detail)
 		}
 
 		// SOFT DISABLE: Direct mode is disabled for Dolt server backend (hq-463d49)
@@ -720,7 +712,7 @@ var rootCmd = &cobra.Command{
 		rigFlag, _ := cmd.Flags().GetString("rig")
 		isCrossRig := rigFlag != ""
 		// Only enforce daemon requirement if direct mode wasn't explicitly forced
-		if daemonClient == nil && daemonStatus.FallbackReason == FallbackNone && !isDaemonCommand && !isCrossRig {
+		if daemonClient == nil && !forceDirectMode && !isDaemonCommand && !isCrossRig {
 			// Check if Dolt server mode is enabled
 			checkBeadsDir := beads.FindBeadsDir()
 			if checkBeadsDir == "" && dbPath != "" {
@@ -730,7 +722,7 @@ var rootCmd = &cobra.Command{
 				if cfg, cfgErr := configfile.Load(checkBeadsDir); cfgErr == nil && cfg != nil && cfg.IsDoltServerMode() {
 					fmt.Fprintf(os.Stderr, "Error: daemon connection required for Dolt server mode\n")
 					fmt.Fprintf(os.Stderr, "Direct mode is disabled to prevent connection churn (see hq-463d49)\n")
-					fmt.Fprintf(os.Stderr, "\nDaemon status: %s\n", daemonStatus.FallbackReason)
+					fmt.Fprintf(os.Stderr, "\nDaemon status: not connected\n")
 					if daemonStatus.Detail != "" {
 						fmt.Fprintf(os.Stderr, "Detail: %s\n", daemonStatus.Detail)
 					}

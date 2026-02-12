@@ -60,55 +60,24 @@ By default, shows only open gates. Use --all to include closed gates.`,
 		allFlag, _ := cmd.Flags().GetBool("all")
 		limit, _ := cmd.Flags().GetInt("limit")
 
-		// Build filter for gate type issues
-		gateType := types.IssueType("gate")
-		filter := types.IssueFilter{
-			IssueType: &gateType,
+		requireDaemon("gate list")
+		listArgs := &rpc.ListArgs{
+			IssueType: "gate",
 			Limit:     limit,
 		}
-
-		// By default, exclude closed gates
 		if !allFlag {
-			filter.ExcludeStatus = []types.Status{types.StatusClosed}
+			listArgs.ExcludeStatus = []string{"closed"}
 		}
 
-		ctx := rootCtx
-
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			listArgs := &rpc.ListArgs{
-				IssueType: "gate",
-				Limit:     limit,
-			}
-			if !allFlag {
-				listArgs.ExcludeStatus = []string{"closed"}
-			}
-
-			resp, err := daemonClient.List(listArgs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-
-			var issues []*types.Issue
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
-			}
-
-			if jsonOutput {
-				outputJSON(issues)
-				return
-			}
-
-			displayGates(issues, allFlag)
-			return
-		}
-
-		// Direct mode
-		issues, err := store.SearchIssues(ctx, "", filter)
+		resp, err := daemonClient.List(listArgs)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		var issues []*types.Issue
+		if err := json.Unmarshal(resp.Data, &issues); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -213,13 +182,11 @@ This is used by 'gt done --phase-complete' to register for gate wake notificatio
 
 		gateID := args[0]
 		waiter := args[1]
-		ctx := rootCtx
 
+		requireDaemon("gate add-waiter")
 		// Get the gate issue
 		var issue *types.Issue
-		var err error
-
-		if daemonClient != nil {
+		{
 			resp, rerr := daemonClient.Show(&rpc.ShowArgs{ID: gateID})
 			if rerr != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", rerr)
@@ -235,12 +202,6 @@ This is used by 'gt done --phase-complete' to register for gate wake notificatio
 				os.Exit(1)
 			}
 			issue = &details.Issue
-		} else {
-			issue, err = store.GetIssue(ctx, gateID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: gate not found: %s\n", gateID)
-				os.Exit(1)
-			}
 		}
 
 		if issue.IssueType != "gate" {
@@ -256,15 +217,11 @@ This is used by 'gt done --phase-complete' to register for gate wake notificatio
 			}
 		}
 
-		// Add waiter to the waiters list
-		newWaiters := append(issue.Waiters, waiter)
-
-		// Update the gate
-		if daemonClient != nil {
-			// Use GateWait RPC which handles waiters correctly (bypasses allowedUpdateFields)
+		// Add waiter via GateWait RPC which handles waiters correctly
+		{
 			gateWaitArgs := &rpc.GateWaitArgs{
 				ID:      gateID,
-				Waiters: []string{waiter}, // GateWait handles deduplication internally
+				Waiters: []string{waiter},
 			}
 			resp, uerr := daemonClient.GateWait(gateWaitArgs)
 			if uerr != nil {
@@ -275,15 +232,6 @@ This is used by 'gt done --phase-complete' to register for gate wake notificatio
 				fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
 				os.Exit(1)
 			}
-		} else {
-			updates := map[string]interface{}{
-				"waiters": newWaiters,
-			}
-			if err := store.UpdateIssue(ctx, gateID, updates, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Error updating gate: %v\n", err)
-				os.Exit(1)
-			}
-			markDirtyAndScheduleFlush()
 		}
 
 		fmt.Printf("%s Added waiter to gate %s: %s\n", ui.RenderPass("✓"), gateID, waiter)
@@ -300,13 +248,11 @@ This is similar to 'bd show' but validates that the issue is a gate.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		gateID := args[0]
-		ctx := rootCtx
 
+		requireDaemon("gate show")
 		// Get the gate issue
 		var issue *types.Issue
-		var err error
-
-		if daemonClient != nil {
+		{
 			resp, rerr := daemonClient.Show(&rpc.ShowArgs{ID: gateID})
 			if rerr != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", rerr)
@@ -322,12 +268,6 @@ This is similar to 'bd show' but validates that the issue is a gate.`,
 				os.Exit(1)
 			}
 			issue = &details.Issue
-		} else {
-			issue, err = store.GetIssue(ctx, gateID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: gate not found: %s\n", gateID)
-				os.Exit(1)
-			}
 		}
 
 		if issue.IssueType != "gate" {
@@ -383,11 +323,9 @@ Use --reason to provide context for why the gate was resolved.`,
 		reason, _ := cmd.Flags().GetString("reason")
 
 		// Verify it's a gate issue
-		ctx := rootCtx
+		requireDaemon("gate resolve")
 		var issue *types.Issue
-		var err error
-
-		if daemonClient != nil {
+		{
 			resp, rerr := daemonClient.Show(&rpc.ShowArgs{ID: gateID})
 			if rerr != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", rerr)
@@ -403,12 +341,6 @@ Use --reason to provide context for why the gate was resolved.`,
 				os.Exit(1)
 			}
 			issue = &details.Issue
-		} else {
-			issue, err = store.GetIssue(ctx, gateID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: gate not found: %s\n", gateID)
-				os.Exit(1)
-			}
 		}
 
 		if issue.IssueType != "gate" {
@@ -417,7 +349,7 @@ Use --reason to provide context for why the gate was resolved.`,
 		}
 
 		// Close the gate
-		if daemonClient != nil {
+		{
 			closeArgs := &rpc.CloseArgs{
 				ID:     gateID,
 				Reason: reason,
@@ -431,12 +363,6 @@ Use --reason to provide context for why the gate was resolved.`,
 				fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
 				os.Exit(1)
 			}
-		} else {
-			if err := store.CloseIssue(ctx, gateID, reason, actor, ""); err != nil {
-				fmt.Fprintf(os.Stderr, "Error closing gate: %v\n", err)
-				os.Exit(1)
-			}
-			markDirtyAndScheduleFlush()
 		}
 
 		fmt.Printf("%s Gate resolved: %s\n", ui.RenderPass("✓"), gateID)
@@ -493,18 +419,10 @@ Examples:
 		limit, _ := cmd.Flags().GetInt("limit")
 
 		// Get open gates
-		gateType := types.IssueType("gate")
-		filter := types.IssueFilter{
-			IssueType:     &gateType,
-			ExcludeStatus: []types.Status{types.StatusClosed},
-			Limit:         limit,
-		}
-
 		ctx := rootCtx
+		requireDaemon("gate check")
 		var gates []*types.Issue
-		var err error
-
-		if daemonClient != nil {
+		{
 			listArgs := &rpc.ListArgs{
 				IssueType:     "gate",
 				ExcludeStatus: []string{"closed"},
@@ -517,12 +435,6 @@ Examples:
 			}
 			if uerr := json.Unmarshal(resp.Data, &gates); uerr != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", uerr)
-				os.Exit(1)
-			}
-		} else {
-			gates, err = store.SearchIssues(ctx, "", filter)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		}
@@ -927,25 +839,18 @@ func checkBeadGate(ctx context.Context, awaitID string) (bool, string) {
 
 // closeGate closes a gate issue with the given reason
 func closeGate(_ interface{}, gateID, reason string) error {
-	if daemonClient != nil {
-		closeArgs := &rpc.CloseArgs{
-			ID:     gateID,
-			Reason: reason,
-		}
-		resp, err := daemonClient.CloseIssue(closeArgs)
-		if err != nil {
-			return err
-		}
-		if !resp.Success {
-			return fmt.Errorf("%s", resp.Error)
-		}
-		return nil
+	requireDaemon("gate close")
+	closeArgs := &rpc.CloseArgs{
+		ID:     gateID,
+		Reason: reason,
 	}
-
-	if err := store.CloseIssue(rootCtx, gateID, reason, actor, ""); err != nil {
+	resp, err := daemonClient.CloseIssue(closeArgs)
+	if err != nil {
 		return err
 	}
-	markDirtyAndScheduleFlush()
+	if !resp.Success {
+		return fmt.Errorf("%s", resp.Error)
+	}
 	return nil
 }
 

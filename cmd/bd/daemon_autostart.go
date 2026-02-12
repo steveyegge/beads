@@ -663,25 +663,10 @@ func isParentPath(parent, child string) bool {
 	return strings.HasPrefix(childNorm, parentNorm)
 }
 
-// emitVerboseWarning prints a one-line warning when falling back to direct mode
+// emitVerboseWarning prints a one-line warning when running in direct mode
 func emitVerboseWarning() {
-	switch daemonStatus.FallbackReason {
-	case FallbackConnectFailed:
-		fmt.Fprintf(os.Stderr, "Warning: Daemon unreachable at %s. Running in direct mode. Hint: bd daemon status\n", daemonStatus.SocketPath)
-	case FallbackHealthFailed:
-		fmt.Fprintf(os.Stderr, "Warning: Daemon unhealthy. Falling back to direct mode. Hint: bd daemon status --all\n")
-	case FallbackAutoStartDisabled:
-		fmt.Fprintf(os.Stderr, "Warning: Auto-start disabled (BEADS_AUTO_START_DAEMON=false). Running in direct mode. Hint: bd daemon\n")
-	case FallbackAutoStartFailed:
-		fmt.Fprintf(os.Stderr, "Warning: Failed to auto-start daemon. Running in direct mode. Hint: bd daemon status\n")
-	case FallbackDaemonUnsupported:
-		fmt.Fprintf(os.Stderr, "Warning: Daemon does not support this command yet. Running in direct mode. Hint: update daemon or use local mode.\n")
-	case FallbackWorktreeSafety:
-		// Don't warn - this is expected behavior. User can configure sync-branch to enable daemon.
-		return
-	case FallbackFlagNoDaemon:
-		// Don't warn when user explicitly requested --no-daemon
-		return
+	if daemonStatus.Detail != "" {
+		fmt.Fprintf(os.Stderr, "Warning: Daemon not available (%s). Running in direct mode. Hint: bd daemon status\n", daemonStatus.Detail)
 	}
 }
 
