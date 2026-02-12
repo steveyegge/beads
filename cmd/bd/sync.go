@@ -1051,8 +1051,9 @@ func resolveSyncConflictsManually(ctx context.Context, jsonlPath, beadsDir strin
 
 // bd-wn2g: RPC-based sync functions
 
-// ensureDirectModeForSync initializes direct mode for sync operations that need it.
-// This is used for operations that involve git operations or interactive resolution.
+// ensureDirectModeForSync checks that storage is available for sync operations.
+// Some sync operations (--full, --import, --resolve, --set-mode) require direct
+// database access and cannot run in daemon-only mode.
 //
 // gt-kfoy7h: When BD_DAEMON_HOST is set (remote daemon mode), sync operations that
 // require direct database access are not supported. In remote daemon mode, sync is
@@ -1070,13 +1071,10 @@ func ensureDirectModeForSync() error {
 			"To use these operations, unset BD_DAEMON_HOST and run against a local database.")
 	}
 
-	if daemonClient != nil {
-		debug.Logf("sync: switching to direct mode for complex operation")
-		if err := fallbackToDirectMode("sync operation requires direct database access"); err != nil {
-			return err
-		}
+	if store == nil {
+		return fmt.Errorf("sync operation requires database access; ensure daemon is running")
 	}
-	return ensureStoreActive()
+	return nil
 }
 
 // doSyncExportViaDaemon performs sync export via the daemon RPC.

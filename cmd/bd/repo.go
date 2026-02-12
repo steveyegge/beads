@@ -104,9 +104,9 @@ that came from the removed repository.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repoPath := args[0]
 
-		// Ensure we have direct database access for cleanup
-		if err := ensureDirectMode("repo remove requires direct database access"); err != nil {
-			return err
+		// Ensure we have storage for cleanup
+		if store == nil {
+			return fmt.Errorf("repo remove requires database access; ensure daemon is running")
 		}
 
 		ctx := rootCtx
@@ -213,8 +213,8 @@ var repoSyncCmd = &cobra.Command{
 This hydrates issues from all repos in repos.additional into the
 local database, then exports any local changes back to JSONL.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := ensureDirectMode("repo sync requires direct database access"); err != nil {
-			return err
+		if store == nil {
+			return fmt.Errorf("repo sync requires database access; ensure daemon is running")
 		}
 
 		ctx := rootCtx

@@ -14,9 +14,9 @@ import (
 //
 //nolint:unparam // path reserved for future use
 func runPollutionCheck(_ string, clean bool, yes bool) {
-	// Ensure we have a store initialized (uses direct mode, no daemon support yet)
-	if err := ensureDirectMode("pollution check requires direct mode"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	// Ensure we have a store initialized
+	if store == nil {
+		fmt.Fprintf(os.Stderr, "Error: pollution check requires database access; ensure daemon is running\n")
 		os.Exit(1)
 	}
 

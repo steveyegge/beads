@@ -28,8 +28,8 @@ var dirtyCountCmd = &cobra.Command{
 	Use:   "count",
 	Short: "Show the number of dirty issues",
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := ensureDirectMode("dirty count requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: dirty count requires database access; ensure daemon is running\n")
 			os.Exit(1)
 		}
 
@@ -66,8 +66,8 @@ This cleans up two categories of stale entries:
 The daemon runs this automatically every 5 minutes. Use this command
 for manual cleanup or when the daemon is not running.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := ensureDirectMode("dirty flush requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: dirty flush requires database access; ensure daemon is running\n")
 			os.Exit(1)
 		}
 

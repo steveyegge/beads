@@ -141,8 +141,6 @@ func runBDForCoverage(t *testing.T, dir string, args ...string) (stdout string, 
 	daemonStatus.FallbackReason = FallbackNone // replaces noDaemon = false
 	noAutoFlush = false
 	noAutoImport = false
-	sandboxMode = false
-	noDb = false
 	autoFlushEnabled = true
 	storeActive = false
 	flushFailureCount = 0

@@ -45,10 +45,6 @@ func tempSockDir(t *testing.T) string {
 func startTestRPCServer(t *testing.T) (socketPath string, cleanup func()) {
 	t.Helper()
 
-	if isSandboxed() {
-		t.Skip("sandboxed environment blocks unix socket operations")
-	}
-
 	tmpDir := tempSockDir(t)
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0o750); err != nil {

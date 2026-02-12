@@ -67,22 +67,19 @@ NOTE: This is a rare operation. Most users never need this command.`,
 
 		ctx := rootCtx
 
-		// Use daemon if available (simple rename only; repair requires direct mode)
+		// Use daemon if available (simple rename only; repair requires direct store access)
 		if daemonClient != nil {
 			if repair {
-				if err := ensureDirectMode("rename-prefix --repair requires direct mode"); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-			} else {
-				renamePrefixViaDaemon(newPrefix, dryRun)
-				return
-			}
-		} else if store == nil {
-			if err := ensureStoreActive(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error: rename-prefix --repair requires direct database access (not available in daemon-only mode)\n")
 				os.Exit(1)
 			}
+			renamePrefixViaDaemon(newPrefix, dryRun)
+			return
+		}
+		if store == nil {
+			fmt.Fprintf(os.Stderr, "Error: daemon connection required for rename-prefix\n")
+			fmt.Fprintf(os.Stderr, "Hint: ensure the daemon is running with 'bd daemon start'\n")
+			os.Exit(1)
 		}
 
 		if err := validatePrefix(newPrefix); err != nil {

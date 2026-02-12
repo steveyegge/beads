@@ -98,17 +98,11 @@ SEE ALSO:
 			}
 		}
 
-		// Ensure we have storage
-		if daemonClient != nil {
-			if err := ensureDirectMode("daemon does not support delete command"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		} else if store == nil {
-			if err := ensureStoreActive(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
+		// Ensure we have storage (daemon RPC required)
+		if daemonClient == nil && store == nil {
+			fmt.Fprintf(os.Stderr, "Error: daemon connection required for cleanup command\n")
+			fmt.Fprintf(os.Stderr, "Hint: ensure the daemon is running with 'bd daemon start'\n")
+			os.Exit(1)
 		}
 
 		ctx := rootCtx

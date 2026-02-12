@@ -53,13 +53,7 @@ Examples:
 
 			resp, err := daemonClient.ListComments(&rpc.CommentListArgs{ID: issueID})
 			if err != nil {
-				if isUnknownOperationError(err) {
-					if err := fallbackToDirectMode("daemon does not support comment_list RPC"); err != nil {
-						FatalErrorRespectJSON("getting comments: %v", err)
-					}
-				} else {
-					FatalErrorRespectJSON("getting comments: %v", err)
-				}
+				FatalErrorRespectJSON("getting comments: %v", err)
 			} else {
 				if err := json.Unmarshal(resp.Data, &comments); err != nil {
 					FatalErrorRespectJSON("decoding comments: %v", err)
@@ -180,13 +174,7 @@ Examples:
 				Text:   commentText,
 			})
 			if err != nil {
-				if isUnknownOperationError(err) {
-					if err := fallbackToDirectMode("daemon does not support comment_add RPC"); err != nil {
-						FatalErrorRespectJSON("adding comment: %v", err)
-					}
-				} else {
-					FatalErrorRespectJSON("adding comment: %v", err)
-				}
+				FatalErrorRespectJSON("adding comment: %v", err)
 			} else {
 				var parsed types.Comment
 				if err := json.Unmarshal(resp.Data, &parsed); err != nil {

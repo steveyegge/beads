@@ -140,8 +140,6 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	daemonStatus.FallbackReason = FallbackNone // replaces noDaemon = false
 	noAutoFlush = false
 	noAutoImport = false
-	sandboxMode = false
-	noDb = false
 	autoFlushEnabled = true
 	storeActive = false
 	flushFailureCount = 0
@@ -904,8 +902,6 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 	daemonStatus.FallbackReason = FallbackNone // replaces noDaemon = false
 	noAutoFlush = false
 	noAutoImport = false
-	sandboxMode = false
-	noDb = false
 	autoFlushEnabled = true
 	storeActive = false
 	flushFailureCount = 0

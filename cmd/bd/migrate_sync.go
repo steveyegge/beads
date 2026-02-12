@@ -87,8 +87,8 @@ func runMigrateSync(ctx context.Context, branchName string, dryRun, force bool) 
 	}
 
 	// Ensure store is initialized for config operations
-	if err := ensureDirectMode("migrate-sync requires direct database access"); err != nil {
-		return err
+	if store == nil {
+		return fmt.Errorf("migrate-sync requires database access; ensure daemon is running")
 	}
 
 	// Get current branch

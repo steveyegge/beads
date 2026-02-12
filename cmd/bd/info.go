@@ -115,16 +115,7 @@ Examples:
 			}
 		}
 
-		// Add config to info output (requires direct mode to access config table)
-		// Save current daemon state
-		wasDaemon := daemonClient != nil
-		var tempErr error
-
-		if wasDaemon {
-			// Temporarily switch to direct mode to read config
-			tempErr = ensureDirectMode("info: reading config")
-		}
-
+		// Add config to info output
 		if store != nil {
 			ctx := rootCtx
 			configMap, err := store.GetAllConfig(ctx)
@@ -132,10 +123,6 @@ Examples:
 				info["config"] = configMap
 			}
 		}
-
-		// Note: We don't restore daemon mode since info is a read-only command
-		// and the process will exit immediately after this
-		_ = tempErr // silence unused warning
 
 		// Add schema information if requested
 		if schemaFlag && store != nil {

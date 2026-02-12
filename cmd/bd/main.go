@@ -26,7 +26,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/memory"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -73,9 +72,7 @@ var (
 var (
 	noAutoFlush     bool
 	noAutoImport    bool
-	sandboxMode     bool
 	allowStale      bool          // Use --allow-stale: skip staleness check (emergency escape hatch)
-	noDb            bool          // Use --no-db mode: load from JSONL, write back after each command
 	readonlyMode    bool          // Read-only mode: block write operations (for worker sandboxes)
 	storeIsReadOnly bool          // Track if store was opened read-only (for staleness checks)
 	lockTimeout     time.Duration // SQLite busy_timeout (default 30s, 0 = fail immediately)
@@ -235,9 +232,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
 	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
-	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables daemon and auto-sync")
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
-	rootCmd.PersistentFlags().BoolVar(&noDb, "no-db", false, "Use no-db mode: load from JSONL, no SQLite")
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
 	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on). Default from config key dolt.auto-commit")
 	rootCmd.PersistentFlags().DurationVar(&lockTimeout, "lock-timeout", 30*time.Second, "SQLite busy timeout (0 = fail immediately if locked)")
@@ -334,14 +329,6 @@ var rootCmd = &cobra.Command{
 				Value  interface{}
 				WasSet bool
 			}{noAutoImport, true}
-		}
-		if !cmd.Flags().Changed("no-db") {
-			noDb = config.GetBool("no-db")
-		} else {
-			flagOverrides["no-db"] = struct {
-				Value  interface{}
-				WasSet bool
-			}{noDb, true}
 		}
 		if !cmd.Flags().Changed("readonly") {
 			readonlyMode = config.GetBool("readonly")
@@ -474,7 +461,7 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Track if direct mode is forced for this command (profile, sandbox, edit, doctor, restore)
+		// Track if direct mode is forced for this command (profile, edit, doctor, restore)
 		forceDirectMode := false
 
 		// Performance profiling setup
@@ -494,26 +481,6 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Auto-detect sandboxed environment (Phase 2 for GH #353)
-		// Only auto-enable if user hasn't explicitly set --sandbox
-		if !cmd.Flags().Changed("sandbox") {
-			if isSandboxed() {
-				sandboxMode = true
-				fmt.Fprintf(os.Stderr, "ℹ️  Sandbox detected, using direct mode\n")
-			}
-		}
-
-		// If sandbox mode is set, enable all sandbox flags
-		if sandboxMode {
-			forceDirectMode = true
-			noAutoFlush = true
-			noAutoImport = true
-			// Use shorter lock timeout in sandbox mode unless explicitly set
-			if !cmd.Flags().Changed("lock-timeout") {
-				lockTimeout = 100 * time.Millisecond
-			}
-		}
-
 		// Force direct mode for human-only interactive commands
 		// edit: can take minutes in $EDITOR, local daemon connection may time out (GH #227)
 		// Exception: when BD_DAEMON_HOST is set (remote daemon), we must use daemon RPC
@@ -529,59 +496,14 @@ var rootCmd = &cobra.Command{
 		// Set auto-import based on flag (invert no-auto-import)
 		autoImportEnabled = !noAutoImport
 
-		// Handle --no-db mode: load from JSONL, use in-memory storage
-		if noDb {
-			// When BD_DAEMON_HOST is set, --no-db makes no sense — the remote daemon
-			// handles storage. Warn the user instead of silently ignoring the daemon. (bd-lkks)
-			if remoteHost := rpc.GetDaemonHost(); remoteHost != "" {
-				fmt.Fprintf(os.Stderr, "Error: --no-db is not compatible with BD_DAEMON_HOST (%s)\n", remoteHost)
-				fmt.Fprintf(os.Stderr, "The remote daemon manages storage. Remove --no-db to use the daemon.\n")
-				os.Exit(1)
-			}
-			if err := initializeNoDbMode(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error initializing --no-db mode: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Set actor for audit trail
-			actor = getActorWithGit()
-
-			// Skip daemon and SQLite initialization - we're in memory mode
-			return
-		}
-
 		// Initialize database path
 		if dbPath == "" {
 			// Use public API to find database (same logic as extensions)
 			if foundDB := beads.FindDatabasePath(); foundDB != "" {
 				dbPath = foundDB
 			} else {
-				// No database found - check if this is JSONL-only mode
+				// No database found
 				beadsDir := beads.FindBeadsDir()
-				if beadsDir != "" {
-					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-
-					// Check if JSONL exists and config.yaml has no-db: true
-					jsonlExists := false
-					if _, err := os.Stat(jsonlPath); err == nil {
-						jsonlExists = true
-					}
-
-					// Use proper YAML parsing to detect no-db mode
-					isNoDbMode := isNoDbModeConfigured(beadsDir)
-
-					// If JSONL-only mode is configured, auto-enable it
-					if jsonlExists && isNoDbMode {
-						noDb = true
-						if err := initializeNoDbMode(); err != nil {
-							fmt.Fprintf(os.Stderr, "Error initializing JSONL-only mode: %v\n", err)
-							os.Exit(1)
-						}
-						// Set actor for audit trail
-						actor = getActorWithGit()
-						return
-					}
-				}
 
 				// Allow some commands to run without a database
 				// - import: auto-initializes database if missing
@@ -595,7 +517,7 @@ var rootCmd = &cobra.Command{
 				}
 
 				// Allow read-only commands to auto-bootstrap from JSONL (GH#b09)
-				// This enables `bd --no-daemon show` after cold-start when DB is missing
+				// This enables `bd show` after cold-start when DB is missing
 				canAutoBootstrap := false
 				if isReadOnlyCommand(cmd) && beadsDir != "" {
 					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
@@ -608,26 +530,8 @@ var rootCmd = &cobra.Command{
 				if cmd.Name() != "import" && cmd.Name() != "setup" && !isYamlOnlyConfigOp && !canAutoBootstrap {
 					// No database found - provide context-aware error message
 					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
-
-					// Check if JSONL exists without no-db mode configured
-					if beadsDir != "" {
-						jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-						if _, err := os.Stat(jsonlPath); err == nil {
-							// JSONL exists but no-db mode not configured
-							fmt.Fprintf(os.Stderr, "\nFound JSONL file: %s\n", jsonlPath)
-							fmt.Fprintf(os.Stderr, "This looks like a fresh clone or JSONL-only project.\n\n")
-							fmt.Fprintf(os.Stderr, "Options:\n")
-							fmt.Fprintf(os.Stderr, "  • Run 'bd init' to create database and import issues\n")
-							fmt.Fprintf(os.Stderr, "  • Use 'bd --no-db %s' for JSONL-only mode\n", cmd.Name())
-							fmt.Fprintf(os.Stderr, "  • Add 'no-db: true' to .beads/config.yaml for permanent JSONL-only mode\n")
-							os.Exit(1)
-						}
-					}
-
-					// Generic error - no beads directory or JSONL found
 					fmt.Fprintf(os.Stderr, "Hint: run 'bd connect' to connect to a remote daemon (BD_DAEMON_HOST)\n")
 					fmt.Fprintf(os.Stderr, "      or run 'bd init' to create a local workspace\n")
-					fmt.Fprintf(os.Stderr, "      or use 'bd --no-db' to work with JSONL only\n")
 					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
 					os.Exit(1)
 				}
@@ -658,12 +562,11 @@ var rootCmd = &cobra.Command{
 		// Initialize daemon status
 		socketPath := getSocketPath()
 		daemonStatus = DaemonStatus{
-			Mode:             "direct",
-			Connected:        false,
-			Degraded:         true,
-			SocketPath:       socketPath,
-			AutoStartEnabled: shouldAutoStartDaemon(),
-			FallbackReason:   FallbackNone,
+			Mode:           "direct",
+			Connected:      false,
+			Degraded:       true,
+			SocketPath:     socketPath,
+			FallbackReason: FallbackNone,
 		}
 
 		// Doctor should always run in direct mode. It's specifically used to diagnose and
@@ -686,8 +589,8 @@ var rootCmd = &cobra.Command{
 			// because it specifically diagnoses daemon connectivity issues. (bd-lkks)
 			if remoteHost := rpc.GetDaemonHost(); remoteHost != "" && cmd.Name() != "doctor" {
 				fmt.Fprintf(os.Stderr, "Error: this command requested direct database access, but BD_DAEMON_HOST is set (%s)\n", remoteHost)
-				fmt.Fprintf(os.Stderr, "Direct mode (--sandbox, --profile, restore) is not available with a remote daemon.\n")
-				fmt.Fprintf(os.Stderr, "Hint: unset BD_DAEMON_HOST to use local mode, or run the command without --sandbox/--profile\n")
+				fmt.Fprintf(os.Stderr, "Direct mode (--profile, restore) is not available with a remote daemon.\n")
+				fmt.Fprintf(os.Stderr, "Hint: unset BD_DAEMON_HOST to use local mode, or run the command without --profile\n")
 				os.Exit(1)
 			}
 			// Only set FallbackFlagNoDaemon if not already set by auto-bypass logic
@@ -803,89 +706,8 @@ var rootCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			// Daemon not running or unhealthy - try auto-start if enabled
-			if daemonStatus.AutoStartEnabled {
-				daemonStatus.AutoStartAttempted = true
-				debug.Logf("attempting to auto-start daemon")
-				startTime := time.Now()
-				if tryAutoStartDaemon(socketPath) {
-					// Retry connection after auto-start
-					client, err := rpc.TryConnectAuto(socketPath)
-					if err == nil && client != nil {
-						// Set expected database path for validation (skip for remote TCP connections)
-						if dbPath != "" && rpc.GetDaemonHost() == "" {
-							absDBPath, _ := filepath.Abs(dbPath)
-							client.SetDatabasePath(absDBPath)
-						}
-
-						// Check health of auto-started daemon
-						health, healthErr := client.Health()
-						if healthErr == nil && health.Status == statusHealthy {
-							client.SetActor(actor)
-							daemonClient = client
-							daemonStatus.Mode = cmdDaemon
-							daemonStatus.Connected = true
-							daemonStatus.Degraded = false
-							daemonStatus.AutoStartSucceeded = true
-							daemonStatus.Health = health.Status
-							daemonStatus.FallbackReason = FallbackNone
-							elapsed := time.Since(startTime).Milliseconds()
-							debug.Logf("auto-start succeeded; connected at %s in %dms", socketPath, elapsed)
-							// Warn if using daemon with git worktrees
-							warnWorktreeDaemon(dbPath)
-							// Initialize hook runner (hooks run on client side, not daemon)
-							if dbPath != "" {
-								beadsDir := filepath.Dir(dbPath)
-								hookRunner = hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
-							}
-							return // Skip direct storage initialization
-						} else {
-							// Auto-started daemon is unhealthy
-							_ = client.Close()
-							daemonStatus.FallbackReason = FallbackHealthFailed
-							if healthErr != nil {
-								daemonStatus.Detail = healthErr.Error()
-							} else {
-								daemonStatus.Health = health.Status
-								daemonStatus.Detail = health.Error
-							}
-							debug.Logf("auto-started daemon is unhealthy; falling back to direct mode")
-						}
-					} else {
-						// Auto-start completed but connection still failed
-						daemonStatus.FallbackReason = FallbackAutoStartFailed
-						if err != nil {
-							daemonStatus.Detail = err.Error()
-						}
-						// Check for daemon-error file to provide better error message
-						if beadsDir := filepath.Dir(socketPath); beadsDir != "" {
-							errFile := filepath.Join(beadsDir, "daemon-error")
-							// nolint:gosec // G304: errFile is derived from secure beads directory
-							if errMsg, readErr := os.ReadFile(errFile); readErr == nil && len(errMsg) > 0 {
-								fmt.Fprintf(os.Stderr, "\n%s\n", string(errMsg))
-								daemonStatus.Detail = string(errMsg)
-							}
-						}
-						debug.Logf("auto-start did not yield a running daemon; falling back to direct mode")
-					}
-				} else {
-					// Auto-start itself failed
-					daemonStatus.FallbackReason = FallbackAutoStartFailed
-					debug.Logf("auto-start failed; falling back to direct mode")
-				}
-			} else {
-				// Auto-start disabled - preserve the actual failure reason
-				// Don't override connect_failed or health_failed with auto_start_disabled
-				// This preserves important diagnostic info (daemon crashed vs not running)
-				debug.Logf("auto-start disabled by BEADS_AUTO_START_DAEMON")
-			}
-
-			// Emit BD_VERBOSE warning if falling back to direct mode
-			if os.Getenv("BD_VERBOSE") != "" {
-				emitVerboseWarning()
-			}
-
-			debug.Logf("using direct mode (reason: %s)", daemonStatus.FallbackReason)
+			// Daemon not available - log the reason and continue to direct storage fallback
+			debug.Logf("daemon not available (reason: %s)", daemonStatus.FallbackReason)
 		}
 
 		// SOFT DISABLE: Direct mode is disabled for Dolt server backend (hq-463d49)
@@ -989,13 +811,11 @@ var rootCmd = &cobra.Command{
 		storeMutex.Unlock()
 
 		// Initialize flush manager (fixes race condition in auto-flush)
-		// Skip FlushManager creation in sandbox mode - no background goroutines needed
-		// (improves Windows exit behavior and container scenarios)
 		// Skip for read-only commands - they don't write anything (GH#804)
 		// For in-process test scenarios where commands run multiple times,
 		// we create a new manager each time. Shutdown() is idempotent so
 		// PostRun can safely shutdown whichever manager is active.
-		if !sandboxMode && !useReadOnly {
+		if !useReadOnly {
 			flushManager = NewFlushManager(autoFlushEnabled, getDebounceDuration())
 		}
 
@@ -1050,34 +870,6 @@ var rootCmd = &cobra.Command{
 		syncCommandContext()
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
-		// Handle --no-db mode: write memory storage back to JSONL
-		if noDb {
-			if store != nil {
-				// Determine beads directory (respect BEADS_DIR)
-				var beadsDir string
-				if envDir := os.Getenv("BEADS_DIR"); envDir != "" {
-					// Canonicalize the path
-					beadsDir = utils.CanonicalizePath(envDir)
-				} else {
-					// Fall back to current directory
-					cwd, err := os.Getwd()
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
-						os.Exit(1)
-					}
-					beadsDir = filepath.Join(cwd, ".beads")
-				}
-
-				if memStore, ok := store.(*memory.MemoryStorage); ok {
-					if err := writeIssuesToJSONL(memStore, beadsDir); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to write JSONL: %v\n", err)
-						os.Exit(1)
-					}
-				}
-			}
-			return
-		}
-
 		// Close daemon client if we're using it
 		if daemonClient != nil {
 			_ = daemonClient.Close()

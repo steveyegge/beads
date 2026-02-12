@@ -19,7 +19,7 @@ import (
 // Bug: In daemon mode, store=nil because RPC handles storage. But watchIssues()
 // was called directly with nil store, causing panic at store.SearchIssues().
 //
-// Fix: Call ensureDirectMode() before watchIssues() to initialize the store.
+// Fix: Call ensureStoreActive() before watchIssues() to verify store is initialized.
 func TestWatchModeWithDaemonDoesNotPanic(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode")
@@ -93,23 +93,9 @@ func TestWatchModeWithDaemonDoesNotPanic(t *testing.T) {
 	daemonClient = &rpc.Client{} // Non-nil = daemon mode
 	autoImportEnabled = false
 
-	// This is what the fix does: call ensureDirectMode before watchIssues
-	// Without this, watchIssues would panic on nil store
-	if err := ensureDirectMode("watch mode requires direct database access"); err != nil {
-		t.Fatalf("ensureDirectMode failed: %v", err)
-	}
-
-	// Verify store is now initialized (fix worked)
-	storeMutex.Lock()
-	currentStore := store
-	isActive := storeActive
-	storeMutex.Unlock()
-
-	if currentStore == nil {
-		t.Fatal("store is still nil after ensureDirectMode - fix not working")
-	}
-	if !isActive {
-		t.Fatal("store not marked active after ensureDirectMode")
+	// Verify ensureStoreActive succeeds (daemon client is set)
+	if err := ensureStoreActive(); err != nil {
+		t.Fatalf("ensureStoreActive failed: %v", err)
 	}
 
 	// Now watchIssues can be called safely (won't panic)

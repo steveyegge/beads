@@ -316,58 +316,6 @@ variable.`,
 				os.Exit(1)
 			}
 
-			// Handle --no-db mode: create issues.jsonl file instead of database
-			if noDb {
-				// Create empty issues.jsonl file
-				jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-				if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-					// nolint:gosec // G306: JSONL file needs to be readable by other tools
-					if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to create issues.jsonl: %v\n", err)
-						os.Exit(1)
-					}
-				}
-
-				// Create empty interactions.jsonl file (append-only agent audit log)
-				interactionsPath := filepath.Join(beadsDir, "interactions.jsonl")
-				if _, err := os.Stat(interactionsPath); os.IsNotExist(err) {
-					// nolint:gosec // G306: JSONL file needs to be readable by other tools
-					if err := os.WriteFile(interactionsPath, []byte{}, 0644); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to create interactions.jsonl: %v\n", err)
-						os.Exit(1)
-					}
-				}
-
-				// Create metadata.json for --no-db mode
-				cfg := configfile.DefaultConfig()
-				if err := cfg.Save(beadsDir); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
-					// Non-fatal - continue anyway
-				}
-
-				// Create config.yaml with no-db: true and the prefix
-				if err := createConfigYaml(beadsDir, true, prefix); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
-					// Non-fatal - continue anyway
-				}
-
-				// Create README.md
-				if err := createReadme(beadsDir); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create README.md: %v\n", err)
-					// Non-fatal - continue anyway
-				}
-
-				if !quiet {
-					fmt.Printf("\n%s bd initialized successfully in --no-db mode!\n\n", ui.RenderPass("✓"))
-					fmt.Printf("  Mode: %s\n", ui.RenderAccent("no-db (JSONL-only)"))
-					fmt.Printf("  Issues file: %s\n", ui.RenderAccent(jsonlPath))
-					fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
-					fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
-					fmt.Printf("Run %s to get started.\n\n", ui.RenderAccent("bd --no-db quickstart"))
-				}
-				return
-			}
-
 			// Create/update .gitignore in .beads directory (idempotent - always update to latest)
 			gitignorePath := filepath.Join(beadsDir, ".gitignore")
 			if err := os.WriteFile(gitignorePath, []byte(doctor.GitignoreTemplate), 0600); err != nil {
