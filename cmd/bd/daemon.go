@@ -301,7 +301,7 @@ func init() {
 	daemonCmd.Flags().Bool("federation", false, "Enable federation mode (runs dolt sql-server with remotesapi)")
 	daemonCmd.Flags().Int("federation-port", 3306, "MySQL port for federation mode dolt sql-server")
 	daemonCmd.Flags().Int("remotesapi-port", 8080, "remotesapi port for peer-to-peer sync in federation mode")
-	daemonCmd.Flags().String("http-addr", "", "HTTP address for Connect-RPC style API (e.g., :9080)")
+	daemonCmd.Flags().String("http-addr", ":9080", "HTTP address for Connect-RPC API (set empty to disable)")
 	daemonCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
 	rootCmd.AddCommand(daemonCmd)
 }

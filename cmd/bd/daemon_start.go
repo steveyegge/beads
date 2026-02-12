@@ -38,7 +38,7 @@ Examples:
   bd daemon start --auto-push        # Enable auto-push (implies --auto-commit)
   bd daemon start --foreground       # Run in foreground (for systemd/supervisord)
   bd daemon start --federation       # Enable federation mode (dolt sql-server)
-  bd daemon start --http-addr :9080  # Enable Connect-RPC HTTP API`,
+  bd daemon start --http-addr :8080  # Use a custom HTTP port`,
 	PreRunE: guardDaemonStartForDolt,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Check if BD_DAEMON_HOST is set - refuse to start local daemon when configured for remote
@@ -202,5 +202,5 @@ func init() {
 	daemonStartCmd.Flags().Bool("federation", false, "Enable federation mode (runs dolt sql-server)")
 	daemonStartCmd.Flags().Int("federation-port", 3306, "MySQL port for federation mode dolt sql-server")
 	daemonStartCmd.Flags().Int("remotesapi-port", 8080, "remotesapi port for peer-to-peer sync in federation mode")
-	daemonStartCmd.Flags().String("http-addr", "", "HTTP address for Connect-RPC style API (e.g., :9080)")
+	daemonStartCmd.Flags().String("http-addr", ":9080", "HTTP address for Connect-RPC API (set empty to disable)")
 }

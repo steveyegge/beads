@@ -51,10 +51,6 @@ spec:
             {{- if .Values.daemon.logJSON }}
             - --log-json
             {{- end }}
-            {{- if .Values.daemon.tls.enabled }}
-            - --tls-cert=/etc/bd-daemon/tls/tls.crt
-            - --tls-key=/etc/bd-daemon/tls/tls.key
-            {{- end }}
             {{- if .Values.daemon.http.enabled }}
             - --http-addr={{ .Values.daemon.http.addr | default ":9080" }}
             {{- end }}
