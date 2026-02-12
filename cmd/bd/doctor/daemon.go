@@ -123,7 +123,12 @@ func CheckDaemonStatus(path string, cliVersion string) DoctorCheck {
 // checkRemoteDaemonHealth checks connectivity and health of a remote daemon.
 func checkRemoteDaemonHealth(host string, cliVersion string) DoctorCheck {
 	token := rpc.GetDaemonToken()
-	client, err := rpc.TryConnectTCP(host, token)
+	// Auto-prepend http:// if bare host:port
+	addr := host
+	if !rpc.IsHTTPURL(addr) {
+		addr = "http://" + addr
+	}
+	httpClient, err := rpc.TryConnectHTTP(addr, token)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Daemon Health",
@@ -133,6 +138,7 @@ func checkRemoteDaemonHealth(host string, cliVersion string) DoctorCheck {
 			Fix:     "Check BD_DAEMON_HOST and BD_DAEMON_TOKEN settings, and verify the remote daemon is running",
 		}
 	}
+	client := rpc.WrapHTTPClient(httpClient)
 	defer func() { _ = client.Close() }()
 
 	health, err := client.Health()

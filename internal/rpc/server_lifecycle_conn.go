@@ -3,7 +3,6 @@ package rpc
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,44 +62,14 @@ func (s *Server) Start(_ context.Context) error {
 		}
 	}
 
-	// Start TCP listener if configured
-	s.mu.Lock()
-	tcpAddr := s.tcpAddr
-	tlsConfig := s.tlsConfig
-	s.mu.Unlock()
-
-	if tcpAddr != "" {
-		tcpListener, err := listenTCP(tcpAddr)
-		if err != nil {
-			_ = listener.Close()
-			return fmt.Errorf("failed to initialize TCP listener on %s: %w", tcpAddr, err)
-		}
-
-		// Wrap with TLS if configured
-		if tlsConfig != nil {
-			tcpListener = tls.NewListener(tcpListener, tlsConfig)
-		}
-
-		s.mu.Lock()
-		s.tcpListener = tcpListener
-		s.mu.Unlock()
-
-		// Start TCP accept loop in separate goroutine
-		listenerType := "tcp"
-		if tlsConfig != nil {
-			listenerType = "tls"
-		}
-		go s.acceptLoop(tcpListener, listenerType)
-	}
-
 	// Start HTTP server if configured
 	s.mu.Lock()
 	httpAddr := s.httpAddr
-	tcpToken := s.tcpToken // Reuse TCP token for HTTP auth
+	authToken := s.authToken
 	s.mu.Unlock()
 
 	if httpAddr != "" {
-		httpServer := NewHTTPServer(s, httpAddr, tcpToken)
+		httpServer := NewHTTPServer(s, httpAddr, authToken)
 		s.mu.Lock()
 		s.httpServer = httpServer
 		s.mu.Unlock()
@@ -142,16 +111,12 @@ func (s *Server) Start(_ context.Context) error {
 	defer close(s.doneChan)
 
 	// Accept connections on Unix socket (main loop)
-	s.acceptLoop(listener, "unix")
+	s.acceptLoop(listener)
 	return nil
 }
 
 // acceptLoop accepts connections on the given listener and handles them.
-// The listenerType is used for logging/debugging ("unix", "tcp", or "tls").
-// Token authentication is enforced for TCP/TLS connections when configured.
-func (s *Server) acceptLoop(listener net.Listener, listenerType string) {
-	requiresAuth := listenerType == "tcp" || listenerType == "tls"
-
+func (s *Server) acceptLoop(listener net.Listener) {
 	for {
 		// Check if we're shutting down
 		s.mu.RLock()
@@ -170,7 +135,7 @@ func (s *Server) acceptLoop(listener net.Listener, listenerType string) {
 				return
 			}
 			// Log error but continue accepting (transient errors are common)
-			fmt.Fprintf(os.Stderr, "Warning: failed to accept %s connection: %v\n", listenerType, err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to accept connection: %v\n", err)
 			continue
 		}
 
@@ -183,7 +148,7 @@ func (s *Server) acceptLoop(listener net.Listener, listenerType string) {
 				defer func() { <-s.connSemaphore }() // Release slot
 				atomic.AddInt32(&s.activeConns, 1)
 				defer atomic.AddInt32(&s.activeConns, -1)
-				s.handleConnectionWithAuth(c, requiresAuth)
+				s.handleConnection(c)
 			}(conn)
 		default:
 			// Max connections reached, reject immediately
@@ -213,18 +178,6 @@ func (s *Server) Stop() error {
 		if s.storage != nil {
 			if closeErr := s.storage.Close(); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to close default storage: %v\n", closeErr)
-			}
-		}
-
-		// Close TCP listener if present
-		s.mu.Lock()
-		tcpListener := s.tcpListener
-		s.tcpListener = nil
-		s.mu.Unlock()
-
-		if tcpListener != nil {
-			if closeErr := tcpListener.Close(); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to close TCP listener: %v\n", closeErr)
 			}
 		}
 
@@ -300,10 +253,6 @@ func (s *Server) handleSignals() {
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
-	s.handleConnectionWithAuth(conn, false)
-}
-
-func (s *Server) handleConnectionWithAuth(conn net.Conn, requiresAuth bool) {
 	defer func() {
 		_ = conn.Close()
 	}()
@@ -318,14 +267,6 @@ func (s *Server) handleConnectionWithAuth(conn net.Conn, requiresAuth bool) {
 
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
-
-	// Get the expected token (if auth is required)
-	var expectedToken string
-	if requiresAuth {
-		s.mu.RLock()
-		expectedToken = s.tcpToken
-		s.mu.RUnlock()
-	}
 
 	for {
 		// Set read deadline for the next request
@@ -345,24 +286,9 @@ func (s *Server) handleConnectionWithAuth(conn net.Conn, requiresAuth bool) {
 				Error:   fmt.Sprintf("invalid request: %v", err),
 			}
 			if err := s.writeResponse(writer, resp); err != nil {
-				// Connection broken, stop handling this connection
 				return
 			}
 			continue
-		}
-
-		// Validate token for TCP connections (if token is configured)
-		if requiresAuth && expectedToken != "" {
-			if req.Token != expectedToken {
-				resp := Response{
-					Success: false,
-					Error:   "authentication failed: invalid or missing token",
-				}
-				if err := s.writeResponse(writer, resp); err != nil {
-					return
-				}
-				continue
-			}
 		}
 
 		// Compute effective timeout: use per-request timeout if larger than default.
@@ -385,7 +311,6 @@ func (s *Server) handleConnectionWithAuth(conn net.Conn, requiresAuth bool) {
 
 		resp := s.handleRequest(&req)
 		if err := s.writeResponse(writer, resp); err != nil {
-			// Connection broken, stop handling this connection
 			return
 		}
 	}

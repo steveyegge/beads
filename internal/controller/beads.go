@@ -25,11 +25,16 @@ func NewBeadsClient(daemonAddr, token string) *BeadsClient {
 
 // connect creates a new RPC connection for a single operation.
 func (b *BeadsClient) connect() (*rpc.Client, error) {
-	client, err := rpc.TryConnectTCP(b.daemonAddr, b.token)
+	// Auto-prepend http:// if bare host:port
+	addr := b.daemonAddr
+	if !rpc.IsHTTPURL(addr) {
+		addr = "http://" + addr
+	}
+	httpClient, err := rpc.TryConnectHTTP(addr, b.token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to BD daemon at %s: %w", b.daemonAddr, err)
 	}
-	return client, nil
+	return rpc.WrapHTTPClient(httpClient), nil
 }
 
 // ListSpawningAgents returns agents with agent_state=spawning that need pods.

@@ -69,17 +69,15 @@ func (dc *DecisionClient) reconnect() error {
 		dc.client.Close()
 	}
 
+	// Auto-prepend http:// if bare host:port
+	addr := dc.addr
+	if !rpc.IsHTTPURL(addr) {
+		addr = "http://" + addr
+	}
+	httpClient, err := rpc.TryConnectHTTP(addr, dc.token)
 	var newClient *rpc.Client
-	var err error
-
-	if strings.HasPrefix(dc.addr, "http://") || strings.HasPrefix(dc.addr, "https://") {
-		var httpClient *rpc.HTTPClient
-		httpClient, err = rpc.TryConnectHTTP(dc.addr, dc.token)
-		if err == nil {
-			newClient = rpc.WrapHTTPClient(httpClient)
-		}
-	} else {
-		newClient, err = rpc.TryConnectTCP(dc.addr, dc.token)
+	if err == nil {
+		newClient = rpc.WrapHTTPClient(httpClient)
 	}
 
 	if err != nil {

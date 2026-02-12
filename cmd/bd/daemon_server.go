@@ -13,7 +13,7 @@ import (
 )
 
 // startRPCServer initializes and starts the RPC server
-func startRPCServer(ctx context.Context, socketPath string, store storage.Storage, workspacePath string, dbPath string, tcpAddr, tlsCert, tlsKey, tcpToken, httpAddr string, log daemonLogger) (*rpc.Server, chan error, error) {
+func startRPCServer(ctx context.Context, socketPath string, store storage.Storage, workspacePath string, dbPath string, authToken, httpAddr string, log daemonLogger) (*rpc.Server, chan error, error) {
 	// Sync daemon version with CLI version
 	rpc.ServerVersion = Version
 
@@ -48,19 +48,9 @@ func startRPCServer(ctx context.Context, socketPath string, store storage.Storag
 
 	server := rpc.NewServerWithWispStore(socketPath, store, wispStore, workspacePath, dbPath)
 
-	// Configure TCP listener if address provided
-	if tcpAddr != "" {
-		server.SetTCPAddr(tcpAddr)
-		// Configure TLS if cert and key provided
-		if tlsCert != "" && tlsKey != "" {
-			if err := server.SetTLSConfig(tlsCert, tlsKey); err != nil {
-				return nil, nil, fmt.Errorf("failed to configure TLS: %w", err)
-			}
-		}
-		// Configure token authentication if provided
-		if tcpToken != "" {
-			server.SetTCPToken(tcpToken)
-		}
+	// Configure auth token if provided
+	if authToken != "" {
+		server.SetAuthToken(authToken)
 	}
 
 	// Configure HTTP listener if address provided (Connect-RPC style API)

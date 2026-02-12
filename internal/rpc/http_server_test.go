@@ -225,7 +225,7 @@ func TestHTTPServerAuth(t *testing.T) {
 
 	server := NewServer(socketPath, store, tmpDir, filepath.Join(tmpDir, "beads.db"))
 	server.SetHTTPAddr("127.0.0.1:0")
-	server.SetTCPToken("secret-token-123") // This token is used for HTTP auth too
+	server.SetAuthToken("secret-token-123")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -2041,7 +2041,7 @@ func setupTestRPCServer(t *testing.T) (string, func()) {
 	}
 
 	server := rpc.NewServer(socketPath, store, tmpDir, dbPath)
-	server.SetTCPAddr("127.0.0.1:0")
+	server.SetHTTPAddr("127.0.0.1:0")
 
 	serverCtx, cancel := context.WithCancel(ctx)
 	errChan := make(chan error, 1)
@@ -2064,7 +2064,7 @@ func setupTestRPCServer(t *testing.T) (string, func()) {
 		t.Fatal("timeout waiting for server to start")
 	}
 
-	tcpAddr := server.TCPListener().Addr().String()
+	httpAddr := "http://" + server.HTTPServer().Addr()
 
 	cleanup := func() {
 		cancel()
@@ -2073,20 +2073,27 @@ func setupTestRPCServer(t *testing.T) (string, func()) {
 		os.RemoveAll(tmpDir)
 	}
 
-	return tcpAddr, cleanup
+	return httpAddr, cleanup
+}
+
+// connectHTTP is a helper that connects to the test RPC server via HTTP.
+func connectHTTP(t *testing.T, addr string) *rpc.Client {
+	t.Helper()
+	httpClient, err := rpc.TryConnectHTTPWithTimeout(addr, "", 2*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect via HTTP: %v", err)
+	}
+	return rpc.WrapHTTPClient(httpClient)
 }
 
 // seedAgents creates agent issues in the test server via RPC.
 func seedAgents(t *testing.T, addr string, agents []types.Issue) {
 	t.Helper()
 	for _, agent := range agents {
-		client, err := rpc.TryConnectTCPWithTimeout(addr, "", 2*time.Second)
-		if err != nil {
-			t.Fatalf("failed to connect for seeding: %v", err)
-		}
+		client := connectHTTP(t, addr)
 
 		// Create the agent issue
-		_, err = client.Create(&rpc.CreateArgs{
+		_, err := client.Create(&rpc.CreateArgs{
 			ID:        agent.ID,
 			Title:     "Test agent " + agent.ID,
 			IssueType: "task",
@@ -2110,10 +2117,7 @@ func seedAgents(t *testing.T, addr string, agents []types.Issue) {
 
 		// If the agent has pod info, register it
 		if agent.PodName != "" {
-			client2, err := rpc.TryConnectTCPWithTimeout(addr, "", 2*time.Second)
-			if err != nil {
-				t.Fatalf("failed to connect for pod registration: %v", err)
-			}
+			client2 := connectHTTP(t, addr)
 			_, err = client2.AgentPodRegister(&rpc.AgentPodRegisterArgs{
 				AgentID:   agent.ID,
 				PodName:   agent.PodName,

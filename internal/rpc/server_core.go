@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -61,10 +60,7 @@ type Server struct {
 	storage       storage.Storage // Default storage (for backward compat)
 	wispStore     WispStore       // In-memory store for ephemeral wisps
 	listener      net.Listener
-	tcpAddr       string           // TCP address to listen on (e.g., ":9876")
-	tcpListener   net.Listener     // TCP listener (in addition to Unix socket)
-	tlsConfig     *tls.Config      // TLS config for TCP connections (nil = no TLS)
-	tcpToken      string           // Token for TCP authentication (empty = no auth required)
+	authToken     string           // Token for HTTP authentication (empty = no auth required)
 	httpAddr      string           // HTTP address to listen on (e.g., ":9080")
 	httpServer    *HTTPServer      // HTTP server (wraps RPC in HTTP POST endpoints)
 	mu            sync.RWMutex
@@ -483,44 +479,20 @@ func (s *Server) SetNATSHealthFn(fn func() NATSHealthInfo) {
 	s.natsHealthFn = fn
 }
 
-// SetTCPAddr sets the TCP address to listen on (e.g., ":9876" or "0.0.0.0:9876").
-// Must be called before Start(). When set, the server will listen on both the
-// Unix socket AND the TCP address.
-func (s *Server) SetTCPAddr(addr string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.tcpAddr = addr
-}
-
-// TCPAddr returns the configured TCP address, or empty string if not set.
-func (s *Server) TCPAddr() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.tcpAddr
-}
-
-// TCPListener returns the active TCP listener, or nil if not configured.
-// Used for testing and diagnostics.
-func (s *Server) TCPListener() net.Listener {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.tcpListener
-}
-
-// SetTCPToken sets the token required for TCP connection authentication.
-// When set, TCP clients must include this token in their requests.
+// SetAuthToken sets the token required for HTTP authentication.
+// When set, HTTP clients must include this token as a Bearer token.
 // Unix socket connections are not affected (local connections are trusted).
-func (s *Server) SetTCPToken(token string) {
+func (s *Server) SetAuthToken(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.tcpToken = token
+	s.authToken = token
 }
 
-// TCPToken returns the configured TCP authentication token, or empty string if not set.
-func (s *Server) TCPToken() string {
+// AuthToken returns the configured authentication token, or empty string if not set.
+func (s *Server) AuthToken() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.tcpToken
+	return s.authToken
 }
 
 // SetHTTPAddr sets the HTTP address to listen on (e.g., ":9080" or "0.0.0.0:9080").
