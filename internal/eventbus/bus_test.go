@@ -356,6 +356,29 @@ func TestJetStreamEnabled(t *testing.T) {
 	}
 }
 
+func TestJetStreamGetter(t *testing.T) {
+	bus := New()
+	if js := bus.JetStream(); js != nil {
+		t.Error("expected nil JetStream before SetJetStream")
+	}
+
+	_, js, cleanup := startTestNATS(t)
+	defer cleanup()
+
+	bus.SetJetStream(js)
+	if got := bus.JetStream(); got == nil {
+		t.Error("expected non-nil JetStream after SetJetStream")
+	}
+	if got := bus.JetStream(); got != js {
+		t.Error("JetStream() should return same context passed to SetJetStream")
+	}
+
+	bus.SetJetStream(nil)
+	if got := bus.JetStream(); got != nil {
+		t.Error("expected nil JetStream after SetJetStream(nil)")
+	}
+}
+
 func TestDispatchPublishesToJetStream(t *testing.T) {
 	_, js, cleanup := startTestNATS(t)
 	defer cleanup()

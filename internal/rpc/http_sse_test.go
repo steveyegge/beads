@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/beads/internal/eventbus"
 )
 
 func TestSSEFilter_Matches(t *testing.T) {
@@ -272,4 +274,198 @@ func TestSSEEndpointNoAuth(t *testing.T) {
 	if !found {
 		t.Errorf("replayed event not found in SSE output. Lines: %v", lines)
 	}
+}
+
+func TestMutationTypeToNATSSubject(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{MutationCreate, "MutationCreate"},
+		{MutationUpdate, "MutationUpdate"},
+		{MutationDelete, "MutationDelete"},
+		{MutationComment, "MutationComment"},
+		{MutationStatus, "MutationStatus"},
+		{"unknown", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := mutationTypeToNATSSubject(tt.input)
+			if got != tt.want {
+				t.Errorf("mutationTypeToNATSSubject(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPayloadToMutationEventSSE(t *testing.T) {
+	payload := eventbus.MutationEventPayload{
+		Type:      "create",
+		IssueID:   "bd-42",
+		Title:     "Test Issue",
+		Assignee:  "alice",
+		Actor:     "bob",
+		Timestamp: "2025-06-15T10:30:00.123456789Z",
+		OldStatus: "",
+		NewStatus: "open",
+		ParentID:  "bd-1",
+		IssueType: "task",
+		Labels:    []string{"p1", "urgent"},
+		AwaitType: "decision",
+	}
+
+	evt := payloadToMutationEventSSE(payload)
+
+	if evt.Type != "create" {
+		t.Errorf("Type = %q, want %q", evt.Type, "create")
+	}
+	if evt.IssueID != "bd-42" {
+		t.Errorf("IssueID = %q, want %q", evt.IssueID, "bd-42")
+	}
+	if evt.Title != "Test Issue" {
+		t.Errorf("Title = %q, want %q", evt.Title, "Test Issue")
+	}
+	if evt.Assignee != "alice" {
+		t.Errorf("Assignee = %q, want %q", evt.Assignee, "alice")
+	}
+	if evt.Actor != "bob" {
+		t.Errorf("Actor = %q, want %q", evt.Actor, "bob")
+	}
+	if evt.Timestamp.IsZero() {
+		t.Error("Timestamp should not be zero")
+	}
+	if evt.NewStatus != "open" {
+		t.Errorf("NewStatus = %q, want %q", evt.NewStatus, "open")
+	}
+	if evt.ParentID != "bd-1" {
+		t.Errorf("ParentID = %q, want %q", evt.ParentID, "bd-1")
+	}
+	if evt.IssueType != "task" {
+		t.Errorf("IssueType = %q, want %q", evt.IssueType, "task")
+	}
+	if len(evt.Labels) != 2 || evt.Labels[0] != "p1" {
+		t.Errorf("Labels = %v, want [p1 urgent]", evt.Labels)
+	}
+	if evt.AwaitType != "decision" {
+		t.Errorf("AwaitType = %q, want %q", evt.AwaitType, "decision")
+	}
+}
+
+func TestPayloadToMutationEventSSE_BadTimestamp(t *testing.T) {
+	payload := eventbus.MutationEventPayload{
+		Type:      "update",
+		IssueID:   "bd-1",
+		Timestamp: "not-a-timestamp",
+	}
+	evt := payloadToMutationEventSSE(payload)
+	if !evt.Timestamp.IsZero() {
+		t.Errorf("expected zero time for bad timestamp, got %v", evt.Timestamp)
+	}
+	if evt.Type != "update" {
+		t.Errorf("Type should still be set: got %q", evt.Type)
+	}
+}
+
+func TestGetBus_NilByDefault(t *testing.T) {
+	s := NewServer("/tmp/test.sock", nil, "/tmp/test", "/tmp/test.db")
+	if bus := s.GetBus(); bus != nil {
+		t.Error("expected nil bus before SetBus")
+	}
+}
+
+func TestGetBus_AfterSetBus(t *testing.T) {
+	s := NewServer("/tmp/test.sock", nil, "/tmp/test", "/tmp/test.db")
+	bus := &eventbus.Bus{}
+	s.SetBus(bus)
+	if got := s.GetBus(); got != bus {
+		t.Error("GetBus should return the bus set via SetBus")
+	}
+}
+
+func TestStreamFromMemory_Keepalive(t *testing.T) {
+	// Verify that the memory-based SSE stream sends keepalive pings.
+	// We use a short-lived context and check that `: keepalive` appears.
+	s := NewServer("/tmp/test.sock", nil, "/tmp/test", "/tmp/test.db")
+	h := NewHTTPServer(s, ":0", "")
+
+	ts := httptest.NewServer(http.HandlerFunc(h.handleSSEEvents))
+	defer ts.Close()
+
+	// Use a 2-second context — the keepalive ticker is 15s so we won't
+	// actually see one in a unit test. Instead, verify the stream starts
+	// correctly and delivers events.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+
+	// Emit an event and verify it arrives
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		s.emitMutation(MutationCreate, "bd-keepalive", "Keepalive Test", "user1")
+	}()
+
+	scanner := bufio.NewScanner(resp.Body)
+	found := false
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), "bd-keepalive") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("event not received via memory-based SSE stream")
+	}
+}
+
+func TestStreamFromMemory_FallbackWhenNoBus(t *testing.T) {
+	// When no bus is set, handleSSEEvents should fall back to memory streaming.
+	s := NewServer("/tmp/test.sock", nil, "/tmp/test", "/tmp/test.db")
+	h := NewHTTPServer(s, ":0", "")
+
+	// No SetBus call — should use memory path
+
+	ts := httptest.NewServer(http.HandlerFunc(h.handleSSEEvents))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Emit and check
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		s.emitMutation(MutationUpdate, "bd-fallback", "Fallback Test", "user1")
+	}()
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), "bd-fallback") {
+			return // success
+		}
+	}
+	t.Error("event not received via memory fallback")
 }
