@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,11 +29,83 @@ var (
 	inProcessMutex sync.Mutex // Protects concurrent access to rootCmd and global state
 )
 
-// setupCLITestDB creates a fresh initialized bd database for CLI tests
+// templateDB holds a pre-initialized bd database directory.
+// Created once via sync.Once, then copied for each test to avoid
+// running bd init (which creates SQLite DB, config files, etc.) per test.
+// This optimization eliminates ~2s per test from repeated initialization.
+var (
+	templateDBDir  string
+	templateDBOnce sync.Once
+	templateDBErr  error
+)
+
+// initTemplateDB creates a single template database that can be copied for each test.
+// Uses exec.Command (subprocess) to avoid polluting Cobra global state.
+// The testBD binary is already built once in init().
+func initTemplateDB() {
+	templateDBOnce.Do(func() {
+		tmpDir, err := os.MkdirTemp("", "bd-cli-template-*")
+		if err != nil {
+			templateDBErr = fmt.Errorf("failed to create template dir: %w", err)
+			return
+		}
+		templateDBDir = tmpDir
+
+		// Use exec.Command to run bd init in a subprocess.
+		// This avoids any Cobra global state pollution that would affect subsequent
+		// in-process test runs.
+		cmd := exec.Command(testBD, "init", "--prefix", "test", "--quiet")
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			templateDBErr = fmt.Errorf("template bd init failed: %v\n%s", err, out)
+			return
+		}
+	})
+}
+
+// copyDir recursively copies a directory tree.
+func copyDir(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, 0750); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		if entry.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(dstPath, data, 0600); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// setupCLITestDB creates a fresh initialized bd database for CLI tests.
+// Uses a cached template directory to avoid running bd init for every test.
+// The template is created once via sync.Once and copied for each test.
 func setupCLITestDB(t *testing.T) string {
 	t.Helper()
+	initTemplateDB()
+	if templateDBErr != nil {
+		t.Fatalf("Template DB initialization failed: %v", templateDBErr)
+	}
 	tmpDir := createTempDirWithCleanup(t)
-	runBDInProcess(t, tmpDir, "init", "--prefix", "test", "--quiet")
+	if err := copyDir(templateDBDir, tmpDir); err != nil {
+		t.Fatalf("Failed to copy template DB: %v", err)
+	}
 	return tmpDir
 }
 
@@ -75,11 +148,6 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	inProcessMutex.Lock()
 	defer inProcessMutex.Unlock()
 
-	// Add --no-daemon to all commands except init
-	if len(args) > 0 && args[0] != "init" {
-		args = append([]string{"--no-daemon"}, args...)
-	}
-
 	// Save original state
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
@@ -100,10 +168,6 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	// Set args for rootCmd
 	rootCmd.SetArgs(args)
 	os.Args = append([]string{"bd"}, args...)
-
-	// Set environment
-	os.Setenv("BEADS_NO_DAEMON", "1")
-	defer os.Unsetenv("BEADS_NO_DAEMON")
 
 	// Execute command
 	err := rootCmd.Execute()
@@ -675,20 +739,28 @@ func init() {
 func runBDExec(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 
-	// Add --no-daemon to all commands except init
-	if len(args) > 0 && args[0] != "init" {
-		args = append([]string{"--no-daemon"}, args...)
-	}
-
 	cmd := exec.Command(testBD, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+	cmd.Env = os.Environ()
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("bd %v failed: %v\nOutput: %s", args, err, out)
 	}
 	return string(out)
+}
+
+// runBDExecAllowErrorWithEnv runs bd via exec.Command with custom env vars,
+// returning combined output and any error (does not fail the test on error).
+func runBDExecAllowErrorWithEnv(t *testing.T, dir string, env []string, args ...string) (string, error) {
+	t.Helper()
+
+	cmd := exec.Command(testBD, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 // TestCLI_EndToEnd performs end-to-end testing using the actual binary
@@ -836,10 +908,6 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 	inProcessMutex.Lock()
 	defer inProcessMutex.Unlock()
 
-	if len(args) > 0 && args[0] != "init" {
-		args = append([]string{"--no-daemon"}, args...)
-	}
-
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	oldDir, _ := os.Getwd()
@@ -856,9 +924,6 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 
 	rootCmd.SetArgs(args)
 	os.Args = append([]string{"bd"}, args...)
-
-	os.Setenv("BEADS_NO_DAEMON", "1")
-	defer os.Unsetenv("BEADS_NO_DAEMON")
 
 	cmdErr := rootCmd.Execute()
 
@@ -1047,7 +1112,7 @@ func TestCLI_CreateDryRun(t *testing.T) {
 		os.WriteFile(mdFile, []byte("# Test Issue\n\nDescription here"), 0644)
 
 		// Run create with --dry-run and --file (should error)
-		cmd := exec.Command(testBD, "--no-daemon", "create", "--file", mdFile, "--dry-run")
+		cmd := exec.Command(testBD, "create", "--file", mdFile, "--dry-run")
 		cmd.Dir = tmpDir
 		cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
 		out, err := cmd.CombinedOutput()
