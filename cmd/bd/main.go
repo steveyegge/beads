@@ -176,6 +176,11 @@ func getActorWithGit() string {
 		return beadsActor
 	}
 
+	// Check GT_ROLE env var (Gas Town agent identity, e.g. "gastown/polecats/furiosa")
+	if gtRole := os.Getenv("GT_ROLE"); gtRole != "" {
+		return gtRole
+	}
+
 	// Try git config user.name - the natural default for a git-native tool
 	if out, err := exec.Command("git", "config", "user.name").Output(); err == nil {
 		if gitUser := strings.TrimSpace(string(out)); gitUser != "" {
@@ -188,7 +193,7 @@ func getActorWithGit() string {
 		return user
 	}
 
-	return "unknown"
+	return ""
 }
 
 // getOwner returns the human owner for CV attribution.

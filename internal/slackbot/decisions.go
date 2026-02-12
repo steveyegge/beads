@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,15 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// looksLikeSessionID returns true if the string appears to be a session UUID
+// or hex identifier rather than a human-readable agent name.
+// Matches patterns like "cea46632-a2c0-4ddf-95f3-c9bd79c0ccc3" or long hex strings.
+var sessionIDPattern = regexp.MustCompile(`^[0-9a-f]{8,}(-[0-9a-f]{4,}){0,4}$`)
+
+func looksLikeSessionID(s string) bool {
+	return len(s) > 16 && sessionIDPattern.MatchString(s)
+}
 
 // Decision is a unified decision struct used internally by the Slack bot.
 // It bridges the beads DecisionPoint/Issue pair into a single view.
@@ -262,7 +272,12 @@ func convertDecisionResponse(resp *rpc.DecisionResponse) Decision {
 
 	d.Question = dp.Prompt
 	d.Context = dp.Context
-	d.RequestedBy = dp.RequestedBy
+	// Sanitize: clear session IDs that leaked into RequestedBy from older versions
+	if looksLikeSessionID(dp.RequestedBy) {
+		d.RequestedBy = ""
+	} else {
+		d.RequestedBy = dp.RequestedBy
+	}
 	d.Urgency = dp.Urgency
 	d.PredecessorID = dp.PriorID
 	d.ParentBeadID = dp.ParentBeadID

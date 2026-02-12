@@ -98,8 +98,11 @@ func runDecisionStopCheck(cmd *cobra.Command, args []string) {
 	// -------------------------------------------------------------------------
 
 	if cfg.RequireAgentDecision {
-		sessionTag := getStopSessionTag()
-		agentDecision, err := findPendingAgentDecision(ctx, sessionTag)
+		// Scope by actor name (human-readable) instead of session UUID.
+		// This means all sessions from the same user share a decision pool,
+		// which is the correct behavior for stop-check gating.
+		actorTag := getActorWithGit()
+		agentDecision, err := findPendingAgentDecision(ctx, actorTag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: error finding agent decision: %v\n", err)
 			// Fail-open on error
@@ -140,9 +143,9 @@ The human will pick which direction to go, or provide custom instructions.`
 		if cfg.AgentDecisionPrompt != "" {
 			reason = cfg.AgentDecisionPrompt
 		}
-		if sessionTag != "" {
-			reason += fmt.Sprintf("\n\nIMPORTANT: Pass --requested-by %q to scope this decision to your session.", sessionTag)
-		}
+		// Note: we no longer tell the agent to pass --requested-by with the session ID.
+		// The actor name (from BD_ACTOR, git user.name, etc.) is used automatically
+		// and produces a human-readable name in Slack notifications.
 		fmt.Fprintf(os.Stderr, "No agent decision found. Blocking.\n")
 		if jsonOutput {
 			outputJSON(map[string]string{"decision": "block", "reason": reason})
@@ -584,7 +587,7 @@ func parseDurationOrDefault(s string, defaultVal time.Duration) time.Duration {
 
 // pollForAgentDecision polls until an agent-created decision appears or timeout.
 // Returns the decision if found, nil on timeout.
-func pollForAgentDecision(ctx context.Context, sessionTag string, timeout, pollInterval time.Duration) (*types.DecisionPoint, error) {
+func pollForAgentDecision(ctx context.Context, actorTag string, timeout, pollInterval time.Duration) (*types.DecisionPoint, error) {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -592,7 +595,7 @@ func pollForAgentDecision(ctx context.Context, sessionTag string, timeout, pollI
 	for {
 		select {
 		case <-ticker.C:
-			dp, err := findPendingAgentDecision(ctx, sessionTag)
+			dp, err := findPendingAgentDecision(ctx, actorTag)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: error polling for agent decision: %v\n", err)
 				continue
@@ -620,7 +623,7 @@ func pollForAgentDecision(ctx context.Context, sessionTag string, timeout, pollI
 // before stop hook fires) is not an actual problem — the agent's
 // `bd decision create --wait` call blocks until response, so by the time the
 // agent tries to stop, the decision flow is complete.
-func findPendingAgentDecision(ctx context.Context, sessionTag string) (*types.DecisionPoint, error) {
+func findPendingAgentDecision(ctx context.Context, actorTag string) (*types.DecisionPoint, error) {
 	var decisions []*types.DecisionPoint
 
 	if daemonClient != nil {
@@ -644,15 +647,15 @@ func findPendingAgentDecision(ctx context.Context, sessionTag string) (*types.De
 	}
 
 	// Filter: not created by stop-hook, has a RequestedBy value,
-	// and matches the current session tag (if available).
-	// This prevents one Claude session from picking up another's decisions.
+	// and matches the current actor (if available).
+	// This prevents one user's agents from picking up another's decisions.
 	var best *types.DecisionPoint
 	for _, dp := range decisions {
 		if dp.RequestedBy == "stop-hook" || dp.RequestedBy == "" {
 			continue
 		}
-		// Session scoping: if we have a session tag, only match decisions from this session
-		if sessionTag != "" && dp.RequestedBy != sessionTag {
+		// Actor scoping: if we have an actor tag, only match decisions from this actor
+		if actorTag != "" && dp.RequestedBy != actorTag {
 			continue
 		}
 		if best == nil || dp.CreatedAt.After(best.CreatedAt) {
