@@ -863,7 +863,9 @@ var rootCmd = &cobra.Command{
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
 		// Close daemon client
-		_ = daemonClient.Close()
+		if daemonClient != nil {
+			_ = daemonClient.Close()
+		}
 		if profileFile != nil {
 			pprof.StopCPUProfile()
 			_ = profileFile.Close()
