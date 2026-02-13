@@ -30,12 +30,13 @@ tasks:
       ref: ${{ init.commit-sha }}
 
   - key: go
+    use: code
     call: golang/install 1.2.0
     with:
       go-version: "1.25"
 
   - key: goreleaser
-    use: [code, go]
+    use: go
     run: |
       # Install GoReleaser
       curl -sSfL https://github.com/goreleaser/goreleaser/releases/download/v2.8.2/goreleaser_Linux_x86_64.tar.gz \
