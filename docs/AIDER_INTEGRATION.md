@@ -114,7 +114,7 @@ Aider: Great! Mark it complete by running:
 /run bd close bd-42 --reason "Implemented login fix and added tests"
 
 Then sync to git:
-/run bd sync
+/run bd sync --full
 ```
 
 ## Configuration
@@ -128,7 +128,7 @@ The config file contains instructions for the AI:
 # 1. Track ALL work in bd (never use markdown TODOs)
 # 2. Suggest 'bd ready' to find available work
 # 3. Suggest 'bd create' for new issues/tasks/bugs
-# 4. Suggest 'bd sync' at end of session
+# 4. Suggest 'bd sync --full' at end of session
 # 5. ALWAYS suggest commands - user will run them via /run
 ```
 
@@ -175,7 +175,7 @@ You can customize this file to add project-specific instructions.
 /run bd close bd-abc --reason "Implemented and tested"
 
 # Sync to git
-/run bd sync
+/run bd sync --full
 ```
 
 ### Checking Status
@@ -243,7 +243,7 @@ Add to your shell config for faster commands:
 ```bash
 alias bdr='/run bd ready'
 alias bdc='/run bd create'
-alias bds='/run bd sync'
+alias bds='/run bd sync --full'
 ```
 
 Then in aider:
@@ -323,7 +323,7 @@ Aider handles git commits. bd tracks issues. They work together:
 2. Make changes with aider
 3. Aider commits changes
 4. Complete issue: `/run bd close bd-42`
-5. Sync issues: `/run bd sync`
+5. Sync issues: `/run bd sync --full`
 
 ## Example Session
 
@@ -366,7 +366,7 @@ Aider: Run:
 /run bd close bd-42 --reason "Fixed login bug - added input validation"
 
 Then sync:
-/run bd sync
+/run bd sync --full
 ```
 
 ## References

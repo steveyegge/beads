@@ -2,6 +2,8 @@
 
 This document describes the auto-routing feature that intelligently directs new issues to the appropriate repository based on user role.
 
+> Note: The daemon/RPC layer has been removed. Sections that reference `bd daemon` are legacy and kept for historical context.
+
 ## Overview
 
 Auto-routing solves the OSS contributor problem: contributors want to plan work locally without polluting upstream PRs with planning issues. The routing layer automatically detects whether you're a maintainer or contributor and routes `bd create` to the appropriate repository.

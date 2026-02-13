@@ -216,9 +216,8 @@ bd version
 ```
 
 **Windows notes:**
-- The background daemon listens on a loopback TCP endpoint recorded in `.beads\bd.sock`
-- Keep that metadata file intact
-- Allow `bd.exe` loopback traffic through any host firewall
+- Beads runs in direct mode; there is no daemon socket to manage.
+- If `.beads\bd.sock` exists from older versions, it can be deleted.
 
 ## IDE and Editor Integrations
 
@@ -504,7 +503,6 @@ sudo mv bd /usr/local/bin/
 ```bash
 bd info --whats-new
 bd hooks install
-bd daemons killall
 bd version
 ```
 

@@ -12,7 +12,7 @@ When working as a team on a shared repository, you want to:
 
 ## Solution
 
-Use `bd init --team` to set up team collaboration with automatic sync and optional protected branch support.
+Use `bd init --team` to set up team collaboration with sync-branch settings, then publish issue updates with `bd sync --full` (or git hooks).
 
 ## Setup
 
@@ -30,14 +30,14 @@ The wizard will:
 1. ✅ Detect your git configuration
 2. ✅ Ask if main branch is protected
 3. ✅ Configure sync branch (if needed)
-4. ✅ Set up automatic sync
-5. ✅ Enable team mode
+4. ✅ Enable team mode
+5. ✅ Record legacy auto-sync preference (daemon removed; use `bd sync --full`)
 
 ### Step 2: Protected Branch Configuration
 
 If your main branch is protected (GitHub/GitLab), the wizard will:
 - Create a separate `beads-metadata` branch for issue updates
-- Configure beads to commit to this branch automatically
+- Configure beads to target this branch when you run `bd sync --full`
 - Set up periodic PR workflow for merging to main
 
 ### Step 3: Team Members Join
@@ -66,11 +66,10 @@ If main isn't protected:
 # Create issue
 bd create "Implement feature X" -p 1
 
-# Daemon auto-commits to main
-# (or run 'bd sync' manually)
+# Sync issue updates (pull → merge → export → commit → push)
+bd sync --full
 
-# Pull to see team's issues
-git pull
+# View team's issues
 bd list
 ```
 
@@ -82,11 +81,8 @@ If main is protected:
 # Create issue
 bd create "Implement feature X" -p 1
 
-# Daemon commits to beads-metadata branch
-# (or run 'bd sync' manually)
-
-# Push beads-metadata
-git push origin beads-metadata
+# Sync issue updates to beads-metadata
+bd sync --full
 
 # Periodically: merge beads-metadata to main via PR
 ```
@@ -100,9 +96,8 @@ team:
   enabled: true
   sync_branch: beads-metadata  # or main if not protected
 
-daemon:
-  auto_commit: true
-  auto_push: true
+sync:
+  branch: beads-metadata       # used by bd sync --full
 ```
 
 ### Manual Configuration
@@ -114,9 +109,8 @@ bd config set team.enabled true
 # Set sync branch
 bd config set team.sync_branch beads-metadata
 
-# Enable auto-sync
-bd config set daemon.auto_commit true
-bd config set daemon.auto_push true
+# Set sync branch for bd sync --full
+bd config set sync.branch beads-metadata
 ```
 
 ## Example Workflows
@@ -127,18 +121,20 @@ bd config set daemon.auto_push true
 # Alice creates an issue
 bd create "Fix authentication bug" -p 1
 
-# Daemon commits and pushes to main
-# (auto-sync enabled)
+# Sync changes to main
+bd sync --full
 
-# Bob pulls changes
-git pull
+# Bob syncs changes
+bd sync --full
 bd list  # Sees Alice's issue
 
 # Bob claims it
 bd update bd-abc --status in_progress
 
-# Daemon commits Bob's update
-# Alice pulls and sees Bob is working on it
+# Bob syncs his update
+bd sync --full
+# Alice syncs and sees Bob is working on it
+bd sync --full
 ```
 
 ### Scenario 2: Protected Main
@@ -147,11 +143,11 @@ bd update bd-abc --status in_progress
 # Alice creates an issue
 bd create "Add new API endpoint" -p 1
 
-# Daemon commits to beads-metadata
-git push origin beads-metadata
+# Sync changes to beads-metadata
+bd sync --full
 
-# Bob pulls beads-metadata
-git pull origin beads-metadata
+# Bob syncs beads-metadata
+bd sync --full
 bd list  # Sees Alice's issue
 
 # Later: merge beads-metadata to main via PR
@@ -211,25 +207,25 @@ bd close bd-abc --reason "PR #123 merged"
 
 ## Sync Strategies
 
-### Auto-Sync (Recommended)
+### Full Sync (Recommended)
 
-Daemon commits and pushes automatically:
+Run a full sync when you want to publish issue changes and pull updates:
 
 ```bash
-bd daemon start --auto-commit --auto-push
+bd sync --full
 ```
 
 Benefits:
 - ✅ Always in sync
-- ✅ No manual intervention
-- ✅ Real-time collaboration
+- ✅ Single command workflow
+- ✅ Includes pull/merge/export/commit/push
 
-### Manual Sync
+### Export-Only Sync
 
-Sync when you want:
+Export issues without touching git history:
 
 ```bash
-bd sync  # Export, commit, pull, import, push
+bd sync  # Export only (commit/push manually)
 ```
 
 Benefits:
@@ -312,14 +308,12 @@ A: Hash-based IDs prevent collisions. Even if created simultaneously, they get d
 
 ### Q: How do I disable auto-sync?
 
-A: Turn it off:
+A: The current CLI runs in direct mode (no daemon). Sync when you're ready:
 
 ```bash
-bd config set daemon.auto_commit false
-bd config set daemon.auto_push false
-
-# Sync manually
-bd sync
+bd sync --full   # full sync
+# or
+bd sync          # export only (commit/push manually)
 ```
 
 ### Q: Can we use different sync branches per person?
@@ -338,33 +332,25 @@ A: Add to your CI pipeline:
 # In .github/workflows/main.yml
 - name: Sync beads issues
   run: |
-    bd sync
+    bd sync --full --no-push
     git push origin beads-metadata
 ```
 
 ## Troubleshooting
 
-### Issue: Daemon not committing
+### Issue: Sync not publishing updates
 
-Check daemon status:
+Check sync status and branch:
 
 ```bash
-bd daemon status
-bd daemons list
+bd sync --status
+bd config get sync.branch
 ```
 
-Verify config:
+Run a full sync:
 
 ```bash
-bd config get daemon.auto_commit
-bd config get daemon.auto_push
-```
-
-Restart daemon:
-
-```bash
-bd daemon stop
-bd daemon start --auto-commit --auto-push
+bd sync --full
 ```
 
 ### Issue: Merge conflicts in JSONL
@@ -383,14 +369,13 @@ git commit
 Manually sync:
 
 ```bash
-bd sync
-git push
+bd sync --full
 ```
 
 Check for conflicts:
 
 ```bash
-git status
+bd sync --status
 bd validate --checks=conflicts
 ```
 

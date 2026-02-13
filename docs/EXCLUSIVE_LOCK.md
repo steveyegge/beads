@@ -1,6 +1,8 @@
 # Exclusive Lock Protocol
 
-The exclusive lock protocol allows external tools to claim exclusive management of a beads database, preventing the bd daemon from interfering with their operations.
+The exclusive lock protocol allows external tools to claim exclusive management of a beads database, preventing bd commands from interfering with their operations.
+
+> Note: The daemon has been removed; lock checks are enforced in direct mode.
 
 ## Use Cases
 
@@ -31,13 +33,13 @@ The lock file is located at `.beads/.exclusive-lock` and contains JSON:
 - `started_at` (RFC3339 timestamp, required): When the lock was acquired
 - `version` (string, optional): Version of the lock holder
 
-### Daemon Behavior
+### Direct Mode Behavior
 
-The bd daemon checks for exclusive locks at the start of each sync cycle:
+bd checks for exclusive locks before accessing the database:
 
-1. **No lock file**: Daemon proceeds normally with sync operations
-2. **Valid lock (process alive)**: Daemon skips all operations for this database
-3. **Stale lock (process dead)**: Daemon removes the lock and proceeds
+1. **No lock file**: bd proceeds normally with sync operations
+2. **Valid lock (process alive)**: bd skips all operations for this database
+3. **Stale lock (process dead)**: bd removes the lock and proceeds
 4. **Malformed lock**: Daemon fails safe and skips the database
 
 ### Stale Lock Detection

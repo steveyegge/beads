@@ -105,6 +105,8 @@ Server mode is required for:
 
 Federation enables direct sync between Dolt installations without a central hub.
 
+> Legacy: Federation depends on the daemon/RPC layer, which has been removed. This section is kept for historical reference.
+
 ### Architecture
 
 ```
@@ -116,14 +118,14 @@ Federation enables direct sync between Dolt installations without a central hub.
 └─────────────────┘         └─────────────────┘
 ```
 
-The daemon in federation mode exposes two ports:
+The legacy daemon in federation mode exposed two ports:
 - **MySQL (3306)**: Multi-writer SQL access
 - **remotesapi (8080)**: Peer-to-peer push/pull
 
 ### Quick Start
 
 ```bash
-# Start daemon in federation mode
+# Legacy daemon start in federation mode
 bd daemon start --federation
 
 # Add a peer
@@ -170,7 +172,7 @@ bd doctor --deep
 # Verify peer connectivity
 bd federation status
 
-# View daemon federation logs
+# Legacy: daemon federation logs
 bd daemon logs | grep -i federation
 ```
 
@@ -293,7 +295,7 @@ bd doctor --server         # Server mode checks (if applicable)
 2. **Nuclear option (rebuild from JSONL):**
    ```bash
    rm -rf .beads/dolt
-   bd sync                  # Rebuilds from JSONL
+   bd sync --import          # Rebuilds from JSONL
    ```
 
 3. **Restore from backup:**

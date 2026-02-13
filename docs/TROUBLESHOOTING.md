@@ -2,6 +2,8 @@
 
 Common issues and solutions for bd users.
 
+**Note:** The daemon/RPC layer has been removed. Sections referencing `bd daemon`, `bd daemons`, or RPC debug output apply only to older releases.
+
 ## Table of Contents
 
 - [Debug Environment Variables](#debug-environment-variables)
@@ -23,10 +25,10 @@ bd supports several environment variables for debugging specific subsystems. Ena
 | Variable | Purpose | Output Location | Usage |
 |----------|---------|----------------|-------|
 | `BD_DEBUG` | General debug logging | stderr | Set to any value to enable |
-| `BD_DEBUG_RPC` | RPC communication between CLI and daemon | stderr | Set to `1` or `true` |
+| `BD_DEBUG_RPC` | Legacy: RPC communication between CLI and daemon | stderr | Set to `1` or `true` |
 | `BD_DEBUG_SYNC` | Sync and import timestamp protection | stderr | Set to any value to enable |
 | `BD_DEBUG_ROUTING` | Issue routing and multi-repo resolution | stderr | Set to any value to enable |
-| `BD_DEBUG_FRESHNESS` | Database file replacement detection | daemon logs | Set to any value to enable |
+| `BD_DEBUG_FRESHNESS` | Legacy: database file replacement detection | legacy daemon logs | Set to any value to enable |
 
 ### Usage Examples
 
@@ -37,7 +39,7 @@ export BD_DEBUG=1
 bd ready
 ```
 
-**RPC communication issues:**
+**RPC communication issues (legacy):**
 ```bash
 # Debug daemon communication
 export BD_DEBUG_RPC=1
@@ -70,7 +72,7 @@ bd create "Test issue" --rig=planning
 # [routing] ID plan-123 matched prefix plan -> /path/to/planning-repo/beads
 ```
 
-**Database reconnection issues:**
+**Database reconnection issues (legacy):**
 ```bash
 # Debug database file replacement detection
 export BD_DEBUG_FRESHNESS=1

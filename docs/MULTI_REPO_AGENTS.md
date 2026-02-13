@@ -4,6 +4,8 @@ This guide covers multi-repo workflow patterns specifically for AI agents workin
 
 **For humans**, see [MULTI_REPO_MIGRATION.md](MULTI_REPO_MIGRATION.md) for interactive wizards and detailed setup.
 
+> Note: The daemon/RPC layer has been removed from current releases. Sections that mention per-project daemons or daemon sockets are legacy and kept for historical context.
+
 ## Quick Reference
 
 ### Single MCP Server (Recommended)
@@ -231,7 +233,7 @@ bd config get repos.additional
 bd config set repos.additional "~/repo1,~/repo2"
 
 # Force sync
-bd sync
+bd sync --full
 bd list --json
 ```
 
@@ -304,7 +306,7 @@ bd daemons killall        # Restart all daemons
 
 ### Teams
 - ✅ Commit `.beads/issues.jsonl` to shared repo
-- ✅ Use `bd sync` to ensure changes are committed/pushed
+- ✅ Use `bd sync --full` to ensure changes are committed/pushed
 - ✅ Link related issues across repos with dependencies
 - ❌ Don't gitignore `.beads/` - you lose the git ledger
 
@@ -318,7 +320,7 @@ bd daemons killall        # Restart all daemons
 - ✅ Always use single MCP server (per-project daemons)
 - ✅ Check routing config before filing issues
 - ✅ Use `bd info --json` to verify workspace state
-- ✅ Run `bd sync` at end of session
+- ✅ Run `bd sync --full` at end of session
 - ❌ Don't assume routing behavior - check config
 
 ## Backward Compatibility

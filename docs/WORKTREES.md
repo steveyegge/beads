@@ -21,7 +21,7 @@ When you configure a **sync branch** (via `bd init --branch <name>` or `bd confi
 **Solution:** Beads creates a lightweight worktree that:
 - Contains only the `.beads/` directory (sparse checkout)
 - Lives in `.git/beads-worktrees/<sync-branch>/`
-- Commits issue changes to the sync branch automatically
+- Commits issue changes to the sync branch when you run `bd sync --full`
 - Leaves your main working directory untouched
 
 ### Where to Find These Worktrees
@@ -39,6 +39,8 @@ your-project/
 │   └── issues.jsonl              # Local JSONL (may differ from sync branch)
 └── src/                          # Your code (untouched by sync)
 ```
+
+**Note:** You will see `.beads/issues.jsonl` in both your working copy and the sync worktree. The working copy is a local mirror for the database; the sync worktree copy is the one committed to the sync branch.
 
 ### Common Confusion: "Beads took over main!"
 
@@ -75,10 +77,6 @@ If you don't want beads to use a separate sync branch:
 # Unset the sync branch configuration
 bd config set sync.branch ""
 
-# Stop and restart daemon
-bd daemon stop
-bd daemon start
-
 # Clean up existing worktrees
 rm -rf .git/beads-worktrees
 git worktree prune
@@ -113,7 +111,7 @@ Main Repository
 ├── .git/                    # Shared git directory
 ├── .beads/                  # Shared database (main repo)
 │   ├── beads.db            # SQLite database
-│   ├── issues.jsonl        # Issue data (git-tracked)
+│   ├── issues.jsonl        # Issue data (tracked in sync branch if configured)
 │   └── config.yaml         # Configuration
 ├── feature-branch/         # Worktree 1
 │   └── (code files only)
@@ -125,54 +123,39 @@ Main Repository
 - ✅ **One database** - All worktrees share the same `.beads` directory in main repo
 - ✅ **Automatic discovery** - Database found regardless of which worktree you're in
 - ✅ **Concurrent access** - SQLite locking prevents corruption
-- ✅ **Git integration** - Issues sync via JSONL in main repo
+- ✅ **Git integration** - Issues sync via JSONL (tracked in sync branch when configured)
 
-### Worktree Detection & Daemon Safety
+### Worktree Detection & Sync Behavior
 
-bd automatically detects when you're in a git worktree and handles daemon mode safely:
+bd automatically detects when you're in a git worktree and resolves the main `.beads` directory. The current CLI runs in direct mode (no background daemon).
 
-**Default behavior (no sync-branch configured):**
-- Daemon is **automatically disabled** in worktrees
-- Uses direct mode for safety (no warning needed)
-- All commands work correctly without configuration
+**Without sync-branch configured:**
+- `bd sync` exports JSONL only (no git operations)
+- `bd sync --full` commits to your current branch
 
 **With sync-branch configured:**
-- Daemon is **enabled** in worktrees
-- Commits go to dedicated sync branch (e.g., `beads-sync`)
-- Full daemon functionality available across all worktrees
+- `bd sync --full` commits to the sync branch worktree
 
 ## Usage Patterns
 
-### Recommended: Configure Sync-Branch for Full Daemon Support
+### Recommended: Use a Sync Branch for Protected Main
 
 ```bash
-# Configure sync-branch once (in main repo or any worktree)
-bd config set sync-branch beads-sync
+# Configure sync branch once (in main repo or any worktree)
+bd config set sync.branch beads-sync
 
-# Now daemon works safely in all worktrees
-cd feature-worktree
-bd create "Implement feature X" -t feature -p 1
-bd update bd-a1b2 --status in_progress
-bd ready  # Daemon auto-syncs to beads-sync branch
+# Commit/push issues to the sync branch
+bd sync --full
 ```
 
-### Alternative: Direct Mode (No Configuration Needed)
+### Direct Commit (No Sync Branch)
 
 ```bash
-# Without sync-branch, daemon is auto-disabled in worktrees
-cd feature-worktree
-bd create "Implement feature X" -t feature -p 1
-bd ready  # Uses direct mode automatically
-bd sync   # Manual sync when needed
-```
+# Commit issues on your current branch
+bd sync --full
 
-### Legacy: Explicit Daemon Disable
-
-```bash
-# Still works if you prefer explicit control
-export BEADS_NO_DAEMON=1
-# or
-bd --no-daemon ready
+# Or export only (no git operations)
+bd sync
 ```
 
 ## Worktree-Aware Features
@@ -286,21 +269,15 @@ bd config set sync.branch ""
 
 **Solution:** See [Beads-Created Worktrees](#beads-created-worktrees-sync-branch) section above for details on what these are and how to remove them if unwanted.
 
-### Issue: Daemon commits to wrong branch
+### Issue: Sync changes appear on the wrong branch
 
-**Symptoms:** Changes appear on unexpected branch in git history
+**Symptoms:** Issues show up on a branch you didn't expect
 
-**Note:** This issue should no longer occur with the new worktree safety feature. Daemon is automatically disabled in worktrees unless sync-branch is configured.
+**Solution:** Ensure a dedicated sync branch is configured and re-run sync.
 
-**Solution (if still occurring):**
 ```bash
-# Option 1: Configure sync-branch (recommended)
-bd config set sync-branch beads-sync
-
-# Option 2: Explicitly disable daemon
-export BEADS_NO_DAEMON=1
-# Or use --no-daemon flag for individual commands
-bd --no-daemon sync
+bd config set sync.branch beads-sync
+bd sync --full --no-pull
 ```
 
 ### Issue: Database not found in worktree
@@ -343,12 +320,6 @@ bd info  # Should show database path in main repo
 ### Environment Variables
 
 ```bash
-# Disable daemon globally for worktree usage
-export BEADS_NO_DAEMON=1
-
-# Disable auto-start (still warns if manually started)
-export BEADS_AUTO_START_DAEMON=false
-
 # Force specific database location
 export BEADS_DB=/path/to/specific/.beads/beads.db
 ```
@@ -359,8 +330,8 @@ export BEADS_DB=/path/to/specific/.beads/beads.db
 # Configure sync behavior
 bd config set sync.branch beads-sync  # Use separate sync branch
 
-# For git-portable workflows, enable daemon auto-commit/push (SQLite backend only):
-bd daemon start --auto-commit --auto-push
+# Use a dedicated sync branch for protected main branches
+bd config set sync.branch beads-sync
 ```
 
 ## Performance Considerations
@@ -382,7 +353,7 @@ bd daemon start --auto-commit --auto-push
 
 ### Before (Limited Worktree Support)
 
-- ❌ Daemon mode broken in worktrees
+- ❌ Sync branch conflicts in worktrees
 - ❌ Manual workarounds required
 - ❌ Complex setup procedures
 - ❌ Limited documentation
@@ -410,7 +381,6 @@ git worktree add services/web
 
 # Each service team works in their worktree
 cd services/auth
-export BEADS_NO_DAEMON=1
 bd create "Add OAuth support" -t feature -p 1
 
 cd ../api
@@ -485,7 +455,7 @@ export BEADS_DIR=~/my-project-beads/.beads
 # All bd commands now use the separate repo
 bd create "My task" -t task
 bd list
-bd sync  # commits to ~/my-project-beads, pushes there
+bd sync --full  # commits to ~/my-project-beads, pushes there
 ```
 
 ### Making It Permanent
@@ -513,9 +483,10 @@ BEADS_DIR=~/my-project-beads/.beads exec bd "$@"
 
 When `BEADS_DIR` points to a different git repository than your current directory:
 
-1. `bd sync` detects "External BEADS_DIR"
+1. `bd sync --full` detects "External BEADS_DIR"
 2. Git operations (add, commit, push, pull) target the beads repo
-3. Your code repository is never touched
+3. `bd sync` without `--full` only exports JSONL (no git operations)
+4. Your code repository is never touched
 
 This was contributed by @dand-oss in [PR #533](https://github.com/steveyegge/beads/pull/533).
 

@@ -86,7 +86,7 @@ Run `bd prime` for workflow context.
 - `bd ready` - Find unblocked work
 - `bd create "Title" --type task --priority 2` - Create issue
 - `bd close <id>` - Complete work
-- `bd sync` - Sync with git (run at session end)
+- `bd sync --full` - Full sync with git (run at session end)
 ```
 
 ### Step 5: Restart VS Code
@@ -117,7 +117,7 @@ With MCP configured, ask Copilot Chat:
 | `beads_show` | Show issue details | "Show bd-42 details" |
 | `beads_update` | Update issue fields | "Set bd-42 to in progress" |
 | `beads_close` | Close an issue | "Complete bd-42" |
-| `beads_sync` | Sync to git | "Sync my changes" |
+| `beads_sync` | Export to JSONL (use `bd sync --full` for full git sync) | "Sync my changes" |
 | `beads_dep_add` | Add dependency | "bd-99 blocks bd-42" |
 | `beads_dep_tree` | Show dependency tree | "What depends on bd-42?" |
 
@@ -209,7 +209,7 @@ bd init --quiet
 Run sync at end of session:
 
 ```bash
-bd sync
+bd sync --full
 ```
 
 Or ask Copilot: "Sync my beads changes to git"

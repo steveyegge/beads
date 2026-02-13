@@ -7,8 +7,7 @@ This guide explains how to completely remove Beads from a repository.
 Run these commands from your repository root:
 
 ```bash
-# 1. Stop any running daemon
-bd daemons killall
+# 1. (Legacy) Stop any running daemon from older versions (skip for current releases)
 
 # 2. Remove git hooks installed by Beads
 rm -f .git/hooks/pre-commit .git/hooks/post-merge .git/hooks/pre-push .git/hooks/post-checkout
@@ -30,14 +29,9 @@ rm -rf .git/beads-worktrees
 
 ## Detailed Steps
 
-### 1. Stop the Daemon
+### 1. Legacy: Stop the Daemon (Older Versions Only)
 
-If a Beads daemon is running for this repository, stop it first:
-
-```bash
-bd daemons list     # Check if daemon is running
-bd daemons killall  # Stop all daemons
-```
+Current releases run in direct mode and do not start a daemon. If you still have an older daemon process running, stop it using the older `bd` binary or OS process tools before continuing.
 
 ### 2. Remove Git Hooks
 
@@ -104,10 +98,10 @@ The `.beads/` directory contains:
 |----------|-------------|
 | `beads.db` | SQLite database with issues |
 | `issues.jsonl` | Git-tracked issue data |
-| `daemon.pid` | Running daemon PID |
-| `daemon.log` | Daemon logs |
-| `daemon.lock` | Lock file for daemon |
-| `bd.sock` | Unix socket for daemon IPC |
+| `daemon.pid` | Legacy: running daemon PID (older versions) |
+| `daemon.log` | Legacy: daemon logs (older versions) |
+| `daemon.lock` | Legacy: lock file for daemon (older versions) |
+| `bd.sock` | Legacy: Unix socket for daemon IPC (older versions) |
 | `config.yaml` | Project configuration |
 | `metadata.json` | Version tracking |
 | `deletions.jsonl` | Soft-deleted issues |

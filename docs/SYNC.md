@@ -2,6 +2,8 @@
 
 This document explains the design decisions behind `bd sync` - why it works the way it does, and the problems each design choice solves.
 
+**Note:** The pull/merge/push flow described below applies to `bd sync --full` (legacy full sync). The default `bd sync` command exports JSONL only and does not perform git operations.
+
 > **Looking for something else?**
 > - Command usage: [commands/sync.md](/claude-plugin/commands/sync.md) (Reference)
 > - Troubleshooting: [website/docs/recovery/sync-failures.md](/website/docs/recovery/sync-failures.md) (How-To)
@@ -67,7 +69,7 @@ The last two rows show why 3-way merge prevents accidental data loss: if one sid
 ## Sync Flow
 
 ```
-bd sync
+bd sync --full
 
   1. Pull  -->  2. Merge  -->  3. Export  -->  4. Push
    Remote       3-way          JSONL          Remote
@@ -126,7 +128,7 @@ However, if the local copy is unchanged from base (meaning the user on this mach
 
 ## Concurrency Protection
 
-What happens if you run `bd sync` twice simultaneously? Without protection, both processes could:
+What happens if you run `bd sync --full` twice simultaneously? Without protection, both processes could:
 
 1. Load the same base state
 2. Pull at different times (seeing different remote states)
@@ -173,12 +175,15 @@ For maximum reliability, ensure machine clocks are synchronized via NTP.
 
 | File | Purpose |
 |------|---------|
-| `.beads/issues.jsonl` | Current state (git-tracked) |
-| `.beads/sync_base.jsonl` | Last-synced state (not tracked, per-machine) |
-| `.beads/.sync.lock` | Concurrency guard (not tracked) |
-| `.beads/beads.db` | SQLite database (not tracked) |
+| `.beads/issues.jsonl` | Current issue state (git-tracked) |
+| `.beads/sync_base.jsonl` | Last-synced merge base (local-only, gitignored) |
+| `.beads/metadata.json` | Version tracking + schema metadata (git-tracked) |
+| `.beads/config.yaml` | Shared config (git-tracked) |
+| `.beads/.sync.lock` | Concurrency guard (local-only) |
+| `.beads/.jsonl.lock` | JSONL write/read lock (local-only) |
+| `.beads/beads.db` | SQLite database (local-only) |
 
-The JSONL files are the source of truth for git. The database is derived from JSONL on each machine.
+JSONL and tracked metadata/config files are the source of truth in git. The database and lock files are derived per-machine.
 
 ## Sync Modes
 
@@ -186,7 +191,8 @@ Beads supports several sync modes for different use cases:
 
 | Mode | Trigger | Flow | Use Case |
 |------|---------|------|----------|
-| **Normal** | Default `bd sync` | Pull → Merge → Export → Push | Standard multi-machine sync |
+| **Export-only** | Default `bd sync` | Export JSONL only | Local-only workflow or manual git operations |
+| **Full (legacy)** | `bd sync --full` | Pull → Merge → Export → Push | Standard multi-machine sync |
 | **Sync-branch** | `sync.branch` config | Separate git branch for beads files | Isolated beads history |
 | **External** | `BEADS_DIR` env | Separate repo for beads | Shared team database |
 | **From-main** | `sync.from_main` config | Clone beads from main branch | Feature branch workflow |
@@ -223,14 +229,14 @@ Each mode has E2E tests in `cmd/bd/`:
 | Local-only | `sync_local_only_test.go` |
 | Export-only | `sync_modes_test.go` |
 | Sync-branch (CLI E2E) | `syncbranch_e2e_test.go` |
-| Sync-branch (Daemon E2E) | `daemon_sync_branch_e2e_test.go` |
+| Sync-branch (Daemon E2E, legacy) | `daemon_sync_branch_e2e_test.go` |
 
-## Sync Paths: CLI vs Daemon
+## Sync Paths: CLI vs Daemon (Legacy)
 
-Sync-branch mode has two distinct code paths that must be tested independently:
+Sync-branch mode historically had two distinct code paths. The daemon path has been removed; the diagram below is kept for historical context.
 
 ```
-bd sync (CLI)                     Daemon (background)
+bd sync --full (CLI)              Daemon (legacy, removed)
      │                                  │
      ▼                                  ▼
 Force close daemon              daemon_sync_branch.go
@@ -243,7 +249,7 @@ syncbranch.PullFromSyncBranch   with forceOverwrite flag
 
 ### Why Two Paths?
 
-SQLite connections become stale when the daemon holds them while the CLI operates on the same database. The CLI path forces daemon closure before sync to prevent connection corruption. The daemon path operates directly since it owns the connection.
+SQLite connections used to become stale when the daemon held them while the CLI operated on the same database. The CLI path forced daemon closure before sync to prevent connection corruption. The daemon path operated directly since it owned the connection.
 
 ### Test Isolation Strategy
 
@@ -251,7 +257,7 @@ Each E2E test requires proper isolation to prevent interference:
 
 | Variable | Purpose |
 |----------|---------|
-| `BEADS_NO_DAEMON=1` | Prevent daemon auto-start (set in TestMain) |
+| `BEADS_NO_DAEMON=1` | Legacy: prevent daemon auto-start (set in TestMain) |
 | `BEADS_DIR=<clone>/.beads` | Isolate database per clone |
 
 ### E2E Test Architecture: Bare Repo Pattern
@@ -304,5 +310,5 @@ The 3-way merge algorithm borrows concepts from:
 
 - [DELETIONS.md](DELETIONS.md) - Tombstone behavior and deletion tracking
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - How beads integrates with git
-- [DAEMON.md](DAEMON.md) - Automatic sync via daemon
+- [DAEMON.md](DAEMON.md) - Legacy daemon reference
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Overall system architecture

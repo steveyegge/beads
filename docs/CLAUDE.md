@@ -1,112 +1,53 @@
-# CLAUDE.md
+# Claude Code Setup (User Guide)
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This guide is for end users who want to use beads with Claude Code. For contributor architecture notes, see [docs/ARCHITECTURE.md](ARCHITECTURE.md) and [AGENTS.md](../AGENTS.md).
 
-## Project Overview
-
-**beads** (command: `bd`) is a git-backed issue tracker for AI-supervised coding workflows. We dogfood our own tool.
-
-**IMPORTANT**: See [AGENTS.md](../AGENTS.md) for complete workflow instructions, bd commands, and development guidelines.
-
-## Architecture Overview
-
-### Three-Layer Design
-
-1. **Storage Layer** (`internal/storage/`)
-   - Interface-based design in `storage.go`
-   - **Dolt** (primary) in `storage/dolt/` — version-controlled SQL with cell-level merge
-   - SQLite (legacy) in `storage/sqlite/` — still supported for simple setups
-   - Memory backend in `storage/memory/` for testing
-
-2. **RPC Layer** (`internal/rpc/`)
-   - Client/server architecture using Unix domain sockets (Windows named pipes)
-   - Protocol defined in `protocol.go`
-   - Server split into focused files: `server_core.go`, `server_issues_epics.go`, `server_labels_deps_comments.go`, etc.
-   - Used by Dolt server mode for multi-writer access
-
-3. **CLI Layer** (`cmd/bd/`)
-   - Cobra-based commands (one file per command: `create.go`, `list.go`, etc.)
-   - Direct database access (Dolt embedded or server mode)
-   - All commands support `--json` for programmatic use
-   - Main entry point in `main.go`
-
-### Storage Architecture
-
-Beads uses **Dolt** as its primary storage backend — a version-controlled SQL database:
-
-```
-Dolt DB (.beads/dolt/)
-    ↕ Dolt commits (automatic per write)
-    ↕ JSONL export (git hooks, for portability)
-JSONL (.beads/issues.jsonl, git-tracked)
-    ↕ git push/pull
-Remote (shared across machines)
-```
-
-- **Write path**: CLI → Dolt → auto-commit to Dolt history
-- **Read path**: Direct SQL queries against Dolt
-- **Sync**: JSONL maintained via git hooks for portability; Dolt handles versioning natively
-- **Hash-based IDs**: Automatic collision prevention (v0.20+)
-
-Core implementation:
-- Dolt storage: `internal/storage/dolt/`
-- Export: `cmd/bd/export.go`
-- Import: `internal/importer/importer.go`
-- Sync: `cmd/bd/sync_helpers.go`, `cmd/bd/sync_conflict.go`
-
-### Key Data Types
-
-See `internal/types/types.go`:
-- `Issue`: Core work item (title, description, status, priority, etc.)
-- `Dependency`: Four types (blocks, related, parent-child, discovered-from)
-- `Label`: Flexible tagging system
-- `Comment`: Threaded discussions
-- `Event`: Full audit trail
-
-## Common Development Commands
+## Quick Setup
 
 ```bash
-# Build and test
-go build -o bd ./cmd/bd
-go test ./...
-go test -coverprofile=coverage.out ./...
+# Initialize in your repo
+bd init
 
-# Run linter (baseline warnings documented in docs/LINTING.md)
-golangci-lint run ./...
+# Install Claude Code hooks (global or per-project)
+bd setup claude
+# or: bd setup claude --project
 
-# Version management
-./scripts/bump-version.sh 0.9.3 --commit
-
-# Local testing
-./bd init --prefix test
-./bd create "Test issue" -p 1
-./bd ready
+# Start working
+bd ready
+bd create "Example task" -p 2
 ```
 
-## Testing Philosophy
+## Syncing Changes
 
-- Unit tests live next to implementation (`*_test.go`)
-- Integration tests use real databases (Dolt or SQLite temp files)
-- Script-based tests in `cmd/bd/testdata/*.txt` (see `scripttest_test.go`)
-- RPC layer has extensive isolation and edge case coverage
+```bash
+# Export to JSONL only (no git operations)
+bd sync
 
-## Important Notes
+# Full sync (pull → merge → export → commit → push)
+bd sync --full
 
-- **Always read AGENTS.md first** - it has the complete workflow
-- Install git hooks for JSONL sync: `bd hooks install`
-- Run `bd sync` at end of agent sessions to sync with remote
-- Check for duplicates proactively: `bd duplicates --auto-merge`
-- Use `--json` flags for all programmatic use
+# Local-only export (no git operations)
+bd sync --flush-only
+```
 
-## Key Files
+## Worktrees and Protected Branches
 
-- **AGENTS.md** - Complete workflow and development guide (READ THIS!)
-- **README.md** - User-facing documentation
-- **ADVANCED.md** - Advanced features (rename, merge, compaction)
-- **EXTENDING.md** - How to add custom tables to the database
-- **LABELS.md** - Complete label system guide
-- **CONFIG.md** - Configuration system
+If your main branch is protected, use a sync branch:
 
-## When Adding Features
+```bash
+bd init --branch beads-sync
+# or later:
+bd config set sync.branch beads-sync
+```
 
-See AGENTS.md "Adding a New Command" and "Adding Storage Features" sections for step-by-step guidance.
+`bd sync --full` creates and uses an internal worktree at `.git/beads-worktrees/<sync-branch>` and commits issue data there. Your working branch stays untouched.
+
+## About the Daemon
+
+The current CLI runs in direct mode. The `--no-daemon` flag is kept for backward compatibility but has no effect. If you see documentation that instructs `bd daemon ...`, treat it as legacy and use `bd sync --full` (or git hooks) instead.
+
+## Need More Detail?
+
+- Claude integration design notes: [docs/CLAUDE_INTEGRATION.md](CLAUDE_INTEGRATION.md)
+- Sync workflow and file roles: [docs/SYNC.md](SYNC.md)
+- Worktrees and protected branches: [docs/WORKTREES.md](WORKTREES.md), [docs/PROTECTED_BRANCHES.md](PROTECTED_BRANCHES.md)

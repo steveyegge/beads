@@ -48,14 +48,17 @@ bd update bd-XXXXX --status in_progress
 
 **Note:** Replace `bd-XXXXX` etc. with actual issue IDs created above.
 
-### 3. Auto-Sync (Daemon)
+### 3. Sync to the Branch
 
 ```bash
-# Start daemon with auto-commit
-bd daemon start --auto-commit
+# Full sync (pull → merge → export → commit → push)
+bd sync --full
 
-# All issue changes are now automatically committed to beads-metadata branch
+# Or: export + commit/push without pulling
+bd sync --full --no-pull
 ```
+
+Add `--no-push` if you want to review changes before pushing.
 
 Check what's been committed:
 
@@ -67,17 +70,19 @@ git log beads-metadata --oneline | head -5
 bd sync --status
 ```
 
-### 4. Manual Sync (Without Daemon)
+### 4. Export Only (No Git Operations)
 
-If you're not using the daemon:
+If you just want to export JSONL without committing:
 
 ```bash
 # Create or update issues
 bd create "Fix bug in login" -t bug -p 0
 bd update bd-XXXXX --status closed
 
-# Manually flush to sync branch
-bd sync --flush-only
+# Export only (no git operations)
+bd sync
+
+# Note: This does not commit to the sync branch
 
 # Verify commit
 git log beads-metadata -1
@@ -125,12 +130,12 @@ If you have multiple clones or agents:
 ```bash
 # Clone 1: Create issue
 bd create "New feature" -t feature -p 1
-bd sync --flush-only  # Commit to beads-metadata
+bd sync --full --no-pull --no-push  # Commit locally to beads-metadata
 git push origin beads-metadata
 
 # Clone 2: Pull changes
 git fetch origin beads-metadata
-bd sync --no-push  # Pull from sync branch and import
+bd sync --full --no-push  # Pull from sync branch and import
 bd list  # See the new feature issue
 ```
 
@@ -145,8 +150,7 @@ bd list  # See the new feature issue
          │
          ▼
 ┌─────────────────┐
-│  Daemon (or     │
-│  manual sync)   │
+│  bd sync --full │
 │  commits to     │
 │  beads-metadata │
 └────────┬────────┘
@@ -181,7 +185,8 @@ my-project/
 ├── .beads/                    # Main beads directory (in your workspace)
 │   ├── beads.db               # SQLite database
 │   ├── issues.jsonl            # JSONL export
-│   └── bd.sock                # Daemon socket (if running)
+│   ├── metadata.json           # Backend metadata
+│   └── sync_base.jsonl         # Local merge base (gitignored)
 ├── src/                       # Your application code
 │   └── ...
 └── README.md
@@ -204,8 +209,7 @@ my-project/
 ### For AI Agents
 
 - **No workflow changes:** Agents use `bd create`, `bd update`, etc. as normal
-- **Let daemon handle it:** With `--auto-commit`, agents don't think about sync
-- **Session end:** Run `bd sync` at end of session to ensure everything is committed
+- **Session end:** Run `bd sync --full` at end of session to ensure everything is committed
 
 ### Troubleshooting
 
@@ -218,17 +222,17 @@ JSONL is append-only and line-based, so conflicts are rare. If they occur:
 
 **"Worktree doesn't exist"**
 
-The daemon creates it automatically on first commit. To create manually:
+`bd sync --full` creates it automatically on first commit. To create manually:
 ```bash
 bd config get sync.branch  # Verify it's set
-bd daemon stop && bd daemon start          # Daemon will create worktree
+bd sync --full --no-pull   # Create worktree and commit
 ```
 
 **"Changes not syncing"**
 
 Make sure:
 - `bd config get sync.branch` returns the same value on all clones
-- Daemon is running: `bd daemon status`
+- You ran `bd sync --full` on the writer clone
 - Both clones have fetched: `git fetch origin beads-metadata`
 
 ## Advanced: GitHub Actions Integration
