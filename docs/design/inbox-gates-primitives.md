@@ -50,10 +50,16 @@ message to the inbox.
 Gates exist at three layers today. Understanding all three is essential context
 for the design.
 
-### Layer 1: Session Gates (`internal/gate/`)
+**Note on numbering**: The codebase uses a different layer numbering scheme
+(Layer 1 = formula gates, Layer 2 = session gates, Layer 3 = config policies).
+This doc uses its own grouping for clarity.
+
+### Session Gates (`internal/gate/`)
 
 Ephemeral, per-hook behavioral rules using file markers. Registered at session
-start, checked by `GateHandler` (priority 20) on each hook event.
+start, checked by `GateHandler` (priority 20) on Stop and PreToolUse events.
+Other hook types (UserPromptSubmit, PreCompact) are checked via
+`bd gate session-check` called directly from Claude Code hook scripts.
 
 **Mechanism**: A gate is satisfied if (a) a file marker exists at
 `.runtime/gates/<session-id>/<gate-id>`, or (b) its `AutoCheck` function returns
@@ -78,7 +84,7 @@ true (which auto-creates the marker).
 **Custom gates**: `bd gate register <id> --hook <type> --description '...'`
 allows runtime registration of new session gates.
 
-### Layer 2: DB Gates (issues table)
+### DB Gates (issues table)
 
 Persistent async wait conditions stored as issue metadata. Used by the
 formula/molecule system for multi-step workflows that span sessions.
@@ -109,7 +115,7 @@ conditions are met.
 **Cross-rig gates**: `await_id="<rig>:<bead-id>"` waits for a bead in a
 different rig to close. Enables cross-agent coordination.
 
-### Layer 3: Stop-Decision Handler
+### Stop-Decision Handler
 
 Not technically a "gate" but acts as one — a separate event bus handler at
 priority 15 (`StopDecisionHandler`) that:
@@ -132,15 +138,27 @@ A session gate (Layer 1, soft mode) that bridges to DB gates (Layer 2). Its
 detect pending formula gates requiring human action. Connects the two layers so
 the agent is warned about outstanding DB gates at stop time.
 
-### Event Bus Handler Chain (Stop hook)
+### Event Bus Handler Chains
 
+**Stop hook:**
 ```
 Priority 14: StopLoopDetector      -- detects infinite stop loops, sets break flag
-Priority 15: StopDecisionHandler   -- creates/checks decision points (Layer 3)
-Priority 20: GateHandler           -- evaluates session gates (Layer 1)
-                                      including bridge to DB gates (Layer 2)
-Priority 30: DecisionHandler       -- polls for decision responses (to be replaced)
+Priority 15: StopDecisionHandler   -- creates/checks decision points
+Priority 20: GateHandler           -- evaluates session gates (strict=block, soft=warn)
 ```
+
+**SessionStart / PreCompact hooks:**
+```
+Priority 10: PrimeHandler          -- injects workflow context (gt prime)
+Priority 30: DecisionHandler       -- polls for decision responses (to be replaced
+                                      by InboxDrainHandler)
+```
+
+**Note**: UserPromptSubmit and PreCompact gates (context-injection, stale-context,
+state-checkpoint, dirty-work) are NOT evaluated by the event bus GateHandler.
+They are evaluated via `bd gate session-check` called directly from Claude Code
+hook configuration scripts. Only Stop and PreToolUse gates go through the event
+bus GateHandler.
 
 ### What this design changes about gates
 
@@ -327,6 +345,26 @@ All → inbox DB → JetStream → coop → JSONL → drain → agent sees it
 One delivery layer instead of three parallel ones (mail inject, decision inject,
 custom inject). One drain handler. One nudge path. One reconciliation mechanism.
 
+### Mail edge cases
+
+**Read state**: When a mail notification is delivered via inbox, the mail's own
+read/unread state (beads issue status) is NOT automatically updated. The inbox
+`delivered_at` tracks inbox delivery; the mail's `status=open` tracks whether the
+agent has processed the mail. The agent is responsible for marking mail as read
+(`gt mail read <id>`) after processing. The inbox notification says "you have
+mail" — reading the mail is a separate action.
+
+**CC and mailing lists**: `gt mail send --to=mayor --cc=dog` pushes TWO inbox
+messages — one for mayor, one for dog. Mailing list fan-out happens in
+`gt mail send` (which already creates per-recipient beads issues), and each
+recipient gets their own inbox notification. The inbox sees individual messages,
+not fan-out groups.
+
+**Queues and announce channels**: Queue messages (`gt mail send --to=queue:work`)
+push one inbox notification to the queue topic. Claiming is handled by mail's own
+`--claimed-by` mechanism, not by inbox. Announce channels push one inbox
+notification per subscriber (same as mailing lists).
+
 ## Three-Tier Delivery Model
 
 ```
@@ -505,17 +543,24 @@ inboxPush(InboxItem{
 })
 ```
 
-## Handler Priority Chain
+## Handler Priority Chains
 
+**Stop hook:**
 ```
 14: StopLoopDetector      -- sets stop_loop_break if looping
 15: StopDecisionHandler   -- tells agent to create decision (if not already done)
 20: GateHandler           -- enforces all gates including decision (strict)
-30: InboxDrainHandler     -- drains inbox (decisions, alerts, gates, etc.)
+```
+
+**SessionStart / PreCompact hooks:**
+```
+10: PrimeHandler          -- injects workflow context
+30: InboxDrainHandler     -- drains inbox (decisions, alerts, gates, mail, etc.)
 ```
 
 StopDecisionHandler is the "creator" (side effects: RPC, config reads, instruction
 blocks). The decision gate is the "enforcer" (pure predicate). Complementary.
+InboxDrainHandler runs on SessionStart/PreCompact, NOT on Stop.
 
 ## Decision Migration
 
@@ -553,10 +598,20 @@ nudge could wake the agent before the inbox message exists.
 ### Local dev (no NATS, no coop)
 
 ```
-bd inbox push --to=mayor -> daemon RPC (DB) + local JSONL write
+bd inbox push --to=mayor
+  -> daemon RPC: InboxPush writes to DB
+  -> bd inbox push CLI also writes to local JSONL directly
+     (same process, same filesystem — opportunistic local delivery)
   -> Next hook fires -> InboxDrainHandler reads JSONL
   -> On SessionStart: also queries DB (reconciliation)
 ```
+
+In local dev, the `bd inbox push` CLI command itself writes to the local JSONL
+queue as a side effect after the daemon RPC succeeds. This is safe because the
+CLI runs on the same filesystem as the agent. The daemon does NOT write to JSONL
+— it only writes to DB and publishes to JetStream (if available). The JSONL write
+is always done by a process local to the agent's filesystem: either the CLI
+(local dev) or coop's JetStream subscriber (K8s).
 
 ### K8s (with NATS, with coop)
 
