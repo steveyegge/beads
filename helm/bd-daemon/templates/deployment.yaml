@@ -157,6 +157,10 @@ spec:
             - name: BD_REDIS_WISP_TTL
               value: {{ .Values.redis.wispTTL | quote }}
             {{- end }}
+            {{- if .Values.daemon.customTypes }}
+            - name: BD_TYPES_CUSTOM
+              value: {{ .Values.daemon.customTypes | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
