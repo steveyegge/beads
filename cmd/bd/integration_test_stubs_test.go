@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/rpc"
+	// "github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
