@@ -11,7 +11,6 @@ import (
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -32,49 +31,10 @@ func (r *RoutedResult) Close() {
 	}
 }
 
-// resolveAndGetIssueWithRouting resolves a partial ID and gets the issue,
-// using routes.jsonl for prefix-based routing if needed.
-// This enables cross-repo issue lookups (e.g., `bd show gt-xyz` from ~/gt).
-//
-// The resolution happens in the correct store based on the ID prefix.
-// Returns a RoutedResult containing the issue, resolved ID, and the store to use.
+// resolveAndGetIssueWithRouting resolves a partial ID and gets the issue.
+// Cross-rig routing is handled by the daemon — this just resolves from the local store.
 // The caller MUST call result.Close() when done to release any routed storage.
 func resolveAndGetIssueWithRouting(ctx context.Context, localStore storage.Storage, id string) (*RoutedResult, error) {
-	// When BD_DAEMON_HOST is set, the remote daemon handles all IDs centrally.
-	// Skip local routing to avoid "direct database access blocked" errors (bd-ma0s.1).
-	if isRemoteDaemon() {
-		return resolveAndGetFromStore(ctx, localStore, id, false)
-	}
-
-	// Step 1: Check if routing is needed based on ID prefix
-	// Find the .beads metadata directory (not the database path, which may be external with Dolt)
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		// No beads directory found - use local store
-		return resolveAndGetFromStore(ctx, localStore, id, false)
-	}
-
-	// Use factory.NewFromConfig as the storage opener to respect backend configuration
-	routedStorage, err := routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	if routedStorage != nil {
-		// Step 2: Resolve and get from routed store
-		result, err := resolveAndGetFromStore(ctx, routedStorage.Storage, id, true)
-		if err != nil {
-			_ = routedStorage.Close()
-			return nil, err
-		}
-		if result != nil {
-			result.closeFn = func() { _ = routedStorage.Close() }
-			return result, nil
-		}
-		_ = routedStorage.Close()
-	}
-
-	// Step 3: Fall back to local store
 	return resolveAndGetFromStore(ctx, localStore, id, false)
 }
 
@@ -103,99 +63,23 @@ func resolveAndGetFromStore(ctx context.Context, s storage.Storage, id string, r
 	}, nil
 }
 
-// getIssueWithRouting tries to get an issue from the local store first,
-// then falls back to checking routes.jsonl for prefix-based routing.
-// This enables cross-repo issue lookups (e.g., `bd show gt-xyz` from ~/gt).
-//
-// Returns a RoutedResult containing the issue and the store to use for related queries.
+// getIssueWithRouting gets an issue from the local store.
+// Cross-rig routing is handled by the daemon.
 // The caller MUST call result.Close() when done to release any routed storage.
 func getIssueWithRouting(ctx context.Context, localStore storage.Storage, id string) (*RoutedResult, error) {
-	// Step 1: Try local store first (current behavior)
 	issue, err := localStore.GetIssue(ctx, id)
-	if err == nil && issue != nil {
-		return &RoutedResult{
-			Issue:      issue,
-			Store:      localStore,
-			Routed:     false,
-			ResolvedID: id,
-		}, nil
+	if err != nil {
+		return nil, err
 	}
-
-	// When BD_DAEMON_HOST is set, skip local routing - remote daemon handles all IDs (bd-ma0s.1).
-	if isRemoteDaemon() {
-		return &RoutedResult{
-			Issue:      issue,
-			Store:      localStore,
-			Routed:     false,
-			ResolvedID: id,
-		}, err
+	if issue == nil {
+		return nil, nil
 	}
-
-	// Step 2: Check routes.jsonl for prefix-based routing
-	// Find the .beads metadata directory (not the database path, which may be external with Dolt)
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		// No beads directory found - return original result
-		return &RoutedResult{
-			Issue:      issue,
-			Store:      localStore,
-			Routed:     false,
-			ResolvedID: id,
-		}, err
-	}
-
-	// Use GetRoutedStorageWithOpener with factory to respect backend configuration (bd-m2jr)
-	routedStorage, routeErr := routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
-	if routeErr != nil || routedStorage == nil {
-		// No routing found or error - return original result
-		return &RoutedResult{
-			Issue:      issue,
-			Store:      localStore,
-			Routed:     false,
-			ResolvedID: id,
-		}, err
-	}
-
-	// Step 3: Try the routed storage
-	routedIssue, routedErr := routedStorage.Storage.GetIssue(ctx, id)
-	if routedErr != nil || routedIssue == nil {
-		_ = routedStorage.Close()
-		// Return the original error if routing also failed
-		if err != nil {
-			return nil, err
-		}
-		return nil, routedErr
-	}
-
-	// Return the issue with the routed store
 	return &RoutedResult{
-		Issue:      routedIssue,
-		Store:      routedStorage.Storage,
-		Routed:     true,
+		Issue:      issue,
+		Store:      localStore,
+		Routed:     false,
 		ResolvedID: id,
-		closeFn: func() {
-			_ = routedStorage.Close()
-		},
 	}, nil
-}
-
-// getRoutedStoreForID returns a storage connection for an issue ID if routing is needed.
-// Returns nil if no routing is needed (issue should be in local store).
-// The caller is responsible for closing the returned storage.
-func getRoutedStoreForID(ctx context.Context, id string) (*routing.RoutedStorage, error) {
-	// When BD_DAEMON_HOST is set, skip local routing - remote daemon handles all IDs (bd-ma0s.1).
-	if isRemoteDaemon() {
-		return nil, nil
-	}
-
-	// Find the .beads metadata directory (not the database path, which may be external with Dolt)
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		return nil, nil
-	}
-
-	// Use GetRoutedStorageWithOpener with factory to respect backend configuration (bd-m2jr)
-	return routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
 }
 
 // isRemoteDaemon returns true if connected to a remote daemon via BD_DAEMON_HOST
@@ -319,7 +203,7 @@ func resolveIDsWithRouting(ctx context.Context, localStore storage.Storage,
 		}
 
 		if daemon != nil {
-			// Daemon mode: resolve via RPC
+			// Resolve via daemon RPC
 			resp, err := daemon.ResolveID(&rpc.ResolveIDArgs{ID: id})
 			if err != nil {
 				return nil, fmt.Errorf("resolving ID %s: %w", id, err)
@@ -330,16 +214,12 @@ func resolveIDsWithRouting(ctx context.Context, localStore storage.Storage,
 			}
 			batch.ResolvedIDs = append(batch.ResolvedIDs, resolvedID)
 		} else {
-			// Direct mode: resolve via store, or mark as routed
-			if needsRouting(id) {
-				batch.RoutedArgs = append(batch.RoutedArgs, id)
-			} else {
-				resolvedID, err := utils.ResolvePartialID(ctx, localStore, id)
-				if err != nil {
-					return nil, fmt.Errorf("resolving ID %s: %w", id, err)
-				}
-				batch.ResolvedIDs = append(batch.ResolvedIDs, resolvedID)
+			// Direct mode (doctor, restore, etc.)
+			resolvedID, err := utils.ResolvePartialID(ctx, localStore, id)
+			if err != nil {
+				return nil, fmt.Errorf("resolving ID %s: %w", id, err)
 			}
+			batch.ResolvedIDs = append(batch.ResolvedIDs, resolvedID)
 		}
 	}
 
@@ -351,18 +231,13 @@ func resolveIDsWithRouting(ctx context.Context, localStore storage.Storage,
 // or a directResult (direct storage fallback). Exactly one will be non-nil.
 type RoutedIDAction func(resolvedID string, routedClient *rpc.Client, directResult *RoutedResult) error
 
-// forEachRoutedID processes routed IDs by trying the daemon at the target rig first,
-// falling back to direct storage resolution. For each ID, it calls the action callback
-// with either a routed daemon client or a direct RoutedResult.
-//
-// The caller's action callback is responsible for closing the routedClient or using
-// directResult.Close() as appropriate. forEachRoutedID handles cleanup on errors.
+// forEachRoutedID processes routed IDs via the daemon at the target rig.
+// For each ID, it calls the action callback with the routed daemon client.
 // Errors are logged to stderr and processing continues to the next ID.
 func forEachRoutedID(ctx context.Context, localStore storage.Storage,
 	routedArgs []string, action RoutedIDAction,
 ) {
 	for _, id := range routedArgs {
-		// Try daemon at the routed rig first to avoid direct Dolt access conflicts
 		resolvedID, routedClient, routeErr := resolveIDViaRoutedDaemon(id)
 		if routedClient != nil {
 			if err := action(resolvedID, routedClient, nil); err != nil {
@@ -374,29 +249,6 @@ func forEachRoutedID(ctx context.Context, localStore storage.Storage,
 			fmt.Fprintf(os.Stderr, "Error routing %s: %v\n", id, routeErr)
 			continue
 		}
-
-		// Fall back to direct storage (no daemon at target rig)
-		result, err := resolveAndGetIssueWithRouting(ctx, localStore, id)
-		if err != nil {
-			if result != nil {
-				result.Close()
-			}
-			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-			continue
-		}
-		if result == nil || result.Issue == nil {
-			if result != nil {
-				result.Close()
-			}
-			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-			continue
-		}
-
-		if err := action(result.ResolvedID, nil, result); err != nil {
-			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", id, err)
-			result.Close()
-			continue
-		}
-		result.Close()
+		fmt.Fprintf(os.Stderr, "Error: no daemon available for routed ID %s\n", id)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/coop"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -243,7 +244,8 @@ func init() {
 	skillSyncCmd.Flags().BoolVar(&skillSyncAll, "all", false, "Sync ALL skills (ignore agent filtering)")
 
 	// skill spy flags
-	skillSpyCmd.Flags().IntVar(&spyLines, "lines", 200, "Number of lines to capture from session")
+	skillSpyCmd.Flags().StringVar(&spyCoopURL, "url", "", "Direct Coop URL (skip pod lookup)")
+	skillSpyCmd.Flags().IntVar(&spyLines, "lines", 200, "Number of lines to capture (unused, kept for compat)")
 
 	// skill test flags
 	skillTestCmd.Flags().BoolVar(&testSetupOnly, "setup-only", false, "Only perform setup, don't monitor")
@@ -1338,9 +1340,9 @@ func ensureAgentBeadExists(ctx context.Context, agentPath string) error {
 
 // Spy command for monitoring polecat sessions
 var skillSpyCmd = &cobra.Command{
-	Use:   "spy <session-name> [marker]",
+	Use:   "spy <agent> [marker]",
 	Short: "Check a polecat session for skill activation markers",
-	Long: `Capture output from a polecat tmux session and check for skill markers.
+	Long: `Capture output from a polecat agent session via Coop and check for skill markers.
 
 This is used for E2E testing to verify that skills are being loaded and used.
 If no marker is specified, checks for the standard E2E test marker: [E2E-SKILL-ACTIVE]
@@ -1348,44 +1350,72 @@ If no marker is specified, checks for the standard E2E test marker: [E2E-SKILL-A
 Examples:
   bd skill spy gt-beads-polecat-alpha              # Check for default marker
   bd skill spy gt-beads-polecat-alpha "[CUSTOM]"   # Check for custom marker
-  bd skill spy gt-beads-polecat-alpha --lines 500  # Capture more lines`,
+  bd skill spy gt-beads-polecat-alpha --url http://localhost:3000  # Direct coop URL`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: runSkillSpy,
 }
 
-var spyLines int
+var (
+	spyLines   int
+	spyCoopURL string
+)
 
-// runSkillSpy captures session output and checks for skill markers
+// captureAgentScreen captures screen text from an agent's coop sidecar.
+func captureAgentScreen(ctx context.Context, agentName string) (string, error) {
+	coopClient, err := resolveCoopClient(ctx, agentName, spyCoopURL)
+	if err != nil {
+		return "", err
+	}
+	return coopClient.CapturePane(ctx)
+}
+
+// resolveCoopClient creates a coop client for the given agent.
+// If directURL is provided, uses it directly. Otherwise resolves via daemon pod-list.
+func resolveCoopClient(ctx context.Context, agentName, directURL string) (*coop.Client, error) {
+	if directURL != "" {
+		return coop.NewClient(directURL), nil
+	}
+
+	requireDaemon("skill spy/test")
+	podInfo, err := resolveAgentPodInfo(ctx, agentName)
+	if err != nil {
+		return nil, fmt.Errorf("resolving agent %s: %w", agentName, err)
+	}
+	if podInfo.PodIP == "" {
+		return nil, fmt.Errorf("agent %s has no pod IP (use bd agent pod-list to check)", podInfo.AgentID)
+	}
+
+	coopURL := fmt.Sprintf("http://%s:%d", podInfo.PodIP, 8080)
+	return coop.NewClient(coopURL), nil
+}
+
+// runSkillSpy captures agent session output via Coop and checks for skill markers
 func runSkillSpy(cmd *cobra.Command, args []string) error {
-	sessionName := args[0]
+	agentName := args[0]
 	marker := "[E2E-SKILL-ACTIVE]"
 	if len(args) > 1 {
 		marker = args[1]
 	}
 
-	// Capture tmux pane output
-	captureCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", spyLines)) //nolint:gosec // sessionName is from CLI args
-	output, err := captureCmd.Output()
+	outputStr, err := captureAgentScreen(rootCtx, agentName)
 	if err != nil {
-		return fmt.Errorf("failed to capture session %s: %w (is tmux session running?)", sessionName, err)
+		return fmt.Errorf("failed to capture agent %s: %w", agentName, err)
 	}
 
-	outputStr := string(output)
 	found := strings.Contains(outputStr, marker)
 
 	if jsonOutput {
 		outputJSON(map[string]interface{}{
-			"session":      sessionName,
+			"agent":        agentName,
 			"marker":       marker,
 			"found":        found,
-			"lines":        spyLines,
-			"output_bytes": len(output),
+			"output_bytes": len(outputStr),
 		})
 		return nil
 	}
 
 	if found {
-		fmt.Printf("%s Marker found in session %s\n", ui.RenderPass("✓"), sessionName)
+		fmt.Printf("%s Marker found in agent %s\n", ui.RenderPass("✓"), agentName)
 		fmt.Printf("  Marker: %s\n", marker)
 
 		// Show context around the marker
@@ -1414,29 +1444,29 @@ func runSkillSpy(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("%s Marker NOT found in session %s\n", ui.RenderFail("✗"), sessionName)
+	fmt.Printf("%s Marker NOT found in agent %s\n", ui.RenderFail("✗"), agentName)
 	fmt.Printf("  Marker: %s\n", marker)
-	fmt.Printf("  Captured %d lines (%d bytes)\n", len(strings.Split(outputStr, "\n")), len(output))
+	fmt.Printf("  Captured %d bytes\n", len(outputStr))
 	return fmt.Errorf("skill marker not found")
 }
 
 // Test command for running E2E skill integration tests
 var skillTestCmd = &cobra.Command{
-	Use:   "test [session-name]",
+	Use:   "test [agent]",
 	Short: "Run E2E skill integration test",
 	Long: `Run end-to-end test to verify skill integration works.
 
 This command orchestrates:
 1. Ensures e2e-test skill exists
 2. Syncs skills to .claude/skills/
-3. If session-name provided: monitors it for skill activation
+3. If agent provided: monitors it for skill activation via Coop
 4. Reports PASS/FAIL
 
 The e2e-test skill instructs Claude to output [E2E-SKILL-ACTIVE] when activated.
 
 Examples:
   bd skill test                          # Setup only, shows how to test manually
-  bd skill test gt-beads-polecat-alpha   # Test existing session
+  bd skill test gt-beads-polecat-alpha   # Test existing agent session
   bd skill test --setup-only             # Only setup, don't monitor`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runSkillTest,
@@ -1528,15 +1558,15 @@ func runSkillTest(cmd *cobra.Command, args []string) error {
 		fmt.Println("\nTo complete E2E testing manually:")
 		fmt.Println("  1. Spawn a test polecat: gt polecat spawn test-skill")
 		fmt.Println("  2. Give it a simple task that uses the e2e-test skill")
-		fmt.Println("  3. Monitor for activation: bd skill spy <session-name>")
-		fmt.Println("\nOr provide a session name to monitor:")
+		fmt.Println("  3. Monitor for activation: bd skill spy <agent>")
+		fmt.Println("\nOr provide an agent name to monitor:")
 		fmt.Println("  bd skill test gt-beads-polecat-alpha")
 		return nil
 	}
 
-	// Step 4: Monitor session
-	sessionName := args[0]
-	fmt.Printf("\nStep 4: Monitoring session %s for skill activation...\n", sessionName)
+	// Step 4: Monitor agent session via Coop
+	agentName := args[0]
+	fmt.Printf("\nStep 4: Monitoring agent %s for skill activation...\n", agentName)
 
 	marker := "[E2E-SKILL-ACTIVE]"
 	attempts := testTimeout / testInterval
@@ -1545,15 +1575,14 @@ func runSkillTest(cmd *cobra.Command, args []string) error {
 	}
 
 	for i := 0; i < attempts; i++ {
-		captureCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", spyLines)) //nolint:gosec // sessionName is from CLI args
-		output, err := captureCmd.Output()
+		outputStr, err := captureAgentScreen(ctx, agentName)
 		if err != nil {
-			fmt.Printf("  Attempt %d/%d: Session not ready (%v)\n", i+1, attempts, err)
-		} else if strings.Contains(string(output), marker) {
+			fmt.Printf("  Attempt %d/%d: Agent not ready (%v)\n", i+1, attempts, err)
+		} else if strings.Contains(outputStr, marker) {
 			fmt.Printf("\n%s TEST PASSED: Skill marker found!\n", ui.RenderPass("✓"))
 
 			// Show context
-			lines := strings.Split(string(output), "\n")
+			lines := strings.Split(outputStr, "\n")
 			for j, line := range lines {
 				if strings.Contains(line, marker) {
 					fmt.Printf("\n  Context (line %d):\n", j+1)
