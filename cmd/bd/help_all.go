@@ -40,8 +40,20 @@ func registerHelpAllFlag() {
 // writeAllHelp writes a complete markdown reference for all commands,
 // generated from the live Cobra command tree.
 func writeAllHelp(w io.Writer, root *cobra.Command) {
-	fmt.Fprintf(w, "# bd — Complete Command Reference\n\n")
-	fmt.Fprintf(w, "Generated from `bd help --all` (bd version %s)\n\n", Version)
+	if err := writeAllHelpInternal(w, root); err != nil {
+		if err2 := writef(os.Stderr, "Error writing help: %v\n", err); err2 != nil {
+			return
+		}
+	}
+}
+
+func writeAllHelpInternal(w io.Writer, root *cobra.Command) error {
+	if err := writef(w, "# bd — Complete Command Reference\n\n"); err != nil {
+		return err
+	}
+	if err := writef(w, "Generated from `bd help --all` (bd version %s)\n\n", Version); err != nil {
+		return err
+	}
 
 	// Collect commands grouped by their GroupID
 	type group struct {
@@ -80,79 +92,121 @@ func writeAllHelp(w io.Writer, root *cobra.Command) {
 	}
 
 	// Table of contents
-	fmt.Fprintf(w, "## Table of Contents\n\n")
+	if err := writef(w, "## Table of Contents\n\n"); err != nil {
+		return err
+	}
 	allGroups := append(orderedGroups, ungrouped...)
 	for _, grp := range allGroups {
 		if len(grp.commands) == 0 {
 			continue
 		}
-		fmt.Fprintf(w, "### %s\n\n", grp.title)
+		if err := writef(w, "### %s\n\n", grp.title); err != nil {
+			return err
+		}
 		for _, cmd := range grp.commands {
 			anchor := "bd-" + strings.ReplaceAll(cmd.Name(), "-", "-")
-			fmt.Fprintf(w, "- [bd %s](#%s) — %s\n", cmd.Name(), anchor, cmd.Short)
+			if err := writef(w, "- [bd %s](#%s) — %s\n", cmd.Name(), anchor, cmd.Short); err != nil {
+				return err
+			}
 			// Include subcommands in TOC
 			for _, sub := range cmd.Commands() {
 				if !sub.IsAvailableCommand() {
 					continue
 				}
 				subAnchor := "bd-" + cmd.Name() + "-" + strings.ReplaceAll(sub.Name(), "-", "-")
-				fmt.Fprintf(w, "  - [bd %s %s](#%s) — %s\n", cmd.Name(), sub.Name(), subAnchor, sub.Short)
+				if err := writef(w, "  - [bd %s %s](#%s) — %s\n", cmd.Name(), sub.Name(), subAnchor, sub.Short); err != nil {
+					return err
+				}
 			}
 		}
-		fmt.Fprintf(w, "\n")
+		if err := writef(w, "\n"); err != nil {
+			return err
+		}
 	}
 
 	// Global flags (once)
-	fmt.Fprintf(w, "---\n\n## Global Flags\n\n")
-	fmt.Fprintf(w, "These flags apply to all commands:\n\n")
-	fmt.Fprintf(w, "```\n")
-	fmt.Fprintf(w, "%s", root.PersistentFlags().FlagUsages())
-	fmt.Fprintf(w, "```\n\n")
+	if err := writef(w, "---\n\n## Global Flags\n\n"); err != nil {
+		return err
+	}
+	if err := writef(w, "These flags apply to all commands:\n\n"); err != nil {
+		return err
+	}
+	if err := writef(w, "```\n"); err != nil {
+		return err
+	}
+	if err := writef(w, "%s", root.PersistentFlags().FlagUsages()); err != nil {
+		return err
+	}
+	if err := writef(w, "```\n\n"); err != nil {
+		return err
+	}
 
 	// Command details
-	fmt.Fprintf(w, "---\n\n")
+	if err := writef(w, "---\n\n"); err != nil {
+		return err
+	}
 	for _, grp := range allGroups {
 		if len(grp.commands) == 0 {
 			continue
 		}
-		fmt.Fprintf(w, "## %s\n\n", grp.title)
+		if err := writef(w, "## %s\n\n", grp.title); err != nil {
+			return err
+		}
 		for _, cmd := range grp.commands {
-			writeCommandHelp(w, cmd, "bd", 3)
+			if err := writeCommandHelp(w, cmd, "bd", 3); err != nil {
+				return err
+			}
 		}
 	}
+
+	return nil
 }
 
 // writeCommandHelp writes markdown help for a single command and its subcommands.
-func writeCommandHelp(w io.Writer, cmd *cobra.Command, parentPath string, depth int) {
+func writeCommandHelp(w io.Writer, cmd *cobra.Command, parentPath string, depth int) error {
 	fullPath := parentPath + " " + cmd.Name()
 	heading := strings.Repeat("#", depth)
 
-	fmt.Fprintf(w, "%s %s\n\n", heading, fullPath)
+	if err := writef(w, "%s %s\n\n", heading, fullPath); err != nil {
+		return err
+	}
 
 	// Description
 	if cmd.Long != "" {
-		fmt.Fprintf(w, "%s\n\n", cmd.Long)
+		if err := writef(w, "%s\n\n", cmd.Long); err != nil {
+			return err
+		}
 	} else if cmd.Short != "" {
-		fmt.Fprintf(w, "%s\n\n", cmd.Short)
+		if err := writef(w, "%s\n\n", cmd.Short); err != nil {
+			return err
+		}
 	}
 
 	// Usage
-	fmt.Fprintf(w, "```\n%s\n```\n\n", strings.TrimRight(cmd.UseLine(), " "))
+	if err := writef(w, "```\n%s\n```\n\n", strings.TrimRight(cmd.UseLine(), " ")); err != nil {
+		return err
+	}
 
 	// Aliases
 	if len(cmd.Aliases) > 0 {
-		fmt.Fprintf(w, "**Aliases:** %s\n\n", strings.Join(cmd.Aliases, ", "))
+		if err := writef(w, "**Aliases:** %s\n\n", strings.Join(cmd.Aliases, ", ")); err != nil {
+			return err
+		}
 	}
 
 	// Examples
 	if cmd.Example != "" {
-		fmt.Fprintf(w, "**Examples:**\n\n```bash\n%s\n```\n\n", cmd.Example)
+		if err := writef(w, "**Examples:**\n\n```bash\n%s\n```\n\n", cmd.Example); err != nil {
+			return err
+		}
 	}
 
 	// Local flags (not inherited/global)
 	localFlags := cmd.NonInheritedFlags()
 	if localFlags.HasFlags() {
-		fmt.Fprintf(w, "**Flags:**\n\n```\n%s```\n\n", localFlags.FlagUsages())
+		if err := writef(w, "**Flags:**\n\n```\n%s```\n\n", localFlags.FlagUsages()); err != nil {
+			return err
+		}
 	}
 
 	// Subcommands
@@ -170,7 +224,16 @@ func writeCommandHelp(w io.Writer, cmd *cobra.Command, parentPath string, depth 
 			if !sub.IsAvailableCommand() {
 				continue
 			}
-			writeCommandHelp(w, sub, fullPath, depth+1)
+			if err := writeCommandHelp(w, sub, fullPath, depth+1); err != nil {
+				return err
+			}
 		}
 	}
+
+	return nil
+}
+
+func writef(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
 }
