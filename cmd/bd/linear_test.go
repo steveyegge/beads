@@ -1448,7 +1448,7 @@ func TestLinearClientCreateIssue(t *testing.T) {
 	client := linear.NewClient("test-api-key", "test-team-id").WithEndpoint(server.URL)
 	ctx := context.Background()
 
-	issue, err := client.CreateIssue(ctx, "New Test Issue", "Created via API", 2, "", nil)
+	issue, err := client.CreateIssue(ctx, "New Test Issue", "Created via API", 2, "", nil, "", "")
 	if err != nil {
 		t.Fatalf("CreateIssue failed: %v", err)
 	}
