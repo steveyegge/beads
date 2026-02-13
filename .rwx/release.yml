@@ -28,6 +28,8 @@ tasks:
     with:
       repository: https://github.com/groblegark/beads.git
       ref: ${{ init.commit-sha }}
+      preserve-git-dir: true
+      fetch-full-depth: true
 
   - key: goreleaser
     use: code
@@ -35,27 +37,24 @@ tasks:
       # Install Go
       curl -sSfL https://go.dev/dl/go1.25.6.linux-amd64.tar.gz | sudo tar xz -C /usr/local
       export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
-      go version
 
       # Install GoReleaser
       curl -sSfL https://github.com/goreleaser/goreleaser/releases/download/v2.8.2/goreleaser_Linux_x86_64.tar.gz \
         | sudo tar xz -C /usr/local/bin goreleaser
 
-      # Debug: check working directory
-      echo "PWD: $(pwd)"
-      ls -la
-      echo "---"
-      ls -la /var/mint-workspace/ 2>/dev/null || true
-
-      # Need full git history for GoReleaser changelog
-      git fetch --unshallow 2>/dev/null || true
+      # Fetch tags for GoReleaser changelog
       git fetch --tags
 
-      # Run GoReleaser
-      GITHUB_TOKEN="$GH_TOKEN" goreleaser release --clean --config .goreleaser.fork.yml
+      # Run GoReleaser (dry run for CLI trigger, real release for tag push)
+      if [ "$TAG" = "dev" ]; then
+        GITHUB_TOKEN="$GH_TOKEN" goreleaser release --clean --config .goreleaser.fork.yml --snapshot
+      else
+        GITHUB_TOKEN="$GH_TOKEN" goreleaser release --clean --config .goreleaser.fork.yml
+      fi
     env:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
       CGO_ENABLED: "1"
+      TAG: ${{ init.tag }}
 
   - key: dispatch-gastown
     use: goreleaser
