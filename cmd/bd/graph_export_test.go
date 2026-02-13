@@ -69,7 +69,6 @@ func makeTestSubgraph() (*TemplateSubgraph, *GraphLayout) {
 }
 
 func TestRenderGraphDOT(t *testing.T) {
-	t.Parallel()
 	subgraph, layout := makeTestSubgraph()
 
 	output := captureGraphOutput(func() {
@@ -106,7 +105,6 @@ func TestRenderGraphDOT(t *testing.T) {
 }
 
 func TestRenderGraphDOT_Empty(t *testing.T) {
-	t.Parallel()
 	emptySubgraph := &TemplateSubgraph{
 		Root:     &types.Issue{ID: "empty"},
 		Issues:   []*types.Issue{},
@@ -176,7 +174,6 @@ func TestStatusPlainIcon(t *testing.T) {
 }
 
 func TestRenderGraphHTML(t *testing.T) {
-	t.Parallel()
 	subgraph, layout := makeTestSubgraph()
 
 	output := captureGraphOutput(func() {

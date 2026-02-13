@@ -42,6 +42,15 @@ func resolveSyncWorktreeJSONLPath(repoPath, beadsDir, mainJSONLPath string) stri
 	if repoRoot == "" || gitCommonDir == "" {
 		return ""
 	}
+	if resolved, err := filepath.EvalSymlinks(repoRoot); err == nil {
+		repoRoot = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(mainJSONLPath); err == nil {
+		mainJSONLPath = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(gitCommonDir); err == nil {
+		gitCommonDir = resolved
+	}
 
 	relPath, err := filepath.Rel(repoRoot, mainJSONLPath)
 	if err != nil {
@@ -108,7 +117,7 @@ func getConfiguredSyncBranch(beadsDir string) string {
 }
 
 func getSyncBranchFromYAML(beadsDir string) string {
-	data, err := os.ReadFile(filepath.Join(beadsDir, "config.yaml"))
+	data, err := os.ReadFile(filepath.Join(beadsDir, "config.yaml")) // #nosec G304 -- config.yaml is workspace-controlled
 	if err != nil {
 		return ""
 	}
