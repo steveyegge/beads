@@ -57,6 +57,9 @@ type Bot struct {
 
 	// User notification preferences
 	preferenceManager *PreferenceManager
+
+	// Coop credential reauth watcher (optional, set via SetCredWatcher)
+	credWatcher *CoopCredWatcher
 }
 
 // BotConfig holds configuration for the Slack bot.
@@ -167,6 +170,11 @@ func NewBot(cfg BotConfig, decisions *DecisionClient) (*Bot, error) {
 		preferenceManager: NewPreferenceManager(beadsDir),
 	}
 	return bot, nil
+}
+
+// SetCredWatcher attaches a CoopCredWatcher for handling reauth code replies.
+func (b *Bot) SetCredWatcher(w *CoopCredWatcher) {
+	b.credWatcher = w
 }
 
 // newBotForTest creates a Bot with injectable mock dependencies for testing.
@@ -2163,6 +2171,13 @@ func (b *Bot) handleChannelCreated(event *slackevents.ChannelCreatedEvent) {
 func (b *Bot) handleThreadReply(ev *slackevents.MessageEvent) {
 	if ev.User == b.botUserID || ev.BotID != "" {
 		return
+	}
+
+	// Check if this is a credential reauth code reply first.
+	if b.credWatcher != nil {
+		if b.credWatcher.HandleThreadReply(ev.Channel, ev.ThreadTimeStamp, ev.Text, ev.User) {
+			return
+		}
 	}
 
 	decisionID := b.getDecisionByThread(ev.Channel, ev.ThreadTimeStamp)

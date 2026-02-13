@@ -256,6 +256,10 @@ spec:
             - name: BD_NATS_URL
               value: {{ include "bd-daemon.natsURL" . | quote }}
             {{- end }}
+            {{- if .Values.slackBot.coopBrokerURL }}
+            - name: COOP_BROKER_URL
+              value: {{ .Values.slackBot.coopBrokerURL | quote }}
+            {{- end }}
           volumeMounts:
             - name: beads-data
               mountPath: /home/beads/.beads

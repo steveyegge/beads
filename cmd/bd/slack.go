@@ -194,6 +194,19 @@ func runSlackStart(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
+	// Start coop credential watcher if broker URL is configured.
+	brokerURL := os.Getenv("COOP_BROKER_URL")
+	if brokerURL != "" {
+		credWatcher := slackbot.NewCoopCredWatcher(natsURL, natsToken, brokerURL, natsToken, bot)
+		bot.SetCredWatcher(credWatcher)
+		go func() {
+			if err := credWatcher.Run(ctx); err != nil {
+				log.Printf("slackbot: coop credential watcher error: %v", err)
+			}
+		}()
+		log.Printf("slackbot: coop credential watcher started (broker=%s)", brokerURL)
+	}
+
 	// Run bot (blocks until context canceled)
 	log.Printf("slackbot: starting (channel=%s, nats=%s, daemon=%s)", channelID, natsURL, daemonHost)
 	return bot.Run(ctx)
