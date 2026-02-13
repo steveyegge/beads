@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -157,9 +158,11 @@ func (w *NATSWatcher) handleMessage(msg *nats.Msg) {
 	log.Printf("slackbot/nats: parsed event decision_id=%s question=%q", payload.DecisionID, payload.Question)
 
 	// Determine event type from the NATS subject suffix.
-	// Subjects are formatted as "decisions.<EventType>".
+	// Subjects are formatted as "decisions.<scope>.<EventType>" where scope
+	// is an agent ID or "_global". Extract the last segment as the event type.
 	subject := msg.Subject
-	eventType := eventbus.EventType(subject[len(eventbus.SubjectDecisionPrefix):])
+	lastDot := strings.LastIndex(subject, ".")
+	eventType := eventbus.EventType(subject[lastDot+1:])
 
 	switch eventType {
 	case eventbus.EventDecisionCreated:
