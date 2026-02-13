@@ -178,10 +178,10 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
-		Version: "0.58.2",
+		Version: "0.58.3",
 		Date:    "2026-02-13",
 		Changes: []string{
-			"FEAT: Slack bot credential reauth watcher — auto-posts reauth URLs to Slack when credentials are revoked, accepts auth codes as thread replies",
+			"FIX: Slack bot constructs auth URL when broker omits it in NATS event; adds rate-limiting for reauth notifications",
 		},
 	},
 	{
