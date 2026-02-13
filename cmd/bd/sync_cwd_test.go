@@ -7,9 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -75,10 +76,7 @@ func TestMultiRepoPathResolutionCWDInvariant(t *testing.T) {
 
 	// Create database
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set issue prefix
@@ -248,10 +246,7 @@ func TestExportToMultiRepoCWDInvariant(t *testing.T) {
 
 	// Create database and issue once before CWD tests
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 
 	// Set issue prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "oss"); err != nil {
@@ -290,10 +285,7 @@ func TestExportToMultiRepoCWDInvariant(t *testing.T) {
 		}
 
 		// Open existing store
-		store, err := sqlite.New(ctx, dbPath)
-		if err != nil {
-			t.Fatalf("failed to open store: %v", err)
-		}
+		store := teststore.New(t)
 		defer store.Close()
 
 		// Run multi-repo export
@@ -404,10 +396,7 @@ func TestSyncModePathResolution(t *testing.T) {
 
 		// Create database
 		dbPath := filepath.Join(beadsDir, "beads.db")
-		store, err := sqlite.New(ctx, dbPath)
-		if err != nil {
-			t.Fatalf("failed to create store: %v", err)
-		}
+		store := teststore.New(t)
 
 		// Set issue prefix
 		if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -508,10 +497,7 @@ repos:
 
 		// Create database
 		dbPath := filepath.Join(beadsDir, "beads.db")
-		store, err := sqlite.New(ctx, dbPath)
-		if err != nil {
-			t.Fatalf("failed to create store: %v", err)
-		}
+		store := teststore.New(t)
 
 		// Set issue prefix
 		if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -619,10 +605,7 @@ repos:
 
 		// Create database in external repo
 		dbPath := filepath.Join(externalBeadsDir, "beads.db")
-		store, err := sqlite.New(ctx, dbPath)
-		if err != nil {
-			t.Fatalf("failed to create store: %v", err)
-		}
+		store := teststore.New(t)
 
 		// Set issue prefix
 		if err := store.SetConfig(ctx, "issue_prefix", "ext"); err != nil {

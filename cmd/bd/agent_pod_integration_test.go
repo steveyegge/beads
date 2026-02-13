@@ -15,8 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -25,7 +26,7 @@ type podTestEnv struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	client     *rpc.Client
-	store      *sqlite.SQLiteStorage
+	store      storage.Storage
 	socketPath string
 	cleanup    func()
 }

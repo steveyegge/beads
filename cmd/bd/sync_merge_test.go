@@ -9,22 +9,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // setupTestStore creates a test storage with issue_prefix configured
-func setupTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
+func setupTestStore(t *testing.T, dbPath string) storage.Storage {
 	t.Helper()
 
 	// Reset config to avoid dolt-native mode from repo config polluting tests
 	config.ResetForTesting()
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {

@@ -13,8 +13,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 func TestDoctorRepair_CorruptDatabase_NotADatabase_RebuildFromJSONL(t *testing.T) {

@@ -2,7 +2,6 @@
 package doctor
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,9 +9,6 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 )
@@ -164,19 +160,8 @@ func checkJSONLGitDivergence(path, beadsDir string) *SyncDivergenceIssue {
 	return nil
 }
 
-// checkSQLiteMtimeDivergence checks if SQLite last_import_time matches JSONL mtime.
+// checkSQLiteMtimeDivergence checks if database last_import_time matches JSONL mtime.
 func checkSQLiteMtimeDivergence(_, beadsDir string) *SyncDivergenceIssue { //nolint:unparam // path reserved for future use
-	// Get database path
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	}
-
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return nil // No database
-	}
-
 	// Find JSONL file
 	jsonlPath := findJSONLFile(beadsDir)
 	if jsonlPath == "" {
@@ -191,11 +176,11 @@ func checkSQLiteMtimeDivergence(_, beadsDir string) *SyncDivergenceIssue { //nol
 	jsonlMtime := jsonlInfo.ModTime()
 
 	// Get last_import_time from database
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return nil
 	}
-	defer db.Close()
+	defer closeDB()
 
 	var lastImportTimeStr string
 	err = db.QueryRow("SELECT value FROM metadata WHERE key = 'last_import_time'").Scan(&lastImportTimeStr)

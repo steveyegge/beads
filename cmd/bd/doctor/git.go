@@ -2,7 +2,6 @@ package doctor
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,12 +9,11 @@ import (
 	"regexp"
 	"strings"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
+	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -960,14 +958,15 @@ func FindOrphanedIssuesFromPath(path string) ([]OrphanIssue, error) {
 		return []OrphanIssue{}, nil
 	}
 
-	// Get database path
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	// Open storage via factory
+	ctx := context.Background()
+	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{AllowWithRemoteDaemon: true})
+	if err != nil {
 		return []OrphanIssue{}, nil
 	}
 
-	// Create a local provider from the database
-	provider, err := storage.NewLocalProvider(dbPath)
+	// Create a local provider from the store
+	provider, err := storage.NewLocalProvider(store)
 	if err != nil {
 		return []OrphanIssue{}, nil
 	}
@@ -1005,17 +1004,6 @@ func CheckOrphanedIssues(path string) DoctorCheck {
 		}
 	}
 
-	// Get database path from config or use canonical name
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:     "Orphaned Issues",
-			Status:   StatusOK,
-			Message:  "N/A (no database)",
-			Category: CategoryGit,
-		}
-	}
-
 	// Use the shared FindOrphanedIssuesFromPath function (creates its own provider)
 	orphans, err := FindOrphanedIssuesFromPath(path)
 	if err != nil {
@@ -1029,22 +1017,16 @@ func CheckOrphanedIssues(path string) DoctorCheck {
 
 	// Check for "no open issues" case - this requires checking the database
 	// since FindOrphanedIssues silently returns empty slice
-	db, err := openDBReadOnly(dbPath)
-	if err == nil {
-		defer db.Close()
-		rows, err := db.Query("SELECT COUNT(*) FROM issues WHERE status IN ('open', 'in_progress')")
-		if err == nil {
-			defer rows.Close()
-			if rows.Next() {
-				var count int
-				if err := rows.Scan(&count); err == nil && count == 0 {
-					return DoctorCheck{
-						Name:     "Orphaned Issues",
-						Status:   StatusOK,
-						Message:  "No open issues to check",
-						Category: CategoryGit,
-					}
-				}
+	db, closeDB, dbErr := openDoctorDB(beadsDir)
+	if dbErr == nil {
+		defer closeDB()
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM issues WHERE status IN ('open', 'in_progress')").Scan(&count); err == nil && count == 0 {
+			return DoctorCheck{
+				Name:     "Orphaned Issues",
+				Status:   StatusOK,
+				Message:  "No open issues to check",
+				Category: CategoryGit,
 			}
 		}
 	}
@@ -1074,7 +1056,3 @@ func CheckOrphanedIssues(path string) DoctorCheck {
 	}
 }
 
-// openDBReadOnly opens a SQLite database in read-only mode
-func openDBReadOnly(dbPath string) (*sql.DB, error) {
-	return sql.Open("sqlite3", sqliteConnString(dbPath, true))
-}

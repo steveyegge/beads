@@ -5,7 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -13,10 +14,7 @@ func TestRemapDependencies(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	testStore, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	ctx := context.Background()
@@ -123,10 +121,7 @@ func TestRemapDependencies_NoDeps(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	testStore, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	ctx := context.Background()
@@ -161,10 +156,7 @@ func TestRemapDependencies_PreservesMetadata(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	testStore, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	ctx := context.Background()

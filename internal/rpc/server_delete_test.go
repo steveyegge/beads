@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // TestHandleDelete_DryRun verifies that dry-run mode returns what would be deleted
 // without actually deleting the issues
 func TestHandleDelete_DryRun(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
+	store := teststore.New(t)
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 
 	// Create test issues
@@ -67,7 +67,7 @@ func TestHandleDelete_DryRun(t *testing.T) {
 
 // TestHandleDelete_InvalidIssueID verifies error handling for non-existent issue IDs
 func TestHandleDelete_InvalidIssueID(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
+	store := teststore.New(t)
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 
 	// Try to delete non-existent issue
@@ -95,7 +95,7 @@ func TestHandleDelete_InvalidIssueID(t *testing.T) {
 
 // TestHandleDelete_PartialSuccess verifies behavior when some IDs are valid and others aren't
 func TestHandleDelete_PartialSuccess(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
+	store := teststore.New(t)
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 
 	// Create one valid issue
@@ -148,7 +148,7 @@ func TestHandleDelete_PartialSuccess(t *testing.T) {
 
 // TestHandleDelete_NoIDs verifies error when no issue IDs are provided
 func TestHandleDelete_NoIDs(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
+	store := teststore.New(t)
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 
 	// Try to delete with empty IDs array
@@ -201,7 +201,7 @@ func TestHandleDelete_StorageNotAvailable(t *testing.T) {
 
 // TestHandleDelete_InvalidJSON verifies error handling for malformed JSON args
 func TestHandleDelete_InvalidJSON(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
+	store := teststore.New(t)
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 
 	deleteReq := &Request{
@@ -223,7 +223,7 @@ func TestHandleDelete_InvalidJSON(t *testing.T) {
 
 // TestHandleDelete_ResponseStructure verifies the response format for successful deletion
 func TestHandleDelete_ResponseStructure(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
+	store := teststore.New(t)
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 
 	// Create test issues
@@ -286,7 +286,7 @@ func TestHandleDelete_ResponseStructure(t *testing.T) {
 
 // TestHandleDelete_WithReason verifies deletion with a reason
 func TestHandleDelete_WithReason(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
+	store := teststore.New(t)
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 
 	// Create test issue
@@ -325,7 +325,6 @@ func TestHandleDelete_WithReason(t *testing.T) {
 func TestHandleDelete_WithTombstone(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	store := newTestStore(t, dbPath)
-	defer store.Close()
 
 	server := NewServer("/tmp/test.sock", store, "/tmp", dbPath)
 
@@ -392,7 +391,7 @@ func TestHandleDelete_WithTombstone(t *testing.T) {
 
 // TestHandleDelete_AllFail verifies behavior when all deletions fail
 func TestHandleDelete_AllFail(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
+	store := teststore.New(t)
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 
 	// Try to delete multiple non-existent issues
@@ -420,7 +419,7 @@ func TestHandleDelete_AllFail(t *testing.T) {
 
 // TestHandleDelete_DryRunPreservesData verifies dry-run doesn't modify anything
 func TestHandleDelete_DryRunPreservesData(t *testing.T) {
-	store := memory.New("/tmp/test.jsonl")
+	store := teststore.New(t)
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 
 	// Create test issues

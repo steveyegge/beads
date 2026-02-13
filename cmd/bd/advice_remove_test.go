@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -14,10 +15,10 @@ import (
 type adviceRemoveTestHelper struct {
 	t     *testing.T
 	ctx   context.Context
-	store *sqlite.SQLiteStorage
+	store storage.Storage
 }
 
-func newAdviceRemoveTestHelper(t *testing.T, store *sqlite.SQLiteStorage) *adviceRemoveTestHelper {
+func newAdviceRemoveTestHelper(t *testing.T, store storage.Storage) *adviceRemoveTestHelper {
 	return &adviceRemoveTestHelper{t: t, ctx: context.Background(), store: store}
 }
 

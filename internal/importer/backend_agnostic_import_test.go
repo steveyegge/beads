@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestImportIssues_BackendAgnostic_DepsLabelsCommentsTombstone(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("")
+	store := teststore.New(t)
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("set issue_prefix: %v", err)
 	}

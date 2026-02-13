@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
@@ -321,7 +319,7 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 
 	// Open database for schema probe
 	// Note: We can't use the global 'store' because doctor can check arbitrary paths
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Schema Compatibility",
@@ -331,7 +329,7 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 			Fix:     "Database may be corrupted. Try 'bd migrate' or restore from backup",
 		}
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Run schema probe (defined in internal/storage/sqlite/schema_probe.go)
 	// This is a simplified version since we can't import the internal package directly
@@ -459,25 +457,9 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 		}
 	}
 
-	// Get database path (same logic as CheckSchemaCompatibility)
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	// If no database, skip this check
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:    "Database Integrity",
-			Status:  StatusOK,
-			Message: "N/A (no database)",
-		}
-	}
-
-	// Open database in read-only mode for integrity check
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	// PRAGMA integrity_check is SQLite-specific and not applicable to Dolt.
+	// Instead, do a basic query sanity check.
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		// Check if JSONL recovery is possible
 		jsonlCount, _, jsonlErr := CountJSONLIssues(filepath.Join(beadsDir, "issues.jsonl"))
@@ -495,75 +477,24 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 			Fix:     "See recovery steps above",
 		}
 	}
-	defer db.Close()
+	defer closeDB()
 
-	// Run PRAGMA integrity_check
-	// This checks the entire database for corruption
-	rows, err := db.Query("PRAGMA integrity_check")
-	if err != nil {
-		// Check if JSONL recovery is possible
-		jsonlCount, _, jsonlErr := CountJSONLIssues(filepath.Join(beadsDir, "issues.jsonl"))
-		if jsonlErr != nil {
-			jsonlCount, _, jsonlErr = CountJSONLIssues(filepath.Join(beadsDir, "beads.jsonl"))
-		}
-		jsonlAvailable := jsonlErr == nil && jsonlCount > 0
-
-		errorType, recoverySteps := classifyDatabaseError(err.Error(), jsonlCount, jsonlAvailable)
-		// Override default error type for this specific case
-		if errorType == "Failed to open database" {
-			errorType = "Failed to run integrity check"
-		}
+	// Basic query sanity check (replaces PRAGMA integrity_check)
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&count); err != nil {
 		return DoctorCheck{
 			Name:    "Database Integrity",
 			Status:  StatusError,
-			Message: errorType,
-			Detail:  fmt.Sprintf("%s\n\nError: %s", recoverySteps, err.Error()),
-			Fix:     "See recovery steps above",
-		}
-	}
-	defer rows.Close()
-
-	var results []string
-	for rows.Next() {
-		var result string
-		if err := rows.Scan(&result); err != nil {
-			continue
-		}
-		results = append(results, result)
-	}
-
-	// "ok" means no corruption detected
-	if len(results) == 1 && results[0] == "ok" {
-		return DoctorCheck{
-			Name:    "Database Integrity",
-			Status:  StatusOK,
-			Message: "No corruption detected",
-		}
-	}
-
-	// Any other result indicates corruption - check if JSONL recovery is possible
-	jsonlCount, _, jsonlErr := CountJSONLIssues(filepath.Join(beadsDir, "issues.jsonl"))
-	if jsonlErr != nil {
-		// Try alternate name
-		jsonlCount, _, jsonlErr = CountJSONLIssues(filepath.Join(beadsDir, "beads.jsonl"))
-	}
-
-	if jsonlErr == nil && jsonlCount > 0 {
-		return DoctorCheck{
-			Name:    "Database Integrity",
-			Status:  StatusError,
-			Message: fmt.Sprintf("Database corruption detected (JSONL has %d issues for recovery)", jsonlCount),
-			Detail:  strings.Join(results, "; "),
-			Fix:     "Run 'bd doctor --fix' to recover from JSONL backup",
+			Message: "Basic query failed",
+			Detail:  err.Error(),
+			Fix:     "Database may be corrupted. Try 'bd doctor --fix' to recover.",
 		}
 	}
 
 	return DoctorCheck{
 		Name:    "Database Integrity",
-		Status:  StatusError,
-		Message: "Database corruption detected",
-		Detail:  strings.Join(results, "; "),
-		Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild from JSONL (if available), or restore from backup",
+		Status:  StatusOK,
+		Message: "Basic query check passed",
 	}
 }
 
@@ -677,7 +608,7 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 	jsonlCount, jsonlPrefixes, jsonlErr := CountJSONLIssues(jsonlPath)
 
 	// Single database open for all queries (instead of 3 separate opens)
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		// Database can't be opened. If JSONL has issues, suggest recovery.
 		if jsonlErr == nil && jsonlCount > 0 {
@@ -696,7 +627,7 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 			Detail:  err.Error(),
 		}
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Get database count
 	var dbCount int
@@ -948,30 +879,23 @@ func classifyDatabaseError(errMsg string, jsonlCount int, jsonlAvailable bool) (
 	return
 }
 
-// getDatabaseVersionFromPath reads the database version from the given path
+// getDatabaseVersionFromPath reads the database version from the given path.
+// NOTE: dbPath is ignored; we derive beadsDir and use openDoctorDB.
 func getDatabaseVersionFromPath(dbPath string) string {
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	// Derive beadsDir from dbPath (dbPath is typically .beads/beads.db)
+	beadsDir := filepath.Dir(dbPath)
+
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return "unknown"
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Try to read version from metadata table
 	var version string
 	err = db.QueryRow("SELECT value FROM metadata WHERE key = 'bd_version'").Scan(&version)
 	if err == nil {
 		return version
-	}
-
-	// Check if metadata table exists
-	var tableName string
-	err = db.QueryRow(`
-		SELECT name FROM sqlite_master
-		WHERE type='table' AND name='metadata'
-	`).Scan(&tableName)
-
-	if err == sql.ErrNoRows {
-		return "pre-0.17.5"
 	}
 
 	return "unknown"
@@ -1111,7 +1035,7 @@ func CheckDatabaseSize(path string) DoctorCheck {
 
 	// Read threshold from config (default 5000, 0 = disabled)
 	threshold := 5000
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(30000)")
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Large Database",
@@ -1119,7 +1043,7 @@ func CheckDatabaseSize(path string) DoctorCheck {
 			Message: "N/A (unable to open database)",
 		}
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Check for custom threshold in config table
 	var thresholdStr string

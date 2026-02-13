@@ -13,13 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // setupDaemonTestEnvForEdit creates a daemon test environment for edit command tests.
-func setupDaemonTestEnvForEdit(t *testing.T) (context.Context, context.CancelFunc, *rpc.Client, *sqlite.SQLiteStorage, func()) {
+func setupDaemonTestEnvForEdit(t *testing.T) (context.Context, context.CancelFunc, *rpc.Client, storage.Storage, func()) {
 	t.Helper()
 
 	tmpDir := makeSocketTempDir(t)

@@ -21,7 +21,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -1363,7 +1362,7 @@ var listCmd = &cobra.Command{
 			if store != nil {
 				allDepsForList, _ = store.GetAllDependencyRecords(ctx)
 			} else if dbPath != "" {
-				if roStore, err := sqlite.NewReadOnlyWithTimeout(ctx, dbPath, lockTimeout); err == nil {
+				if roStore, err := factory.NewWithOptions(ctx, "", filepath.Dir(dbPath), factory.Options{ReadOnly: true, LockTimeout: lockTimeout}); err == nil {
 					allDepsForList, _ = roStore.GetAllDependencyRecords(ctx)
 					_ = roStore.Close()
 				}

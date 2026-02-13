@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // setupGitRepo creates a temporary git repository for testing

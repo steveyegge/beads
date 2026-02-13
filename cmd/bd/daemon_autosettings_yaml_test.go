@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 // TestDaemonAutoSyncFromYAML verifies that daemon.auto-sync is read from config.yaml.
@@ -31,10 +32,7 @@ func TestDaemonAutoSyncFromYAML(t *testing.T) {
 	// Create database without daemon settings
 	dbPath := filepath.Join(beadsDir, "beads.db")
 	ctx := context.Background()
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
@@ -90,10 +88,7 @@ func TestDaemonAutoCommitOnlyFromYAML(t *testing.T) {
 	// Create database without daemon settings
 	dbPath := filepath.Join(beadsDir, "beads.db")
 	ctx := context.Background()
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
@@ -151,10 +146,7 @@ func TestDaemonIndividualSettingsFromYAML(t *testing.T) {
 	// Create database without daemon settings
 	dbPath := filepath.Join(beadsDir, "beads.db")
 	ctx := context.Background()
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
@@ -208,10 +200,7 @@ func TestDaemonEnvVarOverridesYAML(t *testing.T) {
 	// Create database
 	dbPath := filepath.Join(beadsDir, "beads.db")
 	ctx := context.Background()
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
@@ -268,10 +257,7 @@ func TestDaemonCLIFlagOverridesYAML(t *testing.T) {
 	// Create database
 	dbPath := filepath.Join(beadsDir, "beads.db")
 	ctx := context.Background()
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,
@@ -332,10 +318,7 @@ func TestDaemonIndividualEnvVarOverridesYAML(t *testing.T) {
 	// Create database
 	dbPath := filepath.Join(beadsDir, "beads.db")
 	ctx := context.Background()
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set BEADS_DIR so FindBeadsDir() finds the test directory instead of the real worktree,

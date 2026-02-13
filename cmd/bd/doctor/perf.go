@@ -9,8 +9,6 @@ import (
 	"runtime/pprof"
 	"strings"
 	"time"
-
-	"github.com/steveyegge/beads/internal/beads"
 )
 
 var cpuProfileFile *os.File
@@ -29,21 +27,14 @@ func RunPerformanceDiagnostics(path string) {
 		os.Exit(1)
 	}
 
-	// Get database path
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: No database found at %s\n", dbPath)
-		os.Exit(1)
-	}
-
 	// Collect platform info
 	platformInfo := CollectPlatformInfo(path)
 	fmt.Printf("\nPlatform: %s\n", platformInfo["os_arch"])
 	fmt.Printf("Go: %s\n", platformInfo["go_version"])
-	fmt.Printf("SQLite: %s\n", platformInfo["sqlite_version"])
+	fmt.Printf("Database: %s\n", platformInfo["db_version"])
 
 	// Collect database stats
-	dbStats := collectDatabaseStats(dbPath)
+	dbStats := collectDatabaseStats(beadsDir)
 	fmt.Printf("\nDatabase Statistics:\n")
 	fmt.Printf("  Total issues:      %s\n", dbStats["total_issues"])
 	fmt.Printf("  Open issues:       %s\n", dbStats["open_issues"])
@@ -66,19 +57,19 @@ func RunPerformanceDiagnostics(path string) {
 
 	// Measure GetReadyWork
 	readyDuration := measureOperation(func() error {
-		return runReadyWork(dbPath)
+		return runReadyWork(beadsDir)
 	})
 	fmt.Printf("  bd ready                  %dms\n", readyDuration.Milliseconds())
 
 	// Measure SearchIssues (list open)
 	listDuration := measureOperation(func() error {
-		return runListOpen(dbPath)
+		return runListOpen(beadsDir)
 	})
 	fmt.Printf("  bd list --status=open     %dms\n", listDuration.Milliseconds())
 
 	// Measure GetIssue (show random issue)
 	showDuration := measureOperation(func() error {
-		return runShowRandom(dbPath)
+		return runShowRandom(beadsDir)
 	})
 	if showDuration > 0 {
 		fmt.Printf("  bd show <random-issue>    %dms\n", showDuration.Milliseconds())
@@ -86,7 +77,7 @@ func RunPerformanceDiagnostics(path string) {
 
 	// Measure SearchIssues with filters
 	searchDuration := measureOperation(func() error {
-		return runComplexSearch(dbPath)
+		return runComplexSearch(beadsDir)
 	})
 	fmt.Printf("  bd list (complex filters) %dms\n", searchDuration.Milliseconds())
 
@@ -106,30 +97,31 @@ func CollectPlatformInfo(path string) map[string]string {
 	// Go version
 	info["go_version"] = runtime.Version()
 
-	// SQLite version - try to find database
-	// Follow redirect to resolve actual beads directory
+	// Database version - try to query via storage layer
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err == nil {
-		defer db.Close()
+		defer closeDB()
 		var version string
+		// Try SQLite version first, fall back to MySQL/Dolt version
 		if err := db.QueryRow("SELECT sqlite_version()").Scan(&version); err == nil {
-			info["sqlite_version"] = version
+			info["db_version"] = "SQLite " + version
+		} else if err := db.QueryRow("SELECT VERSION()").Scan(&version); err == nil {
+			info["db_version"] = version
 		} else {
-			info["sqlite_version"] = "unknown"
+			info["db_version"] = "unknown"
 		}
 	} else {
-		info["sqlite_version"] = "unknown"
+		info["db_version"] = "unknown"
 	}
 
 	return info
 }
 
-func collectDatabaseStats(dbPath string) map[string]string {
+func collectDatabaseStats(beadsDir string) map[string]string {
 	stats := make(map[string]string)
 
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		stats["total_issues"] = "error"
 		stats["open_issues"] = "error"
@@ -139,7 +131,7 @@ func collectDatabaseStats(dbPath string) map[string]string {
 		stats["db_size"] = "error"
 		return stats
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Total issues
 	var total int
@@ -181,13 +173,8 @@ func collectDatabaseStats(dbPath string) map[string]string {
 		stats["labels"] = "error"
 	}
 
-	// Database file size
-	if info, err := os.Stat(dbPath); err == nil {
-		sizeMB := float64(info.Size()) / (1024 * 1024)
-		stats["db_size"] = fmt.Sprintf("%.2f MB", sizeMB)
-	} else {
-		stats["db_size"] = "error"
-	}
+	// Database size estimate (count-based since we may not have a file path)
+	stats["db_size"] = "N/A"
 
 	return stats
 }
@@ -220,17 +207,17 @@ func measureOperation(op func() error) time.Duration {
 }
 
 // runQuery executes a read-only database query and returns any error
-func runQuery(dbPath string, queryFn func(*sql.DB) error) error {
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
+func runQuery(beadsDir string, queryFn func(*sql.DB) error) error {
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer closeDB()
 	return queryFn(db)
 }
 
-func runReadyWork(dbPath string) error {
-	return runQuery(dbPath, func(db *sql.DB) error {
+func runReadyWork(beadsDir string) error {
+	return runQuery(beadsDir, func(db *sql.DB) error {
 		// simplified ready work query (the real one is more complex)
 		_, err := db.Query(`
 			SELECT id FROM issues
@@ -244,15 +231,15 @@ func runReadyWork(dbPath string) error {
 	})
 }
 
-func runListOpen(dbPath string) error {
-	return runQuery(dbPath, func(db *sql.DB) error {
+func runListOpen(beadsDir string) error {
+	return runQuery(beadsDir, func(db *sql.DB) error {
 		_, err := db.Query("SELECT id, title, status FROM issues WHERE status != 'closed' LIMIT 100")
 		return err
 	})
 }
 
-func runShowRandom(dbPath string) error {
-	return runQuery(dbPath, func(db *sql.DB) error {
+func runShowRandom(beadsDir string) error {
+	return runQuery(beadsDir, func(db *sql.DB) error {
 		// get a random issue
 		var issueID string
 		if err := db.QueryRow("SELECT id FROM issues ORDER BY RANDOM() LIMIT 1").Scan(&issueID); err != nil {
@@ -265,8 +252,8 @@ func runShowRandom(dbPath string) error {
 	})
 }
 
-func runComplexSearch(dbPath string) error {
-	return runQuery(dbPath, func(db *sql.DB) error {
+func runComplexSearch(beadsDir string) error {
+	return runQuery(beadsDir, func(db *sql.DB) error {
 		// complex query with filters
 		_, err := db.Query(`
 			SELECT i.id, i.title, i.status, i.priority

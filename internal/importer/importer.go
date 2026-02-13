@@ -15,7 +15,6 @@ import (
 	"github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -953,25 +952,10 @@ func upsertIssues(ctx context.Context, store storage.Storage, issues []*types.Is
 				}
 			}
 			if len(batchForDepth) > 0 {
-				// Prefer a backend-specific import/batch API when available, so we can honor
-				// options like SkipPrefixValidation (multi-repo mode) without requiring the
-				// entire importer to be SQLite-specific.
-				type importBatchCreator interface {
-					CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts sqlite.BatchCreateOptions) error
-				}
-				if bc, ok := store.(importBatchCreator); ok {
-					batchOpts := sqlite.BatchCreateOptions{
-						OrphanHandling:       sqlite.OrphanHandling(opts.OrphanHandling),
-						SkipPrefixValidation: opts.SkipPrefixValidation,
-					}
-					if err := bc.CreateIssuesWithFullOptions(ctx, batchForDepth, "import", batchOpts); err != nil {
-						return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
-					}
-				} else {
-					// Generic fallback. OrphanSkip and OrphanStrict are enforced above.
-					if err := store.CreateIssues(ctx, batchForDepth, "import"); err != nil {
-						return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
-					}
+				// Use generic batch creation via the storage interface.
+				// OrphanSkip and OrphanStrict are enforced above.
+				if err := store.CreateIssues(ctx, batchForDepth, "import"); err != nil {
+					return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
 				}
 				result.Created += len(batchForDepth)
 			}

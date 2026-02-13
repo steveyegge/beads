@@ -15,7 +15,6 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -63,12 +62,12 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 		return
 	}
 
-	// Find SQLite database
+	// SQLite backend has been removed - migration from SQLite is no longer supported
+	exitWithError("sqlite_removed", "SQLite backend has been removed. --to-dolt migration from SQLite is no longer supported.",
+		"use 'bd init' to create a new Dolt database, then import from JSONL")
+
+	// Unreachable code below kept for reference; exitWithError calls os.Exit.
 	sqlitePath := cfg.DatabasePath(beadsDir)
-	if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
-		exitWithError("no_sqlite_database", "No SQLite database found to migrate",
-			fmt.Sprintf("run 'bd init' first (expected: %s)", sqlitePath))
-	}
 
 	// Dolt path
 	doltPath := filepath.Join(beadsDir, "dolt")
@@ -193,8 +192,13 @@ func hooksNeedDoltUpdate(beadsDir string) bool {
 	return true // bd inline hook without Dolt check
 }
 
-// handleToSQLiteMigration migrates from Dolt to SQLite backend (escape hatch).
+// handleToSQLiteMigration is no longer supported - SQLite backend has been removed.
 func handleToSQLiteMigration(dryRun bool, autoYes bool) {
+	exitWithError("sqlite_removed", "SQLite backend has been removed. --to-sqlite migration is no longer supported.", "")
+	// Unreachable code below kept for compilation. exitWithError calls os.Exit.
+	_ = dryRun
+	_ = autoYes
+
 	ctx := context.Background()
 
 	// Find .beads directory
@@ -261,23 +265,11 @@ func handleToSQLiteMigration(dryRun bool, autoYes bool) {
 	// Create SQLite database
 	printProgress("Creating SQLite database...")
 
-	sqliteStore, err := sqlite.New(ctx, sqlitePath)
-	if err != nil {
-		exitWithError("sqlite_create_failed", err.Error(), "")
-	}
-
-	// Import data with cleanup on failure
-	imported, skipped, importErr := importToSQLite(ctx, sqliteStore, data)
-	if importErr != nil {
-		_ = sqliteStore.Close()
-		// Cleanup partial SQLite database
-		_ = os.Remove(sqlitePath)
-		_ = os.Remove(sqlitePath + "-wal")
-		_ = os.Remove(sqlitePath + "-shm")
-		exitWithError("import_failed", importErr.Error(), "partial SQLite database has been cleaned up")
-	}
-
-	_ = sqliteStore.Close()
+	// SQLite creation removed - this path is unreachable
+	exitWithError("sqlite_removed", "SQLite backend has been removed", "")
+	var imported, skipped int
+	_ = sqlitePath
+	_ = data
 
 	printSuccess(fmt.Sprintf("Imported %d issues (%d skipped)", imported, skipped))
 
@@ -295,15 +287,9 @@ func handleToSQLiteMigration(dryRun bool, autoYes bool) {
 	printFinalStatus("sqlite", imported, skipped, "", sqlitePath, doltPath, false)
 }
 
-// extractFromSQLite extracts all data from a SQLite database
+// extractFromSQLite is no longer supported - SQLite backend has been removed.
 func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, error) {
-	store, err := sqlite.NewReadOnly(ctx, dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	return extractFromStore(ctx, store)
+	return nil, fmt.Errorf("SQLite backend has been removed; cannot extract from SQLite database")
 }
 
 // extractFromDolt extracts all data from a Dolt database
@@ -535,8 +521,8 @@ func importToDolt(ctx context.Context, store *dolt.DoltStore, data *migrationDat
 	return imported, skipped, nil
 }
 
-// importToSQLite imports all data to SQLite, returning (imported, skipped, error)
-func importToSQLite(ctx context.Context, store *sqlite.SQLiteStorage, data *migrationData) (int, int, error) {
+// importToSQLite is no longer supported - SQLite backend has been removed.
+func importToSQLite(ctx context.Context, store storage.Storage, data *migrationData) (int, int, error) {
 	// Set all config values first
 	for key, value := range data.config {
 		if err := store.SetConfig(ctx, key, value); err != nil {

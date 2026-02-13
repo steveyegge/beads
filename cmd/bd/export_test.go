@@ -292,7 +292,7 @@ func TestExportCommand(t *testing.T) {
 
 		// Simulate corrupted export by truncating file
 		corruptedPath := filepath.Join(tmpDir, "export_corrupted.jsonl")
-		
+
 		// First export normally
 		if err := s.ClearAllExportHashes(ctx); err != nil {
 			t.Fatalf("Failed to clear export hashes: %v", err)

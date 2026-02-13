@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -27,10 +28,7 @@ func TestEnsureDatabaseFresh_AutoImportsOnStale(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set prefix
@@ -71,9 +69,9 @@ func TestEnsureDatabaseFresh_AutoImportsOnStale(t *testing.T) {
 	oldStoreActive := storeActive
 	oldAllowStale := allowStale
 
-	noAutoImport = false      // Allow auto-import
-	autoImportEnabled = true  // Enable auto-import
-	allowStale = false        // Don't skip staleness check
+	noAutoImport = false     // Allow auto-import
+	autoImportEnabled = true // Enable auto-import
+	allowStale = false       // Don't skip staleness check
 	store = testStore
 	dbPath = testDBPath
 	rootCtx = ctx
@@ -119,10 +117,7 @@ func TestEnsureDatabaseFresh_NoAutoImportFlag(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set prefix
@@ -211,10 +206,7 @@ func TestEnsureDatabaseFresh_AllowStaleFlag(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set prefix
@@ -255,9 +247,9 @@ func TestEnsureDatabaseFresh_AllowStaleFlag(t *testing.T) {
 	oldStoreActive := storeActive
 	oldAllowStale := allowStale
 
-	noAutoImport = true       // Disable auto-import (shouldn't matter with allowStale)
+	noAutoImport = true // Disable auto-import (shouldn't matter with allowStale)
 	autoImportEnabled = false
-	allowStale = true         // Skip staleness check entirely
+	allowStale = true // Skip staleness check entirely
 	store = testStore
 	dbPath = testDBPath
 	rootCtx = ctx
@@ -321,10 +313,7 @@ func TestEnsureDatabaseFresh_FreshDB(t *testing.T) {
 	f.Close()
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set prefix

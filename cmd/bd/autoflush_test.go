@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -19,7 +20,8 @@ import (
 //
 // Bug: When dbPath is set to a relative fallback (e.g., ".beads/beads.db"),
 // findJSONLPath() returns ".beads/issues.jsonl" (relative), causing:
-//   "Rel: can't make .beads/issues.jsonl relative to /path/to/repo"
+//
+//	"Rel: can't make .beads/issues.jsonl relative to /path/to/repo"
 //
 // See: https://github.com/steveyegge/beads/issues/959
 func TestFindJSONLPath_RelativeDbPath(t *testing.T) {
@@ -166,10 +168,7 @@ func TestFetchAndMergeIssues_IncludesComments(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 
 	// Create storage
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -228,10 +227,7 @@ func TestFetchAndMergeIssues_IncludesMultipleComments(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 
 	// Create storage
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()

@@ -1,7 +1,6 @@
 package doctor
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,10 +9,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/spf13/viper"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 )
 
@@ -364,7 +360,7 @@ func checkMetadataConfigValues(repoPath string) []string {
 			if strings.HasSuffix(cfg.Database, ".db") || strings.HasSuffix(cfg.Database, ".sqlite") || strings.HasSuffix(cfg.Database, ".sqlite3") {
 				issues = append(issues, fmt.Sprintf("metadata.json database: %q looks like a SQLite file, but backend is dolt (expected a directory like %q)", cfg.Database, "dolt"))
 			}
-			if cfg.Database == beads.CanonicalDatabaseName {
+			if cfg.Database == "beads.db" {
 				issues = append(issues, fmt.Sprintf("metadata.json database: %q is misleading for dolt backend (expected %q)", cfg.Database, "dolt"))
 			}
 		}
@@ -401,28 +397,12 @@ func checkDatabaseConfigValues(repoPath string) []string {
 		return issues // No .beads directory, nothing to check
 	}
 
-	// Get database path (backend-aware)
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		// For Dolt, cfg.DatabasePath() is a directory and sqlite checks are not applicable.
-		if cfg.GetBackend() == configfile.BackendDolt {
-			return issues
-		}
-		if cfg.Database != "" {
-			dbPath = cfg.DatabasePath(beadsDir)
-		}
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return issues // No database, nothing to check
-	}
-
-	// Open database in read-only mode
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	// Open database via storage layer
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return issues // Can't open database, skip
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Check status.custom - custom status names should be lowercase alphanumeric with underscores
 	var statusCustom string

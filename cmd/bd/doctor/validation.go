@@ -112,18 +112,8 @@ func readMergeArtifactPatterns(beadsDir string) ([]string, error) {
 func CheckOrphanedDependencies(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:    "Orphaned Dependencies",
-			Status:  "ok",
-			Message: "N/A (no database)",
-		}
-	}
-
-	// Open database read-only
-	db, err := openDBReadOnly(dbPath)
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Orphaned Dependencies",
@@ -131,7 +121,7 @@ func CheckOrphanedDependencies(path string) DoctorCheck {
 			Message: "N/A (unable to open database)",
 		}
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Query for orphaned dependencies
 	query := `
@@ -269,17 +259,8 @@ func CheckDuplicateIssues(path string, gastownMode bool, gastownThreshold int) D
 func CheckTestPollution(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:    "Test Pollution",
-			Status:  "ok",
-			Message: "N/A (no database)",
-		}
-	}
-
-	db, err := openDBReadOnly(dbPath)
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Test Pollution",
@@ -287,7 +268,7 @@ func CheckTestPollution(path string) DoctorCheck {
 			Message: "N/A (unable to open database)",
 		}
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Look for common test patterns in titles
 	query := `
@@ -332,17 +313,8 @@ func CheckTestPollution(path string) DoctorCheck {
 func CheckChildParentDependencies(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:    "Child-Parent Dependencies",
-			Status:  "ok",
-			Message: "N/A (no database)",
-		}
-	}
-
-	db, err := openDBReadOnly(dbPath)
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Child-Parent Dependencies",
@@ -350,7 +322,7 @@ func CheckChildParentDependencies(path string) DoctorCheck {
 			Message: "N/A (unable to open database)",
 		}
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Query for child→parent BLOCKING dependencies where issue_id starts with depends_on_id + "."
 	// Only matches blocking types (blocks, conditional-blocks, waits-for) that cause deadlock.

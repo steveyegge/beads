@@ -6,17 +6,18 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 func TestGetVersionsSince(t *testing.T) {
 	// Get current version counts dynamically from versionChanges
-	latestVersion := versionChanges[0].Version              // First element is latest
+	latestVersion := versionChanges[0].Version                     // First element is latest
 	oldestVersion := versionChanges[len(versionChanges)-1].Version // Last element is oldest
-	versionsAfterOldest := len(versionChanges) - 1          // All except oldest
+	versionsAfterOldest := len(versionChanges) - 1                 // All except oldest
 
 	tests := []struct {
 		name          string
@@ -397,10 +398,7 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 
 	// Create database with old version
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	store := teststore.New(t)
 
 	// Set old database version
 	oldVersion := "0.22.0"
@@ -445,10 +443,7 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 	}
 
 	// Verify database version was updated
-	store, err = sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	store = teststore.New(t)
 	defer store.Close()
 
 	newVersion, err := store.GetMetadata(ctx, "bd_version")
@@ -476,10 +471,7 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 
 	// Create database with current version
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	store := teststore.New(t)
 
 	// Set current database version
 	if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
@@ -500,10 +492,7 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 	autoMigrateOnVersionBump(beadsDir)
 
 	// Verify database version is still current
-	store, err = sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	store = teststore.New(t)
 	defer store.Close()
 
 	currentVersion, err := store.GetMetadata(ctx, "bd_version")

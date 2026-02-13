@@ -11,13 +11,11 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -802,20 +800,19 @@ func checkBeadGate(ctx context.Context, awaitID string) (bool, string) {
 		return false, fmt.Sprintf("rig %q not found: %v", rigName, err)
 	}
 
-	// Load config to get database path
-	cfg, err := configfile.Load(targetBeadsDir)
+	// Open the target database via storage factory
+	st, err := factory.NewFromConfigWithOptions(ctx, targetBeadsDir, factory.Options{
+		AllowWithRemoteDaemon: true,
+	})
 	if err != nil {
-		return false, fmt.Sprintf("failed to load config for rig %q: %v", rigName, err)
+		return false, fmt.Sprintf("failed to open storage for rig %q: %v", rigName, err)
 	}
+	defer func() { _ = st.Close() }()
 
-	dbPath := cfg.DatabasePath(targetBeadsDir)
-
-	// Open the target database (read-only)
-	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
-	if err != nil {
-		return false, fmt.Sprintf("failed to open database for rig %q: %v", rigName, err)
+	db := st.UnderlyingDB()
+	if db == nil {
+		return false, fmt.Sprintf("storage backend for rig %q does not expose underlying database", rigName)
 	}
-	defer func() { _ = db.Close() }()
 
 	// Check if the target bead exists and is closed
 	var status string

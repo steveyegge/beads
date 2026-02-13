@@ -1,17 +1,15 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -68,17 +66,13 @@ func outputJSONAndExit(result repairResult, exitCode int) {
 	os.Exit(exitCode)
 }
 
-// validateRepairPaths validates the beads directory and database exist.
+// validateRepairPaths validates the beads directory exists and returns its path.
 func validateRepairPaths() (string, error) {
 	beadsDir := filepath.Join(repairPath, ".beads")
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		return "", fmt.Errorf(".beads directory not found at %s", beadsDir)
 	}
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("database not found at %s", dbPath)
-	}
-	return dbPath, nil
+	return beadsDir, nil
 }
 
 // findAllOrphans finds all orphaned references in the database.
@@ -162,7 +156,7 @@ func printOrphansText(stats repairStats, orphans allOrphans) {
 }
 
 func runRepair(cmd *cobra.Command, args []string) {
-	dbPath, err := validateRepairPaths()
+	beadsDir, err := validateRepairPaths()
 	if err != nil {
 		if repairJSON {
 			outputJSONAndExit(repairResult{Status: "error", Error: err.Error()}, 1)
@@ -172,28 +166,28 @@ func runRepair(cmd *cobra.Command, args []string) {
 	}
 
 	if !repairJSON {
-		fmt.Printf("Repairing database: %s\n", dbPath)
+		fmt.Printf("Repairing database in: %s\n", beadsDir)
 		if repairDryRun {
 			fmt.Println("[DRY-RUN] No changes will be made")
 		}
 		fmt.Println()
 	}
 
-	db, err := openRepairDB(dbPath)
+	db, closeDB, err := openRepairDB(beadsDir)
 	if err != nil {
 		if repairJSON {
-			outputJSONAndExit(repairResult{DatabasePath: dbPath, Status: "error", Error: fmt.Sprintf("opening database: %v", err)}, 1)
+			outputJSONAndExit(repairResult{DatabasePath: beadsDir, Status: "error", Error: fmt.Sprintf("opening database: %v", err)}, 1)
 		}
 		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Find all orphaned references
 	stats, orphans, err := findAllOrphans(db)
 	if err != nil {
 		if repairJSON {
-			outputJSONAndExit(repairResult{DatabasePath: dbPath, Status: "error", Error: err.Error()}, 1)
+			outputJSONAndExit(repairResult{DatabasePath: beadsDir, Status: "error", Error: err.Error()}, 1)
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -201,7 +195,7 @@ func runRepair(cmd *cobra.Command, args []string) {
 
 	// Build JSON result structure (used for both JSON output and tracking)
 	jsonResult := repairResult{
-		DatabasePath: dbPath,
+		DatabasePath: beadsDir,
 		DryRun:       repairDryRun,
 		OrphanCounts: repairOrphanCounts{
 			DependenciesIssueID:   stats.orphanedDepsIssueID,
@@ -260,24 +254,28 @@ func runRepair(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Create backup before destructive operations
-	backupPath := dbPath + ".pre-repair"
-	if !repairJSON {
-		fmt.Printf("Creating backup: %s\n", filepath.Base(backupPath))
-	}
-	if err := copyFile(dbPath, backupPath); err != nil {
-		if repairJSON {
-			jsonResult.Status = "error"
-			jsonResult.Error = fmt.Sprintf("creating backup: %v", err)
-			outputJSONAndExit(jsonResult, 1)
+	// Create backup before destructive operations (best effort)
+	// Try to find and back up the database file if it's file-based
+	backupPath := ""
+	dbFile := filepath.Join(beadsDir, "beads.db")
+	if _, statErr := os.Stat(dbFile); statErr == nil {
+		backupPath = dbFile + ".pre-repair"
+		if !repairJSON {
+			fmt.Printf("Creating backup: %s\n", filepath.Base(backupPath))
 		}
-		fmt.Fprintf(os.Stderr, "Error creating backup: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Aborting repair. Fix backup issue and retry.\n")
-		os.Exit(1)
-	}
-	jsonResult.BackupPath = backupPath
-	if !repairJSON {
-		fmt.Printf("  %s Backup created\n\n", ui.RenderPass("✓"))
+		if cpErr := copyFile(dbFile, backupPath); cpErr != nil {
+			if !repairJSON {
+				fmt.Fprintf(os.Stderr, "Warning: could not create backup: %v\n", cpErr)
+			}
+			backupPath = ""
+		} else {
+			jsonResult.BackupPath = backupPath
+			if !repairJSON {
+				fmt.Printf("  %s Backup created\n\n", ui.RenderPass("✓"))
+			}
+		}
+	} else if !repairJSON {
+		fmt.Println("(no file-based backup for this storage backend)")
 	}
 
 	// Apply repairs in a transaction
@@ -319,7 +317,7 @@ func runRepair(cmd *cobra.Command, args []string) {
 	if len(orphans.depsDependsOn) > 0 && repairErr == nil {
 		// Mark parent issues as dirty for export
 		for _, dep := range orphans.depsDependsOn {
-			_, _ = tx.Exec("INSERT OR IGNORE INTO dirty_issues (issue_id) VALUES (?)", dep.issueID)
+			_, _ = tx.Exec("INSERT IGNORE INTO dirty_issues (issue_id) VALUES (?)", dep.issueID)
 		}
 
 		result, err := tx.Exec(`
@@ -390,7 +388,9 @@ func runRepair(cmd *cobra.Command, args []string) {
 		}
 		fmt.Fprintf(os.Stderr, "\n%s Error: %v\n", ui.RenderFail("✗"), repairErr)
 		fmt.Fprintf(os.Stderr, "Transaction rolled back. Database unchanged.\n")
-		fmt.Fprintf(os.Stderr, "Backup available at: %s\n", backupPath)
+		if backupPath != "" {
+			fmt.Fprintf(os.Stderr, "Backup available at: %s\n", backupPath)
+		}
 		os.Exit(1)
 	}
 
@@ -401,20 +401,20 @@ func runRepair(cmd *cobra.Command, args []string) {
 			outputJSONAndExit(jsonResult, 1)
 		}
 		fmt.Fprintf(os.Stderr, "\n%s Error committing transaction: %v\n", ui.RenderFail("✗"), err)
-		fmt.Fprintf(os.Stderr, "Backup available at: %s\n", backupPath)
+		if backupPath != "" {
+			fmt.Fprintf(os.Stderr, "Backup available at: %s\n", backupPath)
+		}
 		os.Exit(1)
 	}
 
-	// Run WAL checkpoint to persist changes
+	// Checkpoint/flush to persist changes (best effort - not all backends support WAL)
 	if !repairJSON {
-		fmt.Print("  Running WAL checkpoint... ")
+		fmt.Print("  Flushing changes... ")
 	}
-	if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-		if !repairJSON {
-			fmt.Printf("%s %v\n", ui.RenderFail("✗"), err)
-		}
-	} else if !repairJSON {
-		fmt.Printf("%s\n", ui.RenderPass("✓"))
+	// PRAGMA wal_checkpoint is SQLite-specific; ignore errors on other backends
+	_, _ = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	if !repairJSON {
+		fmt.Printf("%s\n", ui.RenderPass("done"))
 	}
 
 	// Final output
@@ -425,7 +425,9 @@ func runRepair(cmd *cobra.Command, args []string) {
 
 	fmt.Println()
 	fmt.Printf("%s Repair complete. Try running 'bd doctor' to verify.\n", ui.RenderPass("✓"))
-	fmt.Printf("Backup preserved at: %s\n", filepath.Base(backupPath))
+	if backupPath != "" {
+		fmt.Printf("Backup preserved at: %s\n", filepath.Base(backupPath))
+	}
 }
 
 // repairStats tracks what was found/cleaned
@@ -517,20 +519,23 @@ type repairEventDetail struct {
 	EventType string `json:"event_type"`
 }
 
-// openRepairDB opens SQLite directly for repair, bypassing all beads layer code
-func openRepairDB(dbPath string) (*sql.DB, error) {
-	// Build connection string with pragmas
-	busyMs := int64(30 * time.Second / time.Millisecond)
-	if v := strings.TrimSpace(os.Getenv("BD_LOCK_TIMEOUT")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			busyMs = int64(d / time.Millisecond)
-		}
+// openRepairDB opens the database for repair via the storage factory.
+// Returns the underlying *sql.DB and a closer function.
+func openRepairDB(beadsDir string) (*sql.DB, func(), error) {
+	ctx := context.Background()
+	st, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+		AllowWithRemoteDaemon: true,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open storage: %w", err)
 	}
-
-	connStr := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=foreign_keys(OFF)&_time_format=sqlite",
-		dbPath, busyMs)
-
-	return sql.Open("sqlite3", connStr)
+	db := st.UnderlyingDB()
+	if db == nil {
+		_ = st.Close()
+		return nil, nil, fmt.Errorf("storage backend does not expose underlying database")
+	}
+	closer := func() { _ = st.Close() }
+	return db, closer, nil
 }
 
 // findOrphanedDepsIssueID finds dependencies where issue_id doesn't exist

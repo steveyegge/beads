@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -42,10 +43,7 @@ func TestRenamePrefixCommand(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	testStore, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	ctx := context.Background()
@@ -170,10 +168,7 @@ func TestRenamePrefixInDB(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	testStore, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	t.Cleanup(func() {
 		testStore.Close()
 		os.Remove(dbPath)

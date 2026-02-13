@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/util"
 	"github.com/steveyegge/beads/internal/validation"
@@ -630,12 +629,11 @@ Examples:
 			// Only do this when exporting to default JSONL path (not arbitrary outputs)
 			// This prevents validatePreExport from incorrectly blocking on next export
 			if output == "" || output == findJSONLPath() {
-				// Dolt backend does not have a SQLite DB file, so only touch mtime for SQLite.
+				// Touch database mtime to be >= JSONL mtime.
 				// Use store.Path() to get the actual database location, not the JSONL directory,
 				// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
-				if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-					dbPath := sqliteStore.Path()
-					if err := TouchDatabaseFile(dbPath, finalPath); err != nil {
+				if storePath := store.Path(); storePath != "" {
+					if err := TouchDatabaseFile(storePath, finalPath); err != nil {
 						// Log warning but don't fail export
 						fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)
 					}

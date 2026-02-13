@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // TestFixFunctions_RequireBeadsDir verifies all fix functions properly validate

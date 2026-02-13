@@ -5,14 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
-	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -40,28 +35,8 @@ func RunDeepValidation(path string) DeepValidationResult {
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Get database path
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	// Skip if database doesn't exist
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		check := DoctorCheck{
-			Name:     "Deep Validation",
-			Status:   StatusOK,
-			Message:  "N/A (no database)",
-			Category: CategoryMaintenance,
-		}
-		result.AllChecks = append(result.AllChecks, check)
-		return result
-	}
-
 	// Open database
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		check := DoctorCheck{
 			Name:     "Deep Validation",
@@ -74,7 +49,7 @@ func RunDeepValidation(path string) DeepValidationResult {
 		result.OverallOK = false
 		return result
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Get counts for progress reporting
 	_ = db.QueryRow("SELECT COUNT(*) FROM issues WHERE status != 'tombstone'").Scan(&result.TotalIssues)
@@ -283,13 +258,11 @@ func checkAgentBeadIntegrity(db *sql.DB) DoctorCheck {
 		Category: CategoryMetadata,
 	}
 
-	// Check if agent bead columns exist (may not in older schemas)
+	// Check if agent bead columns exist by trying a query
 	var hasColumns bool
-	err := db.QueryRow(`
-		SELECT COUNT(*) > 0 FROM pragma_table_info('issues')
-		WHERE name IN ('role_bead', 'agent_state', 'role_type')
-	`).Scan(&hasColumns)
-	if err != nil || !hasColumns {
+	_, err := db.Query("SELECT role_bead, agent_state, role_type FROM issues LIMIT 0")
+	hasColumns = (err == nil)
+	if !hasColumns {
 		check.Status = StatusOK
 		check.Message = "N/A (schema doesn't support agent beads)"
 		return check
@@ -369,13 +342,11 @@ func checkMailThreadIntegrity(db *sql.DB) DoctorCheck {
 		Category: CategoryMetadata,
 	}
 
-	// Check if thread_id column exists
+	// Check if thread_id column exists by trying a query
 	var hasThreadID bool
-	err := db.QueryRow(`
-		SELECT COUNT(*) > 0 FROM pragma_table_info('dependencies')
-		WHERE name = 'thread_id'
-	`).Scan(&hasThreadID)
-	if err != nil || !hasThreadID {
+	_, err := db.Query("SELECT thread_id FROM dependencies LIMIT 0")
+	hasThreadID = (err == nil)
+	if !hasThreadID {
 		check.Status = StatusOK
 		check.Message = "N/A (schema doesn't support thread_id)"
 		return check

@@ -4,7 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -37,7 +38,7 @@ func TestValidateIssueClosable(t *testing.T) {
 
 func TestApplyLabelUpdates_SetAddRemove(t *testing.T) {
 	ctx := context.Background()
-	st := memory.New("")
+	st := teststore.New(t)
 	if err := st.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestApplyLabelUpdates_SetAddRemove(t *testing.T) {
 
 func TestApplyLabelUpdates_AddRemoveOnly(t *testing.T) {
 	ctx := context.Background()
-	st := memory.New("")
+	st := teststore.New(t)
 	issue := &types.Issue{Title: "x", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
 	if err := st.CreateIssue(ctx, issue, "tester"); err != nil {
 		t.Fatalf("CreateIssue: %v", err)
@@ -96,7 +97,7 @@ func TestApplyLabelUpdates_AddRemoveOnly(t *testing.T) {
 
 func TestFindRepliesToAndReplies_WorksWithMemoryStorage(t *testing.T) {
 	ctx := context.Background()
-	st := memory.New("")
+	st := teststore.New(t)
 	if err := st.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}

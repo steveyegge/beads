@@ -10,7 +10,6 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 // BackendFactory is a function that creates a storage backend
@@ -45,7 +44,6 @@ type Options struct {
 }
 
 // New creates a storage backend based on the backend type.
-// For SQLite, path should be the full path to the .db file.
 // For Dolt, path should be the directory containing the Dolt database.
 func New(ctx context.Context, backend, path string) (storage.Storage, error) {
 	return NewWithOptions(ctx, backend, path, Options{})
@@ -54,17 +52,6 @@ func New(ctx context.Context, backend, path string) (storage.Storage, error) {
 // NewWithOptions creates a storage backend with the specified options.
 func NewWithOptions(ctx context.Context, backend, path string, opts Options) (storage.Storage, error) {
 	switch backend {
-	case configfile.BackendSQLite:
-		if opts.ReadOnly {
-			if opts.LockTimeout > 0 {
-				return sqlite.NewReadOnlyWithTimeout(ctx, path, opts.LockTimeout)
-			}
-			return sqlite.NewReadOnly(ctx, path)
-		}
-		if opts.LockTimeout > 0 {
-			return sqlite.NewWithTimeout(ctx, path, opts.LockTimeout)
-		}
-		return sqlite.New(ctx, path)
 	case configfile.BackendDolt, "":
 		// Dolt is the default backend - check if it's registered (requires CGO)
 		lookupKey := backend
@@ -75,13 +62,13 @@ func NewWithOptions(ctx context.Context, backend, path string, opts Options) (st
 			return factory(ctx, path, opts)
 		}
 		// Dolt not available (no CGO) - provide helpful error
-		return nil, fmt.Errorf("dolt backend requires CGO (not available on this build); use sqlite backend or install from pre-built binaries")
+		return nil, fmt.Errorf("dolt backend requires CGO (not available on this build); install from pre-built binaries")
 	default:
 		// Check if backend is registered
 		if factory, ok := backendRegistry[backend]; ok {
 			return factory(ctx, path, opts)
 		}
-		return nil, fmt.Errorf("unknown storage backend: %s (supported: dolt, sqlite)", backend)
+		return nil, fmt.Errorf("unknown storage backend: %s (supported: dolt)", backend)
 	}
 }
 
@@ -118,8 +105,6 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 	// GetBackend() to default to "dolt", producing wrong paths for SQLite (gt-seal2b).
 	cfg.Backend = backend
 	switch backend {
-	case configfile.BackendSQLite:
-		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
 	case configfile.BackendDolt:
 		// Merge Dolt server mode config into options (config provides defaults, opts can override)
 		// Check server mode: IsDoltServerMode() uses cfg.GetBackend(), but we may have detected
@@ -185,22 +170,11 @@ func GetBackendFromConfig(beadsDir string) string {
 		backend = getBackendFromYamlConfig()
 	}
 
-	// Safety net (gt-q5jzx5, dolt_doctor fix): When backend is sqlite, verify the
-	// database path isn't actually a Dolt directory. This catches misconfigurations
-	// where metadata.json has backend: "sqlite" but database points to a Dolt path.
-	// A directory path always indicates Dolt; SQLite databases are files.
-	if backend == configfile.BackendSQLite {
-		dbPath := cfg.DatabasePath(beadsDir)
-		if detected := detectBackendFromPath(dbPath); detected != "" {
-			return detected
-		}
-	}
-
 	return backend
 }
 
 // detectBackendFromPath examines the filesystem to detect if a database path
-// is a Dolt directory or SQLite file. Returns empty string if undetermined.
+// is a Dolt directory. Returns empty string if undetermined.
 // This provides a safety net when config is ambiguous (gt-q5jzx5).
 func detectBackendFromPath(dbPath string) string {
 	info, err := os.Stat(dbPath)
@@ -213,8 +187,7 @@ func detectBackendFromPath(dbPath string) string {
 		return configfile.BackendDolt
 	}
 
-	// Regular file - assume SQLite (the default)
-	return configfile.BackendSQLite
+	return ""
 }
 
 // getBackendFromYamlConfig returns the storage-backend from config.yaml.
@@ -223,7 +196,7 @@ func detectBackendFromPath(dbPath string) string {
 func getBackendFromYamlConfig() string {
 	backend := config.GetString("storage-backend")
 	if backend == "" {
-		return configfile.BackendSQLite
+		return configfile.BackendDolt
 	}
 	return backend
 }

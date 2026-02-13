@@ -12,7 +12,6 @@ import (
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
@@ -110,14 +109,11 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 
 	// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
 	// This prevents validatePreExport from incorrectly blocking on next export.
-	//
-	// Dolt backend does not use a SQLite DB file, so this check is SQLite-only.
 	// Use store.Path() to get the actual database location, not the JSONL directory,
 	// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
 	if result.JSONLPath != "" {
-		if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-			dbPath := sqliteStore.Path()
-			if err := TouchDatabaseFile(dbPath, result.JSONLPath); err != nil {
+		if storePath := store.Path(); storePath != "" {
+			if err := TouchDatabaseFile(storePath, result.JSONLPath); err != nil {
 				// Non-fatal warning
 				fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)
 			}

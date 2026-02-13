@@ -13,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -37,10 +39,7 @@ func TestSyncBranchCommitAndPush_NotConfigured(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -100,10 +99,7 @@ func TestSyncBranchCommitAndPush_Success(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -204,10 +200,7 @@ func TestSyncBranchCommitAndPush_EnvOverridesDB(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -288,10 +281,7 @@ func TestSyncBranchCommitAndPush_NoChanges(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -365,10 +355,7 @@ func TestSyncBranchCommitAndPush_WorktreeHealthCheck(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -461,10 +448,7 @@ func TestSyncBranchPull_NotConfigured(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -512,10 +496,7 @@ func TestSyncBranchPull_Success(t *testing.T) {
 	}
 
 	clone1DBPath := filepath.Join(clone1BeadsDir, "test.db")
-	store1, err := sqlite.New(context.Background(), clone1DBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store1: %v", err)
-	}
+	store1 := teststore.New(t)
 	defer store1.Close()
 
 	ctx := context.Background()
@@ -571,10 +552,7 @@ func TestSyncBranchPull_Success(t *testing.T) {
 
 	clone2BeadsDir := filepath.Join(clone2Dir, ".beads")
 	clone2DBPath := filepath.Join(clone2BeadsDir, "test.db")
-	store2, err := sqlite.New(context.Background(), clone2DBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store2: %v", err)
-	}
+	store2 := teststore.New(t)
 	defer store2.Close()
 
 	if err := store2.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -651,7 +629,7 @@ func TestSyncBranchIntegration_EndToEnd(t *testing.T) {
 	clone1BeadsDir := filepath.Join(clone1Dir, ".beads")
 	os.MkdirAll(clone1BeadsDir, 0755)
 	clone1DBPath := filepath.Join(clone1BeadsDir, "test.db")
-	store1, _ := sqlite.New(context.Background(), clone1DBPath)
+	store1 := teststore.New(t)
 	defer store1.Close()
 
 	ctx := context.Background()
@@ -700,7 +678,7 @@ func TestSyncBranchIntegration_EndToEnd(t *testing.T) {
 
 	clone2BeadsDir := filepath.Join(clone2Dir, ".beads")
 	clone2DBPath := filepath.Join(clone2BeadsDir, "test.db")
-	store2, _ := sqlite.New(context.Background(), clone2DBPath)
+	store2 := teststore.New(t)
 	defer store2.Close()
 
 	store2.SetConfig(ctx, "issue_prefix", "test")
@@ -797,10 +775,7 @@ func TestSyncBranchConfigChange(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -921,7 +896,7 @@ func TestSyncBranchMultipleConcurrentClones(t *testing.T) {
 	syncBranch := "beads-sync"
 
 	// Helper to setup a clone
-	setupClone := func(name string) (string, *sqlite.SQLiteStorage) {
+	setupClone := func(name string) (string, storage.Storage) {
 		cloneDir := filepath.Join(tmpDir, name)
 		runGitCmd(t, tmpDir, "clone", remoteDir, cloneDir)
 		configureGit(t, cloneDir)
@@ -929,7 +904,7 @@ func TestSyncBranchMultipleConcurrentClones(t *testing.T) {
 		beadsDir := filepath.Join(cloneDir, ".beads")
 		os.MkdirAll(beadsDir, 0755)
 		dbPath := filepath.Join(beadsDir, "test.db")
-		store, _ := sqlite.New(context.Background(), dbPath)
+		store := teststore.New(t)
 
 		ctx := context.Background()
 		store.SetConfig(ctx, "issue_prefix", "test")
@@ -1028,7 +1003,7 @@ func TestSyncBranchMultipleConcurrentClones(t *testing.T) {
 	importToJSONLWithStore(ctx, store2, jsonlPath2)
 
 	// Verify all three issues exist in all clones
-	verifyIssueCount := func(store *sqlite.SQLiteStorage, expected int, cloneName string) {
+	verifyIssueCount := func(store storage.Storage, expected int, cloneName string) {
 		issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 		if err != nil {
 			t.Errorf("%s: Failed to search issues: %v", cloneName, err)
@@ -1043,7 +1018,7 @@ func TestSyncBranchMultipleConcurrentClones(t *testing.T) {
 	verifyIssueCount(store3, 3, "clone3")
 
 	// Verify specific issues exist
-	verifyIssueExists := func(store *sqlite.SQLiteStorage, id, cloneName string) {
+	verifyIssueExists := func(store storage.Storage, id, cloneName string) {
 		_, err := store.GetIssue(ctx, id)
 		if err != nil {
 			t.Errorf("%s: Issue %s not found: %v", cloneName, id, err)
@@ -1069,10 +1044,7 @@ func TestSyncBranchPerformance(t *testing.T) {
 	os.MkdirAll(beadsDir, 0755)
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -1158,10 +1130,7 @@ func TestSyncBranchNetworkFailure(t *testing.T) {
 	os.MkdirAll(beadsDir, 0755)
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -1273,10 +1242,7 @@ func TestSyncBranchCommitAndPush_WithPreCommitHook(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
@@ -1581,7 +1547,7 @@ func TestDaemonSyncBranchE2E(t *testing.T) {
 	t.Setenv(syncbranch.EnvVar, syncBranch)
 
 	// Machine A: Setup database with sync.branch configured
-	var storeA *sqlite.SQLiteStorage
+	var storeA storage.Storage
 	var jsonlPathA string
 
 	withBeadsDir(t, machineA, func() {
@@ -1589,10 +1555,7 @@ func TestDaemonSyncBranchE2E(t *testing.T) {
 		dbPathA := filepath.Join(beadsDirA, "beads.db")
 
 		var err error
-		storeA, err = sqlite.New(ctx, dbPathA)
-		if err != nil {
-			t.Fatalf("Failed to create store for Machine A: %v", err)
-		}
+		storeA = teststore.New(t)
 
 		// Configure store
 		if err := storeA.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -1649,7 +1612,7 @@ func TestDaemonSyncBranchE2E(t *testing.T) {
 	git.ResetCaches()
 
 	// Machine B: Setup database and sync with Machine A's changes first
-	var storeB *sqlite.SQLiteStorage
+	var storeB storage.Storage
 	var jsonlPathB string
 
 	withBeadsDir(t, machineB, func() {
@@ -1657,10 +1620,7 @@ func TestDaemonSyncBranchE2E(t *testing.T) {
 		dbPathB := filepath.Join(beadsDirB, "beads.db")
 
 		var err error
-		storeB, err = sqlite.New(ctx, dbPathB)
-		if err != nil {
-			t.Fatalf("Failed to create store for Machine B: %v", err)
-		}
+		storeB = teststore.New(t)
 
 		// Configure store
 		if err := storeB.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -1825,10 +1785,7 @@ func TestDaemonSyncBranchForceOverwrite(t *testing.T) {
 		beadsDirA := filepath.Join(machineA, ".beads")
 		dbPathA := filepath.Join(beadsDirA, "beads.db")
 
-		storeA, err := sqlite.New(ctx, dbPathA)
-		if err != nil {
-			t.Fatalf("Failed to create store: %v", err)
-		}
+		storeA := teststore.New(t)
 		defer storeA.Close()
 
 		// Configure store
@@ -1996,10 +1953,7 @@ func TestDaemonExportSkipsSameBranch(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -2092,10 +2046,7 @@ func TestDaemonAutoImportSkipsSameBranch(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -2175,10 +2126,7 @@ func TestDaemonSyncSkipsSameBranch(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -2274,10 +2222,7 @@ func TestSyncBranchCommitSkipsSameBranch(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
@@ -2379,10 +2324,7 @@ func TestSyncBranchPullSkipsSameBranch(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
@@ -2467,10 +2409,7 @@ func TestDaemonExportWorktreeDifferentBranch(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
@@ -2560,10 +2499,7 @@ func TestDaemonExportWorktreeSameBranch(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
@@ -2628,10 +2564,7 @@ func TestDaemonExportDynamicBranchSwitch(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
@@ -2709,10 +2642,7 @@ func TestDaemonExportAfterBranchChange(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
@@ -2794,10 +2724,7 @@ func TestDaemonExportConfigReload(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
@@ -2879,10 +2806,7 @@ func TestDaemonStartupWarnsSameBranch(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -2949,10 +2873,7 @@ func TestDaemonStartupNoWarningWhenDifferentBranch(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -3009,10 +2930,7 @@ func TestDaemonStartupNoWarningWhenNoSyncBranch(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()

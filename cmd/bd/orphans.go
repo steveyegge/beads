@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -108,16 +110,24 @@ type orphanIssueOutput struct {
 }
 
 // getIssueProvider returns an IssueProvider based on the current configuration.
-// If --db flag is set, it creates a provider from that database path.
+// If --db flag is set, it opens a store for that beads directory.
 // Otherwise, it uses the global store (already opened in PersistentPreRun).
 func getIssueProvider() (types.IssueProvider, func(), error) {
-	// If --db flag is set and we have a dbPath, create a provider from that path
+	// If --db flag is set and we have a dbPath, open a store from that path
 	if dbPath != "" {
-		provider, err := storage.NewLocalProvider(dbPath)
+		ctx := context.Background()
+		st, err := factory.NewFromConfigWithOptions(ctx, dbPath, factory.Options{
+			AllowWithRemoteDaemon: true,
+		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to open database at %s: %w", dbPath, err)
+			return nil, nil, fmt.Errorf("failed to open storage at %s: %w", dbPath, err)
 		}
-		return provider, func() { _ = provider.Close() }, nil
+		provider, provErr := storage.NewLocalProvider(st)
+		if provErr != nil {
+			_ = st.Close()
+			return nil, nil, fmt.Errorf("failed to create provider: %w", provErr)
+		}
+		return provider, func() { _ = provider.Close(); _ = st.Close() }, nil
 	}
 
 	// Use the global store (already opened by PersistentPreRun)

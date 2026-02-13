@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -31,10 +32,7 @@ func TestExportToJSONLWithStore(t *testing.T) {
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
 
 	// Create storage
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -101,10 +99,7 @@ func TestExportToJSONLWithStore_EmptyDatabase(t *testing.T) {
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
 
 	// Create storage (empty)
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -141,10 +136,7 @@ func TestImportToJSONLWithStore(t *testing.T) {
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
 
 	// Create storage first to initialize database
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -203,10 +195,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
 
 	// Create storage and add issues
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -265,10 +254,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 
 	// Create new database
 	dbPath2 := filepath.Join(tmpDir, ".beads", "beads2.db")
-	store2, err := sqlite.New(context.Background(), dbPath2)
-	if err != nil {
-		t.Fatalf("failed to create store2: %v", err)
-	}
+	store2 := teststore.New(t)
 	defer store2.Close()
 
 	// Set issue_prefix for second database
@@ -330,10 +316,7 @@ func TestExportUpdatesMetadata(t *testing.T) {
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
 
 	// Create storage
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -410,10 +393,7 @@ func TestUpdateExportMetadataMultiRepo(t *testing.T) {
 	jsonlPath2 := filepath.Join(tmpDir, "repo2", ".beads", "issues.jsonl")
 
 	// Create storage
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -535,10 +515,7 @@ func TestExportWithMultiRepoConfigUpdatesAllMetadata(t *testing.T) {
 	additionalJSONL := filepath.Join(additionalDir, ".beads", "issues.jsonl")
 
 	// Create storage
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -672,10 +649,7 @@ func TestUpdateExportMetadataInvalidKeySuffix(t *testing.T) {
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
 
 	// Create storage
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -761,10 +735,7 @@ func TestExportToJSONLWithStore_IncludesTombstones(t *testing.T) {
 	}
 
 	// Create storage
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()

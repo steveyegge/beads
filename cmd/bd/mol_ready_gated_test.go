@@ -8,12 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // setupGatedTestDB creates a temporary file-based test database
-func setupGatedTestDB(t *testing.T) (*sqlite.SQLiteStorage, func()) {
+func setupGatedTestDB(t *testing.T) (storage.Storage, func()) {
 	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "bd-test-gated-*")
 	if err != nil {
@@ -21,7 +23,7 @@ func setupGatedTestDB(t *testing.T) (*sqlite.SQLiteStorage, func()) {
 	}
 
 	testDB := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDB)
+	store := teststore.New(t)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create test database: %v", err)
@@ -443,4 +445,3 @@ func TestFindGateReadyMolecules_MultipleGates(t *testing.T) {
 		t.Errorf("Expected 2 gate-ready molecules, got %d", len(molecules))
 	}
 }
-

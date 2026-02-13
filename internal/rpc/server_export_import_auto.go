@@ -16,7 +16,6 @@ import (
 	"github.com/steveyegge/beads/internal/export"
 	"github.com/steveyegge/beads/internal/importer"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -298,13 +297,7 @@ func (s *Server) checkAndAutoImportIfStale(req *Request) error {
 	defer cancel()
 
 	// Get database path from storage
-	// Staleness check only applies to SQLite storage; Dolt handles sync differently
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-	if !ok {
-		// Not SQLite (e.g., Dolt) - staleness check doesn't apply, skip silently
-		return nil
-	}
-	dbPath := sqliteStore.Path()
+	dbPath := store.Path()
 
 	// Fast path: Check if JSONL is stale using cheap mtime check
 	// This avoids reading/hashing JSONL on every request
@@ -490,12 +483,6 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 	dbDir := filepath.Dir(dbPath)
 	jsonlPath := utils.FindJSONLInDir(dbDir)
 
-	// Get all issues from storage
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-	if !ok {
-		return fmt.Errorf("storage is not SQLiteStorage")
-	}
-
 	// Load export configuration (auto-export mode)
 	cfg, err := export.LoadConfig(ctx, store, true)
 	if err != nil {
@@ -510,7 +497,7 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 
 	// Export to JSONL including tombstones for sync propagation (bd-rp4o fix)
 	fetchStart := time.Now()
-	allIssues, err := sqliteStore.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
+	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 	if err != nil {
 		return fmt.Errorf("failed to fetch issues for export: %w", err)
 	}

@@ -22,7 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -411,7 +412,7 @@ func TestAdviceSubscriptionE2E_ClosedAdviceFiltering(t *testing.T) {
 
 // Helper functions
 
-func createAdviceWithLabels(t *testing.T, ctx context.Context, store *sqlite.SQLiteStorage, title string, labels []string) *types.Issue {
+func createAdviceWithLabels(t *testing.T, ctx context.Context, store storage.Storage, title string, labels []string) *types.Issue {
 	t.Helper()
 
 	advice := &types.Issue{
@@ -433,7 +434,7 @@ func createAdviceWithLabels(t *testing.T, ctx context.Context, store *sqlite.SQL
 	return advice
 }
 
-func filterAdviceBySubscriptions(t *testing.T, ctx context.Context, store *sqlite.SQLiteStorage, subscriptions []string) []*types.Issue {
+func filterAdviceBySubscriptions(t *testing.T, ctx context.Context, store storage.Storage, subscriptions []string) []*types.Issue {
 	t.Helper()
 
 	adviceType := types.IssueType("advice")

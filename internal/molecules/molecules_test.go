@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -61,20 +61,14 @@ func TestLoadMoleculesFromNonexistentFile(t *testing.T) {
 func TestLoader_LoadAll(t *testing.T) {
 	ctx := context.Background()
 
-	// Create temporary directories
+	// Create temporary directories for molecules.jsonl file
 	tempDir := t.TempDir()
 	beadsDir := filepath.Join(tempDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0750); err != nil {
 		t.Fatalf("Failed to create beads dir: %v", err)
 	}
 
-	// Create a test database
-	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Set issue prefix (required by storage)
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -135,20 +129,14 @@ func TestLoader_LoadAll(t *testing.T) {
 func TestLoader_SkipExistingMolecules(t *testing.T) {
 	ctx := context.Background()
 
-	// Create temporary directories
+	// Create temporary directories for molecules.jsonl file
 	tempDir := t.TempDir()
 	beadsDir := filepath.Join(tempDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0750); err != nil {
 		t.Fatalf("Failed to create beads dir: %v", err)
 	}
 
-	// Create a test database
-	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Set issue prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -160,7 +148,8 @@ func TestLoader_SkipExistingMolecules(t *testing.T) {
 		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
-	// Pre-create a molecule in the database (skip prefix validation for mol-* IDs)
+	// Pre-create a molecule in the database
+	// The mol- prefix is allowed because teststore configures "molecule" as a custom type
 	existingMol := &types.Issue{
 		ID:         "mol-existing",
 		Title:      "Existing Molecule",
@@ -168,8 +157,7 @@ func TestLoader_SkipExistingMolecules(t *testing.T) {
 		Status:     types.StatusOpen,
 		IsTemplate: true,
 	}
-	opts := sqlite.BatchCreateOptions{SkipPrefixValidation: true}
-	if err := store.CreateIssuesWithFullOptions(ctx, []*types.Issue{existingMol}, "test", opts); err != nil {
+	if err := store.CreateIssue(ctx, existingMol, "test"); err != nil {
 		t.Fatalf("Failed to create existing molecule: %v", err)
 	}
 

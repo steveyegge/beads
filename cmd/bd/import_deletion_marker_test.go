@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -117,10 +118,7 @@ func TestImportWithDeletionMarkers(t *testing.T) {
 	// Create database
 	ctx := context.Background()
 	dbPath := filepath.Join(tmpDir, "beads.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set prefix
@@ -214,10 +212,7 @@ func TestImportDeletionMarkerDryRun(t *testing.T) {
 	// Create database
 	ctx := context.Background()
 	dbPath := filepath.Join(tmpDir, "beads.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set prefix

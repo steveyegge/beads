@@ -7,13 +7,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/formula"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // setupFormulaTestDB creates a test database with issue_prefix configured.
-func setupFormulaTestDB(t *testing.T) (*sqlite.SQLiteStorage, func()) {
+func setupFormulaTestDB(t *testing.T) (storage.Storage, func()) {
 	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "bd-formula-import-test-*")
 	if err != nil {
@@ -21,7 +23,7 @@ func setupFormulaTestDB(t *testing.T) (*sqlite.SQLiteStorage, func()) {
 	}
 
 	testDB := filepath.Join(tmpDir, "test.db")
-	s, err := sqlite.New(context.Background(), testDB)
+	s := teststore.New(t)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create test database: %v", err)
@@ -56,7 +58,7 @@ func makeTestFormula(name, desc string) *formula.Formula {
 }
 
 // setFormulaTestGlobals sets the global variables needed by saveFormulaToDB.
-func setFormulaTestGlobals(t *testing.T, s *sqlite.SQLiteStorage) func() {
+func setFormulaTestGlobals(t *testing.T, s storage.Storage) func() {
 	t.Helper()
 	oldStore := store
 	oldActor := actor

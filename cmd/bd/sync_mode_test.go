@@ -11,8 +11,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 // TestSyncModeConfig verifies sync mode configuration storage and retrieval.
@@ -30,10 +31,7 @@ func TestSyncModeConfig(t *testing.T) {
 
 	// Create store
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Test 1: Default mode is git-portable
@@ -93,10 +91,7 @@ func TestShouldExportJSONL(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	tests := []struct {
@@ -153,10 +148,7 @@ func TestShouldUseDoltRemote(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	tests := []struct {
@@ -221,10 +213,7 @@ func TestShouldAutoDoltCommit(t *testing.T) {
 
 	// Create store
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Test 1: Default is true (enabled)
@@ -276,10 +265,7 @@ func TestShouldAutoDoltPush(t *testing.T) {
 
 	// Create store
 	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Test 1: Default is false (disabled)

@@ -16,7 +16,6 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -70,20 +69,7 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 		return nil
 	}
 
-	// Try multi-repo export first
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-	if ok {
-		results, err := sqliteStore.ExportToMultiRepo(ctx)
-		if err != nil {
-			return fmt.Errorf("multi-repo export failed: %w", err)
-		}
-		if results != nil {
-			// Multi-repo mode active - export succeeded
-			return nil
-		}
-	}
-
-	// Single-repo mode - use existing logic
+	// Single-repo mode
 	// Get all issues including tombstones for sync propagation
 	// Tombstones must be exported so they propagate to other clones and prevent resurrection
 	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
@@ -215,20 +201,7 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 
 // importToJSONLWithStore imports issues from JSONL using the provided store
 func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
-	// Try multi-repo import first
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-	if ok {
-		results, err := sqliteStore.HydrateFromMultiRepo(ctx)
-		if err != nil {
-			return fmt.Errorf("multi-repo import failed: %w", err)
-		}
-		if results != nil {
-			// Multi-repo mode active - import succeeded
-			return nil
-		}
-	}
-
-	// Single-repo mode - use existing logic
+	// Single-repo mode
 	// Read JSONL file
 	file, err := os.Open(jsonlPath) // #nosec G304 - controlled path from config
 	if err != nil {
@@ -571,8 +544,8 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 			// Dolt backend does not have a SQLite DB file; mtime touch is SQLite-only.
 			// Use store.Path() to get the actual database location, not the JSONL directory,
 			// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
-			if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-				dbPath := sqliteStore.Path()
+			{
+				dbPath := store.Path()
 				if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
 					log.log("Warning: failed to update database mtime: %v", err)
 				}
@@ -895,8 +868,8 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 			// Dolt backend does not have a SQLite DB file; mtime touch is SQLite-only.
 			// Use store.Path() to get the actual database location, not the JSONL directory,
 			// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
-			if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-				dbPath := sqliteStore.Path()
+			{
+				dbPath := store.Path()
 				if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
 					log.log("Warning: failed to update database mtime: %v", err)
 				}
@@ -1012,18 +985,6 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 			return
 		}
 		log.log("Imported from JSONL")
-
-		// Update database mtime after import (fixes #278, #301, #321)
-		// Sync branch import can update JSONL timestamp, so ensure DB >= JSONL
-		// Dolt backend does not have a SQLite DB file; mtime touch is SQLite-only.
-		// Use store.Path() to get the actual database location, not the JSONL directory,
-		// since sync-branch imports read JSONL from a worktree but the DB stays in the main repo.
-		if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-			dbPath := sqliteStore.Path()
-			if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
-				log.log("Warning: failed to update database mtime: %v", err)
-			}
-		}
 
 		// Validate import didn't cause data loss
 		afterCount, err := countDBIssues(syncCtx, store)

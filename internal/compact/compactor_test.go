@@ -9,24 +9,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-func setupTestStorage(t *testing.T) *sqlite.SQLiteStorage {
+func setupTestStorage(t *testing.T) storage.Storage {
 	t.Helper()
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
+	store := teststore.New(t)
 
 	ctx := context.Background()
-	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("failed to set issue_prefix: %v", err)
-	}
 	// Use 7 days minimum for Tier 1 compaction to ensure tests check eligibility properly
 	if err := store.SetConfig(ctx, "compact_tier1_days", "7"); err != nil {
 		t.Fatalf("failed to set config: %v", err)
@@ -38,7 +31,7 @@ func setupTestStorage(t *testing.T) *sqlite.SQLiteStorage {
 	return store
 }
 
-func createClosedIssue(t *testing.T, store *sqlite.SQLiteStorage, id string) *types.Issue {
+func createClosedIssue(t *testing.T, store storage.Storage, id string) *types.Issue {
 	t.Helper()
 
 	ctx := context.Background()
@@ -112,7 +105,7 @@ Testing strategy:
 
 func TestNew(t *testing.T) {
 	store := setupTestStorage(t)
-	defer store.Close()
+
 
 	t.Run("creates compactor with config", func(t *testing.T) {
 		config := &Config{
@@ -141,7 +134,7 @@ func TestNew(t *testing.T) {
 
 func TestCompactTier1_DryRun(t *testing.T) {
 	store := setupTestStorage(t)
-	defer store.Close()
+
 
 	issue := createClosedIssue(t, store, "bd-1")
 
@@ -171,7 +164,7 @@ func TestCompactTier1_DryRun(t *testing.T) {
 
 func TestCompactTier1_IneligibleIssue(t *testing.T) {
 	store := setupTestStorage(t)
-	defer store.Close()
+
 
 	ctx := context.Background()
 	
@@ -220,7 +213,7 @@ func TestCompactTier1_WithAPI(t *testing.T) {
 	}
 
 	store := setupTestStorage(t)
-	defer store.Close()
+
 
 	issue := createClosedIssue(t, store, "bd-api")
 
@@ -255,7 +248,7 @@ func TestCompactTier1_WithAPI(t *testing.T) {
 
 func TestCompactTier1Batch_DryRun(t *testing.T) {
 	store := setupTestStorage(t)
-	defer store.Close()
+
 
 	issue1 := createClosedIssue(t, store, "bd-batch-1")
 	issue2 := createClosedIssue(t, store, "bd-batch-2")
@@ -288,7 +281,7 @@ func TestCompactTier1Batch_DryRun(t *testing.T) {
 
 func TestCompactTier1Batch_WithIneligible(t *testing.T) {
 	store := setupTestStorage(t)
-	defer store.Close()
+
 
 	closedIssue := createClosedIssue(t, store, "bd-closed")
 
@@ -353,7 +346,7 @@ func TestCompactTier1Batch_WithAPI(t *testing.T) {
 	}
 
 	store := setupTestStorage(t)
-	defer store.Close()
+
 
 	issue1 := createClosedIssue(t, store, "bd-api-batch-1")
 	issue2 := createClosedIssue(t, store, "bd-api-batch-2")
@@ -399,7 +392,7 @@ func TestCompactTier1Batch_WithAPI(t *testing.T) {
 
 func TestMockAPI_CompactTier1(t *testing.T) {
 	store := setupTestStorage(t)
-	defer store.Close()
+
 
 	issue := createClosedIssue(t, store, "bd-mock")
 
@@ -417,7 +410,7 @@ func TestMockAPI_CompactTier1(t *testing.T) {
 
 func TestBatchOperations_ErrorHandling(t *testing.T) {
 	store := setupTestStorage(t)
-	defer store.Close()
+
 
 	ctx := context.Background()
 	

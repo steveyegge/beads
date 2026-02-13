@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/gofrs/flock"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -284,10 +285,7 @@ func TestGetSyncBranch_EnvOverridesDB(t *testing.T) {
 	oldDBPath := dbPath
 
 	// Use an in-memory SQLite store for testing
-	testStore, err := sqlite.New(context.Background(), "file::memory:?mode=memory&cache=private")
-	if err != nil {
-		t.Fatalf("failed to create test store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Seed DB config and globals
@@ -456,10 +454,7 @@ func TestHashBasedStalenessDetection_bd_f2f(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create store
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Initialize issue prefix (required for creating issues)
@@ -777,10 +772,7 @@ func TestConcurrentEdit(t *testing.T) {
 
 	// Create database and import base state
 	testDBPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("failed to create test store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set issue_prefix
@@ -883,10 +875,7 @@ func TestConcurrentSyncBlocked(t *testing.T) {
 
 	// Create database
 	testDBPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("failed to create test store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set issue_prefix
@@ -979,10 +968,7 @@ func TestHasUncommittedChanges_FallbackToGetDirtyIssues(t *testing.T) {
 
 	// Create a SQLite store that doesn't implement StatusChecker
 	dbPath := filepath.Join(tmpDir, "test.db")
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create SQLite store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set issue_prefix to enable CreateIssue

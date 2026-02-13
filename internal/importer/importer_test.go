@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -631,14 +631,9 @@ func stringPtr(s string) *string {
 
 func TestImportIssues_Basic(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	// Create temp database
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Set config prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -657,7 +652,7 @@ func TestImportIssues_Basic(t *testing.T) {
 		},
 	}
 
-	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	result, err := ImportIssues(ctx, dbPath, store, issues, Options{})
 	if err != nil {
 		t.Fatalf("Import failed: %v", err)
 	}
@@ -678,13 +673,9 @@ func TestImportIssues_Basic(t *testing.T) {
 
 func TestImportIssues_Update(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
@@ -701,8 +692,7 @@ func TestImportIssues_Update(t *testing.T) {
 	}
 	issue1.ContentHash = issue1.ComputeContentHash()
 
-	err = store.CreateIssue(ctx, issue1, "test")
-	if err != nil {
+	if err := store.CreateIssue(ctx, issue1, "test"); err != nil {
 		t.Fatalf("Failed to create initial issue: %v", err)
 	}
 
@@ -719,7 +709,7 @@ func TestImportIssues_Update(t *testing.T) {
 	}
 	issue2.ContentHash = issue2.ComputeContentHash()
 
-	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{issue2}, Options{})
+	result, err := ImportIssues(ctx, dbPath, store, []*types.Issue{issue2}, Options{})
 	if err != nil {
 		t.Fatalf("Import failed: %v", err)
 	}
@@ -742,13 +732,9 @@ func TestImportIssues_Update(t *testing.T) {
 
 func TestImportIssues_DryRun(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
@@ -765,7 +751,7 @@ func TestImportIssues_DryRun(t *testing.T) {
 	}
 
 	// Dry run returns early when no collisions, so it reports what would be created
-	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{DryRun: true})
+	result, err := ImportIssues(ctx, dbPath, store, issues, Options{DryRun: true})
 	if err != nil {
 		t.Fatalf("Import failed: %v", err)
 	}
@@ -778,13 +764,9 @@ func TestImportIssues_DryRun(t *testing.T) {
 
 func TestImportIssues_Dependencies(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
@@ -810,7 +792,7 @@ func TestImportIssues_Dependencies(t *testing.T) {
 		},
 	}
 
-	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	result, err := ImportIssues(ctx, dbPath, store, issues, Options{})
 	if err != nil {
 		t.Fatalf("Import failed: %v", err)
 	}
@@ -831,13 +813,9 @@ func TestImportIssues_Dependencies(t *testing.T) {
 
 func TestImportIssues_Labels(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
@@ -854,7 +832,7 @@ func TestImportIssues_Labels(t *testing.T) {
 		},
 	}
 
-	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	result, err := ImportIssues(ctx, dbPath, store, issues, Options{})
 	if err != nil {
 		t.Fatalf("Import failed: %v", err)
 	}
@@ -1050,11 +1028,7 @@ func TestConcurrentExternalRefImports(t *testing.T) {
 	t.Skip("TODO(bd-gpe7): Test hangs due to database deadlock - needs investigation")
 
 	t.Run("sequential imports with same external_ref are detected as updates", func(t *testing.T) {
-		store, err := sqlite.New(context.Background(), ":memory:")
-		if err != nil {
-			t.Fatalf("Failed to create store: %v", err)
-		}
-		defer store.Close()
+		store := teststore.New(t)
 
 		ctx := context.Background()
 		if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -1117,13 +1091,9 @@ func TestConcurrentExternalRefImports(t *testing.T) {
 
 func TestImportIssues_TombstoneFromJSONL(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
@@ -1145,7 +1115,7 @@ func TestImportIssues_TombstoneFromJSONL(t *testing.T) {
 		OriginalType: "bug",
 	}
 
-	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{tombstone}, Options{})
+	result, err := ImportIssues(ctx, dbPath, store, []*types.Issue{tombstone}, Options{})
 	if err != nil {
 		t.Fatalf("Import failed: %v", err)
 	}
@@ -1194,13 +1164,10 @@ func TestImportIssues_TombstoneFromJSONL(t *testing.T) {
 // With OrphanSkip mode, the child should be filtered out before creation.
 func TestImportOrphanSkip_CountMismatch(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, ":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
 
-	// Set prefix
+	store := teststore.New(t)
+
+	// Set config prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
 	}
@@ -1299,13 +1266,9 @@ func TestImportOrphanSkip_CountMismatch(t *testing.T) {
 // Expected behavior: Skip the cross-prefix "rename" and keep the existing issue unchanged.
 func TestImportCrossPrefixContentMatch(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Configure database with "alpha" prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "alpha"); err != nil {
@@ -1347,7 +1310,7 @@ func TestImportCrossPrefixContentMatch(t *testing.T) {
 
 	// Import the cross-prefix issue with SkipPrefixValidation (simulates auto-import behavior)
 	// This should NOT fail - cross-prefix content matches should be skipped, not renamed
-	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{incomingIssue}, Options{
+	result, err := ImportIssues(ctx, dbPath, store, []*types.Issue{incomingIssue}, Options{
 		SkipPrefixValidation: true, // Auto-import typically sets this
 	})
 	if err != nil {
@@ -1384,13 +1347,9 @@ func TestImportCrossPrefixContentMatch(t *testing.T) {
 // different test prefixes - these tombstones are safe to ignore.
 func TestImportTombstonePrefixMismatch(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Configure database with "bd" prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -1433,7 +1392,7 @@ func TestImportTombstonePrefixMismatch(t *testing.T) {
 	}
 
 	// Import should succeed - tombstones with wrong prefixes should be ignored
-	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	result, err := ImportIssues(ctx, dbPath, store, issues, Options{})
 	if err != nil {
 		t.Fatalf("Import should succeed when all mismatched prefixes are tombstones: %v", err)
 	}
@@ -1463,13 +1422,9 @@ func TestImportTombstonePrefixMismatch(t *testing.T) {
 // issues with wrong prefixes, even if some tombstones also have wrong prefixes.
 func TestImportMixedPrefixMismatch(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Configure database with "bd" prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -1508,7 +1463,7 @@ func TestImportMixedPrefixMismatch(t *testing.T) {
 	}
 
 	// Import should fail due to the non-tombstone with wrong prefix
-	_, err = ImportIssues(ctx, tmpDB, store, issues, Options{})
+	_, err := ImportIssues(ctx, dbPath, store, issues, Options{})
 	if err == nil {
 		t.Fatal("Import should fail when there are non-tombstone issues with wrong prefixes")
 	}
@@ -1532,13 +1487,9 @@ func TestImportMixedPrefixMismatch(t *testing.T) {
 // (since false just means "field was absent in JSONL due to omitempty").
 func TestImportPreservesPinnedField(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
@@ -1583,7 +1534,7 @@ func TestImportPreservesPinnedField(t *testing.T) {
 	}
 	importedIssue.ContentHash = importedIssue.ComputeContentHash()
 
-	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{importedIssue}, Options{})
+	result, err := ImportIssues(ctx, dbPath, store, []*types.Issue{importedIssue}, Options{})
 	if err != nil {
 		t.Fatalf("Import failed: %v", err)
 	}
@@ -1607,13 +1558,9 @@ func TestImportPreservesPinnedField(t *testing.T) {
 // correctly sets the pinned field in the database.
 func TestImportSetsPinnedTrue(t *testing.T) {
 	ctx := context.Background()
+	dbPath := "" // teststore manages its own storage
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
@@ -1648,7 +1595,7 @@ func TestImportSetsPinnedTrue(t *testing.T) {
 	}
 	importedIssue.ContentHash = importedIssue.ComputeContentHash()
 
-	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{importedIssue}, Options{})
+	result, err := ImportIssues(ctx, dbPath, store, []*types.Issue{importedIssue}, Options{})
 	if err != nil {
 		t.Fatalf("Import failed: %v", err)
 	}
@@ -1670,12 +1617,9 @@ func TestMultiRepoPrefixValidation(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(ctx, tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	dbPath := "" // teststore manages its own storage
+
+	store := teststore.New(t)
 
 	if err := store.SetConfig(ctx, "issue_prefix", "primary"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
@@ -1702,7 +1646,7 @@ func TestMultiRepoPrefixValidation(t *testing.T) {
 			},
 		}
 
-		_, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+		_, err := ImportIssues(ctx, dbPath, store, issues, Options{})
 		if err == nil {
 			t.Error("Expected error for foreign prefix in single-repo mode")
 		}
@@ -1737,7 +1681,7 @@ func TestMultiRepoPrefixValidation(t *testing.T) {
 			},
 		}
 
-		result, err := ImportIssues(ctx, tmpDB, store, issues, Options{
+		result, err := ImportIssues(ctx, dbPath, store, issues, Options{
 			SkipPrefixValidation: false, // Verify auto-skip kicks in
 		})
 		if err != nil {

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -47,7 +47,7 @@ func TestAutoImportIfNewer_NoJSONL(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "bd.db")
-	store := memory.New("")
+	store := teststore.New(t)
 	notify := &testNotifier{}
 
 	importCalled := false
@@ -101,7 +101,7 @@ func TestAutoImportIfNewer_UnchangedHash(t *testing.T) {
 	hash := hex.EncodeToString(hasher.Sum(nil))
 
 	// Store hash in metadata
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 	store.SetMetadata(ctx, "last_import_hash", hash)
 
@@ -151,7 +151,7 @@ func TestAutoImportIfNewer_ChangedHash(t *testing.T) {
 	f.Close()
 
 	// Store different hash in metadata
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 	store.SetMetadata(ctx, "last_import_hash", "different-hash")
 
@@ -203,7 +203,7 @@ func TestAutoImportIfNewer_MergeConflict(t *testing.T) {
 `
 	os.WriteFile(jsonlPath, []byte(conflictData), 0644)
 
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 	notify := &testNotifier{}
 
@@ -250,7 +250,7 @@ func TestAutoImportIfNewer_WithRemapping(t *testing.T) {
 	json.NewEncoder(f).Encode(issue)
 	f.Close()
 
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 	notify := &testNotifier{}
 
@@ -293,7 +293,7 @@ func TestAutoImportIfNewer_WithRemapping(t *testing.T) {
 }
 
 func TestCheckStaleness_NoMetadata(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 
 	tmpDir, err := os.MkdirTemp("", "bd-stale-test-*")
@@ -326,7 +326,7 @@ func TestCheckStaleness_NewerJSONL(t *testing.T) {
 
 	// Create old import time
 	oldTime := time.Now().Add(-1 * time.Hour)
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 	store.SetMetadata(ctx, "last_import_time", oldTime.Format(time.RFC3339))
 
@@ -344,7 +344,7 @@ func TestCheckStaleness_NewerJSONL(t *testing.T) {
 }
 
 func TestCheckStaleness_CorruptedMetadata(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 
 	tmpDir, err := os.MkdirTemp("", "bd-stale-test-*")

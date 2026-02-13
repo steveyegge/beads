@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // setupTestDatabase creates a minimal valid SQLite database for testing

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	sqlitestorage "github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -24,11 +24,7 @@ func BenchmarkDirectCreate(b *testing.B) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		b.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(b)
 
 	ctx := context.Background()
 
@@ -75,11 +71,7 @@ func BenchmarkDirectUpdate(b *testing.B) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		b.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(b)
 
 	ctx := context.Background()
 
@@ -149,11 +141,7 @@ func BenchmarkDirectList(b *testing.B) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		b.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(b)
 
 	ctx := context.Background()
 
@@ -279,11 +267,7 @@ func setupBenchServer(b *testing.B) (*Server, *Client, func(), string) {
 	dbPath := filepath.Join(beadsDir, "test.db")
 	socketPath := filepath.Join(beadsDir, "bd.sock")
 
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		b.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(b)
 
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 
@@ -303,7 +287,6 @@ func setupBenchServer(b *testing.B) (*Server, *Client, func(), string) {
 	if err != nil {
 		cancel()
 		server.Stop()
-		store.Close()
 		os.RemoveAll(tmpDir)
 		b.Fatalf("Failed to connect client: %v", err)
 	}
@@ -315,7 +298,6 @@ func setupBenchServer(b *testing.B) (*Server, *Client, func(), string) {
 		client.Close()
 		cancel()
 		server.Stop()
-		store.Close()
 		os.RemoveAll(tmpDir)
 	}
 

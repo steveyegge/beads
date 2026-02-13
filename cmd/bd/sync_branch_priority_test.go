@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
@@ -33,10 +34,7 @@ func TestSyncBranchConfigPriorityOverUpstream(t *testing.T) {
 		}
 
 		dbPath := filepath.Join(beadsDir, "beads.db")
-		testStore, err := sqlite.New(ctx, dbPath)
-		if err != nil {
-			t.Fatalf("Failed to create test database: %v", err)
-		}
+		testStore := teststore.New(t)
 		defer testStore.Close()
 
 		// Configure sync.branch
@@ -122,10 +120,7 @@ func TestSyncBranchConfigPriorityOverUpstream(t *testing.T) {
 		}
 
 		dbPath := filepath.Join(beadsDir, "beads.db")
-		testStore, err := sqlite.New(ctx, dbPath)
-		if err != nil {
-			t.Fatalf("Failed to create test database: %v", err)
-		}
+		testStore := teststore.New(t)
 		defer testStore.Close()
 
 		// Configure sync.branch

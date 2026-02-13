@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -17,17 +18,14 @@ func TestRepairDeps_NoOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	// Initialize database
 	store.SetConfig(ctx, "issue_prefix", "test-")
-	
+
 	// Create two issues with valid dependency
 	i1 := &types.Issue{Title: "Issue 1", Priority: 1, Status: "open", IssueType: "task"}
 	store.CreateIssue(ctx, i1, "test")
@@ -82,24 +80,21 @@ func TestRepairDeps_FindOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	// Initialize database
 	store.SetConfig(ctx, "issue_prefix", "test-")
-	
+
 	// Create two issues
 	i1 := &types.Issue{Title: "Issue 1", Priority: 1, Status: "open", IssueType: "task"}
 	if err := store.CreateIssue(ctx, i1, "test"); err != nil {
 		t.Fatalf("CreateIssue failed: %v", err)
 	}
 	t.Logf("Created i1: %s", i1.ID)
-	
+
 	i2 := &types.Issue{Title: "Issue 2", Priority: 1, Status: "open", IssueType: "task"}
 	if err := store.CreateIssue(ctx, i2, "test"); err != nil {
 		t.Fatalf("CreateIssue failed: %v", err)
@@ -133,7 +128,7 @@ func TestRepairDeps_FindOrphans(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Verify the orphan was actually inserted
 	var count int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM dependencies WHERE depends_on_id = 'nonexistent-123'").Scan(&count)
@@ -198,17 +193,14 @@ func TestRepairDeps_FixOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	// Initialize database
 	store.SetConfig(ctx, "issue_prefix", "test-")
-	
+
 	// Create three issues
 	i1 := &types.Issue{Title: "Issue 1", Priority: 1, Status: "open", IssueType: "task"}
 	store.CreateIssue(ctx, i1, "test")
@@ -312,17 +304,14 @@ func TestRepairDeps_MultipleTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	// Initialize database
 	store.SetConfig(ctx, "issue_prefix", "test-")
-	
+
 	// Create issues
 	i1 := &types.Issue{Title: "Issue 1", Priority: 1, Status: "open", IssueType: "task"}
 	store.CreateIssue(ctx, i1, "test")

@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage/memory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -25,7 +26,7 @@ func TestIssueIDCompletion(t *testing.T) {
 	rootCtx = ctx
 
 	// Create in-memory store for testing
-	memStore := memory.New("")
+	memStore := teststore.New(t)
 	store = memStore
 
 	// Create test issues
@@ -346,7 +347,7 @@ func TestIssueIDCompletion_EmptyDatabase(t *testing.T) {
 	rootCtx = ctx
 
 	// Create empty in-memory store
-	memStore := memory.New("")
+	memStore := teststore.New(t)
 	store = memStore
 
 	cmd := &cobra.Command{}

@@ -15,8 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -880,7 +881,7 @@ func TestDeleteViaDaemon_DirectBatch(t *testing.T) {
 }
 
 // setupDaemonTestEnvForDelete sets up a complete daemon test environment
-func setupDaemonTestEnvForDelete(t *testing.T) (context.Context, context.CancelFunc, *rpc.Client, *sqlite.SQLiteStorage, func()) {
+func setupDaemonTestEnvForDelete(t *testing.T) (context.Context, context.CancelFunc, *rpc.Client, storage.Storage, func()) {
 	t.Helper()
 
 	tmpDir := makeSocketTempDir(t)

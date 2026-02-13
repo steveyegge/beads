@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 func dialTestConn(t *testing.T, socketPath string) net.Conn {
@@ -30,11 +30,7 @@ func TestConnectionLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	socketPath := newTestSocketPath(t)
 
@@ -105,7 +101,7 @@ func TestConnectionLimits(t *testing.T) {
 	// Set short read timeout to detect rejection
 	extraConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 	reader := bufio.NewReader(extraConn)
-	_, err = reader.ReadBytes('\n')
+	_, err := reader.ReadBytes('\n')
 
 	// Connection should be closed (EOF or timeout)
 	if err == nil {
@@ -152,11 +148,7 @@ func TestRequestTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	socketPath := newTestSocketPath(t)
 
@@ -203,11 +195,7 @@ func TestHealthResponseIncludesLimits(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := newTestSocketPath(t)
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	os.Setenv("BEADS_DAEMON_MAX_CONNS", "50")
 	defer os.Unsetenv("BEADS_DAEMON_MAX_CONNS")

@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -28,20 +29,14 @@ func TestMultiWorkspaceDeletionSync(t *testing.T) {
 	ctx := context.Background()
 
 	// Create stores for both clones
-	storeA, err := sqlite.New(context.Background(), cloneADB)
-	if err != nil {
-		t.Fatalf("Failed to create store A: %v", err)
-	}
+	storeA := teststore.New(t)
 	defer storeA.Close()
 
 	if err := storeA.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set issue_prefix for store A: %v", err)
 	}
 
-	storeB, err := sqlite.New(context.Background(), cloneBDB)
-	if err != nil {
-		t.Fatalf("Failed to create store B: %v", err)
-	}
+	storeB := teststore.New(t)
 	defer storeB.Close()
 
 	if err := storeB.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -182,10 +177,7 @@ func TestDeletionWithLocalModification(t *testing.T) {
 
 	ctx := context.Background()
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -422,10 +414,7 @@ func TestMultiRepoDeletionTracking(t *testing.T) {
 	dbPath := filepath.Join(primaryBeadsDir, "beads.db")
 	ctx := context.Background()
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -611,14 +600,14 @@ func TestGetMultiRepoJSONLPaths_Duplicates(t *testing.T) {
 	}()
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	// Current implementation doesn't dedupe - just verify it returns all entries
 	// (This documents current behavior; future improvement could dedupe)
 	expectedCount := 3 // primary + 2 duplicates
 	if len(paths) != expectedCount {
 		t.Errorf("Expected %d paths, got %d: %v", expectedCount, len(paths), paths)
 	}
-	
+
 	// All should point to same JSONL location
 	expectedJSONL := filepath.Join(primaryDir, ".beads", "issues.jsonl")
 	for i, p := range paths {
@@ -657,15 +646,15 @@ func TestGetMultiRepoJSONLPaths_PathsWithSpaces(t *testing.T) {
 	}()
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	if len(paths) != 2 {
 		t.Fatalf("Expected 2 paths, got %d", len(paths))
 	}
-	
+
 	// Verify paths are constructed correctly
 	expectedPrimary := filepath.Join(primaryDir, ".beads", "issues.jsonl")
 	expectedAdditional := filepath.Join(additionalDir, ".beads", "issues.jsonl")
-	
+
 	if paths[0] != expectedPrimary {
 		t.Errorf("Primary path = %s, want %s", paths[0], expectedPrimary)
 	}
@@ -692,17 +681,17 @@ func TestGetMultiRepoJSONLPaths_RelativePaths(t *testing.T) {
 	}()
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	if len(paths) != 3 {
 		t.Fatalf("Expected 3 paths, got %d", len(paths))
 	}
-	
+
 	// Current implementation: relative paths are NOT expanded to absolute
 	// They're used as-is with filepath.Join
 	expectedPrimary := filepath.Join(".", ".beads", "issues.jsonl")
 	expectedOther := filepath.Join("../other", ".beads", "issues.jsonl")
 	expectedBar := filepath.Join("./foo/../bar", ".beads", "issues.jsonl")
-	
+
 	if paths[0] != expectedPrimary {
 		t.Errorf("Primary path = %s, want %s", paths[0], expectedPrimary)
 	}
@@ -731,15 +720,15 @@ func TestGetMultiRepoJSONLPaths_TildeExpansion(t *testing.T) {
 	}()
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	if len(paths) != 2 {
 		t.Fatalf("Expected 2 paths, got %d", len(paths))
 	}
-	
+
 	// Tilde should be literal (NOT expanded) in current implementation
 	expectedPrimary := filepath.Join("~/repos/main", ".beads", "issues.jsonl")
 	expectedAdditional := filepath.Join("~/repos/other", ".beads", "issues.jsonl")
-	
+
 	if paths[0] != expectedPrimary {
 		t.Errorf("Primary path = %s, want %s", paths[0], expectedPrimary)
 	}
@@ -900,10 +889,7 @@ func TestMultiRepoFlushPrefixFiltering(t *testing.T) {
 	dbPath := filepath.Join(additionalBeadsDir, "beads.db")
 	ctx := context.Background()
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set prefix for additional repo (different from primary)
@@ -942,9 +928,8 @@ func TestMultiRepoFlushPrefixFiltering(t *testing.T) {
 		SourceRepo:  additionalDir,
 	}
 
-	// Use batch create with SkipPrefixValidation to simulate multi-repo hydration
-	// (in real multi-repo mode, issues from other repos are imported with prefix validation skipped)
-	if err := store.CreateIssuesWithFullOptions(ctx, []*types.Issue{primaryIssue, additionalIssue}, "test", sqlite.BatchCreateOptions{SkipPrefixValidation: true}); err != nil {
+	// Use batch create to simulate multi-repo hydration
+	if err := store.CreateIssues(ctx, []*types.Issue{primaryIssue, additionalIssue}, "test"); err != nil {
 		t.Fatalf("Failed to batch create issues: %v", err)
 	}
 

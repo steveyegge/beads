@@ -5,11 +5,10 @@ package importer
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -18,15 +17,9 @@ func TestImportWithExternalRef(t *testing.T) {
 		t.Skip("skipping slow import test in short mode")
 	}
 	ctx := context.Background()
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+	dbPath := "" // teststore manages its own storage
 
-	// Create database
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Set prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -102,15 +95,9 @@ func TestImportWithExternalRef(t *testing.T) {
 
 func TestImportWithExternalRefDifferentID(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+	dbPath := "" // teststore manages its own storage
 
-	// Create database
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Set prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -193,15 +180,9 @@ func TestImportWithExternalRefDifferentID(t *testing.T) {
 
 func TestImportLocalIssueNotOverwrittenByExternalRef(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+	dbPath := "" // teststore manages its own storage
 
-	// Create database
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Set prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -291,15 +272,9 @@ func TestImportLocalIssueNotOverwrittenByExternalRef(t *testing.T) {
 
 func TestImportExternalRefTimestampCheck(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+	dbPath := "" // teststore manages its own storage
 
-	// Create database
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Set prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {

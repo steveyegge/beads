@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-	
+
 	"github.com/steveyegge/beads/internal/config"
 )
 

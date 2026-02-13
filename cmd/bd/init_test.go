@@ -10,10 +10,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 func TestInitCommand(t *testing.T) {
@@ -1331,10 +1332,7 @@ func TestInitSubdirectoryDoesNotInheritParentPrefix(t *testing.T) {
 
 	// Open the child's database and verify the prefix
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, filepath.Join(childBeadsDir, "beads.db"))
-	if err != nil {
-		t.Fatalf("Failed to open child database: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	prefix, err := store.GetConfig(ctx, "issue_prefix")
@@ -1751,10 +1749,7 @@ func TestInitWithRedirectToExistingDatabase(t *testing.T) {
 
 	// Create an existing database in canonical location
 	canonicalDBPath := filepath.Join(canonicalBeadsDir, "beads.db")
-	store, err := sqlite.New(context.Background(), canonicalDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create canonical database: %v", err)
-	}
+	store := teststore.New(t)
 	if err := store.SetConfig(context.Background(), "issue_prefix", "existing"); err != nil {
 		t.Fatalf("Failed to set prefix in canonical database: %v", err)
 	}
@@ -1855,10 +1850,7 @@ func TestCheckExistingBeadsData_WithBEADS_DIR(t *testing.T) {
 		cwdBeadsDir := filepath.Join(tmpDir, "cwd", ".beads")
 		os.MkdirAll(cwdBeadsDir, 0755)
 		cwdDBPath := filepath.Join(cwdBeadsDir, beads.CanonicalDatabaseName)
-		store, err := sqlite.New(context.Background(), cwdDBPath)
-		if err != nil {
-			t.Fatal(err)
-		}
+		store := teststore.New(t)
 		store.Close()
 
 		// Create BEADS_DIR location (no database)
@@ -1888,10 +1880,7 @@ func TestCheckExistingBeadsData_WithBEADS_DIR(t *testing.T) {
 		beadsDirPath := filepath.Join(tmpDir, "external", ".beads")
 		os.MkdirAll(beadsDirPath, 0755)
 		dbPath := filepath.Join(beadsDirPath, beads.CanonicalDatabaseName)
-		store, err := sqlite.New(context.Background(), dbPath)
-		if err != nil {
-			t.Fatal(err)
-		}
+		store := teststore.New(t)
 		store.Close()
 
 		os.Setenv("BEADS_DIR", beadsDirPath)

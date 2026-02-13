@@ -23,7 +23,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
@@ -613,13 +612,8 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	}
 	defer func() { _ = store.Close() }()
 
-	// Enable freshness checking for SQLite backend to detect external database file modifications
-	// (e.g., when git merge replaces the database file)
-	// Dolt doesn't need this since it handles versioning natively.
-	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-		sqliteStore.EnableFreshnessChecking()
-		log.Info("database opened", "path", store.Path(), "backend", "sqlite", "freshness_checking", true)
-	} else if federation {
+	// Log database opened with backend type
+	if federation {
 		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "federation/server")
 	} else if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" {
 		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "server")
@@ -672,18 +666,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		}
 	}
 
-	// Hydrate from multi-repo if configured (SQLite only)
-	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-		if results, err := sqliteStore.HydrateFromMultiRepo(ctx); err != nil {
-			log.Error("multi-repo hydration failed", "error", err)
-			return // Use return instead of os.Exit to allow defers to run
-		} else if results != nil {
-			log.Info("multi-repo hydration complete")
-			for repo, count := range results {
-				log.Info("hydrated issues", "repo", repo, "count", count)
-			}
-		}
-	}
+	// Multi-repo hydration was SQLite-only and has been removed.
 
 	// Validate database fingerprint (skip in local mode - no git available)
 	if localMode {

@@ -7,14 +7,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// setupSyncTestServer creates a test server with SQLite storage for sync tests
-func setupSyncTestServer(t *testing.T) (*Server, *sqlite.SQLiteStorage, string) {
+// setupSyncTestServer creates a test server with storage for sync tests
+func setupSyncTestServer(t *testing.T) (*Server, storage.Storage, string) {
 	t.Helper()
-	ctx := context.Background()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 
@@ -30,23 +30,14 @@ func setupSyncTestServer(t *testing.T) (*Server, *sqlite.SQLiteStorage, string) 
 		t.Fatalf("failed to create jsonl file: %v", err)
 	}
 
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-
-	// Initialize database with required config
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("failed to set issue_prefix: %v", err)
-	}
+	store := teststore.New(t)
 
 	server := NewServer(filepath.Join(beadsDir, "daemon.sock"), store, tmpDir, dbPath)
 	return server, store, tmpDir
 }
 
 // createSyncTestIssue creates a test issue in the store
-func createSyncTestIssue(t *testing.T, store *sqlite.SQLiteStorage, id, title string) *types.Issue {
+func createSyncTestIssue(t *testing.T, store storage.Storage, id, title string) *types.Issue {
 	t.Helper()
 	issue := &types.Issue{
 		ID:        id,

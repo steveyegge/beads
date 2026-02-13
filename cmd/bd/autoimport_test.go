@@ -8,19 +8,17 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestCheckAndAutoImport_NoAutoImportFlag(t *testing.T) {
 	ctx := context.Background()
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set the global flag
@@ -47,10 +45,7 @@ func TestAutoImportIfNewer_NoAutoImportFlag(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set prefix
@@ -116,10 +111,7 @@ func TestAutoImportIfNewer_NoAutoImportFlag(t *testing.T) {
 func TestCheckAndAutoImport_DatabaseHasIssues(t *testing.T) {
 	ctx := context.Background()
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set prefix
@@ -154,10 +146,7 @@ func TestCheckAndAutoImport_EmptyDatabaseNoGit(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	tmpDB := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set prefix
@@ -467,11 +456,11 @@ func TestIsNoDbModeConfigured(t *testing.T) {
 
 func TestGetLocalSyncBranch(t *testing.T) {
 	tests := []struct {
-		name        string
-		configYAML  string
-		envVar      string
-		want        string
-		createFile  bool
+		name       string
+		configYAML string
+		envVar     string
+		want       string
+		createFile bool
 	}{
 		{
 			name:       "no config.yaml exists",

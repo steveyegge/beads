@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -28,10 +29,7 @@ func TestStatusCommand(t *testing.T) {
 	}
 
 	// Initialize the database
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -44,40 +42,40 @@ func TestStatusCommand(t *testing.T) {
 	// Create some test issues with different statuses
 	testIssues := []*types.Issue{
 		{
-			Title:      "Open issue 1",
-			Status:     types.StatusOpen,
-			Priority:   1,
-			IssueType:  types.TypeTask,
-			Assignee:   "alice",
+			Title:     "Open issue 1",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			Assignee:  "alice",
 		},
 		{
-			Title:      "Open issue 2",
-			Status:     types.StatusOpen,
-			Priority:   2,
-			IssueType:  types.TypeBug,
-			Assignee:   "bob",
+			Title:     "Open issue 2",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeBug,
+			Assignee:  "bob",
 		},
 		{
-			Title:      "In progress issue",
-			Status:     types.StatusInProgress,
-			Priority:   1,
-			IssueType:  types.TypeFeature,
-			Assignee:   "alice",
+			Title:     "In progress issue",
+			Status:    types.StatusInProgress,
+			Priority:  1,
+			IssueType: types.TypeFeature,
+			Assignee:  "alice",
 		},
 		{
-			Title:      "Blocked issue",
-			Status:     types.StatusBlocked,
-			Priority:   0,
-			IssueType:  types.TypeBug,
-			Assignee:   "alice",
+			Title:     "Blocked issue",
+			Status:    types.StatusBlocked,
+			Priority:  0,
+			IssueType: types.TypeBug,
+			Assignee:  "alice",
 		},
 		{
-			Title:      "Closed issue",
-			Status:     types.StatusClosed,
-			Priority:   3,
-			IssueType:  types.TypeTask,
-			Assignee:   "bob",
-			ClosedAt:   timePtr(time.Now()),
+			Title:     "Closed issue",
+			Status:    types.StatusClosed,
+			Priority:  3,
+			IssueType: types.TypeTask,
+			Assignee:  "bob",
+			ClosedAt:  timePtr(time.Now()),
 		},
 	}
 
@@ -139,13 +137,13 @@ func TestGetGitActivity(t *testing.T) {
 	// Test getGitActivity - it may return nil if not in a git repo
 	// or if there's no recent activity
 	activity := getGitActivity(24)
-	
+
 	// If we're in a git repo with activity, verify the structure
 	if activity != nil {
 		if activity.HoursTracked != 24 {
 			t.Errorf("Expected 24 hours tracked, got %d", activity.HoursTracked)
 		}
-		
+
 		// Should have non-negative values
 		if activity.CommitCount < 0 {
 			t.Errorf("Negative commit count: %d", activity.CommitCount)
@@ -159,9 +157,9 @@ func TestGetGitActivity(t *testing.T) {
 		if activity.IssuesUpdated < 0 {
 			t.Errorf("Negative issues updated: %d", activity.IssuesUpdated)
 		}
-		
+
 		t.Logf("Git activity: commits=%d, created=%d, closed=%d, updated=%d, total=%d",
-			activity.CommitCount, activity.IssuesCreated, activity.IssuesClosed, 
+			activity.CommitCount, activity.IssuesCreated, activity.IssuesClosed,
 			activity.IssuesUpdated, activity.TotalChanges)
 	} else {
 		t.Log("No git activity found (not in a git repo or no recent commits)")
@@ -179,10 +177,7 @@ func TestGetAssignedStatistics(t *testing.T) {
 	}
 
 	// Initialize the database
-	testStore, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	ctx := context.Background()

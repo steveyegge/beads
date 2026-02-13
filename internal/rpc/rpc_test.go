@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	sqlitestorage "github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -37,23 +37,17 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 	// Ensure socket doesn't exist from previous failed test
 	os.Remove(socketPath)
 
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 
 	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
 
 	// Configure Gas Town custom types for test compatibility (bd-find4)
 	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message"); err != nil {
-		store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to set types.custom: %v", err)
 	}
@@ -77,7 +71,6 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		if i == maxWait-1 {
 			cancel()
 			server.Stop()
-			store.Close()
 			os.RemoveAll(tmpDir)
 			t.Fatalf("Server socket not created after waiting")
 		}
@@ -90,15 +83,13 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 	if err != nil {
 		cancel()
 		server.Stop()
-		store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to connect client: %v", err)
 	}
-	
+
 	if client == nil {
 		cancel()
 		server.Stop()
-		store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Client is nil after connection")
 	}
@@ -110,7 +101,6 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		client.Close()
 		cancel()
 		server.Stop()
-		store.Close()
 		os.RemoveAll(tmpDir)
 	}
 
@@ -346,11 +336,7 @@ func TestSocketCleanup(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := filepath.Join(tmpDir, "bd.sock")
 
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 
@@ -456,7 +442,6 @@ func TestDatabaseHandshake(t *testing.T) {
 	dbPath1 := filepath.Join(beadsDir1, "db1.db")
 	socketPath1 := filepath.Join(beadsDir1, "bd.sock")
 	store1 := newTestStore(t, dbPath1)
-	defer store1.Close()
 
 	server1 := NewServer(socketPath1, store1, tmpDir1, dbPath1)
 	ctx1, cancel1 := context.WithCancel(context.Background())
@@ -471,7 +456,6 @@ func TestDatabaseHandshake(t *testing.T) {
 	dbPath2 := filepath.Join(beadsDir2, "db2.db")
 	socketPath2 := filepath.Join(beadsDir2, "bd.sock")
 	store2 := newTestStore(t, dbPath2)
-	defer store2.Close()
 
 	server2 := NewServer(socketPath2, store2, tmpDir2, dbPath2)
 	ctx2, cancel2 := context.WithCancel(context.Background())

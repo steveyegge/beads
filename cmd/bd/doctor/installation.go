@@ -1,17 +1,13 @@
 package doctor
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
@@ -105,36 +101,22 @@ func CheckPermissions(path string) DoctorCheck {
 	}
 	_ = os.Remove(testFile) // Clean up test file (intentionally ignore error)
 
-	// Check database permissions
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	if _, err := os.Stat(dbPath); err == nil {
-		// Try to open database
-		db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
-		if err != nil {
+	// Check database permissions via storage layer
+	db, closeDB, err := openDoctorDB(beadsDir)
+	if err == nil {
+		// Try a read test
+		_, qErr := db.Exec("SELECT 1")
+		closeDB()
+		if qErr != nil {
 			return DoctorCheck{
 				Name:    "Permissions",
 				Status:  StatusError,
-				Message: "Database file exists but cannot be opened",
+				Message: "Database is not readable",
 				Fix:     "Run 'bd doctor --fix' to fix permissions",
 			}
 		}
-		_ = db.Close() // Intentionally ignore close error
-
-		// Try a write test
-		db, err = sql.Open("sqlite", sqliteConnString(dbPath, true))
-		if err == nil {
-			_, err = db.Exec("SELECT 1")
-			_ = db.Close() // Intentionally ignore close error
-			if err != nil {
-				return DoctorCheck{
-					Name:    "Permissions",
-					Status:  StatusError,
-					Message: "Database file is not readable",
-					Fix:     "Run 'bd doctor --fix' to fix permissions",
-				}
-			}
-		}
 	}
+	// If openDoctorDB fails, it may be that there is no database yet, which is OK
 
 	return DoctorCheck{
 		Name:    "Permissions",

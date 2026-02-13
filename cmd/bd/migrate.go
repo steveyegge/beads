@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,13 +11,10 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 var migrateCmd = &cobra.Command{
@@ -74,11 +70,11 @@ Subcommands:
 			return
 		}
 
-		// Handle --to-sqlite flag (Dolt to SQLite migration, escape hatch)
+		// Handle --to-sqlite flag (removed - SQLite backend no longer available)
 		toSQLite, _ := cmd.Flags().GetBool("to-sqlite")
 		if toSQLite {
-			handleToSQLiteMigration(dryRun, autoYes)
-			return
+			fmt.Fprintln(os.Stderr, "Error: SQLite backend has been removed. --to-sqlite is no longer supported.")
+			os.Exit(1)
 		}
 
 		// Find .beads directory
@@ -286,7 +282,7 @@ Subcommands:
 			// Clean up WAL files before opening to avoid "disk I/O error"
 			cleanupWALFiles(currentDB.path)
 
-			store, err := sqlite.New(rootCtx, currentDB.path)
+			store, err := factory.NewFromConfig(rootCtx, filepath.Dir(currentDB.path))
 			if err != nil {
 				if jsonOutput {
 					outputJSON(map[string]interface{}{
@@ -455,44 +451,19 @@ func detectDatabases(beadsDir string) ([]*dbInfo, error) {
 }
 
 func getDBVersion(dbPath string) string {
-	// Open database read-only using file URI (same as production code)
-	connStr := "file:" + dbPath + "?mode=ro&_time_format=sqlite"
-	db, err := sql.Open("sqlite3", connStr)
+	// SQLite-specific version detection removed; use storage interface
+	store, err := factory.NewFromConfig(rootCtx, filepath.Dir(dbPath))
 	if err != nil {
 		return "unknown"
 	}
-	defer db.Close()
+	defer store.Close()
 
-	// Ping to ensure connection is actually established
-	if err := db.Ping(); err != nil {
+	ctx := rootCtx
+	version, err := store.GetMetadata(ctx, "bd_version")
+	if err != nil || version == "" {
 		return "unknown"
 	}
-
-	// Try to read version from metadata table
-	var version string
-	err = db.QueryRow("SELECT value FROM metadata WHERE key = 'bd_version'").Scan(&version)
-	if err == nil {
-		return version
-	}
-
-	// If the row doesn't exist but table does, this is still a database with metadata
-	// Check if metadata table exists
-	var tableName string
-	err = db.QueryRow(`
-		SELECT name FROM sqlite_master
-		WHERE type='table' AND name='metadata'
-	`).Scan(&tableName)
-
-	if err == sql.ErrNoRows {
-		return "pre-0.17.5"
-	}
-
-	// Table exists but version query failed (probably no bd_version key)
-	if err == nil {
-		return "unknown"
-	}
-
-	return "unknown"
+	return version
 }
 
 
@@ -713,7 +684,7 @@ func handleInspect() {
 	// If database doesn't exist, return inspection with defaults
 	if !dbExists {
 		result := map[string]interface{}{
-			"registered_migrations": sqlite.ListMigrations(),
+			"registered_migrations": []string{},
 			"current_state": map[string]interface{}{
 				"schema_version": "missing",
 				"issue_count":    0,
@@ -722,7 +693,7 @@ func handleInspect() {
 				"db_exists":      false,
 			},
 			"warnings":            []string{"Database does not exist - run 'bd init' first"},
-			"invariants_to_check": sqlite.GetInvariantNames(),
+			"invariants_to_check": []string{},
 		}
 		
 		if jsonOutput {
@@ -736,8 +707,8 @@ func handleInspect() {
 		return
 	}
 
-	// Open database in read-only mode for inspection
-	store, err := sqlite.New(rootCtx, targetPath)
+	// Open database for inspection
+	store, err := factory.NewFromConfig(rootCtx, filepath.Dir(targetPath))
 	if err != nil {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
@@ -779,10 +750,10 @@ func handleInspect() {
 	}
 
 	// Get registered migrations (all migrations are idempotent and run on every open)
-	registeredMigrations := sqlite.ListMigrations()
+	registeredMigrations := []string{}
 	
 	// Build invariants list
-	invariantNames := sqlite.GetInvariantNames()
+	invariantNames := []string{}
 
 	// Generate warnings
 	warnings := []string{}
@@ -906,7 +877,7 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 	}
 
 	// Open database
-	store, err := sqlite.New(rootCtx, targetPath)
+	store, err := factory.NewFromConfig(rootCtx, filepath.Dir(targetPath))
 	if err != nil {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{

@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/memory"
 )
 
 func TestHydrateDeployConfig(t *testing.T) {
@@ -16,7 +17,7 @@ func TestHydrateDeployConfig(t *testing.T) {
 	log := newTestLogger()
 
 	t.Run("hydrates unset env vars from deploy config", func(t *testing.T) {
-		store := memory.New("test")
+		store := teststore.New(t)
 
 		// Seed deploy.* keys in config
 		if err := store.SetConfig(ctx, "deploy.redis_url", "redis://my-redis:6379"); err != nil {
@@ -43,7 +44,7 @@ func TestHydrateDeployConfig(t *testing.T) {
 	})
 
 	t.Run("env vars already set take precedence", func(t *testing.T) {
-		store := memory.New("test")
+		store := teststore.New(t)
 
 		if err := store.SetConfig(ctx, "deploy.redis_url", "redis://from-db:6379"); err != nil {
 			t.Fatal(err)
@@ -61,7 +62,7 @@ func TestHydrateDeployConfig(t *testing.T) {
 	})
 
 	t.Run("non-deploy keys are ignored", func(t *testing.T) {
-		store := memory.New("test")
+		store := teststore.New(t)
 
 		if err := store.SetConfig(ctx, "jira.url", "https://jira.example.com"); err != nil {
 			t.Fatal(err)
@@ -81,7 +82,7 @@ func TestHydrateDeployConfig(t *testing.T) {
 	})
 
 	t.Run("deploy key with no env mapping is skipped", func(t *testing.T) {
-		store := memory.New("test")
+		store := teststore.New(t)
 
 		// deploy.ingress_host has no EnvVar mapping
 		if err := store.SetConfig(ctx, "deploy.ingress_host", "my-host.example.com"); err != nil {
@@ -93,7 +94,7 @@ func TestHydrateDeployConfig(t *testing.T) {
 	})
 
 	t.Run("empty config is a no-op", func(t *testing.T) {
-		store := memory.New("test")
+		store := teststore.New(t)
 		// No deploy config set — should be a no-op
 		hydrateDeployConfig(ctx, store, log)
 	})

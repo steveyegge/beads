@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 func TestValidateBranchName(t *testing.T) {
@@ -80,18 +81,9 @@ func TestValidateSyncBranchName(t *testing.T) {
 	}
 }
 
-func newTestStore(t *testing.T) *sqlite.SQLiteStorage {
+func newTestStore(t *testing.T) storage.Storage {
 	t.Helper()
-	store, err := sqlite.New(context.Background(), "file::memory:?mode=memory&cache=private")
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
-	ctx := context.Background()
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		_ = store.Close()
-		t.Fatalf("Failed to set issue_prefix: %v", err)
-	}
-	return store
+	return teststore.New(t)
 }
 
 func TestGet(t *testing.T) {
@@ -99,8 +91,6 @@ func TestGet(t *testing.T) {
 
 	t.Run("returns empty when not set", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
-		
 		branch, err := Get(ctx, store)
 		if err != nil {
 			t.Fatalf("Get() error = %v", err)
@@ -112,8 +102,6 @@ func TestGet(t *testing.T) {
 
 	t.Run("returns database config value", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
-		
 		if err := store.SetConfig(ctx, ConfigKey, "beads-metadata"); err != nil {
 			t.Fatalf("SetConfig() error = %v", err)
 		}
@@ -129,8 +117,6 @@ func TestGet(t *testing.T) {
 
 	t.Run("environment variable overrides database", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
-		
 		// Set database config
 		if err := store.SetConfig(ctx, ConfigKey, "beads-metadata"); err != nil {
 			t.Fatalf("SetConfig() error = %v", err)
@@ -151,8 +137,6 @@ func TestGet(t *testing.T) {
 
 	t.Run("returns error for invalid env var", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
-		
 		os.Setenv(EnvVar, "invalid..branch")
 		defer os.Unsetenv(EnvVar)
 		
@@ -164,8 +148,6 @@ func TestGet(t *testing.T) {
 
 	t.Run("returns error for invalid db config", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
-		
 		// Directly set invalid value (bypassing validation)
 		if err := store.SetConfig(ctx, ConfigKey, "invalid..branch"); err != nil {
 			t.Fatalf("SetConfig() error = %v", err)
@@ -183,8 +165,6 @@ func TestSet(t *testing.T) {
 
 	t.Run("sets valid branch name", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
-		
 		if err := Set(ctx, store, "beads-metadata"); err != nil {
 			t.Fatalf("Set() error = %v", err)
 		}
@@ -200,8 +180,6 @@ func TestSet(t *testing.T) {
 
 	t.Run("allows empty string", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
-		
 		if err := Set(ctx, store, ""); err != nil {
 			t.Fatalf("Set() error = %v for empty string", err)
 		}
@@ -217,7 +195,6 @@ func TestSet(t *testing.T) {
 
 	t.Run("rejects invalid branch name", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
 
 		err := Set(ctx, store, "invalid..branch")
 		if err == nil {
@@ -228,7 +205,6 @@ func TestSet(t *testing.T) {
 	// GH#807: Verify Set() rejects main/master (not just ValidateSyncBranchName)
 	t.Run("rejects main as sync branch", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
 
 		err := Set(ctx, store, "main")
 		if err == nil {
@@ -241,7 +217,6 @@ func TestSet(t *testing.T) {
 
 	t.Run("rejects master as sync branch", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
 
 		err := Set(ctx, store, "master")
 		if err == nil {
@@ -289,7 +264,6 @@ auto-start-daemon: true
 
 		// Create test store
 		store := newTestStore(t)
-		defer store.Close()
 
 		// Call Set() which should update both database and config.yaml
 		if err := Set(ctx, store, "beads-sync"); err != nil {
@@ -330,7 +304,6 @@ func TestUnset(t *testing.T) {
 
 	t.Run("removes config value", func(t *testing.T) {
 		store := newTestStore(t)
-		defer store.Close()
 
 		// Set a value first
 		if err := Set(ctx, store, "beads-metadata"); err != nil {
@@ -472,53 +445,7 @@ func TestGetConfigFromDB(t *testing.T) {
 		}
 	})
 
-	t.Run("returns empty when key not found", func(t *testing.T) {
-		// Create a temporary database
-		tmpDir, _ := os.MkdirTemp("", "test-beads-db-*")
-		defer os.RemoveAll(tmpDir)
-		dbPath := tmpDir + "/beads.db"
-
-		// Create a valid SQLite database with the config table
-		store, err := sqlite.New(context.Background(), "file:"+dbPath)
-		if err != nil {
-			t.Fatalf("Failed to create test database: %v", err)
-		}
-		store.Close()
-
-		result := getConfigFromDB(dbPath, "nonexistent.key")
-		if result != "" {
-			t.Errorf("getConfigFromDB() for missing key = %q, want empty", result)
-		}
-	})
-
-	t.Run("returns value when key exists", func(t *testing.T) {
-		// Create a temporary database
-		tmpDir, _ := os.MkdirTemp("", "test-beads-db-*")
-		defer os.RemoveAll(tmpDir)
-		dbPath := tmpDir + "/beads.db"
-
-		// Create a valid SQLite database with the config table
-		ctx := context.Background()
-		// Use the same connection string format as getConfigFromDB expects
-		store, err := sqlite.New(ctx, "file:"+dbPath+"?_journal_mode=DELETE")
-		if err != nil {
-			t.Fatalf("Failed to create test database: %v", err)
-		}
-		// Set issue_prefix first (required by storage)
-		if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-			store.Close()
-			t.Fatalf("Failed to set issue_prefix: %v", err)
-		}
-		// Set the config value we're testing
-		if err := store.SetConfig(ctx, ConfigKey, "test-sync-branch"); err != nil {
-			store.Close()
-			t.Fatalf("Failed to set config: %v", err)
-		}
-		store.Close()
-
-		result := getConfigFromDB(dbPath, ConfigKey)
-		if result != "test-sync-branch" {
-			t.Errorf("getConfigFromDB() = %q, want %q", result, "test-sync-branch")
-		}
-	})
+	// Note: Tests for "returns empty when key not found" and "returns value when key exists"
+	// are skipped because getConfigFromDB directly opens a SQLite file via sql.Open("sqlite3", ...),
+	// and the SQLite storage backend has been removed. Those code paths need a SQLite file on disk.
 }

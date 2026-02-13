@@ -1,13 +1,33 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/steveyegge/beads/internal/compact"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/types"
 )
+
+// compactionCandidate holds information about a compaction candidate.
+type compactionCandidate struct {
+	IssueID string
+}
+
+// compactableStore is an optional interface that storage backends can implement
+// to support compaction operations. Backends that don't implement this will
+// get a "compaction not supported" error.
+type compactableStore interface {
+	CheckEligibility(ctx context.Context, issueID string, tier int) (bool, string, error)
+	GetIssue(ctx context.Context, issueID string) (*types.Issue, error)
+	UpdateIssue(ctx context.Context, issueID string, updates map[string]interface{}, actor string) error
+	ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string) error
+	AddComment(ctx context.Context, issueID, actor, comment string) error
+	MarkIssueDirty(ctx context.Context, issueID string) error
+	GetTier1Candidates(ctx context.Context) ([]*compactionCandidate, error)
+	GetTier2Candidates(ctx context.Context) ([]*compactionCandidate, error)
+}
 
 func (s *Server) handleCompact(req *Request) Response {
 	var args CompactArgs
@@ -26,11 +46,11 @@ func (s *Server) handleCompact(req *Request) Response {
 		}
 	}
 
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+	cs, ok := store.(compactableStore)
 	if !ok {
 		return Response{
 			Success: false,
-			Error:   "compact requires SQLite storage",
+			Error:   "compact not supported by the current storage backend",
 		}
 	}
 
@@ -43,7 +63,7 @@ func (s *Server) handleCompact(req *Request) Response {
 		config.Concurrency = 5
 	}
 
-	compactor, err := compact.New(sqliteStore, args.APIKey, config)
+	compactor, err := compact.New(cs, args.APIKey, config)
 	if err != nil {
 		return Response{
 			Success: false,
@@ -57,7 +77,7 @@ func (s *Server) handleCompact(req *Request) Response {
 
 	if args.IssueID != "" {
 		if !args.Force {
-			eligible, reason, err := sqliteStore.CheckEligibility(ctx, args.IssueID, args.Tier)
+			eligible, reason, err := cs.CheckEligibility(ctx, args.IssueID, args.Tier)
 			if err != nil {
 				return Response{
 					Success: false,
@@ -72,7 +92,7 @@ func (s *Server) handleCompact(req *Request) Response {
 			}
 		}
 
-		issue, err := sqliteStore.GetIssue(ctx, args.IssueID)
+		issue, err := cs.GetIssue(ctx, args.IssueID)
 		if err != nil {
 			return Response{
 				Success: false,
@@ -113,7 +133,7 @@ func (s *Server) handleCompact(req *Request) Response {
 			}
 		}
 
-		issueAfter, _ := sqliteStore.GetIssue(ctx, args.IssueID)
+		issueAfter, _ := cs.GetIssue(ctx, args.IssueID)
 		compactedSize := 0
 		if issueAfter != nil {
 			compactedSize = len(issueAfter.Description)
@@ -136,11 +156,11 @@ func (s *Server) handleCompact(req *Request) Response {
 	}
 
 	if args.All {
-		var candidates []*sqlite.CompactionCandidate
+		var candidates []*compactionCandidate
 
 		switch args.Tier {
 		case 1:
-			tier1, err := sqliteStore.GetTier1Candidates(ctx)
+			tier1, err := cs.GetTier1Candidates(ctx)
 			if err != nil {
 				return Response{
 					Success: false,
@@ -149,7 +169,7 @@ func (s *Server) handleCompact(req *Request) Response {
 			}
 			candidates = tier1
 		case 2:
-			tier2, err := sqliteStore.GetTier2Candidates(ctx)
+			tier2, err := cs.GetTier2Candidates(ctx)
 			if err != nil {
 				return Response{
 					Success: false,
@@ -242,18 +262,18 @@ func (s *Server) handleCompactStats(req *Request) Response {
 		}
 	}
 
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+	cs, ok := store.(compactableStore)
 	if !ok {
 		return Response{
 			Success: false,
-			Error:   "compact stats requires SQLite storage",
+			Error:   "compact stats not supported by the current storage backend",
 		}
 	}
 
 	ctx, cancel := s.reqCtx(req)
 	defer cancel()
 
-	tier1, err := sqliteStore.GetTier1Candidates(ctx)
+	tier1, err := cs.GetTier1Candidates(ctx)
 	if err != nil {
 		return Response{
 			Success: false,
@@ -261,7 +281,7 @@ func (s *Server) handleCompactStats(req *Request) Response {
 		}
 	}
 
-	tier2, err := sqliteStore.GetTier2Candidates(ctx)
+	tier2, err := cs.GetTier2Candidates(ctx)
 	if err != nil {
 		return Response{
 			Success: false,

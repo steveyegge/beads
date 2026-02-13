@@ -2,15 +2,12 @@ package doctor
 
 import (
 	"bufio"
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
@@ -134,23 +131,11 @@ func CheckPendingMigrations(path string) DoctorCheck {
 
 // needsHashIDsMigration checks if the database uses sequential IDs
 func needsHashIDsMigration(beadsDir string) bool {
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	// Skip if no database
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return false
-	}
-
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return false
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Get sample of issues
 	rows, err := db.Query("SELECT id FROM issues ORDER BY created_at LIMIT 10")
@@ -235,23 +220,11 @@ func hasGitRemote(repoPath string) bool {
 
 // checkDatabaseVersionMismatch returns a description if database version is old
 func checkDatabaseVersionMismatch(beadsDir string) string {
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	// Skip if no database
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return ""
-	}
-
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return ""
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Get stored version
 	var storedVersion string

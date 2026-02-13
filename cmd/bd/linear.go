@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/linear"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -548,7 +549,10 @@ func getLinearConfig(ctx context.Context, key string) (value string, source stri
 			return value, "project config (bd config)"
 		}
 	} else if dbPath != "" {
-		tempStore, err := sqlite.NewWithTimeout(ctx, dbPath, 5*time.Second)
+		beadsDir := filepath.Dir(dbPath)
+		tempStore, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+			LockTimeout: 5 * time.Second,
+		})
 		if err == nil {
 			defer func() { _ = tempStore.Close() }()
 			value, _ = tempStore.GetConfig(ctx, key)

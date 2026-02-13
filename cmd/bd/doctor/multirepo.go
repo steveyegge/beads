@@ -1,15 +1,12 @@
 package doctor
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/configfile"
 )
 
 // CheckMultiRepoTypes discovers and reports custom types used by child repos in multi-repo setups.
@@ -95,23 +92,11 @@ func discoverChildTypes(repoPath string) []string {
 
 // readTypesFromDB reads types.custom from the database config table
 func readTypesFromDB(beadsDir string) ([]string, error) {
-	// Get database path
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return nil, err
-	}
-
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer closeDB()
 
 	var typesStr string
 	err = db.QueryRow("SELECT value FROM config WHERE key = 'types.custom'").Scan(&typesStr)
@@ -191,23 +176,11 @@ func readTypesFromYAML(beadsDir string) ([]string, error) {
 func findUnknownTypesInHydratedIssues(repoPath string, multiRepo *config.MultiRepoConfig) []string {
 	beadsDir := filepath.Join(repoPath, ".beads")
 
-	// Get database path
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return nil
-	}
-
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return nil
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Collect all known types (core work types + parent custom + all child custom)
 	// Only core work types are built-in; Gas Town types require types.custom config.

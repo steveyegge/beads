@@ -9,9 +9,10 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -80,10 +81,7 @@ func testFreshCloneAutoImport(t *testing.T) {
 	os.Remove(dbPath)
 
 	// Run bd init with auto-import disabled to test checkGitForIssues
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -97,7 +95,6 @@ func testFreshCloneAutoImport(t *testing.T) {
 	git.ResetCaches() // Reset git caches after changing directory
 
 	git.ResetCaches()
-
 
 	count, path, gitRef := checkGitForIssues()
 	if count != 1 {
@@ -183,7 +180,6 @@ func testDatabaseRemovalScenario(t *testing.T) {
 
 	git.ResetCaches()
 
-
 	// Test checkGitForIssues finds issues.jsonl (canonical name)
 	count, path, gitRef := checkGitForIssues()
 	if count != 2 {
@@ -196,10 +192,7 @@ func testDatabaseRemovalScenario(t *testing.T) {
 
 	// Initialize database and import
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -267,7 +260,6 @@ func testLegacyFilenameSupport(t *testing.T) {
 
 	git.ResetCaches()
 
-
 	// Test checkGitForIssues finds issues.jsonl
 	count, path, gitRef := checkGitForIssues()
 	if count != 1 {
@@ -280,10 +272,7 @@ func testLegacyFilenameSupport(t *testing.T) {
 
 	// Initialize and import
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
@@ -349,7 +338,6 @@ func testPrecedenceTest(t *testing.T) {
 
 	git.ResetCaches()
 
-
 	// Test checkGitForIssues prefers issues.jsonl
 	count, path, _ := checkGitForIssues()
 	if count != 2 {
@@ -401,13 +389,9 @@ func testInitSafetyCheck(t *testing.T) {
 
 	git.ResetCaches()
 
-
 	// Create empty database (simulating failed import)
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	store := teststore.New(t)
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)

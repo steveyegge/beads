@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -17,10 +18,10 @@ import (
 type exportImportHelper struct {
 	t     *testing.T
 	ctx   context.Context
-	store *sqlite.SQLiteStorage
+	store storage.Storage
 }
 
-func newExportImportHelper(t *testing.T, store *sqlite.SQLiteStorage) *exportImportHelper {
+func newExportImportHelper(t *testing.T, store storage.Storage) *exportImportHelper {
 	return &exportImportHelper{t: t, ctx: context.Background(), store: store}
 }
 

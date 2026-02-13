@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -602,14 +604,14 @@ func TestTruncateConfigMeta(t *testing.T) {
 }
 
 // setupConfigTestDB creates a test database with custom types configured.
-func setupConfigTestDB(t *testing.T) (*sqlite.SQLiteStorage, func()) {
+func setupConfigTestDB(t *testing.T) (storage.Storage, func()) {
 	tmpDir, err := os.MkdirTemp("", "bd-test-config-beads-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
 	testDB := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDB)
+	store := teststore.New(t)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create test database: %v", err)

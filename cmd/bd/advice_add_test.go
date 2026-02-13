@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -16,7 +17,7 @@ func TestAdviceHookFlags(t *testing.T) {
 	// Use memory store for persistence tests since SQLite store doesn't
 	// include hook fields in INSERT/SELECT yet (migration added columns but
 	// storage layer not updated). This tests the types layer correctly.
-	memStore := memory.New("")
+	memStore := teststore.New(t)
 
 	t.Run("create advice with valid hook configuration", func(t *testing.T) {
 		advice := &types.Issue{
@@ -181,7 +182,7 @@ func TestAdviceHookFlags(t *testing.T) {
 	t.Run("hooks persisted and retrievable", func(t *testing.T) {
 		// Use memory store for persistence test (SQLite storage layer doesn't
 		// include hook fields in INSERT/SELECT statements yet)
-		memStore2 := memory.New("")
+		memStore2 := teststore.New(t)
 
 		// Create advice with all hook fields
 		advice := &types.Issue{
@@ -331,7 +332,7 @@ func TestAdviceHookFlags(t *testing.T) {
 // TestAdviceHookDefaults tests default values for hook flags
 func TestAdviceHookDefaults(t *testing.T) {
 	ctx := context.Background()
-	memStore := memory.New("")
+	memStore := teststore.New(t)
 
 	t.Run("advice without hooks has empty hook fields", func(t *testing.T) {
 		advice := &types.Issue{
@@ -367,7 +368,7 @@ func TestAdviceHookDefaults(t *testing.T) {
 // TestAdvicePriorityAndMetadata tests priority and metadata flag handling
 func TestAdvicePriorityAndMetadata(t *testing.T) {
 	ctx := context.Background()
-	memStore := memory.New("")
+	memStore := teststore.New(t)
 
 	t.Run("create advice with custom priority", func(t *testing.T) {
 		advice := &types.Issue{

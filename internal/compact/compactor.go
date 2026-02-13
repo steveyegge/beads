@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -44,7 +43,7 @@ type summarizer interface {
 }
 
 // New creates a new Compactor instance with the given configuration.
-func New(store *sqlite.SQLiteStorage, apiKey string, config *Config) (*Compactor, error) {
+func New(store issueStore, apiKey string, config *Config) (*Compactor, error) {
 	if config == nil {
 		config = &Config{
 			Concurrency: defaultConcurrency,

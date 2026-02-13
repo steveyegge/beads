@@ -15,7 +15,6 @@ import (
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/export"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
@@ -472,6 +471,3 @@ func loadSyncConflictCount(beadsDir string) (int, error) {
 
 	return len(state.Conflicts), nil
 }
-
-// Compile-time check that SQLiteStorage implements storage.Storage
-var _ storage.Storage = (*sqlite.SQLiteStorage)(nil)

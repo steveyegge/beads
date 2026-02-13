@@ -121,7 +121,6 @@ func TestAutoFlushOnExit(t *testing.T) {
 	}
 }
 
-
 // TestAutoFlushConcurrency tests that concurrent operations don't cause races
 // TestAutoFlushStoreInactive tests that flush doesn't run when store is inactive
 // TestAutoFlushJSONLContent tests that flushed JSONL has correct content
@@ -185,10 +184,6 @@ func TestAutoFlushJSONLContent(t *testing.T) {
 	for _, issue := range issues {
 		if err := testStore.CreateIssue(ctx, issue, "test"); err != nil {
 			t.Fatalf("Failed to create issue: %v", err)
-		}
-		// Mark each issue as dirty in the database so flushToJSONL will export them
-		if err := testStore.MarkIssueDirty(ctx, issue.ID); err != nil {
-			t.Fatalf("Failed to mark issue dirty: %v", err)
 		}
 	}
 

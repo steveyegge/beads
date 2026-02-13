@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
@@ -133,7 +131,7 @@ func CheckDependencyCycles(path string) DoctorCheck {
 	}
 
 	// Open database to check for cycles
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Dependency Cycles",
@@ -142,7 +140,7 @@ func CheckDependencyCycles(path string) DoctorCheck {
 			Detail:  err.Error(),
 		}
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Query for cycles using simplified SQL
 	query := `
@@ -229,7 +227,7 @@ func CheckTombstones(path string) DoctorCheck {
 		}
 	}
 
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Tombstones",
@@ -238,7 +236,7 @@ func CheckTombstones(path string) DoctorCheck {
 			Detail:  err.Error(),
 		}
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Query tombstone statistics
 	var totalTombstones int
@@ -524,7 +522,7 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 	}
 
 	// Open database
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Repo Fingerprint",
@@ -533,7 +531,7 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 			Detail:  err.Error(),
 		}
 	}
-	defer db.Close()
+	defer closeDB()
 
 	// Get stored repo ID
 	var storedRepoID string
@@ -610,11 +608,8 @@ func FixMigrateTombstones(path string) error {
 // This is more robust than checking a single ID's format, since base36 hash IDs can be all-numeric.
 func DetectHashBasedIDs(db *sql.DB, sampleIDs []string) bool {
 	// Heuristic 1: Check for child_counters table (added for hash ID support)
-	var tableName string
-	err := db.QueryRow(`
-		SELECT name FROM sqlite_master
-		WHERE type='table' AND name='child_counters'
-	`).Scan(&tableName)
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM child_counters`).Scan(&count)
 	if err == nil {
 		// child_counters table exists - this is a strong indicator of hash IDs
 		return true

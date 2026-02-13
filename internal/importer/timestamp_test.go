@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -18,11 +18,7 @@ func TestImportTimestampPrecedence(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	
 	// Initialize storage
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 	
 	ctx := context.Background()
 	
@@ -135,17 +131,11 @@ func TestImportTimestampPrecedence(t *testing.T) {
 
 // TestImportSameTimestamp tests behavior when timestamps are equal
 func TestImportSameTimestamp(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-	
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
-	
+	dbPath := "" // teststore manages its own storage
+	store := teststore.New(t)
+
 	ctx := context.Background()
-	
+
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
 	}
@@ -211,11 +201,7 @@ func TestImportTimestampAwareProtection(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	ctx := context.Background()
 
