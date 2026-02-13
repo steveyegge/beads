@@ -23,6 +23,7 @@ type SlackAPI interface {
 	// Conversations
 	CreateConversation(params slack.CreateConversationParams) (*slack.Channel, error)
 	GetConversations(params *slack.GetConversationsParameters) ([]slack.Channel, string, error)
+	GetConversationReplies(params *slack.GetConversationRepliesParameters) ([]slack.Message, bool, string, error)
 	InviteUsersToConversation(channelID string, users ...string) (*slack.Channel, error)
 	JoinConversation(channelID string) (*slack.Channel, string, []string, error)
 	OpenConversation(params *slack.OpenConversationParameters) (*slack.Channel, bool, bool, error)

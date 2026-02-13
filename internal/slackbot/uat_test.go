@@ -185,6 +185,10 @@ func (m *mockSlackAPI) OpenConversation(params *slack.OpenConversationParameters
 	return ch, false, false, nil
 }
 
+func (m *mockSlackAPI) GetConversationReplies(params *slack.GetConversationRepliesParameters) ([]slack.Message, bool, string, error) {
+	return nil, false, "", nil
+}
+
 func (m *mockSlackAPI) GetUserInfo(userID string) (*slack.User, error) {
 	return &slack.User{
 		ID:       userID,

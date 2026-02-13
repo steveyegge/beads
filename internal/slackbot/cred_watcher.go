@@ -277,18 +277,16 @@ func (w *CoopCredWatcher) notifyReauth(account, authURL string) {
 func (w *CoopCredWatcher) HandleThreadReply(channelID, threadTS, text, userID string) bool {
 	w.reauthThreadsMu.RLock()
 	info, ok := w.reauthThreads[threadTS]
-	threadCount := len(w.reauthThreads)
-	var threadKeys []string
-	for k := range w.reauthThreads {
-		threadKeys = append(threadKeys, k)
-	}
 	w.reauthThreadsMu.RUnlock()
 
-	log.Printf("slackbot/cred: HandleThreadReply: channel=%s threadTS=%s textLen=%d user=%s matched=%v tracked_threads=%d keys=%v",
-		channelID, threadTS, len(text), userID, ok, threadCount, threadKeys)
-
 	if !ok {
-		return false
+		// Thread not tracked (e.g., pod restarted since the reauth notification was posted).
+		// Check if the parent message is a reauth notification from this bot.
+		info, ok = w.recoverReauthThread(channelID, threadTS)
+		if !ok {
+			return false
+		}
+		log.Printf("slackbot/cred: recovered reauth thread %s for account %s", threadTS, info.account)
 	}
 
 	code := strings.TrimSpace(text)
@@ -421,6 +419,76 @@ func unhex(c byte) int {
 		return int(c - 'A' + 10)
 	}
 	return -1
+}
+
+// recoverReauthThread checks if a thread's parent message is a reauth notification
+// posted by this bot. This handles the case where the pod restarted after posting
+// the notification, losing the in-memory reauthThreads map.
+func (w *CoopCredWatcher) recoverReauthThread(channelID, threadTS string) (reauthInfo, bool) {
+	// Fetch the parent message of the thread.
+	msgs, _, _, err := w.bot.client.GetConversationReplies(&slack.GetConversationRepliesParameters{
+		ChannelID: channelID,
+		Timestamp: threadTS,
+		Limit:     1,
+		Inclusive:  true,
+	})
+	if err != nil || len(msgs) == 0 {
+		return reauthInfo{}, false
+	}
+
+	parent := msgs[0]
+
+	// Must be from the bot.
+	if parent.User != w.bot.botUserID && parent.BotID == "" {
+		return reauthInfo{}, false
+	}
+
+	// Check if the message text contains our reauth marker.
+	text := parent.Text
+	if !strings.Contains(text, "Credential reauth required for ") {
+		return reauthInfo{}, false
+	}
+
+	// Extract account name from "Credential reauth required for <account>"
+	account := ""
+	if idx := strings.Index(text, "Credential reauth required for "); idx >= 0 {
+		account = strings.TrimSpace(text[idx+len("Credential reauth required for "):])
+	}
+	if account == "" {
+		return reauthInfo{}, false
+	}
+
+	// Extract auth URL from blocks to get client_id and redirect_uri.
+	clientID, redirectURI := parseAuthURLParams("") // defaults
+	for _, block := range parent.Blocks.BlockSet {
+		if sec, ok := block.(*slack.SectionBlock); ok && sec.Text != nil {
+			if idx := strings.Index(sec.Text.Text, "<https://"); idx >= 0 {
+				end := strings.Index(sec.Text.Text[idx+1:], ">")
+				if end > 0 {
+					link := sec.Text.Text[idx+1 : idx+1+end]
+					// Remove the display text after |
+					if pipeIdx := strings.Index(link, "|"); pipeIdx > 0 {
+						link = link[:pipeIdx]
+					}
+					clientID, redirectURI = parseAuthURLParams(link)
+				}
+			}
+		}
+	}
+
+	info := reauthInfo{
+		account:     account,
+		channelID:   channelID,
+		clientID:    clientID,
+		redirectURI: redirectURI,
+	}
+
+	// Re-track this thread so subsequent replies don't need to fetch again.
+	w.reauthThreadsMu.Lock()
+	w.reauthThreads[threadTS] = info
+	w.reauthThreadsMu.Unlock()
+
+	return info, true
 }
 
 // Close drains the subscription and closes the NATS connection.
