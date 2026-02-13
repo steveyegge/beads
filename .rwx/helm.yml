@@ -1,0 +1,59 @@
+on:
+  github:
+    push:
+      if: ${{ event.git.branch == 'main' || starts-with(event.git.tag, 'v') }}
+      init:
+        commit-sha: ${{ event.git.sha }}
+      status-checks:
+        name: Helm
+    pull_request:
+      init:
+        commit-sha: ${{ event.git.sha }}
+      status-checks:
+        name: Helm
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  - key: code
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/beads.git
+      ref: ${{ init.commit-sha }}
+
+  - key: helm-setup
+    run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+  - key: helm-lint
+    use: [code, helm-setup]
+    run: |
+      for chart in helm/*/; do
+        if [ -f "$chart/Chart.yaml" ]; then
+          echo "=== Linting $chart ==="
+          helm lint "$chart"
+          helm dependency build "$chart" 2>/dev/null || true
+          helm template "$(basename $chart)" "$chart" > /dev/null
+        fi
+      done
+
+  - key: helm-publish
+    use: helm-lint
+    if: ${{ init.ref-name != 'pr' }}
+    run: |
+      echo "$GHCR_TOKEN" | helm registry login ghcr.io -u "$GITHUB_USER" --password-stdin
+      for chart in helm/*/; do
+        if [ -f "$chart/Chart.yaml" ]; then
+          name=$(basename "$chart")
+          version=$(grep '^version:' "$chart/Chart.yaml" | awk '{print $2}')
+          echo "Publishing $name v$version..."
+          helm dependency build "$chart" 2>/dev/null || true
+          helm package "$chart" --destination /tmp/helm-packages
+          helm push "/tmp/helm-packages/${name}-${version}.tgz" "oci://ghcr.io/groblegark/charts"
+          echo "Published: oci://ghcr.io/groblegark/charts/${name}:${version}"
+        fi
+      done
+    env:
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GITHUB_USER: ${{ secrets.GITHUB_USER }}

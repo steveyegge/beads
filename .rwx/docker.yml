@@ -1,0 +1,65 @@
+on:
+  github:
+    push:
+      if: ${{ event.git.branch == 'main' || starts-with(event.git.tag, 'v') }}
+      init:
+        commit-sha: ${{ event.git.sha }}
+        ref-name: ${{ event.git.tag || event.git.branch }}
+      status-checks:
+        name: Docker
+    pull_request:
+      init:
+        commit-sha: ${{ event.git.sha }}
+        ref-name: pr
+      status-checks:
+        name: Docker
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  - key: code
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/beads.git
+      ref: ${{ init.commit-sha }}
+
+  - key: docker-build
+    use: code
+    docker: true
+    run: |
+      docker build \
+        --build-arg VERSION=$REF_NAME \
+        --build-arg BUILD_COMMIT=$COMMIT_SHA \
+        -t ghcr.io/groblegark/beads:sha-${COMMIT_SHA:0:7} \
+        -t ghcr.io/groblegark/beads:latest \
+        .
+      # Smoke test — verify binary works
+      docker run --rm ghcr.io/groblegark/beads:sha-${COMMIT_SHA:0:7} version
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+
+  - key: docker-push
+    use: docker-build
+    docker: preserve-data
+    if: ${{ init.ref-name != 'pr' }}
+    run: |
+      echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_USER" --password-stdin
+      docker push ghcr.io/groblegark/beads:sha-${COMMIT_SHA:0:7}
+      docker push ghcr.io/groblegark/beads:latest
+      # Tag with version if this is a tag push
+      if [[ "$REF_NAME" == v* ]]; then
+        VERSION="${REF_NAME#v}"
+        docker tag ghcr.io/groblegark/beads:sha-${COMMIT_SHA:0:7} ghcr.io/groblegark/beads:${VERSION}
+        docker push ghcr.io/groblegark/beads:${VERSION}
+      fi
+    env:
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GITHUB_USER: ${{ secrets.GITHUB_USER }}
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
