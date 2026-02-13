@@ -1,0 +1,66 @@
+on:
+  github:
+    push:
+      if: ${{ starts-with(event.git.tag, 'v') }}
+      init:
+        commit-sha: ${{ event.git.sha }}
+        tag: ${{ event.git.tag }}
+      status-checks:
+        name: Release
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
+      tag: dev
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  - key: system-deps
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y libicu-dev gcc g++
+
+  - key: code
+    use: system-deps
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/beads.git
+      ref: ${{ init.commit-sha }}
+
+  - key: go
+    call: golang/install 1.2.0
+    with:
+      go-version: "1.25"
+
+  - key: goreleaser
+    use: [code, go]
+    run: |
+      # Install GoReleaser
+      curl -sSfL https://github.com/goreleaser/goreleaser/releases/download/v2.8.2/goreleaser_Linux_x86_64.tar.gz \
+        | tar xz -C /usr/local/bin goreleaser
+
+      # Need full git history for GoReleaser changelog
+      git fetch --unshallow 2>/dev/null || true
+      git fetch --tags
+
+      # Run GoReleaser
+      GITHUB_TOKEN="$GH_TOKEN" goreleaser release --clean --config .goreleaser.fork.yml
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  - key: dispatch-gastown
+    use: goreleaser
+    if: ${{ init.tag != 'dev' }}
+    run: |
+      # Trigger gastown agent image rebuild
+      curl -X POST \
+        -H "Authorization: token $DISPATCH_TOKEN" \
+        -H "Accept: application/vnd.github.v3+json" \
+        "https://api.github.com/repos/groblegark/gastown/dispatches" \
+        -d "{\"event_type\":\"beads-release\",\"client_payload\":{\"tag\":\"$TAG\"}}"
+      echo "Dispatched beads-release to gastown with tag $TAG"
+    env:
+      DISPATCH_TOKEN: ${{ secrets.GASTOWN_DISPATCH_TOKEN }}
+      TAG: ${{ init.tag }}
