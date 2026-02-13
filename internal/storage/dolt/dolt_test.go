@@ -716,6 +716,90 @@ func TestDoltStoreDeleteIssue(t *testing.T) {
 	}
 }
 
+// TestDeleteIssuesBatchPerformance verifies that DeleteIssues handles large batches
+// without hanging. This tests the batched IN-clause optimization in findAllDependentsRecursiveTx
+// that replaced the per-ID BFS queries (steveyegge/beads#1692).
+func TestDeleteIssuesBatchPerformance(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create 100 closed ephemeral issues with dependencies forming a chain.
+	// Previously, this would cause 100+ sequential queries in findAllDependentsRecursiveTx;
+	// with the batch optimization, it completes in a handful of batched queries.
+	const issueCount = 100
+	issues := make([]*types.Issue, issueCount)
+	for i := 0; i < issueCount; i++ {
+		issues[i] = &types.Issue{
+			ID:        fmt.Sprintf("test-batch-%03d", i),
+			Title:     fmt.Sprintf("Batch test issue %d", i),
+			Status:    types.StatusClosed,
+			Priority:  3,
+			IssueType: types.TypeTask,
+			Ephemeral: true,
+		}
+	}
+	if err := store.CreateIssues(ctx, issues, "tester"); err != nil {
+		t.Fatalf("failed to create issues: %v", err)
+	}
+
+	// Add dependencies: each issue depends on the previous one (chain)
+	for i := 1; i < issueCount; i++ {
+		dep := &types.Dependency{
+			IssueID:     issues[i].ID,
+			DependsOnID: issues[i-1].ID,
+			Type:        types.DepBlocks,
+		}
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("failed to add dependency %d: %v", i, err)
+		}
+	}
+
+	// Delete all issues with cascade — this exercises findAllDependentsRecursiveTx
+	ids := make([]string, issueCount)
+	for i, issue := range issues {
+		ids[i] = issue.ID
+	}
+
+	// Dry run first to verify stats
+	result, err := store.DeleteIssues(ctx, ids, true, false, true)
+	if err != nil {
+		t.Fatalf("dry run DeleteIssues failed: %v", err)
+	}
+	if result.DeletedCount != issueCount {
+		t.Errorf("dry run: expected %d deletions, got %d", issueCount, result.DeletedCount)
+	}
+	if result.DependenciesCount == 0 {
+		t.Error("dry run: expected non-zero dependency count")
+	}
+
+	// Actual delete
+	result, err = store.DeleteIssues(ctx, ids, true, false, false)
+	if err != nil {
+		t.Fatalf("DeleteIssues failed: %v", err)
+	}
+	if result.DeletedCount != issueCount {
+		t.Errorf("expected %d deletions, got %d", issueCount, result.DeletedCount)
+	}
+
+	// Verify issues are tombstoned
+	for _, id := range ids[:3] { // spot check first 3
+		issue, err := store.GetIssue(ctx, id)
+		if err != nil {
+			t.Errorf("failed to get issue %s after delete: %v", id, err)
+			continue
+		}
+		if issue == nil {
+			continue // tombstone may be filtered out
+		}
+		if issue.Status != types.StatusTombstone {
+			t.Errorf("issue %s: expected tombstone status, got %s", id, issue.Status)
+		}
+	}
+}
+
 func TestDoltStoreStatistics(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
