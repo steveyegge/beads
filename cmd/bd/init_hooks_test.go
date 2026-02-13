@@ -256,12 +256,12 @@ func TestHooksNeedUpdate(t *testing.T) {
 			wantNeedUpdate: true,
 		},
 		{
-			name:       "non-executable hook files",
+			name:       "non-executable current version hooks",
 			setupHooks: true,
-			preCommitBody: "#!/bin/sh\n# bd-hooks-version: 0.40.0\n# bd (beads) pre-commit hook\nbd sync --flush-only\n",
-			postMergeBody: "#!/bin/sh\n# bd-hooks-version: 0.40.0\n# bd (beads) post-merge hook\nbd import\n",
+			preCommitBody: "#!/bin/sh\n# bd-hooks-version: " + Version + "\n# bd (beads) pre-commit hook\nbd sync --flush-only\n",
+			postMergeBody: "#!/bin/sh\n# bd-hooks-version: " + Version + "\n# bd (beads) post-merge hook\nbd import\n",
 			fileMode:       0644,
-			wantNeedUpdate: true,
+			wantNeedUpdate: false, // hooksNeedUpdate checks version, not permissions
 		},
 	}
 

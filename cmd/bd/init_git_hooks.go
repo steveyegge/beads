@@ -70,6 +70,10 @@ func hooksInstalled() bool {
 // Returns true if any bd hook has a version different from the current CLI version.
 // Shim hooks are never outdated (they delegate to bd hooks run).
 // Inline hooks without version markers are always considered outdated.
+//
+// On error (e.g. no git hooks dir), returns false. This is safe when called
+// in the init.go condition (!hooksInstalled() || hooksNeedUpdate()) because
+// hooksInstalled() fails the same way, making the OR expression evaluate to true.
 func hooksNeedUpdate() bool {
 	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
@@ -80,8 +84,13 @@ func hooksNeedUpdate() bool {
 	for _, name := range hookNames {
 		path := filepath.Join(hooksDir, name)
 		info, err := getHookVersion(path)
-		// Skip hooks we can't read, non-bd hooks, and shims (shims delegate to bd hooks run)
-		if err != nil || !info.IsBdHook || info.IsShim {
+		if err != nil {
+			if !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Warning: could not read hook %s: %v\n", name, err)
+			}
+			continue
+		}
+		if !info.IsBdHook || info.IsShim {
 			continue
 		}
 		// Outdated if version is missing (inline hooks) or differs from current
