@@ -164,9 +164,6 @@ func TestFindJSONLPath_EmptyDbPath(t *testing.T) {
 // Bug: fetchAndMergeIssues was only fetching dependencies, not comments or labels.
 // This caused comments to be lost during autoflush full-export triggered by hash mismatch.
 func TestFetchAndMergeIssues_IncludesComments(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-
 	// Create storage
 	store := teststore.New(t)
 	defer store.Close()
@@ -223,9 +220,6 @@ func TestFetchAndMergeIssues_IncludesComments(t *testing.T) {
 // TestFetchAndMergeIssues_IncludesMultipleComments verifies that fetchAndMergeIssues
 // populates all comments on issues, not just one.
 func TestFetchAndMergeIssues_IncludesMultipleComments(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-
 	// Create storage
 	store := teststore.New(t)
 	defer store.Close()

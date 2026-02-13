@@ -39,7 +39,7 @@ func TestStartRPCServer(t *testing.T) {
 	log := createTestLogger(t)
 
 	t.Run("starts successfully with valid paths", func(t *testing.T) {
-		server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, "", "", "", "", "", log)
+		server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, "", "", log)
 		if err != nil {
 			t.Fatalf("startRPCServer failed: %v", err)
 		}
@@ -75,7 +75,7 @@ func TestStartRPCServer(t *testing.T) {
 
 	t.Run("fails with invalid socket path", func(t *testing.T) {
 		invalidSocketPath := "/invalid/nonexistent/path/socket.sock"
-		_, _, err := startRPCServer(ctx, invalidSocketPath, testStore, workspacePath, dbPath, "", "", "", "", "", log)
+		_, _, err := startRPCServer(ctx, invalidSocketPath, testStore, workspacePath, dbPath, "", "", log)
 		if err == nil {
 			t.Error("startRPCServer should fail with invalid socket path")
 		}
@@ -86,7 +86,7 @@ func TestStartRPCServer(t *testing.T) {
 		defer cancel2()
 
 		socketPath2 := filepath.Join(tmpDir, "bd2.sock")
-		server, _, err := startRPCServer(ctx2, socketPath2, testStore, workspacePath, dbPath, "", "", "", "", "", log)
+		server, _, err := startRPCServer(ctx2, socketPath2, testStore, workspacePath, dbPath, "", "", log)
 		if err != nil {
 			t.Fatalf("startRPCServer failed: %v", err)
 		}
@@ -139,7 +139,7 @@ func TestRunEventLoop(t *testing.T) {
 	log := createTestLogger(t)
 
 	// Start RPC server
-	server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, "", "", "", "", "", log)
+	server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start RPC server: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestIsDaemonHealthy(t *testing.T) {
 	})
 
 	t.Run("returns true for running daemon", func(t *testing.T) {
-		server, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, "", "", "", "", "", log)
+		server, _, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, "", "", log)
 		if err != nil {
 			t.Fatalf("Failed to start RPC server: %v", err)
 		}
@@ -421,7 +421,7 @@ func TestEventLoopSignalHandling(t *testing.T) {
 		dbPath := testDBPath
 		log := createTestLogger(t)
 
-		server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, "", "", "", "", "", log)
+		server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, "", "", log)
 		if err != nil {
 			t.Fatalf("Failed to start RPC server: %v", err)
 		}
@@ -489,7 +489,7 @@ func TestDaemonIntegration_SocketCleanup(t *testing.T) {
 
 	ctx1, cancel1 := context.WithTimeout(ctx, 3*time.Second)
 
-	server, _, err := startRPCServer(ctx1, socketPath, testStore, workspacePath, dbPath, "", "", "", "", "", log)
+	server, _, err := startRPCServer(ctx1, socketPath, testStore, workspacePath, dbPath, "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
@@ -554,7 +554,7 @@ func TestEventDrivenLoop_PeriodicRemoteSync(t *testing.T) {
 	log := createTestLogger(t)
 
 	// Start RPC server
-	server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, "", "", "", "", "", log)
+	server, serverErrChan, err := startRPCServer(ctx, socketPath, testStore, workspacePath, dbPath, "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start RPC server: %v", err)
 	}

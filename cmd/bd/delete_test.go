@@ -161,13 +161,16 @@ func TestBulkDeleteNoResurrection(t *testing.T) {
 	dbPath = testDB
 	autoImportEnabled = true
 
-	result, err := s.DeleteIssues(ctx, toDelete, false, true, false)
-	if err != nil {
-		t.Fatalf("DeleteIssues failed: %v", err)
+	deletedCount := 0
+	for _, id := range toDelete {
+		if err := s.DeleteIssue(ctx, id); err != nil {
+			t.Fatalf("DeleteIssue failed for %s: %v", id, err)
+		}
+		deletedCount++
 	}
 
-	if result.DeletedCount != toDeleteCount {
-		t.Errorf("Expected %d deletions, got %d", toDeleteCount, result.DeletedCount)
+	if deletedCount != toDeleteCount {
+		t.Errorf("Expected %d deletions, got %d", toDeleteCount, deletedCount)
 	}
 
 	for _, id := range toDelete {

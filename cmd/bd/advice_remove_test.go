@@ -319,10 +319,11 @@ func TestAdviceRemoveClosedAt(t *testing.T) {
 			t.Fatal("ClosedAt should be set after closing")
 		}
 
-		// Verify timestamp is reasonable
-		if after.ClosedAt.Before(beforeClose) || after.ClosedAt.After(afterClose) {
-			t.Errorf("ClosedAt %v should be between %v and %v",
-				after.ClosedAt, beforeClose, afterClose)
+		// Verify timestamp is reasonable (allow 2s tolerance for Dolt second-precision rounding)
+		tolerance := 2 * time.Second
+		if after.ClosedAt.Before(beforeClose.Add(-tolerance)) || after.ClosedAt.After(afterClose.Add(tolerance)) {
+			t.Errorf("ClosedAt %v should be within %v of the range %v to %v",
+				after.ClosedAt, tolerance, beforeClose, afterClose)
 		}
 	})
 }

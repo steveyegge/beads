@@ -33,7 +33,6 @@ func TestSyncBranchConfigPriorityOverUpstream(t *testing.T) {
 			t.Fatalf("Failed to create .beads dir: %v", err)
 		}
 
-		dbPath := filepath.Join(beadsDir, "beads.db")
 		testStore := teststore.New(t)
 		defer testStore.Close()
 
@@ -119,7 +118,6 @@ func TestSyncBranchConfigPriorityOverUpstream(t *testing.T) {
 			t.Fatalf("Failed to create .beads dir: %v", err)
 		}
 
-		dbPath := filepath.Join(beadsDir, "beads.db")
 		testStore := teststore.New(t)
 		defer testStore.Close()
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,12 +25,7 @@ func setupStopCheckTestDB(t *testing.T) (storage.Storage, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	testDB := filepath.Join(tmpDir, "test.db")
 	s := teststore.New(t)
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("Failed to create test database: %v", err)
-	}
 
 	ctx := context.Background()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -761,8 +755,8 @@ func startTestNATSForStopCheck(t *testing.T) (nats.JetStreamContext, func()) {
 	opts := &natsserver.Options{
 		Port:               -1, // random available port
 		JetStream:          true,
-		JetStreamMaxMemory: 512 << 20,
-		JetStreamMaxStore:  512 << 20,
+		JetStreamMaxMemory: 1 << 30, // 1GB
+		JetStreamMaxStore:  1 << 30, // 1GB
 		StoreDir:           dir,
 		NoLog:              true,
 		NoSigs:             true,

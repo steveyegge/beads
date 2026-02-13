@@ -189,7 +189,7 @@ func getActorWithGit() string {
 		return user
 	}
 
-	return ""
+	return "unknown"
 }
 
 // getOwner returns the human owner for CV attribution.

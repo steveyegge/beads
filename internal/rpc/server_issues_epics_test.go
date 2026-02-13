@@ -628,8 +628,11 @@ func TestDualPathParity(t *testing.T) {
 			t.Fatalf("Create failed: %v", err)
 		}
 
-		// Update via daemon
-		dueStr := dueAt.Format(time.RFC3339)
+		// Update via daemon — use UTC to avoid Dolt DATETIME timezone stripping.
+		// Dolt DATETIME stores wall-clock digits without timezone conversion,
+		// so we must send UTC to get consistent round-trip results.
+		dueUTC := dueAt.UTC()
+		dueStr := dueUTC.Format(time.RFC3339)
 		resp, err := client.Update(&UpdateArgs{
 			ID:    issue.ID,
 			DueAt: &dueStr,
@@ -642,8 +645,12 @@ func TestDualPathParity(t *testing.T) {
 		retrieved, _ := store.GetIssue(ctx, issue.ID)
 		if retrieved.DueAt == nil {
 			t.Error("PARITY FAILURE: DueAt not set after daemon update")
-		} else if retrieved.DueAt.Sub(dueAt).Abs() > time.Second {
-			t.Errorf("PARITY FAILURE: DueAt mismatch: got %v, want %v", *retrieved.DueAt, dueAt)
+		} else {
+			gotUTC := retrieved.DueAt.UTC().Truncate(time.Second)
+			wantUTC := dueUTC.Truncate(time.Second)
+			if gotUTC.Sub(wantUTC).Abs() > time.Second {
+				t.Errorf("PARITY FAILURE: DueAt mismatch: got %v, want %v", gotUTC, wantUTC)
+			}
 		}
 	})
 
@@ -660,8 +667,11 @@ func TestDualPathParity(t *testing.T) {
 			t.Fatalf("Create failed: %v", err)
 		}
 
-		// Update via daemon
-		deferStr := deferUntil.Format(time.RFC3339)
+		// Update via daemon — use UTC to avoid Dolt DATETIME timezone stripping.
+		// Dolt DATETIME stores wall-clock digits without timezone conversion,
+		// so we must send UTC to get consistent round-trip results.
+		deferUTC := deferUntil.UTC()
+		deferStr := deferUTC.Format(time.RFC3339)
 		resp, err := client.Update(&UpdateArgs{
 			ID:         issue.ID,
 			DeferUntil: &deferStr,
@@ -674,24 +684,33 @@ func TestDualPathParity(t *testing.T) {
 		retrieved, _ := store.GetIssue(ctx, issue.ID)
 		if retrieved.DeferUntil == nil {
 			t.Error("PARITY FAILURE: DeferUntil not set after daemon update")
-		} else if retrieved.DeferUntil.Sub(deferUntil).Abs() > time.Second {
-			t.Errorf("PARITY FAILURE: DeferUntil mismatch: got %v, want %v", *retrieved.DeferUntil, deferUntil)
+		} else {
+			gotUTC := retrieved.DeferUntil.UTC().Truncate(time.Second)
+			wantUTC := deferUTC.Truncate(time.Second)
+			if gotUTC.Sub(wantUTC).Abs() > time.Second {
+				t.Errorf("PARITY FAILURE: DeferUntil mismatch: got %v, want %v", gotUTC, wantUTC)
+			}
 		}
 	})
 
 	// ADD NEW FIELD PARITY TESTS HERE when extending Issue type
 }
 
-// compareTimePtr compares two time pointers with 1-second tolerance
+// compareTimePtr compares two time pointers with 1-second tolerance.
+// Both times are normalized to UTC and truncated to seconds before comparison,
+// because Dolt DATETIME strips timezone info and subsecond precision.
 func compareTimePtr(t *testing.T, name string, direct, daemon *time.Time) bool {
 	if (direct == nil) != (daemon == nil) {
 		t.Errorf("%s nil mismatch: direct=%v, daemon=%v", name, direct, daemon)
 		return false
 	}
 	if direct != nil && daemon != nil {
-		// Allow 1-second tolerance for parsing/timezone differences
-		if direct.Sub(*daemon).Abs() > time.Second {
-			t.Errorf("%s value mismatch: direct=%v, daemon=%v", name, *direct, *daemon)
+		// Normalize both to UTC and truncate to second for comparison,
+		// since Dolt DATETIME strips timezone and subsecond precision.
+		dUTC := direct.UTC().Truncate(time.Second)
+		daemonUTC := daemon.UTC().Truncate(time.Second)
+		if dUTC.Sub(daemonUTC).Abs() > time.Second {
+			t.Errorf("%s value mismatch: direct=%v (UTC: %v), daemon=%v (UTC: %v)", name, *direct, dUTC, *daemon, daemonUTC)
 			return false
 		}
 	}

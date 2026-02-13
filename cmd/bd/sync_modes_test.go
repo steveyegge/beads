@@ -32,7 +32,6 @@ func TestSyncBranchModeWithPullFirst(t *testing.T) {
 	}
 
 	// Create store and configure sync.branch
-	testDBPath := filepath.Join(beadsDir, "beads.db")
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
@@ -688,7 +687,6 @@ func TestExportOnlySync(t *testing.T) {
 	}
 
 	// Create a database with a test issue
-	dbPath := filepath.Join(beadsDir, "beads.db")
 	testStore := teststore.New(t)
 
 	// Set issue prefix (required for export)

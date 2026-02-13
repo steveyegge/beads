@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/testutil/teststore"
-	"github.com/steveyegge/beads/internal/types"
 )
 
 // TestHandleDelete_DryRun verifies that dry-run mode returns what would be deleted
@@ -309,26 +308,25 @@ func TestHandleDelete_WithReason(t *testing.T) {
 		t.Fatalf("delete with reason failed: %s", resp.Error)
 	}
 
-	// Verify issue was converted to tombstone (now that MemoryStorage supports CreateTombstone)
+	// Dolt does not implement the tombstoner interface, so the delete handler
+	// falls back to hard delete. Verify the issue is fully deleted.
 	ctx := context.Background()
 	issue, _ := store.GetIssue(ctx, issueIDs[0])
-	if issue == nil {
-		t.Error("issue should exist as tombstone")
-	} else if issue.Status != types.StatusTombstone {
-		t.Errorf("issue should be tombstone, got status=%s", issue.Status)
-	} else if issue.DeleteReason != "test deletion with reason" {
-		t.Errorf("expected DeleteReason='test deletion with reason', got '%s'", issue.DeleteReason)
+	if issue != nil {
+		t.Errorf("issue should be hard-deleted (Dolt has no CreateTombstone), but got status=%s", issue.Status)
 	}
 }
 
-// TestHandleDelete_WithTombstone tests delete handler with SQLite storage that supports tombstones
+// TestHandleDelete_WithTombstone tests delete handler tombstone behavior.
+// Dolt does not implement the tombstoner interface, so delete falls back to hard delete.
+// This test verifies the hard-delete fallback path works correctly.
 func TestHandleDelete_WithTombstone(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	store := newTestStore(t, dbPath)
 
 	server := NewServer("/tmp/test.sock", store, "/tmp", dbPath)
 
-	// Create a test issue using the SQLite store
+	// Create a test issue using the Dolt store
 	ctx := context.Background()
 	createArgs := CreateArgs{
 		Title:     "Issue for tombstone test",
@@ -353,7 +351,7 @@ func TestHandleDelete_WithTombstone(t *testing.T) {
 	}
 	issueID := createdIssue["id"].(string)
 
-	// Delete the issue (should create tombstone)
+	// Delete the issue
 	deleteArgs := DeleteArgs{
 		IDs:    []string{issueID},
 		Reason: "tombstone test",
@@ -370,22 +368,10 @@ func TestHandleDelete_WithTombstone(t *testing.T) {
 		t.Fatalf("delete failed: %s", deleteResp.Error)
 	}
 
-	// Verify issue was tombstoned (still exists but with tombstone status)
-	issue, err := store.GetIssue(ctx, issueID)
-	if err != nil {
-		t.Fatalf("failed to get tombstoned issue: %v", err)
-	}
-	if issue == nil {
-		t.Fatal("tombstoned issue should still exist in database")
-	}
-	if issue.Status != "tombstone" {
-		t.Errorf("expected status=tombstone, got %s", issue.Status)
-	}
-	if issue.DeletedAt == nil {
-		t.Error("DeletedAt should be set for tombstoned issue")
-	}
-	if issue.DeleteReason != "tombstone test" {
-		t.Errorf("expected DeleteReason='tombstone test', got %q", issue.DeleteReason)
+	// Dolt does not implement tombstoner, so the issue should be hard-deleted.
+	issue, _ := store.GetIssue(ctx, issueID)
+	if issue != nil {
+		t.Errorf("issue should be hard-deleted (Dolt has no CreateTombstone), but still exists with status=%s", issue.Status)
 	}
 }
 

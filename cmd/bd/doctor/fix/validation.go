@@ -192,7 +192,7 @@ func ChildParentDependencies(path string, verbose bool) error {
 	query := `
 		SELECT d.issue_id, d.depends_on_id, d.type
 		FROM dependencies d
-		WHERE d.issue_id LIKE d.depends_on_id || '.%'
+		WHERE d.issue_id LIKE CONCAT(d.depends_on_id, '.%')
 		  AND d.type IN ('blocks', 'conditional-blocks', 'waits-for')
 	`
 	rows, err := db.Query(query)

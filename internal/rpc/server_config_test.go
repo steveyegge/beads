@@ -217,8 +217,9 @@ func TestHandleConfigList_ReturnsMap(t *testing.T) {
 	}
 
 	// The issue_prefix should be present from setup
-	if result.Config["issue_prefix"] != "bd" {
-		t.Errorf("expected issue_prefix='bd' from setup, got '%s'", result.Config["issue_prefix"])
+	// teststore.New sets issue_prefix to "test" (not "bd")
+	if result.Config["issue_prefix"] != "test" {
+		t.Errorf("expected issue_prefix='test' from setup, got '%s'", result.Config["issue_prefix"])
 	}
 }
 

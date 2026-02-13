@@ -177,7 +177,6 @@ func TestContentHashComputation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "beads.db")
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	ctx := context.Background()

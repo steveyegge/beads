@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,8 +29,6 @@ func TestDaemonAutoSyncFromYAML(t *testing.T) {
 	}
 
 	// Create database without daemon settings
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	ctx := context.Background()
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
@@ -86,8 +83,6 @@ func TestDaemonAutoCommitOnlyFromYAML(t *testing.T) {
 	}
 
 	// Create database without daemon settings
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	ctx := context.Background()
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
@@ -144,8 +139,6 @@ func TestDaemonIndividualSettingsFromYAML(t *testing.T) {
 	}
 
 	// Create database without daemon settings
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	ctx := context.Background()
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
@@ -198,8 +191,6 @@ func TestDaemonEnvVarOverridesYAML(t *testing.T) {
 	}
 
 	// Create database
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	ctx := context.Background()
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
@@ -255,8 +246,6 @@ func TestDaemonCLIFlagOverridesYAML(t *testing.T) {
 	}
 
 	// Create database
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	ctx := context.Background()
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
@@ -316,8 +305,6 @@ func TestDaemonIndividualEnvVarOverridesYAML(t *testing.T) {
 	}
 
 	// Create database
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	ctx := context.Background()
 	testStore := teststore.New(t)
 	defer testStore.Close()
 

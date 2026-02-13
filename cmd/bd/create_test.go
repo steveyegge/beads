@@ -488,15 +488,15 @@ func TestCreateSuite(t *testing.T) {
 
 	// GH#820: Tests for DueAt and DeferUntil fields
 	t.Run("WithDueAt", func(t *testing.T) {
-		// Create issue with due date
-		dueTime := time.Now().Add(24 * time.Hour) // Due in 24 hours
+		// Create issue with due date (use UTC to avoid timezone stripping by Dolt DATETIME)
+		dueTime := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second) // Due in 24 hours
 		issue := &types.Issue{
 			Title:     "Issue with due date",
 			Priority:  1,
 			Status:    types.StatusOpen,
 			IssueType: types.TypeTask,
 			DueAt:     &dueTime,
-			CreatedAt: time.Now(),
+			CreatedAt: time.Now().UTC(),
 		}
 
 		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
@@ -520,15 +520,15 @@ func TestCreateSuite(t *testing.T) {
 	})
 
 	t.Run("WithDeferUntil", func(t *testing.T) {
-		// Create issue with defer_until
-		deferTime := time.Now().Add(2 * time.Hour) // Defer for 2 hours
+		// Create issue with defer_until (use UTC to avoid timezone stripping by Dolt DATETIME)
+		deferTime := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second) // Defer for 2 hours
 		issue := &types.Issue{
 			Title:      "Issue with defer",
 			Priority:   1,
 			Status:     types.StatusOpen,
 			IssueType:  types.TypeTask,
 			DeferUntil: &deferTime,
-			CreatedAt:  time.Now(),
+			CreatedAt:  time.Now().UTC(),
 		}
 
 		if err := s.CreateIssue(ctx, issue, "test"); err != nil {

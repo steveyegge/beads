@@ -104,16 +104,18 @@ func TestWaitForStore_ImmediateSuccess(t *testing.T) {
 	// Clear BD_DAEMON_HOST so factory doesn't block direct database access
 	t.Setenv("BD_DAEMON_HOST", "")
 
-	// Set up a SQLite store in a temp directory — should connect immediately
+	// Set up a Dolt embedded store in a temp directory — should connect immediately
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(doltDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Write metadata.json for SQLite backend
+	// Write metadata.json for Dolt embedded backend
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendSQLite
+	cfg.Backend = configfile.BackendDolt
+	cfg.DoltMode = configfile.DoltModeEmbedded
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatal(err)
 	}

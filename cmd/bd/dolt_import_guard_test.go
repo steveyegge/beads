@@ -15,12 +15,14 @@ import (
 func TestNoDoltImportsInCmdBd(t *testing.T) {
 	// Legitimate exceptions that require direct Dolt access
 	allowedFiles := map[string]bool{
-		"daemon_event_loop.go":      true, // Daemon process needs direct access
-		"dolt_server_cgo.go":        true, // Dolt server lifecycle (CGO)
-		"init.go":                   true, // Initial database setup
-		"migrate_dolt.go":           true, // One-time migration tool
-		"doctor/federation.go":      true, // Diagnostics with AllowWithRemoteDaemon
-		"dolt_import_guard_test.go": true, // This test file itself
+		"daemon_event_loop.go":           true, // Daemon process needs direct access
+		"dolt_server_cgo.go":             true, // Dolt server lifecycle (CGO)
+		"init.go":                        true, // Initial database setup
+		"migrate_dolt.go":                true, // One-time migration tool
+		"doctor/federation.go":           true, // Diagnostics with AllowWithRemoteDaemon
+		"doctor/fix/validation_test.go":  true, // Test file that creates Dolt stores
+		"dolt_import_guard_test.go":      true, // This test file itself
+		"test_helpers_test.go":           true, // Test helpers that create Dolt stores
 	}
 
 	const doltImportPrefix = "github.com/steveyegge/beads/internal/storage/dolt"

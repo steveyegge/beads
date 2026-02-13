@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -34,6 +35,34 @@ func RunDeepValidation(path string) DeepValidationResult {
 
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+
+	// Quick check: if beads directory doesn't exist, return OK early
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		check := DoctorCheck{
+			Name:     "Deep Validation",
+			Status:   StatusOK,
+			Message:  "No .beads directory found (not initialized)",
+			Category: CategoryMaintenance,
+		}
+		result.AllChecks = append(result.AllChecks, check)
+		return result
+	}
+
+	// Check if a database exists (look for dolt data directory or sqlite file)
+	doltDir := filepath.Join(beadsDir, ".dolt")
+	sqliteFile := filepath.Join(beadsDir, "beads.db")
+	if _, err := os.Stat(doltDir); os.IsNotExist(err) {
+		if _, err := os.Stat(sqliteFile); os.IsNotExist(err) {
+			check := DoctorCheck{
+				Name:     "Deep Validation",
+				Status:   StatusOK,
+				Message:  "No database found in .beads directory",
+				Category: CategoryMaintenance,
+			}
+			result.AllChecks = append(result.AllChecks, check)
+			return result
+		}
+	}
 
 	// Open database
 	db, closeDB, err := openDoctorDB(beadsDir)

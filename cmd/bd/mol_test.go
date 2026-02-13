@@ -214,7 +214,6 @@ func TestMinPriority(t *testing.T) {
 
 func TestBondProtoProto(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	store := teststore.New(t)
 	defer store.Close()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -291,7 +290,6 @@ func TestBondProtoProto(t *testing.T) {
 
 func TestBondProtoMol(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	store := teststore.New(t)
 	defer store.Close()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -365,7 +363,6 @@ func TestBondProtoMol(t *testing.T) {
 
 func TestBondMolMol(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	store := teststore.New(t)
 	defer store.Close()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -466,7 +463,6 @@ func TestBondMolMol(t *testing.T) {
 
 func TestSquashMolecule(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -575,7 +571,6 @@ func TestSquashMolecule(t *testing.T) {
 
 func TestSquashMoleculeWithDelete(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -685,7 +680,6 @@ func TestGenerateDigest(t *testing.T) {
 // TestSquashMoleculeWithAgentSummary verifies that agent-provided summaries are used
 func TestSquashMoleculeWithAgentSummary(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -757,7 +751,6 @@ func TestSquashMoleculeWithAgentSummary(t *testing.T) {
 // TestSpawnWithBasicAttach tests spawning a proto with one --attach flag
 func TestSpawnWithBasicAttach(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -891,7 +884,6 @@ func TestSpawnWithBasicAttach(t *testing.T) {
 // TestSpawnWithMultipleAttachments tests spawning with --attach A --attach B
 func TestSpawnWithMultipleAttachments(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -1010,7 +1002,6 @@ func TestSpawnWithMultipleAttachments(t *testing.T) {
 // TestSpawnAttachTypes verifies sequential vs parallel bonding behavior
 func TestSpawnAttachTypes(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -1131,7 +1122,6 @@ func TestSpawnAttachNonProtoError(t *testing.T) {
 // TestSpawnVariableAggregation tests that variables from primary + attachments are combined
 func TestSpawnVariableAggregation(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -1300,7 +1290,6 @@ func TestSpawnAttachDryRunOutput(t *testing.T) {
 // not in issues.jsonl, to prevent "zombie" resurrection after mol squash.
 func TestWispFilteringFromExport(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -1367,7 +1356,6 @@ func TestWispFilteringFromExport(t *testing.T) {
 // TestGetMoleculeProgress tests loading a molecule and computing progress
 func TestGetMoleculeProgress(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -1469,7 +1457,6 @@ func TestGetMoleculeProgress(t *testing.T) {
 // TestFindParentMolecule tests walking up parent-child chain
 func TestFindParentMolecule(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -1567,7 +1554,6 @@ func TestFindParentMolecule(t *testing.T) {
 // TestFindHookedMolecules tests finding molecules bonded to hooked issues
 func TestFindHookedMolecules(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -1651,7 +1637,6 @@ func TestFindHookedMolecules(t *testing.T) {
 // TestAdvanceToNextStep tests auto-advancing to next step
 func TestAdvanceToNextStep(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -1754,7 +1739,6 @@ func TestAdvanceToNextStep(t *testing.T) {
 // TestAdvanceToNextStepMoleculeComplete tests behavior when molecule is complete
 func TestAdvanceToNextStepMoleculeComplete(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -1813,7 +1797,6 @@ func TestAdvanceToNextStepMoleculeComplete(t *testing.T) {
 // TestAdvanceToNextStepOrphanIssue tests behavior for non-molecule issues
 func TestAdvanceToNextStepOrphanIssue(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -2004,7 +1987,6 @@ func TestGetRelativeID(t *testing.T) {
 // TestBondProtoMolWithRef tests dynamic bonding with custom child references
 func TestBondProtoMolWithRef(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "patrol"); err != nil {
@@ -2095,7 +2077,6 @@ func TestBondProtoMolWithRef(t *testing.T) {
 // TestBondProtoMolMultipleArms tests bonding multiple arms to the same parent
 func TestBondProtoMolMultipleArms(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "patrol"); err != nil {
@@ -2546,7 +2527,6 @@ func TestCalculateBlockingDepths(t *testing.T) {
 // creates issues with the Ephemeral flag set (bd-phin)
 func TestSpawnMoleculeEphemeralFlag(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -2623,7 +2603,6 @@ func TestSpawnMoleculeEphemeralFlag(t *testing.T) {
 // with ephemeral=true creates issues with the Ephemeral flag set (bd-phin)
 func TestSpawnMoleculeFromFormulaEphemeral(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -2813,7 +2792,6 @@ func TestFormatBondType(t *testing.T) {
 // https://github.com/steveyegge/beads/issues/852
 func TestPourRootTitleDescSubstitution(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "mol"); err != nil {
@@ -2900,7 +2878,6 @@ func TestPourRootTitleDescSubstitution(t *testing.T) {
 // Root should use {{title}} for title, but keep formula description.
 func TestPourRootTitleOnly(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "mol"); err != nil {
@@ -2952,7 +2929,6 @@ func TestPourRootTitleOnly(t *testing.T) {
 // Root should use formula name and formula description (original behavior).
 func TestPourRootNoVars(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
 	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "mol"); err != nil {

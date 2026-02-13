@@ -390,7 +390,6 @@ func testInitSafetyCheck(t *testing.T) {
 	git.ResetCaches()
 
 	// Create empty database (simulating failed import)
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {

@@ -17,6 +17,8 @@ import (
 // TestExportIntegrityAfterJSONLTruncation simulates the bd-160 bug scenario.
 // This integration test would have caught the export deduplication bug.
 func TestExportIntegrityAfterJSONLTruncation(t *testing.T) {
+	// JSONL integrity validation is skipped for Dolt backend (JSONL is export-only in Dolt mode)
+	t.Skip("JSONL integrity validation not applicable for Dolt backend")
 	// Setup: Create a database with multiple issues
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
@@ -154,6 +156,8 @@ func TestExportIntegrityAfterJSONLTruncation(t *testing.T) {
 
 // TestExportIntegrityAfterJSONLDeletion tests recovery when JSONL is deleted
 func TestExportIntegrityAfterJSONLDeletion(t *testing.T) {
+	// JSONL integrity validation is skipped for Dolt backend (JSONL is export-only in Dolt mode)
+	t.Skip("JSONL integrity validation not applicable for Dolt backend")
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
@@ -184,7 +188,7 @@ func TestExportIntegrityAfterJSONLDeletion(t *testing.T) {
 		t.Fatalf("failed to create issue: %v", err)
 	}
 
-	_, err = writeJSONLAtomic(jsonlPath, []*types.Issue{issue})
+	_, err := writeJSONLAtomic(jsonlPath, []*types.Issue{issue})
 	if err != nil {
 		t.Fatalf("export failed: %v", err)
 	}

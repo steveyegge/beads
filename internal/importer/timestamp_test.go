@@ -28,7 +28,8 @@ func TestImportTimestampPrecedence(t *testing.T) {
 	}
 	
 	// Create an issue locally at time T1
-	now := time.Now()
+	// Use UTC: Dolt DATETIME has no timezone; storing local time then reading as UTC shifts values.
+	now := time.Now().UTC().Truncate(time.Second)
 	closedAt := now
 	localIssue := &types.Issue{
 		ID:          "bd-test123",
@@ -139,8 +140,9 @@ func TestImportSameTimestamp(t *testing.T) {
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
 	}
-	
-	now := time.Now()
+
+	// Use UTC: Dolt DATETIME has no timezone; storing local time then reading as UTC shifts values.
+	now := time.Now().UTC().Truncate(time.Second)
 	
 	// Create local issue
 	localIssue := &types.Issue{
@@ -209,7 +211,8 @@ func TestImportTimestampAwareProtection(t *testing.T) {
 		t.Fatalf("Failed to set prefix: %v", err)
 	}
 
-	now := time.Now()
+	// Use UTC: Dolt DATETIME has no timezone; storing local time then reading as UTC shifts values.
+	now := time.Now().UTC().Truncate(time.Second)
 
 	// Create a local issue in the database
 	localIssue := &types.Issue{

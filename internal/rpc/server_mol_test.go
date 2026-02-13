@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
@@ -542,31 +543,31 @@ func TestHandleMolBurn_BatchMolecules(t *testing.T) {
 func TestResolvePartialID(t *testing.T) {
 	server, store := setupMolTestServer(t)
 
-	// Create an issue
-	createTestMolecule(t, store, "bd-abc123", "Test Issue", false)
+	// teststore.New sets issue_prefix to "test", so use "test-" prefixed IDs
+	createTestMolecule(t, store, "test-abc123", "Test Issue", false)
 
 	ctx := context.Background()
 
 	// Test full ID
-	resolved, err := server.resolvePartialID(ctx, "bd-abc123")
+	resolved, err := server.resolvePartialID(ctx, "test-abc123")
 	if err != nil {
 		t.Fatalf("failed to resolve full ID: %v", err)
 	}
-	if resolved != "bd-abc123" {
-		t.Errorf("expected bd-abc123, got %s", resolved)
+	if resolved != "test-abc123" {
+		t.Errorf("expected test-abc123, got %s", resolved)
 	}
 
 	// Test partial ID
-	resolved, err = server.resolvePartialID(ctx, "bd-abc")
+	resolved, err = server.resolvePartialID(ctx, "test-abc")
 	if err != nil {
 		t.Fatalf("failed to resolve partial ID: %v", err)
 	}
-	if resolved != "bd-abc123" {
-		t.Errorf("expected bd-abc123, got %s", resolved)
+	if resolved != "test-abc123" {
+		t.Errorf("expected test-abc123, got %s", resolved)
 	}
 
 	// Test non-existent ID
-	_, err = server.resolvePartialID(ctx, "bd-nonexistent")
+	_, err = server.resolvePartialID(ctx, "test-nonexistent")
 	if err == nil {
 		t.Error("expected error for non-existent ID")
 	}
@@ -918,7 +919,22 @@ func TestHandleTypes_WithCustomTypes(t *testing.T) {
 }
 
 func TestHandleTypes_NoCustomTypes(t *testing.T) {
-	server, _ := setupMolTestServerWithSQLite(t)
+	server, store := setupMolTestServerWithSQLite(t)
+
+	// teststore.New sets custom types by default; clear them for this test.
+	// Must also clear the YAML config fallback, since GetCustomTypes falls
+	// back to config.yaml when the database value is empty.
+	ctx := context.Background()
+	if err := store.SetConfig(ctx, "types.custom", ""); err != nil {
+		t.Fatalf("failed to clear custom types: %v", err)
+	}
+
+	// Override YAML config to prevent fallback to workspace config.yaml
+	origTypes := config.GetString("types.custom")
+	config.Set("types.custom", "")
+	t.Cleanup(func() {
+		config.Set("types.custom", origTypes)
+	})
 
 	req := &Request{
 		Operation: OpTypes,

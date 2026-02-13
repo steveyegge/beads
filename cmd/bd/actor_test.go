@@ -15,6 +15,7 @@ func TestGetActorWithGit(t *testing.T) {
 	origBdActor, bdActorSet := os.LookupEnv("BD_ACTOR")
 	origBeadsActor, beadsActorSet := os.LookupEnv("BEADS_ACTOR")
 	origUser, userSet := os.LookupEnv("USER")
+	origGtRole, gtRoleSet := os.LookupEnv("GT_ROLE")
 
 	// Cleanup after test
 	defer func() {
@@ -34,7 +35,15 @@ func TestGetActorWithGit(t *testing.T) {
 		} else {
 			os.Unsetenv("USER")
 		}
+		if gtRoleSet {
+			os.Setenv("GT_ROLE", origGtRole)
+		} else {
+			os.Unsetenv("GT_ROLE")
+		}
 	}()
+
+	// Clear GT_ROLE so it doesn't interfere with fallback chain tests
+	os.Unsetenv("GT_ROLE")
 
 	// Helper to get current git user.name (may be empty if not configured)
 	getGitUserName := func() string {

@@ -2,7 +2,6 @@ package doctor
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"os"
 	"os/exec"
@@ -10,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
-
 )
 
 // mockIssueProvider implements types.IssueProvider for testing FindOrphanedIssues
@@ -218,27 +217,12 @@ func TestFindOrphanedIssues_CrossRepo(t *testing.T) {
 		prefix: "PLAN",
 	}
 
-	// Create a LOCAL .beads/ in the code repo to verify it's NOT used
+	// Create a LOCAL .beads/ in the code repo to verify it's NOT used.
+	// Just an empty directory is enough to prove the mock provider is used instead.
 	localBeadsDir := filepath.Join(codeDir, ".beads")
 	if err := os.MkdirAll(localBeadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	localDBPath := filepath.Join(localBeadsDir, "beads.db")
-	localDB, err := sql.Open("sqlite3", localDBPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Local DB has different prefix and issues - should NOT be used
-	_, err = localDB.Exec(`
-		CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT);
-		CREATE TABLE issues (id TEXT PRIMARY KEY, status TEXT, title TEXT);
-		INSERT INTO config (key, value) VALUES ('issue_prefix', 'LOCAL');
-		INSERT INTO issues (id, status, title) VALUES ('LOCAL-999', 'open', 'Local issue');
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	localDB.Close()
 
 	// Call FindOrphanedIssues with the planning provider
 	orphans, err := FindOrphanedIssues(codeDir, planningProvider)
@@ -270,74 +254,50 @@ func TestFindOrphanedIssues_CrossRepo(t *testing.T) {
 }
 
 // TestFindOrphanedIssues_LocalProvider tests backward compatibility (RT-01).
-// This tests the FindOrphanedIssuesFromPath function which creates a LocalProvider
-// from the local .beads/ directory.
+// This tests that a LocalProvider created from a storage.Storage backend
+// correctly detects orphans, which is the same code path used by
+// FindOrphanedIssuesFromPath internally.
 func TestFindOrphanedIssues_LocalProvider(t *testing.T) {
-	dir := t.TempDir()
+	// Create a Dolt-backed store with the issues we need
+	store := teststore.New(t)
+	ctx := context.Background()
 
-	// Initialize git repo
-	cmd := exec.Command("git", "init", "--initial-branch=main")
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
-	}
-
-	// Configure git user for commits
-	cmd = exec.Command("git", "config", "user.email", "test@test.com")
-	cmd.Dir = dir
-	_ = cmd.Run()
-
-	cmd = exec.Command("git", "config", "user.name", "Test User")
-	cmd.Dir = dir
-	_ = cmd.Run()
-
-	// Create .beads directory and database
-	beadsDir := filepath.Join(dir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	// Override the default "test" prefix to "bd" for this test
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	// Create an open issue
+	issue := &types.Issue{
+		Title:     "Local test",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "test-user"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a LocalProvider from the store
+	provider, err := storage.NewLocalProvider(store)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("NewLocalProvider failed: %v", err)
 	}
 
-	_, err = db.Exec(`
-		CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT);
-		CREATE TABLE issues (id TEXT PRIMARY KEY, status TEXT, title TEXT);
-		INSERT INTO config (key, value) VALUES ('issue_prefix', 'bd');
-		INSERT INTO issues (id, status, title) VALUES ('bd-local', 'open', 'Local test');
-	`)
+	// Setup git repo with a commit referencing the issue
+	dir := setupTestGitRepo(t, []string{"Fix (" + issue.ID + ")"})
+
+	orphans, err := FindOrphanedIssues(dir, provider)
 	if err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-
-	// Create commits with issue reference
-	testFile := filepath.Join(dir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	cmd = exec.Command("git", "add", "test.txt")
-	cmd.Dir = dir
-	_ = cmd.Run()
-	cmd = exec.Command("git", "commit", "-m", "Fix (bd-local)")
-	cmd.Dir = dir
-	_ = cmd.Run()
-
-	// Use FindOrphanedIssuesFromPath (the backward-compatible wrapper)
-	orphans, err := FindOrphanedIssuesFromPath(dir)
-	if err != nil {
-		t.Fatalf("FindOrphanedIssuesFromPath returned error: %v", err)
+		t.Fatalf("FindOrphanedIssues returned error: %v", err)
 	}
 
 	if len(orphans) != 1 {
 		t.Errorf("expected 1 orphan, got %d", len(orphans))
 	}
 
-	if len(orphans) > 0 && orphans[0].IssueID != "bd-local" {
-		t.Errorf("expected orphan ID bd-local, got %s", orphans[0].IssueID)
+	if len(orphans) > 0 && orphans[0].IssueID != issue.ID {
+		t.Errorf("expected orphan ID %s, got %s", issue.ID, orphans[0].IssueID)
 	}
 }
 
@@ -384,69 +344,49 @@ func TestFindOrphanedIssues_NotGitRepo(t *testing.T) {
 }
 
 // TestFindOrphanedIssues_IntegrationCrossRepo tests a realistic cross-repo setup (IT-02 full).
-// This creates real SQLite databases in two directories and verifies the full flow.
+// This creates a Dolt-backed planning store and a separate code git repo, then
+// verifies that cross-repo orphan detection works via a real LocalProvider.
 func TestFindOrphanedIssues_IntegrationCrossRepo(t *testing.T) {
-	// Create two directories: planning (has DB) and code (has git)
-	planningDir := t.TempDir()
-	codeDir := t.TempDir()
+	// Create a Dolt-backed "planning" store with issues
+	planningStore := teststore.New(t)
+	ctx := context.Background()
 
-	// Setup planning database
-	planningBeadsDir := filepath.Join(planningDir, ".beads")
-	if err := os.MkdirAll(planningBeadsDir, 0755); err != nil {
+	// Set a custom prefix for the planning store
+	if err := planningStore.SetConfig(ctx, "issue_prefix", "PLAN"); err != nil {
 		t.Fatal(err)
 	}
 
-	planningDBPath := filepath.Join(planningBeadsDir, "beads.db")
-	planningDB, err := sql.Open("sqlite3", planningDBPath)
-	if err != nil {
+	// Create two planning issues (one open, one in-progress)
+	issueA := &types.Issue{
+		Title:     "Feature A",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	issueB := &types.Issue{
+		Title:     "Feature B",
+		Status:    types.StatusInProgress,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := planningStore.CreateIssue(ctx, issueA, "test-user"); err != nil {
+		t.Fatal(err)
+	}
+	if err := planningStore.CreateIssue(ctx, issueB, "test-user"); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = planningDB.Exec(`
-		CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT);
-		CREATE TABLE issues (id TEXT PRIMARY KEY, status TEXT, title TEXT);
-		INSERT INTO config (key, value) VALUES ('issue_prefix', 'PLAN');
-		INSERT INTO issues (id, status, title) VALUES ('PLAN-001', 'open', 'Feature A');
-		INSERT INTO issues (id, status, title) VALUES ('PLAN-002', 'in_progress', 'Feature B');
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	planningDB.Close()
+	// Setup code repo with a commit referencing one planning issue
+	codeDir := setupTestGitRepo(t, []string{
+		"Initial commit",
+		"Implement (" + issueA.ID + ")",
+	})
 
-	// Setup code repo with git
-	cmd := exec.Command("git", "init", "--initial-branch=main")
-	cmd.Dir = codeDir
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
-	}
-
-	cmd = exec.Command("git", "config", "user.email", "test@test.com")
-	cmd.Dir = codeDir
-	_ = cmd.Run()
-
-	cmd = exec.Command("git", "config", "user.name", "Test User")
-	cmd.Dir = codeDir
-	_ = cmd.Run()
-
-	// Create commits referencing planning issues
-	testFile := filepath.Join(codeDir, "main.go")
-	if err := os.WriteFile(testFile, []byte("package main"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	cmd = exec.Command("git", "add", "main.go")
-	cmd.Dir = codeDir
-	_ = cmd.Run()
-	cmd = exec.Command("git", "commit", "-m", "Implement (PLAN-001)")
-	cmd.Dir = codeDir
-	_ = cmd.Run()
-
-	// Create a real LocalProvider from the planning database
-	provider, err := storage.NewLocalProvider(planningDBPath)
+	// Create a real LocalProvider from the planning store
+	provider, err := storage.NewLocalProvider(planningStore)
 	if err != nil {
 		t.Fatalf("failed to create LocalProvider: %v", err)
 	}
-	defer provider.Close()
 
 	// Run FindOrphanedIssues with the cross-repo provider
 	orphans, err := FindOrphanedIssues(codeDir, provider)
@@ -454,46 +394,50 @@ func TestFindOrphanedIssues_IntegrationCrossRepo(t *testing.T) {
 		t.Fatalf("FindOrphanedIssues returned error: %v", err)
 	}
 
-	// Should find 1 orphan (PLAN-001)
+	// Should find 1 orphan (the issue referenced in a commit)
 	if len(orphans) != 1 {
 		t.Errorf("expected 1 orphan, got %d", len(orphans))
 	}
 
-	if len(orphans) > 0 && orphans[0].IssueID != "PLAN-001" {
-		t.Errorf("expected orphan PLAN-001, got %s", orphans[0].IssueID)
+	if len(orphans) > 0 && orphans[0].IssueID != issueA.ID {
+		t.Errorf("expected orphan %s, got %s", issueA.ID, orphans[0].IssueID)
 	}
 }
 
 // TestLocalProvider_Methods tests the LocalProvider implementation directly.
 func TestLocalProvider_Methods(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
+	store := teststore.New(t)
+	ctx := context.Background()
 
-	// Create test database
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
+	// Set a custom prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "CUSTOM"); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = db.Exec(`
-		CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT);
-		CREATE TABLE issues (id TEXT PRIMARY KEY, status TEXT, title TEXT);
-		INSERT INTO config (key, value) VALUES ('issue_prefix', 'CUSTOM');
-		INSERT INTO issues (id, status, title) VALUES ('CUSTOM-001', 'open', 'Open issue');
-		INSERT INTO issues (id, status, title) VALUES ('CUSTOM-002', 'in_progress', 'WIP issue');
-		INSERT INTO issues (id, status, title) VALUES ('CUSTOM-003', 'closed', 'Closed issue');
-	`)
-	if err != nil {
+	// Create issues with various statuses
+	openIssue := &types.Issue{Title: "Open issue", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	wipIssue := &types.Issue{Title: "WIP issue", Status: types.StatusInProgress, Priority: 2, IssueType: types.TypeTask}
+	closedIssue := &types.Issue{Title: "Closed issue", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+
+	if err := store.CreateIssue(ctx, openIssue, "test-user"); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	if err := store.CreateIssue(ctx, wipIssue, "test-user"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateIssue(ctx, closedIssue, "test-user"); err != nil {
+		t.Fatal(err)
+	}
+	// Close the third issue
+	if err := store.CloseIssue(ctx, closedIssue.ID, "done", "test-user", ""); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create provider
-	provider, err := storage.NewLocalProvider(dbPath)
+	provider, err := storage.NewLocalProvider(store)
 	if err != nil {
 		t.Fatalf("storage.NewLocalProvider failed: %v", err)
 	}
-	defer provider.Close()
 
 	// Test GetIssuePrefix
 	prefix := provider.GetIssuePrefix()
@@ -502,7 +446,7 @@ func TestLocalProvider_Methods(t *testing.T) {
 	}
 
 	// Test GetOpenIssues
-	issues, err := provider.GetOpenIssues(context.Background())
+	issues, err := provider.GetOpenIssues(ctx)
 	if err != nil {
 		t.Fatalf("GetOpenIssues failed: %v", err)
 	}
@@ -518,42 +462,32 @@ func TestLocalProvider_Methods(t *testing.T) {
 		ids[issue.ID] = true
 	}
 
-	if !ids["CUSTOM-001"] {
-		t.Error("expected CUSTOM-001 in open issues")
+	if !ids[openIssue.ID] {
+		t.Errorf("expected %s in open issues", openIssue.ID)
 	}
-	if !ids["CUSTOM-002"] {
-		t.Error("expected CUSTOM-002 in open issues")
+	if !ids[wipIssue.ID] {
+		t.Errorf("expected %s in open issues", wipIssue.ID)
 	}
-	if ids["CUSTOM-003"] {
-		t.Error("CUSTOM-003 (closed) should not be in open issues")
+	if ids[closedIssue.ID] {
+		t.Errorf("%s (closed) should not be in open issues", closedIssue.ID)
 	}
 }
 
 // TestLocalProvider_DefaultPrefix tests that LocalProvider returns "bd" when no prefix configured.
 func TestLocalProvider_DefaultPrefix(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
+	store := teststore.New(t)
+	ctx := context.Background()
 
-	// Create database without issue_prefix config
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
+	// Clear the issue_prefix that teststore.New sets by default ("test").
+	// Setting it to empty string triggers the "bd" default in NewLocalProvider.
+	if err := store.SetConfig(ctx, "issue_prefix", ""); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = db.Exec(`
-		CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT);
-		CREATE TABLE issues (id TEXT PRIMARY KEY, status TEXT, title TEXT);
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-
-	provider, err := storage.NewLocalProvider(dbPath)
+	provider, err := storage.NewLocalProvider(store)
 	if err != nil {
 		t.Fatalf("storage.NewLocalProvider failed: %v", err)
 	}
-	defer provider.Close()
 
 	prefix := provider.GetIssuePrefix()
 	if prefix != "bd" {

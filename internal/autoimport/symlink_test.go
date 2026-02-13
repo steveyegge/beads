@@ -60,25 +60,16 @@ func TestCheckStaleness_SymlinkedJSONL(t *testing.T) {
 
 	dbPath := filepath.Join(beadsDir, "beads.db")
 
-	// With correct behavior (os.Lstat):
-	// - Symlink mtime: now (just created)
-	// - Import time: 30 min ago
-	// - Result: stale = true (symlink is newer than import)
-	//
-	// With incorrect behavior (os.Stat):
-	// - Target mtime: 1 hour ago
-	// - Import time: 30 min ago
-	// - Result: stale = false (target is older than import) - WRONG!
+	// With Dolt as the only backend, CheckStaleness always returns false
+	// (Dolt is the source of truth, not JSONL). The symlink behavior is
+	// no longer exercised since the staleness check is skipped entirely.
 	stale, err := CheckStaleness(ctx, store, dbPath)
 	if err != nil {
 		t.Fatalf("CheckStaleness failed: %v", err)
 	}
 
-	if !stale {
-		t.Error("Expected stale=true when symlinked JSONL is newer than last import")
-		t.Error("This indicates os.Stat is being used instead of os.Lstat")
-		t.Error("os.Stat follows the symlink and returns target's mtime (old)")
-		t.Error("os.Lstat returns the symlink's own mtime (recent)")
+	if stale {
+		t.Error("Expected stale=false for Dolt backend (Dolt is source of truth)")
 	}
 }
 

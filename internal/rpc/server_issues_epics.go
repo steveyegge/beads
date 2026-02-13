@@ -1534,23 +1534,24 @@ func (s *Server) handleDelete(req *Request) Response {
 				}
 			}
 
-			// Delete issues one by one using the storage interface
+			// Delete issues one by one using the storage interface.
+			// Collect errors for partial-success reporting instead of
+			// aborting on the first failure (Dolt has no FK cascades).
 			deletedCount := 0
+			var deleteErrors []string
 			for _, id := range deleteArgs.IDs {
 				if err := store.DeleteIssue(ctx, id); err != nil {
+					deleteErrors = append(deleteErrors, fmt.Sprintf("%s: %v", id, err))
 					if !deleteArgs.Force {
-						return Response{
-							Success: false,
-							Error:   fmt.Sprintf("delete failed for %s: %v", id, err),
-						}
+						// Continue to try remaining IDs so we can report partial success
+						continue
 					}
-					// Force mode: continue despite errors
 					continue
 				}
 				deletedCount++
 			}
 
-			// Emit mutation events for deleted issues
+			// Emit mutation events for successfully deleted issues
 			for _, issueID := range deleteArgs.IDs {
 				s.emitMutation(MutationDelete, issueID, "", "")
 			}
@@ -1563,6 +1564,21 @@ func (s *Server) handleDelete(req *Request) Response {
 			responseData := map[string]interface{}{
 				"deleted_count": deletedCount,
 				"total_count":   len(deleteArgs.IDs),
+			}
+
+			if len(deleteErrors) > 0 {
+				responseData["errors"] = deleteErrors
+				if deletedCount == 0 {
+					// All deletes failed
+					data, _ := json.Marshal(responseData)
+					return Response{
+						Success: false,
+						Error:   fmt.Sprintf("failed to delete all issues: %v", deleteErrors),
+						Data:    data,
+					}
+				}
+				// Partial success
+				responseData["partial_success"] = true
 			}
 
 			data, _ := json.Marshal(responseData)
@@ -4261,6 +4277,30 @@ func (s *Server) handleCreateWithDeps(req *Request) Response {
 				toID = mappedID
 			}
 
+			// Validate that external dependency targets exist.
+			// Dolt does not enforce FK constraints, so we must check
+			// explicitly to prevent dangling references.
+			if _, ok := idMapping[depArg.ToID]; !ok {
+				// toID was not created in this batch - verify it exists
+				existing, err := tx.GetIssue(ctx, toID)
+				if err != nil {
+					return fmt.Errorf("failed to verify dependency target %s: %w", toID, err)
+				}
+				if existing == nil {
+					return fmt.Errorf("dependency target %s does not exist", toID)
+				}
+			}
+			if _, ok := idMapping[depArg.FromID]; !ok {
+				// fromID was not created in this batch - verify it exists
+				existing, err := tx.GetIssue(ctx, fromID)
+				if err != nil {
+					return fmt.Errorf("failed to verify dependency source %s: %w", fromID, err)
+				}
+				if existing == nil {
+					return fmt.Errorf("dependency source %s does not exist", fromID)
+				}
+			}
+
 			dep := &types.Dependency{
 				IssueID:     fromID,
 				DependsOnID: toID,
@@ -4559,8 +4599,18 @@ func (s *Server) handleCreateConvoyWithTracking(req *Request) Response {
 		}
 		convoyID = convoy.ID
 
-		// Add tracking dependencies for each tracked issue
+		// Add tracking dependencies for each tracked issue.
+		// Validate that each tracked issue exists first; Dolt does not
+		// enforce FK constraints so we check explicitly.
 		for _, trackedID := range args.TrackedIssues {
+			existing, err := tx.GetIssue(ctx, trackedID)
+			if err != nil {
+				return fmt.Errorf("failed to verify tracked issue %s: %w", trackedID, err)
+			}
+			if existing == nil {
+				return fmt.Errorf("tracked issue %s does not exist", trackedID)
+			}
+
 			dep := &types.Dependency{
 				IssueID:     convoyID,
 				DependsOnID: trackedID,

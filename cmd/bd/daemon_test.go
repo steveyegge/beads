@@ -494,7 +494,6 @@ func TestDaemonServerStartFailureSocketExists(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	socketPath := filepath.Join(tmpDir, "test.sock")
-	testDBPath := filepath.Join(tmpDir, "test.db")
 
 	testStore1 := teststore.New(t)
 	defer testStore1.Close()

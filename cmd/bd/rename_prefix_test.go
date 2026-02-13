@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/testutil/teststore"
@@ -40,9 +38,6 @@ func TestValidatePrefix(t *testing.T) {
 }
 
 func TestRenamePrefixCommand(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
@@ -165,13 +160,9 @@ func TestRenamePrefixCommand(t *testing.T) {
 }
 
 func TestRenamePrefixInDB(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
 	testStore := teststore.New(t)
 	t.Cleanup(func() {
 		testStore.Close()
-		os.Remove(dbPath)
 	})
 
 	ctx := context.Background()
@@ -196,7 +187,7 @@ func TestRenamePrefixInDB(t *testing.T) {
 	}
 
 	issues := []*types.Issue{issue1}
-	err = renamePrefixInDB(ctx, "old", "new", issues)
+	err := renamePrefixInDB(ctx, "old", "new", issues)
 	if err != nil {
 		t.Fatalf("renamePrefixInDB failed: %v", err)
 	}

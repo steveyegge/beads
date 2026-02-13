@@ -31,7 +31,6 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	socketPath := filepath.Join(beadsDir, "bd.sock")
 
 	// Ensure socket doesn't exist from previous failed test
@@ -52,6 +51,9 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
+	// Use store.Path() so the server's dbPath matches the actual Dolt store location.
+	// This prevents "database mismatch" errors during request validation.
+	dbPath := store.Path()
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -131,6 +133,8 @@ func setupTestServerIsolated(t *testing.T) (tmpDir, beadsDir, dbPath, socketPath
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
+	// dbPath is a placeholder; callers that create a teststore should use store.Path()
+	// to get the actual Dolt store path for database mismatch validation.
 	dbPath = filepath.Join(beadsDir, "test.db")
 	socketPath = filepath.Join(beadsDir, "bd.sock")
 
@@ -333,12 +337,11 @@ func TestSocketCleanup(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := filepath.Join(tmpDir, "bd.sock")
 
 	store := teststore.New(t)
 
-	server := NewServer(socketPath, store, tmpDir, dbPath)
+	server := NewServer(socketPath, store, tmpDir, store.Path())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -439,9 +442,9 @@ func TestDatabaseHandshake(t *testing.T) {
 	// Setup first daemon (db1)
 	beadsDir1 := filepath.Join(tmpDir1, ".beads")
 	os.MkdirAll(beadsDir1, 0750)
-	dbPath1 := filepath.Join(beadsDir1, "db1.db")
 	socketPath1 := filepath.Join(beadsDir1, "bd.sock")
-	store1 := newTestStore(t, dbPath1)
+	store1 := newTestStore(t, "")
+	dbPath1 := store1.Path() // Use actual Dolt store path
 
 	server1 := NewServer(socketPath1, store1, tmpDir1, dbPath1)
 	ctx1, cancel1 := context.WithCancel(context.Background())
@@ -453,9 +456,9 @@ func TestDatabaseHandshake(t *testing.T) {
 	// Setup second daemon (db2)
 	beadsDir2 := filepath.Join(tmpDir2, ".beads")
 	os.MkdirAll(beadsDir2, 0750)
-	dbPath2 := filepath.Join(beadsDir2, "db2.db")
 	socketPath2 := filepath.Join(beadsDir2, "bd.sock")
-	store2 := newTestStore(t, dbPath2)
+	store2 := newTestStore(t, "")
+	dbPath2 := store2.Path() // Use actual Dolt store path
 
 	server2 := NewServer(socketPath2, store2, tmpDir2, dbPath2)
 	ctx2, cancel2 := context.WithCancel(context.Background())

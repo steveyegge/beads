@@ -27,7 +27,6 @@ func setupTestServerWithStore(t *testing.T) (*Server, *Client, storage.Storage, 
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	socketPath := filepath.Join(beadsDir, "bd.sock")
 
 	os.Remove(socketPath)
@@ -40,6 +39,9 @@ func setupTestServerWithStore(t *testing.T) (*Server, *Client, storage.Storage, 
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
 
+	// Use store.Path() so the server's dbPath matches the actual Dolt store location.
+	// This prevents "database mismatch" errors during request validation.
+	dbPath := store.Path()
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -51,7 +51,7 @@ func CheckSyncDivergence(path string) DoctorCheck {
 		}
 	}
 
-	backend := configfile.BackendSQLite
+	backend := configfile.BackendDolt // Default matches factory/configfile default
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
 		backend = cfg.GetBackend()
 	}

@@ -157,10 +157,8 @@ func TestAutoImportIfNewer_ChangedHash(t *testing.T) {
 
 	notify := &testNotifier{}
 	importCalled := false
-	var receivedIssues []*types.Issue
 	importFunc := func(ctx context.Context, issues []*types.Issue) (int, int, map[string]string, error) {
 		importCalled = true
-		receivedIssues = issues
 		return 1, 0, nil, nil
 	}
 
@@ -169,16 +167,10 @@ func TestAutoImportIfNewer_ChangedHash(t *testing.T) {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 
-	if !importCalled {
-		t.Error("Import should be called when hash changed")
-	}
-
-	if len(receivedIssues) != 1 {
-		t.Errorf("Expected 1 issue, got %d", len(receivedIssues))
-	}
-
-	if receivedIssues[0].ID != "test-1" {
-		t.Errorf("Expected issue ID 'test-1', got '%s'", receivedIssues[0].ID)
+	// With Dolt as the only backend, auto-import from JSONL is skipped
+	// (Dolt is the source of truth, not JSONL). Verify import was NOT called.
+	if importCalled {
+		t.Error("Import should NOT be called for Dolt backend (Dolt is source of truth)")
 	}
 }
 
@@ -212,13 +204,11 @@ func TestAutoImportIfNewer_MergeConflict(t *testing.T) {
 		return 0, 0, nil, nil
 	}
 
+	// With Dolt as the only backend, auto-import from JSONL is skipped entirely
+	// (Dolt is the source of truth, not JSONL), so merge conflicts are not checked.
 	err = AutoImportIfNewer(ctx, store, dbPath, notify, importFunc, nil)
-	if err == nil {
-		t.Error("Expected error for merge conflict")
-	}
-
-	if len(notify.errors) == 0 {
-		t.Error("Expected error notification")
+	if err != nil {
+		t.Errorf("Expected no error for Dolt backend (auto-import skipped), got: %v", err)
 	}
 }
 
@@ -260,35 +250,19 @@ func TestAutoImportIfNewer_WithRemapping(t *testing.T) {
 	}
 
 	onChangedCalled := false
-	var needsFullExport bool
 	onChanged := func(fullExport bool) {
 		onChangedCalled = true
-		needsFullExport = fullExport
 	}
 
+	// With Dolt as the only backend, auto-import from JSONL is skipped entirely
+	// (Dolt is the source of truth, not JSONL), so remapping never happens.
 	err = AutoImportIfNewer(ctx, store, dbPath, notify, importFunc, onChanged)
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 
-	if !onChangedCalled {
-		t.Error("onChanged should be called when issues are remapped")
-	}
-
-	if !needsFullExport {
-		t.Error("needsFullExport should be true when issues are remapped")
-	}
-
-	// Verify remapping was logged
-	foundRemapping := false
-	for _, info := range notify.infos {
-		if strings.Contains(info, "remapped") {
-			foundRemapping = true
-			break
-		}
-	}
-	if !foundRemapping {
-		t.Error("Expected remapping notification")
+	if onChangedCalled {
+		t.Error("onChanged should NOT be called for Dolt backend (auto-import skipped)")
 	}
 }
 
@@ -333,13 +307,15 @@ func TestCheckStaleness_NewerJSONL(t *testing.T) {
 	// Create newer JSONL file
 	os.WriteFile(jsonlPath, []byte(`{"id":"test-1"}`), 0644)
 
+	// With Dolt as the only backend, CheckStaleness always returns false
+	// (Dolt is the source of truth, not JSONL).
 	stale, err := CheckStaleness(ctx, store, dbPath)
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 
-	if !stale {
-		t.Error("Should be stale when JSONL is newer")
+	if stale {
+		t.Error("Should NOT be stale for Dolt backend (Dolt is source of truth)")
 	}
 }
 
@@ -358,12 +334,14 @@ func TestCheckStaleness_CorruptedMetadata(t *testing.T) {
 	// Set invalid timestamp format
 	store.SetMetadata(ctx, "last_import_time", "not-a-valid-timestamp")
 
-	_, err = CheckStaleness(ctx, store, dbPath)
-	if err == nil {
-		t.Error("Expected error for corrupted metadata, got nil")
+	// With Dolt as the only backend, CheckStaleness returns (false, nil) immediately
+	// without ever reading the metadata, so corrupted timestamps are not an issue.
+	stale, err := CheckStaleness(ctx, store, dbPath)
+	if err != nil {
+		t.Errorf("Expected no error for Dolt backend (staleness check skipped), got: %v", err)
 	}
-	if err != nil && !strings.Contains(err.Error(), "corrupted last_import_time") {
-		t.Errorf("Expected 'corrupted last_import_time' error, got: %v", err)
+	if stale {
+		t.Error("Should NOT be stale for Dolt backend")
 	}
 }
 

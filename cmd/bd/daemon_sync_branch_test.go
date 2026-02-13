@@ -38,7 +38,6 @@ func TestSyncBranchCommitAndPush_NotConfigured(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -98,7 +97,6 @@ func TestSyncBranchCommitAndPush_Success(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -199,7 +197,6 @@ func TestSyncBranchCommitAndPush_EnvOverridesDB(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -280,7 +277,6 @@ func TestSyncBranchCommitAndPush_NoChanges(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -354,7 +350,6 @@ func TestSyncBranchCommitAndPush_WorktreeHealthCheck(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -447,7 +442,6 @@ func TestSyncBranchPull_NotConfigured(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -495,7 +489,6 @@ func TestSyncBranchPull_Success(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	clone1DBPath := filepath.Join(clone1BeadsDir, "test.db")
 	store1 := teststore.New(t)
 	defer store1.Close()
 
@@ -551,7 +544,6 @@ func TestSyncBranchPull_Success(t *testing.T) {
 	configureGit(t, clone2Dir)
 
 	clone2BeadsDir := filepath.Join(clone2Dir, ".beads")
-	clone2DBPath := filepath.Join(clone2BeadsDir, "test.db")
 	store2 := teststore.New(t)
 	defer store2.Close()
 
@@ -628,7 +620,6 @@ func TestSyncBranchIntegration_EndToEnd(t *testing.T) {
 
 	clone1BeadsDir := filepath.Join(clone1Dir, ".beads")
 	os.MkdirAll(clone1BeadsDir, 0755)
-	clone1DBPath := filepath.Join(clone1BeadsDir, "test.db")
 	store1 := teststore.New(t)
 	defer store1.Close()
 
@@ -677,7 +668,6 @@ func TestSyncBranchIntegration_EndToEnd(t *testing.T) {
 	configureGit(t, clone2Dir)
 
 	clone2BeadsDir := filepath.Join(clone2Dir, ".beads")
-	clone2DBPath := filepath.Join(clone2BeadsDir, "test.db")
 	store2 := teststore.New(t)
 	defer store2.Close()
 
@@ -774,7 +764,6 @@ func TestSyncBranchConfigChange(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -903,7 +892,6 @@ func TestSyncBranchMultipleConcurrentClones(t *testing.T) {
 
 		beadsDir := filepath.Join(cloneDir, ".beads")
 		os.MkdirAll(beadsDir, 0755)
-		dbPath := filepath.Join(beadsDir, "test.db")
 		store := teststore.New(t)
 
 		ctx := context.Background()
@@ -1043,7 +1031,6 @@ func TestSyncBranchPerformance(t *testing.T) {
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	os.MkdirAll(beadsDir, 0755)
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -1129,7 +1116,6 @@ func TestSyncBranchNetworkFailure(t *testing.T) {
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	os.MkdirAll(beadsDir, 0755)
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -1241,14 +1227,13 @@ func TestSyncBranchCommitAndPush_WithPreCommitHook(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
 	oldDBPath := dbPath
 	defer func() { dbPath = oldDBPath }()
-	dbPath = testDBPath
+	dbPath = filepath.Join(beadsDir, "test.db")
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -1952,7 +1937,6 @@ func TestDaemonExportSkipsSameBranch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -2045,7 +2029,6 @@ func TestDaemonAutoImportSkipsSameBranch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -2125,7 +2108,6 @@ func TestDaemonSyncSkipsSameBranch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -2221,14 +2203,13 @@ func TestSyncBranchCommitSkipsSameBranch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
 	oldDBPath := dbPath
 	defer func() { dbPath = oldDBPath }()
-	dbPath = testDBPath
+	dbPath = filepath.Join(beadsDir, "test.db")
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -2323,14 +2304,13 @@ func TestSyncBranchPullSkipsSameBranch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
 	oldDBPath := dbPath
 	defer func() { dbPath = oldDBPath }()
-	dbPath = testDBPath
+	dbPath = filepath.Join(beadsDir, "test.db")
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -2408,14 +2388,13 @@ func TestDaemonExportWorktreeDifferentBranch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
 	oldDBPath := dbPath
 	defer func() { dbPath = oldDBPath }()
-	dbPath = testDBPath
+	dbPath = filepath.Join(beadsDir, "test.db")
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -2498,14 +2477,13 @@ func TestDaemonExportWorktreeSameBranch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
 	oldDBPath := dbPath
 	defer func() { dbPath = oldDBPath }()
-	dbPath = testDBPath
+	dbPath = filepath.Join(beadsDir, "test.db")
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -2563,14 +2541,13 @@ func TestDaemonExportDynamicBranchSwitch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
 	oldDBPath := dbPath
 	defer func() { dbPath = oldDBPath }()
-	dbPath = testDBPath
+	dbPath = filepath.Join(beadsDir, "test.db")
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -2641,14 +2618,13 @@ func TestDaemonExportAfterBranchChange(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
 	oldDBPath := dbPath
 	defer func() { dbPath = oldDBPath }()
-	dbPath = testDBPath
+	dbPath = filepath.Join(beadsDir, "test.db")
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -2723,14 +2699,13 @@ func TestDaemonExportConfigReload(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
 	// Set global dbPath so findJSONLPath() works
 	oldDBPath := dbPath
 	defer func() { dbPath = oldDBPath }()
-	dbPath = testDBPath
+	dbPath = filepath.Join(beadsDir, "test.db")
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -2805,7 +2780,6 @@ func TestDaemonStartupWarnsSameBranch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -2872,7 +2846,6 @@ func TestDaemonStartupNoWarningWhenDifferentBranch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 
@@ -2929,7 +2902,6 @@ func TestDaemonStartupNoWarningWhenNoSyncBranch(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "test.db")
 	store := teststore.New(t)
 	defer store.Close()
 

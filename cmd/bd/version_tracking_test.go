@@ -464,12 +464,8 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 	_ = config.Initialize()
 	config.Set("daemon-host", "")
 
-	// Create temp directory (beadsDir)
-	beadsDir := t.TempDir()
-	// Factory will look for beads.db inside beadsDir
-	dbPath := filepath.Join(beadsDir, "beads.db")
-
 	// Create database with current version
+	beadsDir := t.TempDir()
 	ctx := context.Background()
 	store := teststore.New(t)
 

@@ -15,8 +15,15 @@ import (
 func TestCompactSuite(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
-	s := newTestStore(t, testDB)
+	baseStore := newTestStore(t, testDB)
 	ctx := context.Background()
+
+	// compactableStore is only implemented by SQLite; skip if not available.
+	cs, ok := baseStore.(compactableStore)
+	if !ok {
+		t.Skip("storage backend does not implement compactableStore (compaction requires SQLite)")
+	}
+	s := cs
 
 	t.Run("DryRun", func(t *testing.T) {
 		// Create a closed issue

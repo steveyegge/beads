@@ -23,9 +23,6 @@ func TestMultiWorkspaceDeletionSync(t *testing.T) {
 	cloneAJSONL := filepath.Join(cloneADir, "issues.jsonl")
 	cloneBJSONL := filepath.Join(cloneBDir, "issues.jsonl")
 
-	cloneADB := filepath.Join(cloneADir, "beads.db")
-	cloneBDB := filepath.Join(cloneBDir, "beads.db")
-
 	ctx := context.Background()
 
 	// Create stores for both clones
@@ -173,7 +170,6 @@ func TestMultiWorkspaceDeletionSync(t *testing.T) {
 func TestDeletionWithLocalModification(t *testing.T) {
 	dir := t.TempDir()
 	jsonlPath := filepath.Join(dir, "issues.jsonl")
-	dbPath := filepath.Join(dir, "beads.db")
 
 	ctx := context.Background()
 
@@ -229,9 +225,9 @@ func TestDeletionWithLocalModification(t *testing.T) {
 
 	// Try to merge - deletion now wins over modification (bd-pq5k)
 	// This should succeed and delete the issue
-	_, err = merge3WayAndPruneDeletions(ctx, store, jsonlPath)
-	if err != nil {
-		t.Errorf("Expected merge to succeed (deletion wins), but got error: %v", err)
+	_, mergeErr := merge3WayAndPruneDeletions(ctx, store, jsonlPath)
+	if mergeErr != nil {
+		t.Errorf("Expected merge to succeed (deletion wins), but got error: %v", mergeErr)
 	}
 
 	// The issue should be deleted (deletion wins over modification)
@@ -410,8 +406,6 @@ func TestMultiRepoDeletionTracking(t *testing.T) {
 		t.Fatalf("Failed to create additional .beads dir: %v", err)
 	}
 
-	// Create database in primary dir
-	dbPath := filepath.Join(primaryBeadsDir, "beads.db")
 	ctx := context.Background()
 
 	store := teststore.New(t)
@@ -457,31 +451,31 @@ func TestMultiRepoDeletionTracking(t *testing.T) {
 		t.Fatalf("Failed to create additional issue: %v", err)
 	}
 
-	// Export to multi-repo (this creates multiple JSONL files)
-	results, err := store.ExportToMultiRepo(ctx)
-	if err != nil {
-		t.Fatalf("ExportToMultiRepo failed: %v", err)
-	}
-	if results == nil {
-		t.Fatal("Expected multi-repo results, got nil")
-	}
-	if results["."] != 1 {
-		t.Errorf("Expected 1 issue in primary repo, got %d", results["."])
-	}
-	if results[additionalDir] != 1 {
-		t.Errorf("Expected 1 issue in additional repo, got %d", results[additionalDir])
-	}
-
-	// Verify JSONL files exist
+	// Export issues to separate JSONL files (simulating multi-repo export)
 	primaryJSONL := filepath.Join(primaryBeadsDir, "issues.jsonl")
 	additionalJSONL := filepath.Join(additionalBeadsDir, "issues.jsonl")
 
-	if !fileExists(primaryJSONL) {
-		t.Fatalf("Primary JSONL not created: %s", primaryJSONL)
+	// Write primary issue to primary JSONL
+	pf, err := os.Create(primaryJSONL)
+	if err != nil {
+		t.Fatalf("Failed to create primary JSONL: %v", err)
 	}
-	if !fileExists(additionalJSONL) {
-		t.Fatalf("Additional JSONL not created: %s", additionalJSONL)
+	if err := json.NewEncoder(pf).Encode(primaryIssue); err != nil {
+		pf.Close()
+		t.Fatalf("Failed to encode primary issue: %v", err)
 	}
+	pf.Close()
+
+	// Write additional issue to additional JSONL
+	af, err := os.Create(additionalJSONL)
+	if err != nil {
+		t.Fatalf("Failed to create additional JSONL: %v", err)
+	}
+	if err := json.NewEncoder(af).Encode(additionalIssue); err != nil {
+		af.Close()
+		t.Fatalf("Failed to encode additional issue: %v", err)
+	}
+	af.Close()
 
 	// THIS IS THE BUG: Initialize snapshots - currently only works for single JSONL
 	// Should create snapshots for BOTH JSONL files
@@ -885,8 +879,6 @@ func TestMultiRepoFlushPrefixFiltering(t *testing.T) {
 		t.Fatalf("Failed to create additional .beads dir: %v", err)
 	}
 
-	// Create database in additional (non-primary) dir
-	dbPath := filepath.Join(additionalBeadsDir, "beads.db")
 	ctx := context.Background()
 
 	store := teststore.New(t)

@@ -1777,27 +1777,27 @@ func TestInitWithRedirectToExistingDatabase(t *testing.T) {
 	defer os.Chdir(origWd)
 
 	// Call checkExistingBeadsData directly - should return error
-	err = checkExistingBeadsData("new-prefix")
-	if err == nil {
+	checkErr := checkExistingBeadsData("new-prefix")
+	if checkErr == nil {
 		t.Fatal("Expected checkExistingBeadsData to return error when redirect target already has database")
 	}
 
-	errorMsg := err.Error()
+	errorMsg := checkErr.Error()
 	if !strings.Contains(errorMsg, "redirect target already has database") {
 		t.Errorf("Expected error about redirect target having database, got: %s", errorMsg)
 	}
 
 	// Verify canonical database was NOT modified
-	store, err = openExistingTestDB(t, canonicalDBPath)
-	if err != nil {
-		t.Fatalf("Failed to reopen canonical database: %v", err)
+	store2, err2 := openExistingTestDB(t, canonicalDBPath)
+	if err2 != nil {
+		t.Fatalf("Failed to reopen canonical database: %v", err2)
 	}
-	defer store.Close()
+	defer store2.Close()
 
 	ctx := context.Background()
-	prefix, err := store.GetConfig(ctx, "issue_prefix")
-	if err != nil {
-		t.Fatalf("Failed to get prefix from canonical database: %v", err)
+	prefix, err2 := store2.GetConfig(ctx, "issue_prefix")
+	if err2 != nil {
+		t.Fatalf("Failed to get prefix from canonical database: %v", err2)
 	}
 	if prefix != "existing" {
 		t.Errorf("Canonical database prefix should still be 'existing', got %q (was overwritten!)", prefix)
@@ -1849,7 +1849,7 @@ func TestCheckExistingBeadsData_WithBEADS_DIR(t *testing.T) {
 		// Create CWD with existing database (should be ignored)
 		cwdBeadsDir := filepath.Join(tmpDir, "cwd", ".beads")
 		os.MkdirAll(cwdBeadsDir, 0755)
-		cwdDBPath := filepath.Join(cwdBeadsDir, beads.CanonicalDatabaseName)
+		_ = filepath.Join(cwdBeadsDir, beads.CanonicalDatabaseName)
 		store := teststore.New(t)
 		store.Close()
 
@@ -1867,7 +1867,7 @@ func TestCheckExistingBeadsData_WithBEADS_DIR(t *testing.T) {
 		defer os.Chdir(origWd)
 
 		// Should succeed because BEADS_DIR has no database (CWD ignored)
-		err = checkExistingBeadsData("test")
+		err := checkExistingBeadsData("test")
 		if err != nil {
 			t.Errorf("Expected no error when BEADS_DIR has no database (CWD should be ignored), got: %v", err)
 		}
@@ -1879,7 +1879,7 @@ func TestCheckExistingBeadsData_WithBEADS_DIR(t *testing.T) {
 		// Create BEADS_DIR with existing database
 		beadsDirPath := filepath.Join(tmpDir, "external", ".beads")
 		os.MkdirAll(beadsDirPath, 0755)
-		dbPath := filepath.Join(beadsDirPath, beads.CanonicalDatabaseName)
+		_ = filepath.Join(beadsDirPath, beads.CanonicalDatabaseName)
 		store := teststore.New(t)
 		store.Close()
 
@@ -1887,7 +1887,7 @@ func TestCheckExistingBeadsData_WithBEADS_DIR(t *testing.T) {
 		beads.ResetCaches()
 
 		// Should error because BEADS_DIR already has database
-		err = checkExistingBeadsData("test")
+		err := checkExistingBeadsData("test")
 		if err == nil {
 			t.Error("Expected error when BEADS_DIR already has database")
 		}

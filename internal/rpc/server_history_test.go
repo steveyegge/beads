@@ -8,16 +8,7 @@ import (
 // TestHistoryIssue_NonVersionedBackend verifies that history_issue returns a clear error
 // when the storage backend doesn't support versioned operations (e.g., SQLite).
 func TestHistoryIssue_NonVersionedBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	result, err := client.HistoryIssue(&HistoryIssueArgs{IssueID: "bd-test"})
-	if err == nil && result != nil {
-		t.Fatal("Expected error for non-versioned backend, got success")
-	}
-	if err != nil && !containsStr(err.Error(), "versioned storage not available") {
-		t.Errorf("Expected 'versioned storage not available' error, got: %v", err)
-	}
+	t.Skip("Dolt is now the sole backend — non-versioned path no longer exists")
 }
 
 // TestHistoryIssue_MissingIssueID verifies validation.
@@ -37,16 +28,7 @@ func TestHistoryIssue_MissingIssueID(t *testing.T) {
 // TestHistoryDiff_NonVersionedBackend verifies that history_diff returns a clear error
 // when the storage backend doesn't support versioned operations.
 func TestHistoryDiff_NonVersionedBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.HistoryDiff(&HistoryDiffArgs{FromRef: "abc123", ToRef: "def456"})
-	if err == nil {
-		t.Fatal("Expected error for non-versioned backend, got success")
-	}
-	if !containsStr(err.Error(), "versioned storage not available") {
-		t.Errorf("Expected 'versioned storage not available' error, got: %v", err)
-	}
+	t.Skip("Dolt is now the sole backend — non-versioned path no longer exists")
 }
 
 // TestHistoryDiff_MissingRefs verifies validation.
@@ -65,20 +47,7 @@ func TestHistoryDiff_MissingRefs(t *testing.T) {
 
 // TestHistoryIssueDiff_NonVersionedBackend verifies that history_issue_diff returns a clear error.
 func TestHistoryIssueDiff_NonVersionedBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.HistoryIssueDiff(&HistoryIssueDiffArgs{
-		IssueID: "bd-test",
-		FromRef: "abc123",
-		ToRef:   "def456",
-	})
-	if err == nil {
-		t.Fatal("Expected error for non-versioned backend, got success")
-	}
-	if !containsStr(err.Error(), "versioned storage not available") {
-		t.Errorf("Expected 'versioned storage not available' error, got: %v", err)
-	}
+	t.Skip("Dolt is now the sole backend — non-versioned path no longer exists")
 }
 
 // TestHistoryIssueDiff_MissingArgs verifies validation.
@@ -97,33 +66,12 @@ func TestHistoryIssueDiff_MissingArgs(t *testing.T) {
 
 // TestHistoryConflicts_NonVersionedBackend verifies that history_conflicts returns a clear error.
 func TestHistoryConflicts_NonVersionedBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.HistoryConflicts(&HistoryConflictsArgs{})
-	if err == nil {
-		t.Fatal("Expected error for non-versioned backend, got success")
-	}
-	if !containsStr(err.Error(), "versioned storage not available") {
-		t.Errorf("Expected 'versioned storage not available' error, got: %v", err)
-	}
+	t.Skip("Dolt is now the sole backend — non-versioned path no longer exists")
 }
 
 // TestHistoryResolveConflicts_NonVersionedBackend verifies that history_resolve_conflicts returns a clear error.
 func TestHistoryResolveConflicts_NonVersionedBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.HistoryResolveConflicts(&HistoryResolveConflictsArgs{
-		Table:    "issues",
-		Strategy: "ours",
-	})
-	if err == nil {
-		t.Fatal("Expected error for non-versioned backend, got success")
-	}
-	if !containsStr(err.Error(), "versioned storage not available") {
-		t.Errorf("Expected 'versioned storage not available' error, got: %v", err)
-	}
+	t.Skip("Dolt is now the sole backend — non-versioned path no longer exists")
 }
 
 // TestHistoryResolveConflicts_InvalidStrategy verifies validation.
@@ -161,16 +109,7 @@ func TestHistoryResolveConflicts_MissingTable(t *testing.T) {
 
 // TestVersionedDiff_NonVersionedBackend verifies that versioned_diff returns a clear error.
 func TestVersionedDiff_NonVersionedBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.VersionedDiff(&VersionedDiffArgs{FromRef: "abc123", ToRef: "def456"})
-	if err == nil {
-		t.Fatal("Expected error for non-versioned backend, got success")
-	}
-	if !containsStr(err.Error(), "versioned storage not available") {
-		t.Errorf("Expected 'versioned storage not available' error, got: %v", err)
-	}
+	t.Skip("Dolt is now the sole backend — non-versioned path no longer exists")
 }
 
 // TestVersionedDiff_MissingRefs verifies validation.

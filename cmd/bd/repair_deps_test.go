@@ -75,8 +75,8 @@ func TestRepairDeps_NoOrphans(t *testing.T) {
 
 func TestRepairDeps_FindOrphans(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".beads", "beads.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,7 +102,7 @@ func TestRepairDeps_FindOrphans(t *testing.T) {
 	t.Logf("Created i2: %s", i2.ID)
 
 	// Add dependency
-	err = store.AddDependency(ctx, &types.Dependency{
+	err := store.AddDependency(ctx, &types.Dependency{
 		IssueID:     i2.ID,
 		DependsOnID: i1.ID,
 		Type:        types.DepBlocks,
@@ -188,8 +188,8 @@ func TestRepairDeps_FindOrphans(t *testing.T) {
 
 func TestRepairDeps_FixOrphans(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".beads", "beads.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -224,12 +224,12 @@ func TestRepairDeps_FixOrphans(t *testing.T) {
 	// Manually create orphaned dependencies by inserting invalid references
 	db := store.UnderlyingDB()
 	db.Exec("PRAGMA foreign_keys = OFF")
-	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
+	_, err := db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
 		VALUES (?, 'nonexistent-123', 'blocks', datetime('now'), 'test')`, i2.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
+	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
 		VALUES (?, 'nonexistent-456', 'blocks', datetime('now'), 'test')`, i3.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -299,8 +299,8 @@ func TestRepairDeps_FixOrphans(t *testing.T) {
 
 func TestRepairDeps_MultipleTypes(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".beads", "beads.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -335,12 +335,12 @@ func TestRepairDeps_MultipleTypes(t *testing.T) {
 	// Manually create orphaned dependencies with different types
 	db := store.UnderlyingDB()
 	db.Exec("PRAGMA foreign_keys = OFF")
-	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
+	_, err := db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
 		VALUES (?, 'nonexistent-blocks', 'blocks', datetime('now'), 'test')`, i2.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
+	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
 		VALUES (?, 'nonexistent-related', 'related', datetime('now'), 'test')`, i3.ID)
 	if err != nil {
 		t.Fatal(err)

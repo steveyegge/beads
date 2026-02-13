@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -22,12 +21,7 @@ func setupGatedTestDB(t *testing.T) (storage.Storage, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	testDB := filepath.Join(tmpDir, "test.db")
 	store := teststore.New(t)
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("Failed to create test database: %v", err)
-	}
 
 	// Set issue_prefix (required for beads)
 	ctx := context.Background()

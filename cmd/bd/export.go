@@ -169,8 +169,10 @@ Examples:
 		// Export command requires direct database access for consistent snapshot.
 		// Close daemon connection and open direct connection.
 		debug.Logf("Debug: export command forcing direct mode (closes daemon connection)\n")
-		_ = daemonClient.Close()
-		daemonClient = nil
+		if daemonClient != nil {
+			_ = daemonClient.Close()
+			daemonClient = nil
+		}
 
 		// Note: We used to check database file timestamps here, but WAL files
 		// get created when opening the DB, making timestamp checks unreliable.

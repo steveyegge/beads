@@ -98,7 +98,6 @@ func TestContributorRoutingTracer(t *testing.T) {
 		}
 
 		// Initialize project database
-		projectDBPath := filepath.Join(projectBeadsDir, "beads.db")
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -149,7 +148,6 @@ func TestContributorRoutingTracer(t *testing.T) {
 		}
 
 		// Initialize planning database and verify we can create issues there
-		planningDBPath := filepath.Join(planningBeadsDir, "beads.db")
 		planningStore := teststore.New(t)
 		defer planningStore.Close()
 
@@ -196,8 +194,6 @@ func TestBackwardCompatContributorConfig(t *testing.T) {
 		t.Fatalf("failed to create .beads dir: %v", err)
 	}
 
-	// Initialize database
-	dbPath := filepath.Join(beadsDir, "beads.db")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -301,11 +297,7 @@ func (env *contributorRoutingEnv) cleanup() {
 // initProjectStore initializes the project store with routing config
 func (env *contributorRoutingEnv) initProjectStore(syncMode string) storage.Storage {
 	env.t.Helper()
-	projectDBPath := filepath.Join(env.projectDir, ".beads", "beads.db")
-	store := teststore.New(t)
-	if err != nil {
-		env.t.Fatalf("failed to create project store: %v", err)
-	}
+	store := teststore.New(env.t)
 
 	// Set routing config
 	if err := store.SetConfig(env.ctx, "routing.mode", "auto"); err != nil {
@@ -342,11 +334,7 @@ func (env *contributorRoutingEnv) initProjectStore(syncMode string) storage.Stor
 // initPlanningStore initializes the planning store
 func (env *contributorRoutingEnv) initPlanningStore() storage.Storage {
 	env.t.Helper()
-	planningDBPath := filepath.Join(env.planningDir, ".beads", "beads.db")
-	store := teststore.New(t)
-	if err != nil {
-		env.t.Fatalf("failed to create planning store: %v", err)
-	}
+	store := teststore.New(env.t)
 
 	if err := store.SetConfig(env.ctx, "issue_prefix", "plan-"); err != nil {
 		env.t.Fatalf("failed to set issue_prefix in planning store: %v", err)
@@ -655,7 +643,6 @@ func TestExplicitRepoOverride(t *testing.T) {
 		t.Fatalf("failed to create override .beads dir: %v", err)
 	}
 
-	overrideDBPath := filepath.Join(overrideBeadsDir, "beads.db")
 	overrideStore := teststore.New(t)
 	defer overrideStore.Close()
 
@@ -727,7 +714,6 @@ func TestBEADS_DIRPrecedence(t *testing.T) {
 		t.Fatalf("failed to create external .beads dir: %v", err)
 	}
 
-	externalDBPath := filepath.Join(externalBeadsDir, "beads.db")
 	externalStore := teststore.New(t)
 	defer externalStore.Close()
 

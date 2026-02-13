@@ -450,7 +450,6 @@ func TestHashBasedStalenessDetection_bd_f2f(t *testing.T) {
 		t.Fatalf("failed to create beads dir: %v", err)
 	}
 
-	testDBPath := filepath.Join(beadsDir, "beads.db")
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create store
@@ -771,7 +770,6 @@ func TestConcurrentEdit(t *testing.T) {
 	}
 
 	// Create database and import base state
-	testDBPath := filepath.Join(beadsDir, "beads.db")
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
@@ -874,7 +872,6 @@ func TestConcurrentSyncBlocked(t *testing.T) {
 	}
 
 	// Create database
-	testDBPath := filepath.Join(beadsDir, "beads.db")
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
@@ -964,10 +961,8 @@ func TestHasUncommittedChanges_WithStatusChecker(t *testing.T) {
 // when the store doesn't implement StatusChecker (falls back to GetDirtyIssues).
 func TestHasUncommittedChanges_FallbackToGetDirtyIssues(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
 
-	// Create a SQLite store that doesn't implement StatusChecker
-	dbPath := filepath.Join(tmpDir, "test.db")
+	// Create a test store
 	testStore := teststore.New(t)
 	defer testStore.Close()
 

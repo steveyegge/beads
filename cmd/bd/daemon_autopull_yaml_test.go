@@ -40,12 +40,11 @@ issue-prefix: test
 	}
 
 	// Create a database WITHOUT sync.branch in the config table
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	ctx := context.Background()
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
-	// Verify: sync.branch is NOT set in SQLite
+	// Verify: sync.branch is NOT set in store
+	ctx := context.Background()
 	dbSyncBranch, _ := testStore.GetConfig(ctx, "sync.branch")
 	if dbSyncBranch != "" {
 		t.Fatalf("Expected no sync.branch in database, got %q", dbSyncBranch)
@@ -85,8 +84,6 @@ func TestAutoPullDefaultFromEnvVar(t *testing.T) {
 	}
 
 	// Create database without sync.branch
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	ctx := context.Background()
 	testStore := teststore.New(t)
 	defer testStore.Close()
 

@@ -92,7 +92,7 @@ func TestEnsureWorktree(t *testing.T) {
 		}
 		runCmd(t, remoteDir, "git", "add", ".")
 		runCmd(t, remoteDir, "git", "commit", "-m", "add beads")
-		runCmd(t, remoteDir, "git", "checkout", "master")
+		runCmd(t, remoteDir, "git", "checkout", "main")
 
 		// Clone the "remote" to create our local repo
 		tmpDir := t.TempDir()
@@ -190,7 +190,7 @@ func TestEnsureWorktree(t *testing.T) {
 func setupGitRepo(t *testing.T, dir string) {
 	t.Helper()
 
-	runCmd(t, dir, "git", "init")
+	runCmd(t, dir, "git", "init", "-b", "main")
 	runCmd(t, dir, "git", "config", "user.email", "test@test.com")
 	runCmd(t, dir, "git", "config", "user.name", "Test User")
 
@@ -261,8 +261,8 @@ func TestFreshCloneScenario(t *testing.T) {
 	runCmd(t, remoteDir, "git", "add", ".")
 	runCmd(t, remoteDir, "git", "commit", "-m", "add current beads on beads-sync")
 
-	// Go back to master on remote
-	runCmd(t, remoteDir, "git", "checkout", "master")
+	// Go back to main on remote
+	runCmd(t, remoteDir, "git", "checkout", "main")
 
 	// Clone to simulate fresh clone (gets main branch)
 	tmpDir := t.TempDir()
@@ -271,7 +271,7 @@ func TestFreshCloneScenario(t *testing.T) {
 	runCmd(t, localDir, "git", "config", "user.email", "test@test.com")
 	runCmd(t, localDir, "git", "config", "user.name", "Test User")
 
-	// Verify we're on master with stale issues
+	// Verify we're on main with stale issues
 	mainIssues, _ := os.ReadFile(filepath.Join(localDir, ".beads", "issues.jsonl"))
 	if !contains(string(mainIssues), "STALE-001") {
 		t.Fatalf("Expected stale issues on main, got: %s", mainIssues)

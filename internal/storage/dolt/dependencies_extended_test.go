@@ -429,11 +429,10 @@ func TestDetectCycles_WithCycle(t *testing.T) {
 		}
 	}
 
-	// Create cycle
+	// Create first two dependencies (no cycle yet)
 	deps := []*types.Dependency{
 		{IssueID: issueA.ID, DependsOnID: issueB.ID, Type: types.DepBlocks},
 		{IssueID: issueB.ID, DependsOnID: issueC.ID, Type: types.DepBlocks},
-		{IssueID: issueC.ID, DependsOnID: issueA.ID, Type: types.DepBlocks}, // Creates cycle
 	}
 	for _, d := range deps {
 		if err := store.AddDependency(ctx, d, "tester"); err != nil {
@@ -441,13 +440,20 @@ func TestDetectCycles_WithCycle(t *testing.T) {
 		}
 	}
 
+	// Third dependency would create a cycle — should be rejected
+	cycleDep := &types.Dependency{IssueID: issueC.ID, DependsOnID: issueA.ID, Type: types.DepBlocks}
+	if err := store.AddDependency(ctx, cycleDep, "tester"); err == nil {
+		t.Fatal("expected AddDependency to reject cycle-creating dependency")
+	}
+
+	// Since cycle was prevented, DetectCycles should find none
 	cycles, err := store.DetectCycles(ctx)
 	if err != nil {
 		t.Fatalf("DetectCycles failed: %v", err)
 	}
 
-	if len(cycles) == 0 {
-		t.Error("expected to find a cycle")
+	if len(cycles) != 0 {
+		t.Errorf("expected no cycles (cycle was prevented at AddDependency), got %d", len(cycles))
 	}
 }
 
