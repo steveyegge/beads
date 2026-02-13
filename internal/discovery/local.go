@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,6 @@ func (l *LocalSource) Discover(ctx context.Context) ([]*types.Resource, error) {
 	}
 
 	for _, path := range l.Paths {
-		// Resolve relative paths
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(cwd, path)
 		}
@@ -51,20 +51,17 @@ func (l *LocalSource) Discover(ctx context.Context) ([]*types.Resource, error) {
 				return nil
 			}
 
-			// Only look for .yaml or .json files
 			ext := strings.ToLower(filepath.Ext(path))
 			if ext != ".yaml" && ext != ".yml" && ext != ".json" {
 				return nil
 			}
 
-			// Try to parse as a resource
 			res, err := parseResourceFile(path)
 			if err != nil {
-				// Log warning but continue? For now, skip files that don't match expected schema
 				return nil
 			}
 
-			resources = append(resources, res)
+			resources = append(resources, res...)
 			return nil
 		})
 		if err != nil {
@@ -75,58 +72,67 @@ func (l *LocalSource) Discover(ctx context.Context) ([]*types.Resource, error) {
 	return resources, nil
 }
 
-// parseResourceFile parses a single resource file
-// Expects YAML/JSON with: name, type, identifier, tags, etc.
-func parseResourceFile(path string) (*types.Resource, error) {
+// parseResourceFile parses a resource file which may contain multiple YAML documents
+func parseResourceFile(path string) ([]*types.Resource, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	var raw struct {
-		Name       string   `yaml:"name" json:"name"`
-		Type       string   `yaml:"type" json:"type"`
-		Identifier string   `yaml:"identifier" json:"identifier"`
-		Tags       []string `yaml:"tags" json:"tags"`
-		// Capture remaining fields as config JSON
-		Config map[string]interface{} `yaml:",inline" json:"-"`
+	var resources []*types.Resource
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+
+	for {
+		var raw struct {
+			Name       string                 `yaml:"name" json:"name"`
+			Type       string                 `yaml:"type" json:"type"`
+			Identifier string                 `yaml:"identifier" json:"identifier"`
+			Tags       []string               `yaml:"tags" json:"tags"`
+			Config     map[string]interface{} `yaml:",inline" json:"-"`
+		}
+
+		err := decoder.Decode(&raw)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if raw.Name == "" || raw.Type == "" || raw.Identifier == "" {
+			continue
+		}
+
+		var fullMap map[string]interface{}
+		if err := yaml.Unmarshal(data, &fullMap); err != nil {
+			return nil, err
+		}
+		delete(fullMap, "name")
+		delete(fullMap, "type")
+		delete(fullMap, "identifier")
+		delete(fullMap, "tags")
+
+		configJSON, err := json.Marshal(fullMap)
+		if err != nil {
+			return nil, err
+		}
+
+		resources = append(resources, &types.Resource{
+			Name:       raw.Name,
+			Type:       raw.Type,
+			Identifier: raw.Identifier,
+			Source:     types.ResourceSourceLocal,
+			Config:     string(configJSON),
+			IsActive:   true,
+			Tags:       raw.Tags,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+		})
 	}
 
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, err
+	if len(resources) == 0 {
+		return nil, fmt.Errorf("no valid resources found")
 	}
 
-	// Basic validation
-	if raw.Name == "" || raw.Type == "" || raw.Identifier == "" {
-		return nil, fmt.Errorf("missing required fields")
-	}
-
-	// Serialize config to JSON
-	// We need to re-parse into map to get everything, or use a struct that captures "everything else"
-	// Simpler approach: unmarshal into map, remove known fields, marshal rest
-	var fullMap map[string]interface{}
-	if err := yaml.Unmarshal(data, &fullMap); err != nil {
-		return nil, err
-	}
-	delete(fullMap, "name")
-	delete(fullMap, "type")
-	delete(fullMap, "identifier")
-	delete(fullMap, "tags")
-
-	configJSON, err := json.Marshal(fullMap)
-	if err != nil {
-		return nil, err
-	}
-
-	return &types.Resource{
-		Name:       raw.Name,
-		Type:       raw.Type,
-		Identifier: raw.Identifier,
-		Source:     types.ResourceSourceLocal,
-		Config:     string(configJSON),
-		IsActive:   true,
-		Tags:       raw.Tags,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-	}, nil
+	return resources, nil
 }

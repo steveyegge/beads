@@ -33,7 +33,6 @@ type ResourceSource interface {
 
 // DiscoverResources scans configured sources and returns found resources
 func DiscoverResources(ctx context.Context) ([]*types.Resource, error) {
-	// Parse resources configuration
 	var sourcesCfg []SourceConfig
 	if err := config.UnmarshalKey("resources.sources", &sourcesCfg); err != nil {
 		return nil, fmt.Errorf("failed to parse resource sources: %w", err)
@@ -48,7 +47,9 @@ func DiscoverResources(ctx context.Context) ([]*types.Resource, error) {
 		case SourceTypeLocal:
 			source = NewLocalSource(src.Paths)
 		case SourceTypeLinear:
-			source = NewLinearSource()
+			apiKey := os.Getenv("LINEAR_API_KEY")
+			teamID := config.GetString("linear.team_id")
+			source = NewLinearSource(apiKey, teamID)
 		default:
 			fmt.Fprintf(os.Stderr, "Warning: unknown resource source type: %s\n", src.Type)
 			continue

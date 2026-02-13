@@ -77,11 +77,11 @@ const issuesQuery = `
 					}
 				}
 				project {
-				id
-				name
-				slugId
-			}
-			parent {
+					id
+					name
+					slugId
+				}
+				parent {
 					id
 					identifier
 				}

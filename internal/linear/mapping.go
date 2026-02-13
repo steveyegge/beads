@@ -16,6 +16,26 @@ type IDGenerationOptions struct {
 	UsedIDs    map[string]bool // Pre-populated set to avoid collisions (e.g., DB IDs)
 }
 
+// StatusToProjectState maps beads status to Linear project state.
+// Linear project states: planned, started, paused, completed, canceled
+func StatusToProjectState(status types.Status, closedAt *time.Time) string {
+	switch status {
+	case types.StatusOpen:
+		return "planned"
+	case types.StatusInProgress:
+		return "started"
+	case types.StatusBlocked:
+		return "paused"
+	case types.StatusClosed:
+		if closedAt != nil {
+			return "completed"
+		}
+		return "canceled"
+	default:
+		return "planned"
+	}
+}
+
 // BuildLinearDescription formats a Beads issue for Linear's description field.
 // This mirrors the payload used during push to keep hash comparisons consistent.
 func BuildLinearDescription(issue *types.Issue) string {

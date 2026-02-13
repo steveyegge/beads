@@ -381,19 +381,7 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 			continue
 		}
 
-		projectState := "planned" // default
-		switch issue.Status {
-		case types.StatusInProgress:
-			projectState = "started"
-		case types.StatusBlocked:
-			projectState = "paused"
-		case types.StatusClosed:
-			if issue.ClosedAt != nil {
-				projectState = "completed"
-			} else {
-				projectState = "canceled"
-			}
-		}
+		projectState := linear.StatusToProjectState(issue.Status, issue.ClosedAt)
 
 		proj, err := client.CreateProject(ctx, issue.Title, issue.Description, projectState)
 		if err != nil {
@@ -460,23 +448,7 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 				"description": issue.Description,
 			}
 
-			// Map State
-			var projectState string
-			switch issue.Status {
-			case types.StatusOpen:
-				projectState = "planned"
-			case types.StatusInProgress:
-				projectState = "started"
-			case types.StatusBlocked:
-				projectState = "paused"
-			case types.StatusClosed:
-				if issue.ClosedAt != nil {
-					projectState = "completed"
-				} else {
-					projectState = "canceled"
-				}
-			}
-			projectUpdates["state"] = projectState
+			projectUpdates["state"] = linear.StatusToProjectState(issue.Status, issue.ClosedAt)
 
 			// We should check if update is needed (timestamps/hash), but for now force update
 			// as hash logic for projects isn't fully robust yet.

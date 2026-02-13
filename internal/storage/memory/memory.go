@@ -31,6 +31,10 @@ type MemoryStorage struct {
 	metadata     map[string]string              // Metadata key-value pairs
 	counters     map[string]int                 // Prefix -> Last ID
 
+	// Resources
+	resources     map[string]*types.Resource // Identifier -> Resource
+	resourceOrder []string                   // Order of insertion for iteration
+
 	// Indexes for O(1) lookups
 	externalRefToID map[string]string // ExternalRef -> IssueID
 
@@ -49,6 +53,8 @@ func New(jsonlPath string) *MemoryStorage {
 		config:          make(map[string]string),
 		metadata:        make(map[string]string),
 		counters:        make(map[string]int),
+		resources:       make(map[string]*types.Resource),
+		resourceOrder:   []string{},
 		externalRefToID: make(map[string]string),
 		jsonlPath:       jsonlPath,
 	}

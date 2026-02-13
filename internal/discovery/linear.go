@@ -4,29 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 const (
 	SourceTypeLinear = "linear"
-	linearGraphQLEndpoint = "https://api.linear.app/graphql"
 )
 
 // LinearSource discovers labels from Linear and exposes them as skill resources
 type LinearSource struct {
-	APIKey string
+	Client *linear.Client
 }
 
 // NewLinearSource creates a new LinearSource
-func NewLinearSource() *LinearSource {
-	apiKey := os.Getenv("LINEAR_API_KEY")
-	return &LinearSource{APIKey: apiKey}
+func NewLinearSource(apiKey, teamID string) *LinearSource {
+	if apiKey == "" {
+		apiKey = os.Getenv("LINEAR_API_KEY")
+	}
+	if apiKey == "" {
+		return &LinearSource{Client: nil}
+	}
+	return &LinearSource{Client: linear.NewClient(apiKey, teamID)}
 }
 
 // Name returns the source name
@@ -36,8 +38,7 @@ func (l *LinearSource) Name() string {
 
 // Discover fetches labels from Linear
 func (l *LinearSource) Discover(ctx context.Context) ([]*types.Resource, error) {
-	if l.APIKey == "" {
-		// Log warning but don't fail, just return empty
+	if l.Client == nil {
 		fmt.Fprintf(os.Stderr, "Warning: LINEAR_API_KEY not set, skipping Linear discovery\n")
 		return []*types.Resource{}, nil
 	}
@@ -80,20 +81,6 @@ type linearLabel struct {
 	Description string `json:"description"`
 }
 
-type linearResponse struct {
-	Data struct {
-		WorkflowStates struct {
-			Nodes []linearLabel `json:"nodes"`
-		} `json:"workflowStates"`
-		Labels struct {
-			Nodes []linearLabel `json:"nodes"`
-		} `json:"issueLabels"`
-	} `json:"data"`
-	Errors []struct {
-		Message string `json:"message"`
-	} `json:"errors"`
-}
-
 func (l *LinearSource) fetchLabels(ctx context.Context) ([]linearLabel, error) {
 	query := `query {
 		issueLabels {
@@ -106,41 +93,23 @@ func (l *LinearSource) fetchLabels(ctx context.Context) ([]linearLabel, error) {
 		}
 	}`
 
-	reqBody := map[string]string{"query": query}
-	jsonBody, _ := json.Marshal(reqBody)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", linearGraphQLEndpoint, strings.NewReader(string(jsonBody)))
+	req := &linear.GraphQLRequest{Query: query}
+	result, err := l.Client.Execute(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", l.APIKey)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("linear api returned status: %d", resp.StatusCode)
+	var response struct {
+		Data struct {
+			Labels struct {
+				Nodes []linearLabel `json:"nodes"`
+			} `json:"issueLabels"`
+		}
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+	if err := json.Unmarshal(result, &response); err != nil {
 		return nil, err
 	}
 
-	var result linearResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
-	}
-
-	if len(result.Errors) > 0 {
-		return nil, fmt.Errorf("linear api error: %s", result.Errors[0].Message)
-	}
-
-	return result.Data.Labels.Nodes, nil
+	return response.Data.Labels.Nodes, nil
 }

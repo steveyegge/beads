@@ -19,26 +19,25 @@ func (s *DoltStore) GetResources(ctx context.Context, filter types.ResourceFilte
 
 	query := `
 		SELECT r.id, r.type_id, r.name, r.identifier, r.source, r.external_id, 
-		       r.config_json, r.is_active, r.created_at, r.updated_at
+		       r.config_json, r.is_active, r.created_at, r.updated_at,
+		       GROUP_CONCAT(rt.tag) as tags
 		FROM resources r
-		JOIN resource_types rt ON r.type_id = rt.id
+		JOIN resource_types rt_type ON r.type_id = rt_type.id
+		LEFT JOIN resource_tags rt ON r.id = rt.resource_id
 		WHERE r.is_active = TRUE
 	`
 	args := []interface{}{}
 
-	// Add type filter if provided
 	if filter.Type != nil {
-		query += " AND rt.name = ?"
+		query += " AND rt_type.name = ?"
 		args = append(args, *filter.Type)
 	}
 
-	// Add source filter if provided
 	if filter.Source != nil {
 		query += " AND r.source = ?"
 		args = append(args, *filter.Source)
 	}
 
-	// Add tag filters if provided (AND semantics - must have ALL tags)
 	if len(filter.Tags) > 0 {
 		for _, tag := range filter.Tags {
 			query += ` AND EXISTS (
@@ -49,7 +48,7 @@ func (s *DoltStore) GetResources(ctx context.Context, filter types.ResourceFilte
 		}
 	}
 
-	query += " ORDER BY r.identifier"
+	query += " GROUP BY r.id ORDER BY r.identifier"
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -59,18 +58,10 @@ func (s *DoltStore) GetResources(ctx context.Context, filter types.ResourceFilte
 
 	var resources []*types.Resource
 	for rows.Next() {
-		resource, err := scanResource(rows)
+		resource, err := scanResourceWithTags(rows)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan resource: %w", err)
 		}
-
-		// Fetch tags for this resource
-		tags, err := s.GetResourceTags(ctx, resource.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get tags for resource %d: %w", resource.ID, err)
-		}
-		resource.Tags = tags
-
 		resources = append(resources, resource)
 	}
 
@@ -364,6 +355,57 @@ func scanResource(scanner interface {
 	return &resource, nil
 }
 
+func scanResourceWithTags(rows *sql.Rows) (*types.Resource, error) {
+	var resource types.Resource
+	var typeID int64
+	var externalID, configJSON, tagsStr sql.NullString
+	var createdAtStr, updatedAtStr string
+
+	err := rows.Scan(
+		&resource.ID,
+		&typeID,
+		&resource.Name,
+		&resource.Identifier,
+		&resource.Source,
+		&externalID,
+		&configJSON,
+		&resource.IsActive,
+		&createdAtStr,
+		&updatedAtStr,
+		&tagsStr,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	switch typeID {
+	case 1:
+		resource.Type = types.ResourceTypeModel
+	case 2:
+		resource.Type = types.ResourceTypeAgent
+	case 3:
+		resource.Type = types.ResourceTypeSkill
+	default:
+		return nil, fmt.Errorf("unknown resource type_id: %d", typeID)
+	}
+
+	if externalID.Valid {
+		resource.ExternalID = externalID.String
+	}
+	if configJSON.Valid {
+		resource.Config = configJSON.String
+	}
+
+	resource.CreatedAt = parseResourceTimeString(createdAtStr)
+	resource.UpdatedAt = parseResourceTimeString(updatedAtStr)
+
+	if tagsStr.Valid && tagsStr.String != "" {
+		resource.Tags = strings.Split(tagsStr.String, ",")
+	}
+
+	return &resource, nil
+}
+
 // insertResourceTag inserts a tag for a resource (idempotent)
 func insertResourceTag(ctx context.Context, tx *sql.Tx, resourceID int64, tag string) error {
 	_, err := tx.ExecContext(ctx, `
@@ -505,38 +547,129 @@ func (s *DoltStore) SyncResources(ctx context.Context, source string, resources 
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Track identifiers we've seen
+	typeIDMap := make(map[string]int64)
+	rows, err := tx.QueryContext(ctx, "SELECT id, name FROM resource_types")
+	if err != nil {
+		return fmt.Errorf("failed to query resource types: %w", err)
+	}
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan resource type: %w", err)
+		}
+		typeIDMap[name] = id
+	}
+	rows.Close()
+
 	seenIdentifiers := make(map[string]bool)
 
 	for _, resource := range resources {
 		seenIdentifiers[resource.Identifier] = true
-		if err := s.SaveResource(ctx, resource); err != nil {
-			return fmt.Errorf("failed to save resource %s: %w", resource.Identifier, err)
+
+		typeID, ok := typeIDMap[resource.Type]
+		if !ok {
+			return fmt.Errorf("unknown resource type: %s", resource.Type)
+		}
+
+		var existingID int64
+		err := tx.QueryRowContext(ctx, "SELECT id FROM resources WHERE identifier = ?", resource.Identifier).Scan(&existingID)
+		if err == sql.ErrNoRows {
+			now := time.Now().UTC()
+			if resource.CreatedAt.IsZero() {
+				resource.CreatedAt = now
+			}
+			if resource.UpdatedAt.IsZero() {
+				resource.UpdatedAt = now
+			}
+
+			result, err := tx.ExecContext(ctx, `
+				INSERT INTO resources (type_id, name, identifier, source, external_id, config_json, is_active, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`, typeID, resource.Name, resource.Identifier, resource.Source, nullString(resource.ExternalID), nullString(resource.Config), resource.IsActive, resource.CreatedAt, resource.UpdatedAt)
+			if err != nil {
+				return fmt.Errorf("failed to insert resource %s: %w", resource.Identifier, err)
+			}
+			existingID, err = result.LastInsertId()
+			if err != nil {
+				return fmt.Errorf("failed to get last insert ID: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("failed to check existing resource: %w", err)
+		} else {
+			now := time.Now().UTC()
+			_, err := tx.ExecContext(ctx, `
+				UPDATE resources SET name = ?, source = ?, external_id = ?, config_json = ?, is_active = ?, updated_at = ?
+				WHERE id = ?
+			`, resource.Name, resource.Source, nullString(resource.ExternalID), nullString(resource.Config), resource.IsActive, now, existingID)
+			if err != nil {
+				return fmt.Errorf("failed to update resource %s: %w", resource.Identifier, err)
+			}
+		}
+
+		existingTags := make(map[string]bool)
+		tagRows, err := tx.QueryContext(ctx, "SELECT tag FROM resource_tags WHERE resource_id = ?", existingID)
+		if err != nil {
+			return fmt.Errorf("failed to query existing tags: %w", err)
+		}
+		for tagRows.Next() {
+			var tag string
+			if err := tagRows.Scan(&tag); err != nil {
+				tagRows.Close()
+				return fmt.Errorf("failed to scan tag: %w", err)
+			}
+			existingTags[tag] = true
+		}
+		tagRows.Close()
+
+		for _, tag := range resource.Tags {
+			if !existingTags[tag] {
+				_, err := tx.ExecContext(ctx, `
+					INSERT INTO resource_tags (resource_id, tag)
+					VALUES (?, ?)
+					ON DUPLICATE KEY UPDATE resource_id = resource_id
+				`, existingID, tag)
+				if err != nil {
+					return fmt.Errorf("failed to insert tag %s: %w", tag, err)
+				}
+			}
+		}
+
+		newTagSet := make(map[string]bool)
+		for _, tag := range resource.Tags {
+			newTagSet[tag] = true
+		}
+		for tag := range existingTags {
+			if !newTagSet[tag] {
+				_, err := tx.ExecContext(ctx, "DELETE FROM resource_tags WHERE resource_id = ? AND tag = ?", existingID, tag)
+				if err != nil {
+					return fmt.Errorf("failed to remove tag %s: %w", tag, err)
+				}
+			}
 		}
 	}
 
-	// Deactivate resources from this source that weren't in the sync batch
-	rows, err := tx.QueryContext(ctx, `
+	depRows, err := tx.QueryContext(ctx, `
 		SELECT identifier FROM resources WHERE source = ? AND is_active = TRUE
 	`, source)
 	if err != nil {
 		return fmt.Errorf("failed to query existing resources: %w", err)
 	}
-	defer rows.Close()
+	defer depRows.Close()
 
 	var toDeactivate []string
-	for rows.Next() {
+	for depRows.Next() {
 		var identifier string
-		if err := rows.Scan(&identifier); err != nil {
+		if err := depRows.Scan(&identifier); err != nil {
 			return fmt.Errorf("failed to scan identifier: %w", err)
 		}
 		if !seenIdentifiers[identifier] {
 			toDeactivate = append(toDeactivate, identifier)
 		}
 	}
-	rows.Close()
+	depRows.Close()
 
-	// Deactivate missing resources
 	for _, identifier := range toDeactivate {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE resources SET is_active = FALSE, updated_at = ? WHERE identifier = ?
