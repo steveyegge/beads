@@ -66,6 +66,32 @@ func hooksInstalled() bool {
 	return true
 }
 
+// hooksNeedUpdate checks if installed bd hooks are outdated and need updating.
+// Returns true if any bd hook has a version different from the current CLI version.
+// Shim hooks are never outdated (they delegate to bd hooks run).
+// Inline hooks without version markers are always considered outdated.
+func hooksNeedUpdate() bool {
+	hooksDir, err := git.GetGitHooksDir()
+	if err != nil {
+		return false
+	}
+
+	hookNames := []string{"pre-commit", "post-merge"}
+	for _, name := range hookNames {
+		path := filepath.Join(hooksDir, name)
+		info, err := getHookVersion(path)
+		// Skip hooks we can't read, non-bd hooks, and shims (shims delegate to bd hooks run)
+		if err != nil || !info.IsBdHook || info.IsShim {
+			continue
+		}
+		// Outdated if version is missing (inline hooks) or differs from current
+		if info.Version != Version {
+			return true
+		}
+	}
+	return false
+}
+
 // hookInfo contains information about an existing hook
 type hookInfo struct {
 	name                 string
@@ -192,6 +218,7 @@ func buildPreCommitHook(chainHooks bool, existingHooks []hookInfo) string {
 		}
 
 		return `#!/bin/sh
+# bd-hooks-version: ` + Version + `
 #
 # bd (beads) pre-commit hook (chained)
 #
@@ -210,6 +237,7 @@ fi
 	}
 
 	return `#!/bin/sh
+# bd-hooks-version: ` + Version + `
 #
 # bd (beads) pre-commit hook
 #
@@ -250,6 +278,7 @@ func buildPostMergeHook(chainHooks bool, existingHooks []hookInfo) string {
 		}
 
 		return `#!/bin/sh
+# bd-hooks-version: ` + Version + `
 #
 # bd (beads) post-merge hook (chained)
 #
@@ -270,6 +299,7 @@ exit 0
 	}
 
 	return `#!/bin/sh
+# bd-hooks-version: ` + Version + `
 #
 # bd (beads) post-merge hook
 #
@@ -364,6 +394,7 @@ func buildJJPreCommitHook(chainHooks bool, existingHooks []hookInfo) string {
 		}
 
 		return `#!/bin/sh
+# bd-hooks-version: ` + Version + `
 #
 # bd (beads) pre-commit hook (chained, jujutsu mode)
 #
@@ -383,6 +414,7 @@ fi
 	}
 
 	return `#!/bin/sh
+# bd-hooks-version: ` + Version + `
 #
 # bd (beads) pre-commit hook (jujutsu mode)
 #

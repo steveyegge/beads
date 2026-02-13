@@ -526,7 +526,7 @@ environment variable.`,
 		// Install by default unless --skip-hooks is passed
 		// Hooks are installed to .beads/hooks/ (uses git config core.hooksPath)
 		// For jujutsu colocated repos, use simplified hooks (no staging needed)
-		if !skipHooks && !hooksInstalled() {
+		if !skipHooks && (!hooksInstalled() || hooksNeedUpdate()) {
 			isJJ := git.IsJujutsuRepo()
 			isColocated := git.IsColocatedJJGit()
 
