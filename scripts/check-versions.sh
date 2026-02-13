@@ -59,6 +59,10 @@ check_version "cmd/bd/templates/hooks/pre-commit" \
     "$(grep '# bd-hooks-version:' cmd/bd/templates/hooks/pre-commit 2>/dev/null | sed 's/.*: //')" \
     "Hook templates"
 
+check_version "helm/bd-daemon/Chart.yaml" \
+    "$(grep '^appVersion:' helm/bd-daemon/Chart.yaml 2>/dev/null | sed 's/.*"\(.*\)".*/\1/')" \
+    "Helm chart appVersion"
+
 echo ""
 
 if [ $MISMATCH -eq 1 ]; then

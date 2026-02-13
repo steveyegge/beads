@@ -86,9 +86,16 @@ update_file "npm-package/package.json" "\"version\": \"$CURRENT_VERSION\"" "\"ve
 echo "  • README.md"
 update_file "README.md" "Alpha (v$CURRENT_VERSION)" "Alpha (v$NEW_VERSION)"
 
-# 6. default.nix
-echo "  • default.nix"
-update_file "default.nix" "version = \"$CURRENT_VERSION\";" "version = \"$NEW_VERSION\";"
+# 6. Helm chart (appVersion tracks beads version, bump chart version patch)
+echo "  • helm/bd-daemon/Chart.yaml"
+update_file "helm/bd-daemon/Chart.yaml" "appVersion: \"$CURRENT_VERSION\"" "appVersion: \"$NEW_VERSION\""
+CHART_VERSION=$(grep '^version:' helm/bd-daemon/Chart.yaml | awk '{print $2}')
+CHART_MAJOR=$(echo "$CHART_VERSION" | cut -d. -f1)
+CHART_MINOR=$(echo "$CHART_VERSION" | cut -d. -f2)
+CHART_PATCH=$(echo "$CHART_VERSION" | cut -d. -f3)
+NEW_CHART_VERSION="$CHART_MAJOR.$CHART_MINOR.$((CHART_PATCH + 1))"
+update_file "helm/bd-daemon/Chart.yaml" "version: $CHART_VERSION" "version: $NEW_CHART_VERSION"
+echo "    (chart version: $CHART_VERSION → $NEW_CHART_VERSION)"
 
 # 7. Hook templates
 echo "  • cmd/bd/templates/hooks/*"

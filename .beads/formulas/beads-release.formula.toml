@@ -454,57 +454,51 @@ grep 'Alpha (v' README.md
 """
 
 [[steps]]
-id = "bump-default-nix"
-title = "Bump version in default.nix"
+id = "bump-helm-chart"
+title = "Bump Helm chart appVersion and version"
 needs = ["bump-readme"]
 description = """
-Update the Nix package version.
+Update the bd-daemon Helm chart to match the new beads version.
+
+The `appVersion` controls the daemon container image tag. The chart `version`
+gets a patch bump so downstream charts (gastown) can pull the update.
 
 ```bash
 # macOS
-sed -i '' 's/version = "[^"]*";/version = "{{version}}";/' default.nix
+sed -i '' 's/appVersion: "[^"]*"/appVersion: "{{version}}"/' helm/bd-daemon/Chart.yaml
 
 # Linux
-sed -i 's/version = "[^"]*";/version = "{{version}}";/' default.nix
+sed -i 's/appVersion: "[^"]*"/appVersion: "{{version}}"/' helm/bd-daemon/Chart.yaml
+```
+
+Also bump the chart version (patch increment):
+```bash
+CHART_VERSION=$(grep '^version:' helm/bd-daemon/Chart.yaml | awk '{print $2}')
+MAJOR=$(echo "$CHART_VERSION" | cut -d. -f1)
+MINOR=$(echo "$CHART_VERSION" | cut -d. -f2)
+PATCH=$(echo "$CHART_VERSION" | cut -d. -f3)
+NEW_CHART="$MAJOR.$MINOR.$((PATCH + 1))"
+
+# macOS
+sed -i '' "s/version: $CHART_VERSION/version: $NEW_CHART/" helm/bd-daemon/Chart.yaml
+
+# Linux
+sed -i "s/version: $CHART_VERSION/version: $NEW_CHART/" helm/bd-daemon/Chart.yaml
 ```
 
 Verify:
 ```bash
-grep 'version = ' default.nix
-```
-"""
-
-[[steps]]
-id = "update-vendorhash"
-title = "Update Nix vendorHash if needed"
-needs = ["bump-default-nix"]
-description = """
-Update vendorHash if go.mod/go.sum changed since last release.
-
-Check if update is needed:
-```bash
-# Compare go.mod/go.sum against last tag
-LAST_TAG=$(git describe --tags --abbrev=0)
-git diff $LAST_TAG -- go.mod go.sum
+grep -E '^(version|appVersion):' helm/bd-daemon/Chart.yaml
 ```
 
-If there are changes, run the update script:
-```bash
-./scripts/update-nix-vendorhash.sh
-```
-
-The script auto-detects nix or Docker and updates the hash automatically.
-
-Verify:
-```bash
-grep 'vendorHash = ' default.nix
-```
+After the release, the helm.yml CI workflow will automatically publish
+the new chart to `oci://ghcr.io/groblegark/charts/bd-daemon`.
 """
 
 [[steps]]
 id = "stamp-changelog"
 title = "Stamp changelog with release date"
-needs = ["update-vendorhash"]
+needs = ["bump-helm-chart"]
 description = """
 Add the release date to the [Unreleased] section header.
 
@@ -540,10 +534,15 @@ grep 'Version = ' cmd/bd/version.go
 jq -r '.version' .claude-plugin/plugin.json
 jq -r '.version' npm-package/package.json
 grep 'version = ' integrations/beads-mcp/pyproject.toml
-grep 'version = ' default.nix
+grep 'appVersion:' helm/bd-daemon/Chart.yaml
 ```
 
 All should show {{version}}.
+
+Also run the version check script:
+```bash
+./scripts/check-versions.sh
+```
 """
 
 [[steps]]
