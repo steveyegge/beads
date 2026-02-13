@@ -155,7 +155,7 @@ const (
 	defaultAuthorizeURL = "https://claude.ai/oauth/authorize"
 	defaultClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	defaultRedirectURI  = "https://platform.claude.com/oauth/code/callback"
-	defaultScope        = "user:sessions"
+	defaultScope        = "user:profile user:inference user:sessions:claude_code user:mcp_servers"
 
 	// Don't send reauth notifications more often than this.
 	reauthNotifyMinInterval = 5 * time.Minute
@@ -214,6 +214,23 @@ func (w *CoopCredWatcher) handleMessage(msg *nats.Msg) {
 			errMsg = *payload.Error
 		}
 		log.Printf("slackbot/cred: account %s refresh failed: %s", payload.Account, errMsg)
+
+		// If we haven't already posted a reauth notification for this account,
+		// pull the auth URL from the broker. This handles the race where the
+		// broker emitted reauth_required on core NATS before we subscribed.
+		w.reauthThreadsMu.RLock()
+		alreadyNotified := false
+		for _, info := range w.reauthThreads {
+			if info.account == payload.Account {
+				alreadyNotified = true
+				break
+			}
+		}
+		w.reauthThreadsMu.RUnlock()
+
+		if !alreadyNotified {
+			go w.pullReauthURL(payload.Account)
+		}
 	}
 }
 
@@ -489,6 +506,68 @@ func (w *CoopCredWatcher) recoverReauthThread(channelID, threadTS string) (reaut
 	w.reauthThreadsMu.Unlock()
 
 	return info, true
+}
+
+// pullReauthURL calls the broker's login-reauth endpoint to get (or create) a
+// pending reauth session and posts the auth URL to Slack. This handles the race
+// where the broker emitted reauth_required before the slackbot subscribed.
+func (w *CoopCredWatcher) pullReauthURL(account string) {
+	if w.brokerURL == "" {
+		log.Printf("slackbot/cred: cannot pull reauth URL — broker URL not configured")
+		return
+	}
+
+	reqBody, _ := json.Marshal(map[string]string{"account": account})
+	url := w.brokerURL + "/api/v1/credentials/login-reauth"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(reqBody))
+	if err != nil {
+		log.Printf("slackbot/cred: create reauth request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if w.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+w.authToken)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("slackbot/cred: broker reauth request failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("slackbot/cred: broker reauth returned %d: %s", resp.StatusCode, string(body))
+		return
+	}
+
+	var session struct {
+		Account string `json:"account"`
+		AuthURL string `json:"auth_url"`
+	}
+	if err := json.Unmarshal(body, &session); err != nil {
+		log.Printf("slackbot/cred: parse reauth response: %v", err)
+		return
+	}
+	if session.AuthURL == "" {
+		log.Printf("slackbot/cred: broker returned empty auth_url for %s", account)
+		return
+	}
+
+	// Double-check we haven't been beaten by a concurrent notification.
+	w.reauthThreadsMu.RLock()
+	for _, info := range w.reauthThreads {
+		if info.account == account {
+			w.reauthThreadsMu.RUnlock()
+			return
+		}
+	}
+	w.reauthThreadsMu.RUnlock()
+
+	log.Printf("slackbot/cred: pulled reauth URL for %s from broker (startup race recovery)", account)
+	w.notifyReauth(account, session.AuthURL)
 }
 
 // Close drains the subscription and closes the NATS connection.
