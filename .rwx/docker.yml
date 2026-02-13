@@ -16,6 +16,7 @@ on:
   cli:
     init:
       commit-sha: ${{ event.git.sha }}
+      ref-name: cli
 
 base:
   image: ubuntu:24.04
