@@ -204,14 +204,10 @@ func (w *CoopCredWatcher) handleMessage(msg *nats.Msg) {
 		w.notifyReauth(payload.Account, authURL)
 	case "refreshed":
 		log.Printf("slackbot/cred: account %s refreshed", payload.Account)
-		// Clear tracked reauth threads for this account.
-		w.reauthThreadsMu.Lock()
-		for ts, info := range w.reauthThreads {
-			if info.account == payload.Account {
-				delete(w.reauthThreads, ts)
-			}
-		}
-		w.reauthThreadsMu.Unlock()
+		// Don't clear reauth threads here — the credential seeder re-seeds
+		// revoked credentials on pod restart, emitting a false "refreshed"
+		// event that would wipe the thread tracking. Threads are cleaned up
+		// when the code is successfully submitted (submitReauthCode).
 	case "refresh_failed":
 		errMsg := ""
 		if payload.Error != nil {
