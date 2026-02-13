@@ -1,7 +1,7 @@
 # Inbox + Gates: First-Class Primitives for Agent Communication
 
 **Issue**: bd-xtahx
-**Status**: Design complete (v3.1), ready for implementation
+**Status**: Design complete (v3.3), ready for implementation
 **Author**: Matthew Baker + Claude
 **Date**: 2026-02-13
 
@@ -64,6 +64,160 @@ agent what to do), gate is the "enforcer" (blocks if agent didn't do it).
 
 **P4: Backwards-compatible migration via dual-read with phased removal.**
 
+**P5: Agent names are the routing primitive.**
+Messages are addressed to agent names (mayor, dog, sling), not bead IDs or
+session IDs. Agent names are stable, meaningful, and already exist in the system.
+Bead IDs are per-session ephemera. Session IDs are even more transient. The agent
+name is what producers actually know and care about.
+
+## Routing Model
+
+### Agent-Name Routing
+
+Every agent in Gas Town has a name (`GT_ROLE`): mayor, dog, sling, etc. These
+are the natural addressing primitive for inbox messages.
+
+```bash
+bd inbox push --to=mayor "CI build failed on main"
+bd inbox push --to=dog "Your subtask bd-xyz is done"
+bd inbox push --to=all "Maintenance in 10 minutes"
+```
+
+The daemon resolves agent names to active beads/sessions. Producers don't need to
+know bead IDs, session IDs, or pod locations — just the agent name.
+
+### Default scope is the current rig
+
+When `--to` is omitted, the message goes to all agents in the current rig:
+
+```bash
+bd inbox push --type=alert "CI failed"           # all agents in this rig
+bd inbox push --to=mayor --type=alert "CI failed" # just mayor
+bd inbox push --to=all --type=system "Maintenance" # explicit broadcast
+```
+
+For cross-rig messaging:
+
+```bash
+bd inbox push --rig=gastown --to=mayor "Deploy failed"
+```
+
+### NATS Subject Design
+
+```
+inbox.agent.{agent_name}    -- directed message to named agent
+inbox.rig.{rig_name}        -- all agents in a rig (default when --to omitted)
+inbox.all                   -- broadcast to all agents everywhere
+```
+
+Coop subscribes to:
+- `inbox.agent.{GT_ROLE}` — messages for this specific agent
+- `inbox.rig.{rig_name}` — messages for all agents in this rig
+- `inbox.all` — global broadcasts
+
+### Decision Response Routing
+
+Decisions naturally route via agent names. The `requested_by` field on a decision
+point already identifies the requesting agent by name.
+
+```
+1. Agent "mayor" creates decision:
+   bd decision create --prompt="Deploy to prod?"
+   → DB stores: requested_by = "mayor"
+
+2. Human responds:
+   bd decision respond hq-xyz --select=yes
+   → DecisionResolve RPC (updates DB)
+   → InboxPush: --to={requested_by} i.e. --to=mayor
+   → JetStream: publishes to inbox.agent.mayor
+   → Coop receives, writes to JSONL, nudges if idle
+   → Next hook: InboxDrainHandler drains, mayor sees response
+```
+
+### Session Resilience
+
+Agent-name routing is resilient across restarts:
+
+- If mayor crashes and restarts mid-decision, the response still arrives at the
+  new session via `inbox.agent.mayor`. The inbox message is self-contained
+  (includes prompt, options, selected option, text) — no prior session context
+  needed.
+
+- Blocking decisions (`bd decision create --wait`) are session-scoped — the
+  blocking wait dies with the session. But the response arrives via inbox on the
+  next session. Semantics shift from "blocking wait resolved" to "notification
+  of response" — which is more resilient.
+
+- Stop-decision flow: mayor stops, human responds async, next mayor session
+  drains inbox, sees "Human chose: fix-bug", acts on it.
+
+## Relationship to gt mail
+
+### Mail as Feature, Inbox as Transport
+
+Gas Town already has a rich mail system (`gt mail`) with threading, CC, mailing
+lists, queues, announce channels, and read/unread state. Mail messages are stored
+as beads issues (`type=message`) in the town-level `.beads/` directory, making
+them persistent, git-tracked, searchable, and threadable.
+
+Mail currently has its own delivery path: `gt mail send` writes a beads issue,
+emits a `BusMailSent` event, and the `MailNudgeHandler` nudges the recipient via
+coop. The recipient's `gt mail check --inject` polls for unread mail and writes
+to the inject queue.
+
+**The inbox absorbs mail's delivery layer.** Mail keeps its rich storage and
+semantics. The inbox becomes the universal delivery transport that mail (and
+decisions, gates, CI alerts, etc.) all use.
+
+### How mail uses the inbox
+
+```
+gt mail send --to=mayor "Review this PR"
+  → writes beads issue (type=message) — persistent storage (unchanged)
+  → bd inbox push --to=mayor --type=mail --dedup-key=mail:{msg_id}
+      "New mail from dog: Review this PR"
+  → inbox handles delivery: DB → JetStream → coop → JSONL → drain
+```
+
+Mail's own injection path (`gt mail check --inject`, `MailNudgeHandler`) becomes
+a thin wrapper around `bd inbox push`, or is replaced entirely:
+
+| Current | After inbox migration |
+|---------|----------------------|
+| `gt mail send` → `bd bus emit MailSent` → `MailNudgeHandler` nudges coop | `gt mail send` → `bd inbox push --to=<recipient>` |
+| `gt mail check --inject` → polls beads DB → inject queue | Replaced by `bd inbox drain` (mail notifications arrive via inbox) |
+| `MailHandler` in event bus (polls for mail) | Removed (InboxDrainHandler handles all) |
+
+### What stays in mail vs inbox
+
+| Concern | Lives in | Why |
+|---------|----------|-----|
+| Message storage | `gt mail` (beads issues) | Threading, CC, search, git tracking |
+| Mailing lists, queues, channels | `gt mail` | Rich routing semantics |
+| Read/unread state | `gt mail` (issue status) | Persistent per-message state |
+| Delivery notification | `bd inbox` | "You have mail" is an inbox message |
+| Decision responses | `bd inbox` | Ephemeral notifications, not threaded |
+| CI alerts, gate notifications | `bd inbox` | Ephemeral, TTL, dedup |
+
+Mail is a **communication feature** (conversations between agents). The inbox is
+a **delivery primitive** (getting notifications to agents). Mail uses inbox for
+delivery, just as decisions use inbox for response notification.
+
+### All producers converge at inbox
+
+```
+gt mail send         → bd inbox push --type=mail
+bd decision respond  → bd inbox push --type=decision
+bd gate resolve      → bd inbox push --type=gate
+CI webhook           → bd inbox push --type=alert
+Other agent          → bd inbox push --type=agent
+
+All → inbox DB → JetStream → coop → JSONL → drain → agent sees it
+```
+
+One delivery layer instead of three parallel ones (mail inject, decision inject,
+custom inject). One drain handler. One nudge path. One reconciliation mechanism.
+
 ## Three-Tier Delivery Model
 
 ```
@@ -82,15 +236,9 @@ Add `INBOX_EVENTS` stream to daemon's embedded NATS server:
 - MaxMsgs: 10000 (same as other streams)
 - Added in `EnsureStreams()` alongside existing streams
 
-Subject design (routes by bead ID, not session ID — bead IDs are stable):
-```
-inbox.targeted.{bead_id}    -- directed message to specific agent
-inbox.broadcast             -- broadcast to all agents
-```
-
 Coop subscription (Rust, runs in same pod as agent):
-- Durable consumer named `inbox-{bead_id}` with `DeliverPolicy: DeliverNew`
-- Subscribes to: `inbox.targeted.{bead_id}` + `inbox.broadcast`
+- Durable consumer named `inbox-{agent_name}` with `DeliverPolicy: DeliverNew`
+- Subscribes to: `inbox.agent.{GT_ROLE}` + `inbox.rig.{rig}` + `inbox.all`
 - On receive: parse JSON, write to `.runtime/inject-queue/{session_id}.jsonl` with flock
 - Ack AFTER successful JSONL write (at-least-once guarantee)
 - `AckWait: 30s`
@@ -132,26 +280,26 @@ NOT run on every hook fire. PreCompact drains local JSONL only (no RPC).
 ```sql
 CREATE TABLE inbox (
     id           TEXT PRIMARY KEY,
-    bead_id      TEXT,
-    session_id   TEXT,
-    type         TEXT NOT NULL,
-    source       TEXT NOT NULL,
-    content      TEXT NOT NULL,
-    priority     INTEGER DEFAULT 2,
+    agent_name   TEXT NOT NULL,       -- target agent (e.g., "mayor", "dog")
+    rig          TEXT,                -- target rig (NULL = current rig)
+    session_id   TEXT,                -- resolved session for JSONL routing
+    type         TEXT NOT NULL,       -- "decision", "alert", "event", "agent",
+                                     -- "mail", "gate", "system"
+    source       TEXT NOT NULL,       -- producer identity
+    content      TEXT NOT NULL,       -- the message
+    priority     INTEGER DEFAULT 2,  -- 0=critical, 2=normal, 4=low
     created_at   DATETIME NOT NULL,
-    delivered_at DATETIME,
-    expires_at   DATETIME,
-    dedup_key    TEXT NOT NULL
+    delivered_at DATETIME,           -- NULL until drained to agent
+    expires_at   DATETIME,           -- NULL = never expires
+    dedup_key    TEXT NOT NULL        -- MANDATORY: prevents duplicate delivery
 );
-CREATE INDEX idx_inbox_pending ON inbox(bead_id, delivered_at)
-    WHERE delivered_at IS NULL;
-CREATE INDEX idx_inbox_session ON inbox(session_id, delivered_at)
+CREATE INDEX idx_inbox_pending ON inbox(agent_name, delivered_at)
     WHERE delivered_at IS NULL;
 CREATE UNIQUE INDEX idx_inbox_dedup ON inbox(dedup_key);
 ```
 
-- `type`: "decision", "alert", "event", "agent", "mail", "gate", "system"
-- `priority`: 0=critical, 2=normal, 4=low
+- `agent_name`: target agent by name. "all" for broadcast. Can be a rig-scoped
+  wildcard if sent via `--to` omitted (daemon expands to all active agents).
 - `dedup_key`: NOT NULL, UNIQUE. INSERT OR IGNORE for idempotent retries.
 
 Dedup key conventions:
@@ -160,6 +308,7 @@ Dedup key conventions:
 - Gate resolution: `gate:{gate_id}`
 - Alert: `alert:{source}:{timestamp_ms}`
 - Broadcast: `broadcast:{id}`
+- Rig-wide: `rig:{rig_name}:{source}:{timestamp_ms}`
 
 ### JSONL Entry Schema
 
@@ -181,11 +330,21 @@ Backwards-compatible with existing entries (missing fields default to zero value
 ### Commands
 
 ```bash
-# Push a message
+# Push a message to a specific agent
+bd inbox push --to=mayor --type=alert "CI build failed on main"
+bd inbox push --to=dog --type=agent "Your subtask bd-xyz is done"
+
+# Push to all agents in current rig (default when --to omitted)
 bd inbox push --type=alert "CI build failed on main"
-bd inbox push --type=decision --bead=<id> "Decision X resolved: option Y"
-bd inbox push --broadcast --type=system "Maintenance in 10 minutes"
-bd inbox push --type=event --ttl=10m --dedup-key=ci-run-42 "CI run 42 started"
+
+# Explicit broadcast to all agents everywhere
+bd inbox push --to=all --type=system "Maintenance in 10 minutes"
+
+# Cross-rig messaging
+bd inbox push --rig=gastown --to=mayor "Deploy failed"
+
+# With TTL and dedup
+bd inbox push --to=mayor --type=event --ttl=10m --dedup-key=ci-run-42 "CI started"
 
 # List pending
 bd inbox list
@@ -202,7 +361,7 @@ bd inbox drain --session=<id> [--reconcile]
 2. Read all lines
 3. Truncate to 0
 4. Release flock
-5. IF --reconcile: query daemon DB for undelivered items via RPC
+5. IF --reconcile: query daemon DB for undelivered items via RPC (by agent_name)
 6. Merge local + DB entries
 7. Deduplicate by dedup_key (DB wins on conflict)
 8. Discard expired items
@@ -230,6 +389,7 @@ Session gates, DB gates, GateHandler, built-in gates: all unchanged.
 New: **Gate -> Inbox bridge.** When a gate resolves, push notification to inbox:
 ```go
 inboxPush(InboxItem{
+    To:       agentName,
     Type:     "gate",
     DedupKey: fmt.Sprintf("gate:%s", gateID),
     Content:  fmt.Sprintf("Gate %s resolved: %s", gateID, reason),
@@ -255,10 +415,21 @@ blocks). The decision gate is the "enforcer" (pure predicate). Complementary.
 After DB resolve, push to inbox. Critical sequencing:
 1. `DecisionResolve` RPC — resolve in DB, close gate (MUST succeed)
 2. `InboxPush` RPC — write to inbox DB + JetStream publish (best-effort)
+   - Routes to `--to={requested_by}` (the agent that created the decision)
 3. Decision hook fire (existing)
 4. Decision event emit (existing)
 
-Step 2 MUST happen after step 1 but before step 3.
+Step 2 MUST happen after step 1 but before step 3. If the hook fires first, a
+nudge could wake the agent before the inbox message exists.
+
+### Session resilience for decisions
+
+- Agent restarts between decision create and respond: response arrives via inbox
+  to new session. Message is self-contained (prompt, options, selected, text).
+- Blocking wait dies with session, but response persists in DB + inbox. Next
+  session picks it up via reconciliation.
+- Stop-decision flow: agent stops → human responds async → next session drains
+  inbox → agent sees response and acts on it.
 
 ### Deprecation path
 
@@ -273,7 +444,7 @@ Step 2 MUST happen after step 1 but before step 3.
 ### Local dev (no NATS, no coop)
 
 ```
-bd inbox push -> daemon RPC (DB) + local JSONL write
+bd inbox push --to=mayor -> daemon RPC (DB) + local JSONL write
   -> Next hook fires -> InboxDrainHandler reads JSONL
   -> On SessionStart: also queries DB (reconciliation)
 ```
@@ -281,7 +452,7 @@ bd inbox push -> daemon RPC (DB) + local JSONL write
 ### K8s (with NATS, with coop)
 
 ```
-bd inbox push -> daemon RPC (DB) -> JetStream publish
+bd inbox push --to=mayor -> daemon RPC (DB) -> JetStream: inbox.agent.mayor
   -> coop durable consumer receives -> JSONL write -> nudge if idle
   -> Next hook fires -> InboxDrainHandler reads JSONL
   -> On SessionStart: also queries DB (reconciliation)
@@ -290,7 +461,7 @@ bd inbox push -> daemon RPC (DB) -> JetStream publish
 ### K8s degraded (NATS down)
 
 ```
-bd inbox push -> daemon RPC (DB) -> JetStream publish fails
+bd inbox push --to=mayor -> daemon RPC (DB) -> JetStream publish fails
   -> Periodic heartbeat (10min): coop queries daemon -> JSONL write
   -> Or: SessionStart reconciliation catches it
 ```
@@ -324,7 +495,7 @@ bd inbox push -> daemon RPC (DB) -> JetStream publish fails
 - Single `write()` per entry for atomicity
 
 ### JetStream durability
-- Durable consumer: `inbox-{bead_id}` (deterministic name)
+- Durable consumer: `inbox-{agent_name}` (deterministic name, stable across restarts)
 - `DeliverPolicy: DeliverNew`, `AckWait: 30s`
 - NATS store on PVC in K8s
 - If PVC lost: heartbeat reconciliation catches up in 10 minutes
@@ -332,39 +503,52 @@ bd inbox push -> daemon RPC (DB) -> JetStream publish fails
 ## Implementation Plan
 
 ### Phase 1: Inbox infrastructure (non-breaking)
-- DB migration: `inbox` table
-- JetStream: `INBOX_EVENTS` stream
+- DB migration: `inbox` table with agent_name routing
+- JetStream: `INBOX_EVENTS` stream with `inbox.>` subjects
 - RPC: InboxPush, InboxDrain, InboxList
-- `cmd/bd/inbox.go`: push, list, drain
+- `cmd/bd/inbox.go`: push (--to, --rig, --type, --ttl, --dedup-key), list, drain
 - InboxDrainHandler at priority 31 (alongside DecisionHandler at 30)
 
 ### Phase 2: Coop JetStream subscription
-- Coop: durable consumer for inbox subjects
+- Coop: durable consumer `inbox-{GT_ROLE}` subscribing to agent + rig + all
 - Coop: JSONL write + nudge on receive
 - Coop: 10-minute heartbeat reconciliation
 - Integration test: Go + Rust concurrent JSONL writes
 
 ### Phase 3: Decision -> inbox migration
-- `bd decision respond` pushes to inbox
+- `bd decision respond` pushes to inbox (--to={requested_by})
 - InboxDrainHandler to priority 30, DecisionHandler fallback at 31
 - `bd decision check --inject` deprecation warning
 
-### Phase 4: Cleanup + external producers
+### Phase 4: Mail -> inbox migration
+- `gt mail send` calls `bd inbox push --type=mail` after writing beads issue
+- Remove `MailHandler` / `MailNudgeHandler` from event bus (InboxDrainHandler handles delivery)
+- `gt mail check --inject` deprecated (mail notifications arrive via inbox)
+- Mail keeps storage, threading, lists, queues — only delivery layer changes
+
+### Phase 5: Cleanup + external producers
 - Remove DecisionHandler
 - Remove `bd decision check --inject`
+- Remove `gt mail check --inject`
 - Gate -> inbox bridge
 - DB reaper for expired items
 - External producer documentation
 
 ## Open Questions
 
-1. **Broadcast delivery tracking**: First-drain-wins for broadcasts. Late-joining
-   agents miss if NATS was down. Accept this (broadcasts are ephemeral) or add
-   per-agent tracking table?
+1. **Multiple agents with same name**: If two "mayor" agents are active (e.g.,
+   during rolling deploy), both receive the message via the same NATS subject.
+   The durable consumer is shared, so only one gets each message. Is this correct?
+   Should each instance have a unique consumer (e.g., `inbox-mayor-{bead_id}`)?
+   Or is one-of-N delivery acceptable for same-name agents?
 
-2. **Self-notification**: When agent calls `bd inbox push` to notify another
-   agent, skip local JSONL for own session. Route via DB + JetStream only.
+2. **Agent name discovery**: How does `bd inbox push --to=mayor` know if mayor
+   is a valid agent name? The daemon could maintain an active-agent registry
+   (populated from hook events). Push to unknown agent: write to DB anyway
+   (delivered when agent starts) or reject?
 
-3. **Drain trigger frequency**: Currently SessionStart + PreCompact. Add periodic
-   drain (background goroutine)? Coop's heartbeat reconciliation partially
-   addresses this.
+3. **Self-notification**: When agent calls `bd inbox push --to=<other-agent>`,
+   skip local JSONL for own session. Route via DB + JetStream only.
+
+4. **Drain trigger frequency**: Currently SessionStart + PreCompact. Coop's
+   heartbeat reconciliation partially addresses the mid-turn delivery gap.
