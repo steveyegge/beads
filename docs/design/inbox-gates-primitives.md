@@ -45,6 +45,115 @@ message to the inbox.
 - Adding a new notification type requires: new handler, new check command, new
   injection logic
 
+## Current Gate Architecture
+
+Gates exist at three layers today. Understanding all three is essential context
+for the design.
+
+### Layer 1: Session Gates (`internal/gate/`)
+
+Ephemeral, per-hook behavioral rules using file markers. Registered at session
+start, checked by `GateHandler` (priority 20) on each hook event.
+
+**Mechanism**: A gate is satisfied if (a) a file marker exists at
+`.runtime/gates/<session-id>/<gate-id>`, or (b) its `AutoCheck` function returns
+true (which auto-creates the marker).
+
+**Modes**: `strict` (block the hook) or `soft` (warn but allow).
+
+**Built-in gates by hook type:**
+
+| Hook | Gate ID | Mode | AutoCheck | Purpose |
+|------|---------|------|-----------|---------|
+| Stop | `decision` | strict | none (must mark explicitly) | Agent offered a decision before stopping |
+| Stop | `commit-push` | soft | `git status --porcelain` clean | Changes committed and pushed |
+| Stop | `bead-update` | soft | `GT_HOOK_BEAD` not set | Hooked bead status updated |
+| PreToolUse | `destructive-op` | strict | none | Blocks destructive commands |
+| PreToolUse | `sandbox-boundary` | soft | none | Warns on commands outside workspace |
+| UserPromptSubmit | `context-injection` | soft | none | Pending inject queue items |
+| UserPromptSubmit | `stale-context` | soft | none | Session may need `gt prime` |
+| PreCompact | `state-checkpoint` | soft | none | Pending injections not drained |
+| PreCompact | `dirty-work` | soft | none | Uncommitted changes before compaction |
+
+**Custom gates**: `bd gate register <id> --hook <type> --description '...'`
+allows runtime registration of new session gates.
+
+### Layer 2: DB Gates (issues table)
+
+Persistent async wait conditions stored as issue metadata. Used by the
+formula/molecule system for multi-step workflows that span sessions.
+
+**Schema** (columns on `issues` table):
+```
+await_type   TEXT    -- gh:run, gh:pr, timer, human, mail, bead
+await_id     TEXT    -- workflow name, PR number, bead ID, etc.
+timeout_ns   INTEGER -- timeout in nanoseconds
+waiters      TEXT    -- JSON array of agents to notify on resolution
+```
+
+**Supported gate types:**
+
+| Type | Resolves when | Can escalate |
+|------|--------------|--------------|
+| `gh:run` | GitHub Actions workflow completes successfully | Yes (failure/canceled) |
+| `gh:pr` | Pull request merges | Yes (closed unmerged) |
+| `timer` | Duration elapses since creation | No |
+| `human` | Manual `bd close` | No |
+| `mail` | Mail response received | No |
+| `bead` | Target bead in another rig closes | No |
+
+**Auto-resolution**: `bd gate check` periodically evaluates conditions (queries
+GitHub API, checks timestamps, opens target rig DB). Resolves gates whose
+conditions are met.
+
+**Cross-rig gates**: `await_id="<rig>:<bead-id>"` waits for a bead in a
+different rig to close. Enables cross-agent coordination.
+
+### Layer 3: Stop-Decision Handler
+
+Not technically a "gate" but acts as one — a separate event bus handler at
+priority 15 (`StopDecisionHandler`) that:
+
+- Reads `claude-hooks` config bead for `RequireAgentDecision` setting
+- Calls `findPendingAgentDecision()` via daemon RPC
+- If no decision exists: blocks with multi-line instruction block telling agent
+  what to create
+- Respects `stop_loop_break` flag from `StopLoopDetector` (priority 14)
+
+**The overlap**: Both `StopDecisionHandler` (priority 15) and the `decision`
+session gate (checked by `GateHandler` at priority 20) enforce "agent must offer
+a decision before stopping." The handler is the "creator" (tells agent what to
+do), the gate is the "enforcer" (blocks if agent didn't do it).
+
+### Bridge Gate: `mol-gate-pending`
+
+A session gate (Layer 1, soft mode) that bridges to DB gates (Layer 2). Its
+`AutoCheck` queries `bd list --type gate --parent <hookBead> --status open` to
+detect pending formula gates requiring human action. Connects the two layers so
+the agent is warned about outstanding DB gates at stop time.
+
+### Event Bus Handler Chain (Stop hook)
+
+```
+Priority 14: StopLoopDetector      -- detects infinite stop loops, sets break flag
+Priority 15: StopDecisionHandler   -- creates/checks decision points (Layer 3)
+Priority 20: GateHandler           -- evaluates session gates (Layer 1)
+                                      including bridge to DB gates (Layer 2)
+Priority 30: DecisionHandler       -- polls for decision responses (to be replaced)
+```
+
+### What this design changes about gates
+
+**Minimal.** The gate architecture stays intact:
+- Session gates (Layer 1): unchanged
+- DB gates (Layer 2): unchanged
+- StopDecisionHandler (Layer 3): stays at priority 15, unchanged
+- Bridge gate: unchanged
+
+The only gate-related change is the **Gate -> Inbox bridge**: when a gate
+resolves, it pushes a notification to the inbox so the agent learns about it.
+This is additive — gate resolution logic is untouched.
+
 ## Architecture Principles
 
 **P1: The daemon DB is the source of truth.**
