@@ -80,6 +80,7 @@ func hooksNeedUpdate() bool {
 		return false
 	}
 
+	readErrors := false
 	hookNames := []string{"pre-commit", "post-merge"}
 	for _, name := range hookNames {
 		path := filepath.Join(hooksDir, name)
@@ -87,6 +88,7 @@ func hooksNeedUpdate() bool {
 		if err != nil {
 			if !os.IsNotExist(err) {
 				fmt.Fprintf(os.Stderr, "Warning: could not read hook %s: %v\n", name, err)
+				readErrors = true
 			}
 			continue
 		}
@@ -98,7 +100,9 @@ func hooksNeedUpdate() bool {
 			return true
 		}
 	}
-	return false
+	// If we couldn't read hooks that hooksInstalled() confirmed exist,
+	// attempt re-install rather than silently skipping the update.
+	return readErrors
 }
 
 // hookInfo contains information about an existing hook

@@ -267,12 +267,8 @@ func TestHooksNeedUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
+			tmpDir := newGitRepo(t)
 			runInDir(t, tmpDir, func() {
-				if err := exec.Command("git", "init").Run(); err != nil {
-					t.Skipf("Skipping test: git init failed: %v", err)
-				}
-
 				if tt.setupHooks {
 					gitDirPath, err := git.GetGitDir()
 					if err != nil {
