@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -148,6 +149,18 @@ func (w *CoopCredWatcher) waitDisconnect() <-chan struct{} {
 	return ch
 }
 
+// Default OAuth constants for constructing auth URLs when the broker
+// doesn't include them in the NATS event.
+const (
+	defaultAuthorizeURL = "https://claude.ai/oauth/authorize"
+	defaultClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	defaultRedirectURI  = "https://platform.claude.com/oauth/code/callback"
+	defaultScope        = "user:sessions"
+
+	// Don't send reauth notifications more often than this.
+	reauthNotifyMinInterval = 5 * time.Minute
+)
+
 // handleMessage parses a credential event and dispatches reauth notifications.
 func (w *CoopCredWatcher) handleMessage(msg *nats.Msg) {
 	var payload credentialEventPayload
@@ -158,11 +171,47 @@ func (w *CoopCredWatcher) handleMessage(msg *nats.Msg) {
 
 	switch payload.EventType {
 	case "reauth_required":
-		if payload.AuthURL != nil && *payload.AuthURL != "" {
-			w.notifyReauth(payload.Account, *payload.AuthURL)
+		authURL := ""
+		if payload.AuthURL != nil {
+			authURL = *payload.AuthURL
 		}
+		if authURL == "" {
+			// Broker omitted auth_url — construct it from defaults.
+			authURL = defaultAuthorizeURL +
+				"?code=true" +
+				"&client_id=" + defaultClientID +
+				"&redirect_uri=" + url.QueryEscape(defaultRedirectURI) +
+				"&scope=" + url.QueryEscape(defaultScope)
+			log.Printf("slackbot/cred: reauth_required for %s (constructed auth URL)", payload.Account)
+		} else {
+			log.Printf("slackbot/cred: reauth_required for %s (broker-provided URL)", payload.Account)
+		}
+
+		// Rate-limit: don't spam Slack with reauth notifications.
+		w.reauthThreadsMu.RLock()
+		tooRecent := false
+		for _, info := range w.reauthThreads {
+			if info.account == payload.Account {
+				tooRecent = true
+				break
+			}
+		}
+		w.reauthThreadsMu.RUnlock()
+		if tooRecent {
+			return
+		}
+
+		w.notifyReauth(payload.Account, authURL)
 	case "refreshed":
 		log.Printf("slackbot/cred: account %s refreshed", payload.Account)
+		// Clear tracked reauth threads for this account.
+		w.reauthThreadsMu.Lock()
+		for ts, info := range w.reauthThreads {
+			if info.account == payload.Account {
+				delete(w.reauthThreads, ts)
+			}
+		}
+		w.reauthThreadsMu.Unlock()
 	case "refresh_failed":
 		errMsg := ""
 		if payload.Error != nil {
