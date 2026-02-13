@@ -264,6 +264,13 @@ spec:
             - name: COOP_BROKER_URL
               value: {{ .Values.slackBot.coopBrokerURL | quote }}
             {{- end }}
+            {{- if .Values.slackBot.coopBrokerTokenSecret }}
+            - name: COOP_BROKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.slackBot.coopBrokerTokenSecret }}
+                  key: token
+            {{- end }}
           volumeMounts:
             - name: beads-data
               mountPath: /home/beads/.beads
