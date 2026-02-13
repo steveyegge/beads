@@ -178,6 +178,13 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.58.1",
+		Date:    "2026-02-13",
+		Changes: []string{
+			"FIX: Slack bot now correctly parses scoped NATS decision subjects (decisions.<scope>.<EventType>)",
+		},
+	},
+	{
 		Version: "0.57.13",
 		Date:    "2026-02-10",
 		Changes: []string{
