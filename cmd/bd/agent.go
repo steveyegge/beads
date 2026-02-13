@@ -126,7 +126,7 @@ var agentPodRegisterCmd = &cobra.Command{
 	Short: "Register a K8s pod for an agent",
 	Long: `Register a Kubernetes pod for an agent bead.
 
-Sets the pod fields (pod_name, pod_ip, pod_node, screen_session) and
+Sets the pod fields (pod_name, pod_ip, pod_node, coop_session) and
 updates last_activity. If pod_status is not specified, defaults to "running".
 
 This command requires the daemon (BD_DAEMON_HOST).
@@ -218,7 +218,7 @@ func init() {
 	agentPodRegisterCmd.Flags().StringVar(&podRegisterIP, "pod-ip", "", "Pod IP address")
 	agentPodRegisterCmd.Flags().StringVar(&podRegisterNode, "pod-node", "", "K8s node name")
 	agentPodRegisterCmd.Flags().StringVar(&podRegisterStatus, "status", "", "Pod status (default: running)")
-	agentPodRegisterCmd.Flags().StringVar(&podRegisterScreen, "screen", "", "Screen/tmux session name")
+	agentPodRegisterCmd.Flags().StringVar(&podRegisterScreen, "screen", "", "Coop session name")
 	_ = agentPodRegisterCmd.MarkFlagRequired("pod-name")
 
 	agentPodStatusCmd.Flags().StringVar(&podStatusValue, "status", "", "Pod status value (required)")

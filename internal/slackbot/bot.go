@@ -265,6 +265,7 @@ func (b *Bot) handleEvent(evt socketmode.Event) {
 	case socketmode.EventTypeEventsAPI:
 		eventsAPIEvent, ok := evt.Data.(slackevents.EventsAPIEvent)
 		if !ok {
+			log.Printf("slackbot: events_api: type assertion failed, actual type=%T", evt.Data)
 			return
 		}
 		b.socketMode.Ack(*evt.Request)
@@ -2143,6 +2144,7 @@ func (b *Bot) sendDMsToOptedInUsers(decision *Decision, blocks []slack.Block) {
 
 func (b *Bot) handleEventsAPI(event slackevents.EventsAPIEvent) {
 	if event.Type != slackevents.CallbackEvent {
+		log.Printf("slackbot: events_api: ignoring non-callback event type=%s", event.Type)
 		return
 	}
 
@@ -2150,6 +2152,8 @@ func (b *Bot) handleEventsAPI(event slackevents.EventsAPIEvent) {
 	case *slackevents.ChannelCreatedEvent:
 		b.handleChannelCreated(ev)
 	case *slackevents.MessageEvent:
+		log.Printf("slackbot: events_api: message event user=%s channel=%s subtype=%q thread=%s text_len=%d",
+			ev.User, ev.Channel, ev.SubType, ev.ThreadTimeStamp, len(ev.Text))
 		if ev.SubType != "" {
 			return
 		}
@@ -2158,6 +2162,8 @@ func (b *Bot) handleEventsAPI(event slackevents.EventsAPIEvent) {
 			return
 		}
 		b.handleAgentChannelMessage(ev)
+	default:
+		log.Printf("slackbot: events_api: unhandled inner event type=%T", event.InnerEvent.Data)
 	}
 }
 

@@ -23,7 +23,7 @@ Key bindings:
   r          Add rationale before confirming
   Enter      Confirm selection
   d          Dismiss/cancel decision
-  p          Peek at agent's terminal (tmux)
+  p          Peek at agent's terminal (coop)
   !          Filter to high urgency only
   a          Show all urgencies
   R          Refresh

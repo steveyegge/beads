@@ -277,7 +277,16 @@ func (w *CoopCredWatcher) notifyReauth(account, authURL string) {
 func (w *CoopCredWatcher) HandleThreadReply(channelID, threadTS, text, userID string) bool {
 	w.reauthThreadsMu.RLock()
 	info, ok := w.reauthThreads[threadTS]
+	threadCount := len(w.reauthThreads)
+	var threadKeys []string
+	for k := range w.reauthThreads {
+		threadKeys = append(threadKeys, k)
+	}
 	w.reauthThreadsMu.RUnlock()
+
+	log.Printf("slackbot/cred: HandleThreadReply: channel=%s threadTS=%s textLen=%d user=%s matched=%v tracked_threads=%d keys=%v",
+		channelID, threadTS, len(text), userID, ok, threadCount, threadKeys)
+
 	if !ok {
 		return false
 	}
