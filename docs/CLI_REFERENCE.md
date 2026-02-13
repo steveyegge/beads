@@ -19,14 +19,14 @@
 ### Check Status
 
 ```bash
-# Check database path and daemon status
+# Check database path and status fields
 bd info --json
 
 # Example output:
 # {
 #   "database_path": "/path/to/.beads/beads.db",
 #   "issue_prefix": "bd",
-#   "daemon_running": true,
+#   "daemon_running": false,  # legacy field (direct mode always)
 #   "agent_mail_enabled": false
 # }
 ```
@@ -285,15 +285,16 @@ When detected, you'll see: `ℹ️  Sandbox detected, using direct mode`
 bd --sandbox <command>
 
 # Equivalent to combining these flags:
-bd --no-daemon --no-auto-flush --no-auto-import <command>
+bd --no-auto-flush --no-auto-import <command>
+# (legacy --no-daemon flag is a no-op)
 ```
 
 **What it does:**
-- Disables daemon (uses direct SQLite mode)
+- Uses direct mode (default; daemon removed)
 - Disables auto-export to JSONL
 - Disables auto-import from JSONL
 
-**When to use:** Sandboxed environments where daemon can't be controlled (permission restrictions), or when auto-detection doesn't trigger.
+**When to use:** Sandboxed environments where permission restrictions break auto-import/export, or when auto-detection doesn't trigger.
 
 ### Staleness Control
 
@@ -327,7 +328,7 @@ bd import --force -i .beads/issues.jsonl
 # JSON output for programmatic use
 bd --json <command>
 
-# Force direct mode (bypass daemon)
+# Legacy (no-op): force direct mode
 bd --no-daemon <command>
 
 # Disable auto-sync
@@ -343,7 +344,7 @@ bd --actor alice <command>
 
 **See also:**
 - [TROUBLESHOOTING.md - Sandboxed environments](TROUBLESHOOTING.md#sandboxed-environments-codex-claude-code-etc) for detailed sandbox troubleshooting
-- [DAEMON.md](DAEMON.md) for daemon mode details
+- [DAEMON.md](DAEMON.md) for legacy daemon reference
 
 ## Advanced Operations
 
@@ -549,7 +550,7 @@ bd mol burn <ephemeral-id> --dry-run
 bd mol burn <ephemeral-id> --force --json
 ```
 
-**Note:** Most mol commands require `--no-daemon` flag when daemon is running.
+**Note:** `--no-daemon` is legacy; mol commands always run in direct mode.
 
 ## Database Management
 
@@ -651,7 +652,7 @@ bd migrate sync beads-sync --orphan                    # Delete and recreate as 
 
 **After setup:**
 
-- `bd sync` commits beads changes to the sync branch via worktree
+- `bd sync --full` commits beads changes to the sync branch via worktree
 - Your working branch stays clean of beads commits
 - Essential for multi-clone setups where clones work independently
 
@@ -661,42 +662,24 @@ bd migrate sync beads-sync --orphan                    # Delete and recreate as 
 - **Existing worktree**: If a worktree exists for the branch, it's automatically removed before migration.
 - **Non-destructive to remote**: The remote branch is not modified; use `git push --force` to update it after migration.
 
-### Daemon Management
+### Daemon Management (Legacy)
 
-See [docs/DAEMON.md](DAEMON.md) for complete daemon management reference.
-
-```bash
-# List all running daemons
-bd daemons list --json
-
-# Check health (version mismatches, stale sockets)
-bd daemons health --json
-
-# Stop/restart specific daemon
-bd daemons stop /path/to/workspace --json
-bd daemons restart 12345 --json  # By PID
-
-# View daemon logs
-bd daemons logs /path/to/workspace -n 100
-bd daemons logs 12345 -f  # Follow mode
-
-# Stop all daemons
-bd daemons killall --json
-bd daemons killall --force --json  # Force kill if graceful fails
-```
+The daemon has been removed; these commands no longer apply. See [DAEMON.md](DAEMON.md) for historical reference.
 
 ### Sync Operations
 
 ```bash
-# Manual sync (force immediate export/import/commit/push)
+# Full sync (pull → merge → export → commit → push)
+bd sync --full
+
+# Export only
 bd sync
 
-# What it does:
-# 1. Export pending changes to JSONL
-# 2. Commit to git
-# 3. Pull from remote
-# 4. Import any updates
-# 5. Push to remote
+# What bd sync --full does:
+# 1. Pull/merge from remote
+# 2. Export pending changes to JSONL
+# 3. Commit to git
+# 4. Push to remote
 ```
 
 ### Key-Value Store

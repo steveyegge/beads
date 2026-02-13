@@ -174,7 +174,7 @@ bd init  # Auto-imports from .beads/issues.jsonl
 
 # Or initialize new project:
 cd ~/my-project
-bd init  # Creates .beads/, sets up daemon
+bd init  # Creates .beads/ workspace
 git add .beads/
 git commit -m "Initialize beads"
 ```
@@ -216,7 +216,7 @@ Just run any bd command - it will auto-import:
 git pull
 bd ready     # Automatically imports fresh data from git
 bd list      # Also triggers auto-import if needed
-bd sync      # Explicit sync command for manual control
+bd sync --import  # Explicit import command for manual control
 ```
 
 The auto-import check is fast (<5ms) and only imports when the JSONL file is newer than the database. If you want guaranteed immediate sync without waiting for the next command, use the git hooks (see `examples/git-hooks/`).
@@ -236,7 +236,7 @@ Each project gets its own `.beads/` directory with its own database and JSONL fi
 - Multiple agents working on different projects simultaneously → No conflicts
 - Same machine, different repos → Each finds its own `.beads/*.db` automatically
 - Agents in subdirectories → bd walks up to find the project root (like git)
-- **Per-project daemons** → Each project gets its own daemon at `.beads/bd.sock` (LSP model)
+- **Per-project workspaces** → Each project gets its own `.beads/` directory (direct mode)
 
 **Limitation:** Issues cannot reference issues in other projects. Each database is isolated by design. If you need cross-project tracking, initialize bd in a parent directory that contains both projects.
 
@@ -248,10 +248,10 @@ cd ~/work/webapp && bd ready --json    # Uses ~/work/webapp/.beads/webapp.db
 # Agent 2 working on API
 cd ~/work/api && bd ready --json       # Uses ~/work/api/.beads/api.db
 
-# No conflicts! Completely isolated databases and daemons.
+# No conflicts! Completely isolated databases and JSONL files.
 ```
 
-**Architecture:** bd uses per-project daemons (like LSP/language servers) for complete database isolation. See [ADVANCED.md#architecture-daemon-vs-mcp-vs-beads](ADVANCED.md#architecture-daemon-vs-mcp-vs-beads).
+**Architecture:** bd uses per-project workspaces in direct mode for complete database isolation. See [ADVANCED.md#architecture-daemon-vs-mcp-vs-beads](ADVANCED.md#architecture-daemon-vs-mcp-vs-beads).
 
 ### What happens if two agents work on the same issue?
 
@@ -412,16 +412,15 @@ Yes! bd has native Windows support (v0.9.0+):
 - No MSYS or MinGW required
 - PowerShell install script
 - Works with Windows paths and filesystem
-- Daemon uses TCP instead of Unix sockets
+- Direct mode only (no background daemon)
 
 See [INSTALLING.md](INSTALLING.md#windows-11) for details.
 
 ### Can I use bd with git worktrees?
 
-Yes, but with limitations. The daemon doesn't work correctly with worktrees, so use `--no-daemon` mode:
+Yes. Beads runs in direct mode, so no daemon flags are required:
 
 ```bash
-export BEADS_NO_DAEMON=1
 bd ready
 bd create "Fix bug" -p 1
 ```

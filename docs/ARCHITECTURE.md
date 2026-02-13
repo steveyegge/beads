@@ -2,6 +2,8 @@
 
 This document describes bd's overall architecture - the data model, sync mechanism, and how components fit together. For internal implementation details (FlushManager, Blocked Cache), see [INTERNALS.md](INTERNALS.md).
 
+> Note: The daemon/RPC layer has been removed; current releases run in direct mode.
+
 ## The Three-Layer Data Model
 
 bd's core design enables a distributed, git-backed issue tracker that feels like a centralized database. The "magic" comes from three synchronized layers:
@@ -13,7 +15,7 @@ bd's core design enables a distributed, git-backed issue tracker that feels like
 │  bd create, list, update, close, ready, show, dep, sync, ...    │
 │  - Cobra commands in cmd/bd/                                     │
 │  - All commands support --json for programmatic use              │
-│  - Tries daemon RPC first, falls back to direct DB access        │
+│  - Direct DB access only (daemon removed)                        │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                v

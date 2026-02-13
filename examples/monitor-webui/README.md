@@ -2,6 +2,8 @@
 
 A standalone web-based monitoring interface for beads that provides real-time issue tracking through a clean, responsive web UI.
 
+> Legacy: The monitor requires the daemon/RPC layer, which has been removed from current releases. This example is kept for historical reference.
+
 ## Overview
 
 The Monitor WebUI is a separate runtime that connects to the beads daemon via RPC to provide:

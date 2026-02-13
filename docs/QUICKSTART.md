@@ -37,12 +37,12 @@ The wizard will:
 - Import existing issues from git (if any)
 - Prompt to install git hooks (recommended)
 - Prompt to configure git merge driver (recommended)
-- Auto-start daemon for sync (SQLite backend only)
+- Configure sync settings (if using a sync branch)
 
 Notes:
 - SQLite backend stores data in `.beads/beads.db`.
 - Dolt backend stores data in `.beads/dolt/` and records `"database": "dolt"` in `.beads/metadata.json`.
-- Dolt backend runs **single-process-only**; daemon mode is disabled.
+- Dolt backend runs **single-process-only**; beads always runs in direct mode.
 - Dolt backend **auto-commits** after each successful write command in embedded mode (`dolt.auto-commit: on`). In server mode, auto-commit defaults to OFF. Override with `bd --dolt-auto-commit off|on ...` or config.
 
 ### Role Configuration
@@ -229,10 +229,10 @@ As your project accumulates closed issues, the database grows. Manage size with 
 bd admin compact --stats
 
 # Preview compaction candidates (30+ days closed)
-bd admin compact --analyze --json --no-daemon
+bd admin compact --analyze --json
 
 # Apply agent-generated summary
-bd admin compact --apply --id bd-42 --summary summary.txt --no-daemon
+bd admin compact --apply --id bd-42 --summary summary.txt
 
 # Immediately delete closed issues (CAUTION: permanent!)
 bd admin cleanup --force
@@ -247,24 +247,17 @@ bd admin cleanup --force
 
 ## Background Daemon
 
-bd runs a background daemon for auto-sync and performance. You rarely need to manage it directly:
+bd runs in direct mode; the legacy daemon has been removed. The `--no-daemon` flag is deprecated and has no effect.
 
 ```bash
-# Check daemon status
-bd info | grep daemon
+# Full sync (pull → merge → export → commit → push)
+bd sync --full
 
-# List all running daemons
-bd daemons list
-
-# Force direct mode (skip daemon)
-bd --no-daemon ready
+# Export only (commit/push manually)
+bd sync
 ```
 
-**When to disable daemon:**
-- Git worktrees (required: `bd --no-daemon`)
-- CI/CD pipelines
-- Resource-constrained environments
-
+See [DAEMON.md](DAEMON.md) for historical daemon reference.
 See [DAEMON.md](DAEMON.md) for complete daemon management guide.
 
 ## Next Steps

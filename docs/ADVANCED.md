@@ -162,7 +162,7 @@ When agents discover duplicate issues, they should:
 
 Git worktrees work with bd. Each worktree can have its own `.beads` directory, or worktrees can share a database via redirects (see [Database Redirects](#database-redirects)).
 
-**With Dolt backend:** Each worktree operates directly on the database — no daemon coordination needed. Use `bd sync` to synchronize JSONL with git when ready.
+**With Dolt backend:** Each worktree operates directly on the database — no daemon coordination needed. Use `bd sync --full` to synchronize JSONL with git when ready.
 
 **With Dolt server mode:** Multiple worktrees can connect to the same Dolt server for concurrent access without conflicts.
 

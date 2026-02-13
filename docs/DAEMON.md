@@ -1,63 +1,20 @@
 # Daemon Management Guide
 
-**For:** AI agents and developers managing bd background processes
-**Version:** 0.21.0+
+**For:** historical reference and contributor context
+**Status:** daemon removed from current CLI
 
 ## Overview
 
-bd runs a background daemon per workspace for auto-sync, RPC operations, and real-time monitoring. This guide covers daemon management, event-driven mode, and troubleshooting.
+The daemon feature has been removed from the current CLI. This document is retained for historical context only.
 
-## Do I Need the Daemon?
+### Current Guidance
 
-**TL;DR:** For most users, the daemon runs automatically and you don't need to think about it.
+- Use `bd sync` for full pull/merge/export/push.
+- Use `bd sync --flush-only` to export JSONL without git operations.
+- Install hooks with `bd hooks install` or `bd setup claude` to auto-export on commits.
+- The `--no-daemon` flag is kept for backward compatibility but has no effect.
 
-### When Daemon Helps (default: enabled)
-
-| Scenario | Benefit |
-|----------|---------|
-| **Multi-agent workflows** | Prevents database locking conflicts |
-| **Team collaboration** | Auto-syncs JSONL to git in background |
-| **Long coding sessions** | Changes saved even if you forget `bd sync` |
-| **Real-time monitoring** | Enables `bd watch` and status updates |
-
-### When to Disable Daemon
-
-| Scenario | How to Disable |
-|----------|----------------|
-| **Git worktrees (no sync-branch)** | Auto-disabled for safety |
-| **CI/CD pipelines** | `BEADS_NO_DAEMON=true` |
-| **Offline work** | `--no-daemon` (no git push available) |
-| **Resource-constrained** | `BEADS_NO_DAEMON=true` |
-| **Deterministic testing** | Use exclusive lock (see below) |
-
-### Git Worktrees and Daemon
-
-**Automatic safety:** Daemon is automatically disabled in git worktrees unless sync-branch is configured. This prevents commits going to the wrong branch.
-
-**Enable daemon in worktrees:** Configure sync-branch to safely use daemon across all worktrees:
-```bash
-bd config set sync-branch beads-sync
-```
-
-With sync-branch configured, daemon commits to a dedicated branch using an internal worktree, so your current branch is never affected. See [WORKTREES.md](WORKTREES.md) for details.
-
-### Local-Only Users
-
-If you're working alone on a local project with no git remote:
-- **Daemon still helps**: Batches writes, handles auto-export to JSONL
-- **But optional**: Use `--no-daemon` if you prefer direct database access
-- **No network calls**: Daemon doesn't phone home or require internet
-
-```bash
-# Check if daemon is running
-bd info | grep daemon
-
-# Force direct mode for one command
-bd --no-daemon list
-
-# Disable for entire session
-export BEADS_NO_DAEMON=true
-```
+The remaining sections describe the legacy daemon implementation for reference.
 
 ## Architecture
 

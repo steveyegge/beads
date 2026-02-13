@@ -6,21 +6,27 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
 )
 
+var graphOutputMu sync.Mutex
+
 // captureGraphOutput captures stdout output during f() execution
 func captureGraphOutput(f func()) string {
+	graphOutputMu.Lock()
+	defer graphOutputMu.Unlock()
+
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
+	defer func() { os.Stdout = old }()
 
 	f()
 
 	w.Close()
-	os.Stdout = old
 	var buf bytes.Buffer
 	io.Copy(&buf, r)
 	return buf.String()

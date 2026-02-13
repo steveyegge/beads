@@ -58,21 +58,26 @@ Files that should be committed to your protected branch (main):
 
 Files that are automatically gitignored (do NOT commit):
 - `.beads/beads.db` - SQLite database (local only, regenerated from JSONL)
-- `.beads/daemon.lock`, `daemon.log`, `daemon.pid` - Runtime files
+- `.beads/sync_base.jsonl` - Local merge base for sync (per-machine)
 - `.beads/beads.left.jsonl`, `beads.right.jsonl` - Temporary merge artifacts
+- `.beads/daemon.*`, `.beads/bd.sock` - Legacy runtime files (older versions only)
 
 The sync branch (beads-sync) will contain:
-- `.beads/issues.jsonl` - Issue data in JSONL format (committed automatically by daemon)
-- `.beads/metadata.json` - Metadata about the beads installation
-- `.beads/config.yaml` - Configuration template (optional)
+- `.beads/issues.jsonl` - Issue data in JSONL format (committed by `bd sync --full`)
+- `.beads/metadata.json` - Metadata copied during sync
+- `.beads/config.yaml` - Optional; typically tracked on the main branch (not auto-copied)
 
-**2. Start the daemon with auto-commit:**
+**2. Commit changes to the sync branch:**
 
 ```bash
-bd daemon start --auto-commit
+# Full sync (pull → merge → export → commit → push)
+bd sync --full
+
+# Or: export + commit/push without pulling
+bd sync --full --no-pull
 ```
 
-The daemon will automatically commit issue changes to the `beads-sync` branch.
+Add `--no-push` if you want to review changes before pushing.
 
 **3. When ready, merge to main:**
 
@@ -116,13 +121,14 @@ Main branch (protected):
 - `.gitattributes` - Merge driver configuration
 
 Sync branch (beads-sync):
-- `.beads/issues.jsonl` - Issue data (committed by daemon)
-- `.beads/metadata.json` - Repository metadata
-- `.beads/config.yaml` - Configuration template
+- `.beads/issues.jsonl` - Issue data (committed by `bd sync --full`)
+- `.beads/metadata.json` - Repository metadata (copied during sync)
+- `.beads/config.yaml` - Optional; typically tracked on the main branch
 
 Not tracked (gitignored):
 - `.beads/beads.db` - SQLite database (local only)
-- `.beads/daemon.*` - Runtime files
+- `.beads/sync_base.jsonl` - Local merge base for sync (per-machine)
+- `.beads/daemon.*`, `.beads/bd.sock` - Legacy runtime files (older versions only)
 
 **Key points:**
 - The worktree is in `.git/beads-worktrees/` (hidden from your workspace)
@@ -131,14 +137,14 @@ Not tracked (gitignored):
 - Your main working directory is never affected
 - Disk overhead is minimal (~few MB for the worktree)
 
-### Automatic Sync
+### Sync Flow
 
 When you update an issue:
 
-1. Issue is updated in `.beads/beads.db` (SQLite database)
-2. Daemon exports to `.beads/issues.jsonl` (JSONL file)
-3. JSONL is copied to worktree (`.git/beads-worktrees/beads-sync/.beads/`)
-4. Daemon commits the change in the worktree to `beads-sync` branch
+1. Issue is updated in `.beads/beads.db` (local database)
+2. `bd sync` exports to `.beads/issues.jsonl`
+3. `bd sync --full` copies JSONL (and metadata) to the worktree
+4. The worktree commits to the `beads-sync` branch
 5. Main branch stays untouched (no commits on `main`)
 
 ## Setup
@@ -164,28 +170,36 @@ If you already have beads set up and want to switch to a separate branch:
 # Set the sync branch
 bd config set sync.branch beads-sync
 
-# Start the daemon (it will create the worktree automatically)
-bd daemon start --auto-commit
+# Run a full sync once (creates the worktree automatically)
+bd sync --full --no-pull
 ```
 
-### Daemon Configuration
+### Sync Commands
 
-For automatic commits to the sync branch:
+Use these commands to control how and when changes are committed to the sync branch:
 
 ```bash
-# Start daemon with auto-commit
-bd daemon start --auto-commit
+# Full sync (pull → merge → export → commit → push)
+bd sync --full
 
-# Or with auto-commit and auto-push
-bd daemon start --auto-commit --auto-push
+# Export + commit/push without pulling
+bd sync --full --no-pull
+
+# Commit locally without pushing
+bd sync --full --no-push
+
+# Export only (no git operations)
+bd sync --flush-only
+
+# Import only (after git pull/merge)
+bd sync --import-only
 ```
 
-**Daemon modes:**
-- `--auto-commit`: Commits to sync branch after each change
-- `--auto-push`: Also pushes to remote after each commit
-- Default interval: 5 seconds (check for changes every 5s)
+If you want automatic exports during git commits, install hooks:
 
-**Recommended:** Use `--auto-commit` but not `--auto-push` if you want to review changes before pushing. Use `--auto-push` if you want fully hands-free sync.
+```bash
+bd hooks install
+```
 
 ### Environment Variables
 
@@ -193,7 +207,7 @@ You can also configure the sync branch via environment variable:
 
 ```bash
 export BEADS_SYNC_BRANCH=beads-sync
-bd daemon start --auto-commit
+bd sync --full
 ```
 
 This is useful for CI/CD or temporary overrides.
@@ -215,7 +229,11 @@ bd update bd-a1b2 --status in_progress
 bd close bd-a1b2 "Completed authentication"
 ```
 
-All changes are automatically committed to the `beads-sync` branch by the daemon. No changes are needed to agent workflows!
+Changes are stored locally until you run a sync command. When ready to publish:
+
+```bash
+bd sync --full
+```
 
 ### For Humans
 
@@ -228,17 +246,26 @@ bd sync --status
 
 This shows the diff between `beads-sync` and `main` (or your current branch).
 
-**Manual commit (if not using daemon):**
+**Commit to the sync branch:**
 
 ```bash
-bd sync --flush-only  # Export to JSONL and commit to sync branch
+# Export + commit + push
+bd sync --full
+
+# Export + commit only (no pull, no push)
+bd sync --full --no-pull --no-push
 ```
+
+`bd sync` without `--full` only exports to JSONL and does not commit.
 
 **Pull changes from remote:**
 
 ```bash
-# Pull updates from other collaborators
-bd sync --no-push
+# Pull updates from other collaborators (no push)
+bd sync --full --no-push
+
+# Or: if you already ran git pull, just import
+bd sync --import-only
 ```
 
 This pulls changes from the remote sync branch and imports them to your local database.
@@ -360,48 +387,28 @@ rm -rf .git/beads-worktrees/beads-sync
 # Prune stale worktree entries
 git worktree prune
 
-# Restart daemon (it will recreate the worktree)
-bd daemon stop && bd daemon start
+# Recreate the worktree on next sync
+bd sync --full --no-pull
 ```
 
 ### "branch 'beads-sync' not found"
 
-The sync branch doesn't exist yet. The daemon will create it on the first commit. If you want to create it manually:
+The sync branch doesn't exist yet. `bd sync --full` will create it on the first commit. If you want to create it manually:
 
 ```bash
 git checkout -b beads-sync
 git checkout main  # Switch back
 ```
 
-Or just let the daemon create it automatically.
+Or just let `bd sync --full` create it automatically.
 
 ### "Cannot push to protected branch"
 
 If the sync branch itself is protected:
 
 1. **Option 1:** Unprotect the sync branch (it's metadata, doesn't need protection)
-2. **Option 2:** Use `--auto-commit` without `--auto-push`, and push manually when ready
+2. **Option 2:** Use `bd sync --full --no-push`, then push manually when ready
 3. **Option 3:** Use a different branch name that's not protected
-
-### Daemon won't start
-
-Check daemon status and logs:
-
-```bash
-# Check status
-bd daemon status
-
-# View logs
-tail -f ~/.beads/daemon.log
-
-# Restart daemon
-bd daemon stop && bd daemon start
-```
-
-Common issues:
-- Port already in use: Another daemon is running
-- Permission denied: Check `.beads/` directory permissions
-- Git errors: Ensure git is installed and repository is initialized
 
 ### Changes not syncing between clones
 
@@ -411,11 +418,11 @@ Ensure all clones are configured the same way:
 # On each clone, verify:
 bd config get sync.branch  # Should be the same (e.g., beads-sync)
 
-# Pull latest changes
-bd sync --no-push
+# Pull and merge remote changes (no push)
+bd sync --full --no-push
 
-# Check daemon is running
-bd daemon status
+# Or: if you already ran git pull, just import
+bd sync --import-only
 ```
 
 ## FAQ
@@ -440,7 +447,7 @@ Yes:
 
 ```bash
 bd config set sync.branch new-branch-name
-bd daemon stop && bd daemon start
+bd sync --full --no-pull
 ```
 
 The old worktree will remain (no harm), and a new worktree will be created for the new branch.
@@ -451,7 +458,7 @@ Unset the sync branch config:
 
 ```bash
 bd config set sync.branch ""
-bd daemon stop && bd daemon start
+bd sync --full --no-pull
 ```
 
 Beads will go back to committing directly to your current branch.
@@ -497,12 +504,9 @@ Worktrees are very lightweight:
 
 ### Can I delete the worktree?
 
-Yes, but the daemon will recreate it. If you want to clean up permanently:
+Yes, but `bd sync --full` will recreate it if needed. If you want to clean up permanently:
 
 ```bash
-# Stop daemon
-bd daemon stop
-
 # Remove worktree
 git worktree remove .git/beads-worktrees/beads-sync
 
@@ -526,7 +530,7 @@ However, if you want fully automated sync:
 
 ```bash
 # WARNING: This bypasses branch protection!
-bd daemon start --auto-commit --auto-push
+bd sync --full
 bd sync --merge  # Run periodically (e.g., via cron)
 ```
 
@@ -567,7 +571,7 @@ jobs:
       - name: Pull changes
         run: |
           git fetch origin beads-sync
-          bd sync --no-push
+          bd sync --full --no-push
 
       - name: Merge to main (if changes)
         run: |
@@ -670,9 +674,9 @@ If you have an existing beads setup committing to `main`:
    bd config set sync.branch beads-sync
    ```
 
-2. **Restart daemon:**
+2. **Run a full sync once (creates the worktree):**
    ```bash
-   bd daemon stop && bd daemon start
+   bd sync --full --no-pull
    ```
 
 3. **Verify:**
@@ -691,9 +695,9 @@ If you want to stop using a sync branch:
    bd config set sync.branch ""
    ```
 
-2. **Restart daemon:**
+2. **Run a full sync once on the main branch:**
    ```bash
-   bd daemon stop && bd daemon start
+   bd sync --full --no-pull
    ```
 
 Future commits will go to your current branch (e.g., `main`).

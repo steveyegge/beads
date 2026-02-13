@@ -2,6 +2,8 @@
 
 A comprehensive analysis of the beads daemon implementation, with learnings applicable to other projects implementing similar background process patterns.
 
+> Legacy: The daemon/RPC layer has been removed from current releases. This document is historical.
+
 ---
 
 ## Table of Contents

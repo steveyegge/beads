@@ -19,54 +19,9 @@ Git worktrees share the same `.git` directory and `.beads` database:
 - Worktree-aware git operations prevent conflicts
 - Git hooks automatically adapt to worktree context
 
-### Daemon Mode Limitations
+### Direct Mode (No Daemon)
 
-**⚠️ Important:** Daemon mode does NOT work correctly with `git worktree` due to shared database state.
-
-The daemon maintains its own view of the current working directory and git state. When multiple worktrees share the same `.beads` database, the daemon may commit changes intended for one branch to a different branch.
-
-### Solutions for Worktree Users
-
-**1. Use `--no-daemon` flag (recommended):**
-
-```bash
-bd --no-daemon ready
-bd --no-daemon create "Fix bug" -p 1
-bd --no-daemon update bd-42 --status in_progress
-```
-
-**2. Disable daemon via environment (entire session):**
-
-```bash
-export BEADS_NO_DAEMON=1
-bd ready  # All commands use direct mode
-```
-
-**3. Disable auto-start (less safe, still warns):**
-
-```bash
-export BEADS_AUTO_START_DAEMON=false
-```
-
-### Automatic Detection & Warnings
-
-bd automatically detects worktrees and shows prominent warnings if daemon mode is active:
-
-```
-╔══════════════════════════════════════════════════════════════════════════╗
-║ WARNING: Git worktree detected with daemon mode                         ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║ Git worktrees share the same .beads directory, which can cause the      ║
-║ daemon to commit/push to the wrong branch.                               ║
-║                                                                          ║
-║ Shared database: /path/to/main/.beads                                    ║
-║ Worktree git dir: /path/to/shared/.git                                   ║
-║                                                                          ║
-║ RECOMMENDED SOLUTIONS:                                                   ║
-║   1. Use --no-daemon flag:    bd --no-daemon <command>                   ║
-║   2. Disable daemon mode:     export BEADS_NO_DAEMON=1                   ║
-╚══════════════════════════════════════════════════════════════════════════╝
-```
+Beads runs in direct mode; there is no daemon to disable. Worktrees share the same `.beads` database, so avoid running `bd sync --full` concurrently from multiple worktrees. Install git hooks (or run `bd sync --full`) from your primary worktree to publish updates safely.
 
 ### Worktree-Aware Features
 
@@ -245,7 +200,7 @@ bd update bd-a1b2 --status in_progress
 bd close bd-a1b2 "Fixed"
 ```
 
-All changes automatically commit to `beads-sync` branch (if daemon is running with `--auto-commit`).
+Run `bd sync --full` to commit issue updates to `beads-sync` (or use git hooks to keep JSONL current).
 
 ### Merging to Main (Humans)
 
@@ -311,7 +266,7 @@ See [PROTECTED_BRANCHES.md](PROTECTED_BRANCHES.md) for complete setup guide, tro
 **With pre-push hook:**
 - JSONL always reflects database state
 - All workspaces stay synchronized
-- No manual `bd sync` needed
+- No manual `bd sync --full` needed
 
 See [examples/git-hooks/README.md](../examples/git-hooks/README.md) for details.
 
@@ -394,9 +349,9 @@ This approach ensures tests work correctly in both normal repos and git worktree
 - Multi-agent workflows
 
 **Key points:**
-- Each workspace has its own daemon
+- Each workspace has its own `.beads/` directory (direct mode)
 - Git is the source of truth
-- Auto-sync keeps workspaces consistent
+- Auto-export/import + hooks or `bd sync --full` keep workspaces consistent
 
 ### Fork-Based Pattern
 
@@ -456,13 +411,12 @@ See [MULTI_REPO_MIGRATION.md](MULTI_REPO_MIGRATION.md) for complete guide.
 
 ### Automatic Sync (Default)
 
-**With daemon running (SQLite backend):**
+**Direct mode (current default):**
 - Export to JSONL: 30-second debounce after changes
 - Import from JSONL: when file is newer than DB
-- Commit/push: configurable via `--auto-commit` / `--auto-push`
+- Commit/push: manual via `bd sync --full` or git hooks
 
-**Note:** `--auto-commit` here refers to **git commits** (typically to the sync branch).  
-For the Dolt backend, use `dolt.auto-commit` / `--dolt-auto-commit` to control **Dolt history commits**.
+**Note:** For the Dolt backend, use `dolt.auto-commit` / `--dolt-auto-commit` to control Dolt history commits.
 
 **30-second debounce provides transaction window:**
 - Multiple changes within 30s get batched
@@ -472,18 +426,20 @@ For the Dolt backend, use `dolt.auto-commit` / `--dolt-auto-commit` to control *
 ### Manual Sync
 
 ```bash
-# Force immediate sync (bypass debounce)
+# Full sync (pull → merge → export → commit → push)
+bd sync --full
+
+# Export only (bypass debounce)
 bd sync
 
-# What it does:
-# 1. Export pending changes to JSONL
-# 2. Commit to git
-# 3. Pull from remote
-# 4. Import any updates
-# 5. Push to remote
+# What bd sync --full does:
+# 1. Pull/merge from remote
+# 2. Export pending changes to JSONL
+# 3. Commit to git
+# 4. Push to remote
 ```
 
-**ALWAYS run `bd sync` at end of agent sessions** to ensure changes are committed/pushed.
+**ALWAYS run `bd sync --full` at end of agent sessions** (or run `bd sync` and commit/push manually) to ensure changes are published.
 
 ### Disable Automatic Sync
 
@@ -495,7 +451,7 @@ bd --no-auto-flush ready
 bd --no-auto-import ready
 
 # Disable both (manual sync only)
-export BEADS_NO_DAEMON=1  # Direct mode
+bd --no-auto-flush --no-auto-import ready
 ```
 
 ## Git Configuration Best Practices
@@ -506,10 +462,12 @@ export BEADS_NO_DAEMON=1  # Direct mode
 # bd database (not tracked - JSONL is source of truth)
 .beads/beads.db
 .beads/beads.db-*
+
+# Legacy daemon runtime files (older versions)
 .beads/bd.sock
 .beads/bd.pipe
 
-# bd daemon state
+# bd lock state
 .beads/.exclusive-lock
 
 # Git worktrees (if using protected branches)
@@ -598,12 +556,10 @@ grep "issues.jsonl" .gitattributes
 **Solutions:**
 ```bash
 # Agent A: Ensure changes were pushed
-bd sync
-git push
+bd sync --full
 
 # Agent B: Force import
-git pull
-bd import -i .beads/issues.jsonl
+bd sync --full
 
 # Check git hooks installed (prevent future issues)
 ./examples/git-hooks/install.sh

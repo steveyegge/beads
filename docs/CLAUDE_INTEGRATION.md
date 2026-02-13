@@ -1,6 +1,6 @@
 # Claude Code Integration Design
 
-This document explains design decisions for Claude Code integration in beads.
+This document explains design decisions for Claude Code integration in beads. If you only need setup instructions, see [docs/CLAUDE.md](CLAUDE.md).
 
 ## Integration Approach
 
@@ -73,11 +73,11 @@ They should be:
 
 ### Current approach is better
 
-- ✅ `bd prime` - Universal context injection
-- ✅ Hooks - Automatic context refresh
-- ✅ Plugin - Optional Claude-specific enhancements
-- ✅ MCP - Optional native tool access (legacy)
-- ❌ Skills - Unnecessary complexity
+- `bd prime` - Universal context injection
+- Hooks - Automatic context refresh
+- Plugin - Optional Claude-specific enhancements
+- MCP - Optional native tool access (legacy)
+- Skills - Unnecessary complexity
 
 Users who want custom Skills can create their own, but beads doesn't ship with or require them.
 
@@ -109,7 +109,7 @@ bd setup claude --remove
 - `cmd/bd/prime.go` - Context generation
 - `cmd/bd/setup/claude.go` - Hook installation
 - `cmd/bd/doctor/claude.go` - Integration verification
-- `docs/CLAUDE.md` - General project guidance for Claude
+- `docs/CLAUDE.md` - User setup guide for Claude Code
 
 ## References
 
