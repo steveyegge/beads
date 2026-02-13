@@ -10,7 +10,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 func TestGetVersionsSince(t *testing.T) {
@@ -248,6 +248,65 @@ func TestTrackBdVersion_UpgradeDetection(t *testing.T) {
 	}
 }
 
+func TestTrackBdVersion_DowngradeIgnored(t *testing.T) {
+	// Reset global state for test isolation
+	ensureCleanGlobalState(t)
+
+	// Create temp .beads directory
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads: %v", err)
+	}
+
+	// Set BEADS_DIR to force FindBeadsDir to use our temp directory
+	t.Setenv("BEADS_DIR", beadsDir)
+
+	// Change to temp directory
+	t.Chdir(tmpDir)
+
+	// Create minimal metadata.json so FindBeadsDir can find the directory
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if err := os.WriteFile(metadataPath, []byte(`{"database":"beads.db"}`), 0600); err != nil {
+		t.Fatalf("Failed to create metadata.json: %v", err)
+	}
+
+	// Create .local_version with a NEWER version than current (simulating downgrade)
+	localVersionPath := filepath.Join(beadsDir, localVersionFile)
+	if err := writeLocalVersion(localVersionPath, "99.99.99"); err != nil {
+		t.Fatalf("Failed to write local version: %v", err)
+	}
+
+	// Save original state
+	origUpgradeDetected := versionUpgradeDetected
+	origPreviousVersion := previousVersion
+	defer func() {
+		versionUpgradeDetected = origUpgradeDetected
+		previousVersion = origPreviousVersion
+	}()
+
+	// Reset state
+	versionUpgradeDetected = false
+	previousVersion = ""
+
+	// trackBdVersion should NOT detect upgrade (this is a downgrade)
+	trackBdVersion()
+
+	if versionUpgradeDetected {
+		t.Error("Expected no upgrade detection when version is a downgrade")
+	}
+
+	if previousVersion != "" {
+		t.Errorf("previousVersion = %q, want empty string for downgrade", previousVersion)
+	}
+
+	// Should still update .local_version to current version
+	localVersion := readLocalVersion(localVersionPath)
+	if localVersion != Version {
+		t.Errorf(".local_version = %q, want %q", localVersion, Version)
+	}
+}
+
 func TestTrackBdVersion_SameVersion(t *testing.T) {
 	// Create temp .beads directory
 	tmpDir := t.TempDir()
@@ -396,7 +455,7 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 
 	// Create database with old version
 	ctx := context.Background()
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -432,7 +491,7 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 	}
 
 	// Verify database version was updated
-	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err = sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -463,7 +522,7 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 
 	// Create database with current version
 	ctx := context.Background()
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -487,7 +546,7 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 	autoMigrateOnVersionBump(tmpDir)
 
 	// Verify database version is still current
-	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err = sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -519,7 +578,7 @@ func TestAutoMigrateOnVersionBump_RefusesDowngrade(t *testing.T) {
 
 	// Create database with a NEWER version than the current binary
 	ctx := context.Background()
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -548,7 +607,7 @@ func TestAutoMigrateOnVersionBump_RefusesDowngrade(t *testing.T) {
 	autoMigrateOnVersionBump(tmpDir)
 
 	// Verify database version was NOT changed (still the newer version)
-	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err = sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -590,7 +649,7 @@ func TestAutoMigrateOnVersionBump_TracksMaxVersion(t *testing.T) {
 
 	// Create database with an older version
 	ctx := context.Background()
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -612,7 +671,7 @@ func TestAutoMigrateOnVersionBump_TracksMaxVersion(t *testing.T) {
 	autoMigrateOnVersionBump(tmpDir)
 
 	// Verify max version was set
-	store, err = dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err = sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}

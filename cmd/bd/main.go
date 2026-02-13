@@ -47,6 +47,9 @@ var (
 	flushFailureCount = 0        // Consecutive flush failures
 	lastFlushError    error      // Last flush error for debugging
 
+	// Auto-flush manager (event-driven, fixes race condition)
+	flushManager *FlushManager
+
 	// Hook runner for extensibility
 	hookRunner *hooks.Runner
 
@@ -832,6 +835,12 @@ func main() {
 	if name := os.Getenv("BD_NAME"); name != "" {
 		rootCmd.Use = name
 	}
+
+	// Register --all flag on Cobra's auto-generated help command.
+	// Must be called after init() so all subcommands are registered and
+	// Cobra has created its default help command.
+	rootCmd.InitDefaultHelpCmd()
+	registerHelpAllFlag()
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

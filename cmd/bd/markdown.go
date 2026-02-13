@@ -318,8 +318,8 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 
 	// Ensure globals are initialized
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: database not initialized\n")
-		os.Exit(1)
+		FatalErrorWithHint("database not initialized",
+			"run 'bd init' to create a database, or use 'bd --no-db' for JSONL-only mode")
 	}
 	if actor == "" {
 		actor = "bd" // Default actor if not set

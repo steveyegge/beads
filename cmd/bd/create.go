@@ -70,16 +70,18 @@ var createCmd = &cobra.Command{
 		silent, _ := cmd.Flags().GetBool("silent")
 
 		// Warn if creating a test issue in production database (unless silent mode)
-		if strings.HasPrefix(strings.ToLower(title), "test") && !silent && !debug.IsQuiet() {
-			fmt.Fprintf(os.Stderr, "%s Creating issue with 'Test' prefix in production database.\n", ui.RenderWarn("⚠"))
-			fmt.Fprintf(os.Stderr, "  For testing, consider using: BEADS_DB=/tmp/test.db ./bd create \"Test issue\"\n")
+		if isTestIssue(title) && !silent && !debug.IsQuiet() {
+			fmt.Fprintf(os.Stderr, "%s Creating test issue in production database\n", ui.RenderWarn("⚠"))
+			fmt.Fprintf(os.Stderr, "  Title: %q appears to be test data\n", title)
+			fmt.Fprintf(os.Stderr, "  Recommendation: Use isolated test database with BEADS_DB\n")
+			fmt.Fprintf(os.Stderr, "    BEADS_DB=/tmp/test.db ./bd create %q\n", title)
 		}
 
 		// Get field values
 		description, _ := getDescriptionFlag(cmd)
 
 		// Check if description is required by config
-		if description == "" && !strings.Contains(strings.ToLower(title), "test") {
+		if description == "" && !isTestIssue(title) {
 			if config.GetBool("create.require-description") {
 				FatalError("description is required (set create.require-description: false in config.yaml to disable)")
 			}
@@ -776,7 +778,7 @@ func init() {
 	createCmd.Flags().Bool("silent", false, "Output only the issue ID (for scripting)")
 	createCmd.Flags().Bool("dry-run", false, "Preview what would be created without actually creating")
 	registerPriorityFlag(createCmd, "2")
-	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|merge-request|molecule|gate|agent|role|rig|convoy|event); enhancement is alias for feature")
+	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|decision|merge-request|molecule|gate|agent|role|rig|convoy|event); aliases: enhancement/feat→feature, dec/adr→decision")
 	registerCommonIssueFlags(createCmd)
 	createCmd.Flags().String("spec-id", "", "Link to specification document")
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")

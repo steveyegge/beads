@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/steveyegge/beads/internal/importer"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -197,7 +198,56 @@ type ImportResult struct {
 // - Displaying results to the user
 // - Setting metadata (e.g., last_import_hash)
 func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage, issues []*types.Issue, opts ImportOptions) (*ImportResult, error) {
-	return importIssuesEngine(ctx, dbPath, store, issues, opts)
+	// Determine orphan handling: flag > config > default (allow)
+	orphanHandling := opts.OrphanHandling
+	if orphanHandling == "" && store != nil {
+		// Read from config if flag not specified
+		configValue, err := store.GetConfig(ctx, "import.missing_parents")
+		if err == nil && configValue != "" {
+			orphanHandling = configValue
+		} else {
+			// Default to allow (most permissive)
+			orphanHandling = "allow"
+		}
+	} else if orphanHandling == "" {
+		// No store available, default to allow
+		orphanHandling = "allow"
+	}
+
+	// Convert ImportOptions to importer.Options
+	importerOpts := importer.Options{
+		DryRun:                     opts.DryRun,
+		SkipUpdate:                 opts.SkipUpdate,
+		Strict:                     opts.Strict,
+		RenameOnImport:             opts.RenameOnImport,
+		SkipPrefixValidation:       opts.SkipPrefixValidation,
+		ClearDuplicateExternalRefs: opts.ClearDuplicateExternalRefs,
+		OrphanHandling:             importer.OrphanHandling(orphanHandling),
+		ProtectLocalExportIDs:      opts.ProtectLocalExportIDs,
+		DeletionIDs:                opts.DeletionIDs,
+	}
+
+	// Delegate to the importer package
+	result, err := importer.ImportIssues(ctx, dbPath, store, issues, importerOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert importer.Result to ImportResult
+	return &ImportResult{
+		Created:             result.Created,
+		Updated:             result.Updated,
+		Unchanged:           result.Unchanged,
+		Skipped:             result.Skipped,
+		Deleted:             result.Deleted,
+		Collisions:          result.Collisions,
+		IDMapping:           result.IDMapping,
+		CollisionIDs:        result.CollisionIDs,
+		PrefixMismatch:      result.PrefixMismatch,
+		ExpectedPrefix:      result.ExpectedPrefix,
+		MismatchPrefixes:    result.MismatchPrefixes,
+		SkippedDependencies: result.SkippedDependencies,
+	}, nil
 }
 
 // isNumeric returns true if the string contains only digits

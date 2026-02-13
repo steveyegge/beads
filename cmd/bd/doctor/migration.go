@@ -35,8 +35,14 @@ func DetectPendingMigrations(path string) []PendingMigration {
 		return pending
 	}
 
-	// Check for sequential IDs (hash-ids migration)
-	if needsHashIDsMigration(beadsDir) {
+	// Detect backend — SQLite-specific migration checks don't apply to Dolt (bd-k1noz)
+	backend := configfile.BackendSQLite
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
+		backend = cfg.GetBackend()
+	}
+
+	// Check for sequential IDs (hash-ids migration) — SQLite only
+	if backend == configfile.BackendSQLite && needsHashIDsMigration(beadsDir) {
 		pending = append(pending, PendingMigration{
 			Name:        "hash-ids",
 			Description: "Convert sequential IDs to hash-based IDs",
@@ -65,14 +71,16 @@ func DetectPendingMigrations(path string) []PendingMigration {
 		})
 	}
 
-	// Check for database version mismatch (main migrate command)
-	if versionMismatch := checkDatabaseVersionMismatch(beadsDir); versionMismatch != "" {
-		pending = append(pending, PendingMigration{
-			Name:        "database",
-			Description: versionMismatch,
-			Command:     "bd migrate",
-			Priority:    1,
-		})
+	// Check for database version mismatch (main migrate command) — SQLite only (bd-k1noz)
+	if backend == configfile.BackendSQLite {
+		if versionMismatch := checkDatabaseVersionMismatch(beadsDir); versionMismatch != "" {
+			pending = append(pending, PendingMigration{
+				Name:        "database",
+				Description: versionMismatch,
+				Command:     "bd migrate",
+				Priority:    1,
+			})
+		}
 	}
 
 	return pending

@@ -53,8 +53,8 @@ Examples:
 		requireFreshDB(ctx)
 
 		if store == nil {
-			fmt.Fprintln(os.Stderr, "Error: database not initialized")
-			os.Exit(1)
+			FatalErrorWithHint("database not initialized",
+				"run 'bd init' to create a database, or use 'bd --no-db' for JSONL-only mode")
 		}
 
 		if len(args) > 0 {

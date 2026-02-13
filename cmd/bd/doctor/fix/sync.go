@@ -2,18 +2,17 @@ package fix
 
 import (
 	"bufio"
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/factory"
 )
 
 // DBJSONLSync fixes database-JSONL sync issues by running the appropriate sync command.
@@ -29,7 +28,8 @@ func DBJSONLSync(path string) error {
 
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Dolt backend: DB-JSONL sync uses SQLite-specific issue counting, skip
+	// Dolt backend: Dolt uses native version control (push/pull/merge) instead
+	// of the DB-JSONL sync layer. JSONL is only an optional compatibility export.
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
 		fmt.Println("  DB-JSONL sync skipped (dolt backend — sync is database-native)")
 		return nil
@@ -72,8 +72,8 @@ func DBJSONLSync(path string) error {
 		return nil // No JSONL, nothing to sync
 	}
 
-	// Count issues in both
-	dbCount, err := countDatabaseIssues(dbPath)
+	// Count issues in both (using factory for backend-agnostic access)
+	dbCount, err := countDatabaseIssues(beadsDir)
 	if err != nil {
 		return fmt.Errorf("failed to count database issues: %w", err)
 	}
@@ -155,21 +155,22 @@ func DBJSONLSync(path string) error {
 	return nil
 }
 
-// countDatabaseIssues counts the number of issues in the database.
-func countDatabaseIssues(dbPath string) (int, error) {
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+// countDatabaseIssues counts the number of issues in the database using the
+// storage factory for backend-agnostic access (bd-lftxx).
+func countDatabaseIssues(beadsDir string) (int, error) {
+	ctx := context.Background()
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{ReadOnly: true})
 	if err != nil {
 		return 0, fmt.Errorf("failed to open database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = store.Close() }()
 
-	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&count)
+	stats, err := store.GetStatistics(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to query database: %w", err)
 	}
 
-	return count, nil
+	return stats.TotalIssues, nil
 }
 
 // countJSONLIssues counts the number of valid issues in a JSONL file.
