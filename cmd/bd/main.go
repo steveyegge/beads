@@ -19,8 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/debug"
+"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/molecules"
 	"github.com/steveyegge/beads/internal/rpc"
@@ -702,34 +701,20 @@ var rootCmd = &cobra.Command{
 			debug.Logf("daemon not available (detail: %s)", daemonStatus.Detail)
 		}
 
-		// SOFT DISABLE: Direct mode is disabled for Dolt server backend (hq-463d49)
-		// Direct mode creates a new connection pool per bd invocation, causing
-		// massive connection churn and CPU overhead. Require daemon mode instead.
-		// Exclude daemon commands - they need direct mode to start/manage the daemon.
-		// Also exclude --rig flag usage - it opens a different rig's database directly (hq-5e851d).
+		// Daemon connection is REQUIRED for all normal commands (bd-mwmfu).
+		// Exclude daemon commands (they manage the daemon itself) and
+		// forceDirectMode commands (doctor, restore, profile).
 		isDaemonCommand := cmd.Name() == "daemon" || cmd.Name() == "daemons" ||
 			(cmd.Parent() != nil && (cmd.Parent().Name() == "daemon" || cmd.Parent().Name() == "daemons"))
 		rigFlag, _ := cmd.Flags().GetString("rig")
 		isCrossRig := rigFlag != ""
-		// Only enforce daemon requirement if direct mode wasn't explicitly forced
 		if daemonClient == nil && !forceDirectMode && !isDaemonCommand && !isCrossRig {
-			// Check if Dolt server mode is enabled
-			checkBeadsDir := beads.FindBeadsDir()
-			if checkBeadsDir == "" && dbPath != "" {
-				checkBeadsDir = filepath.Dir(dbPath)
+			fmt.Fprintf(os.Stderr, "Error: daemon connection required\n")
+			if daemonStatus.Detail != "" {
+				fmt.Fprintf(os.Stderr, "Detail: %s\n", daemonStatus.Detail)
 			}
-			if checkBeadsDir != "" {
-				if cfg, cfgErr := configfile.Load(checkBeadsDir); cfgErr == nil && cfg != nil && cfg.IsDoltServerMode() {
-					fmt.Fprintf(os.Stderr, "Error: daemon connection required for Dolt server mode\n")
-					fmt.Fprintf(os.Stderr, "Direct mode is disabled to prevent connection churn (see hq-463d49)\n")
-					fmt.Fprintf(os.Stderr, "\nDaemon status: not connected\n")
-					if daemonStatus.Detail != "" {
-						fmt.Fprintf(os.Stderr, "Detail: %s\n", daemonStatus.Detail)
-					}
-					fmt.Fprintf(os.Stderr, "\nTo fix: start daemon with 'bd daemon start'\n")
-					os.Exit(1)
-				}
-			}
+			fmt.Fprintf(os.Stderr, "\nTo fix: start daemon with 'bd daemon start'\n")
+			os.Exit(1)
 		}
 
 		// Check if this is a read-only command (GH#804)
