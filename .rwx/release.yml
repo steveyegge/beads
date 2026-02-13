@@ -29,15 +29,14 @@ tasks:
       repository: https://github.com/groblegark/beads.git
       ref: ${{ init.commit-sha }}
 
-  - key: go
-    use: code
-    call: golang/install 1.2.0
-    with:
-      go-version: "1.25"
-
   - key: goreleaser
-    use: go
+    use: code
     run: |
+      # Install Go
+      curl -sSfL https://go.dev/dl/go1.25.6.linux-amd64.tar.gz | sudo tar xz -C /usr/local
+      export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
+      go version
+
       # Install GoReleaser
       curl -sSfL https://github.com/goreleaser/goreleaser/releases/download/v2.8.2/goreleaser_Linux_x86_64.tar.gz \
         | sudo tar xz -C /usr/local/bin goreleaser
@@ -50,6 +49,7 @@ tasks:
       GITHUB_TOKEN="$GH_TOKEN" goreleaser release --clean --config .goreleaser.fork.yml
     env:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      CGO_ENABLED: "1"
 
   - key: dispatch-gastown
     use: goreleaser
