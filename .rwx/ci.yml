@@ -1,0 +1,99 @@
+on:
+  github:
+    push:
+      if: ${{ event.git.branch == 'main' }}
+      init:
+        commit-sha: ${{ event.git.sha }}
+      status-checks:
+        name: CI
+    pull_request:
+      init:
+        commit-sha: ${{ event.git.sha }}
+      status-checks:
+        - tasks: [build, lint, test, version-check]
+          name: CI
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  # ── System deps ────────────────────────────────────────────────────────
+  - key: system-deps
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y libicu-dev gcc g++ bc
+
+  # ── Clone ──────────────────────────────────────────────────────────────
+  - key: code
+    use: system-deps
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/beads.git
+      ref: ${{ init.commit-sha }}
+
+  # ── Go toolchain ──────────────────────────────────────────────────────
+  - key: go
+    call: golang/install 1.2.0
+    with:
+      go-version: "1.25"
+
+  # ── Download modules (cached by go.mod/go.sum) ────────────────────────
+  - key: go-deps
+    use: [code, go]
+    run: go mod download
+    filter:
+      - go.mod
+      - go.sum
+
+  # ── Git config (needed for tests that init repos) ─────────────────────
+  - key: git-config
+    use: go-deps
+    run: |
+      git config --global user.name "CI Bot"
+      git config --global user.email "ci@beads.test"
+
+  # ── Build ─────────────────────────────────────────────────────────────
+  - key: build
+    use: git-config
+    run: go build -v ./cmd/bd
+
+  # ── Lint (parallel with build) ────────────────────────────────────────
+  - key: lint
+    use: git-config
+    run: |
+      curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+        | sh -s -- -b $(go env GOPATH)/bin latest
+      golangci-lint run --timeout=5m
+
+  # ── Tests (after build proves it compiles) ────────────────────────────
+  - key: test
+    use: build
+    run: |
+      go test -v -race -short -coverprofile=coverage.out ./... 2>&1 | tee test-output.txt
+      # Check coverage threshold
+      COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+      MIN_COVERAGE=42
+      echo "Coverage: $COVERAGE%"
+      if (( $(echo "$COVERAGE < $MIN_COVERAGE" | bc -l) )); then
+        echo "Coverage below ${MIN_COVERAGE}% threshold"
+        exit 1
+      fi
+
+  # ── Version consistency check (parallel with everything) ──────────────
+  - key: version-check
+    use: code
+    run: ./scripts/check-versions.sh
+
+  # ── Beads JSONL change guard (parallel) ───────────────────────────────
+  - key: beads-changes-check
+    use: code
+    run: |
+      git fetch origin main 2>/dev/null || true
+      if git diff --name-only origin/main...HEAD 2>/dev/null | grep -q "^\.beads/issues\.jsonl$"; then
+        echo "ERROR: .beads/issues.jsonl modified — not allowed in PRs"
+        exit 1
+      fi
+      echo "No .beads/issues.jsonl changes"
