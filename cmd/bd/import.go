@@ -95,8 +95,10 @@ NOTE: Import requires direct database access. When using a remote daemon
 		// having sync use --no-daemon mode for consistency.
 		// Import requires direct database access. Close daemon connection.
 		debug.Logf("Debug: import command forcing direct mode (closes daemon connection)\n")
-		_ = daemonClient.Close()
-		daemonClient = nil
+		if daemonClient != nil {
+			_ = daemonClient.Close()
+			daemonClient = nil
+		}
 
 		var err error
 		beadsDir := filepath.Dir(dbPath)
