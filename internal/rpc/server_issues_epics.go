@@ -3874,6 +3874,7 @@ func (s *Server) handleDecisionResolve(req *Request) Response {
 	s.emitMutationFor(MutationUpdate, issue)
 	s.emitDecisionEvent(eventbus.EventDecisionResponded, eventbus.DecisionEventPayload{
 		DecisionID:  args.IssueID,
+		RequestedBy: dp.RequestedBy,
 		ChosenLabel: args.SelectedOption,
 		ResolvedBy:  args.RespondedBy,
 		Rationale:   args.Guidance,

@@ -113,7 +113,7 @@ func TestMailNudgeHandler_PostNudge_Success(t *testing.T) {
 	defer server.Close()
 
 	h := &MailNudgeHandler{httpClient: server.Client()}
-	delivered, reason, err := h.postNudge(context.Background(), server.URL, "You have new mail")
+	delivered, reason, err := postNudge(context.Background(), h.httpClient, server.URL, "You have new mail")
 	if err != nil {
 		t.Fatalf("postNudge error: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestMailNudgeHandler_PostNudge_NotDelivered(t *testing.T) {
 	defer server.Close()
 
 	h := &MailNudgeHandler{httpClient: server.Client()}
-	delivered, reason, err := h.postNudge(context.Background(), server.URL, "test")
+	delivered, reason, err := postNudge(context.Background(), h.httpClient, server.URL, "test")
 	if err != nil {
 		t.Fatalf("postNudge error: %v", err)
 	}
@@ -154,15 +154,14 @@ func TestMailNudgeHandler_PostNudge_HTTPError(t *testing.T) {
 	defer server.Close()
 
 	h := &MailNudgeHandler{httpClient: server.Client()}
-	_, _, err := h.postNudge(context.Background(), server.URL, "test")
+	_, _, err := postNudge(context.Background(), h.httpClient, server.URL, "test")
 	if err == nil {
 		t.Error("expected error for HTTP 500")
 	}
 }
 
-func TestMailNudgeHandler_PostNudge_ConnectionRefused(t *testing.T) {
-	h := &MailNudgeHandler{}
-	_, _, err := h.postNudge(context.Background(), "http://127.0.0.1:1", "test")
+func TestPostNudge_ConnectionRefused(t *testing.T) {
+	_, _, err := postNudge(context.Background(), nil, "http://127.0.0.1:1", "test")
 	if err == nil {
 		t.Error("expected error for connection refused")
 	}
@@ -170,11 +169,14 @@ func TestMailNudgeHandler_PostNudge_ConnectionRefused(t *testing.T) {
 
 func TestDefaultMailHandlers(t *testing.T) {
 	handlers := DefaultMailHandlers()
-	if len(handlers) != 1 {
-		t.Fatalf("expected 1 handler, got %d", len(handlers))
+	if len(handlers) != 2 {
+		t.Fatalf("expected 2 handlers, got %d", len(handlers))
 	}
 	if handlers[0].ID() != "mail-nudge" {
-		t.Errorf("expected handler ID %q, got %q", "mail-nudge", handlers[0].ID())
+		t.Errorf("expected handler[0] ID %q, got %q", "mail-nudge", handlers[0].ID())
+	}
+	if handlers[1].ID() != "decision-nudge" {
+		t.Errorf("expected handler[1] ID %q, got %q", "decision-nudge", handlers[1].ID())
 	}
 }
 
@@ -191,6 +193,57 @@ func TestMailNudgeInDefaultHandlers(t *testing.T) {
 	}
 	if !found {
 		t.Error("mail-nudge handler not found in DefaultHandlers()")
+	}
+}
+
+func TestDecisionNudgeHandlerMetadata(t *testing.T) {
+	h := &DecisionNudgeHandler{}
+	if h.ID() != "decision-nudge" {
+		t.Errorf("ID() = %q, want %q", h.ID(), "decision-nudge")
+	}
+	if h.Priority() != 50 {
+		t.Errorf("Priority() = %d, want 50", h.Priority())
+	}
+	if len(h.Handles()) != 1 || h.Handles()[0] != EventDecisionResponded {
+		t.Errorf("Handles() = %v, want [DecisionResponded]", h.Handles())
+	}
+}
+
+func TestDecisionNudgeHandler_EmptyRequestedBy(t *testing.T) {
+	h := &DecisionNudgeHandler{}
+	payload := DecisionEventPayload{DecisionID: "test-123", RequestedBy: ""}
+	raw, _ := json.Marshal(payload)
+	event := &Event{Type: EventDecisionResponded, Raw: raw}
+	result := &Result{}
+
+	err := h.Handle(context.Background(), event, result)
+	if err != nil {
+		t.Errorf("expected nil error for empty RequestedBy, got: %v", err)
+	}
+}
+
+func TestDecisionNudgeHandler_BadPayload(t *testing.T) {
+	h := &DecisionNudgeHandler{}
+	event := &Event{Type: EventDecisionResponded, Raw: json.RawMessage(`{invalid`)}
+	result := &Result{}
+
+	err := h.Handle(context.Background(), event, result)
+	if err == nil {
+		t.Error("expected error for invalid JSON payload")
+	}
+}
+
+func TestDecisionNudgeInDefaultHandlers(t *testing.T) {
+	handlers := DefaultHandlers()
+	found := false
+	for _, h := range handlers {
+		if h.ID() == "decision-nudge" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("decision-nudge handler not found in DefaultHandlers()")
 	}
 }
 

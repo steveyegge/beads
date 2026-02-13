@@ -56,7 +56,7 @@ func (h *MailNudgeHandler) Handle(ctx context.Context, event *Event, result *Res
 
 	// POST nudge to coop sidecar.
 	message := fmt.Sprintf("You have new mail from %s: %s", payload.From, payload.Subject)
-	delivered, reason, err := h.postNudge(ctx, coopURL, message)
+	delivered, reason, err := postNudge(ctx, h.httpClient, coopURL, message)
 	if err != nil {
 		log.Printf("mail-nudge: nudge to %s (%s) failed: %v", agentID, coopURL, err)
 		return nil // Best-effort; don't fail the event chain.
@@ -165,10 +165,10 @@ func resolveCoopURLFromBead(ctx context.Context, cwd, agentID string) (string, e
 }
 
 // postNudge POSTs a nudge message to a Coop sidecar's nudge endpoint.
-// Returns (delivered, reason, error).
-func (h *MailNudgeHandler) postNudge(ctx context.Context, coopURL, message string) (bool, string, error) {
-	if h.httpClient == nil {
-		h.httpClient = &http.Client{Timeout: 5 * time.Second}
+// Returns (delivered, reason, error). If client is nil, a default is used.
+func postNudge(ctx context.Context, client *http.Client, coopURL, message string) (bool, string, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
 	}
 
 	body, err := json.Marshal(map[string]string{"message": message})
@@ -183,7 +183,7 @@ func (h *MailNudgeHandler) postNudge(ctx context.Context, coopURL, message strin
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := h.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return false, "", err
 	}
@@ -207,9 +207,59 @@ func (h *MailNudgeHandler) postNudge(ctx context.Context, coopURL, message strin
 	return nudgeResp.Delivered, nudgeResp.Reason, nil
 }
 
-// DefaultMailHandlers returns the mail event bus handlers for daemon registration.
+// DecisionNudgeHandler nudges the requesting agent via their Coop HTTP API when
+// a decision is resolved. This wakes idle agents so their PostToolUse hook can
+// run `bd decision check --inject` and deliver the response. (bd-5mkhu)
+//
+// Priority 50 (runs after standard handlers; nudging is supplementary).
+type DecisionNudgeHandler struct {
+	httpClient *http.Client
+}
+
+func (h *DecisionNudgeHandler) ID() string          { return "decision-nudge" }
+func (h *DecisionNudgeHandler) Handles() []EventType { return []EventType{EventDecisionResponded} }
+func (h *DecisionNudgeHandler) Priority() int        { return 50 }
+
+func (h *DecisionNudgeHandler) Handle(ctx context.Context, event *Event, result *Result) error {
+	var payload DecisionEventPayload
+	if err := unmarshalEventPayload(event, &payload); err != nil {
+		return fmt.Errorf("decision-nudge: %w", err)
+	}
+
+	agentID := payload.RequestedBy
+	if agentID == "" {
+		return nil // No agent to nudge
+	}
+
+	// Look up agent bead notes for coop_url.
+	coopURL, err := resolveCoopURLFromBead(ctx, event.CWD, agentID)
+	if err != nil {
+		log.Printf("decision-nudge: no coop_url for agent %q: %v", agentID, err)
+		return nil // Not a coop agent or not reachable; skip silently.
+	}
+
+	// POST nudge to coop sidecar.
+	message := fmt.Sprintf("Decision %s resolved by %s (chose: %s)", payload.DecisionID, payload.ResolvedBy, payload.ChosenLabel)
+	delivered, reason, err := postNudge(ctx, h.httpClient, coopURL, message)
+	if err != nil {
+		log.Printf("decision-nudge: nudge to %s (%s) failed: %v", agentID, coopURL, err)
+		return nil // Best-effort; don't fail the event chain.
+	}
+
+	if delivered {
+		log.Printf("decision-nudge: nudged %s for decision %s", agentID, payload.DecisionID)
+	} else {
+		log.Printf("decision-nudge: nudge to %s not delivered (reason: %s)", agentID, reason)
+	}
+
+	return nil
+}
+
+// DefaultMailHandlers returns the mail and decision nudge event bus handlers
+// for daemon registration.
 func DefaultMailHandlers() []Handler {
 	return []Handler{
 		&MailNudgeHandler{},
+		&DecisionNudgeHandler{},
 	}
 }
