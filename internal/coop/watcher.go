@@ -48,8 +48,8 @@ func NewWatcher(baseURL string, opts ...Option) *Watcher {
 }
 
 // Watch connects to the WebSocket and streams StateChangeEvents until the
-// context is cancelled. Reconnects on connection loss with exponential backoff.
-// The returned channel is closed when the context is cancelled.
+// context is canceled. Reconnects on connection loss with exponential backoff.
+// The returned channel is closed when the context is canceled.
 func (w *Watcher) Watch(ctx context.Context) (<-chan StateChangeEvent, error) {
 	ch := make(chan StateChangeEvent, 64)
 

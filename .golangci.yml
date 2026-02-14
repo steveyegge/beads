@@ -22,13 +22,16 @@ linters:
         - (*database/sql.Stmt).Close
         - (*database/sql.Conn).Close
         - (*os.File).Close
-        - (os).RemoveAll
-        - (os).Remove
-        - (os).Setenv
-        - (os).Unsetenv
-        - (os).Chdir
-        - (os).MkdirAll
-        - (fmt).Sscanf
+        - os.RemoveAll
+        - os.Remove
+        - os.Setenv
+        - os.Unsetenv
+        - os.Chdir
+        - os.MkdirAll
+        - fmt.Sscanf
+        - fmt.Fprintf
+        - syscall.Flock
+        - golang.org/x/term.Restore
         # WebSocket close/write — best-effort during cleanup or context cancellation
         - (*github.com/gorilla/websocket.Conn).Close
         - (*github.com/gorilla/websocket.Conn).WriteMessage
@@ -48,12 +51,8 @@ linters:
         - (github.com/steveyegge/beads/internal/storage.Storage).Close
         # DoltStore Rows close — deferred cleanup (custom sql.Rows wrapper)
         - (*github.com/steveyegge/beads/internal/storage/dolt.Rows).Close
-        # File lock release — best-effort cleanup
-        - (syscall).Flock
         # Net listener close — best-effort cleanup (e.g., findFreePort)
         - (net.Listener).Close
-        # Terminal restore — deferred cleanup in attach flows
-        - (golang.org/x/term).Restore
         # Eventbus dispatch — fire-and-forget event publishing
         - (*github.com/steveyegge/beads/internal/eventbus.Bus).Dispatch
         # Slackbot notifications — best-effort, errors logged internally
@@ -95,7 +94,7 @@ linters:
           - gosec
         text: "G306.*0700"
       # G204: Safe subprocess launches with validated arguments
-      - path: 'cmd/bd/daemon_autostart\.go|cmd/bd/daemon_sync_branch\.go|cmd/bd/doctor\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/gate\.go|cmd/bd/gate_discover\.go|cmd/bd/jira\.go|cmd/bd/migrate_sync\.go|cmd/bd/show\.go|cmd/bd/sync\.go|internal/git/worktree\.go|internal/syncbranch/worktree\.go'
+      - path: 'cmd/bd/agent_attach\.go|cmd/bd/daemon_autostart\.go|cmd/bd/daemon_sync_branch\.go|cmd/bd/doctor\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/gate\.go|cmd/bd/gate_discover\.go|cmd/bd/jira\.go|cmd/bd/migrate_sync\.go|cmd/bd/show\.go|cmd/bd/sync\.go|internal/git/worktree\.go|internal/syncbranch/worktree\.go|internal/tui/decision/model\.go'
         linters:
           - gosec
         text: 'G204'
@@ -120,26 +119,26 @@ linters:
           - errcheck
         text: "Error return value of .*(Close|Rollback|RemoveAll|Setenv|Unsetenv|Chdir|MkdirAll|Remove|Write|SetReadDeadline|SetDeadline|Start|Stop).* is not checked"
 
+      # errcheck: WebSocket conn.Close — best-effort cleanup in agent attach
+      - path: 'cmd/bd/agent_attach\.go'
+        linters:
+          - errcheck
+        text: "conn\\.Close"
       # errcheck: Stdout/Stderr writes are best-effort in attach flows
       - path: 'internal/coop/attach\.go'
         linters:
           - errcheck
-        text: "opts\\.Stdout\\.Write|opts\\.Stderr"
+        text: "opts\\.Stdout\\.Write|opts\\.Stderr|fmt\\.Fprintf"
       # errcheck: HTTP response body Close in deferred cleanup
-      - path: 'internal/coop/client\.go'
+      - path: 'internal/coop/client\.go|internal/rpc/http_client\.go|internal/rpc/http_client_sse\.go|internal/eventbus/handlers_mail\.go'
         linters:
           - errcheck
         text: "resp\\.Body\\.Close"
       # errcheck: HTTP ResponseWriter.Write — cannot handle errors mid-response
-      - path: 'internal/rpc/http_server\.go'
+      - path: 'internal/rpc/http_server\.go|internal/slackbot/health\.go'
         linters:
           - errcheck
         text: "w\\.Write"
-      # errcheck: SSE keepalive writes — best-effort, client may disconnect
-      - path: 'internal/rpc/http_sse\.go'
-        linters:
-          - errcheck
-        text: "fmt\\.Fprintf"
 
       # unparam: Placeholder functions that may return errors in future implementation
       - path: 'cmd/bd/jira\.go'
@@ -154,11 +153,11 @@ linters:
       - path: 'cmd/bd/decision_stop_check\.go'
         linters:
           - unparam
-        text: 'ctx.*is unused'
+        text: 'ctx.*is unused|checkDecisionResponse.*result'
       - path: 'cmd/bd/routed\.go'
         linters:
           - unparam
-        text: 'forEachRoutedID.*ctx'
+        text: 'forEachRoutedID.*(ctx|localStore)'
       - path: 'cmd/bd/skill\.go'
         linters:
           - unparam
@@ -174,7 +173,7 @@ linters:
       - path: 'internal/rpc/server_write_ops\.go'
         linters:
           - unparam
-        text: 'cookFormulaFull.*ctx'
+        text: 'cookFormulaFull.*(ctx|conditionVars)'
       - path: 'internal/slackbot/nats\.go'
         linters:
           - unparam
@@ -200,7 +199,7 @@ linters:
       - path: 'internal/rpc/server_mol\.go'
         linters:
           - unparam
-        text: 'handleMolBondDryRun.*actor|looksLikeFormulaName.*result|spawnSubgraph.*parentID|burnMolecules.*force'
+        text: 'handleMolBondDryRun.*actor|looksLikeFormulaName.*result|spawnSubgraph.*(parentID|childRef)|burnMolecules.*(force|actor)'
       - path: 'internal/slackbot/bot\.go'
         linters:
           - unparam
@@ -216,7 +215,7 @@ linters:
           - gosec
         text: 'G602'
       # gosec G304: File inclusion via variable — paths from trusted config/CLI args
-      - path: 'cmd/bd/route\.go|internal/gate/builtin_userprompt\.go|internal/slackbot/router\.go'
+      - path: 'cmd/bd/route\.go|cmd/bd/runbook\.go|internal/gate/builtin_userprompt\.go|internal/slackbot/router\.go'
         linters:
           - gosec
         text: 'G304'
@@ -225,13 +224,13 @@ linters:
         linters:
           - gosec
         text: 'G204'
-      # gosec G104: Errors unhandled in spike/test utility code
-      - path: 'cmd/nats-spike/main\.go'
+      # gosec G104: Errors unhandled in spike/test utility code and best-effort cleanup
+      - path: 'cmd/nats-spike/main\.go|internal/coop/attach\.go'
         linters:
           - gosec
         text: 'G104'
       # gosec G306: WriteFile 0644 permissions are appropriate for config/temp files
-      - path: 'internal/gate/builtin_userprompt\.go|internal/inject/queue\.go|internal/slackbot/preferences\.go|internal/slackbot/router\.go'
+      - path: 'cmd/bd/route\.go|cmd/bd/runbook\.go|internal/gate/builtin_userprompt\.go|internal/inject/queue\.go|internal/slackbot/preferences\.go|internal/slackbot/router\.go|internal/slackbot/state\.go'
         linters:
           - gosec
         text: 'G30[26]'

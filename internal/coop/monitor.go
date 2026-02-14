@@ -175,7 +175,7 @@ func (m *AgentMonitor) PollOnce(ctx context.Context) []MonitorEvent {
 }
 
 // Run starts the monitoring loop, emitting events to the returned channel.
-// The loop runs until the context is cancelled.
+// The loop runs until the context is canceled.
 func (m *AgentMonitor) Run(ctx context.Context) <-chan MonitorEvent {
 	ch := make(chan MonitorEvent, 64)
 
