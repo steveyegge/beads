@@ -22,6 +22,7 @@ const GitignoreTemplate = `# SQLite databases
 # Daemon runtime files
 daemon.lock
 daemon.log
+daemon-*.log.gz
 daemon.pid
 bd.sock
 sync-state.json
