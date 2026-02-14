@@ -537,9 +537,16 @@ func extractAuthCode(text string) string {
 		parsed, err := url.Parse(text)
 		if err == nil {
 			if code := parsed.Query().Get("code"); code != "" {
-				return code
+				text = code
 			}
 		}
+	}
+
+	// Claude's OAuth callback includes the state after a # separator:
+	//   code#state  or  code%23state
+	// Strip the state suffix — the actual code is the part before #.
+	if hashIdx := strings.Index(text, "#"); hashIdx > 0 {
+		text = text[:hashIdx]
 	}
 
 	return text
