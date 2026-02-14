@@ -83,6 +83,7 @@ func importFromJSONLInline(ctx context.Context, jsonlPath string, renameOnImport
 
 	var allIssues []*types.Issue
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	lineNum := 0
 
 	for scanner.Scan() {

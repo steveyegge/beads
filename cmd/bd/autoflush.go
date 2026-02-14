@@ -172,6 +172,7 @@ func getWorktreeJSONLPath(mainJSONLPath string) string {
 func detectPrefixFromJSONL(jsonlData []byte) string {
 	// Parse first issue to extract prefix from its ID
 	scanner := bufio.NewScanner(bytes.NewReader(jsonlData))
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {

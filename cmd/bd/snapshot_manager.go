@@ -306,6 +306,7 @@ func (sm *SnapshotManager) BuildIDToTimestampMap(path string) (map[string]time.T
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -416,6 +417,7 @@ func (sm *SnapshotManager) buildIDToLineMap(path string) (map[string]string, err
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -454,6 +456,7 @@ func (sm *SnapshotManager) buildIDSet(path string) (map[string]bool, error) {
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
