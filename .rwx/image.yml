@@ -123,6 +123,7 @@ tasks:
         'RUN apt-get update && apt-get install -y --no-install-recommends \' \
         '        ca-certificates tzdata libicu74 netcat-openbsd \' \
         '    && rm -rf /var/lib/apt/lists/* \' \
+        '    && userdel -r ubuntu 2>/dev/null; groupdel ubuntu 2>/dev/null; true \' \
         '    && groupadd -g 1000 beads \' \
         '    && useradd -u 1000 -g beads -s /bin/sh -m beads' \
         'COPY bd oj /usr/local/bin/' \
