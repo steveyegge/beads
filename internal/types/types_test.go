@@ -546,8 +546,8 @@ func TestIssueTypeIsValid(t *testing.T) {
 		{TypeEpic, true},
 		{TypeChore, true},
 		{TypeDecision, true},
+		{TypeMessage, true},
 		// Gas Town types are now custom types (not built-in)
-		{IssueType("message"), false},
 		{IssueType("merge-request"), false},
 		{IssueType("molecule"), false},
 		{IssueType("gate"), false},
@@ -644,8 +644,8 @@ func TestIssueTypeRequiredSections(t *testing.T) {
 		{TypeEpic, 1, "## Success Criteria"},
 		{TypeDecision, 3, "## Decision"},
 		{TypeChore, 0, ""},
+		{TypeMessage, 0, ""},
 		// Gas Town types are now custom and have no required sections
-		{IssueType("message"), 0, ""},
 		{IssueType("molecule"), 0, ""},
 		{IssueType("gate"), 0, ""},
 		{TypeEvent, 0, ""},
