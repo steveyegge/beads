@@ -212,6 +212,26 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.50.0",
+		Date:    "2026-02-14",
+		Changes: []string{
+			"CHANGED: Default backend is now Dolt for new bd init projects (existing SQLite projects unaffected)",
+			"NEW: bd graph terminal-native DAG visualization, DOT export, interactive HTML export",
+			"NEW: bd sql command for raw SQL access (table, JSON, CSV output)",
+			"NEW: bd help --all for complete command reference dump",
+			"NEW: decision built-in issue type",
+			"NEW: Cross-database dependency resolution via prefix routes in bd show/graph/blocked",
+			"NEW: bd doctor artifact cleanup (--check=artifacts --clean) and Dolt corruption recovery (--fix)",
+			"NEW: bd doctor Claude Code integration checks and grouped category output",
+			"REMOVED: Daemon/RPC subsystem and JSONL sync layer fully removed",
+			"FIX: bd close enforces gate satisfaction (--force to bypass)",
+			"FIX: bd show exits non-zero when issue not found",
+			"FIX: Dolt joinIter panic prevented (replaced IN/EXISTS subqueries with Go-level filtering)",
+			"FIX: Embedded Dolt self-deadlock in git hooks and bd migrate",
+			"FIX: bd ready excludes children of deferred parents",
+		},
+	},
+	{
 		Version: "0.49.6",
 		Date:    "2026-02-09",
 		Changes: []string{

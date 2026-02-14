@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-02-14
+
+### Added
+
+- **Dolt is now the default backend** for new `bd init` projects. Existing SQLite projects are unaffected. `BEADS_DB` env var auto-detects SQLite.
+- **`bd graph` visualization overhaul** — terminal-native horizontal DAG as default view, plus DOT and interactive HTML export formats. Old box view available via `--box` (bd-9de)
+- **`bd sql` command** for raw SQL access to the underlying database. Supports table, JSON, and CSV output
+- **`bd help --all`** to dump complete command reference (#1699)
+- **`decision` built-in issue type** with aliases and help strings
+- **Cross-database dependency resolution** via prefix routes in `bd show`, `bd graph`, and `bd blocked` — external deps display actual title, status, and priority (bd-k0pfm)
+- **`bd show --watch`** flag for auto-refreshing display on file changes with fsnotify debounce
+- **`bd vc commit --stdin`** for reading multi-line commit messages from stdin
+- **`BD_BRANCH` env var** for branch-per-polecat write isolation in Dolt
+- **`BD_NAME` env var** for multi-instance help text identity
+- **`bd doctor` artifact cleanup** — `--check=artifacts` detects stale JSONL, WAL/SHM, backup files. Works with `--clean` and `--fix`
+- **`bd doctor` Claude Code integration checks** — detect malformed `settings.json`, verify hook completeness, detect legacy MCP tool references
+- **`bd doctor` output grouped by category** with per-category pass counts
+- **Dolt corruption recovery** via `bd doctor --fix` — backs up corrupted `.dolt-data/`, reinitializes fresh Dolt database, auto-imports from JSONL backup
+- **Frictionless `bd init`** — better test-issue detection, non-interactive stdin detection, version tracking at init time, cancellable prompts, actionable error hints via `FatalErrorWithHint`
+- **Mise installation** documented in INSTALLING.md
+
+### Changed
+
+- **Default backend is Dolt** — `bd init` without `--backend` now creates Dolt databases. Existing projects with no explicit backend in metadata.json continue to use SQLite (backward compatible)
+- **Removed daemon/RPC subsystem** — internal daemon, RPC layer, and `internal/rpc/` package deleted (~19,663 lines). All commands use direct embedded database access
+- **Removed JSONL sync layer** — `internal/importer/`, `markDirtyAndScheduleFlush()`, and `daemonClient != nil` branches eliminated (~7,634 lines)
+- **Stripped dirty tracking from Storage interface** — `MarkIssueDirty` subsystem no longer part of the storage contract
+- **`bd graph` default view** changed from vertical box layout to horizontal DAG
+- **Schema version downgrade protection** — CLI refuses to run against a database written by a newer version
+- **Upgrade notification** only triggers for actual version upgrades (no longer fires on downgrades/branch switches)
+- **`resolve-conflicts` defaults to canonical `issues.jsonl`**
+- **Batch `GetLabelsForIssues`** replaces N+1 `GetLabels` calls in list operations
+- **Consolidated redirect resolution** into single `FollowRedirect` function
+- **Backend-agnostic refactoring** — compact, migrate, dep, sync, findReplies, and wisp/mol commands use Storage interface instead of SQLite type assertions
+
+### Fixed
+
+- **`bd close` enforces gate satisfaction** before closing machine-checkable gates (`gh:pr`, `gh:run`, `timer`, `bead`). `--force` bypasses
+- **`bd show` exits non-zero** when issue not found (previously exited 0 with empty JSON output)
+- **`bd list` closed-blocker filtering** — closed issues no longer shown as blockers in annotations
+- **`bd list --parent` includes dotted-ID children** — matches both explicit parent links and `X.*` naming convention
+- **`bd ready` deferred-parent propagation** — excludes children of deferred parents from ready work
+- **Dolt `joinIter` panic** prevented by replacing `IN`/`EXISTS` subqueries with Go-level filtering
+- **Embedded Dolt self-deadlock** in git hooks and `bd migrate` — added to `noDbCommands`
+- **Dolt rename FK violation** — disable FK checks during rename operations
+- **Dolt `GetIssuesByLabel` deadlock** — fixed connection pool exhaustion with `MaxOpenConns=1`
+- **XSS vulnerabilities** in graph HTML export (bd-67uzz)
+- **Redirect path resolution** — resolve from parent of `.beads` dir, not `.beads` itself
+- **`bd migrate --to-dolt`** sets `sync.mode=dolt-native` and uses config-based backend
+- **`bd doctor` backend-agnostic checks** — uses storage factory instead of raw SQLite; routes.jsonl false positive fix; `dolt_mode server` respected
+- **`bd show` extra newline** before first issue header removed
+- **`--type` flag help text** shows only base types
+- **`bd prime` prompt** optimized to avoid spurious "creating issue without description" warning
+- **Linuxbrew ICU paths** supported in Makefile
+- **Windows build recipe** fixed (BINARY conditional moved inside targets)
+- **`go install`** fixed by removing local `replace` directive
+- **Nix flake build** and `gosec` lint errors resolved
+- **Duplicate Cobra command registration** replaced with `Aliases`
+- **Homebrew upgrade command** corrected in upgrading docs
+
+### Documentation
+
+- Added Dolt GitHub link to README
+- Added beadsmap and Beadbox to community tools
+- Corrected Homebrew upgrade command
+- Added Mise installation instructions to INSTALLING.md
+
 ## [0.49.6] - 2026-02-08
 
 ### Reverted

@@ -8,7 +8,7 @@ import (
 )
 
 func TestRenderGraphVisual(t *testing.T) {
-	// No t.Parallel() — captureGraphOutput swaps global os.Stdout
+	t.Parallel()
 	subgraph, layout := makeTestSubgraph()
 
 	output := captureGraphOutput(func() {
@@ -54,6 +54,7 @@ func TestRenderGraphVisual(t *testing.T) {
 }
 
 func TestRenderGraphVisual_Empty(t *testing.T) {
+	t.Parallel()
 	emptySubgraph := &TemplateSubgraph{
 		Root:     &types.Issue{ID: "empty"},
 		Issues:   []*types.Issue{},
@@ -75,6 +76,7 @@ func TestRenderGraphVisual_Empty(t *testing.T) {
 }
 
 func TestRenderGraphVisual_SingleNode(t *testing.T) {
+	t.Parallel()
 	issue := &types.Issue{
 		ID: "solo-1", Title: "Solo issue", Status: types.StatusOpen,
 		Priority: 0, IssueType: types.TypeTask,

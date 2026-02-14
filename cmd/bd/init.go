@@ -74,7 +74,11 @@ variable.`,
 			os.Exit(1)
 		}
 		if backend == "" {
-			backend = configfile.BackendSQLite // Default to SQLite
+			if os.Getenv("BEADS_DB") != "" {
+				backend = configfile.BackendSQLite // BEADS_DB always points to a SQLite file
+			} else {
+				backend = configfile.BackendDolt // Default to Dolt for new projects
+			}
 		}
 
 		// Validate server mode requires dolt backend
@@ -483,10 +487,8 @@ variable.`,
 				}
 			}
 
-			// Save backend choice (only store if non-default to keep metadata.json clean)
-			if backend != configfile.BackendSQLite {
-				cfg.Backend = backend
-			}
+			// Always store backend explicitly in metadata.json
+			cfg.Backend = backend
 			// In Dolt mode, metadata.json.database should point to the Dolt directory (not beads.db).
 			// Backward-compat: older dolt setups left this as "beads.db", which is misleading and
 			// can trigger SQLite-only code paths.
@@ -857,7 +859,7 @@ func init() {
 	initCmd.Flags().StringP("prefix", "p", "", "Issue prefix (default: current directory name)")
 	initCmd.Flags().BoolP("quiet", "q", false, "Suppress output (quiet mode)")
 	initCmd.Flags().StringP("branch", "b", "", "Git branch for beads commits (default: current branch)")
-	initCmd.Flags().String("backend", "", "Storage backend: sqlite (default) or dolt (version-controlled)")
+	initCmd.Flags().String("backend", "", "Storage backend: dolt (default, version-controlled) or sqlite")
 	initCmd.Flags().Bool("contributor", false, "Run OSS contributor setup wizard")
 	initCmd.Flags().Bool("team", false, "Run team workflow setup wizard")
 	initCmd.Flags().Bool("stealth", false, "Enable stealth mode: global gitattributes and gitignore, no local repo tracking")
