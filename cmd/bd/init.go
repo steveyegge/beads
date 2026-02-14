@@ -423,7 +423,7 @@ variable.`,
 		// Belt-and-suspenders: write then verify read-back for each field.
 
 		// Store and verify the bd version (for version mismatch detection)
-		verifyMetadata(ctx, store, "bd_version", Version, quiet)
+		verifyMetadata(ctx, store, "bd_version", Version)
 
 		// Compute and store repository fingerprint (FR-015: skip outside git)
 		repoID, err := beads.ComputeRepoID()
@@ -432,7 +432,7 @@ variable.`,
 				fmt.Fprintf(os.Stderr, "Warning: could not compute repository ID: %v\n", err)
 			}
 		} else {
-			if verifyMetadata(ctx, store, "repo_id", repoID, quiet) && !quiet {
+			if verifyMetadata(ctx, store, "repo_id", repoID) && !quiet {
 				fmt.Printf("  Repository ID: %s\n", repoID[:8])
 			}
 		}
@@ -444,7 +444,7 @@ variable.`,
 				fmt.Fprintf(os.Stderr, "Warning: could not compute clone ID: %v\n", err)
 			}
 		} else {
-			if verifyMetadata(ctx, store, "clone_id", cloneID, quiet) && !quiet {
+			if verifyMetadata(ctx, store, "clone_id", cloneID) && !quiet {
 				fmt.Printf("  Clone ID: %s\n", cloneID)
 			}
 		}
@@ -1208,7 +1208,7 @@ func promptContributorMode() (isContributor bool, err error) {
 
 // verifyMetadata writes a metadata field and verifies the write succeeded.
 // Returns true if write+verify succeeded, false with warning if either failed.
-func verifyMetadata(ctx context.Context, store storage.Storage, key, value string, quiet bool) bool {
+func verifyMetadata(ctx context.Context, store storage.Storage, key, value string) bool {
 	if err := store.SetMetadata(ctx, key, value); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to write %s metadata: %v\n", key, err)
 		fmt.Fprintf(os.Stderr, "  Run 'bd doctor --fix' to repair.\n")

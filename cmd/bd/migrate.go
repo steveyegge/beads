@@ -494,8 +494,8 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, beadsDir string, dryRun bo
 		dryRunResult := map[string]interface{}{
 			"dry_run":              true,
 			"needs_version_update": needsVersionUpdate,
-			"needs_repo_id":       needsRepoID,
-			"needs_clone_id":      needsCloneID,
+			"needs_repo_id":        needsRepoID,
+			"needs_clone_id":       needsCloneID,
 		}
 		if needsVersionUpdate {
 			dryRunResult["current_version"] = currentVersion

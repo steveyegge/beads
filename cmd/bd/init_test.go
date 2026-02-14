@@ -2305,7 +2305,7 @@ func TestVerifyMetadataFailure(t *testing.T) {
 		}
 
 		stderr := captureStderr(t, func() {
-			ok := verifyMetadata(ctx, store, "bd_version", "1.0.0", false)
+			ok := verifyMetadata(ctx, store, "bd_version", "1.0.0")
 			if ok {
 				t.Error("verifyMetadata should return false on write failure")
 			}
@@ -2334,7 +2334,7 @@ func TestVerifyMetadataFailure(t *testing.T) {
 		stderr := captureStderr(t, func() {
 			// First, allow write to succeed (setErr is nil for this subtest)
 			store.setErr = nil
-			ok := verifyMetadata(ctx, store, "repo_id", "abc123", false)
+			ok := verifyMetadata(ctx, store, "repo_id", "abc123")
 			if ok {
 				t.Error("verifyMetadata should return false on read-back failure")
 			}
@@ -2350,7 +2350,7 @@ func TestVerifyMetadataFailure(t *testing.T) {
 
 	t.Run("success returns true", func(t *testing.T) {
 		store := memory.New("")
-		ok := verifyMetadata(ctx, store, "test_key", "test_value", false)
+		ok := verifyMetadata(ctx, store, "test_key", "test_value")
 		if !ok {
 			t.Error("verifyMetadata should return true on success")
 		}
