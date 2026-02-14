@@ -67,14 +67,13 @@ func TestCheckMergeDriver(t *testing.T) {
 			name: "not a git repo",
 			setup: func(t *testing.T, dir string) {
 				// Just create .beads directory, no git
-				// CheckMergeDriver uses global git detection
 				beadsDir := filepath.Join(dir, ".beads")
 				if err := os.MkdirAll(beadsDir, 0755); err != nil {
 					t.Fatal(err)
 				}
 			},
-			expectedStatus: "warning", // Uses global git detection, so still checks
-			expectMessage:  "",        // Message varies
+			expectedStatus: "ok", // path-local detection: returns N/A when not in git repo
+			expectMessage:  "",   // Message varies
 		},
 		{
 			name: "merge driver not configured",
@@ -182,17 +181,16 @@ func TestCheckSyncBranchHealth(t *testing.T) {
 		expectMessage  string
 	}{
 		{
-			name: "no sync branch configured (uses global git detection)",
+			name: "no sync branch configured (not a git repo)",
 			setup: func(t *testing.T, dir string) {
-				// CheckSyncBranchHealth uses global git.GetGitDir() detection
-				// which checks from current working directory, not the path parameter
+				// No git init — path-local detection returns "not a git repository"
 				beadsDir := filepath.Join(dir, ".beads")
 				if err := os.MkdirAll(beadsDir, 0755); err != nil {
 					t.Fatal(err)
 				}
 			},
 			expectedStatus: "ok",
-			expectMessage:  "N/A (no sync branch configured)",
+			expectMessage:  "N/A (not a git repository)",
 		},
 		{
 			name: "no sync branch configured with git",

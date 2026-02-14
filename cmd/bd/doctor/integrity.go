@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -322,17 +321,6 @@ func CheckDeletionsManifest(path string) DoctorCheck {
 			Name:    "Deletions Manifest",
 			Status:  StatusOK,
 			Message: "N/A (no .beads directory)",
-		}
-	}
-
-	// Check if we're in a git repository using path-local detection
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	cmd.Dir = path
-	if err := cmd.Run(); err != nil {
-		return DoctorCheck{
-			Name:    "Deletions Manifest",
-			Status:  StatusOK,
-			Message: "N/A (not a git repository)",
 		}
 	}
 
