@@ -312,11 +312,14 @@ variable.`,
 				return
 			}
 
-			// Create/update .gitignore in .beads directory (idempotent - always update to latest)
+			// Create/update .gitignore in .beads directory (only if missing or outdated)
 			gitignorePath := filepath.Join(beadsDir, ".gitignore")
-			if err := os.WriteFile(gitignorePath, []byte(doctor.GitignoreTemplate), 0600); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to create/update .gitignore: %v\n", err)
-				// Non-fatal - continue anyway
+			check := doctor.CheckGitignore()
+			if check.Status != "ok" {
+				if err := os.WriteFile(gitignorePath, []byte(doctor.GitignoreTemplate), 0600); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to create/update .gitignore: %v\n", err)
+					// Non-fatal - continue anyway
+				}
 			}
 
 			// Ensure interactions.jsonl exists (append-only agent audit log)
