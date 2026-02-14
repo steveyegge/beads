@@ -6,12 +6,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
+
+// doltInitMu serializes Dolt engine creation to avoid data races in the
+// go-mysql-server global status variable initialization (upstream issue).
+var doltInitMu sync.Mutex
 
 const windowsOS = "windows"
 
@@ -47,7 +52,10 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) storage.
 		SkipDirtyTracking: true,
 	}
 
+	// Serialize Dolt engine creation to avoid upstream race in InitStatusVariables.
+	doltInitMu.Lock()
 	s, err := dolt.New(ctx, cfg)
+	doltInitMu.Unlock()
 	if err != nil {
 		t.Fatalf("Failed to create Dolt store: %v", err)
 	}
@@ -122,7 +130,10 @@ func openExistingTestDB(t *testing.T, dbPath string) (storage.Storage, error) {
 		SkipDirtyTracking: true,
 	}
 
+	// Serialize Dolt engine creation to avoid upstream race in InitStatusVariables.
+	doltInitMu.Lock()
 	s, err := dolt.New(ctx, cfg)
+	doltInitMu.Unlock()
 	if err != nil {
 		return nil, err
 	}

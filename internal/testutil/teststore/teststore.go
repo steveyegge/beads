@@ -21,12 +21,17 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"sync"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// doltInitMu serializes Dolt engine creation to avoid data races in the
+// go-mysql-server global status variable initialization (upstream issue).
+var doltInitMu sync.Mutex
 
 // New creates an isolated Dolt-backed storage.Storage for a single test or benchmark.
 //
@@ -57,7 +62,10 @@ func New(t testing.TB) storage.Storage {
 		SkipDirtyTracking: true,
 	}
 
+	// Serialize Dolt engine creation to avoid upstream race in InitStatusVariables.
+	doltInitMu.Lock()
 	store, err := dolt.New(ctx, cfg)
+	doltInitMu.Unlock()
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("teststore: failed to create Dolt store: %v", err)

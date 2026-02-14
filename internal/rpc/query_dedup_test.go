@@ -207,16 +207,20 @@ func TestQueryDeduplicator_ReturnsWasDeduped(t *testing.T) {
 	<-firstStarted
 	time.Sleep(5 * time.Millisecond)
 
-	// Second query
+	// Second query — starts while first query is blocked, so it gets deduped.
+	// We use a generous sleep to ensure the goroutine enters Execute before
+	// we unblock the first query.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		close(barrier) // Allow first query to complete
 		_, wasDeduped := dedup.Execute(OpList, args, func() Response {
 			return Response{Success: true}
 		})
 		secondDeduped = wasDeduped
 	}()
+	// Give goroutine time to reach Execute and register as a waiter
+	time.Sleep(50 * time.Millisecond)
+	close(barrier) // Now allow first query to complete
 
 	wg.Wait()
 
