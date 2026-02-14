@@ -4,7 +4,7 @@ on:
       if: ${{ event.git.branch == 'main' || starts-with(event.git.tag, 'v') }}
       init:
         commit-sha: ${{ event.git.sha }}
-        ref-name: ${{ event.git.tag || event.git.branch }}
+        ref-name: ${{ event.git.ref }}
       status-checks:
         name: Helm
     pull_request:

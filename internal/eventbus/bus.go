@@ -89,7 +89,7 @@ func (b *Bus) Dispatch(ctx context.Context, event *Event) (*Result, error) {
 
 	for _, h := range matching {
 		if err := ctx.Err(); err != nil {
-			return result, fmt.Errorf("eventbus: context cancelled: %w", err)
+			return result, fmt.Errorf("eventbus: context canceled: %w", err)
 		}
 
 		if err := h.Handle(ctx, event, result); err != nil {

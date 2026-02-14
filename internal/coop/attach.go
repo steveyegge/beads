@@ -98,7 +98,7 @@ func (c *Client) Attach(ctx context.Context, opts AttachOptions) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Close the WebSocket when the context is cancelled to unblock ReadMessage.
+	// Close the WebSocket when the context is canceled to unblock ReadMessage.
 	go func() {
 		<-ctx.Done()
 		conn.Close()

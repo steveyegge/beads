@@ -160,7 +160,7 @@ func (n *NATSServer) Health() NATSHealth {
 	}
 
 	h.Status = "running"
-	h.Connections = int(varz.Connections)
+	h.Connections = varz.Connections
 	h.InMsgs = varz.InMsgs
 	h.OutMsgs = varz.OutMsgs
 	h.Uptime = varz.Now.Sub(varz.Start).String()
@@ -168,8 +168,8 @@ func (n *NATSServer) Health() NATSHealth {
 	jsz, err := n.server.Jsz(nil)
 	if err == nil && jsz != nil {
 		h.JetStream = true
-		h.Streams = int(jsz.Streams)
-		h.Consumers = int(jsz.Consumers)
+		h.Streams = jsz.Streams
+		h.Consumers = jsz.Consumers
 		h.Messages = jsz.Messages
 	}
 
