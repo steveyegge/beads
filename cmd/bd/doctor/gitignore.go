@@ -46,6 +46,10 @@ beads.left.meta.json
 beads.right.jsonl
 beads.right.meta.json
 
+# Dolt backend (binary database files, can grow to 500MB+)
+dolt/
+dolt-access.lock
+
 # Sync state (local-only, per-machine)
 # These files are machine-specific and should not be shared across clones
 .sync.lock
@@ -71,6 +75,8 @@ var requiredPatterns = []string{
 	"*.db?*",
 	"redirect",
 	"last-touched",
+	"dolt/",
+	"dolt-access.lock",
 	".sync.lock",
 	".jsonl.lock",
 	"sync_base.jsonl",

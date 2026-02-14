@@ -1642,6 +1642,46 @@ func TestRequiredPatterns_ContainsLastTouched(t *testing.T) {
 	}
 }
 
+// TestGitignoreTemplate_ContainsDoltPatterns verifies that the .beads/.gitignore template
+// includes dolt/ and dolt-access.lock to prevent Dolt backend binary files from being
+// committed to git. Dolt noms journal files can grow to 500MB+ and are binary.
+// GH#1713
+func TestGitignoreTemplate_ContainsDoltPatterns(t *testing.T) {
+	doltPatterns := []string{
+		"dolt/",
+		"dolt-access.lock",
+	}
+
+	for _, pattern := range doltPatterns {
+		if !strings.Contains(GitignoreTemplate, pattern) {
+			t.Errorf("GitignoreTemplate should contain '%s' pattern", pattern)
+		}
+	}
+}
+
+// TestRequiredPatterns_ContainsDoltPatterns verifies that bd doctor validates
+// the presence of Dolt backend patterns in .beads/.gitignore.
+// GH#1713
+func TestRequiredPatterns_ContainsDoltPatterns(t *testing.T) {
+	doltPatterns := []string{
+		"dolt/",
+		"dolt-access.lock",
+	}
+
+	for _, expected := range doltPatterns {
+		found := false
+		for _, pattern := range requiredPatterns {
+			if pattern == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("requiredPatterns should include '%s'", expected)
+		}
+	}
+}
+
 // TestGitignoreTemplate_ContainsJSONLLock verifies that the .beads/.gitignore template
 // includes .jsonl.lock to prevent the JSONL coordination lock file from being tracked.
 // The lock file is a runtime artifact in the same category as daemon.lock and .sync.lock.
