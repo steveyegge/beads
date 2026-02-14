@@ -487,7 +487,7 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 				Status:  StatusWarning,
 				Message: "Missing repo fingerprint metadata",
 				Detail:  "Storage: Dolt",
-				Fix:     "Run 'bd migrate --update-repo-id' to add fingerprint metadata",
+				Fix:     "Run 'bd doctor --fix' to repair metadata",
 			}
 		}
 
