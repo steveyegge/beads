@@ -212,7 +212,11 @@ Examples:
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("dep add")
-		depType, _ := cmd.Flags().GetString("type")
+		depTypeRaw, _ := cmd.Flags().GetString("type")
+		depType, err := parseDependencyTypeStrict(depTypeRaw)
+		if err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
 
 		// Get the dependency target from flag or positional arg
 		blockedBy, _ := cmd.Flags().GetString("blocked-by")
@@ -235,7 +239,6 @@ Examples:
 		// Check if toID is an external reference (don't resolve it)
 		isExternalRef := strings.HasPrefix(dependsOnArg, "external:")
 
-		var err error
 		fromID, err = utils.ResolvePartialID(ctx, store, args[0])
 		if err != nil {
 			FatalErrorRespectJSON("resolving issue ID %s: %v", args[0], err)
@@ -272,7 +275,7 @@ Examples:
 		dep := &types.Dependency{
 			IssueID:     fromID,
 			DependsOnID: toID,
-			Type:        types.DependencyType(depType),
+			Type:        depType,
 		}
 
 		if err := store.AddDependency(ctx, dep, actor); err != nil {
@@ -1084,7 +1087,7 @@ func init() {
 	// dep command shorthand flag
 	depCmd.Flags().StringP("blocks", "b", "", "Issue ID that this issue blocks (shorthand for: bd dep add <blocked> <blocker>)")
 
-	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|tracks|related|parent-child|discovered-from|until|caused-by|validates|relates-to|supersedes)")
+	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (known built-ins only; e.g. blocks, parent-child, conditional-blocks, waits-for, related, discovered-from)")
 	depAddCmd.Flags().String("blocked-by", "", "Issue ID that blocks the first issue (alternative to positional arg)")
 	depAddCmd.Flags().String("depends-on", "", "Issue ID that the first issue depends on (alias for --blocked-by)")
 

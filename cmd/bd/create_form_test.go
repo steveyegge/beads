@@ -392,6 +392,33 @@ func TestCreateIssueFromFormValues(t *testing.T) {
 		}
 	})
 
+	t.Run("RejectsUnknownDependencyType", func(t *testing.T) {
+		before, err := s.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			t.Fatalf("failed to list issues before test: %v", err)
+		}
+
+		fv := &createFormValues{
+			Title:        "Invalid dep type issue",
+			Priority:     1,
+			IssueType:    "task",
+			Dependencies: []string{"needs:bd-123"},
+		}
+
+		_, err = CreateIssueFromFormValues(ctx, s, fv, "test")
+		if err == nil {
+			t.Fatal("expected error for unknown dependency type, got nil")
+		}
+
+		after, err := s.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			t.Fatalf("failed to list issues after test: %v", err)
+		}
+		if len(after) != len(before) {
+			t.Fatalf("issue count changed on validation failure: before=%d after=%d", len(before), len(after))
+		}
+	})
+
 	t.Run("AllIssueTypes", func(t *testing.T) {
 		issueTypes := []string{"bug", "feature", "task", "epic", "chore", "decision"}
 		expectedTypes := []types.IssueType{

@@ -331,6 +331,13 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 
 	// Create each issue
 	for _, template := range templates {
+		parsedDeps, err := parseDependencySpecs(template.Dependencies)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing dependencies for issue '%s': %v\n", template.Title, err)
+			failedIssues = append(failedIssues, template.Title)
+			continue
+		}
+
 		issue := &types.Issue{
 			Title:              template.Title,
 			Description:        template.Description,
@@ -356,41 +363,15 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 		}
 
 		// Add dependencies
-		for _, depSpec := range template.Dependencies {
-			depSpec = strings.TrimSpace(depSpec)
-			if depSpec == "" {
-				continue
-			}
-
-			var depType types.DependencyType
-			var dependsOnID string
-
-			// Parse format: "type:id" or just "id" (defaults to "blocks")
-			if strings.Contains(depSpec, ":") {
-				parts := strings.SplitN(depSpec, ":", 2)
-				if len(parts) != 2 {
-					fmt.Fprintf(os.Stderr, "Warning: invalid dependency format '%s' for %s\n", depSpec, issue.ID)
-					continue
-				}
-				depType = types.DependencyType(strings.TrimSpace(parts[0]))
-				dependsOnID = strings.TrimSpace(parts[1])
-			} else {
-				depType = types.DepBlocks
-				dependsOnID = depSpec
-			}
-
-			if !depType.IsValid() {
-				fmt.Fprintf(os.Stderr, "Warning: invalid dependency type '%s' for %s\n", depType, issue.ID)
-				continue
-			}
-
+		for _, parsedDep := range parsedDeps {
 			dep := &types.Dependency{
 				IssueID:     issue.ID,
-				DependsOnID: dependsOnID,
-				Type:        depType,
+				DependsOnID: parsedDep.DependsOnID,
+				Type:        parsedDep.Type,
 			}
 			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
+				fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s (%s): %v\n",
+					issue.ID, parsedDep.DependsOnID, parsedDep.Type, err)
 			}
 		}
 
