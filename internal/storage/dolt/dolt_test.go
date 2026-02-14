@@ -208,6 +208,35 @@ func TestDoltStoreConfig(t *testing.T) {
 	}
 }
 
+func TestGetCustomTypes(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// defaultConfig seeds types.custom — verify it's accessible
+	types, err := store.GetCustomTypes(ctx)
+	if err != nil {
+		t.Fatalf("GetCustomTypes failed: %v", err)
+	}
+	if len(types) == 0 {
+		t.Fatal("expected custom types to be seeded by defaultConfig, got none")
+	}
+
+	// Verify "agent" is among the seeded types
+	found := false
+	for _, ct := range types {
+		if ct == "agent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'agent' in custom types, got %v", types)
+	}
+}
+
 func TestDoltStoreIssue(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()

@@ -264,7 +264,8 @@ INSERT IGNORE INTO config (` + "`key`" + `, value) VALUES
     ('compact_model', 'claude-haiku-4-5-20251001'),
     ('compact_batch_size', '50'),
     ('compact_parallel_workers', '5'),
-    ('auto_compact_enabled', 'false');
+    ('auto_compact_enabled', 'false'),
+    ('types.custom', 'molecule,gate,convoy,merge-request,slot,agent,role,rig,message');
 `
 
 // readyIssuesView is a MySQL-compatible view for ready work
