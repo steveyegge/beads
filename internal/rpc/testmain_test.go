@@ -13,7 +13,9 @@ func TestMain(m *testing.M) {
 		// from the application layer.
 		goleak.IgnoreTopFunction("github.com/dolthub/dolt/go/libraries/doltcore/doltdb.(*BranchActivityTracker).processEvents"),
 		goleak.IgnoreTopFunction("github.com/dolthub/dolt/go/libraries/doltcore/sqle/binlogreplication.newBinlogStreamerManager.func1"),
+		goleak.IgnoreTopFunction("github.com/dolthub/dolt/go/libraries/doltcore/sqle/binlogreplication.newBinlogStreamerManager"),
 		goleak.IgnoreTopFunction("github.com/dolthub/dolt/go/libraries/doltcore/sqle.RunAsyncReplicationThreads.func2"),
+		goleak.IgnoreTopFunction("github.com/dolthub/dolt/go/libraries/doltcore/sqle.RunAsyncReplicationThreads"),
 		goleak.IgnoreTopFunction("database/sql.(*Rows).awaitDone"),
 		// Dolt event collector and telemetry goroutines
 		goleak.IgnoreTopFunction("github.com/dolthub/dolt/go/libraries/events.(*sendingThread).run"),

@@ -15,6 +15,9 @@ import (
 func setupSyncValidationTest(t *testing.T) (*testing.T, func()) {
 	t.Helper()
 
+	// Force globals mode so ensureStoreActive uses the package-level store
+	enableTestModeGlobals()
+
 	tmpDir := t.TempDir()
 	testDBPath := filepath.Join(tmpDir, ".beads", "issues.db")
 

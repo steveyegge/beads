@@ -108,6 +108,14 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		whereClauses = append(whereClauses, "updated_at < ?")
 		args = append(args, filter.UpdatedBefore.Format(time.RFC3339))
 	}
+	if filter.ClosedAfter != nil {
+		whereClauses = append(whereClauses, "closed_at IS NOT NULL AND closed_at > ?")
+		args = append(args, filter.ClosedAfter.Format(time.RFC3339))
+	}
+	if filter.ClosedBefore != nil {
+		whereClauses = append(whereClauses, "closed_at IS NOT NULL AND closed_at < ?")
+		args = append(args, filter.ClosedBefore.Format(time.RFC3339))
+	}
 
 	// Empty/null checks
 	if filter.EmptyDescription {
@@ -195,6 +203,22 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 	// Time-based scheduling filters
 	if filter.Deferred {
 		whereClauses = append(whereClauses, "defer_until IS NOT NULL")
+	}
+	if filter.DeferAfter != nil {
+		whereClauses = append(whereClauses, "defer_until IS NOT NULL AND defer_until > ?")
+		args = append(args, filter.DeferAfter.Format(time.RFC3339))
+	}
+	if filter.DeferBefore != nil {
+		whereClauses = append(whereClauses, "defer_until IS NOT NULL AND defer_until < ?")
+		args = append(args, filter.DeferBefore.Format(time.RFC3339))
+	}
+	if filter.DueAfter != nil {
+		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at > ?")
+		args = append(args, filter.DueAfter.Format(time.RFC3339))
+	}
+	if filter.DueBefore != nil {
+		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at < ?")
+		args = append(args, filter.DueBefore.Format(time.RFC3339))
 	}
 	if filter.Overdue {
 		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at < ? AND status != ?")

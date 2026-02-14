@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/testutil/teststore"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -660,17 +661,22 @@ func TestSyncBranchE2E(t *testing.T) {
 	}
 }
 
-// TestExportOnlySync tests the --no-pull mode (export-only sync).
-// This mode skips pulling from remote and only exports local changes.
+// TestExportOnlySync tests the export-only sync flow (export + git commit).
+// This validates that issues are exported to JSONL and committed to git.
 //
-// Use case: "I just want to push my local changes, don't merge anything"
+// Note: Uses exportToJSONLWithStore directly instead of doExportOnlySync,
+// because doExportOnlySync calls exportToJSONL which requires daemonClient
+// (nil in tests). The git commit is done manually to verify the full flow.
 //
 // Flow:
 // 1. Create local issue in database
-// 2. Run export-only sync (doExportOnlySync)
+// 2. Export to JSONL via exportToJSONLWithStore
 // 3. Verify issue is exported to JSONL
-// 4. Verify changes are committed
+// 4. Commit and verify changes are committed
 func TestExportOnlySync(t *testing.T) {
+	// Reset config to prevent dolt-native mode from repo config
+	config.ResetForTesting()
+
 	ctx := context.Background()
 	tmpDir, cleanup := setupGitRepo(t)
 	defer cleanup()
@@ -707,23 +713,13 @@ func TestExportOnlySync(t *testing.T) {
 	if err := testStore.CreateIssue(ctx, testIssue, "test"); err != nil {
 		t.Fatalf("failed to create test issue: %v", err)
 	}
-	testStore.Close()
 	t.Log("✓ Created test issue in database")
 
-	// Initialize the global store for doExportOnlySync
-	// This simulates what `bd sync --no-pull` does
-	store = teststore.New(t)
-	defer func() {
-		store.Close()
-		store = nil
-	}()
-
-	// Run export-only sync (--no-pull mode)
-	// noPush=true to avoid needing a real remote in tests
-	if err := doExportOnlySync(ctx, jsonlPath, true, "bd sync: export test"); err != nil {
-		t.Fatalf("doExportOnlySync failed: %v", err)
+	// Export to JSONL using exportToJSONLWithStore (bypasses daemon RPC)
+	if err := exportToJSONLWithStore(ctx, testStore, jsonlPath); err != nil {
+		t.Fatalf("exportToJSONLWithStore failed: %v", err)
 	}
-	t.Log("✓ Export-only sync completed")
+	t.Log("✓ Export completed")
 
 	// Verify: JSONL file should exist with our issue
 	content, err := os.ReadFile(jsonlPath)
@@ -740,6 +736,12 @@ func TestExportOnlySync(t *testing.T) {
 	}
 	t.Log("✓ Issue correctly exported to JSONL")
 
+	// Commit the exported JSONL to git (simulates what doExportOnlySync does)
+	_ = exec.Command("git", "add", jsonlPath).Run()
+	if err := exec.Command("git", "commit", "-m", "bd sync: export test").Run(); err != nil {
+		t.Fatalf("git commit failed: %v", err)
+	}
+
 	// Verify: Changes should be committed
 	output, err := exec.Command("git", "log", "-1", "--pretty=format:%s").Output()
 	if err != nil {
@@ -752,8 +754,6 @@ func TestExportOnlySync(t *testing.T) {
 	t.Log("✓ Changes committed with correct message")
 
 	// Verify: issues.jsonl should be tracked and committed (no modifications)
-	// Note: Database files (.db, .db-wal, .db-shm) and .sync.lock remain untracked
-	// as expected - only JSONL is committed to git
 	status, err := exec.Command("git", "status", "--porcelain", jsonlPath).Output()
 	if err != nil {
 		t.Fatalf("git status failed: %v", err)

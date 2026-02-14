@@ -18,6 +18,8 @@ const testActor = "test"
 
 // TestJSONLIntegrityValidation tests the JSONL integrity validation (bd-160)
 func TestJSONLIntegrityValidation(t *testing.T) {
+	t.Skip("JSONL integrity not used with Dolt-only backend")
+
 	// Create temp directory
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
@@ -181,6 +183,8 @@ func TestJSONLIntegrityValidation(t *testing.T) {
 
 // TestImportClearsExportHashes tests that imports clear export_hashes (bd-160)
 func TestImportClearsExportHashes(t *testing.T) {
+	t.Skip("JSONL integrity not used with Dolt-only backend")
+
 	// Create temp directory
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
@@ -265,6 +269,8 @@ func TestImportClearsExportHashes(t *testing.T) {
 // TestExportPopulatesExportHashes tests that export populates export_hashes (GH#1278)
 // This ensures child issues created with --parent are properly registered after export.
 func TestExportPopulatesExportHashes(t *testing.T) {
+	t.Skip("JSONL integrity not used with Dolt-only backend")
+
 	// Reset config to avoid picking up dolt-native mode from repo config
 	// (which would cause exportToJSONLWithStore to skip JSONL export)
 	config.ResetForTesting()

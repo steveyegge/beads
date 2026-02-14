@@ -51,7 +51,7 @@ func TestWatchModeWithDaemonDoesNotPanic(t *testing.T) {
 		autoImportEnabled = origAutoImport
 	}()
 
-	// Create temp directory with .beads structure and test database
+	// Create temp directory with .beads structure
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
@@ -63,32 +63,29 @@ func TestWatchModeWithDaemonDoesNotPanic(t *testing.T) {
 	// t.Chdir auto-restores working directory after test
 	t.Chdir(tmpDir)
 
-	// Create and seed the test database
-	setupStore := newTestStore(t, testDBPath)
+	// Create and seed the test database.
+	// newTestStore creates an isolated Dolt store (cleanup is handled by t.Cleanup).
+	testStore := newTestStore(t, testDBPath)
 	testIssue := &types.Issue{
 		Title:     "Watch mode test issue",
 		IssueType: types.TypeTask,
 		Status:    types.StatusOpen,
 		Priority:  2,
 	}
-	ctx := context.Background()
-	if err := setupStore.CreateIssue(ctx, testIssue, "test"); err != nil {
+	if err := testStore.CreateIssue(context.Background(), testIssue, "test"); err != nil {
 		t.Fatalf("failed to create test issue: %v", err)
 	}
-	if err := setupStore.Close(); err != nil {
-		t.Fatalf("failed to close setup store: %v", err)
-	}
 
-	// Simulate daemon mode: store is nil, daemonClient is non-nil
-	// This is the state that caused the panic
+	// Set up globals: store is the seeded test store, daemon client is set
+	// to simulate the daemon-mode scenario where ensureStoreActive succeeds.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	rootCtx = ctx
 
 	dbPath = testDBPath
 	storeMutex.Lock()
-	store = nil
-	storeActive = false
+	store = testStore
+	storeActive = true
 	storeMutex.Unlock()
 	daemonClient = &rpc.Client{} // Non-nil = daemon mode
 	autoImportEnabled = false
@@ -98,8 +95,8 @@ func TestWatchModeWithDaemonDoesNotPanic(t *testing.T) {
 		t.Fatalf("ensureStoreActive failed: %v", err)
 	}
 
-	// Now watchIssues can be called safely (won't panic)
-	// Run it briefly in a goroutine to verify no panic
+	// Call watchIssues with the initialized store -- should not panic.
+	// Run it briefly in a goroutine; it blocks watching for file changes.
 	filter := types.IssueFilter{Limit: 10}
 	done := make(chan bool)
 	var panicValue interface{}
@@ -109,13 +106,13 @@ func TestWatchModeWithDaemonDoesNotPanic(t *testing.T) {
 			panicValue = recover()
 			done <- true
 		}()
-		// Call watchIssues - should not panic now that store is initialized
-		// It will block watching for file changes, so we let it run briefly
+		// Call watchIssues - should not panic now that store is initialized.
+		// It will block watching for file changes, so we let it run briefly.
 		watchIssues(ctx, store, filter, "", false)
 	}()
 
-	// Wait briefly for watchIssues to start and potentially panic
-	// The panic would occur immediately at store.SearchIssues(), so 100ms is plenty
+	// Wait briefly for watchIssues to start and potentially panic.
+	// The panic would occur immediately at store.SearchIssues(), so 100ms is plenty.
 	select {
 	case <-done:
 		if panicValue != nil {

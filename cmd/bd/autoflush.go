@@ -863,6 +863,9 @@ func flushToJSONLWithState(state flushState) {
 	storeMutex.Unlock()
 
 	ctx := rootCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	// Check if JSONL export is enabled for current sync mode (bd-48h)
 	// In dolt-native mode, JSONL export is disabled - Dolt is the source of truth

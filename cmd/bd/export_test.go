@@ -814,11 +814,34 @@ func TestExportDecisionPoints(t *testing.T) {
 		importStore := newTestStore(t, importDB)
 		defer importStore.Close()
 
-		// Import the exported file
-		store = importStore
-		dbPath = importDB
-		importCmd.Flags().Set("input", exportPath)
-		importCmd.Run(importCmd, []string{})
+		// Read and parse the exported JSONL directly, then import using
+		// importIssuesCore so we import into importStore (not a factory-created
+		// store that importCmd.Run would open from dbPath).
+		file, err := os.Open(exportPath)
+		if err != nil {
+			t.Fatalf("Failed to open export file: %v", err)
+		}
+		defer file.Close()
+
+		var allIssues []*types.Issue
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			var iss types.Issue
+			if err := json.Unmarshal(scanner.Bytes(), &iss); err != nil {
+				t.Fatalf("Failed to parse JSONL line: %v", err)
+			}
+			iss.SetDefaults()
+			allIssues = append(allIssues, &iss)
+		}
+		if err := scanner.Err(); err != nil {
+			t.Fatalf("Error reading JSONL: %v", err)
+		}
+
+		opts := ImportOptions{}
+		_, err = importIssuesCore(ctx, importDB, importStore, allIssues, opts)
+		if err != nil {
+			t.Fatalf("importIssuesCore failed: %v", err)
+		}
 
 		// Verify the decision point was imported
 		importedDP, err := importStore.GetDecisionPoint(ctx, issue.ID)

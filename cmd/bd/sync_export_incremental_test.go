@@ -99,10 +99,18 @@ func TestReadJSONLToMapWithMalformedLines(t *testing.T) {
 }
 
 func TestShouldUseIncrementalExport(t *testing.T) {
+	// Reset config to avoid dolt-native mode from repo's .beads/config.yaml
+	config.ResetForTesting()
+
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, "test.db")
 	s := newTestStore(t, testDB)
 	defer s.Close()
+
+	// Enable dirty tracking (teststore defaults to SkipDirtyTracking=true for dolt-native)
+	if dt, ok := s.(interface{ SetSkipDirtyTracking(bool) }); ok {
+		dt.SetSkipDirtyTracking(false)
+	}
 
 	ctx := context.Background()
 	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
@@ -184,6 +192,11 @@ func TestIncrementalExportIntegration(t *testing.T) {
 	s := newTestStore(t, testDB)
 	defer s.Close()
 
+	// Enable dirty tracking (teststore defaults to SkipDirtyTracking=true for dolt-native)
+	if dt, ok := s.(interface{ SetSkipDirtyTracking(bool) }); ok {
+		dt.SetSkipDirtyTracking(false)
+	}
+
 	ctx := context.Background()
 	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
 
@@ -216,9 +229,20 @@ func TestIncrementalExportIntegration(t *testing.T) {
 		}
 	}
 
-	// Initial full export using exportToJSONL (not deferred, which calls ensureStoreActive)
-	if err := exportToJSONL(ctx, jsonlPath); err != nil {
+	// Initial full export using exportToJSONLWithStore (direct store path, no daemon needed)
+	if err := exportToJSONLWithStore(ctx, s, jsonlPath); err != nil {
 		t.Fatalf("initial export failed: %v", err)
+	}
+
+	// Clear dirty flags after initial export (exportToJSONLWithStore does not clear them)
+	initialDirtyIDs, err := s.GetDirtyIssues(ctx)
+	if err != nil {
+		t.Fatalf("failed to get dirty issues after export: %v", err)
+	}
+	if len(initialDirtyIDs) > 0 {
+		if err := s.ClearDirtyIssuesByID(ctx, initialDirtyIDs); err != nil {
+			t.Fatalf("failed to clear dirty flags: %v", err)
+		}
 	}
 
 	// Verify initial export worked
@@ -281,10 +305,18 @@ func TestIncrementalExportIntegration(t *testing.T) {
 }
 
 func TestIncrementalExportWithDeletion(t *testing.T) {
+	// Reset config to avoid dolt-native mode affecting JSONL export
+	config.ResetForTesting()
+
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, "test.db")
 	s := newTestStore(t, testDB)
 	defer s.Close()
+
+	// Enable dirty tracking (teststore defaults to SkipDirtyTracking=true for dolt-native)
+	if dt, ok := s.(interface{ SetSkipDirtyTracking(bool) }); ok {
+		dt.SetSkipDirtyTracking(false)
+	}
 
 	ctx := context.Background()
 	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
@@ -314,13 +346,21 @@ func TestIncrementalExportWithDeletion(t *testing.T) {
 		}
 	}
 
-	// Initial export
-	if err := exportToJSONL(ctx, jsonlPath); err != nil {
+	// Initial export (use direct store export, no daemon needed)
+	if err := exportToJSONLWithStore(ctx, s, jsonlPath); err != nil {
 		t.Fatalf("initial export failed: %v", err)
 	}
 
-	// Get initial dirty count (should be 0 after export)
+	// Clear dirty flags after export (exportToJSONLWithStore sets hashes but not dirty flags)
 	dirtyIDs, _ := s.GetDirtyIssues(ctx)
+	if len(dirtyIDs) > 0 {
+		if err := s.ClearDirtyIssuesByID(ctx, dirtyIDs); err != nil {
+			t.Fatalf("failed to clear dirty flags: %v", err)
+		}
+	}
+
+	// Get dirty count (should be 0 after clearing)
+	dirtyIDs, _ = s.GetDirtyIssues(ctx)
 	if len(dirtyIDs) != 0 {
 		t.Errorf("expected 0 dirty issues after export, got %d", len(dirtyIDs))
 	}
@@ -366,10 +406,18 @@ func TestIncrementalExportWithDeletion(t *testing.T) {
 }
 
 func TestIncrementalExportWithNewIssue(t *testing.T) {
+	// Reset config to avoid dolt-native mode affecting JSONL export
+	config.ResetForTesting()
+
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, "test.db")
 	s := newTestStore(t, testDB)
 	defer s.Close()
+
+	// Enable dirty tracking (teststore defaults to SkipDirtyTracking=true for dolt-native)
+	if dt, ok := s.(interface{ SetSkipDirtyTracking(bool) }); ok {
+		dt.SetSkipDirtyTracking(false)
+	}
 
 	ctx := context.Background()
 	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
@@ -393,9 +441,17 @@ func TestIncrementalExportWithNewIssue(t *testing.T) {
 		t.Fatalf("failed to create issue: %v", err)
 	}
 
-	// Initial export
-	if err := exportToJSONL(ctx, jsonlPath); err != nil {
+	// Initial export (use direct store export, no daemon needed)
+	if err := exportToJSONLWithStore(ctx, s, jsonlPath); err != nil {
 		t.Fatalf("initial export failed: %v", err)
+	}
+
+	// Clear dirty flags after export
+	initialDirtyIDs, _ := s.GetDirtyIssues(ctx)
+	if len(initialDirtyIDs) > 0 {
+		if err := s.ClearDirtyIssuesByID(ctx, initialDirtyIDs); err != nil {
+			t.Fatalf("failed to clear dirty flags: %v", err)
+		}
 	}
 
 	// Create new issue

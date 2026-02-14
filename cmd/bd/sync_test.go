@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/testutil/teststore"
 
 	"github.com/gofrs/flock"
@@ -232,9 +233,9 @@ func TestMergeSyncBranch_NoSyncBranchConfigured(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when sync.branch not configured")
 	}
-	// Error could be about missing database or missing sync.branch config or non-existent branch
-	if err != nil && !strings.Contains(err.Error(), "sync.branch") && !strings.Contains(err.Error(), "database") && !strings.Contains(err.Error(), "does not exist") {
-		t.Errorf("expected error about sync.branch, database, or non-existent branch, got: %v", err)
+	// Error could be about missing database, missing sync.branch config, non-existent branch, or no storage backend
+	if err != nil && !strings.Contains(err.Error(), "sync.branch") && !strings.Contains(err.Error(), "database") && !strings.Contains(err.Error(), "does not exist") && !strings.Contains(err.Error(), "no storage backend") {
+		t.Errorf("expected error about sync.branch, database, non-existent branch, or no storage backend, got: %v", err)
 	}
 }
 
@@ -277,6 +278,9 @@ func TestMergeSyncBranch_DirtyWorkingTree(t *testing.T) {
 func TestGetSyncBranch_EnvOverridesDB(t *testing.T) {
 	ctx := context.Background()
 
+	// Force globals mode so ensureStoreActive uses the package-level store
+	enableTestModeGlobals()
+
 	// Save and restore global store state
 	oldStore := store
 	storeMutex.Lock()
@@ -284,7 +288,7 @@ func TestGetSyncBranch_EnvOverridesDB(t *testing.T) {
 	storeMutex.Unlock()
 	oldDBPath := dbPath
 
-	// Use an in-memory SQLite store for testing
+	// Use a Dolt-backed store for testing
 	testStore := teststore.New(t)
 	defer testStore.Close()
 
@@ -959,6 +963,9 @@ func TestHasUncommittedChanges_WithStatusChecker(t *testing.T) {
 
 // TestHasUncommittedChanges_FallbackToGetDirtyIssues tests hasUncommittedChanges
 // when the store doesn't implement StatusChecker (falls back to GetDirtyIssues).
+// With Dolt backend, the store implements StatusChecker so it uses HasUncommittedChanges
+// instead of GetDirtyIssues, but the test semantics remain the same: no changes = false,
+// after creating an issue = true.
 func TestHasUncommittedChanges_FallbackToGetDirtyIssues(t *testing.T) {
 	ctx := context.Background()
 
@@ -969,6 +976,12 @@ func TestHasUncommittedChanges_FallbackToGetDirtyIssues(t *testing.T) {
 	// Set issue_prefix to enable CreateIssue
 	if err := testStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	// Commit initial Dolt state so HasUncommittedChanges starts clean.
+	// The teststore.New() creates config rows which are uncommitted in Dolt.
+	if vs, ok := storage.AsVersioned(testStore); ok {
+		_ = vs.Commit(ctx, "initial test state")
 	}
 
 	t.Run("returns false when no dirty issues", func(t *testing.T) {

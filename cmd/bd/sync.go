@@ -58,12 +58,14 @@ func getSyncBranchContext(ctx context.Context) *SyncBranchContext {
 // bd-ma0s.6: Added daemon RPC routing.
 func hasUncommittedChanges(ctx context.Context, s storage.Storage) (bool, error) {
 	// bd-ma0s.6: Route through daemon RPC
-	result, err := daemonClient.VcsHasUncommitted()
-	if err != nil {
-		debug.Logf("VcsHasUncommitted RPC failed, falling back to direct: %v", err)
-		// Fall through to direct mode
-	} else {
-		return result.HasUncommitted, nil
+	if daemonClient != nil {
+		result, err := daemonClient.VcsHasUncommitted()
+		if err != nil {
+			debug.Logf("VcsHasUncommitted RPC failed, falling back to direct: %v", err)
+			// Fall through to direct mode
+		} else {
+			return result.HasUncommitted, nil
+		}
 	}
 
 	// Try StatusChecker interface first (Dolt backend)

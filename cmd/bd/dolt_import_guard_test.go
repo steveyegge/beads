@@ -23,6 +23,8 @@ func TestNoDoltImportsInCmdBd(t *testing.T) {
 		"doctor/fix/validation_test.go":  true, // Test file that creates Dolt stores
 		"dolt_import_guard_test.go":      true, // This test file itself
 		"test_helpers_test.go":           true, // Test helpers that create Dolt stores
+		"version_tracking_test.go":       true, // Tests auto-migration with Dolt store
+		"worktree_daemon_test.go":        true, // Tests worktree detection with Dolt store
 	}
 
 	const doltImportPrefix = "github.com/steveyegge/beads/internal/storage/dolt"

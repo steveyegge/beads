@@ -164,7 +164,9 @@ func TestExportImport(t *testing.T) {
 	// Test import into new database
 	t.Run("Import", func(t *testing.T) {
 		exported := h.searchIssues(types.IssueFilter{})
-		newDBPath := filepath.Join(tmpDir, "import-test.db")
+		// Use a separate temp directory to avoid Dolt lock conflicts
+		importDir := t.TempDir()
+		newDBPath := filepath.Join(importDir, "import-test.db")
 		newStore := newTestStoreWithPrefix(t, newDBPath, "test")
 		newHelper := newExportImportHelper(t, newStore)
 		for _, issue := range exported {
@@ -424,7 +426,9 @@ func TestCloseReasonRoundTrip(t *testing.T) {
 	}
 
 	// Import into a new database and verify close_reason is preserved
-	newDBPath := filepath.Join(tmpDir, "import-test.db")
+	// Use a separate temp directory to avoid Dolt lock conflicts
+	importDir := t.TempDir()
+	newDBPath := filepath.Join(importDir, "import-test.db")
 	newStore := newTestStoreWithPrefix(t, newDBPath, "test")
 
 	// Re-create the issue in new database (simulating import)

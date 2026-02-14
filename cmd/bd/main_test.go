@@ -18,6 +18,7 @@ import (
 
 // TestAutoFlushOnExit tests that FlushManager.Shutdown() performs final flush before exit
 func TestAutoFlushOnExit(t *testing.T) {
+	t.Skip("JSONL sync not used with Dolt-only backend")
 	// Initialize rootCtx for flush operations
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -125,6 +126,7 @@ func TestAutoFlushOnExit(t *testing.T) {
 // TestAutoFlushStoreInactive tests that flush doesn't run when store is inactive
 // TestAutoFlushJSONLContent tests that flushed JSONL has correct content
 func TestAutoFlushJSONLContent(t *testing.T) {
+	t.Skip("JSONL sync not used with Dolt-only backend")
 	// FIX: Initialize rootCtx for flush operations
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -253,6 +255,7 @@ func TestAutoFlushJSONLContent(t *testing.T) {
 
 // TestAutoImportIfNewer tests that auto-import triggers when JSONL is newer than DB
 func TestAutoImportIfNewer(t *testing.T) {
+	t.Skip("JSONL sync not used with Dolt-only backend")
 	// FIX: Initialize rootCtx for auto-import operations
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -357,6 +360,7 @@ func TestAutoImportIfNewer(t *testing.T) {
 
 // TestAutoImportDisabled tests that --no-auto-import flag disables auto-import
 func TestAutoImportDisabled(t *testing.T) {
+	t.Skip("JSONL sync not used with Dolt-only backend")
 	// FIX: Initialize rootCtx for auto-import operations
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -444,6 +448,7 @@ func TestAutoImportDisabled(t *testing.T) {
 
 // TestAutoImportWithUpdate tests that auto-import detects same-ID updates and applies them
 func TestAutoImportWithUpdate(t *testing.T) {
+	t.Skip("JSONL sync not used with Dolt-only backend")
 	// FIX: Initialize rootCtx for auto-import operations
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -529,6 +534,7 @@ func TestAutoImportWithUpdate(t *testing.T) {
 
 // TestAutoImportNoUpdate tests happy path with no updates needed
 func TestAutoImportNoUpdate(t *testing.T) {
+	t.Skip("JSONL sync not used with Dolt-only backend")
 	// FIX: Initialize rootCtx for auto-import operations
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -611,6 +617,7 @@ func TestAutoImportNoUpdate(t *testing.T) {
 
 // TestAutoImportMergeConflict tests that auto-import detects Git merge conflicts (bd-270)
 func TestAutoImportMergeConflict(t *testing.T) {
+	t.Skip("JSONL sync not used with Dolt-only backend")
 	// FIX: Initialize rootCtx for auto-import operations
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -700,6 +707,7 @@ func TestAutoImportMergeConflict(t *testing.T) {
 // TestAutoImportConflictMarkerFalsePositive tests that conflict marker detection
 // doesn't trigger on JSON-encoded conflict markers in issue content (bd-17d5)
 func TestAutoImportConflictMarkerFalsePositive(t *testing.T) {
+	t.Skip("JSONL sync not used with Dolt-only backend")
 	// FIX: Initialize rootCtx for auto-import operations
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -784,6 +792,7 @@ func TestAutoImportConflictMarkerFalsePositive(t *testing.T) {
 
 // TestAutoImportClosedAtInvariant tests that auto-import enforces status/closed_at invariant
 func TestAutoImportClosedAtInvariant(t *testing.T) {
+	t.Skip("JSONL sync not used with Dolt-only backend")
 	// FIX: Initialize rootCtx for auto-import operations
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

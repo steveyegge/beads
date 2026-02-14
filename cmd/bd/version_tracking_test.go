@@ -6,11 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/testutil/teststore"
-
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 func TestGetVersionsSince(t *testing.T) {
@@ -391,62 +390,71 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 		previousVersion = origPreviousVersion
 	}()
 
-	// Create temp directory (beadsDir) with unique name to avoid any possible interference
+	// Create temp beadsDir and Dolt store directory inside it.
+	// autoMigrateOnVersionBump uses factory.NewFromConfigWithOptions(beadsDir)
+	// which loads metadata.json and opens the Dolt store at beadsDir/dolt.
 	beadsDir := t.TempDir()
-	// Factory will look for beads.db inside beadsDir
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	storeDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatalf("Failed to create dolt store dir: %v", err)
+	}
 
-	// Create database with old version
+	// Create database with old version using Dolt directly.
+	// Use Database: "beads" because factory.NewFromConfigWithOptions defaults to "beads".
 	ctx := context.Background()
-	store := teststore.New(t)
+	doltCfg := &dolt.Config{
+		Path:              storeDir,
+		CommitterName:     "test",
+		CommitterEmail:    "test@example.com",
+		Database:          "beads",
+		SkipDirtyTracking: true,
+	}
+	s, err := dolt.New(ctx, doltCfg)
+	if err != nil {
+		t.Fatalf("Failed to create Dolt store: %v", err)
+	}
 
 	// Set old database version
 	oldVersion := "0.22.0"
-	if err := store.SetMetadata(ctx, "bd_version", oldVersion); err != nil {
+	if err := s.SetMetadata(ctx, "bd_version", oldVersion); err != nil {
 		t.Fatalf("Failed to set old version: %v", err)
 	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("Failed to close database: %v", err)
+	// Must close the store before autoMigrateOnVersionBump opens its own
+	if err := s.Close(); err != nil {
+		t.Logf("Warning: close returned: %v", err)
 	}
 
-	// Create metadata.json so factory.NewFromConfigWithOptions finds the database
+	// Create metadata.json with Dolt backend so factory.NewFromConfigWithOptions finds the database
 	cfg := &configfile.Config{
-		Backend:  configfile.BackendSQLite,
-		Database: "beads.db",
+		Backend:  configfile.BackendDolt,
+		Database: "dolt",
 	}
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("Failed to save config: %v", err)
 	}
 
 	// Simulate version upgrade (must be set to true for migration to run)
-	// Set this AFTER closing the database to ensure clean state
 	upgradeAcknowledged = false
 	previousVersion = oldVersion
-
-	// Verify dbPath before migration
-	if dbPath == "" {
-		t.Fatalf("dbPath is empty!")
-	}
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Fatalf("database doesn't exist before migration: %s", dbPath)
-	}
 
 	// Set versionUpgradeDetected immediately before calling to avoid races
 	versionUpgradeDetected = true
 	t.Logf("Calling autoMigrateOnVersionBump with beadsDir=%s, versionUpgradeDetected=%v", beadsDir, versionUpgradeDetected)
-	// Immediately call migration while flag is still true
 	autoMigrateOnVersionBump(beadsDir)
 
 	// Verify the flag is still true after migration
 	if !versionUpgradeDetected {
-		t.Fatalf("version Upgrade detected flag was cleared during migration")
+		t.Fatalf("versionUpgradeDetected flag was cleared during migration")
 	}
 
-	// Verify database version was updated
-	store = teststore.New(t)
-	defer store.Close()
+	// Verify database version was updated by reopening the store
+	s2, err := dolt.New(ctx, doltCfg)
+	if err != nil {
+		t.Fatalf("Failed to reopen Dolt store: %v", err)
+	}
+	defer s2.Close()
 
-	newVersion, err := store.GetMetadata(ctx, "bd_version")
+	newVersion, err := s2.GetMetadata(ctx, "bd_version")
 	if err != nil {
 		t.Fatalf("Failed to read database version: %v", err)
 	}
@@ -464,16 +472,42 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 	_ = config.Initialize()
 	config.Set("daemon-host", "")
 
-	// Create database with current version
+	// Create beadsDir and Dolt store directory inside it
 	beadsDir := t.TempDir()
+	storeDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatalf("Failed to create dolt store dir: %v", err)
+	}
+
+	// Create database with current version using Dolt directly.
+	// Use Database: "beads" because factory.NewFromConfigWithOptions defaults to "beads".
 	ctx := context.Background()
-	store := teststore.New(t)
+	doltCfg := &dolt.Config{
+		Path:              storeDir,
+		CommitterName:     "test",
+		CommitterEmail:    "test@example.com",
+		Database:          "beads",
+		SkipDirtyTracking: true,
+	}
+	s, err := dolt.New(ctx, doltCfg)
+	if err != nil {
+		t.Fatalf("Failed to create Dolt store: %v", err)
+	}
 
 	// Set current database version
-	if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
+	if err := s.SetMetadata(ctx, "bd_version", Version); err != nil {
 		t.Fatalf("Failed to set version: %v", err)
 	}
-	_ = store.Close()
+	_ = s.Close()
+
+	// Create metadata.json with Dolt backend
+	cfg := &configfile.Config{
+		Backend:  configfile.BackendDolt,
+		Database: "dolt",
+	}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Failed to save config: %v", err)
+	}
 
 	// Save original state
 	origUpgradeDetected := versionUpgradeDetected
@@ -484,14 +518,17 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 	// Simulate version upgrade
 	versionUpgradeDetected = true
 
-	// Call auto-migration - should be a no-op
+	// Call auto-migration - should be a no-op since version already matches
 	autoMigrateOnVersionBump(beadsDir)
 
-	// Verify database version is still current
-	store = teststore.New(t)
-	defer store.Close()
+	// Verify database version is still current by reopening the store
+	s2, err := dolt.New(ctx, doltCfg)
+	if err != nil {
+		t.Fatalf("Failed to reopen Dolt store: %v", err)
+	}
+	defer s2.Close()
 
-	currentVersion, err := store.GetMetadata(ctx, "bd_version")
+	currentVersion, err := s2.GetMetadata(ctx, "bd_version")
 	if err != nil {
 		t.Fatalf("Failed to read database version: %v", err)
 	}

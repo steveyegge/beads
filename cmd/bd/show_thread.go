@@ -149,7 +149,20 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) {
 
 // findRepliesTo finds the parent ID that this issue replies to via replies-to dependency.
 // Returns empty string if no parent found.
-func findRepliesTo(_ context.Context, issueID string, daemonClient *rpc.Client, _ storage.Storage) string {
+func findRepliesTo(ctx context.Context, issueID string, daemonClient *rpc.Client, st storage.Storage) string {
+	if daemonClient == nil {
+		// Fall back to direct store access
+		deps, err := st.GetDependenciesWithMetadata(ctx, issueID)
+		if err != nil {
+			return ""
+		}
+		for _, dep := range deps {
+			if dep.DependencyType == types.DepRepliesTo {
+				return dep.ID
+			}
+		}
+		return ""
+	}
 	// Use Show to get dependencies with metadata
 	resp, err := daemonClient.Show(&rpc.ShowArgs{ID: issueID})
 	if err != nil {
@@ -175,7 +188,22 @@ func findRepliesTo(_ context.Context, issueID string, daemonClient *rpc.Client, 
 }
 
 // findReplies finds all issues that reply to this issue via replies-to dependency.
-func findReplies(_ context.Context, issueID string, daemonClient *rpc.Client, _ storage.Storage) []*types.Issue {
+func findReplies(ctx context.Context, issueID string, daemonClient *rpc.Client, st storage.Storage) []*types.Issue {
+	if daemonClient == nil {
+		// Fall back to direct store access
+		deps, err := st.GetDependentsWithMetadata(ctx, issueID)
+		if err != nil {
+			return nil
+		}
+		var replies []*types.Issue
+		for _, dep := range deps {
+			if dep.DependencyType == types.DepRepliesTo {
+				issue := dep.Issue // Copy to avoid aliasing
+				replies = append(replies, &issue)
+			}
+		}
+		return replies
+	}
 	// Use Show to get dependents with metadata
 	resp, err := daemonClient.Show(&rpc.ShowArgs{ID: issueID})
 	if err != nil {
