@@ -263,6 +263,10 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.Permissions(path)
 		case "Database":
 			err = fix.DatabaseVersion(path)
+			// Also repair any other missing metadata fields (bd_version, repo_id, clone_id)
+			if mErr := fix.FixMissingMetadata(path, Version); mErr != nil && err == nil {
+				err = mErr
+			}
 		case "Database Integrity":
 			// Corruption detected - try recovery from JSONL
 			// Pass force and source flags for enhanced recovery
@@ -271,6 +275,10 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.SchemaCompatibility(path)
 		case "Repo Fingerprint":
 			err = fix.RepoFingerprint(path)
+			// Also repair any other missing metadata fields (bd_version, repo_id, clone_id)
+			if mErr := fix.FixMissingMetadata(path, Version); mErr != nil && err == nil {
+				err = mErr
+			}
 		case "Git Merge Driver":
 			err = fix.MergeDriver(path)
 		case "Sync Branch Config":

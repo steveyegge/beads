@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +15,11 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/memory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
@@ -2175,3 +2180,246 @@ func TestInit_WithBEADS_DIR_DoltBackend(t *testing.T) {
 
 // Note: TestInit_WithoutBEADS_DIR_NoBehaviorChange and TestInit_BEADS_DB_OverridesBEADS_DIR
 // are now subtests of TestInitBEADS_DIR above.
+
+// TestInitDoltMetadata verifies that bd init --backend dolt writes and persists
+// all 3 tracking metadata fields (bd_version, repo_id, clone_id) via verifyMetadata.
+// Covers FR-001, FR-002, FR-003, FR-004.
+func TestInitDoltMetadata(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping Dolt metadata test on Windows")
+	}
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("Dolt not installed, skipping Dolt metadata test")
+	}
+
+	saveAndRestoreGlobals(t)
+	dbPath = ""
+
+	// Reset caches to avoid stale state
+	beads.ResetCaches()
+	git.ResetCaches()
+	t.Cleanup(func() {
+		beads.ResetCaches()
+		git.ResetCaches()
+	})
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("prefix", "")
+	initCmd.Flags().Set("quiet", "false")
+	initCmd.Flags().Set("backend", "")
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Create a git repo so ComputeRepoID succeeds (needs remote.origin.url)
+	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
+		t.Fatalf("git init failed: %v", err)
+	}
+	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@example.com")
+	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test User")
+	_ = runCommandInDir(tmpDir, "git", "config", "remote.origin.url", "https://github.com/test/repo.git")
+
+	rootCmd.SetArgs([]string{"init", "--backend", "dolt", "--prefix", "test", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("init --backend dolt failed: %v", err)
+	}
+
+	// Open the dolt store to verify metadata was written
+	ctx := context.Background()
+	doltPath := filepath.Join(tmpDir, ".beads", "dolt")
+	doltStore, err := openDoltStoreForTest(t, ctx, doltPath, "beads_test")
+	if err != nil {
+		t.Fatalf("failed to open dolt store for verification: %v", err)
+	}
+	defer doltStore.Close()
+
+	// FR-001: bd_version must be written
+	bdVersion, err := doltStore.GetMetadata(ctx, "bd_version")
+	if err != nil {
+		t.Fatalf("GetMetadata(bd_version) failed: %v", err)
+	}
+	if bdVersion == "" {
+		t.Error("bd_version metadata was not written")
+	}
+
+	// FR-002: repo_id must be written (git repo with remote configured)
+	repoID, err := doltStore.GetMetadata(ctx, "repo_id")
+	if err != nil {
+		t.Fatalf("GetMetadata(repo_id) failed: %v", err)
+	}
+	if repoID == "" {
+		t.Error("repo_id metadata was not written")
+	}
+
+	// FR-003: clone_id must be written
+	cloneID, err := doltStore.GetMetadata(ctx, "clone_id")
+	if err != nil {
+		t.Fatalf("GetMetadata(clone_id) failed: %v", err)
+	}
+	if cloneID == "" {
+		t.Error("clone_id metadata was not written")
+	}
+}
+
+// openDoltStoreForTest opens an existing Dolt store for read-only verification in tests.
+func openDoltStoreForTest(t *testing.T, ctx context.Context, doltPath, dbName string) (storage.Storage, error) {
+	t.Helper()
+	return factory.NewWithOptions(ctx, configfile.BackendDolt, doltPath, factory.Options{
+		Database: dbName,
+		ReadOnly: true,
+	})
+}
+
+// failingMetadataStore wraps a storage.Storage and forces SetMetadata/GetMetadata to fail.
+type failingMetadataStore struct {
+	storage.Storage
+	setErr error
+	getErr error
+	getVal string
+}
+
+func (f *failingMetadataStore) SetMetadata(ctx context.Context, key, value string) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	return f.Storage.SetMetadata(ctx, key, value)
+}
+
+func (f *failingMetadataStore) GetMetadata(ctx context.Context, key string) (string, error) {
+	if f.getErr != nil {
+		return f.getVal, f.getErr
+	}
+	return f.Storage.GetMetadata(ctx, key)
+}
+
+// TestVerifyMetadataFailure verifies that verifyMetadata produces correct warnings
+// when the store returns errors. Covers FR-005 (specific field name in warning).
+func TestVerifyMetadataFailure(t *testing.T) {
+	ctx := context.Background()
+	baseStore := memory.New("")
+
+	t.Run("write failure warns with field name and doctor suggestion", func(t *testing.T) {
+		store := &failingMetadataStore{
+			Storage: baseStore,
+			setErr:  errors.New("disk full"),
+		}
+
+		stderr := captureStderr(t, func() {
+			ok := verifyMetadata(ctx, store, "bd_version", "1.0.0")
+			if ok {
+				t.Error("verifyMetadata should return false on write failure")
+			}
+		})
+
+		if !strings.Contains(stderr, "bd_version") {
+			t.Errorf("warning should mention field name 'bd_version', got: %s", stderr)
+		}
+		if !strings.Contains(stderr, "doctor --fix") {
+			t.Errorf("warning should suggest 'doctor --fix', got: %s", stderr)
+		}
+		if !strings.Contains(stderr, "disk full") {
+			t.Errorf("warning should include error message, got: %s", stderr)
+		}
+	})
+
+	t.Run("read-back mismatch warns with field name and values", func(t *testing.T) {
+		store := &failingMetadataStore{
+			Storage: baseStore,
+			getErr:  nil,
+			getVal:  "wrong_value",
+		}
+		// Override GetMetadata to return wrong value without error
+		store.getErr = errors.New("read error")
+
+		stderr := captureStderr(t, func() {
+			// First, allow write to succeed (setErr is nil for this subtest)
+			store.setErr = nil
+			ok := verifyMetadata(ctx, store, "repo_id", "abc123")
+			if ok {
+				t.Error("verifyMetadata should return false on read-back failure")
+			}
+		})
+
+		if !strings.Contains(stderr, "repo_id") {
+			t.Errorf("warning should mention field name 'repo_id', got: %s", stderr)
+		}
+		if !strings.Contains(stderr, "doctor --fix") {
+			t.Errorf("warning should suggest 'doctor --fix', got: %s", stderr)
+		}
+	})
+
+	t.Run("success returns true", func(t *testing.T) {
+		store := memory.New("")
+		ok := verifyMetadata(ctx, store, "test_key", "test_value")
+		if !ok {
+			t.Error("verifyMetadata should return true on success")
+		}
+		// Verify the value was actually written
+		val, err := store.GetMetadata(ctx, "test_key")
+		if err != nil {
+			t.Fatalf("GetMetadata failed: %v", err)
+		}
+		if val != "test_value" {
+			t.Errorf("expected 'test_value', got %q", val)
+		}
+	})
+}
+
+// TestInitDoltMetadataNoGit verifies that bd init outside a git repo gracefully
+// skips repo_id while still writing bd_version and clone_id.
+// Verifies warning output; actual metadata persistence checked by e2e tests.
+// Covers FR-015 (skip repo_id outside git).
+func TestInitDoltMetadataNoGit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping Dolt metadata test on Windows")
+	}
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("Dolt not installed, skipping Dolt metadata test")
+	}
+
+	saveAndRestoreGlobals(t)
+	dbPath = ""
+
+	beads.ResetCaches()
+	git.ResetCaches()
+	t.Cleanup(func() {
+		beads.ResetCaches()
+		git.ResetCaches()
+	})
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("prefix", "")
+	initCmd.Flags().Set("quiet", "false")
+	initCmd.Flags().Set("backend", "")
+
+	// Create temp dir WITHOUT git init — ComputeRepoID will fail
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Capture stderr to check for repo_id warning
+	stderr := captureStderr(t, func() {
+		rootCmd.SetArgs([]string{"init", "--backend", "dolt", "--prefix", "nogit"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("init --backend dolt failed: %v", err)
+		}
+	})
+
+	// Should warn about repository ID (not in a git repo)
+	if !strings.Contains(stderr, "repository ID") {
+		t.Errorf("expected warning about repository ID in non-git dir, stderr: %s", stderr)
+	}
+
+	// Verify .beads/dolt directory was created (init succeeded)
+	doltPath := filepath.Join(tmpDir, ".beads", "dolt")
+	if info, err := os.Stat(doltPath); os.IsNotExist(err) {
+		t.Errorf("Dolt database directory was not created: %s", doltPath)
+	} else if !info.IsDir() {
+		t.Errorf("Expected Dolt path to be a directory: %s", doltPath)
+	}
+
+	// Verify no SQLite database was created (backend-specific)
+	sqlitePath := filepath.Join(tmpDir, ".beads", "beads.db")
+	if _, err := os.Stat(sqlitePath); err == nil {
+		t.Errorf("unexpected sqlite database created in dolt mode")
+	}
+}

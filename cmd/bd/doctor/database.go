@@ -88,7 +88,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 				Status:  StatusWarning,
 				Message: "Database missing version metadata",
 				Detail:  "Storage: Dolt",
-				Fix:     "Run 'bd migrate' or re-run 'bd init --backend dolt' to set version metadata",
+				Fix:     "Run 'bd doctor --fix' to repair metadata",
 			}
 		}
 

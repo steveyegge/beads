@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -426,38 +427,31 @@ variable.`,
 		// === TRACKING METADATA (Pattern B: Warn and Continue) ===
 		// Tracking metadata enhances functionality (diagnostics, version checks, collision detection)
 		// but the system works without it. Failures here degrade gracefully - we warn but continue.
-		// Examples: bd_version enables upgrade warnings, repo_id/clone_id help with collision detection.
+		// Belt-and-suspenders: write then verify read-back for each field.
 
-		// Store the bd version in metadata (for version mismatch detection)
-		if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to store version metadata: %v\n", err)
-			// Non-fatal - continue anyway
-		}
+		// Store and verify the bd version (for version mismatch detection)
+		verifyMetadata(ctx, store, "bd_version", Version)
 
-		// Compute and store repository fingerprint
+		// Compute and store repository fingerprint (FR-015: skip outside git)
 		repoID, err := beads.ComputeRepoID()
 		if err != nil {
 			if !quiet {
 				fmt.Fprintf(os.Stderr, "Warning: could not compute repository ID: %v\n", err)
 			}
 		} else {
-			if err := store.SetMetadata(ctx, "repo_id", repoID); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to set repo_id: %v\n", err)
-			} else if !quiet {
+			if verifyMetadata(ctx, store, "repo_id", repoID) && !quiet {
 				fmt.Printf("  Repository ID: %s\n", repoID[:8])
 			}
 		}
 
-		// Store clone-specific ID
+		// Compute and store clone-specific ID (FR-016: skip on failure)
 		cloneID, err := beads.GetCloneID()
 		if err != nil {
 			if !quiet {
 				fmt.Fprintf(os.Stderr, "Warning: could not compute clone ID: %v\n", err)
 			}
 		} else {
-			if err := store.SetMetadata(ctx, "clone_id", cloneID); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to set clone_id: %v\n", err)
-			} else if !quiet {
+			if verifyMetadata(ctx, store, "clone_id", cloneID) && !quiet {
 				fmt.Printf("  Clone ID: %s\n", cloneID)
 			}
 		}
@@ -1215,4 +1209,22 @@ func promptContributorMode() (isContributor bool, err error) {
 	}
 
 	return isContributor, nil
+}
+
+// verifyMetadata writes a metadata field and verifies the write succeeded.
+// Returns true if write+verify succeeded, false with warning if either failed.
+func verifyMetadata(ctx context.Context, store storage.Storage, key, value string) bool {
+	if err := store.SetMetadata(ctx, key, value); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to write %s metadata: %v\n", key, err)
+		fmt.Fprintf(os.Stderr, "  Run 'bd doctor --fix' to repair.\n")
+		return false
+	}
+	// Verify read-back
+	readBack, err := store.GetMetadata(ctx, key)
+	if err != nil || readBack != value {
+		fmt.Fprintf(os.Stderr, "Warning: %s metadata write did not persist (wrote %q, read %q)\n", key, value, readBack)
+		fmt.Fprintf(os.Stderr, "  Run 'bd doctor --fix' to repair.\n")
+		return false
+	}
+	return true
 }
