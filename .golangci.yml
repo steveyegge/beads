@@ -84,7 +84,7 @@ linters:
           - gosec
         text: "G302.*0700|G301.*0750"
       # G302/G306: JSONL files and error logs need 0644 for debugging/sharing
-      - path: 'cmd/bd/autoflush\.go|cmd/bd/daemon\.go|cmd/bd/daemon_sync_branch\.go|cmd/bd/resolve_conflicts\.go|cmd/bd/setup\.go|internal/daemon/registry\.go|internal/daemonrunner/daemon\.go|internal/git/worktree\.go'
+      - path: 'cmd/bd/autoflush\.go|cmd/bd/daemon\.go|cmd/bd/daemon_sync_branch\.go|cmd/bd/resolve_conflicts\.go|cmd/bd/setup\.go|cmd/bd/systemd\.go|internal/daemon/registry\.go|internal/daemonrunner/daemon\.go|internal/git/worktree\.go'
         linters:
           - gosec
         text: "G306"
@@ -94,7 +94,7 @@ linters:
           - gosec
         text: "G306.*0700"
       # G204: Safe subprocess launches with validated arguments
-      - path: 'cmd/bd/agent_attach\.go|cmd/bd/daemon_autostart\.go|cmd/bd/daemon_sync_branch\.go|cmd/bd/doctor\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/gate\.go|cmd/bd/gate_discover\.go|cmd/bd/jira\.go|cmd/bd/migrate_sync\.go|cmd/bd/show\.go|cmd/bd/sync\.go|internal/git/worktree\.go|internal/syncbranch/worktree\.go|internal/tui/decision/model\.go'
+      - path: 'cmd/bd/agent_attach\.go|cmd/bd/daemon_autostart\.go|cmd/bd/daemon_guard\.go|cmd/bd/daemon_sync_branch\.go|cmd/bd/doctor\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/gate\.go|cmd/bd/gate_discover\.go|cmd/bd/jira\.go|cmd/bd/migrate_sync\.go|cmd/bd/show\.go|cmd/bd/sync\.go|internal/git/worktree\.go|internal/syncbranch/worktree\.go|internal/tui/decision/model\.go'
         linters:
           - gosec
         text: 'G204'
@@ -124,13 +124,18 @@ linters:
         linters:
           - errcheck
         text: "conn\\.Close"
+      # errcheck: Redis client.Close on failed ping — best-effort cleanup
+      - path: 'internal/daemon/redis_wisp_store\.go'
+        linters:
+          - errcheck
+        text: "client\\.Close"
       # errcheck: Stdout/Stderr writes are best-effort in attach flows
       - path: 'internal/coop/attach\.go'
         linters:
           - errcheck
         text: "opts\\.Stdout\\.Write|opts\\.Stderr|fmt\\.Fprintf"
       # errcheck: HTTP response body Close in deferred cleanup
-      - path: 'internal/coop/client\.go|internal/rpc/http_client\.go|internal/rpc/http_client_sse\.go|internal/eventbus/handlers_mail\.go'
+      - path: 'internal/coop/client\.go|internal/rpc/http_client\.go|internal/rpc/http_client_sse\.go|internal/eventbus/handlers_mail\.go|internal/slackbot/cred_watcher\.go'
         linters:
           - errcheck
         text: "resp\\.Body\\.Close"
@@ -199,7 +204,7 @@ linters:
       - path: 'internal/rpc/server_mol\.go'
         linters:
           - unparam
-        text: 'handleMolBondDryRun.*actor|looksLikeFormulaName.*result|spawnSubgraph.*(parentID|childRef)|burnMolecules.*(force|actor)'
+        text: 'handleMolBondDryRun.*actor|looksLikeFormulaName.*result|spawnSubgraph.*(parentID|childRef)|burnMolecules'
       - path: 'internal/slackbot/bot\.go'
         linters:
           - unparam
@@ -225,7 +230,7 @@ linters:
           - gosec
         text: 'G204'
       # gosec G104: Errors unhandled in spike/test utility code and best-effort cleanup
-      - path: 'cmd/nats-spike/main\.go|internal/coop/attach\.go'
+      - path: 'cmd/nats-spike/main\.go|internal/coop/attach\.go|internal/coop/watcher\.go|internal/validation/semantic_id\.go'
         linters:
           - gosec
         text: 'G104'

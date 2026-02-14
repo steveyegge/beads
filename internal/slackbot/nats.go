@@ -15,7 +15,7 @@ import (
 
 // NATSWatcher watches for decision events via NATS JetStream.
 // It subscribes to the DECISION_EVENTS stream and calls back to the Bot
-// when decisions are created, resolved, or cancelled.
+// when decisions are created, resolved, or canceled.
 type NATSWatcher struct {
 	natsURL   string
 	natsToken string
@@ -43,7 +43,7 @@ func NewNATSWatcher(natsURL, natsToken string, bot *Bot, decisions *DecisionClie
 // Run connects to NATS and subscribes to decision events on the
 // DECISION_EVENTS stream using a durable "slack-bot" consumer. It
 // reconnects with exponential backoff on disconnect and catches up on
-// missed decisions after each reconnect. Run blocks until ctx is cancelled.
+// missed decisions after each reconnect. Run blocks until ctx is canceled.
 func (w *NATSWatcher) Run(ctx context.Context) error {
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second

@@ -67,7 +67,7 @@ func NewCoopCredWatcher(natsURL, natsToken, brokerURL, authToken string, bot *Bo
 }
 
 // Run connects to NATS and subscribes to coop.events.credential.
-// It reconnects with backoff on disconnect and blocks until ctx is cancelled.
+// It reconnects with backoff on disconnect and blocks until ctx is canceled.
 func (w *CoopCredWatcher) Run(ctx context.Context) error {
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second
