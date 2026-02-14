@@ -161,3 +161,84 @@ func TestE2E_DoctorFixMetadataRoundtrip(t *testing.T) {
 		}
 	}
 }
+
+// TestE2E_MigrateDoltMetadata verifies that bd migrate on a Dolt database
+// sets all 3 metadata fields (bd_version, repo_id, clone_id), including
+// the case where bd_version is already set but identity fields are missing.
+// Covers SC-005 (migrate sets repo_id and clone_id).
+func TestE2E_MigrateDoltMetadata(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow integration test in short mode")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("dolt metadata e2e test not supported on windows")
+	}
+
+	tmpDir := createTempDirWithCleanup(t)
+
+	// Set up a real git repo so repo_id can be computed
+	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
+		t.Fatalf("git init failed: %v", err)
+	}
+	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@example.com")
+	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test User")
+	_ = runCommandInDir(tmpDir, "git", "config", "remote.origin.url", "https://github.com/test/repo.git")
+
+	socketPath := filepath.Join(tmpDir, ".beads", "bd.sock")
+	env := append(os.Environ(),
+		"BEADS_TEST_MODE=1",
+		"BEADS_AUTO_START_DAEMON=true",
+		"BEADS_NO_DAEMON=0",
+		"BD_SOCKET="+socketPath,
+	)
+
+	// Init dolt backend (writes all metadata via Phase 1)
+	initOut, initErr := runBDExecAllowErrorWithEnv(t, tmpDir, env, "init", "--backend", "dolt", "--prefix", "test", "--quiet")
+	if initErr != nil {
+		lower := strings.ToLower(initOut)
+		if strings.Contains(lower, "dolt") && (strings.Contains(lower, "not supported") || strings.Contains(lower, "not available") || strings.Contains(lower, "unknown")) {
+			t.Skipf("dolt backend not available: %s", initOut)
+		}
+		t.Fatalf("bd init --backend dolt failed: %v\n%s", initErr, initOut)
+	}
+
+	// Ensure daemon cleanup
+	t.Cleanup(func() {
+		_, _ = runBDExecAllowErrorWithEnv(t, tmpDir, env, "daemon", "stop")
+		time.Sleep(200 * time.Millisecond)
+	})
+
+	// Delete repo_id and clone_id to simulate a pre-Phase-3 database
+	// (bd_version is set by init, but identity fields are missing)
+	sqlOut, sqlErr := runBDExecAllowErrorWithEnv(t, tmpDir, env, "sql",
+		"DELETE FROM metadata WHERE key IN ('repo_id', 'clone_id')")
+	if sqlErr != nil {
+		t.Fatalf("bd sql DELETE failed: %v\n%s", sqlErr, sqlOut)
+	}
+
+	// Run bd migrate — should detect missing repo_id/clone_id and set them
+	migrateOut, migrateErr := runBDExecAllowErrorWithEnv(t, tmpDir, env, "migrate")
+	if migrateErr != nil {
+		t.Fatalf("bd migrate failed: %v\n%s", migrateErr, migrateOut)
+	}
+
+	// Verify migrate output mentions setting identity fields
+	if !strings.Contains(migrateOut, "repo_id") && !strings.Contains(migrateOut, "All metadata") {
+		t.Logf("Note: migrate output did not mention repo_id; output:\n%s", migrateOut)
+	}
+
+	// Run doctor to verify clean state after migrate
+	doctorOut, _ := runBDExecAllowErrorWithEnv(t, tmpDir, env, "doctor")
+
+	// Doctor should NOT report missing metadata
+	metadataWarnings := []string{
+		"Missing metadata",
+		"repo_id not set",
+		"Missing repo fingerprint",
+	}
+	for _, warning := range metadataWarnings {
+		if strings.Contains(doctorOut, warning) {
+			t.Errorf("bd doctor reported metadata warning %q after migrate; output:\n%s", warning, doctorOut)
+		}
+	}
+}

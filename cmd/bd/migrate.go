@@ -431,7 +431,7 @@ type dbInfo struct {
 
 // handleDoltMetadataUpdate handles version metadata updates for Dolt backends.
 // The standard migration flow (detectDatabases, rename .db files) is SQLite-only.
-// For Dolt, we just need to ensure version metadata is set correctly.
+// For Dolt, we ensure version metadata and identity fields are set correctly.
 func handleDoltMetadataUpdate(cfg *configfile.Config, beadsDir string, dryRun bool) {
 	doltPath := cfg.DatabasePath(beadsDir)
 
@@ -466,9 +466,17 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, beadsDir string, dryRun bo
 	}
 	defer func() { _ = store.Close() }()
 
-	// Check current version
+	// Check current state of all metadata fields
 	currentVersion, _ := store.GetMetadata(ctx, "bd_version")
-	if currentVersion == Version {
+	currentRepoID, _ := store.GetMetadata(ctx, "repo_id")
+	currentCloneID, _ := store.GetMetadata(ctx, "clone_id")
+
+	needsVersionUpdate := currentVersion != Version
+	needsRepoID := currentRepoID == ""
+	needsCloneID := currentCloneID == ""
+
+	// If everything is already current, return early
+	if !needsVersionUpdate && !needsRepoID && !needsCloneID {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"status":  "current",
@@ -477,58 +485,126 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, beadsDir string, dryRun bo
 		} else {
 			fmt.Printf("Dolt database version: %s\n", currentVersion)
 			fmt.Printf("%s\n", ui.RenderPass("✓ Version matches"))
+			fmt.Printf("%s\n", ui.RenderPass("✓ All metadata fields present"))
 		}
 		return
 	}
 
 	if dryRun {
+		dryRunResult := map[string]interface{}{
+			"dry_run":              true,
+			"needs_version_update": needsVersionUpdate,
+			"needs_repo_id":       needsRepoID,
+			"needs_clone_id":      needsCloneID,
+		}
+		if needsVersionUpdate {
+			dryRunResult["current_version"] = currentVersion
+			dryRunResult["target_version"] = Version
+		}
 		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"dry_run":              true,
-				"needs_version_update": true,
-				"current_version":      currentVersion,
-				"target_version":       Version,
-			})
+			outputJSON(dryRunResult)
 		} else {
 			fmt.Println("Dry run mode - no changes will be made")
-			fmt.Printf("Would update Dolt version: %s → %s\n", currentVersion, Version)
+			if needsVersionUpdate {
+				fmt.Printf("Would update Dolt version: %s → %s\n", currentVersion, Version)
+			}
+			if needsRepoID {
+				fmt.Println("Would set repo_id")
+			}
+			if needsCloneID {
+				fmt.Println("Would set clone_id")
+			}
 		}
 		return
 	}
 
-	if !jsonOutput {
-		fmt.Printf("Updating Dolt schema version: %s → %s\n", currentVersion, Version)
+	versionUpdated := false
+	repoIDSet := false
+	cloneIDSet := false
+
+	// Update bd_version if needed
+	if needsVersionUpdate {
+		if !jsonOutput {
+			fmt.Printf("Updating Dolt schema version: %s → %s\n", currentVersion, Version)
+		}
+
+		// Detect and set issue_prefix if missing
+		prefix, err := store.GetConfig(ctx, "issue_prefix")
+		if err != nil || prefix == "" {
+			issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+			if err == nil && len(issues) > 0 {
+				detectedPrefix := utils.ExtractIssuePrefix(issues[0].ID)
+				if detectedPrefix != "" {
+					if err := store.SetConfig(ctx, "issue_prefix", detectedPrefix); err != nil {
+						if !jsonOutput {
+							fmt.Fprintf(os.Stderr, "Warning: failed to set issue prefix: %v\n", err)
+						}
+					} else if !jsonOutput {
+						fmt.Printf("%s\n", ui.RenderPass(fmt.Sprintf("✓ Detected and set issue prefix: %s", detectedPrefix)))
+					}
+				}
+			}
+		}
+
+		// Update version metadata (fatal on failure — version is critical)
+		if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"error":   "version_update_failed",
+					"message": err.Error(),
+				})
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: failed to update version: %v\n", err)
+			}
+			os.Exit(1)
+		}
+		versionUpdated = true
+
+		if !jsonOutput {
+			fmt.Printf("%s\n", ui.RenderPass("✓ Version updated"))
+		}
 	}
 
-	// Detect and set issue_prefix if missing
-	prefix, err := store.GetConfig(ctx, "issue_prefix")
-	if err != nil || prefix == "" {
-		issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-		if err == nil && len(issues) > 0 {
-			detectedPrefix := utils.ExtractIssuePrefix(issues[0].ID)
-			if detectedPrefix != "" {
-				if err := store.SetConfig(ctx, "issue_prefix", detectedPrefix); err != nil {
-					if !jsonOutput {
-						fmt.Fprintf(os.Stderr, "Warning: failed to set issue prefix: %v\n", err)
-					}
-				} else if !jsonOutput {
-					fmt.Printf("%s\n", ui.RenderPass(fmt.Sprintf("✓ Detected and set issue prefix: %s", detectedPrefix)))
+	// Set repo_id if missing (non-fatal — may fail in non-git environments)
+	if needsRepoID {
+		computed, err := beads.ComputeRepoID()
+		if err != nil {
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Warning: could not compute repo_id: %v\n", err)
+			}
+		} else {
+			if err := store.SetMetadata(ctx, "repo_id", computed); err != nil {
+				if !jsonOutput {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set repo_id: %v\n", err)
+				}
+			} else {
+				repoIDSet = true
+				if !jsonOutput {
+					fmt.Printf("%s\n", ui.RenderPass(fmt.Sprintf("✓ Set repo_id: %s", truncateID(computed, 8))))
 				}
 			}
 		}
 	}
 
-	// Update version metadata
-	if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
-		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"error":   "version_update_failed",
-				"message": err.Error(),
-			})
+	// Set clone_id if missing (non-fatal — may fail in non-git environments)
+	if needsCloneID {
+		computed, err := beads.GetCloneID()
+		if err != nil {
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Warning: could not compute clone_id: %v\n", err)
+			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to update version: %v\n", err)
+			if err := store.SetMetadata(ctx, "clone_id", computed); err != nil {
+				if !jsonOutput {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set clone_id: %v\n", err)
+				}
+			} else {
+				cloneIDSet = true
+				if !jsonOutput {
+					fmt.Printf("%s\n", ui.RenderPass(fmt.Sprintf("✓ Set clone_id: %s", truncateID(computed, 8))))
+				}
+			}
 		}
-		os.Exit(1)
 	}
 
 	if jsonOutput {
@@ -537,10 +613,11 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, beadsDir string, dryRun bo
 			"current_database": cfg.Database,
 			"backend":          "dolt",
 			"version":          Version,
-			"version_updated":  true,
+			"version_updated":  versionUpdated,
+			"repo_id_set":      repoIDSet,
+			"clone_id_set":     cloneIDSet,
 		})
 	} else {
-		fmt.Printf("%s\n", ui.RenderPass("✓ Version updated"))
 		fmt.Printf("\nDolt database: %s (version %s)\n", cfg.Database, Version)
 	}
 }
