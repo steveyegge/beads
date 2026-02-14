@@ -479,7 +479,7 @@ func (e *remoteNotConfiguredError) Error() string {
 func TestShouldUseDoltRemote_ModeSelection(t *testing.T) {
 	ctx := context.Background()
 
-	resetConfigForRemoteTest(t)
+	setupYamlConfig(t)
 
 	tests := []struct {
 		mode    string
@@ -493,12 +493,9 @@ func TestShouldUseDoltRemote_ModeSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
-			mock := newMockRemoteStore()
-			if err := mock.SetConfig(ctx, SyncModeConfigKey, tt.mode); err != nil {
-				t.Fatalf("set mode: %v", err)
-			}
+			config.Set("sync.mode", tt.mode)
 
-			got := ShouldUseDoltRemote(ctx, mock)
+			got := ShouldUseDoltRemote(ctx, nil)
 			if got != tt.wantUse {
 				t.Errorf("ShouldUseDoltRemote() = %v, want %v", got, tt.wantUse)
 			}
@@ -507,11 +504,11 @@ func TestShouldUseDoltRemote_ModeSelection(t *testing.T) {
 }
 
 // TestShouldExportJSONL_DoltNative_False verifies that JSONL export is disabled
-// in dolt-native mode using the mock (no Dolt required).
+// in dolt-native mode. Uses config.Set for in-memory viper (no DB needed).
 func TestShouldExportJSONL_DoltNative_False(t *testing.T) {
 	ctx := context.Background()
 
-	resetConfigForRemoteTest(t)
+	setupYamlConfig(t)
 
 	tests := []struct {
 		mode       string
@@ -525,12 +522,9 @@ func TestShouldExportJSONL_DoltNative_False(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
-			mock := newMockRemoteStore()
-			if err := mock.SetConfig(ctx, SyncModeConfigKey, tt.mode); err != nil {
-				t.Fatalf("set mode: %v", err)
-			}
+			config.Set("sync.mode", tt.mode)
 
-			got := ShouldExportJSONL(ctx, mock)
+			got := ShouldExportJSONL(ctx, nil)
 			if got != tt.wantExport {
 				t.Errorf("ShouldExportJSONL() = %v, want %v", got, tt.wantExport)
 			}
