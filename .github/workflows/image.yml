@@ -45,7 +45,7 @@ jobs:
       # PR builds: build only, no push (validates the image builds cleanly)
       - name: Build image (PR)
         if: github.event_name == 'pull_request'
-        uses: rwx-cloud/build-push-action@v1
+        uses: rwx-cloud/build-push-action@v1.0.1
         with:
           access-token: ${{ secrets.RWX_ACCESS_TOKEN }}
           file: .rwx/image.yml
@@ -56,7 +56,7 @@ jobs:
       - name: Build and push image
         if: github.event_name != 'pull_request'
         id: build
-        uses: rwx-cloud/build-push-action@v1
+        uses: rwx-cloud/build-push-action@v1.0.1
         with:
           access-token: ${{ secrets.RWX_ACCESS_TOKEN }}
           file: .rwx/image.yml
