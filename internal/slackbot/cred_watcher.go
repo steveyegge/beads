@@ -31,6 +31,7 @@ type CoopCredWatcher struct {
 
 	// Track reauth thread messages so we can intercept code replies.
 	reauthThreads   map[string]reauthInfo // thread_ts → reauth info
+	completedThreads map[string]bool      // threads where reauth succeeded (don't re-recover)
 	reauthThreadsMu sync.RWMutex
 }
 
@@ -56,12 +57,13 @@ type credentialEventPayload struct {
 // events and forwards reauth URLs to Slack.
 func NewCoopCredWatcher(natsURL, natsToken, brokerURL, authToken string, bot *Bot) *CoopCredWatcher {
 	return &CoopCredWatcher{
-		natsURL:       natsURL,
-		natsToken:     natsToken,
-		brokerURL:     strings.TrimRight(brokerURL, "/"),
-		authToken:     authToken,
-		bot:           bot,
-		reauthThreads: make(map[string]reauthInfo),
+		natsURL:          natsURL,
+		natsToken:        natsToken,
+		brokerURL:        strings.TrimRight(brokerURL, "/"),
+		authToken:        authToken,
+		bot:              bot,
+		reauthThreads:    make(map[string]reauthInfo),
+		completedThreads: make(map[string]bool),
 	}
 }
 
@@ -294,7 +296,12 @@ func (w *CoopCredWatcher) notifyReauth(account, authURL string) {
 func (w *CoopCredWatcher) HandleThreadReply(channelID, threadTS, text, userID string) bool {
 	w.reauthThreadsMu.RLock()
 	info, ok := w.reauthThreads[threadTS]
+	completed := w.completedThreads[threadTS]
 	w.reauthThreadsMu.RUnlock()
+
+	if completed {
+		return false
+	}
 
 	if !ok {
 		// Thread not tracked (e.g., pod restarted since the reauth notification was posted).
@@ -307,12 +314,10 @@ func (w *CoopCredWatcher) HandleThreadReply(channelID, threadTS, text, userID st
 	}
 
 	trimmed := strings.TrimSpace(text)
-	log.Printf("slackbot/cred: HandleThreadReply raw_text=%q (len=%d)", trimmed, len(trimmed))
 	code := extractAuthCode(trimmed)
 	if code == "" {
 		return false
 	}
-	log.Printf("slackbot/cred: HandleThreadReply extracted_code=%q (len=%d)", code, len(code))
 
 	// Submit the code to the broker.
 	go w.submitReauthCode(info, code, channelID, threadTS, userID)
@@ -339,8 +344,7 @@ func (w *CoopCredWatcher) submitReauthCode(info reauthInfo, code, channelID, thr
 		return
 	}
 
-	log.Printf("slackbot/cred: submitting code to broker: account=%s code_len=%d code_prefix=%q redirect_uri=%s client_id=%s",
-		info.account, len(code), safePrefix(code, 10), info.redirectURI, info.clientID)
+	log.Printf("slackbot/cred: submitting reauth code for %s (code_len=%d)", info.account, len(code))
 
 	url := w.brokerURL + "/api/v1/credentials/login-reauth/complete"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
@@ -366,9 +370,11 @@ func (w *CoopCredWatcher) submitReauthCode(info reauthInfo, code, channelID, thr
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode == http.StatusOK {
-		// Remove from tracked threads — reauth complete.
+		// Remove from tracked threads and mark completed so recoverReauthThread
+		// doesn't re-add it for subsequent conversational replies.
 		w.reauthThreadsMu.Lock()
 		delete(w.reauthThreads, threadTS)
+		w.completedThreads[threadTS] = true
 		w.reauthThreadsMu.Unlock()
 
 		log.Printf("slackbot/cred: reauth completed for account %s (submitted by %s)", info.account, userID)
@@ -448,12 +454,11 @@ func unhex(c byte) int {
 // posted by this bot. This handles the case where the pod restarted after posting
 // the notification, losing the in-memory reauthThreads map.
 func (w *CoopCredWatcher) recoverReauthThread(channelID, threadTS string) (reauthInfo, bool) {
-	// Fetch the parent message of the thread.
+	// Fetch the full thread (parent + replies) to check if reauth already completed.
 	msgs, _, _, err := w.bot.client.GetConversationReplies(&slack.GetConversationRepliesParameters{
 		ChannelID: channelID,
 		Timestamp: threadTS,
-		Limit:     1,
-		Inclusive:  true,
+		Inclusive: true,
 	})
 	if err != nil || len(msgs) == 0 {
 		return reauthInfo{}, false
@@ -470,6 +475,18 @@ func (w *CoopCredWatcher) recoverReauthThread(channelID, threadTS string) (reaut
 	text := parent.Text
 	if !strings.Contains(text, "Credential reauth required for ") {
 		return reauthInfo{}, false
+	}
+
+	// Check if the bot already posted a success reply — reauth is done, don't re-track.
+	for _, reply := range msgs[1:] {
+		if (reply.User == w.bot.botUserID || reply.BotID != "") &&
+			strings.Contains(reply.Text, "Re-authentication successful") {
+			// Mark as completed so we don't fetch the thread again.
+			w.reauthThreadsMu.Lock()
+			w.completedThreads[threadTS] = true
+			w.reauthThreadsMu.Unlock()
+			return reauthInfo{}, false
+		}
 	}
 
 	// Extract account name from "Credential reauth required for <account>"
@@ -515,10 +532,14 @@ func (w *CoopCredWatcher) recoverReauthThread(channelID, threadTS string) (reaut
 }
 
 // extractAuthCode extracts the authorization code from user input.
-// Handles three cases:
+// Handles these cases:
 //   - Full callback URL: https://platform.claude.com/oauth/code/callback?code=ABC123
 //   - Slack-formatted URL: <https://platform.claude.com/oauth/code/callback?code=ABC123>
-//   - Raw code: ABC123
+//   - Raw code with state: UrVjjR...#nqIa2... (code#state from callback page)
+//   - Raw code: UrVjjR...
+//
+// Returns "" if the text doesn't look like a valid authorization code
+// (must be 20+ chars, alphanumeric/base64url only, no spaces).
 func extractAuthCode(text string) string {
 	// Strip Slack URL formatting: <url|display> or <url>
 	if strings.HasPrefix(text, "<") {
@@ -549,7 +570,28 @@ func extractAuthCode(text string) string {
 		text = text[:hashIdx]
 	}
 
+	// Validate: auth codes are 20+ chars of alphanumeric/base64url (no spaces).
+	// This prevents submitting conversational replies ("lol", "Ha", etc.) as codes.
+	if !looksLikeAuthCode(text) {
+		return ""
+	}
+
 	return text
+}
+
+// looksLikeAuthCode returns true if s looks like an OAuth authorization code:
+// at least 20 characters, only alphanumeric, dash, underscore, plus, slash, equals.
+func looksLikeAuthCode(s string) bool {
+	if len(s) < 20 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '+' || c == '/' || c == '=') {
+			return false
+		}
+	}
+	return true
 }
 
 // pullReauthURL calls the broker's login-reauth endpoint to get (or create) a
@@ -612,14 +654,6 @@ func (w *CoopCredWatcher) pullReauthURL(account string) {
 
 	log.Printf("slackbot/cred: pulled reauth URL for %s from broker (startup race recovery)", account)
 	w.notifyReauth(account, session.AuthURL)
-}
-
-// safePrefix returns the first n characters of s (for safe logging of secrets).
-func safePrefix(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }
 
 // Close drains the subscription and closes the NATS connection.
