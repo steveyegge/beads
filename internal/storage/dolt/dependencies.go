@@ -803,6 +803,9 @@ func scanDependencyRow(rows rowScanner) (*types.Dependency, error) {
 	if createdAt.Valid {
 		dep.CreatedAt = createdAt.Time
 	}
+	if metadata.Valid {
+		dep.Metadata = metadata.String
+	}
 	if threadID.Valid {
 		dep.ThreadID = threadID.String
 	}

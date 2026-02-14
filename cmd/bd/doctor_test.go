@@ -393,7 +393,7 @@ func TestCheckDatabaseVersionJSONLMode(t *testing.T) {
 	if err := config.Initialize(); err != nil {
 		t.Fatalf("Failed to initialize config: %v", err)
 	}
-	config.Set("storage-backend", "sqlite")
+	config.Set("storage-backend", "dolt")
 	// Clear daemon-host to prevent remote-daemon-mode short circuit
 	config.Set("daemon-host", "")
 	t.Setenv("BD_DAEMON_HOST", "")
@@ -438,7 +438,7 @@ func TestCheckDatabaseVersionFreshClone(t *testing.T) {
 	if err := config.Initialize(); err != nil {
 		t.Fatalf("Failed to initialize config: %v", err)
 	}
-	config.Set("storage-backend", "sqlite")
+	config.Set("storage-backend", "dolt")
 	// Clear daemon-host to prevent remote-daemon-mode short circuit
 	config.Set("daemon-host", "")
 	t.Setenv("BD_DAEMON_HOST", "")
@@ -462,7 +462,7 @@ func TestCheckDatabaseVersionFreshClone(t *testing.T) {
 	if check.Status != doctor.StatusWarning {
 		t.Errorf("Expected warning status for fresh clone, got %s", check.Status)
 	}
-	if check.Message != "Fresh clone detected (no database)" {
+	if check.Message != "Fresh clone detected (no dolt database)" {
 		t.Errorf("Expected fresh clone message, got %s", check.Message)
 	}
 	if check.Fix == "" {

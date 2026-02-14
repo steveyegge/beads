@@ -51,6 +51,15 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 			_, issuesErr := os.Stat(issuesJSONL)
 			_, beadsErr := os.Stat(beadsJSONL)
 			if issuesErr == nil || beadsErr == nil {
+				// Check if this is intentional no-db mode
+				if isNoDbModeConfigured(beadsDir) {
+					return DoctorCheck{
+						Name:    "Database",
+						Status:  StatusOK,
+						Message: "JSONL-only mode",
+						Detail:  "Storage: JSONL (no-db mode configured)",
+					}
+				}
 				return DoctorCheck{
 					Name:    "Database",
 					Status:  StatusWarning,
