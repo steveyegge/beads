@@ -8,13 +8,21 @@
 #                --push-to ghcr.io/groblegark/beads:latest \
 #                --push-to ghcr.io/groblegark/beads:sha-$(git rev-parse --short HEAD)
 
-# Triggered by:
-#   - GitHub Actions (.github/workflows/image.yml) via rwx-cloud/build-push-action
-#   - CLI: rwx image build .rwx/image.yml --target image --init commit-sha=$(git rev-parse HEAD),ref-name=dev
-#
-# NOT triggered directly by Mint GitHub events — the GHA workflow handles
-# push/PR triggers and GHCR publishing. This avoids duplicate builds.
 on:
+  github:
+    push:
+      if: ${{ event.git.branch == 'main' || starts-with(event.git.tag, 'v') }}
+      init:
+        commit-sha: ${{ event.git.sha }}
+        ref-name: ${{ event.git.ref }}
+      status-checks:
+        name: Image
+    pull_request:
+      init:
+        commit-sha: ${{ event.git.sha }}
+        ref-name: pr
+      status-checks:
+        name: Image
   cli:
     init:
       commit-sha: ${{ event.git.sha }}
@@ -132,3 +140,64 @@ tasks:
       echo "bd daemon start --foreground --tcp-addr=:9876 --http-addr=:9877 --log-json" | tee $RWX_IMAGE/command
     env:
       HOME: /home/beads
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # Push to GHCR (uses docker: true for registry access, skipped on PRs)
+  # ═══════════════════════════════════════════════════════════════════════
+
+  - key: push
+    use: [build-bd, build-oj]
+    if: ${{ init.ref-name != 'pr' }}
+    docker: true
+    run: |
+      # Normalize ref: refs/tags/v1.0 → v1.0, refs/heads/main → main
+      REF_NAME="${REF_NAME#refs/tags/}"
+      REF_NAME="${REF_NAME#refs/heads/}"
+
+      # Build minimal runtime image from artifacts
+      mkdir -p /tmp/image-ctx
+      cp ${{ tasks.build-bd.artifacts.bd-binary }} /tmp/image-ctx/bd
+      cp ${{ tasks.build-oj.artifacts.oj-binary }} /tmp/image-ctx/oj
+
+      cat > /tmp/image-ctx/Dockerfile <<'DOCKERFILE'
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates tzdata icu-libs netcat-openbsd \
+    && addgroup -g 1000 beads \
+    && adduser -u 1000 -G beads -s /bin/sh -D beads
+COPY bd oj /usr/local/bin/
+RUN chmod 755 /usr/local/bin/bd /usr/local/bin/oj \
+    && chown beads:beads /usr/local/bin/bd /usr/local/bin/oj
+USER beads
+WORKDIR /home/beads
+EXPOSE 9876 9877
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD nc -z localhost 9877 || exit 1
+ENTRYPOINT ["bd"]
+CMD ["daemon", "start", "--foreground", "--tcp-addr=:9876", "--http-addr=:9877", "--log-json"]
+DOCKERFILE
+
+      SHORT_SHA="${COMMIT_SHA:0:7}"
+      docker build \
+        -t ghcr.io/groblegark/beads:sha-${SHORT_SHA} \
+        -t ghcr.io/groblegark/beads:latest \
+        /tmp/image-ctx
+
+      # Smoke test
+      docker run --rm ghcr.io/groblegark/beads:sha-${SHORT_SHA} version
+
+      # Push
+      echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_USER" --password-stdin
+      docker push ghcr.io/groblegark/beads:sha-${SHORT_SHA}
+      docker push ghcr.io/groblegark/beads:latest
+
+      # Version tag on release
+      if [[ "$REF_NAME" == v* ]]; then
+        VERSION="${REF_NAME#v}"
+        docker tag ghcr.io/groblegark/beads:sha-${SHORT_SHA} ghcr.io/groblegark/beads:${VERSION}
+        docker push ghcr.io/groblegark/beads:${VERSION}
+      fi
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GITHUB_USER: ${{ secrets.GITHUB_USER }}
