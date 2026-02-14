@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.2] - 2026-02-14
+
+### Added
+
+- **SQLite-to-Dolt migration nudge** — rate-limited hint (once per 24h) on any `bd` command for SQLite users, plus `bd doctor` backend migration check (#1706)
+- **Dolt audit log** for `bd dolt config set` changes
+
+### Fixed
+
+- **`bd doctor` performance** — replaced O(n) full-table scans with SQL aggregation queries, reducing doctor runtime from 130s to 6s on large databases (#1706)
+- **Dolt metadata writes** — reliable `bd_version`, `repo_id`, `clone_id` persistence with init-time verification, doctor fix, and migrate extension (#1741)
+- **`FindBeadsDir` worktree boundary** — stopped directory walk from escaping sibling worktree boundaries (#1731)
+- **`bd doctor` plugin install command** — corrected command shown in doctor output (#1732)
+- **Backend descriptions** — updated `bd backend list` and help text to show Dolt as the default (not SQLite) since v0.50
+
 ## [0.50.1] - 2026-02-14
 
 ### Fixed
