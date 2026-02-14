@@ -88,10 +88,13 @@ tasks:
       cd /tmp/oj
       rm -f .cargo/config.toml
       cargo build --release -p oj
+
+      # Copy to working dir for artifact (must be relative path)
+      cp /tmp/oj/target/release/oj oj
     outputs:
       artifacts:
         - key: oj-binary
-          path: /tmp/oj/target/release/oj
+          path: oj
 
   # ═══════════════════════════════════════════════════════════════════════
   # Push — assemble alpine runtime image from artifacts, push to GHCR
