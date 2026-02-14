@@ -508,7 +508,7 @@ func watchIssuesViaRPC(ctx context.Context, client *rpc.Client, args *rpc.ListWa
 
 		result, err = client.ListWatch(args)
 		if err != nil {
-			// Check if context was cancelled
+			// Check if context was canceled
 			select {
 			case <-ctx.Done():
 				fmt.Fprintf(os.Stderr, "\nStopped watching.\n")
