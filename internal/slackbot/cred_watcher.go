@@ -40,6 +40,7 @@ type reauthInfo struct {
 	account   string
 	channelID string
 	state     string // OAuth state from coopmux reauth initiation
+	postedAt  time.Time
 }
 
 // credentialEventPayload mirrors the NATS event published by coop.
@@ -171,7 +172,7 @@ func (w *CoopCredWatcher) handleMessage(msg *nats.Msg) {
 		w.reauthThreadsMu.RLock()
 		tooRecent := false
 		for _, info := range w.reauthThreads {
-			if info.account == payload.Account {
+			if info.account == payload.Account && time.Since(info.postedAt) < reauthNotifyMinInterval {
 				tooRecent = true
 				break
 			}
@@ -201,16 +202,16 @@ func (w *CoopCredWatcher) handleMessage(msg *nats.Msg) {
 		// pull the auth URL from the broker. This handles the race where the
 		// broker emitted reauth_required on core NATS before we subscribed.
 		w.reauthThreadsMu.RLock()
-		alreadyNotified := false
+		recentlyNotified := false
 		for _, info := range w.reauthThreads {
-			if info.account == payload.Account {
-				alreadyNotified = true
+			if info.account == payload.Account && time.Since(info.postedAt) < reauthNotifyMinInterval {
+				recentlyNotified = true
 				break
 			}
 		}
 		w.reauthThreadsMu.RUnlock()
 
-		if !alreadyNotified {
+		if !recentlyNotified {
 			go w.pullReauthURL(payload.Account)
 		}
 	}
@@ -263,6 +264,7 @@ func (w *CoopCredWatcher) notifyReauth(account, authURL, state string) {
 		account:   account,
 		channelID: channelID,
 		state:     state,
+		postedAt:  time.Now(),
 	}
 	w.reauthThreadsMu.Unlock()
 
@@ -370,6 +372,14 @@ func (w *CoopCredWatcher) submitReauthCode(info reauthInfo, code, channelID, thr
 		}
 		w.bot.postThreadReply(channelID, threadTS,
 			fmt.Sprintf("Re-authentication failed (HTTP %d):\n```\n%s\n```\nCheck the code and try again.", resp.StatusCode, detail))
+
+		// Clear the stale thread so a fresh reauth notification can be posted.
+		// The old auth URL and state are likely invalid (e.g. broker restarted
+		// with a new PKCE session), so keeping the thread suppresses all future
+		// reauth notifications for this account.
+		w.reauthThreadsMu.Lock()
+		delete(w.reauthThreads, threadTS)
+		w.reauthThreadsMu.Unlock()
 	}
 }
 
@@ -599,7 +609,7 @@ func (w *CoopCredWatcher) pullReauthURL(account string) {
 	// Double-check we haven't been beaten by a concurrent notification.
 	w.reauthThreadsMu.RLock()
 	for _, info := range w.reauthThreads {
-		if info.account == account {
+		if info.account == account && time.Since(info.postedAt) < reauthNotifyMinInterval {
 			w.reauthThreadsMu.RUnlock()
 			return
 		}
