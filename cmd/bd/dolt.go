@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -249,6 +250,9 @@ func setDoltConfig(key, value string, updateConfig bool) {
 		os.Exit(1)
 	}
 
+	// Audit log: record who changed what
+	logDoltConfigChange(beadsDir, key, value)
+
 	// Save to metadata.json
 	if err := cfg.Save(beadsDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
@@ -343,4 +347,21 @@ func testServerConnection(cfg *configfile.Config) bool {
 	}
 	_ = conn.Close()
 	return true
+}
+
+// logDoltConfigChange appends an audit entry to .beads/dolt-config.log.
+func logDoltConfigChange(beadsDir, key, value string) {
+	logPath := filepath.Join(beadsDir, "dolt-config.log")
+	actor := os.Getenv("BD_ACTOR")
+	if actor == "" {
+		actor = "unknown"
+	}
+	entry := fmt.Sprintf("%s actor=%s key=%s value=%s\n",
+		time.Now().UTC().Format(time.RFC3339), actor, key, value)
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return // best effort
+	}
+	defer f.Close()
+	_, _ = f.WriteString(entry)
 }
