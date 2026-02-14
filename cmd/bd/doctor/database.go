@@ -915,6 +915,7 @@ func CountJSONLIssues(jsonlPath string) (int, map[string]int, error) {
 	errorCount := 0
 
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -1180,6 +1181,7 @@ func readJSONLStatuses(jsonlPath string) (map[string]string, error) {
 
 	statuses := make(map[string]string)
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	// Increase buffer for large JSON lines
 	scanner.Buffer(make([]byte, 0, 1024), 2*1024*1024)
 

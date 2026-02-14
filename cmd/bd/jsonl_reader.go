@@ -21,6 +21,7 @@ func loadIssuesFromJSONL(path string) ([]*types.Issue, error) {
 
 	var issues []*types.Issue
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 
 	lineNum := 0
 	for scanner.Scan() {

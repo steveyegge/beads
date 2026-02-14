@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -16,9 +17,14 @@ type daemonLogger struct {
 }
 
 // log is the backward-compatible logging method (maps to Info level).
-// Use Info(), Warn(), Error(), Debug() for explicit levels.
-func (d *daemonLogger) log(format string, args ...interface{}) {
-	d.logger.Info(format, toSlogArgs(args)...)
+// Uses fmt.Sprintf to format the message before passing to slog.
+// Use Info(), Warn(), Error(), Debug() for explicit levels with key-value pairs.
+func (d *daemonLogger) log(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		d.logger.Info(fmt.Sprintf(msg, args...))
+	} else {
+		d.logger.Info(msg)
+	}
 }
 
 // Info logs at INFO level.

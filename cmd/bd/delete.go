@@ -200,6 +200,7 @@ func removeIssueFromJSONL(issueID string) error {
 	}
 	var issues []*types.Issue
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "" {
@@ -469,6 +470,7 @@ func readIssueIDsFromFile(filename string) ([]string, error) {
 	defer func() { _ = f.Close() }()
 	var ids []string
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		// Skip empty lines and comments

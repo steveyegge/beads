@@ -822,6 +822,7 @@ func readFirstIssueFromJSONL(path string) (*types.Issue, error) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
@@ -857,6 +858,7 @@ func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(output))
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := scanner.Text()
 

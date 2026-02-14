@@ -498,7 +498,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 				errMsg += "Run 'bd init' to migrate legacy databases or manually remove old databases\n"
 				errMsg += "Or run 'bd doctor' for more diagnostics"
 
-				log.log(errMsg)
+				log.log("%s", errMsg)
 
 				// Write error to file so user can see it without checking logs
 				errFile := filepath.Join(beadsDir, "daemon-error")

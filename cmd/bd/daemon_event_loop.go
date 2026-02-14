@@ -190,7 +190,7 @@ func runEventDrivenLoop(
 
 		case <-statsTicker.C:
 			// Periodic stats logging
-			log.log(server.PeriodicStatsSummary())
+			log.log("%s", server.PeriodicStatsSummary())
 
 		case <-func() <-chan time.Time {
 			if remoteSyncTicker != nil {

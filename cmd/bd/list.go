@@ -20,7 +20,6 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -37,20 +36,6 @@ type storageExecutor func(store storage.Storage) error
 func withStorage(ctx context.Context, store storage.Storage, dbPath string, lockTimeout time.Duration, fn storageExecutor) error {
 	if store != nil {
 		return fn(store)
-	} else if dbPath != "" && rpc.GetDaemonHost() == "" {
-		// Local daemon mode: open read-only connection based on configured backend
-		// (supports both SQLite and Dolt backends).
-		// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
-		beadsDir := filepath.Dir(dbPath)
-		roStore, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
-			ReadOnly:    true,
-			LockTimeout: lockTimeout,
-		})
-		if err != nil {
-			return err
-		}
-		defer func() { _ = roStore.Close() }()
-		return fn(roStore)
 	}
 	return fmt.Errorf("no storage available")
 }
@@ -645,6 +630,18 @@ func formatDependencyInfo(blockedBy, blocks []string) string {
 
 // buildBlockingMaps builds maps of blocking dependencies from dependency records.
 // Returns two maps: blockedByMap[issueID] = []IDs that block this issue,
+// extractDepsFromIssues builds a dependency map from issues that already have
+// Dependencies populated (e.g., from daemon RPC responses).
+func extractDepsFromIssues(issues []*types.Issue) map[string][]*types.Dependency {
+	allDeps := make(map[string][]*types.Dependency)
+	for _, issue := range issues {
+		if len(issue.Dependencies) > 0 {
+			allDeps[issue.ID] = issue.Dependencies
+		}
+	}
+	return allDeps
+}
+
 // and blocksMap[issueID] = []IDs that this issue blocks.
 // Only includes dependencies where AffectsReadyWork() is true (blocks, parent-child, etc.)
 func buildBlockingMaps(allDeps map[string][]*types.Dependency) (blockedByMap, blocksMap map[string][]string) {
@@ -1336,17 +1333,9 @@ var listCmd = &cobra.Command{
 				var allDeps map[string][]*types.Dependency
 				if store != nil {
 					allDeps, _ = store.GetAllDependencyRecords(ctx)
-				} else if dbPath != "" && rpc.GetDaemonHost() == "" {
-					// Local daemon mode: open read-only connection for tree deps (supports Dolt).
-					// Skip when BD_DAEMON_HOST is set - direct storage is blocked (bd-ma0s.1).
-					beadsDir := filepath.Dir(dbPath)
-					if roStore, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
-						ReadOnly:    true,
-						LockTimeout: lockTimeout,
-					}); err == nil {
-						allDeps, _ = roStore.GetAllDependencyRecords(ctx)
-						_ = roStore.Close()
-					}
+				} else {
+					// Extract deps from daemon response (issues already have Dependencies populated)
+					allDeps = extractDepsFromIssues(issues)
 				}
 				// Use epic progress from daemon response (already extracted above)
 				displayPrettyListWithDeps(issues, false, allDeps, progressMap)
@@ -1361,11 +1350,9 @@ var listCmd = &cobra.Command{
 			var allDepsForList map[string][]*types.Dependency
 			if store != nil {
 				allDepsForList, _ = store.GetAllDependencyRecords(ctx)
-			} else if dbPath != "" {
-				if roStore, err := factory.NewWithOptions(ctx, "", filepath.Dir(dbPath), factory.Options{ReadOnly: true, LockTimeout: lockTimeout}); err == nil {
-					allDepsForList, _ = roStore.GetAllDependencyRecords(ctx)
-					_ = roStore.Close()
-				}
+			} else {
+				// Extract deps from daemon response (issues already have Dependencies populated)
+				allDepsForList = extractDepsFromIssues(issues)
 			}
 			blockedByMap, blocksMap := buildBlockingMaps(allDepsForList)
 
