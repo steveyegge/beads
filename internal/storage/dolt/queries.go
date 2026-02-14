@@ -19,27 +19,27 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 	args := []interface{}{}
 
 	if query != "" {
-		whereClauses = append(whereClauses, "(title LIKE ? OR description LIKE ? OR id LIKE ?)")
-		pattern := "%" + query + "%"
+		whereClauses = append(whereClauses, "(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(id) LIKE ?)")
+		pattern := "%" + strings.ToLower(query) + "%"
 		args = append(args, pattern, pattern, pattern)
 	}
 
 	if filter.TitleSearch != "" {
-		whereClauses = append(whereClauses, "title LIKE ?")
-		args = append(args, "%"+filter.TitleSearch+"%")
+		whereClauses = append(whereClauses, "LOWER(title) LIKE ?")
+		args = append(args, "%"+strings.ToLower(filter.TitleSearch)+"%")
 	}
 
 	if filter.TitleContains != "" {
-		whereClauses = append(whereClauses, "title LIKE ?")
-		args = append(args, "%"+filter.TitleContains+"%")
+		whereClauses = append(whereClauses, "LOWER(title) LIKE ?")
+		args = append(args, "%"+strings.ToLower(filter.TitleContains)+"%")
 	}
 	if filter.DescriptionContains != "" {
-		whereClauses = append(whereClauses, "description LIKE ?")
-		args = append(args, "%"+filter.DescriptionContains+"%")
+		whereClauses = append(whereClauses, "LOWER(description) LIKE ?")
+		args = append(args, "%"+strings.ToLower(filter.DescriptionContains)+"%")
 	}
 	if filter.NotesContains != "" {
-		whereClauses = append(whereClauses, "notes LIKE ?")
-		args = append(args, "%"+filter.NotesContains+"%")
+		whereClauses = append(whereClauses, "LOWER(notes) LIKE ?")
+		args = append(args, "%"+strings.ToLower(filter.NotesContains)+"%")
 	}
 
 	if filter.Status != nil {
@@ -107,6 +107,14 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 	if filter.UpdatedBefore != nil {
 		whereClauses = append(whereClauses, "updated_at < ?")
 		args = append(args, filter.UpdatedBefore.Format(time.RFC3339))
+	}
+	if filter.ClosedAfter != nil {
+		whereClauses = append(whereClauses, "closed_at IS NOT NULL AND closed_at > ?")
+		args = append(args, filter.ClosedAfter.Format(time.RFC3339))
+	}
+	if filter.ClosedBefore != nil {
+		whereClauses = append(whereClauses, "closed_at IS NOT NULL AND closed_at < ?")
+		args = append(args, filter.ClosedBefore.Format(time.RFC3339))
 	}
 
 	// Empty/null checks
@@ -195,6 +203,22 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 	// Time-based scheduling filters
 	if filter.Deferred {
 		whereClauses = append(whereClauses, "defer_until IS NOT NULL")
+	}
+	if filter.DeferAfter != nil {
+		whereClauses = append(whereClauses, "defer_until IS NOT NULL AND defer_until > ?")
+		args = append(args, filter.DeferAfter.Format(time.RFC3339))
+	}
+	if filter.DeferBefore != nil {
+		whereClauses = append(whereClauses, "defer_until IS NOT NULL AND defer_until < ?")
+		args = append(args, filter.DeferBefore.Format(time.RFC3339))
+	}
+	if filter.DueAfter != nil {
+		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at > ?")
+		args = append(args, filter.DueAfter.Format(time.RFC3339))
+	}
+	if filter.DueBefore != nil {
+		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at < ?")
+		args = append(args, filter.DueBefore.Format(time.RFC3339))
 	}
 	if filter.Overdue {
 		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at < ? AND status != ?")
@@ -514,47 +538,69 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 	return results, nil
 }
 
-// GetEpicsEligibleForClosure returns epics whose children are all closed
+// GetEpicsEligibleForClosure returns open epics that have children, with their closure status.
+// Despite the name, it returns ALL open epics with children (not just eligible ones) so
+// callers can filter by EligibleForClose as needed.
 func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
+	// Use a subquery to compute child counts, then filter in the outer WHERE.
+	// This avoids HAVING-without-GROUP-BY which behaves differently in Dolt vs MySQL.
+	// Also: collect IDs first, close rows, then fetch full issues to avoid nested queries.
 	rows, err := s.queryContext(ctx, `
-		SELECT e.id,
-		       (SELECT COUNT(*) FROM dependencies d JOIN issues c ON d.issue_id = c.id
-		        WHERE d.depends_on_id = e.id AND d.type = 'parent-child') as total_children,
-		       (SELECT COUNT(*) FROM dependencies d JOIN issues c ON d.issue_id = c.id
-		        WHERE d.depends_on_id = e.id AND d.type = 'parent-child' AND c.status = 'closed') as closed_children
-		FROM issues e
-		WHERE e.issue_type = 'epic'
-		  AND e.status != 'closed'
-		  AND e.status != 'tombstone'
-		HAVING total_children > 0 AND total_children = closed_children
+		SELECT sub.id, sub.total_children, sub.closed_children
+		FROM (
+			SELECT e.id,
+			       (SELECT COUNT(*) FROM dependencies d JOIN issues c ON d.issue_id = c.id
+			        WHERE d.depends_on_id = e.id AND d.type = 'parent-child') as total_children,
+			       (SELECT COUNT(*) FROM dependencies d JOIN issues c ON d.issue_id = c.id
+			        WHERE d.depends_on_id = e.id AND d.type = 'parent-child' AND c.status = 'closed') as closed_children
+			FROM issues e
+			WHERE e.issue_type = 'epic'
+			  AND e.status != 'closed'
+			  AND e.status != 'tombstone'
+		) sub
+		WHERE sub.total_children > 0
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get epics eligible for closure: %w", err)
 	}
-	defer rows.Close()
 
-	var results []*types.EpicStatus
+	// Collect IDs and counts first, then close rows before making nested queries
+	type epicRow struct {
+		id     string
+		total  int
+		closed int
+	}
+	var epicRows []epicRow
 	for rows.Next() {
-		var id string
-		var total, closed int
-		if err := rows.Scan(&id, &total, &closed); err != nil {
+		var r epicRow
+		if err := rows.Scan(&r.id, &r.total, &r.closed); err != nil {
+			rows.Close()
 			return nil, err
 		}
+		epicRows = append(epicRows, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-		issue, err := s.GetIssue(ctx, id)
+	// Now fetch full issue details outside the rows cursor
+	var results []*types.EpicStatus
+	for _, r := range epicRows {
+		issue, err := s.GetIssue(ctx, r.id)
 		if err != nil || issue == nil {
 			continue
 		}
 
 		results = append(results, &types.EpicStatus{
 			Epic:             issue,
-			TotalChildren:    total,
-			ClosedChildren:   closed,
-			EligibleForClose: total > 0 && total == closed,
+			TotalChildren:    r.total,
+			ClosedChildren:   r.closed,
+			EligibleForClose: r.total > 0 && r.total == r.closed,
 		})
 	}
 
-	return results, rows.Err()
+	return results, nil
 }
 
 // GetEpicProgress returns progress (total/closed children) for a list of epic IDs

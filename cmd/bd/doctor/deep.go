@@ -2,7 +2,6 @@
 package doctor
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -10,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/beads/internal/configfile"
-	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -39,32 +36,36 @@ func RunDeepValidation(path string) DeepValidationResult {
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Get database path to check existence
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, "dolt")
-	}
-
-	// Skip if database doesn't exist
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	// Quick check: if beads directory doesn't exist, return OK early
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		check := DoctorCheck{
 			Name:     "Deep Validation",
 			Status:   StatusOK,
-			Message:  "N/A (no database)",
+			Message:  "No .beads directory found (not initialized)",
 			Category: CategoryMaintenance,
 		}
 		result.AllChecks = append(result.AllChecks, check)
 		return result
 	}
 
-	// Open database via storage factory (backend-agnostic)
-	ctx := context.Background()
-	st, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{
-		ReadOnly:              true,
-		AllowWithRemoteDaemon: true,
-	})
+	// Check if a database exists (look for dolt data directory or sqlite file)
+	doltDir := filepath.Join(beadsDir, ".dolt")
+	sqliteFile := filepath.Join(beadsDir, "beads.db")
+	if _, err := os.Stat(doltDir); os.IsNotExist(err) {
+		if _, err := os.Stat(sqliteFile); os.IsNotExist(err) {
+			check := DoctorCheck{
+				Name:     "Deep Validation",
+				Status:   StatusOK,
+				Message:  "No database found in .beads directory",
+				Category: CategoryMaintenance,
+			}
+			result.AllChecks = append(result.AllChecks, check)
+			return result
+		}
+	}
+
+	// Open database
+	db, closeDB, err := openDoctorDB(beadsDir)
 	if err != nil {
 		check := DoctorCheck{
 			Name:     "Deep Validation",
@@ -77,20 +78,7 @@ func RunDeepValidation(path string) DeepValidationResult {
 		result.OverallOK = false
 		return result
 	}
-	defer st.Close()
-
-	db := st.UnderlyingDB()
-	if db == nil {
-		check := DoctorCheck{
-			Name:     "Deep Validation",
-			Status:   StatusError,
-			Message:  "Storage backend does not support raw SQL access",
-			Category: CategoryMaintenance,
-		}
-		result.AllChecks = append(result.AllChecks, check)
-		result.OverallOK = false
-		return result
-	}
+	defer closeDB()
 
 	// Get counts for progress reporting
 	_ = db.QueryRow("SELECT COUNT(*) FROM issues WHERE status != 'tombstone'").Scan(&result.TotalIssues)
@@ -299,13 +287,11 @@ func checkAgentBeadIntegrity(db *sql.DB) DoctorCheck {
 		Category: CategoryMetadata,
 	}
 
-	// Check if agent bead columns exist (may not in older schemas)
+	// Check if agent bead columns exist by trying a query
 	var hasColumns bool
-	err := db.QueryRow(`
-		SELECT COUNT(*) > 0 FROM pragma_table_info('issues')
-		WHERE name IN ('role_bead', 'agent_state', 'role_type')
-	`).Scan(&hasColumns)
-	if err != nil || !hasColumns {
+	_, err := db.Query("SELECT role_bead, agent_state, role_type FROM issues LIMIT 0")
+	hasColumns = (err == nil)
+	if !hasColumns {
 		check.Status = StatusOK
 		check.Message = "N/A (schema doesn't support agent beads)"
 		return check
@@ -385,13 +371,11 @@ func checkMailThreadIntegrity(db *sql.DB) DoctorCheck {
 		Category: CategoryMetadata,
 	}
 
-	// Check if thread_id column exists
+	// Check if thread_id column exists by trying a query
 	var hasThreadID bool
-	err := db.QueryRow(`
-		SELECT COUNT(*) > 0 FROM pragma_table_info('dependencies')
-		WHERE name = 'thread_id'
-	`).Scan(&hasThreadID)
-	if err != nil || !hasThreadID {
+	_, err := db.Query("SELECT thread_id FROM dependencies LIMIT 0")
+	hasThreadID = (err == nil)
+	if !hasThreadID {
 		check.Status = StatusOK
 		check.Message = "N/A (schema doesn't support thread_id)"
 		return check

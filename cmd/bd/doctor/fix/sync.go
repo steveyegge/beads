@@ -2,18 +2,18 @@ package fix
 
 import (
 	"bufio"
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // DBJSONLSync fixes database-JSONL sync issues by running the appropriate sync command.
@@ -67,7 +67,7 @@ func DBJSONLSync(path string) error {
 	}
 
 	// Count issues in both
-	dbCount, err := countDatabaseIssues(dbPath)
+	dbCount, err := countDatabaseIssues(beadsDir)
 	if err != nil {
 		return fmt.Errorf("failed to count database issues: %w", err)
 	}
@@ -150,20 +150,20 @@ func DBJSONLSync(path string) error {
 }
 
 // countDatabaseIssues counts the number of issues in the database.
-func countDatabaseIssues(dbPath string) (int, error) {
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+func countDatabaseIssues(beadsDir string) (int, error) {
+	ctx := context.Background()
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
 	if err != nil {
 		return 0, fmt.Errorf("failed to open database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = store.Close() }()
 
-	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&count)
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		return 0, fmt.Errorf("failed to query database: %w", err)
 	}
 
-	return count, nil
+	return len(issues), nil
 }
 
 // countJSONLIssues counts the number of valid issues in a JSONL file.
@@ -178,6 +178,7 @@ func countJSONLIssues(jsonlPath string) (int, error) {
 
 	count := 0
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {

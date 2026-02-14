@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 func TestStatusEndpoint(t *testing.T) {
@@ -15,11 +15,7 @@ func TestStatusEndpoint(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := newTestSocketPath(t)
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 
@@ -88,11 +84,7 @@ func TestStatusEndpointWithConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := newTestSocketPath(t)
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 
@@ -146,11 +138,7 @@ func TestStatusEndpointLocalMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := newTestSocketPath(t)
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 
@@ -205,11 +193,7 @@ func TestStatusEndpointDefaultConfig(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := newTestSocketPath(t)
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 	// Don't call SetConfig - test default values
@@ -262,11 +246,7 @@ func TestSetConfigConcurrency(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := newTestSocketPath(t)
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 

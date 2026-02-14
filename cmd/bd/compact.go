@@ -11,8 +11,24 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/compact"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
 )
+
+// compactionCandidate represents an issue eligible for compaction.
+type compactionCandidate struct {
+	IssueID      string
+	OriginalSize int
+	ClosedAt     time.Time
+}
+
+// compactableStore is a storage backend that supports compaction operations.
+type compactableStore interface {
+	storage.Storage
+	CheckEligibility(ctx context.Context, issueID string, tier int) (bool, string, error)
+	ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string) error
+	GetTier1Candidates(ctx context.Context) ([]*compactionCandidate, error)
+	GetTier2Candidates(ctx context.Context) ([]*compactionCandidate, error)
+}
 
 var (
 	compactDryRun          bool
@@ -159,13 +175,12 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Hint: compact --analyze does not yet support daemon mode\n")
 				os.Exit(1)
 			}
-			sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+			cs, ok := store.(compactableStore)
 			if !ok {
-				fmt.Fprintf(os.Stderr, "Error: failed to open database in direct mode\n")
-				fmt.Fprintf(os.Stderr, "Hint: Ensure .beads/beads.db exists and is readable\n")
+				fmt.Fprintf(os.Stderr, "Error: storage backend does not support compaction\n")
 				os.Exit(1)
 			}
-			runCompactAnalyze(ctx, sqliteStore)
+			runCompactAnalyze(ctx, cs)
 			return
 		}
 
@@ -185,13 +200,12 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Error: --apply requires --summary\n")
 				os.Exit(1)
 			}
-			sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+			cs, ok := store.(compactableStore)
 			if !ok {
-				fmt.Fprintf(os.Stderr, "Error: failed to open database in direct mode\n")
-				fmt.Fprintf(os.Stderr, "Hint: Ensure .beads/beads.db exists and is readable\n")
+				fmt.Fprintf(os.Stderr, "Error: storage backend does not support compaction\n")
 				os.Exit(1)
 			}
-			runCompactApply(ctx, sqliteStore)
+			runCompactApply(ctx, cs)
 			return
 		}
 
@@ -218,7 +232,7 @@ Examples:
 	},
 }
 
-func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *sqlite.SQLiteStorage, issueID string) {
+func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store compactableStore, issueID string) {
 	start := time.Now()
 
 	if !compactForce {
@@ -317,7 +331,7 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *
 	markDirtyAndScheduleFlush()
 }
 
-func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sqlite.SQLiteStorage) {
+func runCompactAll(ctx context.Context, compactor *compact.Compactor, store compactableStore) {
 	start := time.Now()
 
 	var candidates []string
@@ -451,7 +465,7 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sql
 	}
 }
 
-func runCompactStats(ctx context.Context, store *sqlite.SQLiteStorage) {
+func runCompactStats(ctx context.Context, store compactableStore) {
 	tier1, err := store.GetTier1Candidates(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to get Tier 1 candidates: %v\n", err)
@@ -505,7 +519,7 @@ func runCompactStats(ctx context.Context, store *sqlite.SQLiteStorage) {
 	}
 }
 
-func runCompactAnalyze(ctx context.Context, store *sqlite.SQLiteStorage) {
+func runCompactAnalyze(ctx context.Context, store compactableStore) {
 	type Candidate struct {
 		ID                 string `json:"id"`
 		Title              string `json:"title"`
@@ -549,7 +563,7 @@ func runCompactAnalyze(ctx context.Context, store *sqlite.SQLiteStorage) {
 		})
 	} else {
 		// Get tier candidates
-		var tierCandidates []*sqlite.CompactionCandidate
+		var tierCandidates []*compactionCandidate
 		var err error
 		if compactTier == 1 {
 			tierCandidates, err = store.GetTier1Candidates(ctx)
@@ -610,7 +624,7 @@ func runCompactAnalyze(ctx context.Context, store *sqlite.SQLiteStorage) {
 	fmt.Printf("Total: %d candidates\n", len(candidates))
 }
 
-func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
+func runCompactApply(ctx context.Context, store compactableStore) {
 	start := time.Now()
 
 	// Read summary
@@ -694,11 +708,6 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 	eventData := fmt.Sprintf("Tier %d compaction: %d → %d bytes (saved %d, %.1f%%)", compactTier, originalSize, compactedSize, savingBytes, reductionPct)
 	if err := store.AddComment(ctx, compactID, actor, eventData); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to record event: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := store.MarkIssueDirty(ctx, compactID); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to mark dirty: %v\n", err)
 		os.Exit(1)
 	}
 

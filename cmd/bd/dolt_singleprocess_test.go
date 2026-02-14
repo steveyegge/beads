@@ -90,5 +90,3 @@ func TestDoltSingleProcess_DaemonGuardBlocksStartCommand(t *testing.T) {
 		t.Fatalf("expected error to mention daemon mode unsupported, got: %v", err)
 	}
 }
-
-

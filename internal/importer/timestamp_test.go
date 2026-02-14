@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -18,11 +18,7 @@ func TestImportTimestampPrecedence(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	
 	// Initialize storage
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 	
 	ctx := context.Background()
 	
@@ -32,7 +28,8 @@ func TestImportTimestampPrecedence(t *testing.T) {
 	}
 	
 	// Create an issue locally at time T1
-	now := time.Now()
+	// Use UTC: Dolt DATETIME has no timezone; storing local time then reading as UTC shifts values.
+	now := time.Now().UTC().Truncate(time.Second)
 	closedAt := now
 	localIssue := &types.Issue{
 		ID:          "bd-test123",
@@ -135,22 +132,17 @@ func TestImportTimestampPrecedence(t *testing.T) {
 
 // TestImportSameTimestamp tests behavior when timestamps are equal
 func TestImportSameTimestamp(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-	
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
-	
+	dbPath := "" // teststore manages its own storage
+	store := teststore.New(t)
+
 	ctx := context.Background()
-	
+
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
 	}
-	
-	now := time.Now()
+
+	// Use UTC: Dolt DATETIME has no timezone; storing local time then reading as UTC shifts values.
+	now := time.Now().UTC().Truncate(time.Second)
 	
 	// Create local issue
 	localIssue := &types.Issue{
@@ -211,11 +203,7 @@ func TestImportTimestampAwareProtection(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	ctx := context.Background()
 
@@ -223,7 +211,8 @@ func TestImportTimestampAwareProtection(t *testing.T) {
 		t.Fatalf("Failed to set prefix: %v", err)
 	}
 
-	now := time.Now()
+	// Use UTC: Dolt DATETIME has no timezone; storing local time then reading as UTC shifts values.
+	now := time.Now().UTC().Truncate(time.Second)
 
 	// Create a local issue in the database
 	localIssue := &types.Issue{

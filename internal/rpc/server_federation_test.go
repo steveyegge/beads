@@ -14,24 +14,12 @@ import (
 
 // TestFedListRemotes_NonDoltBackend verifies proper error when using SQLite backend.
 func TestFedListRemotes_NonDoltBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.FedListRemotes(&FedListRemotesArgs{})
-	if err == nil {
-		t.Error("expected error for non-Dolt backend")
-	}
+	t.Skip("Dolt is now the sole backend — non-Dolt path no longer exists")
 }
 
 // TestFedSync_NonDoltBackend verifies proper error when using SQLite backend.
 func TestFedSync_NonDoltBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.FedSync(&FedSyncArgs{Peer: "town-beta", Strategy: "ours"})
-	if err == nil {
-		t.Error("expected error for non-Dolt backend")
-	}
+	t.Skip("Dolt is now the sole backend — non-Dolt path no longer exists")
 }
 
 // TestFedSync_MissingPeer verifies peer argument validation.
@@ -73,13 +61,7 @@ func TestFedSync_InvalidStrategy(t *testing.T) {
 
 // TestFedSyncStatus_NonDoltBackend verifies proper error.
 func TestFedSyncStatus_NonDoltBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.FedSyncStatus(&FedSyncStatusArgs{Peer: "town-beta"})
-	if err == nil {
-		t.Error("expected error for non-Dolt backend")
-	}
+	t.Skip("Dolt is now the sole backend — non-Dolt path no longer exists")
 }
 
 // TestFedSyncStatus_MissingPeer verifies peer argument validation.
@@ -104,13 +86,7 @@ func TestFedSyncStatus_MissingPeer(t *testing.T) {
 
 // TestFedFetch_NonDoltBackend verifies proper error.
 func TestFedFetch_NonDoltBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.FedFetch(&FedFetchArgs{Peer: "town-beta"})
-	if err == nil {
-		t.Error("expected error for non-Dolt backend")
-	}
+	t.Skip("Dolt is now the sole backend — non-Dolt path no longer exists")
 }
 
 // TestFedFetch_MissingPeer verifies peer argument validation.
@@ -135,13 +111,7 @@ func TestFedFetch_MissingPeer(t *testing.T) {
 
 // TestFedPushTo_NonDoltBackend verifies proper error.
 func TestFedPushTo_NonDoltBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.FedPushTo(&FedPushToArgs{Peer: "town-beta"})
-	if err == nil {
-		t.Error("expected error for non-Dolt backend")
-	}
+	t.Skip("Dolt is now the sole backend — non-Dolt path no longer exists")
 }
 
 // TestFedPushTo_MissingPeer verifies peer argument validation.
@@ -166,13 +136,7 @@ func TestFedPushTo_MissingPeer(t *testing.T) {
 
 // TestFedPullFrom_NonDoltBackend verifies proper error.
 func TestFedPullFrom_NonDoltBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.FedPullFrom(&FedPullFromArgs{Peer: "town-beta"})
-	if err == nil {
-		t.Error("expected error for non-Dolt backend")
-	}
+	t.Skip("Dolt is now the sole backend — non-Dolt path no longer exists")
 }
 
 // TestFedPullFrom_MissingPeer verifies peer argument validation.
@@ -197,13 +161,7 @@ func TestFedPullFrom_MissingPeer(t *testing.T) {
 
 // TestFedAddRemote_NonDoltBackend verifies proper error.
 func TestFedAddRemote_NonDoltBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.FedAddRemote(&FedAddRemoteArgs{Name: "town-beta", URL: "dolthub://acme/beads"})
-	if err == nil {
-		t.Error("expected error for non-Dolt backend")
-	}
+	t.Skip("Dolt is now the sole backend — non-Dolt path no longer exists")
 }
 
 // TestFedAddRemote_MissingName verifies name argument validation.
@@ -248,13 +206,7 @@ func TestFedAddRemote_MissingURL(t *testing.T) {
 
 // TestFedRemoveRemote_NonDoltBackend verifies proper error.
 func TestFedRemoveRemote_NonDoltBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.FedRemoveRemote(&FedRemoveRemoteArgs{Name: "town-beta"})
-	if err == nil {
-		t.Error("expected error for non-Dolt backend")
-	}
+	t.Skip("Dolt is now the sole backend — non-Dolt path no longer exists")
 }
 
 // TestFedRemoveRemote_MissingName verifies name argument validation.
@@ -279,18 +231,7 @@ func TestFedRemoveRemote_MissingName(t *testing.T) {
 
 // TestFedAddPeer_NonDoltBackend verifies proper error.
 func TestFedAddPeer_NonDoltBackend(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	_, err := client.FedAddPeer(&FedAddPeerArgs{
-		Name:     "town-beta",
-		URL:      "http://192.168.1.100:3306/beads",
-		Username: "sync-bot",
-		Password: "secret",
-	})
-	if err == nil {
-		t.Error("expected error for non-Dolt backend")
-	}
+	t.Skip("Dolt is now the sole backend — non-Dolt path no longer exists")
 }
 
 // TestFedAddPeer_MissingName verifies name argument validation.
@@ -364,7 +305,10 @@ func TestFedOperations_InvalidJSON(t *testing.T) {
 }
 
 // TestFedOperations_RoundTrip verifies all federation operations are correctly routed
-// through the RPC server (operation dispatch, arg parsing, error response).
+// through the RPC server (operation dispatch, arg parsing, response).
+// With Dolt as the sole backend, some operations succeed (e.g., list_remotes returns
+// empty list) while others fail due to missing remotes/peers. The key assertion is
+// that operations are properly dispatched (not "unknown operation").
 func TestFedOperations_RoundTrip(t *testing.T) {
 	server, _, cleanup := setupTestServer(t)
 	defer cleanup()
@@ -399,17 +343,13 @@ func TestFedOperations_RoundTrip(t *testing.T) {
 
 			resp := server.executeOperation(req)
 
-			// All should fail with "federation requires Dolt backend" since test uses SQLite
-			if resp.Success {
-				t.Errorf("expected failure for %s on SQLite backend", tt.op)
-			}
-			if resp.Error == "" {
-				t.Errorf("expected non-empty error for %s", tt.op)
-			}
-			// Verify the error is about federation/Dolt, not "unknown operation"
+			// Verify the operation is registered and dispatched (not "unknown operation")
 			if resp.Error == "unknown operation: "+tt.op {
 				t.Errorf("operation %s not registered in executeOperation switch", tt.op)
 			}
+			// Some operations may succeed with Dolt (e.g., list_remotes returns empty),
+			// others may fail due to missing remotes/peers. Both are valid — we just
+			// verify routing works.
 		})
 	}
 }

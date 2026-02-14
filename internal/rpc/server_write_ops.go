@@ -13,7 +13,6 @@ import (
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -509,14 +508,10 @@ func (s *Server) handleCookPersist(ctx context.Context, resolved *formula.Formul
 		issue.Labels = nil // DB stores labels separately
 	}
 
-	// Create all issues using batch with skip prefix validation (mol-* IDs
-	// don't match the configured prefix).
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-	if !ok {
-		return Response{Success: false, Error: "cook --persist requires SQLite storage"}
-	}
-	opts := sqlite.BatchCreateOptions{SkipPrefixValidation: true}
-	if err := sqliteStore.CreateIssuesWithFullOptions(ctx, subgraph.Issues, actor, opts); err != nil {
+	// Create all issues using batch creation via the storage interface.
+	// Molecule IDs (mol-*) don't match the configured prefix, but CreateIssues
+	// on Dolt backends handles this correctly.
+	if err := store.CreateIssues(ctx, subgraph.Issues, actor); err != nil {
 		return Response{Success: false, Error: fmt.Sprintf("creating issues: %v", err)}
 	}
 

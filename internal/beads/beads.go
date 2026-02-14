@@ -18,7 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -410,10 +410,15 @@ type Storage = storage.Storage
 // Use Storage.RunInTransaction() to obtain a Transaction instance.
 type Transaction = storage.Transaction
 
-// NewSQLiteStorage opens a bd SQLite database for programmatic access.
+// NewStorage opens a bd database for programmatic access.
 // Most extensions should use this to query ready work and update issue status.
+func NewStorage(ctx context.Context, dbPath string) (Storage, error) {
+	return factory.New(ctx, configfile.BackendDolt, dbPath)
+}
+
+// NewSQLiteStorage is deprecated. Use NewStorage instead.
 func NewSQLiteStorage(ctx context.Context, dbPath string) (Storage, error) {
-	return sqlite.New(ctx, dbPath)
+	return NewStorage(ctx, dbPath)
 }
 
 // FindDatabasePath discovers the bd database path using bd's standard search order:
@@ -777,7 +782,7 @@ func FindAllDatabases() []DatabaseInfo {
 			// Don't fail if we can't open/query the database - it might be locked
 			// or corrupted, but we still want to detect and warn about it
 			ctx := context.Background()
-			store, err := sqlite.New(ctx, dbPath)
+			store, err := factory.NewFromConfig(ctx, beadsDir)
 			if err == nil {
 				if issues, err := store.SearchIssues(ctx, "", types.IssueFilter{}); err == nil {
 					issueCount = len(issues)

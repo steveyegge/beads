@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 func TestConfigCommands(t *testing.T) {
@@ -197,18 +199,13 @@ func TestYamlOnlyConfigWithoutDatabase(t *testing.T) {
 }
 
 // setupTestDB creates a temporary test database
-func setupTestDB(t *testing.T) (*sqlite.SQLiteStorage, func()) {
+func setupTestDB(t *testing.T) (storage.Storage, func()) {
 	tmpDir, err := os.MkdirTemp("", "bd-test-config-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	testDB := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(context.Background(), testDB)
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	store := teststore.New(t)
 
 	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
 	ctx := context.Background()

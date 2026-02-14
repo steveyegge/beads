@@ -64,11 +64,11 @@ func TestGetBackendFromConfigServerModeEnvVar(t *testing.T) {
 	}
 	// No metadata.json written - simulates fresh K8s container
 
-	// Without env var, should return empty (falls through to yaml config / empty)
+	// Without env var, still returns "dolt" since dolt is the only backend now
 	os.Unsetenv("BEADS_DOLT_SERVER_MODE")
 	backend := GetBackendFromConfig(beadsDir)
-	if backend == "dolt" {
-		t.Error("Expected non-dolt backend without env var set, got 'dolt'")
+	if backend != "dolt" {
+		t.Errorf("Expected backend 'dolt' (only backend), got %q", backend)
 	}
 
 	// With BEADS_DOLT_SERVER_MODE=1, should return "dolt"

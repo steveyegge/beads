@@ -5,11 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-func createTestDecisionPoint(t *testing.T, store *memory.MemoryStorage, id string, iteration, maxIter int) (*types.Issue, *types.DecisionPoint) {
+func createTestDecisionPoint(t *testing.T, store storage.Storage, id string, iteration, maxIter int) (*types.Issue, *types.DecisionPoint) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -48,7 +49,7 @@ func createTestDecisionPoint(t *testing.T, store *memory.MemoryStorage, id strin
 }
 
 func TestCreateNextIteration(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 
 	issue, dp := createTestDecisionPoint(t, store, "mol.decision-1", 1, 3)
@@ -100,7 +101,7 @@ func TestCreateNextIteration(t *testing.T) {
 }
 
 func TestCreateNextIteration_MaxReached(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 
 	// Create at max iteration
@@ -121,7 +122,7 @@ func TestCreateNextIteration_MaxReached(t *testing.T) {
 }
 
 func TestCreateNextIteration_ChainedIterations(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 
 	// Create initial decision

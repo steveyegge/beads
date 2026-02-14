@@ -88,9 +88,9 @@ variable.`,
 			os.Exit(1)
 		}
 
-		// Validate backend flag
-		if backend != "" && backend != configfile.BackendSQLite && backend != configfile.BackendDolt {
-			fmt.Fprintf(os.Stderr, "Error: invalid backend '%s' (must be 'sqlite' or 'dolt')\n", backend)
+		// Validate backend flag (only dolt is supported)
+		if backend != "" && backend != configfile.BackendDolt {
+			fmt.Fprintf(os.Stderr, "Error: invalid backend '%s' (supported: dolt)\n", backend)
 			os.Exit(1)
 		}
 		if backend == "" {
@@ -102,7 +102,7 @@ variable.`,
 					fmt.Printf("Inheriting storage backend '%s' from parent config\n", backend)
 				}
 			} else {
-				backend = configfile.BackendSQLite // Default to SQLite
+				backend = configfile.BackendDolt // Dolt is the sole backend
 			}
 		}
 
@@ -730,7 +730,7 @@ func init() {
 	initCmd.Flags().StringP("prefix", "p", "", "Issue prefix (default: current directory name)")
 	initCmd.Flags().BoolP("quiet", "q", false, "Suppress output (quiet mode)")
 	initCmd.Flags().StringP("branch", "b", "", "Git branch for beads commits (default: current branch)")
-	initCmd.Flags().String("backend", "", "Storage backend: sqlite (default) or dolt (version-controlled)")
+	initCmd.Flags().String("backend", "", "Storage backend (default: dolt)")
 	initCmd.Flags().Bool("contributor", false, "Run OSS contributor setup wizard")
 	initCmd.Flags().Bool("team", false, "Run team workflow setup wizard")
 	initCmd.Flags().Bool("stealth", false, "Enable stealth mode: global gitattributes and gitignore, no local repo tracking")
@@ -822,6 +822,7 @@ func readFirstIssueFromJSONL(path string) (*types.Issue, error) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
@@ -857,6 +858,7 @@ func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(output))
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := scanner.Text()
 

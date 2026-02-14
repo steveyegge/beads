@@ -1,55 +1,39 @@
 package doctor
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
-	"os"
-	"strings"
-	"time"
+
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 )
 
-//nolint:unparam // readOnly is used to add mode=ro to connection string
-func sqliteConnString(path string, readOnly bool) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
+// openDoctorDB opens a storage backend for the given beads directory and returns
+// the underlying *sql.DB for direct SQL queries. The returned closeFunc must be
+// called when done (it closes both the store and database).
+func openDoctorDB(beadsDir string) (*sql.DB, func(), error) {
+	ctx := context.Background()
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+		AllowWithRemoteDaemon: true,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open storage: %w", err)
 	}
+	db := store.UnderlyingDB()
+	if db == nil {
+		_ = store.Close()
+		return nil, nil, fmt.Errorf("backend does not expose underlying database")
+	}
+	closer := func() { _ = store.Close() }
+	return db, closer, nil
+}
 
-	// Best-effort: honor the same env var viper uses (BD_LOCK_TIMEOUT).
-	busy := 30 * time.Second
-	if v := strings.TrimSpace(os.Getenv("BD_LOCK_TIMEOUT")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			busy = d
-		}
-	}
-	busyMs := int64(busy / time.Millisecond)
-
-	// If it's already a URI, append pragmas if absent.
-	if strings.HasPrefix(path, "file:") {
-		conn := path
-		sep := "?"
-		if strings.Contains(conn, "?") {
-			sep = "&"
-		}
-		if readOnly && !strings.Contains(conn, "mode=") {
-			conn += sep + "mode=ro"
-			sep = "&"
-		}
-		if !strings.Contains(conn, "_pragma=busy_timeout") {
-			conn += fmt.Sprintf("%s_pragma=busy_timeout(%d)", sep, busyMs)
-			sep = "&"
-		}
-		if !strings.Contains(conn, "_pragma=foreign_keys") {
-			conn += sep + "_pragma=foreign_keys(ON)"
-			sep = "&"
-		}
-		if !strings.Contains(conn, "_time_format=") {
-			conn += sep + "_time_format=sqlite"
-		}
-		return conn
-	}
-
-	if readOnly {
-		return fmt.Sprintf("file:%s?mode=ro&_pragma=foreign_keys(ON)&_pragma=busy_timeout(%d)&_time_format=sqlite", path, busyMs)
-	}
-	return fmt.Sprintf("file:%s?_pragma=foreign_keys(ON)&_pragma=busy_timeout(%d)&_time_format=sqlite", path, busyMs)
+// openDoctorStore opens a storage.Storage for the given beads directory.
+// Used by doctor checks that work through the storage interface.
+func openDoctorStore(beadsDir string) (storage.Storage, error) {
+	ctx := context.Background()
+	return factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+		AllowWithRemoteDaemon: true,
+	})
 }

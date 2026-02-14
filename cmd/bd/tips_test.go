@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 func TestTipSelection(t *testing.T) {
@@ -24,7 +24,7 @@ func TestTipSelection(t *testing.T) {
 	tips = []Tip{}
 	tipsMutex.Unlock()
 
-	store := memory.New("")
+	store := teststore.New(t)
 
 	// Test 1: No tips registered
 	tip := selectNextTip(store)
@@ -131,7 +131,7 @@ func TestTipProbability(t *testing.T) {
 	}
 	tipsMutex.Unlock()
 
-	store := memory.New("")
+	store := teststore.New(t)
 
 	// Run selection multiple times
 	shownCount := 0
@@ -153,7 +153,7 @@ func TestTipProbability(t *testing.T) {
 }
 
 func TestGetLastShown(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 
 	// Test 1: Never shown
 	lastShown := getLastShown(store, "never_shown")
@@ -181,7 +181,7 @@ func TestGetLastShown(t *testing.T) {
 }
 
 func TestRecordTipShown(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 
 	recordTipShown(store, "test_tip")
 
@@ -215,7 +215,7 @@ func TestMaybeShowTip_RespectsFlags(t *testing.T) {
 	}
 	tipsMutex.Unlock()
 
-	store := memory.New("")
+	store := teststore.New(t)
 
 	// Test 1: Should not show in JSON mode
 	jsonOutput = true
@@ -232,7 +232,7 @@ func TestMaybeShowTip_RespectsFlags(t *testing.T) {
 }
 
 func TestTipFrequency(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 
 	tipsMutex.Lock()
 	tips = []Tip{
@@ -279,7 +279,7 @@ func TestInjectTip(t *testing.T) {
 	tips = []Tip{}
 	tipsMutex.Unlock()
 
-	store := memory.New("")
+	store := teststore.New(t)
 
 	// Set deterministic seed for testing
 	os.Setenv("BEADS_TIP_SEED", "11111")

@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -1315,7 +1316,7 @@ func TestParse_GateInChildStep(t *testing.T) {
 // --- Database backend tests (gt-pozvwr.24.4) ---
 
 // storeFormula is a test helper that stores a formula in a MemoryStorage backend.
-func storeFormula(t *testing.T, store *memory.MemoryStorage, f *Formula) {
+func storeFormula(t *testing.T, store storage.Storage, f *Formula) {
 	t.Helper()
 	issue, labels, err := FormulaToIssue(f, "test-")
 	if err != nil {
@@ -1333,7 +1334,7 @@ func storeFormula(t *testing.T, store *memory.MemoryStorage, f *Formula) {
 }
 
 func TestLoadByName_FromDatabase(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	f := &Formula{
 		Formula:     "db-workflow",
 		Description: "A formula stored in the database",
@@ -1368,7 +1369,7 @@ func TestLoadByName_FromDatabase(t *testing.T) {
 }
 
 func TestLoadByName_DatabaseCaching(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	f := &Formula{
 		Formula: "cached-formula",
 		Version: 1,
@@ -1397,7 +1398,7 @@ func TestLoadByName_DatabaseCaching(t *testing.T) {
 }
 
 func TestLoadByName_DatabaseFallsBackToFilesystem(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	// Store a different formula in DB, but NOT the one we'll look up
 	storeFormula(t, store, &Formula{
 		Formula: "other-formula",
@@ -1437,7 +1438,7 @@ func TestLoadByName_DatabaseFallsBackToFilesystem(t *testing.T) {
 }
 
 func TestLoadByName_DatabaseTakesPrecedence(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	// Store formula in DB
 	storeFormula(t, store, &Formula{
 		Formula: "dual-formula",
@@ -1506,7 +1507,7 @@ func TestLoadByName_NoStoragePreservesFilesystemBehavior(t *testing.T) {
 }
 
 func TestResolve_MixedSources(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 
 	// Store parent formula in DB
 	storeFormula(t, store, &Formula{
@@ -1578,7 +1579,7 @@ func TestResolve_MixedSources(t *testing.T) {
 }
 
 func TestResolve_CycleDetection_WithDB(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 
 	// Store two formulas in DB that form a cycle
 	storeFormula(t, store, &Formula{
@@ -1612,7 +1613,7 @@ func TestResolve_CycleDetection_WithDB(t *testing.T) {
 }
 
 func TestLoadByName_NotFoundAnywhere(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	p := NewParserWithStorage(store)
 
 	_, err := p.LoadByName("nonexistent-formula")
@@ -1633,7 +1634,7 @@ func TestNewParserWithStorage_NilStorage(t *testing.T) {
 }
 
 func TestLoadByName_DBFormulaSourceTracing(t *testing.T) {
-	store := memory.New("")
+	store := teststore.New(t)
 	f := &Formula{
 		Formula: "traced-formula",
 		Version: 1,

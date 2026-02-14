@@ -12,7 +12,6 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -285,8 +284,7 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 		}
 	}
 
-	// SQLite backend - need SQLite-specific store for GetTier1Candidates
-	// Open database using factory
+	// Open database using factory to check for compaction candidates
 	ctx := context.Background()
 	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
 	if err != nil {
@@ -299,8 +297,15 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 	}
 	defer func() { _ = store.Close() }()
 
-	// Type assert to SQLiteStorage for compaction methods
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+	// Use interface-based approach for compaction methods
+	type compactionCandidate struct {
+		IssueID      string
+		OriginalSize int
+	}
+	type compactableStore interface {
+		GetTier1Candidates(ctx context.Context) ([]*compactionCandidate, error)
+	}
+	cs, ok := store.(compactableStore)
 	if !ok {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",
@@ -310,7 +315,7 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 		}
 	}
 
-	tier1, err := sqliteStore.GetTier1Candidates(ctx)
+	tier1, err := cs.GetTier1Candidates(ctx)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",

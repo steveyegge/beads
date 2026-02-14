@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -1197,19 +1197,16 @@ func hasLabelPrefix(s, prefix string) bool {
 // Avoid unused import warning for strings package
 var _ = strings.Contains
 
-// setupAtomicTestServer creates a test server with SQLite storage for transaction testing
+// setupAtomicTestServer creates a test server with storage for transaction testing
 func setupAtomicTestServer(t *testing.T) (*Server, storage.Storage) {
 	t.Helper()
-	ctx := context.Background()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
+
+	store := teststore.New(t)
 
 	// Initialize database with required config
+	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("failed to set issue_prefix: %v", err)
 	}

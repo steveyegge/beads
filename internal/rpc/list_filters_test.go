@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
-	sqlitestorage "github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // setupTestServerWithStore creates a test server and returns the store for direct access
-func setupTestServerWithStore(t *testing.T) (*Server, *Client, *sqlitestorage.SQLiteStorage, func()) {
+func setupTestServerWithStore(t *testing.T) (*Server, *Client, storage.Storage, func()) {
 	tmpDir, err := os.MkdirTemp("", "bd-rpc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -26,24 +27,21 @@ func setupTestServerWithStore(t *testing.T) (*Server, *Client, *sqlitestorage.SQ
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "test.db")
 	socketPath := filepath.Join(beadsDir, "bd.sock")
 
 	os.Remove(socketPath)
 
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
 
+	// Use store.Path() so the server's dbPath matches the actual Dolt store location.
+	// This prevents "database mismatch" errors during request validation.
+	dbPath := store.Path()
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -62,7 +60,6 @@ func setupTestServerWithStore(t *testing.T) (*Server, *Client, *sqlitestorage.SQ
 		if i == maxWait-1 {
 			cancel()
 			server.Stop()
-			store.Close()
 			os.RemoveAll(tmpDir)
 			t.Fatalf("Server socket not created after waiting")
 		}
@@ -74,7 +71,6 @@ func setupTestServerWithStore(t *testing.T) (*Server, *Client, *sqlitestorage.SQ
 	if err != nil {
 		cancel()
 		server.Stop()
-		store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to connect client: %v", err)
 	}
@@ -82,7 +78,6 @@ func setupTestServerWithStore(t *testing.T) (*Server, *Client, *sqlitestorage.SQ
 	if client == nil {
 		cancel()
 		server.Stop()
-		store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Client is nil after connection")
 	}
@@ -93,7 +88,6 @@ func setupTestServerWithStore(t *testing.T) (*Server, *Client, *sqlitestorage.SQ
 		client.Close()
 		cancel()
 		server.Stop()
-		store.Close()
 		os.RemoveAll(tmpDir)
 	}
 

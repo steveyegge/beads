@@ -155,11 +155,8 @@ type migrationPlan struct {
 }
 
 func executeMigrateIssues(ctx context.Context, p migrateIssuesParams) error {
-	// Get database connection (backend-agnostic via UnderlyingDB)
+	// Get database connection (use global store)
 	db := store.UnderlyingDB()
-	if db == nil {
-		return fmt.Errorf("migrate-issues requires a SQL-backed storage (got %s)", store.BackendName())
-	}
 
 	// Step 1: Validate repositories exist
 	if err := validateRepos(ctx, db, p.from, p.to, p.strict); err != nil {

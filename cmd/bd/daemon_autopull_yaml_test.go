@@ -6,8 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
@@ -39,15 +40,11 @@ issue-prefix: test
 	}
 
 	// Create a database WITHOUT sync.branch in the config table
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	ctx := context.Background()
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
-	// Verify: sync.branch is NOT set in SQLite
+	// Verify: sync.branch is NOT set in store
+	ctx := context.Background()
 	dbSyncBranch, _ := testStore.GetConfig(ctx, "sync.branch")
 	if dbSyncBranch != "" {
 		t.Fatalf("Expected no sync.branch in database, got %q", dbSyncBranch)
@@ -87,12 +84,7 @@ func TestAutoPullDefaultFromEnvVar(t *testing.T) {
 	}
 
 	// Create database without sync.branch
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	ctx := context.Background()
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set env var (highest priority)
@@ -119,10 +111,7 @@ func TestAutoPullDefaultFromSQLite(t *testing.T) {
 	// Create database WITH sync.branch
 	dbPath := filepath.Join(beadsDir, "beads.db")
 	ctx := context.Background()
-	testStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set sync.branch in SQLite (legacy configuration)

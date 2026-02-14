@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 // TestCheckStaleness_SymlinkedJSONL verifies that mtime detection uses the symlink's
@@ -54,31 +54,22 @@ func TestCheckStaleness_SymlinkedJSONL(t *testing.T) {
 
 	// Set last_import_time to 30 minutes ago (between target mtime and symlink mtime)
 	importTime := time.Now().Add(-30 * time.Minute)
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 	store.SetMetadata(ctx, "last_import_time", importTime.Format(time.RFC3339))
 
 	dbPath := filepath.Join(beadsDir, "beads.db")
 
-	// With correct behavior (os.Lstat):
-	// - Symlink mtime: now (just created)
-	// - Import time: 30 min ago
-	// - Result: stale = true (symlink is newer than import)
-	//
-	// With incorrect behavior (os.Stat):
-	// - Target mtime: 1 hour ago
-	// - Import time: 30 min ago
-	// - Result: stale = false (target is older than import) - WRONG!
+	// With Dolt as the only backend, CheckStaleness always returns false
+	// (Dolt is the source of truth, not JSONL). The symlink behavior is
+	// no longer exercised since the staleness check is skipped entirely.
 	stale, err := CheckStaleness(ctx, store, dbPath)
 	if err != nil {
 		t.Fatalf("CheckStaleness failed: %v", err)
 	}
 
-	if !stale {
-		t.Error("Expected stale=true when symlinked JSONL is newer than last import")
-		t.Error("This indicates os.Stat is being used instead of os.Lstat")
-		t.Error("os.Stat follows the symlink and returns target's mtime (old)")
-		t.Error("os.Lstat returns the symlink's own mtime (recent)")
+	if stale {
+		t.Error("Expected stale=false for Dolt backend (Dolt is source of truth)")
 	}
 }
 
@@ -116,7 +107,7 @@ func TestCheckStaleness_SymlinkedJSONL_NotStale(t *testing.T) {
 
 	// Set last_import_time to just now (after symlink creation)
 	importTime := time.Now().Add(1 * time.Second)
-	store := memory.New("")
+	store := teststore.New(t)
 	ctx := context.Background()
 	store.SetMetadata(ctx, "last_import_time", importTime.Format(time.RFC3339))
 

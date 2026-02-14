@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -14,10 +15,10 @@ import (
 type adviceRemoveTestHelper struct {
 	t     *testing.T
 	ctx   context.Context
-	store *sqlite.SQLiteStorage
+	store storage.Storage
 }
 
-func newAdviceRemoveTestHelper(t *testing.T, store *sqlite.SQLiteStorage) *adviceRemoveTestHelper {
+func newAdviceRemoveTestHelper(t *testing.T, store storage.Storage) *adviceRemoveTestHelper {
 	return &adviceRemoveTestHelper{t: t, ctx: context.Background(), store: store}
 }
 
@@ -318,10 +319,11 @@ func TestAdviceRemoveClosedAt(t *testing.T) {
 			t.Fatal("ClosedAt should be set after closing")
 		}
 
-		// Verify timestamp is reasonable
-		if after.ClosedAt.Before(beforeClose) || after.ClosedAt.After(afterClose) {
-			t.Errorf("ClosedAt %v should be between %v and %v",
-				after.ClosedAt, beforeClose, afterClose)
+		// Verify timestamp is reasonable (allow 2s tolerance for Dolt second-precision rounding)
+		tolerance := 2 * time.Second
+		if after.ClosedAt.Before(beforeClose.Add(-tolerance)) || after.ClosedAt.After(afterClose.Add(tolerance)) {
+			t.Errorf("ClosedAt %v should be within %v of the range %v to %v",
+				after.ClosedAt, tolerance, beforeClose, afterClose)
 		}
 	})
 }

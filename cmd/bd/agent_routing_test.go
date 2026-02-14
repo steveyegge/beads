@@ -125,8 +125,9 @@ func TestAgentStateWithRouting(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	// Test the routed resolution
-	result, err := resolveAndGetIssueWithRouting(ctx, townStore, "gt-testrig-polecat-test")
+	// Local file-based routing was removed (daemon handles cross-rig routing now).
+	// Verify that resolveAndGetIssueWithRouting finds the issue when given the rig store directly.
+	result, err := resolveAndGetIssueWithRouting(ctx, rigStore, "gt-testrig-polecat-test")
 	if err != nil {
 		t.Fatalf("resolveAndGetIssueWithRouting failed: %v", err)
 	}
@@ -143,15 +144,18 @@ func TestAgentStateWithRouting(t *testing.T) {
 		t.Errorf("Expected issue ID %q, got %q", "gt-testrig-polecat-test", result.Issue.ID)
 	}
 
-	if !result.Routed {
-		t.Error("Expected result.Routed to be true for cross-repo lookup")
-	}
-
 	if result.Issue.IssueType != types.TypeTask {
 		t.Errorf("Expected issue type %q, got %q", types.TypeTask, result.Issue.IssueType)
 	}
 
-	t.Logf("Successfully resolved agent %s via routing", result.Issue.ID)
+	// Verify the issue is NOT found in the town store (routing is daemon-only now)
+	townResult, err := resolveAndGetIssueWithRouting(ctx, townStore, "gt-testrig-polecat-test")
+	if err == nil && townResult != nil {
+		townResult.Close()
+		t.Error("Expected town store to NOT find the rig issue (local routing removed)")
+	}
+
+	t.Logf("Successfully resolved agent %s from rig store", result.Issue.ID)
 }
 
 // TestNeedsRoutingFunction tests the needsRouting function
@@ -214,7 +218,7 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 
 	// Initialize databases (prefix without trailing hyphen)
 	townDBPath := filepath.Join(townBeadsDir, "beads.db")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	_ = newTestStoreWithPrefix(t, townDBPath, "hq") // town store exists but routing is daemon-only now
 
 	rigDBPath := filepath.Join(rigBeadsDir, "beads.db")
 	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
@@ -268,8 +272,9 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	// Test that we can resolve the agent from the town directory
-	result, err := resolveAndGetIssueWithRouting(ctx, townStore, "gt-test-witness")
+	// Local file-based routing was removed (daemon handles cross-rig routing now).
+	// Verify that resolveAndGetIssueWithRouting finds the issue when given the rig store directly.
+	result, err := resolveAndGetIssueWithRouting(ctx, rigStore, "gt-test-witness")
 	if err != nil {
 		t.Fatalf("resolveAndGetIssueWithRouting failed: %v", err)
 	}
@@ -282,11 +287,7 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 		t.Errorf("Expected issue ID %q, got %q", "gt-test-witness", result.Issue.ID)
 	}
 
-	if !result.Routed {
-		t.Error("Expected result.Routed to be true")
-	}
-
-	t.Logf("Successfully resolved agent %s via routing for heartbeat test", result.Issue.ID)
+	t.Logf("Successfully resolved agent %s from rig store for heartbeat test", result.Issue.ID)
 }
 
 // TestAgentShowWithRouting tests that bd agent show respects routes.jsonl
@@ -337,7 +338,7 @@ func TestAgentShowWithRouting(t *testing.T) {
 
 	// Initialize databases (prefix without trailing hyphen)
 	townDBPath := filepath.Join(townBeadsDir, "beads.db")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	_ = newTestStoreWithPrefix(t, townDBPath, "hq") // town store exists but routing is daemon-only now
 
 	rigDBPath := filepath.Join(rigBeadsDir, "beads.db")
 	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
@@ -391,8 +392,9 @@ func TestAgentShowWithRouting(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	// Test that we can resolve the agent from the town directory
-	result, err := resolveAndGetIssueWithRouting(ctx, townStore, "gt-myrig-crew-alice")
+	// Local file-based routing was removed (daemon handles cross-rig routing now).
+	// Verify that resolveAndGetIssueWithRouting finds the issue when given the rig store directly.
+	result, err := resolveAndGetIssueWithRouting(ctx, rigStore, "gt-myrig-crew-alice")
 	if err != nil {
 		t.Fatalf("resolveAndGetIssueWithRouting failed: %v", err)
 	}
@@ -409,5 +411,5 @@ func TestAgentShowWithRouting(t *testing.T) {
 		t.Errorf("Expected issue type %q, got %q", types.TypeTask, result.Issue.IssueType)
 	}
 
-	t.Logf("Successfully resolved agent %s via routing for show test", result.Issue.ID)
+	t.Logf("Successfully resolved agent %s from rig store for show test", result.Issue.ID)
 }

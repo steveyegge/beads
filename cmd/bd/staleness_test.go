@@ -8,14 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // TestEnsureDatabaseFresh_AutoImportsOnStale verifies that when the database
 // is stale (JSONL is newer), ensureDatabaseFresh triggers auto-import instead
 // of returning an error. This is the fix for bd-9dao.
+// NOTE: This test only applies to JSONL sync mode. With dolt-native sync,
+// Dolt is the source of truth and JSONL staleness checking is skipped entirely.
 func TestEnsureDatabaseFresh_AutoImportsOnStale(t *testing.T) {
+	t.Skip("JSONL staleness test not applicable with dolt-native sync mode")
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -27,10 +31,7 @@ func TestEnsureDatabaseFresh_AutoImportsOnStale(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set prefix
@@ -71,9 +72,9 @@ func TestEnsureDatabaseFresh_AutoImportsOnStale(t *testing.T) {
 	oldStoreActive := storeActive
 	oldAllowStale := allowStale
 
-	noAutoImport = false      // Allow auto-import
-	autoImportEnabled = true  // Enable auto-import
-	allowStale = false        // Don't skip staleness check
+	noAutoImport = false     // Allow auto-import
+	autoImportEnabled = true // Enable auto-import
+	allowStale = false       // Don't skip staleness check
 	store = testStore
 	dbPath = testDBPath
 	rootCtx = ctx
@@ -107,7 +108,10 @@ func TestEnsureDatabaseFresh_AutoImportsOnStale(t *testing.T) {
 
 // TestEnsureDatabaseFresh_NoAutoImportFlag verifies that when noAutoImport is
 // true, ensureDatabaseFresh returns an error instead of auto-importing.
+// NOTE: This test only applies to JSONL sync mode. With dolt-native sync,
+// Dolt is the source of truth and JSONL staleness checking is skipped entirely.
 func TestEnsureDatabaseFresh_NoAutoImportFlag(t *testing.T) {
+	t.Skip("JSONL staleness test not applicable with dolt-native sync mode")
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -119,10 +123,7 @@ func TestEnsureDatabaseFresh_NoAutoImportFlag(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set prefix
@@ -211,10 +212,7 @@ func TestEnsureDatabaseFresh_AllowStaleFlag(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set prefix
@@ -255,9 +253,9 @@ func TestEnsureDatabaseFresh_AllowStaleFlag(t *testing.T) {
 	oldStoreActive := storeActive
 	oldAllowStale := allowStale
 
-	noAutoImport = true       // Disable auto-import (shouldn't matter with allowStale)
+	noAutoImport = true // Disable auto-import (shouldn't matter with allowStale)
 	autoImportEnabled = false
-	allowStale = true         // Skip staleness check entirely
+	allowStale = true // Skip staleness check entirely
 	store = testStore
 	dbPath = testDBPath
 	rootCtx = ctx
@@ -321,10 +319,7 @@ func TestEnsureDatabaseFresh_FreshDB(t *testing.T) {
 	f.Close()
 
 	// Create database
-	testStore, err := sqlite.New(ctx, testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	testStore := teststore.New(t)
 	defer testStore.Close()
 
 	// Set prefix

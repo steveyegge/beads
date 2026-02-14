@@ -31,7 +31,6 @@ import (
 
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -147,19 +146,10 @@ func (l *Loader) loadMolecules(ctx context.Context, molecules []*types.Issue) (i
 		return 0, nil
 	}
 
-	// Use batch creation with prefix validation skipped.
+	// Use batch creation via the storage interface.
 	// Molecules have their own ID namespace (mol-*) independent of project prefix.
-	if sqliteStore, ok := l.store.(*sqlite.SQLiteStorage); ok {
-		opts := sqlite.BatchCreateOptions{
-			SkipPrefixValidation: true, // Molecules use their own prefix
-		}
-		if err := sqliteStore.CreateIssuesWithFullOptions(ctx, newMolecules, "molecules-loader", opts); err != nil {
-			return 0, fmt.Errorf("batch create molecules: %w", err)
-		}
-		return len(newMolecules), nil
-	}
-
-	// Fallback for non-SQLite stores (e.g., memory storage in tests)
+	// Note: SkipPrefixValidation is not available through the generic interface,
+	// so we fall back to individual creates which don't enforce prefix validation.
 	loaded := 0
 	for _, mol := range newMolecules {
 		if err := l.store.CreateIssue(ctx, mol, "molecules-loader"); err != nil {

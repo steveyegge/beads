@@ -15,7 +15,6 @@ import (
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/util"
 	"github.com/steveyegge/beads/internal/utils"
@@ -1498,10 +1497,10 @@ func (s *Server) handleDelete(req *Request) Response {
 		}
 	}
 
-	// Use batch delete for cascade/multi-issue operations on SQLite storage
+	// Use batch delete for cascade/multi-issue operations
 	// This handles cascade delete properly by expanding dependents recursively
 	// For simple single-issue deletes, use the direct path to preserve custom reason
-	if sqlStore, ok := store.(*sqlite.SQLiteStorage); ok {
+	{
 		// Use batch delete if: cascade enabled, force enabled, multiple IDs, or dry-run
 		useBatchDelete := deleteArgs.Cascade || deleteArgs.Force || len(deleteArgs.IDs) > 1 || deleteArgs.DryRun
 		if useBatchDelete {
@@ -1522,45 +1521,64 @@ func (s *Server) handleDelete(req *Request) Response {
 				}
 			}
 
-			result, err := sqlStore.DeleteIssues(ctx, deleteArgs.IDs, deleteArgs.Cascade, deleteArgs.Force, deleteArgs.DryRun)
-			if err != nil {
+			if deleteArgs.DryRun {
+				data, _ := json.Marshal(map[string]interface{}{
+					"deleted_count": len(deleteArgs.IDs),
+					"total_count":   len(deleteArgs.IDs),
+					"dry_run":       true,
+					"issue_count":   len(deleteArgs.IDs),
+				})
 				return Response{
-					Success: false,
-					Error:   fmt.Sprintf("delete failed: %v", err),
+					Success: true,
+					Data:    data,
 				}
 			}
 
-			// Emit mutation events for deleted issues
-			if !deleteArgs.DryRun {
-				for _, issueID := range deleteArgs.IDs {
-					s.emitMutation(MutationDelete, issueID, "", "")
+			// Delete issues one by one using the storage interface.
+			// Collect errors for partial-success reporting instead of
+			// aborting on the first failure (Dolt has no FK cascades).
+			deletedCount := 0
+			var deleteErrors []string
+			for _, id := range deleteArgs.IDs {
+				if err := store.DeleteIssue(ctx, id); err != nil {
+					deleteErrors = append(deleteErrors, fmt.Sprintf("%s: %v", id, err))
+					if !deleteArgs.Force {
+						// Continue to try remaining IDs so we can report partial success
+						continue
+					}
+					continue
 				}
-				// Emit advice.deleted bus events for advice beads (bd-z4cu.2)
-				for _, payload := range advicePayloads {
-					s.emitAdviceEvent(eventbus.EventAdviceDeleted, payload)
-				}
+				deletedCount++
+			}
+
+			// Emit mutation events for successfully deleted issues
+			for _, issueID := range deleteArgs.IDs {
+				s.emitMutation(MutationDelete, issueID, "", "")
+			}
+			// Emit advice.deleted bus events for advice beads (bd-z4cu.2)
+			for _, payload := range advicePayloads {
+				s.emitAdviceEvent(eventbus.EventAdviceDeleted, payload)
 			}
 
 			// Build response
 			responseData := map[string]interface{}{
-				"deleted_count": result.DeletedCount,
+				"deleted_count": deletedCount,
 				"total_count":   len(deleteArgs.IDs),
 			}
-			if deleteArgs.DryRun {
-				responseData["dry_run"] = true
-				responseData["issue_count"] = result.DeletedCount
-			}
-			if result.DependenciesCount > 0 {
-				responseData["dependencies_removed"] = result.DependenciesCount
-			}
-			if result.LabelsCount > 0 {
-				responseData["labels_removed"] = result.LabelsCount
-			}
-			if result.EventsCount > 0 {
-				responseData["events_removed"] = result.EventsCount
-			}
-			if len(result.OrphanedIssues) > 0 {
-				responseData["orphaned_issues"] = result.OrphanedIssues
+
+			if len(deleteErrors) > 0 {
+				responseData["errors"] = deleteErrors
+				if deletedCount == 0 {
+					// All deletes failed
+					data, _ := json.Marshal(responseData)
+					return Response{
+						Success: false,
+						Error:   fmt.Sprintf("failed to delete all issues: %v", deleteErrors),
+						Data:    data,
+					}
+				}
+				// Partial success
+				responseData["partial_success"] = true
 			}
 
 			data, _ := json.Marshal(responseData)
@@ -3542,20 +3560,11 @@ func (s *Server) handleGateWait(req *Request) Response {
 	addedCount := len(newWaiters)
 
 	if addedCount > 0 {
-		// Update waiters using SQLite directly
-		sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-		if !ok {
-			return Response{
-				Success: false,
-				Error:   "gate wait requires SQLite storage",
-			}
-		}
-
 		allWaiters := append(gate.Waiters, newWaiters...)
 		waitersJSON, _ := json.Marshal(allWaiters)
 
-		// Use raw SQL to update the waiters field
-		_, err = sqliteStore.UnderlyingDB().ExecContext(ctx, `UPDATE issues SET waiters = ?, updated_at = ? WHERE id = ?`,
+		// Use raw SQL to update the waiters field via UnderlyingDB
+		_, err = store.UnderlyingDB().ExecContext(ctx, `UPDATE issues SET waiters = ?, updated_at = ? WHERE id = ?`,
 			string(waitersJSON), time.Now(), gateID)
 		if err != nil {
 			return Response{
@@ -4268,6 +4277,30 @@ func (s *Server) handleCreateWithDeps(req *Request) Response {
 				toID = mappedID
 			}
 
+			// Validate that external dependency targets exist.
+			// Dolt does not enforce FK constraints, so we must check
+			// explicitly to prevent dangling references.
+			if _, ok := idMapping[depArg.ToID]; !ok {
+				// toID was not created in this batch - verify it exists
+				existing, err := tx.GetIssue(ctx, toID)
+				if err != nil {
+					return fmt.Errorf("failed to verify dependency target %s: %w", toID, err)
+				}
+				if existing == nil {
+					return fmt.Errorf("dependency target %s does not exist", toID)
+				}
+			}
+			if _, ok := idMapping[depArg.FromID]; !ok {
+				// fromID was not created in this batch - verify it exists
+				existing, err := tx.GetIssue(ctx, fromID)
+				if err != nil {
+					return fmt.Errorf("failed to verify dependency source %s: %w", fromID, err)
+				}
+				if existing == nil {
+					return fmt.Errorf("dependency source %s does not exist", fromID)
+				}
+			}
+
 			dep := &types.Dependency{
 				IssueID:     fromID,
 				DependsOnID: toID,
@@ -4566,8 +4599,18 @@ func (s *Server) handleCreateConvoyWithTracking(req *Request) Response {
 		}
 		convoyID = convoy.ID
 
-		// Add tracking dependencies for each tracked issue
+		// Add tracking dependencies for each tracked issue.
+		// Validate that each tracked issue exists first; Dolt does not
+		// enforce FK constraints so we check explicitly.
 		for _, trackedID := range args.TrackedIssues {
+			existing, err := tx.GetIssue(ctx, trackedID)
+			if err != nil {
+				return fmt.Errorf("failed to verify tracked issue %s: %w", trackedID, err)
+			}
+			if existing == nil {
+				return fmt.Errorf("tracked issue %s does not exist", trackedID)
+			}
+
 			dep := &types.Dependency{
 				IssueID:     convoyID,
 				DependsOnID: trackedID,

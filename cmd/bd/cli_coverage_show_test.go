@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -306,11 +306,7 @@ func TestCoverage_TemplateAndPinnedProtections(t *testing.T) {
 	}
 
 	// Insert a template issue directly and verify update/close protect it.
-	dbFile := filepath.Join(dir, ".beads", "beads.db")
-	s, err := sqlite.New(context.Background(), dbFile)
-	if err != nil {
-		t.Fatalf("sqlite.New: %v", err)
-	}
+	s := teststore.New(t)
 	ctx := context.Background()
 	template := &types.Issue{
 		Title:      "Template issue",
@@ -344,10 +340,7 @@ func TestCoverage_TemplateAndPinnedProtections(t *testing.T) {
 		t.Fatalf("expected 1 issue from show, got %d", len(showDetails))
 	}
 	// Re-open the DB after running the CLI to confirm is_template persisted.
-	s2, err := sqlite.New(context.Background(), dbFile)
-	if err != nil {
-		t.Fatalf("sqlite.New (reopen): %v", err)
-	}
+	s2 := teststore.New(t)
 	postShow, err := s2.GetIssue(context.Background(), template.ID)
 	_ = s2.Close()
 	if err != nil {
@@ -382,11 +375,7 @@ func TestCoverage_ShowThread(t *testing.T) {
 	dir := t.TempDir()
 	runBDForCoverage(t, dir, "init", "--prefix", "test", "--quiet")
 
-	dbFile := filepath.Join(dir, ".beads", "beads.db")
-	s, err := sqlite.New(context.Background(), dbFile)
-	if err != nil {
-		t.Fatalf("sqlite.New: %v", err)
-	}
+	s := teststore.New(t)
 	ctx := context.Background()
 
 	root := &types.Issue{Title: "Root message", IssueType: "message", Status: types.StatusOpen, Sender: "alice", Assignee: "bob"}

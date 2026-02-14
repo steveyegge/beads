@@ -9,23 +9,19 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// setupInitMigrateTestServer creates a test server with SQLite storage for init/migrate tests
+// setupInitMigrateTestServer creates a test server with storage for init/migrate tests
 func setupInitMigrateTestServer(t *testing.T) (*Server, storage.Storage) {
 	t.Helper()
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
+	store := teststore.New(t)
 
-	// Initialize database with required config
+	// Set issue_prefix to "test" for init/migrate tests
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("failed to set issue_prefix: %v", err)
 	}
@@ -413,11 +409,7 @@ func TestHandleMigrateInspect_MissingVersion(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
+	store := teststore.New(t)
 
 	// Set prefix but NOT version
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {

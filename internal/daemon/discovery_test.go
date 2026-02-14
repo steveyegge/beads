@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 func TestDiscoverDaemon(t *testing.T) {
@@ -21,11 +21,7 @@ func TestDiscoverDaemon(t *testing.T) {
 	// Start daemon
 	dbPath := filepath.Join(workspace, "test.db")
 	socketPath := filepath.Join(workspace, "bd.sock")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := rpc.NewServer(socketPath, store, tmpDir, dbPath)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -59,11 +55,7 @@ func TestFindDaemonByWorkspace(t *testing.T) {
 	// Start daemon
 	dbPath := filepath.Join(workspace, "test.db")
 	socketPath := filepath.Join(workspace, "bd.sock")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := rpc.NewServer(socketPath, store, tmpDir, dbPath)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -232,11 +224,7 @@ func TestDiscoverDaemons_Legacy(t *testing.T) {
 	// Start a test daemon
 	dbPath := filepath.Join(beadsDir, "test.db")
 	socketPath := filepath.Join(beadsDir, "bd.sock")
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := rpc.NewServer(socketPath, store, tmpDir, dbPath)
 	ctx, cancel := context.WithCancel(context.Background())

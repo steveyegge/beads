@@ -7,17 +7,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestLargeSQLite(t *testing.T) {
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	ctx := context.Background()
 
@@ -65,12 +60,7 @@ func TestXLargeSQLite(t *testing.T) {
 		t.Skip("Skipping XLarge test in short mode")
 	}
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	ctx := context.Background()
 
@@ -99,12 +89,7 @@ func TestLargeFromJSONL(t *testing.T) {
 		t.Skip("Skipping JSONL test in short mode")
 	}
 
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	ctx := context.Background()
 

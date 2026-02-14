@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
-	sqlitestorage "github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
 )
 
 // setupDecisionStore creates a test server with custom types configured for gate issues.
-func setupDecisionStore(t *testing.T) (*Server, *Client, *sqlitestorage.SQLiteStorage, func()) {
+func setupDecisionStore(t *testing.T) (*Server, *Client, storage.Storage, func()) {
 	t.Helper()
 	// Initialize config so decision defaults (max_reminders=3, timeout=24h) are available.
 	_ = config.Initialize()

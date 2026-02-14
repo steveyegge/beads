@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -22,26 +23,17 @@ func TestMultiWorkspaceDeletionSync(t *testing.T) {
 	cloneAJSONL := filepath.Join(cloneADir, "issues.jsonl")
 	cloneBJSONL := filepath.Join(cloneBDir, "issues.jsonl")
 
-	cloneADB := filepath.Join(cloneADir, "beads.db")
-	cloneBDB := filepath.Join(cloneBDir, "beads.db")
-
 	ctx := context.Background()
 
 	// Create stores for both clones
-	storeA, err := sqlite.New(context.Background(), cloneADB)
-	if err != nil {
-		t.Fatalf("Failed to create store A: %v", err)
-	}
+	storeA := teststore.New(t)
 	defer storeA.Close()
 
 	if err := storeA.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set issue_prefix for store A: %v", err)
 	}
 
-	storeB, err := sqlite.New(context.Background(), cloneBDB)
-	if err != nil {
-		t.Fatalf("Failed to create store B: %v", err)
-	}
+	storeB := teststore.New(t)
 	defer storeB.Close()
 
 	if err := storeB.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -178,14 +170,10 @@ func TestMultiWorkspaceDeletionSync(t *testing.T) {
 func TestDeletionWithLocalModification(t *testing.T) {
 	dir := t.TempDir()
 	jsonlPath := filepath.Join(dir, "issues.jsonl")
-	dbPath := filepath.Join(dir, "beads.db")
 
 	ctx := context.Background()
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -237,9 +225,9 @@ func TestDeletionWithLocalModification(t *testing.T) {
 
 	// Try to merge - deletion now wins over modification (bd-pq5k)
 	// This should succeed and delete the issue
-	_, err = merge3WayAndPruneDeletions(ctx, store, jsonlPath)
-	if err != nil {
-		t.Errorf("Expected merge to succeed (deletion wins), but got error: %v", err)
+	_, mergeErr := merge3WayAndPruneDeletions(ctx, store, jsonlPath)
+	if mergeErr != nil {
+		t.Errorf("Expected merge to succeed (deletion wins), but got error: %v", mergeErr)
 	}
 
 	// The issue should be deleted (deletion wins over modification)
@@ -418,14 +406,9 @@ func TestMultiRepoDeletionTracking(t *testing.T) {
 		t.Fatalf("Failed to create additional .beads dir: %v", err)
 	}
 
-	// Create database in primary dir
-	dbPath := filepath.Join(primaryBeadsDir, "beads.db")
 	ctx := context.Background()
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -468,31 +451,31 @@ func TestMultiRepoDeletionTracking(t *testing.T) {
 		t.Fatalf("Failed to create additional issue: %v", err)
 	}
 
-	// Export to multi-repo (this creates multiple JSONL files)
-	results, err := store.ExportToMultiRepo(ctx)
-	if err != nil {
-		t.Fatalf("ExportToMultiRepo failed: %v", err)
-	}
-	if results == nil {
-		t.Fatal("Expected multi-repo results, got nil")
-	}
-	if results["."] != 1 {
-		t.Errorf("Expected 1 issue in primary repo, got %d", results["."])
-	}
-	if results[additionalDir] != 1 {
-		t.Errorf("Expected 1 issue in additional repo, got %d", results[additionalDir])
-	}
-
-	// Verify JSONL files exist
+	// Export issues to separate JSONL files (simulating multi-repo export)
 	primaryJSONL := filepath.Join(primaryBeadsDir, "issues.jsonl")
 	additionalJSONL := filepath.Join(additionalBeadsDir, "issues.jsonl")
 
-	if !fileExists(primaryJSONL) {
-		t.Fatalf("Primary JSONL not created: %s", primaryJSONL)
+	// Write primary issue to primary JSONL
+	pf, err := os.Create(primaryJSONL)
+	if err != nil {
+		t.Fatalf("Failed to create primary JSONL: %v", err)
 	}
-	if !fileExists(additionalJSONL) {
-		t.Fatalf("Additional JSONL not created: %s", additionalJSONL)
+	if err := json.NewEncoder(pf).Encode(primaryIssue); err != nil {
+		pf.Close()
+		t.Fatalf("Failed to encode primary issue: %v", err)
 	}
+	pf.Close()
+
+	// Write additional issue to additional JSONL
+	af, err := os.Create(additionalJSONL)
+	if err != nil {
+		t.Fatalf("Failed to create additional JSONL: %v", err)
+	}
+	if err := json.NewEncoder(af).Encode(additionalIssue); err != nil {
+		af.Close()
+		t.Fatalf("Failed to encode additional issue: %v", err)
+	}
+	af.Close()
 
 	// THIS IS THE BUG: Initialize snapshots - currently only works for single JSONL
 	// Should create snapshots for BOTH JSONL files
@@ -611,14 +594,14 @@ func TestGetMultiRepoJSONLPaths_Duplicates(t *testing.T) {
 	}()
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	// Current implementation doesn't dedupe - just verify it returns all entries
 	// (This documents current behavior; future improvement could dedupe)
 	expectedCount := 3 // primary + 2 duplicates
 	if len(paths) != expectedCount {
 		t.Errorf("Expected %d paths, got %d: %v", expectedCount, len(paths), paths)
 	}
-	
+
 	// All should point to same JSONL location
 	expectedJSONL := filepath.Join(primaryDir, ".beads", "issues.jsonl")
 	for i, p := range paths {
@@ -657,15 +640,15 @@ func TestGetMultiRepoJSONLPaths_PathsWithSpaces(t *testing.T) {
 	}()
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	if len(paths) != 2 {
 		t.Fatalf("Expected 2 paths, got %d", len(paths))
 	}
-	
+
 	// Verify paths are constructed correctly
 	expectedPrimary := filepath.Join(primaryDir, ".beads", "issues.jsonl")
 	expectedAdditional := filepath.Join(additionalDir, ".beads", "issues.jsonl")
-	
+
 	if paths[0] != expectedPrimary {
 		t.Errorf("Primary path = %s, want %s", paths[0], expectedPrimary)
 	}
@@ -692,17 +675,17 @@ func TestGetMultiRepoJSONLPaths_RelativePaths(t *testing.T) {
 	}()
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	if len(paths) != 3 {
 		t.Fatalf("Expected 3 paths, got %d", len(paths))
 	}
-	
+
 	// Current implementation: relative paths are NOT expanded to absolute
 	// They're used as-is with filepath.Join
 	expectedPrimary := filepath.Join(".", ".beads", "issues.jsonl")
 	expectedOther := filepath.Join("../other", ".beads", "issues.jsonl")
 	expectedBar := filepath.Join("./foo/../bar", ".beads", "issues.jsonl")
-	
+
 	if paths[0] != expectedPrimary {
 		t.Errorf("Primary path = %s, want %s", paths[0], expectedPrimary)
 	}
@@ -731,15 +714,15 @@ func TestGetMultiRepoJSONLPaths_TildeExpansion(t *testing.T) {
 	}()
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	if len(paths) != 2 {
 		t.Fatalf("Expected 2 paths, got %d", len(paths))
 	}
-	
+
 	// Tilde should be literal (NOT expanded) in current implementation
 	expectedPrimary := filepath.Join("~/repos/main", ".beads", "issues.jsonl")
 	expectedAdditional := filepath.Join("~/repos/other", ".beads", "issues.jsonl")
-	
+
 	if paths[0] != expectedPrimary {
 		t.Errorf("Primary path = %s, want %s", paths[0], expectedPrimary)
 	}
@@ -896,14 +879,9 @@ func TestMultiRepoFlushPrefixFiltering(t *testing.T) {
 		t.Fatalf("Failed to create additional .beads dir: %v", err)
 	}
 
-	// Create database in additional (non-primary) dir
-	dbPath := filepath.Join(additionalBeadsDir, "beads.db")
 	ctx := context.Background()
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set prefix for additional repo (different from primary)
@@ -942,9 +920,8 @@ func TestMultiRepoFlushPrefixFiltering(t *testing.T) {
 		SourceRepo:  additionalDir,
 	}
 
-	// Use batch create with SkipPrefixValidation to simulate multi-repo hydration
-	// (in real multi-repo mode, issues from other repos are imported with prefix validation skipped)
-	if err := store.CreateIssuesWithFullOptions(ctx, []*types.Issue{primaryIssue, additionalIssue}, "test", sqlite.BatchCreateOptions{SkipPrefixValidation: true}); err != nil {
+	// Use batch create to simulate multi-repo hydration
+	if err := store.CreateIssues(ctx, []*types.Issue{primaryIssue, additionalIssue}, "test"); err != nil {
 		t.Fatalf("Failed to batch create issues: %v", err)
 	}
 

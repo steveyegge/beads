@@ -13,13 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // setupDaemonTestEnvForEdit creates a daemon test environment for edit command tests.
-func setupDaemonTestEnvForEdit(t *testing.T) (context.Context, context.CancelFunc, *rpc.Client, *sqlite.SQLiteStorage, func()) {
+func setupDaemonTestEnvForEdit(t *testing.T) (context.Context, context.CancelFunc, *rpc.Client, storage.Storage, func()) {
 	t.Helper()
 
 	tmpDir := makeSocketTempDir(t)
@@ -39,7 +40,7 @@ func setupDaemonTestEnvForEdit(t *testing.T) (context.Context, context.CancelFun
 
 	log := daemonLogger{logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))}
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", log)
 	if err != nil {
 		cancel()
 		t.Fatalf("Failed to start RPC server: %v", err)

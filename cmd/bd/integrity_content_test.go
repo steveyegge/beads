@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -33,10 +34,7 @@ func TestContentBasedComparison(t *testing.T) {
 	ctx := context.Background()
 
 	// Create and populate database
-	localStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	localStore := teststore.New(t)
 	defer localStore.Close()
 
 	// Initialize database with issue_prefix
@@ -179,16 +177,12 @@ func TestContentHashComputation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "beads.db")
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	ctx := context.Background()
 
 	// Create and populate database
-	localStore, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	localStore := teststore.New(t)
 	defer localStore.Close()
 
 	if err := localStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {

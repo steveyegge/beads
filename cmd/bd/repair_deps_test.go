@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -17,17 +18,14 @@ func TestRepairDeps_NoOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	// Initialize database
 	store.SetConfig(ctx, "issue_prefix", "test-")
-	
+
 	// Create two issues with valid dependency
 	i1 := &types.Issue{Title: "Issue 1", Priority: 1, Status: "open", IssueType: "task"}
 	store.CreateIssue(ctx, i1, "test")
@@ -77,29 +75,26 @@ func TestRepairDeps_NoOrphans(t *testing.T) {
 
 func TestRepairDeps_FindOrphans(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".beads", "beads.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	// Initialize database
 	store.SetConfig(ctx, "issue_prefix", "test-")
-	
+
 	// Create two issues
 	i1 := &types.Issue{Title: "Issue 1", Priority: 1, Status: "open", IssueType: "task"}
 	if err := store.CreateIssue(ctx, i1, "test"); err != nil {
 		t.Fatalf("CreateIssue failed: %v", err)
 	}
 	t.Logf("Created i1: %s", i1.ID)
-	
+
 	i2 := &types.Issue{Title: "Issue 2", Priority: 1, Status: "open", IssueType: "task"}
 	if err := store.CreateIssue(ctx, i2, "test"); err != nil {
 		t.Fatalf("CreateIssue failed: %v", err)
@@ -107,7 +102,7 @@ func TestRepairDeps_FindOrphans(t *testing.T) {
 	t.Logf("Created i2: %s", i2.ID)
 
 	// Add dependency
-	err = store.AddDependency(ctx, &types.Dependency{
+	err := store.AddDependency(ctx, &types.Dependency{
 		IssueID:     i2.ID,
 		DependsOnID: i1.ID,
 		Type:        types.DepBlocks,
@@ -119,21 +114,21 @@ func TestRepairDeps_FindOrphans(t *testing.T) {
 	// Manually create orphaned dependency by directly inserting invalid reference
 	// This simulates corruption or import errors
 	db := store.UnderlyingDB()
-	_, err = db.ExecContext(ctx, "PRAGMA foreign_keys = OFF")
+	_, err = db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Insert a dependency pointing to a non-existent issue
-	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
-		VALUES (?, 'nonexistent-123', 'blocks', datetime('now'), 'test')`, i2.ID)
+	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
+		VALUES (?, 'nonexistent-123', 'blocks', NOW(), 'test')`, i2.ID)
 	if err != nil {
 		t.Fatalf("Failed to insert orphaned dependency: %v", err)
 	}
-	_, err = db.ExecContext(ctx, "PRAGMA foreign_keys = ON")
+	_, err = db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Verify the orphan was actually inserted
 	var count int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM dependencies WHERE depends_on_id = 'nonexistent-123'").Scan(&count)
@@ -193,22 +188,19 @@ func TestRepairDeps_FindOrphans(t *testing.T) {
 
 func TestRepairDeps_FixOrphans(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".beads", "beads.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	// Initialize database
 	store.SetConfig(ctx, "issue_prefix", "test-")
-	
+
 	// Create three issues
 	i1 := &types.Issue{Title: "Issue 1", Priority: 1, Status: "open", IssueType: "task"}
 	store.CreateIssue(ctx, i1, "test")
@@ -231,18 +223,18 @@ func TestRepairDeps_FixOrphans(t *testing.T) {
 
 	// Manually create orphaned dependencies by inserting invalid references
 	db := store.UnderlyingDB()
-	db.Exec("PRAGMA foreign_keys = OFF")
-	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
-		VALUES (?, 'nonexistent-123', 'blocks', datetime('now'), 'test')`, i2.ID)
+	db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0")
+	_, err := db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
+		VALUES (?, 'nonexistent-123', 'blocks', NOW(), 'test')`, i2.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
-		VALUES (?, 'nonexistent-456', 'blocks', datetime('now'), 'test')`, i3.ID)
+	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
+		VALUES (?, 'nonexistent-456', 'blocks', NOW(), 'test')`, i3.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Exec("PRAGMA foreign_keys = ON")
+	db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 1")
 
 	// Find and fix orphans
 	allDeps, _ := store.GetAllDependencyRecords(ctx)
@@ -307,22 +299,19 @@ func TestRepairDeps_FixOrphans(t *testing.T) {
 
 func TestRepairDeps_MultipleTypes(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".beads", "beads.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	// Initialize database
 	store.SetConfig(ctx, "issue_prefix", "test-")
-	
+
 	// Create issues
 	i1 := &types.Issue{Title: "Issue 1", Priority: 1, Status: "open", IssueType: "task"}
 	store.CreateIssue(ctx, i1, "test")
@@ -345,18 +334,18 @@ func TestRepairDeps_MultipleTypes(t *testing.T) {
 
 	// Manually create orphaned dependencies with different types
 	db := store.UnderlyingDB()
-	db.Exec("PRAGMA foreign_keys = OFF")
-	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
-		VALUES (?, 'nonexistent-blocks', 'blocks', datetime('now'), 'test')`, i2.ID)
+	db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0")
+	_, err := db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
+		VALUES (?, 'nonexistent-blocks', 'blocks', NOW(), 'test')`, i2.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) 
-		VALUES (?, 'nonexistent-related', 'related', datetime('now'), 'test')`, i3.ID)
+	_, err = db.ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
+		VALUES (?, 'nonexistent-related', 'related', NOW(), 'test')`, i3.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Exec("PRAGMA foreign_keys = ON")
+	db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 1")
 
 	// Find orphans
 	allDeps, _ := store.GetAllDependencyRecords(ctx)

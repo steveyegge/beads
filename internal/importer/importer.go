@@ -15,7 +15,6 @@ import (
 	"github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -953,25 +952,10 @@ func upsertIssues(ctx context.Context, store storage.Storage, issues []*types.Is
 				}
 			}
 			if len(batchForDepth) > 0 {
-				// Prefer a backend-specific import/batch API when available, so we can honor
-				// options like SkipPrefixValidation (multi-repo mode) without requiring the
-				// entire importer to be SQLite-specific.
-				type importBatchCreator interface {
-					CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts sqlite.BatchCreateOptions) error
-				}
-				if bc, ok := store.(importBatchCreator); ok {
-					batchOpts := sqlite.BatchCreateOptions{
-						OrphanHandling:       sqlite.OrphanHandling(opts.OrphanHandling),
-						SkipPrefixValidation: opts.SkipPrefixValidation,
-					}
-					if err := bc.CreateIssuesWithFullOptions(ctx, batchForDepth, "import", batchOpts); err != nil {
-						return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
-					}
-				} else {
-					// Generic fallback. OrphanSkip and OrphanStrict are enforced above.
-					if err := store.CreateIssues(ctx, batchForDepth, "import"); err != nil {
-						return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
-					}
+				// Use generic batch creation via the storage interface.
+				// OrphanSkip and OrphanStrict are enforced above.
+				if err := store.CreateIssues(ctx, batchForDepth, "import"); err != nil {
+					return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
 				}
 				result.Created += len(batchForDepth)
 			}
@@ -1823,9 +1807,17 @@ func buildAllowedPrefixSet(primaryPrefix string, allowedPrefixesConfig string, b
 
 	// Load prefixes from routes.jsonl for multi-rig setups (Gas Town)
 	// This allows issues from other rigs to coexist in the same JSONL
-	// Use LoadTownRoutes to find routes at town level (~/gt/.beads/routes.jsonl)
+	// Use LoadRoutesFromFile directly (not LoadTownRoutes/LoadRoutes) to avoid
+	// daemon-host config interfering with file-based route loading. Prefix
+	// enumeration only needs the local routes.jsonl file, not RPC routing.
 	if beadsDir != "" {
-		routes, _ := routing.LoadTownRoutes(beadsDir)
+		routes, _ := routing.LoadRoutesFromFile(beadsDir)
+		// If no routes found locally, try town-level routes.jsonl
+		if len(routes) == 0 {
+			if townRoot := routing.FindTownRoot(beadsDir); townRoot != "" {
+				routes, _ = routing.LoadRoutesFromFile(filepath.Join(townRoot, ".beads"))
+			}
+		}
 		for _, route := range routes {
 			// Normalize: remove trailing - if present
 			prefix := strings.TrimSuffix(route.Prefix, "-")

@@ -2,18 +2,15 @@ package syncbranch
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
-
-	// Import SQLite driver (same as used by storage/sqlite)
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/steveyegge/beads/internal/storage/factory"
 )
 
 const (
@@ -165,27 +162,27 @@ func IsConfiguredWithDB(dbPath string) bool {
 	return branch != ""
 }
 
-// getConfigFromDB reads a config value directly from the database file.
-// This is a lightweight read that doesn't require the full storage layer.
+// getConfigFromDB reads a config value from the database via the storage factory.
 // Returns empty string if the database doesn't exist or the key is not found.
 func getConfigFromDB(dbPath string, key string) string {
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	// Derive beadsDir from dbPath (the dbPath is inside the .beads directory)
+	beadsDir := filepath.Dir(dbPath)
+
+	// Check if beads dir exists
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		return ""
 	}
 
-	// Open database in read-only mode
-	// Use file: prefix as required by ncruces/go-sqlite3 driver
-	connStr := fmt.Sprintf("file:%s?mode=ro", dbPath)
-	db, err := sql.Open("sqlite3", connStr)
+	ctx := context.Background()
+	st, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+		AllowWithRemoteDaemon: true,
+	})
 	if err != nil {
 		return ""
 	}
-	defer db.Close()
+	defer func() { _ = st.Close() }()
 
-	// Query the config table
-	var value string
-	err = db.QueryRow(`SELECT value FROM config WHERE key = ?`, key).Scan(&value)
+	value, err := st.GetConfig(ctx, key)
 	if err != nil {
 		return ""
 	}

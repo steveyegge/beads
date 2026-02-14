@@ -173,7 +173,7 @@ func TestDialogRequest_Types(t *testing.T) {
 
 func TestDialogResponse_Canceled(t *testing.T) {
 	resp := DialogResponse{
-		ID:        "test-1",
+		ID:       "test-1",
 		Canceled: true,
 	}
 

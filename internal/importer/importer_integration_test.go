@@ -11,18 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // TestConcurrentExternalRefUpdates tests concurrent updates to same external_ref with different timestamps
 // This is a slow integration test that verifies no deadlocks occur
 func TestConcurrentExternalRefUpdates(t *testing.T) {
-	store, err := sqlite.New(context.Background(), ":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -106,12 +102,8 @@ func TestLocalUnpushedIssueNotDeleted(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	dbPath := "" // teststore manages its own storage
+	store := teststore.New(t)
 
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)

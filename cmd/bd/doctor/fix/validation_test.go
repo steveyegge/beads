@@ -1,12 +1,14 @@
 package fix
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // TestFixFunctions_RequireBeadsDir verifies all fix functions properly validate
@@ -43,162 +45,227 @@ func TestFixFunctions_RequireBeadsDir(t *testing.T) {
 	}
 }
 
-func TestChildParentDependencies_NoBadDeps(t *testing.T) {
-	// Set up test database with no child→parent deps
-	dir := t.TempDir()
+// skipIfNoDolt skips the test if dolt binary is not available.
+func skipIfNoDolt(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("dolt binary not in PATH, skipping test")
+	}
+}
+
+// setupDoltStore creates a Dolt store in dir/.beads/dolt with the given issues
+// and dependencies. Returns the store's underlying *sql.DB for verification queries
+// and a cleanup function. The store is closed after setup so ChildParentDependencies
+// can open its own connection.
+func setupDoltStore(t *testing.T, dir string, issues []*types.Issue, deps []*types.Dependency) {
+	t.Helper()
+
 	beadsDir := filepath.Join(dir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	db, err := openDB(dbPath)
-	if err != nil {
+	// Write metadata.json so the factory knows to use Dolt
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if err := os.WriteFile(metadataPath, []byte(`{"backend":"dolt"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create minimal schema
-	_, err = db.Exec(`
-		CREATE TABLE issues (id TEXT PRIMARY KEY);
-		CREATE TABLE dependencies (issue_id TEXT, depends_on_id TEXT, type TEXT);
-		CREATE TABLE dirty_issues (issue_id TEXT PRIMARY KEY);
-		INSERT INTO issues (id) VALUES ('bd-abc'), ('bd-abc.1'), ('bd-xyz');
-		INSERT INTO dependencies (issue_id, depends_on_id, type) VALUES ('bd-abc.1', 'bd-xyz', 'blocks');
-	`)
-	if err != nil {
-		t.Fatal(err)
+	ctx := context.Background()
+	doltPath := filepath.Join(beadsDir, "dolt")
+
+	// Disable server mode for tests
+	t.Setenv("BEADS_DOLT_SERVER_MODE", "0")
+
+	cfg := &dolt.Config{
+		Path:              doltPath,
+		CommitterName:     "test",
+		CommitterEmail:    "test@example.com",
+		Database:          "beads",
+		SkipDirtyTracking: true,
 	}
-	db.Close()
+
+	store, err := dolt.New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("failed to create Dolt store: %v", err)
+	}
+
+	// Set prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		store.Close()
+		t.Fatalf("failed to set prefix: %v", err)
+	}
+
+	// Create issues
+	for _, issue := range issues {
+		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+			store.Close()
+			t.Fatalf("failed to create issue %s: %v", issue.ID, err)
+		}
+	}
+
+	// Add dependencies
+	for _, dep := range deps {
+		if err := store.AddDependency(ctx, dep, "test"); err != nil {
+			store.Close()
+			t.Fatalf("failed to add dependency %s->%s: %v", dep.IssueID, dep.DependsOnID, err)
+		}
+	}
+
+	store.Close()
+}
+
+// reopenDB opens a Dolt store in beadsDir and returns the underlying *sql.DB.
+func reopenDB(t *testing.T, dir string) *dolt.DoltStore {
+	t.Helper()
+	beadsDir := filepath.Join(dir, ".beads")
+	doltPath := filepath.Join(beadsDir, "dolt")
+
+	ctx := context.Background()
+	cfg := &dolt.Config{
+		Path:              doltPath,
+		CommitterName:     "test",
+		CommitterEmail:    "test@example.com",
+		Database:          "beads",
+		SkipDirtyTracking: true,
+	}
+
+	store, err := dolt.New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("failed to reopen Dolt store: %v", err)
+	}
+	return store
+}
+
+func TestChildParentDependencies_NoBadDeps(t *testing.T) {
+	skipIfNoDolt(t)
+
+	dir := t.TempDir()
+
+	// Create issues: bd-abc, bd-abc.1, bd-xyz
+	// Dependency: bd-abc.1 blocks bd-xyz (NOT a child->parent dep)
+	issues := []*types.Issue{
+		{ID: "bd-abc", Title: "Parent", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "bd-abc.1", Title: "Child", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "bd-xyz", Title: "Other", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+	}
+	deps := []*types.Dependency{
+		{IssueID: "bd-abc.1", DependsOnID: "bd-xyz", Type: types.DepBlocks},
+	}
+	setupDoltStore(t, dir, issues, deps)
 
 	// Run fix - should find no bad deps
-	err = ChildParentDependencies(dir, false)
+	err := ChildParentDependencies(dir, false)
 	if err != nil {
 		t.Errorf("ChildParentDependencies failed: %v", err)
 	}
 
 	// Verify the good dependency still exists
-	db, _ = openDB(dbPath)
-	defer db.Close()
-	var count int
-	db.QueryRow("SELECT COUNT(*) FROM dependencies").Scan(&count)
-	if count != 1 {
-		t.Errorf("Expected 1 dependency, got %d", count)
+	store := reopenDB(t, dir)
+	defer store.Close()
+	ctx := context.Background()
+	depRecords, err := store.GetDependencyRecords(ctx, "bd-abc.1")
+	if err != nil {
+		t.Fatalf("GetDependencyRecords failed: %v", err)
+	}
+	if len(depRecords) != 1 {
+		t.Errorf("Expected 1 dependency, got %d", len(depRecords))
 	}
 }
 
 func TestChildParentDependencies_FixesBadDeps(t *testing.T) {
-	// Set up test database with child→parent deps
+	skipIfNoDolt(t)
+
 	dir := t.TempDir()
-	beadsDir := filepath.Join(dir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
 
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	db, err := openDB(dbPath)
-	if err != nil {
-		t.Fatal(err)
+	// Create issues with child->parent blocking dependencies (the anti-pattern)
+	issues := []*types.Issue{
+		{ID: "bd-abc", Title: "Parent", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "bd-abc.1", Title: "Child 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "bd-abc.1.2", Title: "Grandchild", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
 	}
-
-	// Create minimal schema with child→parent dependency
-	_, err = db.Exec(`
-		CREATE TABLE issues (id TEXT PRIMARY KEY);
-		CREATE TABLE dependencies (issue_id TEXT, depends_on_id TEXT, type TEXT);
-		CREATE TABLE dirty_issues (issue_id TEXT PRIMARY KEY);
-		INSERT INTO issues (id) VALUES ('bd-abc'), ('bd-abc.1'), ('bd-abc.1.2');
-		INSERT INTO dependencies (issue_id, depends_on_id, type) VALUES
-			('bd-abc.1', 'bd-abc', 'blocks'),
-			('bd-abc.1.2', 'bd-abc', 'blocks'),
-			('bd-abc.1.2', 'bd-abc.1', 'blocks');
-	`)
-	if err != nil {
-		t.Fatal(err)
+	deps := []*types.Dependency{
+		{IssueID: "bd-abc.1", DependsOnID: "bd-abc", Type: types.DepBlocks},
+		{IssueID: "bd-abc.1.2", DependsOnID: "bd-abc", Type: types.DepBlocks},
+		{IssueID: "bd-abc.1.2", DependsOnID: "bd-abc.1", Type: types.DepBlocks},
 	}
-	db.Close()
+	setupDoltStore(t, dir, issues, deps)
 
 	// Run fix
-	err = ChildParentDependencies(dir, false)
+	err := ChildParentDependencies(dir, false)
 	if err != nil {
 		t.Errorf("ChildParentDependencies failed: %v", err)
 	}
 
 	// Verify all bad dependencies were removed
-	db, _ = openDB(dbPath)
-	defer db.Close()
-	var count int
-	db.QueryRow("SELECT COUNT(*) FROM dependencies").Scan(&count)
-	if count != 0 {
-		t.Errorf("Expected 0 dependencies after fix, got %d", count)
-	}
+	store := reopenDB(t, dir)
+	defer store.Close()
+	ctx := context.Background()
 
-	// Verify dirty_issues was updated for affected issues
-	// Note: 2 unique issue_ids (bd-abc.1 appears once, bd-abc.1.2 appears twice but INSERT OR IGNORE dedupes)
-	var dirtyCount int
-	db.QueryRow("SELECT COUNT(*) FROM dirty_issues").Scan(&dirtyCount)
-	if dirtyCount != 2 {
-		t.Errorf("Expected 2 dirty issues (unique issue_ids from removed deps), got %d", dirtyCount)
+	// Check each issue's deps - all should be gone
+	for _, id := range []string{"bd-abc.1", "bd-abc.1.2"} {
+		deps, err := store.GetDependencyRecords(ctx, id)
+		if err != nil {
+			t.Fatalf("GetDependencyRecords(%s) failed: %v", id, err)
+		}
+		if len(deps) != 0 {
+			t.Errorf("Expected 0 dependencies for %s after fix, got %d", id, len(deps))
+		}
 	}
 }
 
 // TestChildParentDependencies_PreservesParentChildType verifies that legitimate
 // parent-child type dependencies are NOT removed (only blocking types are removed).
 // Regression test for GitHub issue #750.
+//
+// Note: Dolt's dependencies table has PRIMARY KEY (issue_id, depends_on_id) without
+// including type, so a given (issue_id, depends_on_id) pair can only have ONE type.
+// We test with separate issue pairs: one with 'blocks' (should be removed) and
+// another with 'parent-child' (should be preserved).
 func TestChildParentDependencies_PreservesParentChildType(t *testing.T) {
-	// Set up test database with both 'blocks' and 'parent-child' type deps
+	skipIfNoDolt(t)
+
 	dir := t.TempDir()
-	beadsDir := filepath.Join(dir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
 
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	db, err := openDB(dbPath)
-	if err != nil {
-		t.Fatal(err)
+	// bd-abc.1 -> bd-abc as 'blocks' (anti-pattern, should be removed)
+	// bd-abc.2 -> bd-abc as 'parent-child' (legitimate, should be preserved)
+	issues := []*types.Issue{
+		{ID: "bd-abc", Title: "Parent", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "bd-abc.1", Title: "Child 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "bd-abc.2", Title: "Child 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
 	}
-
-	// Create schema with both 'blocks' (anti-pattern) and 'parent-child' (legitimate) deps
-	_, err = db.Exec(`
-		CREATE TABLE issues (id TEXT PRIMARY KEY);
-		CREATE TABLE dependencies (issue_id TEXT, depends_on_id TEXT, type TEXT);
-		CREATE TABLE dirty_issues (issue_id TEXT PRIMARY KEY);
-		INSERT INTO issues (id) VALUES ('bd-abc'), ('bd-abc.1'), ('bd-abc.2');
-		INSERT INTO dependencies (issue_id, depends_on_id, type) VALUES
-			('bd-abc.1', 'bd-abc', 'parent-child'),
-			('bd-abc.2', 'bd-abc', 'parent-child'),
-			('bd-abc.1', 'bd-abc', 'blocks');
-	`)
-	if err != nil {
-		t.Fatal(err)
+	deps := []*types.Dependency{
+		{IssueID: "bd-abc.1", DependsOnID: "bd-abc", Type: types.DepBlocks},
+		{IssueID: "bd-abc.2", DependsOnID: "bd-abc", Type: types.DepParentChild},
 	}
-	db.Close()
+	setupDoltStore(t, dir, issues, deps)
 
 	// Run fix
-	err = ChildParentDependencies(dir, false)
+	err := ChildParentDependencies(dir, false)
 	if err != nil {
 		t.Fatalf("ChildParentDependencies failed: %v", err)
 	}
 
 	// Verify only 'blocks' type was removed, 'parent-child' preserved
-	db, _ = openDB(dbPath)
-	defer db.Close()
+	store := reopenDB(t, dir)
+	defer store.Close()
+	ctx := context.Background()
 
-	var blocksCount int
-	db.QueryRow("SELECT COUNT(*) FROM dependencies WHERE type = 'blocks'").Scan(&blocksCount)
-	if blocksCount != 0 {
-		t.Errorf("Expected 0 'blocks' dependencies after fix, got %d", blocksCount)
+	// bd-abc.1 should have no deps left (blocks was removed)
+	deps1, err := store.GetDependencyRecords(ctx, "bd-abc.1")
+	if err != nil {
+		t.Fatalf("GetDependencyRecords(bd-abc.1) failed: %v", err)
+	}
+	if len(deps1) != 0 {
+		t.Errorf("Expected 0 dependencies for bd-abc.1 after fix (blocks removed), got %d", len(deps1))
 	}
 
-	var parentChildCount int
-	db.QueryRow("SELECT COUNT(*) FROM dependencies WHERE type = 'parent-child'").Scan(&parentChildCount)
-	if parentChildCount != 2 {
-		t.Errorf("Expected 2 'parent-child' dependencies preserved, got %d", parentChildCount)
+	// bd-abc.2 should still have its parent-child dep (not removed by fix)
+	deps2, err := store.GetDependencyRecords(ctx, "bd-abc.2")
+	if err != nil {
+		t.Fatalf("GetDependencyRecords(bd-abc.2) failed: %v", err)
 	}
-
-	// Verify only 1 dirty issue (the one with 'blocks' dep removed)
-	var dirtyCount int
-	db.QueryRow("SELECT COUNT(*) FROM dirty_issues").Scan(&dirtyCount)
-	if dirtyCount != 1 {
-		t.Errorf("Expected 1 dirty issue, got %d", dirtyCount)
+	if len(deps2) != 1 || deps2[0].Type != types.DepParentChild {
+		t.Errorf("Expected 1 'parent-child' dependency for bd-abc.2, got %v", deps2)
 	}
 }

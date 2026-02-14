@@ -15,8 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -25,7 +26,7 @@ type podTestEnv struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	client     *rpc.Client
-	store      *sqlite.SQLiteStorage
+	store      storage.Storage
 	socketPath string
 	cleanup    func()
 }
@@ -63,7 +64,7 @@ func setupDaemonTestEnvForPod(t *testing.T) *podTestEnv {
 
 	log := daemonLogger{logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))}
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", log)
 	if err != nil {
 		cancel()
 		t.Fatalf("Failed to start RPC server: %v", err)
@@ -330,7 +331,7 @@ func TestPodIntegration_FieldsSurviveDaemonRestart(t *testing.T) {
 	socketPath1 := filepath.Join(beadsDir, "bd1.sock")
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 15*time.Second)
 
-	server1, _, err := startRPCServer(ctx1, socketPath1, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
+	server1, _, err := startRPCServer(ctx1, socketPath1, testStore, tmpDir, testDBPath, "", "", log)
 	if err != nil {
 		cancel1()
 		t.Fatalf("Failed to start RPC server (phase 1): %v", err)
@@ -385,7 +386,7 @@ func TestPodIntegration_FieldsSurviveDaemonRestart(t *testing.T) {
 	// Open a fresh store pointing at the same database file (previous was closed by server1.Stop)
 	testStore2 := newTestStore(t, testDBPath)
 
-	server2, _, err := startRPCServer(ctx2, socketPath2, testStore2, tmpDir, testDBPath, "", "", "", "", "", log)
+	server2, _, err := startRPCServer(ctx2, socketPath2, testStore2, tmpDir, testDBPath, "", "", log)
 	if err != nil {
 		t.Fatalf("Failed to start RPC server (phase 2): %v", err)
 	}

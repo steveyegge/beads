@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 // TestHTTPServerHealth tests the /health endpoint
@@ -25,8 +25,7 @@ func TestHTTPServerHealth(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	socketPath := filepath.Join(tmpDir, "bd.sock")
-	store := memory.New("/tmp/test.jsonl")
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := NewServer(socketPath, store, tmpDir, filepath.Join(tmpDir, "beads.db"))
 	server.SetHTTPAddr("127.0.0.1:0")
@@ -88,8 +87,7 @@ func TestHTTPServerReadiness(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	socketPath := filepath.Join(tmpDir, "bd.sock")
-	store := memory.New("/tmp/test.jsonl")
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := NewServer(socketPath, store, tmpDir, filepath.Join(tmpDir, "beads.db"))
 	server.SetHTTPAddr("127.0.0.1:0")
@@ -149,8 +147,7 @@ func TestHTTPServerRPCEndpoint(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	socketPath := filepath.Join(tmpDir, "bd.sock")
-	store := memory.New("/tmp/test.jsonl")
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := NewServer(socketPath, store, tmpDir, filepath.Join(tmpDir, "beads.db"))
 	server.SetHTTPAddr("127.0.0.1:0")
@@ -220,8 +217,7 @@ func TestHTTPServerAuth(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	socketPath := filepath.Join(tmpDir, "bd.sock")
-	store := memory.New("/tmp/test.jsonl")
-	defer store.Close()
+	store := teststore.New(t)
 
 	server := NewServer(socketPath, store, tmpDir, filepath.Join(tmpDir, "beads.db"))
 	server.SetHTTPAddr("127.0.0.1:0")

@@ -120,19 +120,34 @@ func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID str
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependencies with metadata: %w", err)
 	}
-	defer rows.Close()
 
-	var results []*types.IssueWithDependencyMetadata
+	// Collect scan data first, then close rows before making nested queries.
+	// Dolt embedded mode can't handle multiple open queries on the same connection.
+	type depRow struct {
+		depID     string
+		depType   string
+		createdAt sql.NullTime
+		createdBy string
+		metadata  sql.NullString
+		threadID  sql.NullString
+	}
+	var depRows []depRow
 	for rows.Next() {
-		var depID, depType, createdBy string
-		var createdAt sql.NullTime
-		var metadata, threadID sql.NullString
-
-		if err := rows.Scan(&depID, &depType, &createdAt, &createdBy, &metadata, &threadID); err != nil {
+		var r depRow
+		if err := rows.Scan(&r.depID, &r.depType, &r.createdAt, &r.createdBy, &r.metadata, &r.threadID); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("failed to scan dependency: %w", err)
 		}
+		depRows = append(depRows, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-		issue, err := s.GetIssue(ctx, depID)
+	var results []*types.IssueWithDependencyMetadata
+	for _, r := range depRows {
+		issue, err := s.GetIssue(ctx, r.depID)
 		if err != nil {
 			return nil, err
 		}
@@ -142,11 +157,11 @@ func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID str
 
 		result := &types.IssueWithDependencyMetadata{
 			Issue:          *issue,
-			DependencyType: types.DependencyType(depType),
+			DependencyType: types.DependencyType(r.depType),
 		}
 		results = append(results, result)
 	}
-	return results, rows.Err()
+	return results, nil
 }
 
 // GetDependentsWithMetadata returns dependents with metadata
@@ -159,19 +174,34 @@ func (s *DoltStore) GetDependentsWithMetadata(ctx context.Context, issueID strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependents with metadata: %w", err)
 	}
-	defer rows.Close()
 
-	var results []*types.IssueWithDependencyMetadata
+	// Collect scan data first, then close rows before making nested queries.
+	// Dolt embedded mode can't handle multiple open queries on the same connection.
+	type depRow struct {
+		depID     string
+		depType   string
+		createdAt sql.NullTime
+		createdBy string
+		metadata  sql.NullString
+		threadID  sql.NullString
+	}
+	var depRows []depRow
 	for rows.Next() {
-		var depID, depType, createdBy string
-		var createdAt sql.NullTime
-		var metadata, threadID sql.NullString
-
-		if err := rows.Scan(&depID, &depType, &createdAt, &createdBy, &metadata, &threadID); err != nil {
+		var r depRow
+		if err := rows.Scan(&r.depID, &r.depType, &r.createdAt, &r.createdBy, &r.metadata, &r.threadID); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("failed to scan dependent: %w", err)
 		}
+		depRows = append(depRows, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-		issue, err := s.GetIssue(ctx, depID)
+	var results []*types.IssueWithDependencyMetadata
+	for _, r := range depRows {
+		issue, err := s.GetIssue(ctx, r.depID)
 		if err != nil {
 			return nil, err
 		}
@@ -181,11 +211,11 @@ func (s *DoltStore) GetDependentsWithMetadata(ctx context.Context, issueID strin
 
 		result := &types.IssueWithDependencyMetadata{
 			Issue:          *issue,
-			DependencyType: types.DependencyType(depType),
+			DependencyType: types.DependencyType(r.depType),
 		}
 		results = append(results, result)
 	}
-	return results, rows.Err()
+	return results, nil
 }
 
 // GetDependencyRecords returns raw dependency records for an issue
@@ -324,14 +354,20 @@ func (s *DoltStore) buildDependencyTree(ctx context.Context, issueID string, dep
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
+	// Collect IDs first, then close rows before making nested queries.
+	// Dolt embedded mode can't handle multiple open queries on the same connection.
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		childIDs = append(childIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	node := &types.TreeNode{

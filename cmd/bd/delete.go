@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -201,6 +200,7 @@ func removeIssueFromJSONL(issueID string) error {
 	}
 	var issues []*types.Issue
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "" {
@@ -258,139 +258,8 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 			os.Exit(1)
 		}
 	}
-	ctx := rootCtx
-	// Type assert to SQLite storage
-	d, ok := store.(*sqlite.SQLiteStorage)
-	if !ok {
-		// Fallback for non-SQLite storage (e.g., MemoryStorage in --no-db mode)
-		deleteBatchFallback(issueIDs, force, dryRun, cascade, jsonOutput, hardDelete, reason)
-		return
-	}
-	// Verify all issues exist
-	issues := make(map[string]*types.Issue)
-	notFound := []string{}
-	for _, id := range issueIDs {
-		issue, err := d.GetIssue(ctx, id)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting issue %s: %v\n", id, err)
-			os.Exit(1)
-		}
-		if issue == nil {
-			notFound = append(notFound, id)
-		} else {
-			issues[id] = issue
-		}
-	}
-	if len(notFound) > 0 {
-		fmt.Fprintf(os.Stderr, "Error: issues not found: %s\n", strings.Join(notFound, ", "))
-		os.Exit(1)
-	}
-	// Dry-run or preview mode
-	if dryRun || !force {
-		result, err := d.DeleteIssues(ctx, issueIDs, cascade, false, true)
-		if err != nil {
-			// Try to show preview even if there are dependency issues
-			showDeletionPreview(issueIDs, issues, cascade, err)
-			os.Exit(1)
-		}
-		showDeletionPreview(issueIDs, issues, cascade, nil)
-		fmt.Printf("\nWould delete: %d issues\n", result.DeletedCount)
-		fmt.Printf("Would remove: %d dependencies, %d labels, %d events\n",
-			result.DependenciesCount, result.LabelsCount, result.EventsCount)
-		if len(result.OrphanedIssues) > 0 {
-			fmt.Printf("Would orphan: %d issues\n", len(result.OrphanedIssues))
-		}
-		if dryRun {
-			fmt.Printf("\n(Dry-run mode - no changes made)\n")
-		} else {
-			fmt.Printf("\n%s\n", ui.RenderWarn("This operation cannot be undone!"))
-			if cascade {
-				fmt.Printf("To proceed with cascade deletion, run: %s\n",
-					ui.RenderWarn("bd delete "+strings.Join(issueIDs, " ")+" --cascade --force"))
-			} else {
-				fmt.Printf("To proceed, run: %s\n",
-					ui.RenderWarn("bd delete "+strings.Join(issueIDs, " ")+" --force"))
-			}
-		}
-		return
-	}
-	// Pre-collect connected issues before deletion (so we can update their text references)
-	connectedIssues := make(map[string]*types.Issue)
-	idSet := make(map[string]bool)
-	for _, id := range issueIDs {
-		idSet[id] = true
-	}
-	for _, id := range issueIDs {
-		// Get dependencies (issues this one depends on)
-		deps, err := store.GetDependencies(ctx, id)
-		if err == nil {
-			for _, dep := range deps {
-				if !idSet[dep.ID] {
-					connectedIssues[dep.ID] = dep
-				}
-			}
-		}
-		// Get dependents (issues that depend on this one)
-		dependents, err := store.GetDependents(ctx, id)
-		if err == nil {
-			for _, dep := range dependents {
-				if !idSet[dep.ID] {
-					connectedIssues[dep.ID] = dep
-				}
-			}
-		}
-	}
-	// Actually delete (creates tombstones)
-	result, err := d.DeleteIssues(ctx, issueIDs, cascade, force, false)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Hard delete: immediately prune tombstones from JSONL
-	// Note: We keep tombstones in DB to prevent resurrection during sync.
-	// The tombstones will be exported and synced to remote, blocking resurrection.
-	// Use 'bd cleanup --hard' after syncing to fully purge old tombstones.
-	if hardDelete {
-		if !jsonOutput {
-			fmt.Println(ui.RenderWarn("⚠️  HARD DELETE MODE: Pruning tombstones from JSONL"))
-			fmt.Println("  Note: Tombstones kept in DB to prevent resurrection. Run 'bd sync' then 'bd cleanup --hard' to fully purge.")
-		}
-		// Prune tombstones from JSONL using negative TTL (immediate expiration)
-		if pruneResult, err := pruneExpiredTombstones(-1); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to prune tombstones from JSONL: %v\n", err)
-		} else if pruneResult != nil && pruneResult.PrunedCount > 0 && !jsonOutput {
-			fmt.Printf("  Pruned %d tombstone(s) from JSONL\n", pruneResult.PrunedCount)
-		}
-	}
-
-	// Update text references in connected issues (using pre-collected issues)
-	updatedCount := updateTextReferencesInIssues(ctx, issueIDs, connectedIssues)
-	// Note: No longer remove from JSONL - tombstones will be exported to JSONL
-	// Schedule auto-flush
-	markDirtyAndScheduleFlush()
-	// Output results
-	if jsonOutput {
-		outputJSON(map[string]interface{}{
-			"deleted":              issueIDs,
-			"deleted_count":        result.DeletedCount,
-			"dependencies_removed": result.DependenciesCount,
-			"labels_removed":       result.LabelsCount,
-			"events_removed":       result.EventsCount,
-			"references_updated":   updatedCount,
-			"orphaned_issues":      result.OrphanedIssues,
-		})
-	} else {
-		fmt.Printf("%s Deleted %d issue(s)\n", ui.RenderPass("✓"), result.DeletedCount)
-		fmt.Printf("  Removed %d dependency link(s)\n", result.DependenciesCount)
-		fmt.Printf("  Removed %d label(s)\n", result.LabelsCount)
-		fmt.Printf("  Removed %d event(s)\n", result.EventsCount)
-		fmt.Printf("  Updated text references in %d issue(s)\n", updatedCount)
-		if len(result.OrphanedIssues) > 0 {
-			fmt.Printf("  %s Orphaned %d issue(s): %s\n",
-				ui.RenderWarn("⚠"), len(result.OrphanedIssues), strings.Join(result.OrphanedIssues, ", "))
-		}
-	}
+	// Use the generic fallback path for all storage backends
+	deleteBatchFallback(issueIDs, force, dryRun, cascade, jsonOutput, hardDelete, reason)
 }
 
 // deleteBatchFallback handles batch deletion for non-SQLite storage (e.g., MemoryStorage in --no-db mode)
@@ -601,6 +470,7 @@ func readIssueIDsFromFile(filename string) ([]string, error) {
 	defer func() { _ = f.Close() }()
 	var ids []string
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		// Skip empty lines and comments

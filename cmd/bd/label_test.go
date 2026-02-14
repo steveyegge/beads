@@ -6,12 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
 type labelTestHelper struct {
-	s   *sqlite.SQLiteStorage
+	s   storage.Storage
 	ctx context.Context
 	t   *testing.T
 }
@@ -99,16 +100,24 @@ func (h *labelTestHelper) assertLabelEvent(issueID string, eventType types.Event
 	if err != nil {
 		h.t.Fatalf("Failed to get events: %v", err)
 	}
-	
-	expectedComment := ""
+
+	expectedMessage := ""
 	if eventType == types.EventLabelAdded {
-		expectedComment = "Added label: " + labelName
+		expectedMessage = "Added label: " + labelName
 	} else if eventType == types.EventLabelRemoved {
-		expectedComment = "Removed label: " + labelName
+		expectedMessage = "Removed label: " + labelName
 	}
-	
+
 	for _, e := range events {
-		if e.EventType == eventType && e.Comment != nil && *e.Comment == expectedComment {
+		if e.EventType != eventType {
+			continue
+		}
+		// The Dolt backend stores label event messages in new_value via recordEvent,
+		// not in the comment column.
+		if e.NewValue != nil && *e.NewValue == expectedMessage {
+			return
+		}
+		if e.Comment != nil && *e.Comment == expectedMessage {
 			return
 		}
 	}

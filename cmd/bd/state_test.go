@@ -7,12 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
 type stateTestHelper struct {
-	s   *sqlite.SQLiteStorage
+	s   storage.Storage
 	ctx context.Context
 	t   *testing.T
 }
@@ -136,9 +137,9 @@ func TestStateQueries(t *testing.T) {
 	t.Run("state labels mixed with regular labels", func(t *testing.T) {
 		issue := h.createIssue("Mixed Labels Test", types.TypeTask, 1)
 		h.addLabel(issue.ID, "patrol:active")
-		h.addLabel(issue.ID, "backend")  // Not a state label
+		h.addLabel(issue.ID, "backend") // Not a state label
 		h.addLabel(issue.ID, "mode:normal")
-		h.addLabel(issue.ID, "urgent")   // Not a state label
+		h.addLabel(issue.ID, "urgent") // Not a state label
 		h.assertStateValue(issue.ID, "patrol", "active")
 		h.assertStateValue(issue.ID, "mode", "normal")
 		h.assertStateCount(issue.ID, 2)

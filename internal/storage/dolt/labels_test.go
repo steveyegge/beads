@@ -128,10 +128,82 @@ func TestGetLabelsForIssues_NoLabels(t *testing.T) {
 // =============================================================================
 
 func TestGetIssuesByLabel(t *testing.T) {
-	// Skip: GetIssuesByLabel makes nested queries (GetIssue calls inside a rows cursor)
-	// which can cause connection issues in embedded Dolt mode.
-	// This is a known limitation that should be fixed in bd-tdgo.3.
-	t.Skip("Skipping: GetIssuesByLabel has nested query issue in embedded Dolt mode")
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Create issues with different priorities
+	issue1 := &types.Issue{
+		ID:        "bylabel-issue1",
+		Title:     "High priority bug",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	issue2 := &types.Issue{
+		ID:        "bylabel-issue2",
+		Title:     "Low priority bug",
+		Status:    types.StatusOpen,
+		Priority:  3,
+		IssueType: types.TypeTask,
+	}
+	issue3 := &types.Issue{
+		ID:        "bylabel-issue3",
+		Title:     "Feature request",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+
+	for _, issue := range []*types.Issue{issue1, issue2, issue3} {
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+	}
+
+	// Add "bug" label to issue1 and issue2, "feature" to issue3
+	if err := store.AddLabel(ctx, issue1.ID, "bug", "tester"); err != nil {
+		t.Fatalf("failed to add label: %v", err)
+	}
+	if err := store.AddLabel(ctx, issue2.ID, "bug", "tester"); err != nil {
+		t.Fatalf("failed to add label: %v", err)
+	}
+	if err := store.AddLabel(ctx, issue3.ID, "feature", "tester"); err != nil {
+		t.Fatalf("failed to add label: %v", err)
+	}
+
+	// Get issues by "bug" label
+	issues, err := store.GetIssuesByLabel(ctx, "bug")
+	if err != nil {
+		t.Fatalf("GetIssuesByLabel failed: %v", err)
+	}
+
+	if len(issues) != 2 {
+		t.Fatalf("expected 2 issues with 'bug' label, got %d", len(issues))
+	}
+
+	// Should be ordered by priority ASC (issue1=P1 before issue2=P3)
+	if issues[0].ID != issue1.ID {
+		t.Errorf("expected first issue to be %s (P1), got %s", issue1.ID, issues[0].ID)
+	}
+	if issues[1].ID != issue2.ID {
+		t.Errorf("expected second issue to be %s (P3), got %s", issue2.ID, issues[1].ID)
+	}
+
+	// Get issues by "feature" label
+	issues, err = store.GetIssuesByLabel(ctx, "feature")
+	if err != nil {
+		t.Fatalf("GetIssuesByLabel failed: %v", err)
+	}
+
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue with 'feature' label, got %d", len(issues))
+	}
+	if issues[0].ID != issue3.ID {
+		t.Errorf("expected issue %s, got %s", issue3.ID, issues[0].ID)
+	}
 }
 
 func TestGetIssuesByLabel_NoMatches(t *testing.T) {

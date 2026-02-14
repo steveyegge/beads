@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/memory"
 )
 
 func TestHydrateDeployConfig(t *testing.T) {
@@ -16,7 +17,7 @@ func TestHydrateDeployConfig(t *testing.T) {
 	log := newTestLogger()
 
 	t.Run("hydrates unset env vars from deploy config", func(t *testing.T) {
-		store := memory.New("test")
+		store := teststore.New(t)
 
 		// Seed deploy.* keys in config
 		if err := store.SetConfig(ctx, "deploy.redis_url", "redis://my-redis:6379"); err != nil {
@@ -43,7 +44,7 @@ func TestHydrateDeployConfig(t *testing.T) {
 	})
 
 	t.Run("env vars already set take precedence", func(t *testing.T) {
-		store := memory.New("test")
+		store := teststore.New(t)
 
 		if err := store.SetConfig(ctx, "deploy.redis_url", "redis://from-db:6379"); err != nil {
 			t.Fatal(err)
@@ -61,7 +62,7 @@ func TestHydrateDeployConfig(t *testing.T) {
 	})
 
 	t.Run("non-deploy keys are ignored", func(t *testing.T) {
-		store := memory.New("test")
+		store := teststore.New(t)
 
 		if err := store.SetConfig(ctx, "jira.url", "https://jira.example.com"); err != nil {
 			t.Fatal(err)
@@ -81,7 +82,7 @@ func TestHydrateDeployConfig(t *testing.T) {
 	})
 
 	t.Run("deploy key with no env mapping is skipped", func(t *testing.T) {
-		store := memory.New("test")
+		store := teststore.New(t)
 
 		// deploy.ingress_host has no EnvVar mapping
 		if err := store.SetConfig(ctx, "deploy.ingress_host", "my-host.example.com"); err != nil {
@@ -93,7 +94,7 @@ func TestHydrateDeployConfig(t *testing.T) {
 	})
 
 	t.Run("empty config is a no-op", func(t *testing.T) {
-		store := memory.New("test")
+		store := teststore.New(t)
 		// No deploy config set — should be a no-op
 		hydrateDeployConfig(ctx, store, log)
 	})
@@ -103,16 +104,18 @@ func TestWaitForStore_ImmediateSuccess(t *testing.T) {
 	// Clear BD_DAEMON_HOST so factory doesn't block direct database access
 	t.Setenv("BD_DAEMON_HOST", "")
 
-	// Set up a SQLite store in a temp directory — should connect immediately
+	// Set up a Dolt embedded store in a temp directory — should connect immediately
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(doltDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Write metadata.json for SQLite backend
+	// Write metadata.json for Dolt embedded backend
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendSQLite
+	cfg.Backend = configfile.BackendDolt
+	cfg.DoltMode = configfile.DoltModeEmbedded
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatal(err)
 	}

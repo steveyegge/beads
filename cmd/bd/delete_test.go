@@ -13,7 +13,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -160,13 +161,16 @@ func TestBulkDeleteNoResurrection(t *testing.T) {
 	dbPath = testDB
 	autoImportEnabled = true
 
-	result, err := s.DeleteIssues(ctx, toDelete, false, true, false)
-	if err != nil {
-		t.Fatalf("DeleteIssues failed: %v", err)
+	deletedCount := 0
+	for _, id := range toDelete {
+		if err := s.DeleteIssue(ctx, id); err != nil {
+			t.Fatalf("DeleteIssue failed for %s: %v", id, err)
+		}
+		deletedCount++
 	}
 
-	if result.DeletedCount != toDeleteCount {
-		t.Errorf("Expected %d deletions, got %d", toDeleteCount, result.DeletedCount)
+	if deletedCount != toDeleteCount {
+		t.Errorf("Expected %d deletions, got %d", toDeleteCount, deletedCount)
 	}
 
 	for _, id := range toDelete {
@@ -201,7 +205,7 @@ func TestBulkDeleteNoResurrection(t *testing.T) {
 	}
 }
 
-func exportToJSONLTest(t *testing.T, s *sqlite.SQLiteStorage, jsonlPath string) {
+func exportToJSONLTest(t *testing.T, s storage.Storage, jsonlPath string) {
 	t.Helper()
 	ctx := context.Background()
 	issues, err := s.SearchIssues(ctx, "", types.IssueFilter{})

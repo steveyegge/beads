@@ -4,19 +4,18 @@ import (
 	"bufio"
 	"cmp"
 	"context"
-	"database/sql"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -348,13 +347,6 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 		)
 	})
 
-	// Get a database connection for ID generation
-	conn, err := st.UnderlyingConn(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get database connection: %w", err)
-	}
-	defer func() { _ = conn.Close() }()
-
 	// Build a map of all renames for text replacement using hash IDs
 	// Track used IDs to avoid collisions within the batch
 	renameMap := make(map[string]string)
@@ -367,7 +359,7 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 
 	// Generate hash IDs for all incorrect issues
 	for _, is := range incorrectIssues {
-		newID, err := generateRepairHashID(ctx, conn, targetPrefix, is.issue, actorName, usedIDs)
+		newID, err := generateRepairHashID(ctx, nil, targetPrefix, is.issue, actorName, usedIDs)
 		if err != nil {
 			return fmt.Errorf("failed to generate hash ID for %s: %w", is.issue.ID, err)
 		}
@@ -562,28 +554,18 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 	return nil
 }
 
-// generateRepairHashID generates a hash-based ID for an issue during repair
-// Uses the sqlite.GenerateIssueID function but also checks usedIDs for batch collision avoidance
-func generateRepairHashID(ctx context.Context, conn *sql.Conn, prefix string, issue *types.Issue, actor string, usedIDs map[string]bool) (string, error) {
-	// Try to generate a unique ID using the standard generation function
-	// This handles collision detection against existing database IDs
-	newID, err := sqlite.GenerateIssueID(ctx, conn, prefix, issue, actor)
-	if err != nil {
-		return "", err
-	}
+// generateRepairHashID generates a hash-based ID for an issue during repair.
+// Checks usedIDs for batch collision avoidance.
+func generateRepairHashID(_ context.Context, _ interface{}, prefix string, issue *types.Issue, actor string, usedIDs map[string]bool) (string, error) {
+	// Generate a hash-based ID from the issue content
+	newID := generateRepairHash(prefix, issue, actor, 0)
 
 	// Check if this ID was already used in this batch
-	// If so, we need to generate a new one with a different timestamp
+	// If so, we need to generate a new one with a different nonce
 	attempts := 0
 	for usedIDs[newID] && attempts < 100 {
-		// Slightly modify the creation time to get a different hash
-		modifiedIssue := *issue
-		modifiedIssue.CreatedAt = issue.CreatedAt.Add(time.Duration(attempts+1) * time.Nanosecond)
-		newID, err = sqlite.GenerateIssueID(ctx, conn, prefix, &modifiedIssue, actor)
-		if err != nil {
-			return "", err
-		}
 		attempts++
+		newID = generateRepairHash(prefix, issue, actor, attempts)
 	}
 
 	if usedIDs[newID] {
@@ -591,6 +573,20 @@ func generateRepairHashID(ctx context.Context, conn *sql.Conn, prefix string, is
 	}
 
 	return newID, nil
+}
+
+// generateRepairHash computes a hash-based ID for an issue using SHA256.
+func generateRepairHash(prefix string, issue *types.Issue, actor string, nonce int) string {
+	content := fmt.Sprintf("%s|%s|%s|%d|%d",
+		issue.Title,
+		issue.Description,
+		actor,
+		issue.CreatedAt.UnixNano(),
+		nonce,
+	)
+	h := sha256.Sum256([]byte(content))
+	shortHash := hex.EncodeToString(h[:4]) // 4 bytes = 8 hex chars
+	return fmt.Sprintf("%s-%s", prefix, shortHash)
 }
 
 // parseJSONLFile reads and parses a JSONL file into a slice of issues

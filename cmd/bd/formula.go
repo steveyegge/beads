@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -225,6 +227,42 @@ func runFormulaList(cmd *cobra.Command, args []string) {
 
 // listFormulasFromDB queries the database for formula-type issues via daemon RPC.
 func listFormulasFromDB(typeFilter string) []FormulaListEntry {
+	if daemonClient == nil {
+		// Direct store fallback for tests
+		if store == nil {
+			return nil
+		}
+		ctx := rootCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		status := types.StatusOpen
+		issueType := types.TypeFormula
+		issues, err := store.SearchIssues(ctx, "", types.IssueFilter{
+			Status:    &status,
+			IssueType: &issueType,
+		})
+		if err != nil {
+			return nil
+		}
+		var entries []FormulaListEntry
+		for _, issue := range issues {
+			f, err := formula.IssueToFormula(issue)
+			if err != nil {
+				continue
+			}
+			if typeFilter != "" && string(f.Type) != typeFilter {
+				continue
+			}
+			entries = append(entries, FormulaListEntry{
+				Name:        f.Formula,
+				Type:        string(f.Type),
+				Description: truncateDescription(f.Description, 60),
+				Source:      "db",
+			})
+		}
+		return entries
+	}
 	args := &rpc.FormulaListArgs{
 		Type: typeFilter,
 	}
@@ -618,6 +656,44 @@ func runFormulaShow(cmd *cobra.Command, args []string) {
 // loadFormulaFromDBForShow tries to load a formula from the database via daemon RPC.
 // Returns nil if the formula is not found in DB or daemon is not available.
 func loadFormulaFromDBForShow(nameOrID string) *formula.Formula {
+	if daemonClient == nil {
+		// Direct store fallback for tests
+		if store == nil {
+			return nil
+		}
+		ctx := rootCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		// Try as issue ID first
+		issue, err := store.GetIssue(ctx, nameOrID)
+		if err != nil || issue == nil {
+			// Try as formula name — search by title
+			status := types.StatusOpen
+			issueType := types.TypeFormula
+			issues, err := store.SearchIssues(ctx, "", types.IssueFilter{
+				Status:    &status,
+				IssueType: &issueType,
+			})
+			if err != nil {
+				return nil
+			}
+			for _, iss := range issues {
+				if iss.Title == nameOrID {
+					issue = iss
+					break
+				}
+			}
+		}
+		if issue == nil {
+			return nil
+		}
+		f, err := formula.IssueToFormula(issue)
+		if err != nil {
+			return nil
+		}
+		return f
+	}
 	args := &rpc.FormulaGetArgs{}
 	if strings.Contains(nameOrID, "-formula-") {
 		args.ID = nameOrID
@@ -1188,19 +1264,77 @@ func loadFormulaByNameOrPath(nameOrPath string) (*formula.Formula, error) {
 
 // saveFormulaToDB saves a formula to the database via daemon RPC.
 func saveFormulaToDB(f *formula.Formula) (*rpc.FormulaSaveResult, error) {
-	requireDaemon("formula import")
+	if daemonClient != nil {
+		formulaJSON, err := json.Marshal(f)
+		if err != nil {
+			return nil, fmt.Errorf("serializing formula: %w", err)
+		}
 
-	formulaJSON, err := json.Marshal(f)
+		saveArgs := &rpc.FormulaSaveArgs{
+			Formula: formulaJSON,
+			Force:   importForce,
+		}
+
+		return daemonClient.FormulaSave(saveArgs)
+	}
+
+	// Direct store fallback (for tests or daemon-less operation)
+	if store == nil {
+		return nil, fmt.Errorf("'formula import' requires a running daemon or store")
+	}
+
+	if err := f.Validate(); err != nil {
+		return nil, fmt.Errorf("formula validation failed: %w", err)
+	}
+
+	ctx := rootCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	idPrefix, _ := store.GetConfig(ctx, "issue_prefix")
+	if idPrefix != "" {
+		idPrefix += "-"
+	}
+
+	issue, labels, err := formula.FormulaToIssue(f, idPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("serializing formula: %w", err)
+		return nil, fmt.Errorf("failed to convert formula to issue: %w", err)
+	}
+	if issue.Status == "" {
+		issue.Status = types.StatusOpen
 	}
 
-	saveArgs := &rpc.FormulaSaveArgs{
-		Formula: formulaJSON,
-		Force:   importForce,
+	existing, _ := store.GetIssue(ctx, issue.ID)
+	created := existing == nil
+
+	if existing != nil {
+		if !importForce {
+			return nil, fmt.Errorf("formula %q already exists as %s (use force to overwrite)", f.Formula, issue.ID)
+		}
+		updates := map[string]interface{}{
+			"title":       issue.Title,
+			"description": issue.Description,
+			"metadata":    issue.Metadata,
+		}
+		if err := store.UpdateIssue(ctx, existing.ID, updates, actor); err != nil {
+			return nil, fmt.Errorf("failed to update formula: %w", err)
+		}
+	} else {
+		if err := store.CreateIssue(ctx, issue, actor); err != nil {
+			return nil, fmt.Errorf("failed to create formula: %w", err)
+		}
 	}
 
-	return daemonClient.FormulaSave(saveArgs)
+	for _, label := range labels {
+		_ = store.AddLabel(ctx, issue.ID, label, actor)
+	}
+
+	return &rpc.FormulaSaveResult{
+		ID:      issue.ID,
+		Name:    f.Formula,
+		Created: created,
+	}, nil
 }
 
 func init() {

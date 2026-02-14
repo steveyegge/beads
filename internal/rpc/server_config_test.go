@@ -7,25 +7,15 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
-// setupConfigTestServer creates a test server with SQLite storage for config tests
+// setupConfigTestServer creates a test server with storage for config tests
 func setupConfigTestServer(t *testing.T) (*Server, storage.Storage) {
 	t.Helper()
-	ctx := context.Background()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-
-	// Initialize database with required config
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("failed to set issue_prefix: %v", err)
-	}
+	store := teststore.New(t)
 
 	server := NewServer("/tmp/test.sock", store, tmpDir, dbPath)
 	return server, store
@@ -227,8 +217,9 @@ func TestHandleConfigList_ReturnsMap(t *testing.T) {
 	}
 
 	// The issue_prefix should be present from setup
-	if result.Config["issue_prefix"] != "bd" {
-		t.Errorf("expected issue_prefix='bd' from setup, got '%s'", result.Config["issue_prefix"])
+	// teststore.New sets issue_prefix to "test" (not "bd")
+	if result.Config["issue_prefix"] != "test" {
+		t.Errorf("expected issue_prefix='test' from setup, got '%s'", result.Config["issue_prefix"])
 	}
 }
 

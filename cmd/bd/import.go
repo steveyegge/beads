@@ -163,6 +163,7 @@ NOTE: Import requires direct database access. When using a remote daemon
 		// Phase 1: Read and parse all JSONL
 		ctx := rootCtx
 		scanner := bufio.NewScanner(in)
+		scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 
 		var allIssues []*types.Issue
 		var deletionMarkers []*DeletionMarker
@@ -221,6 +222,7 @@ NOTE: Import requires direct database access. When using a remote daemon
 					}()
 					in = f
 					scanner = bufio.NewScanner(in)
+					scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 					allIssues = nil        // Reset issues list
 					deletionMarkers = nil  // Reset deletion markers list
 					lineNum = 0            // Reset line counter
@@ -690,6 +692,7 @@ func countLines(filePath string) int {
 	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // 10MB max line size
 	lines := 0
 	for scanner.Scan() {
 		lines++

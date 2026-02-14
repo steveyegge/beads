@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,8 +10,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/cmd/bd/doctor"
-	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -26,20 +26,11 @@ func runCheckHealth(path string) {
 		return
 	}
 
-	// Get database path once (centralized path resolution)
-	dbPath := getCheckHealthDBPath(beadsDir)
-
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// No database - only check hooks
-		if issue := doctor.CheckHooksQuick(Version); issue != "" {
-			printCheckHealthHint([]string{issue})
-		}
-		return
-	}
-
-	// Open database once for all checks (single DB connection)
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
+	// Open database via storage factory
+	ctx := context.Background()
+	st, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+		AllowWithRemoteDaemon: true,
+	})
 	if err != nil {
 		// Can't open DB - only check hooks
 		if issue := doctor.CheckHooksQuick(Version); issue != "" {
@@ -47,7 +38,16 @@ func runCheckHealth(path string) {
 		}
 		return
 	}
-	defer db.Close()
+	defer func() { _ = st.Close() }()
+
+	db := st.UnderlyingDB()
+	if db == nil {
+		// Backend doesn't expose DB - only check hooks
+		if issue := doctor.CheckHooksQuick(Version); issue != "" {
+			printCheckHealthHint([]string{issue})
+		}
+		return
+	}
 
 	// Check if hints.doctor is disabled in config
 	if hintsDisabledDB(db) {
@@ -203,15 +203,6 @@ func printCheckHealthHint(issues []string) {
 	fmt.Fprintf(os.Stderr, "   Run 'bd doctor' for details, or 'bd doctor --fix' to auto-repair\n")
 	fmt.Fprintf(os.Stderr, "   (Suppress with: bd config set %s false)\n", ConfigKeyHintsDoctor)
 	os.Exit(1)
-}
-
-// getCheckHealthDBPath returns the database path for check-health operations.
-// This centralizes the path resolution logic.
-func getCheckHealthDBPath(beadsDir string) string {
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		return cfg.DatabasePath(beadsDir)
-	}
-	return filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 }
 
 // hintsDisabledDB checks if hints.doctor is set to "false" using an existing DB connection.

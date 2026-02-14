@@ -4,13 +4,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 func TestGetStoredRemoteSHA(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
-	defer store.Close()
+
 
 	// Test getting SHA when not set
 	sha, err := GetStoredRemoteSHA(ctx, store)
@@ -40,7 +41,7 @@ func TestGetStoredRemoteSHA(t *testing.T) {
 func TestClearStoredRemoteSHA(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
-	defer store.Close()
+
 
 	// Set a SHA first
 	testSHA := "abc123def456"
@@ -88,24 +89,15 @@ func TestForcePushStatus(t *testing.T) {
 // newTestStoreIntegrity creates a test store for integrity tests
 // Note: This is a duplicate of newTestStore from syncbranch_test.go
 // but we need it here since tests are in the same package
-func newTestStoreIntegrity(t *testing.T) *sqlite.SQLiteStorage {
+func newTestStoreIntegrity(t *testing.T) storage.Storage {
 	t.Helper()
-	store, err := sqlite.New(context.Background(), "file::memory:?mode=memory&cache=private")
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
-	ctx := context.Background()
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		_ = store.Close()
-		t.Fatalf("Failed to set issue_prefix: %v", err)
-	}
-	return store
+	return teststore.New(t)
 }
 
 func TestCheckForcePush_NoStoredSHA(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStoreIntegrity(t)
-	defer store.Close()
+
 
 	// When no stored SHA exists, CheckForcePush should return "first sync" status
 	// Note: We can't fully test this without a git repo, but we can test the early return

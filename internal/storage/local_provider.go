@@ -3,64 +3,37 @@ package storage
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
-	"os"
-	"strings"
-	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// LocalProvider implements types.IssueProvider using a read-only SQLite connection.
+// LocalProvider implements types.IssueProvider using a Storage backend.
 // This is used for cross-repo orphan detection when --db flag points to an external database.
 type LocalProvider struct {
-	db     *sql.DB
+	store  Storage
 	prefix string
 }
 
-// NewLocalProvider creates a provider backed by a SQLite database at the given path.
-func NewLocalProvider(dbPath string) (*LocalProvider, error) {
-	db, err := openDBReadOnly(dbPath)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get issue prefix from config
-	var prefix string
-	err = db.QueryRow("SELECT value FROM config WHERE key = 'issue_prefix'").Scan(&prefix)
+// NewLocalProvider creates a provider backed by a Storage instance.
+// The caller should pass a store opened from the target beads directory.
+func NewLocalProvider(store Storage) (*LocalProvider, error) {
+	ctx := context.Background()
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
 	if err != nil || prefix == "" {
 		prefix = "bd" // default
 	}
 
-	return &LocalProvider{db: db, prefix: prefix}, nil
+	return &LocalProvider{store: store, prefix: prefix}, nil
 }
 
 // GetOpenIssues returns issues that are open or in_progress.
 func (p *LocalProvider) GetOpenIssues(ctx context.Context) ([]*types.Issue, error) {
-	// Get all open/in_progress issues with their titles (title is optional for compatibility)
-	rows, err := p.db.QueryContext(ctx, "SELECT id, title, status FROM issues WHERE status IN ('open', 'in_progress')")
-	// If the query fails (e.g., no title column), fall back to simpler query
+	issues, err := p.store.SearchIssues(ctx, "", types.IssueFilter{
+		ExcludeStatus: []types.Status{types.StatusClosed},
+	})
 	if err != nil {
-		rows, err = p.db.QueryContext(ctx, "SELECT id, '', status FROM issues WHERE status IN ('open', 'in_progress')")
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
-	defer rows.Close()
-
-	var issues []*types.Issue
-	for rows.Next() {
-		var id, title, status string
-		if err := rows.Scan(&id, &title, &status); err == nil {
-			issues = append(issues, &types.Issue{
-				ID:     id,
-				Title:  title,
-				Status: types.Status(status),
-			})
-		}
-	}
-
 	return issues, nil
 }
 
@@ -69,38 +42,13 @@ func (p *LocalProvider) GetIssuePrefix() string {
 	return p.prefix
 }
 
-// Close closes the underlying database connection.
+// Close closes the underlying storage.
 func (p *LocalProvider) Close() error {
-	if p.db != nil {
-		return p.db.Close()
+	if p.store != nil {
+		return p.store.Close()
 	}
 	return nil
 }
 
 // Ensure LocalProvider implements types.IssueProvider
 var _ types.IssueProvider = (*LocalProvider)(nil)
-
-// openDBReadOnly opens a SQLite database in read-only mode.
-func openDBReadOnly(dbPath string) (*sql.DB, error) {
-	connStr := sqliteReadOnlyConnString(dbPath)
-	return sql.Open("sqlite3", connStr)
-}
-
-// sqliteReadOnlyConnString builds a read-only SQLite connection string.
-func sqliteReadOnlyConnString(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-
-	// Honor BD_LOCK_TIMEOUT env var for busy timeout
-	busy := 30 * time.Second
-	if v := strings.TrimSpace(os.Getenv("BD_LOCK_TIMEOUT")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			busy = d
-		}
-	}
-	busyMs := int64(busy / time.Millisecond)
-
-	return fmt.Sprintf("file:%s?mode=ro&_pragma=foreign_keys(ON)&_pragma=busy_timeout(%d)", path, busyMs)
-}

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	sqlitestorage "github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 const testVersion100 = "1.0.0"
@@ -91,7 +91,6 @@ func TestVersionCompatibility(t *testing.T) {
 			defer cleanup()
 
 			store := newTestStore(t, dbPath)
-			defer store.Close()
 
 			// Override server version
 			originalServerVersion := ServerVersion
@@ -172,11 +171,7 @@ func TestHealthCheckIncludesVersionInfo(t *testing.T) {
 	tmpDir, _, dbPath, socketPath, cleanup := setupTestServerIsolated(t)
 	defer cleanup()
 
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Set explicit versions
 	ServerVersion = testVersion100
@@ -229,11 +224,7 @@ func TestIncompatibleVersionInHealth(t *testing.T) {
 	tmpDir, _, dbPath, socketPath, cleanup := setupTestServerIsolated(t)
 	defer cleanup()
 
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Set incompatible versions
 	ServerVersion = testVersion100
@@ -342,11 +333,7 @@ func TestPingAndHealthBypassVersionCheck(t *testing.T) {
 	tmpDir, _, dbPath, socketPath, cleanup := setupTestServerIsolated(t)
 	defer cleanup()
 
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	// Set incompatible versions
 	ServerVersion = testVersion100
@@ -410,11 +397,7 @@ func TestMetricsOperation(t *testing.T) {
 	tmpDir, _, dbPath, socketPath, cleanup := setupTestServerIsolated(t)
 	defer cleanup()
 
-	store, err := sqlitestorage.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := teststore.New(t)
 
 	ServerVersion = testVersion100
 	ClientVersion = testVersion100

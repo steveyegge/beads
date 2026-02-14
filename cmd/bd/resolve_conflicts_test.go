@@ -141,19 +141,19 @@ func TestParseConflictsLabels(t *testing.T) {
 
 func TestResolveConflict(t *testing.T) {
 	tests := []struct {
-		name       string
-		conflict   conflictRegion
-		wantIssueID string
+		name            string
+		conflict        conflictRegion
+		wantIssueID     string
 		wantResContains string
 	}{
 		{
 			name: "merge same issue different titles",
 			conflict: conflictRegion{
-				StartLine: 1,
-				EndLine:   5,
-				LeftSide:  []string{`{"id":"bd-1","title":"Local Title","updated_at":"2024-01-02T00:00:00Z"}`},
-				RightSide: []string{`{"id":"bd-1","title":"Remote Title","updated_at":"2024-01-01T00:00:00Z"}`},
-				LeftLabel: "HEAD",
+				StartLine:  1,
+				EndLine:    5,
+				LeftSide:   []string{`{"id":"bd-1","title":"Local Title","updated_at":"2024-01-02T00:00:00Z"}`},
+				RightSide:  []string{`{"id":"bd-1","title":"Remote Title","updated_at":"2024-01-01T00:00:00Z"}`},
+				LeftLabel:  "HEAD",
 				RightLabel: "branch",
 			},
 			wantIssueID:     "bd-1",
@@ -162,11 +162,11 @@ func TestResolveConflict(t *testing.T) {
 		{
 			name: "left only valid JSON",
 			conflict: conflictRegion{
-				StartLine: 1,
-				EndLine:   5,
-				LeftSide:  []string{`{"id":"bd-1","title":"Valid"}`},
-				RightSide: []string{`not valid json`},
-				LeftLabel: "HEAD",
+				StartLine:  1,
+				EndLine:    5,
+				LeftSide:   []string{`{"id":"bd-1","title":"Valid"}`},
+				RightSide:  []string{`not valid json`},
+				LeftLabel:  "HEAD",
 				RightLabel: "branch",
 			},
 			wantIssueID:     "bd-1",
@@ -175,11 +175,11 @@ func TestResolveConflict(t *testing.T) {
 		{
 			name: "right only valid JSON",
 			conflict: conflictRegion{
-				StartLine: 1,
-				EndLine:   5,
-				LeftSide:  []string{`invalid json here`},
-				RightSide: []string{`{"id":"bd-2","title":"Valid"}`},
-				LeftLabel: "HEAD",
+				StartLine:  1,
+				EndLine:    5,
+				LeftSide:   []string{`invalid json here`},
+				RightSide:  []string{`{"id":"bd-2","title":"Valid"}`},
+				LeftLabel:  "HEAD",
 				RightLabel: "branch",
 			},
 			wantIssueID:     "bd-2",
@@ -188,11 +188,11 @@ func TestResolveConflict(t *testing.T) {
 		{
 			name: "both unparseable",
 			conflict: conflictRegion{
-				StartLine: 1,
-				EndLine:   5,
-				LeftSide:  []string{`not json`},
-				RightSide: []string{`also not json`},
-				LeftLabel: "HEAD",
+				StartLine:  1,
+				EndLine:    5,
+				LeftSide:   []string{`not json`},
+				RightSide:  []string{`also not json`},
+				LeftLabel:  "HEAD",
 				RightLabel: "branch",
 			},
 			wantIssueID:     "",

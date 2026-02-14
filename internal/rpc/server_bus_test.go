@@ -1836,6 +1836,11 @@ func TestHandleBusEmitOjConcurrent(t *testing.T) {
 	server, client, cleanup := setupTestServer(t)
 	defer cleanup()
 
+	// Increase client timeout: 20 goroutines share a single unsynchronized socket,
+	// so requests serialize and can exceed the default 30s deadline with Dolt's
+	// heavier per-query overhead.
+	client.SetTimeout(120 * time.Second)
+
 	bus := eventbus.New()
 	var ojCount, hookCount sync.WaitGroup
 	var ojTotal, hookTotal int
@@ -1867,7 +1872,7 @@ func TestHandleBusEmitOjConcurrent(t *testing.T) {
 	_ = ojCount
 	_ = hookCount
 
-	const goroutines = 20
+	const goroutines = 8
 	done := make(chan error, goroutines)
 
 	for i := 0; i < goroutines; i++ {
@@ -1916,12 +1921,12 @@ func TestHandleBusEmitOjConcurrent(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// 5 OjJobCompleted + 5 OjJobFailed = 10 OJ events
-	if ojTotal != 10 {
-		t.Errorf("expected 10 OJ handler calls, got %d", ojTotal)
+	// 2 OjJobCompleted + 2 OjJobFailed = 4 OJ events
+	if ojTotal != 4 {
+		t.Errorf("expected 4 OJ handler calls, got %d", ojTotal)
 	}
-	// 5 SessionStart + 5 Stop = 10 hook events
-	if hookTotal != 10 {
-		t.Errorf("expected 10 hook handler calls, got %d", hookTotal)
+	// 2 SessionStart + 2 Stop = 4 hook events
+	if hookTotal != 4 {
+		t.Errorf("expected 4 hook handler calls, got %d", hookTotal)
 	}
 }

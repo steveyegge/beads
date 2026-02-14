@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/steveyegge/beads/internal/beads"
 )
 
 const (
@@ -49,11 +47,36 @@ type Entry struct {
 }
 
 func Path() (string, error) {
-	beadsDir := beads.FindBeadsDir()
+	beadsDir := findBeadsDir()
 	if beadsDir == "" {
 		return "", fmt.Errorf("no .beads directory found")
 	}
 	return filepath.Join(beadsDir, FileName), nil
+}
+
+// findBeadsDir locates the .beads directory without importing the beads package
+// (which would cause an import cycle through dolt → audit → beads → factory → dolt).
+func findBeadsDir() string {
+	if d := os.Getenv("BEADS_DIR"); d != "" {
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			return d
+		}
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		candidate := filepath.Join(dir, ".beads")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // EnsureFile creates .beads/interactions.jsonl if it does not exist.

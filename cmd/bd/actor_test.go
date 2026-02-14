@@ -15,6 +15,7 @@ func TestGetActorWithGit(t *testing.T) {
 	origBdActor, bdActorSet := os.LookupEnv("BD_ACTOR")
 	origBeadsActor, beadsActorSet := os.LookupEnv("BEADS_ACTOR")
 	origUser, userSet := os.LookupEnv("USER")
+	origGtRole, gtRoleSet := os.LookupEnv("GT_ROLE")
 
 	// Cleanup after test
 	defer func() {
@@ -34,7 +35,15 @@ func TestGetActorWithGit(t *testing.T) {
 		} else {
 			os.Unsetenv("USER")
 		}
+		if gtRoleSet {
+			os.Setenv("GT_ROLE", origGtRole)
+		} else {
+			os.Unsetenv("GT_ROLE")
+		}
 	}()
+
+	// Clear GT_ROLE so it doesn't interfere with fallback chain tests
+	os.Unsetenv("GT_ROLE")
 
 	// Helper to get current git user.name (may be empty if not configured)
 	getGitUserName := func() string {
@@ -48,37 +57,37 @@ func TestGetActorWithGit(t *testing.T) {
 	gitUserName := getGitUserName()
 
 	tests := []struct {
-		name          string
-		actorFlag     string
-		bdActor       string
-		beadsActor    string
-		user          string
-		expected      string
-		skipIfNoGit   bool // Skip if git user.name is not configured
+		name        string
+		actorFlag   string
+		bdActor     string
+		beadsActor  string
+		user        string
+		expected    string
+		skipIfNoGit bool // Skip if git user.name is not configured
 	}{
 		{
-			name:      "actor flag takes priority",
-			actorFlag: "flag-actor",
-			bdActor:   "bd-actor",
+			name:       "actor flag takes priority",
+			actorFlag:  "flag-actor",
+			bdActor:    "bd-actor",
 			beadsActor: "beads-actor",
-			user:      "system-user",
-			expected:  "flag-actor",
+			user:       "system-user",
+			expected:   "flag-actor",
 		},
 		{
-			name:      "BD_ACTOR takes priority when no flag",
-			actorFlag: "",
-			bdActor:   "bd-actor",
+			name:       "BD_ACTOR takes priority when no flag",
+			actorFlag:  "",
+			bdActor:    "bd-actor",
 			beadsActor: "beads-actor",
-			user:      "system-user",
-			expected:  "bd-actor",
+			user:       "system-user",
+			expected:   "bd-actor",
 		},
 		{
-			name:      "BEADS_ACTOR takes priority when no BD_ACTOR",
-			actorFlag: "",
-			bdActor:   "",
+			name:       "BEADS_ACTOR takes priority when no BD_ACTOR",
+			actorFlag:  "",
+			bdActor:    "",
 			beadsActor: "beads-actor",
-			user:      "system-user",
-			expected:  "beads-actor",
+			user:       "system-user",
+			expected:   "beads-actor",
 		},
 		{
 			name:        "git config user.name used when no env vars",
@@ -90,22 +99,22 @@ func TestGetActorWithGit(t *testing.T) {
 			skipIfNoGit: true,
 		},
 		{
-			name:      "USER fallback when no git config",
-			actorFlag: "",
-			bdActor:   "",
+			name:       "USER fallback when no git config",
+			actorFlag:  "",
+			bdActor:    "",
 			beadsActor: "",
-			user:      "fallback-user",
-			expected:  "fallback-user",
+			user:       "fallback-user",
+			expected:   "fallback-user",
 			// Note: This test may fail if git user.name is configured
 			// We handle this by checking the actual git config in the test
 		},
 		{
-			name:      "unknown as final fallback",
-			actorFlag: "",
-			bdActor:   "",
+			name:       "unknown as final fallback",
+			actorFlag:  "",
+			bdActor:    "",
 			beadsActor: "",
-			user:      "",
-			expected:  "unknown",
+			user:       "",
+			expected:   "unknown",
 			// Note: This test may get git user.name instead if configured
 		},
 	}

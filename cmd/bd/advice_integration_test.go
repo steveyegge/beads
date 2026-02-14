@@ -47,7 +47,7 @@ func setupAdviceTestServer(t *testing.T) (*rpc.Client, func()) {
 
 	log := createTestLogger(t)
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", log)
 	if err != nil {
 		testStore.Close()
 		cancel()

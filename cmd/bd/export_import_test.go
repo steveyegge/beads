@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -17,10 +18,10 @@ import (
 type exportImportHelper struct {
 	t     *testing.T
 	ctx   context.Context
-	store *sqlite.SQLiteStorage
+	store storage.Storage
 }
 
-func newExportImportHelper(t *testing.T, store *sqlite.SQLiteStorage) *exportImportHelper {
+func newExportImportHelper(t *testing.T, store storage.Storage) *exportImportHelper {
 	return &exportImportHelper{t: t, ctx: context.Background(), store: store}
 }
 
@@ -163,7 +164,9 @@ func TestExportImport(t *testing.T) {
 	// Test import into new database
 	t.Run("Import", func(t *testing.T) {
 		exported := h.searchIssues(types.IssueFilter{})
-		newDBPath := filepath.Join(tmpDir, "import-test.db")
+		// Use a separate temp directory to avoid Dolt lock conflicts
+		importDir := t.TempDir()
+		newDBPath := filepath.Join(importDir, "import-test.db")
 		newStore := newTestStoreWithPrefix(t, newDBPath, "test")
 		newHelper := newExportImportHelper(t, newStore)
 		for _, issue := range exported {
@@ -423,7 +426,9 @@ func TestCloseReasonRoundTrip(t *testing.T) {
 	}
 
 	// Import into a new database and verify close_reason is preserved
-	newDBPath := filepath.Join(tmpDir, "import-test.db")
+	// Use a separate temp directory to avoid Dolt lock conflicts
+	importDir := t.TempDir()
+	newDBPath := filepath.Join(importDir, "import-test.db")
 	newStore := newTestStoreWithPrefix(t, newDBPath, "test")
 
 	// Re-create the issue in new database (simulating import)

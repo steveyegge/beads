@@ -93,14 +93,25 @@ func (s *DoltStore) GetIssuesByLabel(ctx context.Context, label string) ([]*type
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issues by label: %w", err)
 	}
-	defer rows.Close()
 
-	var issues []*types.Issue
+	// Collect IDs first, then close rows before making nested queries.
+	// Dolt embedded mode can't handle multiple open queries on the same connection.
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("failed to scan issue id: %w", err)
 		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var issues []*types.Issue
+	for _, id := range ids {
 		issue, err := s.GetIssue(ctx, id)
 		if err != nil {
 			return nil, err
@@ -109,5 +120,5 @@ func (s *DoltStore) GetIssuesByLabel(ctx context.Context, label string) ([]*type
 			issues = append(issues, issue)
 		}
 	}
-	return issues, rows.Err()
+	return issues, nil
 }

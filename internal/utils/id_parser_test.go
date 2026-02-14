@@ -1,11 +1,12 @@
-package utils
+package utils_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 func TestParseIssueID(t *testing.T) {
@@ -55,9 +56,9 @@ func TestParseIssueID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ParseIssueID(tt.input, tt.prefix)
+			result := utils.ParseIssueID(tt.input, tt.prefix)
 			if result != tt.expected {
-				t.Errorf("ParseIssueID(%q, %q) = %q; want %q", tt.input, tt.prefix, result, tt.expected)
+				t.Errorf("utils.ParseIssueID(%q, %q) = %q; want %q", tt.input, tt.prefix, result, tt.expected)
 			}
 		})
 	}
@@ -65,7 +66,7 @@ func TestParseIssueID(t *testing.T) {
 
 func TestResolvePartialID(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("")
+	store := teststore.New(t)
 	
 	// Create test issues with sequential IDs (current implementation)
 	// When hash IDs (bd-165) are implemented, these can be hash-based
@@ -184,20 +185,20 @@ func TestResolvePartialID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ResolvePartialID(ctx, store, tt.input)
+			result, err := utils.ResolvePartialID(ctx, store, tt.input)
 			
 			if tt.shouldError {
 				if err == nil {
-					t.Errorf("ResolvePartialID(%q) expected error containing %q, got nil", tt.input, tt.errorMsg)
+					t.Errorf("utils.ResolvePartialID(%q) expected error containing %q, got nil", tt.input, tt.errorMsg)
 				} else if tt.errorMsg != "" && !contains(err.Error(), tt.errorMsg) {
-					t.Errorf("ResolvePartialID(%q) error = %q; want error containing %q", tt.input, err.Error(), tt.errorMsg)
+					t.Errorf("utils.ResolvePartialID(%q) error = %q; want error containing %q", tt.input, err.Error(), tt.errorMsg)
 				}
 			} else {
 				if err != nil {
-					t.Errorf("ResolvePartialID(%q) unexpected error: %v", tt.input, err)
+					t.Errorf("utils.ResolvePartialID(%q) unexpected error: %v", tt.input, err)
 				}
 				if result != tt.expected {
-					t.Errorf("ResolvePartialID(%q) = %q; want %q", tt.input, result, tt.expected)
+					t.Errorf("utils.ResolvePartialID(%q) = %q; want %q", tt.input, result, tt.expected)
 				}
 			}
 		})
@@ -206,7 +207,7 @@ func TestResolvePartialID(t *testing.T) {
 
 func TestResolvePartialIDs(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("")
+	store := teststore.New(t)
 	
 	// Create test issues
 	issue1 := &types.Issue{
@@ -265,22 +266,22 @@ func TestResolvePartialIDs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ResolvePartialIDs(ctx, store, tt.inputs)
+			result, err := utils.ResolvePartialIDs(ctx, store, tt.inputs)
 			
 			if tt.shouldError {
 				if err == nil {
-					t.Errorf("ResolvePartialIDs(%v) expected error, got nil", tt.inputs)
+					t.Errorf("utils.ResolvePartialIDs(%v) expected error, got nil", tt.inputs)
 				}
 			} else {
 				if err != nil {
-					t.Errorf("ResolvePartialIDs(%v) unexpected error: %v", tt.inputs, err)
+					t.Errorf("utils.ResolvePartialIDs(%v) unexpected error: %v", tt.inputs, err)
 				}
 				if len(result) != len(tt.expected) {
-					t.Errorf("ResolvePartialIDs(%v) returned %d results; want %d", tt.inputs, len(result), len(tt.expected))
+					t.Errorf("utils.ResolvePartialIDs(%v) returned %d results; want %d", tt.inputs, len(result), len(tt.expected))
 				}
 				for i := range result {
 					if result[i] != tt.expected[i] {
-						t.Errorf("ResolvePartialIDs(%v)[%d] = %q; want %q", tt.inputs, i, result[i], tt.expected[i])
+						t.Errorf("utils.ResolvePartialIDs(%v)[%d] = %q; want %q", tt.inputs, i, result[i], tt.expected[i])
 					}
 				}
 			}
@@ -290,7 +291,7 @@ func TestResolvePartialIDs(t *testing.T) {
 
 func TestResolvePartialID_NoConfig(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("")
+	store := teststore.New(t)
 	
 	// Create test issue without setting config (test default prefix)
 	issue1 := &types.Issue{
@@ -306,13 +307,13 @@ func TestResolvePartialID_NoConfig(t *testing.T) {
 	}
 	
 	// Don't set config - should use default "bd" prefix
-	result, err := ResolvePartialID(ctx, store, "1")
+	result, err := utils.ResolvePartialID(ctx, store, "1")
 	if err != nil {
 		t.Fatalf("ResolvePartialID failed with default config: %v", err)
 	}
 	
 	if result != "bd-1" {
-		t.Errorf("ResolvePartialID(\"1\") with default config = %q; want \"bd-1\"", result)
+		t.Errorf("utils.ResolvePartialID(\"1\") with default config = %q; want \"bd-1\"", result)
 	}
 }
 
@@ -320,7 +321,7 @@ func TestResolvePartialID_NilStorage(t *testing.T) {
 	ctx := context.Background()
 
 	// Test that nil storage returns an error instead of panicking
-	_, err := ResolvePartialID(ctx, nil, "bd-123")
+	_, err := utils.ResolvePartialID(ctx, nil, "bd-123")
 	if err == nil {
 		t.Fatal("ResolvePartialID with nil storage should return error, got nil")
 	}
@@ -436,9 +437,9 @@ func TestExtractIssuePrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ExtractIssuePrefix(tt.issueID)
+			result := utils.ExtractIssuePrefix(tt.issueID)
 			if result != tt.expected {
-				t.Errorf("ExtractIssuePrefix(%q) = %q; want %q", tt.issueID, result, tt.expected)
+				t.Errorf("utils.ExtractIssuePrefix(%q) = %q; want %q", tt.issueID, result, tt.expected)
 			}
 		})
 	}
@@ -499,9 +500,9 @@ func TestExtractIssueNumber(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ExtractIssueNumber(tt.issueID)
+			result := utils.ExtractIssueNumber(tt.issueID)
 			if result != tt.expected {
-				t.Errorf("ExtractIssueNumber(%q) = %d; want %d", tt.issueID, result, tt.expected)
+				t.Errorf("utils.ExtractIssueNumber(%q) = %d; want %d", tt.issueID, result, tt.expected)
 			}
 		})
 	}

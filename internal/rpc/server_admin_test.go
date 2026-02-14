@@ -1,20 +1,18 @@
 package rpc
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 // setupAdminTestServer creates a test server for admin RPC tests.
 func setupAdminTestServer(t *testing.T) (*Server, string) {
 	t.Helper()
-	ctx := context.Background()
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	dbPath := filepath.Join(beadsDir, "beads.db")
@@ -23,15 +21,7 @@ func setupAdminTestServer(t *testing.T) (*Server, string) {
 		t.Fatalf("failed to create .beads dir: %v", err)
 	}
 
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("failed to set issue_prefix: %v", err)
-	}
+	store := teststore.New(t)
 
 	server := NewServer(filepath.Join(beadsDir, "daemon.sock"), store, tmpDir, dbPath)
 	return server, tmpDir

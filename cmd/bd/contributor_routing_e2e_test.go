@@ -15,8 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/routing"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -96,14 +98,10 @@ func TestContributorRoutingTracer(t *testing.T) {
 		}
 
 		// Initialize project database
-		projectDBPath := filepath.Join(projectBeadsDir, "beads.db")
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		projectStore, err := sqlite.New(ctx, projectDBPath)
-		if err != nil {
-			t.Fatalf("failed to create project store: %v", err)
-		}
+		projectStore := teststore.New(t)
 		defer projectStore.Close()
 
 		// Set routing config in project store (canonical keys)
@@ -150,11 +148,7 @@ func TestContributorRoutingTracer(t *testing.T) {
 		}
 
 		// Initialize planning database and verify we can create issues there
-		planningDBPath := filepath.Join(planningBeadsDir, "beads.db")
-		planningStore, err := sqlite.New(ctx, planningDBPath)
-		if err != nil {
-			t.Fatalf("failed to create planning store: %v", err)
-		}
+		planningStore := teststore.New(t)
 		defer planningStore.Close()
 
 		// Initialize planning store with required config
@@ -200,15 +194,10 @@ func TestBackwardCompatContributorConfig(t *testing.T) {
 		t.Fatalf("failed to create .beads dir: %v", err)
 	}
 
-	// Initialize database
-	dbPath := filepath.Join(beadsDir, "beads.db")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 
 	// Set LEGACY contributor.* keys (what old versions of bd init --contributor would set)
@@ -306,13 +295,9 @@ func (env *contributorRoutingEnv) cleanup() {
 }
 
 // initProjectStore initializes the project store with routing config
-func (env *contributorRoutingEnv) initProjectStore(syncMode string) *sqlite.SQLiteStorage {
+func (env *contributorRoutingEnv) initProjectStore(syncMode string) storage.Storage {
 	env.t.Helper()
-	projectDBPath := filepath.Join(env.projectDir, ".beads", "beads.db")
-	store, err := sqlite.New(env.ctx, projectDBPath)
-	if err != nil {
-		env.t.Fatalf("failed to create project store: %v", err)
-	}
+	store := teststore.New(env.t)
 
 	// Set routing config
 	if err := store.SetConfig(env.ctx, "routing.mode", "auto"); err != nil {
@@ -347,13 +332,9 @@ func (env *contributorRoutingEnv) initProjectStore(syncMode string) *sqlite.SQLi
 }
 
 // initPlanningStore initializes the planning store
-func (env *contributorRoutingEnv) initPlanningStore() *sqlite.SQLiteStorage {
+func (env *contributorRoutingEnv) initPlanningStore() storage.Storage {
 	env.t.Helper()
-	planningDBPath := filepath.Join(env.planningDir, ".beads", "beads.db")
-	store, err := sqlite.New(env.ctx, planningDBPath)
-	if err != nil {
-		env.t.Fatalf("failed to create planning store: %v", err)
-	}
+	store := teststore.New(env.t)
 
 	if err := store.SetConfig(env.ctx, "issue_prefix", "plan-"); err != nil {
 		env.t.Fatalf("failed to set issue_prefix in planning store: %v", err)
@@ -368,8 +349,8 @@ func verifyIssueRouting(
 	ctx context.Context,
 	routingConfig *routing.RoutingConfig,
 	userRole routing.UserRole,
-	targetStore *sqlite.SQLiteStorage,
-	otherStore *sqlite.SQLiteStorage,
+	targetStore storage.Storage,
+	otherStore storage.Storage,
 	expectedRepoPath string,
 	description string,
 ) {
@@ -662,11 +643,7 @@ func TestExplicitRepoOverride(t *testing.T) {
 		t.Fatalf("failed to create override .beads dir: %v", err)
 	}
 
-	overrideDBPath := filepath.Join(overrideBeadsDir, "beads.db")
-	overrideStore, err := sqlite.New(env.ctx, overrideDBPath)
-	if err != nil {
-		t.Fatalf("failed to create override store: %v", err)
-	}
+	overrideStore := teststore.New(t)
 	defer overrideStore.Close()
 
 	if err := overrideStore.SetConfig(env.ctx, "issue_prefix", "over-"); err != nil {
@@ -737,11 +714,7 @@ func TestBEADS_DIRPrecedence(t *testing.T) {
 		t.Fatalf("failed to create external .beads dir: %v", err)
 	}
 
-	externalDBPath := filepath.Join(externalBeadsDir, "beads.db")
-	externalStore, err := sqlite.New(env.ctx, externalDBPath)
-	if err != nil {
-		t.Fatalf("failed to create external store: %v", err)
-	}
+	externalStore := teststore.New(t)
 	defer externalStore.Close()
 
 	if err := externalStore.SetConfig(env.ctx, "issue_prefix", "ext-"); err != nil {
@@ -796,10 +769,10 @@ func TestExplicitRoleOverride(t *testing.T) {
 	// even when the remote URL would indicate contributor
 
 	tests := []struct {
-		name           string
-		configRole     string
-		expectedRole   routing.UserRole
-		description    string
+		name         string
+		configRole   string
+		expectedRole routing.UserRole
+		description  string
 	}{
 		{
 			name:         "explicit maintainer",
@@ -851,7 +824,7 @@ func TestRoutingWithAllSyncModes(t *testing.T) {
 		mode       string
 		configKey  string
 		configVal  string
-		extraCheck func(t *testing.T, store *sqlite.SQLiteStorage, ctx context.Context)
+		extraCheck func(t *testing.T, store storage.Storage, ctx context.Context)
 	}{
 		{
 			name:      "direct",
@@ -864,7 +837,7 @@ func TestRoutingWithAllSyncModes(t *testing.T) {
 			mode:      "sync-branch",
 			configKey: "sync.branch",
 			configVal: "beads-sync",
-			extraCheck: func(t *testing.T, store *sqlite.SQLiteStorage, ctx context.Context) {
+			extraCheck: func(t *testing.T, store storage.Storage, ctx context.Context) {
 				val, _ := store.GetConfig(ctx, "sync.branch")
 				if val != "beads-sync" {
 					t.Errorf("sync.branch = %q, want %q", val, "beads-sync")

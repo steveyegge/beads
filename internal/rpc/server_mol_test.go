@@ -3,41 +3,29 @@ package rpc
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/memory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// setupMolTestServer creates a test server with an in-memory store (no transaction support)
+// setupMolTestServer creates a test server with a teststore backend
 func setupMolTestServer(t *testing.T) (*Server, storage.Storage) {
 	t.Helper()
-	store := memory.New("/tmp/test.jsonl")
+	store := teststore.New(t)
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
 	return server, store
 }
 
-// setupMolTestServerWithSQLite creates a test server with SQLite storage (with transaction support)
+// setupMolTestServerWithSQLite creates a test server with teststore storage (with transaction support)
 func setupMolTestServerWithSQLite(t *testing.T) (*Server, storage.Storage) {
 	t.Helper()
-	ctx := context.Background()
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create storage: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
+	store := teststore.New(t)
 
-	// Initialize database with required config
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("failed to set issue_prefix: %v", err)
-	}
-
-	server := NewServer("/tmp/test.sock", store, tmpDir, dbPath)
+	server := NewServer("/tmp/test.sock", store, tmpDir, "/tmp/test.db")
 	return server, store
 }
 
@@ -555,31 +543,31 @@ func TestHandleMolBurn_BatchMolecules(t *testing.T) {
 func TestResolvePartialID(t *testing.T) {
 	server, store := setupMolTestServer(t)
 
-	// Create an issue
-	createTestMolecule(t, store, "bd-abc123", "Test Issue", false)
+	// teststore.New sets issue_prefix to "test", so use "test-" prefixed IDs
+	createTestMolecule(t, store, "test-abc123", "Test Issue", false)
 
 	ctx := context.Background()
 
 	// Test full ID
-	resolved, err := server.resolvePartialID(ctx, "bd-abc123")
+	resolved, err := server.resolvePartialID(ctx, "test-abc123")
 	if err != nil {
 		t.Fatalf("failed to resolve full ID: %v", err)
 	}
-	if resolved != "bd-abc123" {
-		t.Errorf("expected bd-abc123, got %s", resolved)
+	if resolved != "test-abc123" {
+		t.Errorf("expected test-abc123, got %s", resolved)
 	}
 
 	// Test partial ID
-	resolved, err = server.resolvePartialID(ctx, "bd-abc")
+	resolved, err = server.resolvePartialID(ctx, "test-abc")
 	if err != nil {
 		t.Fatalf("failed to resolve partial ID: %v", err)
 	}
-	if resolved != "bd-abc123" {
-		t.Errorf("expected bd-abc123, got %s", resolved)
+	if resolved != "test-abc123" {
+		t.Errorf("expected test-abc123, got %s", resolved)
 	}
 
 	// Test non-existent ID
-	_, err = server.resolvePartialID(ctx, "bd-nonexistent")
+	_, err = server.resolvePartialID(ctx, "test-nonexistent")
 	if err == nil {
 		t.Error("expected error for non-existent ID")
 	}
@@ -931,7 +919,22 @@ func TestHandleTypes_WithCustomTypes(t *testing.T) {
 }
 
 func TestHandleTypes_NoCustomTypes(t *testing.T) {
-	server, _ := setupMolTestServerWithSQLite(t)
+	server, store := setupMolTestServerWithSQLite(t)
+
+	// teststore.New sets custom types by default; clear them for this test.
+	// Must also clear the YAML config fallback, since GetCustomTypes falls
+	// back to config.yaml when the database value is empty.
+	ctx := context.Background()
+	if err := store.SetConfig(ctx, "types.custom", ""); err != nil {
+		t.Fatalf("failed to clear custom types: %v", err)
+	}
+
+	// Override YAML config to prevent fallback to workspace config.yaml
+	origTypes := config.GetString("types.custom")
+	config.Set("types.custom", "")
+	t.Cleanup(func() {
+		config.Set("types.custom", origTypes)
+	})
 
 	req := &Request{
 		Operation: OpTypes,

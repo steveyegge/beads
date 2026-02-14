@@ -1,17 +1,16 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
-
-	// Import SQLite driver for test database creation
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // TestShouldDisableDaemonForWorktree tests the worktree daemon disable logic.
@@ -173,6 +172,18 @@ func TestShouldDisableDaemonForWorktree(t *testing.T) {
 
 		// Reset git caches after changing directory
 		git.ResetCaches()
+
+		// Set BEADS_DIR to the test's .beads directory so FindDatabasePath()
+		// can locate the database (worktree is in a separate temp dir)
+		origBeadsDir := os.Getenv("BEADS_DIR")
+		os.Setenv("BEADS_DIR", mainDir+"/.beads")
+		defer func() {
+			if origBeadsDir != "" {
+				os.Setenv("BEADS_DIR", origBeadsDir)
+			} else {
+				os.Unsetenv("BEADS_DIR")
+			}
+		}()
 
 		// Reinitialize config to pick up the new directory's config.yaml
 		if err := config.Initialize(); err != nil {
@@ -349,7 +360,7 @@ func restoreTestEnv(key, value string) {
 // setupWorktreeTestRepo creates a git repo with a worktree for testing.
 // Returns the main repo directory and worktree directory.
 // Caller is responsible for cleanup via cleanupTestWorktree.
-// 
+//
 // IMPORTANT: This function also reinitializes the config package to use the
 // temp directory's config, avoiding interference from the beads project's own config.
 func setupWorktreeTestRepo(t *testing.T) (mainDir, worktreeDir string) {
@@ -438,27 +449,40 @@ func setupWorktreeTestRepoWithDB(t *testing.T, syncBranch string) (mainDir, work
 	// First create the basic worktree repo
 	mainDir, worktreeDir = setupWorktreeTestRepo(t)
 
-	// Now create a database with sync.branch config
+	// Now create a Dolt database with sync.branch config
 	beadsDir := mainDir + "/.beads"
-	dbPath := beadsDir + "/beads.db"
-
-	// Create a minimal SQLite database with the config table and sync.branch value
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-	defer db.Close()
-
-	// Create config table
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)`)
-	if err != nil {
-		t.Fatalf("Failed to create config table: %v", err)
+	storeDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatalf("Failed to create dolt store dir: %v", err)
 	}
 
-	// Insert sync.branch config
-	_, err = db.Exec(`INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`, "sync.branch", syncBranch)
+	ctx := context.Background()
+	doltCfg := &dolt.Config{
+		Path:              storeDir,
+		CommitterName:     "test",
+		CommitterEmail:    "test@example.com",
+		Database:          "beads",
+		SkipDirtyTracking: true,
+	}
+	s, err := dolt.New(ctx, doltCfg)
 	if err != nil {
-		t.Fatalf("Failed to insert sync.branch config: %v", err)
+		t.Fatalf("Failed to create Dolt store: %v", err)
+	}
+
+	// Set sync.branch config
+	if err := s.SetConfig(ctx, "sync.branch", syncBranch); err != nil {
+		s.Close()
+		t.Fatalf("Failed to set sync.branch config: %v", err)
+	}
+	_ = s.Close()
+
+	// Create metadata.json with Dolt backend so factory.NewFromConfigWithOptions can find the database
+	cfg := &configfile.Config{
+		Backend:  configfile.BackendDolt,
+		Database: "dolt",
+	}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Failed to save config: %v", err)
 	}
 
 	return mainDir, worktreeDir

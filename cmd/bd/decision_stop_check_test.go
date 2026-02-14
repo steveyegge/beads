@@ -4,32 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/steveyegge/beads/internal/eventbus"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // setupStopCheckTestDB creates a temp SQLite store for stop-check tests.
-func setupStopCheckTestDB(t *testing.T) (*sqlite.SQLiteStorage, func()) {
+func setupStopCheckTestDB(t *testing.T) (storage.Storage, func()) {
 	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "bd-stop-check-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	testDB := filepath.Join(tmpDir, "test.db")
-	s, err := sqlite.New(context.Background(), testDB)
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	s := teststore.New(t)
 
 	ctx := context.Background()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -47,7 +43,7 @@ func setupStopCheckTestDB(t *testing.T) (*sqlite.SQLiteStorage, func()) {
 }
 
 // createTestDecisionAt creates a gate issue + decision point with a specific timestamp.
-func createTestDecisionAt(t *testing.T, s *sqlite.SQLiteStorage, id, prompt, requestedBy, decisionContext string, createdAt time.Time) {
+func createTestDecisionAt(t *testing.T, s storage.Storage, id, prompt, requestedBy, decisionContext string, createdAt time.Time) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -86,7 +82,7 @@ func createTestDecisionAt(t *testing.T, s *sqlite.SQLiteStorage, id, prompt, req
 }
 
 // createTestDecision creates a gate issue + decision point in the store.
-func createTestDecision(t *testing.T, s *sqlite.SQLiteStorage, id, prompt, requestedBy, decisionContext string) {
+func createTestDecision(t *testing.T, s storage.Storage, id, prompt, requestedBy, decisionContext string) {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now()
@@ -759,8 +755,8 @@ func startTestNATSForStopCheck(t *testing.T) (nats.JetStreamContext, func()) {
 	opts := &natsserver.Options{
 		Port:               -1, // random available port
 		JetStream:          true,
-		JetStreamMaxMemory: 512 << 20,
-		JetStreamMaxStore:  512 << 20,
+		JetStreamMaxMemory: 1 << 30, // 1GB
+		JetStreamMaxStore:  1 << 30, // 1GB
 		StoreDir:           dir,
 		NoLog:              true,
 		NoSigs:             true,

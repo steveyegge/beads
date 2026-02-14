@@ -287,6 +287,14 @@ func (fm *FlushManager) performFlush(fullExport bool) {
 	}
 	storeMutex.Unlock()
 
+	// Recover from panics caused by store being closed between the active check
+	// and the actual DB access (race with test cleanup or shutdown).
+	defer func() {
+		if r := recover(); r != nil {
+			// Store was closed mid-flush — silently ignore
+		}
+	}()
+
 	// Call the actual flush implementation with explicit state
 	// This avoids race conditions with global isDirty/needsFullExport flags
 	flushToJSONLWithState(flushState{

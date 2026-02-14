@@ -8,19 +8,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestImportIssues_BackendAgnostic_DepsLabelsCommentsTombstone(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("")
+	store := teststore.New(t)
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("set issue_prefix: %v", err)
 	}
 
-	commentTS := time.Date(2020, 1, 2, 3, 4, 5, 6, time.UTC)
-	deletedTS := time.Date(2021, 2, 3, 4, 5, 6, 7, time.UTC)
+	// Use second-precision timestamps; Dolt (MySQL) does not preserve nanoseconds.
+	commentTS := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	deletedTS := time.Date(2021, 2, 3, 4, 5, 6, 0, time.UTC)
 
 	issueA := &types.Issue{
 		ID:        "test-1",

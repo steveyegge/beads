@@ -13,13 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // setupDaemonTestEnvForDecision sets up a complete daemon test environment for decision tests
-func setupDaemonTestEnvForDecision(t *testing.T) (context.Context, context.CancelFunc, *rpc.Client, *sqlite.SQLiteStorage, func()) {
+func setupDaemonTestEnvForDecision(t *testing.T) (context.Context, context.CancelFunc, *rpc.Client, storage.Storage, func()) {
 	t.Helper()
 
 	tmpDir := makeSocketTempDir(t)
@@ -39,7 +40,7 @@ func setupDaemonTestEnvForDecision(t *testing.T) (context.Context, context.Cance
 
 	log := daemonLogger{logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))}
 
-	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", "", "", "", log)
+	server, _, err := startRPCServer(ctx, socketPath, testStore, tmpDir, testDBPath, "", "", log)
 	if err != nil {
 		cancel()
 		t.Fatalf("Failed to start RPC server: %v", err)
@@ -393,9 +394,9 @@ func TestDecisionRespondViaDaemon_WithGuidance(t *testing.T) {
 
 	// Resolve decision with guidance (no selection, triggering iteration)
 	resolveArgs := &rpc.DecisionResolveArgs{
-		IssueID:      gateIssue.ID,
-		Guidance:     "Consider a hybrid approach combining both options",
-		RespondedBy:  "architect@example.com",
+		IssueID:     gateIssue.ID,
+		Guidance:    "Consider a hybrid approach combining both options",
+		RespondedBy: "architect@example.com",
 	}
 
 	resp, err := client.DecisionResolve(resolveArgs)

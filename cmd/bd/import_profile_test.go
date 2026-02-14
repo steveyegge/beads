@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -37,28 +37,12 @@ func TestImportPerformance(t *testing.T) {
 }
 
 func profileImportOperation(t *testing.T, numIssues int) {
-	// Create temp directory for test database
-	tmpDir, err := os.MkdirTemp("", "bd-import-profile-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dbPath := filepath.Join(tmpDir, "test.db")
-
 	// Initialize storage
 	ctx := context.Background()
 	var store storage.Storage
-	store, err = sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
+	store = teststore.New(t)
 
-	// Set test config
-	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
-		t.Fatalf("Failed to set config: %v", err)
-	}
+	tmpDir := t.TempDir()
 
 	// Generate test issues
 	t.Logf("Generating %d test issues...", numIssues)
@@ -116,12 +100,19 @@ func profileImportOperation(t *testing.T, numIssues int) {
 	}
 	phases["parse"] = time.Since(parseStart)
 
-	// Phase 2: Collision detection
+	// Phase 2: Collision detection (check which issues already exist)
 	collisionStart := time.Now()
-	sqliteStore := store.(*sqlite.SQLiteStorage)
-	collisionResult, err := sqlite.DetectCollisions(ctx, sqliteStore, parsedIssues)
-	if err != nil {
-		t.Fatalf("Collision detection failed: %v", err)
+	var newCount, existingCount int
+	for _, issue := range parsedIssues {
+		existing, err := store.GetIssue(ctx, issue.ID)
+		if err != nil {
+			t.Fatalf("Failed to check issue: %v", err)
+		}
+		if existing == nil {
+			newCount++
+		} else {
+			existingCount++
+		}
 	}
 	phases["collision_detection"] = time.Since(collisionStart)
 
@@ -181,9 +172,8 @@ func profileImportOperation(t *testing.T, numIssues int) {
 	t.Logf("  Create/Update:      %v (%.1f%%)", phases["create_update"], 100*phases["create_update"].Seconds()/totalDuration.Seconds())
 	t.Logf("  Sync counters:      %v (%.1f%%)", phases["sync_counters"], 100*phases["sync_counters"].Seconds()/totalDuration.Seconds())
 	t.Logf("\nCollision detection results:")
-	t.Logf("  New issues: %d", len(collisionResult.NewIssues))
-	t.Logf("  Exact matches: %d", len(collisionResult.ExactMatches))
-	t.Logf("  Collisions: %d", len(collisionResult.Collisions))
+	t.Logf("  New issues: %d", newCount)
+	t.Logf("  Existing issues: %d", existingCount)
 	t.Logf("\nCPU profile saved to: %s", cpuProfile)
 	t.Logf("To analyze: go tool pprof %s", cpuProfile)
 
@@ -265,25 +255,9 @@ func TestImportWithExistingData(t *testing.T) {
 
 	numIssues := 208 // The exact number from bd-199
 
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "bd-import-existing-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dbPath := filepath.Join(tmpDir, "test.db")
 	ctx := context.Background()
 	var store storage.Storage
-	store, err = sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create storage: %v", err)
-	}
-	defer store.Close()
-
-	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
-		t.Fatalf("Failed to set config: %v", err)
-	}
+	store = teststore.New(t)
 
 	// Generate and create initial issues
 	t.Logf("Creating %d initial issues...", numIssues)
@@ -297,20 +271,25 @@ func TestImportWithExistingData(t *testing.T) {
 	// Now import the same issues again (idempotent case)
 	t.Logf("Testing idempotent import of %d existing issues...", numIssues)
 
-	sqliteStore := store.(*sqlite.SQLiteStorage)
-
 	startTime := time.Now()
-	collisionResult, err := sqlite.DetectCollisions(ctx, sqliteStore, issues)
-	if err != nil {
-		t.Fatalf("Collision detection failed: %v", err)
+	var newCount, existingCount int
+	for _, issue := range issues {
+		existing, err := store.GetIssue(ctx, issue.ID)
+		if err != nil {
+			t.Fatalf("Failed to check issue: %v", err)
+		}
+		if existing == nil {
+			newCount++
+		} else {
+			existingCount++
+		}
 	}
 	duration := time.Since(startTime)
 
 	t.Logf("\n=== Idempotent Import Results ===")
 	t.Logf("Time: %v", duration)
-	t.Logf("Exact matches: %d", len(collisionResult.ExactMatches))
-	t.Logf("New issues: %d", len(collisionResult.NewIssues))
-	t.Logf("Collisions: %d", len(collisionResult.Collisions))
+	t.Logf("Existing issues: %d", existingCount)
+	t.Logf("New issues: %d", newCount)
 	t.Logf("Throughput: %.1f issues/sec", float64(numIssues)/duration.Seconds())
 
 	if duration > 5*time.Second {

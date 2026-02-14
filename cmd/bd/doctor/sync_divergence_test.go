@@ -170,6 +170,7 @@ func TestCheckSyncDivergence(t *testing.T) {
 }
 
 func TestCheckSQLiteMtimeDivergence(t *testing.T) {
+	t.Skip("SQLite backend removed — this function only checks SQLite mtime divergence")
 	t.Run("no database", func(t *testing.T) {
 		dir := mkTmpDirInTmp(t, "bd-mtime-nodb-*")
 		beadsDir := filepath.Join(dir, ".beads")

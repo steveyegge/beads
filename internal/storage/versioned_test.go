@@ -4,25 +4,25 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 )
 
 // TestIsVersioned verifies the IsVersioned type detection helper.
 func TestIsVersioned(t *testing.T) {
-	// Memory storage is NOT versioned
-	memStore := memory.New("")
+	// Dolt storage IS versioned
+	doltStore := teststore.New(t)
 
-	if storage.IsVersioned(memStore) {
-		t.Error("IsVersioned should return false for memory storage")
+	if !storage.IsVersioned(doltStore) {
+		t.Error("IsVersioned should return true for Dolt storage")
 	}
 
-	// Test AsVersioned returns false for non-versioned storage
-	vs, ok := storage.AsVersioned(memStore)
-	if ok {
-		t.Error("AsVersioned should return false for memory storage")
+	// Test AsVersioned returns true for versioned storage
+	vs, ok := storage.AsVersioned(doltStore)
+	if !ok {
+		t.Error("AsVersioned should return true for Dolt storage")
 	}
-	if vs != nil {
-		t.Error("AsVersioned should return nil for memory storage")
+	if vs == nil {
+		t.Error("AsVersioned should return non-nil for Dolt storage")
 	}
 }
 

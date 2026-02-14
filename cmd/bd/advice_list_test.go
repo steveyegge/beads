@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/memory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -15,11 +16,11 @@ import (
 type adviceListTestHelper struct {
 	t      *testing.T
 	ctx    context.Context
-	store  *sqlite.SQLiteStorage
+	store  storage.Storage
 	advice []*types.Issue
 }
 
-func newAdviceListTestHelper(t *testing.T, store *sqlite.SQLiteStorage) *adviceListTestHelper {
+func newAdviceListTestHelper(t *testing.T, store storage.Storage) *adviceListTestHelper {
 	return &adviceListTestHelper{t: t, ctx: context.Background(), store: store}
 }
 
@@ -583,7 +584,7 @@ func TestSingularizeRole(t *testing.T) {
 		{"polecats", "polecat"},
 		{"crews", "crew"},
 		{"dogs", "dog"},
-		{"witness", "witnes"}, // edge case - already singular but ends in 's'
+		{"witness", "witnes"},  // edge case - already singular but ends in 's'
 		{"polecat", "polecat"}, // no trailing 's'
 		{"", ""},
 	}
@@ -654,7 +655,7 @@ func TestBuildAgentSubscriptions(t *testing.T) {
 func TestBuildAgentSubscriptionsWithNativeFields(t *testing.T) {
 	// Use memory store - allows any ID without prefix validation
 	// This is necessary because agent bead IDs are agent paths like "beads/polecats/quartz"
-	memStore := memory.New("")
+	memStore := teststore.New(t)
 
 	// Save original globals and restore after test
 	oldStore := store

@@ -7,8 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/formula"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -133,7 +134,7 @@ func TestSubstituteVariables(t *testing.T) {
 
 // templateTestHelper provides helpers for Beads template tests
 type templateTestHelper struct {
-	s   *sqlite.SQLiteStorage
+	s   storage.Storage
 	ctx context.Context
 	t   *testing.T
 }

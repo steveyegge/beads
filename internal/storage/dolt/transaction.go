@@ -424,6 +424,32 @@ func (t *doltTransaction) AddDependency(ctx context.Context, dep *types.Dependen
 		metadata = "{}"
 	}
 
+	// Pre-check: verify both issues exist (converts FK errors to user-friendly "not found" messages)
+	var exists int
+	if err := t.tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues WHERE id = ?", dep.IssueID).Scan(&exists); err != nil {
+		return fmt.Errorf("failed to check issue existence: %w", err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("issue %q not found", dep.IssueID)
+	}
+
+	if !strings.HasPrefix(dep.DependsOnID, "external:") {
+		if err := t.tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues WHERE id = ?", dep.DependsOnID).Scan(&exists); err != nil {
+			return fmt.Errorf("failed to check dependency target existence: %w", err)
+		}
+		if exists == 0 {
+			return fmt.Errorf("dependency target %q not found", dep.DependsOnID)
+		}
+	}
+
+	// Cycle detection: check if adding this dependency would create a cycle.
+	// A cycle exists if dep.DependsOnID can already reach dep.IssueID via existing dependencies.
+	if dep.Type == types.DepBlocks {
+		if wouldCreateCycle(ctx, t.tx, dep.IssueID, dep.DependsOnID) {
+			return fmt.Errorf("adding dependency %s -> %s would create a cycle", dep.IssueID, dep.DependsOnID)
+		}
+	}
+
 	_, err := t.tx.ExecContext(ctx, `
 		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, NOW(), ?, ?, ?)
@@ -476,6 +502,45 @@ func (t *doltTransaction) GetDependencyRecords(ctx context.Context, issueID stri
 		deps = append(deps, &d)
 	}
 	return deps, rows.Err()
+}
+
+// wouldCreateCycle checks whether adding an edge from issueID -> dependsOnID
+// would create a cycle in the dependency graph. It does a BFS from dependsOnID
+// to see if it can reach issueID through existing "blocks" dependencies.
+func wouldCreateCycle(ctx context.Context, tx *sql.Tx, issueID, dependsOnID string) bool {
+	visited := make(map[string]bool)
+	queue := []string{dependsOnID}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		if current == issueID {
+			return true // Found a path back to issueID — cycle!
+		}
+		if visited[current] {
+			continue
+		}
+		visited[current] = true
+
+		rows, err := tx.QueryContext(ctx,
+			"SELECT depends_on_id FROM dependencies WHERE issue_id = ? AND type = ?",
+			current, types.DepBlocks)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var next string
+			if err := rows.Scan(&next); err != nil {
+				continue
+			}
+			if !visited[next] {
+				queue = append(queue, next)
+			}
+		}
+		rows.Close()
+	}
+	return false
 }
 
 // RemoveDependency removes a dependency within the transaction (full fidelity: matches DoltStore.RemoveDependency)

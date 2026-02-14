@@ -161,6 +161,9 @@ The human will pick which direction to go, or provide custom instructions.`
 
 // loadStopDecisionConfig loads stop_decision settings from the claude-hooks config bead.
 func loadStopDecisionConfig(ctx context.Context) *stopDecisionConfig {
+	if daemonClient == nil {
+		return nil
+	}
 	var mergedData map[string]interface{}
 
 	// Use daemon to get merged config
@@ -216,6 +219,9 @@ func loadStopDecisionConfig(ctx context.Context) *stopDecisionConfig {
 
 // createStopDecision creates a decision point for the stop check.
 func createStopDecision(_ context.Context, prompt string, options []types.DecisionOption, _, defaultOption string, _ time.Duration) (string, error) {
+	if daemonClient == nil {
+		return "", fmt.Errorf("no daemon client")
+	}
 	createArgs := &rpc.DecisionCreateArgs{
 		Prompt:        prompt,
 		Options:       options,
@@ -397,6 +403,24 @@ func awaitDecisionOnJetStream(ctx context.Context, js nats.JetStreamContext, dec
 // Important: checks decision point response BEFORE issue status, because
 // bd decision respond both records the response AND closes the gate issue.
 func checkDecisionResponse(ctx context.Context, decisionID string) (*types.DecisionPoint, string, string, bool, error) {
+	if daemonClient == nil {
+		// Fall back to direct store access (used in tests)
+		if store == nil {
+			return nil, "", "", false, nil
+		}
+		dp, err := store.GetDecisionPoint(ctx, decisionID)
+		if err == nil && dp != nil && dp.RespondedAt != nil {
+			return dp, dp.SelectedOption, decisionResponseText(dp), true, nil
+		}
+		issue, err := store.GetIssue(ctx, decisionID)
+		if err != nil {
+			return nil, "", "", false, err
+		}
+		if issue != nil && issue.Status == types.StatusClosed {
+			return nil, "", "", true, nil
+		}
+		return nil, "", "", false, nil
+	}
 	// Check decision point response via RPC
 	getArgs := &rpc.DecisionGetArgs{IssueID: decisionID}
 	result, err := daemonClient.DecisionGet(getArgs)
@@ -479,14 +503,25 @@ func pollForAgentDecision(ctx context.Context, actorTag string, timeout, pollInt
 func findPendingAgentDecision(ctx context.Context, actorTag string) (*types.DecisionPoint, error) {
 	var decisions []*types.DecisionPoint
 
-	// Only check pending (unresponded) decisions via daemon RPC
-	listArgs := &rpc.DecisionListArgs{All: false}
-	listResp, err := daemonClient.DecisionList(listArgs)
-	if err != nil {
-		return nil, fmt.Errorf("daemon decision list: %w", err)
-	}
-	for _, dr := range listResp.Decisions {
-		decisions = append(decisions, dr.Decision)
+	if daemonClient != nil {
+		// Use daemon RPC when available
+		listArgs := &rpc.DecisionListArgs{All: false}
+		listResp, err := daemonClient.DecisionList(listArgs)
+		if err != nil {
+			return nil, fmt.Errorf("daemon decision list: %w", err)
+		}
+		for _, dr := range listResp.Decisions {
+			decisions = append(decisions, dr.Decision)
+		}
+	} else if store != nil {
+		// Fall back to direct store access (used in tests)
+		pending, err := store.ListPendingDecisions(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("store list pending decisions: %w", err)
+		}
+		decisions = pending
+	} else {
+		return nil, nil
 	}
 
 	// Filter: not created by stop-hook, has a RequestedBy value,
@@ -527,20 +562,42 @@ func getStopSessionTag() string {
 func findUnclosedStopDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
 	var decisions []*types.DecisionPoint
 
-	// List all decisions (including resolved) to find stop-hook ones via daemon RPC
-	allListArgs := &rpc.DecisionListArgs{All: true}
-	allResp, err := daemonClient.DecisionList(allListArgs)
-	if err != nil {
-		return nil, fmt.Errorf("daemon decision list: %w", err)
-	}
-	for _, dr := range allResp.Decisions {
-		dp := dr.Decision
-		if dp.RequestedBy != "stop-hook" {
-			continue
+	if daemonClient != nil {
+		// List all decisions (including resolved) to find stop-hook ones via daemon RPC
+		allListArgs := &rpc.DecisionListArgs{All: true}
+		allResp, err := daemonClient.DecisionList(allListArgs)
+		if err != nil {
+			return nil, fmt.Errorf("daemon decision list: %w", err)
 		}
-		// Only include if the gate issue is still open
-		if dr.Issue != nil && dr.Issue.Status != types.StatusClosed {
-			decisions = append(decisions, dp)
+		for _, dr := range allResp.Decisions {
+			dp := dr.Decision
+			if dp.RequestedBy != "stop-hook" {
+				continue
+			}
+			// Only include if the gate issue is still open
+			if dr.Issue != nil && dr.Issue.Status != types.StatusClosed {
+				decisions = append(decisions, dp)
+			}
+		}
+	} else if store != nil {
+		// Fall back to direct store access (used in tests).
+		// List all pending decisions and filter for stop-hook.
+		pending, err := store.ListPendingDecisions(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("store list pending decisions: %w", err)
+		}
+		for _, dp := range pending {
+			if dp.RequestedBy != "stop-hook" {
+				continue
+			}
+			// Check if gate issue is still open
+			issue, err := store.GetIssue(ctx, dp.IssueID)
+			if err != nil {
+				continue
+			}
+			if issue != nil && issue.Status != types.StatusClosed {
+				decisions = append(decisions, dp)
+			}
 		}
 	}
 

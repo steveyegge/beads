@@ -15,8 +15,15 @@ import (
 func TestCompactSuite(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
-	s := newTestStore(t, testDB)
+	baseStore := newTestStore(t, testDB)
 	ctx := context.Background()
+
+	// compactableStore is only implemented by SQLite; skip if not available.
+	cs, ok := baseStore.(compactableStore)
+	if !ok {
+		t.Skip("storage backend does not implement compactableStore (compaction requires SQLite)")
+	}
+	s := cs
 
 	t.Run("DryRun", func(t *testing.T) {
 		// Create a closed issue
@@ -399,7 +406,7 @@ func TestPruneExpiredTombstones(t *testing.T) {
 	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
 	now := time.Now()
 
-	freshTombstoneTime := now.Add(-10 * 24 * time.Hour)  // 10 days ago - NOT expired
+	freshTombstoneTime := now.Add(-10 * 24 * time.Hour)   // 10 days ago - NOT expired
 	expiredTombstoneTime := now.Add(-60 * 24 * time.Hour) // 60 days ago - expired (> 30 day TTL)
 
 	issues := []*types.Issue{

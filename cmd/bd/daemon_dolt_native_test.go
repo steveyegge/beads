@@ -8,28 +8,27 @@ import (
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/testutil/teststore"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// mockStatusCheckerStore wraps a memory store and adds StatusChecker capability
+// mockStatusCheckerStore wraps a storage.Storage and adds StatusChecker capability
 // for testing the sync overhead reduction optimization (gt-p1mpqx).
 type mockStatusCheckerStore struct {
-	*memory.MemoryStorage
-	hasChanges    bool
-	checkCount    int64
-	commitCount   int64
-	pushCount     int64
-	pullCount     int64
-	commitErr     error
-	pushErr       error
-	pullErr       error
+	storage.Storage
+	hasChanges  bool
+	checkCount  int64
+	commitCount int64
+	pushCount   int64
+	pullCount   int64
+	commitErr   error
+	pushErr     error
+	pullErr     error
 }
 
 func newMockStatusCheckerStore(hasChanges bool) *mockStatusCheckerStore {
 	return &mockStatusCheckerStore{
-		MemoryStorage: memory.New("test"),
-		hasChanges:    hasChanges,
+		hasChanges: hasChanges,
 	}
 }
 
@@ -94,7 +93,7 @@ func (m *mockStatusCheckerStore) AddRemote(ctx context.Context, name, url string
 // TestDoltNativeExportFunc_NonRemoteStore tests that export handles non-remote stores gracefully
 func TestDoltNativeExportFunc_NonRemoteStore(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("test") // Memory store doesn't implement RemoteStorage
+	store := teststore.New(t) // Memory store doesn't implement RemoteStorage
 	log := newTestLogger()
 
 	// Should complete without panic when store doesn't support remote operations
@@ -105,7 +104,7 @@ func TestDoltNativeExportFunc_NonRemoteStore(t *testing.T) {
 // TestDoltNativePullFunc_NonRemoteStore tests that pull handles non-remote stores gracefully
 func TestDoltNativePullFunc_NonRemoteStore(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("test")
+	store := teststore.New(t)
 	log := newTestLogger()
 
 	// Should complete without panic when store doesn't support remote operations
@@ -116,7 +115,7 @@ func TestDoltNativePullFunc_NonRemoteStore(t *testing.T) {
 // TestDoltNativeSyncFunc_NonRemoteStore tests that sync handles non-remote stores gracefully
 func TestDoltNativeSyncFunc_NonRemoteStore(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("test")
+	store := teststore.New(t)
 	log := newTestLogger()
 
 	// Should complete without panic when store doesn't support remote operations
@@ -129,7 +128,7 @@ func TestDoltNativeExportFunc_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	store := memory.New("test")
+	store := teststore.New(t)
 	log := newTestLogger()
 
 	// Should complete without panic even with cancelled context
@@ -143,7 +142,7 @@ func TestDoltNativeSyncFunc_Timeout(t *testing.T) {
 	defer cancel()
 	time.Sleep(5 * time.Millisecond) // Let timeout expire
 
-	store := memory.New("test")
+	store := teststore.New(t)
 	log := newTestLogger()
 
 	// Should complete without panic even with expired context
@@ -154,7 +153,7 @@ func TestDoltNativeSyncFunc_Timeout(t *testing.T) {
 // TestDoltNativeFunctions_NoAutoCommit tests behavior when autoCommit is false
 func TestDoltNativeFunctions_NoAutoCommit(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("test")
+	store := teststore.New(t)
 	log := newTestLogger()
 
 	// With autoCommit=false, should not attempt to commit
@@ -165,7 +164,7 @@ func TestDoltNativeFunctions_NoAutoCommit(t *testing.T) {
 // TestDoltNativeFunctions_NoPull tests behavior when autoPull is false
 func TestDoltNativeFunctions_NoPull(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("test")
+	store := teststore.New(t)
 	log := newTestLogger()
 
 	// With autoPull=false, should not attempt to pull
@@ -179,7 +178,7 @@ func TestGetSyncModeDoltNative(t *testing.T) {
 	config.ResetForTesting()
 
 	ctx := context.Background()
-	store := memory.New("test")
+	store := teststore.New(t)
 
 	// Default should be git-portable when neither database nor config.yaml has a value
 	mode := GetSyncMode(ctx, store)
@@ -205,7 +204,7 @@ func TestShouldExportJSONL_DoltNative(t *testing.T) {
 	config.ResetForTesting()
 
 	ctx := context.Background()
-	store := memory.New("test")
+	store := teststore.New(t)
 
 	// Default should export JSONL
 	if !ShouldExportJSONL(ctx, store) {
@@ -226,7 +225,7 @@ func TestShouldExportJSONL_DoltNative(t *testing.T) {
 // TestShouldUseDoltRemote_DoltNative verifies Dolt remote is used for dolt-native
 func TestShouldUseDoltRemote_DoltNative(t *testing.T) {
 	ctx := context.Background()
-	store := memory.New("test")
+	store := teststore.New(t)
 
 	// Default should NOT use Dolt remote
 	if ShouldUseDoltRemote(ctx, store) {

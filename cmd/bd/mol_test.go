@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/testutil/teststore"
+
 	"github.com/steveyegge/beads/internal/formula"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -213,11 +214,7 @@ func TestMinPriority(t *testing.T) {
 
 func TestBondProtoProto(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -293,11 +290,7 @@ func TestBondProtoProto(t *testing.T) {
 
 func TestBondProtoMol(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -370,11 +363,7 @@ func TestBondProtoMol(t *testing.T) {
 
 func TestBondMolMol(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	store := teststore.New(t)
 	defer store.Close()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -474,11 +463,7 @@ func TestBondMolMol(t *testing.T) {
 
 func TestSquashMolecule(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -506,7 +491,7 @@ func TestSquashMolecule(t *testing.T) {
 		Status:      types.StatusClosed,
 		Priority:    2,
 		IssueType:   types.TypeTask,
-		Ephemeral:        true,
+		Ephemeral:   true,
 		CloseReason: "Completed design",
 	}
 	child2 := &types.Issue{
@@ -515,7 +500,7 @@ func TestSquashMolecule(t *testing.T) {
 		Status:      types.StatusClosed,
 		Priority:    2,
 		IssueType:   types.TypeTask,
-		Ephemeral:        true,
+		Ephemeral:   true,
 		CloseReason: "Code merged",
 	}
 
@@ -586,11 +571,7 @@ func TestSquashMolecule(t *testing.T) {
 
 func TestSquashMoleculeWithDelete(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -616,7 +597,7 @@ func TestSquashMoleculeWithDelete(t *testing.T) {
 		Status:    types.StatusClosed,
 		Priority:  2,
 		IssueType: types.TypeTask,
-		Ephemeral:      true,
+		Ephemeral: true,
 	}
 	if err := s.CreateIssue(ctx, child, "test"); err != nil {
 		t.Fatalf("Failed to create child: %v", err)
@@ -699,11 +680,7 @@ func TestGenerateDigest(t *testing.T) {
 // TestSquashMoleculeWithAgentSummary verifies that agent-provided summaries are used
 func TestSquashMoleculeWithAgentSummary(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -730,7 +707,7 @@ func TestSquashMoleculeWithAgentSummary(t *testing.T) {
 		Status:      types.StatusClosed,
 		Priority:    2,
 		IssueType:   types.TypeTask,
-		Ephemeral:        true,
+		Ephemeral:   true,
 		CloseReason: "Done",
 	}
 	if err := s.CreateIssue(ctx, child, "test"); err != nil {
@@ -774,11 +751,7 @@ func TestSquashMoleculeWithAgentSummary(t *testing.T) {
 // TestSpawnWithBasicAttach tests spawning a proto with one --attach flag
 func TestSpawnWithBasicAttach(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -911,11 +884,7 @@ func TestSpawnWithBasicAttach(t *testing.T) {
 // TestSpawnWithMultipleAttachments tests spawning with --attach A --attach B
 func TestSpawnWithMultipleAttachments(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -1033,11 +1002,7 @@ func TestSpawnWithMultipleAttachments(t *testing.T) {
 // TestSpawnAttachTypes verifies sequential vs parallel bonding behavior
 func TestSpawnAttachTypes(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -1157,11 +1122,7 @@ func TestSpawnAttachNonProtoError(t *testing.T) {
 // TestSpawnVariableAggregation tests that variables from primary + attachments are combined
 func TestSpawnVariableAggregation(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -1329,11 +1290,7 @@ func TestSpawnAttachDryRunOutput(t *testing.T) {
 // not in issues.jsonl, to prevent "zombie" resurrection after mol squash.
 func TestWispFilteringFromExport(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -1349,14 +1306,14 @@ func TestWispFilteringFromExport(t *testing.T) {
 		Status:    types.StatusOpen,
 		Priority:  1,
 		IssueType: types.TypeTask,
-		Ephemeral:      false,
+		Ephemeral: false,
 	}
 	wispIssue := &types.Issue{
 		Title:     "Wisp Issue",
 		Status:    types.StatusOpen,
 		Priority:  2,
 		IssueType: types.TypeTask,
-		Ephemeral:      true,
+		Ephemeral: true,
 	}
 
 	if err := s.CreateIssue(ctx, normalIssue, "test"); err != nil {
@@ -1399,11 +1356,7 @@ func TestWispFilteringFromExport(t *testing.T) {
 // TestGetMoleculeProgress tests loading a molecule and computing progress
 func TestGetMoleculeProgress(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -1504,11 +1457,7 @@ func TestGetMoleculeProgress(t *testing.T) {
 // TestFindParentMolecule tests walking up parent-child chain
 func TestFindParentMolecule(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -1605,11 +1554,7 @@ func TestFindParentMolecule(t *testing.T) {
 // TestFindHookedMolecules tests finding molecules bonded to hooked issues
 func TestFindHookedMolecules(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -1692,11 +1637,7 @@ func TestFindHookedMolecules(t *testing.T) {
 // TestAdvanceToNextStep tests auto-advancing to next step
 func TestAdvanceToNextStep(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -1798,11 +1739,7 @@ func TestAdvanceToNextStep(t *testing.T) {
 // TestAdvanceToNextStepMoleculeComplete tests behavior when molecule is complete
 func TestAdvanceToNextStepMoleculeComplete(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -1860,11 +1797,7 @@ func TestAdvanceToNextStepMoleculeComplete(t *testing.T) {
 // TestAdvanceToNextStepOrphanIssue tests behavior for non-molecule issues
 func TestAdvanceToNextStepOrphanIssue(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -2054,11 +1987,7 @@ func TestGetRelativeID(t *testing.T) {
 // TestBondProtoMolWithRef tests dynamic bonding with custom child references
 func TestBondProtoMolWithRef(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "patrol"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -2148,11 +2077,7 @@ func TestBondProtoMolWithRef(t *testing.T) {
 // TestBondProtoMolMultipleArms tests bonding multiple arms to the same parent
 func TestBondProtoMolMultipleArms(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "patrol"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -2602,11 +2527,7 @@ func TestCalculateBlockingDepths(t *testing.T) {
 // creates issues with the Ephemeral flag set (bd-phin)
 func TestSpawnMoleculeEphemeralFlag(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -2618,17 +2539,17 @@ func TestSpawnMoleculeEphemeralFlag(t *testing.T) {
 
 	// Create a template with a child (IDs will be auto-generated)
 	root := &types.Issue{
-		Title:      "Template Epic",
-		Status:     types.StatusOpen,
-		Priority:   2,
-		IssueType:  types.TypeEpic,
-		Labels:     []string{MoleculeLabel}, // Required for loadTemplateSubgraph
+		Title:     "Template Epic",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeEpic,
+		Labels:    []string{MoleculeLabel}, // Required for loadTemplateSubgraph
 	}
 	child := &types.Issue{
-		Title:      "Template Task",
-		Status:     types.StatusOpen,
-		Priority:   2,
-		IssueType:  types.TypeTask,
+		Title:     "Template Task",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
 	}
 
 	if err := s.CreateIssue(ctx, root, "test"); err != nil {
@@ -2682,11 +2603,7 @@ func TestSpawnMoleculeEphemeralFlag(t *testing.T) {
 // with ephemeral=true creates issues with the Ephemeral flag set (bd-phin)
 func TestSpawnMoleculeFromFormulaEphemeral(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -2698,22 +2615,22 @@ func TestSpawnMoleculeFromFormulaEphemeral(t *testing.T) {
 
 	// Create a minimal in-memory subgraph (simulating cookFormulaToSubgraph output)
 	root := &types.Issue{
-		ID:          "test-formula",
-		Title:       "Test Formula",
-		Status:      types.StatusOpen,
-		Priority:    2,
-		IssueType:   types.TypeEpic,
-		IsTemplate:  true,
+		ID:         "test-formula",
+		Title:      "Test Formula",
+		Status:     types.StatusOpen,
+		Priority:   2,
+		IssueType:  types.TypeEpic,
+		IsTemplate: true,
 	}
 	step := &types.Issue{
-		ID:          "test-formula.step1",
-		Title:       "Step 1",
-		Status:      types.StatusOpen,
-		Priority:    2,
-		IssueType:   types.TypeTask,
-		IsTemplate:  true,
+		ID:         "test-formula.step1",
+		Title:      "Step 1",
+		Status:     types.StatusOpen,
+		Priority:   2,
+		IssueType:  types.TypeTask,
+		IsTemplate: true,
 	}
-	
+
 	subgraph := &TemplateSubgraph{
 		Root:   root,
 		Issues: []*types.Issue{root, step},
@@ -2875,11 +2792,7 @@ func TestFormatBondType(t *testing.T) {
 // https://github.com/steveyegge/beads/issues/852
 func TestPourRootTitleDescSubstitution(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "mol"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -2965,11 +2878,7 @@ func TestPourRootTitleDescSubstitution(t *testing.T) {
 // Root should use {{title}} for title, but keep formula description.
 func TestPourRootTitleOnly(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "mol"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
@@ -3020,11 +2929,7 @@ func TestPourRootTitleOnly(t *testing.T) {
 // Root should use formula name and formula description (original behavior).
 func TestPourRootNoVars(t *testing.T) {
 	ctx := context.Background()
-	dbPath := t.TempDir() + "/test.db"
-	s, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	s := teststore.New(t)
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "mol"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)

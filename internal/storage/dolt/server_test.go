@@ -2,6 +2,8 @@ package dolt
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,12 +34,26 @@ func TestServerStartStop(t *testing.T) {
 	}
 	t.Logf("dolt init output: %s", output)
 
-	// Use non-standard ports to avoid conflicts
+	// Use ephemeral ports to avoid conflicts with other tests/services
+	sqlListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to get ephemeral SQL port: %v", err)
+	}
+	sqlPort := sqlListener.Addr().(*net.TCPAddr).Port
+	sqlListener.Close()
+
+	remotesListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to get ephemeral remotes port: %v", err)
+	}
+	remotesPort := remotesListener.Addr().(*net.TCPAddr).Port
+	remotesListener.Close()
+
 	logFile := filepath.Join(tmpDir, "server.log")
 	server := NewServer(ServerConfig{
 		DataDir:        tmpDir,
-		SQLPort:        13306, // Non-standard port
-		RemotesAPIPort: 18080, // Non-standard port
+		SQLPort:        sqlPort,
+		RemotesAPIPort: remotesPort,
 		Host:           "127.0.0.1",
 		LogFile:        logFile,
 	})
@@ -60,18 +76,18 @@ func TestServerStartStop(t *testing.T) {
 	}
 
 	// Verify ports
-	if server.SQLPort() != 13306 {
-		t.Errorf("expected SQL port 13306, got %d", server.SQLPort())
+	if server.SQLPort() != sqlPort {
+		t.Errorf("expected SQL port %d, got %d", sqlPort, server.SQLPort())
 	}
-	if server.RemotesAPIPort() != 18080 {
-		t.Errorf("expected remotesapi port 18080, got %d", server.RemotesAPIPort())
+	if server.RemotesAPIPort() != remotesPort {
+		t.Errorf("expected remotesapi port %d, got %d", remotesPort, server.RemotesAPIPort())
 	}
 
 	// Verify DSN format
 	dsn := server.DSN("testdb")
-	expected := "root@tcp(127.0.0.1:13306)/testdb"
-	if dsn != expected {
-		t.Errorf("expected DSN %q, got %q", expected, dsn)
+	expectedDSN := fmt.Sprintf("root@tcp(127.0.0.1:%d)/testdb", sqlPort)
+	if dsn != expectedDSN {
+		t.Errorf("expected DSN %q, got %q", expectedDSN, dsn)
 	}
 
 	// Stop server

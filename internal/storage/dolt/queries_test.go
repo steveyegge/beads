@@ -132,14 +132,14 @@ func TestGetEpicsEligibleForClosure_OpenChild(t *testing.T) {
 		}
 	}
 
-	// Get epics eligible for closure - our epic should not be included
+	// Get epics eligible for closure - our epic should be returned but NOT eligible
 	epics, err := store.GetEpicsEligibleForClosure(ctx)
 	if err != nil {
 		t.Fatalf("GetEpicsEligibleForClosure failed: %v", err)
 	}
 
 	for _, es := range epics {
-		if es.Epic.ID == epic.ID {
+		if es.Epic.ID == epic.ID && es.EligibleForClose {
 			t.Error("epic with open child should not be eligible for closure")
 		}
 	}

@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/storage"
-	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -92,14 +92,8 @@ WARNING: Backup your database before running this command, even though it create
 			}
 		}
 		
-		// Open database via factory (backend-agnostic)
-		beadsDir := beads.FindBeadsDir()
-		if beadsDir == "" {
-			beadsDir = filepath.Dir(dbPath)
-		}
-		store, err := storagefactory.NewFromConfigWithOptions(rootCtx, beadsDir, storagefactory.Options{
-			AllowWithRemoteDaemon: true,
-		})
+		// Open database
+		store, err := factory.NewFromConfig(rootCtx, filepath.Dir(dbPath))
 		if err != nil {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{

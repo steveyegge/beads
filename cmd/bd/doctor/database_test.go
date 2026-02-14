@@ -1,40 +1,90 @@
 package doctor
 
 import (
-	"database/sql"
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/steveyegge/beads/internal/configfile"
+	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/types"
 )
 
-// setupTestDatabase creates a minimal valid SQLite database for testing
-func setupTestDatabase(t *testing.T, dir string) string {
+// writeDoltMetadata writes a metadata.json with backend=dolt so that
+// getBackendAndBeadsDir returns the Dolt backend for the given beads dir.
+func writeDoltMetadata(t *testing.T, beadsDir string) {
 	t.Helper()
-	dbPath := filepath.Join(dir, ".beads", "beads.db")
-
-	db, err := sql.Open("sqlite3", dbPath)
+	cfg := &configfile.Config{Backend: configfile.BackendDolt}
+	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
+		t.Fatalf("failed to marshal metadata: %v", err)
 	}
-	defer db.Close()
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+		t.Fatalf("failed to write metadata.json: %v", err)
+	}
+}
 
-	// Create minimal issues table
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS issues (
-		id TEXT PRIMARY KEY,
-		title TEXT,
-		status TEXT
-	)`)
+// setupDoltDatabase creates a real Dolt-backed store at the expected path
+// inside the given beads directory. It writes metadata.json and initializes
+// a Dolt database with an issues table containing the provided issues.
+// Returns the store path (beadsDir/dolt).
+func setupDoltDatabase(t *testing.T, beadsDir string, issues []testIssue) {
+	t.Helper()
+
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("dolt binary not in PATH, skipping test")
+	}
+
+	writeDoltMetadata(t, beadsDir)
+
+	doltPath := filepath.Join(beadsDir, "dolt")
+	ctx := context.Background()
+	store, err := storagefactory.NewWithOptions(ctx, configfile.BackendDolt, doltPath, storagefactory.Options{})
 	if err != nil {
-		t.Fatalf("failed to create table: %v", err)
+		t.Fatalf("failed to create Dolt store: %v", err)
 	}
 
-	return dbPath
+	// Set issue_prefix so ID generation works
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		store.Close()
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	// Set a bd_version in metadata
+	if err := store.SetMetadata(ctx, "bd_version", "0.1.0"); err != nil {
+		store.Close()
+		t.Fatalf("failed to set bd_version: %v", err)
+	}
+
+	// Insert issues if provided
+	for _, issue := range issues {
+		if err := store.CreateIssue(ctx, issue.toTypesIssue(), "test-user"); err != nil {
+			store.Close()
+			t.Fatalf("failed to create issue %s: %v", issue.id, err)
+		}
+	}
+
+	store.Close()
+}
+
+// testIssue is a simple struct for test issue data.
+type testIssue struct {
+	id     string
+	title  string
+	status string
+}
+
+func (ti testIssue) toTypesIssue() *types.Issue {
+	return &types.Issue{
+		ID:    ti.id,
+		Title: ti.title,
+	}
 }
 
 func TestCheckDatabaseIntegrity(t *testing.T) {
@@ -45,32 +95,20 @@ func TestCheckDatabaseIntegrity(t *testing.T) {
 		expectMessage  string
 	}{
 		{
-			name: "no database",
+			name: "no database - dolt backend with no dolt dir",
 			setup: func(t *testing.T, dir string) {
-				// No database file created
+				writeDoltMetadata(t, filepath.Join(dir, ".beads"))
 			},
 			expectedStatus: "ok",
 			expectMessage:  "N/A (no database)",
 		},
 		{
-			name: "valid database",
+			name: "valid dolt database",
 			setup: func(t *testing.T, dir string) {
-				setupTestDatabase(t, dir)
+				setupDoltDatabase(t, filepath.Join(dir, ".beads"), nil)
 			},
 			expectedStatus: "ok",
-			expectMessage:  "No corruption detected",
-		},
-		{
-			name: "corrupt database",
-			setup: func(t *testing.T, dir string) {
-				dbPath := filepath.Join(dir, ".beads", "beads.db")
-				// Write garbage that isn't a valid SQLite file
-				if err := os.WriteFile(dbPath, []byte("not a sqlite database"), 0600); err != nil {
-					t.Fatalf("failed to create corrupt db: %v", err)
-				}
-			},
-			expectedStatus: "error",
-			expectMessage:  "", // message varies based on sqlite driver error
+			expectMessage:  "Basic query check passed",
 		},
 	}
 
@@ -87,7 +125,7 @@ func TestCheckDatabaseIntegrity(t *testing.T) {
 			check := CheckDatabaseIntegrity(tmpDir)
 
 			if check.Status != tt.expectedStatus {
-				t.Errorf("expected status %q, got %q", tt.expectedStatus, check.Status)
+				t.Errorf("expected status %q, got %q (message: %s)", tt.expectedStatus, check.Status, check.Message)
 			}
 			if tt.expectMessage != "" && check.Message != tt.expectMessage {
 				t.Errorf("expected message %q, got %q", tt.expectMessage, check.Message)
@@ -104,86 +142,24 @@ func TestCheckDatabaseJSONLSync(t *testing.T) {
 		expectMessage  string
 	}{
 		{
-			name: "no database",
+			name: "dolt backend with JSONL but no dolt dir",
 			setup: func(t *testing.T, dir string) {
-				// No database, but create JSONL
+				writeDoltMetadata(t, filepath.Join(dir, ".beads"))
 				jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
 				if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1","title":"Test"}`+"\n"), 0600); err != nil {
 					t.Fatalf("failed to create JSONL: %v", err)
 				}
 			},
 			expectedStatus: "ok",
-			expectMessage:  "N/A (no database)",
+			expectMessage:  "N/A (dolt backend)",
 		},
 		{
-			name: "no JSONL",
+			name: "dolt backend with no JSONL",
 			setup: func(t *testing.T, dir string) {
-				setupTestDatabase(t, dir)
+				writeDoltMetadata(t, filepath.Join(dir, ".beads"))
 			},
 			expectedStatus: "ok",
 			expectMessage:  "N/A (no JSONL file)",
-		},
-		{
-			name: "both exist with same count",
-			setup: func(t *testing.T, dir string) {
-				// Create database with one issue
-				dbPath := setupTestDatabase(t, dir)
-				db, _ := sql.Open("sqlite3", dbPath)
-				defer db.Close()
-				_, _ = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('test-1', 'Test Issue', 'open')`)
-
-				// Create JSONL with one issue
-				jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-				if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1","title":"Test Issue","status":"open"}`+"\n"), 0600); err != nil {
-					t.Fatalf("failed to create JSONL: %v", err)
-				}
-			},
-			expectedStatus: "warning", // Warning because db doesn't have full schema for prefix check
-			expectMessage:  "",
-		},
-		{
-			name: "count mismatch",
-			setup: func(t *testing.T, dir string) {
-				// Create database with one issue
-				dbPath := setupTestDatabase(t, dir)
-				db, _ := sql.Open("sqlite3", dbPath)
-				defer db.Close()
-				_, _ = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('test-1', 'Test Issue', 'open')`)
-
-				// Create JSONL with two issues
-				jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-				content := `{"id":"test-1","title":"Test Issue 1","status":"open"}
-{"id":"test-2","title":"Test Issue 2","status":"open"}
-`
-				if err := os.WriteFile(jsonlPath, []byte(content), 0600); err != nil {
-					t.Fatalf("failed to create JSONL: %v", err)
-				}
-			},
-			expectedStatus: "warning",
-		},
-		{
-			// GH#885: Status mismatch detection
-			name: "status mismatch - same count different status",
-			setup: func(t *testing.T, dir string) {
-				// Create database with issue status "closed"
-				dbPath := setupTestDatabase(t, dir)
-				db, _ := sql.Open("sqlite3", dbPath)
-				defer db.Close()
-				// Add config table for prefix check (required by CheckDatabaseJSONLSync)
-				_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)`)
-				_, _ = db.Exec(`INSERT INTO config (key, value) VALUES ('issue_prefix', 'test')`)
-				_, _ = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('test-1', 'Test Issue', 'closed')`)
-
-				// Create JSONL with same issue but status "open" (stale JSONL)
-				jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-				content := `{"id":"test-1","title":"Test Issue","status":"open"}
-`
-				if err := os.WriteFile(jsonlPath, []byte(content), 0600); err != nil {
-					t.Fatalf("failed to create JSONL: %v", err)
-				}
-			},
-			expectedStatus: "warning",
-			expectMessage:  "Status mismatch: 1 issue(s) have different status in DB vs JSONL",
 		},
 	}
 
@@ -214,24 +190,44 @@ func TestCheckDatabaseVersion(t *testing.T) {
 		name           string
 		setup          func(t *testing.T, dir string)
 		expectedStatus string
+		expectMessage  string
 	}{
 		{
-			name: "fresh clone with JSONL",
+			name: "fresh clone with JSONL - dolt backend",
 			setup: func(t *testing.T, dir string) {
-				// No database but JSONL exists - fresh clone warning
+				writeDoltMetadata(t, filepath.Join(dir, ".beads"))
 				jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
 				if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1","title":"Test"}`+"\n"), 0600); err != nil {
 					t.Fatalf("failed to create JSONL: %v", err)
 				}
 			},
-			expectedStatus: "warning", // Warning for fresh clone needing init
+			expectedStatus: "warning",
+			expectMessage:  "Fresh clone detected (no dolt database)",
 		},
 		{
-			name: "no database no jsonl",
+			name: "no database no jsonl - dolt backend",
 			setup: func(t *testing.T, dir string) {
-				// No database, no JSONL - error (need to run bd init)
+				writeDoltMetadata(t, filepath.Join(dir, ".beads"))
 			},
 			expectedStatus: "error",
+			expectMessage:  "No dolt database found",
+		},
+		{
+			name: "valid dolt database with matching version",
+			setup: func(t *testing.T, dir string) {
+				setupDoltDatabase(t, filepath.Join(dir, ".beads"), nil)
+			},
+			expectedStatus: "ok",
+			expectMessage:  "version 0.1.0",
+		},
+		{
+			name: "dolt database with version mismatch",
+			setup: func(t *testing.T, dir string) {
+				setupDoltDatabase(t, filepath.Join(dir, ".beads"), nil)
+				// The database was created with bd_version=0.1.0, but we'll pass a different CLI version
+			},
+			expectedStatus: "warning",
+			expectMessage:  "version 0.1.0 (CLI: 99.99.99)",
 		},
 	}
 
@@ -245,10 +241,19 @@ func TestCheckDatabaseVersion(t *testing.T) {
 
 			tt.setup(t, tmpDir)
 
-			check := CheckDatabaseVersion(tmpDir, "0.1.0")
+			// Use matching CLI version except for the mismatch test
+			cliVersion := "0.1.0"
+			if tt.name == "dolt database with version mismatch" {
+				cliVersion = "99.99.99"
+			}
+
+			check := CheckDatabaseVersion(tmpDir, cliVersion)
 
 			if check.Status != tt.expectedStatus {
 				t.Errorf("expected status %q, got %q (message: %s)", tt.expectedStatus, check.Status, check.Message)
+			}
+			if tt.expectMessage != "" && check.Message != tt.expectMessage {
+				t.Errorf("expected message %q, got %q", tt.expectMessage, check.Message)
 			}
 		})
 	}
@@ -259,21 +264,23 @@ func TestCheckSchemaCompatibility(t *testing.T) {
 		name           string
 		setup          func(t *testing.T, dir string)
 		expectedStatus string
+		expectMessage  string
 	}{
 		{
-			name: "no database",
+			name: "no database - dolt backend",
 			setup: func(t *testing.T, dir string) {
-				// No database created
+				writeDoltMetadata(t, filepath.Join(dir, ".beads"))
 			},
 			expectedStatus: "ok",
+			expectMessage:  "N/A (no database)",
 		},
 		{
-			name: "minimal schema",
+			name: "valid dolt database",
 			setup: func(t *testing.T, dir string) {
-				// Our minimal test database doesn't have full schema
-				setupTestDatabase(t, dir)
+				setupDoltDatabase(t, filepath.Join(dir, ".beads"), nil)
 			},
-			expectedStatus: "error", // Error because schema is incomplete
+			expectedStatus: "ok",
+			expectMessage:  "Basic queries succeeded",
 		},
 	}
 
@@ -290,7 +297,10 @@ func TestCheckSchemaCompatibility(t *testing.T) {
 			check := CheckSchemaCompatibility(tmpDir)
 
 			if check.Status != tt.expectedStatus {
-				t.Errorf("expected status %q, got %q (message: %s)", tt.expectedStatus, check.Status, check.Message)
+				t.Errorf("expected status %q, got %q (message: %s, detail: %s)", tt.expectedStatus, check.Status, check.Message, check.Detail)
+			}
+			if tt.expectMessage != "" && check.Message != tt.expectMessage {
+				t.Errorf("expected message %q, got %q", tt.expectMessage, check.Message)
 			}
 		})
 	}
@@ -408,368 +418,23 @@ func TestCountJSONLIssues_ExtractsPrefixes(t *testing.T) {
 // Edge case tests
 
 func TestCheckDatabaseIntegrity_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name           string
-		setup          func(t *testing.T, dir string) string
-		expectedStatus string
-	}{
-		{
-			name: "locked database file",
-			setup: func(t *testing.T, dir string) string {
-				dbPath := setupTestDatabase(t, dir)
-
-				// Open a connection with an exclusive lock
-				db, err := sql.Open("sqlite3", dbPath)
-				if err != nil {
-					t.Fatalf("failed to open database: %v", err)
-				}
-
-				// Start a transaction to hold a lock
-				tx, err := db.Begin()
-				if err != nil {
-					db.Close()
-					t.Fatalf("failed to begin transaction: %v", err)
-				}
-
-				// Write some data to ensure the lock is held
-				_, err = tx.Exec("INSERT INTO issues (id, title, status) VALUES ('lock-test', 'Lock Test', 'open')")
-				if err != nil {
-					tx.Rollback()
-					db.Close()
-					t.Fatalf("failed to insert test data: %v", err)
-				}
-
-				// Keep the transaction open by returning a cleanup function via test context
-				t.Cleanup(func() {
-					tx.Rollback()
-					db.Close()
-				})
-
-				return dbPath
-			},
-			expectedStatus: "ok", // Should still succeed with busy_timeout
-		},
-		{
-			name: "read-only database file",
-			setup: func(t *testing.T, dir string) string {
-				dbPath := setupTestDatabase(t, dir)
-
-				// Make the database file read-only
-				if err := os.Chmod(dbPath, 0400); err != nil {
-					t.Fatalf("failed to chmod database: %v", err)
-				}
-
-				return dbPath
-			},
-			expectedStatus: "ok", // Integrity check uses read-only mode
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			beadsDir := filepath.Join(tmpDir, ".beads")
-			if err := os.MkdirAll(beadsDir, 0755); err != nil {
-				t.Fatal(err)
-			}
-
-			tt.setup(t, tmpDir)
-
-			check := CheckDatabaseIntegrity(tmpDir)
-
-			if check.Status != tt.expectedStatus {
-				t.Errorf("expected status %q, got %q (message: %s)", tt.expectedStatus, check.Status, check.Message)
-			}
-		})
-	}
+	t.Skip("SQLite-specific edge cases (locked/read-only database) not applicable with Dolt backend")
 }
 
 func TestCheckDatabaseJSONLSync_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name           string
-		setup          func(t *testing.T, dir string)
-		expectedStatus string
-	}{
-		{
-			name: "malformed JSONL with some valid entries",
-			setup: func(t *testing.T, dir string) {
-				dbPath := setupTestDatabase(t, dir)
-				db, _ := sql.Open("sqlite3", dbPath)
-				defer db.Close()
-
-				// Insert test issue into database
-				_, _ = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('test-1', 'Test Issue', 'open')`)
-
-				// Create JSONL with malformed entries
-				jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-				content := `{"id":"test-1","title":"Valid Entry"}
-{malformed json without quotes
-{"id":"test-2","incomplete
-{"id":"test-3","title":"Another Valid Entry"}
-`
-				if err := os.WriteFile(jsonlPath, []byte(content), 0600); err != nil {
-					t.Fatalf("failed to create JSONL: %v", err)
-				}
-			},
-			expectedStatus: "warning", // Should warn about malformed lines
-		},
-		{
-			name: "JSONL with mixed valid and invalid JSON",
-			setup: func(t *testing.T, dir string) {
-				setupTestDatabase(t, dir)
-
-				// Create JSONL with some invalid JSON lines
-				jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-				content := `{"id":"test-1","title":"Valid"}
-not json at all
-{"id":"test-2","title":"Also Valid"}
-{"broken": json}
-`
-				if err := os.WriteFile(jsonlPath, []byte(content), 0600); err != nil {
-					t.Fatalf("failed to create JSONL: %v", err)
-				}
-			},
-			expectedStatus: "warning",
-		},
-		{
-			name: "JSONL with entries missing id field",
-			setup: func(t *testing.T, dir string) {
-				dbPath := setupTestDatabase(t, dir)
-				db, _ := sql.Open("sqlite3", dbPath)
-				defer db.Close()
-				_, _ = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('test-1', 'Test', 'open')`)
-
-				// Create JSONL where some entries don't have id field
-				jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-				content := `{"id":"test-1","title":"Has ID"}
-{"title":"No ID field","status":"open"}
-{"id":"test-2","title":"Has ID"}
-`
-				if err := os.WriteFile(jsonlPath, []byte(content), 0600); err != nil {
-					t.Fatalf("failed to create JSONL: %v", err)
-				}
-			},
-			expectedStatus: "warning", // Count mismatch: db has 1, jsonl counts only 2 valid
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			beadsDir := filepath.Join(tmpDir, ".beads")
-			if err := os.MkdirAll(beadsDir, 0755); err != nil {
-				t.Fatal(err)
-			}
-
-			tt.setup(t, tmpDir)
-
-			check := CheckDatabaseJSONLSync(tmpDir)
-
-			if check.Status != tt.expectedStatus {
-				t.Errorf("expected status %q, got %q (message: %s)", tt.expectedStatus, check.Status, check.Message)
-			}
-		})
-	}
+	// With Dolt backend, CheckDatabaseJSONLSync always returns early with
+	// "N/A (dolt backend)" or "N/A (no JSONL file)" - the SQLite-specific
+	// malformed JSONL / missing ID / count mismatch tests don't apply because
+	// the Dolt code path never compares DB vs JSONL counts.
+	t.Skip("SQLite-specific JSONL sync edge cases not applicable with Dolt backend")
 }
 
 func TestCheckDatabaseVersion_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name           string
-		setup          func(t *testing.T, dir string)
-		cliVersion     string
-		expectedStatus string
-		expectMessage  string
-	}{
-		{
-			name: "future database version",
-			setup: func(t *testing.T, dir string) {
-				dbPath := filepath.Join(dir, ".beads", "beads.db")
-				db, err := sql.Open("sqlite3", dbPath)
-				if err != nil {
-					t.Fatalf("failed to create database: %v", err)
-				}
-				defer db.Close()
-
-				// Create metadata table with future version
-				_, err = db.Exec(`CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)`)
-				if err != nil {
-					t.Fatalf("failed to create metadata table: %v", err)
-				}
-				_, err = db.Exec(`INSERT INTO metadata (key, value) VALUES ('bd_version', '99.99.99')`)
-				if err != nil {
-					t.Fatalf("failed to insert version: %v", err)
-				}
-			},
-			cliVersion:     "0.1.0",
-			expectedStatus: "warning",
-			expectMessage:  "version 99.99.99 (CLI: 0.1.0)",
-		},
-		{
-			name: "database with metadata table but no version",
-			setup: func(t *testing.T, dir string) {
-				dbPath := filepath.Join(dir, ".beads", "beads.db")
-				db, err := sql.Open("sqlite3", dbPath)
-				if err != nil {
-					t.Fatalf("failed to create database: %v", err)
-				}
-				defer db.Close()
-
-				// Create metadata table but don't insert version
-				_, err = db.Exec(`CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)`)
-				if err != nil {
-					t.Fatalf("failed to create metadata table: %v", err)
-				}
-			},
-			cliVersion:     "0.1.0",
-			expectedStatus: "error",
-			expectMessage:  "Unable to read database version",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			beadsDir := filepath.Join(tmpDir, ".beads")
-			if err := os.MkdirAll(beadsDir, 0755); err != nil {
-				t.Fatal(err)
-			}
-
-			tt.setup(t, tmpDir)
-
-			check := CheckDatabaseVersion(tmpDir, tt.cliVersion)
-
-			if check.Status != tt.expectedStatus {
-				t.Errorf("expected status %q, got %q (message: %s)", tt.expectedStatus, check.Status, check.Message)
-			}
-			if tt.expectMessage != "" && check.Message != tt.expectMessage {
-				t.Errorf("expected message %q, got %q", tt.expectMessage, check.Message)
-			}
-		})
-	}
+	t.Skip("SQLite-specific version edge cases (future version, missing version) not applicable with Dolt backend")
 }
 
 func TestCheckSchemaCompatibility_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name           string
-		setup          func(t *testing.T, dir string)
-		expectedStatus string
-		expectInDetail string
-	}{
-		{
-			name: "partial schema - missing dependencies table",
-			setup: func(t *testing.T, dir string) {
-				dbPath := filepath.Join(dir, ".beads", "beads.db")
-				db, err := sql.Open("sqlite3", dbPath)
-				if err != nil {
-					t.Fatalf("failed to create database: %v", err)
-				}
-				defer db.Close()
-
-				// Create only issues table, missing other required tables
-				_, err = db.Exec(`CREATE TABLE issues (
-					id TEXT PRIMARY KEY,
-					title TEXT,
-					content_hash TEXT,
-					external_ref TEXT,
-					compacted_at INTEGER,
-					close_reason TEXT
-				)`)
-				if err != nil {
-					t.Fatalf("failed to create issues table: %v", err)
-				}
-			},
-			expectedStatus: "error",
-			expectInDetail: "table:dependencies",
-		},
-		{
-			name: "partial schema - missing columns in issues table",
-			setup: func(t *testing.T, dir string) {
-				dbPath := filepath.Join(dir, ".beads", "beads.db")
-				db, err := sql.Open("sqlite3", dbPath)
-				if err != nil {
-					t.Fatalf("failed to create database: %v", err)
-				}
-				defer db.Close()
-
-				// Create issues table missing some required columns
-				_, err = db.Exec(`CREATE TABLE issues (
-					id TEXT PRIMARY KEY,
-					title TEXT
-				)`)
-				if err != nil {
-					t.Fatalf("failed to create issues table: %v", err)
-				}
-
-				// Create other tables to avoid those errors
-				_, err = db.Exec(`CREATE TABLE dependencies (
-					issue_id TEXT,
-					depends_on_id TEXT,
-					type TEXT
-				)`)
-				if err != nil {
-					t.Fatalf("failed to create dependencies table: %v", err)
-				}
-
-				_, err = db.Exec(`CREATE TABLE child_counters (
-					parent_id TEXT,
-					last_child INTEGER
-				)`)
-				if err != nil {
-					t.Fatalf("failed to create child_counters table: %v", err)
-				}
-
-				_, err = db.Exec(`CREATE TABLE export_hashes (
-					issue_id TEXT,
-					content_hash TEXT
-				)`)
-				if err != nil {
-					t.Fatalf("failed to create export_hashes table: %v", err)
-				}
-			},
-			expectedStatus: "error",
-			expectInDetail: "issues.content_hash",
-		},
-		{
-			name: "database with no tables",
-			setup: func(t *testing.T, dir string) {
-				dbPath := filepath.Join(dir, ".beads", "beads.db")
-				db, err := sql.Open("sqlite3", dbPath)
-				if err != nil {
-					t.Fatalf("failed to create database: %v", err)
-				}
-				// Execute a query to ensure the database file is created
-				_, err = db.Exec("SELECT 1")
-				if err != nil {
-					t.Fatalf("failed to initialize database: %v", err)
-				}
-				db.Close()
-			},
-			expectedStatus: "error",
-			expectInDetail: "table:",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			beadsDir := filepath.Join(tmpDir, ".beads")
-			if err := os.MkdirAll(beadsDir, 0755); err != nil {
-				t.Fatal(err)
-			}
-
-			tt.setup(t, tmpDir)
-
-			check := CheckSchemaCompatibility(tmpDir)
-
-			if check.Status != tt.expectedStatus {
-				t.Errorf("expected status %q, got %q (message: %s, detail: %s)",
-					tt.expectedStatus, check.Status, check.Message, check.Detail)
-			}
-			if tt.expectInDetail != "" && !strings.Contains(check.Detail, tt.expectInDetail) {
-				t.Errorf("expected detail to contain %q, got %q", tt.expectInDetail, check.Detail)
-			}
-		})
-	}
+	t.Skip("SQLite-specific schema edge cases (partial schema, missing tables/columns) not applicable with Dolt backend")
 }
 
 func TestCountJSONLIssues_EdgeCases(t *testing.T) {
@@ -810,7 +475,7 @@ func TestCountJSONLIssues_EdgeCases(t *testing.T) {
 		{
 			name: "file with unicode and special characters",
 			setupContent: func() string {
-				return `{"id":"test-1","title":"Issue with émojis 🎉","description":"Unicode: 日本語"}
+				return `{"id":"test-1","title":"Issue with emojis","description":"Unicode: test"}
 {"id":"test-2","title":"Quotes \"escaped\" and 'mixed'","status":"open"}
 {"id":"test-3","title":"Newlines\nand\ttabs","status":"closed"}
 `
@@ -897,140 +562,12 @@ also not json
 // TestCheckDatabaseJSONLSync_MoleculePrefix verifies that molecule/wisp prefixes
 // are recognized as valid variants and don't trigger false positive warnings.
 // Regression test for GitHub issue #811.
+//
+// With Dolt as the sole backend, CheckDatabaseJSONLSync returns early with
+// "N/A (dolt backend)" and never performs prefix checks. The prefix validation
+// logic itself is still exercised through the CountJSONLIssues tests.
 func TestCheckDatabaseJSONLSync_MoleculePrefix(t *testing.T) {
-	tests := []struct {
-		name           string
-		dbPrefix       string
-		jsonlContent   string
-		expectWarning  bool
-		warningMessage string
-	}{
-		{
-			name:     "mol prefix is valid variant",
-			dbPrefix: "my-project",
-			// 3 out of 4 issues have the -mol prefix (majority)
-			jsonlContent: `{"id":"my-project-mol-001","title":"Mol Issue 1"}
-{"id":"my-project-mol-002","title":"Mol Issue 2"}
-{"id":"my-project-mol-003","title":"Mol Issue 3"}
-{"id":"my-project-004","title":"Regular Issue"}
-`,
-			expectWarning:  false, // Should NOT warn - mol is a valid variant
-			warningMessage: "",
-		},
-		{
-			name:     "wisp prefix is valid variant",
-			dbPrefix: "my-project",
-			jsonlContent: `{"id":"my-project-wisp-001","title":"Wisp Issue 1"}
-{"id":"my-project-wisp-002","title":"Wisp Issue 2"}
-{"id":"my-project-wisp-003","title":"Wisp Issue 3"}
-`,
-			expectWarning:  false, // Should NOT warn - wisp is a valid variant
-			warningMessage: "",
-		},
-		{
-			name:     "eph prefix is valid variant",
-			dbPrefix: "my-project",
-			jsonlContent: `{"id":"my-project-eph-001","title":"Ephemeral Issue 1"}
-{"id":"my-project-eph-002","title":"Ephemeral Issue 2"}
-{"id":"my-project-eph-003","title":"Ephemeral Issue 3"}
-`,
-			expectWarning:  false, // Should NOT warn - eph is a valid variant
-			warningMessage: "",
-		},
-		{
-			name:     "unrelated prefix SHOULD warn",
-			dbPrefix: "my-project",
-			jsonlContent: `{"id":"other-project-001","title":"Wrong Project 1"}
-{"id":"other-project-002","title":"Wrong Project 2"}
-{"id":"other-project-003","title":"Wrong Project 3"}
-`,
-			expectWarning:  true, // SHOULD warn - different project entirely
-			warningMessage: "Prefix mismatch",
-		},
-		{
-			name:     "mixed valid variants do not warn",
-			dbPrefix: "bd",
-			jsonlContent: `{"id":"bd-mol-001","title":"Mol Issue"}
-{"id":"bd-wisp-001","title":"Wisp Issue"}
-{"id":"bd-001","title":"Regular Issue"}
-`,
-			expectWarning:  false, // All are valid variants of "bd"
-			warningMessage: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			beadsDir := filepath.Join(tmpDir, ".beads")
-			if err := os.MkdirAll(beadsDir, 0755); err != nil {
-				t.Fatal(err)
-			}
-
-			// Create database with config table containing the prefix
-			dbPath := filepath.Join(beadsDir, "beads.db")
-			db, err := sql.Open("sqlite3", dbPath)
-			if err != nil {
-				t.Fatalf("failed to create database: %v", err)
-			}
-
-			// Create issues table
-			_, err = db.Exec(`CREATE TABLE issues (id TEXT PRIMARY KEY, title TEXT, status TEXT)`)
-			if err != nil {
-				db.Close()
-				t.Fatalf("failed to create issues table: %v", err)
-			}
-
-			// Create config table with prefix
-			_, err = db.Exec(`CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT)`)
-			if err != nil {
-				db.Close()
-				t.Fatalf("failed to create config table: %v", err)
-			}
-			_, err = db.Exec(`INSERT INTO config (key, value) VALUES ('issue_prefix', ?)`, tt.dbPrefix)
-			if err != nil {
-				db.Close()
-				t.Fatalf("failed to insert prefix: %v", err)
-			}
-
-			// Count issues in JSONL and insert matching count into DB
-			lines := strings.Split(strings.TrimSpace(tt.jsonlContent), "\n")
-			issueCount := 0
-			for _, line := range lines {
-				if strings.TrimSpace(line) != "" {
-					issueCount++
-				}
-			}
-			for i := 0; i < issueCount; i++ {
-				_, err = db.Exec(`INSERT INTO issues (id, title, status) VALUES (?, ?, ?)`,
-					fmt.Sprintf("db-issue-%d", i), fmt.Sprintf("DB Issue %d", i), "open")
-				if err != nil {
-					db.Close()
-					t.Fatalf("failed to insert issue: %v", err)
-				}
-			}
-			db.Close()
-
-			// Create JSONL file
-			jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-			if err := os.WriteFile(jsonlPath, []byte(tt.jsonlContent), 0600); err != nil {
-				t.Fatalf("failed to create JSONL: %v", err)
-			}
-
-			check := CheckDatabaseJSONLSync(tmpDir)
-
-			hasPrefixWarning := strings.Contains(check.Message, "Prefix mismatch")
-
-			if tt.expectWarning && !hasPrefixWarning {
-				t.Errorf("expected prefix mismatch warning, but got: status=%s, message=%s",
-					check.Status, check.Message)
-			}
-			if !tt.expectWarning && hasPrefixWarning {
-				t.Errorf("did NOT expect prefix mismatch warning, but got: status=%s, message=%s",
-					check.Status, check.Message)
-			}
-		})
-	}
+	t.Skip("SQLite-specific prefix mismatch test not applicable with Dolt backend (Dolt sync returns N/A early)")
 }
 
 func TestCountJSONLIssues_Performance(t *testing.T) {

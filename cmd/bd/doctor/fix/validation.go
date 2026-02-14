@@ -2,14 +2,14 @@ package fix
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/steveyegge/beads/internal/storage/factory"
 )
 
 // MergeArtifacts removes temporary git merge files from .beads directory.
@@ -106,10 +106,9 @@ func OrphanedDependencies(path string, verbose bool) error {
 	}
 
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, "beads.db")
 
 	// Open database
-	db, err := openDB(dbPath)
+	db, err := openDB(beadsDir)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -157,7 +156,7 @@ func OrphanedDependencies(path string, verbose bool) error {
 			fmt.Printf("  Warning: failed to remove %s→%s: %v\n", o.issueID, o.dependsOnID, err)
 		} else {
 			// Mark issue as dirty for export
-			_, _ = db.Exec("INSERT OR IGNORE INTO dirty_issues (issue_id) VALUES (?)", o.issueID)
+			_, _ = db.Exec("INSERT IGNORE INTO dirty_issues (issue_id) VALUES (?)", o.issueID)
 			removed++
 			if showIndividual {
 				fmt.Printf("  Removed orphaned dependency: %s→%s\n", o.issueID, o.dependsOnID)
@@ -179,10 +178,9 @@ func ChildParentDependencies(path string, verbose bool) error {
 	}
 
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, "beads.db")
 
 	// Open database
-	db, err := openDB(dbPath)
+	db, err := openDB(beadsDir)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -194,7 +192,7 @@ func ChildParentDependencies(path string, verbose bool) error {
 	query := `
 		SELECT d.issue_id, d.depends_on_id, d.type
 		FROM dependencies d
-		WHERE d.issue_id LIKE d.depends_on_id || '.%'
+		WHERE d.issue_id LIKE CONCAT(d.depends_on_id, '.%')
 		  AND d.type IN ('blocks', 'conditional-blocks', 'waits-for')
 	`
 	rows, err := db.Query(query)
@@ -233,7 +231,7 @@ func ChildParentDependencies(path string, verbose bool) error {
 			fmt.Printf("  Warning: failed to remove %s→%s: %v\n", d.issueID, d.dependsOnID, err)
 		} else {
 			// Mark issue as dirty for export
-			_, _ = db.Exec("INSERT OR IGNORE INTO dirty_issues (issue_id) VALUES (?)", d.issueID)
+			_, _ = db.Exec("INSERT IGNORE INTO dirty_issues (issue_id) VALUES (?)", d.issueID)
 			removed++
 			if showIndividual {
 				fmt.Printf("  Removed child→parent dependency: %s→%s\n", d.issueID, d.dependsOnID)
@@ -245,7 +243,19 @@ func ChildParentDependencies(path string, verbose bool) error {
 	return nil
 }
 
-// openDB opens a SQLite database for read-write access
-func openDB(dbPath string) (*sql.DB, error) {
-	return sql.Open("sqlite3", sqliteConnString(dbPath, false))
+// openDB opens a database for read-write access via the storage factory.
+// Returns the underlying *sql.DB for direct SQL operations.
+func openDB(beadsDir string) (*sql.DB, error) {
+	ctx := context.Background()
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{AllowWithRemoteDaemon: true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+	db := store.UnderlyingDB()
+	if db == nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("backend does not expose underlying database")
+	}
+	// Note: caller must close the returned db, which also closes the store.
+	return db, nil
 }

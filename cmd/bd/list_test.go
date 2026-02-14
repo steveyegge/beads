@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/util"
 )
@@ -17,11 +18,11 @@ import (
 type listTestHelper struct {
 	t      *testing.T
 	ctx    context.Context
-	store  *sqlite.SQLiteStorage
+	store  storage.Storage
 	issues []*types.Issue
 }
 
-func newListTestHelper(t *testing.T, store *sqlite.SQLiteStorage) *listTestHelper {
+func newListTestHelper(t *testing.T, store storage.Storage) *listTestHelper {
 	return &listTestHelper{t: t, ctx: context.Background(), store: store}
 }
 
