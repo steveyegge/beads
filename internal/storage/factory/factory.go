@@ -7,10 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 // BackendFactory is a function that creates a storage backend
@@ -44,45 +43,34 @@ type Options struct {
 	AllowWithRemoteDaemon bool
 }
 
-// New creates a storage backend based on the backend type.
-// For SQLite, path should be the full path to the .db file.
-// For Dolt, path should be the directory containing the Dolt database.
+// New creates a Dolt storage backend.
+// Path should be the directory containing the Dolt database.
 func New(ctx context.Context, backend, path string) (storage.Storage, error) {
 	return NewWithOptions(ctx, backend, path, Options{})
 }
 
 // NewWithOptions creates a storage backend with the specified options.
+// Dolt is the only supported backend. SQLite has been removed (bd-i0r5c).
 func NewWithOptions(ctx context.Context, backend, path string, opts Options) (storage.Storage, error) {
-	switch backend {
-	case configfile.BackendSQLite:
-		if opts.ReadOnly {
-			if opts.LockTimeout > 0 {
-				return sqlite.NewReadOnlyWithTimeout(ctx, path, opts.LockTimeout)
-			}
-			return sqlite.NewReadOnly(ctx, path)
-		}
-		if opts.LockTimeout > 0 {
-			return sqlite.NewWithTimeout(ctx, path, opts.LockTimeout)
-		}
-		return sqlite.New(ctx, path)
-	case configfile.BackendDolt, "":
-		// Dolt is the default backend - check if it's registered (requires CGO)
-		lookupKey := backend
-		if lookupKey == "" {
-			lookupKey = configfile.BackendDolt
-		}
-		if factory, ok := backendRegistry[lookupKey]; ok {
-			return factory(ctx, path, opts)
-		}
-		// Dolt not available (no CGO) - provide helpful error
-		return nil, fmt.Errorf("dolt backend requires CGO (not available on this build); use sqlite backend or install from pre-built binaries")
-	default:
-		// Check if backend is registered
-		if factory, ok := backendRegistry[backend]; ok {
-			return factory(ctx, path, opts)
-		}
-		return nil, fmt.Errorf("unknown storage backend: %s (supported: dolt, sqlite)", backend)
+	// Normalize: empty string and "dolt" both mean Dolt
+	lookupKey := backend
+	if lookupKey == "" || lookupKey == configfile.BackendDolt {
+		lookupKey = configfile.BackendDolt
 	}
+
+	// Legacy SQLite references: log warning but attempt Dolt anyway.
+	// Old metadata.json files may still say "sqlite" — callers should
+	// run `bd migrate --to-dolt` to update their workspace.
+	if backend == configfile.BackendSQLite {
+		debug.Logf("warning: SQLite backend requested but no longer supported; falling back to Dolt (run 'bd migrate --to-dolt')")
+		lookupKey = configfile.BackendDolt
+	}
+
+	if factory, ok := backendRegistry[lookupKey]; ok {
+		return factory(ctx, path, opts)
+	}
+
+	return nil, fmt.Errorf("dolt backend requires CGO (not available on this build); install from pre-built binaries")
 }
 
 // NewFromConfig creates a storage backend based on the metadata.json configuration.
@@ -109,123 +97,42 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 		cfg = configfile.DefaultConfig()
 	}
 
-	// Use GetBackendFromConfig for robust backend detection.
-	// This handles cases where metadata.json has an incorrect backend value
-	// by falling back to filesystem detection (gt-q5jzx5, dolt_doctor fix).
-	backend := GetBackendFromConfig(beadsDir)
-	// Sync cfg.Backend with detected backend so cfg.DatabasePath() computes the
-	// correct path. Without this, DefaultConfig() leaves Backend="" which causes
-	// GetBackend() to default to "dolt", producing wrong paths for SQLite (gt-seal2b).
-	cfg.Backend = backend
-	switch backend {
-	case configfile.BackendSQLite:
-		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
-	case configfile.BackendDolt:
-		// Merge Dolt server mode config into options (config provides defaults, opts can override)
-		// Check server mode: IsDoltServerMode() uses cfg.GetBackend(), but we may have detected
-		// Dolt via filesystem when cfg.Backend is wrong. Check server settings directly too.
-		isServerMode := cfg.IsDoltServerMode()
-		if !isServerMode && (cfg.DoltServerEnabled || cfg.DoltMode == "server" || os.Getenv("BEADS_DOLT_SERVER_MODE") == "1") {
-			// Config has server settings but IsDoltServerMode() returned false due to
-			// backend mismatch - trust the server settings (dolt_doctor fix)
-			isServerMode = true
-		}
-		if isServerMode {
-			opts.ServerMode = true
-			if opts.ServerHost == "" {
-				opts.ServerHost = cfg.GetDoltServerHost()
-			}
-			if opts.ServerPort == 0 {
-				opts.ServerPort = cfg.GetDoltServerPort()
-			}
-			if opts.ServerUser == "" {
-				opts.ServerUser = cfg.GetDoltServerUser()
-			}
-			if opts.Database == "" {
-				opts.Database = cfg.GetDoltDatabase()
-			}
-			// Password from config (env var is usually preferred)
-			if opts.ServerPassword == "" && cfg.DoltServerPassword != "" {
-				opts.ServerPassword = cfg.DoltServerPassword
-			}
-		}
-		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
-	default:
-		return nil, fmt.Errorf("unknown storage backend in config: %s", backend)
+	// Backend is always Dolt. Ensure cfg.Backend is set so cfg.DatabasePath()
+	// computes the correct path (directory, not file).
+	cfg.Backend = configfile.BackendDolt
+
+	// Merge Dolt server mode config into options
+	isServerMode := cfg.IsDoltServerMode()
+	if !isServerMode && (cfg.DoltServerEnabled || cfg.DoltMode == "server" || os.Getenv("BEADS_DOLT_SERVER_MODE") == "1") {
+		isServerMode = true
 	}
+	if isServerMode {
+		opts.ServerMode = true
+		if opts.ServerHost == "" {
+			opts.ServerHost = cfg.GetDoltServerHost()
+		}
+		if opts.ServerPort == 0 {
+			opts.ServerPort = cfg.GetDoltServerPort()
+		}
+		if opts.ServerUser == "" {
+			opts.ServerUser = cfg.GetDoltServerUser()
+		}
+		if opts.Database == "" {
+			opts.Database = cfg.GetDoltDatabase()
+		}
+		if opts.ServerPassword == "" && cfg.DoltServerPassword != "" {
+			opts.ServerPassword = cfg.DoltServerPassword
+		}
+	}
+	return NewWithOptions(ctx, configfile.BackendDolt, cfg.DatabasePath(beadsDir), opts)
 }
 
-// GetBackendFromConfig returns the backend type from metadata.json, falling back
-// to config.yaml's storage-backend setting if metadata.json doesn't specify one.
-// This enables town-level config inheritance: when town's config.yaml has
-// storage-backend: dolt, rig-level workspaces will inherit it even if their
-// local metadata.json doesn't have Backend set. (hq-5813b7)
-//
-// Safety net (gt-q5jzx5): If neither config specifies a backend, detect from
-// filesystem - a directory indicates Dolt, a file indicates SQLite.
+// GetBackendFromConfig returns the backend type. Always returns Dolt since
+// SQLite has been removed (bd-i0r5c). Kept for API compatibility — callers
+// still call this to determine backend, and old metadata.json files may
+// have "sqlite" which we silently upgrade to "dolt".
 func GetBackendFromConfig(beadsDir string) string {
-	// Server mode env var takes priority: BEADS_DOLT_SERVER_MODE=1 implies Dolt
-	// backend. This enables K8s deployments configured entirely via env vars,
-	// where no metadata.json or config.yaml may exist.
-	if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" {
-		return configfile.BackendDolt
-	}
-
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
-		// No metadata.json - fall back to config.yaml
-		return getBackendFromYamlConfig()
-	}
-
-	// Determine backend: use explicit config if set, else fall back to config.yaml
-	backend := cfg.Backend
-	if backend == "" {
-		// metadata.json exists but Backend is empty - check config.yaml
-		// This enables town-level inheritance via viper's directory walking
-		backend = getBackendFromYamlConfig()
-	}
-
-	// Safety net (gt-q5jzx5, dolt_doctor fix): When backend is sqlite, verify the
-	// database path isn't actually a Dolt directory. This catches misconfigurations
-	// where metadata.json has backend: "sqlite" but database points to a Dolt path.
-	// A directory path always indicates Dolt; SQLite databases are files.
-	if backend == configfile.BackendSQLite {
-		dbPath := cfg.DatabasePath(beadsDir)
-		if detected := detectBackendFromPath(dbPath); detected != "" {
-			return detected
-		}
-	}
-
-	return backend
-}
-
-// detectBackendFromPath examines the filesystem to detect if a database path
-// is a Dolt directory or SQLite file. Returns empty string if undetermined.
-// This provides a safety net when config is ambiguous (gt-q5jzx5).
-func detectBackendFromPath(dbPath string) string {
-	info, err := os.Stat(dbPath)
-	if err != nil {
-		return "" // Path doesn't exist yet or error - can't determine
-	}
-
-	if info.IsDir() {
-		// Directories are Dolt databases
-		return configfile.BackendDolt
-	}
-
-	// Regular file - assume SQLite (the default)
-	return configfile.BackendSQLite
-}
-
-// getBackendFromYamlConfig returns the storage-backend from config.yaml.
-// The config package uses viper which walks up parent directories to find
-// .beads/config.yaml, enabling town-level config inheritance.
-func getBackendFromYamlConfig() string {
-	backend := config.GetString("storage-backend")
-	if backend == "" {
-		return configfile.BackendSQLite
-	}
-	return backend
+	return configfile.BackendDolt
 }
 
 // LoadConfig loads and returns the config from the specified beads directory.

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 var migrateIssuesCmd = &cobra.Command{
@@ -156,12 +155,11 @@ type migrationPlan struct {
 }
 
 func executeMigrateIssues(ctx context.Context, p migrateIssuesParams) error {
-	// Get database connection (use global store)
-	sqlStore, ok := store.(*sqlite.SQLiteStorage)
-	if !ok {
-		return fmt.Errorf("migrate-issues requires SQLite storage")
+	// Get database connection (backend-agnostic via UnderlyingDB)
+	db := store.UnderlyingDB()
+	if db == nil {
+		return fmt.Errorf("migrate-issues requires a SQL-backed storage (got %s)", store.BackendName())
 	}
-	db := sqlStore.UnderlyingDB()
 
 	// Step 1: Validate repositories exist
 	if err := validateRepos(ctx, db, p.from, p.to, p.strict); err != nil {

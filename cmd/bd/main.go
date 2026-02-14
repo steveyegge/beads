@@ -527,27 +527,35 @@ var rootCmd = &cobra.Command{
 				}
 
 				if cmd.Name() != "import" && cmd.Name() != "setup" && !isYamlOnlyConfigOp && !canAutoBootstrap {
-					// No database found - provide context-aware error message
-					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
-					fmt.Fprintf(os.Stderr, "Hint: run 'bd connect' to connect to a remote daemon (BD_DAEMON_HOST)\n")
-					fmt.Fprintf(os.Stderr, "      or run 'bd init' to create a local workspace\n")
-					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
-					os.Exit(1)
+					// When BD_DAEMON_HOST is set, don't require a local database.
+					// The remote daemon provides all storage — skip the local dbPath
+					// fallback and let execution continue to daemon connection. (bd-ges3k)
+					if rpc.GetDaemonHost() != "" {
+						debug.Logf("no local database found, but BD_DAEMON_HOST is set — deferring to remote daemon")
+					} else {
+						// No database and no remote daemon configured
+						fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
+						fmt.Fprintf(os.Stderr, "Hint: run 'bd connect' to connect to a remote daemon (BD_DAEMON_HOST)\n")
+						fmt.Fprintf(os.Stderr, "      or run 'bd init' to create a local workspace\n")
+						fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
+						os.Exit(1)
+					}
+				} else {
+					// For import/setup/bootstrap commands, set default database path.
+					// Invariant: dbPath must always be absolute for filepath.Rel() compatibility
+					// in daemon sync-branch code path. Use CanonicalizePath for OS-agnostic
+					// handling (symlinks, case normalization on macOS).
+					//
+					// IMPORTANT: Use FindBeadsDir() to get the correct .beads directory,
+					// which follows redirect files. Without this, a redirected .beads
+					// would create a local database instead of using the redirect target.
+					// (GH#bd-0qel)
+					targetBeadsDir := beads.FindBeadsDir()
+					if targetBeadsDir == "" {
+						targetBeadsDir = ".beads"
+					}
+					dbPath = utils.CanonicalizePath(filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName))
 				}
-				// For import/setup commands, set default database path
-				// Invariant: dbPath must always be absolute for filepath.Rel() compatibility
-				// in daemon sync-branch code path. Use CanonicalizePath for OS-agnostic
-				// handling (symlinks, case normalization on macOS).
-				//
-				// IMPORTANT: Use FindBeadsDir() to get the correct .beads directory,
-				// which follows redirect files. Without this, a redirected .beads
-				// would create a local database instead of using the redirect target.
-				// (GH#bd-0qel)
-				targetBeadsDir := beads.FindBeadsDir()
-				if targetBeadsDir == "" {
-					targetBeadsDir = ".beads"
-				}
-				dbPath = utils.CanonicalizePath(filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName))
 			}
 		}
 

@@ -2,6 +2,7 @@
 package doctor
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,10 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -40,12 +39,12 @@ func RunDeepValidation(path string) DeepValidationResult {
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Get database path
+	// Get database path to check existence
 	var dbPath string
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
 		dbPath = cfg.DatabasePath(beadsDir)
 	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+		dbPath = filepath.Join(beadsDir, "dolt")
 	}
 
 	// Skip if database doesn't exist
@@ -60,8 +59,12 @@ func RunDeepValidation(path string) DeepValidationResult {
 		return result
 	}
 
-	// Open database
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
+	// Open database via storage factory (backend-agnostic)
+	ctx := context.Background()
+	st, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{
+		ReadOnly:              true,
+		AllowWithRemoteDaemon: true,
+	})
 	if err != nil {
 		check := DoctorCheck{
 			Name:     "Deep Validation",
@@ -74,7 +77,20 @@ func RunDeepValidation(path string) DeepValidationResult {
 		result.OverallOK = false
 		return result
 	}
-	defer db.Close()
+	defer st.Close()
+
+	db := st.UnderlyingDB()
+	if db == nil {
+		check := DoctorCheck{
+			Name:     "Deep Validation",
+			Status:   StatusError,
+			Message:  "Storage backend does not support raw SQL access",
+			Category: CategoryMaintenance,
+		}
+		result.AllChecks = append(result.AllChecks, check)
+		result.OverallOK = false
+		return result
+	}
 
 	// Get counts for progress reporting
 	_ = db.QueryRow("SELECT COUNT(*) FROM issues WHERE status != 'tombstone'").Scan(&result.TotalIssues)

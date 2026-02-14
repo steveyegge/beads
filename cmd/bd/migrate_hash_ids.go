@@ -16,7 +16,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -91,8 +92,14 @@ WARNING: Backup your database before running this command, even though it create
 			}
 		}
 		
-		// Open database
-		store, err := sqlite.New(rootCtx, dbPath)
+		// Open database via factory (backend-agnostic)
+		beadsDir := beads.FindBeadsDir()
+		if beadsDir == "" {
+			beadsDir = filepath.Dir(dbPath)
+		}
+		store, err := storagefactory.NewFromConfigWithOptions(rootCtx, beadsDir, storagefactory.Options{
+			AllowWithRemoteDaemon: true,
+		})
 		if err != nil {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
@@ -206,7 +213,7 @@ WARNING: Backup your database before running this command, even though it create
 }
 
 // migrateToHashIDs performs the actual migration
-func migrateToHashIDs(ctx context.Context, store *sqlite.SQLiteStorage, issues []*types.Issue, dryRun bool) (map[string]string, error) {
+func migrateToHashIDs(ctx context.Context, store storage.Storage, issues []*types.Issue, dryRun bool) (map[string]string, error) {
 	// Build dependency graph to determine top-level vs child issues
 	parentMap := make(map[string]string) // child ID → parent ID
 	
