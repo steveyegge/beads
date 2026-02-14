@@ -24,7 +24,7 @@ on:
       ref-name: cli
 
 # Build environment — ubuntu with RWX base tools (curl, jq, git).
-# The final container image is debian:bookworm-slim, built by the push task.
+# The final container image is ubuntu:24.04, built by the push task.
 base:
   image: ubuntu:24.04
   config: rwx/base 1.0.0
@@ -99,7 +99,7 @@ tasks:
           path: oj
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Push — assemble debian runtime image from artifacts, push to GHCR
+  # Push — assemble ubuntu runtime image from artifacts, push to GHCR
   # Skipped on PRs (build-bd and build-oj validate the build).
   # ═══════════════════════════════════════════════════════════════════════
 
@@ -119,9 +119,9 @@ tasks:
 
       # Write Dockerfile for the push image
       printf '%s\n' \
-        'FROM debian:bookworm-slim' \
+        'FROM ubuntu:24.04' \
         'RUN apt-get update && apt-get install -y --no-install-recommends \' \
-        '        ca-certificates tzdata libicu72 netcat-openbsd \' \
+        '        ca-certificates tzdata libicu74 netcat-openbsd \' \
         '    && rm -rf /var/lib/apt/lists/* \' \
         '    && groupadd -g 1000 beads \' \
         '    && useradd -u 1000 -g beads -s /bin/sh -m beads' \
