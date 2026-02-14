@@ -20,15 +20,14 @@ base:
   config: rwx/base 1.0.0
 
 tasks:
-  # ── System deps ────────────────────────────────────────────────────────
+  # ── System deps (CGO needs ICU, gcc) ──────────────────────────────────
   - key: system-deps
     run: |
       sudo apt-get update
       sudo apt-get install -y libicu-dev gcc g++ bc
 
-  # ── Clone ──────────────────────────────────────────────────────────────
+  # ── Clone (parallel with system-deps — no build deps needed) ──────────
   - key: code
-    use: system-deps
     call: git/clone 2.0.3
     with:
       repository: https://github.com/groblegark/beads.git
@@ -40,9 +39,16 @@ tasks:
     with:
       go-version: "1.25"
 
+  # ── golangci-lint (cached, parallel with clone) ───────────────────────
+  - key: golangci-lint
+    use: go
+    run: |
+      curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+        | sh -s -- -b $(go env GOPATH)/bin v2.1.6
+
   # ── Download modules (cached by go.mod/go.sum) ────────────────────────
   - key: go-deps
-    use: [code, go]
+    use: [code, go, system-deps]
     run: go mod download
     filter:
       - go.mod
@@ -62,11 +68,8 @@ tasks:
 
   # ── Lint (parallel with build) ────────────────────────────────────────
   - key: lint
-    use: git-config
-    run: |
-      curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-        | sh -s -- -b $(go env GOPATH)/bin latest
-      golangci-lint run --timeout=5m
+    use: [git-config, golangci-lint]
+    run: golangci-lint run --timeout=5m
 
   # ── Tests (after build proves it compiles) ────────────────────────────
   - key: test

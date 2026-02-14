@@ -31,17 +31,21 @@ tasks:
       preserve-git-dir: true
       fetch-full-depth: true
 
-  - key: goreleaser
-    use: code
-    run: |
-      # Install Go
-      curl -sSfL https://go.dev/dl/go1.25.6.linux-amd64.tar.gz | sudo tar xz -C /usr/local
-      export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
+  # ── Go toolchain (replaces manual curl) ─────────────────────────────
+  - key: go
+    call: golang/install 1.2.0
+    with:
+      go-version: "1.25"
 
-      # Install GoReleaser
+  # ── GoReleaser install (parallel with code clone) ───────────────────
+  - key: goreleaser-install
+    run: |
       curl -sSfL https://github.com/goreleaser/goreleaser/releases/download/v2.8.2/goreleaser_Linux_x86_64.tar.gz \
         | sudo tar xz -C /usr/local/bin goreleaser
 
+  - key: goreleaser
+    use: [code, go, goreleaser-install]
+    run: |
       # Fetch tags for GoReleaser changelog
       git fetch --tags
 

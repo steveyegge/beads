@@ -1,0 +1,134 @@
+# Native OCI image build for bd daemon + oj CLI
+# No Docker daemon needed — builds natively on RWX.
+# Rust (oj) and Go (bd) build in parallel, then artifacts are copied
+# into a clean alpine runtime (no compilers in the final image).
+#
+# Local test:  rwx image build .rwx/image.yml --target image
+# Push:        rwx image build .rwx/image.yml --target image \
+#                --push-to ghcr.io/groblegark/beads:latest \
+#                --push-to ghcr.io/groblegark/beads:sha-$(git rev-parse --short HEAD)
+
+# Triggered by:
+#   - GitHub Actions (.github/workflows/image.yml) via rwx-cloud/build-push-action
+#   - CLI: rwx image build .rwx/image.yml --target image --init commit-sha=$(git rev-parse HEAD),ref-name=dev
+#
+# NOT triggered directly by Mint GitHub events — the GHA workflow handles
+# push/PR triggers and GHCR publishing. This avoids duplicate builds.
+on:
+  cli:
+    init:
+      commit-sha: ${{ event.git.sha }}
+      ref-name: cli
+
+# Runtime base — alpine:3.22
+base:
+  image: alpine:3.22
+  config: none
+
+tasks:
+  # ═══════════════════════════════════════════════════════════════════════
+  # Builder tasks (run in parallel, output artifacts only)
+  # These install compilers but artifacts extract just the binaries.
+  # ═══════════════════════════════════════════════════════════════════════
+
+  # ── Clone beads repo ─────────────────────────────────────────────────
+  - key: code
+    call: git/clone 2.0.3
+    with:
+      repository: https://github.com/groblegark/beads.git
+      ref: ${{ init.commit-sha }}
+
+  # ── Go toolchain ─────────────────────────────────────────────────────
+  - key: go
+    call: golang/install 1.2.0
+    with:
+      go-version: "1.25"
+
+  # ── CGO build deps (ICU, gcc) ───────────────────────────────────────
+  - key: build-deps
+    run: apk add --no-cache git gcc g++ musl-dev icu-dev
+
+  # ── Go mod download (cached by go.mod/go.sum) ───────────────────────
+  - key: go-deps
+    use: [code, go, build-deps]
+    run: go mod download
+    filter:
+      - go.mod
+      - go.sum
+
+  # ── Build bd binary → artifact ──────────────────────────────────────
+  - key: build-bd
+    use: go-deps
+    run: |
+      REF_NAME="${REF_NAME#refs/tags/}"
+      REF_NAME="${REF_NAME#refs/heads/}"
+      CGO_ENABLED=1 GOOS=linux go build \
+        -ldflags="-s -w -X main.Version=${REF_NAME} -X main.Build=${COMMIT_SHA}" \
+        -o bd ./cmd/bd
+    env:
+      COMMIT_SHA: ${{ init.commit-sha }}
+      REF_NAME: ${{ init.ref-name }}
+    outputs:
+      artifacts:
+        - key: bd-binary
+          path: bd
+
+  # ── Build oj binary → artifact (parallel with Go build) ────────────
+  - key: build-oj
+    use: build-deps
+    run: |
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.93.0
+      export PATH="$HOME/.cargo/bin:$PATH"
+
+      git clone --depth 1 --branch main https://github.com/groblegark/oddjobs.git /tmp/oj
+      cd /tmp/oj
+      rm -f .cargo/config.toml
+      cargo build --release -p oj
+    outputs:
+      artifacts:
+        - key: oj-binary
+          path: /tmp/oj/target/release/oj
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # Runtime tasks (clean chain — no build tools leak into the image)
+  # ═══════════════════════════════════════════════════════════════════════
+
+  # ── Runtime deps ────────────────────────────────────────────────────
+  - key: runtime-deps
+    run: apk add --no-cache ca-certificates tzdata icu-libs netcat-openbsd
+
+  # ── Create non-root user ────────────────────────────────────────────
+  - key: user-setup
+    use: runtime-deps
+    run: |
+      addgroup -g 1000 beads
+      adduser -u 1000 -G beads -s /bin/sh -D beads
+
+  # ── Install bd binary from artifact ─────────────────────────────────
+  - key: install-bd
+    use: user-setup
+    run: |
+      cp ${{ tasks.build-bd.artifacts.bd-binary }} /usr/local/bin/bd
+      chmod 755 /usr/local/bin/bd
+      chown beads:beads /usr/local/bin/bd
+
+  # ── Install oj binary from artifact ─────────────────────────────────
+  - key: install-oj
+    use: user-setup
+    run: |
+      cp ${{ tasks.build-oj.artifacts.oj-binary }} /usr/local/bin/oj
+      chmod 755 /usr/local/bin/oj
+      chown beads:beads /usr/local/bin/oj
+
+  # ── Final image config ──────────────────────────────────────────────
+  - key: image
+    use: [install-bd, install-oj]
+    run: |
+      # Smoke test
+      /usr/local/bin/bd version
+
+      # Container metadata
+      echo "beads" | tee $RWX_IMAGE/user
+      echo "bd daemon start --foreground --tcp-addr=:9876 --http-addr=:9877 --log-json" | tee $RWX_IMAGE/command
+    env:
+      HOME: /home/beads
