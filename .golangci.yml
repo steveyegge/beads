@@ -32,6 +32,8 @@ linters:
         - (fmt).Sscanf
         - (fmt).Fprintf
         - (fmt).Fprintln
+        - fmt.Fprintf
+        - fmt.Fprintln
     misspell:
       locale: US
 
@@ -48,7 +50,7 @@ linters:
           - gosec
         text: "G306"
       # G304: Safe file reads from known JSONL and error paths
-      - path: 'cmd/bd/autoflush\.go|cmd/bd/daemon_autostart\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/doctor/git\.go|cmd/bd/doctor/sync_branch_jsonl\.go|cmd/bd/rename_prefix\.go|cmd/bd/sync_merge\.go|internal/beads/beads\.go|internal/daemon/discovery\.go|internal/daemonrunner/sync\.go|internal/syncbranch/worktree\.go'
+      - path: 'cmd/bd/autoflush\.go|cmd/bd/daemon_autostart\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/doctor/git\.go|cmd/bd/doctor/sync_branch_jsonl\.go|cmd/bd/dolt\.go|cmd/bd/rename_prefix\.go|cmd/bd/sync_merge\.go|internal/beads/beads\.go|internal/daemon/discovery\.go|internal/daemonrunner/sync\.go|internal/syncbranch/worktree\.go'
         linters:
           - gosec
         text: "G304"
@@ -86,6 +88,11 @@ linters:
         linters:
           - gosec
         text: "G201"
+      # errcheck: fmt.Fprintf errors are noise in CLI help text generation
+      - path: 'cmd/bd/help_all\.go'
+        linters:
+          - errcheck
+        text: "fmt.Fprintf"
       # errcheck: Ignore unchecked errors in test files for common cleanup patterns
       - path: '_test\.go'
         linters:
@@ -112,6 +119,11 @@ linters:
         linters:
           - unparam
         text: 'truncateID.*maxLen'
+      # unparam: getConfig error return kept for API consistency with store.GetConfig
+      - path: 'internal/tracker/adapters/(linear|gitlab)/adapter\.go'
+        linters:
+          - unparam
+        text: 'getConfig'
       # misspell: "cancelled" is intentional - matching GitHub API response values
       - path: 'cmd/bd/gate\.go'
         linters:
