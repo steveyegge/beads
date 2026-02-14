@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -139,6 +140,11 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 		printWarning(fmt.Sprintf("failed to set sync.mode in DB: %v", err))
 	} else {
 		printSuccess("Set sync.mode = dolt-native in database")
+	}
+
+	// Also write to config.yaml for consistent reads via config.GetSyncMode()
+	if err := config.SetYamlConfig("sync.mode", SyncModeDoltNative); err != nil {
+		printWarning(fmt.Sprintf("failed to write sync.mode to config.yaml: %v", err))
 	}
 
 	// Commit the migration

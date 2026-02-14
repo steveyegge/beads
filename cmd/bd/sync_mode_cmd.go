@@ -151,10 +151,15 @@ Example:
 			os.Exit(1)
 		}
 
-		// Set the mode
+		// Set the mode in database
 		if err := SetSyncMode(rootCtx, store, mode); err != nil {
 			fmt.Fprintf(os.Stderr, "Error setting sync mode: %v\n", err)
 			os.Exit(1)
+		}
+
+		// Also write to config.yaml so reads via config.GetSyncMode() stay consistent
+		if err := config.SetYamlConfig("sync.mode", mode); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write sync.mode to config.yaml: %v\n", err)
 		}
 
 		if jsonOutput {
