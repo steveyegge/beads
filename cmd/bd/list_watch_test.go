@@ -98,6 +98,11 @@ func TestWatchModeWithDaemonDoesNotPanic(t *testing.T) {
 		t.Fatalf("ensureStoreActive failed: %v", err)
 	}
 
+	// Open a real store for watchIssues (ensureStoreActive with daemon just
+	// returns nil without opening storage, so we need a concrete store).
+	// newTestStore registers t.Cleanup to close the store automatically.
+	currentStore := newTestStore(t, testDBPath)
+
 	// Now watchIssues can be called safely (won't panic)
 	// Run it briefly in a goroutine to verify no panic
 	filter := types.IssueFilter{Limit: 10}

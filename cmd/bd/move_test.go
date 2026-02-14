@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -232,4 +235,75 @@ func TestRemapDependencies_PreservesMetadata(t *testing.T) {
 	if bDepRecords[0].Metadata != `{"reason": "found during work"}` {
 		t.Errorf("Metadata not preserved: got %s", bDepRecords[0].Metadata)
 	}
+}
+
+// remapDependencies is a test helper that reimplements the dependency remapping
+// logic that was previously in move.go. The production code was moved to
+// internal/rpc/server_write_ops.go as remapMoveDependencies during the daemon
+// refactoring (c751b322), but these tests validate the full dependency remapping
+// behavior including metadata preservation and cross-rig external refs.
+func remapDependencies(ctx context.Context, s storage.Storage, oldID, newID, targetRig, actor string) (int, error) {
+	count := 0
+
+	// Get dependencies where oldID is the issue (oldID depends on something)
+	// These must be removed since the new issue is in a different rig's store
+	depsFrom, err := s.GetDependencyRecords(ctx, oldID)
+	if err != nil {
+		return count, fmt.Errorf("getting dependencies from %s: %w", oldID, err)
+	}
+
+	// Remove deps FROM the old ID (user needs to recreate in target rig)
+	for _, dep := range depsFrom {
+		if err := s.RemoveDependency(ctx, oldID, dep.DependsOnID, actor); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: failed to remove dep %s->%s: %v\n", oldID, dep.DependsOnID, err)
+		}
+	}
+
+	// Get dependents (issues that depend on oldID)
+	dependents, err := s.GetDependents(ctx, oldID)
+	if err != nil {
+		return count, fmt.Errorf("getting dependents of %s: %w", oldID, err)
+	}
+
+	// For each issue that depends on oldID, update to use external ref to newID
+	for _, dependent := range dependents {
+		// Get the dependency record to preserve type/metadata
+		depRecords, err := s.GetDependencyRecords(ctx, dependent.ID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: failed to get deps for %s: %v\n", dependent.ID, err)
+			continue
+		}
+
+		for _, dep := range depRecords {
+			if dep.DependsOnID != oldID {
+				continue
+			}
+
+			// Remove old dependency
+			if err := s.RemoveDependency(ctx, dependent.ID, oldID, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: failed to remove dep %s->%s: %v\n", dependent.ID, oldID, err)
+				continue
+			}
+
+			// Point to external reference in target rig
+			externalRef := fmt.Sprintf("external:%s:%s", targetRig, newID)
+
+			// Add new dependency with external ref, preserving type and metadata
+			newDep := &types.Dependency{
+				IssueID:     dependent.ID,
+				DependsOnID: externalRef,
+				Type:        dep.Type,
+				CreatedBy:   actor,
+				Metadata:    dep.Metadata,
+				ThreadID:    dep.ThreadID,
+			}
+			if err := s.AddDependency(ctx, newDep, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: failed to add dep %s->%s: %v\n", dependent.ID, externalRef, err)
+				continue
+			}
+			count++
+		}
+	}
+
+	return count, nil
 }

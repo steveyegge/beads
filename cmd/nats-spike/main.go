@@ -3,6 +3,8 @@
 //
 // This is throwaway spike code for gt-wfaq5n.12. It validates that NATS
 // embedding works before touching bd-daemon.
+//
+//nolint:errcheck // spike code - error handling intentionally omitted for brevity
 package main
 
 import (
