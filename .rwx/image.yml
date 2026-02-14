@@ -159,22 +159,23 @@ tasks:
       cp ${{ tasks.build-bd.artifacts.bd-binary }} /tmp/image-ctx/bd
       cp ${{ tasks.build-oj.artifacts.oj-binary }} /tmp/image-ctx/oj
 
-      cat > /tmp/image-ctx/Dockerfile <<'DOCKERFILE'
-FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata icu-libs netcat-openbsd \
-    && addgroup -g 1000 beads \
-    && adduser -u 1000 -G beads -s /bin/sh -D beads
-COPY bd oj /usr/local/bin/
-RUN chmod 755 /usr/local/bin/bd /usr/local/bin/oj \
-    && chown beads:beads /usr/local/bin/bd /usr/local/bin/oj
-USER beads
-WORKDIR /home/beads
-EXPOSE 9876 9877
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD nc -z localhost 9877 || exit 1
-ENTRYPOINT ["bd"]
-CMD ["daemon", "start", "--foreground", "--tcp-addr=:9876", "--http-addr=:9877", "--log-json"]
-DOCKERFILE
+      # Write Dockerfile for the push image
+      printf '%s\n' \
+        'FROM alpine:3.22' \
+        'RUN apk add --no-cache ca-certificates tzdata icu-libs netcat-openbsd \' \
+        '    && addgroup -g 1000 beads \' \
+        '    && adduser -u 1000 -G beads -s /bin/sh -D beads' \
+        'COPY bd oj /usr/local/bin/' \
+        'RUN chmod 755 /usr/local/bin/bd /usr/local/bin/oj \' \
+        '    && chown beads:beads /usr/local/bin/bd /usr/local/bin/oj' \
+        'USER beads' \
+        'WORKDIR /home/beads' \
+        'EXPOSE 9876 9877' \
+        'HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \' \
+        '    CMD nc -z localhost 9877 || exit 1' \
+        'ENTRYPOINT ["bd"]' \
+        'CMD ["daemon", "start", "--foreground", "--tcp-addr=:9876", "--http-addr=:9877", "--log-json"]' \
+        > /tmp/image-ctx/Dockerfile
 
       SHORT_SHA="${COMMIT_SHA:0:7}"
       docker build \
