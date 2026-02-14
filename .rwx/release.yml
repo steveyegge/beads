@@ -18,6 +18,8 @@ base:
 
 tasks:
   - key: system-deps
+    filter:
+      - .rwx/release.yml
     run: |
       sudo apt-get update
       sudo apt-get install -y libicu-dev gcc g++
@@ -37,8 +39,10 @@ tasks:
     with:
       go-version: "1.25"
 
-  # ── GoReleaser install (parallel with code clone) ───────────────────
+  # ── GoReleaser install (cached by version, parallel with clone) ─────
   - key: goreleaser-install
+    filter:
+      - .rwx/release.yml
     run: |
       curl -sSfL https://github.com/goreleaser/goreleaser/releases/download/v2.8.2/goreleaser_Linux_x86_64.tar.gz \
         | sudo tar xz -C /usr/local/bin goreleaser

@@ -36,6 +36,8 @@ tasks:
 
   # ── System deps for CGO (ICU, gcc) ──────────────────────────────────
   - key: build-deps
+    filter:
+      - .rwx/image.yml
     run: |
       sudo apt-get update
       sudo apt-get install -y libicu-dev gcc g++
@@ -78,21 +80,26 @@ tasks:
         - key: bd-binary
           path: bd
 
+  # ── Rust toolchain (cached by version) ──────────────────────────────
+  - key: rust
+    filter:
+      - .rwx/image.yml
+    run: |
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain 1.93.0
+
   # ── Build oj binary → artifact (parallel with Go build) ────────────
   - key: build-oj
+    use: rust
     run: |
       set -ex
-      echo "ARTIFACT_DIR=$(pwd)" # debug: show where artifacts resolve
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.93.0
       export PATH="$HOME/.cargo/bin:$PATH"
 
       git clone --depth 1 --branch main https://github.com/groblegark/oddjobs.git /tmp/oj
       rm -f /tmp/oj/.cargo/config.toml
       cargo build --manifest-path /tmp/oj/Cargo.toml --release -p oj
 
-      # Copy to working dir so artifact path resolves correctly
       cp /tmp/oj/target/release/oj oj
-      ls -la oj
     outputs:
       artifacts:
         - key: oj-binary

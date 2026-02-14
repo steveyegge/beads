@@ -22,6 +22,8 @@ base:
 tasks:
   # ── System deps (CGO needs ICU, gcc) ──────────────────────────────────
   - key: system-deps
+    filter:
+      - .rwx/ci.yml
     run: |
       sudo apt-get update
       sudo apt-get install -y libicu-dev gcc g++ bc
@@ -39,9 +41,11 @@ tasks:
     with:
       go-version: "1.25"
 
-  # ── golangci-lint (cached, parallel with clone) ───────────────────────
+  # ── golangci-lint (cached by version, parallel with clone) ────────────
   - key: golangci-lint
     use: go
+    filter:
+      - .rwx/ci.yml
     run: |
       curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
         | sh -s -- -b $(go env GOPATH)/bin v2.9.0

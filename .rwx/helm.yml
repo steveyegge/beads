@@ -30,6 +30,8 @@ tasks:
       ref: ${{ init.commit-sha }}
 
   - key: helm-setup
+    filter:
+      - .rwx/helm.yml
     run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
   - key: helm-lint
