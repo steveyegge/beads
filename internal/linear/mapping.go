@@ -387,6 +387,66 @@ func RelationToBeadsDep(relationType string, config *MappingConfig) string {
 	return "related" // Default fallback
 }
 
+// EpicToProject converts a Beads Epic to a Linear Project structure.
+// Note: This is mainly used for creating new projects, as Linear projects are managed via
+// specific mutations (ProjectCreate, ProjectUpdate) rather than a unified structure.
+// This function helps standardizing the conversion logic.
+func EpicToProject(epic *types.Issue) *Project {
+	project := &Project{
+		Name:        epic.Title,
+		Description: epic.Description,
+		// State mapping needs context or defaults, handled in caller
+	}
+	return project
+}
+
+// ProjectToEpic converts a Linear Project to a Beads Epic.
+func ProjectToEpic(project *Project) *types.Issue {
+	createdAt, err := time.Parse(time.RFC3339, project.CreatedAt)
+	if err != nil {
+		createdAt = time.Now()
+	}
+
+	updatedAt, err := time.Parse(time.RFC3339, project.UpdatedAt)
+	if err != nil {
+		updatedAt = time.Now()
+	}
+
+	epic := &types.Issue{
+		Title:       project.Name,
+		Description: project.Description,
+		IssueType:   types.TypeEpic,
+		CreatedAt:   createdAt,
+		UpdatedAt:   updatedAt,
+		ExternalRef: &project.URL,
+		// Priority: Default to Medium? Projects don't have priority in the same way issues do.
+		Priority: 2,
+	}
+
+	// Map State
+	switch strings.ToLower(project.State) {
+	case "planned":
+		epic.Status = types.StatusOpen
+	case "started":
+		epic.Status = types.StatusInProgress
+	case "paused":
+		epic.Status = types.StatusBlocked
+	case "completed":
+		epic.Status = types.StatusClosed
+		if project.CompletedAt != "" {
+			if completedAt, err := time.Parse(time.RFC3339, project.CompletedAt); err == nil {
+				epic.ClosedAt = &completedAt
+			}
+		}
+	case "canceled":
+		epic.Status = types.StatusClosed
+	default:
+		epic.Status = types.StatusOpen
+	}
+
+	return epic
+}
+
 // IssueToBeads converts a Linear issue to a Beads issue.
 func IssueToBeads(li *Issue, config *MappingConfig) *IssueConversion {
 	createdAt, err := time.Parse(time.RFC3339, li.CreatedAt)
@@ -442,7 +502,16 @@ func IssueToBeads(li *Issue, config *MappingConfig) *IssueConversion {
 	// Collect dependencies to be created after all issues are imported
 	var deps []DependencyInfo
 
-	// Map parent-child relationship
+	// Map Project relationship (Task -> Epic)
+	if li.Project != nil {
+		deps = append(deps, DependencyInfo{
+			FromLinearID: li.Identifier,
+			ToLinearID:   li.Project.ID, // Projects use UUIDs
+			Type:         "parent-child",
+		})
+	}
+
+	// Map parent-child relationship (Subtask -> Task)
 	if li.Parent != nil {
 		deps = append(deps, DependencyInfo{
 			FromLinearID: li.Identifier,
@@ -491,54 +560,84 @@ func IssueToBeads(li *Issue, config *MappingConfig) *IssueConversion {
 	}
 }
 
-// BuildLinearToLocalUpdates creates an updates map from a Linear issue
-// to apply to a local Beads issue. This is used when Linear wins a conflict.
-func BuildLinearToLocalUpdates(li *Issue, config *MappingConfig) map[string]interface{} {
+// BuildProjectToLocalUpdates creates an updates map from a Linear project
+// to apply to a local Beads epic.
+func BuildProjectToLocalUpdates(project *Project) map[string]interface{} {
 	updates := make(map[string]interface{})
 
-	// Update title
-	updates["title"] = li.Title
+	updates["title"] = project.Name
+	updates["description"] = project.Description
 
-	// Update description
-	updates["description"] = li.Description
+	// Map State
+	switch strings.ToLower(project.State) {
+	case "planned":
+		updates["status"] = string(types.StatusOpen)
+	case "started":
+		updates["status"] = string(types.StatusInProgress)
+	case "paused":
+		updates["status"] = string(types.StatusBlocked)
+	case "completed":
+		updates["status"] = string(types.StatusClosed)
+		if project.CompletedAt != "" {
+			if completedAt, err := time.Parse(time.RFC3339, project.CompletedAt); err == nil {
+				updates["closed_at"] = completedAt
+			}
+		}
+	case "canceled":
+		updates["status"] = string(types.StatusClosed)
+	default:
+		updates["status"] = string(types.StatusOpen)
+	}
 
-	// Update priority using configured mapping
-	updates["priority"] = PriorityToBeads(li.Priority, config)
+	if project.UpdatedAt != "" {
+		if updatedAt, err := time.Parse(time.RFC3339, project.UpdatedAt); err == nil {
+			updates["updated_at"] = updatedAt
+		}
+	}
 
-	// Update status using configured mapping
-	updates["status"] = string(StateToBeadsStatus(li.State, config))
+	return updates
+}
 
-	// Update assignee if present
-	if li.Assignee != nil {
-		if li.Assignee.Email != "" {
-			updates["assignee"] = li.Assignee.Email
+// BuildLinearToLocalUpdates creates an updates map from a Linear issue
+// to apply to a local Beads issue.
+func BuildLinearToLocalUpdates(issue *Issue, config *MappingConfig) map[string]interface{} {
+	updates := make(map[string]interface{})
+
+	updates["title"] = issue.Title
+	updates["description"] = issue.Description
+	updates["priority"] = PriorityToBeads(issue.Priority, config)
+
+	// Map status
+	status := StateToBeadsStatus(issue.State, config)
+	updates["status"] = string(status)
+
+	if issue.Assignee != nil {
+		if issue.Assignee.Email != "" {
+			updates["assignee"] = issue.Assignee.Email
 		} else {
-			updates["assignee"] = li.Assignee.Name
+			updates["assignee"] = issue.Assignee.Name
 		}
 	} else {
 		updates["assignee"] = ""
 	}
 
-	// Update labels from Linear
-	if li.Labels != nil {
+	if issue.Labels != nil {
 		var labels []string
-		for _, label := range li.Labels.Nodes {
+		for _, label := range issue.Labels.Nodes {
 			labels = append(labels, label.Name)
 		}
 		updates["labels"] = labels
 	}
 
-	// Update timestamps
-	if li.UpdatedAt != "" {
-		if updatedAt, err := time.Parse(time.RFC3339, li.UpdatedAt); err == nil {
+	if issue.UpdatedAt != "" {
+		if updatedAt, err := time.Parse(time.RFC3339, issue.UpdatedAt); err == nil {
 			updates["updated_at"] = updatedAt
 		}
 	}
 
-	// Handle closed state
-	if li.CompletedAt != "" {
-		if closedAt, err := time.Parse(time.RFC3339, li.CompletedAt); err == nil {
-			updates["closed_at"] = closedAt
+	if issue.CompletedAt != "" {
+		if completedAt, err := time.Parse(time.RFC3339, issue.CompletedAt); err == nil {
+			updates["closed_at"] = completedAt
 		}
 	}
 
