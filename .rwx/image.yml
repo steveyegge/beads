@@ -1,6 +1,6 @@
 # OCI image build for bd daemon + oj CLI
 # Go and Rust build natively in parallel, then a docker: true task
-# assembles and pushes a minimal alpine runtime image to GHCR.
+# assembles and pushes a minimal debian runtime image to GHCR.
 
 on:
   github:
@@ -24,7 +24,7 @@ on:
       ref-name: cli
 
 # Build environment — ubuntu with RWX base tools (curl, jq, git).
-# The final container image is alpine:3.22, built by the push task.
+# The final container image is debian:bookworm-slim, built by the push task.
 base:
   image: ubuntu:24.04
   config: rwx/base 1.0.0
@@ -99,7 +99,7 @@ tasks:
           path: oj
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Push — assemble alpine runtime image from artifacts, push to GHCR
+  # Push — assemble debian runtime image from artifacts, push to GHCR
   # Skipped on PRs (build-bd and build-oj validate the build).
   # ═══════════════════════════════════════════════════════════════════════
 
@@ -119,10 +119,12 @@ tasks:
 
       # Write Dockerfile for the push image
       printf '%s\n' \
-        'FROM alpine:3.22' \
-        'RUN apk add --no-cache ca-certificates tzdata icu-libs netcat-openbsd \' \
-        '    && addgroup -g 1000 beads \' \
-        '    && adduser -u 1000 -G beads -s /bin/sh -D beads' \
+        'FROM debian:bookworm-slim' \
+        'RUN apt-get update && apt-get install -y --no-install-recommends \' \
+        '        ca-certificates tzdata libicu72 netcat-openbsd \' \
+        '    && rm -rf /var/lib/apt/lists/* \' \
+        '    && groupadd -g 1000 beads \' \
+        '    && useradd -u 1000 -g beads -s /bin/sh -m beads' \
         'COPY bd oj /usr/local/bin/' \
         'RUN chmod 755 /usr/local/bin/bd /usr/local/bin/oj \' \
         '    && chown beads:beads /usr/local/bin/bd /usr/local/bin/oj' \
