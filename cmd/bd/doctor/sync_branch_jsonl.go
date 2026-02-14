@@ -108,7 +108,7 @@ func getConfiguredSyncBranch(beadsDir string) string {
 }
 
 func getSyncBranchFromYAML(beadsDir string) string {
-	data, err := os.ReadFile(filepath.Join(beadsDir, "config.yaml"))
+	data, err := os.ReadFile(filepath.Join(beadsDir, "config.yaml")) //nolint:gosec // G304: beadsDir is from FindBeadsDir, not user input
 	if err != nil {
 		return ""
 	}

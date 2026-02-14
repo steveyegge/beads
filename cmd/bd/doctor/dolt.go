@@ -97,7 +97,7 @@ func openDoltDBEmbedded(beadsDir string) (*sql.DB, error) {
 
 	ctx := context.Background()
 	if _, err := db.ExecContext(ctx, "USE beads"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to switch to beads database: %w", err)
 	}
 
