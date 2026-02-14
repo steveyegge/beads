@@ -80,6 +80,7 @@ tasks:
 
   # ── Build oj binary → artifact (parallel with Go build) ────────────
   - key: build-oj
+    use: code
     run: |
       set -ex
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.93.0
@@ -90,14 +91,17 @@ tasks:
       rm -f .cargo/config.toml
       cargo build --release -p oj
 
-      # Copy binary to a known location for artifact extraction
-      mkdir -p "$HOME/artifacts"
-      cp /tmp/oj/target/release/oj "$HOME/artifacts/oj"
-      ls -la "$HOME/artifacts/oj"
+      # Debug: show env and working dir
+      echo "PWD=$(pwd) HOME=$HOME"
+      ls -la /tmp/oj/target/release/oj
+
+      # Copy binary next to the repo checkout for artifact
+      cp /tmp/oj/target/release/oj ./oj-binary
+      ls -la ./oj-binary
     outputs:
       artifacts:
         - key: oj-binary
-          path: artifacts/oj
+          path: oj-binary
 
   # ═══════════════════════════════════════════════════════════════════════
   # Push — assemble alpine runtime image from artifacts, push to GHCR
