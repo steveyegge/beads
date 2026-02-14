@@ -65,20 +65,20 @@ func New(t testing.TB) storage.Storage {
 
 	// Set issue_prefix so ID generation works (mirrors bd-166 requirement).
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
-		store.Close()
+		_ = store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("teststore: failed to set issue_prefix: %v", err)
 	}
 
 	// Register standard Gas Town custom issue types.
 	if err := store.SetConfig(ctx, "types.custom", "gate,molecule,convoy,merge-request,slot,agent,role,rig,message"); err != nil {
-		store.Close()
+		_ = store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("teststore: failed to set custom types: %v", err)
 	}
 
 	t.Cleanup(func() {
-		store.Close()
+		_ = store.Close()
 		os.RemoveAll(tmpDir)
 	})
 

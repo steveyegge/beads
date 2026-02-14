@@ -124,7 +124,7 @@ func (l *Loader) LoadAll(ctx context.Context, beadsDir string) (*LoadResult, err
 // loadMolecules loads a slice of molecules into the store.
 // Each molecule is marked as a template (IsTemplate = true).
 // Returns the number of molecules successfully loaded.
-func (l *Loader) loadMolecules(ctx context.Context, molecules []*types.Issue) (int, error) {
+func (l *Loader) loadMolecules(ctx context.Context, molecules []*types.Issue) (int, error) { //nolint:unparam // error return reserved for future use
 	// Filter out molecules that already exist
 	var newMolecules []*types.Issue
 	for _, mol := range molecules {

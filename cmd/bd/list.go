@@ -33,7 +33,7 @@ type storageExecutor func(store storage.Storage) error
 // withStorage executes an operation with either the direct store or a read-only store in daemon mode.
 // When BD_DAEMON_HOST is set (remote daemon), direct storage access is blocked, so this
 // returns "no storage available" - callers should handle this gracefully (bd-ma0s.1).
-func withStorage(ctx context.Context, store storage.Storage, dbPath string, lockTimeout time.Duration, fn storageExecutor) error {
+func withStorage(_ context.Context, store storage.Storage, dbPath string, lockTimeout time.Duration, fn storageExecutor) error {
 	if store != nil {
 		return fn(store)
 	}

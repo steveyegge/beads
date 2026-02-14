@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,7 +15,6 @@ import (
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/git"
 	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
 )
 
@@ -325,9 +325,10 @@ func CheckDeletionsManifest(path string) DoctorCheck {
 		}
 	}
 
-	// Check if we're in a git repository using worktree-aware detection
-	_, err := git.GetGitDir()
-	if err != nil {
+	// Check if we're in a git repository using path-local detection
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
 		return DoctorCheck{
 			Name:    "Deletions Manifest",
 			Status:  StatusOK,

@@ -514,9 +514,10 @@ func CheckSyncBranchHookCompatibility(path string) DoctorCheck {
 
 // CheckMergeDriver verifies that the git merge driver is correctly configured.
 func CheckMergeDriver(path string) DoctorCheck {
-	// Check if we're in a git repository using worktree-aware detection
-	_, err := git.GetGitDir()
-	if err != nil {
+	// Check if we're in a git repository using path-local detection
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
 		return DoctorCheck{
 			Name:    "Git Merge Driver",
 			Status:  StatusOK,
@@ -525,7 +526,7 @@ func CheckMergeDriver(path string) DoctorCheck {
 	}
 
 	// Get current merge driver configuration
-	cmd := exec.Command("git", "config", "merge.beads.driver")
+	cmd = exec.Command("git", "config", "merge.beads.driver")
 	cmd.Dir = path
 	output, err := cmd.Output()
 	if err != nil {
@@ -585,9 +586,10 @@ func CheckSyncBranchConfig(path string) DoctorCheck {
 		}
 	}
 
-	// Check if we're in a git repository using worktree-aware detection
-	_, err := git.GetGitDir()
-	if err != nil {
+	// Check if we're in a git repository using path-local detection
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
 		return DoctorCheck{
 			Name:    "Sync Branch Config",
 			Status:  StatusOK,
@@ -601,7 +603,7 @@ func CheckSyncBranchConfig(path string) DoctorCheck {
 
 	// Get current branch
 	currentBranch := ""
-	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	cmd = exec.Command("git", "symbolic-ref", "--short", "HEAD")
 	cmd.Dir = path
 	if output, err := cmd.Output(); err == nil {
 		currentBranch = strings.TrimSpace(string(output))
@@ -659,9 +661,10 @@ func CheckSyncBranchConfig(path string) DoctorCheck {
 // CheckSyncBranchHealth detects when the sync branch has diverged from main
 // or from the remote sync branch (after a force-push reset).
 func CheckSyncBranchHealth(path string) DoctorCheck {
-	// Skip if not in a git repo using worktree-aware detection
-	_, err := git.GetGitDir()
-	if err != nil {
+	// Skip if not in a git repo using path-local detection
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
 		return DoctorCheck{
 			Name:    "Sync Branch Health",
 			Status:  StatusOK,
@@ -680,7 +683,7 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 	}
 
 	// Check if local sync branch exists
-	cmd := exec.Command("git", "rev-parse", "--verify", syncBranch) // #nosec G204 - syncBranch from config file
+	cmd = exec.Command("git", "rev-parse", "--verify", syncBranch) // #nosec G204 - syncBranch from config file
 	cmd.Dir = path
 	if err := cmd.Run(); err != nil {
 		// Local branch doesn't exist - that's fine, bd sync will create it
