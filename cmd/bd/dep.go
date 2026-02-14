@@ -1087,7 +1087,7 @@ func init() {
 	// dep command shorthand flag
 	depCmd.Flags().StringP("blocks", "b", "", "Issue ID that this issue blocks (shorthand for: bd dep add <blocked> <blocker>)")
 
-	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (known built-ins only; e.g. blocks, parent-child, conditional-blocks, waits-for, related, discovered-from)")
+	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks, parent-child, conditional-blocks, waits-for, related, discovered-from, replies-to, relates-to, duplicates, supersedes, authored-by, assigned-to, approved-by, attests, tracks, until, caused-by, validates, delegated-from)")
 	depAddCmd.Flags().String("blocked-by", "", "Issue ID that blocks the first issue (alternative to positional arg)")
 	depAddCmd.Flags().String("depends-on", "", "Issue ID that the first issue depends on (alias for --blocked-by)")
 

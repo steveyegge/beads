@@ -23,6 +23,58 @@ func TestParseDependencyTypeStrict_AcceptsAllKnownTypes(t *testing.T) {
 	}
 }
 
+// TestKnownDependencyTypes_BidirectionalSync ensures knownDependencyTypes and
+// IsWellKnown() stay in sync in both directions: every well-known constant
+// defined in types.go must appear in knownDependencyTypes, and vice versa.
+func TestKnownDependencyTypes_BidirectionalSync(t *testing.T) {
+	// All well-known dependency type constants defined in internal/types.
+	// Keep this list in sync with the const block in types.go.
+	allWellKnownConstants := []types.DependencyType{
+		types.DepBlocks,
+		types.DepParentChild,
+		types.DepConditionalBlocks,
+		types.DepWaitsFor,
+		types.DepRelated,
+		types.DepDiscoveredFrom,
+		types.DepRepliesTo,
+		types.DepRelatesTo,
+		types.DepDuplicates,
+		types.DepSupersedes,
+		types.DepAuthoredBy,
+		types.DepAssignedTo,
+		types.DepApprovedBy,
+		types.DepAttests,
+		types.DepTracks,
+		types.DepUntil,
+		types.DepCausedBy,
+		types.DepValidates,
+		types.DepDelegatedFrom,
+	}
+
+	knownSet := make(map[types.DependencyType]bool, len(knownDependencyTypes))
+	for _, dt := range knownDependencyTypes {
+		knownSet[dt] = true
+	}
+
+	// Forward: every constant in knownDependencyTypes must be well-known.
+	for _, dt := range knownDependencyTypes {
+		if !dt.IsWellKnown() {
+			t.Errorf("knownDependencyTypes contains %q which is not well-known", dt)
+		}
+	}
+
+	// Reverse: every well-known constant must appear in knownDependencyTypes.
+	for _, dt := range allWellKnownConstants {
+		if !dt.IsWellKnown() {
+			t.Errorf("test setup bug: %q listed in allWellKnownConstants but IsWellKnown() returns false", dt)
+			continue
+		}
+		if !knownSet[dt] {
+			t.Errorf("well-known type %q is accepted by IsWellKnown() but missing from knownDependencyTypes", dt)
+		}
+	}
+}
+
 func TestParseDependencyTypeStrict_RejectsUnknownTypes(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -122,6 +174,27 @@ func TestParseDependencySpec(t *testing.T) {
 			spec:    "  ",
 			wantErr: "cannot be empty",
 		},
+		// Finding #1: malformed external refs must be rejected.
+		{
+			name:    "bare external missing capability",
+			spec:    "external:proj",
+			wantErr: "invalid external",
+		},
+		{
+			name:    "bare external empty project",
+			spec:    "external::cap",
+			wantErr: "missing project",
+		},
+		{
+			name:    "bare external empty ref",
+			spec:    "external:",
+			wantErr: "invalid external",
+		},
+		{
+			name:    "typed external missing capability",
+			spec:    "related:external:proj",
+			wantErr: "invalid external",
+		},
 	}
 
 	for _, tt := range tests {
@@ -168,5 +241,21 @@ func TestParseDependencySpecs(t *testing.T) {
 	}
 	if deps[1].Type != types.DepRelated || deps[1].DependsOnID != "bd-2" {
 		t.Fatalf("deps[1] = (%q, %q), want (%q, %q)", deps[1].Type, deps[1].DependsOnID, types.DepRelated, "bd-2")
+	}
+}
+
+// TestParseDependencySpecs_FailFast verifies that the first invalid spec
+// causes an immediate error (no partial results).
+func TestParseDependencySpecs_FailFast(t *testing.T) {
+	_, err := parseDependencySpecs([]string{
+		"blocks:bd-1",
+		"bad-type:bd-2",
+		"related:bd-3",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid dependency type in batch, got nil")
+	}
+	if !strings.Contains(err.Error(), "bad-type") {
+		t.Fatalf("error should mention the bad type, got: %v", err)
 	}
 }

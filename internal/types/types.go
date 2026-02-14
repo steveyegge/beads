@@ -780,9 +780,13 @@ const (
 	DepDelegatedFrom DependencyType = "delegated-from" // Work delegated from parent; completion cascades up
 )
 
-// IsValid checks if the dependency type value is valid.
+// IsValid checks if the dependency type value is valid at the storage level.
 // Accepts any non-empty string up to 50 characters.
 // Use IsWellKnown() to check if it's a built-in type.
+//
+// Note: CLI input validation (cmd/bd/dependency_input.go) restricts to
+// well-known types only via parseDependencyTypeStrict. The storage layer
+// retains backward compatibility with existing custom-type dependencies.
 func (d DependencyType) IsValid() bool {
 	return len(d) > 0 && len(d) <= 50
 }

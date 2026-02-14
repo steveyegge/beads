@@ -83,6 +83,9 @@ func parseDependencySpec(spec string) (dependencySpec, error) {
 
 	// External references are valid bare dependency targets and default to "blocks".
 	if strings.HasPrefix(spec, "external:") {
+		if err := validateExternalRef(spec); err != nil {
+			return dependencySpec{}, fmt.Errorf("invalid external dependency %q: %w", spec, err)
+		}
 		return dependencySpec{
 			Raw:         spec,
 			DependsOnID: spec,
@@ -114,6 +117,13 @@ func parseDependencySpec(spec string) (dependencySpec, error) {
 		return dependencySpec{}, err
 	}
 
+	// Validate external reference format if the target is an external ref.
+	if strings.HasPrefix(dependsOnID, "external:") {
+		if err := validateExternalRef(dependsOnID); err != nil {
+			return dependencySpec{}, fmt.Errorf("invalid external dependency target %q: %w", dependsOnID, err)
+		}
+	}
+
 	return dependencySpec{
 		Raw:         spec,
 		DependsOnID: dependsOnID,
@@ -121,6 +131,11 @@ func parseDependencySpec(spec string) (dependencySpec, error) {
 	}, nil
 }
 
+// parseDependencySpecs parses a slice of dependency spec strings, returning
+// all valid specs or an error on the first invalid one. This is fail-fast:
+// callers should validate before creating issues so that no issue is persisted
+// with partially-valid dependencies. Previously, invalid deps were silently
+// skipped with warnings; callers now abort or skip the entire operation instead.
 func parseDependencySpecs(specs []string) ([]dependencySpec, error) {
 	parsed := make([]dependencySpec, 0, len(specs))
 	for i, spec := range specs {
