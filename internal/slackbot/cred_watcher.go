@@ -306,7 +306,7 @@ func (w *CoopCredWatcher) HandleThreadReply(channelID, threadTS, text, userID st
 		log.Printf("slackbot/cred: recovered reauth thread %s for account %s", threadTS, info.account)
 	}
 
-	code := strings.TrimSpace(text)
+	code := extractAuthCode(strings.TrimSpace(text))
 	if code == "" {
 		return false
 	}
@@ -506,6 +506,37 @@ func (w *CoopCredWatcher) recoverReauthThread(channelID, threadTS string) (reaut
 	w.reauthThreadsMu.Unlock()
 
 	return info, true
+}
+
+// extractAuthCode extracts the authorization code from user input.
+// Handles three cases:
+//   - Full callback URL: https://platform.claude.com/oauth/code/callback?code=ABC123
+//   - Slack-formatted URL: <https://platform.claude.com/oauth/code/callback?code=ABC123>
+//   - Raw code: ABC123
+func extractAuthCode(text string) string {
+	// Strip Slack URL formatting: <url|display> or <url>
+	if strings.HasPrefix(text, "<") {
+		end := strings.Index(text, ">")
+		if end > 0 {
+			text = text[1:end]
+		}
+		// Remove display text after pipe
+		if pipeIdx := strings.Index(text, "|"); pipeIdx > 0 {
+			text = text[:pipeIdx]
+		}
+	}
+
+	// If it looks like a URL with a code parameter, extract it.
+	if strings.Contains(text, "code=") {
+		parsed, err := url.Parse(text)
+		if err == nil {
+			if code := parsed.Query().Get("code"); code != "" {
+				return code
+			}
+		}
+	}
+
+	return text
 }
 
 // pullReauthURL calls the broker's login-reauth endpoint to get (or create) a
