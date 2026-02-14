@@ -364,8 +364,12 @@ func (w *CoopCredWatcher) submitReauthCode(info reauthInfo, code, channelID, thr
 			fmt.Sprintf(":white_check_mark: Re-authentication successful for account *%s*.", info.account))
 	} else {
 		log.Printf("slackbot/cred: broker returned %d: %s", resp.StatusCode, string(respBody))
+		detail := string(respBody)
+		if len(detail) > 500 {
+			detail = detail[:500] + "..."
+		}
 		w.bot.postThreadReply(channelID, threadTS,
-			fmt.Sprintf("Re-authentication failed (HTTP %d). Check the code and try again.", resp.StatusCode))
+			fmt.Sprintf("Re-authentication failed (HTTP %d):\n```\n%s\n```\nCheck the code and try again.", resp.StatusCode, detail))
 	}
 }
 
