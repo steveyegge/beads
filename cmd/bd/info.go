@@ -181,14 +181,18 @@ var versionChanges = []VersionChange{
 		Version: "0.58.3",
 		Date:    "2026-02-13",
 		Changes: []string{
-			"FIX: Slack bot constructs auth URL when broker omits it in NATS event; adds rate-limiting for reauth notifications",
+			"FIX: Slack bot constructs auth URL when broker omits it in NATS event",
+			"FIX: Rate-limiting for reauth notifications to prevent spam",
+			"FIX: OAuth authorization code parsing strips code#state suffix",
 		},
 	},
 	{
 		Version: "0.58.1",
 		Date:    "2026-02-13",
 		Changes: []string{
-			"FIX: Slack bot now correctly parses scoped NATS decision subjects (decisions.<scope>.<EventType>)",
+			"FIX: Slack bot correctly parses scoped NATS decision subjects (decisions.<scope>.<EventType>)",
+			"NEW: Credential watcher for automated Coop API token refresh",
+			"FIX: Dedicated broker auth token used for Coop API calls",
 		},
 	},
 	{
