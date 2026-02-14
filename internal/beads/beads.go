@@ -89,6 +89,10 @@ func FollowRedirect(beadsDir string) string {
 		fmt.Fprintf(os.Stderr, "Warning: redirect chains not allowed, ignoring redirect in %s\n", target)
 	}
 
+	if os.Getenv("BD_DEBUG_ROUTING") != "" {
+		fmt.Fprintf(os.Stderr, "[routing] Followed redirect from %s -> %s\n", beadsDir, target)
+	}
+
 	return target
 }
 

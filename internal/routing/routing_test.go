@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -412,5 +413,157 @@ func TestFindTownRoutes_SymlinkedBeadsDir(t *testing.T) {
 				t.Errorf("Route resolution failed:\n  got:  %s\n  want: %s", actualPath, expectedRigPath)
 			}
 		}
+	}
+}
+
+// TestResolveBeadsDirForRig_FollowsRedirect verifies that ResolveBeadsDirForRig
+// correctly follows redirect files when resolving rig paths.
+func TestResolveBeadsDirForRig_FollowsRedirect(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Resolve symlinks in tmpDir (macOS /var -> /private/var)
+	tmpDir, err := filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create town structure:
+	// tmpDir/
+	//   mayor/
+	//     town.json
+	//   .beads/
+	//     routes.jsonl
+	//   project/
+	//     .beads/
+	//       redirect  <- points to actual/.beads
+	//   actual/
+	//     .beads/     <- real beads directory
+
+	// Create mayor/town.json to mark town root
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create town-level .beads with routes.jsonl
+	townBeadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	routesContent := `{"prefix": "proj-", "path": "project"}
+`
+	if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(routesContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create stub project/.beads with redirect
+	stubBeadsDir := filepath.Join(tmpDir, "project", ".beads")
+	if err := os.MkdirAll(stubBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create actual/.beads as the real target
+	actualBeadsDir := filepath.Join(tmpDir, "actual", ".beads")
+	if err := os.MkdirAll(actualBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write redirect file pointing to actual/.beads
+	redirectContent := "# Redirect to actual storage location\n" + actualBeadsDir + "\n"
+	if err := os.WriteFile(filepath.Join(stubBeadsDir, "redirect"), []byte(redirectContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to town root (required for findTownRootFromCWD)
+	t.Chdir(tmpDir)
+
+	// Test ResolveBeadsDirForRig
+	resolvedDir, prefix, err := ResolveBeadsDirForRig("proj-", townBeadsDir)
+	if err != nil {
+		t.Fatalf("ResolveBeadsDirForRig() error = %v", err)
+	}
+
+	if prefix != "proj-" {
+		t.Errorf("ResolveBeadsDirForRig() prefix = %q, want %q", prefix, "proj-")
+	}
+
+	// The resolved directory should be the actual target, not the stub
+	resolvedResolved, _ := filepath.EvalSymlinks(resolvedDir)
+	actualResolved, _ := filepath.EvalSymlinks(actualBeadsDir)
+	if resolvedResolved != actualResolved {
+		t.Errorf("ResolveBeadsDirForRig() did not follow redirect:\n  got:  %s\n  want: %s", resolvedDir, actualBeadsDir)
+	}
+}
+
+// TestResolveBeadsDirForID_FollowsRedirect verifies that ResolveBeadsDirForID
+// correctly follows redirect files when resolving issue ID lookups.
+func TestResolveBeadsDirForID_FollowsRedirect(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Resolve symlinks in tmpDir (macOS /var -> /private/var)
+	tmpDir, err := filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create town structure with redirect
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create town-level .beads with routes.jsonl
+	townBeadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	routesContent := `{"prefix": "test-", "path": "myproject"}
+`
+	if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(routesContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create stub myproject/.beads with redirect
+	stubBeadsDir := filepath.Join(tmpDir, "myproject", ".beads")
+	if err := os.MkdirAll(stubBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create actual target directory
+	actualBeadsDir := filepath.Join(tmpDir, "storage", ".beads")
+	if err := os.MkdirAll(actualBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write redirect file
+	if err := os.WriteFile(filepath.Join(stubBeadsDir, "redirect"), []byte(actualBeadsDir+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to town root
+	t.Chdir(tmpDir)
+
+	// Test ResolveBeadsDirForID with an ID that matches the route prefix
+	ctx := context.Background()
+	resolvedDir, routed, err := ResolveBeadsDirForID(ctx, "test-abc123", townBeadsDir)
+	if err != nil {
+		t.Fatalf("ResolveBeadsDirForID() error = %v", err)
+	}
+
+	if !routed {
+		t.Error("ResolveBeadsDirForID() routed = false, want true")
+	}
+
+	// The resolved directory should be the actual target, not the stub
+	resolvedResolved, _ := filepath.EvalSymlinks(resolvedDir)
+	actualResolved, _ := filepath.EvalSymlinks(actualBeadsDir)
+	if resolvedResolved != actualResolved {
+		t.Errorf("ResolveBeadsDirForID() did not follow redirect:\n  got:  %s\n  want: %s", resolvedDir, actualBeadsDir)
 	}
 }
