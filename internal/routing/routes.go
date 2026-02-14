@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -183,7 +184,7 @@ func ResolveBeadsDirForRig(rigOrPrefix, currentBeadsDir string) (beadsDir string
 	}
 
 	// Follow redirect if present
-	targetPath = resolveRedirect(targetPath)
+	targetPath = beads.FollowRedirect(targetPath)
 
 	// Verify the target exists
 	if info, statErr := os.Stat(targetPath); statErr != nil || !info.IsDir() {
@@ -261,7 +262,7 @@ func ResolveBeadsDirForID(ctx context.Context, id, currentBeadsDir string) (stri
 					}
 
 					// Follow redirect if present
-					targetPath = resolveRedirect(targetPath)
+					targetPath = beads.FollowRedirect(targetPath)
 
 					// Verify the target exists
 					if info, err := os.Stat(targetPath); err == nil && info.IsDir() {
@@ -362,50 +363,6 @@ func findTownRoutes(currentBeadsDir string) ([]Route, string) {
 	}
 
 	return routes, townRoot
-}
-
-// resolveRedirect checks for a redirect file in the beads directory
-// and resolves the redirect path if present.
-func resolveRedirect(beadsDir string) string {
-	redirectFile := filepath.Join(beadsDir, "redirect")
-	data, err := os.ReadFile(redirectFile) //nolint:gosec // redirectFile is constructed from known beadsDir
-	if err != nil {
-		if os.Getenv("BD_DEBUG_ROUTING") != "" {
-			fmt.Fprintf(os.Stderr, "[routing] No redirect file at %s: %v\n", redirectFile, err)
-		}
-		return beadsDir // No redirect
-	}
-
-	redirectPath := strings.TrimSpace(string(data))
-	if os.Getenv("BD_DEBUG_ROUTING") != "" {
-		fmt.Fprintf(os.Stderr, "[routing] Read redirect: %q from %s\n", redirectPath, redirectFile)
-	}
-	if redirectPath == "" {
-		return beadsDir
-	}
-
-	// Handle relative paths
-	if !filepath.IsAbs(redirectPath) {
-		redirectPath = filepath.Join(beadsDir, redirectPath)
-	}
-
-	// Clean and resolve the path
-	redirectPath = filepath.Clean(redirectPath)
-	if os.Getenv("BD_DEBUG_ROUTING") != "" {
-		fmt.Fprintf(os.Stderr, "[routing] Resolved redirect path: %s\n", redirectPath)
-	}
-
-	// Verify the redirect target exists
-	if info, err := os.Stat(redirectPath); err == nil && info.IsDir() {
-		if os.Getenv("BD_DEBUG_ROUTING") != "" {
-			fmt.Fprintf(os.Stderr, "[routing] Followed redirect from %s -> %s\n", beadsDir, redirectPath)
-		}
-		return redirectPath
-	} else if os.Getenv("BD_DEBUG_ROUTING") != "" {
-		fmt.Fprintf(os.Stderr, "[routing] Redirect target check failed: %v\n", err)
-	}
-
-	return beadsDir
 }
 
 // RoutedStorage represents a storage connection that may have been routed
