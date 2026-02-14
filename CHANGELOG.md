@@ -7,6 +7,167 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-02-14
+
+**Dolt Transition Complete** — SQLite removed, Dolt is the sole storage backend.
+
+This is a landmark release. The entire storage layer has been replaced: SQLite backend deleted,
+JSONL sync layer removed, daemon/RPC subsystem eliminated. Over 30,000 lines of legacy code
+removed. Beads now runs natively on Dolt with Git-like branching, merging, and collaboration.
+
+### Added
+
+#### Dolt Backend
+- **`bd dolt` command** - Configure Dolt server mode, connection settings, and status
+- **`bd sql` command** - Raw SQL access to the Dolt database for debugging and queries
+- **`BD_BRANCH` support** - Branch-per-polecat write isolation for concurrent agents
+- **JSONL import/restore** - Recovery path for Dolt corruption via JSONL reimport
+- **Cycle detection in AddDependency** - Prevents circular dependency creation
+- **Issue existence checks** - Validates issue IDs before creating dependencies
+- **Retry-aware DB helpers** - Expanded retryable error coverage including transient Dolt failures
+- **Tombstone/delete operations** - Full delete support for Dolt backend
+
+#### New Commands & Flags
+- **`bd help --all`** - Dump the complete command reference
+- **`--watch` flag for `bd show`** - Live-updating issue display
+- **`--stdin` flag for `bd vc commit`** - Read commit messages from stdin
+- **`--rig` flag for `bd list` and `bd ready`** - Cross-rig queries from any directory
+- **`bd human` subcommands** - Native human bead management
+- **`decision` type** - Built-in issue type with aliases and help strings
+
+#### Graph & Visualization
+- **Terminal-native DAG** - Default `bd graph` view renders in the terminal
+- **DOT and HTML export** - `bd graph --format=dot` and interactive HTML visualization
+- **Cross-database dep resolution** - `bd show`/`graph`/`blocked` follow prefix routes
+
+#### Doctor
+- **`--check=artifacts`** - Classic artifact cleanup
+- **MCP tool reference detection** - Validate MCP configuration
+- **Claude Code integration checks** - Enhanced AI tool validation
+- **Category grouping** - Warnings and errors grouped by category
+- **Stale git hook detection** - Flag hooks by `bd-hooks-version`
+- **Backend-agnostic checks** - All doctor checks work with Dolt
+
+#### Workflow
+- **Frictionless `bd init`** - Simplified first-run experience with cancelable prompts
+- **`BD_NAME` env var** - Multi-instance help text identity
+
+### Fixed
+
+#### Dolt Stability
+- **joinIter panic prevention** - Replace `IN`/`EXISTS` subqueries with Go-level filtering
+- **Embedded Dolt self-deadlock** - Fixed in git hooks and `bd migrate`
+- **Auto-commit defaults** - OFF in server mode, ON in embedded mode
+- **schemaReady()** - No longer hardcodes "beads" database name
+- **SQLite creation prevention** - Blocked when Dolt backend is configured
+- **Auto-create Dolt branch** - On `BD_BRANCH` checkout failure
+- **FK violation in rename** - Disable FK checks during Dolt rename operations
+
+#### Storage Interface
+- **Factory pattern everywhere** - All code uses `factory.NewFromConfig`, no direct SQLite instantiation
+- **CompactableStorage interface** - Compact subcommands use interface, not concrete types
+- **MultiRepoStorage interface** - Multi-repo sync uses interface, not type assertions
+- **Storage interface promotions** - `DeleteIssuesBySourceRepo`, `ClearRepoMtime` added to interface
+
+#### Doctor
+- **Dolt data gitignore** - Prevent accidental commits of database files
+- **routes.jsonl false positive** - Fixed routing validation
+- **Backend detection** - Fix functions detect SQLite by file type, not config
+- **Symlink resolution** - macOS doctor test compatibility
+
+#### CLI & Display
+- **`bd show` exit code** - Non-zero when issue not found
+- **`--parent` dotted-ID children** - Parent filtering includes dotted-ID descendants
+- **Closed blocker filtering** - `bd list` annotations exclude closed blockers
+- **Upgrade notifications** - Only shown for actual version upgrades
+
+#### Security
+- **XSS prevention** - Graph export sanitized for XSS vulnerabilities
+- **Windows TCP validation** - Network and address validation in transport
+- **MaxMessageSize limit** - Prevents unbounded memory allocation in RPC
+- **Nested batch rejection** - Prevents stack overflow in RPC operations
+
+#### Daemon & RPC (pre-removal fixes)
+- **Thread-safe DaemonLock.Close()** - sync.Once protection
+- **Nil storage guards** - handleHealth, handleClose nil checks
+- **WaitGroup drain** - Replaces polling in Stop() to prevent storage-close race
+- **Missing OpDepTree handler** - Implemented in handleRequest switch
+- **Memory leak prevention** - Copy recentMutations to prevent unbounded growth
+- **Channel leak elimination** - Pre-allocated nil channels in select loop
+- **Shutdown reliability** - 5s timeout, signal handling, log rotation detection
+
+#### Build & Platform
+- **Linuxbrew ICU paths** - Makefile supports non-standard ICU locations
+- **GOTOOLCHAIN** - Makefile matches go.mod version
+- **Windows build** - BINARY conditional fix, ICU dependency removed
+- **Nix build** - Flake fix and gosec lint resolution
+- **Fedora Silverblue** - Allow `/var/home` in safe boundary check
+- **`go install` fix** - Remove local replace directive
+
+### Changed
+
+#### Architecture (Breaking)
+- **SQLite backend deleted** - Dolt is now the sole primary storage backend
+- **JSONL sync layer deleted** - Replaced by Dolt-native sync (`internal/importer` removed)
+- **Daemon/RPC subsystem deleted** - `internal/rpc/` package removed (-19,663 lines)
+- **JSONL flush/sync machinery deleted** - No more markDirtyAndScheduleFlush (-7,634 lines)
+- **171 dead `if daemonClient != nil` branches removed** (-3,384 lines)
+- **Dirty tracking stripped** - From Storage interface and all implementations
+- **Default backend** - Now Dolt instead of SQLite
+
+#### Refactoring
+- **`list.go`, `show.go`, `sync.go` split** - Into domain-focused files
+- **`queries.go` split** - Into parsing, search, and delete modules
+
+#### Dependencies
+- Bump `golang.org/x/mod` 0.32.0 → 0.33.0
+- Bump `golang.org/x/term` 0.39.0 → 0.40.0
+- Bump `golang.org/x/sys` 0.40.0 → 0.41.0
+- Bump `anthropic-sdk-go`, `fastmcp`
+
+### Removed
+
+- **SQLite storage backend** - Replaced by Dolt
+- **JSONL sync layer** - `internal/importer` package deleted
+- **Daemon/RPC subsystem** - `internal/rpc/` package deleted
+- **JSONL flush/sync machinery** - All flush, sync, and dirty tracking code
+- **`bd clean` command** - Stale reference removed
+- **Type-based parent-child validation** - Rejected custom types incorrectly
+- **Dead Homebrew CI job** - Removed stale workflow
+
+### Known Limitations
+
+- **Embedded Dolt restored** - v0.49.5 premature removal was reverted; embedded mode is still needed for standalone beads (only Gas Town uses server-only)
+- **Test suite speed** - 279 tests still take 8+ minutes due to per-test database creation
+- **Pre-existing test failures** - graph_visual, graph_export, sync_branch_jsonl tests have known failures on main
+- **bd search panic** - joinIter panic on certain complex queries (upstream Dolt engine issue)
+
+### Migration Guide
+
+If upgrading from v0.49.x with SQLite:
+1. Run `bd migrate --to-dolt` to convert your database
+2. The daemon is no longer needed — `bd` connects directly to Dolt
+3. JSONL sync is replaced by Dolt's native Git-like branching
+4. If issues arise, `bd` can import from JSONL backup: use the JSONL import/restore path
+
+### Contributors
+
+Thanks to all contributors for this release:
+- @peterkc - Dolt gitignore entries (#1714), metadata writes (#1741)
+- @sjsyrek - Multiple fixes: create deps (#1742), lint (#1734), Dolt seed (#1733), doctor (#1732), worktree boundary (#1731), ready output (#1728), CI test fixes (#1746), and more
+- @julianknutsen - Dependency validation (#1726)
+- @seanbearden - Batch delete optimization (#1707)
+- @l0g1x - Doctor performance (#1706)
+- @bryanhirsch - Hosted Dolt TLS support (#1704)
+- @HuyNguyenDinh - Linear project sync (#1674, #1709)
+- @sfncore - TOON format support (#1712)
+- @nz - Nix flake update (#1718)
+- @dmotles - Hook and migrate deadlock fixes (#1720, #1716)
+- @krantiutils - Migrate backend fix (#1715)
+- @timsehn - Dolt link in README (#1717)
+- @EchBTI - Redirect path resolution (#1745)
+- And many more community contributors
+
 ## [0.49.6] - 2026-02-08
 
 ### Reverted
