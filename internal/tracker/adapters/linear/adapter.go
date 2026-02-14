@@ -32,8 +32,8 @@ type Adapter struct {
 }
 
 func (a *Adapter) Name() string         { return "linear" }
-func (a *Adapter) DisplayName() string   { return "Linear" }
-func (a *Adapter) ConfigPrefix() string  { return "linear" }
+func (a *Adapter) DisplayName() string  { return "Linear" }
+func (a *Adapter) ConfigPrefix() string { return "linear" }
 
 func (a *Adapter) Init(ctx context.Context, store storage.Storage) error {
 	a.store = store
@@ -203,14 +203,14 @@ func (a *Adapter) getConfig(ctx context.Context, key, envVar string) (string, er
 // linearToTrackerIssue converts a linear.Issue to a tracker.TrackerIssue.
 func linearToTrackerIssue(li *linearlib.Issue) tracker.TrackerIssue {
 	ti := tracker.TrackerIssue{
-		ID:         li.ID,
-		Identifier: li.Identifier,
-		URL:        li.URL,
-		Title:      li.Title,
+		ID:          li.ID,
+		Identifier:  li.Identifier,
+		URL:         li.URL,
+		Title:       li.Title,
 		Description: li.Description,
-		Priority:   li.Priority,
-		Labels:     make([]string, 0),
-		Raw:        li,
+		Priority:    li.Priority,
+		Labels:      make([]string, 0),
+		Raw:         li,
 	}
 
 	if li.State != nil {

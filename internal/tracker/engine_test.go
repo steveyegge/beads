@@ -32,14 +32,14 @@ func newMockTracker(name string) *mockTracker {
 	}
 }
 
-func (m *mockTracker) Name() string                                        { return m.name }
-func (m *mockTracker) DisplayName() string                                 { return m.name }
-func (m *mockTracker) ConfigPrefix() string                                { return m.name }
-func (m *mockTracker) Init(_ context.Context, _ storage.Storage) error     { return nil }
-func (m *mockTracker) Validate() error                                     { return nil }
-func (m *mockTracker) Close() error                                        { return nil }
-func (m *mockTracker) FieldMapper() FieldMapper                       { return m.fieldMapper }
-func (m *mockTracker) IsExternalRef(ref string) bool                  { return len(ref) > 0 }
+func (m *mockTracker) Name() string                                    { return m.name }
+func (m *mockTracker) DisplayName() string                             { return m.name }
+func (m *mockTracker) ConfigPrefix() string                            { return m.name }
+func (m *mockTracker) Init(_ context.Context, _ storage.Storage) error { return nil }
+func (m *mockTracker) Validate() error                                 { return nil }
+func (m *mockTracker) Close() error                                    { return nil }
+func (m *mockTracker) FieldMapper() FieldMapper                        { return m.fieldMapper }
+func (m *mockTracker) IsExternalRef(ref string) bool                   { return len(ref) > 0 }
 func (m *mockTracker) ExtractIdentifier(ref string) string {
 	// Extract "EXT-1" from "https://test.test/EXT-1"
 	if i := strings.LastIndex(ref, "/"); i >= 0 {
@@ -104,11 +104,11 @@ func (m *mockMapper) PriorityToBeads(p interface{}) int {
 	}
 	return 2
 }
-func (m *mockMapper) PriorityToTracker(p int) interface{}             { return p }
-func (m *mockMapper) StatusToBeads(_ interface{}) types.Status        { return types.StatusOpen }
-func (m *mockMapper) StatusToTracker(s types.Status) interface{}      { return string(s) }
-func (m *mockMapper) TypeToBeads(_ interface{}) types.IssueType       { return types.TypeTask }
-func (m *mockMapper) TypeToTracker(t types.IssueType) interface{}     { return string(t) }
+func (m *mockMapper) PriorityToTracker(p int) interface{}         { return p }
+func (m *mockMapper) StatusToBeads(_ interface{}) types.Status    { return types.StatusOpen }
+func (m *mockMapper) StatusToTracker(s types.Status) interface{}  { return string(s) }
+func (m *mockMapper) TypeToBeads(_ interface{}) types.IssueType   { return types.TypeTask }
+func (m *mockMapper) TypeToTracker(t types.IssueType) interface{} { return string(t) }
 func (m *mockMapper) IssueToTracker(issue *types.Issue) map[string]interface{} {
 	return map[string]interface{}{
 		"title":       issue.Title,

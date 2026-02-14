@@ -33,7 +33,7 @@ type Adapter struct {
 	store  storage.Storage
 }
 
-func (a *Adapter) Name() string        { return "gitlab" }
+func (a *Adapter) Name() string         { return "gitlab" }
 func (a *Adapter) DisplayName() string  { return "GitLab" }
 func (a *Adapter) ConfigPrefix() string { return "gitlab" }
 
@@ -185,13 +185,13 @@ func (a *Adapter) getConfig(ctx context.Context, key, envVar string) (string, er
 // gitlabToTrackerIssue converts a gitlab.Issue to a tracker.TrackerIssue.
 func gitlabToTrackerIssue(gl *gitlablib.Issue) tracker.TrackerIssue {
 	ti := tracker.TrackerIssue{
-		ID:         strconv.Itoa(gl.ID),
-		Identifier: strconv.Itoa(gl.IID),
-		URL:        gl.WebURL,
-		Title:      gl.Title,
+		ID:          strconv.Itoa(gl.ID),
+		Identifier:  strconv.Itoa(gl.IID),
+		URL:         gl.WebURL,
+		Title:       gl.Title,
 		Description: gl.Description,
-		Labels:     gl.Labels,
-		Raw:        gl,
+		Labels:      gl.Labels,
+		Raw:         gl,
 	}
 
 	if gl.State != "" {
