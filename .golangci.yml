@@ -229,9 +229,9 @@ linters:
         linters:
           - gosec
         text: 'G204'
-      # gosec G104: Errors unhandled in spike/test utility code and best-effort cleanup
-      - path: 'cmd/nats-spike/main\.go|internal/coop/attach\.go|internal/coop/watcher\.go|internal/rpc/http_server\.go|internal/storage/dolt/watchdog\.go|internal/validation/semantic_id\.go'
-        linters:
+      # gosec G104: Errors unhandled — duplicates errcheck which is already configured
+      # with fine-grained exclude-functions. G104 is redundant when errcheck is enabled.
+      - linters:
           - gosec
         text: 'G104'
       # gosec G306: WriteFile 0644 permissions are appropriate for config/temp files
