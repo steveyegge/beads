@@ -306,10 +306,13 @@ func (w *CoopCredWatcher) HandleThreadReply(channelID, threadTS, text, userID st
 		log.Printf("slackbot/cred: recovered reauth thread %s for account %s", threadTS, info.account)
 	}
 
-	code := extractAuthCode(strings.TrimSpace(text))
+	trimmed := strings.TrimSpace(text)
+	log.Printf("slackbot/cred: HandleThreadReply raw_text=%q (len=%d)", trimmed, len(trimmed))
+	code := extractAuthCode(trimmed)
 	if code == "" {
 		return false
 	}
+	log.Printf("slackbot/cred: HandleThreadReply extracted_code=%q (len=%d)", code, len(code))
 
 	// Submit the code to the broker.
 	go w.submitReauthCode(info, code, channelID, threadTS, userID)
@@ -335,6 +338,9 @@ func (w *CoopCredWatcher) submitReauthCode(info reauthInfo, code, channelID, thr
 		log.Printf("slackbot/cred: marshal reauth code request: %v", err)
 		return
 	}
+
+	log.Printf("slackbot/cred: submitting code to broker: account=%s code_len=%d code_prefix=%q redirect_uri=%s client_id=%s",
+		info.account, len(code), safePrefix(code, 10), info.redirectURI, info.clientID)
 
 	url := w.brokerURL + "/api/v1/credentials/login-reauth/complete"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
@@ -599,6 +605,14 @@ func (w *CoopCredWatcher) pullReauthURL(account string) {
 
 	log.Printf("slackbot/cred: pulled reauth URL for %s from broker (startup race recovery)", account)
 	w.notifyReauth(account, session.AuthURL)
+}
+
+// safePrefix returns the first n characters of s (for safe logging of secrets).
+func safePrefix(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // Close drains the subscription and closes the NATS connection.
