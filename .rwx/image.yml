@@ -82,19 +82,21 @@ tasks:
   - key: build-oj
     run: |
       set -ex
+      echo "ARTIFACT_DIR=$(pwd)" # debug: show where artifacts resolve
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.93.0
       export PATH="$HOME/.cargo/bin:$PATH"
 
       git clone --depth 1 --branch main https://github.com/groblegark/oddjobs.git /tmp/oj
-      cd /tmp/oj
-      rm -f .cargo/config.toml
-      cargo build --release -p oj
+      rm -f /tmp/oj/.cargo/config.toml
+      cargo build --manifest-path /tmp/oj/Cargo.toml --release -p oj
 
-      cp /tmp/oj/target/release/oj /tmp/oj-binary
+      # Copy to working dir so artifact path resolves correctly
+      cp /tmp/oj/target/release/oj oj
+      ls -la oj
     outputs:
       artifacts:
         - key: oj-binary
-          path: /tmp/oj-binary
+          path: oj
 
   # ═══════════════════════════════════════════════════════════════════════
   # Push — assemble alpine runtime image from artifacts, push to GHCR
