@@ -8,81 +8,77 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
-// TestSyncModeConfig verifies sync mode configuration storage and retrieval.
+// setupYamlConfig creates a temp .beads/ directory with config.yaml,
+// changes to it, and initializes viper. Cleanup restores cwd and
+// re-initializes viper to avoid global state leaking between tests.
+func setupYamlConfig(t *testing.T) {
+	t.Helper()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get cwd: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(""), 0o644); err != nil {
+		t.Fatalf("failed to create config.yaml: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	config.Initialize() // Points viper at temp .beads/config.yaml
+
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+		config.Initialize() // Re-initialize viper to original config
+	})
+}
+
+// TestSyncModeConfig verifies sync mode yaml roundtrip: set via SetSyncMode,
+// read back via GetSyncMode. Storage parameter is nil since both functions
+// now use config.yaml exclusively.
 func TestSyncModeConfig(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
-
-	// Create .beads directory
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-
-	// Create store
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
-	defer testStore.Close()
+	setupYamlConfig(t)
 
 	// Test 1: Default mode is git-portable
-	mode := GetSyncMode(ctx, testStore)
+	mode := GetSyncMode(ctx, nil)
 	if mode != SyncModeGitPortable {
 		t.Errorf("default sync mode = %q, want %q", mode, SyncModeGitPortable)
 	}
-	t.Logf("✓ Default sync mode is git-portable")
 
-	// Test 2: Set and get realtime mode
-	if err := SetSyncMode(ctx, testStore, SyncModeRealtime); err != nil {
-		t.Fatalf("failed to set sync mode: %v", err)
+	// Test 2-4: Set and get each non-default mode
+	for _, want := range []string{SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders} {
+		if err := SetSyncMode(ctx, nil, want); err != nil {
+			t.Fatalf("SetSyncMode(%q) failed: %v", want, err)
+		}
+		got := GetSyncMode(ctx, nil)
+		if got != want {
+			t.Errorf("GetSyncMode() = %q after setting %q", got, want)
+		}
 	}
-	mode = GetSyncMode(ctx, testStore)
-	if mode != SyncModeRealtime {
-		t.Errorf("sync mode = %q, want %q", mode, SyncModeRealtime)
-	}
-	t.Logf("✓ Can set and get realtime mode")
-
-	// Test 3: Set and get dolt-native mode
-	if err := SetSyncMode(ctx, testStore, SyncModeDoltNative); err != nil {
-		t.Fatalf("failed to set sync mode: %v", err)
-	}
-	mode = GetSyncMode(ctx, testStore)
-	if mode != SyncModeDoltNative {
-		t.Errorf("sync mode = %q, want %q", mode, SyncModeDoltNative)
-	}
-	t.Logf("✓ Can set and get dolt-native mode")
-
-	// Test 4: Set and get belt-and-suspenders mode
-	if err := SetSyncMode(ctx, testStore, SyncModeBeltAndSuspenders); err != nil {
-		t.Fatalf("failed to set sync mode: %v", err)
-	}
-	mode = GetSyncMode(ctx, testStore)
-	if mode != SyncModeBeltAndSuspenders {
-		t.Errorf("sync mode = %q, want %q", mode, SyncModeBeltAndSuspenders)
-	}
-	t.Logf("✓ Can set and get belt-and-suspenders mode")
 
 	// Test 5: Invalid mode returns error
-	err = SetSyncMode(ctx, testStore, "invalid-mode")
-	if err == nil {
+	if err := SetSyncMode(ctx, nil, "invalid-mode"); err == nil {
 		t.Error("expected error for invalid sync mode")
 	}
-	t.Logf("✓ Invalid mode correctly rejected")
 
-	// Test 6: Invalid mode in DB defaults to git-portable
-	if err := testStore.SetConfig(ctx, SyncModeConfigKey, "invalid"); err != nil {
-		t.Fatalf("failed to set invalid config: %v", err)
+	// Test 6: Invalid mode in config.yaml defaults to git-portable (FR-011)
+	if err := config.SetYamlConfig("sync.mode", "bogus-value"); err != nil {
+		t.Fatalf("failed to write invalid mode to config.yaml: %v", err)
 	}
-	mode = GetSyncMode(ctx, testStore)
+	config.Initialize() // Re-read config.yaml with invalid value
+	mode = GetSyncMode(ctx, nil)
 	if mode != SyncModeGitPortable {
-		t.Errorf("invalid mode should default to %q, got %q", SyncModeGitPortable, mode)
+		t.Errorf("invalid mode in config.yaml: GetSyncMode() = %q, want %q", mode, SyncModeGitPortable)
 	}
-	t.Logf("✓ Invalid mode in DB defaults to git-portable")
 }
 
 // TestShouldExportJSONL verifies JSONL export behavior per mode.

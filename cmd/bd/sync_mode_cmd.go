@@ -145,12 +145,6 @@ Example:
 			os.Exit(1)
 		}
 
-		// Require direct mode for database writes
-		if err := ensureDirectMode("sync mode set requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
 		// Set the mode
 		if err := SetSyncMode(rootCtx, store, mode); err != nil {
 			fmt.Fprintf(os.Stderr, "Error setting sync mode: %v\n", err)

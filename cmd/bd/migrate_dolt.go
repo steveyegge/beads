@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -132,13 +133,14 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 		exitWithError("import_failed", importErr.Error(), "partial Dolt directory has been cleaned up")
 	}
 
-	// Set sync.mode to dolt-native in the DB so ShouldExportJSONL skips
-	// the expensive JSONL export. Without this, the migrated DB has no
-	// sync.mode set, defaulting to git-portable (10-25s export tax per write).
-	if err := doltStore.SetConfig(ctx, SyncModeConfigKey, SyncModeDoltNative); err != nil {
-		printWarning(fmt.Sprintf("failed to set sync.mode in DB: %v", err))
+	// Set sync.mode to dolt-native in config.yaml so ShouldExportJSONL skips
+	// the expensive JSONL export. Without this, sync.mode defaults to
+	// git-portable (10-25s export tax per write).
+	if err := config.SetYamlConfig("sync.mode", SyncModeDoltNative); err != nil {
+		printWarning(fmt.Sprintf("failed to set sync.mode in config.yaml: %v", err))
 	} else {
-		printSuccess("Set sync.mode = dolt-native in database")
+		config.Set("sync.mode", SyncModeDoltNative)
+		printSuccess("Set sync.mode = dolt-native in config.yaml")
 	}
 
 	// Commit the migration
