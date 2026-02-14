@@ -260,7 +260,7 @@ slackBot:
     tag: ""         # Defaults to main image.tag
     pullPolicy: ""  # Defaults to main image.pullPolicy
   secretName: "slack-bot-credentials"
-  coopBrokerURL: ""  # Coop broker URL for credential reauth (e.g. "http://gastown-next-coop-broker:8080")
+  coopBrokerURL: ""  # Coopmux URL for credential reauth (e.g. "http://gastown-next-coop-broker:9800")
   resources:
     requests:
       cpu: 100m
