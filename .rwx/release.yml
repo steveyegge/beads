@@ -60,13 +60,13 @@ tasks:
     use: goreleaser
     if: ${{ init.tag != 'dev' }}
     run: |
-      # Trigger gastown agent image rebuild
-      curl -X POST \
-        -H "Authorization: token $DISPATCH_TOKEN" \
-        -H "Accept: application/vnd.github.v3+json" \
-        "https://api.github.com/repos/groblegark/gastown/dispatches" \
-        -d "{\"event_type\":\"beads-release\",\"client_payload\":{\"tag\":\"$TAG\"}}"
-      echo "Dispatched beads-release to gastown with tag $TAG"
+      # Trigger gastown agent image rebuild via RWX dispatch API
+      DISPATCH_ID=$(curl -sSf -X POST https://cloud.rwx.com/mint/api/runs/dispatches \
+        -H "Authorization: Bearer $RWX_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"key\": \"gastown-agent-rebuild\", \"params\": {\"trigger-source\": \"beads-release-$TAG\"}, \"ref\": \"main\", \"title\": \"Agent rebuild (beads $TAG)\"}" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('dispatch_id',''))")
+      echo "Dispatched gastown-agent-rebuild via RWX (dispatch_id=$DISPATCH_ID, tag=$TAG)"
     env:
-      DISPATCH_TOKEN: ${{ secrets.GASTOWN_DISPATCH_TOKEN }}
+      RWX_TOKEN: ${{ secrets.RWX_ACCESS_TOKEN }}
       TAG: ${{ init.tag }}
