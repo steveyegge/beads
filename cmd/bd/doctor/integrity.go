@@ -397,7 +397,7 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Database belongs to different repository",
 				Detail:  fmt.Sprintf("stored: %s, current: %s", storedRepoID[:8], currentRepoID[:8]),
-				Fix:     "Run 'bd migrate --update-repo-id' if URL changed, or 'rm -rf .beads && bd init --backend dolt' if wrong database",
+				Fix:     "Run 'bd migrate --update-repo-id' if URL changed, or 'rm -rf .beads && bd init' if wrong database",
 			}
 		}
 

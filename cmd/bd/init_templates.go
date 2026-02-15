@@ -37,31 +37,16 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 # Example: issue-prefix: "myproject" creates issues like "myproject-1", "myproject-2", etc.
 %s
 
-# Use no-db mode: load from JSONL, no SQLite, write back after each command
+# Use no-db mode: load from JSONL, write back after each command
 # When true, bd will use .beads/issues.jsonl as the source of truth
-# instead of SQLite database
+# instead of the Dolt database
 %s
-
-# Disable daemon for RPC communication (forces direct database access)
-# no-daemon: false
-
-# Disable auto-flush of database to JSONL after mutations
-# no-auto-flush: false
-
-# Disable auto-import from JSONL when it's newer than database
-# no-auto-import: false
 
 # Enable JSON output by default
 # json: false
 
 # Default actor for audit trails (overridden by BD_ACTOR or --actor)
 # actor: ""
-
-# Path to database (overridden by BEADS_DB or --db)
-# db: ""
-
-# Auto-start daemon if not running (can also use BEADS_AUTO_START_DAEMON)
-# auto-start-daemon: true
 
 # Debounce interval for auto-flush (can also use BEADS_FLUSH_DEBOUNCE)
 # flush-debounce: "5s"

@@ -83,7 +83,7 @@ Force: Delete and orphan dependents
 		// Handle batch deletion in direct mode
 		// Also use batch path for cascade (which needs to expand dependents)
 		if len(issueIDs) > 1 || cascade {
-			deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput)
+			deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, false)
 			return
 		}
 

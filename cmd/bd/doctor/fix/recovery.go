@@ -94,7 +94,7 @@ func databaseCorruptionRecovery(path string) error {
 //  1. Verify JSONL backup exists and has issues
 //  2. Back up the corrupted dolt directory
 //  3. Remove the corrupted dolt directory
-//  4. Re-initialize via bd init --backend dolt --force --from-jsonl
+//  4. Re-initialize via bd init --force
 //
 // The Dolt bootstrap in factory_dolt.go will automatically import from JSONL
 // when it finds no existing dolt database, so removing the corrupted directory
@@ -138,10 +138,10 @@ func doltCorruptionRecovery(path, beadsDir string) error {
 		return err
 	}
 
-	// Reinitialize: bd init --backend dolt --force --from-jsonl -q
-	// This creates a fresh dolt database and the Dolt bootstrap will import from JSONL.
+	// Reinitialize: bd init --force -q
+	// This creates a fresh Dolt database and the bootstrap will import from JSONL.
 	fmt.Printf("  Recovering %d issues from %s into fresh Dolt database\n", issueCount, filepath.Base(jsonlPath))
-	initCmd := newBdCmd(bdBinary, "init", "--backend", "dolt", "--force", "-q", "--skip-hooks", "--skip-merge-driver")
+	initCmd := newBdCmd(bdBinary, "init", "--force", "-q", "--skip-hooks")
 	initCmd.Dir = path
 	initCmd.Stdout = os.Stdout
 	initCmd.Stderr = os.Stderr
@@ -412,9 +412,9 @@ func doltCorruptionRecoveryWithOptions(path, beadsDir string, force bool, source
 		return err
 	}
 
-	// Reinitialize: bd init --backend dolt --force -q
+	// Reinitialize: bd init --force -q
 	fmt.Printf("  Recovering %d issues from %s into fresh Dolt database\n", issueCount, filepath.Base(jsonlPath))
-	initCmd := newBdCmd(bdBinary, "init", "--backend", "dolt", "--force", "-q", "--skip-hooks", "--skip-merge-driver")
+	initCmd := newBdCmd(bdBinary, "init", "--force", "-q", "--skip-hooks")
 	initCmd.Dir = path
 	initCmd.Stdout = os.Stdout
 	initCmd.Stderr = os.Stderr

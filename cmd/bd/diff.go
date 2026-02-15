@@ -29,14 +29,8 @@ Examples:
 		fromRef := args[0]
 		toRef := args[1]
 
-		// Check if storage supports versioning
-		vs, ok := storage.AsVersioned(store)
-		if !ok {
-			FatalErrorRespectJSON("diff requires Dolt backend (current backend does not support versioning)")
-		}
-
 		// Get diff between refs
-		entries, err := vs.Diff(ctx, fromRef, toRef)
+		entries, err := store.Diff(ctx, fromRef, toRef)
 		if err != nil {
 			FatalErrorRespectJSON("failed to get diff: %v", err)
 		}

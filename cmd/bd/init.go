@@ -44,19 +44,17 @@ With --stealth: configures per-repository git settings for invisible beads usage
   • Claude Code settings with bd onboard instruction
   Perfect for personal use without affecting repo collaborators.
 
-The default backend is Dolt. If a dolt sql-server is detected running on port 3307 or 3306,
-server mode is automatically enabled for multi-writer access. Use --server to explicitly
-enable server mode, or set connection details with --server-host, --server-port, and
---server-user. Password should be set via BEADS_DOLT_PASSWORD environment variable.`,
+If a dolt sql-server is detected running on port 3307 or 3306, server mode is automatically
+enabled for multi-writer access. Use --server to explicitly enable server mode, or set
+connection details with --server-host, --server-port, and --server-user. Password should
+be set via BEADS_DOLT_PASSWORD environment variable.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
 		branch, _ := cmd.Flags().GetString("branch")
-		backend, _ := cmd.Flags().GetString("backend")
 		contributor, _ := cmd.Flags().GetBool("contributor")
 		team, _ := cmd.Flags().GetBool("team")
 		stealth, _ := cmd.Flags().GetBool("stealth")
-		skipMergeDriver, _ := cmd.Flags().GetBool("skip-merge-driver")
 		skipHooks, _ := cmd.Flags().GetBool("skip-hooks")
 		force, _ := cmd.Flags().GetBool("force")
 		// fromJSONL flag is accepted but no longer used for SQLite import;
@@ -69,30 +67,8 @@ enable server mode, or set connection details with --server-host, --server-port,
 		serverPort, _ := cmd.Flags().GetInt("server-port")
 		serverUser, _ := cmd.Flags().GetString("server-user")
 
-		// Validate backend flag
-		if backend != "" && backend != configfile.BackendDolt {
-			if backend == configfile.BackendSQLite {
-				fmt.Fprintf(os.Stderr, "Error: SQLite backend has been removed. Use '--backend dolt' (now the default).\n")
-				fmt.Fprintf(os.Stderr, "If you have an existing SQLite database, run 'bd migrate-dolt' to convert it.\n")
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: invalid backend '%s' (must be 'dolt')\n", backend)
-			}
-			os.Exit(1)
-		}
-		if backend == "" {
-			if os.Getenv("BEADS_DB") != "" {
-				fmt.Fprintf(os.Stderr, "Warning: BEADS_DB environment variable detected (points to a SQLite file).\n")
-				fmt.Fprintf(os.Stderr, "SQLite backend has been removed. Ignoring BEADS_DB and using Dolt backend.\n")
-				fmt.Fprintf(os.Stderr, "To migrate your SQLite database, run 'bd migrate-dolt'.\n\n")
-			}
-			backend = configfile.BackendDolt // Dolt is the only supported backend
-		}
-
-		// Validate server mode requires dolt backend
-		if serverMode && backend != configfile.BackendDolt {
-			fmt.Fprintf(os.Stderr, "Error: --server flag requires --backend dolt\n")
-			os.Exit(1)
-		}
+		// Dolt is the only supported backend
+		backend := configfile.BackendDolt
 
 		// Initialize config (PersistentPreRun doesn't run for init command)
 		if err := config.Initialize(); err != nil {
@@ -116,10 +92,9 @@ enable server mode, or set connection details with --server-host, --server-port,
 				os.Exit(1)
 			}
 
-			// In stealth mode, skip git hooks and merge driver installation
+			// In stealth mode, skip git hooks installation
 			// since we handle it globally
 			skipHooks = true
-			skipMergeDriver = true
 		}
 
 		// Check BEADS_DB environment variable if --db flag not set
@@ -685,17 +660,6 @@ enable server mode, or set connection details with --server-host, --server-port,
 			}
 		}
 
-		// Check if we're in a git repo and merge driver isn't configured
-		// Install by default unless --skip-merge-driver is passed
-		// For colocated jj+git repos, merge driver is still useful
-		// For pure jj repos, skip merge driver (no git)
-		if !skipMergeDriver && isGitRepo() && !mergeDriverInstalled() {
-			if err := installMergeDriver(); err != nil && !quiet {
-				fmt.Fprintf(os.Stderr, "\n%s Failed to install merge driver: %v\n", ui.RenderWarn("⚠"), err)
-				fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd doctor --fix"))
-			}
-		}
-
 		// Set git index flags to hide JSONL from git status when sync.branch is configured.
 		// These flags are local-only (don't transfer via git clone), so each clone needs them set.
 		// This fixes the issue where fresh clones show .beads/issues.jsonl as modified.
@@ -794,13 +758,11 @@ func init() {
 	initCmd.Flags().StringP("prefix", "p", "", "Issue prefix (default: current directory name)")
 	initCmd.Flags().BoolP("quiet", "q", false, "Suppress output (quiet mode)")
 	initCmd.Flags().StringP("branch", "b", "", "Git branch for beads commits (default: current branch)")
-	initCmd.Flags().String("backend", "", "Storage backend: dolt (default, version-controlled)")
 	initCmd.Flags().Bool("contributor", false, "Run OSS contributor setup wizard")
 	initCmd.Flags().Bool("team", false, "Run team workflow setup wizard")
 	initCmd.Flags().Bool("stealth", false, "Enable stealth mode: global gitattributes and gitignore, no local repo tracking")
 	initCmd.Flags().Bool("setup-exclude", false, "Configure .git/info/exclude to keep beads files local (for forks)")
 	initCmd.Flags().Bool("skip-hooks", false, "Skip git hooks installation")
-	initCmd.Flags().Bool("skip-merge-driver", false, "Skip git merge driver setup")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if JSONL already has issues (may cause data loss)")
 	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
 

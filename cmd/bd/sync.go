@@ -714,7 +714,6 @@ func doExportSync(ctx context.Context, jsonlPath string, _, dryRun bool) error {
 		return fmt.Errorf("failed to initialize store: %w", err)
 	}
 
-	syncMode := GetSyncMode(ctx, store)
 	shouldExportJSONL := ShouldExportJSONL(ctx, store)
 	shouldUseDolt := ShouldUseDoltRemote(ctx, store)
 

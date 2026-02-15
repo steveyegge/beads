@@ -526,12 +526,6 @@ func CheckFreshClone(repoPath string) DoctorCheck {
 	if prefix != "" {
 		fixCmd = fmt.Sprintf("bd init --prefix %s", prefix)
 	}
-	if backend == configfile.BackendDolt {
-		fixCmd = "bd init --backend dolt"
-		if prefix != "" {
-			fixCmd = fmt.Sprintf("bd init --backend dolt --prefix %s", prefix)
-		}
-	}
 
 	return DoctorCheck{
 		Name:    "Fresh Clone",

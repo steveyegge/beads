@@ -295,15 +295,11 @@ func checkYAMLConfigValues(repoPath string) []string {
 			if strings.ContainsAny(dbPath, "\x00") {
 				issues = append(issues, fmt.Sprintf("db: %q contains invalid characters", dbPath))
 			}
-			// Check if it has a valid database extension
-			if !strings.HasSuffix(dbPath, ".db") && !strings.HasSuffix(dbPath, ".sqlite") && !strings.HasSuffix(dbPath, ".sqlite3") {
-				issues = append(issues, fmt.Sprintf("db: %q has unusual extension (expected .db, .sqlite, or .sqlite3)", dbPath))
-			}
 		}
 	}
 
 	// Validate boolean config values
-	boolKeys := []string{"json", "no-auto-flush", "no-auto-import", "no-db", "sync.require_confirmation_on_mass_delete"}
+	boolKeys := []string{"json", "no-db", "sync.require_confirmation_on_mass_delete"}
 	issues = append(issues, validateBooleanConfigs(v, boolKeys)...)
 
 	// Validate repos paths
@@ -356,11 +352,7 @@ func checkMetadataConfigValues(repoPath string) []string {
 			issues = append(issues, fmt.Sprintf("metadata.json database: %q should be a filename, not a path", cfg.Database))
 		}
 		backend := cfg.GetBackend()
-		if backend == configfile.BackendSQLite {
-			if !strings.HasSuffix(cfg.Database, ".db") && !strings.HasSuffix(cfg.Database, ".sqlite") && !strings.HasSuffix(cfg.Database, ".sqlite3") {
-				issues = append(issues, fmt.Sprintf("metadata.json database: %q has unusual extension (expected .db, .sqlite, or .sqlite3)", cfg.Database))
-			}
-		} else if backend == configfile.BackendDolt {
+		if backend == configfile.BackendDolt {
 			// Dolt is directory-backed; `database` should point to a directory (typically "dolt").
 			if strings.HasSuffix(cfg.Database, ".db") || strings.HasSuffix(cfg.Database, ".sqlite") || strings.HasSuffix(cfg.Database, ".sqlite3") {
 				issues = append(issues, fmt.Sprintf("metadata.json database: %q looks like a SQLite file, but backend is dolt (expected a directory like %q)", cfg.Database, "dolt"))

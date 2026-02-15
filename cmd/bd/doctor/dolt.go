@@ -154,7 +154,7 @@ func CheckDoltConnection(path string) DoctorCheck {
 				Status:   StatusError,
 				Message:  "Dolt database not found",
 				Detail:   fmt.Sprintf("Expected: %s", doltPath),
-				Fix:      "Run 'bd init --backend dolt' to create Dolt database",
+				Fix:      "Run 'bd init' to create Dolt database",
 				Category: CategoryCore,
 			}
 		}
@@ -244,7 +244,7 @@ func CheckDoltSchema(path string) DoctorCheck {
 			Name:     "Dolt Schema",
 			Status:   StatusError,
 			Message:  fmt.Sprintf("Missing tables: %v", missingTables),
-			Fix:      "Run 'bd init --backend dolt' to create schema",
+			Fix:      "Run 'bd init' to create schema",
 			Category: CategoryCore,
 		}
 	}

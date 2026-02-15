@@ -11,20 +11,16 @@ import (
 )
 
 // YamlOnlyKeys are configuration keys that must be stored in config.yaml
-// rather than the SQLite database. These are "startup" settings that are
+// rather than the database. These are "startup" settings that are
 // read before the database is opened.
 //
 // This fixes GH#536: users were confused when `bd config set no-db true`
 // appeared to succeed but had no effect (because no-db is read from yaml
-// at startup, not from SQLite).
+// at startup, not from the database).
 var YamlOnlyKeys = map[string]bool{
 	// Bootstrap flags (affect how bd starts)
-	"no-db":             true,
-	"no-daemon":         true,
-	"no-auto-flush":     true,
-	"no-auto-import":    true,
-	"json":              true,
-	"auto-start-daemon": true,
+	"no-db": true,
+	"json":  true,
 
 	// Database and identity
 	"db":       true,
@@ -33,7 +29,6 @@ var YamlOnlyKeys = map[string]bool{
 
 	// Timing settings
 	"flush-debounce":       true,
-	"lock-timeout":         true,
 	"remote-sync-interval": true,
 
 	// Git settings
@@ -46,16 +41,6 @@ var YamlOnlyKeys = map[string]bool{
 	"sync-branch": true,
 	"sync.branch": true,
 	"sync.require_confirmation_on_mass_delete": true,
-
-	// Daemon settings (GH#871: team-wide auto-sync config)
-	"daemon.auto-sync":   true,
-	"daemon.auto_sync":   true,
-	"daemon.auto-commit": true,
-	"daemon.auto_commit": true,
-	"daemon.auto-push":   true,
-	"daemon.auto_push":   true,
-	"daemon.auto-pull":   true,
-	"daemon.auto_pull":   true,
 
 	// Routing settings
 	"routing.mode":        true,
@@ -84,7 +69,7 @@ func IsYamlOnlyKey(key string) bool {
 	}
 
 	// Check prefix matches for nested keys
-	prefixes := []string{"routing.", "sync.", "git.", "directory.", "repos.", "external_projects.", "validation.", "daemon.", "hierarchy.", "ai."}
+	prefixes := []string{"routing.", "sync.", "git.", "directory.", "repos.", "external_projects.", "validation.", "hierarchy.", "ai."}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(key, prefix) {
 			return true

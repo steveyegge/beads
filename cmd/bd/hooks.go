@@ -687,8 +687,7 @@ func runPrePushHook(args []string) int {
 	ctx := context.Background()
 
 	// Flush pending bd changes
-	// Use --no-daemon to ensure direct mode (inline import requires local store)
-	flushCmd := exec.Command("bd", "sync", "--flush-only", "--no-daemon")
+	flushCmd := exec.Command("bd", "sync", "--flush-only")
 	_ = flushCmd.Run() // Ignore errors
 
 	// Auto-stage JSONL files after flush to prevent race condition.

@@ -2,17 +2,12 @@
 package doctor
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 )
@@ -55,26 +50,12 @@ func CheckSyncDivergence(path string) DoctorCheck {
 		}
 	}
 
-	backend := configfile.BackendDolt
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		backend = cfg.GetBackend()
-	}
-
 	var issues []SyncDivergenceIssue
 
 	// Check 1: JSONL differs from git HEAD
 	jsonlIssue := checkJSONLGitDivergence(path, beadsDir)
 	if jsonlIssue != nil {
 		issues = append(issues, *jsonlIssue)
-	}
-
-	// Check 2: SQLite last_import_time vs JSONL mtime (SQLite only).
-	// Dolt backend does not maintain SQLite metadata; this SQLite-only check doesn't apply.
-	if backend == configfile.BackendSQLite {
-		mtimeIssue := checkSQLiteMtimeDivergence(path, beadsDir)
-		if mtimeIssue != nil {
-			issues = append(issues, *mtimeIssue)
-		}
 	}
 
 	// Check 3: Uncommitted .beads/ changes
@@ -84,14 +65,10 @@ func CheckSyncDivergence(path string) DoctorCheck {
 	}
 
 	if len(issues) == 0 {
-		msg := "JSONL, Dolt, and git are in sync"
-		if backend == configfile.BackendSQLite {
-			msg = "JSONL, SQLite, and git are in sync"
-		}
 		return DoctorCheck{
 			Name:     "Sync Divergence",
 			Status:   StatusOK,
-			Message:  msg,
+			Message:  "JSONL, Dolt, and git are in sync",
 			Category: CategoryData,
 		}
 	}
@@ -158,86 +135,6 @@ func checkJSONLGitDivergence(path, beadsDir string) *SyncDivergenceIssue {
 			Type:        "jsonl_git_mismatch",
 			Description: fmt.Sprintf("JSONL file differs from git HEAD: %s", filepath.Base(jsonlPath)),
 			FixCommand:  fixCmd,
-		}
-	}
-
-	return nil
-}
-
-// checkSQLiteMtimeDivergence checks if SQLite last_import_time matches JSONL mtime.
-func checkSQLiteMtimeDivergence(path, beadsDir string) *SyncDivergenceIssue {
-	// Get database path
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	}
-
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return nil // No database
-	}
-
-	// Find JSONL file. In sync-branch mode prefer the sync worktree JSONL path.
-	jsonlPath := findJSONLFileWithSyncWorktree(path, beadsDir)
-	if jsonlPath == "" {
-		return nil // No JSONL file
-	}
-
-	// Get JSONL mtime
-	jsonlInfo, err := os.Stat(jsonlPath)
-	if err != nil {
-		return nil
-	}
-	jsonlMtime := jsonlInfo.ModTime()
-
-	// Get last_import_time from database
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
-	if err != nil {
-		return nil
-	}
-	defer db.Close()
-
-	var lastImportTimeStr string
-	err = db.QueryRow("SELECT value FROM metadata WHERE key = 'last_import_time'").Scan(&lastImportTimeStr)
-	if err != nil {
-		// No last_import_time recorded - this is a potential issue
-		return &SyncDivergenceIssue{
-			Type:        "sqlite_mtime_stale",
-			Description: "No last_import_time recorded in database (may need sync)",
-			FixCommand:  "bd sync --import-only",
-		}
-	}
-
-	// Parse last_import_time
-	lastImportTime, err := time.Parse(time.RFC3339, lastImportTimeStr)
-	if err != nil {
-		// Try Unix timestamp format
-		var unixTs int64
-		if _, err := fmt.Sscanf(lastImportTimeStr, "%d", &unixTs); err == nil {
-			lastImportTime = time.Unix(unixTs, 0)
-		} else {
-			return nil // Can't parse, skip this check
-		}
-	}
-
-	// Compare times with a 2-second tolerance (filesystem mtime precision varies)
-	timeDiff := jsonlMtime.Sub(lastImportTime)
-	if timeDiff < 0 {
-		timeDiff = -timeDiff
-	}
-
-	if timeDiff > 2*time.Second {
-		if jsonlMtime.After(lastImportTime) {
-			return &SyncDivergenceIssue{
-				Type:        "sqlite_mtime_stale",
-				Description: fmt.Sprintf("JSONL is newer than last import (%s > %s)", jsonlMtime.Format(time.RFC3339), lastImportTime.Format(time.RFC3339)),
-				FixCommand:  "bd sync --import-only",
-			}
-		}
-		return &SyncDivergenceIssue{
-			Type:        "sqlite_mtime_stale",
-			Description: fmt.Sprintf("Database import time is newer than JSONL (%s > %s)", lastImportTime.Format(time.RFC3339), jsonlMtime.Format(time.RFC3339)),
-			FixCommand:  "bd export",
 		}
 	}
 

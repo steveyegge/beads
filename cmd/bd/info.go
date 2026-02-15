@@ -392,7 +392,7 @@ var versionChanges = []VersionChange{
 		Version: "0.47.2",
 		Date:    "2026-01-14",
 		Changes: []string{
-			"NEW: Dolt backend (experimental) - bd init --backend=dolt for version-controlled storage",
+			"NEW: Dolt backend - version-controlled storage with bd init",
 			"NEW: bd show --children flag - Display child issues inline with parent",
 			"NEW: Comprehensive NixOS support - Improved flake and home-manager integration",
 			"FIX: Redirect + sync-branch incompatibility - bd sync works in redirected repos (bd-wayc3)",

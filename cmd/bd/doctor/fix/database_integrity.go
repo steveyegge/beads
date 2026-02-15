@@ -18,7 +18,7 @@ import (
 // original DB as a backup for forensic recovery.
 //
 // For Dolt backends, delegates to doltCorruptionRecovery which removes the corrupted
-// dolt directory and reinitializes from JSONL via bd init --backend dolt.
+// dolt directory and reinitializes from JSONL via bd init.
 func DatabaseIntegrity(path string) error {
 	if err := validateBeadsWorkspace(path); err != nil {
 		return err

@@ -15,8 +15,6 @@ import (
 var ErrTestBinary = fmt.Errorf("running as test binary - cannot execute bd subcommands")
 
 func newBdCmd(bdBinary string, args ...string) *exec.Cmd {
-	// The daemon subsystem has been removed. No need for --no-daemon flag.
-	// See daemon_deprecated.go for context.
 	cmd := exec.Command(bdBinary, args...) // #nosec G204 -- bdBinary from validated executable path
 	return cmd
 }

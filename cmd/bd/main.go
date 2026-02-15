@@ -57,7 +57,7 @@ var (
 	allowStale      bool          // Use --allow-stale: skip staleness check (emergency escape hatch)
 	readonlyMode    bool          // Read-only mode: block write operations (for worker sandboxes)
 	storeIsReadOnly bool          // Track if store was opened read-only (for staleness checks)
-	lockTimeout     time.Duration // SQLite busy_timeout (default 30s, 0 = fail immediately)
+	lockTimeout     = 30 * time.Second // Dolt open timeout (fixed default)
 	profileEnabled  bool
 	profileFile     *os.File
 	traceFile       *os.File
@@ -88,8 +88,7 @@ var (
 )
 
 // readOnlyCommands lists commands that only read from the database.
-// These commands open SQLite in read-only mode to avoid modifying the
-// database file (which breaks file watchers). See GH#804.
+// These commands open the store in read-only mode. See GH#804.
 var readOnlyCommands = map[string]bool{
 	"list":       true,
 	"ready":      true,
@@ -188,7 +187,6 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
 	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on). Default: on for embedded, off for server mode. Override via config key dolt.auto-commit")
-	rootCmd.PersistentFlags().DurationVar(&lockTimeout, "lock-timeout", 30*time.Second, "Database busy timeout (0 = fail immediately if locked)")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
@@ -275,14 +273,6 @@ var rootCmd = &cobra.Command{
 				Value  interface{}
 				WasSet bool
 			}{readonlyMode, true}
-		}
-		if !cmd.Flags().Changed("lock-timeout") {
-			lockTimeout = config.GetDuration("lock-timeout")
-		} else {
-			flagOverrides["lock-timeout"] = struct {
-				Value  interface{}
-				WasSet bool
-			}{lockTimeout, true}
 		}
 		if !cmd.Flags().Changed("db") && dbPath == "" {
 			dbPath = config.GetString("db")
@@ -402,13 +392,6 @@ var rootCmd = &cobra.Command{
 			if isSandboxed() {
 				sandboxMode = true
 				fmt.Fprintf(os.Stderr, "ℹ️  Sandbox detected, using direct mode\n")
-			}
-		}
-
-		// If sandbox mode is set, use shorter lock timeout unless explicitly set
-		if sandboxMode {
-			if !cmd.Flags().Changed("lock-timeout") {
-				lockTimeout = 100 * time.Millisecond
 			}
 		}
 

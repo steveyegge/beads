@@ -47,7 +47,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 					Status:  StatusWarning,
 					Message: "Fresh clone detected (no dolt database)",
 					Detail:  "Storage: Dolt",
-					Fix:     "Run 'bd init --backend dolt' to create and hydrate the dolt database",
+					Fix:     "Run 'bd init' to create and hydrate the dolt database",
 				}
 			}
 			return DoctorCheck{
@@ -55,7 +55,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 				Status:  StatusError,
 				Message: "No dolt database found",
 				Detail:  "Storage: Dolt",
-				Fix:     "Run 'bd init --backend dolt' to create database",
+				Fix:     "Run 'bd init' to create database",
 			}
 		}
 
@@ -67,7 +67,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Unable to open database",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init --backend dolt",
+				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init",
 			}
 		}
 		defer func() { _ = store.Close() }()
@@ -248,7 +248,7 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Database schema is incomplete or incompatible",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init --backend dolt",
+				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init",
 			}
 		}
 
@@ -368,7 +368,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Failed to open database",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init --backend dolt",
+				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init",
 			}
 		}
 		defer func() { _ = store.Close() }()

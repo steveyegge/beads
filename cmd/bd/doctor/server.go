@@ -284,7 +284,7 @@ func checkDatabaseExists(db *sql.DB, database string) DoctorCheck {
 			Name:     "Database Exists",
 			Status:   StatusError,
 			Message:  fmt.Sprintf("Database '%s' not found", database),
-			Fix:      fmt.Sprintf("Run 'bd init --backend dolt' to create the '%s' database", database),
+			Fix:      fmt.Sprintf("Run 'bd init' to create the '%s' database", database),
 			Category: CategoryFederation,
 		}
 	}
@@ -343,7 +343,7 @@ func checkSchemaCompatible(db *sql.DB, database string) DoctorCheck {
 				Name:     "Schema Compatible",
 				Status:   StatusError,
 				Message:  "Issues table not found",
-				Fix:      "Run 'bd init --backend dolt' to create schema",
+				Fix:      "Run 'bd init' to create schema",
 				Category: CategoryFederation,
 			}
 		}

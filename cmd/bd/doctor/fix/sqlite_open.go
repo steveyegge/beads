@@ -1,7 +1,11 @@
 package fix
 
-import "github.com/steveyegge/beads/internal/storage"
+import "fmt"
 
+// sqliteConnString builds a SQLite connection string with optional read-only mode.
 func sqliteConnString(path string, readOnly bool) string {
-	return storage.SQLiteConnString(path, readOnly)
+	if readOnly {
+		return fmt.Sprintf("file:%s?mode=ro", path)
+	}
+	return fmt.Sprintf("file:%s", path)
 }
