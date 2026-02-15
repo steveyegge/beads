@@ -255,17 +255,15 @@ func TestPerformContentMerge(t *testing.T) {
 			t.Fatalf("performContentMerge() error = %v", err)
 		}
 
-		// Check that merged content contains all three issues
+		// 3-way merge removed: performContentMerge now returns remote content (remote wins)
 		mergedStr := string(merged)
 		if !strings.Contains(mergedStr, "test-1") {
 			t.Error("merged content missing base issue test-1")
 		}
-		if !strings.Contains(mergedStr, "local-1") {
-			t.Error("merged content missing local issue local-1")
-		}
 		if !strings.Contains(mergedStr, "remote-1") {
 			t.Error("merged content missing remote issue remote-1")
 		}
+		// local-1 is NOT expected since remote-wins doesn't include local-only issues
 	})
 
 	t.Run("handles deletion correctly", func(t *testing.T) {

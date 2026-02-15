@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -372,37 +371,10 @@ exit 0
 `
 }
 
-// mergeDriverInstalled checks if bd merge driver is configured correctly
-// Note: This runs during bd init BEFORE .beads exists, so it runs git in CWD.
+// mergeDriverInstalled always returns true now that the 3-way merge engine
+// has been removed (Dolt handles sync natively). No new merge driver installations.
 func mergeDriverInstalled() bool {
-	// Check git config for merge driver (runs in CWD)
-	cmd := exec.Command("git", "config", "merge.beads.driver")
-	output, err := cmd.Output()
-	if err != nil || len(output) == 0 {
-		return false
-	}
-
-	// Check if using old invalid placeholders (%L/%R from versions <0.24.0)
-	// Git only supports %O (base), %A (current), %B (other)
-	driverConfig := strings.TrimSpace(string(output))
-	if strings.Contains(driverConfig, "%L") || strings.Contains(driverConfig, "%R") {
-		// Stale config with invalid placeholders - needs repair
-		return false
-	}
-
-	// Check if .gitattributes has the merge driver configured
-	gitattributesPath := ".gitattributes"
-	content, err := os.ReadFile(gitattributesPath)
-	if err != nil {
-		return false
-	}
-
-	// Look for beads JSONL merge attribute (either canonical or legacy filename)
-	hasCanonical := strings.Contains(string(content), ".beads/issues.jsonl") &&
-		strings.Contains(string(content), "merge=beads")
-	hasLegacy := strings.Contains(string(content), ".beads/beads.jsonl") &&
-		strings.Contains(string(content), "merge=beads")
-	return hasCanonical || hasLegacy
+	return true
 }
 
 // installJJHooks installs simplified git hooks for colocated jujutsu+git repos.
@@ -578,53 +550,8 @@ func printJJAliasInstructions() {
 	fmt.Printf("For more details, see: https://github.com/steveyegge/beads/blob/main/docs/JUJUTSU.md\n\n")
 }
 
-// installMergeDriver configures git to use bd merge for JSONL files
-// Note: This runs during bd init BEFORE .beads exists, so it runs git in CWD.
+// installMergeDriver is a no-op now that the 3-way merge engine has been removed.
+// Dolt handles sync natively without a git merge driver.
 func installMergeDriver() error {
-	// Configure git merge driver (runs in CWD)
-	cmd := exec.Command("git", "config", "merge.beads.driver", "bd merge %A %O %A %B")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to configure git merge driver: %w\n%s", err, output)
-	}
-
-	cmd = exec.Command("git", "config", "merge.beads.name", "bd JSONL merge driver")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		// Non-fatal, the name is just descriptive
-		fmt.Fprintf(os.Stderr, "Warning: failed to set merge driver name: %v\n%s", err, output)
-	}
-
-	// Create or update .gitattributes
-	gitattributesPath := ".gitattributes"
-
-	// Read existing .gitattributes if it exists
-	var existingContent string
-	content, err := os.ReadFile(gitattributesPath)
-	if err == nil {
-		existingContent = string(content)
-	}
-
-	// Check if beads merge driver is already configured
-	// Check for either pattern (issues.jsonl is canonical, beads.jsonl is legacy)
-	hasBeadsMerge := (strings.Contains(existingContent, ".beads/issues.jsonl") ||
-		strings.Contains(existingContent, ".beads/beads.jsonl")) &&
-		strings.Contains(existingContent, "merge=beads")
-
-	if !hasBeadsMerge {
-		// Append beads merge driver configuration (issues.jsonl is canonical)
-		beadsMergeAttr := "\n# Use bd merge for beads JSONL files\n.beads/issues.jsonl merge=beads\n"
-
-		newContent := existingContent
-		if !strings.HasSuffix(newContent, "\n") && len(newContent) > 0 {
-			newContent += "\n"
-		}
-		newContent += beadsMergeAttr
-
-		// Write updated .gitattributes (0644 is standard for .gitattributes)
-		// #nosec G306 - .gitattributes needs to be readable
-		if err := os.WriteFile(gitattributesPath, []byte(newContent), 0644); err != nil {
-			return fmt.Errorf("failed to update .gitattributes: %w", err)
-		}
-	}
-
 	return nil
 }

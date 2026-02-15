@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/beads/internal/merge"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -287,54 +286,12 @@ func countJSONLIssues(data []byte) int {
 	return count
 }
 
-// mergeJSONLFiles merges two JSONL files using 3-way merge with empty base.
-// This combines issues from both files, with the source (local) taking precedence
-// for issues that exist in both.
-func (wm *WorktreeManager) mergeJSONLFiles(srcData, dstData []byte) ([]byte, error) {
-	// Create temp files for merge
-	tmpDir, err := os.MkdirTemp("", "bd-worktree-merge-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }() // Best effort cleanup of temp dir
-
-	baseFile := filepath.Join(tmpDir, "base.jsonl")
-	leftFile := filepath.Join(tmpDir, "left.jsonl")   // source (local)
-	rightFile := filepath.Join(tmpDir, "right.jsonl") // destination (worktree)
-	outputFile := filepath.Join(tmpDir, "merged.jsonl")
-
-	// Empty base - treat this as both sides adding issues
-	if err := os.WriteFile(baseFile, []byte{}, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write base file: %w", err)
-	}
-
-	// Source (local) is "left" - takes precedence for conflicts
-	if err := os.WriteFile(leftFile, srcData, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write left file: %w", err)
-	}
-
-	// Destination (worktree) is "right"
-	if err := os.WriteFile(rightFile, dstData, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write right file: %w", err)
-	}
-
-	// Perform 3-way merge
-	err = merge.Merge3Way(outputFile, baseFile, leftFile, rightFile, false)
-	if err != nil {
-		// Check if it's just a conflict warning (merge still produced output)
-		if !strings.Contains(err.Error(), "merge completed with") {
-			return nil, fmt.Errorf("3-way merge failed: %w", err)
-		}
-		// Conflicts are auto-resolved, continue
-	}
-
-	// Read merged result
-	mergedData, err := os.ReadFile(outputFile) // #nosec G304 - temp file we created
-	if err != nil {
-		return nil, fmt.Errorf("failed to read merged file: %w", err)
-	}
-
-	return mergedData, nil
+// mergeJSONLFiles was the 3-way JSONL merge for worktree sync.
+// The 3-way merge engine has been removed (Dolt handles sync natively).
+// This stub returns the source data (local wins), preserving the caller contract
+// until JSONL sync is fully removed.
+func (wm *WorktreeManager) mergeJSONLFiles(srcData, _ []byte) ([]byte, error) {
+	return srcData, nil
 }
 
 // isValidWorktree checks if the path is a valid git worktree

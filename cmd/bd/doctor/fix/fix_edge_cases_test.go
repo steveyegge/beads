@@ -3,7 +3,6 @@ package fix
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -350,64 +349,13 @@ func TestGitHooks_EdgeCases(t *testing.T) {
 	})
 }
 
-// TestMergeDriver_EdgeCases tests MergeDriver with edge cases
+// TestMergeDriver_EdgeCases verifies MergeDriver is a no-op (merge engine removed).
 func TestMergeDriver_EdgeCases(t *testing.T) {
-	t.Run("read-only git config file", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("skipping Unix permission test on Windows")
-		}
+	t.Run("is a no-op", func(t *testing.T) {
 		dir := setupTestGitRepo(t)
-		gitDir := filepath.Join(dir, ".git")
-		gitConfigPath := filepath.Join(gitDir, "config")
-
-		// Make both .git directory and config file read-only to truly prevent writes
-		// (git might otherwise create a new file and rename it)
-		if err := os.Chmod(gitConfigPath, 0400); err != nil {
-			t.Fatalf("failed to make config read-only: %v", err)
-		}
-		if err := os.Chmod(gitDir, 0500); err != nil {
-			t.Fatalf("failed to make .git read-only: %v", err)
-		}
-
-		// Restore write permissions at the end
-		defer func() {
-			_ = os.Chmod(gitDir, 0700)
-			_ = os.Chmod(gitConfigPath, 0600)
-		}()
-
-		// MergeDriver should fail with read-only config
-		err := MergeDriver(dir)
-		if err == nil {
-			t.Error("expected error when git config is read-only")
-		}
-	})
-
-	t.Run("succeeds after config was previously set", func(t *testing.T) {
-		dir := setupTestGitRepo(t)
-
-		// Set the merge driver config initially
 		err := MergeDriver(dir)
 		if err != nil {
-			t.Fatalf("first MergeDriver call failed: %v", err)
-		}
-
-		// Run again to verify it handles existing config
-		err = MergeDriver(dir)
-		if err != nil {
-			t.Errorf("MergeDriver should succeed when config already exists, got: %v", err)
-		}
-
-		// Verify the config is still correct
-		cmd := exec.Command("git", "config", "merge.beads.driver")
-		cmd.Dir = dir
-		output, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("failed to get git config: %v", err)
-		}
-
-		expected := "bd merge %A %O %A %B\n"
-		if string(output) != expected {
-			t.Errorf("expected %q, got %q", expected, string(output))
+			t.Fatalf("MergeDriver should be a no-op, got error: %v", err)
 		}
 	})
 }

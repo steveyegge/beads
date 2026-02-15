@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
@@ -668,131 +667,13 @@ func countLinesInGitHEAD(filePath string, workDir string) int {
 	return lines
 }
 
-// attemptAutoMerge attempts to resolve git conflicts using bd merge 3-way merge.
-// GH#1110: Now uses RepoContext to ensure we operate on the beads repo.
-func attemptAutoMerge(conflictedPath string) error {
-	// Validate inputs
-	if conflictedPath == "" {
-		return fmt.Errorf("no file path provided for merge")
-	}
-
-	// Get git repository root from RepoContext
-	var gitRoot string
-	if rc, err := beads.GetRepoContext(); err == nil {
-		gitRoot = rc.RepoRoot
-	} else {
-		// Fallback to CWD-based lookup
-		gitRootCmd := exec.Command("git", "rev-parse", "--show-toplevel") // #nosec G204 -- fixed git invocation for repo root discovery
-		gitRootOutput, err := gitRootCmd.Output()
-		if err != nil {
-			return fmt.Errorf("not in a git repository: %w", err)
-		}
-		gitRoot = strings.TrimSpace(string(gitRootOutput))
-	}
-
-	// Convert conflicted path to absolute path relative to git root
-	absConflictedPath := conflictedPath
-	if !filepath.IsAbs(conflictedPath) {
-		absConflictedPath = filepath.Join(gitRoot, conflictedPath)
-	}
-
-	// Get base (merge-base), left (ours/HEAD), and right (theirs/MERGE_HEAD) versions
-	// These are the three inputs needed for 3-way merge
-
-	// Extract relative path from git root for git commands
-	relPath, err := filepath.Rel(gitRoot, absConflictedPath)
-	if err != nil {
-		relPath = conflictedPath
-	}
-
-	// Create temp directory for merge artifacts
-	tmpDir, err := os.MkdirTemp("", "bd-merge-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	basePath := filepath.Join(tmpDir, "base.jsonl")
-	leftPath := filepath.Join(tmpDir, "left.jsonl")
-	rightPath := filepath.Join(tmpDir, "right.jsonl")
-	outputPath := filepath.Join(tmpDir, "merged.jsonl")
-
-	// Extract base version (merge-base)
-	baseCmd := exec.Command("git", "show", fmt.Sprintf(":1:%s", relPath)) // #nosec G204 -- relPath limited to files tracked in current repo
-	baseCmd.Dir = gitRoot
-	baseContent, err := baseCmd.Output()
-	if err != nil {
-		// Stage 1 might not exist if file was added in both branches
-		// Create empty base in this case
-		baseContent = []byte{}
-	}
-	if err := os.WriteFile(basePath, baseContent, 0600); err != nil {
-		return fmt.Errorf("failed to write base version: %w", err)
-	}
-
-	// Extract left version (ours/HEAD)
-	leftCmd := exec.Command("git", "show", fmt.Sprintf(":2:%s", relPath)) // #nosec G204 -- relPath limited to files tracked in current repo
-	leftCmd.Dir = gitRoot
-	leftContent, err := leftCmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to extract 'ours' version: %w", err)
-	}
-	if err := os.WriteFile(leftPath, leftContent, 0600); err != nil {
-		return fmt.Errorf("failed to write left version: %w", err)
-	}
-
-	// Extract right version (theirs/MERGE_HEAD)
-	rightCmd := exec.Command("git", "show", fmt.Sprintf(":3:%s", relPath)) // #nosec G204 -- relPath limited to files tracked in current repo
-	rightCmd.Dir = gitRoot
-	rightContent, err := rightCmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to extract 'theirs' version: %w", err)
-	}
-	if err := os.WriteFile(rightPath, rightContent, 0600); err != nil {
-		return fmt.Errorf("failed to write right version: %w", err)
-	}
-
-	// Get current executable to call bd merge
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("cannot resolve current executable: %w", err)
-	}
-
-	// Invoke bd merge command
-	mergeCmd := exec.Command(exe, "merge", outputPath, basePath, leftPath, rightPath) // #nosec G204 -- executes current bd binary for deterministic merge
-	mergeOutput, err := mergeCmd.CombinedOutput()
-	if err != nil {
-		// Check exit code - bd merge returns 1 if there are conflicts, 2 for errors
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if exitErr.ExitCode() == 1 {
-				// Conflicts exist - merge tool did its best but couldn't resolve everything
-				return fmt.Errorf("merge conflicts could not be automatically resolved:\n%s", mergeOutput)
-			}
-		}
-		return fmt.Errorf("merge command failed: %w\n%s", err, mergeOutput)
-	}
-
-	// Merge succeeded - copy merged result back to original file
-	// #nosec G304 -- merged output created earlier in this function
-	mergedContent, err := os.ReadFile(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to read merged output: %w", err)
-	}
-
-	if err := os.WriteFile(absConflictedPath, mergedContent, 0600); err != nil {
-		return fmt.Errorf("failed to write merged result: %w", err)
-	}
-
-	// Stage the resolved file
-	stageCmd := exec.Command("git", "add", relPath) // #nosec G204 -- relPath constrained to file within current repo
-	stageCmd.Dir = gitRoot
-	if err := stageCmd.Run(); err != nil {
-		// Non-fatal - user can stage manually
-		fmt.Fprintf(os.Stderr, "Warning: failed to auto-stage merged file: %v\n", err)
-	}
-
-	return nil
+// attemptAutoMerge previously resolved git conflicts using the 3-way merge engine.
+// The merge engine has been removed (Dolt handles sync natively).
+// Returns an error directing users to manual resolution.
+func attemptAutoMerge(_ string) error {
+	return fmt.Errorf("3-way JSONL merge engine removed (Dolt handles sync natively); resolve conflicts manually")
 }
+
 
 // detectPrefixFromIssues extracts the common prefix from issue IDs
 // Uses utils.ExtractIssuePrefix which handles multi-part prefixes correctly

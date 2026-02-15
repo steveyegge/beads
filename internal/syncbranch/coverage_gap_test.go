@@ -479,18 +479,21 @@ func TestPullFromSyncBranch_DivergenceCase(t *testing.T) {
 		}
 		merged := string(mergedData)
 
+		// 3-way merge removed: divergence resolution takes remote content (remote wins)
 		if !strings.Contains(merged, "base-1") {
 			t.Error("Merged content missing base issue")
-		}
-		if !strings.Contains(merged, "local-1") {
-			t.Error("Merged content missing local issue")
 		}
 		if !strings.Contains(merged, "remote-1") {
 			t.Error("Merged content missing remote issue")
 		}
+		// local-1 is NOT expected since remote-wins doesn't include local-only issues
 	})
 
-	t.Run("safety check triggers on mass deletion during merge", func(t *testing.T) {
+	t.Run("remote-wins divergence resolves without safety check", func(t *testing.T) {
+		// 3-way merge removed: divergence resolution takes remote content.
+		// After reset --hard to remote, writing remote content produces no changes,
+		// so the safety check block is not reached. This test verifies the new behavior.
+
 		// Create bare remote
 		remoteDir := t.TempDir()
 		runGit(t, remoteDir, "init", "--bare")
@@ -506,11 +509,6 @@ func TestPullFromSyncBranch_DivergenceCase(t *testing.T) {
 		// Create sync branch with 10 issues
 		runGit(t, repoDir, "checkout", "-b", syncBranch)
 		var lines []string
-		for i := 1; i <= 10; i++ {
-			lines = append(lines, `{"id":"issue-`+strings.Repeat("0", 3-len(string(rune('0'+i))))+`","title":"Issue","created_at":"2024-01-01T00:00:00Z","created_by":"user1"}`)
-		}
-		// Use simpler IDs
-		lines = nil
 		for i := 1; i <= 10; i++ {
 			id := "bd-" + string(rune('a'+i-1))
 			lines = append(lines, `{"id":"`+id+`","title":"Issue `+id+`","created_at":"2024-01-01T00:00:00Z","created_by":"user1"}`)
@@ -535,7 +533,6 @@ func TestPullFromSyncBranch_DivergenceCase(t *testing.T) {
 		runGit(t, repoDir, "commit", "-m", "local: add issue")
 
 		// Pull with push=true and requireMassDeleteConfirmation=true
-		// Note: PullFromSyncBranch works from the worktree, we stay on beads-sync
 		result, err := PullFromSyncBranch(ctx, repoDir, syncBranch, jsonlPath, true, true)
 		if err != nil {
 			t.Fatalf("PullFromSyncBranch() error = %v", err)
@@ -544,15 +541,9 @@ func TestPullFromSyncBranch_DivergenceCase(t *testing.T) {
 		if !result.Merged {
 			t.Error("Expected Merged=true")
 		}
-		if !result.SafetyCheckTriggered {
-			t.Error("Expected SafetyCheckTriggered=true for mass deletion")
-		}
-		if !result.Pushed {
-			// When safety check triggers with requireConfirmation=true, push is skipped
-			// That's correct behavior
-		}
-		if len(result.SafetyWarnings) == 0 {
-			t.Error("Expected SafetyWarnings to be populated")
+		// With remote-wins, no hasChanges after reset, so safety check doesn't fire
+		if result.SafetyCheckTriggered {
+			t.Error("Expected SafetyCheckTriggered=false (remote-wins produces no changes after reset)")
 		}
 	})
 }

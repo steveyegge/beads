@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/merge"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -48,92 +47,11 @@ func updateBaseSnapshot(jsonlPath string) error {
 	return sm.UpdateBase()
 }
 
-// merge3WayAndPruneDeletions performs 3-way merge and prunes accepted deletions from DB
-// Returns true if merge was performed, false if skipped (no base file)
-func merge3WayAndPruneDeletions(ctx context.Context, store storage.Storage, jsonlPath string) (bool, error) {
-	sm := NewSnapshotManager(jsonlPath)
-	basePath, leftPath := sm.getSnapshotPaths()
-
-	// If no base snapshot exists, skip deletion handling (first run or bootstrap)
-	if !sm.BaseExists() {
-		return false, nil
-	}
-
-	// Validate snapshot metadata
-	if err := sm.Validate(); err != nil {
-		// Stale or invalid snapshot - clean up and skip merge
-		fmt.Fprintf(os.Stderr, "Warning: snapshot validation failed (%v), cleaning up\n", err)
-		_ = sm.Cleanup()
-		return false, nil
-	}
-
-	// Run 3-way merge: base (last import) vs left (pre-pull export) vs right (pulled JSONL)
-	tmpMerged := jsonlPath + ".merged"
-	// Ensure temp file cleanup on failure
-	defer func() {
-		if fileExists(tmpMerged) {
-			_ = os.Remove(tmpMerged)
-		}
-	}()
-
-	if err := merge.Merge3Way(tmpMerged, basePath, leftPath, jsonlPath, false); err != nil {
-		// Merge error (including conflicts) is returned as error
-		return false, fmt.Errorf("3-way merge failed: %w", err)
-	}
-
-	// Replace the JSONL with merged result
-	if err := os.Rename(tmpMerged, jsonlPath); err != nil {
-		return false, fmt.Errorf("failed to replace JSONL with merged result: %w", err)
-	}
-
-	// Compute accepted deletions (issues in base but not in merged, and unchanged locally)
-	acceptedDeletions, err := sm.ComputeAcceptedDeletions(jsonlPath)
-	if err != nil {
-		return false, fmt.Errorf("failed to compute accepted deletions: %w", err)
-	}
-
-	// Prune accepted deletions from the database.
-	//
-	// "Accepted deletions" are issues that:
-	//   1. Existed in the base snapshot (last successful import)
-	//   2. Were NOT modified locally (still in left snapshot, unchanged)
-	//   3. Are NOT in the merged result (deleted remotely)
-	//
-	// We tolerate "issue not found" errors because the issue may already be gone:
-	//   - Tombstoned by auto-import's git-history-backfill
-	//   - Deleted manually by the user
-	//   - Never existed in this clone (multi-repo, partial history)
-	// The goal is ensuring deletion, so already-deleted is success.
-	var deletionErrors []error
-	var alreadyGone int
-	for _, id := range acceptedDeletions {
-		if err := store.DeleteIssue(ctx, id); err != nil {
-			if isIssueNotFoundError(err) {
-				alreadyGone++
-				continue
-			}
-			deletionErrors = append(deletionErrors, fmt.Errorf("issue %s: %w", id, err))
-		}
-	}
-
-	if len(deletionErrors) > 0 {
-		return false, fmt.Errorf("deletion failures (DB may be inconsistent): %v", deletionErrors)
-	}
-
-	// Print stats if deletions were found
-	stats := sm.GetStats()
-	actuallyDeleted := len(acceptedDeletions) - alreadyGone
-	if stats.DeletionsFound > 0 || alreadyGone > 0 {
-		if alreadyGone > 0 {
-			fmt.Fprintf(os.Stderr, "3-way merge: pruned %d deleted issue(s) from database, %d already gone (base: %d, left: %d, merged: %d)\n",
-				actuallyDeleted, alreadyGone, stats.BaseCount, stats.LeftCount, stats.MergedCount)
-		} else {
-			fmt.Fprintf(os.Stderr, "3-way merge: pruned %d deleted issue(s) from database (base: %d, left: %d, merged: %d)\n",
-				actuallyDeleted, stats.BaseCount, stats.LeftCount, stats.MergedCount)
-		}
-	}
-
-	return true, nil
+// merge3WayAndPruneDeletions was the 3-way JSONL merge for deletion tracking.
+// The 3-way merge engine has been removed (Dolt handles sync natively).
+// This stub preserves the function signature for callers until JSONL sync is fully removed.
+func merge3WayAndPruneDeletions(_ context.Context, _ storage.Storage, _ string) (bool, error) {
+	return false, nil
 }
 
 // getSnapshotStats returns statistics about the snapshot files

@@ -18,7 +18,7 @@ func TestFixFunctions_RequireBeadsDir(t *testing.T) {
 		fn   func(string) error
 	}{
 		{"GitHooks", GitHooks},
-		{"MergeDriver", MergeDriver},
+		// MergeDriver removed from validation: it's now a no-op (merge engine removed)
 		{"DBJSONLSync", DBJSONLSync},
 		{"DatabaseVersion", DatabaseVersion},
 		{"SchemaCompatibility", SchemaCompatibility},

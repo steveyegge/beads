@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/merge"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -615,90 +614,17 @@ func resetToRemote(ctx context.Context, repoRoot, syncBranch, jsonlPath string) 
 	return nil
 }
 
-// performContentMerge extracts JSONL from base, local, and remote, then merges content.
-// Returns the merged JSONL content.
+// performContentMerge extracts JSONL from remote and returns it.
+// The 3-way merge engine has been removed (Dolt handles sync natively).
+// When sync branches diverge, we take remote content since the caller
+// resets to remote's commit graph anyway.
 func performContentMerge(ctx context.Context, worktreePath, branch, remote, jsonlRelPath string) ([]byte, error) {
-	// Find merge base
-	mergeBaseCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "merge-base",
-		"HEAD", fmt.Sprintf("%s/%s", remote, branch))
-	mergeBaseOutput, err := mergeBaseCmd.Output()
-	if err != nil {
-		// No common ancestor - treat as empty base
-		mergeBaseOutput = nil
-	}
-	mergeBase := strings.TrimSpace(string(mergeBaseOutput))
-
-	// Create temp files for 3-way merge
-	tmpDir, err := os.MkdirTemp("", "bd-merge-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	baseFile := filepath.Join(tmpDir, "base.jsonl")
-	localFile := filepath.Join(tmpDir, "local.jsonl")
-	remoteFile := filepath.Join(tmpDir, "remote.jsonl")
-	outputFile := filepath.Join(tmpDir, "merged.jsonl")
-
-	// Extract base JSONL (may not exist if this is first divergence)
-	if mergeBase != "" {
-		baseContent, err := extractJSONLFromCommit(ctx, worktreePath, mergeBase, jsonlRelPath)
-		if err != nil {
-			// Base file might not exist in ancestor - use empty file
-			baseContent = []byte{}
-		}
-		if err := os.WriteFile(baseFile, baseContent, 0600); err != nil {
-			return nil, fmt.Errorf("failed to write base file: %w", err)
-		}
-	} else {
-		// No merge base - use empty file
-		if err := os.WriteFile(baseFile, []byte{}, 0600); err != nil {
-			return nil, fmt.Errorf("failed to write empty base file: %w", err)
-		}
-	}
-
-	// Extract local JSONL (current HEAD in worktree)
-	localContent, err := extractJSONLFromCommit(ctx, worktreePath, "HEAD", jsonlRelPath)
-	if err != nil {
-		// Local file might not exist - use empty
-		localContent = []byte{}
-	}
-	if err := os.WriteFile(localFile, localContent, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write local file: %w", err)
-	}
-
-	// Extract remote JSONL
 	remoteRef := fmt.Sprintf("%s/%s", remote, branch)
 	remoteContent, err := extractJSONLFromCommit(ctx, worktreePath, remoteRef, jsonlRelPath)
 	if err != nil {
-		// Remote file might not exist - use empty
 		remoteContent = []byte{}
 	}
-	if err := os.WriteFile(remoteFile, remoteContent, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write remote file: %w", err)
-	}
-
-	// Perform 3-way merge using bd's merge algorithm
-	// The merge function writes to outputFile (first arg) and returns error if conflicts
-	err = merge.Merge3Way(outputFile, baseFile, localFile, remoteFile, false)
-	if err != nil {
-		// Check if it's a conflict error
-		if strings.Contains(err.Error(), "merge completed with") {
-			// There were conflicts - this is rare for JSONL since most fields can be
-			// auto-merged. When it happens, it means both sides changed the same field
-			// to different values. We fail here rather than writing corrupt JSONL.
-			return nil, fmt.Errorf("merge conflict: %w (manual resolution required)", err)
-		}
-		return nil, fmt.Errorf("3-way merge failed: %w", err)
-	}
-
-	// Read merged result
-	mergedContent, err := os.ReadFile(outputFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read merged file: %w", err)
-	}
-
-	return mergedContent, nil
+	return remoteContent, nil
 }
 
 // extractJSONLFromCommit extracts a file's content from a specific git commit.

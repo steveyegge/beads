@@ -134,42 +134,13 @@ func TestUntrackedJSONL_E2E(t *testing.T) {
 	})
 }
 
-// TestMergeDriver_E2E tests the full MergeDriver fix flow
+// TestMergeDriver_E2E tests MergeDriver is a no-op (merge engine removed).
 func TestMergeDriver_E2E(t *testing.T) {
-	t.Run("sets correct merge driver config", func(t *testing.T) {
+	t.Run("is a no-op", func(t *testing.T) {
 		dir := setupTestGitRepo(t)
-
-		// Run fix
 		err := MergeDriver(dir)
 		if err != nil {
-			t.Fatalf("MergeDriver fix failed: %v", err)
-		}
-
-		// Verify config was set
-		output := runGit(t, dir, "config", "--get", "merge.beads.driver")
-		expected := "bd merge %A %O %A %B"
-		if strings.TrimSpace(output) != expected {
-			t.Errorf("expected merge driver %q, got %q", expected, output)
-		}
-	})
-
-	t.Run("fixes incorrect config", func(t *testing.T) {
-		dir := setupTestGitRepo(t)
-
-		// Set incorrect config first
-		runGit(t, dir, "config", "merge.beads.driver", "bd merge %L %O %A %R")
-
-		// Run fix
-		err := MergeDriver(dir)
-		if err != nil {
-			t.Fatalf("MergeDriver fix failed: %v", err)
-		}
-
-		// Verify config was corrected
-		output := runGit(t, dir, "config", "--get", "merge.beads.driver")
-		expected := "bd merge %A %O %A %B"
-		if strings.TrimSpace(output) != expected {
-			t.Errorf("expected corrected merge driver %q, got %q", expected, output)
+			t.Fatalf("MergeDriver should be a no-op, got error: %v", err)
 		}
 	})
 }
@@ -757,83 +728,12 @@ func TestUntrackedJSONLWithUncommittedChanges_E2E(t *testing.T) {
 	})
 }
 
-// TestMergeDriverWithLockedConfig_E2E tests handling when git config is locked
+// TestMergeDriverWithLockedConfig_E2E is a no-op test (merge engine removed).
 func TestMergeDriverWithLockedConfig_E2E(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("skipping permission tests when running as root")
-	}
-
-	t.Run("handles read-only git config file", func(t *testing.T) {
-		// Skip on macOS - file owner can bypass read-only permissions
-		if runtime.GOOS == "darwin" {
-			t.Skip("skipping on macOS: file owner can write to read-only files")
-		}
-		// Skip on WSL - similar to macOS, file owner can bypass read-only permissions
-		if isWSL() {
-			t.Skip("skipping on WSL: file owner can write to read-only files")
-		}
-		// Skip in CI - containers may have CAP_DAC_OVERRIDE or other capabilities
-		// that bypass file permission checks
-		if os.Getenv("CI") == "true" || os.Getenv("GITHUB_ACTIONS") == "true" {
-			t.Skip("skipping in CI: container may bypass file permission checks")
-		}
-
-		dir := setupTestGitRepo(t)
-
-		gitDir := filepath.Join(dir, ".git")
-		gitConfigPath := filepath.Join(dir, ".git", "config")
-
-		// Make both .git directory and config file read-only to truly prevent writes.
-		// Git may otherwise write via lockfile+rename even if the config file itself is read-only.
-		if err := os.Chmod(gitConfigPath, 0400); err != nil {
-			t.Fatalf("failed to make config read-only: %v", err)
-		}
-		if err := os.Chmod(gitDir, 0500); err != nil {
-			t.Fatalf("failed to make .git read-only: %v", err)
-		}
-		defer func() {
-			// Restore permissions for cleanup
-			_ = os.Chmod(gitDir, 0755)
-			_ = os.Chmod(gitConfigPath, 0644)
-		}()
-
-		// Run fix - should fail gracefully
-		err := MergeDriver(dir)
-		if err == nil {
-			t.Fatal("expected error when git config is read-only")
-		}
-
-		// Verify error message is meaningful
-		if !strings.Contains(err.Error(), "failed to update git merge driver config") {
-			t.Errorf("error should mention config update failure, got: %v", err)
-		}
-	})
-
-	t.Run("succeeds when config directory is writable", func(t *testing.T) {
-		dir := setupTestGitRepo(t)
-
-		gitDir := filepath.Join(dir, ".git")
-		gitConfigPath := filepath.Join(gitDir, "config")
-
-		// Ensure git directory and config are writable
-		if err := os.Chmod(gitDir, 0755); err != nil {
-			t.Fatalf("failed to set git dir permissions: %v", err)
-		}
-		if err := os.Chmod(gitConfigPath, 0644); err != nil {
-			t.Fatalf("failed to set config permissions: %v", err)
-		}
-
-		// Run fix
-		err := MergeDriver(dir)
+	t.Run("is a no-op regardless of config state", func(t *testing.T) {
+		err := MergeDriver(t.TempDir())
 		if err != nil {
-			t.Fatalf("MergeDriver fix should succeed with writable config: %v", err)
-		}
-
-		// Verify config was set
-		output := runGit(t, dir, "config", "--get", "merge.beads.driver")
-		expected := "bd merge %A %O %A %B"
-		if strings.TrimSpace(output) != expected {
-			t.Errorf("expected merge driver %q, got %q", expected, output)
+			t.Fatalf("MergeDriver should be a no-op, got error: %v", err)
 		}
 	})
 }

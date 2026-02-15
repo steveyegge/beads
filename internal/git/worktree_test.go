@@ -636,18 +636,17 @@ func TestSyncJSONLToWorktreeMerge(t *testing.T) {
 			t.Fatalf("Failed to read result JSONL: %v", err)
 		}
 
-		// Should have all 4 issues (3 from worktree + 1 from local)
+		// 3-way merge removed: mergeJSONLFiles now returns srcData (local wins).
+		// When local has fewer issues, srcData (1 issue) overwrites destination.
 		resultCount := countJSONLIssues(resultData)
-		if resultCount != 4 {
-			t.Errorf("Expected 4 issues after merge, got %d\nContent:\n%s", resultCount, string(resultData))
+		if resultCount != 1 {
+			t.Errorf("Expected 1 issue after local-wins overwrite, got %d\nContent:\n%s", resultCount, string(resultData))
 		}
 
-		// Verify specific issues are present
+		// Verify the local issue is present
 		resultStr := string(resultData)
-		for _, id := range []string{"bd-001", "bd-002", "bd-003", "bd-004"} {
-			if !strings.Contains(resultStr, id) {
-				t.Errorf("Expected issue %s to be in merged result", id)
-			}
+		if !strings.Contains(resultStr, "bd-004") {
+			t.Errorf("Expected issue bd-004 to be in result")
 		}
 	})
 
@@ -798,18 +797,17 @@ func TestSyncJSONLToWorktree_DeleteMutation(t *testing.T) {
 			t.Fatalf("Failed to read result JSONL: %v", err)
 		}
 
-		// Should have all 4 issues (3 from remote + 1 from local, merged)
+		// 3-way merge removed: mergeJSONLFiles now returns srcData (local wins).
+		// When local has fewer issues, srcData (1 issue) overwrites destination.
 		resultCount := countJSONLIssues(resultData)
-		if resultCount != 4 {
-			t.Errorf("Expected 4 issues after merge, got %d\nContent:\n%s", resultCount, string(resultData))
+		if resultCount != 1 {
+			t.Errorf("Expected 1 issue after local-wins overwrite, got %d\nContent:\n%s", resultCount, string(resultData))
 		}
 
-		// Verify all issues are present
+		// Verify the local issue is present
 		resultStr := string(resultData)
-		for _, id := range []string{"bd-200", "bd-201", "bd-202", "bd-203"} {
-			if !strings.Contains(resultStr, id) {
-				t.Errorf("Expected issue %s to be in merged result", id)
-			}
+		if !strings.Contains(resultStr, "bd-203") {
+			t.Errorf("Expected issue bd-203 to be in result")
 		}
 	})
 }

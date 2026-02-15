@@ -74,27 +74,13 @@ func TestGitHooks_Validation(t *testing.T) {
 	})
 }
 
-// TestMergeDriver_Validation tests MergeDriver validation
+// TestMergeDriver_Validation tests MergeDriver is a no-op (merge engine removed).
 func TestMergeDriver_Validation(t *testing.T) {
-	t.Run("sets correct merge driver config", func(t *testing.T) {
+	t.Run("is a no-op", func(t *testing.T) {
 		dir := setupTestGitRepo(t)
-
 		err := MergeDriver(dir)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify the config was set
-		cmd := exec.Command("git", "config", "merge.beads.driver")
-		cmd.Dir = dir
-		output, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("failed to get git config: %v", err)
-		}
-
-		expected := "bd merge %A %O %A %B\n"
-		if string(output) != expected {
-			t.Errorf("expected %q, got %q", expected, string(output))
+			t.Fatalf("MergeDriver should be a no-op, got error: %v", err)
 		}
 	})
 }
