@@ -219,7 +219,7 @@ func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, fo
 		}
 
 		// Use deleteBatch for persistent molecules
-		deleteBatch(nil, issueIDs, true, false, false, false, false, "mol burn")
+		deleteBatch(nil, issueIDs, true, false, false, false)
 		batchResult.TotalDeleted += len(issueIDs)
 		batchResult.Results = append(batchResult.Results, BurnResult{
 			MoleculeID:   id,
@@ -382,7 +382,7 @@ func burnPersistentMolecule(ctx context.Context, resolvedID string, dryRun, forc
 
 	// Use deleteBatch with cascade=false (we already have all IDs from subgraph)
 	// force=true, hardDelete=false (Dolt handles sync)
-	deleteBatch(nil, issueIDs, true, false, false, jsonOutput, false, "mol burn")
+	deleteBatch(nil, issueIDs, true, false, false, jsonOutput)
 }
 
 // burnWisps deletes all wisp issues without creating a digest
