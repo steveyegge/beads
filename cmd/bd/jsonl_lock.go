@@ -15,6 +15,7 @@ const (
 	jsonlLockFileName = ".jsonl.lock"
 
 	// jsonlLockTimeout is the maximum time to wait for the lock before giving up
+	// when no explicit --lock-timeout override is provided.
 	jsonlLockTimeout = 30 * time.Second
 
 	// jsonlLockPollInterval is how often to retry acquiring the lock
@@ -38,6 +39,20 @@ type JSONLLock struct {
 	flock    *flock.Flock
 	beadsDir string
 	mode     string // "exclusive" or "shared"
+}
+
+// effectiveJSONLLockTimeout returns the active JSONL lock timeout contract.
+// It intentionally reuses the global --lock-timeout value so direct and daemon
+// sync paths honor the same bounded wait policy.
+func effectiveJSONLLockTimeout() time.Duration {
+	if lockTimeout > 0 {
+		return lockTimeout
+	}
+	if lockTimeout == 0 {
+		return 0
+	}
+	// Defensive fallback; lockTimeout should never be negative in normal flow.
+	return jsonlLockTimeout
 }
 
 // newJSONLLock creates a new JSONLLock for the given beads directory.
@@ -109,9 +124,7 @@ func (l *JSONLLock) Release() error {
 
 // acquireWithRetry attempts to acquire the lock with retries until timeout.
 func (l *JSONLLock) acquireWithRetry(ctx context.Context, exclusive bool) error {
-	// Create a timeout context if needed
-	timeoutCtx, cancel := context.WithTimeout(ctx, jsonlLockTimeout)
-	defer cancel()
+	timeout := effectiveJSONLLockTimeout()
 
 	start := time.Now()
 	lockType := "shared"
@@ -119,7 +132,7 @@ func (l *JSONLLock) acquireWithRetry(ctx context.Context, exclusive bool) error 
 		lockType = "exclusive"
 	}
 
-	for {
+	tryAcquire := func() (bool, error) {
 		var locked bool
 		var err error
 
@@ -129,10 +142,33 @@ func (l *JSONLLock) acquireWithRetry(ctx context.Context, exclusive bool) error 
 			locked, err = l.flock.TryRLock()
 		}
 
+		return locked, err
+	}
+
+	if timeout == 0 {
+		locked, err := tryAcquire()
 		if err != nil {
 			return fmt.Errorf("failed to acquire %s JSONL lock: %w", lockType, err)
 		}
+		if locked {
+			l.mode = lockType
+			debug.Logf("acquired %s JSONL lock immediately: %s", lockType, l.flock.Path())
+			return nil
+		}
+		return fmt.Errorf(
+			"timeout waiting for %s JSONL lock after 0s (another process may be syncing or exporting - try again in a moment)",
+			lockType,
+		)
+	}
 
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	for {
+		locked, err := tryAcquire()
+		if err != nil {
+			return fmt.Errorf("failed to acquire %s JSONL lock: %w", lockType, err)
+		}
 		if locked {
 			l.mode = lockType
 			debug.Logf("acquired %s JSONL lock after %v: %s", lockType, time.Since(start), l.flock.Path())
