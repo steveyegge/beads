@@ -553,7 +553,6 @@ func (m *MemoryStorage) ClaimIssue(ctx context.Context, id string, actor string)
 	return nil
 }
 
-
 // DeleteIssue permanently deletes an issue and all associated data
 func (m *MemoryStorage) DeleteIssue(ctx context.Context, id string) error {
 	m.mu.Lock()

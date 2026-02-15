@@ -1338,4 +1338,3 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 		return nil
 	})
 }
-

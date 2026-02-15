@@ -1330,21 +1330,21 @@ func TestImportDeletedPrefixMismatch(t *testing.T) {
 		},
 		// Deleted issue with wrong prefix "beads"
 		{
-			ID:           "beads-old1",
-			Title:        "(deleted)",
-			Status:       types.StatusClosed,
-			Priority:     2,
-			IssueType:    types.TypeTask,
-			ClosedAt:     &deletedAt,
+			ID:        "beads-old1",
+			Title:     "(deleted)",
+			Status:    types.StatusClosed,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			ClosedAt:  &deletedAt,
 		},
 		// Deleted issue with wrong prefix "test"
 		{
-			ID:           "test-old2",
-			Title:        "(deleted)",
-			Status:       types.StatusClosed,
-			Priority:     2,
-			IssueType:    types.TypeTask,
-			ClosedAt:     &deletedAt,
+			ID:        "test-old2",
+			Title:     "(deleted)",
+			Status:    types.StatusClosed,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			ClosedAt:  &deletedAt,
 		},
 	}
 
@@ -1398,12 +1398,12 @@ func TestImportMixedPrefixMismatch(t *testing.T) {
 		},
 		// Deleted issue with wrong prefix
 		{
-			ID:           "beads-old1",
-			Title:        "(deleted)",
-			Status:       types.StatusClosed,
-			Priority:     2,
-			IssueType:    types.TypeTask,
-			ClosedAt:     &deletedAt,
+			ID:        "beads-old1",
+			Title:     "(deleted)",
+			Status:    types.StatusClosed,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			ClosedAt:  &deletedAt,
 		},
 		// Non-deleted issue with wrong prefix (should cause error)
 		{
