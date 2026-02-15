@@ -88,20 +88,20 @@ func pruneExpiredTombstones(customTTL time.Duration) (*TombstonePruneResult, err
 	encoder := json.NewEncoder(tempFile)
 	for _, issue := range kept {
 		if err := encoder.Encode(issue); err != nil {
-			_ = tempFile.Close()
-			_ = os.Remove(tempPath)
+			_ = tempFile.Close() // Best effort cleanup
+			_ = os.Remove(tempPath) // Best effort cleanup of temp file
 			return nil, fmt.Errorf("failed to write issue %s: %w", issue.ID, err)
 		}
 	}
 
 	if err := tempFile.Close(); err != nil {
-		_ = os.Remove(tempPath)
+		_ = os.Remove(tempPath) // Best effort cleanup of temp file
 		return nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// Atomically replace
 	if err := os.Rename(tempPath, issuesPath); err != nil {
-		_ = os.Remove(tempPath)
+		_ = os.Remove(tempPath) // Best effort cleanup of temp file
 		return nil, fmt.Errorf("failed to replace issues.jsonl: %w", err)
 	}
 
@@ -413,19 +413,19 @@ func purgeTombstonesByDependency(dryRun bool) (*PurgeTombstonesResult, error) {
 	encoder := json.NewEncoder(tempFile)
 	for _, issue := range kept {
 		if err := encoder.Encode(issue); err != nil {
-			_ = tempFile.Close()
-			_ = os.Remove(tempPath)
+			_ = tempFile.Close() // Best effort cleanup
+			_ = os.Remove(tempPath) // Best effort cleanup of temp file
 			return nil, fmt.Errorf("failed to write issue %s: %w", issue.ID, err)
 		}
 	}
 
 	if err := tempFile.Close(); err != nil {
-		_ = os.Remove(tempPath)
+		_ = os.Remove(tempPath) // Best effort cleanup of temp file
 		return nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	if err := os.Rename(tempPath, issuesPath); err != nil {
-		_ = os.Remove(tempPath)
+		_ = os.Remove(tempPath) // Best effort cleanup of temp file
 		return nil, fmt.Errorf("failed to replace issues.jsonl: %w", err)
 	}
 

@@ -129,17 +129,17 @@ var showCmd = &cobra.Command{
 			if jsonOutput {
 				// Include labels, dependencies (with metadata), dependents (with metadata), and comments in JSON output
 				details := &types.IssueDetails{Issue: *issue}
-				details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
+				details.Labels, _ = issueStore.GetLabels(ctx, issue.ID) // Best effort: show issue even if label fetch fails
 
 				// Get dependencies with metadata (dependency_type field)
-				details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
+				details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID) // Best effort: show issue even if deps unavailable
 				// Resolve external deps via routing (bd-k0pfm)
 				if externalDeps, err := resolveExternalDepsViaRouting(ctx, issueStore, issue.ID); err == nil {
 					details.Dependencies = append(details.Dependencies, externalDeps...)
 				}
-				details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)
+				details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID) // Best effort: show issue even if dependents unavailable
 
-				details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID)
+				details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID) // Best effort: show issue even if comments unavailable
 				// Compute parent from dependencies
 				for _, dep := range details.Dependencies {
 					if dep.DependencyType == types.DepParentChild {
@@ -190,7 +190,7 @@ var showCmd = &cobra.Command{
 			}
 
 			// Show labels
-			labels, _ := issueStore.GetLabels(ctx, issue.ID)
+			labels, _ := issueStore.GetLabels(ctx, issue.ID) // Best effort: show issue even if label fetch fails
 			if len(labels) > 0 {
 				fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(labels, ", "))
 			}
@@ -200,7 +200,7 @@ var showCmd = &cobra.Command{
 			relatedSeen := make(map[string]*types.IssueWithDependencyMetadata)
 
 			// Show dependencies - grouped by dependency type for clarity
-			depsWithMeta, _ := issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
+			depsWithMeta, _ := issueStore.GetDependenciesWithMetadata(ctx, issue.ID) // Best effort: show issue even if deps unavailable
 
 			// Resolve external deps via routing (bd-k0pfm)
 			// GetDependenciesWithMetadata JOINs on issues table, so external refs
@@ -249,7 +249,7 @@ var showCmd = &cobra.Command{
 			}
 
 			// Show dependents - grouped by dependency type for clarity
-			dependentsWithMeta, _ := issueStore.GetDependentsWithMetadata(ctx, issue.ID)
+			dependentsWithMeta, _ := issueStore.GetDependentsWithMetadata(ctx, issue.ID) // Best effort: show issue even if dependents unavailable
 			if len(dependentsWithMeta) > 0 {
 				// Group by dependency type
 				var blocks, children, discovered []*types.IssueWithDependencyMetadata
@@ -297,7 +297,7 @@ var showCmd = &cobra.Command{
 			}
 
 			// Show comments
-			comments, _ := issueStore.GetIssueComments(ctx, issue.ID)
+			comments, _ := issueStore.GetIssueComments(ctx, issue.ID) // Best effort: show issue even if comments unavailable
 			if len(comments) > 0 {
 				fmt.Printf("\n%s\n", ui.RenderBold("COMMENTS"))
 				for _, comment := range comments {

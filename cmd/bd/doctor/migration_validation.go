@@ -564,7 +564,7 @@ func checkDoltLocks(beadsDir string) (bool, string) {
 // Returns: foreignCount, foreignPrefixes map, ephemeralCount.
 func categorizeDoltExtras(ctx context.Context, store storage.Storage, jsonlIDs map[string]bool) (int, map[string]int, int) {
 	// Get the configured prefix for this rig
-	localPrefix, _ := store.GetConfig(ctx, "issue_prefix")
+	localPrefix, _ := store.GetConfig(ctx, "issue_prefix") // Best effort: empty prefix means no prefix-based validation
 
 	// Query all issue IDs from Dolt
 	db := store.UnderlyingDB()

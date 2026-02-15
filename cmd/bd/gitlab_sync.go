@@ -76,7 +76,7 @@ func generateIssueID(prefix string) string {
 	timestamp := time.Now().UnixNano() / 1000000 // milliseconds
 	// Add random bytes to prevent collision on restart
 	randBytes := make([]byte, 4)
-	_, _ = rand.Read(randBytes)
+	_, _ = rand.Read(randBytes) // crypto/rand.Read always returns len(p) bytes on supported platforms
 	return fmt.Sprintf("%s-%d-%d-%x", prefix, timestamp, counter, randBytes)
 }
 
@@ -216,7 +216,7 @@ func doPullFromGitLabWithContext(ctx context.Context, syncCtx *SyncContext, clie
 
 	lastSyncStr := ""
 	if syncCtx.store != nil {
-		lastSyncStr, _ = syncCtx.store.GetConfig(ctx, "gitlab.last_sync")
+		lastSyncStr, _ = syncCtx.store.GetConfig(ctx, "gitlab.last_sync") // Best effort: empty means sync from beginning
 	}
 
 	if lastSyncStr != "" {

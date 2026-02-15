@@ -14,7 +14,7 @@ import (
 // since the last sync. This is a more expensive operation as it fetches individual
 // issue timestamps from Linear.
 func detectLinearConflicts(ctx context.Context) ([]linear.Conflict, error) {
-	lastSyncStr, _ := store.GetConfig(ctx, "linear.last_sync")
+	lastSyncStr, _ := store.GetConfig(ctx, "linear.last_sync") // Best effort: empty means no previous sync
 	if lastSyncStr == "" {
 		return nil, nil
 	}

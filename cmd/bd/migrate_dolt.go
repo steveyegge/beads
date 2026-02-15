@@ -126,9 +126,9 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 	// Import data with cleanup on failure
 	imported, skipped, importErr := importToDolt(ctx, doltStore, data)
 	if importErr != nil {
-		_ = doltStore.Close()
+		_ = doltStore.Close() // Best effort cleanup on error path
 		// Cleanup partial Dolt directory
-		_ = os.RemoveAll(doltPath)
+		_ = os.RemoveAll(doltPath) // Best effort cleanup of failed migration
 		exitWithError("import_failed", importErr.Error(), "partial Dolt directory has been cleaned up")
 	}
 
@@ -147,7 +147,7 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 		printWarning(fmt.Sprintf("failed to create Dolt commit: %v", err))
 	}
 
-	_ = doltStore.Close()
+	_ = doltStore.Close() // Best effort cleanup
 
 	printSuccess(fmt.Sprintf("Imported %d issues (%d skipped)", imported, skipped))
 
@@ -286,15 +286,15 @@ func handleToSQLiteMigration(dryRun bool, autoYes bool) {
 	// Import data with cleanup on failure
 	imported, skipped, importErr := importToSQLite(ctx, sqliteStore, data)
 	if importErr != nil {
-		_ = sqliteStore.Close()
+		_ = sqliteStore.Close() // Best effort cleanup on error path
 		// Cleanup partial SQLite database
-		_ = os.Remove(sqlitePath)
-		_ = os.Remove(sqlitePath + "-wal")
-		_ = os.Remove(sqlitePath + "-shm")
+		_ = os.Remove(sqlitePath)        // Best effort cleanup of SQLite files
+		_ = os.Remove(sqlitePath + "-wal") // Best effort cleanup of SQLite files
+		_ = os.Remove(sqlitePath + "-shm") // Best effort cleanup of SQLite files
 		exitWithError("import_failed", importErr.Error(), "partial SQLite database has been cleaned up")
 	}
 
-	_ = sqliteStore.Close()
+	_ = sqliteStore.Close() // Best effort cleanup
 
 	printSuccess(fmt.Sprintf("Imported %d issues (%d skipped)", imported, skipped))
 
@@ -318,7 +318,7 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.Close() }() // Best effort cleanup
 
 	return extractFromStore(ctx, store)
 }
@@ -329,7 +329,7 @@ func extractFromDolt(ctx context.Context, dbPath string) (*migrationData, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open Dolt database: %w", err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.Close() }() // Best effort cleanup
 
 	return extractFromStore(ctx, store)
 }
@@ -389,7 +389,7 @@ func extractFromStore(ctx context.Context, store storageReader) (*migrationData,
 	}
 
 	// Get prefix
-	prefix, _ := store.GetConfig(ctx, "issue_prefix")
+	prefix, _ := store.GetConfig(ctx, "issue_prefix") // Best effort: empty prefix is valid
 
 	// Assign labels and dependencies to issues
 	for _, issue := range issues {
@@ -425,7 +425,7 @@ func importToDolt(ctx context.Context, store *dolt.DoltStore, data *migrationDat
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
 	imported := 0
 	skipped := 0
@@ -779,7 +779,7 @@ func confirmBackendMigration(from, to string, withBackup bool) bool {
 	fmt.Printf("  %d. Keep your %s database (can be deleted after verification)\n\n", step, from)
 	fmt.Printf("Continue? [y/N] ")
 	var response string
-	_, _ = fmt.Scanln(&response)
+	_, _ = fmt.Scanln(&response) // Best effort: EOF on stdin treated as empty response
 	return strings.ToLower(response) == "y" || strings.ToLower(response) == "yes"
 }
 

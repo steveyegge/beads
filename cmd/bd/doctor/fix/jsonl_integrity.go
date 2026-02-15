@@ -63,7 +63,7 @@ func JSONLIntegrity(path string) error {
 
 	binary, err := getBdBinary()
 	if err != nil {
-		_ = moveFile(backup, jsonlPath)
+		_ = moveFile(backup, jsonlPath) // Best effort rollback: if restore fails, manual recovery from backup needed
 		return err
 	}
 
@@ -77,9 +77,9 @@ func JSONLIntegrity(path string) error {
 		failedTS := time.Now().UTC().Format("20060102T150405Z")
 		if _, statErr := os.Stat(jsonlPath); statErr == nil {
 			failed := jsonlPath + "." + failedTS + ".failed.regen.jsonl"
-			_ = moveFile(jsonlPath, failed)
+			_ = moveFile(jsonlPath, failed) // Best effort rollback: if restore fails, manual recovery from backup needed
 		}
-		_ = copyFile(backup, jsonlPath)
+		_ = copyFile(backup, jsonlPath) // Best effort rollback: if restore fails, manual recovery from backup needed
 		return fmt.Errorf("failed to regenerate JSONL from database: %w (backup: %s)", err, backup)
 	}
 

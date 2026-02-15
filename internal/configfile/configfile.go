@@ -77,7 +77,7 @@ func Load(beadsDir string) (*Config, error) {
 			return nil, fmt.Errorf("migrating config to metadata.json: %w", err)
 		}
 
-		// Remove legacy file (best effort)
+		// Remove legacy file (best effort: migration already saved to new location)
 		_ = os.Remove(legacyPath)
 
 		return &cfg, nil

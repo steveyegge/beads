@@ -75,7 +75,7 @@ Examples:
 		}
 
 		if jsonOutput {
-			updated, _ := store.GetIssue(ctx, fullID)
+			updated, _ := store.GetIssue(ctx, fullID) // Best effort: nil issue handled by subsequent nil check
 			if updated != nil {
 				outputJSON(updated)
 			}
@@ -115,7 +115,7 @@ func promoteRouted(id, comment string) {
 	}
 
 	if jsonOutput {
-		updated, _ := result.Store.GetIssue(rootCtx, result.ResolvedID)
+		updated, _ := result.Store.GetIssue(rootCtx, result.ResolvedID) // Best effort: nil issue handled by subsequent nil check
 		if updated != nil {
 			outputJSON(updated)
 		}

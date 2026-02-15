@@ -59,7 +59,7 @@ func AcquireAccessLock(doltDir string, exclusive bool, timeout time.Duration) (*
 	if err := lockFn(f); err == nil {
 		return &AccessLock{file: f, path: lockPath}, nil
 	} else if !errors.Is(err, lockfile.ErrLockBusy) {
-		_ = f.Close()
+		_ = f.Close() // Best effort cleanup on lock acquisition failure
 		return nil, fmt.Errorf("access lock: %w", err)
 	}
 
@@ -71,12 +71,12 @@ func AcquireAccessLock(doltDir string, exclusive bool, timeout time.Duration) (*
 		if err := lockFn(f); err == nil {
 			return &AccessLock{file: f, path: lockPath}, nil
 		} else if !errors.Is(err, lockfile.ErrLockBusy) {
-			_ = f.Close()
+			_ = f.Close() // Best effort cleanup on lock acquisition failure
 			return nil, fmt.Errorf("access lock: %w", err)
 		}
 	}
 
-	_ = f.Close()
+	_ = f.Close() // Best effort cleanup on lock acquisition failure
 	kind := "shared"
 	if exclusive {
 		kind = "exclusive"
@@ -91,7 +91,7 @@ func (l *AccessLock) Release() {
 	if l == nil || l.file == nil {
 		return
 	}
-	_ = lockfile.FlockUnlock(l.file)
-	_ = l.file.Close()
+	_ = lockfile.FlockUnlock(l.file) // Best effort: unlock may fail if fd already closed
+	_ = l.file.Close()              // Best effort cleanup
 	l.file = nil
 }

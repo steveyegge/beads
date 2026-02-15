@@ -131,7 +131,7 @@ Examples:
 			for i, issue := range issues {
 				issueIDs[i] = issue.ID
 			}
-			labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
+			labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs) // Best effort: labels are supplementary display info
 			for _, issue := range issues {
 				issue.Labels = labelsMap[issue.ID]
 			}
@@ -214,7 +214,7 @@ Examples:
 		}
 
 		// Fetch labels (not populated by GetIssue) and check for 'human' label
-		labelsMap, _ := targetStore.GetLabelsForIssues(ctx, []string{resolvedID})
+		labelsMap, _ := targetStore.GetLabelsForIssues(ctx, []string{resolvedID}) // Best effort: labels are supplementary display info
 		hasHumanLabel := false
 		for _, label := range labelsMap[resolvedID] {
 			if label == "human" {
@@ -286,7 +286,7 @@ Examples:
 		}
 
 		// Fetch labels (not populated by GetIssue) and check for 'human' label
-		labelsMap, _ := targetStore.GetLabelsForIssues(ctx, []string{resolvedID})
+		labelsMap, _ := targetStore.GetLabelsForIssues(ctx, []string{resolvedID}) // Best effort: labels are supplementary display info
 		hasHumanLabel := false
 		for _, label := range labelsMap[resolvedID] {
 			if label == "human" {

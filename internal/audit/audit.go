@@ -110,7 +110,7 @@ func Append(e *Entry) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to open interactions log: %w", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = f.Close() }() // Best effort: file close in defer after flush
 
 	bw := bufio.NewWriter(f)
 	enc := json.NewEncoder(bw)

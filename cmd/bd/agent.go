@@ -221,14 +221,14 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 			// Already have the issue from routed resolution
 			agent = routedResult.Issue
 			// Get labels from routed store
-			labels, _ = routedResult.Store.GetLabels(ctx, agentID)
+			labels, _ = routedResult.Store.GetLabels(ctx, agentID) // Best effort: labels are supplementary display info
 		} else {
 			var err error
 			agent, err = activeStore.GetIssue(ctx, agentID)
 			if err != nil || agent == nil {
 				return fmt.Errorf("agent bead not found: %s", agentID)
 			}
-			labels, _ = activeStore.GetLabels(ctx, agentID)
+			labels, _ = activeStore.GetLabels(ctx, agentID) // Best effort: labels are supplementary display info
 		}
 
 		// Verify agent bead is actually an agent (check for gt:agent label)
@@ -302,14 +302,14 @@ func runAgentHeartbeat(cmd *cobra.Command, args []string) error {
 	if routedResult != nil && routedResult.Issue != nil {
 		// Already have the issue from routed resolution
 		agent = routedResult.Issue
-		labels, _ = routedResult.Store.GetLabels(ctx, agentID)
+		labels, _ = routedResult.Store.GetLabels(ctx, agentID) // Best effort: labels are supplementary display info
 	} else {
 		var err error
 		agent, err = activeStore.GetIssue(ctx, agentID)
 		if err != nil || agent == nil {
 			return fmt.Errorf("agent bead not found: %s", agentID)
 		}
-		labels, _ = activeStore.GetLabels(ctx, agentID)
+		labels, _ = activeStore.GetLabels(ctx, agentID) // Best effort: labels are supplementary display info
 	}
 
 	// Verify agent bead is actually an agent (check for gt:agent label)
@@ -372,14 +372,14 @@ func runAgentShow(cmd *cobra.Command, args []string) error {
 	if routedResult != nil && routedResult.Issue != nil {
 		// Already have the issue from routed resolution
 		agent = routedResult.Issue
-		labels, _ = routedResult.Store.GetLabels(ctx, agentID)
+		labels, _ = routedResult.Store.GetLabels(ctx, agentID) // Best effort: labels are supplementary display info
 	} else {
 		var err error
 		agent, err = store.GetIssue(ctx, agentID)
 		if err != nil || agent == nil {
 			return fmt.Errorf("agent bead not found: %s", agentID)
 		}
-		labels, _ = store.GetLabels(ctx, agentID)
+		labels, _ = store.GetLabels(ctx, agentID) // Best effort: labels are supplementary display info
 	}
 
 	// Verify agent bead is actually an agent (check for gt:agent label)

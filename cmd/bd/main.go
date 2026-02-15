@@ -245,7 +245,7 @@ var rootCmd = &cobra.Command{
 			return
 		}
 		// No subcommand - show help
-		_ = cmd.Help()
+		_ = cmd.Help() // Help() always returns nil for cobra commands
 	},
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Initialize CommandContext to hold runtime state (replaces scattered globals)
@@ -434,11 +434,11 @@ var rootCmd = &cobra.Command{
 			timestamp := time.Now().Format("20060102-150405")
 			if f, _ := os.Create(fmt.Sprintf("bd-profile-%s-%s.prof", cmd.Name(), timestamp)); f != nil {
 				profileFile = f
-				_ = pprof.StartCPUProfile(f)
+				_ = pprof.StartCPUProfile(f) // Best effort: profiling is a debug tool, failure is non-fatal
 			}
 			if f, _ := os.Create(fmt.Sprintf("bd-trace-%s-%s.out", cmd.Name(), timestamp)); f != nil {
 				traceFile = f
-				_ = trace.Start(f)
+				_ = trace.Start(f) // Best effort: profiling is a debug tool, failure is non-fatal
 			}
 		}
 
@@ -795,16 +795,16 @@ var rootCmd = &cobra.Command{
 		storeMutex.Unlock()
 
 		if store != nil {
-			_ = store.Close()
+			_ = store.Close() // Best effort cleanup
 		}
 
 		if profileFile != nil {
 			pprof.StopCPUProfile()
-			_ = profileFile.Close()
+			_ = profileFile.Close() // Best effort cleanup
 		}
 		if traceFile != nil {
 			trace.Stop()
-			_ = traceFile.Close()
+			_ = traceFile.Close() // Best effort cleanup
 		}
 
 		// Cancel the signal context to clean up resources

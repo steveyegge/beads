@@ -81,7 +81,7 @@ func (wm *WorktreeManager) CreateBeadsWorktree(branch, worktreePath string) erro
 
 	// Configure sparse checkout to only include .beads/
 	if err := wm.configureSparseCheckout(worktreePath); err != nil {
-		// Cleanup worktree on failure
+		// Best effort cleanup of worktree on failure
 		_ = wm.RemoveBeadsWorktree(worktreePath)
 		return fmt.Errorf("failed to configure sparse checkout: %w", err)
 	}
@@ -91,7 +91,7 @@ func (wm *WorktreeManager) CreateBeadsWorktree(branch, worktreePath string) erro
 	checkoutCmd.Dir = worktreePath
 	output, err = checkoutCmd.CombinedOutput()
 	if err != nil {
-		_ = wm.RemoveBeadsWorktree(worktreePath)
+		_ = wm.RemoveBeadsWorktree(worktreePath) // Best effort cleanup on error path
 		return fmt.Errorf("failed to checkout branch in worktree: %w\nOutput: %s", err, string(output))
 	}
 
@@ -296,7 +296,7 @@ func (wm *WorktreeManager) mergeJSONLFiles(srcData, dstData []byte) ([]byte, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() { _ = os.RemoveAll(tmpDir) }() // Best effort cleanup of temp dir
 
 	baseFile := filepath.Join(tmpDir, "base.jsonl")
 	leftFile := filepath.Join(tmpDir, "left.jsonl")   // source (local)

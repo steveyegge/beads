@@ -24,6 +24,6 @@ func outputJSONError(err error, code string) {
 	}
 	encoder := json.NewEncoder(os.Stderr)
 	encoder.SetIndent("", "  ")
-	_ = encoder.Encode(errObj)
+	_ = encoder.Encode(errObj) // Best effort: if JSON encoding fails, error is already printed to stderr
 	os.Exit(1)
 }

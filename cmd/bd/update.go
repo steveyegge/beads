@@ -373,7 +373,7 @@ create, update, show, or close operation).`,
 			}
 
 			// Run update hook
-			updatedIssue, _ := issueStore.GetIssue(ctx, result.ResolvedID)
+			updatedIssue, _ := issueStore.GetIssue(ctx, result.ResolvedID) // Best effort: nil issue handled by subsequent nil check
 			if updatedIssue != nil && hookRunner != nil {
 				hookRunner.Run(hooks.EventUpdate, updatedIssue)
 			}

@@ -124,7 +124,7 @@ func SyncBranchHealth(path, syncBranch string) error {
 	fmt.Printf("  Deleting local %s branch...\n", syncBranch)
 	cmd = exec.Command("git", "branch", "-D", syncBranch)
 	cmd.Dir = path
-	_ = cmd.Run() // Ignore error if branch doesn't exist
+	_ = cmd.Run() // Best effort: branch may not exist
 
 	// Fetch latest and recreate
 	cmd = exec.Command("git", "fetch", "origin", mainBranch)
@@ -232,7 +232,7 @@ func setGitIndexFlags(repoPath, filePath, excludePattern string) (bool, error) {
 		// Revert assume-unchanged if skip-worktree fails
 		revertCmd := exec.Command("git", "update-index", "--no-assume-unchanged", filePath)
 		revertCmd.Dir = repoPath
-		_ = revertCmd.Run()
+		_ = revertCmd.Run() // Best effort: rollback of failed rebase
 		return false, fmt.Errorf("failed to set skip-worktree on %s: %w\n%s", filePath, err, out)
 	}
 

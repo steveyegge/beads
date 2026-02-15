@@ -100,13 +100,13 @@ func RunServerHealthChecks(path string) ServerHealthResult {
 	if versionCheck.Status == StatusError {
 		result.OverallOK = false
 		if db != nil {
-			_ = db.Close()
+			_ = db.Close() // Best effort cleanup
 		}
 		return result
 	}
 	defer func() {
 		if db != nil {
-			_ = db.Close()
+			_ = db.Close() // Best effort cleanup
 		}
 	}()
 
@@ -151,7 +151,7 @@ func checkServerReachable(host string, port int) DoctorCheck {
 			Category: CategoryFederation,
 		}
 	}
-	_ = conn.Close()
+	_ = conn.Close() // Best effort cleanup
 
 	return DoctorCheck{
 		Name:     "Server Reachable",
@@ -203,7 +203,7 @@ func checkDoltVersion(cfg *configfile.Config) (DoctorCheck, *sql.DB) {
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
+		_ = db.Close() // Best effort cleanup
 		return DoctorCheck{
 			Name:     "Dolt Version",
 			Status:   StatusError,
@@ -220,7 +220,7 @@ func checkDoltVersion(cfg *configfile.Config) (DoctorCheck, *sql.DB) {
 	if err != nil {
 		// If dolt_version() doesn't exist, it's not a Dolt server
 		if strings.Contains(err.Error(), "Unknown") || strings.Contains(err.Error(), "doesn't exist") {
-			_ = db.Close()
+			_ = db.Close() // Best effort cleanup
 			return DoctorCheck{
 				Name:     "Dolt Version",
 				Status:   StatusError,
@@ -230,7 +230,7 @@ func checkDoltVersion(cfg *configfile.Config) (DoctorCheck, *sql.DB) {
 				Category: CategoryFederation,
 			}, nil
 		}
-		_ = db.Close()
+		_ = db.Close() // Best effort cleanup
 		return DoctorCheck{
 			Name:     "Dolt Version",
 			Status:   StatusError,

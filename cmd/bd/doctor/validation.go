@@ -26,7 +26,7 @@ func openStoreDB(beadsDir string) (*sql.DB, storage.Storage, error) {
 	}
 	db := store.UnderlyingDB()
 	if db == nil {
-		_ = store.Close()
+		_ = store.Close() // Best effort cleanup
 		return nil, nil, fmt.Errorf("storage backend has no underlying database")
 	}
 	return db, store, nil

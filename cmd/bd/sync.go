@@ -36,6 +36,7 @@ func getSyncBranchContext(ctx context.Context) *SyncBranchContext {
 	if err := ensureStoreActive(); err != nil || store == nil {
 		return sbc
 	}
+	// Best effort: if syncbranch lookup fails, we proceed without sync branch info
 	if sb, _ := syncbranch.Get(ctx, store); sb != "" {
 		sbc.Branch = sb
 		if rc, err := beads.GetRepoContext(); err == nil {
@@ -606,7 +607,7 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 
 	// Step 11: Clear sync state on successful sync
 	if bd := beads.FindBeadsDir(); bd != "" {
-		_ = ClearSyncState(bd)
+		_ = ClearSyncState(bd) // Best effort: stale state is harmless
 	}
 
 	fmt.Println("\n✓ Sync complete")
@@ -674,7 +675,7 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 
 	// Clear sync state on successful sync
 	if bd := beads.FindBeadsDir(); bd != "" {
-		_ = ClearSyncState(bd)
+		_ = ClearSyncState(bd) // Best effort: stale state is harmless
 	}
 
 	fmt.Println("\n✓ Sync complete")

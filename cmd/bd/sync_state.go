@@ -136,13 +136,13 @@ func RecordSyncFailure(beadsDir string, reason string) time.Duration {
 		state.NeedsManualSync = true
 	}
 
-	_ = saveSyncStateUnlocked(beadsDir, state)
+	_ = saveSyncStateUnlocked(beadsDir, state) // Best effort: state persistence is advisory for backoff logic
 	return backoff
 }
 
 // RecordSyncSuccess clears the sync state after a successful sync.
 func RecordSyncSuccess(beadsDir string) {
-	_ = ClearSyncState(beadsDir)
+	_ = ClearSyncState(beadsDir) // Best effort: stale state is harmless
 }
 
 // ShouldSkipSync returns true if we're still in the backoff period.

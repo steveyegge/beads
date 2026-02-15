@@ -395,12 +395,12 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 	for activeRows.Next() {
 		var id string
 		if err := activeRows.Scan(&id); err != nil {
-			_ = activeRows.Close()
+			_ = activeRows.Close() // Best effort cleanup on error path
 			return nil, err
 		}
 		activeIDs[id] = true
 	}
-	_ = activeRows.Close()
+	_ = activeRows.Close() // Redundant close for safety (rows already iterated)
 	if err := activeRows.Err(); err != nil {
 		return nil, err
 	}
@@ -420,14 +420,14 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 	for depRows.Next() {
 		var issueID, blockerID string
 		if err := depRows.Scan(&issueID, &blockerID); err != nil {
-			_ = depRows.Close()
+			_ = depRows.Close() // Best effort cleanup on error path
 			return nil, err
 		}
 		if activeIDs[issueID] && activeIDs[blockerID] {
 			blockerMap[issueID] = append(blockerMap[issueID], blockerID)
 		}
 	}
-	_ = depRows.Close()
+	_ = depRows.Close() // Redundant close for safety (rows already iterated)
 	if err := depRows.Err(); err != nil {
 		return nil, err
 	}
@@ -477,12 +477,12 @@ func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.Ep
 	for epicRows.Next() {
 		var id string
 		if err := epicRows.Scan(&id); err != nil {
-			_ = epicRows.Close()
+			_ = epicRows.Close() // Best effort cleanup on error path
 			return nil, err
 		}
 		epicIDs = append(epicIDs, id)
 	}
-	_ = epicRows.Close()
+	_ = epicRows.Close() // Redundant close for safety (rows already iterated)
 
 	if len(epicIDs) == 0 {
 		return nil, nil
@@ -505,14 +505,14 @@ func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.Ep
 	for depRows.Next() {
 		var parentID, childID string
 		if err := depRows.Scan(&parentID, &childID); err != nil {
-			_ = depRows.Close()
+			_ = depRows.Close() // Best effort cleanup on error path
 			return nil, err
 		}
 		if epicSet[parentID] {
 			epicChildMap[parentID] = append(epicChildMap[parentID], childID)
 		}
 	}
-	_ = depRows.Close()
+	_ = depRows.Close() // Redundant close for safety (rows already iterated)
 
 	// Step 3: For each epic with children, check child statuses
 	var results []*types.EpicStatus
@@ -632,7 +632,7 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 				activeIDs[id] = true
 			}
 		}
-		_ = activeRows.Close()
+		_ = activeRows.Close() // Redundant close for safety (rows already iterated)
 
 		// Step 2: Get all blocking dependencies (single-table scan)
 		depRows, err := s.queryContext(ctx, `
@@ -650,7 +650,7 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 					}
 				}
 			}
-			_ = depRows.Close()
+			_ = depRows.Close() // Redundant close for safety (rows already iterated)
 			blockedCount = len(blockedSet)
 		}
 	}
@@ -684,12 +684,12 @@ func (s *DoltStore) computeBlockedIDs(ctx context.Context) ([]string, error) {
 	for activeRows.Next() {
 		var id string
 		if err := activeRows.Scan(&id); err != nil {
-			_ = activeRows.Close()
+			_ = activeRows.Close() // Best effort cleanup on error path
 			return nil, err
 		}
 		activeIDs[id] = true
 	}
-	_ = activeRows.Close()
+	_ = activeRows.Close() // Redundant close for safety (rows already iterated)
 	if err := activeRows.Err(); err != nil {
 		return nil, err
 	}
@@ -708,14 +708,14 @@ func (s *DoltStore) computeBlockedIDs(ctx context.Context) ([]string, error) {
 	for depRows.Next() {
 		var issueID, blockerID string
 		if err := depRows.Scan(&issueID, &blockerID); err != nil {
-			_ = depRows.Close()
+			_ = depRows.Close() // Best effort cleanup on error path
 			return nil, err
 		}
 		if activeIDs[issueID] && activeIDs[blockerID] {
 			blockedSet[issueID] = true
 		}
 	}
-	_ = depRows.Close()
+	_ = depRows.Close() // Redundant close for safety (rows already iterated)
 	if err := depRows.Err(); err != nil {
 		return nil, err
 	}
@@ -755,12 +755,12 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 	for depRows.Next() {
 		var id string
 		if err := depRows.Scan(&id); err != nil {
-			_ = depRows.Close()
+			_ = depRows.Close() // Best effort cleanup on error path
 			return nil, err
 		}
 		childIDs = append(childIDs, id)
 	}
-	_ = depRows.Close()
+	_ = depRows.Close() // Redundant close for safety (rows already iterated)
 
 	// Step 2: Get status for each child (single-table lookups)
 	for _, childID := range childIDs {

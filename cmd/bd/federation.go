@@ -275,7 +275,7 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 	}
 
 	// Get pending local changes
-	doltStatus, _ := ds.Status(ctx)
+	doltStatus, _ := ds.Status(ctx) // Best effort: nil status means federation not available
 	pendingChanges := 0
 	if doltStatus != nil {
 		pendingChanges = len(doltStatus.Staged) + len(doltStatus.Unstaged)
@@ -296,7 +296,7 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 		}
 
 		// Get sync status
-		status, _ := ds.SyncStatus(ctx, peer)
+		status, _ := ds.SyncStatus(ctx, peer) // Best effort: nil status means sync info unavailable
 		ps.Status = status
 
 		// Test connectivity by attempting a fetch
@@ -304,7 +304,7 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 		if fetchErr == nil {
 			ps.Reachable = true
 			// Re-get status after successful fetch for accurate ahead/behind
-			status, _ = ds.SyncStatus(ctx, peer)
+			status, _ = ds.SyncStatus(ctx, peer) // Best effort: nil status means sync info unavailable
 			ps.Status = status
 		} else {
 			ps.ReachError = fetchErr.Error()

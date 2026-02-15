@@ -136,7 +136,7 @@ func runMergeSlotCreate(cmd *cobra.Command, args []string) error {
 	ctx := rootCtx
 
 	// Check if slot already exists
-	existing, _ := store.GetIssue(ctx, slotID)
+	existing, _ := store.GetIssue(ctx, slotID) // Best effort: nil means slot doesn't exist yet
 	if existing != nil {
 		fmt.Printf("Merge slot already exists: %s\n", slotID)
 		return nil

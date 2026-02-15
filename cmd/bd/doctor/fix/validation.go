@@ -159,7 +159,7 @@ func OrphanedDependencies(path string, verbose bool) error {
 		} else {
 			if !isDolt {
 				// Mark issue as dirty for export (SQLite only; dolt commits automatically)
-				_, _ = db.Exec("INSERT OR IGNORE INTO dirty_issues (issue_id) VALUES (?)", o.issueID)
+				_, _ = db.Exec("INSERT OR IGNORE INTO dirty_issues (issue_id) VALUES (?)", o.issueID) // Best effort: dirty marking is advisory for next JSONL export
 			}
 			removed++
 			if showIndividual {
@@ -170,7 +170,7 @@ func OrphanedDependencies(path string, verbose bool) error {
 
 	if isDolt {
 		// Commit changes in dolt
-		_, _ = db.Exec("CALL DOLT_COMMIT('-Am', 'doctor: remove orphaned dependencies')")
+		_, _ = db.Exec("CALL DOLT_COMMIT('-Am', 'doctor: remove orphaned dependencies')") // Best effort: commit advisory; schema fix already applied in-memory
 	}
 
 	fmt.Printf("  Fixed %d orphaned dependency reference(s)\n", removed)
@@ -242,7 +242,7 @@ func ChildParentDependencies(path string, verbose bool) error {
 		} else {
 			if !isDolt {
 				// Mark issue as dirty for export (SQLite only; dolt commits automatically)
-				_, _ = db.Exec("INSERT OR IGNORE INTO dirty_issues (issue_id) VALUES (?)", d.issueID)
+				_, _ = db.Exec("INSERT OR IGNORE INTO dirty_issues (issue_id) VALUES (?)", d.issueID) // Best effort: dirty marking is advisory for next JSONL export
 			}
 			removed++
 			if showIndividual {
@@ -252,7 +252,7 @@ func ChildParentDependencies(path string, verbose bool) error {
 	}
 
 	if isDolt {
-		_, _ = db.Exec("CALL DOLT_COMMIT('-Am', 'doctor: remove child-parent dependency anti-patterns')")
+		_, _ = db.Exec("CALL DOLT_COMMIT('-Am', 'doctor: remove child-parent dependency anti-patterns')") // Best effort: commit advisory; schema fix already applied in-memory
 	}
 
 	fmt.Printf("  Fixed %d child→parent dependency anti-pattern(s)\n", removed)
@@ -291,7 +291,7 @@ func openAnyDB(beadsDir string) (*sql.DB, bool, error) {
 
 	// Verify the connection actually works
 	if err := db.Ping(); err != nil {
-		_ = db.Close()
+		_ = db.Close() // Best effort cleanup
 		return nil, false, fmt.Errorf("no SQLite database and dolt server not reachable at %s:%d: %w", host, port, err)
 	}
 

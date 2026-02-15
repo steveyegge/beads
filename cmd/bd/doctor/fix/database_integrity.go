@@ -76,7 +76,7 @@ func DatabaseIntegrity(path string) error {
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 		sidecar := dbPath + suffix
 		if _, err := os.Stat(sidecar); err == nil {
-			_ = moveFile(sidecar, backupDB+suffix) // best effort
+			_ = moveFile(sidecar, backupDB+suffix) // Best effort rollback: if restore fails, manual recovery from backup needed
 		}
 	}
 
@@ -98,15 +98,15 @@ func DatabaseIntegrity(path string) error {
 		failedTS := time.Now().UTC().Format("20060102T150405Z")
 		if _, statErr := os.Stat(dbPath); statErr == nil {
 			failedDB := dbPath + "." + failedTS + ".failed.init.db"
-			_ = moveFile(dbPath, failedDB)
+			_ = moveFile(dbPath, failedDB) // Best effort rollback: if restore fails, manual recovery from backup needed
 			for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-				_ = moveFile(dbPath+suffix, failedDB+suffix)
+				_ = moveFile(dbPath+suffix, failedDB+suffix) // Best effort rollback: if restore fails, manual recovery from backup needed
 			}
 		}
-		_ = copyFile(backupDB, dbPath)
+		_ = copyFile(backupDB, dbPath) // Best effort rollback: if restore fails, manual recovery from backup needed
 		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 			if _, statErr := os.Stat(backupDB + suffix); statErr == nil {
-				_ = copyFile(backupDB+suffix, dbPath+suffix)
+				_ = copyFile(backupDB+suffix, dbPath+suffix) // Best effort rollback: if restore fails, manual recovery from backup needed
 			}
 		}
 		return fmt.Errorf("failed to rebuild database from JSONL: %w (backup: %s)", err, backupDB)

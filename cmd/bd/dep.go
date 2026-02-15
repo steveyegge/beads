@@ -95,7 +95,7 @@ Examples:
 
 		// If no args and no flags, show help
 		if len(args) == 0 && blocksID == "" {
-			_ = cmd.Help()
+			_ = cmd.Help() // Help() always returns nil for cobra commands
 			return
 		}
 
@@ -159,7 +159,7 @@ Examples:
 		}
 
 		// If we have an arg but no --blocks flag, show help
-		_ = cmd.Help()
+		_ = cmd.Help() // Help() always returns nil for cobra commands
 	},
 }
 
@@ -1058,7 +1058,7 @@ func resolveExternalDependencies(ctx context.Context, depStore storage.Storage, 
 
 		// Fetch the issue from the target rig
 		issue, err := targetStore.GetIssue(ctx, targetID)
-		_ = targetStore.Close()
+		_ = targetStore.Close() // Best effort cleanup
 		if err != nil || issue == nil {
 			if isVerbose() {
 				fmt.Fprintf(os.Stderr, "[external-deps] issue not found: %s (err=%v)\n", targetID, err)

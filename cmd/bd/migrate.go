@@ -467,6 +467,7 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, beadsDir string, dryRun bo
 	defer func() { _ = store.Close() }()
 
 	// Check current state of all metadata fields
+	// Best effort: empty metadata means first-time setup
 	currentVersion, _ := store.GetMetadata(ctx, "bd_version")
 	currentRepoID, _ := store.GetMetadata(ctx, "repo_id")
 	currentCloneID, _ := store.GetMetadata(ctx, "clone_id")
@@ -856,9 +857,9 @@ func cleanupWALFiles(dbPath string) {
 	walPath := dbPath + "-wal"
 	shmPath := dbPath + "-shm"
 
-	// Best effort cleanup - don't fail if these don't exist
-	_ = os.Remove(walPath) // WAL may not exist
-	_ = os.Remove(shmPath) // SHM may not exist
+	// Best effort cleanup of SQLite WAL/SHM files
+	_ = os.Remove(walPath)
+	_ = os.Remove(shmPath)
 }
 
 // handleInspect shows migration plan and database state for AI agent analysis
@@ -967,7 +968,7 @@ func handleInspect() {
 
 	// Get config
 	configMap := make(map[string]string)
-	prefix, _ := store.GetConfig(ctx, "issue_prefix")
+	prefix, _ := store.GetConfig(ctx, "issue_prefix") // Best effort: empty prefix is valid
 	if prefix != "" {
 		configMap["issue_prefix"] = prefix
 	}
@@ -1122,7 +1123,7 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 
 	// Get current sync.branch config
 	ctx := rootCtx
-	current, _ := store.GetConfig(ctx, "sync.branch")
+	current, _ := store.GetConfig(ctx, "sync.branch") // Best effort: empty means no sync branch configured
 
 	// Dry-run mode
 	if dryRun {

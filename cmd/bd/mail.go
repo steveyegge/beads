@@ -40,7 +40,7 @@ Examples:
 		// Handle --help and -h ourselves since flag parsing is disabled
 		for _, arg := range args {
 			if arg == "--help" || arg == "-h" {
-				_ = cmd.Help()
+				_ = cmd.Help() // Help() always returns nil for cobra commands
 				return
 			}
 		}

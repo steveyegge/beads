@@ -267,7 +267,7 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 	}
 
 	// Check if backend is SQLite - compaction only applies to SQLite
-	cfg, _ := configfile.Load(beadsDir)
+	cfg, _ := configfile.Load(beadsDir) // Best effort: nil config means no maintenance settings to check
 	if cfg != nil && cfg.GetBackend() != configfile.BackendSQLite {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",

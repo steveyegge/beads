@@ -64,5 +64,5 @@ func signalOrchestratorActivity() {
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return
 	}
-	_ = os.Rename(tmpPath, activityPath)
+	_ = os.Rename(tmpPath, activityPath) // Best effort: activity timestamp is advisory
 }

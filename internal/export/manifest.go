@@ -29,8 +29,8 @@ func WriteManifest(jsonlPath string, manifest *Manifest) error {
 	}
 	tempPath := tempFile.Name()
 	defer func() {
-		_ = tempFile.Close()
-		_ = os.Remove(tempPath)
+		_ = tempFile.Close()    // Best effort: may already be closed before rename
+		_ = os.Remove(tempPath) // Best effort: cleanup temp file; may already be renamed
 	}()
 
 	// Write manifest
@@ -38,7 +38,7 @@ func WriteManifest(jsonlPath string, manifest *Manifest) error {
 		return fmt.Errorf("failed to write manifest: %w", err)
 	}
 
-	// Close before rename
+	// Close before rename (required on Windows; double-close in defer is harmless)
 	_ = tempFile.Close()
 
 	// Atomic replace

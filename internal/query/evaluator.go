@@ -518,13 +518,13 @@ func (e *Evaluator) parseDurationAgo(s string) (time.Time, error) {
 func (e *Evaluator) extractBaseFilters(node Node, filter *types.IssueFilter) {
 	switch n := node.(type) {
 	case *ComparisonNode:
-		// Try to apply, ignore errors
+		// Try to apply, ignore errors (best-effort optimization: incompatible filters are safely skipped)
 		_ = e.applyComparison(n, filter)
 	case *AndNode:
 		e.extractBaseFilters(n.Left, filter)
 		e.extractBaseFilters(n.Right, filter)
 	case *NotNode:
-		_ = e.applyNot(n, filter)
+		_ = e.applyNot(n, filter) // Best-effort optimization: incompatible NOT filters are safely skipped
 	case *OrNode:
 		// For OR, we can't safely extract base filters
 		// (extracting from either side would over-filter)

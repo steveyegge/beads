@@ -84,7 +84,7 @@ func (h *haikuClient) SummarizeTier1(ctx context.Context, issue *types.Issue) (s
 		if callErr != nil {
 			e.Error = callErr.Error()
 		}
-		_, _ = audit.Append(e)
+		_, _ = audit.Append(e) // Best effort: audit logging must never fail compaction
 	}
 	return resp, callErr
 }

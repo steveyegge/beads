@@ -90,7 +90,7 @@ create, update, show, or close operation).`,
 
 		// Handle local IDs
 		for _, id := range resolvedIDs {
-			// Get issue for checks
+			// Get issue for checks (nil issue is handled by validateIssueClosable)
 			issue, _ := store.GetIssue(ctx, id)
 
 			if err := validateIssueClosable(id, issue, force); err != nil {
@@ -126,7 +126,7 @@ create, update, show, or close operation).`,
 
 			closedCount++
 
-			// Run close hook
+			// Run close hook (best effort: hook runs only if re-fetch succeeds)
 			closedIssue, _ := store.GetIssue(ctx, id)
 			if closedIssue != nil && hookRunner != nil {
 				hookRunner.Run(hooks.EventClose, closedIssue)
@@ -194,7 +194,7 @@ create, update, show, or close operation).`,
 
 			closedCount++
 
-			// Get updated issue for hook
+			// Get updated issue for hook (best effort: hook runs only if re-fetch succeeds)
 			closedIssue, _ := result.Store.GetIssue(ctx, result.ResolvedID)
 			if closedIssue != nil && hookRunner != nil {
 				hookRunner.Run(hooks.EventClose, closedIssue)

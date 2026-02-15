@@ -261,7 +261,7 @@ func isDoltServerRunning(host string, port int) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	_ = conn.Close() // Best effort cleanup
 	return true
 }
 

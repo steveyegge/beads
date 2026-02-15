@@ -73,7 +73,7 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
 	// Get prefix from config
 	var configPrefix string
@@ -144,7 +144,7 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
 	// Get prefix from config for validation
 	var configPrefix string
@@ -352,7 +352,7 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
 	// nolint:gosec // G201: setClauses contains only column names (e.g. "status = ?"), actual values passed via args
 	query := fmt.Sprintf("UPDATE issues SET %s WHERE id = ?", strings.Join(setClauses, ", "))
@@ -390,7 +390,7 @@ func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) err
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
 	// Use conditional UPDATE with WHERE clause to ensure atomicity.
 	// The UPDATE only succeeds if assignee is currently empty.
@@ -442,7 +442,7 @@ func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, ac
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
@@ -473,7 +473,7 @@ func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
 	// Delete related data (foreign keys will cascade, but be explicit)
 	tables := []string{"dependencies", "events", "comments", "labels"}
@@ -527,7 +527,7 @@ func (s *DoltStore) CreateTombstone(ctx context.Context, id string, actor string
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
 	// Convert issue to tombstone
 	_, err = tx.ExecContext(ctx, `
@@ -574,7 +574,7 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
 	// Resolve the full set of IDs to delete
 	expandedIDs := ids
@@ -608,7 +608,7 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 			for rows.Next() {
 				var depID string
 				if err := rows.Scan(&depID); err != nil {
-					_ = rows.Close()
+					_ = rows.Close() // Best effort cleanup on error path
 					return nil, fmt.Errorf("failed to scan dependent: %w", err)
 				}
 				if !idSet[depID] {
@@ -616,7 +616,7 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 					result.OrphanedIssues = append(result.OrphanedIssues, depID)
 				}
 			}
-			_ = rows.Close()
+			_ = rows.Close() // Redundant close for safety (rows already iterated)
 			if err := rows.Err(); err != nil {
 				return nil, fmt.Errorf("failed to iterate dependents for %s: %w", id, err)
 			}
@@ -636,14 +636,14 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 			for rows.Next() {
 				var depID string
 				if err := rows.Scan(&depID); err != nil {
-					_ = rows.Close()
+					_ = rows.Close() // Best effort cleanup on error path
 					return nil, fmt.Errorf("failed to scan dependent: %w", err)
 				}
 				if !idSet[depID] {
 					orphanSet[depID] = true
 				}
 			}
-			_ = rows.Close()
+			_ = rows.Close() // Redundant close for safety (rows already iterated)
 			if err := rows.Err(); err != nil {
 				return nil, fmt.Errorf("failed to iterate dependents for %s: %w", id, err)
 			}
@@ -706,12 +706,12 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	for rows.Next() {
 		var id, issueType string
 		if err := rows.Scan(&id, &issueType); err != nil {
-			_ = rows.Close()
+			_ = rows.Close() // Best effort cleanup on error path
 			return nil, fmt.Errorf("failed to scan issue type: %w", err)
 		}
 		issueTypes[id] = issueType
 	}
-	_ = rows.Close()
+	_ = rows.Close() // Redundant close for safety (rows already iterated)
 
 	// 3. Convert issues to tombstones
 	now := time.Now().UTC()
@@ -777,7 +777,7 @@ func (s *DoltStore) findAllDependentsRecursiveTx(ctx context.Context, tx *sql.Tx
 		for rows.Next() {
 			var depID string
 			if err := rows.Scan(&depID); err != nil {
-				_ = rows.Close()
+				_ = rows.Close() // Best effort cleanup on error path
 				return nil, fmt.Errorf("failed to scan dependent: %w", err)
 			}
 			if !result[depID] {
@@ -785,7 +785,7 @@ func (s *DoltStore) findAllDependentsRecursiveTx(ctx context.Context, tx *sql.Tx
 				toProcess = append(toProcess, depID)
 			}
 		}
-		_ = rows.Close()
+		_ = rows.Close() // Redundant close for safety (rows already iterated)
 		if err := rows.Err(); err != nil {
 			return nil, fmt.Errorf("failed to iterate dependents for %s: %w", current, err)
 		}
@@ -1223,7 +1223,7 @@ func (s *DoltStore) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo str
 	if err != nil {
 		return 0, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
 	// Get the list of issue IDs to delete
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM issues WHERE source_repo = ?`, sourceRepo)
@@ -1234,12 +1234,12 @@ func (s *DoltStore) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo str
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
+			_ = rows.Close() // Best effort cleanup on error path
 			return 0, fmt.Errorf("failed to scan issue ID: %w", err)
 		}
 		issueIDs = append(issueIDs, id)
 	}
-	_ = rows.Close()
+	_ = rows.Close() // Redundant close for safety (rows already iterated)
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("failed to iterate issues: %w", err)
 	}

@@ -98,7 +98,7 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 		// Limit response body to 50MB to prevent OOM from malformed responses.
 		const maxResponseSize = 50 * 1024 * 1024
 		respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-		_ = resp.Body.Close()
+		_ = resp.Body.Close() // Best effort: HTTP body close; connection may be reused regardless
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response (attempt %d/%d): %w", attempt+1, MaxRetries+1, err)
 			continue

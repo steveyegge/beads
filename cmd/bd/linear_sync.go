@@ -23,7 +23,7 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string, skipLinear
 	}
 
 	var linearIssues []linear.Issue
-	lastSyncStr, _ := store.GetConfig(ctx, "linear.last_sync")
+	lastSyncStr, _ := store.GetConfig(ctx, "linear.last_sync") // Best effort: empty means sync from beginning
 
 	if lastSyncStr != "" {
 		lastSync, err := time.Parse(time.RFC3339, lastSyncStr)

@@ -196,8 +196,8 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		// Safe because we imported all JSONL issues before rename
 		if jsonlPath != "" {
 			// Clear metadata hashes so integrity check doesn't fail
-			_ = store.SetMetadata(ctx, "jsonl_content_hash", "")
-			_ = store.SetMetadata(ctx, "export_hashes", "")
+			_ = store.SetMetadata(ctx, "jsonl_content_hash", "") // Best effort: stale hashes will be recomputed on next export
+			_ = store.SetMetadata(ctx, "export_hashes", "")      // Best effort: stale hashes will be recomputed on next export
 
 			// Export renamed issues directly to JSONL
 			if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
@@ -218,7 +218,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			_ = enc.Encode(result)
+			_ = enc.Encode(result) // Best effort: JSON encoding of simple struct does not fail in practice
 		}
 	},
 }
@@ -404,8 +404,8 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 	jsonlPath := findJSONLPath()
 	if jsonlPath != "" {
 		// Clear metadata hashes so integrity check doesn't fail
-		_ = st.SetMetadata(ctx, "jsonl_content_hash", "")
-		_ = st.SetMetadata(ctx, "export_hashes", "")
+		_ = st.SetMetadata(ctx, "jsonl_content_hash", "") // Best effort: stale hashes will be recomputed on next export
+		_ = st.SetMetadata(ctx, "export_hashes", "")      // Best effort: stale hashes will be recomputed on next export
 
 		// Export renamed issues directly to JSONL
 		if err := exportToJSONLWithStore(ctx, st, jsonlPath); err != nil {

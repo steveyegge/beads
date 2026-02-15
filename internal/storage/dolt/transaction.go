@@ -36,13 +36,13 @@ func (s *DoltStore) RunInTransaction(ctx context.Context, fn func(tx storage.Tra
 
 	defer func() {
 		if r := recover(); r != nil {
-			_ = sqlTx.Rollback()
+			_ = sqlTx.Rollback() // Best effort rollback on error path
 			panic(r)
 		}
 	}()
 
 	if err := fn(tx); err != nil {
-		_ = sqlTx.Rollback()
+		_ = sqlTx.Rollback() // Best effort rollback on error path
 		return err
 	}
 
@@ -158,16 +158,16 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
+			_ = rows.Close() // Best effort cleanup on error path
 			return nil, err
 		}
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
+		_ = rows.Close() // Best effort cleanup on error path
 		return nil, err
 	}
-	_ = rows.Close()
+	_ = rows.Close() // Redundant close for safety (rows already iterated)
 
 	// Now fetch each issue (safe since rows is closed)
 	var issues []*types.Issue

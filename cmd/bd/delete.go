@@ -610,7 +610,7 @@ func deleteBatchFallback(issueIDs []string, force bool, dryRun bool, cascade boo
 	// Hard delete: remove from JSONL immediately
 	if hardDelete {
 		for _, id := range issueIDs {
-			_ = removeIssueFromJSONL(id)
+			_ = removeIssueFromJSONL(id) // Best effort: JSONL will be re-exported from DB on next sync
 		}
 	}
 

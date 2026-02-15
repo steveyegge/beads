@@ -37,7 +37,7 @@ func withStorage(ctx context.Context, store storage.Storage, dbPath string, lock
 		if err != nil {
 			return err
 		}
-		defer func() { _ = roStore.Close() }()
+		defer func() { _ = roStore.Close() }() // Best effort cleanup
 		return fn(roStore)
 	}
 	return fmt.Errorf("no storage available")
@@ -130,7 +130,7 @@ func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueF
 		fmt.Fprintf(os.Stderr, "Error creating watcher: %v\n", err)
 		return
 	}
-	defer func() { _ = watcher.Close() }()
+	defer func() { _ = watcher.Close() }() // Best effort cleanup
 
 	// Watch the .beads directory
 	if err := watcher.Add(beadsDir); err != nil {
@@ -139,6 +139,7 @@ func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueF
 	}
 
 	// Initial display
+	// Best effort: display gracefully degrades with empty data
 	issues, _ := store.SearchIssues(ctx, "", filter)
 	sortIssues(issues, sortBy, reverse)
 	displayPrettyList(issues, true)
@@ -171,6 +172,7 @@ func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueF
 						debounceTimer.Stop()
 					}
 					debounceTimer = time.AfterFunc(debounceDelay, func() {
+						// Best effort: display gracefully degrades with empty data
 						issues, _ := store.SearchIssues(ctx, "", filter)
 						sortIssues(issues, sortBy, reverse)
 						displayPrettyList(issues, true)
@@ -298,6 +300,7 @@ var listCmd = &cobra.Command{
 		// Parent filtering (--filter-parent is alias for --parent)
 		parentID, _ := cmd.Flags().GetString("parent")
 		if parentID == "" {
+			// Flag registered; GetString only errors if flag doesn't exist
 			parentID, _ = cmd.Flags().GetString("filter-parent")
 		}
 
@@ -617,7 +620,7 @@ var listCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			defer func() { _ = rigStore.Close() }()
+			defer func() { _ = rigStore.Close() }() // Best effort cleanup
 			activeStore = rigStore
 		} else {
 			requireFreshDB(ctx)
@@ -667,6 +670,7 @@ var listCmd = &cobra.Command{
 				}
 
 				// Load dependencies for tree structure
+				// Best effort: display gracefully degrades with empty data
 				allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
 				displayPrettyListWithDeps(treeIssues, false, allDeps)
 				return
@@ -674,6 +678,7 @@ var listCmd = &cobra.Command{
 
 			// Regular tree display (no parent filter)
 			// Load dependencies for tree structure
+			// Best effort: display gracefully degrades with empty data
 			allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
 			displayPrettyListWithDeps(issues, false, allDeps)
 			// Show truncation hint if we hit the limit (GH#788)
@@ -698,6 +703,7 @@ var listCmd = &cobra.Command{
 			for i, issue := range issues {
 				issueIDs[i] = issue.ID
 			}
+			// Best effort: display gracefully degrades with empty data
 			labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
 			depCounts, _ := activeStore.GetDependencyCounts(ctx, issueIDs)
 			allDeps, _ := activeStore.GetDependencyRecordsForIssues(ctx, issueIDs)
@@ -735,9 +741,11 @@ var listCmd = &cobra.Command{
 		for i, issue := range issues {
 			issueIDs[i] = issue.ID
 		}
+		// Best effort: display gracefully degrades with empty data
 		labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
 
 		// Load dependencies for blocking info display
+		// Best effort: display gracefully degrades with empty data
 		allDepsForList, _ := activeStore.GetAllDependencyRecords(ctx)
 		closedIDs := getClosedBlockerIDs(ctx, activeStore, allDepsForList)
 		blockedByMap, blocksMap, _ := buildBlockingMaps(allDepsForList, closedIDs)

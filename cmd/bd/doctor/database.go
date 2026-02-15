@@ -934,13 +934,13 @@ func CountJSONLIssues(jsonlPath string) (int, map[string]int, error) {
 // countIssuesInJSONLFile counts the number of valid issues in a JSONL file
 // This is a wrapper around CountJSONLIssues that returns only the count
 func countIssuesInJSONLFile(jsonlPath string) int {
-	count, _, _ := CountJSONLIssues(jsonlPath)
+	count, _, _ := CountJSONLIssues(jsonlPath) // Best effort: zero count / nil prefixes are safe defaults for diagnostic
 	return count
 }
 
 // detectPrefixFromJSONL detects the most common prefix in a JSONL file
 func detectPrefixFromJSONL(jsonlPath string) string {
-	_, prefixes, _ := CountJSONLIssues(jsonlPath)
+	_, prefixes, _ := CountJSONLIssues(jsonlPath) // Best effort: zero count / nil prefixes are safe defaults for diagnostic
 	if len(prefixes) == 0 {
 		return ""
 	}

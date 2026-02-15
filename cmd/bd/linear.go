@@ -544,7 +544,7 @@ func maskAPIKey(key string) string {
 func getLinearConfig(ctx context.Context, key string) (value string, source string) {
 	// Try to read from store (works in direct mode)
 	if store != nil {
-		value, _ = store.GetConfig(ctx, key)
+		value, _ = store.GetConfig(ctx, key) // Best effort: empty value is valid fallback
 		if value != "" {
 			return value, "project config (bd config)"
 		}
@@ -552,7 +552,7 @@ func getLinearConfig(ctx context.Context, key string) (value string, source stri
 		tempStore, err := factory.NewWithOptions(ctx, configfile.BackendDolt, dbPath, factory.Options{LockTimeout: 5 * time.Second})
 		if err == nil {
 			defer func() { _ = tempStore.Close() }()
-			value, _ = tempStore.GetConfig(ctx, key)
+			value, _ = tempStore.GetConfig(ctx, key) // Best effort: empty value is valid fallback
 			if value != "" {
 				return value, "project config (bd config)"
 			}

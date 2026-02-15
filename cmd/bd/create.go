@@ -406,7 +406,7 @@ var createCmd = &cobra.Command{
 			// will close whatever store is assigned to the global `store` variable.
 			// This fixes the "database is closed" error during auto-flush (GH#routing-close-bug).
 			if store != nil {
-				_ = store.Close()
+				_ = store.Close() // Best effort cleanup on error path
 			}
 
 			// Replace store for remainder of create operation
@@ -451,11 +451,11 @@ var createCmd = &cobra.Command{
 
 			// Get database prefix and allowed prefixes from config
 			var dbPrefix, allowedPrefixes string
-			dbPrefix, _ = store.GetConfig(ctx, "issue_prefix")
+			dbPrefix, _ = store.GetConfig(ctx, "issue_prefix") // Best effort: empty prefix is a valid fallback
 			if dbPrefix == "" {
 				dbPrefix = config.GetString("issue-prefix")
 			}
-			allowedPrefixes, _ = store.GetConfig(ctx, "allowed_prefixes")
+			allowedPrefixes, _ = store.GetConfig(ctx, "allowed_prefixes") // Best effort: empty means no prefix restriction
 
 			// Use ValidateIDPrefixAllowed which handles multi-hyphen prefixes correctly (GH#1135)
 			// This checks if the ID starts with an allowed prefix, rather than extracting
@@ -735,7 +735,7 @@ func performAtomicExport(_ context.Context, jsonlPath string, issues []*types.Is
 	defer func() {
 		// Remove temp file if it still exists (rename failed or error occurred)
 		if _, err := os.Stat(tempPath); err == nil {
-			_ = os.Remove(tempPath)
+			_ = os.Remove(tempPath) // Best effort cleanup of temp file
 		}
 	}()
 
@@ -749,14 +749,14 @@ func performAtomicExport(_ context.Context, jsonlPath string, issues []*types.Is
 	encoder := json.NewEncoder(tempFile)
 	for _, issue := range issues {
 		if err := encoder.Encode(issue); err != nil {
-			_ = tempFile.Close()
+			_ = tempFile.Close() // Best effort cleanup
 			return fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
 		}
 	}
 
 	// Sync to disk before rename
 	if err := tempFile.Sync(); err != nil {
-		_ = tempFile.Close()
+		_ = tempFile.Close() // Best effort cleanup
 		return fmt.Errorf("failed to sync temp file: %w", err)
 	}
 
@@ -1040,7 +1040,7 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 				return fmt.Errorf("failed to initialize target database: %w", err)
 			}
 			if err := tempStore.SetConfig(ctx, "issue_prefix", sourcePrefix); err != nil {
-				_ = tempStore.Close()
+				_ = tempStore.Close() // Best effort cleanup on error path
 				return fmt.Errorf("failed to set prefix in target store: %w", err)
 			}
 			if err := tempStore.Close(); err != nil {

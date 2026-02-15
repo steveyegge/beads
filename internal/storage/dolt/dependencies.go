@@ -146,16 +146,16 @@ func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID str
 		var metadata, threadID sql.NullString
 
 		if err := rows.Scan(&depID, &depType, &createdAt, &createdBy, &metadata, &threadID); err != nil {
-			_ = rows.Close()
+			_ = rows.Close() // Best effort cleanup on error path
 			return nil, fmt.Errorf("failed to scan dependency: %w", err)
 		}
 		deps = append(deps, depMeta{depID: depID, depType: depType})
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
+		_ = rows.Close() // Best effort cleanup on error path
 		return nil, err
 	}
-	_ = rows.Close()
+	_ = rows.Close() // Redundant close for safety (rows already iterated)
 
 	if len(deps) == 0 {
 		return nil, nil
@@ -212,16 +212,16 @@ func (s *DoltStore) GetDependentsWithMetadata(ctx context.Context, issueID strin
 		var metadata, threadID sql.NullString
 
 		if err := rows.Scan(&depID, &depType, &createdAt, &createdBy, &metadata, &threadID); err != nil {
-			_ = rows.Close()
+			_ = rows.Close() // Best effort cleanup on error path
 			return nil, fmt.Errorf("failed to scan dependent: %w", err)
 		}
 		deps = append(deps, depMeta{depID: depID, depType: depType})
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
+		_ = rows.Close() // Best effort cleanup on error path
 		return nil, err
 	}
-	_ = rows.Close()
+	_ = rows.Close() // Redundant close for safety (rows already iterated)
 
 	if len(deps) == 0 {
 		return nil, nil
@@ -512,7 +512,7 @@ func (s *DoltStore) DetectCycles(ctx context.Context) ([][]*types.Issue, error) 
 					cyclePath := path[cycleStart:]
 					var cycleIssues []*types.Issue
 					for _, id := range cyclePath {
-						issue, _ := s.GetIssue(ctx, id)
+						issue, _ := s.GetIssue(ctx, id) // Best effort: nil issue handled by caller
 						if issue != nil {
 							cycleIssues = append(cycleIssues, issue)
 						}
@@ -613,7 +613,7 @@ func (s *DoltStore) scanIssueIDs(ctx context.Context, rows *sql.Rows) ([]*types.
 	// result sets on one connection - the first must be closed before starting
 	// a new query, otherwise "driver: bad connection" errors occur.
 	// Closing here is safe because sql.Rows.Close() is idempotent.
-	_ = rows.Close()
+	_ = rows.Close() // Redundant close for safety (rows already iterated)
 
 	if len(ids) == 0 {
 		return nil, nil

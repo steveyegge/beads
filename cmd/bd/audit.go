@@ -45,7 +45,7 @@ var auditRecordCmd = &cobra.Command{
 
 		// If stdin is piped and no explicit record fields were provided, assume stdin JSON.
 		// This matches "or pipe JSON via stdin" without requiring a flag.
-		fi, _ := os.Stdin.Stat()
+		fi, _ := os.Stdin.Stat() // Best effort: nil FileInfo means not a pipe, use default behavior
 		stdinPiped := fi != nil && (fi.Mode()&os.ModeCharDevice) == 0
 		noFieldsProvided := auditRecordKind == "" &&
 			auditRecordModel == "" &&

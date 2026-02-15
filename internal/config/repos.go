@@ -166,7 +166,7 @@ func SetReposInYAML(configPath string, repos *ReposConfig) error {
 	if v != nil {
 		if err := v.ReadInConfig(); err != nil {
 			// Not fatal - config is on disk, will be picked up on next command
-			_ = err
+			_ = err // Best effort: viper reload failure is non-fatal since config was already written to disk
 		}
 	}
 

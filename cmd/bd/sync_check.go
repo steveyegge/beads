@@ -106,7 +106,7 @@ func showSyncIntegrityCheck(ctx context.Context, jsonlPath string) {
 	}
 
 	if jsonOutput {
-		data, _ := json.MarshalIndent(result, "", "  ")
+		data, _ := json.MarshalIndent(result, "", "  ") // json.MarshalIndent on simple structs does not fail in practice
 		fmt.Println(string(data))
 	}
 }
@@ -132,7 +132,7 @@ func checkForcedPush(ctx context.Context) *ForcedPushCheck {
 		return result
 	}
 
-	syncBranch, _ := syncbranch.Get(ctx, store)
+	syncBranch, _ := syncbranch.Get(ctx, store) // Best effort: empty syncBranch means feature not configured
 	if syncBranch == "" {
 		return result
 	}

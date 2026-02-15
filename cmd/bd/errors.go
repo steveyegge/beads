@@ -38,7 +38,7 @@ func FatalError(format string, args ...interface{}) {
 func FatalErrorRespectJSON(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	if jsonOutput {
-		data, _ := json.MarshalIndent(map[string]string{"error": msg}, "", "  ")
+		data, _ := json.MarshalIndent(map[string]string{"error": msg}, "", "  ") // json.MarshalIndent on simple maps does not fail in practice
 		fmt.Println(string(data))
 	} else {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", msg)

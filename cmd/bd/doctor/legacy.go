@@ -369,7 +369,7 @@ func CheckDatabaseConfig(repoPath string) DoctorCheck {
 		dbPath := cfg.DatabasePath(beadsDir)
 		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 			// Check if other .db files exist
-			entries, _ := os.ReadDir(beadsDir)
+			entries, _ := os.ReadDir(beadsDir) // Best effort: nil entries means no legacy files to check
 			var otherDBs []string
 			for _, entry := range entries {
 				if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".db") {
@@ -398,7 +398,7 @@ func CheckDatabaseConfig(repoPath string) DoctorCheck {
 		jsonlPath := cfg.JSONLPath(beadsDir)
 		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
 			// Check if other .jsonl files exist
-			entries, _ := os.ReadDir(beadsDir)
+			entries, _ := os.ReadDir(beadsDir) // Best effort: nil entries means no legacy files to check
 			var otherJSONLs []string
 			for _, entry := range entries {
 				if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {

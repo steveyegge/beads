@@ -67,7 +67,7 @@ func (r *Runner) Run(event string, issue *types.Issue) {
 
 	// Run asynchronously (ignore error as this is fire-and-forget)
 	go func() {
-		_ = r.runHook(hookPath, event, issue)
+		_ = r.runHook(hookPath, event, issue) // Best effort: hook failures should not block the triggering operation
 	}()
 }
 

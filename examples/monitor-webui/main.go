@@ -150,7 +150,7 @@ func connectToDaemon(socketPath, dbPath string) error {
 	// Check daemon health
 	health, err := client.Health()
 	if err != nil || health.Status != "healthy" {
-		_ = client.Close()
+		_ = client.Close() // Best effort cleanup on error path
 		if err != nil {
 			return fmt.Errorf("daemon health check failed: %v", err)
 		}

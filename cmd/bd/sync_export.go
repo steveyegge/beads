@@ -286,7 +286,7 @@ func exportToJSONLDeferred(ctx context.Context, jsonlPath string) (*ExportResult
 	}
 
 	// Compute hash and time for the result (but don't update metadata yet)
-	contentHash, _ := computeJSONLHash(jsonlPath)
+	contentHash, _ := computeJSONLHash(jsonlPath) // Best effort: empty hash means next export will recompute
 	exportTime := time.Now().Format(time.RFC3339Nano)
 
 	// Mark success so lock is transferred to result instead of released
@@ -335,7 +335,7 @@ func exportToJSONLIncrementalDeferred(ctx context.Context, jsonlPath string) (*E
 	// No dirty issues means nothing to export
 	if len(dirtyIDs) == 0 {
 		// Still need to return a valid result for idempotency
-		contentHash, _ := computeJSONLHash(jsonlPath)
+		contentHash, _ := computeJSONLHash(jsonlPath) // Best effort: empty hash means next export will recompute
 		return &ExportResult{
 			JSONLPath:   jsonlPath,
 			ExportedIDs: []string{},
@@ -532,7 +532,7 @@ func performIncrementalExport(ctx context.Context, jsonlPath string, dirtyIDs []
 	}
 
 	// Compute hash
-	contentHash, _ := computeJSONLHash(jsonlPath)
+	contentHash, _ := computeJSONLHash(jsonlPath) // Best effort: empty hash means next export will recompute
 	exportTime := time.Now().Format(time.RFC3339Nano)
 
 	// Mark success so lock is transferred to result instead of released

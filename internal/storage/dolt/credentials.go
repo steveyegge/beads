@@ -242,14 +242,14 @@ func (s *DoltStore) RemoveFederationPeer(ctx context.Context, name string) error
 		return fmt.Errorf("failed to remove federation peer: %w", err)
 	}
 
-	rows, _ := result.RowsAffected()
+	rows, _ := result.RowsAffected() // Best effort: rows affected is used only for logging
 	if rows == 0 {
 		// Peer not in credentials table, but might still be a Dolt remote
 		// Continue to try removing the remote
 	}
 
 	// Also remove the Dolt remote (best-effort)
-	_ = s.RemoveRemote(ctx, name)
+	_ = s.RemoveRemote(ctx, name) // Best effort cleanup before re-adding remote
 
 	return nil
 }
@@ -266,16 +266,16 @@ func (s *DoltStore) UpdatePeerLastSync(ctx context.Context, name string) error {
 func setFederationCredentials(username, password string) func() {
 	if username != "" {
 		// Best-effort: failures here should not crash the caller.
-		_ = os.Setenv("DOLT_REMOTE_USER", username)
+		_ = os.Setenv("DOLT_REMOTE_USER", username) // Best effort: Setenv failure is extremely rare in practice
 	}
 	if password != "" {
 		// Best-effort: failures here should not crash the caller.
-		_ = os.Setenv("DOLT_REMOTE_PASSWORD", password)
+		_ = os.Setenv("DOLT_REMOTE_PASSWORD", password) // Best effort: Setenv failure is extremely rare in practice
 	}
 	return func() {
 		// Best-effort cleanup.
-		_ = os.Unsetenv("DOLT_REMOTE_USER")
-		_ = os.Unsetenv("DOLT_REMOTE_PASSWORD")
+		_ = os.Unsetenv("DOLT_REMOTE_USER")    // Best effort cleanup of auth env vars
+		_ = os.Unsetenv("DOLT_REMOTE_PASSWORD") // Best effort cleanup of auth env vars
 	}
 }
 
@@ -304,7 +304,7 @@ func (s *DoltStore) withPeerCredentials(ctx context.Context, peerName string, fn
 
 	// Update last sync time on success
 	if err == nil && peer != nil {
-		_ = s.UpdatePeerLastSync(ctx, peerName)
+		_ = s.UpdatePeerLastSync(ctx, peerName) // Best effort: peer sync timestamp is advisory
 	}
 
 	return err

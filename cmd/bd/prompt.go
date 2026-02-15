@@ -43,7 +43,7 @@ func readLineWithContext(ctx context.Context, reader *bufio.Reader, closer io.Cl
 	select {
 	case <-sigCtx.Done():
 		if closer != nil {
-			_ = closer.Close()
+			_ = closer.Close() // Best effort cleanup of readline
 		}
 		return "", sigCtx.Err()
 	case res := <-resultCh:

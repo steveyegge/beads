@@ -94,7 +94,7 @@ Examples:
 
 			// Get config
 			configMap := make(map[string]string)
-			prefix, _ := store.GetConfig(ctx, "issue_prefix")
+			prefix, _ := store.GetConfig(ctx, "issue_prefix") // Best effort: empty prefix is valid
 			if prefix != "" {
 				configMap["issue_prefix"] = prefix
 			}

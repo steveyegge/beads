@@ -391,7 +391,7 @@ func hookPreCommit() int {
 					// #nosec G204 -- f comes from jsonlFilePaths (controlled, hardcoded paths)
 					gitAdd = exec.Command("git", "add", f)
 				}
-				_ = gitAdd.Run()
+				_ = gitAdd.Run() // Best effort: file may not be tracked in git
 			}
 		}
 	}
@@ -526,7 +526,7 @@ func updateExportStateCommit(beadsDir, worktreeRoot, doltCommit string) {
 	}
 	prevState.LastExportCommit = doltCommit
 	prevState.LastExportTime = time.Now()
-	_ = saveExportState(beadsDir, worktreeRoot, prevState)
+	_ = saveExportState(beadsDir, worktreeRoot, prevState) // Best effort: export state is advisory
 }
 
 // runJSONLExport runs the actual JSONL export via bd sync.
@@ -551,7 +551,7 @@ func stageJSONLFiles(ctx context.Context) {
 				// #nosec G204 -- f comes from jsonlFilePaths (controlled, hardcoded paths)
 				gitAdd = exec.Command("git", "add", f)
 			}
-			_ = gitAdd.Run()
+			_ = gitAdd.Run() // Best effort: file may not be tracked in git
 		}
 	}
 }
@@ -646,7 +646,7 @@ func hookPostMergeDolt(beadsDir string) int {
 	if !ok {
 		// Not a Dolt store with version control, use regular import
 		cmd := exec.Command("bd", "sync", "--import-only", "--no-git-history", "--no-daemon")
-		_ = cmd.Run()
+		_ = cmd.Run() // Best effort: import is supplementary to the main sync
 		return 0
 	}
 
@@ -675,7 +675,7 @@ func hookPostMergeDolt(beadsDir string) int {
 	if err := importFromJSONLToStore(ctx, store, jsonlPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not import JSONL: %v\n", err)
 		// Checkout back to original branch
-		_ = doltStore.Checkout(ctx, currentBranch)
+		_ = doltStore.Checkout(ctx, currentBranch) // Best effort: restore branch on error path
 		return 0
 	}
 
@@ -805,7 +805,7 @@ func hookPostCheckout(args []string) int {
 			LastExportTime:   time.Now(),
 			JSONLHash:        newHash,
 		}
-		_ = saveExportState(beadsDir, worktreeRoot, state)
+		_ = saveExportState(beadsDir, worktreeRoot, state) // Best effort: export state is advisory
 
 		if cfg.ChainStrategy == ChainAfter && exitCode == 0 {
 			return runChainedHookWithConfig("post-checkout", args, cfg)
@@ -831,7 +831,7 @@ func hookPostCheckout(args []string) int {
 		LastExportTime:   time.Now(),
 		JSONLHash:        newHash,
 	}
-	_ = saveExportState(beadsDir, worktreeRoot, state)
+	_ = saveExportState(beadsDir, worktreeRoot, state) // Best effort: export state is advisory
 
 	// Run quick health check
 	healthCmd := exec.Command("bd", "doctor", "--check-health")

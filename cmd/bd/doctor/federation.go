@@ -109,7 +109,7 @@ func CheckFederationRemotesAPI(path string) DoctorCheck {
 			Category: CategoryFederation,
 		}
 	}
-	_ = conn.Close()
+	_ = conn.Close() // Best effort cleanup
 
 	return DoctorCheck{
 		Name:     "Federation remotesapi",

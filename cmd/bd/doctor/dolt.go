@@ -77,7 +77,7 @@ func openDoltDBViaServer(cfg *configfile.Config) (*sql.DB, error) {
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
+		_ = db.Close() // Best effort cleanup
 		return nil, fmt.Errorf("server not reachable: %w", err)
 	}
 
@@ -108,7 +108,7 @@ func openDoltDBEmbedded(beadsDir string) (*sql.DB, error) {
 // (which can hang on close) and a regular close for server mode.
 func closeDoltDB(db *sql.DB, serverMode bool) {
 	if serverMode {
-		_ = db.Close()
+		_ = db.Close() // Best effort cleanup
 	} else {
 		closeDoltDBWithTimeout(db)
 	}
@@ -142,7 +142,7 @@ func CheckDoltConnection(path string) DoctorCheck {
 	}
 
 	// Load config to check mode
-	cfg, _ := configfile.Load(beadsDir)
+	cfg, _ := configfile.Load(beadsDir) // Best effort: nil config uses default Dolt settings
 	isServerMode := cfg != nil && cfg.IsDoltServerMode()
 
 	// In embedded mode, check if Dolt database directory exists on disk

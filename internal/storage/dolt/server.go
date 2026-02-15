@@ -141,10 +141,10 @@ func (s *Server) Start(ctx context.Context) error {
 	// Wait for server to be ready
 	if err := s.waitForReady(ctx); err != nil {
 		// Server failed to start, clean up
-		_ = s.cmd.Process.Kill()
-		_ = os.Remove(s.pidFile)
+		_ = s.cmd.Process.Kill() // Best effort: process may already be dead
+		_ = os.Remove(s.pidFile) // Best effort cleanup of pid file
 		if s.logFile != nil {
-			_ = s.logFile.Close()
+			_ = s.logFile.Close() // Best effort cleanup
 			s.logFile = nil
 		}
 		return fmt.Errorf("server failed to become ready: %w", err)
@@ -164,7 +164,7 @@ func (s *Server) Stop() error {
 	}
 
 	// Best-effort graceful shutdown (platform-specific).
-	_ = terminateProcess(s.cmd.Process)
+	_ = terminateProcess(s.cmd.Process) // Best effort: process may already be dead
 
 	// Wait for graceful shutdown with timeout
 	done := make(chan error, 1)
@@ -178,14 +178,14 @@ func (s *Server) Stop() error {
 		// Process exited
 	case <-time.After(ServerStopTimeout):
 		// Force kill
-		_ = s.cmd.Process.Kill()
-		<-done // Wait for process to be reaped
+		_ = s.cmd.Process.Kill() // Force kill after graceful shutdown timeout
+		<-done                   // Wait for process to be reaped
 	}
 
 	// Clean up PID file and log file
-	_ = os.Remove(s.pidFile)
+	_ = os.Remove(s.pidFile) // Best effort cleanup of pid file
 	if s.logFile != nil {
-		_ = s.logFile.Close()
+		_ = s.logFile.Close() // Best effort cleanup
 		s.logFile = nil
 	}
 	s.running = false
@@ -229,7 +229,7 @@ func (s *Server) checkPortAvailable(port int) error {
 	if err != nil {
 		return err
 	}
-	_ = listener.Close()
+	_ = listener.Close() // Close immediately; we only needed to test the port
 	return nil
 }
 
@@ -253,7 +253,7 @@ func (s *Server) waitForReady(ctx context.Context) error {
 		// Try to connect
 		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
 		if err == nil {
-			_ = conn.Close()
+			_ = conn.Close() // Best effort cleanup of health check connection
 			return nil
 		}
 
@@ -285,7 +285,7 @@ func GetRunningServerPID(dataDir string) int {
 
 	// Best-effort liveness check (platform-specific).
 	if !processMayBeAlive(process) {
-		_ = os.Remove(pidFile)
+		_ = os.Remove(pidFile) // Best effort cleanup of stale pid file
 		return 0
 	}
 
@@ -300,12 +300,12 @@ func StopServerByPID(pid int) error {
 	}
 
 	// Best-effort graceful shutdown (platform-specific).
-	_ = terminateProcess(process)
+	_ = terminateProcess(process) // Best effort: process may already be dead
 
 	// Wait for graceful shutdown
 	done := make(chan struct{})
 	go func() {
-		_, _ = process.Wait()
+		_, _ = process.Wait() // Reap zombie process; error means already reaped
 		close(done)
 	}()
 
@@ -339,6 +339,6 @@ func isServerListening(host string, port int) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	_ = conn.Close() // Best effort cleanup of probe connection
 	return true
 }

@@ -7,7 +7,7 @@ import (
 // CheckBackendMigration checks if the backend needs migration from SQLite to Dolt.
 // As of v0.50, Dolt is the default backend. All SQLite users are nudged to migrate.
 func CheckBackendMigration(path string) DoctorCheck {
-	backend, _ := getBackendAndBeadsDir(path)
+	backend, _ := getBackendAndBeadsDir(path) // Best effort: empty backend handled by caller
 
 	// Already on Dolt — all good
 	if backend == configfile.BackendDolt {
