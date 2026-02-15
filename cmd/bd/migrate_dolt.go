@@ -278,7 +278,7 @@ func handleToSQLiteMigration(dryRun bool, autoYes bool) {
 	// Create SQLite database
 	printProgress("Creating SQLite database...")
 
-	sqliteStore, err := factory.New(ctx, configfile.BackendDolt, sqlitePath)
+	sqliteStore, err := factory.New(ctx, configfile.BackendSQLite, sqlitePath)
 	if err != nil {
 		exitWithError("sqlite_create_failed", err.Error(), "")
 	}
@@ -314,7 +314,7 @@ func handleToSQLiteMigration(dryRun bool, autoYes bool) {
 
 // extractFromSQLite extracts all data from a SQLite database
 func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, error) {
-	store, err := factory.NewWithOptions(ctx, configfile.BackendDolt, dbPath, factory.Options{ReadOnly: true})
+	store, err := factory.NewWithOptions(ctx, configfile.BackendSQLite, dbPath, factory.Options{ReadOnly: true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 	}
