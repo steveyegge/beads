@@ -94,6 +94,11 @@ func parseCreateFormInput(raw *createFormRawInput) *createFormValues {
 // It returns the created issue and any error that occurred.
 // This function handles labels, dependencies, and source_repo inheritance.
 func CreateIssueFromFormValues(ctx context.Context, s storage.Storage, fv *createFormValues, actor string) (*types.Issue, error) {
+	parsedDeps, err := parseDependencySpecs(fv.Dependencies)
+	if err != nil {
+		return nil, err
+	}
+
 	var externalRefPtr *string
 	if fv.ExternalRef != "" {
 		externalRefPtr = &fv.ExternalRef
@@ -115,23 +120,10 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.Storage, fv *creat
 	// Check if any dependencies are discovered-from type
 	// If so, inherit source_repo from the parent issue
 	var discoveredFromParentID string
-	for _, depSpec := range fv.Dependencies {
-		depSpec = strings.TrimSpace(depSpec)
-		if depSpec == "" {
-			continue
-		}
-
-		if strings.Contains(depSpec, ":") {
-			parts := strings.SplitN(depSpec, ":", 2)
-			if len(parts) == 2 {
-				depType := types.DependencyType(strings.TrimSpace(parts[0]))
-				dependsOnID := strings.TrimSpace(parts[1])
-
-				if depType == types.DepDiscoveredFrom && dependsOnID != "" {
-					discoveredFromParentID = dependsOnID
-					break
-				}
-			}
+	for _, dep := range parsedDeps {
+		if dep.Type == types.DepDiscoveredFrom {
+			discoveredFromParentID = dep.DependsOnID
+			break
 		}
 	}
 
@@ -156,40 +148,15 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.Storage, fv *creat
 	}
 
 	// Add dependencies if specified
-	for _, depSpec := range fv.Dependencies {
-		depSpec = strings.TrimSpace(depSpec)
-		if depSpec == "" {
-			continue
-		}
-
-		var depType types.DependencyType
-		var dependsOnID string
-
-		if strings.Contains(depSpec, ":") {
-			parts := strings.SplitN(depSpec, ":", 2)
-			if len(parts) != 2 {
-				fmt.Fprintf(os.Stderr, "Warning: invalid dependency format '%s', expected 'type:id' or 'id'\n", depSpec)
-				continue
-			}
-			depType = types.DependencyType(strings.TrimSpace(parts[0]))
-			dependsOnID = strings.TrimSpace(parts[1])
-		} else {
-			depType = types.DepBlocks
-			dependsOnID = depSpec
-		}
-
-		if !depType.IsValid() {
-			fmt.Fprintf(os.Stderr, "Warning: invalid dependency type '%s' (valid: blocks, related, parent-child, discovered-from)\n", depType)
-			continue
-		}
-
+	for _, parsedDep := range parsedDeps {
 		dep := &types.Dependency{
 			IssueID:     issue.ID,
-			DependsOnID: dependsOnID,
-			Type:        depType,
+			DependsOnID: parsedDep.DependsOnID,
+			Type:        parsedDep.Type,
 		}
 		if err := s.AddDependency(ctx, dep, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s (%s): %v\n",
+				issue.ID, parsedDep.DependsOnID, parsedDep.Type, err)
 		}
 	}
 

@@ -118,6 +118,10 @@ var createCmd = &cobra.Command{
 		parentID, _ := cmd.Flags().GetString("parent")
 		externalRef, _ := cmd.Flags().GetString("external-ref")
 		deps, _ := cmd.Flags().GetStringSlice("deps")
+		parsedDeps, err := parseDependencySpecs(deps)
+		if err != nil {
+			FatalError("%v", err)
+		}
 		waitsFor, _ := cmd.Flags().GetString("waits-for")
 		waitsForGate, _ := cmd.Flags().GetString("waits-for-gate")
 		forceCreate, _ := cmd.Flags().GetBool("force")
@@ -504,26 +508,10 @@ var createCmd = &cobra.Command{
 		// Check if any dependencies are discovered-from type
 		// If so, inherit source_repo from the parent issue
 		var discoveredFromParentID string
-		for _, depSpec := range deps {
-			depSpec = strings.TrimSpace(depSpec)
-			if depSpec == "" {
-				continue
-			}
-
-			var depType types.DependencyType
-			var dependsOnID string
-
-			if strings.Contains(depSpec, ":") {
-				parts := strings.SplitN(depSpec, ":", 2)
-				if len(parts) == 2 {
-					depType = types.DependencyType(strings.TrimSpace(parts[0]))
-					dependsOnID = strings.TrimSpace(parts[1])
-
-					if depType == types.DepDiscoveredFrom && dependsOnID != "" {
-						discoveredFromParentID = dependsOnID
-						break
-					}
-				}
+		for _, dep := range parsedDeps {
+			if dep.Type == types.DepDiscoveredFrom {
+				discoveredFromParentID = dep.DependsOnID
+				break
 			}
 		}
 
@@ -583,46 +571,16 @@ var createCmd = &cobra.Command{
 			}
 		}
 
-		// Add dependencies if specified (format: type:id or just id for default "blocks" type)
-		for _, depSpec := range deps {
-			// Skip empty specs (e.g., from trailing commas)
-			depSpec = strings.TrimSpace(depSpec)
-			if depSpec == "" {
-				continue
-			}
-
-			var depType types.DependencyType
-			var dependsOnID string
-
-			// Parse format: "type:id" or just "id" (defaults to "blocks")
-			if strings.Contains(depSpec, ":") {
-				parts := strings.SplitN(depSpec, ":", 2)
-				if len(parts) != 2 {
-					WarnError("invalid dependency format '%s', expected 'type:id' or 'id'", depSpec)
-					continue
-				}
-				depType = types.DependencyType(strings.TrimSpace(parts[0]))
-				dependsOnID = strings.TrimSpace(parts[1])
-			} else {
-				// Default to "blocks" if no type specified
-				depType = types.DepBlocks
-				dependsOnID = depSpec
-			}
-
-			// Validate dependency type
-			if !depType.IsValid() {
-				WarnError("invalid dependency type '%s' (valid: blocks, related, parent-child, discovered-from)", depType)
-				continue
-			}
-
+		// Add parsed dependencies.
+		for _, parsedDep := range parsedDeps {
 			// Add the dependency
 			dep := &types.Dependency{
 				IssueID:     issue.ID,
-				DependsOnID: dependsOnID,
-				Type:        depType,
+				DependsOnID: parsedDep.DependsOnID,
+				Type:        parsedDep.Type,
 			}
 			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				WarnError("failed to add dependency %s -> %s: %v", issue.ID, dependsOnID, err)
+				WarnError("failed to add dependency %s -> %s (%s): %v", issue.ID, parsedDep.DependsOnID, parsedDep.Type, err)
 			}
 		}
 
