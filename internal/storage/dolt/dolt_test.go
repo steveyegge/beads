@@ -745,6 +745,67 @@ func TestDoltStoreDeleteIssue(t *testing.T) {
 	}
 }
 
+// TestDeleteIssuesBatchPerformance verifies that batch deletion works correctly
+// with a large number of issues and chain dependencies. This exercises the batched
+// IN-clause query paths that prevent N+1 hangs on embedded Dolt (steveyegge/beads#1692).
+func TestDeleteIssuesBatchPerformance(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	const issueCount = 100
+
+	// Create 100 issues with chain dependencies: issue-1 <- issue-2 <- ... <- issue-100
+	for i := 1; i <= issueCount; i++ {
+		issue := &types.Issue{
+			ID:        fmt.Sprintf("batch-del-%d", i),
+			Title:     fmt.Sprintf("Batch Delete Issue %d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("failed to create issue %d: %v", i, err)
+		}
+		if i > 1 {
+			dep := &types.Dependency{
+				IssueID:     fmt.Sprintf("batch-del-%d", i),
+				DependsOnID: fmt.Sprintf("batch-del-%d", i-1),
+				Type:        types.DepBlocks,
+			}
+			if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+				t.Fatalf("failed to add dependency %d: %v", i, err)
+			}
+		}
+	}
+
+	// Cascade delete from the root — should delete all 100 issues
+	result, err := store.DeleteIssues(ctx, []string{"batch-del-1"}, true, false, false)
+	if err != nil {
+		t.Fatalf("batch cascade delete failed: %v", err)
+	}
+
+	if result.DeletedCount != issueCount {
+		t.Errorf("expected %d deleted, got %d", issueCount, result.DeletedCount)
+	}
+	if result.DependenciesCount < issueCount-1 {
+		t.Errorf("expected at least %d dependencies, got %d", issueCount-1, result.DependenciesCount)
+	}
+
+	// Verify all issues are actually gone
+	for i := 1; i <= issueCount; i++ {
+		got, err := store.GetIssue(ctx, fmt.Sprintf("batch-del-%d", i))
+		if err != nil {
+			t.Fatalf("failed to get issue %d after delete: %v", i, err)
+		}
+		if got != nil {
+			t.Errorf("issue batch-del-%d should be deleted", i)
+		}
+	}
+}
+
 func TestDoltStoreStatistics(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()

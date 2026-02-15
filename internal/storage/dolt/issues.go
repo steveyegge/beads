@@ -494,6 +494,11 @@ func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
 // If cascade is false but force is true, deletes issues and orphans dependents.
 // If both are false, returns an error if any issue has dependents.
 // If dryRun is true, only computes statistics without deleting.
+// deleteBatchSize controls the maximum number of IDs per IN-clause query.
+// Kept small to avoid choking embedded Dolt (go-mysql-server with MaxOpenConns=1)
+// where large parameter counts cause hangs. See steveyegge/beads#1692.
+const deleteBatchSize = 50
+
 func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool, force bool, dryRun bool) (*types.DeleteIssuesResult, error) {
 	if len(ids) == 0 {
 		return &types.DeleteIssuesResult{}, nil
@@ -524,98 +529,97 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 			expandedIDs = append(expandedIDs, id)
 		}
 	} else if !force {
-		// Check for external dependents
-		for _, id := range ids {
-			var depCount int
-			err := tx.QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM dependencies WHERE depends_on_id = ?`, id).Scan(&depCount)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check dependents for %s: %w", id, err)
+		// Check for external dependents using batched queries.
+		// We need to identify which specific issue has external deps for the error message.
+		for i := 0; i < len(ids); i += deleteBatchSize {
+			end := i + deleteBatchSize
+			if end > len(ids) {
+				end = len(ids)
 			}
-			if depCount == 0 {
-				continue
-			}
+			batch := ids[i:end]
+			inClause, args := doltBuildSQLInClause(batch)
+
 			rows, err := tx.QueryContext(ctx,
-				`SELECT issue_id FROM dependencies WHERE depends_on_id = ?`, id)
+				fmt.Sprintf(`SELECT depends_on_id, issue_id FROM dependencies WHERE depends_on_id IN (%s)`, inClause),
+				args...)
 			if err != nil {
-				return nil, fmt.Errorf("failed to get dependents for %s: %w", id, err)
+				return nil, fmt.Errorf("failed to check dependents: %w", err)
 			}
-			hasExternal := false
+
+			externalBySource := make(map[string][]string) // depends_on_id -> external issue_ids
 			for rows.Next() {
-				var depID string
-				if err := rows.Scan(&depID); err != nil {
-					_ = rows.Close() // Best effort cleanup on error path
+				var depOnID, issueID string
+				if err := rows.Scan(&depOnID, &issueID); err != nil {
+					_ = rows.Close()
 					return nil, fmt.Errorf("failed to scan dependent: %w", err)
 				}
-				if !idSet[depID] {
-					hasExternal = true
-					result.OrphanedIssues = append(result.OrphanedIssues, depID)
+				if !idSet[issueID] {
+					externalBySource[depOnID] = append(externalBySource[depOnID], issueID)
 				}
 			}
-			_ = rows.Close() // Redundant close for safety (rows already iterated)
+			_ = rows.Close()
 			if err := rows.Err(); err != nil {
-				return nil, fmt.Errorf("failed to iterate dependents for %s: %w", id, err)
+				return nil, fmt.Errorf("failed to iterate dependents: %w", err)
 			}
-			if hasExternal {
-				return nil, fmt.Errorf("issue %s has dependents not in deletion set; use --cascade to delete them or --force to orphan them", id)
+
+			// Return error for the first issue in this batch that has external dependents
+			for _, id := range batch {
+				if deps, ok := externalBySource[id]; ok {
+					result.OrphanedIssues = deps
+					return nil, fmt.Errorf("issue %s has dependents not in deletion set; use --cascade to delete them or --force to orphan them", id)
+				}
 			}
 		}
 	} else {
-		// Force mode: track orphaned issues
-		orphanSet := make(map[string]bool)
-		for _, id := range ids {
-			rows, err := tx.QueryContext(ctx,
-				`SELECT issue_id FROM dependencies WHERE depends_on_id = ?`, id)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get dependents for %s: %w", id, err)
-			}
-			for rows.Next() {
-				var depID string
-				if err := rows.Scan(&depID); err != nil {
-					_ = rows.Close() // Best effort cleanup on error path
-					return nil, fmt.Errorf("failed to scan dependent: %w", err)
-				}
-				if !idSet[depID] {
-					orphanSet[depID] = true
-				}
-			}
-			_ = rows.Close() // Redundant close for safety (rows already iterated)
-			if err := rows.Err(); err != nil {
-				return nil, fmt.Errorf("failed to iterate dependents for %s: %w", id, err)
-			}
+		// Force mode: track orphaned issues using batched queries
+		orphans, err := s.findExternalDependentsBatched(ctx, tx, ids, idSet)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get dependents: %w", err)
 		}
-		for orphanID := range orphanSet {
-			result.OrphanedIssues = append(result.OrphanedIssues, orphanID)
-		}
+		result.OrphanedIssues = orphans
 	}
 
-	// Build IN clause for stats and deletion
-	inClause, args := doltBuildSQLInClause(expandedIDs)
-
-	// Populate stats
+	// Populate stats using batched queries to avoid choking embedded Dolt
+	// with large IN clauses (steveyegge/beads#1692). With batch size 50,
+	// the OR query uses at most 100 params — well within Dolt's limits.
 	var depsCount, labelsCount, eventsCount int
-	err = tx.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT COUNT(*) FROM dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)`, inClause, inClause),
-		append(args, args...)...).Scan(&depsCount)
-	if err != nil {
-		return nil, fmt.Errorf("failed to count dependencies: %w", err)
+	for i := 0; i < len(expandedIDs); i += deleteBatchSize {
+		end := i + deleteBatchSize
+		if end > len(expandedIDs) {
+			end = len(expandedIDs)
+		}
+		batch := expandedIDs[i:end]
+		batchInClause, batchArgs := doltBuildSQLInClause(batch)
+
+		var batchDeps int
+		err = tx.QueryRowContext(ctx,
+			fmt.Sprintf(`SELECT COUNT(*) FROM dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)`, batchInClause, batchInClause),
+			append(batchArgs, batchArgs...)...).Scan(&batchDeps)
+		if err != nil {
+			return nil, fmt.Errorf("failed to count dependencies: %w", err)
+		}
+		depsCount += batchDeps
+
+		var batchLabels int
+		err = tx.QueryRowContext(ctx,
+			fmt.Sprintf(`SELECT COUNT(*) FROM labels WHERE issue_id IN (%s)`, batchInClause),
+			batchArgs...).Scan(&batchLabels)
+		if err != nil {
+			return nil, fmt.Errorf("failed to count labels: %w", err)
+		}
+		labelsCount += batchLabels
+
+		var batchEvents int
+		err = tx.QueryRowContext(ctx,
+			fmt.Sprintf(`SELECT COUNT(*) FROM events WHERE issue_id IN (%s)`, batchInClause),
+			batchArgs...).Scan(&batchEvents)
+		if err != nil {
+			return nil, fmt.Errorf("failed to count events: %w", err)
+		}
+		eventsCount += batchEvents
 	}
 	result.DependenciesCount = depsCount
-
-	err = tx.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT COUNT(*) FROM labels WHERE issue_id IN (%s)`, inClause),
-		args...).Scan(&labelsCount)
-	if err != nil {
-		return nil, fmt.Errorf("failed to count labels: %w", err)
-	}
 	result.LabelsCount = labelsCount
-
-	err = tx.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT COUNT(*) FROM events WHERE issue_id IN (%s)`, inClause),
-		args...).Scan(&eventsCount)
-	if err != nil {
-		return nil, fmt.Errorf("failed to count events: %w", err)
-	}
 	result.EventsCount = eventsCount
 	result.DeletedCount = len(expandedIDs)
 
@@ -623,37 +627,48 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		return result, nil
 	}
 
-	// 1. Delete dependencies
-	_, err = tx.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)`, inClause, inClause),
-		append(args, args...)...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to delete dependencies: %w", err)
-	}
-
-	// 2. Delete labels, comments, and events for the issues
-	for _, table := range []string{"labels", "comments", "events"} {
-		if err := validateTableName(table); err != nil {
-			return nil, fmt.Errorf("invalid table name %q: %w", table, err)
+	// Delete in batches to avoid choking embedded Dolt
+	totalDeleted := 0
+	for i := 0; i < len(expandedIDs); i += deleteBatchSize {
+		end := i + deleteBatchSize
+		if end > len(expandedIDs) {
+			end = len(expandedIDs)
 		}
+		batch := expandedIDs[i:end]
+		batchInClause, batchArgs := doltBuildSQLInClause(batch)
+
+		// 1. Delete dependencies
 		_, err = tx.ExecContext(ctx,
-			fmt.Sprintf(`DELETE FROM %s WHERE issue_id IN (%s)`, table, inClause), //nolint:gosec // G201: table validated above, inClause contains only ? placeholders
-			args...)
+			fmt.Sprintf(`DELETE FROM dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)`, batchInClause, batchInClause),
+			append(batchArgs, batchArgs...)...)
 		if err != nil {
-			return nil, fmt.Errorf("failed to delete from %s: %w", table, err)
+			return nil, fmt.Errorf("failed to delete dependencies: %w", err)
 		}
-	}
 
-	// 3. Delete the issues themselves
-	deleteResult, err := tx.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM issues WHERE id IN (%s)`, inClause),
-		args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to delete issues: %w", err)
-	}
+		// 2. Delete labels, comments, and events for the issues
+		for _, table := range []string{"labels", "comments", "events"} {
+			if err := validateTableName(table); err != nil {
+				return nil, fmt.Errorf("invalid table name %q: %w", table, err)
+			}
+			_, err = tx.ExecContext(ctx,
+				fmt.Sprintf(`DELETE FROM %s WHERE issue_id IN (%s)`, table, batchInClause), //nolint:gosec // G201: table validated above, batchInClause contains only ? placeholders
+				batchArgs...)
+			if err != nil {
+				return nil, fmt.Errorf("failed to delete from %s: %w", table, err)
+			}
+		}
 
-	rowsAffected, _ := deleteResult.RowsAffected()
-	result.DeletedCount = int(rowsAffected)
+		// 3. Delete the issues themselves
+		deleteResult, err := tx.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM issues WHERE id IN (%s)`, batchInClause),
+			batchArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to delete issues: %w", err)
+		}
+		rowsAffected, _ := deleteResult.RowsAffected()
+		totalDeleted += int(rowsAffected)
+	}
+	result.DeletedCount = totalDeleted
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
@@ -662,7 +677,9 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	return result, nil
 }
 
-// findAllDependentsRecursiveTx finds all issues that depend on the given issues, recursively (within a transaction)
+// findAllDependentsRecursiveTx finds all issues that depend on the given issues, recursively (within a transaction).
+// Uses batched IN-clause queries instead of per-ID queries to avoid N+1 performance problems
+// that hang on embedded Dolt with large ID sets (see steveyegge/beads#1692).
 func (s *DoltStore) findAllDependentsRecursiveTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	for _, id := range ids {
@@ -673,13 +690,20 @@ func (s *DoltStore) findAllDependentsRecursiveTx(ctx context.Context, tx *sql.Tx
 	copy(toProcess, ids)
 
 	for len(toProcess) > 0 {
-		current := toProcess[0]
-		toProcess = toProcess[1:]
+		// Take a batch of IDs to process
+		batchEnd := deleteBatchSize
+		if batchEnd > len(toProcess) {
+			batchEnd = len(toProcess)
+		}
+		batch := toProcess[:batchEnd]
+		toProcess = toProcess[batchEnd:]
 
+		inClause, args := doltBuildSQLInClause(batch)
 		rows, err := tx.QueryContext(ctx,
-			`SELECT issue_id FROM dependencies WHERE depends_on_id = ?`, current)
+			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_id IN (%s)`, inClause),
+			args...)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query dependents for %s: %w", current, err)
+			return nil, fmt.Errorf("failed to query dependents for batch: %w", err)
 		}
 
 		for rows.Next() {
@@ -695,10 +719,51 @@ func (s *DoltStore) findAllDependentsRecursiveTx(ctx context.Context, tx *sql.Tx
 		}
 		_ = rows.Close() // Redundant close for safety (rows already iterated)
 		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("failed to iterate dependents for %s: %w", current, err)
+			return nil, fmt.Errorf("failed to iterate dependents for batch: %w", err)
 		}
 	}
 
+	return result, nil
+}
+
+// findExternalDependentsBatched finds all dependents of the given IDs that are NOT in the idSet.
+// Uses batched IN-clause queries instead of per-ID queries.
+func (s *DoltStore) findExternalDependentsBatched(ctx context.Context, tx *sql.Tx, ids []string, idSet map[string]bool) ([]string, error) {
+	orphanSet := make(map[string]bool)
+	for i := 0; i < len(ids); i += deleteBatchSize {
+		end := i + deleteBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[i:end]
+		inClause, args := doltBuildSQLInClause(batch)
+
+		rows, err := tx.QueryContext(ctx,
+			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_id IN (%s)`, inClause),
+			args...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query dependents: %w", err)
+		}
+		for rows.Next() {
+			var depID string
+			if err := rows.Scan(&depID); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("failed to scan dependent: %w", err)
+			}
+			if !idSet[depID] {
+				orphanSet[depID] = true
+			}
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("failed to iterate dependents: %w", err)
+		}
+	}
+
+	result := make([]string, 0, len(orphanSet))
+	for id := range orphanSet {
+		result = append(result, id)
+	}
 	return result, nil
 }
 
