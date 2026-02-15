@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	gitlablib "github.com/steveyegge/beads/internal/gitlab"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -28,7 +27,7 @@ func TestRegistered(t *testing.T) {
 }
 
 func TestIsExternalRef(t *testing.T) {
-	a := &Adapter{}
+	tr := &Tracker{}
 	tests := []struct {
 		ref  string
 		want bool
@@ -40,14 +39,14 @@ func TestIsExternalRef(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := a.IsExternalRef(tt.ref); got != tt.want {
+		if got := tr.IsExternalRef(tt.ref); got != tt.want {
 			t.Errorf("IsExternalRef(%q) = %v, want %v", tt.ref, got, tt.want)
 		}
 	}
 }
 
 func TestExtractIdentifier(t *testing.T) {
-	a := &Adapter{}
+	tr := &Tracker{}
 	tests := []struct {
 		ref  string
 		want string
@@ -57,26 +56,26 @@ func TestExtractIdentifier(t *testing.T) {
 		{"not-a-url", ""},
 	}
 	for _, tt := range tests {
-		if got := a.ExtractIdentifier(tt.ref); got != tt.want {
+		if got := tr.ExtractIdentifier(tt.ref); got != tt.want {
 			t.Errorf("ExtractIdentifier(%q) = %q, want %q", tt.ref, got, tt.want)
 		}
 	}
 }
 
 func TestBuildExternalRef(t *testing.T) {
-	a := &Adapter{}
+	tr := &Tracker{}
 	ti := &tracker.TrackerIssue{
 		URL:        "https://gitlab.com/group/project/-/issues/42",
 		Identifier: "42",
 	}
-	ref := a.BuildExternalRef(ti)
+	ref := tr.BuildExternalRef(ti)
 	if ref != ti.URL {
 		t.Errorf("BuildExternalRef() = %q, want %q", ref, ti.URL)
 	}
 }
 
 func TestFieldMapperStatus(t *testing.T) {
-	m := &fieldMapper{config: gitlablib.DefaultMappingConfig()}
+	m := &gitlabFieldMapper{config: DefaultMappingConfig()}
 
 	if got := m.StatusToBeads("opened"); got != types.StatusOpen {
 		t.Errorf("StatusToBeads(opened) = %q, want %q", got, types.StatusOpen)
@@ -90,7 +89,7 @@ func TestFieldMapperStatus(t *testing.T) {
 }
 
 func TestFieldMapperPriority(t *testing.T) {
-	m := &fieldMapper{config: gitlablib.DefaultMappingConfig()}
+	m := &gitlabFieldMapper{config: DefaultMappingConfig()}
 
 	if got := m.PriorityToBeads("critical"); got != 0 {
 		t.Errorf("PriorityToBeads(critical) = %d, want 0", got)
@@ -105,7 +104,7 @@ func TestFieldMapperPriority(t *testing.T) {
 
 func TestGitLabToTrackerIssue(t *testing.T) {
 	now := time.Now()
-	gl := &gitlablib.Issue{
+	gl := &Issue{
 		ID:          100,
 		IID:         42,
 		Title:       "Fix pipeline",
@@ -115,7 +114,7 @@ func TestGitLabToTrackerIssue(t *testing.T) {
 		Labels:      []string{"bug", "priority::high"},
 		CreatedAt:   &now,
 		UpdatedAt:   &now,
-		Assignee:    &gitlablib.User{ID: 5, Username: "bob"},
+		Assignee:    &User{ID: 5, Username: "bob"},
 	}
 
 	ti := gitlabToTrackerIssue(gl)

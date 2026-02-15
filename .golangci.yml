@@ -120,7 +120,7 @@ linters:
           - unparam
         text: 'truncateID.*maxLen'
       # unparam: getConfig error return kept for API consistency with store.GetConfig
-      - path: 'internal/tracker/adapters/(linear|gitlab)/adapter\.go'
+      - path: 'internal/(linear|gitlab|jira)/tracker\.go'
         linters:
           - unparam
         text: 'getConfig'

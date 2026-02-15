@@ -1,17 +1,13 @@
-// Package gitlab provides a tracker.IssueTracker adapter for GitLab.
-//
-// It wraps the existing internal/gitlab package (client + mapping) to conform
-// to the plugin framework interfaces.
 package gitlab
 
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
-	gitlablib "github.com/steveyegge/beads/internal/gitlab"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
@@ -19,58 +15,58 @@ import (
 
 func init() {
 	tracker.Register("gitlab", func() tracker.IssueTracker {
-		return &Adapter{}
+		return &Tracker{}
 	})
 }
 
 // issueIIDPattern matches GitLab issue URLs: .../issues/42
 var issueIIDPattern = regexp.MustCompile(`/issues/(\d+)`)
 
-// Adapter implements tracker.IssueTracker for GitLab.
-type Adapter struct {
-	client *gitlablib.Client
-	config *gitlablib.MappingConfig
+// Tracker implements tracker.IssueTracker for GitLab.
+type Tracker struct {
+	client *Client
+	config *MappingConfig
 	store  storage.Storage
 }
 
-func (a *Adapter) Name() string         { return "gitlab" }
-func (a *Adapter) DisplayName() string  { return "GitLab" }
-func (a *Adapter) ConfigPrefix() string { return "gitlab" }
+func (t *Tracker) Name() string         { return "gitlab" }
+func (t *Tracker) DisplayName() string  { return "GitLab" }
+func (t *Tracker) ConfigPrefix() string { return "gitlab" }
 
-func (a *Adapter) Init(ctx context.Context, store storage.Storage) error {
-	a.store = store
+func (t *Tracker) Init(ctx context.Context, store storage.Storage) error {
+	t.store = store
 
-	token, err := a.getConfig(ctx, "gitlab.token", "GITLAB_TOKEN")
+	token, err := t.getConfig(ctx, "gitlab.token", "GITLAB_TOKEN")
 	if err != nil || token == "" {
 		return fmt.Errorf("GitLab token not configured (set gitlab.token or GITLAB_TOKEN)")
 	}
 
-	baseURL, _ := a.getConfig(ctx, "gitlab.url", "GITLAB_URL")
+	baseURL, _ := t.getConfig(ctx, "gitlab.url", "GITLAB_URL")
 	if baseURL == "" {
 		baseURL = "https://gitlab.com"
 	}
 
-	projectID, err := a.getConfig(ctx, "gitlab.project_id", "GITLAB_PROJECT_ID")
+	projectID, err := t.getConfig(ctx, "gitlab.project_id", "GITLAB_PROJECT_ID")
 	if err != nil || projectID == "" {
 		return fmt.Errorf("GitLab project ID not configured (set gitlab.project_id or GITLAB_PROJECT_ID)")
 	}
 
-	a.client = gitlablib.NewClient(token, baseURL, projectID)
-	a.config = gitlablib.DefaultMappingConfig()
+	t.client = NewClient(token, baseURL, projectID)
+	t.config = DefaultMappingConfig()
 	return nil
 }
 
-func (a *Adapter) Validate() error {
-	if a.client == nil {
-		return fmt.Errorf("GitLab adapter not initialized")
+func (t *Tracker) Validate() error {
+	if t.client == nil {
+		return fmt.Errorf("GitLab tracker not initialized")
 	}
 	return nil
 }
 
-func (a *Adapter) Close() error { return nil }
+func (t *Tracker) Close() error { return nil }
 
-func (a *Adapter) FetchIssues(ctx context.Context, opts tracker.FetchOptions) ([]tracker.TrackerIssue, error) {
-	var issues []gitlablib.Issue
+func (t *Tracker) FetchIssues(ctx context.Context, opts tracker.FetchOptions) ([]tracker.TrackerIssue, error) {
+	var issues []Issue
 	var err error
 
 	state := opts.State
@@ -83,9 +79,9 @@ func (a *Adapter) FetchIssues(ctx context.Context, opts tracker.FetchOptions) ([
 	}
 
 	if opts.Since != nil {
-		issues, err = a.client.FetchIssuesSince(ctx, state, *opts.Since)
+		issues, err = t.client.FetchIssuesSince(ctx, state, *opts.Since)
 	} else {
-		issues, err = a.client.FetchIssues(ctx, state)
+		issues, err = t.client.FetchIssues(ctx, state)
 	}
 	if err != nil {
 		return nil, err
@@ -98,13 +94,13 @@ func (a *Adapter) FetchIssues(ctx context.Context, opts tracker.FetchOptions) ([
 	return result, nil
 }
 
-func (a *Adapter) FetchIssue(ctx context.Context, identifier string) (*tracker.TrackerIssue, error) {
+func (t *Tracker) FetchIssue(ctx context.Context, identifier string) (*tracker.TrackerIssue, error) {
 	iid, err := strconv.Atoi(identifier)
 	if err != nil {
 		return nil, fmt.Errorf("invalid GitLab IID %q: %w", identifier, err)
 	}
 
-	gl, err := a.client.FetchIssueByIID(ctx, iid)
+	gl, err := t.client.FetchIssueByIID(ctx, iid)
 	if err != nil {
 		return nil, err
 	}
@@ -116,11 +112,11 @@ func (a *Adapter) FetchIssue(ctx context.Context, identifier string) (*tracker.T
 	return &ti, nil
 }
 
-func (a *Adapter) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
-	fields := gitlablib.BeadsIssueToGitLabFields(issue, a.config)
+func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	fields := BeadsIssueToGitLabFields(issue, t.config)
 	labels, _ := fields["labels"].([]string)
 
-	created, err := a.client.CreateIssue(ctx, issue.Title, issue.Description, labels)
+	created, err := t.client.CreateIssue(ctx, issue.Title, issue.Description, labels)
 	if err != nil {
 		return nil, err
 	}
@@ -129,14 +125,14 @@ func (a *Adapter) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 	return &ti, nil
 }
 
-func (a *Adapter) UpdateIssue(ctx context.Context, externalID string, issue *types.Issue) (*tracker.TrackerIssue, error) {
+func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *types.Issue) (*tracker.TrackerIssue, error) {
 	iid, err := strconv.Atoi(externalID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid GitLab IID %q: %w", externalID, err)
 	}
 
-	updates := gitlablib.BeadsIssueToGitLabFields(issue, a.config)
-	updated, err := a.client.UpdateIssue(ctx, iid, updates)
+	updates := BeadsIssueToGitLabFields(issue, t.config)
+	updated, err := t.client.UpdateIssue(ctx, iid, updates)
 	if err != nil {
 		return nil, err
 	}
@@ -145,15 +141,15 @@ func (a *Adapter) UpdateIssue(ctx context.Context, externalID string, issue *typ
 	return &ti, nil
 }
 
-func (a *Adapter) FieldMapper() tracker.FieldMapper {
-	return &fieldMapper{config: a.config}
+func (t *Tracker) FieldMapper() tracker.FieldMapper {
+	return &gitlabFieldMapper{config: t.config}
 }
 
-func (a *Adapter) IsExternalRef(ref string) bool {
+func (t *Tracker) IsExternalRef(ref string) bool {
 	return strings.Contains(ref, "gitlab") && issueIIDPattern.MatchString(ref)
 }
 
-func (a *Adapter) ExtractIdentifier(ref string) string {
+func (t *Tracker) ExtractIdentifier(ref string) string {
 	matches := issueIIDPattern.FindStringSubmatch(ref)
 	if len(matches) < 2 {
 		return ""
@@ -161,7 +157,7 @@ func (a *Adapter) ExtractIdentifier(ref string) string {
 	return matches[1]
 }
 
-func (a *Adapter) BuildExternalRef(issue *tracker.TrackerIssue) string {
+func (t *Tracker) BuildExternalRef(issue *tracker.TrackerIssue) string {
 	if issue.URL != "" {
 		return issue.URL
 	}
@@ -169,13 +165,13 @@ func (a *Adapter) BuildExternalRef(issue *tracker.TrackerIssue) string {
 }
 
 // getConfig reads a config value from storage, falling back to env var.
-func (a *Adapter) getConfig(ctx context.Context, key, envVar string) (string, error) {
-	val, err := a.store.GetConfig(ctx, key)
+func (t *Tracker) getConfig(ctx context.Context, key, envVar string) (string, error) {
+	val, err := t.store.GetConfig(ctx, key)
 	if err == nil && val != "" {
 		return val, nil
 	}
 	if envVar != "" {
-		if envVal := envLookup(envVar); envVal != "" {
+		if envVal := os.Getenv(envVar); envVal != "" {
 			return envVal, nil
 		}
 	}
@@ -183,7 +179,7 @@ func (a *Adapter) getConfig(ctx context.Context, key, envVar string) (string, er
 }
 
 // gitlabToTrackerIssue converts a gitlab.Issue to a tracker.TrackerIssue.
-func gitlabToTrackerIssue(gl *gitlablib.Issue) tracker.TrackerIssue {
+func gitlabToTrackerIssue(gl *Issue) tracker.TrackerIssue {
 	ti := tracker.TrackerIssue{
 		ID:          strconv.Itoa(gl.ID),
 		Identifier:  strconv.Itoa(gl.IID),

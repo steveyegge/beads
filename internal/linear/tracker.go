@@ -1,16 +1,11 @@
-// Package linear provides a tracker.IssueTracker adapter for Linear.
-//
-// It wraps the existing internal/linear package (client + mapping) to conform
-// to the plugin framework interfaces, enabling the shared SyncEngine to handle
-// Linear synchronization without duplicating logic.
 package linear
 
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
-	linearlib "github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
@@ -18,63 +13,63 @@ import (
 
 func init() {
 	tracker.Register("linear", func() tracker.IssueTracker {
-		return &Adapter{}
+		return &Tracker{}
 	})
 }
 
-// Adapter implements tracker.IssueTracker for Linear.
-type Adapter struct {
-	client    *linearlib.Client
-	config    *linearlib.MappingConfig
+// Tracker implements tracker.IssueTracker for Linear.
+type Tracker struct {
+	client    *Client
+	config    *MappingConfig
 	store     storage.Storage
 	teamID    string
 	projectID string
 }
 
-func (a *Adapter) Name() string         { return "linear" }
-func (a *Adapter) DisplayName() string  { return "Linear" }
-func (a *Adapter) ConfigPrefix() string { return "linear" }
+func (t *Tracker) Name() string         { return "linear" }
+func (t *Tracker) DisplayName() string  { return "Linear" }
+func (t *Tracker) ConfigPrefix() string { return "linear" }
 
-func (a *Adapter) Init(ctx context.Context, store storage.Storage) error {
-	a.store = store
+func (t *Tracker) Init(ctx context.Context, store storage.Storage) error {
+	t.store = store
 
-	apiKey, err := a.getConfig(ctx, "linear.api_key", "LINEAR_API_KEY")
+	apiKey, err := t.getConfig(ctx, "linear.api_key", "LINEAR_API_KEY")
 	if err != nil || apiKey == "" {
 		return fmt.Errorf("Linear API key not configured (set linear.api_key or LINEAR_API_KEY)")
 	}
 
-	teamID, err := a.getConfig(ctx, "linear.team_id", "LINEAR_TEAM_ID")
+	teamID, err := t.getConfig(ctx, "linear.team_id", "LINEAR_TEAM_ID")
 	if err != nil || teamID == "" {
 		return fmt.Errorf("Linear team ID not configured (set linear.team_id or LINEAR_TEAM_ID)")
 	}
-	a.teamID = teamID
+	t.teamID = teamID
 
-	client := linearlib.NewClient(apiKey, teamID)
+	client := NewClient(apiKey, teamID)
 
 	if endpoint, _ := store.GetConfig(ctx, "linear.api_endpoint"); endpoint != "" {
 		client = client.WithEndpoint(endpoint)
 	}
 	if projectID, _ := store.GetConfig(ctx, "linear.project_id"); projectID != "" {
 		client = client.WithProjectID(projectID)
-		a.projectID = projectID
+		t.projectID = projectID
 	}
 
-	a.client = client
-	a.config = linearlib.LoadMappingConfig(&configLoaderAdapter{ctx: ctx, store: store})
+	t.client = client
+	t.config = LoadMappingConfig(&configLoaderAdapter{ctx: ctx, store: store})
 	return nil
 }
 
-func (a *Adapter) Validate() error {
-	if a.client == nil {
-		return fmt.Errorf("Linear adapter not initialized")
+func (t *Tracker) Validate() error {
+	if t.client == nil {
+		return fmt.Errorf("Linear tracker not initialized")
 	}
 	return nil
 }
 
-func (a *Adapter) Close() error { return nil }
+func (t *Tracker) Close() error { return nil }
 
-func (a *Adapter) FetchIssues(ctx context.Context, opts tracker.FetchOptions) ([]tracker.TrackerIssue, error) {
-	var issues []linearlib.Issue
+func (t *Tracker) FetchIssues(ctx context.Context, opts tracker.FetchOptions) ([]tracker.TrackerIssue, error) {
+	var issues []Issue
 	var err error
 
 	state := opts.State
@@ -83,9 +78,9 @@ func (a *Adapter) FetchIssues(ctx context.Context, opts tracker.FetchOptions) ([
 	}
 
 	if opts.Since != nil {
-		issues, err = a.client.FetchIssuesSince(ctx, state, *opts.Since)
+		issues, err = t.client.FetchIssuesSince(ctx, state, *opts.Since)
 	} else {
-		issues, err = a.client.FetchIssues(ctx, state)
+		issues, err = t.client.FetchIssues(ctx, state)
 	}
 	if err != nil {
 		return nil, err
@@ -98,8 +93,8 @@ func (a *Adapter) FetchIssues(ctx context.Context, opts tracker.FetchOptions) ([
 	return result, nil
 }
 
-func (a *Adapter) FetchIssue(ctx context.Context, identifier string) (*tracker.TrackerIssue, error) {
-	li, err := a.client.FetchIssueByIdentifier(ctx, identifier)
+func (t *Tracker) FetchIssue(ctx context.Context, identifier string) (*tracker.TrackerIssue, error) {
+	li, err := t.client.FetchIssueByIdentifier(ctx, identifier)
 	if err != nil {
 		return nil, err
 	}
@@ -110,16 +105,15 @@ func (a *Adapter) FetchIssue(ctx context.Context, identifier string) (*tracker.T
 	return &ti, nil
 }
 
-func (a *Adapter) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
-	priority := linearlib.PriorityToLinear(issue.Priority, a.config)
+func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	priority := PriorityToLinear(issue.Priority, t.config)
 
-	// Find the appropriate state ID for the issue's status
-	stateID, err := a.findStateID(ctx, issue.Status)
+	stateID, err := t.findStateID(ctx, issue.Status)
 	if err != nil {
 		return nil, fmt.Errorf("finding state for status %s: %w", issue.Status, err)
 	}
 
-	created, err := a.client.CreateIssue(ctx, issue.Title, issue.Description, priority, stateID, nil)
+	created, err := t.client.CreateIssue(ctx, issue.Title, issue.Description, priority, stateID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -128,11 +122,11 @@ func (a *Adapter) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker
 	return &ti, nil
 }
 
-func (a *Adapter) UpdateIssue(ctx context.Context, externalID string, issue *types.Issue) (*tracker.TrackerIssue, error) {
-	mapper := a.FieldMapper()
+func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *types.Issue) (*tracker.TrackerIssue, error) {
+	mapper := t.FieldMapper()
 	updates := mapper.IssueToTracker(issue)
 
-	updated, err := a.client.UpdateIssue(ctx, externalID, updates)
+	updated, err := t.client.UpdateIssue(ctx, externalID, updates)
 	if err != nil {
 		return nil, err
 	}
@@ -141,21 +135,21 @@ func (a *Adapter) UpdateIssue(ctx context.Context, externalID string, issue *typ
 	return &ti, nil
 }
 
-func (a *Adapter) FieldMapper() tracker.FieldMapper {
-	return &fieldMapper{config: a.config}
+func (t *Tracker) FieldMapper() tracker.FieldMapper {
+	return &linearFieldMapper{config: t.config}
 }
 
-func (a *Adapter) IsExternalRef(ref string) bool {
-	return linearlib.IsLinearExternalRef(ref)
+func (t *Tracker) IsExternalRef(ref string) bool {
+	return IsLinearExternalRef(ref)
 }
 
-func (a *Adapter) ExtractIdentifier(ref string) string {
-	return linearlib.ExtractLinearIdentifier(ref)
+func (t *Tracker) ExtractIdentifier(ref string) string {
+	return ExtractLinearIdentifier(ref)
 }
 
-func (a *Adapter) BuildExternalRef(issue *tracker.TrackerIssue) string {
+func (t *Tracker) BuildExternalRef(issue *tracker.TrackerIssue) string {
 	if issue.URL != "" {
-		if canonical, ok := linearlib.CanonicalizeLinearExternalRef(issue.URL); ok {
+		if canonical, ok := CanonicalizeLinearExternalRef(issue.URL); ok {
 			return canonical
 		}
 		return issue.URL
@@ -164,10 +158,10 @@ func (a *Adapter) BuildExternalRef(issue *tracker.TrackerIssue) string {
 }
 
 // findStateID looks up the Linear workflow state ID for a beads status.
-func (a *Adapter) findStateID(ctx context.Context, status types.Status) (string, error) {
-	targetType := linearlib.StatusToLinearStateType(status)
+func (t *Tracker) findStateID(ctx context.Context, status types.Status) (string, error) {
+	targetType := StatusToLinearStateType(status)
 
-	states, err := a.client.GetTeamStates(ctx)
+	states, err := t.client.GetTeamStates(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -178,7 +172,6 @@ func (a *Adapter) findStateID(ctx context.Context, status types.Status) (string,
 		}
 	}
 
-	// Fallback: return first state
 	if len(states) > 0 {
 		return states[0].ID, nil
 	}
@@ -186,14 +179,13 @@ func (a *Adapter) findStateID(ctx context.Context, status types.Status) (string,
 }
 
 // getConfig reads a config value from storage, falling back to env var.
-func (a *Adapter) getConfig(ctx context.Context, key, envVar string) (string, error) {
-	val, err := a.store.GetConfig(ctx, key)
+func (t *Tracker) getConfig(ctx context.Context, key, envVar string) (string, error) {
+	val, err := t.store.GetConfig(ctx, key)
 	if err == nil && val != "" {
 		return val, nil
 	}
-	// Fall back to environment variable
 	if envVar != "" {
-		if envVal := envLookup(envVar); envVal != "" {
+		if envVal := os.Getenv(envVar); envVal != "" {
 			return envVal, nil
 		}
 	}
@@ -201,7 +193,7 @@ func (a *Adapter) getConfig(ctx context.Context, key, envVar string) (string, er
 }
 
 // linearToTrackerIssue converts a linear.Issue to a tracker.TrackerIssue.
-func linearToTrackerIssue(li *linearlib.Issue) tracker.TrackerIssue {
+func linearToTrackerIssue(li *Issue) tracker.TrackerIssue {
 	ti := tracker.TrackerIssue{
 		ID:          li.ID,
 		Identifier:  li.Identifier,

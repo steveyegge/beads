@@ -3,7 +3,6 @@ package linear
 import (
 	"testing"
 
-	linearlib "github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -26,7 +25,7 @@ func TestRegistered(t *testing.T) {
 }
 
 func TestIsExternalRef(t *testing.T) {
-	a := &Adapter{}
+	tr := &Tracker{}
 	tests := []struct {
 		ref  string
 		want bool
@@ -37,14 +36,14 @@ func TestIsExternalRef(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := a.IsExternalRef(tt.ref); got != tt.want {
+		if got := tr.IsExternalRef(tt.ref); got != tt.want {
 			t.Errorf("IsExternalRef(%q) = %v, want %v", tt.ref, got, tt.want)
 		}
 	}
 }
 
 func TestExtractIdentifier(t *testing.T) {
-	a := &Adapter{}
+	tr := &Tracker{}
 	tests := []struct {
 		ref  string
 		want string
@@ -53,19 +52,19 @@ func TestExtractIdentifier(t *testing.T) {
 		{"https://linear.app/team/issue/PROJ-123", "PROJ-123"},
 	}
 	for _, tt := range tests {
-		if got := a.ExtractIdentifier(tt.ref); got != tt.want {
+		if got := tr.ExtractIdentifier(tt.ref); got != tt.want {
 			t.Errorf("ExtractIdentifier(%q) = %q, want %q", tt.ref, got, tt.want)
 		}
 	}
 }
 
 func TestBuildExternalRef(t *testing.T) {
-	a := &Adapter{}
+	tr := &Tracker{}
 	ti := &tracker.TrackerIssue{
 		URL:        "https://linear.app/team/issue/PROJ-123/some-title-slug",
 		Identifier: "PROJ-123",
 	}
-	ref := a.BuildExternalRef(ti)
+	ref := tr.BuildExternalRef(ti)
 	want := "https://linear.app/team/issue/PROJ-123"
 	if ref != want {
 		t.Errorf("BuildExternalRef() = %q, want %q", ref, want)
@@ -73,7 +72,7 @@ func TestBuildExternalRef(t *testing.T) {
 }
 
 func TestFieldMapperPriority(t *testing.T) {
-	m := &fieldMapper{config: linearlib.DefaultMappingConfig()}
+	m := &linearFieldMapper{config: DefaultMappingConfig()}
 
 	// Linear 1 (urgent) -> Beads 0 (critical)
 	if got := m.PriorityToBeads(1); got != 0 {
@@ -86,23 +85,23 @@ func TestFieldMapperPriority(t *testing.T) {
 }
 
 func TestFieldMapperStatus(t *testing.T) {
-	m := &fieldMapper{config: linearlib.DefaultMappingConfig()}
+	m := &linearFieldMapper{config: DefaultMappingConfig()}
 
 	// Started -> in_progress
-	state := &linearlib.State{Type: "started", Name: "In Progress"}
+	state := &State{Type: "started", Name: "In Progress"}
 	if got := m.StatusToBeads(state); got != types.StatusInProgress {
 		t.Errorf("StatusToBeads(started) = %q, want %q", got, types.StatusInProgress)
 	}
 
 	// Completed -> closed
-	state = &linearlib.State{Type: "completed", Name: "Done"}
+	state = &State{Type: "completed", Name: "Done"}
 	if got := m.StatusToBeads(state); got != types.StatusClosed {
 		t.Errorf("StatusToBeads(completed) = %q, want %q", got, types.StatusClosed)
 	}
 }
 
 func TestLinearToTrackerIssue(t *testing.T) {
-	li := &linearlib.Issue{
+	li := &Issue{
 		ID:          "uuid-123",
 		Identifier:  "TEAM-42",
 		Title:       "Fix the bug",
@@ -111,8 +110,8 @@ func TestLinearToTrackerIssue(t *testing.T) {
 		Priority:    2,
 		CreatedAt:   "2026-01-15T10:00:00Z",
 		UpdatedAt:   "2026-01-16T14:30:00Z",
-		Assignee:    &linearlib.User{ID: "user-1", Name: "Alice", Email: "alice@example.com"},
-		State:       &linearlib.State{Type: "started", Name: "In Progress"},
+		Assignee:    &User{ID: "user-1", Name: "Alice", Email: "alice@example.com"},
+		State:       &State{Type: "started", Name: "In Progress"},
 	}
 
 	ti := linearToTrackerIssue(li)
