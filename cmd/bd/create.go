@@ -283,12 +283,12 @@ var createCmd = &cobra.Command{
 						// Check if this prefix matches a route to a different rig
 						for _, route := range routes {
 							if route.Prefix == prefix && route.Path != "" && route.Path != "." {
-								// Found a matching route - auto-route to that rig
-								rigName := routing.ExtractProjectFromPath(route.Path)
-								if rigName != "" {
-									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, specID, wisp)
-									return
-								}
+								// Found a matching route - route by exact prefix, not project name.
+								// Multiple routes can share a project name but differ by prefix/path.
+								// Routing by project may select a different route and validate against
+								// the wrong target database/custom type config.
+								createInRig(cmd, route.Prefix, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, specID, wisp)
+								return
 							}
 						}
 					}
