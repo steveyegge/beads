@@ -29,6 +29,12 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// Command group constants
+const (
+	GroupMaintenance = "maintenance"
+	GroupIntegrations = "integrations"
+)
+
 var (
 	dbPath     string
 	actor      string
@@ -118,6 +124,8 @@ var readOnlyCommands = map[string]bool{
 	"duplicates": true,
 	"comments":   true, // list comments (not add)
 	"current":    true, // bd sync mode current
+	// resources command has subcommands, some read-only, some write
+	// For now we don't mark it read-only to allow sync to write
 	// NOTE: "export" is NOT read-only - it writes to clear dirty issues and update jsonl_file_hash
 }
 

@@ -30,11 +30,12 @@ const (
 
 // Client provides methods to interact with the Linear GraphQL API.
 type Client struct {
-	APIKey     string
-	TeamID     string
-	ProjectID  string // Optional: filter issues to a specific project
-	Endpoint   string // GraphQL endpoint URL (defaults to DefaultAPIEndpoint)
-	HTTPClient *http.Client
+	APIKey          string
+	TeamID          string
+	ProjectID       string
+	Endpoint        string
+	HTTPClient      *http.Client
+	enableSubIssues bool
 }
 
 // GraphQLRequest represents a GraphQL request payload.
@@ -69,6 +70,7 @@ type Issue struct {
 	State       *State     `json:"state"`
 	Assignee    *User      `json:"assignee"`
 	Labels      *Labels    `json:"labels"`
+	Project     *Project   `json:"project,omitempty"`
 	Parent      *Parent    `json:"parent,omitempty"`
 	Relations   *Relations `json:"relations,omitempty"`
 	CreatedAt   string     `json:"createdAt"`
@@ -134,6 +136,11 @@ type StatesWrapper struct {
 	Nodes []State `json:"nodes"`
 }
 
+// TeamResponse represents the response from team query.
+type TeamResponse struct {
+	Team TeamStates `json:"team"`
+}
+
 // IssuesResponse represents the response from issues query.
 type IssuesResponse struct {
 	Issues struct {
@@ -161,9 +168,45 @@ type IssueUpdateResponse struct {
 	} `json:"issueUpdate"`
 }
 
-// TeamResponse represents the response from team query.
-type TeamResponse struct {
-	Team TeamStates `json:"team"`
+// Project represents a project in Linear.
+type Project struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	SlugId      string `json:"slugId"`
+	URL         string `json:"url"`
+	State       string `json:"state"` // "planned", "started", "paused", "completed", "canceled"
+	Progress    int    `json:"progress"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
+	CompletedAt string `json:"completedAt,omitempty"`
+}
+
+// ProjectsResponse represents the response from projects query.
+type ProjectsResponse struct {
+	Projects struct {
+		Nodes    []Project `json:"nodes"`
+		PageInfo struct {
+			HasNextPage bool   `json:"hasNextPage"`
+			EndCursor   string `json:"endCursor"`
+		} `json:"pageInfo"`
+	} `json:"projects"`
+}
+
+// ProjectCreateResponse represents the response from projectCreate mutation.
+type ProjectCreateResponse struct {
+	ProjectCreate struct {
+		Success bool    `json:"success"`
+		Project Project `json:"project"`
+	} `json:"projectCreate"`
+}
+
+// ProjectUpdateResponse represents the response from projectUpdate mutation.
+type ProjectUpdateResponse struct {
+	ProjectUpdate struct {
+		Success bool    `json:"success"`
+		Project Project `json:"project"`
+	} `json:"projectUpdate"`
 }
 
 // SyncStats tracks statistics for a Linear sync operation.

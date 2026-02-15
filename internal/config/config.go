@@ -224,6 +224,14 @@ func Initialize() error {
 	return nil
 }
 
+// UnmarshalKey unmarshals a config key into a struct
+func UnmarshalKey(key string, rawVal interface{}) error {
+	if v == nil {
+		return fmt.Errorf("viper not initialized")
+	}
+	return v.UnmarshalKey(key, rawVal)
+}
+
 // ResetForTesting clears the config state, allowing Initialize() to be called again.
 // This is intended for tests that need to change config.yaml between test steps.
 // WARNING: Not thread-safe. Only call from single-threaded test contexts.

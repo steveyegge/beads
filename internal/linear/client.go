@@ -15,6 +15,34 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// ProjectsQuery is the GraphQL query for fetching projects.
+const ProjectsQuery = `
+	query Projects($filter: ProjectFilter!, $first: Int!, $after: String) {
+		projects(
+			first: $first
+			after: $after
+			filter: $filter
+		) {
+			nodes {
+				id
+				name
+				description
+				slugId
+				url
+				state
+				progress
+				createdAt
+				updatedAt
+				completedAt
+			}
+			pageInfo {
+				hasNextPage
+				endCursor
+			}
+		}
+	}
+`
+
 // issuesQuery is the GraphQL query for fetching issues with all required fields.
 // Used by both FetchIssues and FetchIssuesSince for consistency.
 const issuesQuery = `
@@ -47,6 +75,11 @@ const issuesQuery = `
 						id
 						name
 					}
+				}
+				project {
+					id
+					name
+					slugId
 				}
 				parent {
 					id
@@ -83,6 +116,7 @@ func NewClient(apiKey, teamID string) *Client {
 		HTTPClient: &http.Client{
 			Timeout: DefaultTimeout,
 		},
+		enableSubIssues: true, // Enable sub-issues by default for parent-child support
 	}
 }
 
@@ -90,11 +124,12 @@ func NewClient(apiKey, teamID string) *Client {
 // This is useful for testing with mock servers or connecting to self-hosted instances.
 func (c *Client) WithEndpoint(endpoint string) *Client {
 	return &Client{
-		APIKey:     c.APIKey,
-		TeamID:     c.TeamID,
-		ProjectID:  c.ProjectID,
-		Endpoint:   endpoint,
-		HTTPClient: c.HTTPClient,
+		APIKey:          c.APIKey,
+		TeamID:          c.TeamID,
+		ProjectID:       c.ProjectID,
+		Endpoint:        endpoint,
+		HTTPClient:      c.HTTPClient,
+		enableSubIssues: c.enableSubIssues,
 	}
 }
 
@@ -102,11 +137,12 @@ func (c *Client) WithEndpoint(endpoint string) *Client {
 // This is useful for testing or customizing timeouts and transport settings.
 func (c *Client) WithHTTPClient(httpClient *http.Client) *Client {
 	return &Client{
-		APIKey:     c.APIKey,
-		TeamID:     c.TeamID,
-		ProjectID:  c.ProjectID,
-		Endpoint:   c.Endpoint,
-		HTTPClient: httpClient,
+		APIKey:          c.APIKey,
+		TeamID:          c.TeamID,
+		ProjectID:       c.ProjectID,
+		Endpoint:        c.Endpoint,
+		HTTPClient:      httpClient,
+		enableSubIssues: c.enableSubIssues,
 	}
 }
 
@@ -114,11 +150,25 @@ func (c *Client) WithHTTPClient(httpClient *http.Client) *Client {
 // When set, FetchIssues and FetchIssuesSince will only return issues belonging to this project.
 func (c *Client) WithProjectID(projectID string) *Client {
 	return &Client{
-		APIKey:     c.APIKey,
-		TeamID:     c.TeamID,
-		ProjectID:  projectID,
-		Endpoint:   c.Endpoint,
-		HTTPClient: c.HTTPClient,
+		APIKey:          c.APIKey,
+		TeamID:          c.TeamID,
+		ProjectID:       projectID,
+		Endpoint:        c.Endpoint,
+		HTTPClient:      c.HTTPClient,
+		enableSubIssues: c.enableSubIssues,
+	}
+}
+
+// WithSubIssuesEnabled returns a new client with sub-issues feature flag set.
+// This is required for parent-child issue linking via the GraphQL API.
+func (c *Client) WithSubIssuesEnabled(enabled bool) *Client {
+	return &Client{
+		APIKey:          c.APIKey,
+		TeamID:          c.TeamID,
+		ProjectID:       c.ProjectID,
+		Endpoint:        c.Endpoint,
+		HTTPClient:      c.HTTPClient,
+		enableSubIssues: enabled,
 	}
 }
 
@@ -139,6 +189,9 @@ func (c *Client) Execute(ctx context.Context, req *GraphQLRequest) (json.RawMess
 
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", c.APIKey)
+		if c.enableSubIssues {
+			httpReq.Header.Set("GraphQL-Features", "sub_issues")
+		}
 
 		resp, err := c.HTTPClient.Do(httpReq)
 		if err != nil {
@@ -387,8 +440,163 @@ func (c *Client) GetTeamStates(ctx context.Context) ([]State, error) {
 	return teamResp.Team.States.Nodes, nil
 }
 
+// FetchProjects retrieves projects from Linear with optional filtering by state.
+// state can be: "planned", "started", "paused", "completed", "canceled", or "all".
+func (c *Client) FetchProjects(ctx context.Context, state string) ([]Project, error) {
+	var allProjects []Project
+	var cursor string
+
+	filter := map[string]interface{}{
+		"team": map[string]interface{}{
+			"id": map[string]interface{}{
+				"eq": c.TeamID,
+			},
+		},
+	}
+
+	if state != "all" && state != "" {
+		filter["state"] = map[string]interface{}{
+			"eq": state,
+		}
+	}
+
+	for {
+		variables := map[string]interface{}{
+			"filter": filter,
+			"first":  MaxPageSize,
+		}
+		if cursor != "" {
+			variables["after"] = cursor
+		}
+
+		req := &GraphQLRequest{
+			Query:     ProjectsQuery,
+			Variables: variables,
+		}
+
+		data, err := c.Execute(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch projects: %w", err)
+		}
+
+		var projectsResp ProjectsResponse
+		if err := json.Unmarshal(data, &projectsResp); err != nil {
+			return nil, fmt.Errorf("failed to parse projects response: %w", err)
+		}
+
+		allProjects = append(allProjects, projectsResp.Projects.Nodes...)
+
+		if !projectsResp.Projects.PageInfo.HasNextPage {
+			break
+		}
+		cursor = projectsResp.Projects.PageInfo.EndCursor
+	}
+
+	return allProjects, nil
+}
+
+// CreateProject creates a new project in Linear.
+func (c *Client) CreateProject(ctx context.Context, name, description, state string) (*Project, error) {
+	query := `
+		mutation CreateProject($input: ProjectCreateInput!) {
+			projectCreate(input: $input) {
+				success
+				project {
+					id
+					name
+					description
+					slugId
+					url
+					state
+					progress
+					createdAt
+					updatedAt
+				}
+			}
+		}
+	`
+
+	input := map[string]interface{}{
+		"teamIds":     []string{c.TeamID},
+		"name":        name,
+		"description": description,
+	}
+
+	if state != "" {
+		input["state"] = state
+	}
+
+	req := &GraphQLRequest{
+		Query: query,
+		Variables: map[string]interface{}{
+			"input": input,
+		},
+	}
+
+	data, err := c.Execute(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create project: %w", err)
+	}
+
+	var createResp ProjectCreateResponse
+	if err := json.Unmarshal(data, &createResp); err != nil {
+		return nil, fmt.Errorf("failed to parse create response: %w", err)
+	}
+
+	if !createResp.ProjectCreate.Success {
+		return nil, fmt.Errorf("project creation reported as unsuccessful")
+	}
+
+	return &createResp.ProjectCreate.Project, nil
+}
+
+// UpdateProject updates an existing project in Linear.
+func (c *Client) UpdateProject(ctx context.Context, projectID string, updates map[string]interface{}) (*Project, error) {
+	query := `
+		mutation UpdateProject($id: String!, $input: ProjectUpdateInput!) {
+			projectUpdate(id: $id, input: $input) {
+				success
+				project {
+					id
+					name
+					description
+					slugId
+					url
+					state
+					progress
+					updatedAt
+				}
+			}
+		}
+	`
+
+	req := &GraphQLRequest{
+		Query: query,
+		Variables: map[string]interface{}{
+			"id":    projectID,
+			"input": updates,
+		},
+	}
+
+	data, err := c.Execute(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update project: %w", err)
+	}
+
+	var updateResp ProjectUpdateResponse
+	if err := json.Unmarshal(data, &updateResp); err != nil {
+		return nil, fmt.Errorf("failed to parse update response: %w", err)
+	}
+
+	if !updateResp.ProjectUpdate.Success {
+		return nil, fmt.Errorf("project update reported as unsuccessful")
+	}
+
+	return &updateResp.ProjectUpdate.Project, nil
+}
+
 // CreateIssue creates a new issue in Linear.
-func (c *Client) CreateIssue(ctx context.Context, title, description string, priority int, stateID string, labelIDs []string) (*Issue, error) {
+func (c *Client) CreateIssue(ctx context.Context, title, description string, priority int, stateID string, labelIDs []string, projectID string, parentID string) (*Issue, error) {
 	query := `
 		mutation CreateIssue($input: IssueCreateInput!) {
 			issueCreate(input: $input) {
@@ -418,9 +626,15 @@ func (c *Client) CreateIssue(ctx context.Context, title, description string, pri
 		"description": description,
 	}
 
-	// Include project if configured
-	if c.ProjectID != "" {
+	// Include project if configured or provided
+	if projectID != "" {
+		input["projectId"] = projectID
+	} else if c.ProjectID != "" {
 		input["projectId"] = c.ProjectID
+	}
+
+	if parentID != "" {
+		input["parentId"] = parentID
 	}
 
 	if priority > 0 {
