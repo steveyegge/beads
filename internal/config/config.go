@@ -437,6 +437,12 @@ func DefaultAIModel() string {
 	return GetString("ai.model")
 }
 
+// GetViper returns the underlying viper instance for advanced access patterns
+// like reading structured arrays. Returns nil if not initialized.
+func GetViper() *viper.Viper {
+	return v
+}
+
 // AllSettings returns all configuration settings as a map
 func AllSettings() map[string]interface{} {
 	if v == nil {

@@ -663,10 +663,11 @@ var createCmd = &cobra.Command{
 			flushRoutedRepo(targetStore, repoPath)
 		}
 
-		// Run create hook
+		// Run create hooks (file-based and config-driven)
 		if hookRunner != nil {
 			hookRunner.Run(hooks.EventCreate, issue)
 		}
+		eventDispatcher.Fire("create", issue)
 
 		if jsonOutput {
 			outputJSON(issue)

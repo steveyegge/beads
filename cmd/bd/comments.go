@@ -135,6 +135,11 @@ Examples:
 			FatalErrorRespectJSON("adding comment: %v", err)
 		}
 
+		// Fire comment event hooks
+		if commentIssue, err := store.GetIssue(ctx, issueID); err == nil {
+			eventDispatcher.FireComment(commentIssue, author, commentText)
+		}
+
 		if jsonOutput {
 			outputJSON(comment)
 			return

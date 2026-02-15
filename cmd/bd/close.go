@@ -126,11 +126,12 @@ create, update, show, or close operation).`,
 
 			closedCount++
 
-			// Run close hook (best effort: hook runs only if re-fetch succeeds)
+			// Run close hooks (file-based and config-driven)
 			closedIssue, _ := store.GetIssue(ctx, id)
 			if closedIssue != nil && hookRunner != nil {
 				hookRunner.Run(hooks.EventClose, closedIssue)
 			}
+			eventDispatcher.Fire("close", closedIssue)
 
 			if jsonOutput {
 				if closedIssue != nil {
@@ -194,11 +195,12 @@ create, update, show, or close operation).`,
 
 			closedCount++
 
-			// Get updated issue for hook (best effort: hook runs only if re-fetch succeeds)
+			// Run close hooks (file-based and config-driven)
 			closedIssue, _ := result.Store.GetIssue(ctx, result.ResolvedID)
 			if closedIssue != nil && hookRunner != nil {
 				hookRunner.Run(hooks.EventClose, closedIssue)
 			}
+			eventDispatcher.Fire("close", closedIssue)
 
 			if jsonOutput {
 				if closedIssue != nil {

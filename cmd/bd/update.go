@@ -372,11 +372,12 @@ create, update, show, or close operation).`,
 				}
 			}
 
-			// Run update hook
+			// Run update hooks (file-based and config-driven)
 			updatedIssue, _ := issueStore.GetIssue(ctx, result.ResolvedID) // Best effort: nil issue handled by subsequent nil check
 			if updatedIssue != nil && hookRunner != nil {
 				hookRunner.Run(hooks.EventUpdate, updatedIssue)
 			}
+			eventDispatcher.Fire("update", updatedIssue)
 
 			if jsonOutput {
 				if updatedIssue != nil {

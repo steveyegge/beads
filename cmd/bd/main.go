@@ -50,8 +50,11 @@ var (
 	// Auto-flush manager (event-driven, fixes race condition)
 	flushManager *FlushManager
 
-	// Hook runner for extensibility
+	// Hook runner for extensibility (file-based hooks in .beads/hooks/)
 	hookRunner *hooks.Runner
+
+	// Event dispatcher for config-driven hooks (event-hooks in config.yaml)
+	eventDispatcher *hooks.Dispatcher
 
 	// skipFinalFlush is set by sync command when sync.branch mode completes successfully.
 	// This prevents PersistentPostRun from re-exporting and dirtying the working directory.
@@ -692,11 +695,18 @@ var rootCmd = &cobra.Command{
 		storeActive = true
 		storeMutex.Unlock()
 
-		// Initialize hook runner
+		// Initialize hook runner (file-based)
 		// dbPath is .beads/something.db, so workspace root is parent of .beads
 		if dbPath != "" {
 			beadsDir := filepath.Dir(dbPath)
 			hookRunner = hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
+		}
+
+		// Initialize event dispatcher (config-driven hooks from config.yaml)
+		if eventHooks, err := hooks.LoadEventHooks(config.GetViper()); err != nil {
+			debug.Logf("warning: failed to load event hooks: %v", err)
+		} else {
+			eventDispatcher = hooks.NewDispatcher(eventHooks)
 		}
 
 		// Warn if multiple databases detected in directory hierarchy
