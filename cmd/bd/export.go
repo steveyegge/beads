@@ -115,18 +115,25 @@ func validateExportPath(path string) error {
 var exportCmd = &cobra.Command{
 	Use:     "export",
 	GroupID: "sync",
-	Short:   "Export issues to JSONL or Obsidian format",
-	Long: `Export all issues to JSON Lines or Obsidian Tasks markdown format.
+	Short:   "Export issues to JSON, JSONL, or Obsidian format",
+	Long: `Export all issues to JSON, JSON Lines, or Obsidian Tasks markdown format.
 Issues are sorted by ID for consistent diffs.
 
 Output to stdout by default, or use -o flag for file output.
 For obsidian format, defaults to ai_docs/changes-log.md
 
 Formats:
+  json      - Structured JSON with version, metadata, and full issue data
   jsonl     - JSON Lines format (one JSON object per line) [default]
   obsidian  - Obsidian Tasks markdown format with checkboxes, priorities, dates
 
+Positional arguments are treated as issue IDs to export (like --id).
+
 Examples:
+  bd export --format json                        # all issues as structured JSON
+  bd export --format json --status open          # open issues only
+  bd export --format json --since 2026-02-01     # updated since date
+  bd export aegis-0a9 --format json              # single bead
   bd export --status open -o open-issues.jsonl
   bd export --format obsidian                    # outputs to ai_docs/changes-log.md
   bd export --format obsidian -o custom.md       # outputs to custom.md
@@ -155,11 +162,34 @@ Examples:
 		idFilter, _ := cmd.Flags().GetString("id")
 		parentID, _ := cmd.Flags().GetString("parent")
 
+		since, _ := cmd.Flags().GetString("since")
+
+		// Merge positional args into ID filter
+		if len(args) > 0 {
+			existing := idFilter
+			for _, arg := range args {
+				if existing != "" {
+					existing += ","
+				}
+				existing += arg
+			}
+			idFilter = existing
+		}
+
 		debug.Logf("Debug: export flags - output=%q, force=%v\n", output, force)
 
-		if format != "jsonl" && format != "obsidian" {
-			fmt.Fprintf(os.Stderr, "Error: format must be 'jsonl' or 'obsidian'\n")
+		if format != "json" && format != "jsonl" && format != "obsidian" {
+			fmt.Fprintf(os.Stderr, "Error: format must be 'json', 'jsonl', or 'obsidian'\n")
 			os.Exit(1)
+		}
+
+		// --since is an alias for --updated-after
+		if since != "" {
+			if updatedAfter != "" {
+				fmt.Fprintf(os.Stderr, "Error: cannot use both --since and --updated-after\n")
+				os.Exit(1)
+			}
+			updatedAfter = since
 		}
 
 		// Default output path for obsidian format
@@ -530,6 +560,35 @@ Examples:
 			for _, issue := range issues {
 				exportedIDs = append(exportedIDs, issue.ID)
 			}
+		} else if format == "json" {
+			// Build active filters map for metadata
+			activeFilters := make(map[string]string)
+			if statusFilter != "" {
+				activeFilters["status"] = statusFilter
+			}
+			if assignee != "" {
+				activeFilters["assignee"] = assignee
+			}
+			if issueType != "" {
+				activeFilters["type"] = issueType
+			}
+			if idFilter != "" {
+				activeFilters["id"] = idFilter
+			}
+			if updatedAfter != "" {
+				activeFilters["updated_after"] = updatedAfter
+			}
+			if createdAfter != "" {
+				activeFilters["created_after"] = createdAfter
+			}
+
+			if err := writeJSONExport(out, issues, activeFilters); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing JSON export: %v\n", err)
+				os.Exit(1)
+			}
+			for _, issue := range issues {
+				exportedIDs = append(exportedIDs, issue.ID)
+			}
 		} else {
 			// Write JSONL (timestamp-only deduplication DISABLED due to bd-160)
 			encoder := json.NewEncoder(out)
@@ -647,7 +706,7 @@ Examples:
 }
 
 func init() {
-	exportCmd.Flags().StringP("format", "f", "jsonl", "Export format: jsonl, obsidian")
+	exportCmd.Flags().StringP("format", "f", "jsonl", "Export format: json, jsonl, obsidian")
 	exportCmd.Flags().StringP("output", "o", "", "Output file (default: stdout)")
 	exportCmd.Flags().StringP("status", "s", "", "Filter by status")
 	exportCmd.Flags().Bool("force", false, "Force export even if database is empty")
@@ -677,6 +736,9 @@ func init() {
 
 	// Parent filter
 	exportCmd.Flags().String("parent", "", "Filter by parent issue ID (shows children of specified issue)")
+
+	// Since filter (alias for --updated-after)
+	exportCmd.Flags().String("since", "", "Filter issues updated since date (alias for --updated-after)")
 
 	rootCmd.AddCommand(exportCmd)
 }
