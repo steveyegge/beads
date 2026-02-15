@@ -2,13 +2,14 @@
 package doctor
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
@@ -71,9 +72,9 @@ func CheckSyncDivergence(path string) DoctorCheck {
 	// Check 2: SQLite last_import_time vs JSONL mtime (SQLite only).
 	// Dolt backend does not maintain SQLite metadata; this SQLite-only check doesn't apply.
 	if backend == configfile.BackendSQLite {
-		mtimeIssue := checkSQLiteMtimeDivergence(path, beadsDir)
-		if mtimeIssue != nil {
-			issues = append(issues, *mtimeIssue)
+		hashIssue := checkSQLiteHashDivergence(path, beadsDir)
+		if hashIssue != nil {
+			issues = append(issues, *hashIssue)
 		}
 	}
 
@@ -164,8 +165,10 @@ func checkJSONLGitDivergence(path, beadsDir string) *SyncDivergenceIssue {
 	return nil
 }
 
-// checkSQLiteMtimeDivergence checks if SQLite last_import_time matches JSONL mtime.
-func checkSQLiteMtimeDivergence(path, beadsDir string) *SyncDivergenceIssue {
+// checkSQLiteHashDivergence checks if JSONL content hash matches the hash stored in SQLite metadata.
+// This replaces the old mtime-based check which was prone to false positives: auto-flush rewrites
+// JSONL after import, making file mtime always newer than last_import_time.
+func checkSQLiteHashDivergence(path, beadsDir string) *SyncDivergenceIssue {
 	// Get database path
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
@@ -183,65 +186,53 @@ func checkSQLiteMtimeDivergence(path, beadsDir string) *SyncDivergenceIssue {
 		return nil // No JSONL file
 	}
 
-	// Get JSONL mtime
-	jsonlInfo, err := os.Stat(jsonlPath)
+	// Compute current JSONL content hash
+	currentHash, err := computeFileHash(jsonlPath)
 	if err != nil {
-		return nil
+		return nil // can't read JSONL, skip check
 	}
-	jsonlMtime := jsonlInfo.ModTime()
 
-	// Get last_import_time from database
+	// Get stored hash from database metadata
 	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
 	if err != nil {
 		return nil
 	}
 	defer db.Close()
 
-	var lastImportTimeStr string
-	err = db.QueryRow("SELECT value FROM metadata WHERE key = 'last_import_time'").Scan(&lastImportTimeStr)
-	if err != nil {
-		// No last_import_time recorded - this is a potential issue
+	// try jsonl_content_hash first, fall back to legacy last_import_hash
+	var storedHash string
+	err = db.QueryRow("SELECT value FROM metadata WHERE key = 'jsonl_content_hash'").Scan(&storedHash)
+	if err != nil || storedHash == "" {
+		err = db.QueryRow("SELECT value FROM metadata WHERE key = 'last_import_hash'").Scan(&storedHash)
+	}
+	if err != nil || storedHash == "" {
 		return &SyncDivergenceIssue{
-			Type:        "sqlite_mtime_stale",
-			Description: "No last_import_time recorded in database (may need sync)",
+			Type:        "sqlite_hash_stale",
+			Description: "No JSONL content hash recorded in database (may need sync)",
 			FixCommand:  "bd sync --import-only",
 		}
 	}
 
-	// Parse last_import_time
-	lastImportTime, err := time.Parse(time.RFC3339, lastImportTimeStr)
-	if err != nil {
-		// Try Unix timestamp format
-		var unixTs int64
-		if _, err := fmt.Sscanf(lastImportTimeStr, "%d", &unixTs); err == nil {
-			lastImportTime = time.Unix(unixTs, 0)
-		} else {
-			return nil // Can't parse, skip this check
-		}
-	}
-
-	// Compare times with a 2-second tolerance (filesystem mtime precision varies)
-	timeDiff := jsonlMtime.Sub(lastImportTime)
-	if timeDiff < 0 {
-		timeDiff = -timeDiff
-	}
-
-	if timeDiff > 2*time.Second {
-		if jsonlMtime.After(lastImportTime) {
-			return &SyncDivergenceIssue{
-				Type:        "sqlite_mtime_stale",
-				Description: fmt.Sprintf("JSONL is newer than last import (%s > %s)", jsonlMtime.Format(time.RFC3339), lastImportTime.Format(time.RFC3339)),
-				FixCommand:  "bd sync --import-only",
-			}
-		}
+	if currentHash != storedHash {
 		return &SyncDivergenceIssue{
-			Type:        "sqlite_mtime_stale",
-			Description: fmt.Sprintf("Database import time is newer than JSONL (%s > %s)", lastImportTime.Format(time.RFC3339), jsonlMtime.Format(time.RFC3339)),
-			FixCommand:  "bd export",
+			Type:        "sqlite_hash_stale",
+			Description: "JSONL content differs from last sync (content hash mismatch)",
+			FixCommand:  "bd sync --import-only",
 		}
 	}
 
 	return nil
+}
+
+// computeFileHash computes SHA256 hash of a file's content, returned as hex string.
+func computeFileHash(path string) (string, error) {
+	data, err := os.ReadFile(path) // #nosec G304 - controlled path
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // checkUncommittedBeadsChanges checks if there are uncommitted changes in .beads/ directory.

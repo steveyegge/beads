@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func setupSyncBranchWorktreeRepo(t *testing.T) (repoPath, worktreePath string) {
@@ -44,7 +43,9 @@ func writeJSONLIssues(t *testing.T, jsonlPath string, count int) {
 	}
 }
 
-func createSyncDoctorTestDB(t *testing.T, dbPath string, issueCount int, lastImportTime *time.Time) {
+// createSyncDoctorTestDB creates a test SQLite database with issues and optional hash metadata.
+// If jsonlContentHash is non-empty, it is stored as jsonl_content_hash in the metadata table.
+func createSyncDoctorTestDB(t *testing.T, dbPath string, issueCount int, jsonlContentHash string) {
 	t.Helper()
 
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
@@ -73,8 +74,8 @@ func createSyncDoctorTestDB(t *testing.T, dbPath string, issueCount int, lastImp
 		}
 	}
 
-	if lastImportTime != nil {
-		if _, err := db.Exec("INSERT INTO metadata (key, value) VALUES (?, ?)", "last_import_time", lastImportTime.Format(time.RFC3339)); err != nil {
+	if jsonlContentHash != "" {
+		if _, err := db.Exec("INSERT INTO metadata (key, value) VALUES (?, ?)", "jsonl_content_hash", jsonlContentHash); err != nil {
 			t.Fatalf("insert metadata: %v", err)
 		}
 	}
@@ -90,7 +91,7 @@ func TestCheckDatabaseJSONLSync_UsesSyncWorktreeJSONL(t *testing.T) {
 	// Main JSONL is stale, sync worktree JSONL has current state.
 	writeJSONLIssues(t, mainJSONL, 1)
 	writeJSONLIssues(t, worktreeJSONL, 3)
-	createSyncDoctorTestDB(t, dbPath, 3, nil)
+	createSyncDoctorTestDB(t, dbPath, 3, "")
 
 	check := CheckDatabaseJSONLSync(repoPath)
 	if check.Status != StatusOK {
@@ -98,26 +99,26 @@ func TestCheckDatabaseJSONLSync_UsesSyncWorktreeJSONL(t *testing.T) {
 	}
 }
 
-func TestCheckSyncDivergence_UsesSyncWorktreeJSONLForMtime(t *testing.T) {
+// TestCheckSyncDivergence_UsesSyncWorktreeJSONLForHash verifies that the hash-based
+// divergence check uses the sync worktree JSONL (not main JSONL) when sync-branch is configured.
+func TestCheckSyncDivergence_UsesSyncWorktreeJSONLForHash(t *testing.T) {
 	repoPath, worktreePath := setupSyncBranchWorktreeRepo(t)
 
 	mainJSONL := filepath.Join(repoPath, ".beads", "issues.jsonl")
 	worktreeJSONL := filepath.Join(worktreePath, ".beads", "issues.jsonl")
 	dbPath := filepath.Join(repoPath, ".beads", "beads.db")
 
+	// main JSONL has different content from worktree JSONL
 	writeJSONLIssues(t, mainJSONL, 1)
 	writeJSONLIssues(t, worktreeJSONL, 1)
 
-	worktreeTime := time.Now().Add(-1 * time.Minute).Round(time.Second)
-	mainTime := worktreeTime.Add(-10 * time.Minute)
-	if err := os.Chtimes(worktreeJSONL, worktreeTime, worktreeTime); err != nil {
-		t.Fatalf("chtimes worktree jsonl: %v", err)
-	}
-	if err := os.Chtimes(mainJSONL, mainTime, mainTime); err != nil {
-		t.Fatalf("chtimes main jsonl: %v", err)
+	// compute hash of the worktree JSONL (the one the check should use)
+	worktreeHash, err := computeFileHash(worktreeJSONL)
+	if err != nil {
+		t.Fatalf("compute hash: %v", err)
 	}
 
-	createSyncDoctorTestDB(t, dbPath, 1, &worktreeTime)
+	createSyncDoctorTestDB(t, dbPath, 1, worktreeHash)
 
 	check := CheckSyncDivergence(repoPath)
 	if check.Status != StatusOK {
