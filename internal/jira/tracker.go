@@ -2,6 +2,7 @@ package jira
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -12,7 +13,7 @@ import (
 
 // ErrNotImplemented is returned by Jira tracker methods that are not yet supported.
 // Jira pull currently uses a Python script (jira2jsonl.py), not the Go API client.
-var ErrNotImplemented = fmt.Errorf("not implemented: Jira sync uses Python script (jira2jsonl.py)")
+var ErrNotImplemented = errors.New("not implemented: Jira sync uses Python script (jira2jsonl.py)")
 
 func init() {
 	tracker.Register("jira", func() tracker.IssueTracker {
