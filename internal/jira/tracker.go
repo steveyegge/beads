@@ -186,7 +186,6 @@ func jiraToTrackerIssue(ji *Issue) tracker.TrackerIssue {
 	// Priority
 	if ji.Fields.Priority != nil {
 		ti.Priority = jiraPriorityToNumeric(ji.Fields.Priority.Name)
-		ti.State = ji.Fields.Status // Store for FieldMapper
 	}
 
 	// State
