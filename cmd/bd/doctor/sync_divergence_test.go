@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/steveyegge/beads/internal/config"
 )
@@ -169,22 +168,22 @@ func TestCheckSyncDivergence(t *testing.T) {
 	})
 }
 
-func TestCheckSQLiteMtimeDivergence(t *testing.T) {
+func TestCheckSQLiteHashDivergence(t *testing.T) {
 	t.Run("no database", func(t *testing.T) {
-		dir := mkTmpDirInTmp(t, "bd-mtime-nodb-*")
+		dir := mkTmpDirInTmp(t, "bd-hash-nodb-*")
 		beadsDir := filepath.Join(dir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
 			t.Fatal(err)
 		}
 
-		issue := checkSQLiteMtimeDivergence(dir, beadsDir)
+		issue := checkSQLiteHashDivergence(dir, beadsDir)
 		if issue != nil {
 			t.Errorf("expected nil issue for no database, got %+v", issue)
 		}
 	})
 
 	t.Run("no JSONL", func(t *testing.T) {
-		dir := mkTmpDirInTmp(t, "bd-mtime-nojsonl-*")
+		dir := mkTmpDirInTmp(t, "bd-hash-nojsonl-*")
 		beadsDir := filepath.Join(dir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
 			t.Fatal(err)
@@ -200,20 +199,20 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
 		db.Close()
 
-		issue := checkSQLiteMtimeDivergence(dir, beadsDir)
+		issue := checkSQLiteHashDivergence(dir, beadsDir)
 		if issue != nil {
 			t.Errorf("expected nil issue for no JSONL, got %+v", issue)
 		}
 	})
 
-	t.Run("no last_import_time", func(t *testing.T) {
-		dir := mkTmpDirInTmp(t, "bd-mtime-noimport-*")
+	t.Run("no hash in metadata", func(t *testing.T) {
+		dir := mkTmpDirInTmp(t, "bd-hash-nohash-*")
 		beadsDir := filepath.Join(dir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
 			t.Fatal(err)
 		}
 
-		// Create database without last_import_time
+		// Create database without any hash metadata
 		dbPath := filepath.Join(beadsDir, "beads.db")
 		db, err := sql.Open("sqlite3", dbPath)
 		if err != nil {
@@ -229,16 +228,16 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		issue := checkSQLiteMtimeDivergence(dir, beadsDir)
+		issue := checkSQLiteHashDivergence(dir, beadsDir)
 		if issue == nil {
-			t.Error("expected issue for missing last_import_time")
-		} else if issue.Type != "sqlite_mtime_stale" {
-			t.Errorf("type=%q want sqlite_mtime_stale", issue.Type)
+			t.Error("expected issue for missing hash metadata")
+		} else if issue.Type != "sqlite_hash_stale" {
+			t.Errorf("type=%q want sqlite_hash_stale", issue.Type)
 		}
 	})
 
-	t.Run("times match", func(t *testing.T) {
-		dir := mkTmpDirInTmp(t, "bd-mtime-match-*")
+	t.Run("hashes match", func(t *testing.T) {
+		dir := mkTmpDirInTmp(t, "bd-hash-match-*")
 		beadsDir := filepath.Join(dir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
 			t.Fatal(err)
@@ -246,15 +245,18 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 
 		// Create JSONL first
 		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-		if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1"}`+"\n"), 0644); err != nil {
+		jsonlContent := `{"id":"test-1"}` + "\n"
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
 			t.Fatal(err)
 		}
 
-		// Get JSONL mtime
-		jsonlInfo, _ := os.Stat(jsonlPath)
-		importTime := jsonlInfo.ModTime()
+		// Compute hash of the JSONL content
+		hash, err := computeFileHash(jsonlPath)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-		// Create database with matching last_import_time
+		// Create database with matching jsonl_content_hash
 		dbPath := filepath.Join(beadsDir, "beads.db")
 		db, err := sql.Open("sqlite3", dbPath)
 		if err != nil {
@@ -263,23 +265,23 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 		_, _ = db.Exec("CREATE TABLE issues (id TEXT)")
 		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
 		_, _ = db.Exec("INSERT INTO metadata (key, value) VALUES (?, ?)",
-			"last_import_time", importTime.Format(time.RFC3339))
+			"jsonl_content_hash", hash)
 		db.Close()
 
-		issue := checkSQLiteMtimeDivergence(dir, beadsDir)
+		issue := checkSQLiteHashDivergence(dir, beadsDir)
 		if issue != nil {
-			t.Errorf("expected nil issue for matching times, got %+v", issue)
+			t.Errorf("expected nil issue for matching hashes, got %+v", issue)
 		}
 	})
 
-	t.Run("JSONL newer than import", func(t *testing.T) {
-		dir := mkTmpDirInTmp(t, "bd-mtime-newer-*")
+	t.Run("hashes differ", func(t *testing.T) {
+		dir := mkTmpDirInTmp(t, "bd-hash-differ-*")
 		beadsDir := filepath.Join(dir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
 			t.Fatal(err)
 		}
 
-		// Create database with old last_import_time
+		// Create database with a stale hash
 		dbPath := filepath.Join(beadsDir, "beads.db")
 		db, err := sql.Open("sqlite3", dbPath)
 		if err != nil {
@@ -287,23 +289,22 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 		}
 		_, _ = db.Exec("CREATE TABLE issues (id TEXT)")
 		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
-		oldTime := time.Now().Add(-1 * time.Hour)
 		_, _ = db.Exec("INSERT INTO metadata (key, value) VALUES (?, ?)",
-			"last_import_time", oldTime.Format(time.RFC3339))
+			"jsonl_content_hash", "0000000000000000000000000000000000000000000000000000000000000000")
 		db.Close()
 
-		// Create JSONL (will have current mtime)
+		// Create JSONL with different content
 		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 		if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1"}`+"\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 
-		issue := checkSQLiteMtimeDivergence(dir, beadsDir)
+		issue := checkSQLiteHashDivergence(dir, beadsDir)
 		if issue == nil {
-			t.Error("expected issue for JSONL newer than import")
+			t.Error("expected issue for hash mismatch")
 		} else {
-			if issue.Type != "sqlite_mtime_stale" {
-				t.Errorf("type=%q want sqlite_mtime_stale", issue.Type)
+			if issue.Type != "sqlite_hash_stale" {
+				t.Errorf("type=%q want sqlite_hash_stale", issue.Type)
 			}
 			if !strings.Contains(issue.FixCommand, "import") {
 				t.Errorf("fix=%q want import command", issue.FixCommand)
@@ -311,28 +312,107 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 		}
 	})
 
-	// Regression test: verify we read from metadata table, not config table.
-	// The sync code writes to metadata, so doctor must read from there.
-	// This catches the bug where doctor queried 'config' instead of 'metadata'.
-	t.Run("reads from metadata table not config", func(t *testing.T) {
-		dir := mkTmpDirInTmp(t, "bd-mtime-table-*")
+	// regression: auto-flush rewrites JSONL with same content but new mtime;
+	// hash-based check must NOT report divergence in this case
+	t.Run("same content different mtime no false positive", func(t *testing.T) {
+		dir := mkTmpDirInTmp(t, "bd-hash-mtime-*")
 		beadsDir := filepath.Join(dir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
 			t.Fatal(err)
 		}
 
-		// Create JSONL first
+		jsonlContent := `{"id":"test-1"}` + "\n"
 		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-		if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1"}`+"\n"), 0644); err != nil {
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
 			t.Fatal(err)
 		}
 
-		// Get JSONL mtime
-		jsonlInfo, _ := os.Stat(jsonlPath)
-		importTime := jsonlInfo.ModTime()
+		hash, err := computeFileHash(jsonlPath)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-		// Create database with BOTH config and metadata tables (realistic schema)
-		// Put last_import_time ONLY in metadata (as real sync code does)
+		// Create database with matching hash
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		db, err := sql.Open("sqlite3", dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = db.Exec("CREATE TABLE issues (id TEXT)")
+		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
+		_, _ = db.Exec("INSERT INTO metadata (key, value) VALUES (?, ?)",
+			"jsonl_content_hash", hash)
+		db.Close()
+
+		// Simulate auto-flush: rewrite JSONL with same content (different mtime)
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		issue := checkSQLiteHashDivergence(dir, beadsDir)
+		if issue != nil {
+			t.Errorf("false positive: same content but different mtime should NOT report divergence, got %+v", issue)
+		}
+	})
+
+	// verify legacy last_import_hash key is also checked
+	t.Run("falls back to legacy last_import_hash key", func(t *testing.T) {
+		dir := mkTmpDirInTmp(t, "bd-hash-legacy-*")
+		beadsDir := filepath.Join(dir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		jsonlContent := `{"id":"test-1"}` + "\n"
+		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		hash, err := computeFileHash(jsonlPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Create database with hash under old key only
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		db, err := sql.Open("sqlite3", dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = db.Exec("CREATE TABLE issues (id TEXT)")
+		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
+		_, _ = db.Exec("INSERT INTO metadata (key, value) VALUES (?, ?)",
+			"last_import_hash", hash)
+		db.Close()
+
+		issue := checkSQLiteHashDivergence(dir, beadsDir)
+		if issue != nil {
+			t.Errorf("expected nil with legacy key, got %+v", issue)
+		}
+	})
+
+	// verify we read from metadata table, not config table
+	t.Run("reads from metadata table not config", func(t *testing.T) {
+		dir := mkTmpDirInTmp(t, "bd-hash-table-*")
+		beadsDir := filepath.Join(dir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		jsonlContent := `{"id":"test-1"}` + "\n"
+		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		hash, err := computeFileHash(jsonlPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Create database with BOTH config and metadata tables
+		// Put hash ONLY in metadata (as real sync code does)
 		dbPath := filepath.Join(beadsDir, "beads.db")
 		db, err := sql.Open("sqlite3", dbPath)
 		if err != nil {
@@ -341,14 +421,13 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 		_, _ = db.Exec("CREATE TABLE issues (id TEXT)")
 		_, _ = db.Exec("CREATE TABLE config (key TEXT, value TEXT)")
 		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
-		// Only insert into metadata, NOT config
 		_, _ = db.Exec("INSERT INTO metadata (key, value) VALUES (?, ?)",
-			"last_import_time", importTime.Format(time.RFC3339))
+			"jsonl_content_hash", hash)
 		db.Close()
 
-		issue := checkSQLiteMtimeDivergence(dir, beadsDir)
+		issue := checkSQLiteHashDivergence(dir, beadsDir)
 		if issue != nil {
-			t.Errorf("expected nil issue when last_import_time is in metadata table, got %+v", issue)
+			t.Errorf("expected nil when hash is in metadata table, got %+v", issue)
 		}
 	})
 }
