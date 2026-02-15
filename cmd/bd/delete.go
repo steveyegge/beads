@@ -84,7 +84,7 @@ Force: Delete and orphan dependents
 		// Handle batch deletion in direct mode
 		// Also use batch path for cascade (which needs to expand dependents)
 		if len(issueIDs) > 1 || cascade {
-			deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput)
+			deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, false, "delete")
 			return
 		}
 
@@ -327,7 +327,7 @@ func removeIssueFromJSONL(issueID string) error {
 // deleteBatch handles deletion of multiple issues
 //
 //nolint:unparam // cmd parameter required for potential future use
-func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, cascade bool, jsonOutput bool) {
+func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, cascade bool, jsonOutput bool, _ bool, _ string) {
 	// Ensure we have a direct store
 	if store == nil {
 		if err := ensureStoreActive(); err != nil {
