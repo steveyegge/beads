@@ -1,14 +1,11 @@
-package main
+package jira
 
 import (
 	"testing"
-
-	"github.com/steveyegge/beads/internal/jira"
 )
 
-func TestJiraSyncStats(t *testing.T) {
-	// Test that stats struct initializes correctly (uses jira.SyncStats now)
-	stats := jira.SyncStats{}
+func TestSyncStats(t *testing.T) {
+	stats := SyncStats{}
 
 	if stats.Pulled != 0 {
 		t.Errorf("expected Pulled to be 0, got %d", stats.Pulled)
@@ -33,11 +30,10 @@ func TestJiraSyncStats(t *testing.T) {
 	}
 }
 
-func TestJiraSyncResult(t *testing.T) {
-	// Test result struct initialization (uses jira.SyncResult now)
-	result := jira.SyncResult{
+func TestSyncResult(t *testing.T) {
+	result := SyncResult{
 		Success: true,
-		Stats: jira.SyncStats{
+		Stats: SyncStats{
 			Created: 5,
 			Updated: 3,
 		},
@@ -61,5 +57,45 @@ func TestJiraSyncResult(t *testing.T) {
 	}
 	if len(result.Warnings) != 0 {
 		t.Errorf("expected Warnings to be empty, got %v", result.Warnings)
+	}
+}
+
+func TestPullStats(t *testing.T) {
+	stats := PullStats{
+		Created: 10,
+		Updated: 5,
+		Skipped: 2,
+	}
+
+	if stats.Created != 10 {
+		t.Errorf("expected Created to be 10, got %d", stats.Created)
+	}
+	if stats.Updated != 5 {
+		t.Errorf("expected Updated to be 5, got %d", stats.Updated)
+	}
+	if stats.Skipped != 2 {
+		t.Errorf("expected Skipped to be 2, got %d", stats.Skipped)
+	}
+}
+
+func TestPushStats(t *testing.T) {
+	stats := PushStats{
+		Created: 8,
+		Updated: 4,
+		Skipped: 1,
+		Errors:  2,
+	}
+
+	if stats.Created != 8 {
+		t.Errorf("expected Created to be 8, got %d", stats.Created)
+	}
+	if stats.Updated != 4 {
+		t.Errorf("expected Updated to be 4, got %d", stats.Updated)
+	}
+	if stats.Skipped != 1 {
+		t.Errorf("expected Skipped to be 1, got %d", stats.Skipped)
+	}
+	if stats.Errors != 2 {
+		t.Errorf("expected Errors to be 2, got %d", stats.Errors)
 	}
 }

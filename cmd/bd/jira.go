@@ -4,42 +4,18 @@ import (
 	"bufio"
 	"cmp"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/jira"
 	"github.com/steveyegge/beads/internal/types"
 )
-
-// JiraSyncStats tracks statistics for a Jira sync operation.
-type JiraSyncStats struct {
-	Pulled    int `json:"pulled"`
-	Pushed    int `json:"pushed"`
-	Created   int `json:"created"`
-	Updated   int `json:"updated"`
-	Skipped   int `json:"skipped"`
-	Errors    int `json:"errors"`
-	Conflicts int `json:"conflicts"`
-}
-
-// JiraSyncResult represents the result of a Jira sync operation.
-type JiraSyncResult struct {
-	Success  bool          `json:"success"`
-	Stats    JiraSyncStats `json:"stats"`
-	LastSync string        `json:"last_sync,omitempty"`
-	Error    string        `json:"error,omitempty"`
-	Warnings []string      `json:"warnings,omitempty"`
-}
 
 var jiraCmd = &cobra.Command{
 	Use:     "jira",
@@ -129,7 +105,7 @@ Examples:
 		}
 
 		ctx := rootCtx
-		result := &JiraSyncResult{Success: true}
+		result := &jira.SyncResult{Success: true}
 
 		// Step 1: Pull from Jira
 		if pull {
@@ -164,7 +140,8 @@ Examples:
 
 		// Step 2: Handle conflicts (if bidirectional)
 		if pull && push && !dryRun {
-			conflicts, err := detectJiraConflicts(ctx)
+			client := newJiraClient(ctx)
+			conflicts, err := jira.DetectConflicts(ctx, client, store, os.Stderr)
 			if err != nil {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("conflict detection failed: %v", err))
 			} else if len(conflicts) > 0 {
@@ -175,13 +152,13 @@ Examples:
 				} else if preferJira {
 					fmt.Printf("→ Resolving %d conflicts (preferring Jira)\n", len(conflicts))
 					// Jira wins - re-import conflicting issues
-					if err := reimportConflicts(ctx, conflicts); err != nil {
+					if err := jira.ReimportConflicts(conflicts, os.Stderr); err != nil {
 						result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
 					}
 				} else {
 					// Default: timestamp-based (newer wins)
 					fmt.Printf("→ Resolving %d conflicts (newer wins)\n", len(conflicts))
-					if err := resolveConflictsByTimestamp(ctx, conflicts); err != nil {
+					if err := jira.ResolveConflictsByTimestamp(conflicts, os.Stderr); err != nil {
 						result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
 					}
 				}
@@ -280,7 +257,7 @@ var jiraStatusCmd = &cobra.Command{
 		withJiraRef := 0
 		pendingPush := 0
 		for _, issue := range allIssues {
-			if issue.ExternalRef != nil && isJiraExternalRef(*issue.ExternalRef, jiraURL) {
+			if issue.ExternalRef != nil && jira.IsJiraExternalRef(*issue.ExternalRef, jiraURL) {
 				withJiraRef++
 			} else if issue.ExternalRef == nil {
 				// Only count issues without any external_ref as pending push
@@ -352,6 +329,20 @@ func init() {
 	rootCmd.AddCommand(jiraCmd)
 }
 
+// newJiraClient creates a Jira client from the current store configuration.
+func newJiraClient(ctx context.Context) *jira.Client {
+	jiraURL, _ := store.GetConfig(ctx, "jira.url")
+	apiToken, _ := store.GetConfig(ctx, "jira.api_token")
+	if apiToken == "" {
+		apiToken = os.Getenv("JIRA_API_TOKEN")
+	}
+	username, _ := store.GetConfig(ctx, "jira.username")
+	if username == "" {
+		username = os.Getenv("JIRA_USERNAME")
+	}
+	return jira.NewClient(jiraURL, username, apiToken)
+}
+
 // validateJiraConfig checks that required Jira configuration is present.
 func validateJiraConfig() error {
 	if err := ensureStoreActive(); err != nil {
@@ -378,19 +369,12 @@ func validateJiraConfig() error {
 	return nil
 }
 
-// PullStats tracks pull operation statistics.
-type PullStats struct {
-	Created int
-	Updated int
-	Skipped int
-}
-
 // doPullFromJira imports issues from Jira using the Python script.
-func doPullFromJira(ctx context.Context, dryRun bool, state string) (*PullStats, error) {
-	stats := &PullStats{}
+func doPullFromJira(ctx context.Context, dryRun bool, state string) (*jira.PullStats, error) {
+	stats := &jira.PullStats{}
 
 	// Find the Python script
-	scriptPath, err := findJiraScript("jira2jsonl.py")
+	scriptPath, err := jira.FindScript("jira2jsonl.py")
 	if err != nil {
 		return stats, fmt.Errorf("jira2jsonl.py not found: %w", err)
 	}
@@ -468,20 +452,12 @@ func doPullFromJira(ctx context.Context, dryRun bool, state string) (*PullStats,
 	return stats, nil
 }
 
-// PushStats tracks push operation statistics.
-type PushStats struct {
-	Created int
-	Updated int
-	Skipped int
-	Errors  int
-}
-
 // doPushToJira exports issues to Jira using the Python script.
-func doPushToJira(ctx context.Context, dryRun bool, createOnly bool, updateRefs bool) (*PushStats, error) {
-	stats := &PushStats{}
+func doPushToJira(ctx context.Context, dryRun bool, createOnly bool, updateRefs bool) (*jira.PushStats, error) {
+	stats := &jira.PushStats{}
 
 	// Find the Python script
-	scriptPath, err := findJiraScript("jsonl2jira.py")
+	scriptPath, err := jira.FindScript("jsonl2jira.py")
 	if err != nil {
 		return stats, fmt.Errorf("jsonl2jira.py not found: %w", err)
 	}
@@ -587,359 +563,4 @@ func doPushToJira(ctx context.Context, dryRun bool, createOnly bool, updateRefs 
 	}
 
 	return stats, nil
-}
-
-// findJiraScript locates the Jira Python script.
-func findJiraScript(name string) (string, error) {
-	// Check environment variable first (allows users to specify script location)
-	if envPath := os.Getenv("BD_JIRA_SCRIPT"); envPath != "" {
-		if _, err := os.Stat(envPath); err == nil {
-			return envPath, nil
-		}
-		return "", fmt.Errorf("BD_JIRA_SCRIPT points to non-existent file: %s", envPath)
-	}
-
-	// Check common locations
-	locations := []string{
-		// Relative to current working directory
-		filepath.Join("examples", "jira-import", name),
-	}
-
-	// Add executable-relative path
-	if exe, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exe)
-		locations = append(locations, filepath.Join(exeDir, "examples", "jira-import", name))
-		locations = append(locations, filepath.Join(exeDir, "..", "examples", "jira-import", name))
-	}
-
-	// Check BEADS_DIR or current .beads location
-	if beadsDir := beads.FindBeadsDir(); beadsDir != "" {
-		repoRoot := filepath.Dir(beadsDir)
-		locations = append(locations, filepath.Join(repoRoot, "examples", "jira-import", name))
-	}
-
-	for _, loc := range locations {
-		if _, err := os.Stat(loc); err == nil {
-			absPath, err := filepath.Abs(loc)
-			if err == nil {
-				return absPath, nil
-			}
-			return loc, nil
-		}
-	}
-
-	return "", fmt.Errorf(`script not found: %s
-
-The Jira sync feature requires the Python script from the beads repository.
-
-To fix this, either:
-  1. Set BD_JIRA_SCRIPT to point to the script:
-     export BD_JIRA_SCRIPT=/path/to/jira2jsonl.py
-
-  2. Or download it from GitHub:
-     curl -o jira2jsonl.py https://raw.githubusercontent.com/steveyegge/beads/main/examples/jira-import/jira2jsonl.py
-     export BD_JIRA_SCRIPT=$PWD/jira2jsonl.py
-
-Looked in: %v`, name, locations)
-}
-
-// JiraConflict represents a conflict between local and Jira versions.
-type JiraConflict struct {
-	IssueID         string
-	LocalUpdated    time.Time
-	JiraUpdated     time.Time
-	JiraExternalRef string
-}
-
-// detectJiraConflicts finds issues that have been modified both locally and in Jira.
-// It fetches each potentially conflicting issue from Jira to compare timestamps,
-// only reporting a conflict if both sides have been modified since the last sync.
-func detectJiraConflicts(ctx context.Context) ([]JiraConflict, error) {
-	// Get last sync time
-	lastSyncStr, _ := store.GetConfig(ctx, "jira.last_sync")
-	if lastSyncStr == "" {
-		// No previous sync - no conflicts possible
-		return nil, nil
-	}
-
-	lastSync, err := time.Parse(time.RFC3339, lastSyncStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid last_sync timestamp: %w", err)
-	}
-
-	// Get all issues with Jira refs that were updated since last sync
-	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-	if err != nil {
-		return nil, err
-	}
-
-	// Get jiraURL for validation
-	jiraURL, _ := store.GetConfig(ctx, "jira.url")
-
-	var conflicts []JiraConflict
-	for _, issue := range allIssues {
-		if issue.ExternalRef == nil || !isJiraExternalRef(*issue.ExternalRef, jiraURL) {
-			continue
-		}
-
-		// Check if local issue was updated since last sync
-		if !issue.UpdatedAt.After(lastSync) {
-			continue
-		}
-
-		// Local was updated - now check if Jira was also updated
-		jiraKey := extractJiraKey(*issue.ExternalRef)
-		if jiraKey == "" {
-			// Can't extract key - treat as potential conflict for safety
-			conflicts = append(conflicts, JiraConflict{
-				IssueID:         issue.ID,
-				LocalUpdated:    issue.UpdatedAt,
-				JiraExternalRef: *issue.ExternalRef,
-			})
-			continue
-		}
-
-		// Fetch Jira issue timestamp
-		jiraUpdated, err := fetchJiraIssueTimestamp(ctx, jiraKey)
-		if err != nil {
-			// Can't fetch from Jira - log warning and treat as potential conflict
-			fmt.Fprintf(os.Stderr, "Warning: couldn't fetch Jira issue %s: %v\n", jiraKey, err)
-			conflicts = append(conflicts, JiraConflict{
-				IssueID:         issue.ID,
-				LocalUpdated:    issue.UpdatedAt,
-				JiraExternalRef: *issue.ExternalRef,
-			})
-			continue
-		}
-
-		// Only a conflict if Jira was ALSO updated since last sync
-		if jiraUpdated.After(lastSync) {
-			conflicts = append(conflicts, JiraConflict{
-				IssueID:         issue.ID,
-				LocalUpdated:    issue.UpdatedAt,
-				JiraUpdated:     jiraUpdated,
-				JiraExternalRef: *issue.ExternalRef,
-			})
-		}
-	}
-
-	return conflicts, nil
-}
-
-// reimportConflicts re-imports conflicting issues from Jira (Jira wins).
-// NOTE: Full implementation would fetch the complete Jira issue and update local copy.
-// Currently shows detailed conflict info for manual review.
-func reimportConflicts(_ context.Context, conflicts []JiraConflict) error {
-	if len(conflicts) == 0 {
-		return nil
-	}
-	fmt.Fprintf(os.Stderr, "Warning: conflict resolution (--prefer-jira) not fully implemented\n")
-	fmt.Fprintf(os.Stderr, "  %d issue(s) have conflicts - Jira version would win:\n", len(conflicts))
-	for _, c := range conflicts {
-		if !c.JiraUpdated.IsZero() {
-			fmt.Fprintf(os.Stderr, "    - %s (local: %s, jira: %s)\n",
-				c.IssueID,
-				c.LocalUpdated.Format(time.RFC3339),
-				c.JiraUpdated.Format(time.RFC3339))
-		} else {
-			fmt.Fprintf(os.Stderr, "    - %s (local: %s, jira: unknown)\n",
-				c.IssueID,
-				c.LocalUpdated.Format(time.RFC3339))
-		}
-	}
-	return nil
-}
-
-// resolveConflictsByTimestamp resolves conflicts by keeping the newer version.
-// Uses the actual Jira timestamps fetched during conflict detection to determine
-// which version (local or Jira) should be preserved.
-func resolveConflictsByTimestamp(_ context.Context, conflicts []JiraConflict) error {
-	if len(conflicts) == 0 {
-		return nil
-	}
-
-	var localWins, jiraWins, unknown int
-	for _, c := range conflicts {
-		if c.JiraUpdated.IsZero() {
-			unknown++
-		} else if c.LocalUpdated.After(c.JiraUpdated) {
-			localWins++
-		} else {
-			jiraWins++
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "Conflict resolution by timestamp:\n")
-	fmt.Fprintf(os.Stderr, "  Local wins (newer): %d\n", localWins)
-	fmt.Fprintf(os.Stderr, "  Jira wins (newer):  %d\n", jiraWins)
-	if unknown > 0 {
-		fmt.Fprintf(os.Stderr, "  Unknown (couldn't fetch): %d\n", unknown)
-	}
-
-	// Show details
-	for _, c := range conflicts {
-		if c.JiraUpdated.IsZero() {
-			fmt.Fprintf(os.Stderr, "    - %s: local version kept (couldn't fetch Jira timestamp)\n", c.IssueID)
-		} else if c.LocalUpdated.After(c.JiraUpdated) {
-			fmt.Fprintf(os.Stderr, "    - %s: local wins (local: %s > jira: %s)\n",
-				c.IssueID,
-				c.LocalUpdated.Format(time.RFC3339),
-				c.JiraUpdated.Format(time.RFC3339))
-		} else {
-			fmt.Fprintf(os.Stderr, "    - %s: jira wins (jira: %s >= local: %s)\n",
-				c.IssueID,
-				c.JiraUpdated.Format(time.RFC3339),
-				c.LocalUpdated.Format(time.RFC3339))
-		}
-	}
-
-	// NOTE: Full implementation would actually re-import the Jira version for jiraWins issues
-	if jiraWins > 0 {
-		fmt.Fprintf(os.Stderr, "Warning: %d issue(s) should be re-imported from Jira (not yet implemented)\n", jiraWins)
-	}
-
-	return nil
-}
-
-// isJiraExternalRef checks if an external_ref URL matches the configured Jira instance.
-// It validates both the URL structure (/browse/PROJECT-123) and optionally the host.
-func isJiraExternalRef(externalRef, jiraURL string) bool {
-	// Must contain /browse/ pattern
-	if !strings.Contains(externalRef, "/browse/") {
-		return false
-	}
-
-	// If jiraURL is provided, validate the host matches
-	if jiraURL != "" {
-		jiraURL = strings.TrimSuffix(jiraURL, "/")
-		if !strings.HasPrefix(externalRef, jiraURL) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// extractJiraKey extracts the Jira issue key from an external_ref URL.
-// For example, "https://company.atlassian.net/browse/PROJ-123" returns "PROJ-123".
-func extractJiraKey(externalRef string) string {
-	idx := strings.LastIndex(externalRef, "/browse/")
-	if idx == -1 {
-		return ""
-	}
-	return externalRef[idx+len("/browse/"):]
-}
-
-// fetchJiraIssueTimestamp fetches the updated timestamp for a single Jira issue.
-// It returns the Jira issue's updated timestamp, or an error if the fetch fails.
-func fetchJiraIssueTimestamp(ctx context.Context, jiraKey string) (time.Time, error) {
-	var zero time.Time
-
-	// Get Jira configuration
-	jiraURL, _ := store.GetConfig(ctx, "jira.url")
-	if jiraURL == "" {
-		return zero, fmt.Errorf("jira.url not configured")
-	}
-	jiraURL = strings.TrimSuffix(jiraURL, "/")
-
-	// Get credentials (config takes precedence over env)
-	apiToken, _ := store.GetConfig(ctx, "jira.api_token")
-	if apiToken == "" {
-		apiToken = os.Getenv("JIRA_API_TOKEN")
-	}
-	if apiToken == "" {
-		return zero, fmt.Errorf("jira API token not configured")
-	}
-
-	username, _ := store.GetConfig(ctx, "jira.username")
-	if username == "" {
-		username = os.Getenv("JIRA_USERNAME")
-	}
-
-	// Build API URL - use v3 for Jira Cloud (v2 is deprecated)
-	// Only fetch the 'updated' field to minimize response size
-	apiURL := fmt.Sprintf("%s/rest/api/3/issue/%s?fields=updated", jiraURL, jiraKey)
-
-	// Create request
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-	if err != nil {
-		return zero, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set authentication header
-	isCloud := strings.Contains(jiraURL, "atlassian.net")
-	if isCloud && username != "" {
-		// Jira Cloud: Basic auth with email:api_token
-		auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + apiToken))
-		req.Header.Set("Authorization", "Basic "+auth)
-	} else if username != "" {
-		// Jira Server with username: Basic auth
-		auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + apiToken))
-		req.Header.Set("Authorization", "Basic "+auth)
-	} else {
-		// Jira Server without username: Bearer token (PAT)
-		req.Header.Set("Authorization", "Bearer "+apiToken)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "bd-jira-sync/1.0")
-
-	// Execute request
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return zero, fmt.Errorf("failed to fetch issue %s: %w", jiraKey, err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return zero, fmt.Errorf("jira API returned %d for issue %s: %s", resp.StatusCode, jiraKey, string(body))
-	}
-
-	// Parse response
-	var result struct {
-		Fields struct {
-			Updated string `json:"updated"`
-		} `json:"fields"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return zero, fmt.Errorf("failed to parse Jira response: %w", err)
-	}
-
-	// Parse Jira timestamp (ISO 8601 format: 2024-01-15T10:30:00.000+0000)
-	updated, err := parseJiraTimestamp(result.Fields.Updated)
-	if err != nil {
-		return zero, fmt.Errorf("failed to parse Jira timestamp: %w", err)
-	}
-
-	return updated, nil
-}
-
-// parseJiraTimestamp parses Jira's timestamp format into a time.Time.
-// Jira uses ISO 8601 with timezone: 2024-01-15T10:30:00.000+0000 or 2024-01-15T10:30:00.000Z
-func parseJiraTimestamp(ts string) (time.Time, error) {
-	if ts == "" {
-		return time.Time{}, fmt.Errorf("empty timestamp")
-	}
-
-	// Try common formats
-	formats := []string{
-		"2006-01-02T15:04:05.000-0700",
-		"2006-01-02T15:04:05.000Z",
-		"2006-01-02T15:04:05-0700",
-		"2006-01-02T15:04:05Z",
-		time.RFC3339,
-		time.RFC3339Nano,
-	}
-
-	for _, format := range formats {
-		if t, err := time.Parse(format, ts); err == nil {
-			return t, nil
-		}
-	}
-
-	return time.Time{}, fmt.Errorf("unrecognized timestamp format: %s", ts)
 }
