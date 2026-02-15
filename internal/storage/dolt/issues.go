@@ -580,12 +580,10 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		result.OrphanedIssues = orphans
 	}
 
-	// Populate stats using batched queries to avoid choking embedded Dolt
-	// with large IN clauses (steveyegge/beads#1692).
-	//
-	// Dependency counting is split into two non-overlapping passes to prevent
-	// double-counting: a row where both issue_id and depends_on_id are in
-	// expandedIDs would be counted twice if we used a single OR query per batch.
+	// Populate stats using batched queries. Dependency counting is split into two
+	// non-overlapping passes to prevent double-counting: a row where both issue_id
+	// and depends_on_id are in expandedIDs would be counted twice with a single
+	// OR query per batch.
 	//   Pass 1: COUNT WHERE issue_id IN (batch)       — deps FROM deleted issues
 	//   Pass 2: COUNT WHERE depends_on_id IN (batch)   — deps TO deleted issues
 	//           AND issue_id NOT in expandedIDSet       — excluding already-counted rows
@@ -653,8 +651,6 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 				_ = rows.Close()
 				return nil, fmt.Errorf("failed to scan inbound dependency: %w", err)
 			}
-			// Only count if the source issue is NOT also being deleted
-			// (those rows were already counted in pass 1)
 			if !expandedIDSet[issID] {
 				depsCount++
 			}
@@ -673,7 +669,11 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		return result, nil
 	}
 
-	// Delete in batches to avoid choking embedded Dolt
+	// Delete in batches. The schema uses ON DELETE CASCADE for labels, comments,
+	// events, child_counters, issue_snapshots, and compaction_snapshots — as well
+	// as dependencies.issue_id — so only the inbound dependency edge
+	// (depends_on_id, which has no FK) needs explicit cleanup before issuing the
+	// DELETE FROM issues.
 	totalDeleted := 0
 	for i := 0; i < len(expandedIDs); i += deleteBatchSize {
 		end := i + deleteBatchSize
@@ -683,28 +683,17 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		batch := expandedIDs[i:end]
 		batchInClause, batchArgs := doltBuildSQLInClause(batch)
 
-		// 1. Delete dependencies
+		// 1. Delete inbound dependency edges (depends_on_id has no FK CASCADE)
 		_, err = tx.ExecContext(ctx,
-			fmt.Sprintf(`DELETE FROM dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)`, batchInClause, batchInClause),
-			append(batchArgs, batchArgs...)...)
+			fmt.Sprintf(`DELETE FROM dependencies WHERE depends_on_id IN (%s)`, batchInClause),
+			batchArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("failed to delete dependencies: %w", err)
+			return nil, fmt.Errorf("failed to delete inbound dependencies: %w", err)
 		}
 
-		// 2. Delete labels, comments, and events for the issues
-		for _, table := range []string{"labels", "comments", "events"} {
-			if err := validateTableName(table); err != nil {
-				return nil, fmt.Errorf("invalid table name %q: %w", table, err)
-			}
-			_, err = tx.ExecContext(ctx,
-				fmt.Sprintf(`DELETE FROM %s WHERE issue_id IN (%s)`, table, batchInClause), //nolint:gosec // G201: table validated above, batchInClause contains only ? placeholders
-				batchArgs...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to delete from %s: %w", table, err)
-			}
-		}
-
-		// 3. Delete the issues themselves
+		// 2. Delete the issues — CASCADE handles labels, comments, events,
+		//    child_counters, issue_snapshots, compaction_snapshots, and
+		//    dependencies (issue_id side via fk_dep_issue).
 		deleteResult, err := tx.ExecContext(ctx,
 			fmt.Sprintf(`DELETE FROM issues WHERE id IN (%s)`, batchInClause),
 			batchArgs...)
