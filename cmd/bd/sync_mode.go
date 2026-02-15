@@ -48,31 +48,15 @@ const (
 	TriggerChange = "change"
 )
 
-// GetSyncMode returns the configured sync mode, checking config.yaml first (where bd config set writes),
-// then falling back to database. This fixes GH#1277 where yaml and database were inconsistent.
+// GetSyncMode returns the configured sync mode from config.yaml via viper.
+// Delegates entirely to config.GetSyncMode() — no database fallback.
 func GetSyncMode(ctx context.Context, s storage.Storage) string {
-	// First check config.yaml (where bd config set writes for sync.* keys)
-	yamlMode := config.GetSyncMode()
-	if yamlMode != "" && yamlMode != config.SyncModeGitPortable {
-		// Non-default value in yaml takes precedence
-		return string(yamlMode)
-	}
-
-	// Fall back to database (legacy path)
-	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
-	if err != nil || mode == "" {
-		return SyncModeGitPortable
-	}
-
-	// Validate mode using the shared validation
-	if !config.IsValidSyncMode(mode) {
-		return SyncModeGitPortable
-	}
-
-	return mode
+	return string(config.GetSyncMode())
 }
 
-// SetSyncMode sets the sync mode configuration in the database.
+// SetSyncMode sets the sync mode configuration in config.yaml and updates
+// the in-memory viper state so subsequent reads within the same process
+// see the new value.
 func SetSyncMode(ctx context.Context, s storage.Storage, mode string) error {
 	// Validate mode using the shared validation
 	if !config.IsValidSyncMode(mode) {
@@ -80,7 +64,11 @@ func SetSyncMode(ctx context.Context, s storage.Storage, mode string) error {
 			mode, fmt.Sprintf("%v", config.ValidSyncModes()))
 	}
 
-	return s.SetConfig(ctx, SyncModeConfigKey, mode)
+	if err := config.SetYamlConfig("sync.mode", mode); err != nil {
+		return fmt.Errorf("failed to write sync.mode to config.yaml: %w", err)
+	}
+	config.Set("sync.mode", mode) // Update in-memory viper state
+	return nil
 }
 
 // GetExportTrigger returns when JSONL export should happen.
@@ -109,10 +97,6 @@ func GetImportTrigger(ctx context.Context, s storage.Storage) string {
 // ShouldExportJSONL returns true if the current sync mode uses JSONL export.
 // In dolt-native mode, JSONL is not used — all sync is via Dolt remotes.
 // Belt-and-suspenders mode uses both Dolt AND JSONL for maximum redundancy.
-//
-// Uses GetSyncMode which checks config.yaml first, then falls back to the database.
-// This ensures that sync.mode set in config.yaml (e.g. during Dolt migration) is
-// respected even if not yet propagated to the database via 'bd sync mode set'.
 func ShouldExportJSONL(ctx context.Context, s storage.Storage) bool {
 	mode := GetSyncMode(ctx, s)
 	return mode != SyncModeDoltNative
@@ -120,7 +104,6 @@ func ShouldExportJSONL(ctx context.Context, s storage.Storage) bool {
 
 // ShouldImportJSONL returns true if the current sync mode uses JSONL import.
 // In dolt-native mode, there is no JSONL to import — all sync is via Dolt remotes.
-// Uses GetSyncMode which checks config.yaml first, then falls back to the database.
 func ShouldImportJSONL(ctx context.Context, s storage.Storage) bool {
 	mode := GetSyncMode(ctx, s)
 	return mode != SyncModeDoltNative
