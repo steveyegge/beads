@@ -14,7 +14,7 @@ import (
 // setupYamlConfig creates a temp .beads/ directory with config.yaml,
 // changes to it, and initializes viper. Cleanup restores cwd and
 // re-initializes viper to avoid global state leaking between tests.
-func setupYamlConfig(t *testing.T) {
+func setupYamlConfig(t *testing.T) string {
 	t.Helper()
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -38,6 +38,7 @@ func setupYamlConfig(t *testing.T) {
 		_ = os.Chdir(origDir)
 		config.Initialize() // Re-initialize viper to original config
 	})
+	return tmpDir
 }
 
 // TestSyncModeConfig verifies sync mode yaml roundtrip: set via SetSyncMode,

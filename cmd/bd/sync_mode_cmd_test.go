@@ -89,8 +89,9 @@ func TestSyncModeListJSON(t *testing.T) {
 // TestSyncModeCurrentWithStore tests `bd sync mode current` with a database.
 func TestSyncModeCurrentWithStore(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
+	setupYamlConfig(t)
 
+	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("failed to create .beads dir: %v", err)
@@ -103,7 +104,7 @@ func TestSyncModeCurrentWithStore(t *testing.T) {
 	}
 	defer testStore.Close()
 
-	// Set a specific sync mode
+	// Set sync mode (writes to config.yaml and viper in-memory)
 	if err := SetSyncMode(ctx, testStore, SyncModeRealtime); err != nil {
 		t.Fatalf("failed to set sync mode: %v", err)
 	}
@@ -249,30 +250,19 @@ func TestSyncModeInfoStructure(t *testing.T) {
 
 // TestSyncModeSetValidModes tests `bd sync mode set` with valid modes.
 func TestSyncModeSetValidModes(t *testing.T) {
+	setupYamlConfig(t)
+
 	for _, mode := range config.ValidSyncModes() {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
-			tmpDir := t.TempDir()
 
-			beadsDir := filepath.Join(tmpDir, ".beads")
-			if err := os.MkdirAll(beadsDir, 0755); err != nil {
-				t.Fatalf("failed to create .beads dir: %v", err)
-			}
-
-			dbPath := filepath.Join(beadsDir, "beads.db")
-			testStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
-			if err != nil {
-				t.Fatalf("failed to create store: %v", err)
-			}
-			defer testStore.Close()
-
-			// Set the mode
-			if err := SetSyncMode(ctx, testStore, mode); err != nil {
+			// Set the mode (writes to config.yaml and viper)
+			if err := SetSyncMode(ctx, nil, mode); err != nil {
 				t.Fatalf("failed to set sync mode %s: %v", mode, err)
 			}
 
 			// Verify it was set correctly
-			got := GetSyncMode(ctx, testStore)
+			got := GetSyncMode(ctx, nil)
 			if got != mode {
 				t.Errorf("GetSyncMode() = %q, want %q", got, mode)
 			}

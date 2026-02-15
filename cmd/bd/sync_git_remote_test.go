@@ -18,15 +18,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// resetConfigForRemoteTest clears viper config state without loading
-// the real config.yaml. This prevents sync.mode from config.yaml
-// (e.g., dolt-native in production workspace) from overriding test values.
-func resetConfigForRemoteTest(t *testing.T) {
-	t.Helper()
-	config.ResetForTesting()
-	t.Cleanup(config.ResetForTesting)
-}
-
 // mockRemoteStore wraps a MemoryStorage to implement RemoteStorage.
 // Tracks Push/Pull/Commit calls for verification.
 type mockRemoteStore struct {
@@ -115,14 +106,10 @@ func (m *mockRemoteStore) ResolveConflicts(_ context.Context, _ string, _ string
 // and does NOT write JSONL.
 func TestDoExportSync_DoltNative_CallsPush(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
+	tmpDir := setupYamlConfig(t)
 
-	// Create .beads directory with empty JSONL
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	// Create empty JSONL in .beads dir
+	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
 	if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
 		t.Fatalf("write JSONL failed: %v", err)
 	}
@@ -130,23 +117,18 @@ func TestDoExportSync_DoltNative_CallsPush(t *testing.T) {
 	// Save and restore globals
 	saveAndRestoreGlobals(t)
 
-	// Create mock remote store and set dolt-native mode
+	// Create mock remote store and set dolt-native mode via yaml config
 	mock := newMockRemoteStore()
 	if err := mock.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("set issue_prefix: %v", err)
 	}
-	if err := mock.SetConfig(ctx, SyncModeConfigKey, SyncModeDoltNative); err != nil {
-		t.Fatalf("set sync mode: %v", err)
-	}
+	config.Set("sync.mode", SyncModeDoltNative)
 
 	// Install mock as global store
 	store = mock
 	storeMutex.Lock()
 	storeActive = true
 	storeMutex.Unlock()
-
-	// Reset viper to prevent config.yaml sync.mode from overriding DB config
-	resetConfigForRemoteTest(t)
 
 	// Verify preconditions
 	mode := GetSyncMode(ctx, mock)
@@ -189,13 +171,9 @@ func TestDoExportSync_DoltNative_CallsPush(t *testing.T) {
 // mode calls both Dolt Push AND exports JSONL.
 func TestDoExportSync_BeltAndSuspenders_DoesBoth(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
+	tmpDir := setupYamlConfig(t)
 
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
 	if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
 		t.Fatalf("write JSONL failed: %v", err)
 	}
@@ -206,9 +184,7 @@ func TestDoExportSync_BeltAndSuspenders_DoesBoth(t *testing.T) {
 	if err := mock.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("set issue_prefix: %v", err)
 	}
-	if err := mock.SetConfig(ctx, SyncModeConfigKey, SyncModeBeltAndSuspenders); err != nil {
-		t.Fatalf("set sync mode: %v", err)
-	}
+	config.Set("sync.mode", SyncModeBeltAndSuspenders)
 
 	// Create an issue so JSONL export has something to write
 	issue := &types.Issue{
@@ -228,8 +204,6 @@ func TestDoExportSync_BeltAndSuspenders_DoesBoth(t *testing.T) {
 	storeMutex.Lock()
 	storeActive = true
 	storeMutex.Unlock()
-
-	resetConfigForRemoteTest(t)
 
 	// Verify preconditions
 	if !ShouldUseDoltRemote(ctx, mock) {
@@ -265,13 +239,9 @@ func TestDoExportSync_BeltAndSuspenders_DoesBoth(t *testing.T) {
 // call Dolt Push (it only writes JSONL).
 func TestDoExportSync_GitPortable_NoPush(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
+	tmpDir := setupYamlConfig(t)
 
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
 	if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
 		t.Fatalf("write JSONL failed: %v", err)
 	}
@@ -288,8 +258,6 @@ func TestDoExportSync_GitPortable_NoPush(t *testing.T) {
 	storeMutex.Lock()
 	storeActive = true
 	storeMutex.Unlock()
-
-	resetConfigForRemoteTest(t)
 
 	// Verify preconditions
 	if ShouldUseDoltRemote(ctx, mock) {
@@ -324,6 +292,13 @@ func TestDoPullFirstSync_DoltNative_CallsPull(t *testing.T) {
 		t.Fatalf("write JSONL failed: %v", err)
 	}
 
+	// Initialize yaml config in the git repo's .beads dir
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(""), 0644); err != nil {
+		t.Fatalf("write config.yaml failed: %v", err)
+	}
+	config.Initialize()
+	t.Cleanup(func() { config.Initialize() })
+
 	// Commit .beads so git status is clean
 	_ = exec.Command("git", "add", ".beads").Run()
 	_ = exec.Command("git", "commit", "-m", "add beads dir").Run()
@@ -334,16 +309,12 @@ func TestDoPullFirstSync_DoltNative_CallsPull(t *testing.T) {
 	if err := mock.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("set issue_prefix: %v", err)
 	}
-	if err := mock.SetConfig(ctx, SyncModeConfigKey, SyncModeDoltNative); err != nil {
-		t.Fatalf("set sync mode: %v", err)
-	}
+	config.Set("sync.mode", SyncModeDoltNative)
 
 	store = mock
 	storeMutex.Lock()
 	storeActive = true
 	storeMutex.Unlock()
-
-	resetConfigForRemoteTest(t)
 
 	sbc := &SyncBranchContext{} // no sync branch configured
 
@@ -385,6 +356,13 @@ func TestDoPullFirstSync_DoltNative_PullError(t *testing.T) {
 		t.Fatalf("write JSONL failed: %v", err)
 	}
 
+	// Initialize yaml config in the git repo's .beads dir
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(""), 0644); err != nil {
+		t.Fatalf("write config.yaml failed: %v", err)
+	}
+	config.Initialize()
+	t.Cleanup(func() { config.Initialize() })
+
 	_ = exec.Command("git", "add", ".beads").Run()
 	_ = exec.Command("git", "commit", "-m", "add beads dir").Run()
 
@@ -394,9 +372,7 @@ func TestDoPullFirstSync_DoltNative_PullError(t *testing.T) {
 	if err := mock.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("set issue_prefix: %v", err)
 	}
-	if err := mock.SetConfig(ctx, SyncModeConfigKey, SyncModeDoltNative); err != nil {
-		t.Fatalf("set sync mode: %v", err)
-	}
+	config.Set("sync.mode", SyncModeDoltNative)
 
 	// Inject a non-remote error
 	mock.pullErr = os.ErrPermission
@@ -405,8 +381,6 @@ func TestDoPullFirstSync_DoltNative_PullError(t *testing.T) {
 	storeMutex.Lock()
 	storeActive = true
 	storeMutex.Unlock()
-
-	resetConfigForRemoteTest(t)
 
 	sbc := &SyncBranchContext{}
 
@@ -423,13 +397,9 @@ func TestDoPullFirstSync_DoltNative_PullError(t *testing.T) {
 // "no remote configured" gracefully (warns but doesn't fail).
 func TestDoExportSync_DoltNative_NoRemote(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
+	tmpDir := setupYamlConfig(t)
 
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
 	if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
 		t.Fatalf("write JSONL failed: %v", err)
 	}
@@ -440,9 +410,7 @@ func TestDoExportSync_DoltNative_NoRemote(t *testing.T) {
 	if err := mock.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("set issue_prefix: %v", err)
 	}
-	if err := mock.SetConfig(ctx, SyncModeConfigKey, SyncModeDoltNative); err != nil {
-		t.Fatalf("set sync mode: %v", err)
-	}
+	config.Set("sync.mode", SyncModeDoltNative)
 
 	// Inject "no remote" error — doExportSync checks if error contains "remote"
 	// to decide whether to warn vs fail.
@@ -452,8 +420,6 @@ func TestDoExportSync_DoltNative_NoRemote(t *testing.T) {
 	storeMutex.Lock()
 	storeActive = true
 	storeMutex.Unlock()
-
-	resetConfigForRemoteTest(t)
 
 	err := doExportSync(ctx, jsonlPath, false, false)
 	if err != nil {
