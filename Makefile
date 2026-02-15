@@ -1,6 +1,6 @@
 # Makefile for beads project
 
-.PHONY: all build test test-full-cgo bench bench-quick clean install help check-up-to-date fmt fmt-check
+.PHONY: all build test test-full-cgo bench bench-quick clean install install-dev help check-up-to-date fmt fmt-check
 
 # Default target
 all: build
@@ -113,6 +113,22 @@ else
 	@rm -f $(INSTALL_DIR)/bd
 	@cp $(BUILD_DIR)/bd $(INSTALL_DIR)/bd
 	@echo "Installed bd to $(INSTALL_DIR)/bd"
+	@rm -f $(INSTALL_DIR)/beads
+	@ln -s bd $(INSTALL_DIR)/beads
+	@echo "Created 'beads' alias -> bd"
+endif
+
+# Install dev build from any branch (skips origin/main check)
+install-dev: build
+	@mkdir -p $(INSTALL_DIR)
+ifeq ($(OS),Windows_NT)
+	@rm -f $(INSTALL_DIR)/bd.exe
+	@cp -f $(BUILD_DIR)/bd.exe $(INSTALL_DIR)/bd.exe
+	@echo "Installed bd.exe to $(INSTALL_DIR)/bd.exe (dev)"
+else
+	@rm -f $(INSTALL_DIR)/bd
+	@cp -f $(BUILD_DIR)/bd $(INSTALL_DIR)/bd
+	@echo "Installed bd to $(INSTALL_DIR)/bd (dev)"
 	@rm -f $(INSTALL_DIR)/beads
 	@ln -s bd $(INSTALL_DIR)/beads
 	@echo "Created 'beads' alias -> bd"
