@@ -39,6 +39,8 @@ func registerHelpAllFlag() {
 
 // writeAllHelp writes a complete markdown reference for all commands,
 // generated from the live Cobra command tree.
+//
+//nolint:errcheck // help text writer — nothing to do with Fprintf errors
 func writeAllHelp(w io.Writer, root *cobra.Command) {
 	fmt.Fprintf(w, "# bd — Complete Command Reference\n\n")
 	fmt.Fprintf(w, "Generated from `bd help --all` (bd version %s)\n\n", Version)
