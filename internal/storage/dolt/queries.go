@@ -291,7 +291,11 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 	} else {
 		statusClause = "status IN ('open', 'in_progress')"
 	}
-	whereClauses := []string{statusClause, "(ephemeral = 0 OR ephemeral IS NULL)"}
+	whereClauses := []string{
+		statusClause,
+		"(ephemeral = 0 OR ephemeral IS NULL)", // Exclude wisps by ephemeral flag
+		"(pinned = 0 OR pinned IS NULL)",        // Exclude pinned issues (context markers, not work)
+	}
 	args := []interface{}{}
 	if filter.Status != "" {
 		args = append(args, string(filter.Status))
@@ -305,6 +309,23 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 	if filter.Type != "" {
 		whereClauses = append(whereClauses, "id IN (SELECT id FROM issues WHERE issue_type = ?)")
 		args = append(args, filter.Type)
+	} else {
+		// Exclude workflow/identity types from ready work by default.
+		// These are internal items, not actionable work for agents to claim:
+		// - merge-request: processed by Refinery
+		// - gate: async wait conditions
+		// - molecule: workflow containers
+		// - message: mail/communication items
+		// - agent: identity/state tracking beads
+		// - role: agent role definitions (reference metadata)
+		// - rig: rig identity beads (reference metadata)
+		excludeTypes := []string{"merge-request", "gate", "molecule", "message", "agent", "role", "rig"}
+		placeholders := make([]string, len(excludeTypes))
+		for i, t := range excludeTypes {
+			placeholders[i] = "?"
+			args = append(args, t)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT id FROM issues WHERE issue_type NOT IN (%s))", strings.Join(placeholders, ",")))
 	}
 	// Unassigned takes precedence over Assignee filter (matches memory storage)
 	if filter.Unassigned {
