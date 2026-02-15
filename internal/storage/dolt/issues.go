@@ -562,11 +562,12 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 				return nil, fmt.Errorf("failed to iterate dependents: %w", err)
 			}
 
-			// Return error for the first issue in this batch that has external dependents
+			// Return error for the first issue in this batch that has external dependents.
+			// Return result (not nil) so the caller can inspect OrphanedIssues even on error.
 			for _, id := range batch {
 				if deps, ok := externalBySource[id]; ok {
 					result.OrphanedIssues = deps
-					return nil, fmt.Errorf("issue %s has dependents not in deletion set; use --cascade to delete them or --force to orphan them", id)
+					return result, fmt.Errorf("issue %s has dependents not in deletion set; use --cascade to delete them or --force to orphan them", id)
 				}
 			}
 		}
@@ -580,9 +581,22 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	}
 
 	// Populate stats using batched queries to avoid choking embedded Dolt
-	// with large IN clauses (steveyegge/beads#1692). With batch size 50,
-	// the OR query uses at most 100 params — well within Dolt's limits.
+	// with large IN clauses (steveyegge/beads#1692).
+	//
+	// Dependency counting is split into two non-overlapping passes to prevent
+	// double-counting: a row where both issue_id and depends_on_id are in
+	// expandedIDs would be counted twice if we used a single OR query per batch.
+	//   Pass 1: COUNT WHERE issue_id IN (batch)       — deps FROM deleted issues
+	//   Pass 2: COUNT WHERE depends_on_id IN (batch)   — deps TO deleted issues
+	//           AND issue_id NOT in expandedIDSet       — excluding already-counted rows
+	// The second pass filters in Go since the full set may exceed one IN clause.
+	expandedIDSet := make(map[string]bool, len(expandedIDs))
+	for _, id := range expandedIDs {
+		expandedIDSet[id] = true
+	}
+
 	var depsCount, labelsCount, eventsCount int
+	// Pass 1: deps originating from deleted issues (no cross-batch overlap possible)
 	for i := 0; i < len(expandedIDs); i += deleteBatchSize {
 		end := i + deleteBatchSize
 		if end > len(expandedIDs) {
@@ -593,8 +607,8 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 
 		var batchDeps int
 		err = tx.QueryRowContext(ctx,
-			fmt.Sprintf(`SELECT COUNT(*) FROM dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)`, batchInClause, batchInClause),
-			append(batchArgs, batchArgs...)...).Scan(&batchDeps)
+			fmt.Sprintf(`SELECT COUNT(*) FROM dependencies WHERE issue_id IN (%s)`, batchInClause),
+			batchArgs...).Scan(&batchDeps)
 		if err != nil {
 			return nil, fmt.Errorf("failed to count dependencies: %w", err)
 		}
@@ -617,6 +631,38 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 			return nil, fmt.Errorf("failed to count events: %w", err)
 		}
 		eventsCount += batchEvents
+	}
+	// Pass 2: inbound deps from outside the deletion set (pointing TO deleted issues)
+	for i := 0; i < len(expandedIDs); i += deleteBatchSize {
+		end := i + deleteBatchSize
+		if end > len(expandedIDs) {
+			end = len(expandedIDs)
+		}
+		batch := expandedIDs[i:end]
+		batchInClause, batchArgs := doltBuildSQLInClause(batch)
+
+		rows, err := tx.QueryContext(ctx,
+			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_id IN (%s)`, batchInClause),
+			batchArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to count inbound dependencies: %w", err)
+		}
+		for rows.Next() {
+			var issID string
+			if err := rows.Scan(&issID); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("failed to scan inbound dependency: %w", err)
+			}
+			// Only count if the source issue is NOT also being deleted
+			// (those rows were already counted in pass 1)
+			if !expandedIDSet[issID] {
+				depsCount++
+			}
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("failed to iterate inbound dependencies: %w", err)
+		}
 	}
 	result.DependenciesCount = depsCount
 	result.LabelsCount = labelsCount
@@ -677,9 +723,15 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	return result, nil
 }
 
+// maxRecursiveResults is the safety limit for the total number of issues discovered
+// during recursive dependent traversal. Prevents pathological dependency graphs
+// from causing unbounded memory/time consumption.
+const maxRecursiveResults = 10000
+
 // findAllDependentsRecursiveTx finds all issues that depend on the given issues, recursively (within a transaction).
 // Uses batched IN-clause queries instead of per-ID queries to avoid N+1 performance problems
 // that hang on embedded Dolt with large ID sets (see steveyegge/beads#1692).
+// Traversal is capped at maxRecursiveResults total discovered IDs.
 func (s *DoltStore) findAllDependentsRecursiveTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	for _, id := range ids {
@@ -690,6 +742,9 @@ func (s *DoltStore) findAllDependentsRecursiveTx(ctx context.Context, tx *sql.Tx
 	copy(toProcess, ids)
 
 	for len(toProcess) > 0 {
+		if len(result) > maxRecursiveResults {
+			return nil, fmt.Errorf("cascade traversal discovered over %d issues; aborting to prevent runaway deletion", maxRecursiveResults)
+		}
 		// Take a batch of IDs to process
 		batchEnd := deleteBatchSize
 		if batchEnd > len(toProcess) {
