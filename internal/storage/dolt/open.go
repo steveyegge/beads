@@ -49,9 +49,13 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, cfg *Config)
 			if cfg.ServerUser == "" {
 				cfg.ServerUser = fileCfg.GetDoltServerUser()
 			}
-			if cfg.Database == "" {
-				cfg.Database = fileCfg.GetDoltDatabase()
-			}
+		}
+		// Always read database name from config (applies to both embedded and server mode).
+		// Init stores prefix-based database names (e.g., "beads_myproject") in metadata.json
+		// to avoid cross-rig contamination. Without this, embedded mode defaults to "beads"
+		// and misses metadata written to the prefixed database.
+		if cfg.Database == "" {
+			cfg.Database = fileCfg.GetDoltDatabase()
 		}
 
 		return New(ctx, cfg)

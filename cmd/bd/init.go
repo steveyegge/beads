@@ -619,6 +619,16 @@ enable server mode, or set connection details with --server-host, --server-port,
 			}
 		}
 
+		// Commit all metadata to Dolt so it persists across connections.
+		// Without this, metadata written to the working set is lost when
+		// doctor (or any other command) opens the database read-only.
+		if err := store.Commit(ctx, "bd init: initialize metadata"); err != nil {
+			// "nothing to commit" is expected if schema init already committed everything
+			if !strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
+				fmt.Fprintf(os.Stderr, "Warning: failed to commit init metadata: %v\n", err)
+			}
+		}
+
 		if err := store.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
 		}
@@ -770,22 +780,32 @@ enable server mode, or set connection details with --server-host, --server-port,
 		// Run bd doctor diagnostics to catch setup issues early
 		doctorResult := runDiagnostics(cwd)
 		// Check if there are any warnings or errors (not just critical failures)
-		hasIssues := false
+		inGitRepo := isGitRepo()
+		var nonGitIssues []doctorCheck
+		var gitOnlyIssues []doctorCheck
 		for _, check := range doctorResult.Checks {
 			if check.Status != statusOK {
-				hasIssues = true
-				break
-			}
-		}
-		if hasIssues {
-			fmt.Printf("%s Setup incomplete. Some issues were detected:\n", ui.RenderWarn("⚠"))
-			// Show just the warnings/errors, not all checks
-			for _, check := range doctorResult.Checks {
-				if check.Status != statusOK {
-					fmt.Printf("  • %s: %s\n", check.Name, check.Message)
+				// These checks require a git repo to function
+				if !inGitRepo && isGitDependentCheck(check.Name) {
+					gitOnlyIssues = append(gitOnlyIssues, check)
+				} else {
+					nonGitIssues = append(nonGitIssues, check)
 				}
 			}
+		}
+		if len(nonGitIssues) > 0 {
+			fmt.Printf("%s Setup incomplete. Some issues were detected:\n", ui.RenderWarn("⚠"))
+			for _, check := range nonGitIssues {
+				fmt.Printf("  • %s: %s\n", check.Name, check.Message)
+			}
 			fmt.Printf("\nRun %s to see details and fix these issues.\n\n", ui.RenderAccent("bd doctor --fix"))
+		}
+		if len(gitOnlyIssues) > 0 {
+			fmt.Printf("%s Not a git repository — some features are unavailable:\n", ui.RenderAccent("ℹ"))
+			for _, check := range gitOnlyIssues {
+				fmt.Printf("  • %s\n", check.Name)
+			}
+			fmt.Printf("\nThese will resolve automatically when you run %s inside a git repository.\n\n", ui.RenderAccent("bd init"))
 		}
 	},
 }
@@ -811,6 +831,18 @@ func init() {
 	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")
 
 	rootCmd.AddCommand(initCmd)
+}
+
+// isGitDependentCheck returns true for doctor checks that require a git repository
+// to function. When running outside a git repo, these are expected warnings and
+// should be reported as informational rather than as setup failures.
+func isGitDependentCheck(name string) bool {
+	switch name {
+	case "Repo Fingerprint", "Role Configuration", "Git Upstream", "Git Hooks",
+		"Git Merge Driver", "Git Working Tree":
+		return true
+	}
+	return false
 }
 
 // migrateOldDatabases detects and migrates old database files to beads.db

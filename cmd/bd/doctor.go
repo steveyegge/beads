@@ -900,6 +900,25 @@ func printDiagnostics(result doctorResult) {
 			fmt.Println()
 		}
 
+		// If not in a git repo, add context for git-dependent warnings
+		if !isGitRepo() {
+			allGitDependent := true
+			for _, check := range result.Checks {
+				if check.Status != statusOK && !isGitDependentCheck(check.Name) {
+					allGitDependent = false
+					break
+				}
+			}
+			if allGitDependent {
+				fmt.Printf("%s %s\n", ui.RenderAccent("ℹ"),
+					ui.RenderMuted("Not a git repository — these warnings are expected and will resolve when you run 'bd init' inside a git repo."))
+			} else {
+				fmt.Printf("%s %s\n", ui.RenderAccent("ℹ"),
+					ui.RenderMuted("Not a git repository — some warnings above (e.g., Repo Fingerprint, Role Configuration) are expected outside of git."))
+			}
+			fmt.Println()
+		}
+
 		if !doctorVerbose {
 			fmt.Printf("%s\n", ui.RenderMuted("Run with --verbose to see all checks"))
 		}
