@@ -618,6 +618,7 @@ func resetToRemote(ctx context.Context, repoRoot, syncBranch, jsonlPath string) 
 // The 3-way merge engine has been removed (Dolt handles sync natively).
 // When sync branches diverge, we take remote content since the caller
 // resets to remote's commit graph anyway.
+//
 //nolint:unparam // Keep error return for explicit call-site contract and future merge backends.
 func performContentMerge(ctx context.Context, worktreePath, branch, remote, jsonlRelPath string) ([]byte, error) {
 	remoteRef := fmt.Sprintf("%s/%s", remote, branch)
