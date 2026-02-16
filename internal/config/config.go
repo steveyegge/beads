@@ -373,6 +373,23 @@ func LogOverride(override ConfigOverride) {
 		override.Key, overrideDesc, override.OriginalValue, sourceDesc, override.EffectiveValue)
 }
 
+// SaveConfigValue sets a key-value pair and writes it to the config file.
+// If no config file is currently loaded, it creates config.yaml in the given beadsDir.
+func SaveConfigValue(key string, value interface{}, beadsDir string) error {
+	if v == nil {
+		return fmt.Errorf("config not initialized")
+	}
+	v.Set(key, value)
+
+	configPath := v.ConfigFileUsed()
+	if configPath == "" {
+		configPath = filepath.Join(beadsDir, "config.yaml")
+		v.SetConfigFile(configPath)
+	}
+
+	return v.WriteConfigAs(configPath)
+}
+
 // GetString retrieves a string configuration value
 func GetString(key string) string {
 	if v == nil {

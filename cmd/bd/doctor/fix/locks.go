@@ -85,6 +85,36 @@ func StaleLockFiles(path string) error {
 		}
 	}
 
+	// Remove stale Dolt noms LOCK files
+	// These are left behind when the Dolt engine exits uncleanly.
+	// Only remove if no process holds the advisory access lock.
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if info, err := os.Stat(doltDir); err == nil && info.IsDir() {
+		// Walk dolt dir to find noms LOCK files
+		_ = filepath.Walk(doltDir, func(p string, fi os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			if fi.IsDir() || fi.Name() != "LOCK" {
+				return nil
+			}
+			// Only clean LOCK files under .dolt/noms/
+			if !strings.Contains(p, filepath.Join(".dolt", "noms")) {
+				return nil
+			}
+			// Probe the advisory lock to ensure no process is active
+			accessLockPath := filepath.Join(beadsDir, "dolt-access.lock")
+			if probeStale(accessLockPath) {
+				if err := os.Remove(p); err != nil {
+					errors = append(errors, fmt.Sprintf("noms LOCK %s: %v", filepath.Base(filepath.Dir(p)), err))
+				} else {
+					removed = append(removed, "noms/LOCK")
+				}
+			}
+			return nil
+		})
+	}
+
 	if len(removed) > 0 {
 		fmt.Printf("  Removed stale lock files: %s\n", strings.Join(removed, ", "))
 	}
@@ -94,4 +124,23 @@ func StaleLockFiles(path string) error {
 	}
 
 	return nil
+}
+
+// probeStale checks if the given lock file is NOT held by any process.
+// Returns true if the lock is stale (safe to clean up).
+func probeStale(lockPath string) bool {
+	f, err := os.OpenFile(lockPath, os.O_RDWR, 0)
+	if err != nil {
+		// File doesn't exist or can't open - treat as stale
+		return true
+	}
+	defer f.Close()
+	// Try to acquire exclusive lock non-blocking
+	if err := lockfile.FlockExclusiveNonBlock(f); err != nil {
+		// Lock is held by another process - NOT stale
+		return false
+	}
+	// We got the lock, meaning no one else holds it - stale
+	_ = lockfile.FlockUnlock(f)
+	return true
 }

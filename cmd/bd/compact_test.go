@@ -13,7 +13,6 @@ import (
 )
 
 func TestCompactSuite(t *testing.T) {
-	t.Skip("Compaction not yet implemented for Dolt backend")
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
@@ -51,22 +50,24 @@ func TestCompactSuite(t *testing.T) {
 		// Create mix of issues - some eligible, some not
 		issues := []*types.Issue{
 			{
-				ID:        "test-stats-1",
-				Title:     "Old closed",
-				Status:    types.StatusClosed,
-				Priority:  2,
-				IssueType: types.TypeTask,
-				CreatedAt: time.Now().Add(-60 * 24 * time.Hour),
-				ClosedAt:  ptrTime(time.Now().Add(-35 * 24 * time.Hour)),
+				ID:          "test-stats-1",
+				Title:       "Old closed",
+				Description: "Content that makes this issue eligible for compaction.",
+				Status:      types.StatusClosed,
+				Priority:    2,
+				IssueType:   types.TypeTask,
+				CreatedAt:   time.Now().Add(-60 * 24 * time.Hour),
+				ClosedAt:    ptrTime(time.Now().Add(-35 * 24 * time.Hour)),
 			},
 			{
-				ID:        "test-stats-2",
-				Title:     "Recent closed",
-				Status:    types.StatusClosed,
-				Priority:  2,
-				IssueType: types.TypeTask,
-				CreatedAt: time.Now().Add(-10 * 24 * time.Hour),
-				ClosedAt:  ptrTime(time.Now().Add(-5 * 24 * time.Hour)),
+				ID:          "test-stats-2",
+				Title:       "Recent closed",
+				Description: "Some content here too.",
+				Status:      types.StatusClosed,
+				Priority:    2,
+				IssueType:   types.TypeTask,
+				CreatedAt:   time.Now().Add(-10 * 24 * time.Hour),
+				ClosedAt:    ptrTime(time.Now().Add(-5 * 24 * time.Hour)),
 			},
 			{
 				ID:        "test-stats-3",

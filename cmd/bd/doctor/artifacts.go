@@ -266,7 +266,13 @@ func scanJSONLArtifacts(beadsDir string, report *ArtifactReport) {
 }
 
 // scanSQLiteArtifacts checks for leftover SQLite database files.
+// Only flags SQLite files as artifacts if Dolt is the active backend.
+// If SQLite is still the active backend, beads.db is the live database.
 func scanSQLiteArtifacts(beadsDir string, report *ArtifactReport) {
+	if !isDoltNative(beadsDir) {
+		return
+	}
+
 	entries, err := os.ReadDir(beadsDir)
 	if err != nil {
 		return
@@ -283,7 +289,7 @@ func scanSQLiteArtifacts(beadsDir string, report *ArtifactReport) {
 			report.SQLiteArtifacts = append(report.SQLiteArtifacts, ArtifactFinding{
 				Path:        filepath.Join(beadsDir, name),
 				Type:        "sqlite",
-				Description: "SQLite database file",
+				Description: "SQLite database file (Dolt is active backend)",
 				SafeDelete:  name == "beads.db-shm" || name == "beads.db-wal",
 			})
 			continue

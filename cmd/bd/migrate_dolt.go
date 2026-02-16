@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
@@ -151,6 +152,15 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 	}
 
 	printSuccess("Updated metadata.json to use Dolt backend")
+
+	// Write sync.mode to config.yaml so viper-based code reads the correct mode.
+	// The DB config table was already updated above; this fixes the split-brain
+	// where config.yaml still says "git-portable" (GH #1723, #1794).
+	if err := config.SaveConfigValue("sync.mode", string(config.SyncModeDoltNative), beadsDir); err != nil {
+		printWarning(fmt.Sprintf("failed to write sync.mode to config.yaml: %v (set manually: sync.mode: dolt-native)", err))
+	} else {
+		printSuccess("Set sync.mode = dolt-native in config.yaml")
+	}
 
 	// Check if git hooks need updating for Dolt compatibility
 	if hooksNeedDoltUpdate(beadsDir) {
