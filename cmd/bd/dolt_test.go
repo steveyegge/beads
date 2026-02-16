@@ -55,6 +55,10 @@ func TestDoltShowConfigEmbeddedMode(t *testing.T) {
 		t.Fatalf("failed to save config: %v", err)
 	}
 
+	// Override BEADS_DIR so FindBeadsDir() returns our temp .beads,
+	// not the rig's .beads (which happens in worktree environments).
+	t.Setenv("BEADS_DIR", beadsDir)
+
 	oldCwd, _ := os.Getwd()
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatalf("failed to chdir: %v", err)
@@ -126,6 +130,10 @@ func TestDoltShowConfigServerMode(t *testing.T) {
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
 	}
+
+	// Override BEADS_DIR so FindBeadsDir() returns our temp .beads,
+	// not the rig's .beads (which happens in worktree environments).
+	t.Setenv("BEADS_DIR", beadsDir)
 
 	oldCwd, _ := os.Getwd()
 	if err := os.Chdir(tmpDir); err != nil {
@@ -204,6 +212,12 @@ func TestDoltSetConfigValidation(t *testing.T) {
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
 	}
+
+	// Override BEADS_DIR so FindBeadsDir() returns our temp .beads,
+	// not the rig's .beads (which happens in worktree environments).
+	// Without this, setDoltConfig writes test values to the production
+	// metadata.json, corrupting the Dolt server connection config.
+	t.Setenv("BEADS_DIR", beadsDir)
 
 	oldCwd, _ := os.Getwd()
 	if err := os.Chdir(tmpDir); err != nil {
@@ -303,6 +317,10 @@ func TestDoltSetConfigJSONOutput(t *testing.T) {
 		t.Fatalf("failed to save config: %v", err)
 	}
 
+	// Override BEADS_DIR so FindBeadsDir() returns our temp .beads,
+	// not the rig's .beads (which happens in worktree environments).
+	t.Setenv("BEADS_DIR", beadsDir)
+
 	oldCwd, _ := os.Getwd()
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatalf("failed to chdir: %v", err)
@@ -353,6 +371,10 @@ func TestDoltSetConfigWithUpdateConfig(t *testing.T) {
 	if err := os.WriteFile(configYamlPath, []byte("prefix: test\n"), 0644); err != nil {
 		t.Fatalf("failed to create config.yaml: %v", err)
 	}
+
+	// Override BEADS_DIR so FindBeadsDir() returns our temp .beads,
+	// not the rig's .beads (which happens in worktree environments).
+	t.Setenv("BEADS_DIR", beadsDir)
 
 	oldCwd, _ := os.Getwd()
 	if err := os.Chdir(tmpDir); err != nil {
