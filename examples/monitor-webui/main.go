@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
