@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
@@ -116,11 +117,16 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 		exitWithError("import_failed", importErr.Error(), "partial Dolt directory has been cleaned up")
 	}
 
-	// Set sync.mode to dolt-native in the DB.
+	// Set sync.mode to dolt-native in config.yaml (authoritative source).
+	if err := config.SetYamlConfig("sync.mode", "dolt-native"); err != nil {
+		printWarning(fmt.Sprintf("failed to set sync.mode in config.yaml: %v", err))
+	} else {
+		config.Set("sync.mode", "dolt-native") // Update viper in-memory
+		printSuccess("Set sync.mode = dolt-native in config.yaml")
+	}
+	// Also write to Dolt config table for backward compatibility with older bd versions.
 	if err := doltStore.SetConfig(ctx, "sync.mode", "dolt-native"); err != nil {
 		printWarning(fmt.Sprintf("failed to set sync.mode in DB: %v", err))
-	} else {
-		printSuccess("Set sync.mode = dolt-native in database")
 	}
 
 	// Commit the migration
