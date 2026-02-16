@@ -274,7 +274,7 @@ func applyFixList(path string, fixes []doctorCheck) {
 		case "Schema Compatibility":
 			err = fix.SchemaCompatibility(path)
 		case "Repo Fingerprint":
-			err = fix.RepoFingerprint(path)
+			err = fix.RepoFingerprint(path, doctorYes)
 			// Also repair any other missing metadata fields (bd_version, repo_id, clone_id)
 			if mErr := fix.FixMissingMetadata(path, Version); mErr != nil && err == nil {
 				err = mErr
