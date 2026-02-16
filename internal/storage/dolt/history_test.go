@@ -12,7 +12,7 @@ import (
 // getIssueHistory Tests
 // =============================================================================
 
-func TestgetIssueHistory(t *testing.T) {
+func TestGetIssueHistory(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
@@ -67,7 +67,7 @@ func TestgetIssueHistory(t *testing.T) {
 	}
 }
 
-func TestgetIssueHistory_NonExistent(t *testing.T) {
+func TestGetIssueHistory_NonExistent(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
@@ -89,7 +89,7 @@ func TestgetIssueHistory_NonExistent(t *testing.T) {
 // getIssueAsOf Tests
 // =============================================================================
 
-func TestgetIssueAsOf(t *testing.T) {
+func TestGetIssueAsOf(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
@@ -157,7 +157,7 @@ func TestgetIssueAsOf(t *testing.T) {
 	}
 }
 
-func TestgetIssueAsOf_InvalidRef(t *testing.T) {
+func TestGetIssueAsOf_InvalidRef(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
@@ -171,7 +171,7 @@ func TestgetIssueAsOf_InvalidRef(t *testing.T) {
 	}
 }
 
-func TestgetIssueAsOf_NonExistentIssue(t *testing.T) {
+func TestGetIssueAsOf_NonExistentIssue(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 

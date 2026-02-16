@@ -76,51 +76,9 @@ func TestAccessLock_ReleaseAllowsReacquisition(t *testing.T) {
 	exLock.Release()
 }
 
-func TestRunDoltHealthChecks_NonDoltBackend(t *testing.T) {
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
-		t.Fatalf("failed to create beads dir: %v", err)
-	}
-
-	// Explicitly set SQLite backend via metadata.json.
-	// Without metadata.json, dolt.GetBackendFromConfig defaults to "dolt".
-	configContent := []byte(`{"backend":"sqlite"}`)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), configContent, 0o644); err != nil {
-		t.Fatalf("failed to write config: %v", err)
-	}
-
-	checks := RunDoltHealthChecks(tmpDir)
-	if len(checks) != 4 {
-		t.Fatalf("expected 4 checks for non-dolt backend, got %d", len(checks))
-	}
-
-	// Validate all 4 N/A checks
-	expectedChecks := []struct {
-		name     string
-		category string
-	}{
-		{"Dolt Connection", CategoryCore},
-		{"Dolt Schema", CategoryCore},
-		{"Dolt-JSONL Sync", CategoryData},
-		{"Dolt Status", CategoryData},
-	}
-
-	for i, expected := range expectedChecks {
-		if checks[i].Status != StatusOK {
-			t.Errorf("check[%d] %q: expected StatusOK, got %s", i, expected.name, checks[i].Status)
-		}
-		if checks[i].Name != expected.name {
-			t.Errorf("check[%d]: expected name %q, got %q", i, expected.name, checks[i].Name)
-		}
-		if checks[i].Message != "N/A (SQLite backend)" {
-			t.Errorf("check[%d] %q: expected 'N/A (SQLite backend)' message, got %q", i, expected.name, checks[i].Message)
-		}
-		if checks[i].Category != expected.category {
-			t.Errorf("check[%d] %q: expected category %q, got %q", i, expected.name, expected.category, checks[i].Category)
-		}
-	}
-}
+// TestRunDoltHealthChecks_NonDoltBackend was removed: SQLite backend no longer
+// exists. GetBackend() always returns "dolt" after the dolt-native cleanup.
+// (bd-yqpwy)
 
 func TestRunDoltHealthChecks_DoltBackendNoDatabase(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -242,10 +200,9 @@ func TestLockContention(t *testing.T) {
 func TestServerMode_NoLockAcquired(t *testing.T) {
 	// Verifies that server mode skips lock acquisition entirely.
 	// BEADS_DOLT_SERVER_MODE=1 triggers server mode, which attempts MySQL
-	// connection instead of embedded Dolt. The MySQL connection will fail
-	// (no server running), but the important assertions are:
-	// 1. Error does NOT contain "access lock" (lock was skipped)
-	// 2. No lock file was created
+	// connection instead of embedded Dolt. We force a non-listening port
+	// so the connection always fails, regardless of whether a real Dolt
+	// server is running on the machine.
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	doltDir := filepath.Join(beadsDir, "dolt")
@@ -258,8 +215,9 @@ func TestServerMode_NoLockAcquired(t *testing.T) {
 		t.Fatalf("failed to write config: %v", err)
 	}
 
-	// Enable server mode via env var
+	// Enable server mode via env var, pointing at a port nothing listens on
 	t.Setenv("BEADS_DOLT_SERVER_MODE", "1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "59999")
 
 	checks := RunDoltHealthChecks(tmpDir)
 	if len(checks) != 1 {

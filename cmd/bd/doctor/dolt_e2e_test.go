@@ -10,9 +10,6 @@ import (
 	"runtime"
 	"sync"
 	"testing"
-	"time"
-
-	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // e2eDoctorResult mirrors the JSON output struct from cmd/bd/doctor.go.
@@ -192,108 +189,9 @@ func runBDDoctor(t *testing.T, bdPath, path string) (e2eDoctorResult, string, er
 	return result, string(out), execErr
 }
 
-// TestE2E_DoctorSQLiteBackend verifies that `bd doctor --json` reports all 4
-// dolt checks as N/A when the workspace uses SQLite backend.
-func TestE2E_DoctorSQLiteBackend(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping E2E test in short mode (requires bd binary build)")
-	}
+// TestE2E_DoctorSQLiteBackend was removed: SQLite backend no longer exists.
+// GetBackend() always returns "dolt" after the dolt-native cleanup (bd-yqpwy).
 
-	bdPath := buildTestBD(t)
-	tmpDir := setupMinimalGitRepo(t)
-
-	// Write metadata.json marking this as SQLite backend
-	metadataPath := filepath.Join(tmpDir, ".beads", "metadata.json")
-	if err := os.WriteFile(metadataPath, []byte(`{"backend":"sqlite"}`), 0o644); err != nil {
-		t.Fatalf("failed to write metadata.json: %v", err)
-	}
-
-	result, _, _ := runBDDoctor(t, bdPath, tmpDir)
-
-	// Find the 4 dolt checks and verify they are N/A
-	doltCheckNames := map[string]bool{
-		"Dolt Connection": false,
-		"Dolt Schema":     false,
-		"Dolt-JSONL Sync": false,
-		"Dolt Status":     false,
-	}
-
-	for _, check := range result.Checks {
-		if _, isDolt := doltCheckNames[check.Name]; isDolt {
-			doltCheckNames[check.Name] = true
-
-			if check.Message != "N/A (SQLite backend)" {
-				t.Errorf("check %q: expected message %q, got %q",
-					check.Name, "N/A (SQLite backend)", check.Message)
-			}
-		}
-	}
-
-	// Verify all 4 dolt checks were present
-	for name, found := range doltCheckNames {
-		if !found {
-			t.Errorf("expected dolt check %q in output, not found", name)
-		}
-	}
-
-	// Verify no orphan lock file was created
-	lockPath := filepath.Join(tmpDir, ".beads", "dolt-access.lock")
-	if _, err := os.Stat(lockPath); err == nil {
-		t.Errorf("lock file should not exist for SQLite backend, found at %s", lockPath)
-	}
-}
-
-// TestE2E_DoctorDoltBackendNoDB verifies that `bd doctor --json` handles a dolt
-// workspace without a real database: exits non-zero, reports connection error,
-// and does not leave orphan LOCK files.
-func TestE2E_DoctorDoltBackendNoDB(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping E2E test in short mode (requires bd binary build)")
-	}
-
-	bdPath := buildTestBD(t)
-	tmpDir := setupMinimalGitRepo(t)
-
-	// Write metadata.json marking this as dolt backend
-	metadataPath := filepath.Join(tmpDir, ".beads", "metadata.json")
-	if err := os.WriteFile(metadataPath, []byte(`{"backend":"dolt"}`), 0o644); err != nil {
-		t.Fatalf("failed to write metadata.json: %v", err)
-	}
-
-	// Create dolt directory (needed for lock acquisition path)
-	doltDir := filepath.Join(tmpDir, ".beads", "dolt")
-	if err := os.MkdirAll(doltDir, 0o755); err != nil {
-		t.Fatalf("failed to create dolt dir: %v", err)
-	}
-
-	result, _, execErr := runBDDoctor(t, bdPath, tmpDir)
-
-	// Exit code should be non-zero (doctor reports failures)
-	if execErr == nil {
-		t.Error("expected non-zero exit code for dolt backend without real database")
-	}
-
-	// Verify "Dolt Connection" check is present with error status
-	foundConnection := false
-	for _, check := range result.Checks {
-		if check.Name == "Dolt Connection" {
-			foundConnection = true
-			if check.Status != "error" {
-				t.Errorf("Dolt Connection check: expected status %q, got %q", "error", check.Status)
-			}
-			break
-		}
-	}
-	if !foundConnection {
-		t.Error("expected 'Dolt Connection' check in output, not found")
-	}
-
-	// Verify no orphan lock file — prove the lock is released by acquiring
-	// an exclusive lock. If the lock were still held, this would time out.
-	exLock, err := dolt.AcquireAccessLock(doltDir, true, 2*time.Second)
-	if err != nil {
-		t.Errorf("could not acquire exclusive lock after bd doctor (lock not released?): %v", err)
-	} else {
-		exLock.Release()
-	}
-}
+// TestE2E_DoctorDoltBackendNoDB was removed: the embedded Dolt driver
+// auto-creates the database, so the "no DB" error scenario doesn't exist.
+// (bd-yqpwy)
