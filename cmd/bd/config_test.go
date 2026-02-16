@@ -397,10 +397,10 @@ federation:
 		}
 	})
 
-	t.Run("external mode without remote", func(t *testing.T) {
+	t.Run("dolt-native mode without remote", func(t *testing.T) {
 		configContent := `prefix: test
 sync:
-  mode: "external"
+  mode: "dolt-native"
 `
 		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
 			t.Fatalf("Failed to write config.yaml: %v", err)
@@ -416,6 +416,28 @@ sync:
 		}
 		if !found {
 			t.Errorf("Expected issue about federation.remote being required, got: %v", issues)
+		}
+	})
+
+	t.Run("belt-and-suspenders mode without remote", func(t *testing.T) {
+		configContent := `prefix: test
+sync:
+  mode: "belt-and-suspenders"
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write config.yaml: %v", err)
+		}
+
+		issues := validateSyncConfig(tmpDir)
+		found := false
+		for _, issue := range issues {
+			if strings.Contains(issue, "federation.remote") && strings.Contains(issue, "required") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected issue about federation.remote being required for belt-and-suspenders, got: %v", issues)
 		}
 	})
 
@@ -441,10 +463,10 @@ federation:
 		}
 	})
 
-	t.Run("valid sync config", func(t *testing.T) {
+	t.Run("valid sync config with git-portable", func(t *testing.T) {
 		configContent := `prefix: test
 sync:
-  mode: "git-branch"
+  mode: "git-portable"
 conflict:
   strategy: "lww"
 federation:
@@ -458,6 +480,103 @@ federation:
 		issues := validateSyncConfig(tmpDir)
 		if len(issues) != 0 {
 			t.Errorf("Expected no issues for valid config, got: %v", issues)
+		}
+	})
+
+	t.Run("valid sync config with realtime", func(t *testing.T) {
+		configContent := `prefix: test
+sync:
+  mode: "realtime"
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write config.yaml: %v", err)
+		}
+
+		issues := validateSyncConfig(tmpDir)
+		if len(issues) != 0 {
+			t.Errorf("Expected no issues for valid config with realtime, got: %v", issues)
+		}
+	})
+
+	t.Run("valid sync config with dolt-native and remote", func(t *testing.T) {
+		configContent := `prefix: test
+sync:
+  mode: "dolt-native"
+federation:
+  remote: "dolthub://org/repo"
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write config.yaml: %v", err)
+		}
+
+		issues := validateSyncConfig(tmpDir)
+		if len(issues) != 0 {
+			t.Errorf("Expected no issues for valid dolt-native config with remote, got: %v", issues)
+		}
+	})
+
+	t.Run("valid sync config with belt-and-suspenders and remote", func(t *testing.T) {
+		configContent := `prefix: test
+sync:
+  mode: "belt-and-suspenders"
+federation:
+  remote: "s3://bucket/path"
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write config.yaml: %v", err)
+		}
+
+		issues := validateSyncConfig(tmpDir)
+		if len(issues) != 0 {
+			t.Errorf("Expected no issues for valid belt-and-suspenders config with remote, got: %v", issues)
+		}
+	})
+
+	// Stale mode names (from pre-v0.50) must now be rejected
+	staleModes := []string{"local", "git-branch", "external"}
+	for _, staleMode := range staleModes {
+		staleMode := staleMode // capture range variable
+		t.Run("stale mode rejected: "+staleMode, func(t *testing.T) {
+			configContent := "prefix: test\nsync:\n  mode: \"" + staleMode + "\"\n"
+			if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+				t.Fatalf("Failed to write config.yaml: %v", err)
+			}
+
+			issues := validateSyncConfig(tmpDir)
+			foundSyncIssue := false
+			for _, issue := range issues {
+				if strings.Contains(issue, "sync.mode") && strings.Contains(issue, "invalid") {
+					foundSyncIssue = true
+					// Verify the error message lists current valid modes
+					for _, validMode := range config.ValidSyncModes() {
+						if !strings.Contains(issue, validMode) {
+							t.Errorf("Error message for stale mode %q should list valid mode %q, got: %s",
+								staleMode, validMode, issue)
+						}
+					}
+					break
+				}
+			}
+			if !foundSyncIssue {
+				t.Errorf("Expected sync.mode %q to be rejected as invalid, got issues: %v", staleMode, issues)
+			}
+		})
+	}
+
+	t.Run("git-portable mode does not require federation.remote", func(t *testing.T) {
+		configContent := `prefix: test
+sync:
+  mode: "git-portable"
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write config.yaml: %v", err)
+		}
+
+		issues := validateSyncConfig(tmpDir)
+		for _, issue := range issues {
+			if strings.Contains(issue, "federation.remote") {
+				t.Errorf("git-portable should not require federation.remote, got issue: %s", issue)
+			}
 		}
 	})
 }

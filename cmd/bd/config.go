@@ -331,7 +331,7 @@ var configValidateCmd = &cobra.Command{
 	Long: `Validate sync-related configuration settings.
 
 Checks:
-  - sync.mode is a valid value (local, git-branch, external)
+  - sync.mode is a valid value (git-portable, realtime, dolt-native, belt-and-suspenders)
   - conflict.strategy is valid (lww, manual, ours, theirs)
   - federation.sovereignty is valid (if set)
   - federation.remote is set when sync.mode requires it
@@ -418,15 +418,15 @@ func validateSyncConfig(repoPath string) []string {
 	federationSov := v.GetString("federation.sovereignty")
 	federationRemote := v.GetString("federation.remote")
 
-	// Validate sync.mode
-	validSyncModes := map[string]bool{
-		"":           true, // not set is valid (uses default)
-		"local":      true,
-		"git-branch": true,
-		"external":   true,
+	// Validate sync.mode using canonical list from internal/config
+	validSyncModes := make(map[string]bool)
+	validSyncModes[""] = true // not set is valid (uses default)
+	for _, m := range config.ValidSyncModes() {
+		validSyncModes[m] = true
 	}
 	if syncMode != "" && !validSyncModes[syncMode] {
-		issues = append(issues, fmt.Sprintf("sync.mode: %q is invalid (valid values: local, git-branch, external)", syncMode))
+		issues = append(issues, fmt.Sprintf("sync.mode: %q is invalid (valid values: %s)",
+			syncMode, strings.Join(config.ValidSyncModes(), ", ")))
 	}
 
 	// Validate conflict.strategy
@@ -452,9 +452,10 @@ func validateSyncConfig(repoPath string) []string {
 		issues = append(issues, fmt.Sprintf("federation.sovereignty: %q is invalid (valid values: none, isolated, federated)", federationSov))
 	}
 
-	// Validate federation.remote when required
-	if syncMode == "external" && federationRemote == "" {
-		issues = append(issues, "federation.remote: required when sync.mode is 'external'")
+	// Validate federation.remote when required (dolt-native and belt-and-suspenders use remotes)
+	if (syncMode == string(config.SyncModeDoltNative) || syncMode == string(config.SyncModeBeltAndSuspenders)) && federationRemote == "" {
+		issues = append(issues, fmt.Sprintf("federation.remote: required when sync.mode is '%s' or '%s'",
+			config.SyncModeDoltNative, config.SyncModeBeltAndSuspenders))
 	}
 
 	// Validate remote URL format
