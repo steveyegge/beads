@@ -192,6 +192,33 @@ var createCmd = &cobra.Command{
 			deferUntil = &t
 		}
 
+		// Lineage metadata flags (aegis-ts8xa: human input lineage convention)
+		origin, _ := cmd.Flags().GetString("origin")
+		originHuman, _ := cmd.Flags().GetString("origin-human")
+
+		// Validate origin value
+		if origin != "" {
+			validOrigins := []string{"human", "human-implied", "agent-patrol", "agent-initiative", "system"}
+			valid := false
+			for _, v := range validOrigins {
+				if origin == v {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				FatalError("invalid --origin %q (valid: human, human-implied, agent-patrol, agent-initiative, system)", origin)
+			}
+		}
+
+		// Validate --origin-human requires --origin=human or --origin=human-implied
+		if originHuman != "" && origin != "human" && origin != "human-implied" {
+			FatalError("--origin-human requires --origin=human or --origin=human-implied")
+		}
+
+		// Build lineage metadata
+		lineageMetadata := buildLineageMetadata(origin, originHuman, getActorWithGit())
+
 		// Handle --dry-run flag (before --rig to ensure it works with cross-rig creation)
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		if dryRun {
@@ -220,6 +247,7 @@ var createCmd = &cobra.Command{
 				Rig:                agentRig,
 				DueAt:              dueAt,
 				DeferUntil:         deferUntil,
+				Metadata:           lineageMetadata,
 				// Event fields
 				EventKind: eventCategory,
 				Actor:     eventActor,
@@ -264,6 +292,12 @@ var createCmd = &cobra.Command{
 				}
 				if eventCategory != "" {
 					fmt.Printf("  Event category: %s\n", eventCategory)
+				}
+				if origin != "" {
+					fmt.Printf("  Origin: %s\n", origin)
+				}
+				if originHuman != "" {
+					fmt.Printf("  Origin human: %s\n", originHuman)
 				}
 			}
 			return
@@ -497,6 +531,7 @@ var createCmd = &cobra.Command{
 			Payload:            eventPayload,
 			DueAt:              dueAt,
 			DeferUntil:         deferUntil,
+			Metadata:           lineageMetadata,
 		}
 
 		ctx := rootCtx
@@ -816,8 +851,38 @@ func init() {
 	//   --defer=tomorrow    Hidden until tomorrow
 	createCmd.Flags().String("due", "", "Due date/time. Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
 	createCmd.Flags().String("defer", "", "Defer until date (issue hidden from bd ready until then). Same formats as --due")
+	// Lineage flags (aegis-ts8xa: human input lineage convention)
+	createCmd.Flags().String("origin", "", "Work origin: human, human-implied, agent-patrol, agent-initiative, system")
+	createCmd.Flags().String("origin-human", "", "Human identity for origin tracking (requires --origin=human or human-implied)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
+}
+
+// buildLineageMetadata constructs lineage metadata JSON from origin flags.
+// Returns nil if no origin is specified (no metadata to set).
+// Populates: origin, origin_human (if provided), origin_timestamp, executed_by.
+func buildLineageMetadata(origin, originHuman, executedBy string) json.RawMessage {
+	if origin == "" {
+		return nil
+	}
+
+	lineage := map[string]any{
+		"origin":           origin,
+		"origin_timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+	if originHuman != "" {
+		lineage["origin_human"] = originHuman
+	}
+	if executedBy != "" {
+		lineage["executed_by"] = executedBy
+	}
+
+	meta := map[string]any{"lineage": lineage}
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return nil
+	}
+	return json.RawMessage(data)
 }
 
 // createInRig creates an issue in a different rig using --rig flag or auto-routing.
@@ -902,6 +967,11 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		deferUntil = &t
 	}
 
+	// Extract lineage flags (aegis-ts8xa)
+	origin, _ := cmd.Flags().GetString("origin")
+	originHuman, _ := cmd.Flags().GetString("origin-human")
+	rigLineageMetadata := buildLineageMetadata(origin, originHuman, getActorWithGit())
+
 	// Create issue with explicit ID if provided, otherwise CreateIssue will generate one
 	issue := &types.Issue{
 		ID:                 explicitID, // Set explicit ID if provided (empty string if not)
@@ -933,6 +1003,8 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		DeferUntil: deferUntil,
 		// Cross-rig routing: use route prefix instead of database config
 		PrefixOverride: prefixOverride,
+		// Lineage metadata (aegis-ts8xa)
+		Metadata: rigLineageMetadata,
 	}
 
 	if err := targetStore.CreateIssue(ctx, issue, actor); err != nil {
