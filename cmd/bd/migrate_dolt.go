@@ -224,7 +224,7 @@ func handleToSQLiteMigration(_ bool, _ bool) {
 
 // extractFromSQLite extracts all data from a SQLite database using raw SQL.
 func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 	}
