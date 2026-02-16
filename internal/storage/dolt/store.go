@@ -792,6 +792,29 @@ func (s *DoltStore) Push(ctx context.Context) error {
 	return nil
 }
 
+// ForcePush force-pushes commits to the remote, overwriting remote changes.
+// Use when the remote has uncommitted changes in its working set.
+func (s *DoltStore) ForcePush(ctx context.Context) error {
+	if s.remoteUser != "" {
+		federationEnvMutex.Lock()
+		cleanup := setFederationCredentials(s.remoteUser, s.remotePassword)
+		defer func() {
+			cleanup()
+			federationEnvMutex.Unlock()
+		}()
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--force', '--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
+		if err != nil {
+			return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
+		}
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch)
+	if err != nil {
+		return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
+	}
+	return nil
+}
+
 // Pull pulls changes from the remote.
 // Passes branch explicitly to avoid "did not specify a branch" errors.
 // When remote credentials are configured (for Hosted Dolt), sets DOLT_REMOTE_PASSWORD

@@ -3,11 +3,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -31,6 +33,8 @@ Commands:
   bd dolt show         Show current Dolt configuration with connection test
   bd dolt set <k> <v>  Set a configuration value
   bd dolt test         Test server connection
+  bd dolt push         Push commits to Dolt remote
+  bd dolt pull         Pull commits from Dolt remote
 
 Configuration keys for 'bd dolt set':
   mode      Connection mode: "embedded" or "server"
@@ -100,11 +104,102 @@ Use this before switching to server mode to ensure the server is running.`,
 	},
 }
 
+var doltCommitCmd = &cobra.Command{
+	Use:   "commit",
+	Short: "Create a Dolt commit from pending changes",
+	Long: `Create a Dolt commit from any uncommitted changes in the working set.
+
+This is useful before push/pull operations that require a clean working set.
+Normally, auto-commit handles this after each bd write command, but manual
+commit may be needed if auto-commit was off or changes were made externally.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
+		st := getStore()
+		if st == nil {
+			fmt.Fprintf(os.Stderr, "Error: no store available\n")
+			os.Exit(1)
+		}
+		msg := "bd: manual commit (dolt commit)"
+		if err := st.Commit(ctx, msg); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
+				fmt.Println("Nothing to commit.")
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Committed.")
+	},
+}
+
+var doltPushCmd = &cobra.Command{
+	Use:   "push",
+	Short: "Push commits to Dolt remote",
+	Long: `Push local Dolt commits to the configured remote.
+
+Requires a Dolt remote to be configured in the database directory.
+For Hosted Dolt, set DOLT_REMOTE_USER and DOLT_REMOTE_PASSWORD environment
+variables for authentication.
+
+Use --force to overwrite remote changes (e.g., when the remote has
+uncommitted changes in its working set).`,
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
+		st := getStore()
+		if st == nil {
+			fmt.Fprintf(os.Stderr, "Error: no store available\n")
+			os.Exit(1)
+		}
+		force, _ := cmd.Flags().GetBool("force")
+		fmt.Println("Pushing to Dolt remote...")
+		if force {
+			if err := st.ForcePush(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			if err := st.Push(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		fmt.Println("Push complete.")
+	},
+}
+
+var doltPullCmd = &cobra.Command{
+	Use:   "pull",
+	Short: "Pull commits from Dolt remote",
+	Long: `Pull commits from the configured Dolt remote into the local database.
+
+Requires a Dolt remote to be configured in the database directory.
+For Hosted Dolt, set DOLT_REMOTE_USER and DOLT_REMOTE_PASSWORD environment
+variables for authentication.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
+		st := getStore()
+		if st == nil {
+			fmt.Fprintf(os.Stderr, "Error: no store available\n")
+			os.Exit(1)
+		}
+		fmt.Println("Pulling from Dolt remote...")
+		if err := st.Pull(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Pull complete.")
+	},
+}
+
 func init() {
 	doltSetCmd.Flags().Bool("update-config", false, "Also write to config.yaml for team-wide defaults")
 	doltCmd.AddCommand(doltShowCmd)
 	doltCmd.AddCommand(doltSetCmd)
 	doltCmd.AddCommand(doltTestCmd)
+	doltCmd.AddCommand(doltCommitCmd)
+	doltPushCmd.Flags().Bool("force", false, "Force push (overwrite remote changes)")
+	doltCmd.AddCommand(doltPushCmd)
+	doltCmd.AddCommand(doltPullCmd)
 	rootCmd.AddCommand(doltCmd)
 }
 
