@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -742,6 +743,479 @@ func TestDoltStoreDeleteIssue(t *testing.T) {
 	}
 	if retrieved != nil {
 		t.Error("expected issue to be deleted")
+	}
+}
+
+// TestDeleteIssuesBatchPerformance verifies that batch deletion works correctly
+// with a large number of issues and chain dependencies. This exercises the batched
+// IN-clause query paths that prevent N+1 hangs on embedded Dolt (steveyegge/beads#1692).
+func TestDeleteIssuesBatchPerformance(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	const issueCount = 100
+
+	// Create 100 issues with chain dependencies: issue-1 <- issue-2 <- ... <- issue-100
+	for i := 1; i <= issueCount; i++ {
+		issue := &types.Issue{
+			ID:        fmt.Sprintf("batch-del-%d", i),
+			Title:     fmt.Sprintf("Batch Delete Issue %d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("failed to create issue %d: %v", i, err)
+		}
+		if i > 1 {
+			dep := &types.Dependency{
+				IssueID:     fmt.Sprintf("batch-del-%d", i),
+				DependsOnID: fmt.Sprintf("batch-del-%d", i-1),
+				Type:        types.DepBlocks,
+			}
+			if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+				t.Fatalf("failed to add dependency %d: %v", i, err)
+			}
+		}
+	}
+
+	// Cascade delete from the root — should delete all 100 issues
+	result, err := store.DeleteIssues(ctx, []string{"batch-del-1"}, true, false, false)
+	if err != nil {
+		t.Fatalf("batch cascade delete failed: %v", err)
+	}
+
+	if result.DeletedCount != issueCount {
+		t.Errorf("expected %d deleted, got %d", issueCount, result.DeletedCount)
+	}
+	if result.DependenciesCount < issueCount-1 {
+		t.Errorf("expected at least %d dependencies, got %d", issueCount-1, result.DependenciesCount)
+	}
+
+	// Verify all issues are actually gone
+	for i := 1; i <= issueCount; i++ {
+		got, err := store.GetIssue(ctx, fmt.Sprintf("batch-del-%d", i))
+		if err != nil {
+			t.Fatalf("failed to get issue %d after delete: %v", i, err)
+		}
+		if got != nil {
+			t.Errorf("issue batch-del-%d should be deleted", i)
+		}
+	}
+}
+
+// TestDeleteIssuesEmptyInput verifies that DeleteIssues handles empty input gracefully.
+func TestDeleteIssuesEmptyInput(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	result, err := store.DeleteIssues(ctx, []string{}, false, false, false)
+	if err != nil {
+		t.Fatalf("expected no error for empty input, got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result for empty input")
+	}
+	if result.DeletedCount != 0 {
+		t.Errorf("expected 0 deleted, got %d", result.DeletedCount)
+	}
+}
+
+// TestDeleteIssuesNonCascadeWithExternalDeps verifies that deleting an issue with
+// external dependents (without --cascade or --force) returns an error identifying
+// the blocking issue and does not delete anything.
+func TestDeleteIssuesNonCascadeWithExternalDeps(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create parent issue and a dependent that will NOT be in the deletion set
+	parent := &types.Issue{
+		ID: "nc-parent", Title: "Parent", Status: types.StatusOpen,
+		Priority: 1, IssueType: types.TypeTask,
+	}
+	child := &types.Issue{
+		ID: "nc-child", Title: "Child", Status: types.StatusOpen,
+		Priority: 1, IssueType: types.TypeTask,
+	}
+	for _, iss := range []*types.Issue{parent, child} {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", iss.ID, err)
+		}
+	}
+	dep := &types.Dependency{
+		IssueID: "nc-child", DependsOnID: "nc-parent", Type: types.DepBlocks,
+	}
+	if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+		t.Fatalf("failed to add dependency: %v", err)
+	}
+
+	// Try to delete parent only (child depends on it, not in deletion set)
+	result, err := store.DeleteIssues(ctx, []string{"nc-parent"}, false, false, false)
+	if err == nil {
+		t.Fatal("expected error when deleting issue with external dependents")
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result even on error (for OrphanedIssues inspection)")
+	}
+	if len(result.OrphanedIssues) == 0 {
+		t.Error("expected OrphanedIssues to be populated on error")
+	}
+
+	// Verify error message identifies the issue
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "nc-parent") {
+		t.Errorf("error should identify issue nc-parent, got: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "dependents not in deletion set") {
+		t.Errorf("error should mention external dependents, got: %s", errMsg)
+	}
+
+	// Verify nothing was deleted
+	got, err := store.GetIssue(ctx, "nc-parent")
+	if err != nil {
+		t.Fatalf("failed to get issue after failed delete: %v", err)
+	}
+	if got == nil {
+		t.Error("parent issue should still exist after failed non-cascade delete")
+	}
+}
+
+// TestDeleteIssuesDryRun verifies that dry-run mode computes stats without deleting.
+func TestDeleteIssuesDryRun(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create 3 issues with chain deps and a label
+	for i := 1; i <= 3; i++ {
+		iss := &types.Issue{
+			ID: fmt.Sprintf("dry-%d", i), Title: fmt.Sprintf("Dry %d", i),
+			Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+		if i > 1 {
+			dep := &types.Dependency{
+				IssueID: fmt.Sprintf("dry-%d", i), DependsOnID: fmt.Sprintf("dry-%d", i-1),
+				Type: types.DepBlocks,
+			}
+			if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+				t.Fatalf("failed to add dep: %v", err)
+			}
+		}
+	}
+	if err := store.AddLabel(ctx, "dry-1", "test-label", "tester"); err != nil {
+		t.Fatalf("failed to add label: %v", err)
+	}
+
+	// Dry-run cascade delete from root
+	result, err := store.DeleteIssues(ctx, []string{"dry-1"}, true, false, true)
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	if result.DeletedCount != 3 {
+		t.Errorf("dry-run: expected 3 deleted count, got %d", result.DeletedCount)
+	}
+	if result.DependenciesCount < 2 {
+		t.Errorf("dry-run: expected at least 2 deps, got %d", result.DependenciesCount)
+	}
+	if result.LabelsCount < 1 {
+		t.Errorf("dry-run: expected at least 1 label, got %d", result.LabelsCount)
+	}
+
+	// Verify nothing was actually deleted
+	for i := 1; i <= 3; i++ {
+		got, err := store.GetIssue(ctx, fmt.Sprintf("dry-%d", i))
+		if err != nil {
+			t.Fatalf("failed to get issue after dry-run: %v", err)
+		}
+		if got == nil {
+			t.Errorf("issue dry-%d should still exist after dry-run", i)
+		}
+	}
+}
+
+// TestDeleteIssuesForceWithOrphans verifies that force mode correctly identifies
+// and reports orphaned external dependents without blocking deletion.
+func TestDeleteIssuesForceWithOrphans(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create: parent, child1 (in deletion set), child2 (external dependent)
+	for _, id := range []string{"f-parent", "f-child1", "f-child2"} {
+		iss := &types.Issue{
+			ID: id, Title: id, Status: types.StatusOpen,
+			Priority: 1, IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create %s: %v", id, err)
+		}
+	}
+	// child1 and child2 both depend on parent
+	for _, childID := range []string{"f-child1", "f-child2"} {
+		dep := &types.Dependency{
+			IssueID: childID, DependsOnID: "f-parent", Type: types.DepBlocks,
+		}
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("failed to add dep for %s: %v", childID, err)
+		}
+	}
+
+	// Force-delete parent and child1 (child2 is external dependent)
+	result, err := store.DeleteIssues(ctx, []string{"f-parent", "f-child1"}, false, true, false)
+	if err != nil {
+		t.Fatalf("force delete failed: %v", err)
+	}
+	if len(result.OrphanedIssues) == 0 {
+		t.Error("expected OrphanedIssues to contain f-child2")
+	}
+	foundOrphan := false
+	for _, id := range result.OrphanedIssues {
+		if id == "f-child2" {
+			foundOrphan = true
+		}
+	}
+	if !foundOrphan {
+		t.Errorf("expected f-child2 in OrphanedIssues, got: %v", result.OrphanedIssues)
+	}
+
+	// Verify parent and child1 are deleted
+	for _, id := range []string{"f-parent", "f-child1"} {
+		got, err := store.GetIssue(ctx, id)
+		if err != nil {
+			t.Fatalf("failed to get %s: %v", id, err)
+		}
+		if got != nil {
+			t.Errorf("%s should be deleted", id)
+		}
+	}
+	// child2 should still exist
+	got, err := store.GetIssue(ctx, "f-child2")
+	if err != nil {
+		t.Fatalf("failed to get f-child2: %v", err)
+	}
+	if got == nil {
+		t.Error("f-child2 should still exist (orphaned, not deleted)")
+	}
+}
+
+// TestDeleteIssuesBatchBoundary exercises the exact batch boundary (deleteBatchSize=50):
+// 50 issues (one full batch) and 51 issues (one full batch + one remainder).
+func TestDeleteIssuesBatchBoundary(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	for _, count := range []int{deleteBatchSize, deleteBatchSize + 1} {
+		t.Run(fmt.Sprintf("count_%d", count), func(t *testing.T) {
+			ids := make([]string, count)
+			for i := 0; i < count; i++ {
+				id := fmt.Sprintf("bb-%d-%d", count, i)
+				ids[i] = id
+				iss := &types.Issue{
+					ID: id, Title: id, Status: types.StatusOpen,
+					Priority: 1, IssueType: types.TypeTask,
+				}
+				if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+					t.Fatalf("failed to create issue %s: %v", id, err)
+				}
+				if i > 0 {
+					dep := &types.Dependency{
+						IssueID: id, DependsOnID: ids[i-1], Type: types.DepBlocks,
+					}
+					if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+						t.Fatalf("failed to add dep: %v", err)
+					}
+				}
+			}
+
+			// Cascade delete from root
+			result, err := store.DeleteIssues(ctx, []string{ids[0]}, true, false, false)
+			if err != nil {
+				t.Fatalf("cascade delete failed for count %d: %v", count, err)
+			}
+			if result.DeletedCount != count {
+				t.Errorf("expected %d deleted, got %d", count, result.DeletedCount)
+			}
+			if result.DependenciesCount < count-1 {
+				t.Errorf("expected at least %d deps, got %d", count-1, result.DependenciesCount)
+			}
+
+			// Verify all gone
+			for _, id := range ids {
+				got, err := store.GetIssue(ctx, id)
+				if err != nil {
+					t.Fatalf("GetIssue(%s) failed: %v", id, err)
+				}
+				if got != nil {
+					t.Errorf("issue %s should be deleted", id)
+				}
+			}
+		})
+	}
+}
+
+// TestDeleteIssuesCircularDeps verifies that cascade delete handles circular
+// dependencies without infinite loops (the BFS visited set prevents revisiting).
+func TestDeleteIssuesCircularDeps(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create A -> B -> C -> A (circular)
+	for _, id := range []string{"circ-a", "circ-b", "circ-c"} {
+		iss := &types.Issue{
+			ID: id, Title: id, Status: types.StatusOpen,
+			Priority: 1, IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create %s: %v", id, err)
+		}
+	}
+	// B depends on A, C depends on B, A depends on C (circular)
+	deps := []struct{ from, to string }{
+		{"circ-b", "circ-a"},
+		{"circ-c", "circ-b"},
+		{"circ-a", "circ-c"},
+	}
+	for _, d := range deps {
+		dep := &types.Dependency{
+			IssueID: d.from, DependsOnID: d.to, Type: types.DepBlocks,
+		}
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("failed to add dep %s->%s: %v", d.from, d.to, err)
+		}
+	}
+
+	// Cascade delete from A should find B and C via the cycle
+	result, err := store.DeleteIssues(ctx, []string{"circ-a"}, true, false, false)
+	if err != nil {
+		t.Fatalf("cascade delete with circular deps failed: %v", err)
+	}
+	if result.DeletedCount != 3 {
+		t.Errorf("expected 3 deleted (all in cycle), got %d", result.DeletedCount)
+	}
+
+	// Verify all deleted
+	for _, id := range []string{"circ-a", "circ-b", "circ-c"} {
+		got, err := store.GetIssue(ctx, id)
+		if err != nil {
+			t.Fatalf("GetIssue(%s) failed: %v", id, err)
+		}
+		if got != nil {
+			t.Errorf("%s should be deleted", id)
+		}
+	}
+}
+
+// TestDeleteIssuesDiamondDeps verifies that cascade delete handles diamond
+// dependency graphs correctly (each issue discovered only once).
+func TestDeleteIssuesDiamondDeps(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Diamond: root <- left, root <- right, left <- bottom, right <- bottom
+	for _, id := range []string{"dia-root", "dia-left", "dia-right", "dia-bottom"} {
+		iss := &types.Issue{
+			ID: id, Title: id, Status: types.StatusOpen,
+			Priority: 1, IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create %s: %v", id, err)
+		}
+	}
+	deps := []struct{ from, to string }{
+		{"dia-left", "dia-root"},
+		{"dia-right", "dia-root"},
+		{"dia-bottom", "dia-left"},
+		{"dia-bottom", "dia-right"},
+	}
+	for _, d := range deps {
+		dep := &types.Dependency{
+			IssueID: d.from, DependsOnID: d.to, Type: types.DepBlocks,
+		}
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("failed to add dep: %v", err)
+		}
+	}
+
+	// Cascade delete from root should find all 4
+	result, err := store.DeleteIssues(ctx, []string{"dia-root"}, true, false, false)
+	if err != nil {
+		t.Fatalf("diamond cascade delete failed: %v", err)
+	}
+	if result.DeletedCount != 4 {
+		t.Errorf("expected 4 deleted, got %d", result.DeletedCount)
+	}
+
+	for _, id := range []string{"dia-root", "dia-left", "dia-right", "dia-bottom"} {
+		got, err := store.GetIssue(ctx, id)
+		if err != nil {
+			t.Fatalf("GetIssue(%s) failed: %v", id, err)
+		}
+		if got != nil {
+			t.Errorf("%s should be deleted", id)
+		}
+	}
+}
+
+// TestDeleteIssuesDepsCountAccuracy verifies that the dependency count does not
+// double-count rows that span across batches. Uses a cross-batch dependency where
+// issue_id is in one batch and depends_on_id is in another.
+func TestDeleteIssuesDepsCountAccuracy(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create 2 issues with 1 dependency between them
+	for _, id := range []string{"dc-a", "dc-b"} {
+		iss := &types.Issue{
+			ID: id, Title: id, Status: types.StatusOpen,
+			Priority: 1, IssueType: types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create %s: %v", id, err)
+		}
+	}
+	dep := &types.Dependency{
+		IssueID: "dc-b", DependsOnID: "dc-a", Type: types.DepBlocks,
+	}
+	if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+		t.Fatalf("failed to add dep: %v", err)
+	}
+
+	// Dry-run to check stats only
+	result, err := store.DeleteIssues(ctx, []string{"dc-a", "dc-b"}, false, true, true)
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	// There is exactly 1 dependency row: (dc-b, dc-a). It should be counted once.
+	if result.DependenciesCount != 1 {
+		t.Errorf("expected exactly 1 dependency, got %d (possible double-counting)", result.DependenciesCount)
 	}
 }
 
