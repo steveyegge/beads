@@ -27,7 +27,6 @@ Backend migration flags:
   --to-dolt     Migrate from SQLite to Dolt backend
 
 Subcommands:
-  hash-ids    Migrate sequential IDs to hash-based IDs (legacy)
   issues      Move issues between repositories
   sync        Set up sync.branch workflow for multi-clone setups
 `,
@@ -755,6 +754,17 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 		fmt.Println("  3. Future issue updates will be committed to the separate branch")
 		fmt.Println("\nSee docs/PROTECTED_BRANCHES.md for complete workflow guide")
 	}
+}
+
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	// nolint:gosec // G304: src is validated migration backup path
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	// nolint:gosec // G306: backup file needs to be readable by other tools
+	return os.WriteFile(dst, data, 0644)
 }
 
 func init() {

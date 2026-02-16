@@ -22,7 +22,7 @@ func TestExampleCompiles(t *testing.T) {
 
 	// Open storage
 	ctx := context.Background()
-	store, err := beads.NewStorage(ctx, dbPath)
+	store, err := beads.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open storage: %v", err)
 	}

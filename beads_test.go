@@ -9,14 +9,14 @@ import (
 	"github.com/steveyegge/beads"
 )
 
-func TestNewStorage(t *testing.T) {
+func TestOpen(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test-dolt")
 
 	ctx := context.Background()
-	store, err := beads.NewStorage(ctx, dbPath)
+	store, err := beads.Open(ctx, dbPath)
 	if err != nil {
-		t.Fatalf("NewStorage failed: %v", err)
+		t.Fatalf("Open failed: %v", err)
 	}
 	defer store.Close()
 

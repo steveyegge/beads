@@ -29,7 +29,7 @@ func main() {
 
 	// Open bd storage + extension database
 	ctx := context.Background()
-	store, _ := beads.NewStorage(ctx, *dbPath)
+	store, _ := beads.Open(ctx, *dbPath)
 	defer store.Close()
 	db, _ := sql.Open("sqlite3", *dbPath)
 	defer db.Close()

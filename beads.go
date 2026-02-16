@@ -22,8 +22,8 @@ type Storage = beads.Storage
 // Use Storage.RunInTransaction() to obtain a Transaction instance.
 type Transaction = beads.Transaction
 
-// NewStorage creates a new storage instance at the given path using the Dolt backend.
-func NewStorage(ctx context.Context, dbPath string) (Storage, error) {
+// Open opens a Dolt-backed beads database at the given path.
+func Open(ctx context.Context, dbPath string) (Storage, error) {
 	return dolt.New(ctx, &dolt.Config{Path: dbPath})
 }
 

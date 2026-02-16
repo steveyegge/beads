@@ -6,11 +6,12 @@
 // and federation via Dolt remotes. This backend eliminates the need for JSONL sync layers
 // by making the database itself version-controlled.
 //
-// Key differences from SQLite backend:
-//   - Uses github.com/dolthub/driver for embedded Dolt access
-//   - Supports version control operations (commit, push, pull, branch, merge)
-//   - History queries via AS OF and dolt_history_* tables
-//   - Cell-level merge instead of line-level JSONL merge
+// Dolt capabilities:
+//   - Embedded access via github.com/dolthub/driver (no server required)
+//   - Native version control (commit, push, pull, branch, merge)
+//   - Time-travel queries via AS OF and dolt_history_* tables
+//   - Cell-level merge for conflict resolution
+//   - Server mode for multi-writer scenarios (federation)
 //
 // Connection modes:
 //   - Embedded: No server required, database/sql interface via dolthub/driver
@@ -54,6 +55,10 @@ type DoltStore struct {
 	// filesystem locks held by the embedded engine.
 	embeddedConnector *embedded.Connector
 
+	// Watchdog for server mode auto-recovery
+	watchdogCancel context.CancelFunc
+	watchdogDone   chan struct{}
+
 	// Version control config
 	committerName  string
 	committerEmail string
@@ -77,6 +82,9 @@ type Config struct {
 	ServerPort     int    // Server port (default: 3307)
 	ServerUser     string // MySQL user (default: root)
 	ServerPassword string // MySQL password (default: empty, can be set via BEADS_DOLT_PASSWORD)
+
+	// Watchdog options
+	DisableWatchdog bool // Disable server health monitoring (default: enabled in server mode)
 }
 
 const embeddedOpenMaxElapsed = 30 * time.Second
@@ -413,6 +421,9 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		store.branch = bdBranch
 	}
 
+	// Start watchdog for server mode auto-recovery
+	store.startWatchdog(cfg)
+
 	return store, nil
 }
 
@@ -669,6 +680,8 @@ func isOnlyComments(stmt string) bool {
 // Close closes the database connection
 func (s *DoltStore) Close() error {
 	s.closed.Store(true)
+	// Stop watchdog before taking the lock (watchdog may hold RLock)
+	s.stopWatchdog()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var err error

@@ -25,7 +25,7 @@ func main() {
 	fmt.Printf("Using database: %s\n\n", dbPath)
 
 	// Open the database
-	store, err := beads.NewStorage(ctx, dbPath)
+	store, err := beads.Open(ctx, dbPath)
 	if err != nil {
 		log.Fatalf("Failed to open storage: %v", err)
 	}

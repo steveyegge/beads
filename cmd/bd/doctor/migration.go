@@ -16,9 +16,9 @@ import (
 
 // PendingMigration represents a single pending migration
 type PendingMigration struct {
-	Name        string // e.g., "hash-ids", "sync"
-	Description string // e.g., "Convert sequential IDs to hash-based IDs"
-	Command     string // e.g., "bd migrate hash-ids"
+	Name        string // e.g., "sync"
+	Description string // e.g., "Configure sync branch for multi-clone setup"
+	Command     string // e.g., "bd migrate sync beads-sync"
 	Priority    int    // 1 = critical, 2 = recommended, 3 = optional
 }
 
@@ -99,49 +99,6 @@ func CheckPendingMigrations(path string) DoctorCheck {
 		Fix:      strings.Join(fixes, "\n"),
 		Category: CategoryMaintenance,
 	}
-}
-
-// needsHashIDsMigration checks if the database uses sequential IDs
-func needsHashIDsMigration(beadsDir string) bool {
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	// Skip if no database
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return false
-	}
-
-	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
-	if err != nil {
-		return false
-	}
-	defer db.Close()
-
-	// Get sample of issues
-	rows, err := db.Query("SELECT id FROM issues ORDER BY created_at LIMIT 10")
-	if err != nil {
-		return false
-	}
-	defer rows.Close()
-
-	var issueIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err == nil {
-			issueIDs = append(issueIDs, id)
-		}
-	}
-
-	if len(issueIDs) == 0 {
-		return false
-	}
-
-	// Returns true if NOT using hash-based IDs (i.e., using sequential)
-	return !DetectHashBasedIDs(db, issueIDs)
 }
 
 // needsSyncMigration checks if sync-branch should be configured

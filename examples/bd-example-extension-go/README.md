@@ -162,7 +162,7 @@ if dbPath == "" {
 }
 
 // Open bd storage
-store, err := beads.NewStorage(ctx, dbPath)
+store, err := beads.Open(ctx, dbPath)
 
 // Find ready work
 readyIssues, err := store.GetReadyWork(ctx, beads.WorkFilter{Limit: 10})

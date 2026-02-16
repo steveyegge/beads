@@ -103,8 +103,6 @@ func TestDoctorJSONOutput(t *testing.T) {
 	}
 }
 
-// Note: isHashID is tested in migrate_hash_ids_test.go
-
 func TestDetectHashBasedIDs(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -538,17 +538,3 @@ func TestFindBeadsDir_BEADS_DIR_WithProjectFiles(t *testing.T) {
 	}
 }
 
-// TestNewStorage_Unit tests that NewStorage wraps dolt.New successfully
-func TestNewStorage_Unit(t *testing.T) {
-	tmpDir := t.TempDir()
-	doltPath := filepath.Join(tmpDir, "dolt")
-
-	store, err := NewStorage(t.Context(), doltPath)
-	if err != nil {
-		t.Fatalf("NewStorage() returned error: %v", err)
-	}
-	if store == nil {
-		t.Fatal("NewStorage() returned nil store")
-	}
-	_ = store.Close()
-}

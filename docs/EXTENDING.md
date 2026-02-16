@@ -115,7 +115,7 @@ import (
 
 // Open bd's storage
 ctx := context.Background()
-store, err := beads.NewStorage(ctx, dbPath)
+store, err := beads.Open(ctx, dbPath)
 if err != nil {
     log.Fatal(err)
 }
@@ -193,7 +193,7 @@ type VCStorage struct {
 func NewVCStorage(dbPath string) (*VCStorage, error) {
     // Open bd's storage
     ctx := context.Background()
-    store, err := beads.NewStorage(ctx, dbPath)
+    store, err := beads.Open(ctx, dbPath)
     if err != nil {
         return nil, err
     }
@@ -491,7 +491,7 @@ import (
 
 // Open bd's storage
 ctx := context.Background()
-store, err := beads.NewStorage(ctx, ".beads/dolt")
+store, err := beads.Open(ctx, ".beads/dolt")
 if err != nil {
     log.Fatal(err)
 }

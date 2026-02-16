@@ -37,7 +37,7 @@ func TestReadonlyModeBlocksWrites(t *testing.T) {
 		{"duplicates --auto-merge"},
 		{"epic close-eligible"},
 		{"migrate"},
-		{"migrate-hash-ids"},
+
 		{"migrate-issues"},
 		{"rename-prefix"},
 		{"validate --fix-all"},

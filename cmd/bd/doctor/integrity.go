@@ -111,7 +111,7 @@ func CheckIDFormat(path string) DoctorCheck {
 		Name:    "Issue IDs",
 		Status:  StatusWarning,
 		Message: "sequential (e.g., bd-1, bd-2, ...)",
-		Fix:     "Run 'bd migrate hash-ids' to upgrade (prevents ID collisions in multi-worker scenarios)",
+		Fix:     "Sequential IDs may cause collisions in multi-worker scenarios. Re-initialize with 'bd init' to use hash-based IDs.",
 	}
 }
 

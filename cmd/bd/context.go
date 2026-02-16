@@ -371,7 +371,6 @@ func isAllowStale() bool {
 
 // syncCommandContext copies all legacy global values to the CommandContext.
 // This is called after initialization is complete to ensure cmdCtx has all values.
-// During the transition period, this keeps cmdCtx in sync with globals.
 func syncCommandContext() {
 	if shouldUseGlobals() {
 		return
