@@ -224,7 +224,7 @@ func handleToSQLiteMigration(_ bool, _ bool) {
 
 // extractFromSQLite extracts all data from a SQLite database using raw SQL.
 func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 	}
@@ -254,8 +254,8 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 			COALESCE(status,''), COALESCE(priority,0), COALESCE(issue_type,''),
 			COALESCE(assignee,''), estimated_minutes,
 			COALESCE(created_at,''), COALESCE(created_by,''), COALESCE(owner,''),
-			COALESCE(updated_at,''), COALESCE(closed_at,''), external_ref,
-			COALESCE(compaction_level,0), COALESCE(compacted_at,''), compacted_at_commit,
+			COALESCE(updated_at,''), closed_at, external_ref,
+			COALESCE(compaction_level,0), compacted_at, compacted_at_commit,
 			COALESCE(original_size,0),
 			COALESCE(sender,''), COALESCE(ephemeral,0), COALESCE(pinned,0),
 			COALESCE(is_template,0), COALESCE(crystallizes,''),
@@ -264,8 +264,8 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 			COALESCE(event_kind,''), COALESCE(actor,''), COALESCE(target,''), COALESCE(payload,''),
 			COALESCE(await_type,''), COALESCE(await_id,''), COALESCE(timeout_ns,0), COALESCE(waiters,''),
 			COALESCE(hook_bead,''), COALESCE(role_bead,''), COALESCE(agent_state,''),
-			COALESCE(last_activity,''), COALESCE(role_type,''), COALESCE(rig,''),
-			COALESCE(due_at,''), COALESCE(defer_until,'')
+			last_activity, COALESCE(role_type,''), COALESCE(rig,''),
+			due_at, defer_until
 		FROM issues`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query issues: %w", err)
@@ -278,6 +278,7 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 		var estMin sql.NullInt64
 		var extRef, compactCommit sql.NullString
 		var qualScore sql.NullFloat64
+		var closedAtStr, compactedAtStr, lastActivityStr, dueAtStr, deferUntilStr sql.NullString
 		var timeoutNs int64
 		var waitersJSON string
 		if err := issueRows.Scan(
@@ -286,8 +287,8 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 			&issue.Status, &issue.Priority, &issue.IssueType,
 			&issue.Assignee, &estMin,
 			&issue.CreatedAt, &issue.CreatedBy, &issue.Owner,
-			&issue.UpdatedAt, &issue.ClosedAt, &extRef,
-			&issue.CompactionLevel, &issue.CompactedAt, &compactCommit,
+			&issue.UpdatedAt, &closedAtStr, &extRef,
+			&issue.CompactionLevel, &compactedAtStr, &compactCommit,
 			&issue.OriginalSize,
 			&issue.Sender, &issue.Ephemeral, &issue.Pinned,
 			&issue.IsTemplate, &issue.Crystallizes,
@@ -296,8 +297,8 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 			&issue.EventKind, &issue.Actor, &issue.Target, &issue.Payload,
 			&issue.AwaitType, &issue.AwaitID, &timeoutNs, &waitersJSON,
 			&issue.HookBead, &issue.RoleBead, &issue.AgentState,
-			&issue.LastActivity, &issue.RoleType, &issue.Rig,
-			&issue.DueAt, &issue.DeferUntil,
+			&lastActivityStr, &issue.RoleType, &issue.Rig,
+			&dueAtStr, &deferUntilStr,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
 		}
@@ -315,6 +316,11 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 			v := float32(qualScore.Float64)
 			issue.QualityScore = &v
 		}
+		issue.ClosedAt = parseNullableTime(closedAtStr)
+		issue.CompactedAt = parseNullableTime(compactedAtStr)
+		issue.LastActivity = parseNullableTime(lastActivityStr)
+		issue.DueAt = parseNullableTime(dueAtStr)
+		issue.DeferUntil = parseNullableTime(deferUntilStr)
 		issue.Timeout = time.Duration(timeoutNs)
 		if waitersJSON != "" {
 			_ = json.Unmarshal([]byte(waitersJSON), &issue.Waiters)
@@ -744,4 +750,23 @@ func formatJSONArray(arr []string) string {
 // listMigrations returns registered Dolt migrations (CGO build).
 func listMigrations() []string {
 	return dolt.ListMigrations()
+}
+
+// parseNullableTime converts a sql.NullString to *time.Time.
+// SQLite stores timestamps as text; this handles NULL columns without COALESCE.
+func parseNullableTime(ns sql.NullString) *time.Time {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+	} {
+		if t, err := time.Parse(layout, ns.String); err == nil {
+			return &t
+		}
+	}
+	return nil
 }
