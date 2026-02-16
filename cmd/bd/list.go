@@ -297,6 +297,9 @@ var listCmd = &cobra.Command{
 		// Gate filtering (bd-7zka.2)
 		includeGates, _ := cmd.Flags().GetBool("include-gates")
 
+		// Wisp filtering (aegis-zzd6q)
+		includeWisps, _ := cmd.Flags().GetBool("include-wisps")
+
 		// Parent filtering (--filter-parent is alias for --parent)
 		parentID, _ := cmd.Flags().GetString("parent")
 		if parentID == "" {
@@ -552,6 +555,13 @@ var listCmd = &cobra.Command{
 		// Use --include-gates or --type gate to show gate issues
 		if !includeGates && issueType != "gate" {
 			filter.ExcludeTypes = append(filter.ExcludeTypes, "gate")
+		}
+
+		// Wisp filtering: exclude ephemeral beads by default (aegis-zzd6q)
+		// Use --include-wisps or --all to show ephemeral beads
+		if !includeWisps && !allFlag {
+			notEphemeral := false
+			filter.Ephemeral = &notEphemeral
 		}
 
 		// Parent filtering: filter children by parent issue
@@ -841,6 +851,9 @@ func init() {
 
 	// Gate filtering: exclude gate issues by default (bd-7zka.2)
 	listCmd.Flags().Bool("include-gates", false, "Include gate issues in output (normally hidden)")
+
+	// Wisp filtering: exclude ephemeral wisps by default (aegis-zzd6q)
+	listCmd.Flags().Bool("include-wisps", false, "Include ephemeral wisp beads in output (normally hidden)")
 
 	// Parent filtering: filter children by parent issue
 	listCmd.Flags().String("parent", "", "Filter by parent issue ID (shows children of specified issue)")
