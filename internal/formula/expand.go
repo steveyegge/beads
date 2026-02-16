@@ -276,8 +276,8 @@ func mergeVars(formula *Formula, overrides map[string]string) map[string]string 
 
 	// Start with formula defaults
 	for name, def := range formula.Vars {
-		if def.Default != "" {
-			result[name] = def.Default
+		if def.Default != nil {
+			result[name] = *def.Default
 		}
 	}
 

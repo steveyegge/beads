@@ -594,9 +594,10 @@ func extractRequiredVariables(subgraph *TemplateSubgraph) []string {
 			// Not a declared formula variable - skip (documentation handlebars)
 			continue
 		}
-		// A declared variable is required only if explicitly marked as such.
-		// Variables with empty-string defaults (default="") are optional.
-		if def.Required {
+		// A declared variable is required if it has no default.
+		// nil Default = no default specified (must provide).
+		// Non-nil Default (including &"") = has explicit default (optional).
+		if def.Default == nil {
 			required = append(required, v)
 		}
 	}
@@ -617,8 +618,8 @@ func applyVariableDefaults(vars map[string]string, subgraph *TemplateSubgraph) m
 
 	// Apply defaults for missing variables (including empty-string defaults)
 	for name, def := range subgraph.VarDefs {
-		if _, exists := result[name]; !exists && !def.Required {
-			result[name] = def.Default
+		if _, exists := result[name]; !exists && def.Default != nil {
+			result[name] = *def.Default
 		}
 	}
 

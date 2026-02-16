@@ -880,7 +880,7 @@ func TestExtractRequiredVariables_IgnoresUndeclaredVars(t *testing.T) {
 				{Title: "Deploy {{component}}", Description: "Deploy the component"},
 			},
 			varDefs: map[string]formula.VarDef{
-				"component": {Default: "api"},
+				"component": {Default: formula.StringPtr("api")},
 			},
 			wantRequired: []string{},
 		},
@@ -908,7 +908,7 @@ func TestExtractRequiredVariables_IgnoresUndeclaredVars(t *testing.T) {
 			},
 			varDefs: map[string]formula.VarDef{
 				"component": {Required: true},
-				"env":       {Default: "prod"},
+				"env":       {Default: formula.StringPtr("prod")},
 				// status_count is NOT declared - it's documentation
 			},
 			wantRequired: []string{"component"},
@@ -952,4 +952,105 @@ func TestExtractRequiredVariables_IgnoresUndeclaredVars(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestExtractRequiredVariables_EmptyStringDefault tests the core bug fix:
+// variables with default="" should NOT be required (they have an explicit empty-string default).
+func TestExtractRequiredVariables_EmptyStringDefault(t *testing.T) {
+	t.Parallel()
+
+	t.Run("declared var with empty-string default is NOT required", func(t *testing.T) {
+		subgraph := &TemplateSubgraph{
+			Issues: []*types.Issue{
+				{Title: "Run {{setup_command}}", Description: "Execute setup"},
+			},
+			VarDefs: map[string]formula.VarDef{
+				"setup_command": {Default: formula.StringPtr("")},
+			},
+		}
+
+		got := extractRequiredVariables(subgraph)
+		if len(got) != 0 {
+			t.Errorf("extractRequiredVariables() = %v, want empty (empty-string default should not be required)", got)
+		}
+	})
+
+	t.Run("declared var with no default IS required", func(t *testing.T) {
+		subgraph := &TemplateSubgraph{
+			Issues: []*types.Issue{
+				{Title: "Build {{component}}", Description: "Build it"},
+			},
+			VarDefs: map[string]formula.VarDef{
+				"component": {Required: true},
+			},
+		}
+
+		got := extractRequiredVariables(subgraph)
+		if len(got) != 1 || got[0] != "component" {
+			t.Errorf("extractRequiredVariables() = %v, want [component]", got)
+		}
+	})
+}
+
+func TestApplyVariableDefaults(t *testing.T) {
+	t.Parallel()
+
+	t.Run("applies non-empty defaults for missing vars", func(t *testing.T) {
+		subgraph := &TemplateSubgraph{
+			VarDefs: map[string]formula.VarDef{
+				"env": {Default: formula.StringPtr("production")},
+			},
+		}
+		result := applyVariableDefaults(map[string]string{}, subgraph)
+		if result["env"] != "production" {
+			t.Errorf("env = %q, want 'production'", result["env"])
+		}
+	})
+
+	t.Run("applies empty-string defaults for missing vars", func(t *testing.T) {
+		subgraph := &TemplateSubgraph{
+			VarDefs: map[string]formula.VarDef{
+				"setup_cmd": {Default: formula.StringPtr("")},
+			},
+		}
+		result := applyVariableDefaults(map[string]string{}, subgraph)
+		if v, ok := result["setup_cmd"]; !ok {
+			t.Error("setup_cmd should be present in result (empty-string default)")
+		} else if v != "" {
+			t.Errorf("setup_cmd = %q, want empty string", v)
+		}
+	})
+
+	t.Run("user-provided vars override defaults", func(t *testing.T) {
+		subgraph := &TemplateSubgraph{
+			VarDefs: map[string]formula.VarDef{
+				"env": {Default: formula.StringPtr("staging")},
+			},
+		}
+		result := applyVariableDefaults(map[string]string{"env": "production"}, subgraph)
+		if result["env"] != "production" {
+			t.Errorf("env = %q, want 'production'", result["env"])
+		}
+	})
+
+	t.Run("does not apply defaults for vars with nil Default", func(t *testing.T) {
+		subgraph := &TemplateSubgraph{
+			VarDefs: map[string]formula.VarDef{
+				"required": {Required: true}, // nil Default
+			},
+		}
+		result := applyVariableDefaults(map[string]string{}, subgraph)
+		if _, ok := result["required"]; ok {
+			t.Error("required should NOT have a default applied (nil Default)")
+		}
+	})
+
+	t.Run("nil VarDefs returns original vars unchanged", func(t *testing.T) {
+		subgraph := &TemplateSubgraph{VarDefs: nil}
+		input := map[string]string{"key": "value"}
+		result := applyVariableDefaults(input, subgraph)
+		if result["key"] != "value" {
+			t.Errorf("key = %q, want 'value'", result["key"])
+		}
+	})
 }

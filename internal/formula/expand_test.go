@@ -485,8 +485,8 @@ func TestSubstituteVars(t *testing.T) {
 func TestMergeVars(t *testing.T) {
 	formula := &Formula{
 		Vars: map[string]*VarDef{
-			"env":     {Default: "staging"},
-			"version": {Default: "1.0"},
+			"env":     {Default: StringPtr("staging")},
+			"version": {Default: StringPtr("1.0")},
 			"name":    {Required: true}, // No default
 		},
 	}
@@ -517,6 +517,31 @@ func TestMergeVars(t *testing.T) {
 
 		if result["env"] != "staging" {
 			t.Errorf("env = %q, want 'staging'", result["env"])
+		}
+	})
+
+	t.Run("empty-string defaults are included in merge", func(t *testing.T) {
+		f := &Formula{
+			Vars: map[string]*VarDef{
+				"setup_cmd": {Default: StringPtr("")},
+				"name":      {Default: StringPtr("default-name")},
+				"required":  {Required: true}, // nil default
+			},
+		}
+		result := mergeVars(f, nil)
+
+		if v, ok := result["setup_cmd"]; !ok {
+			t.Error("setup_cmd should be present in merged result (empty-string default)")
+		} else if v != "" {
+			t.Errorf("setup_cmd = %q, want empty string", v)
+		}
+
+		if result["name"] != "default-name" {
+			t.Errorf("name = %q, want 'default-name'", result["name"])
+		}
+
+		if _, ok := result["required"]; ok {
+			t.Error("required should NOT be in merged result (nil default)")
 		}
 	})
 }
