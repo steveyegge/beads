@@ -63,6 +63,48 @@ func StaleLockFiles(path string) error {
 		}
 	}
 
+	// Remove stale dolt-access.lock (embedded dolt advisory flock).
+	// This lock uses flock which is released on process exit, but the file
+	// persists and can confuse diagnostics or cause issues if flock behavior
+	// varies across platforms.
+	accessLockPath := filepath.Join(beadsDir, "dolt-access.lock")
+	if info, err := os.Stat(accessLockPath); err == nil {
+		age := time.Since(info.ModTime())
+		if age > 5*time.Minute {
+			if err := os.Remove(accessLockPath); err != nil {
+				errors = append(errors, fmt.Sprintf("dolt-access.lock: %v", err))
+			} else {
+				removed = append(removed, "dolt-access.lock")
+			}
+		}
+	}
+
+	// Remove stale Dolt internal LOCK files (noms layer filesystem lock).
+	// These live at .beads/dolt/<database>/.dolt/noms/LOCK and are created
+	// by the embedded Dolt engine. If a process crashes without closing the
+	// embedded connector, the LOCK file persists and blocks all future opens
+	// with "the database is locked by another dolt process".
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if dbEntries, err := os.ReadDir(doltDir); err == nil {
+		for _, dbEntry := range dbEntries {
+			if !dbEntry.IsDir() {
+				continue
+			}
+			nomsLock := filepath.Join(doltDir, dbEntry.Name(), ".dolt", "noms", "LOCK")
+			if info, err := os.Stat(nomsLock); err == nil {
+				age := time.Since(info.ModTime())
+				if age > 5*time.Minute {
+					lockName := fmt.Sprintf("dolt/%s/.dolt/noms/LOCK", dbEntry.Name())
+					if err := os.Remove(nomsLock); err != nil {
+						errors = append(errors, fmt.Sprintf("%s: %v", lockName, err))
+					} else {
+						removed = append(removed, lockName)
+					}
+				}
+			}
+		}
+	}
+
 	// Remove stale startup locks
 	entries, err := os.ReadDir(beadsDir)
 	if err == nil {
