@@ -39,55 +39,6 @@ func CheckInstallation(path string) DoctorCheck {
 	}
 }
 
-// CheckMultipleDatabases checks for multiple database files in .beads directory
-func CheckMultipleDatabases(path string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
-	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-
-	// Find all .db files (excluding backups and vc.db)
-	files, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Database Files",
-			Status:  StatusError,
-			Message: "Unable to check for multiple databases",
-		}
-	}
-
-	// Filter out backups and vc.db
-	var dbFiles []string
-	for _, f := range files {
-		base := filepath.Base(f)
-		if !strings.HasSuffix(base, ".backup.db") && base != "vc.db" {
-			dbFiles = append(dbFiles, base)
-		}
-	}
-
-	if len(dbFiles) == 0 {
-		return DoctorCheck{
-			Name:    "Database Files",
-			Status:  StatusOK,
-			Message: "No database files (JSONL-only mode)",
-		}
-	}
-
-	if len(dbFiles) == 1 {
-		return DoctorCheck{
-			Name:    "Database Files",
-			Status:  StatusOK,
-			Message: "Single database file",
-		}
-	}
-
-	// Multiple databases found
-	return DoctorCheck{
-		Name:    "Database Files",
-		Status:  StatusWarning,
-		Message: fmt.Sprintf("Multiple database files found: %s", strings.Join(dbFiles, ", ")),
-		Fix:     "Run 'bd migrate' to consolidate databases or manually remove old .db files",
-	}
-}
-
 // CheckPermissions verifies that .beads directory and database are readable/writable
 func CheckPermissions(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)

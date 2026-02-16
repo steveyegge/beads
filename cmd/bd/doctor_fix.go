@@ -214,7 +214,6 @@ func applyFixList(path string, fixes []doctorCheck) {
 		"Database",
 		"Schema Compatibility",
 		"JSONL Integrity",
-		"DB-JSONL Sync",
 		"Sync Divergence",
 	}
 	priority := make(map[string]int, len(order))
@@ -255,8 +254,6 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = doctor.FixLastTouchedTracking()
 		case "Git Hooks":
 			err = fix.GitHooks(path)
-		case "DB-JSONL Sync":
-			err = fix.DBJSONLSync(path)
 		case "Sync Divergence":
 			err = fix.SyncDivergence(path)
 		case "Permissions":

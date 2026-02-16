@@ -80,24 +80,6 @@ func createSyncDoctorTestDB(t *testing.T, dbPath string, issueCount int, lastImp
 	}
 }
 
-func TestCheckDatabaseJSONLSync_UsesSyncWorktreeJSONL(t *testing.T) {
-	repoPath, worktreePath := setupSyncBranchWorktreeRepo(t)
-
-	mainJSONL := filepath.Join(repoPath, ".beads", "issues.jsonl")
-	worktreeJSONL := filepath.Join(worktreePath, ".beads", "issues.jsonl")
-	dbPath := filepath.Join(repoPath, ".beads", "beads.db")
-
-	// Main JSONL is stale, sync worktree JSONL has current state.
-	writeJSONLIssues(t, mainJSONL, 1)
-	writeJSONLIssues(t, worktreeJSONL, 3)
-	createSyncDoctorTestDB(t, dbPath, 3, nil)
-
-	check := CheckDatabaseJSONLSync(repoPath)
-	if check.Status != StatusOK {
-		t.Fatalf("status=%q want %q (msg=%q detail=%q)", check.Status, StatusOK, check.Message, check.Detail)
-	}
-}
-
 func TestCheckSyncDivergence_UsesSyncWorktreeJSONLForMtime(t *testing.T) {
 	repoPath, worktreePath := setupSyncBranchWorktreeRepo(t)
 
