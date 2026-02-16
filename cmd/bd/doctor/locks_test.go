@@ -120,6 +120,112 @@ func TestCheckStaleLockFiles(t *testing.T) {
 		}
 	})
 
+	t.Run("fresh dolt-access.lock not stale", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		lockPath := filepath.Join(beadsDir, "dolt-access.lock")
+		if err := os.WriteFile(lockPath, []byte("lock"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		result := CheckStaleLockFiles(tmpDir)
+		if result.Status != StatusOK {
+			t.Errorf("expected OK for fresh dolt-access.lock, got %s: %s", result.Status, result.Message)
+		}
+	})
+
+	t.Run("stale dolt-access.lock detected", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		lockPath := filepath.Join(beadsDir, "dolt-access.lock")
+		if err := os.WriteFile(lockPath, []byte("lock"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		oldTime := time.Now().Add(-10 * time.Minute)
+		if err := os.Chtimes(lockPath, oldTime, oldTime); err != nil {
+			t.Fatal(err)
+		}
+
+		result := CheckStaleLockFiles(tmpDir)
+		if result.Status != StatusWarning {
+			t.Errorf("expected Warning for stale dolt-access.lock, got %s: %s", result.Status, result.Message)
+		}
+	})
+
+	t.Run("fresh noms LOCK not stale", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		nomsDir := filepath.Join(tmpDir, ".beads", "dolt", "beads", ".dolt", "noms")
+		if err := os.MkdirAll(nomsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		lockPath := filepath.Join(nomsDir, "LOCK")
+		if err := os.WriteFile(lockPath, []byte("lock"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		result := CheckStaleLockFiles(tmpDir)
+		if result.Status != StatusOK {
+			t.Errorf("expected OK for fresh noms LOCK, got %s: %s", result.Status, result.Message)
+		}
+	})
+
+	t.Run("stale noms LOCK detected", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		nomsDir := filepath.Join(tmpDir, ".beads", "dolt", "beads", ".dolt", "noms")
+		if err := os.MkdirAll(nomsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		lockPath := filepath.Join(nomsDir, "LOCK")
+		if err := os.WriteFile(lockPath, []byte("lock"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		oldTime := time.Now().Add(-10 * time.Minute)
+		if err := os.Chtimes(lockPath, oldTime, oldTime); err != nil {
+			t.Fatal(err)
+		}
+
+		result := CheckStaleLockFiles(tmpDir)
+		if result.Status != StatusWarning {
+			t.Errorf("expected Warning for stale noms LOCK, got %s: %s", result.Status, result.Message)
+		}
+	})
+
+	t.Run("stale noms LOCK multi-database", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+
+		// Create two database dirs with stale noms LOCKs
+		for _, dbName := range []string{"beads", "other"} {
+			nomsDir := filepath.Join(beadsDir, "dolt", dbName, ".dolt", "noms")
+			if err := os.MkdirAll(nomsDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			lockPath := filepath.Join(nomsDir, "LOCK")
+			if err := os.WriteFile(lockPath, []byte("lock"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			oldTime := time.Now().Add(-10 * time.Minute)
+			if err := os.Chtimes(lockPath, oldTime, oldTime); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		result := CheckStaleLockFiles(tmpDir)
+		if result.Status != StatusWarning {
+			t.Errorf("expected Warning for multiple stale noms LOCKs, got %s: %s", result.Status, result.Message)
+		}
+	})
+
 	t.Run("multiple stale locks", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		beadsDir := filepath.Join(tmpDir, ".beads")
