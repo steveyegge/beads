@@ -85,10 +85,17 @@ func openDoltDBViaServer(cfg *configfile.Config) (*sql.DB, error) {
 }
 
 // openDoltDBEmbedded opens a Dolt database using the in-process embedded driver.
-// Switches to the "beads" database after opening.
+// Reads the configured database name from metadata.json (dolt_database field)
+// and switches to it after opening.
 func openDoltDBEmbedded(beadsDir string) (*sql.DB, error) {
 	doltDir := filepath.Join(beadsDir, "dolt")
 	connStr := fmt.Sprintf("file://%s?commitname=beads&commitemail=beads@local", doltDir)
+
+	// Determine the database name from configuration
+	dbName := configfile.DefaultDoltDatabase
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
+		dbName = cfg.GetDoltDatabase()
+	}
 
 	db, err := sql.Open("dolt", connStr)
 	if err != nil {
@@ -96,9 +103,9 @@ func openDoltDBEmbedded(beadsDir string) (*sql.DB, error) {
 	}
 
 	ctx := context.Background()
-	if _, err := db.ExecContext(ctx, "USE beads"); err != nil {
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("USE `%s`", dbName)); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to switch to beads database: %w", err)
+		return nil, fmt.Errorf("failed to switch to %s database: %w", dbName, err)
 	}
 
 	return db, nil
@@ -286,7 +293,11 @@ func CheckDoltConnection(path string) DoctorCheck {
 
 	// In embedded mode, check if Dolt database directory exists on disk
 	if !isServerMode {
-		doltPath := filepath.Join(beadsDir, "dolt", "beads", ".dolt")
+		dbName := configfile.DefaultDoltDatabase
+		if cfg != nil {
+			dbName = cfg.GetDoltDatabase()
+		}
+		doltPath := filepath.Join(beadsDir, "dolt", dbName, ".dolt")
 		if _, err := os.Stat(doltPath); os.IsNotExist(err) {
 			return DoctorCheck{
 				Name:     "Dolt Connection",

@@ -707,6 +707,65 @@ func runDiagnostics(path string) doctorResult {
 	return result
 }
 
+// runInitDiagnostics runs a limited subset of diagnostics appropriate for a
+// freshly-initialized project. Unlike runDiagnostics (which checks everything),
+// this only validates that the init itself succeeded: the .beads directory exists,
+// the database is openable with correct schema, and permissions are correct.
+// Checks that require git, federation remotes, or other post-setup configuration
+// are skipped since they cannot be satisfied in a fresh project.
+func runInitDiagnostics(path string) doctorResult {
+	result := doctorResult{
+		Path:       path,
+		CLIVersion: Version,
+		OverallOK:  true,
+	}
+
+	// Check 1: Installation (.beads/ directory)
+	installCheck := convertWithCategory(doctor.CheckInstallation(path), doctor.CategoryCore)
+	result.Checks = append(result.Checks, installCheck)
+	if installCheck.Status != statusOK {
+		result.OverallOK = false
+		return result
+	}
+
+	// Check 2: Database version
+	dbCheck := convertWithCategory(doctor.CheckDatabaseVersion(path, Version), doctor.CategoryCore)
+	result.Checks = append(result.Checks, dbCheck)
+	if dbCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 3: Schema compatibility
+	schemaCheck := convertWithCategory(doctor.CheckSchemaCompatibility(path), doctor.CategoryCore)
+	result.Checks = append(result.Checks, schemaCheck)
+	if schemaCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 4: Permissions
+	permCheck := convertWithCategory(doctor.CheckPermissions(path), doctor.CategoryCore)
+	result.Checks = append(result.Checks, permCheck)
+	if permCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 5: Dolt connection — validates init actually created a working DB
+	doltConnCheck := convertDoctorCheck(doctor.CheckDoltConnection(path))
+	result.Checks = append(result.Checks, doltConnCheck)
+	if doltConnCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 6: Dolt schema — validates tables were created
+	doltSchemaCheck := convertDoctorCheck(doctor.CheckDoltSchema(path))
+	result.Checks = append(result.Checks, doltSchemaCheck)
+	if doltSchemaCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	return result
+}
+
 // convertDoctorCheck converts doctor package check to main package check
 func convertDoctorCheck(dc doctor.DoctorCheck) doctorCheck {
 	return doctorCheck{
