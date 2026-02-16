@@ -319,15 +319,14 @@ Comprehensive test coverage in `blocked_cache_test.go`:
 - Transitive blocking via parent-child
 - Related dependencies (should NOT affect cache)
 
-Run tests: `go test -v ./internal/storage/sqlite -run TestCache`
+Run tests: `go test -v ./internal/storage/dolt -run TestCache`
 
 ### Implementation Files
 
-- `internal/storage/sqlite/blocked_cache.go` - Cache rebuild and invalidation
-- `internal/storage/sqlite/ready.go` - Uses cache in GetReadyWork queries
-- `internal/storage/sqlite/dependencies.go` - Invalidates on dep changes
-- `internal/storage/sqlite/queries.go` - Invalidates on status changes
-- `internal/storage/sqlite/migrations/015_blocked_issues_cache.go` - Schema and initial population
+- `internal/storage/dolt/blocked_cache.go` - Cache rebuild and invalidation
+- `internal/storage/dolt/ready.go` - Uses cache in GetReadyWork queries
+- `internal/storage/dolt/dependencies.go` - Invalidates on dep changes
+- `internal/storage/dolt/queries.go` - Invalidates on status changes
 
 ### Future Optimizations
 

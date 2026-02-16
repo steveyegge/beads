@@ -30,8 +30,8 @@ GitHub Issues + gh CLI can approximate some features, but fundamentally cannot r
    - bd: Automatic collision resolution, duplicate merge with dependency consolidation and reference rewriting
    - GH: Manual close-as-duplicate, no safe bulk merge, no cross-reference updates
 
-5. **Extensible Local Database**
-   - bd: Add SQL tables and join with issue data locally (see [EXTENDING.md](EXTENDING.md))
+5. **Version-Controlled SQL Database**
+   - bd: Full SQL queries against local Dolt database with native version control
    - GH: No local database; would need to mirror data externally
 
 6. **Agent-Native APIs**
@@ -50,7 +50,7 @@ Taskwarrior is excellent for personal task management, but bd is built for AI ag
 - **JSON-first design**: Every command has `--json` output
 - **Git-native sync**: No sync server setup required
 - **Merge-friendly JSONL**: One issue per line, AI-resolvable conflicts
-- **Extensible SQLite**: Add your own tables without forking
+- **SQL database**: Full SQL queries against Dolt database
 
 ### Can I use bd without AI agents?
 
@@ -318,7 +318,7 @@ The [CONFIG.md](CONFIG.md) guide shows how to store integration settings. Contri
 
 ### How does bd handle scale?
 
-bd uses SQLite, which handles millions of rows efficiently. For a typical project with thousands of issues:
+bd uses Dolt (a version-controlled SQL database), which handles millions of rows efficiently. For a typical project with thousands of issues:
 
 - Commands complete in <100ms
 - Full-text search is instant
@@ -373,7 +373,7 @@ bd's git-based sync means agents work independently and merge their changes like
 
 Yes! bd is designed for offline-first operation:
 
-- All queries run against local SQLite database
+- All queries run against local Dolt database
 - No network required for any commands
 - Sync happens via git push/pull when you're online
 - Full functionality available without internet
@@ -391,19 +391,14 @@ This makes bd ideal for:
 bd is a single static binary with no runtime dependencies:
 
 - **Language**: Go 1.24+
-- **Database**: SQLite (embedded, pure Go driver)
-- **Optional**: Git (for sync across machines)
+- **Database**: Dolt (embedded or server mode)
+- **Optional**: Git (for JSONL sync across machines)
 
 That's it! No PostgreSQL, no Redis, no Docker, no node_modules.
 
 ### Can I extend bd's database?
 
-Yes! See [EXTENDING.md](EXTENDING.md) for how to:
-
-- Add custom tables to the SQLite database
-- Join with issue data
-- Build custom queries
-- Create integrations
+See [EXTENDING.md](EXTENDING.md) for the legacy SQLite extension approach (deprecated). With the Dolt backend, use `bd query` for direct SQL access or build integrations using `bd --json` CLI output.
 
 ### Does bd support Windows?
 
@@ -454,7 +449,7 @@ bd config set sync.branch ""
 
 See [WORKTREES.md#beads-created-worktrees-sync-branch](WORKTREES.md#beads-created-worktrees-sync-branch) for full details.
 
-### What's the difference between SQLite corruption and ID collisions?
+### What's the difference between database corruption and ID collisions?
 
 bd handles two distinct types of integrity issues:
 
@@ -467,23 +462,22 @@ The hash/fingerprint/collision architecture prevents:
 
 **Solution**: Hash-based IDs (v0.20+) eliminate collisions. Different issues automatically get different IDs.
 
-**2. Physical SQLite Corruption**
+**2. Physical Database Corruption**
 
-SQLite database file corruption can occur from:
+Database corruption can occur from:
 - **Disk/hardware failures**: Power loss, disk errors, filesystem corruption
-- **Concurrent writes**: Multiple processes writing to the same database file simultaneously
-- **Container scenarios**: Shared database volumes with multiple containers
+- **Concurrent writes**: Multiple processes writing to the embedded database simultaneously
 
 **Solution**: Reimport from JSONL (which survives in git history):
 ```bash
-mv .beads/*.db .beads/*.db.backup
+rm -rf .beads/dolt
 bd init
 bd import -i .beads/issues.jsonl
 ```
 
 **Key Difference**: Collision resolution fixes logical issues in the data. Physical corruption requires restoring from the JSONL source of truth.
 
-**When to use in-memory mode (`--no-db`)**: For multi-process/container scenarios where SQLite's file locking isn't sufficient. The in-memory backend loads from JSONL at startup and writes back after each command, avoiding shared database state entirely.
+**For multi-writer scenarios**: Use Dolt server mode (`bd dolt set mode server`) to allow concurrent access from multiple processes.
 
 ## Getting Help
 

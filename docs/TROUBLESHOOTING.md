@@ -234,18 +234,21 @@ If you installed via Homebrew, this shouldn't be necessary as the formula alread
 
 ### `database is locked`
 
-Another bd process is accessing the database, or SQLite didn't close properly. Solutions:
+Another bd process is accessing the database. Solutions:
 
 ```bash
 # Find and kill hanging processes
 ps aux | grep bd
 kill <pid>
 
-# Remove lock files (safe if no bd processes running)
-rm .beads/*.db-journal .beads/*.db-wal .beads/*.db-shm
+# For embedded mode: remove the lock file
+rm .beads/dolt/.dolt/lock
+
+# For server mode: restart the Dolt server
+# (server mode handles concurrent access natively)
 ```
 
-**Note**: bd uses a pure Go SQLite driver (`modernc.org/sqlite`) for better portability. Under extreme concurrent load (100+ simultaneous operations), you may see "database is locked" errors. This is a known limitation of the pure Go implementation and does not affect normal usage. For very high concurrency scenarios, consider using the CGO-enabled driver or PostgreSQL (planned for future release).
+**Note**: For high-concurrency scenarios (multiple agents), use Dolt server mode (`bd dolt set mode server`) which handles concurrent access natively via `dolt sql-server`.
 
 ### `bd init` fails with "directory not empty"
 
@@ -269,7 +272,7 @@ You're trying to import issues that conflict with existing ones. Options:
 bd import -i issues.jsonl --skip-existing
 
 # Or clear database and re-import everything
-rm .beads/*.db
+rm -rf .beads/dolt
 bd import -i .beads/issues.jsonl
 ```
 
@@ -378,16 +381,13 @@ bd config set sync.branch ""  # Disable sync branch feature
 
 ### Database corruption
 
-**Important**: Distinguish between **logical consistency issues** (ID collisions, wrong prefixes) and **physical SQLite corruption**.
+**Important**: Distinguish between **logical consistency issues** (ID collisions, wrong prefixes) and **physical database corruption**.
 
 For **physical database corruption** (disk failures, power loss, filesystem errors):
 
 ```bash
-# Check database integrity
-sqlite3 .beads/*.db "PRAGMA integrity_check;"
-
 # If corrupted, reimport from JSONL (source of truth in git)
-mv .beads/*.db .beads/*.db.backup
+mv .beads/dolt .beads/dolt.backup
 bd init
 bd import -i .beads/issues.jsonl
 ```
@@ -399,7 +399,7 @@ For **logical consistency issues** (ID collisions from branch merges, parallel w
 bd import -i .beads/issues.jsonl
 ```
 
-See [FAQ](FAQ.md#whats-the-difference-between-sqlite-corruption-and-id-collisions) for the distinction.
+See [FAQ](FAQ.md#whats-the-difference-between-database-corruption-and-id-collisions) for the distinction.
 
 ### Multiple databases detected warning
 
@@ -770,7 +770,7 @@ bd --no-daemon --no-auto-flush --no-auto-import <command>
 ```
 
 **What sandbox mode does:**
-- Disables daemon (uses direct SQLite mode)
+- Disables daemon (uses direct database mode)
 - Disables auto-export to JSONL
 - Disables auto-import from JSONL
 - Allows bd to work in network-restricted environments

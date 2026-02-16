@@ -46,10 +46,10 @@ Uses shorter benchmark time (100ms) for quicker feedback.
 
 ```bash
 # Run only GetReadyWork benchmarks
-go test -bench=BenchmarkGetReadyWork -benchtime=1s -tags=bench -run=^$ ./internal/storage/sqlite/
+go test -bench=BenchmarkGetReadyWork -benchtime=1s -tags=bench -run=^$ ./internal/storage/dolt/
 
 # Run only Large (10K) benchmarks
-go test -bench=Large -benchtime=1s -tags=bench -run=^$ ./internal/storage/sqlite/
+go test -bench=Large -benchtime=1s -tags=bench -run=^$ ./internal/storage/dolt/
 ```
 
 ### Understanding Benchmark Output
@@ -110,7 +110,7 @@ For memory-focused analysis:
 ```bash
 # Generate memory profile
 go test -bench=BenchmarkGetReadyWork_Large -benchtime=1s -tags=bench -run=^$ \
-    -memprofile=mem.prof ./internal/storage/sqlite/
+    -memprofile=mem.prof ./internal/storage/dolt/
 
 # View memory profile
 go tool pprof -http=:8080 mem.prof
@@ -178,10 +178,10 @@ Compare before/after:
 
 ```bash
 # Save baseline
-go test -bench=. -count=5 -tags=bench -run=^$ ./internal/storage/sqlite/ > old.txt
+go test -bench=. -count=5 -tags=bench -run=^$ ./internal/storage/dolt/ > old.txt
 
 # Make changes, then run again
-go test -bench=. -count=5 -tags=bench -run=^$ ./internal/storage/sqlite/ > new.txt
+go test -bench=. -count=5 -tags=bench -run=^$ ./internal/storage/dolt/ > new.txt
 
 # Compare
 benchstat old.txt new.txt
@@ -220,7 +220,7 @@ A change is significant if:
 
 1. **Reduce allocations**: Reuse buffers, avoid `append` in loops
 2. **Batch database operations**: One query instead of N
-3. **Use indexes**: Ensure queries hit SQLite indexes
+3. **Use indexes**: Ensure queries hit database indexes
 4. **Avoid N+1 queries**: Fetch related data in single query
 5. **Cache computed values**: Store results that don't change
 

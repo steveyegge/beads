@@ -24,7 +24,9 @@ A comprehensive analysis of the beads daemon implementation, with learnings appl
 
 ## Overview
 
-The `bd daemon` is a background process that provides automatic synchronization between the local SQLite database and the git-tracked JSONL file. It follows an **LSP-style model** with one daemon per workspace, communicating via Unix domain sockets (or named pipes on Windows).
+The `bd daemon` is a background process that provides RPC access and automatic synchronization for the local database. It follows an **LSP-style model** with one daemon per workspace, communicating via Unix domain sockets (or named pipes on Windows).
+
+> **Note:** bd has migrated from SQLite to Dolt as the storage backend. Some implementation details in this document reference the SQLite era but the architectural patterns remain relevant.
 
 **Key insight:** The daemon exists primarily to automate a single operation - `bd export` before git commits. Everything else is secondary.
 

@@ -1,6 +1,10 @@
 # Multi-Repo Hydration Layer
 
-This document describes the implementation of Task 3 from the multi-repo support feature (bd-307): the hydration layer that loads issues from multiple JSONL files into a unified SQLite database.
+> **⚠️ DEPRECATED**: This document describes the SQLite-era multi-repo hydration layer.
+> The `internal/storage/sqlite/` backend has been removed. The Dolt backend does not
+> currently implement multi-repo hydration. This document is preserved for historical reference.
+
+This document describes the implementation of Task 3 from the multi-repo support feature (bd-307): the hydration layer that loaded issues from multiple JSONL files into a unified SQLite database.
 
 ## Overview
 

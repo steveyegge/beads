@@ -19,7 +19,7 @@ We will respond within 48 hours and work with you to address the issue.
 ### Database Security
 
 bd stores issue data locally in:
-- SQLite databases (`.beads/*.db`) - local only, gitignored
+- Dolt database (`.beads/dolt/`) - local only, gitignored
 - JSONL files (`.beads/issues.jsonl`) - committed to git
 
 **Important**:
@@ -45,7 +45,7 @@ bd uses parameterized SQL queries to prevent SQL injection. However:
 
 bd has minimal dependencies:
 - Go standard library
-- SQLite (via modernc.org/sqlite - pure Go implementation)
+- Dolt (version-controlled SQL database)
 - Cobra CLI framework
 
 All dependencies are regularly updated. Run `go mod verify` to check integrity.
@@ -72,7 +72,7 @@ Once version 1.0 is released, we will support the latest major version and one p
 ## Known Limitations
 
 - bd is designed for **development/internal use**, not production secret management
-- Issue data is stored in plain text (both SQLite and JSONL)
+- Issue data is stored in plain text (both Dolt and JSONL)
 - No built-in encryption or access control (relies on filesystem permissions)
 - No audit logging beyond git history
 
