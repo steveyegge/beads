@@ -12,6 +12,12 @@ import (
 )
 
 func TestTipSelection(t *testing.T) {
+	// Reset doltAutoCommit to prevent test interference (prior tests may set it to "on"
+	// via rootCmd.Execute, causing recordTipShown to defer writes instead of persisting)
+	oldDoltAutoCommit := doltAutoCommit
+	doltAutoCommit = ""
+	t.Cleanup(func() { doltAutoCommit = oldDoltAutoCommit })
+
 	// Set deterministic seed for testing
 	os.Setenv("BEADS_TIP_SEED", "12345")
 	defer os.Unsetenv("BEADS_TIP_SEED")
@@ -182,6 +188,11 @@ func TestGetLastShown(t *testing.T) {
 }
 
 func TestRecordTipShown(t *testing.T) {
+	// Reset doltAutoCommit to prevent test interference
+	oldDoltAutoCommit := doltAutoCommit
+	doltAutoCommit = ""
+	t.Cleanup(func() { doltAutoCommit = oldDoltAutoCommit })
+
 	store := newTestStoreWithPrefix(t, filepath.Join(t.TempDir(), "test.db"), "test")
 
 	recordTipShown(store, "test_tip")
@@ -233,6 +244,11 @@ func TestMaybeShowTip_RespectsFlags(t *testing.T) {
 }
 
 func TestTipFrequency(t *testing.T) {
+	// Reset doltAutoCommit to prevent test interference
+	oldDoltAutoCommit := doltAutoCommit
+	doltAutoCommit = ""
+	t.Cleanup(func() { doltAutoCommit = oldDoltAutoCommit })
+
 	store := newTestStoreWithPrefix(t, filepath.Join(t.TempDir(), "test.db"), "test")
 
 	tipsMutex.Lock()

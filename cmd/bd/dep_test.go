@@ -1503,11 +1503,11 @@ func TestDepListCrossRigRouting(t *testing.T) {
 	// Create temp directory structure:
 	// tmpDir/
 	//   .beads/
-	//     beads.db (town database, prefix "hq")
+	//     dolt/ (town database, prefix "hq")
 	//     routes.jsonl (routing config)
 	//   rig/
 	//     .beads/
-	//       beads.db (rig database, prefix "gt")
+	//       dolt/ (rig database, prefix "gt")
 	tmpDir := t.TempDir()
 
 	// Create town .beads directory
@@ -1523,11 +1523,11 @@ func TestDepListCrossRigRouting(t *testing.T) {
 	}
 
 	// Initialize town database
-	townDBPath := filepath.Join(townBeadsDir, "beads.db")
+	townDBPath := filepath.Join(townBeadsDir, "dolt")
 	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
 
 	// Initialize rig database
-	rigDBPath := filepath.Join(rigBeadsDir, "beads.db")
+	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
 	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
 
 	// Create test issues in rig database with a dependency

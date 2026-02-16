@@ -7,10 +7,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -163,11 +163,19 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *dolt.Do
 	return store
 }
 
-// openExistingTestDB is not supported with the memory backend since memory stores
-// cannot be "reopened" from a previous state.
+// openExistingTestDB reopens an existing Dolt store for verification in tests.
+// It tries NewFromConfig first (reads metadata.json for correct database name),
+// then falls back to direct open for BEADS_DB or other non-standard paths.
 func openExistingTestDB(t *testing.T, dbPath string) (*dolt.DoltStore, error) {
 	t.Helper()
-	return nil, fmt.Errorf("openExistingTestDB not supported with memory backend")
+	ctx := context.Background()
+	// Try NewFromConfig which reads metadata.json for correct database name
+	beadsDir := filepath.Dir(dbPath)
+	if store, err := dolt.NewFromConfig(ctx, beadsDir); err == nil {
+		return store, nil
+	}
+	// Fallback: open directly (for BEADS_DB cases without metadata.json)
+	return dolt.New(ctx, &dolt.Config{Path: dbPath})
 }
 
 // runCommandInDir runs a command in the specified directory

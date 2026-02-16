@@ -41,11 +41,11 @@ func TestResolveExternalDepsViaRouting(t *testing.T) {
 	}
 
 	// Initialize town database (local store)
-	townDBPath := filepath.Join(townBeadsDir, "beads.db")
+	townDBPath := filepath.Join(townBeadsDir, "dolt")
 	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
 
 	// Initialize rig database (remote store)
-	rigDBPath := filepath.Join(rigBeadsDir, "beads.db")
+	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
 	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
 
 	// Create an issue in the remote rig database
@@ -157,7 +157,7 @@ func TestResolveExternalDepsUnresolvable(t *testing.T) {
 		t.Fatalf("Failed to create town beads dir: %v", err)
 	}
 
-	townDBPath := filepath.Join(townBeadsDir, "beads.db")
+	townDBPath := filepath.Join(townBeadsDir, "dolt")
 	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
 
 	// Create a local issue with an external dep to a non-existent target
@@ -234,10 +234,10 @@ func TestResolveBlockedByRefs(t *testing.T) {
 		t.Fatalf("Failed to create rig beads dir: %v", err)
 	}
 
-	townDBPath := filepath.Join(townBeadsDir, "beads.db")
+	townDBPath := filepath.Join(townBeadsDir, "dolt")
 	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
 
-	rigDBPath := filepath.Join(rigBeadsDir, "beads.db")
+	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
 	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
 
 	remoteIssue := &types.Issue{
@@ -308,7 +308,7 @@ func TestNoExternalDeps(t *testing.T) {
 		t.Fatalf("Failed to create beads dir: %v", err)
 	}
 
-	dbFile := filepath.Join(beadsDir, "beads.db")
+	dbFile := filepath.Join(beadsDir, "dolt")
 	testStore := newTestStoreWithPrefix(t, dbFile, "test")
 
 	// Create two local issues with a local dependency
