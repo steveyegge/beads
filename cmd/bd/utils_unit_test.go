@@ -174,8 +174,4 @@ func TestTruncateDescription(t *testing.T) {
 	}
 }
 
-// Test showCleanupDeprecationHint - just ensure it doesn't panic
-func TestShowCleanupDeprecationHint(t *testing.T) {
-	// This function just prints to stdout, so we just verify it doesn't panic
-	showCleanupDeprecationHint()
-}
+// TestShowCleanupDeprecationHint removed: showCleanupDeprecationHint was removed in pruning.

@@ -285,8 +285,18 @@ func TestCheckDuplicateIssues_NoDatabase(t *testing.T) {
 	if check.Status != StatusOK {
 		t.Errorf("Status = %q, want %q", check.Status, StatusOK)
 	}
-	if check.Message != "N/A (no database)" {
-		t.Errorf("Message = %q, want 'N/A (no database)'", check.Message)
+	// When no Dolt database exists, openStoreDB may create an empty one but
+	// the duplicate query will fail since no schema exists.
+	wantMessages := []string{"N/A (no database)", "N/A (unable to query issues)"}
+	found := false
+	for _, msg := range wantMessages {
+		if check.Message == msg {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Message = %q, want one of %v", check.Message, wantMessages)
 	}
 }
 

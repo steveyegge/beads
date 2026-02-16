@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,9 +61,7 @@ func TestResolveExternalDepsViaRouting(t *testing.T) {
 	}
 
 	// Close rig store to release lock before routing opens it
-	if closer, ok := rigStore.(io.Closer); ok {
-		closer.Close()
-	}
+	rigStore.Close()
 
 	// Create a local issue that depends on the remote issue via external ref
 	localIssue := &types.Issue{
@@ -253,9 +250,7 @@ func TestResolveBlockedByRefs(t *testing.T) {
 	if err := rigStore.CreateIssue(ctx, remoteIssue, "test"); err != nil {
 		t.Fatalf("Failed to create remote issue: %v", err)
 	}
-	if closer, ok := rigStore.(io.Closer); ok {
-		closer.Close()
-	}
+	rigStore.Close()
 
 	routesContent := `{"prefix":"gt-","path":"rig"}`
 	routesPath := filepath.Join(townBeadsDir, "routes.jsonl")

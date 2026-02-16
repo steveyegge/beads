@@ -76,9 +76,9 @@ func TestSchemaVersionRunsInitWhenStale(t *testing.T) {
 	}
 
 	// Drop a table so we can detect re-creation
-	_, err = store.db.ExecContext(ctx, "DROP TABLE IF EXISTS export_hashes")
+	_, err = store.db.ExecContext(ctx, "DROP TABLE IF EXISTS interactions")
 	if err != nil {
-		t.Fatalf("failed to drop export_hashes: %v", err)
+		t.Fatalf("failed to drop interactions: %v", err)
 	}
 
 	// Run initSchemaOnDB — should run full init because version is stale
@@ -86,14 +86,14 @@ func TestSchemaVersionRunsInitWhenStale(t *testing.T) {
 		t.Fatalf("initSchemaOnDB failed: %v", err)
 	}
 
-	// export_hashes should be recreated
+	// interactions should be recreated
 	var count int
-	err = store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'export_hashes' AND table_schema = DATABASE()").Scan(&count)
+	err = store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'interactions' AND table_schema = DATABASE()").Scan(&count)
 	if err != nil {
-		t.Fatalf("failed to check for export_hashes: %v", err)
+		t.Fatalf("failed to check for interactions: %v", err)
 	}
 	if count != 1 {
-		t.Error("export_hashes was not recreated — initSchemaOnDB should have run full init for stale version")
+		t.Error("interactions was not recreated — initSchemaOnDB should have run full init for stale version")
 	}
 
 	// Version should be updated to current

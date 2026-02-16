@@ -166,10 +166,10 @@ func TestCheckMetadataConfigValues(t *testing.T) {
 		t.Fatalf("failed to create .beads dir: %v", err)
 	}
 
-	// Test with valid metadata
+	// Test with valid metadata (Dolt backend)
 	t.Run("valid metadata", func(t *testing.T) {
 		metadataContent := `{
-  "database": "beads.db",
+  "database": "dolt",
   "jsonl_export": "issues.jsonl"
 }`
 		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
@@ -436,11 +436,9 @@ func TestCheckConfigValuesDbPath(t *testing.T) {
 		}
 
 		check := CheckConfigValues(tmpDir)
-		if check.Status != "warning" {
-			t.Errorf("expected warning status, got %s", check.Status)
-		}
-		if check.Detail == "" || !contains(check.Detail, "db") {
-			t.Errorf("expected detail to mention db, got: %s", check.Detail)
+		// Dolt backend doesn't validate db file extension (it's directory-based)
+		if check.Status != "ok" {
+			t.Errorf("expected ok status (db extension not validated for Dolt), got %s: %s", check.Status, check.Detail)
 		}
 	})
 

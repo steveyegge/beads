@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,9 +67,7 @@ func TestAgentStateWithRouting(t *testing.T) {
 	}
 
 	// Close rig store to release Dolt lock before routing opens it
-	if closer, ok := rigStore.(io.Closer); ok {
-		closer.Close()
-	}
+	rigStore.Close()
 
 	// Create routes.jsonl in town .beads directory
 	routesContent := `{"prefix":"gt-","path":"rig"}`
@@ -155,9 +152,7 @@ func TestUpdateClaimUsesCASOnRoutedIssue(t *testing.T) {
 	if err := rigStore.CreateIssue(ctx, issue, "test"); err != nil {
 		t.Fatalf("create routed issue: %v", err)
 	}
-	if closer, ok := rigStore.(io.Closer); ok {
-		_ = closer.Close()
-	}
+	rigStore.Close()
 
 	routesPath := filepath.Join(townBeadsDir, "routes.jsonl")
 	if err := os.WriteFile(routesPath, []byte(`{"prefix":"gt-","path":"rig"}`), 0o644); err != nil {
@@ -283,9 +278,7 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 	}
 
 	// Close rig store to release Dolt lock before routing opens it
-	if closer, ok := rigStore.(io.Closer); ok {
-		closer.Close()
-	}
+	rigStore.Close()
 
 	// Create routes.jsonl
 	routesContent := `{"prefix":"gt-","path":"rig"}`
@@ -374,9 +367,7 @@ func TestAgentShowWithRouting(t *testing.T) {
 	}
 
 	// Close rig store to release Dolt lock before routing opens it
-	if closer, ok := rigStore.(io.Closer); ok {
-		closer.Close()
-	}
+	rigStore.Close()
 
 	// Create routes.jsonl
 	routesContent := `{"prefix":"gt-","path":"rig"}`
@@ -578,9 +569,7 @@ func TestSlotClearWithRouting(t *testing.T) {
 	}
 
 	// Close rig store to release lock before routing opens it
-	if closer, ok := rigStore.(io.Closer); ok {
-		closer.Close()
-	}
+	rigStore.Close()
 
 	// Create routes.jsonl
 	routesContent := `{"prefix":"gt-","path":"rig"}`
@@ -623,11 +612,7 @@ func TestSlotClearWithRouting(t *testing.T) {
 
 	// Verify the hook was cleared by reading the agent bead from the rig database
 	rigStore2 := newTestStoreWithPrefix(t, rigDBPath, "gt")
-	defer func() {
-		if closer, ok := rigStore2.(io.Closer); ok {
-			closer.Close()
-		}
-	}()
+	defer rigStore2.Close()
 
 	updated, err := rigStore2.GetIssue(ctx, "gt-testrig-polecat-slottest")
 	if err != nil {
@@ -675,9 +660,7 @@ func TestSlotShowWithRouting(t *testing.T) {
 		t.Fatalf("Failed to add gt:agent label: %v", err)
 	}
 
-	if closer, ok := rigStore.(io.Closer); ok {
-		closer.Close()
-	}
+	rigStore.Close()
 
 	routesPath := filepath.Join(townBeadsDir, "routes.jsonl")
 	if err := os.WriteFile(routesPath, []byte(`{"prefix":"gt-","path":"rig"}`), 0644); err != nil {

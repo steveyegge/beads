@@ -369,15 +369,6 @@ func TestBootstrapWithRoutesAndInteractions(t *testing.T) {
 		t.Fatalf("failed to write issues JSONL: %v", err)
 	}
 
-	// Create test routes JSONL
-	routesPath := filepath.Join(beadsDir, "routes.jsonl")
-	routesContent := `{"prefix":"test-","path":"."}
-{"prefix":"other-","path":"other/rig"}
-`
-	if err := os.WriteFile(routesPath, []byte(routesContent), 0644); err != nil {
-		t.Fatalf("failed to write routes JSONL: %v", err)
-	}
-
 	// Create test interactions JSONL
 	interactionsPath := filepath.Join(beadsDir, "interactions.jsonl")
 	interactionsContent := `{"id":"int-001","kind":"llm_call","created_at":"2025-01-20T10:00:00Z","actor":"test-agent","model":"claude-3"}
@@ -387,12 +378,16 @@ func TestBootstrapWithRoutesAndInteractions(t *testing.T) {
 		t.Fatalf("failed to write interactions JSONL: %v", err)
 	}
 
-	// Perform bootstrap
+	// Perform bootstrap (routes must be passed explicitly via BootstrapConfig)
 	ctx := context.Background()
 	bootstrapped, result, err := Bootstrap(ctx, BootstrapConfig{
 		BeadsDir:    beadsDir,
 		DoltPath:    doltDir,
 		LockTimeout: 10 * time.Second,
+		Routes: []BootstrapRoute{
+			{Prefix: "test-", Path: "."},
+			{Prefix: "other-", Path: "other/rig"},
+		},
 	})
 
 	if err != nil {

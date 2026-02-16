@@ -6,7 +6,7 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
-func TestIsNumeric(t *testing.T) {
+func TestIsNumericID_EdgeCases(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected bool
@@ -15,14 +15,14 @@ func TestIsNumeric(t *testing.T) {
 		{"123", true},
 		{"999", true},
 		{"abc", false},
-		{"", true}, // empty string returns true (loop never runs)
+		{"", false},
 		{"12a", false},
 	}
 
 	for _, tt := range tests {
-		result := isNumeric(tt.input)
+		result := isNumericID(tt.input)
 		if result != tt.expected {
-			t.Errorf("isNumeric(%q) = %v, want %v", tt.input, result, tt.expected)
+			t.Errorf("isNumericID(%q) = %v, want %v", tt.input, result, tt.expected)
 		}
 	}
 }

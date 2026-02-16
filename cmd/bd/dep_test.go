@@ -1563,9 +1563,7 @@ func TestDepListCrossRigRouting(t *testing.T) {
 	}
 
 	// Close rig store to release Dolt lock before routing opens it
-	if closer, ok := rigStore.(io.Closer); ok {
-		closer.Close()
-	}
+	rigStore.Close()
 
 	// Create routes.jsonl in town .beads directory
 	routesContent := `{"prefix":"gt-","path":"rig"}`

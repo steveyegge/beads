@@ -18,6 +18,10 @@ func newTestStore(t *testing.T) *dolt.DoltStore {
 	if err != nil {
 		t.Fatalf("Failed to create dolt store: %v", err)
 	}
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		store.Close()
+		t.Fatalf("Failed to set issue_prefix: %v", err)
+	}
 	t.Cleanup(func() { store.Close() })
 	return store
 }

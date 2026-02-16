@@ -606,8 +606,10 @@ func TestCheckDatabaseConfig_SystemJSONLExportIsError(t *testing.T) {
 	}
 
 	check := CheckDatabaseConfig(tmpDir)
-	if check.Status != "error" {
-		t.Fatalf("expected error, got %s: %s", check.Status, check.Message)
+	// With Dolt-only backend, GetBackend() always returns BackendDolt,
+	// so this check returns early with OK ("Dolt backend (data on server)")
+	if check.Status != "ok" {
+		t.Fatalf("expected ok (Dolt-only backend), got %s: %s", check.Status, check.Message)
 	}
 }
 
@@ -695,10 +697,10 @@ func TestCheckFreshClone(t *testing.T) {
 				file.Close()
 			}
 
-			// Create database if needed
+			// Create database if needed (Dolt backend uses .beads/dolt/ directory)
 			if tt.hasDatabase {
-				dbPath := filepath.Join(beadsDir, "beads.db")
-				if err := os.WriteFile(dbPath, []byte("fake db"), 0644); err != nil {
+				doltDir := filepath.Join(beadsDir, "dolt")
+				if err := os.MkdirAll(doltDir, 0755); err != nil {
 					t.Fatal(err)
 				}
 			}

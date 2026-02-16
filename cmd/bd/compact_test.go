@@ -9,18 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestCompactSuite(t *testing.T) {
+	t.Skip("Compaction not yet implemented for Dolt backend")
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
-	baseStore := newTestStore(t, testDB)
-	s, ok := baseStore.(storage.CompactableStorage)
-	if !ok {
-		t.Skip("storage backend does not support compaction")
-	}
+	s := newTestStore(t, testDB)
 	ctx := context.Background()
 
 	t.Run("DryRun", func(t *testing.T) {

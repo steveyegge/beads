@@ -294,8 +294,8 @@ func TestEngineConflictResolution(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
 
-	// Set up last_sync
-	lastSync := time.Now().Add(-1 * time.Hour)
+	// Set up last_sync (use UTC to avoid DATETIME timezone round-trip issues)
+	lastSync := time.Now().UTC().Add(-1 * time.Hour)
 	if err := store.SetConfig(ctx, "test.last_sync", lastSync.Format(time.RFC3339)); err != nil {
 		t.Fatalf("SetConfig() error: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestEngineConflictResolution(t *testing.T) {
 		IssueType:   types.TypeTask,
 		Priority:    2,
 		ExternalRef: strPtr("https://test.test/EXT-1"),
-		UpdatedAt:   time.Now().Add(-30 * time.Minute), // Modified 30 min ago
+		UpdatedAt:   time.Now().UTC().Add(-30 * time.Minute), // Modified 30 min ago
 	}
 	if err := store.CreateIssue(ctx, issue, "test-actor"); err != nil {
 		t.Fatalf("CreateIssue() error: %v", err)
@@ -321,7 +321,7 @@ func TestEngineConflictResolution(t *testing.T) {
 			ID:         "EXT-1",
 			Identifier: "EXT-1",
 			Title:      "External version",
-			UpdatedAt:  time.Now().Add(-15 * time.Minute), // Modified 15 min ago (newer)
+			UpdatedAt:  time.Now().UTC().Add(-15 * time.Minute), // Modified 15 min ago (newer)
 		},
 	}
 

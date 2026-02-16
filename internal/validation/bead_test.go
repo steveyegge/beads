@@ -222,7 +222,7 @@ func TestParseIssueType(t *testing.T) {
 		{"molecule type", "molecule", types.TypeTask, true, "invalid issue type"},
 		{"gate type", "gate", types.TypeTask, true, "invalid issue type"},
 		{"event type", "event", types.TypeTask, true, "invalid issue type"},
-		{"message type", "message", types.TypeTask, true, "invalid issue type"},
+		{"message type", "message", types.TypeMessage, false, ""},
 
 		// Case sensitivity (function is case-sensitive)
 		{"uppercase bug", "BUG", types.TypeTask, true, "invalid issue type"},

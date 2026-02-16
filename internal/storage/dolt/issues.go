@@ -29,13 +29,17 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 		return fmt.Errorf("failed to get custom types: %w", err)
 	}
 
-	// Set timestamps
+	// Set timestamps (always normalize to UTC since DATETIME columns lose timezone info)
 	now := time.Now().UTC()
 	if issue.CreatedAt.IsZero() {
 		issue.CreatedAt = now
+	} else {
+		issue.CreatedAt = issue.CreatedAt.UTC()
 	}
 	if issue.UpdatedAt.IsZero() {
 		issue.UpdatedAt = now
+	} else {
+		issue.UpdatedAt = issue.UpdatedAt.UTC()
 	}
 
 	// Defensive fix for closed_at invariant

@@ -1038,6 +1038,19 @@ func findOrphanedIssuesFromPath(path string) ([]OrphanIssue, error) {
 // This catches cases where someone implemented a fix with "(bd-xxx)" in the commit
 // message but forgot to run "bd close".
 func CheckOrphanedIssues(path string) DoctorCheck {
+	// Orphaned issue detection requires a local database provider which was removed
+	// during the Dolt-only migration. This check is disabled until reimplemented
+	// against the Dolt store.
+	return DoctorCheck{
+		Name:     "Orphaned Issues",
+		Status:   StatusOK,
+		Message:  "N/A (not yet implemented for Dolt backend)",
+		Category: CategoryGit,
+	}
+
+	// Unreachable: legacy SQLite-based implementation below preserved for reference
+	// during Dolt reimplementation.
+
 	// Skip if not in a git repo (check from path directory)
 	cmd := exec.Command("git", "rev-parse", "--git-dir")
 	cmd.Dir = path

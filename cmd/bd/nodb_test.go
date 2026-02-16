@@ -8,31 +8,8 @@ import (
 	"testing"
 )
 
-func TestExtractIssuePrefix(t *testing.T) {
-	tests := []struct {
-		name     string
-		issueID  string
-		expected string
-	}{
-		{"standard ID", "bd-123", "bd"},
-		{"custom prefix", "myproject-456", "myproject"},
-		{"hash ID", "bd-abc123def", "bd"},
-		{"multi-part prefix with numeric suffix", "alpha-beta-1", "alpha-beta"},
-		{"multi-part non-numeric suffix", "vc-baseline-test", "vc"}, // Falls back to first hyphen
-		{"beads-vscode style", "beads-vscode-42", "beads-vscode"},
-		{"no hyphen", "nohyphen", ""},
-		{"empty", "", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractIssuePrefix(tt.issueID)
-			if got != tt.expected {
-				t.Errorf("extractIssuePrefix(%q) = %q, want %q", tt.issueID, got, tt.expected)
-			}
-		})
-	}
-}
+// TestExtractIssuePrefix removed: extractIssuePrefix local wrapper was removed.
+// Covered by TestExtractPrefix in helpers_test.go via utils.ExtractIssuePrefix.
 
 func TestLoadIssuesFromJSONL(t *testing.T) {
 	tempDir := t.TempDir()
@@ -80,22 +57,31 @@ invalid json here
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	_, err := loadIssuesFromJSONL(jsonlPath)
-	if err == nil {
-		t.Error("Expected error for invalid JSON, got nil")
+	// loadIssuesFromJSONL now skips invalid lines with a warning (not an error)
+	issues, err := loadIssuesFromJSONL(jsonlPath)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(issues) != 2 {
+		t.Errorf("Expected 2 valid issues (invalid lines skipped), got %d", len(issues))
 	}
 }
 
 func TestLoadIssuesFromJSONL_NonExistent(t *testing.T) {
-	_, err := loadIssuesFromJSONL("/nonexistent/file.jsonl")
-	if err == nil {
-		t.Error("Expected error for non-existent file, got nil")
+	// loadIssuesFromJSONL now returns nil, nil for non-existent files
+	issues, err := loadIssuesFromJSONL("/nonexistent/file.jsonl")
+	if err != nil {
+		t.Errorf("Expected nil error for non-existent file, got: %v", err)
+	}
+	if issues != nil {
+		t.Errorf("Expected nil issues for non-existent file, got %d", len(issues))
 	}
 }
 
 // NOTE: TestDetectPrefix was removed because it referenced the deleted memory backend and the detectPrefix function which no longer exists.
 
 func TestInitializeNoDbMode_SetsStoreActive(t *testing.T) {
+	t.Skip("no-db mode has been removed; beads now requires Dolt")
 	// This test verifies the fix for bd comment --no-db not working.
 	// The bug was that initializeNoDbMode() set `store` but not `storeActive`,
 	// so ensureStoreActive() would try to find a SQLite database.
@@ -183,6 +169,7 @@ func TestInitializeNoDbMode_SetsStoreActive(t *testing.T) {
 }
 
 func TestInitializeNoDbMode_SetsCmdCtxStoreActive(t *testing.T) {
+	t.Skip("no-db mode has been removed; beads now requires Dolt")
 	// GH#897: Verify that initializeNoDbMode sets storeActive global.
 	// This is critical for commands like `comments add` that call ensureStoreActive().
 	ensureCleanGlobalState(t)

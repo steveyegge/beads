@@ -237,6 +237,7 @@ func TestDetectHashBasedIDs(t *testing.T) {
 }
 
 func TestCheckIDFormat(t *testing.T) {
+	t.Skip("SQLite-specific: creates SQLite database directly; Dolt backend can't read it")
 	tests := []struct {
 		name           string
 		issueIDs       []string
@@ -374,21 +375,19 @@ func TestCheckInstallation(t *testing.T) {
 }
 
 func TestCheckDatabaseVersionJSONLMode(t *testing.T) {
-	// Create temporary directory with .beads but no database
+	// Dolt backend doesn't have a "JSONL-only" mode; it reports fresh clone
+	// when no dolt/ directory exists but JSONL is present.
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.Mkdir(beadsDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create empty issues.jsonl to simulate --no-db mode
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 	if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create config.yaml with no-db: true to indicate intentional JSONL-only mode
-	// Without this, doctor treats it as a fresh clone needing 'bd init' (bd-4ew)
 	configPath := filepath.Join(beadsDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte("no-db: true\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -396,14 +395,12 @@ func TestCheckDatabaseVersionJSONLMode(t *testing.T) {
 
 	check := doctor.CheckDatabaseVersion(tmpDir, Version)
 
-	if check.Status != doctor.StatusOK {
-		t.Errorf("Expected ok status for JSONL mode, got %s", check.Status)
+	// Dolt backend sees JSONL without dolt/ dir → fresh clone warning
+	if check.Status != doctor.StatusWarning {
+		t.Errorf("Expected warning status for Dolt fresh clone, got %s", check.Status)
 	}
-	if check.Message != "JSONL-only mode" {
-		t.Errorf("Expected JSONL-only mode message, got %s", check.Message)
-	}
-	if check.Detail == "" {
-		t.Error("Expected detail field to be set for JSONL mode")
+	if !strings.Contains(check.Message, "Fresh clone") {
+		t.Errorf("Expected fresh clone message, got %s", check.Message)
 	}
 }
 
@@ -427,7 +424,7 @@ func TestCheckDatabaseVersionFreshClone(t *testing.T) {
 	if check.Status != doctor.StatusWarning {
 		t.Errorf("Expected warning status for fresh clone, got %s", check.Status)
 	}
-	if check.Message != "Fresh clone detected (no database)" {
+	if !strings.Contains(check.Message, "Fresh clone detected") {
 		t.Errorf("Expected fresh clone message, got %s", check.Message)
 	}
 	if check.Fix == "" {
