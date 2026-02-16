@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads"
 )
 
 // TestExampleCompiles ensures the example code compiles and basic API works
@@ -18,16 +18,15 @@ func TestExampleCompiles(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dbPath := filepath.Join(tmpDir, "test.db")
+	dbPath := filepath.Join(tmpDir, "dolt")
 
 	// Open storage
-	store, err := beads.NewSQLiteStorage(dbPath)
+	ctx := context.Background()
+	store, err := beads.NewStorage(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open storage: %v", err)
 	}
 	defer store.Close()
-
-	ctx := context.Background()
 
 	// Create an issue (from example code)
 	newIssue := &beads.Issue{

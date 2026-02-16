@@ -13,6 +13,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // integrationTestHelper provides common test setup and assertion methods
@@ -26,10 +27,10 @@ func newIntegrationHelper(t *testing.T, store beads.Storage) *integrationTestHel
 	return &integrationTestHelper{t: t, ctx: context.Background(), store: store}
 }
 
-func (h *integrationTestHelper) createIssue(title string, issueType beads.IssueType, priority int) *beads.Issue {
-	issue := &beads.Issue{
+func (h *integrationTestHelper) createIssue(title string, issueType types.IssueType, priority int) *types.Issue {
+	issue := &types.Issue{
 		Title:     title,
-		Status:    beads.StatusOpen,
+		Status:    types.StatusOpen,
 		Priority:  priority,
 		IssueType: issueType,
 		CreatedAt: time.Now(),
@@ -41,16 +42,16 @@ func (h *integrationTestHelper) createIssue(title string, issueType beads.IssueT
 	return issue
 }
 
-func (h *integrationTestHelper) createFullIssue(desc, design, acceptance, notes, assignee string) *beads.Issue {
-	issue := &beads.Issue{
+func (h *integrationTestHelper) createFullIssue(desc, design, acceptance, notes, assignee string) *types.Issue {
+	issue := &types.Issue{
 		Title:              "Complete issue",
 		Description:        desc,
 		Design:             design,
 		AcceptanceCriteria: acceptance,
 		Notes:              notes,
-		Status:             beads.StatusOpen,
+		Status:             types.StatusOpen,
 		Priority:           1,
-		IssueType:          beads.TypeFeature,
+		IssueType:          types.TypeFeature,
 		Assignee:           assignee,
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
@@ -74,10 +75,10 @@ func (h *integrationTestHelper) closeIssue(id string, reason string) {
 }
 
 func (h *integrationTestHelper) addDependency(issue1ID, issue2ID string) {
-	dep := &beads.Dependency{
+	dep := &types.Dependency{
 		IssueID:     issue1ID,
 		DependsOnID: issue2ID,
-		Type:        beads.DepBlocks,
+		Type:        types.DepBlocks,
 		CreatedAt:   time.Now(),
 		CreatedBy:   "test-actor",
 	}
@@ -92,7 +93,7 @@ func (h *integrationTestHelper) addLabel(id, label string) {
 	}
 }
 
-func (h *integrationTestHelper) addComment(id, user, text string) *beads.Comment {
+func (h *integrationTestHelper) addComment(id, user, text string) *types.Comment {
 	comment, err := h.store.AddIssueComment(h.ctx, id, user, text)
 	if err != nil {
 		h.t.Fatalf("AddIssueComment failed: %v", err)
@@ -100,7 +101,7 @@ func (h *integrationTestHelper) addComment(id, user, text string) *beads.Comment
 	return comment
 }
 
-func (h *integrationTestHelper) getIssue(id string) *beads.Issue {
+func (h *integrationTestHelper) getIssue(id string) *types.Issue {
 	issue, err := h.store.GetIssue(h.ctx, id)
 	if err != nil {
 		h.t.Fatalf("GetIssue failed: %v", err)
@@ -108,7 +109,7 @@ func (h *integrationTestHelper) getIssue(id string) *beads.Issue {
 	return issue
 }
 
-func (h *integrationTestHelper) getDependencies(id string) []*beads.Issue {
+func (h *integrationTestHelper) getDependencies(id string) []*types.Issue {
 	deps, err := h.store.GetDependencies(h.ctx, id)
 	if err != nil {
 		h.t.Fatalf("GetDependencies failed: %v", err)
@@ -124,7 +125,7 @@ func (h *integrationTestHelper) getLabels(id string) []string {
 	return labels
 }
 
-func (h *integrationTestHelper) getComments(id string) []*beads.Comment {
+func (h *integrationTestHelper) getComments(id string) []*types.Comment {
 	comments, err := h.store.GetIssueComments(h.ctx, id)
 	if err != nil {
 		h.t.Fatalf("GetIssueComments failed: %v", err)
@@ -182,33 +183,33 @@ func TestLibraryIntegration(t *testing.T) {
 
 	// Test 1: Create issue
 	t.Run("CreateIssue", func(t *testing.T) {
-		issue := h.createIssue("Test task", beads.TypeTask, 2)
+		issue := h.createIssue("Test task", types.TypeTask, 2)
 		h.assertID(issue.ID)
 		t.Logf("Created issue: %s", issue.ID)
 	})
 
 	// Test 2: Get issue
 	t.Run("GetIssue", func(_ *testing.T) {
-		issue := h.createIssue("Get test", beads.TypeBug, 1)
+		issue := h.createIssue("Get test", types.TypeBug, 1)
 		retrieved := h.getIssue(issue.ID)
 		h.assertEqual(issue.Title, retrieved.Title, "title")
-		h.assertEqual(beads.TypeBug, retrieved.IssueType, "type")
+		h.assertEqual(types.TypeBug, retrieved.IssueType, "type")
 	})
 
 	// Test 3: Update issue
 	t.Run("UpdateIssue", func(_ *testing.T) {
-		issue := h.createIssue("Update test", beads.TypeTask, 2)
-		updates := map[string]interface{}{"status": beads.StatusInProgress, "assignee": "test-user"}
+		issue := h.createIssue("Update test", types.TypeTask, 2)
+		updates := map[string]interface{}{"status": types.StatusInProgress, "assignee": "test-user"}
 		h.updateIssue(issue.ID, updates)
 		updated := h.getIssue(issue.ID)
-		h.assertEqual(beads.StatusInProgress, updated.Status, "status")
+		h.assertEqual(types.StatusInProgress, updated.Status, "status")
 		h.assertEqual("test-user", updated.Assignee, "assignee")
 	})
 
 	// Test 4: Add dependency
 	t.Run("AddDependency", func(_ *testing.T) {
-		issue1 := h.createIssue("Parent task", beads.TypeTask, 1)
-		issue2 := h.createIssue("Child task", beads.TypeTask, 1)
+		issue1 := h.createIssue("Parent task", types.TypeTask, 1)
+		issue2 := h.createIssue("Child task", types.TypeTask, 1)
 		h.addDependency(issue1.ID, issue2.ID)
 		deps := h.getDependencies(issue1.ID)
 		h.assertCount(len(deps), 1, "dependencies")
@@ -217,7 +218,7 @@ func TestLibraryIntegration(t *testing.T) {
 
 	// Test 5: Add label
 	t.Run("AddLabel", func(t *testing.T) {
-		issue := h.createIssue("Label test", beads.TypeFeature, 2)
+		issue := h.createIssue("Label test", types.TypeFeature, 2)
 		h.addLabel(issue.ID, "urgent")
 		labels := h.getLabels(issue.ID)
 		h.assertCount(len(labels), 1, "labels")
@@ -226,7 +227,7 @@ func TestLibraryIntegration(t *testing.T) {
 
 	// Test 6: Add comment
 	t.Run("AddComment", func(t *testing.T) {
-		issue := h.createIssue("Comment test", beads.TypeTask, 2)
+		issue := h.createIssue("Comment test", types.TypeTask, 2)
 		comment := h.addComment(issue.ID, "test-user", "Test comment")
 		h.assertEqual("Test comment", comment.Text, "comment text")
 		comments := h.getComments(issue.ID)
@@ -236,9 +237,9 @@ func TestLibraryIntegration(t *testing.T) {
 	// Test 7: Get ready work
 	t.Run("GetReadyWork", func(t *testing.T) {
 		for i := 0; i < 3; i++ {
-			h.createIssue("Ready work test", beads.TypeTask, i)
+			h.createIssue("Ready work test", types.TypeTask, i)
 		}
-		ready, err := store.GetReadyWork(h.ctx, beads.WorkFilter{Status: beads.StatusOpen, Limit: 5})
+		ready, err := store.GetReadyWork(h.ctx, types.WorkFilter{Status: types.StatusOpen, Limit: 5})
 		if err != nil {
 			t.Fatalf("GetReadyWork failed: %v", err)
 		}
@@ -263,24 +264,24 @@ func TestLibraryIntegration(t *testing.T) {
 
 	// Test 9: Close issue
 	t.Run("CloseIssue", func(t *testing.T) {
-		issue := h.createIssue("Close test", beads.TypeTask, 2)
+		issue := h.createIssue("Close test", types.TypeTask, 2)
 		h.closeIssue(issue.ID, "Completed")
 		closed := h.getIssue(issue.ID)
-		h.assertEqual(beads.StatusClosed, closed.Status, "status")
+		h.assertEqual(types.StatusClosed, closed.Status, "status")
 		h.assertNotNil(closed.ClosedAt, "ClosedAt")
 	})
 }
 
 // TestDependencyTypes ensures all dependency type constants are exported
 func TestDependencyTypes(t *testing.T) {
-	types := []beads.DependencyType{
-		beads.DepBlocks,
-		beads.DepRelated,
-		beads.DepParentChild,
-		beads.DepDiscoveredFrom,
+	depTypes := []types.DependencyType{
+		types.DepBlocks,
+		types.DepRelated,
+		types.DepParentChild,
+		types.DepDiscoveredFrom,
 	}
 
-	for _, dt := range types {
+	for _, dt := range depTypes {
 		if dt == "" {
 			t.Errorf("Dependency type should not be empty")
 		}
@@ -289,11 +290,11 @@ func TestDependencyTypes(t *testing.T) {
 
 // TestStatusConstants ensures all status constants are exported
 func TestStatusConstants(t *testing.T) {
-	statuses := []beads.Status{
-		beads.StatusOpen,
-		beads.StatusInProgress,
-		beads.StatusClosed,
-		beads.StatusBlocked,
+	statuses := []types.Status{
+		types.StatusOpen,
+		types.StatusInProgress,
+		types.StatusClosed,
+		types.StatusBlocked,
 	}
 
 	for _, s := range statuses {
@@ -305,15 +306,15 @@ func TestStatusConstants(t *testing.T) {
 
 // TestIssueTypeConstants ensures all issue type constants are exported
 func TestIssueTypeConstants(t *testing.T) {
-	types := []beads.IssueType{
-		beads.TypeBug,
-		beads.TypeFeature,
-		beads.TypeTask,
-		beads.TypeEpic,
-		beads.TypeChore,
+	issueTypes := []types.IssueType{
+		types.TypeBug,
+		types.TypeFeature,
+		types.TypeTask,
+		types.TypeEpic,
+		types.TypeChore,
 	}
 
-	for _, it := range types {
+	for _, it := range issueTypes {
 		if it == "" {
 			t.Errorf("IssueType should not be empty")
 		}
@@ -342,13 +343,13 @@ func TestBatchCreateIssues(t *testing.T) {
 	}
 
 	// Create multiple issues
-	issues := make([]*beads.Issue, 5)
+	issues := make([]*types.Issue, 5)
 	for i := 0; i < 5; i++ {
-		issues[i] = &beads.Issue{
+		issues[i] = &types.Issue{
 			Title:     "Batch test",
-			Status:    beads.StatusOpen,
+			Status:    types.StatusOpen,
 			Priority:  2,
-			IssueType: beads.TypeTask,
+			IssueType: types.TypeTask,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
@@ -453,23 +454,23 @@ func TestImportWithDeletedParent(t *testing.T) {
 	// Phase 1: Create parent and child in JSONL (simulating historical git state)
 	ctx := context.Background()
 
-	parent := beads.Issue{
+	parent := types.Issue{
 		ID:          "bd-parent",
 		Title:       "Parent Epic",
 		Description: "Original parent description",
-		Status:      beads.StatusOpen,
+		Status:      types.StatusOpen,
 		Priority:    1,
-		IssueType:   beads.TypeEpic,
+		IssueType:   types.TypeEpic,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
 
-	child := beads.Issue{
+	child := types.Issue{
 		ID:        "bd-parent.1",
 		Title:     "Child Task",
-		Status:    beads.StatusOpen,
+		Status:    types.StatusOpen,
 		Priority:  1,
-		IssueType: beads.TypeTask,
+		IssueType: types.TypeTask,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -503,12 +504,12 @@ func TestImportWithDeletedParent(t *testing.T) {
 	}
 
 	// Manually create only the child (parent missing)
-	childToImport := &beads.Issue{
+	childToImport := &types.Issue{
 		ID:        "bd-parent.1",
 		Title:     "Child Task",
-		Status:    beads.StatusOpen,
+		Status:    types.StatusOpen,
 		Priority:  1,
-		IssueType: beads.TypeTask,
+		IssueType: types.TypeTask,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -540,7 +541,7 @@ func TestImportWithDeletedParent(t *testing.T) {
 	if retrievedParent == nil {
 		t.Fatal("Parent was not resurrected")
 	}
-	if retrievedParent.Status != beads.StatusClosed {
+	if retrievedParent.Status != types.StatusClosed {
 		t.Errorf("Expected parent status=closed, got %s", retrievedParent.Status)
 	}
 	if retrievedParent.Priority != 4 {

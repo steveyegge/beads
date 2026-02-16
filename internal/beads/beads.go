@@ -8,7 +8,6 @@
 package beads
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,7 +17,6 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -242,78 +240,12 @@ func findDatabaseInBeadsDir(beadsDir string, _ bool) string {
 	return ""
 }
 
-// Issue represents a tracked work item with metadata, dependencies, and status.
-type (
-	Issue = types.Issue
-	// Status represents the current state of an issue (open, in progress, closed, blocked).
-	Status = types.Status
-	// IssueType represents the type of issue (bug, feature, task, epic, chore).
-	IssueType = types.IssueType
-	// Dependency represents a relationship between issues.
-	Dependency = types.Dependency
-	// DependencyType represents the type of dependency (blocks, related, parent-child, discovered-from).
-	DependencyType = types.DependencyType
-	// Comment represents a user comment on an issue.
-	Comment = types.Comment
-	// Event represents an audit log event.
-	Event = types.Event
-	// EventType represents the type of audit event.
-	EventType = types.EventType
-	// Label represents a tag attached to an issue.
-	Label = types.Label
-	// BlockedIssue represents an issue with blocking dependencies.
-	BlockedIssue = types.BlockedIssue
-	// TreeNode represents a node in a dependency tree.
-	TreeNode = types.TreeNode
-	// Statistics represents project-wide metrics.
-	Statistics = types.Statistics
-	// IssueFilter represents filtering criteria for issue queries.
-	IssueFilter = types.IssueFilter
-	// WorkFilter represents filtering criteria for work queries.
-	WorkFilter = types.WorkFilter
-	// SortPolicy determines how ready work is ordered.
-	SortPolicy = types.SortPolicy
-)
-
-// Status constants
-const (
-	StatusOpen       = types.StatusOpen
-	StatusInProgress = types.StatusInProgress
-	StatusBlocked    = types.StatusBlocked
-	StatusClosed     = types.StatusClosed
-)
-
-// IssueType constants (core types only - Gas Town types removed)
-const (
-	TypeBug     = types.TypeBug
-	TypeFeature = types.TypeFeature
-	TypeTask    = types.TypeTask
-	TypeEpic    = types.TypeEpic
-	TypeChore   = types.TypeChore
-)
-
-// DependencyType constants
-const (
-	DepBlocks         = types.DepBlocks
-	DepRelated        = types.DepRelated
-	DepParentChild    = types.DepParentChild
-	DepDiscoveredFrom = types.DepDiscoveredFrom
-)
-
 // Storage provides the minimal interface for extension orchestration
 type Storage = *dolt.DoltStore
 
 // Transaction provides atomic multi-operation support within a database transaction.
 // Use Storage.RunInTransaction() to obtain a Transaction instance.
 type Transaction = storage.Transaction
-
-// NewStorage opens a bd database for programmatic access.
-// Deprecated: callers should use dolt.New() or dolt.NewFromConfig() directly.
-// This function is retained for backward compatibility but will be removed in a future release.
-func NewStorage(ctx context.Context, dbPath string) (Storage, error) {
-	return dolt.New(ctx, &dolt.Config{Path: dbPath})
-}
-
 
 // FindDatabasePath discovers the bd database path using bd's standard search order:
 //  1. $BEADS_DIR environment variable (points to .beads directory)

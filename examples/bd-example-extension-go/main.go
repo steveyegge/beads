@@ -10,7 +10,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads"
 )
 
 //go:embed schema.sql
@@ -28,7 +28,8 @@ func main() {
 	}
 
 	// Open bd storage + extension database
-	store, _ := beads.NewSQLiteStorage(*dbPath)
+	ctx := context.Background()
+	store, _ := beads.NewStorage(ctx, *dbPath)
 	defer store.Close()
 	db, _ := sql.Open("sqlite3", *dbPath)
 	defer db.Close()
@@ -37,7 +38,6 @@ func main() {
 	db.Exec(schema) // Initialize extension schema
 
 	// Get ready work
-	ctx := context.Background()
 	readyIssues, _ := store.GetReadyWork(ctx, beads.WorkFilter{Limit: 1})
 	if len(readyIssues) == 0 {
 		fmt.Println("No ready work")
