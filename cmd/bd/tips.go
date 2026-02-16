@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
@@ -393,16 +392,9 @@ func initDefaultTips() {
 }
 
 // syncConflictCondition checks if there's a sync conflict that needs manual resolution.
-// This is the condition function for the sync_conflict tip.
+// Sync conflict tracking was removed — always returns false.
 func syncConflictCondition() bool {
-	// Find beads directory to check sync state
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		return false
-	}
-
-	state := LoadSyncState(beadsDir)
-	return state.NeedsManualSync
+	return false
 }
 
 // init initializes the tip system with default tips

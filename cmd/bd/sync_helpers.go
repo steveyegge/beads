@@ -54,15 +54,6 @@ func sanitizeMetadataKey(key string) string {
 	return strings.ReplaceAll(key, ":", "_")
 }
 
-// getDebounceDuration returns the configured flush debounce duration.
-func getDebounceDuration() time.Duration {
-	duration := config.GetDuration("flush-debounce")
-	if duration == 0 {
-		return 5 * time.Second
-	}
-	return duration
-}
-
 // exportToJSONLWithStore exports issues to JSONL using the provided store.
 // If multi-repo mode is configured, routes issues to their respective JSONL files.
 // Otherwise, exports to a single JSONL file.
@@ -216,6 +207,67 @@ func importToJSONLWithStore(ctx context.Context, store *dolt.DoltStore, jsonlPat
 
 	_, err = importIssuesCore(ctx, "", store, issues, opts)
 	return err
+}
+
+// exportToJSONL exports the current database state to the JSONL file.
+// Delegates to exportToJSONLWithStore using the global store.
+func exportToJSONL(ctx context.Context, jsonlPath string) error {
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("activating store: %w", err)
+	}
+	if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
+		return err
+	}
+	repoKey := getRepoKeyForPath(jsonlPath)
+	updateExportMetadata(ctx, store, jsonlPath, slog.Default(), repoKey)
+	return nil
+}
+
+// importFromJSONL imports issues from a JSONL file into the database.
+func importFromJSONL(ctx context.Context, jsonlPath string) error {
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("activating store: %w", err)
+	}
+	return importToJSONLWithStore(ctx, store, jsonlPath)
+}
+
+// loadIssuesFromJSONL reads a JSONL file and returns the parsed issues.
+func loadIssuesFromJSONL(jsonlPath string) ([]*types.Issue, error) {
+	file, err := os.Open(jsonlPath) // #nosec G304 - controlled path
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("opening JSONL: %w", err)
+	}
+	defer file.Close()
+
+	var issues []*types.Issue
+	scanner := bufio.NewScanner(file)
+	const maxScannerBuffer = 1024 * 1024 // 1MB
+	scanner.Buffer(make([]byte, 0, maxScannerBuffer), maxScannerBuffer)
+
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse JSONL line %d: %v\n", lineNum, err)
+			continue
+		}
+		issues = append(issues, &issue)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading JSONL: %w", err)
+	}
+
+	return issues, nil
 }
 
 // updateExportMetadata updates jsonl_content_hash and related metadata after a successful export.
