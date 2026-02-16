@@ -9,6 +9,10 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 )
 
+var repoFingerprintReadLine = readLineUnbuffered
+var repoFingerprintGetBdBinary = getBdBinary
+var repoFingerprintNewBdCmd = newBdCmd
+
 // readLineUnbuffered reads a line from stdin without buffering.
 // This ensures subprocess stdin isn't consumed by our buffered reader.
 func readLineUnbuffered() (string, error) {
@@ -29,22 +33,51 @@ func readLineUnbuffered() (string, error) {
 	}
 }
 
+func runUpdateRepoID(path, bdBinary string, autoYes bool) error {
+	args := []string{"migrate", "--update-repo-id"}
+	if autoYes {
+		args = append(args, "--yes")
+		fmt.Println("  → Auto mode (--yes): running 'bd migrate --update-repo-id --yes'...")
+	} else {
+		fmt.Println("  → Running 'bd migrate --update-repo-id'...")
+	}
+
+	cmd := repoFingerprintNewBdCmd(bdBinary, args...)
+	cmd.Dir = path
+	if !autoYes {
+		// Allow interactive confirmation prompt when running without --yes.
+		cmd.Stdin = os.Stdin
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to update repo ID: %w", err)
+	}
+	return nil
+}
+
 // RepoFingerprint fixes repo fingerprint mismatches by prompting the user
 // for which action to take. This is interactive because the consequences
 // differ significantly between options:
 //  1. Update repo ID (if URL changed or bd upgraded)
 //  2. Reinitialize database (if wrong database was copied)
 //  3. Skip (do nothing)
-func RepoFingerprint(path string) error {
+func RepoFingerprint(path string, autoYes bool) error {
 	// Validate workspace
 	if err := validateBeadsWorkspace(path); err != nil {
 		return err
 	}
 
 	// Get bd binary path
-	bdBinary, err := getBdBinary()
+	bdBinary, err := repoFingerprintGetBdBinary()
 	if err != nil {
 		return err
+	}
+
+	// In --yes mode, auto-select the recommended safe action [1].
+	if autoYes {
+		return runUpdateRepoID(path, bdBinary, true)
 	}
 
 	// Prompt user for action
@@ -57,7 +90,7 @@ func RepoFingerprint(path string) error {
 	fmt.Print("  Choice [1/2/s]: ")
 
 	// Read single character without buffering to avoid consuming input meant for subprocesses
-	response, err := readLineUnbuffered()
+	response, err := repoFingerprintReadLine()
 	if err != nil {
 		return fmt.Errorf("failed to read input: %w", err)
 	}
@@ -66,18 +99,7 @@ func RepoFingerprint(path string) error {
 
 	switch response {
 	case "1":
-		// Run bd migrate --update-repo-id
-		fmt.Println("  → Running 'bd migrate --update-repo-id'...")
-		cmd := newBdCmd(bdBinary, "migrate", "--update-repo-id")
-		cmd.Dir = path
-		cmd.Stdin = os.Stdin // Allow user to respond to migrate's confirmation prompt
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to update repo ID: %w", err)
-		}
-		return nil
+		return runUpdateRepoID(path, bdBinary, false)
 
 	case "2":
 		// Detect backend to determine what to remove
@@ -91,7 +113,7 @@ func RepoFingerprint(path string) error {
 
 		// Confirm before destructive action
 		fmt.Printf("  ⚠️  This will DELETE %s. Continue? [y/N]: ", dbPath)
-		confirm, err := readLineUnbuffered()
+		confirm, err := repoFingerprintReadLine()
 		if err != nil {
 			return fmt.Errorf("failed to read confirmation: %w", err)
 		}
@@ -119,7 +141,7 @@ func RepoFingerprint(path string) error {
 		}
 
 		fmt.Println("  → Running 'bd init'...")
-		cmd := newBdCmd(bdBinary, "init", "--quiet")
+		cmd := repoFingerprintNewBdCmd(bdBinary, "init", "--quiet")
 		cmd.Dir = path
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
