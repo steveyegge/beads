@@ -830,75 +830,41 @@ func doltBuildSQLInClause(ids []string) (string, []interface{}) {
 // Helper functions
 // =============================================================================
 
-func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO issues (
-			id, content_hash, title, description, design, acceptance_criteria, notes,
-			status, priority, issue_type, assignee, estimated_minutes,
-			created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id,
-			compaction_level, compacted_at, compacted_at_commit, original_size,
-			sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
-			mol_type, work_type, quality_score, source_system, source_repo, close_reason,
-			event_kind, actor, target, payload,
-			await_type, await_id, timeout_ns, waiters,
-			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
-			due_at, defer_until, metadata
-		) VALUES (
-			?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?,
-			?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?,
-			?, ?, ?
-		)
-	`,
-		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
-		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
-		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt, nullStringPtr(issue.ExternalRef), issue.SpecID,
-		issue.CompactionLevel, issue.CompactedAt, nullStringPtr(issue.CompactedAtCommit), nullIntVal(issue.OriginalSize),
-		issue.Sender, issue.Ephemeral, issue.WispType, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
-		issue.MolType, issue.WorkType, issue.QualityScore, issue.SourceSystem, issue.SourceRepo, issue.CloseReason,
-		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
-		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
-		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
-		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
-	)
-	return err
+// Scanner is the common interface between *sql.Row and *sql.Rows.
+type Scanner interface {
+	Scan(dest ...any) error
 }
 
-func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error) {
+// issueColumns is the canonical SELECT column list for issue scanning.
+// All queries that scan into an Issue must use this exact column set.
+const issueColumns = `id, content_hash, title, description, design, acceptance_criteria, notes,
+	status, priority, issue_type, assignee, estimated_minutes,
+	created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id,
+	compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+	sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
+	await_type, await_id, timeout_ns, waiters,
+	hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+	event_kind, actor, target, payload,
+	due_at, defer_until,
+	quality_score, work_type, source_system, metadata`
+
+// scanIssueFromRow scans a single issue from any Scanner (works with both *sql.Row and *sql.Rows).
+func scanIssueFromRow(s Scanner) (*types.Issue, error) {
 	var issue types.Issue
-	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
+	var createdAtStr, updatedAtStr sql.NullString
 	var closedAt, compactedAt, lastActivity, dueAt, deferUntil sql.NullTime
 	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
 	var assignee, externalRef, specID, compactedAtCommit, owner sql.NullString
 	var contentHash, sourceRepo, closeReason sql.NullString
 	var workType, sourceSystem sql.NullString
-	var sender, wispType, molType, eventKind, actor, target, payload sql.NullString
+	var sender, wispType, molType, eventKind, actorCol, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
 	var hookBead, roleBead, agentState, roleType, rig sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var qualityScore sql.NullFloat64
 	var metadata sql.NullString
 
-	err := db.QueryRowContext(ctx, `
-		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
-		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
-		       sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       event_kind, actor, target, payload,
-		       due_at, defer_until,
-		       quality_score, work_type, source_system, metadata
-		FROM issues
-		WHERE id = ?
-	`, id).Scan(
+	if err := s.Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
@@ -907,19 +873,13 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&sender, &ephemeral, &wispType, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
-		&eventKind, &actor, &target, &payload,
+		&eventKind, &actorCol, &target, &payload,
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem, &metadata,
-	)
-
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get issue: %w", err)
+	); err != nil {
+		return nil, err
 	}
 
-	// Parse timestamp strings (TEXT columns require manual parsing)
 	if createdAtStr.Valid {
 		issue.CreatedAt = parseTimeString(createdAtStr.String)
 	}
@@ -927,7 +887,42 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 	}
 
-	// Map nullable fields
+	mapNullableFields(&issue, contentHash, closedAt, estimatedMinutes, assignee, owner,
+		externalRef, specID, compactedAt, compactedAtCommit, originalSize, sourceRepo, closeReason,
+		sender, ephemeral, wispType, pinned, isTemplate, crystallizes,
+		awaitType, awaitID, timeoutNs, waiters,
+		hookBead, roleBead, agentState, lastActivity, roleType, rig, molType,
+		eventKind, actorCol, target, payload,
+		dueAt, deferUntil,
+		qualityScore, workType, sourceSystem, metadata)
+
+	return &issue, nil
+}
+
+func mapNullableFields(issue *types.Issue,
+	contentHash sql.NullString,
+	closedAt sql.NullTime,
+	estimatedMinutes sql.NullInt64,
+	assignee, owner, externalRef, specID sql.NullString,
+	compactedAt sql.NullTime,
+	compactedAtCommit sql.NullString,
+	originalSize sql.NullInt64,
+	sourceRepo, closeReason sql.NullString,
+	sender sql.NullString,
+	ephemeral sql.NullInt64,
+	wispType sql.NullString,
+	pinned, isTemplate, crystallizes sql.NullInt64,
+	awaitType, awaitID sql.NullString,
+	timeoutNs sql.NullInt64,
+	waiters sql.NullString,
+	hookBead, roleBead, agentState sql.NullString,
+	lastActivity sql.NullTime,
+	roleType, rig, molType sql.NullString,
+	eventKind, actorCol, target, payload sql.NullString,
+	dueAt, deferUntil sql.NullTime,
+	qualityScore sql.NullFloat64,
+	workType, sourceSystem, metadata sql.NullString,
+) {
 	if contentHash.Valid {
 		issue.ContentHash = contentHash.String
 	}
@@ -1019,8 +1014,8 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	if eventKind.Valid {
 		issue.EventKind = eventKind.String
 	}
-	if actor.Valid {
-		issue.Actor = actor.String
+	if actorCol.Valid {
+		issue.Actor = actorCol.String
 	}
 	if target.Valid {
 		issue.Target = target.String
@@ -1044,12 +1039,64 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	if sourceSystem.Valid {
 		issue.SourceSystem = sourceSystem.String
 	}
-	// Custom metadata field (GH#1406)
 	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
 		issue.Metadata = []byte(metadata.String)
 	}
+}
 
-	return &issue, nil
+func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO issues (
+			id, content_hash, title, description, design, acceptance_criteria, notes,
+			status, priority, issue_type, assignee, estimated_minutes,
+			created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id,
+			compaction_level, compacted_at, compacted_at_commit, original_size,
+			sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
+			mol_type, work_type, quality_score, source_system, source_repo, close_reason,
+			event_kind, actor, target, payload,
+			await_type, await_id, timeout_ns, waiters,
+			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
+			due_at, defer_until, metadata
+		) VALUES (
+			?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?,
+			?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?
+		)
+	`,
+		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
+		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
+		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt, nullStringPtr(issue.ExternalRef), issue.SpecID,
+		issue.CompactionLevel, issue.CompactedAt, nullStringPtr(issue.CompactedAtCommit), nullIntVal(issue.OriginalSize),
+		issue.Sender, issue.Ephemeral, issue.WispType, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
+		issue.MolType, issue.WorkType, issue.QualityScore, issue.SourceSystem, issue.SourceRepo, issue.CloseReason,
+		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
+		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
+		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
+		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
+	)
+	return err
+}
+
+func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error) {
+	row := db.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT %s FROM issues WHERE id = ?
+	`, issueColumns), id)
+
+	issue, err := scanIssueFromRow(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get issue: %w", err)
+	}
+	return issue, nil
 }
 
 func recordEvent(ctx context.Context, tx *sql.Tx, issueID string, eventType types.EventType, actor, oldValue, newValue string) error {
