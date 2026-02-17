@@ -78,8 +78,13 @@ func TestGetGitHooksDirTildeExpansion(t *testing.T) {
 				wantDir = filepath.Join(subRepoPath, wantDir[len(repoRelPrefix):])
 			}
 
-			if gotDir != wantDir {
-				t.Errorf("GetGitHooksDir() = %q, want %q", gotDir, wantDir)
+			// On macOS, /var is a symlink to /private/var, so we need to resolve
+			// symlinks before comparing paths for equality.
+			gotDirResolved, _ := filepath.EvalSymlinks(gotDir)
+			wantDirResolved, _ := filepath.EvalSymlinks(wantDir)
+			if gotDirResolved != wantDirResolved {
+				t.Errorf("GetGitHooksDir() = %q (resolved: %q), want %q (resolved: %q)",
+					gotDir, gotDirResolved, wantDir, wantDirResolved)
 			}
 		})
 	}
