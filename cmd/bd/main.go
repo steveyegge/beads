@@ -5,26 +5,17 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
-	"path/filepath"
 	"runtime/pprof"
 	"runtime/trace"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/molecules"
 	"github.com/steveyegge/beads/internal/storage/dolt"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 var (
@@ -225,414 +216,43 @@ var rootCmd = &cobra.Command{
 		_ = cmd.Help() // Help() always returns nil for cobra commands
 	},
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		// Initialize CommandContext to hold runtime state (replaces scattered globals)
+		// --- Phase 1: Universal setup (runs for every command) ---
 		initCommandContext()
+		resetWriteTracking()
+		setupSignalContext()
+		applyVerbosityFlags()
+		validateEnvVars()
+		applyViperOverrides(cmd)
+		validateDoltAutoCommitFlag()
 
-		// Reset per-command write tracking (used by Dolt auto-commit).
-		commandDidWrite.Store(false)
-		commandDidExplicitDoltCommit = false
-		commandDidWriteTipMetadata = false
-		commandTipIDsShown = make(map[string]struct{})
-
-		// Set up signal-aware context for graceful cancellation
-		rootCtx, rootCancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-
-		// Apply verbosity flags early (before any output)
-		debug.SetVerbose(verboseFlag)
-		debug.SetQuiet(quietFlag)
-
-		// Block dangerous env var overrides that could cause data fragmentation (bd-hevyw).
-		if err := checkBlockedEnvVars(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Apply viper configuration if flags weren't explicitly set
-		// Priority: flags > viper (config file + env vars) > defaults
-		// Do this BEFORE early-return so init/version/help respect config
-
-		// Track flag overrides for notification (only in verbose mode)
-		flagOverrides := make(map[string]struct {
-			Value  interface{}
-			WasSet bool
-		})
-
-		// If flag wasn't explicitly set, use viper value
-		if !cmd.Flags().Changed("json") {
-			jsonOutput = config.GetBool("json")
-		} else {
-			flagOverrides["json"] = struct {
-				Value  interface{}
-				WasSet bool
-			}{jsonOutput, true}
-		}
-		if !cmd.Flags().Changed("readonly") {
-			readonlyMode = config.GetBool("readonly")
-		} else {
-			flagOverrides["readonly"] = struct {
-				Value  interface{}
-				WasSet bool
-			}{readonlyMode, true}
-		}
-		if !cmd.Flags().Changed("db") && dbPath == "" {
-			dbPath = config.GetString("db")
-		} else if cmd.Flags().Changed("db") {
-			flagOverrides["db"] = struct {
-				Value  interface{}
-				WasSet bool
-			}{dbPath, true}
-		}
-		if !cmd.Flags().Changed("actor") && actor == "" {
-			actor = config.GetString("actor")
-		} else if cmd.Flags().Changed("actor") {
-			flagOverrides["actor"] = struct {
-				Value  interface{}
-				WasSet bool
-			}{actor, true}
-		}
-		if !cmd.Flags().Changed("dolt-auto-commit") && strings.TrimSpace(doltAutoCommit) == "" {
-			doltAutoCommit = config.GetString("dolt.auto-commit")
-		} else if cmd.Flags().Changed("dolt-auto-commit") {
-			flagOverrides["dolt-auto-commit"] = struct {
-				Value  interface{}
-				WasSet bool
-			}{doltAutoCommit, true}
-		}
-
-		// Check for and log configuration overrides (only in verbose mode)
-		if verboseFlag {
-			overrides := config.CheckOverrides(flagOverrides)
-			for _, override := range overrides {
-				config.LogOverride(override)
-			}
-		}
-
-		// Validate Dolt auto-commit mode early so all commands fail fast on invalid config.
-		if _, err := getDoltAutoCommitMode(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		// GH#1093: Check noDbCommands BEFORE expensive operations (ensureForkProtection,
-		// signalOrchestratorActivity) to avoid spawning git subprocesses for simple commands
-		// like "bd version" that don't need database access.
-		noDbCommands := []string{
-			"__complete",       // Cobra's internal completion command (shell completions work without db)
-			"__completeNoDesc", // Cobra's completion without descriptions (used by fish)
-			"bash",
-			"completion",
-			"doctor",
-			"dolt",
-			"fish",
-			"help",
-			"hook", // manages its own store lifecycle; double-open deadlocks embedded Dolt (#1719)
-			"hooks",
-			"human",
-			"init",
-			"merge",
-			"migrate", // manages its own store lifecycle; double-open deadlocks embedded Dolt (#1668)
-			"onboard",
-			"powershell",
-			"prime",
-			"quickstart",
-			"resolve-conflicts",
-			"setup",
-			"version",
-			"zsh",
-		}
-		// Check both the command name and parent command name for subcommands
-		cmdName := cmd.Name()
-		if cmd.Parent() != nil {
-			parentName := cmd.Parent().Name()
-			if slices.Contains(noDbCommands, parentName) {
-				return
-			}
-		}
-		if slices.Contains(noDbCommands, cmdName) {
+		// --- Phase 2: Early exit for commands that don't need a database ---
+		if isNoDbCommand(cmd) {
 			return
 		}
 
-		// Skip for root command with no subcommand (just shows help)
-		if cmd.Parent() == nil && cmdName == cmd.Use {
-			return
-		}
-
-		// Also skip for --version flag on root command (cmdName would be "bd")
-		if v, _ := cmd.Flags().GetBool("version"); v {
-			return
-		}
-
-		// Signal orchestrator daemon about bd activity (best-effort, for exponential backoff)
-		// GH#1093: Moved after noDbCommands check to avoid git subprocesses for simple commands
+		// --- Phase 3: Pre-database setup ---
 		defer signalOrchestratorActivity()
-
-		// Protect forks from accidentally committing upstream issue database
 		ensureForkProtection()
+		setupProfiling(cmd)
+		detectSandbox(cmd)
 
-		// Performance profiling setup
-		if profileEnabled {
-			timestamp := time.Now().Format("20060102-150405")
-			if f, _ := os.Create(fmt.Sprintf("bd-profile-%s-%s.prof", cmd.Name(), timestamp)); f != nil {
-				profileFile = f
-				_ = pprof.StartCPUProfile(f) // Best effort: profiling is a debug tool, failure is non-fatal
-			}
-			if f, _ := os.Create(fmt.Sprintf("bd-trace-%s-%s.out", cmd.Name(), timestamp)); f != nil {
-				traceFile = f
-				_ = trace.Start(f) // Best effort: profiling is a debug tool, failure is non-fatal
-			}
-		}
-
-		// Auto-detect sandboxed environment (Phase 2 for GH #353)
-		if !cmd.Flags().Changed("sandbox") {
-			if isSandboxed() {
-				sandboxMode = true
-				fmt.Fprintf(os.Stderr, "ℹ️  Sandbox detected, using direct mode\n")
-			}
-		}
-
-		// Handle --no-db mode: load from JSONL, use in-memory storage
-		if noDb {
-			if err := initializeNoDbMode(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error initializing --no-db mode: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Set actor for audit trail
-			actor = getActorWithGit()
-
-			// Skip database initialization - we're in memory mode
+		// --- Phase 4: No-db / JSONL-only mode ---
+		if initNoDbIfEnabled() {
 			return
 		}
 
-		// Initialize database path
-		if dbPath == "" {
-			// Use public API to find database (same logic as extensions)
-			if foundDB := beads.FindDatabasePath(); foundDB != "" {
-				dbPath = foundDB
-			} else {
-				// No database found - check if this is JSONL-only mode
-				beadsDir := beads.FindBeadsDir()
-				if beadsDir != "" {
-					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-
-					// Check if JSONL exists and config.yaml has no-db: true
-					jsonlExists := false
-					if _, err := os.Stat(jsonlPath); err == nil {
-						jsonlExists = true
-					}
-
-					// Use proper YAML parsing to detect no-db mode
-					isNoDbMode := isNoDbModeConfigured(beadsDir)
-
-					// If JSONL-only mode is configured, auto-enable it
-					if jsonlExists && isNoDbMode {
-						noDb = true
-						if err := initializeNoDbMode(); err != nil {
-							fmt.Fprintf(os.Stderr, "Error initializing JSONL-only mode: %v\n", err)
-							os.Exit(1)
-						}
-						// Set actor for audit trail
-						actor = getActorWithGit()
-						return
-					}
-				}
-
-				// Allow some commands to run without a database
-				// - import: auto-initializes database if missing
-				// - setup: creates editor integration files (no DB needed)
-				// - config set/get for yaml-only keys: writes to config.yaml, not SQLite (GH#536)
-				isYamlOnlyConfigOp := false
-				if (cmd.Name() == "set" || cmd.Name() == "get") && cmd.Parent() != nil && cmd.Parent().Name() == "config" {
-					if len(args) > 0 && config.IsYamlOnlyKey(args[0]) {
-						isYamlOnlyConfigOp = true
-					}
-				}
-
-				// Allow read-only commands to auto-bootstrap from JSONL (GH#b09)
-				// This enables `bd show` after cold-start when DB is missing.
-				// IMPORTANT: If metadata.json says the backend is Dolt, we must NOT
-				// silently create a different database — that causes contamination.
-				// Error out instead so the user can fix the Dolt connection. (gt-r1nex)
-				canAutoBootstrap := false
-				if isReadOnlyCommand(cmd.Name()) && beadsDir != "" {
-					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-					if _, err := os.Stat(jsonlPath); err == nil {
-						configuredBackend := dolt.GetBackendFromConfig(beadsDir)
-						if configuredBackend == configfile.BackendDolt {
-							// Dolt backend configured but database not found — don't auto-bootstrap
-							fmt.Fprintf(os.Stderr, "Error: Dolt backend configured but database not found\n")
-							fmt.Fprintf(os.Stderr, "The .beads/metadata.json specifies backend: dolt\n")
-							fmt.Fprintf(os.Stderr, "but no Dolt database was found. Check that the Dolt server is running.\n")
-							fmt.Fprintf(os.Stderr, "\nHint: run 'bd doctor --fix' to diagnose and repair\n")
-							os.Exit(1)
-						}
-						canAutoBootstrap = true
-						debug.Logf("cold-start bootstrap: JSONL exists, allowing auto-create for %s", cmd.Name())
-					}
-				}
-
-				if cmd.Name() != "import" && cmd.Name() != "setup" && !isYamlOnlyConfigOp && !canAutoBootstrap {
-					// No database found - provide context-aware error message
-					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
-
-					// Check if JSONL exists without no-db mode configured
-					if beadsDir != "" {
-						jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-						if _, err := os.Stat(jsonlPath); err == nil {
-							// JSONL exists but no-db mode not configured
-							fmt.Fprintf(os.Stderr, "\nFound JSONL file: %s\n", jsonlPath)
-							fmt.Fprintf(os.Stderr, "This looks like a fresh clone or JSONL-only project.\n\n")
-							fmt.Fprintf(os.Stderr, "Options:\n")
-							fmt.Fprintf(os.Stderr, "  • Run 'bd init' to create database and import issues\n")
-							fmt.Fprintf(os.Stderr, "  • Use 'bd --no-db %s' for JSONL-only mode\n", cmd.Name())
-							fmt.Fprintf(os.Stderr, "  • Add 'no-db: true' to .beads/config.yaml for permanent JSONL-only mode\n")
-							os.Exit(1)
-						}
-					}
-
-					// Generic error - no beads directory or JSONL found
-					fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
-					fmt.Fprintf(os.Stderr, "      or use 'bd --no-db' to work with JSONL only (no database)\n")
-					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
-					os.Exit(1)
-				}
-				// For import/setup commands, set default database path
-				// Invariant: dbPath must always be absolute. Use CanonicalizePath for OS-agnostic
-				// handling (symlinks, case normalization on macOS).
-				//
-				// IMPORTANT: Use FindBeadsDir() to get the correct .beads directory,
-				// which follows redirect files. Without this, a redirected .beads
-				// would create a local database instead of using the redirect target.
-				// (GH#bd-0qel)
-				targetBeadsDir := beads.FindBeadsDir()
-				if targetBeadsDir == "" {
-					targetBeadsDir = ".beads"
-				}
-				dbPath = utils.CanonicalizePath(filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName))
-			}
+		// --- Phase 5: Database discovery and path resolution ---
+		if discoverDatabasePath(cmd, args) {
+			return // no-db mode was auto-activated from JSONL-only config
 		}
 
-		// Set actor for audit trail
-		actor = getActorWithGit()
-
-		// Track bd version changes
-		// Best-effort tracking - failures are silent
-		trackBdVersion()
-
-		// Check if this is a read-only command (GH#804)
-		// Read-only commands open SQLite in read-only mode to avoid modifying
-		// the database file (which breaks file watchers).
-		useReadOnly := isReadOnlyCommand(cmd.Name())
-
-		// Auto-migrate database on version bump
-		// Skip for read-only commands - they can't write anyway
-		if !useReadOnly {
-			autoMigrateOnVersionBump(filepath.Dir(dbPath))
-		}
-
-		// Initialize direct storage access
-		var err error
-		beadsDir := filepath.Dir(dbPath)
-
-		// Create Dolt storage config
-		doltPath := filepath.Join(beadsDir, "dolt")
-		doltCfg := &dolt.Config{
-			ReadOnly: useReadOnly,
-		}
-
-		// Set advisory lock timeout for dolt embedded mode.
-		// Reads get a shorter timeout (shared lock, less contention expected).
-		// Writes get a longer timeout (exclusive lock, may need to wait for readers).
-		if useReadOnly {
-			doltCfg.OpenTimeout = 5 * time.Second
-		} else {
-			doltCfg.OpenTimeout = 15 * time.Second
-		}
-
-		// Load config to get database name and server mode settings
-		cfg, cfgErr := configfile.Load(beadsDir)
-		if cfgErr == nil && cfg != nil {
-			// Always set database name (needed for bootstrap to find
-			// prefix-based databases like "beads_hq"; see #1669)
-			doltCfg.Database = cfg.GetDoltDatabase()
-
-			if cfg.IsDoltServerMode() {
-				doltCfg.ServerMode = true
-				doltCfg.ServerHost = cfg.GetDoltServerHost()
-				doltCfg.ServerPort = cfg.GetDoltServerPort()
-				doltCfg.ServerUser = cfg.GetDoltServerUser()
-				doltCfg.ServerPassword = cfg.GetDoltServerPassword()
-				doltCfg.ServerTLS = cfg.GetDoltServerTLS()
-			}
-		}
-
-		// Apply mode-aware default for dolt-auto-commit if neither flag nor
-		// config explicitly set it. Server mode defaults to OFF because the
-		// server handles commits via its own transaction lifecycle; firing
-		// DOLT_COMMIT after every write under concurrent load causes
-		// 'database is read only' errors. Embedded mode defaults to ON so
-		// each write is durably committed.
-		if strings.TrimSpace(doltAutoCommit) == "" {
-			if doltCfg.ServerMode {
-				doltAutoCommit = string(doltAutoCommitOff)
-			} else {
-				doltAutoCommit = string(doltAutoCommitOn)
-			}
-		}
-
-		// Bootstrap embedded dolt if needed
-		if !doltCfg.ServerMode {
-			if bErr := bootstrapEmbeddedDolt(rootCtx, doltPath, doltCfg); bErr != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", bErr)
-				os.Exit(1)
-			}
-		}
-
-		doltCfg.Path = doltPath
-		store, err = dolt.New(rootCtx, doltCfg)
-
-		// Track final read-only state for staleness checks (GH#1089)
-		storeIsReadOnly = doltCfg.ReadOnly
-
-		if err != nil {
-			// Check for fresh clone scenario
-			if handleFreshCloneError(err, beadsDir) {
-				os.Exit(1)
-			}
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Mark store as active for flush goroutine safety
-		storeMutex.Lock()
-		storeActive = true
-		storeMutex.Unlock()
-
-		// Initialize hook runner
-		// dbPath is .beads/something.db, so workspace root is parent of .beads
-		if dbPath != "" {
-			beadsDir := filepath.Dir(dbPath)
-			hookRunner = hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
-		}
-
-		// Warn if multiple databases detected in directory hierarchy
-		warnMultipleDatabases(dbPath)
-
-		// Load molecule templates from hierarchical catalog locations
-		// Templates are loaded after auto-import to ensure the database is up-to-date.
-		// Skip for import command to avoid conflicts during import operations.
-		if cmd.Name() != "import" && store != nil {
-			beadsDir := filepath.Dir(dbPath)
-			loader := molecules.NewLoader(store)
-			if result, err := loader.LoadAll(rootCtx, beadsDir); err != nil {
-				debug.Logf("warning: failed to load molecules: %v", err)
-			} else if result.Loaded > 0 {
-				debug.Logf("loaded %d molecules from %v", result.Loaded, result.Sources)
-			}
-		}
-
-		// Tips (including sync conflict proactive checks) are shown via maybeShowTip()
-		// after successful command execution, not in PreRun
+		// --- Phase 6: Actor, version tracking, store, and extensions ---
+		setupActor()
+		trackVersionChanges(cmd)
+		openStore(cmd)
+		initHookRunner()
+		warnMultipleDbs()
+		loadMoleculeTemplates(cmd)
 
 		// Sync all state to CommandContext for unified access
 		syncCommandContext()
