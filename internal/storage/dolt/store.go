@@ -273,6 +273,12 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	var absPath string
 	var accessLock *AccessLock
 	if !cfg.ServerMode {
+		// Guard: if the path is an existing regular file (e.g., beads.db from SQLite era),
+		// MkdirAll will fail confusingly. Give a clear error instead.
+		if info, statErr := os.Stat(cfg.Path); statErr == nil && !info.IsDir() {
+			return nil, fmt.Errorf("database path %q is a file, not a directory — run 'bd migrate --to-dolt' to migrate from SQLite", cfg.Path)
+		}
+
 		if err := os.MkdirAll(cfg.Path, 0o750); err != nil {
 			return nil, fmt.Errorf("failed to create database directory: %w", err)
 		}

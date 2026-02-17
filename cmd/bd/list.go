@@ -137,8 +137,11 @@ func watchIssues(ctx context.Context, store *dolt.DoltStore, filter types.IssueF
 	}
 
 	// Initial display
-	// Best effort: display gracefully degrades with empty data
-	issues, _ := store.SearchIssues(ctx, "", filter)
+	issues, err := store.SearchIssues(ctx, "", filter)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error querying issues: %v\n", err)
+		return
+	}
 	sortIssues(issues, sortBy, reverse)
 	displayPrettyList(issues, true)
 
@@ -170,8 +173,11 @@ func watchIssues(ctx context.Context, store *dolt.DoltStore, filter types.IssueF
 						debounceTimer.Stop()
 					}
 					debounceTimer = time.AfterFunc(debounceDelay, func() {
-						// Best effort: display gracefully degrades with empty data
-						issues, _ := store.SearchIssues(ctx, "", filter)
+						issues, err := store.SearchIssues(ctx, "", filter)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Error refreshing issues: %v\n", err)
+							return
+						}
 						sortIssues(issues, sortBy, reverse)
 						displayPrettyList(issues, true)
 						fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")

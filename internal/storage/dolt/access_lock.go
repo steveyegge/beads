@@ -81,7 +81,8 @@ func AcquireAccessLock(doltDir string, exclusive bool, timeout time.Duration) (*
 	if exclusive {
 		kind = "exclusive"
 	}
-	return nil, fmt.Errorf("dolt access lock timeout (%s, %v): another bd process is using the database: %w",
+	return nil, fmt.Errorf("dolt access lock timeout (%s, %v): another bd process is using the database; "+
+		"if no other process is running, try 'bd doctor --fix' to clean stale locks: %w",
 		kind, timeout, lockfile.ErrLockBusy)
 }
 

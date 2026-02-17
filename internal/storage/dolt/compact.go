@@ -11,6 +11,11 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const (
+	defaultTier1Days = 30
+	defaultTier2Days = 90
+)
+
 // CheckEligibility checks if an issue is eligible for compaction at the given tier.
 // Tier 1: closed 30+ days ago, compaction_level=0
 // Tier 2: closed 90+ days ago, compaction_level=1
