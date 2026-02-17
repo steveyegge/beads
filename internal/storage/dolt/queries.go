@@ -691,47 +691,12 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 		return nil, fmt.Errorf("failed to get statistics: %w", err)
 	}
 
-	// Blocked count: use separate single-table queries with Go-level filtering
-	// to avoid Dolt's joinIter panic (slice bounds out of range at join_iters.go:192).
-	// Even IN (SELECT ...) subqueries across tables can trigger this panic because
-	// Dolt's optimizer converts them to join plans internally.
-	// Same fix pattern as GetBlockedIssues (57e25f69).
+	// Blocked count: reuse computeBlockedIDs which caches the result across
+	// GetReadyWork and GetStatistics calls within the same CLI invocation.
 	var blockedCount int
-
-	// Step 1: Get all active issue IDs (single-table scan)
-	activeIDs := make(map[string]bool)
-	activeRows, err := s.queryContext(ctx, `
-		SELECT id FROM issues
-		WHERE status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-	`)
+	blockedIDs, err := s.computeBlockedIDs(ctx)
 	if err == nil {
-		for activeRows.Next() {
-			var id string
-			if err := activeRows.Scan(&id); err == nil {
-				activeIDs[id] = true
-			}
-		}
-		_ = activeRows.Close() // Redundant close for safety (rows already iterated)
-
-		// Step 2: Get all blocking dependencies (single-table scan)
-		depRows, err := s.queryContext(ctx, `
-			SELECT issue_id, depends_on_id FROM dependencies
-			WHERE type = 'blocks'
-		`)
-		if err == nil {
-			blockedSet := make(map[string]bool)
-			for depRows.Next() {
-				var issueID, blockerID string
-				if err := depRows.Scan(&issueID, &blockerID); err == nil {
-					// Step 3: Filter in Go — both sides must be active
-					if activeIDs[issueID] && activeIDs[blockerID] {
-						blockedSet[issueID] = true
-					}
-				}
-			}
-			_ = depRows.Close() // Redundant close for safety (rows already iterated)
-			blockedCount = len(blockedSet)
-		}
+		blockedCount = len(blockedIDs)
 	}
 	stats.BlockedIssues = blockedCount
 
@@ -749,8 +714,18 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 // computeBlockedIDs returns the set of issue IDs that are blocked by active issues.
 // Uses separate single-table queries with Go-level filtering to avoid Dolt's
 // joinIter panic (slice bounds out of range at join_iters.go:192).
+// Results are cached per DoltStore lifetime and invalidated when dependencies
+// change (AddDependency, RemoveDependency).
 // Caller must hold s.mu (at least RLock).
 func (s *DoltStore) computeBlockedIDs(ctx context.Context) ([]string, error) {
+	s.cacheMu.Lock()
+	if s.blockedIDsCached {
+		result := s.blockedIDsCache
+		s.cacheMu.Unlock()
+		return result, nil
+	}
+	s.cacheMu.Unlock()
+
 	// Step 1: Get all active issue IDs (single-table scan)
 	activeIDs := make(map[string]bool)
 	activeRows, err := s.queryContext(ctx, `
@@ -803,7 +778,24 @@ func (s *DoltStore) computeBlockedIDs(ctx context.Context) ([]string, error) {
 	for id := range blockedSet {
 		result = append(result, id)
 	}
+
+	s.cacheMu.Lock()
+	s.blockedIDsCache = result
+	s.blockedIDsCacheMap = blockedSet
+	s.blockedIDsCached = true
+	s.cacheMu.Unlock()
+
 	return result, nil
+}
+
+// invalidateBlockedIDsCache clears the blocked IDs cache so the next call
+// to computeBlockedIDs will recompute from the database.
+func (s *DoltStore) invalidateBlockedIDsCache() {
+	s.cacheMu.Lock()
+	s.blockedIDsCached = false
+	s.blockedIDsCache = nil
+	s.blockedIDsCacheMap = nil
+	s.cacheMu.Unlock()
 }
 
 // GetMoleculeProgress returns progress stats for a molecule

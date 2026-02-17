@@ -76,6 +76,8 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 	if err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
 	}
+
+	s.invalidateBlockedIDsCache()
 	return nil
 }
 
@@ -87,6 +89,8 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 	if err != nil {
 		return fmt.Errorf("failed to remove dependency: %w", err)
 	}
+
+	s.invalidateBlockedIDsCache()
 	return nil
 }
 
