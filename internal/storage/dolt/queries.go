@@ -455,11 +455,24 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 		return nil, err
 	}
 
-	// Step 4: Hydrate blocked issues and build results
+	// Step 4: Batch-fetch all blocked issues and build results
+	blockedIDs := make([]string, 0, len(blockerMap))
+	for id := range blockerMap {
+		blockedIDs = append(blockedIDs, id)
+	}
+	issues, err := s.GetIssuesByIDs(ctx, blockedIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch-fetch blocked issues: %w", err)
+	}
+	issueMap := make(map[string]*types.Issue, len(issues))
+	for _, issue := range issues {
+		issueMap[issue.ID] = issue
+	}
+
 	var results []*types.BlockedIssue
 	for id, blockerIDs := range blockerMap {
-		issue, err := s.GetIssue(ctx, id)
-		if err != nil || issue == nil {
+		issue, ok := issueMap[id]
+		if !ok || issue == nil {
 			continue
 		}
 
@@ -536,7 +549,53 @@ func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.Ep
 	}
 	_ = depRows.Close() // Redundant close for safety (rows already iterated)
 
-	// Step 3: For each epic with children, check child statuses
+	// Step 3: Batch-fetch statuses for all child issues across all epics
+	allChildIDs := make([]string, 0)
+	for _, children := range epicChildMap {
+		allChildIDs = append(allChildIDs, children...)
+	}
+	childStatusMap := make(map[string]string)
+	if len(allChildIDs) > 0 {
+		placeholders := make([]string, len(allChildIDs))
+		args := make([]interface{}, len(allChildIDs))
+		for i, id := range allChildIDs {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
+		statusQuery := fmt.Sprintf("SELECT id, status FROM issues WHERE id IN (%s)", strings.Join(placeholders, ","))
+		statusRows, err := s.queryContext(ctx, statusQuery, args...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to batch-fetch child statuses: %w", err)
+		}
+		for statusRows.Next() {
+			var id, status string
+			if err := statusRows.Scan(&id, &status); err != nil {
+				_ = statusRows.Close()
+				return nil, err
+			}
+			childStatusMap[id] = status
+		}
+		_ = statusRows.Close()
+	}
+
+	// Step 4: Batch-fetch all epic issues
+	epicsWithChildren := make([]string, 0)
+	for _, epicID := range epicIDs {
+		if len(epicChildMap[epicID]) > 0 {
+			epicsWithChildren = append(epicsWithChildren, epicID)
+		}
+	}
+	epicIssues, err := s.GetIssuesByIDs(ctx, epicsWithChildren)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch-fetch epic issues: %w", err)
+	}
+	epicIssueMap := make(map[string]*types.Issue, len(epicIssues))
+	for _, issue := range epicIssues {
+		epicIssueMap[issue.ID] = issue
+	}
+
+	// Step 5: Build results from cached data
 	var results []*types.EpicStatus
 	for _, epicID := range epicIDs {
 		children := epicChildMap[epicID]
@@ -544,19 +603,17 @@ func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.Ep
 			continue
 		}
 
+		issue, ok := epicIssueMap[epicID]
+		if !ok || issue == nil {
+			continue
+		}
+
 		totalChildren := len(children)
 		closedChildren := 0
 		for _, childID := range children {
-			var status string
-			err := s.db.QueryRowContext(ctx, "SELECT status FROM issues WHERE id = ?", childID).Scan(&status)
-			if err == nil && types.Status(status) == types.StatusClosed {
+			if status, ok := childStatusMap[childID]; ok && types.Status(status) == types.StatusClosed {
 				closedChildren++
 			}
-		}
-
-		issue, err := s.GetIssue(ctx, epicID)
-		if err != nil || issue == nil {
-			continue
 		}
 
 		results = append(results, &types.EpicStatus{
@@ -782,22 +839,48 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 	}
 	_ = depRows.Close() // Redundant close for safety (rows already iterated)
 
-	// Step 2: Get status for each child (single-table lookups)
-	for _, childID := range childIDs {
-		var status string
-		var createdAt sql.NullString
-		err := s.db.QueryRowContext(ctx, "SELECT status, created_at FROM issues WHERE id = ?", childID).Scan(&status, &createdAt)
-		if err != nil {
-			continue
+	// Step 2: Batch-fetch status for all children (single batched query)
+	if len(childIDs) > 0 {
+		placeholders := make([]string, len(childIDs))
+		args := make([]interface{}, len(childIDs))
+		for i, id := range childIDs {
+			placeholders[i] = "?"
+			args[i] = id
 		}
-		stats.Total++
-		switch types.Status(status) {
-		case types.StatusClosed:
-			stats.Completed++
-		case types.StatusInProgress:
-			stats.InProgress++
-			if stats.CurrentStepID == "" {
-				stats.CurrentStepID = childID
+		// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
+		query := fmt.Sprintf("SELECT id, status FROM issues WHERE id IN (%s)", strings.Join(placeholders, ","))
+		statusRows, err := s.queryContext(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to batch-fetch child statuses: %w", err)
+		}
+		type childInfo struct {
+			status string
+		}
+		childMap := make(map[string]childInfo)
+		for statusRows.Next() {
+			var id, status string
+			if err := statusRows.Scan(&id, &status); err != nil {
+				_ = statusRows.Close()
+				return nil, err
+			}
+			childMap[id] = childInfo{status: status}
+		}
+		_ = statusRows.Close()
+
+		for _, childID := range childIDs {
+			info, ok := childMap[childID]
+			if !ok {
+				continue
+			}
+			stats.Total++
+			switch types.Status(info.status) {
+			case types.StatusClosed:
+				stats.Completed++
+			case types.StatusInProgress:
+				stats.InProgress++
+				if stats.CurrentStepID == "" {
+					stats.CurrentStepID = childID
+				}
 			}
 		}
 	}
