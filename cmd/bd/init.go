@@ -317,13 +317,10 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 
 		// Create Dolt storage backend
 		storagePath := filepath.Join(beadsDir, "dolt")
-		// Use prefix-based database name to avoid cross-rig contamination (bd-u8rda)
-		dbName := "beads"
-		if prefix != "" {
-			dbName = "beads_" + prefix
-		}
+		// Always use canonical database name "beads" so that all bd subcommands
+		// (doctor, hook, vc, etc.) can find it without reading metadata.json first.
 		var store *dolt.DoltStore
-		store, err = dolt.New(ctx, &dolt.Config{Path: storagePath, Database: dbName})
+		store, err = dolt.New(ctx, &dolt.Config{Path: storagePath, Database: "beads"})
 		if err != nil {
 			// If the backend requires CGO but this is a nocgo build, fall back to JSONL-only mode.
 			// This enables Windows CI (CGO_ENABLED=0) and other pure-Go builds to use bd init.
@@ -451,11 +448,10 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 					cfg.Database = "dolt"
 				}
 
-				// Set prefix-based SQL database name to avoid cross-rig contamination (bd-u8rda).
-				// E.g., prefix "gt" → database "beads_gt", prefix "bd" → database "beads_bd".
-				if prefix != "" {
-					cfg.DoltDatabase = "beads_" + prefix
-				}
+				// Always use canonical database name "beads". The prefix-based naming
+				// (beads_<prefix>) caused a mismatch with bd doctor and other subcommands
+				// that default to "beads". Keeping a single canonical name avoids this.
+				cfg.DoltDatabase = "beads"
 
 				// Save server mode configuration (bd-dolt.2.2)
 				if serverMode {

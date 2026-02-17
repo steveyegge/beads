@@ -345,14 +345,6 @@ func hookPreCommit() int {
 		}
 	}
 
-	// Check if sync-branch is configured (changes go to separate branch)
-	if hookGetSyncBranch() != "" {
-		if cfg.ChainStrategy == ChainAfter {
-			return runChainedHookWithConfig("pre-commit", nil, cfg)
-		}
-		return 0
-	}
-
 	// Get worktree root for per-worktree state tracking
 	worktreeRoot, err := getWorktreeRoot()
 	if err != nil {
@@ -360,7 +352,9 @@ func hookPreCommit() int {
 		worktreeRoot = beadsDir // Fallback
 	}
 
-	// Check if we're using Dolt backend - use branch-then-merge pattern
+	// Check if we're using Dolt backend - use branch-then-merge pattern.
+	// Dolt export must run even when sync-branch is configured, otherwise
+	// the JSONL file never gets updated and bd doctor reports a count mismatch.
 	backend := dolt.GetBackendFromConfig(beadsDir)
 	if backend == configfile.BackendDolt {
 		exitCode := hookPreCommitDolt(beadsDir, worktreeRoot)
@@ -368,6 +362,15 @@ func hookPreCommit() int {
 			return runChainedHookWithConfig("pre-commit", nil, cfg)
 		}
 		return exitCode
+	}
+
+	// Non-Dolt backend: skip export when sync-branch is configured
+	// (changes go to separate branch, nothing to export here)
+	if hookGetSyncBranch() != "" {
+		if cfg.ChainStrategy == ChainAfter {
+			return runChainedHookWithConfig("pre-commit", nil, cfg)
+		}
+		return 0
 	}
 
 	// SQLite backend: Use existing sync --flush-only
@@ -521,9 +524,15 @@ func updateExportStateCommit(beadsDir, worktreeRoot, doltCommit string) {
 	_ = saveExportState(beadsDir, worktreeRoot, prevState) // Best effort: export state is advisory
 }
 
-// runJSONLExport runs the actual JSONL export via bd sync.
+// runJSONLExport exports the database to JSONL via bd export.
+// Previously this called "bd sync --flush-only" which is a no-op in Dolt mode.
 func runJSONLExport() error {
-	cmd := exec.Command("bd", "sync", "--flush-only")
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return fmt.Errorf("no .beads directory found")
+	}
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	cmd := exec.Command("bd", "export", "-o", jsonlPath)
 	return cmd.Run()
 }
 

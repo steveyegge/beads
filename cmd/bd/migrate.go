@@ -767,6 +767,30 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, 0644)
 }
 
+// migrateSyncCmd is the "bd migrate sync <branch>" subcommand that
+// configures the separate-branch workflow for multi-clone setups.
+// Previously this was documented but never wired as an actual subcommand,
+// so bd doctor's recommendation to run "bd migrate sync beads-sync" would fail.
+var migrateSyncCmd = &cobra.Command{
+	Use:   "sync <branch>",
+	Short: "Set up sync.branch workflow for multi-clone setups",
+	Long: `Configure separate branch workflow for multi-clone setups.
+
+This sets the sync.branch config value so that issue data is committed
+to a dedicated branch, keeping your main branch clean.
+
+Example:
+  bd migrate sync beads-sync`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		if !dryRun {
+			CheckReadonly("migrate sync")
+		}
+		handleToSeparateBranch(args[0], dryRun)
+	},
+}
+
 func init() {
 	migrateCmd.Flags().Bool("yes", false, "Auto-confirm prompts")
 	migrateCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
@@ -775,5 +799,10 @@ func init() {
 	migrateCmd.Flags().Bool("update-repo-id", false, "Update repository ID (use after changing git remote)")
 	migrateCmd.Flags().Bool("inspect", false, "Show migration plan and database state for AI agent analysis")
 	migrateCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output migration statistics in JSON format")
+
+	migrateSyncCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
+	migrateSyncCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	migrateCmd.AddCommand(migrateSyncCmd)
+
 	rootCmd.AddCommand(migrateCmd)
 }
