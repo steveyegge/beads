@@ -8,9 +8,6 @@ import (
 )
 
 func TestGetGitHooksDirTildeExpansion(t *testing.T) {
-	repoPath, cleanup := setupTestRepo(t)
-	defer cleanup()
-
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("Failed to get home directory: %v", err)
@@ -19,7 +16,9 @@ func TestGetGitHooksDirTildeExpansion(t *testing.T) {
 	tests := []struct {
 		name      string
 		hooksPath string
-		wantDir   string
+		// wantDir is either an absolute path or "REPO_RELATIVE:" prefix
+		// meaning the expected path is relative to the subtest's repo root.
+		wantDir string
 	}{
 		{
 			name:      "tilde with forward slash",
@@ -39,25 +38,31 @@ func TestGetGitHooksDirTildeExpansion(t *testing.T) {
 		{
 			name:      "relative path without tilde",
 			hooksPath: ".beads/hooks",
-			wantDir:   filepath.Join(repoPath, ".beads", "hooks"),
+			wantDir:   "REPO_RELATIVE:.beads/hooks",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Each subtest gets its own repo to avoid git config corruption.
+			// Setting core.hooksPath to a backslash-tilde path (e.g. ~\.githooks)
+			// causes all subsequent git commands to fail with "failed to expand
+			// user dir", and even `git config --unset` cannot recover.
+			subRepoPath, subCleanup := setupTestRepo(t)
+			defer subCleanup()
 			ResetCaches()
 
 			cmd := exec.Command("git", "config", "core.hooksPath", tt.hooksPath)
-			cmd.Dir = repoPath
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("Failed to set core.hooksPath: %v", err)
+			cmd.Dir = subRepoPath
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("Failed to set core.hooksPath to %q: %v\n%s", tt.hooksPath, err, out)
 			}
 
 			originalDir, err := os.Getwd()
 			if err != nil {
 				t.Fatalf("Failed to get working directory: %v", err)
 			}
-			if err := os.Chdir(repoPath); err != nil {
+			if err := os.Chdir(subRepoPath); err != nil {
 				t.Fatalf("Failed to chdir to test repo: %v", err)
 			}
 			t.Cleanup(func() { os.Chdir(originalDir) })
@@ -67,8 +72,14 @@ func TestGetGitHooksDirTildeExpansion(t *testing.T) {
 				t.Fatalf("GetGitHooksDir() returned error: %v", err)
 			}
 
-			if gotDir != tt.wantDir {
-				t.Errorf("GetGitHooksDir() = %q, want %q", gotDir, tt.wantDir)
+			wantDir := tt.wantDir
+			const repoRelPrefix = "REPO_RELATIVE:"
+			if len(wantDir) > len(repoRelPrefix) && wantDir[:len(repoRelPrefix)] == repoRelPrefix {
+				wantDir = filepath.Join(subRepoPath, wantDir[len(repoRelPrefix):])
+			}
+
+			if gotDir != wantDir {
+				t.Errorf("GetGitHooksDir() = %q, want %q", gotDir, wantDir)
 			}
 		})
 	}

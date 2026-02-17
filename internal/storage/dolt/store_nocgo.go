@@ -32,6 +32,10 @@ type Config struct {
 	ServerPort     int
 	ServerUser     string
 	ServerPassword string
+	ServerTLS      bool
+
+	RemoteUser     string
+	RemotePassword string
 
 	DisableWatchdog bool
 }

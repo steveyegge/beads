@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -79,6 +80,7 @@ func TestEnsureWorktree(t *testing.T) {
 		// Create a "remote" repository with beads-sync branch
 		remoteDir := t.TempDir()
 		setupGitRepo(t, remoteDir)
+		defaultBranch := getDefaultBranch(t, remoteDir)
 
 		// Create beads-sync branch in "remote"
 		runCmd(t, remoteDir, "git", "checkout", "-b", "beads-sync")
@@ -92,7 +94,7 @@ func TestEnsureWorktree(t *testing.T) {
 		}
 		runCmd(t, remoteDir, "git", "add", ".")
 		runCmd(t, remoteDir, "git", "commit", "-m", "add beads")
-		runCmd(t, remoteDir, "git", "checkout", "master")
+		runCmd(t, remoteDir, "git", "checkout", defaultBranch)
 
 		// Clone the "remote" to create our local repo
 		tmpDir := t.TempDir()
@@ -203,6 +205,18 @@ func setupGitRepo(t *testing.T, dir string) {
 	runCmd(t, dir, "git", "commit", "-m", "initial")
 }
 
+// getDefaultBranch returns the default branch name for a git repo.
+func getDefaultBranch(t *testing.T, dir string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("Failed to get default branch: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // runCmd runs a command in the given directory
 func runCmd(t *testing.T, dir string, name string, args ...string) {
 	t.Helper()
@@ -230,8 +244,9 @@ func TestFreshCloneScenario(t *testing.T) {
 	// Create a "remote" repository simulating the broken state
 	remoteDir := t.TempDir()
 	setupGitRepo(t, remoteDir)
+	defaultBranch := getDefaultBranch(t, remoteDir)
 
-	// Create stale issues on main (simulating the broken state)
+	// Create stale issues on default branch (simulating the broken state)
 	beadsDir := filepath.Join(remoteDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("Failed to create .beads directory: %v", err)
@@ -261,8 +276,8 @@ func TestFreshCloneScenario(t *testing.T) {
 	runCmd(t, remoteDir, "git", "add", ".")
 	runCmd(t, remoteDir, "git", "commit", "-m", "add current beads on beads-sync")
 
-	// Go back to master on remote
-	runCmd(t, remoteDir, "git", "checkout", "master")
+	// Go back to default branch on remote
+	runCmd(t, remoteDir, "git", "checkout", defaultBranch)
 
 	// Clone to simulate fresh clone (gets main branch)
 	tmpDir := t.TempDir()

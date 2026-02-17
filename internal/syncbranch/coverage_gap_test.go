@@ -169,14 +169,15 @@ func TestCheckForcePush_WithGitRepo(t *testing.T) {
 		remoteDir := t.TempDir()
 		runGit(t, remoteDir, "init", "--bare")
 
-		// Create local repo with a commit on master
+		// Create local repo with a commit on default branch
 		repoDir := setupTestRepo(t)
 		defer os.RemoveAll(repoDir)
 		writeFile(t, filepath.Join(repoDir, "dummy.txt"), "x")
 		runGit(t, repoDir, "add", ".")
 		runGit(t, repoDir, "commit", "-m", "initial")
 		runGit(t, repoDir, "remote", "add", "origin", remoteDir)
-		runGit(t, repoDir, "push", "-u", "origin", "master")
+		// Push current branch (whatever default name git init chose)
+		runGit(t, repoDir, "push", "-u", "origin", "HEAD")
 
 		// Store a fake SHA
 		store := newTestStore(t)
