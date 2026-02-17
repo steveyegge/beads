@@ -210,6 +210,19 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.52.0",
+		Date:    "2026-02-16",
+		Changes: []string{
+			"NEW: bd ready --include-ephemeral flag to include ephemeral issues in ready work",
+			"FIX: Doctor redirect target resolution (#1803)",
+			"FIX: Guard dolt directory creation with server-mode check (#1800)",
+			"FIX: Tilde expansion in core.hooksPath on Windows (#1798)",
+			"FIX: Worktree redirect path resolution from worktree root (#1791)",
+			"FIX: Block rename-prefix in git worktrees (#1792)",
+			"REMOVED: Dead git-portable sync functions (#1793)",
+		},
+	},
+	{
 		Version: "0.51.0",
 		Date:    "2026-02-16",
 		Changes: []string{
