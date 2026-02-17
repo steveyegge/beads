@@ -58,7 +58,7 @@ func TestParse_BasicFormula(t *testing.T) {
 	if v := formula.Vars["component"]; v == nil || !v.Required {
 		t.Error("component var should be required")
 	}
-	if v := formula.Vars["framework"]; v == nil || v.Default != "react" {
+	if v := formula.Vars["framework"]; v == nil || v.Default == nil || *v.Default != "react" {
 		t.Error("framework var should have default 'react'")
 	}
 	if v := formula.Vars["framework"]; v == nil || len(v.Enum) != 3 {
@@ -145,7 +145,7 @@ func TestValidate_RequiredWithDefault(t *testing.T) {
 		Version: 1,
 		Type:    TypeWorkflow,
 		Vars: map[string]*VarDef{
-			"bad": {Required: true, Default: "value"}, // can't have both
+			"bad": {Required: true, Default: StringPtr("value")}, // can't have both
 		},
 		Steps: []*Step{{ID: "step1", Title: "Step 1"}},
 	}
@@ -343,7 +343,7 @@ func TestValidateVars(t *testing.T) {
 			"required_var": {Required: true},
 			"enum_var":     {Enum: []string{"a", "b", "c"}},
 			"pattern_var":  {Pattern: `^[a-z]+$`},
-			"optional_var": {Default: "default"},
+			"optional_var": {Default: StringPtr("default")},
 		},
 	}
 
@@ -398,7 +398,7 @@ func TestApplyDefaults(t *testing.T) {
 	formula := &Formula{
 		Formula: "mol-defaults",
 		Vars: map[string]*VarDef{
-			"with_default":    {Default: "default_value"},
+			"with_default":    {Default: StringPtr("default_value")},
 			"without_default": {},
 		},
 	}
@@ -1395,14 +1395,14 @@ title = "Start {{wisp_type}} on {{rig_name}}"
 	// Simple string should become Default
 	if v := formula.Vars["wisp_type"]; v == nil {
 		t.Error("wisp_type var not found")
-	} else if v.Default != "patrol" {
-		t.Errorf("wisp_type.Default = %q, want 'patrol'", v.Default)
+	} else if v.Default == nil || *v.Default != "patrol" {
+		t.Errorf("wisp_type.Default = %v, want 'patrol'", v.Default)
 	}
 
 	if v := formula.Vars["rig_name"]; v == nil {
 		t.Error("rig_name var not found")
-	} else if v.Default != "mayor" {
-		t.Errorf("rig_name.Default = %q, want 'mayor'", v.Default)
+	} else if v.Default == nil || *v.Default != "mayor" {
+		t.Errorf("rig_name.Default = %v, want 'mayor'", v.Default)
 	}
 }
 
@@ -1449,8 +1449,8 @@ title = "Test"
 	// Check simple var
 	if v := formula.Vars["simple_var"]; v == nil {
 		t.Error("simple_var not found")
-	} else if v.Default != "simple_value" {
-		t.Errorf("simple_var.Default = %q, want 'simple_value'", v.Default)
+	} else if v.Default == nil || *v.Default != "simple_value" {
+		t.Errorf("simple_var.Default = %v, want 'simple_value'", v.Default)
 	}
 
 	// Check complex var
@@ -1460,8 +1460,8 @@ title = "Test"
 		if v.Description != "A complex variable" {
 			t.Errorf("complex_var.Description = %q, want 'A complex variable'", v.Description)
 		}
-		if v.Default != "complex_default" {
-			t.Errorf("complex_var.Default = %q, want 'complex_default'", v.Default)
+		if v.Default == nil || *v.Default != "complex_default" {
+			t.Errorf("complex_var.Default = %v, want 'complex_default'", v.Default)
 		}
 		if len(v.Enum) != 3 {
 			t.Errorf("len(complex_var.Enum) = %d, want 3", len(v.Enum))

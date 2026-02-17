@@ -485,8 +485,8 @@ func TestSubstituteVars(t *testing.T) {
 func TestMergeVars(t *testing.T) {
 	formula := &Formula{
 		Vars: map[string]*VarDef{
-			"env":     {Default: "staging"},
-			"version": {Default: "1.0"},
+			"env":     {Default: StringPtr("staging")},
+			"version": {Default: StringPtr("1.0")},
 			"name":    {Required: true}, // No default
 		},
 	}
