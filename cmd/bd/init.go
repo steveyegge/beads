@@ -327,7 +327,8 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 		if err != nil {
 			// If the backend requires CGO but this is a nocgo build, fall back to JSONL-only mode.
 			// This enables Windows CI (CGO_ENABLED=0) and other pure-Go builds to use bd init.
-			if strings.Contains(err.Error(), "requires CGO") {
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "requires CGO") || strings.Contains(errMsg, "without CGO support") {
 				if !quiet {
 					fmt.Fprintf(os.Stderr, "Note: %s backend requires CGO (not available in this build).\n", backend)
 					fmt.Fprintf(os.Stderr, "Falling back to JSONL-only mode.\n\n")
