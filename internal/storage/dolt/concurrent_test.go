@@ -331,8 +331,8 @@ func TestLongTransactionBlocking(t *testing.T) {
 			// Signal that long tx has started
 			close(longTxStarted)
 
-			// Hold the transaction open for a while
-			time.Sleep(2 * time.Second)
+			// Hold the transaction open long enough for short txs to contend
+			time.Sleep(500 * time.Millisecond)
 
 			// Do some work
 			return tx.UpdateIssue(ctx, issue.ID, map[string]interface{}{
