@@ -259,7 +259,7 @@ func applyFixList(path string, fixes []doctorCheck) {
 		case "Permissions":
 			err = fix.Permissions(path)
 		case "Database":
-			err = fix.DatabaseVersion(path)
+			err = fix.DatabaseVersionWithBdVersion(path, Version)
 			// Also repair any other missing metadata fields (bd_version, repo_id, clone_id)
 			if mErr := fix.FixMissingMetadata(path, Version); mErr != nil && err == nil {
 				err = mErr

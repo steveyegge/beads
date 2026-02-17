@@ -1,20 +1,22 @@
 package fix
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 var repoFingerprintReadLine = readLineUnbuffered
-var repoFingerprintGetBdBinary = getBdBinary
-var repoFingerprintNewBdCmd = newBdCmd
 
 // readLineUnbuffered reads a line from stdin without buffering.
-// This ensures subprocess stdin isn't consumed by our buffered reader.
+// This avoids consuming input past the newline, keeping stdin available
+// for any further prompts in the same session.
 func readLineUnbuffered() (string, error) {
 	var result []byte
 	buf := make([]byte, 1)
@@ -33,27 +35,59 @@ func readLineUnbuffered() (string, error) {
 	}
 }
 
-func runUpdateRepoID(path, bdBinary string, autoYes bool) error {
-	args := []string{"migrate", "--update-repo-id"}
-	if autoYes {
-		args = append(args, "--yes")
-		fmt.Println("  → Auto mode (--yes): running 'bd migrate --update-repo-id --yes'...")
-	} else {
-		fmt.Println("  → Running 'bd migrate --update-repo-id'...")
+// updateRepoIDInProcess updates the repo_id metadata directly in the Dolt store,
+// avoiding subprocess lock contention. (GH#1805)
+func updateRepoIDInProcess(beadsDir string, autoYes bool) error {
+	ctx := context.Background()
+
+	// Compute new repo ID
+	newRepoID, err := beads.ComputeRepoID()
+	if err != nil {
+		return fmt.Errorf("failed to compute repository ID: %w", err)
 	}
 
-	cmd := repoFingerprintNewBdCmd(bdBinary, args...)
-	cmd.Dir = path
-	if !autoYes {
-		// Allow interactive confirmation prompt when running without --yes.
-		cmd.Stdin = os.Stdin
+	// Open database
+	store, err := dolt.NewFromConfig(ctx, beadsDir)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
 	}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	defer func() { _ = store.Close() }()
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to update repo ID: %w", err)
+	// Get old repo ID (treat any error as "no existing repo_id")
+	oldRepoID, _ := store.GetMetadata(ctx, "repo_id")
+
+	oldDisplay := "none"
+	if len(oldRepoID) >= 8 {
+		oldDisplay = oldRepoID[:8]
 	}
+	newDisplay := newRepoID
+	if len(newDisplay) >= 8 {
+		newDisplay = newDisplay[:8]
+	}
+
+	// Prompt for confirmation if repo_id exists and differs
+	if oldRepoID != "" && oldRepoID != newRepoID && !autoYes {
+		fmt.Printf("  WARNING: Changing repository ID can break sync if other clones exist.\n\n")
+		fmt.Printf("  Current repo ID: %s\n", oldDisplay)
+		fmt.Printf("  New repo ID:     %s\n\n", newDisplay)
+		fmt.Printf("  Continue? [y/N] ")
+		response, err := repoFingerprintReadLine()
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
+		response = strings.TrimSpace(strings.ToLower(response))
+		if response != "y" && response != "yes" {
+			fmt.Println("  → Canceled")
+			return nil
+		}
+	}
+
+	// Update repo ID
+	if err := store.SetMetadata(ctx, "repo_id", newRepoID); err != nil {
+		return fmt.Errorf("failed to update repo_id: %w", err)
+	}
+
+	fmt.Printf("  ✓ Repository ID updated (old: %s, new: %s)\n", oldDisplay, newDisplay)
 	return nil
 }
 
@@ -63,21 +97,21 @@ func runUpdateRepoID(path, bdBinary string, autoYes bool) error {
 //  1. Update repo ID (if URL changed or bd upgraded)
 //  2. Reinitialize database (if wrong database was copied)
 //  3. Skip (do nothing)
+//
+// All operations are performed in-process to avoid Dolt lock contention
+// that occurs when spawning bd subcommands. (GH#1805)
 func RepoFingerprint(path string, autoYes bool) error {
 	// Validate workspace
 	if err := validateBeadsWorkspace(path); err != nil {
 		return err
 	}
 
-	// Get bd binary path
-	bdBinary, err := repoFingerprintGetBdBinary()
-	if err != nil {
-		return err
-	}
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// In --yes mode, auto-select the recommended safe action [1].
 	if autoYes {
-		return runUpdateRepoID(path, bdBinary, true)
+		fmt.Println("  → Auto mode (--yes): updating repo ID in-process...")
+		return updateRepoIDInProcess(beadsDir, true)
 	}
 
 	// Prompt user for action
@@ -99,11 +133,10 @@ func RepoFingerprint(path string, autoYes bool) error {
 
 	switch response {
 	case "1":
-		return runUpdateRepoID(path, bdBinary, false)
+		return updateRepoIDInProcess(beadsDir, false)
 
 	case "2":
 		// Detect backend to determine what to remove
-		beadsDir := filepath.Join(path, ".beads")
 		cfg, cfgErr := configfile.Load(beadsDir)
 		if cfgErr != nil || cfg == nil {
 			cfg = configfile.DefaultConfig()
@@ -123,32 +156,30 @@ func RepoFingerprint(path string, autoYes bool) error {
 			return nil
 		}
 
-		// Remove database and reinitialize
+		// Remove database and reinitialize in-process
 		fmt.Printf("  → Removing %s...\n", dbPath)
 		if isDolt {
-			// Dolt uses a directory
 			if err := os.RemoveAll(dbPath); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("failed to remove Dolt database: %w", err)
 			}
 		} else {
-			// SQLite uses a file
 			if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("failed to remove database: %w", err)
 			}
-			// Also remove WAL and SHM files if they exist
 			_ = os.Remove(dbPath + "-wal")
 			_ = os.Remove(dbPath + "-shm")
 		}
 
-		fmt.Println("  → Running 'bd init'...")
-		cmd := repoFingerprintNewBdCmd(bdBinary, "init", "--quiet")
-		cmd.Dir = path
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		if err := cmd.Run(); err != nil {
+		// Reinitialize by creating a new store (auto-bootstraps from JSONL)
+		fmt.Println("  → Reinitializing database from JSONL...")
+		ctx := context.Background()
+		store, err := dolt.NewFromConfig(ctx, beadsDir)
+		if err != nil {
 			return fmt.Errorf("failed to initialize database: %w", err)
 		}
+		defer func() { _ = store.Close() }()
+
+		fmt.Println("  ✓ Database reinitialized")
 		return nil
 
 	case "s", "":
