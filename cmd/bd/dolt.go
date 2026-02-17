@@ -451,14 +451,15 @@ func testServerConnection(cfg *configfile.Config) bool {
 }
 
 // logDoltConfigChange appends an audit entry to .beads/dolt-config.log.
+// Includes the beadsDir path for debugging worktree config pollution (bd-la2cl).
 func logDoltConfigChange(beadsDir, key, value string) {
 	logPath := filepath.Join(beadsDir, "dolt-config.log")
 	actor := os.Getenv("BD_ACTOR")
 	if actor == "" {
 		actor = "unknown"
 	}
-	entry := fmt.Sprintf("%s actor=%s key=%s value=%s\n",
-		time.Now().UTC().Format(time.RFC3339), actor, key, value)
+	entry := fmt.Sprintf("%s actor=%s key=%s value=%s beads_dir=%s\n",
+		time.Now().UTC().Format(time.RFC3339), actor, key, value, beadsDir)
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return // best effort

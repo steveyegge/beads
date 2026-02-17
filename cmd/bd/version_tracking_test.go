@@ -312,6 +312,10 @@ func TestTrackBdVersion_SameVersion(t *testing.T) {
 		t.Fatalf("Failed to create .beads: %v", err)
 	}
 
+	// Override BEADS_DIR so FindBeadsDir() returns our temp .beads,
+	// not the rig's .beads (which happens in worktree environments).
+	t.Setenv("BEADS_DIR", beadsDir)
+
 	// Change to temp directory
 	t.Chdir(tmpDir)
 

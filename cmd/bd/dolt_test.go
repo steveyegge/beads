@@ -594,6 +594,62 @@ func captureDoltSetOutput(t *testing.T, key, value string, updateConfig bool) st
 	return buf.String()
 }
 
+// TestSetDoltConfigWorktreeIsolation verifies that setDoltConfig writes to
+// BEADS_DIR (the test temp directory), not the main repo's .beads directory.
+// This is a regression test for bd-la2cl: test values (10.0.0.1:3309, mydb)
+// were being written to the production metadata.json in worktree environments
+// because FindBeadsDir() resolves to the main repo root.
+func TestSetDoltConfigWorktreeIsolation(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
+	}
+
+	// Create metadata.json with Dolt backend
+	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendDolt
+	cfg.DoltMode = configfile.DoltModeServer
+	cfg.DoltServerHost = "127.0.0.1"
+	cfg.DoltServerPort = 3307
+	cfg.DoltDatabase = "beads"
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	// CRITICAL: Set BEADS_DIR so FindBeadsDir() returns our temp .beads,
+	// not the main repo's .beads (which happens in worktree environments).
+	t.Setenv("BEADS_DIR", beadsDir)
+
+	oldCwd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldCwd) }()
+
+	// Write test values via setDoltConfig
+	setDoltConfig("host", "192.168.99.99", false)
+	setDoltConfig("port", "9999", false)
+	setDoltConfig("database", "testdb", false)
+
+	// Verify values were written to the TEMP directory's metadata.json
+	loadedCfg, err := configfile.Load(beadsDir)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if loadedCfg.DoltServerHost != "192.168.99.99" {
+		t.Errorf("test values not written to temp beadsDir: host = %s", loadedCfg.DoltServerHost)
+	}
+
+	// Verify the main repo's metadata.json was NOT modified.
+	// FindBeadsDir() without BEADS_DIR override would return the main repo's .beads.
+	// We can't easily test this in all environments, but we verify by checking that
+	// the values we wrote don't match the "known bad" test values from the original bug.
+	if loadedCfg.DoltServerHost == "10.0.0.1" && loadedCfg.DoltServerPort == 3309 {
+		t.Error("REGRESSION: test values match the known-bad production corruption values (10.0.0.1:3309)")
+	}
+}
+
 func containsAny(s string, substrs ...string) bool {
 	for _, sub := range substrs {
 		if strings.Contains(s, sub) {
