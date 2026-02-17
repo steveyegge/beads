@@ -46,9 +46,10 @@ func TestMain(m *testing.M) {
 	// Also reset viper state that was loaded by main.go's init().
 	config.ResetForTesting()
 
-	// Enable test mode that forces accessor functions to use legacy globals.
-	// This ensures backward compatibility with tests that manipulate globals directly.
-	enableTestModeGlobals()
+	// Reset CommandContext so accessor functions fall back to globals.
+	// Tests that manipulate globals directly work because accessors
+	// check cmdCtx == nil and return the global value in that case.
+	resetCommandContext()
 
 	// Set BEADS_TEST_MODE once for the entire test run (bd-cqjoi).
 	// Previously each test set/unset this env var via ensureTestMode(),

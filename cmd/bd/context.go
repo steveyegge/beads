@@ -1,6 +1,3 @@
-// Package main provides the CommandContext struct that consolidates runtime state.
-// This addresses the code smell of 20+ global variables in main.go by grouping
-// related state into a single struct for better testability and clearer ownership.
 package main
 
 import (
@@ -16,7 +13,7 @@ import (
 // This consolidates the previously scattered global variables for:
 // - Better testability (can inject mock contexts)
 // - Clearer state ownership (all state in one place)
-// - Reduced global count (20+ globals → 1 context)
+// - Reduced global count (20+ globals -> 1 context)
 // - Thread safety (mutexes grouped with the data they protect)
 type CommandContext struct {
 	// Configuration (derived from flags and config)
@@ -51,10 +48,6 @@ type CommandContext struct {
 // Commands access state through this single point instead of scattered globals.
 var cmdCtx *CommandContext
 
-// testModeUseGlobals when true forces accessor functions to use legacy globals.
-// This ensures backward compatibility with tests that manipulate globals directly.
-var testModeUseGlobals bool
-
 // initCommandContext creates and initializes a new CommandContext.
 // Called from PersistentPreRun to set up runtime state.
 func initCommandContext() {
@@ -68,55 +61,36 @@ func GetCommandContext() *CommandContext {
 }
 
 // resetCommandContext clears the CommandContext for testing.
-// This ensures tests that manipulate globals directly work correctly.
 // Only call this in tests, never in production code.
 func resetCommandContext() {
 	cmdCtx = nil
 }
 
-// enableTestModeGlobals forces accessor functions to use legacy globals.
-// This ensures backward compatibility with tests that manipulate globals directly.
-func enableTestModeGlobals() {
-	testModeUseGlobals = true
-	cmdCtx = nil
-}
-
-// shouldUseGlobals returns true if accessor functions should use globals.
-func shouldUseGlobals() bool {
-	return testModeUseGlobals || cmdCtx == nil
-}
-
-// The following accessor functions provide backward-compatible access
-// to the CommandContext fields. Commands can use these during the
-// migration period, and they can be gradually replaced with direct
-// cmdCtx access as files are updated.
-
 // getStore returns the current storage backend.
-// This is the primary way commands should access storage.
 func getStore() *dolt.DoltStore {
-	if shouldUseGlobals() {
-		return store // fallback to legacy global during transition
+	if cmdCtx == nil {
+		return store
 	}
 	return cmdCtx.Store
 }
 
-// setStore updates the storage backend in the CommandContext.
+// setStore updates the storage backend in both CommandContext and the global.
 func setStore(s *dolt.DoltStore) {
 	if cmdCtx != nil {
 		cmdCtx.Store = s
 	}
-	store = s // keep legacy global in sync during transition
+	store = s
 }
 
 // getActor returns the current actor name for audit trail.
 func getActor() string {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return actor
 	}
 	return cmdCtx.Actor
 }
 
-// setActor updates the actor name in the CommandContext.
+// setActor updates the actor name in both CommandContext and the global.
 func setActor(a string) {
 	if cmdCtx != nil {
 		cmdCtx.Actor = a
@@ -126,13 +100,13 @@ func setActor(a string) {
 
 // isJSONOutput returns true if JSON output mode is enabled.
 func isJSONOutput() bool {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return jsonOutput
 	}
 	return cmdCtx.JSONOutput
 }
 
-// setJSONOutput updates the JSON output flag.
+// setJSONOutput updates the JSON output flag in both CommandContext and the global.
 func setJSONOutput(j bool) {
 	if cmdCtx != nil {
 		cmdCtx.JSONOutput = j
@@ -142,13 +116,13 @@ func setJSONOutput(j bool) {
 
 // getDBPath returns the database path.
 func getDBPath() string {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return dbPath
 	}
 	return cmdCtx.DBPath
 }
 
-// setDBPath updates the database path.
+// setDBPath updates the database path in both CommandContext and the global.
 func setDBPath(p string) {
 	if cmdCtx != nil {
 		cmdCtx.DBPath = p
@@ -157,10 +131,10 @@ func setDBPath(p string) {
 }
 
 // getRootContext returns the signal-aware root context.
-// Returns context.Background() if the root context is nil (e.g., before CLI initialization).
+// Returns context.Background() if the root context is nil.
 func getRootContext() context.Context {
 	var ctx context.Context
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		ctx = rootCtx
 	} else {
 		ctx = cmdCtx.RootCtx
@@ -183,7 +157,7 @@ func setRootContext(ctx context.Context, cancel context.CancelFunc) {
 
 // getHookRunner returns the hook runner instance.
 func getHookRunner() *hooks.Runner {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return hookRunner
 	}
 	return cmdCtx.HookRunner
@@ -199,15 +173,23 @@ func setHookRunner(h *hooks.Runner) {
 
 // isReadonlyMode returns true if read-only mode is enabled.
 func isReadonlyMode() bool {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return readonlyMode
 	}
 	return cmdCtx.ReadonlyMode
 }
 
+// setReadonlyMode updates the read-only mode flag.
+func setReadonlyMode(rm bool) {
+	if cmdCtx != nil {
+		cmdCtx.ReadonlyMode = rm
+	}
+	readonlyMode = rm
+}
+
 // getLockTimeout returns the SQLite lock timeout.
 func getLockTimeout() time.Duration {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return lockTimeout
 	}
 	return cmdCtx.LockTimeout
@@ -235,23 +217,39 @@ func setStoreActive(active bool) {
 
 // isVerbose returns true if verbose mode is enabled.
 func isVerbose() bool {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return verboseFlag
 	}
 	return cmdCtx.Verbose
 }
 
+// setVerbose updates the verbose flag.
+func setVerbose(v bool) {
+	if cmdCtx != nil {
+		cmdCtx.Verbose = v
+	}
+	verboseFlag = v
+}
+
 // isQuiet returns true if quiet mode is enabled.
 func isQuiet() bool {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return quietFlag
 	}
 	return cmdCtx.Quiet
 }
 
+// setQuiet updates the quiet flag.
+func setQuiet(q bool) {
+	if cmdCtx != nil {
+		cmdCtx.Quiet = q
+	}
+	quietFlag = q
+}
+
 // isNoDb returns true if no-db mode is enabled.
 func isNoDb() bool {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return noDb
 	}
 	return cmdCtx.NoDb
@@ -267,7 +265,7 @@ func setNoDb(nd bool) {
 
 // isSandboxMode returns true if sandbox mode is enabled.
 func isSandboxMode() bool {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return sandboxMode
 	}
 	return cmdCtx.SandboxMode
@@ -283,7 +281,7 @@ func setSandboxMode(sm bool) {
 
 // isVersionUpgradeDetected returns true if a version upgrade was detected.
 func isVersionUpgradeDetected() bool {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return versionUpgradeDetected
 	}
 	return cmdCtx.VersionUpgradeDetected
@@ -299,7 +297,7 @@ func setVersionUpgradeDetected(detected bool) {
 
 // getPreviousVersion returns the previous bd version.
 func getPreviousVersion() string {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return previousVersion
 	}
 	return cmdCtx.PreviousVersion
@@ -315,7 +313,7 @@ func setPreviousVersion(v string) {
 
 // isUpgradeAcknowledged returns true if the upgrade notification was shown.
 func isUpgradeAcknowledged() bool {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return upgradeAcknowledged
 	}
 	return cmdCtx.UpgradeAcknowledged
@@ -331,7 +329,7 @@ func setUpgradeAcknowledged(ack bool) {
 
 // getProfileFile returns the CPU profile file handle.
 func getProfileFile() *os.File {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return profileFile
 	}
 	return cmdCtx.ProfileFile
@@ -347,7 +345,7 @@ func setProfileFile(f *os.File) {
 
 // getTraceFile returns the trace file handle.
 func getTraceFile() *os.File {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return traceFile
 	}
 	return cmdCtx.TraceFile
@@ -363,43 +361,16 @@ func setTraceFile(f *os.File) {
 
 // isAllowStale returns true if staleness checks should be skipped.
 func isAllowStale() bool {
-	if shouldUseGlobals() {
+	if cmdCtx == nil {
 		return allowStale
 	}
 	return cmdCtx.AllowStale
 }
 
-// syncCommandContext copies all legacy global values to the CommandContext.
-// This is called after initialization is complete to ensure cmdCtx has all values.
-func syncCommandContext() {
-	if shouldUseGlobals() {
-		return
+// setAllowStale updates the allow-stale flag.
+func setAllowStale(as bool) {
+	if cmdCtx != nil {
+		cmdCtx.AllowStale = as
 	}
-
-	// Configuration
-	cmdCtx.DBPath = dbPath
-	cmdCtx.Actor = actor
-	cmdCtx.JSONOutput = jsonOutput
-	cmdCtx.SandboxMode = sandboxMode
-	cmdCtx.AllowStale = allowStale
-	cmdCtx.NoDb = noDb
-	cmdCtx.ReadonlyMode = readonlyMode
-	cmdCtx.LockTimeout = lockTimeout
-	cmdCtx.Verbose = verboseFlag
-	cmdCtx.Quiet = quietFlag
-
-	// Runtime state
-	cmdCtx.Store = store
-	cmdCtx.RootCtx = rootCtx
-	cmdCtx.RootCancel = rootCancel
-	cmdCtx.HookRunner = hookRunner
-
-	// Version tracking
-	cmdCtx.VersionUpgradeDetected = versionUpgradeDetected
-	cmdCtx.PreviousVersion = previousVersion
-	cmdCtx.UpgradeAcknowledged = upgradeAcknowledged
-
-	// Profiling
-	cmdCtx.ProfileFile = profileFile
-	cmdCtx.TraceFile = traceFile
+	allowStale = as
 }
