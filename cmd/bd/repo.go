@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -208,9 +210,9 @@ var repoSyncCmd = &cobra.Command{
 	Short: "Manually trigger multi-repo sync",
 	Long: `Synchronize issues from all configured additional repositories.
 
-Reads issues.jsonl from each additional repository and imports them into
-the primary database with their original prefixes and source_repo set.
-Uses mtime caching to skip repos whose JSONL hasn't changed.
+Detects each peer's storage backend and uses the appropriate sync method:
+  - Dolt peers: native Dolt server query (faster, no JSONL needed)
+  - JSONL peers: reads issues.jsonl with mtime caching
 
 Also triggers Dolt push/pull if a remote is configured.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -232,83 +234,58 @@ Also triggers Dolt push/pull if a remote is configured.`,
 			return fmt.Errorf("failed to load repo config: %w", err)
 		}
 
+		var doltSynced, jsonlSynced int
+		var syncErrors []string
 		totalImported := 0
-		totalSkipped := 0
 
-		// Hydrate issues from each additional repository
+		// Sync each additional repo using the appropriate backend
 		for _, repoPath := range repos.Additional {
-			// Expand tilde
+			// Expand ~ to home directory
 			expandedPath := repoPath
 			if len(repoPath) > 0 && repoPath[0] == '~' {
-				home, err := os.UserHomeDir()
-				if err == nil {
+				home, homeErr := os.UserHomeDir()
+				if homeErr == nil {
 					expandedPath = filepath.Join(home, repoPath[1:])
 				}
 			}
 
-			// Resolve to absolute path for consistent mtime caching
-			absPath, err := filepath.Abs(expandedPath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to resolve path %s: %v\n", repoPath, err)
-				continue
-			}
-
-			jsonlPath := filepath.Join(absPath, ".beads", "issues.jsonl")
-			info, err := os.Stat(jsonlPath)
-			if err != nil {
+			// Detect peer backend type
+			backend, detectErr := dolt.DetectPeerBackend(expandedPath)
+			if detectErr != nil {
+				// Fall back to JSONL path detection if backend detection fails
 				if verbose {
-					fmt.Fprintf(os.Stderr, "Skipping %s: no issues.jsonl found\n", repoPath)
+					fmt.Fprintf(os.Stderr, "Backend detection failed for %s: %v, trying JSONL\n", repoPath, detectErr)
 				}
-				continue
+				backend = dolt.PeerBackendJSONL
 			}
 
-			// Check mtime cache — skip if JSONL hasn't changed
-			currentMtime := info.ModTime().UnixNano()
-			cachedMtime, _ := store.GetRepoMtime(ctx, absPath)
-			if cachedMtime == currentMtime {
-				if verbose {
-					fmt.Fprintf(os.Stderr, "Skipping %s: JSONL unchanged\n", repoPath)
+			switch backend {
+			case dolt.PeerBackendDolt:
+				// Use native Dolt hydration (read-only server access)
+				result, hydrateErr := store.HydrateFromPeerDolt(ctx, expandedPath)
+				if hydrateErr != nil {
+					syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", repoPath, hydrateErr))
+					continue
 				}
-				totalSkipped++
-				continue
-			}
-
-			// Parse issues from JSONL
-			issues, err := parseIssuesFromJSONL(jsonlPath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to parse %s: %v\n", jsonlPath, err)
-				continue
-			}
-
-			if len(issues) == 0 {
-				if verbose {
-					fmt.Fprintf(os.Stderr, "Skipping %s: no issues in JSONL\n", repoPath)
+				doltSynced++
+				totalImported += result.Imported
+				if verbose && !jsonOutput {
+					fmt.Printf("  %s: %d imported, %d skipped (Dolt native)\n",
+						repoPath, result.Imported, result.Skipped)
 				}
-				continue
-			}
 
-			// Set source_repo on all imported issues
-			for _, issue := range issues {
-				issue.SourceRepo = repoPath
-			}
+			case dolt.PeerBackendJSONL:
+				// Fall back to JSONL import with mtime caching
+				imported, err := syncPeerViaJSONL(ctx, repoPath, expandedPath, verbose)
+				if err != nil {
+					syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", repoPath, err))
+					continue
+				}
+				jsonlSynced++
+				totalImported += imported
 
-			// Import with prefix validation skipped (cross-prefix hydration)
-			if err := store.CreateIssuesWithFullOptions(ctx, issues, "repo-sync", storage.BatchCreateOptions{
-				OrphanHandling:       storage.OrphanAllow,
-				SkipPrefixValidation: true,
-			}); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to import from %s: %v\n", repoPath, err)
-				continue
-			}
-
-			// Update mtime cache
-			if err := store.SetRepoMtime(ctx, absPath, jsonlPath, currentMtime); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to update mtime cache for %s: %v\n", repoPath, err)
-			}
-
-			totalImported += len(issues)
-			if verbose {
-				fmt.Fprintf(os.Stderr, "Imported %d issue(s) from %s\n", len(issues), repoPath)
+			default:
+				syncErrors = append(syncErrors, fmt.Sprintf("%s: unknown backend %s", repoPath, backend))
 			}
 		}
 
@@ -318,23 +295,95 @@ Also triggers Dolt push/pull if a remote is configured.`,
 		if jsonOutput {
 			result := map[string]interface{}{
 				"synced":          true,
-				"repos_synced":    len(repos.Additional) - totalSkipped,
-				"repos_skipped":   totalSkipped,
+				"dolt_synced":     doltSynced,
+				"jsonl_synced":    jsonlSynced,
 				"issues_imported": totalImported,
+				"errors":          syncErrors,
 			}
 			return json.NewEncoder(os.Stdout).Encode(result)
 		}
 
+		if len(syncErrors) > 0 {
+			fmt.Fprintf(os.Stderr, "\nSync errors:\n")
+			for _, e := range syncErrors {
+				fmt.Fprintf(os.Stderr, "  - %s\n", e)
+			}
+		}
+
 		if totalImported > 0 {
-			fmt.Printf("Multi-repo sync complete: imported %d issue(s) from %d repo(s)\n",
-				totalImported, len(repos.Additional)-totalSkipped)
-		} else if totalSkipped == len(repos.Additional) {
-			fmt.Println("Multi-repo sync complete: all repos up to date")
+			fmt.Printf("Multi-repo sync complete: %d imported (%d Dolt, %d JSONL)\n",
+				totalImported, doltSynced, jsonlSynced)
 		} else {
-			fmt.Println("Multi-repo sync complete")
+			fmt.Println("Multi-repo sync complete: all repos up to date")
 		}
 		return nil
 	},
+}
+
+// syncPeerViaJSONL syncs a peer repository using JSONL import with mtime caching.
+// Returns the number of issues imported.
+func syncPeerViaJSONL(ctx context.Context, repoPath, expandedPath string, verbose bool) (int, error) {
+	// Resolve to absolute path for consistent mtime caching
+	absPath, err := filepath.Abs(expandedPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	jsonlPath := filepath.Join(absPath, ".beads", "issues.jsonl")
+	info, err := os.Stat(jsonlPath)
+	if err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Skipping %s: no issues.jsonl found\n", repoPath)
+		}
+		return 0, nil
+	}
+
+	// Check mtime cache — skip if JSONL hasn't changed
+	currentMtime := info.ModTime().UnixNano()
+	cachedMtime, _ := store.GetRepoMtime(ctx, absPath)
+	if cachedMtime == currentMtime {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Skipping %s: JSONL unchanged\n", repoPath)
+		}
+		return 0, nil
+	}
+
+	// Parse issues from JSONL
+	issues, err := parseIssuesFromJSONL(jsonlPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse JSONL: %w", err)
+	}
+
+	if len(issues) == 0 {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Skipping %s: no issues in JSONL\n", repoPath)
+		}
+		return 0, nil
+	}
+
+	// Set source_repo on all imported issues
+	for _, issue := range issues {
+		issue.SourceRepo = repoPath
+	}
+
+	// Import with prefix validation skipped (cross-prefix hydration)
+	if err := store.CreateIssuesWithFullOptions(ctx, issues, "repo-sync", storage.BatchCreateOptions{
+		OrphanHandling:       storage.OrphanAllow,
+		SkipPrefixValidation: true,
+	}); err != nil {
+		return 0, fmt.Errorf("failed to import: %w", err)
+	}
+
+	// Update mtime cache
+	if err := store.SetRepoMtime(ctx, absPath, jsonlPath, currentMtime); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update mtime cache for %s: %v\n", repoPath, err)
+	}
+
+	if verbose && !jsonOutput {
+		fmt.Fprintf(os.Stderr, "Imported %d issue(s) from %s (JSONL)\n", len(issues), repoPath)
+	}
+
+	return len(issues), nil
 }
 
 // parseIssuesFromJSONL reads and parses issues from a JSONL file.
