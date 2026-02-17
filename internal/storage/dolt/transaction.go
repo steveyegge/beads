@@ -66,7 +66,7 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		var configPrefix string
 		err := t.tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
 		if err == sql.ErrNoRows || configPrefix == "" {
-			return fmt.Errorf("database not initialized: issue_prefix config is missing")
+			return fmt.Errorf("%w: issue_prefix config is missing", storage.ErrNotInitialized)
 		} else if err != nil {
 			return fmt.Errorf("failed to get config: %w", err)
 		}
@@ -410,7 +410,7 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 
 	issue, err := scanIssueFromRow(row)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, fmt.Errorf("%w: issue %s", storage.ErrNotFound, id)
 	}
 	if err != nil {
 		return nil, err
