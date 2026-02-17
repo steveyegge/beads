@@ -522,8 +522,8 @@ func classifyDatabaseError(errMsg string, jsonlCount int, jsonlAvailable bool) (
 		errorType = "Database is locked"
 		recoverySteps = "1. Check for running bd processes: ps aux | grep bd\n" +
 			"2. Kill any stale processes\n" +
-			"3. Remove stale locks: bd doctor --fix\n" +
-			"4. Retry: bd doctor"
+			"3. Run: bd doctor --fix (removes stale lock files including Dolt internal locks)\n" +
+			"4. If still stuck, manually remove: rm .beads/dolt-access.lock .beads/dolt/*/.dolt/noms/LOCK"
 
 	case strings.Contains(errMsg, "not a database") || strings.Contains(errMsg, "file is not a database"):
 		errorType = "File is not a valid SQLite database"
