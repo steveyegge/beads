@@ -1,0 +1,19 @@
+[book]
+title = "Beads"
+authors = ["aegis"]
+language = "en"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "_build"
+create-missing = true
+
+[output.html]
+default-theme = "coal"
+preferred-dark-theme = "coal"
+additional-css = ["theme/dracula.css"]
+additional-js = []
+no-section-label = false
+git-repository-url = "https://github.com/scbrown/beads"
+edit-url-template = "https://github.com/scbrown/beads/edit/main/book/src/{path}"

@@ -1,0 +1,203 @@
+/* Dracula Theme for mdbook */
+/* https://draculatheme.com/contribute */
+/* Font: Intel One Mono */
+
+@import url('https://fonts.googleapis.com/css2?family=Intel+One+Mono:wght@400;500;700&display=swap');
+
+/* Dracula palette */
+:root {
+    --dracula-bg: #282a36;
+    --dracula-current: #44475a;
+    --dracula-fg: #f8f8f2;
+    --dracula-comment: #6272a4;
+    --dracula-cyan: #8be9fd;
+    --dracula-green: #50fa7b;
+    --dracula-orange: #ffb86c;
+    --dracula-pink: #ff79c6;
+    --dracula-purple: #bd93f9;
+    --dracula-red: #ff5555;
+    --dracula-yellow: #f1fa8c;
+}
+
+/* Apply Intel One Mono everywhere */
+body, .content, code, pre, pre > code, .sidebar, .menu-title,
+.chapter, nav, .nav-chapters, .search-results, input {
+    font-family: 'Intel One Mono', 'JetBrains Mono', 'Fira Code', monospace !important;
+}
+
+/* Coal theme overrides (mdbook's dark theme as base) */
+.coal {
+    --bg: var(--dracula-bg);
+    --fg: var(--dracula-fg);
+    --sidebar-bg: #21222c;
+    --sidebar-fg: var(--dracula-fg);
+    --sidebar-non-existant: var(--dracula-comment);
+    --sidebar-active: var(--dracula-purple);
+    --sidebar-spacer: var(--dracula-current);
+    --scrollbar: var(--dracula-current);
+    --icons: var(--dracula-comment);
+    --icons-hover: var(--dracula-purple);
+    --links: var(--dracula-purple);
+    --inline-code-color: var(--dracula-green);
+    --theme-popup-bg: var(--dracula-current);
+    --theme-popup-border: var(--dracula-comment);
+    --theme-hover: var(--dracula-bg);
+    --quote-bg: var(--dracula-current);
+    --quote-border: var(--dracula-purple);
+    --table-border-color: var(--dracula-current);
+    --table-header-bg: var(--dracula-current);
+    --table-alternate-bg: #2d2f3b;
+    --searchbar-border-color: var(--dracula-current);
+    --searchbar-bg: var(--dracula-current);
+    --searchbar-fg: var(--dracula-fg);
+    --searchbar-shadow-color: transparent;
+    --searchresults-header-fg: var(--dracula-purple);
+    --searchresults-border-color: var(--dracula-current);
+    --search-mark-bg: var(--dracula-yellow);
+}
+
+/* Sidebar styling */
+.sidebar .sidebar-scrollbox {
+    background: #21222c;
+}
+
+.sidebar .chapter li.chapter-item a {
+    color: var(--dracula-fg);
+}
+
+.sidebar .chapter li.chapter-item a:hover {
+    color: var(--dracula-purple);
+}
+
+.sidebar .chapter li.chapter-item a.active {
+    color: var(--dracula-purple);
+    font-weight: 700;
+}
+
+/* Code blocks */
+pre {
+    background: var(--dracula-current) !important;
+    border: 1px solid var(--dracula-comment);
+    border-radius: 6px;
+    padding: 1em;
+}
+
+code {
+    color: var(--dracula-green);
+    font-size: 0.9em;
+}
+
+pre > code {
+    color: var(--dracula-fg);
+}
+
+/* Syntax highlighting - Dracula colors */
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-section {
+    color: var(--dracula-pink) !important;
+}
+
+.hljs-string, .hljs-attr {
+    color: var(--dracula-yellow) !important;
+}
+
+.hljs-function, .hljs-name {
+    color: var(--dracula-green) !important;
+}
+
+.hljs-number, .hljs-built_in {
+    color: var(--dracula-purple) !important;
+}
+
+.hljs-comment, .hljs-quote {
+    color: var(--dracula-comment) !important;
+}
+
+.hljs-type, .hljs-class .hljs-title {
+    color: var(--dracula-cyan) !important;
+}
+
+.hljs-variable, .hljs-template-variable {
+    color: var(--dracula-orange) !important;
+}
+
+/* Headings */
+.content h1, .content h2, .content h3, .content h4 {
+    color: var(--dracula-purple);
+    border-bottom-color: var(--dracula-current);
+}
+
+.content h1 {
+    font-size: 1.8em;
+}
+
+/* Links */
+.content a {
+    color: var(--dracula-purple);
+    text-decoration: none;
+}
+
+.content a:hover {
+    color: var(--dracula-pink);
+    text-decoration: underline;
+}
+
+/* Tables */
+.content table th {
+    background: var(--dracula-current);
+    color: var(--dracula-purple);
+    font-weight: 700;
+}
+
+.content table td {
+    border-color: var(--dracula-current);
+}
+
+/* Blockquotes */
+.content blockquote {
+    border-left: 4px solid var(--dracula-purple);
+    background: var(--dracula-current);
+    padding: 0.5em 1em;
+    border-radius: 0 6px 6px 0;
+}
+
+/* Navigation arrows */
+.nav-chapters {
+    color: var(--dracula-comment);
+}
+
+.nav-chapters:hover {
+    color: var(--dracula-purple);
+}
+
+/* Search */
+.searchbar input {
+    font-family: 'Intel One Mono', monospace !important;
+}
+
+#searchresults .search-results .result a {
+    color: var(--dracula-purple);
+}
+
+/* Menu bar */
+.menu-bar {
+    background: #21222c;
+    border-bottom: 1px solid var(--dracula-current);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--dracula-bg);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--dracula-current);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--dracula-comment);
+}
