@@ -402,93 +402,20 @@ func (t *doltTransaction) AddComment(ctx context.Context, issueID, actor, commen
 // Helper functions for transaction context
 
 func insertIssueTx(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO issues (
-			id, content_hash, title, description, design, acceptance_criteria, notes,
-			status, priority, issue_type, assignee, estimated_minutes,
-			created_at, created_by, owner, updated_at, closed_at,
-			sender, ephemeral, wisp_type, pinned, is_template, crystallizes
-		) VALUES (
-			?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?
-		)
-	`,
-		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
-		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
-		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt,
-		issue.Sender, issue.Ephemeral, string(issue.WispType), issue.Pinned, issue.IsTemplate, issue.Crystallizes,
-	)
-	return err
+	return insertIssue(ctx, tx, issue)
 }
 
 func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, error) {
-	var issue types.Issue
-	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
-	var closedAt sql.NullTime
-	var estimatedMinutes sql.NullInt64
-	var assignee, owner, contentHash sql.NullString
-	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
+	row := tx.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT %s FROM issues WHERE id = ?
+	`, issueColumns), id)
 
-	err := tx.QueryRowContext(ctx, `
-		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
-		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at,
-		       ephemeral, pinned, is_template, crystallizes
-		FROM issues
-		WHERE id = ?
-	`, id).Scan(
-		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
-		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
-		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt,
-		&ephemeral, &pinned, &isTemplate, &crystallizes,
-	)
-
+	issue, err := scanIssueFromRow(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	// Parse timestamp strings (TEXT columns require manual parsing)
-	if createdAtStr.Valid {
-		issue.CreatedAt = parseTimeString(createdAtStr.String)
-	}
-	if updatedAtStr.Valid {
-		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
-	}
-
-	if contentHash.Valid {
-		issue.ContentHash = contentHash.String
-	}
-	if closedAt.Valid {
-		issue.ClosedAt = &closedAt.Time
-	}
-	if estimatedMinutes.Valid {
-		mins := int(estimatedMinutes.Int64)
-		issue.EstimatedMinutes = &mins
-	}
-	if assignee.Valid {
-		issue.Assignee = assignee.String
-	}
-	if owner.Valid {
-		issue.Owner = owner.String
-	}
-	if ephemeral.Valid && ephemeral.Int64 != 0 {
-		issue.Ephemeral = true
-	}
-	if pinned.Valid && pinned.Int64 != 0 {
-		issue.Pinned = true
-	}
-	if isTemplate.Valid && isTemplate.Int64 != 0 {
-		issue.IsTemplate = true
-	}
-	if crystallizes.Valid && crystallizes.Int64 != 0 {
-		issue.Crystallizes = true
-	}
-
-	return &issue, nil
+	return issue, nil
 }
