@@ -936,6 +936,7 @@ type IssueFilter struct {
 
 	// Parent filtering: filter children by parent issue ID
 	ParentID *string // Filter by parent issue (via parent-child dependency)
+	NoParent bool    // Exclude issues that are children of another issue
 
 	// Molecule type filtering
 	MolType *MolType // Filter by molecule type (nil = any, swarm/patrol/work)
@@ -1011,6 +1012,11 @@ type WorkFilter struct {
 
 	// Time-based deferral filtering (GH#820)
 	IncludeDeferred bool // If true, include issues with future defer_until timestamps
+
+	// Ephemeral issue filtering
+	// By default, GetReadyWork excludes ephemeral issues (wisps).
+	// Set to true to include them (e.g., for merge-request processing).
+	IncludeEphemeral bool
 
 	// Molecule step filtering
 	// By default, GetReadyWork excludes mol/wisp steps (IDs containing -mol- or -wisp-)

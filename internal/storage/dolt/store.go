@@ -64,6 +64,8 @@ type DoltStore struct {
 	committerEmail string
 	remote         string // Default remote for push/pull
 	branch         string // Current branch
+	remoteUser     string // Remote auth user for Hosted Dolt push/pull (optional)
+	remotePassword string // Remote auth password for Hosted Dolt push/pull (optional)
 }
 
 // Config holds Dolt database configuration
@@ -82,6 +84,12 @@ type Config struct {
 	ServerPort     int    // Server port (default: 3307)
 	ServerUser     string // MySQL user (default: root)
 	ServerPassword string // MySQL password (default: empty, can be set via BEADS_DOLT_PASSWORD)
+	ServerTLS      bool   // Enable TLS for server connections (required for Hosted Dolt)
+
+	// Remote auth for Hosted Dolt push/pull (optional)
+	// When set, Push/Pull use the --user flag and set DOLT_REMOTE_PASSWORD env var.
+	RemoteUser     string // Hosted Dolt remote user (set via DOLT_REMOTE_USER env var)
+	RemotePassword string // Hosted Dolt remote password (set via DOLT_REMOTE_PASSWORD env var)
 
 	// Watchdog options
 	DisableWatchdog bool // Disable server health monitoring (default: enabled in server mode)
@@ -250,44 +258,60 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		}
 	}
 
-	// Guard: if the path is an existing regular file (e.g., beads.db from SQLite era),
-	// MkdirAll will fail confusingly. Give a clear error instead.
-	if info, statErr := os.Stat(cfg.Path); statErr == nil && !info.IsDir() {
-		return nil, fmt.Errorf("database path %q is a file, not a directory — run 'bd migrate --to-dolt' to migrate from SQLite", cfg.Path)
+	// Embedded-only: create local directory and acquire access lock.
+	// In server mode, the database lives on the remote dolt sql-server;
+	// creating a local dolt/ directory would shadow the server connection
+	// with an empty embedded db (see bd-vyr).
+	// Remote credentials for Hosted Dolt push/pull (env vars take precedence)
+	if cfg.RemoteUser == "" {
+		cfg.RemoteUser = os.Getenv("DOLT_REMOTE_USER")
+	}
+	if cfg.RemotePassword == "" {
+		cfg.RemotePassword = os.Getenv("DOLT_REMOTE_PASSWORD")
 	}
 
-	// Ensure directory exists
-	if err := os.MkdirAll(cfg.Path, 0o750); err != nil {
-		return nil, fmt.Errorf("failed to create database directory: %w", err)
-	}
-
-	// IMPORTANT: Use an absolute path for embedded DSNs.
-	//
-	// The embedded driver sets its internal filesystem working directory to Config.Directory
-	// and also passes the directory path through to lower layers. If we pass a relative path,
-	// the working-directory stacking can effectively double it (e.g. ".beads/dolt/.beads/dolt").
-	absPath, err := filepath.Abs(cfg.Path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path: %w", err)
-	}
-
-	// Acquire advisory flock before opening dolt (embedded mode only).
-	// This prevents multiple bd processes from competing for dolt's internal LOCK file.
-	// Set BD_SKIP_ACCESS_LOCK=1 to bypass flock for testing whether Dolt's internal
-	// locking is sufficient. See bd-39gso for testing plan.
+	var absPath string
 	var accessLock *AccessLock
-	if !cfg.ServerMode && cfg.OpenTimeout > 0 && os.Getenv("BD_SKIP_ACCESS_LOCK") == "" {
-		exclusive := !cfg.ReadOnly
-		var lockErr error
-		accessLock, lockErr = AcquireAccessLock(absPath, exclusive, cfg.OpenTimeout)
-		if lockErr != nil {
-			return nil, fmt.Errorf("failed to acquire dolt access lock: %w", lockErr)
+	if !cfg.ServerMode {
+		// Guard: if the path is an existing regular file (e.g., beads.db from SQLite era),
+		// MkdirAll will fail confusingly. Give a clear error instead.
+		if info, statErr := os.Stat(cfg.Path); statErr == nil && !info.IsDir() {
+			return nil, fmt.Errorf("database path %q is a file, not a directory — run 'bd migrate --to-dolt' to migrate from SQLite", cfg.Path)
+		}
+
+		if err := os.MkdirAll(cfg.Path, 0o750); err != nil {
+			return nil, fmt.Errorf("failed to create database directory: %w", err)
+		}
+
+		// IMPORTANT: Use an absolute path for embedded DSNs.
+		//
+		// The embedded driver sets its internal filesystem working directory to Config.Directory
+		// and also passes the directory path through to lower layers. If we pass a relative path,
+		// the working-directory stacking can effectively double it (e.g. ".beads/dolt/.beads/dolt").
+		var err error
+		absPath, err = filepath.Abs(cfg.Path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get absolute path: %w", err)
+		}
+
+		// Acquire advisory flock before opening dolt (embedded mode only).
+		// This prevents multiple bd processes from competing for dolt's internal LOCK file.
+		// Set BD_SKIP_ACCESS_LOCK=1 to bypass flock for testing whether Dolt's internal
+		// locking is sufficient. See bd-39gso for testing plan.
+		if cfg.OpenTimeout > 0 && os.Getenv("BD_SKIP_ACCESS_LOCK") == "" {
+			exclusive := !cfg.ReadOnly
+			var lockErr error
+			accessLock, lockErr = AcquireAccessLock(absPath, exclusive, cfg.OpenTimeout)
+			if lockErr != nil {
+				return nil, fmt.Errorf("failed to acquire dolt access lock: %w", lockErr)
+			}
 		}
 	}
 
 	var db *sql.DB
 	var connStr string
 	var embeddedConnector *embedded.Connector
+	var err error
 
 	if cfg.ServerMode {
 		// Fail-fast TCP check before MySQL protocol initialization.
@@ -388,6 +412,8 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		committerEmail:    cfg.CommitterEmail,
 		remote:            cfg.Remote,
 		branch:            "main",
+		remoteUser:        cfg.RemoteUser,
+		remotePassword:    cfg.RemotePassword,
 		readOnly:          cfg.ReadOnly,
 		serverMode:        cfg.ServerMode,
 		accessLock:        accessLock,
@@ -458,18 +484,35 @@ func openEmbeddedConnection(dsn string) (*sql.DB, string, *embedded.Connector, e
 	return db, dsn, connector, nil
 }
 
+// buildServerDSN constructs a MySQL DSN for connecting to a Dolt server.
+// If database is empty, connects without selecting a database (for init operations).
+func buildServerDSN(cfg *Config, database string) string {
+	var userPart string
+	if cfg.ServerPassword != "" {
+		userPart = fmt.Sprintf("%s:%s", cfg.ServerUser, cfg.ServerPassword)
+	} else {
+		userPart = cfg.ServerUser
+	}
+
+	var dbPart string
+	if database != "" {
+		dbPart = "/" + database
+	} else {
+		dbPart = "/"
+	}
+
+	params := "parseTime=true"
+	if cfg.ServerTLS {
+		params += "&tls=true"
+	}
+
+	return fmt.Sprintf("%s@tcp(%s:%d)%s?%s",
+		userPart, cfg.ServerHost, cfg.ServerPort, dbPart, params)
+}
+
 // openServerConnection opens a connection to a dolt sql-server via MySQL protocol
 func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, error) {
-	// DSN format: user:password@tcp(host:port)/database?parseTime=true
-	// parseTime=true tells the MySQL driver to parse DATETIME/TIMESTAMP to time.Time
-	var connStr string
-	if cfg.ServerPassword != "" {
-		connStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
-			cfg.ServerUser, cfg.ServerPassword, cfg.ServerHost, cfg.ServerPort, cfg.Database)
-	} else {
-		connStr = fmt.Sprintf("%s@tcp(%s:%d)/%s?parseTime=true",
-			cfg.ServerUser, cfg.ServerHost, cfg.ServerPort, cfg.Database)
-	}
+	connStr := buildServerDSN(cfg, cfg.Database)
 
 	db, err := sql.Open("mysql", connStr)
 	if err != nil {
@@ -483,14 +526,7 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 
 	// Ensure database exists (may need to create it)
 	// First connect without database to create it
-	var initConnStr string
-	if cfg.ServerPassword != "" {
-		initConnStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true",
-			cfg.ServerUser, cfg.ServerPassword, cfg.ServerHost, cfg.ServerPort)
-	} else {
-		initConnStr = fmt.Sprintf("%s@tcp(%s:%d)/?parseTime=true",
-			cfg.ServerUser, cfg.ServerHost, cfg.ServerPort)
-	}
+	initConnStr := buildServerDSN(cfg, "")
 	initDB, err := sql.Open("mysql", initConnStr)
 	if err != nil {
 		_ = db.Close()
@@ -746,8 +782,23 @@ func (s *DoltStore) Commit(ctx context.Context, message string) error {
 	return nil
 }
 
-// Push pushes commits to the remote
+// Push pushes commits to the remote.
+// When remote credentials are configured (for Hosted Dolt), sets DOLT_REMOTE_PASSWORD
+// env var and passes --user flag to authenticate.
 func (s *DoltStore) Push(ctx context.Context) error {
+	if s.remoteUser != "" {
+		federationEnvMutex.Lock()
+		cleanup := setFederationCredentials(s.remoteUser, s.remotePassword)
+		defer func() {
+			cleanup()
+			federationEnvMutex.Unlock()
+		}()
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
+		if err != nil {
+			return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
+		}
+		return nil
+	}
 	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch)
 	if err != nil {
 		return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
@@ -755,11 +806,50 @@ func (s *DoltStore) Push(ctx context.Context) error {
 	return nil
 }
 
-// Pull pulls changes from the remote
-func (s *DoltStore) Pull(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?)", s.remote)
+// ForcePush force-pushes commits to the remote, overwriting remote changes.
+// Use when the remote has uncommitted changes in its working set.
+func (s *DoltStore) ForcePush(ctx context.Context) error {
+	if s.remoteUser != "" {
+		federationEnvMutex.Lock()
+		cleanup := setFederationCredentials(s.remoteUser, s.remotePassword)
+		defer func() {
+			cleanup()
+			federationEnvMutex.Unlock()
+		}()
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--force', '--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
+		if err != nil {
+			return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
+		}
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch)
 	if err != nil {
-		return fmt.Errorf("failed to pull from %s: %w", s.remote, err)
+		return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
+	}
+	return nil
+}
+
+// Pull pulls changes from the remote.
+// Passes branch explicitly to avoid "did not specify a branch" errors.
+// When remote credentials are configured (for Hosted Dolt), sets DOLT_REMOTE_PASSWORD
+// env var and passes --user flag to authenticate.
+func (s *DoltStore) Pull(ctx context.Context) error {
+	if s.remoteUser != "" {
+		federationEnvMutex.Lock()
+		cleanup := setFederationCredentials(s.remoteUser, s.remotePassword)
+		defer func() {
+			cleanup()
+			federationEnvMutex.Unlock()
+		}()
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
+		if err != nil {
+			return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
+		}
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch)
+	if err != nil {
+		return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
 	}
 	return nil
 }

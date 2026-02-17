@@ -12,18 +12,11 @@ import (
 )
 
 // GitignoreTemplate is the canonical .beads/.gitignore content
-const GitignoreTemplate = `# SQLite databases
-*.db
-*.db?*
-*.db-journal
-*.db-wal
-*.db-shm
+const GitignoreTemplate = `# Dolt database (managed by Dolt, not git)
+dolt/
+dolt-access.lock
 
-# Daemon runtime files
-daemon.lock
-daemon.log
-daemon-*.log.gz
-daemon.pid
+# Runtime files
 bd.sock
 sync-state.json
 last-touched
@@ -31,21 +24,9 @@ last-touched
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
 
-# Legacy database files
-db.sqlite
-bd.db
-
 # Worktree redirect file (contains relative path to main repo's .beads/)
 # Must not be committed as paths would be wrong in other clones
 redirect
-
-# Merge artifacts (temporary files from 3-way merge)
-beads.base.jsonl
-beads.base.meta.json
-beads.left.jsonl
-beads.left.meta.json
-beads.right.jsonl
-beads.right.meta.json
 
 # Sync state (local-only, per-machine)
 # These files are machine-specific and should not be shared across clones
@@ -54,9 +35,24 @@ beads.right.meta.json
 sync_base.jsonl
 export-state/
 
-# Dolt database (managed by Dolt remotes, not git)
-dolt/
-dolt-access.lock
+# Legacy files (from pre-Dolt versions)
+*.db
+*.db?*
+*.db-journal
+*.db-wal
+*.db-shm
+db.sqlite
+bd.db
+daemon.lock
+daemon.log
+daemon-*.log.gz
+daemon.pid
+beads.base.jsonl
+beads.base.meta.json
+beads.left.jsonl
+beads.left.meta.json
+beads.right.jsonl
+beads.right.meta.json
 
 # NOTE: Do NOT add negation patterns (e.g., !issues.jsonl) here.
 # They would override fork protection in .git/info/exclude, allowing
@@ -92,10 +88,10 @@ func CheckGitignore() DoctorCheck {
 	redirectPath := filepath.Join(".beads", "redirect")
 	// #nosec G304 -- redirect path is fixed to .beads/redirect
 	if data, err := os.ReadFile(redirectPath); err == nil {
-		target := strings.TrimSpace(string(data))
+		target := parseRedirectTarget(data)
 		if target != "" {
-			cwd, _ := os.Getwd()
-			resolvedTarget := filepath.Clean(filepath.Join(cwd, target))
+			beadsDir := filepath.Dir(redirectPath)
+			resolvedTarget := resolveRedirectTarget(beadsDir, target)
 			gitignorePath = filepath.Join(resolvedTarget, ".gitignore")
 		}
 	}
@@ -294,6 +290,47 @@ func FixRedirectTracking() error {
 	return nil
 }
 
+// parseRedirectTarget extracts the first non-comment, non-empty redirect target.
+// It also strips a UTF-8 BOM if present.
+func parseRedirectTarget(data []byte) string {
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "\ufeff")
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return line
+	}
+
+	return ""
+}
+
+// resolveRedirectTarget resolves a redirect target relative to the .beads parent.
+// Absolute targets are cleaned and returned as-is.
+func resolveRedirectTarget(beadsDir string, target string) string {
+	if target == "" {
+		return ""
+	}
+
+	resolvedTarget := target
+	if !filepath.IsAbs(target) {
+		projectRoot := filepath.Dir(beadsDir)
+		resolvedTarget = filepath.Join(projectRoot, target)
+	}
+	resolvedTarget = filepath.Clean(resolvedTarget)
+	if absPath, err := filepath.Abs(resolvedTarget); err == nil {
+		resolvedTarget = absPath
+	}
+
+	return resolvedTarget
+}
+
 // CheckRedirectTargetValid verifies that the redirect target exists and has a valid beads database.
 // This catches cases where the redirect points to a non-existent directory or one without a database.
 func CheckRedirectTargetValid() DoctorCheck {
@@ -318,7 +355,7 @@ func CheckRedirectTargetValid() DoctorCheck {
 	}
 
 	// Parse redirect target
-	target := strings.TrimSpace(string(data))
+	target := parseRedirectTarget(data)
 	if target == "" {
 		return DoctorCheck{
 			Name:    "Redirect Target Valid",
@@ -328,17 +365,8 @@ func CheckRedirectTargetValid() DoctorCheck {
 		}
 	}
 
-	// Resolve the redirect path relative to the parent of .beads
-	cwd, err := os.Getwd()
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Redirect Target Valid",
-			Status:  StatusWarning,
-			Message: "Cannot determine current directory",
-		}
-	}
-
-	resolvedTarget := filepath.Clean(filepath.Join(cwd, target))
+	beadsDir := filepath.Dir(redirectPath)
+	resolvedTarget := resolveRedirectTarget(beadsDir, target)
 
 	// Check if target directory exists
 	info, err := os.Stat(resolvedTarget)
@@ -425,7 +453,7 @@ func CheckRedirectTargetSyncWorktree() DoctorCheck {
 		}
 	}
 
-	target := strings.TrimSpace(string(data))
+	target := parseRedirectTarget(data)
 	if target == "" {
 		return DoctorCheck{
 			Name:    "Redirect Target Sync",
@@ -435,16 +463,8 @@ func CheckRedirectTargetSyncWorktree() DoctorCheck {
 	}
 
 	// Resolve the target path
-	cwd, err := os.Getwd()
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Redirect Target Sync",
-			Status:  StatusOK,
-			Message: "N/A (cannot determine cwd)",
-		}
-	}
-
-	resolvedTarget := filepath.Clean(filepath.Join(cwd, target))
+	beadsDir := filepath.Dir(redirectPath)
+	resolvedTarget := resolveRedirectTarget(beadsDir, target)
 
 	// Check if the target has a sync-branch configured in config.yaml
 	configPath := filepath.Join(resolvedTarget, "config.yaml")

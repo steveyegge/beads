@@ -227,8 +227,8 @@ func outputCookDryRun(resolved *formula.Formula, protoID string, runtimeMode boo
 		modeLabel = "runtime"
 		// Apply defaults for runtime mode display
 		for name, def := range resolved.Vars {
-			if _, provided := inputVars[name]; !provided && def.Default != "" {
-				inputVars[name] = def.Default
+			if _, provided := inputVars[name]; !provided && def.Default != nil {
+				inputVars[name] = *def.Default
 			}
 		}
 	}
@@ -268,8 +268,8 @@ func outputCookDryRun(resolved *formula.Formula, protoID string, runtimeMode boo
 			if def.Required {
 				attrs = append(attrs, "required")
 			}
-			if def.Default != "" {
-				attrs = append(attrs, fmt.Sprintf("default=%s", def.Default))
+			if def.Default != nil {
+				attrs = append(attrs, fmt.Sprintf("default=%s", *def.Default))
 			}
 			if len(def.Enum) > 0 {
 				attrs = append(attrs, fmt.Sprintf("enum=[%s]", strings.Join(def.Enum, ",")))
@@ -288,8 +288,8 @@ func outputCookEphemeral(resolved *formula.Formula, runtimeMode bool, inputVars 
 	if runtimeMode {
 		// Apply defaults from formula variable definitions
 		for name, def := range resolved.Vars {
-			if _, provided := inputVars[name]; !provided && def.Default != "" {
-				inputVars[name] = def.Default
+			if _, provided := inputVars[name]; !provided && def.Default != nil {
+				inputVars[name] = *def.Default
 			}
 		}
 
@@ -727,8 +727,8 @@ func resolveAndCookFormulaWithVars(formulaName string, searchPaths []string, con
 		// Merge with formula defaults for complete evaluation
 		mergedVars := make(map[string]string)
 		for name, def := range resolved.Vars {
-			if def != nil && def.Default != "" {
-				mergedVars[name] = def.Default
+			if def != nil && def.Default != nil {
+				mergedVars[name] = *def.Default
 			}
 		}
 		for k, v := range conditionVars {

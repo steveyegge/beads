@@ -334,7 +334,6 @@ var rootCmd = &cobra.Command{
 			"powershell",
 			"prime",
 			"quickstart",
-			"repair",
 			"resolve-conflicts",
 			"setup",
 			"version",
@@ -560,6 +559,9 @@ var rootCmd = &cobra.Command{
 				doltCfg.ServerMode = true
 				doltCfg.ServerHost = cfg.GetDoltServerHost()
 				doltCfg.ServerPort = cfg.GetDoltServerPort()
+				doltCfg.ServerUser = cfg.GetDoltServerUser()
+				doltCfg.ServerPassword = cfg.GetDoltServerPassword()
+				doltCfg.ServerTLS = cfg.GetDoltServerTLS()
 			}
 		}
 

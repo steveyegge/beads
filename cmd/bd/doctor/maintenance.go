@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
@@ -202,14 +201,6 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 		Message:  "N/A (compaction only applies to SQLite backend)",
 		Category: CategoryMaintenance,
 	}
-}
-
-// resolveBeadsDir follows a redirect file if present in the beads directory.
-// This handles the redirect mechanism where .beads/redirect points to
-// the actual beads directory location (used in multi-clone setups).
-// This is a wrapper around beads.FollowRedirect for use within the doctor package.
-func resolveBeadsDir(beadsDir string) string {
-	return beads.FollowRedirect(beadsDir)
 }
 
 // CheckPersistentMolIssues detects mol- prefixed issues that should have been ephemeral.

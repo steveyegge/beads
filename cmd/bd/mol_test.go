@@ -2744,7 +2744,7 @@ func TestPourRootTitleDescSubstitution(t *testing.T) {
 			"desc": {
 				Description: "Task description",
 				Required:    false,
-				Default:     "No description provided",
+				Default:     formula.StringPtr("No description provided"),
 			},
 		},
 		Steps: []*formula.Step{

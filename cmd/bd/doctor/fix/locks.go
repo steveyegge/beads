@@ -50,7 +50,7 @@ func StaleLockFiles(path string) error {
 		}
 	}
 
-	// Remove stale daemon lock (only if no process holds the flock)
+	// Remove stale legacy daemon lock (only if no process holds the flock)
 	daemonLockPath := filepath.Join(beadsDir, "daemon.lock")
 	if _, err := os.Stat(daemonLockPath); err == nil {
 		running, _ := lockfile.TryDaemonLock(beadsDir)
@@ -59,6 +59,50 @@ func StaleLockFiles(path string) error {
 				errors = append(errors, fmt.Sprintf("daemon.lock: %v", err))
 			} else {
 				removed = append(removed, "daemon.lock")
+			}
+		}
+	}
+
+	// Remove stale dolt-access.lock (embedded dolt advisory flock).
+	// This lock uses flock which is released on process exit, but the file
+	// persists and can confuse diagnostics or cause issues if flock behavior
+	// varies across platforms.
+	accessLockPath := filepath.Join(beadsDir, "dolt-access.lock")
+	if info, err := os.Stat(accessLockPath); err == nil {
+		age := time.Since(info.ModTime())
+		if age > 5*time.Minute {
+			if err := os.Remove(accessLockPath); err != nil {
+				errors = append(errors, fmt.Sprintf("dolt-access.lock: %v", err))
+			} else {
+				removed = append(removed, "dolt-access.lock")
+			}
+		}
+	}
+
+	// Remove stale Dolt internal LOCK files (noms layer filesystem lock).
+	// These live at .beads/dolt/<database>/.dolt/noms/LOCK and are created
+	// by the embedded Dolt engine. If a process crashes without closing the
+	// embedded connector, the LOCK file persists and blocks all future opens
+	// with "the database is locked by another dolt process".
+	// Uses flock probe to verify no active process holds the advisory lock
+	// before removing — more correct than age-only cleanup.
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if dbEntries, err := os.ReadDir(doltDir); err == nil {
+		for _, dbEntry := range dbEntries {
+			if !dbEntry.IsDir() {
+				continue
+			}
+			nomsLock := filepath.Join(doltDir, dbEntry.Name(), ".dolt", "noms", "LOCK")
+			if _, err := os.Stat(nomsLock); err == nil {
+				lockName := fmt.Sprintf("dolt/%s/.dolt/noms/LOCK", dbEntry.Name())
+				// Probe the advisory access lock to ensure no process is active
+				if probeStale(accessLockPath) {
+					if err := os.Remove(nomsLock); err != nil {
+						errors = append(errors, fmt.Sprintf("%s: %v", lockName, err))
+					} else {
+						removed = append(removed, lockName)
+					}
+				}
 			}
 		}
 	}
@@ -85,36 +129,6 @@ func StaleLockFiles(path string) error {
 		}
 	}
 
-	// Remove stale Dolt noms LOCK files
-	// These are left behind when the Dolt engine exits uncleanly.
-	// Only remove if no process holds the advisory access lock.
-	doltDir := filepath.Join(beadsDir, "dolt")
-	if info, err := os.Stat(doltDir); err == nil && info.IsDir() {
-		// Walk dolt dir to find noms LOCK files
-		_ = filepath.Walk(doltDir, func(p string, fi os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return nil
-			}
-			if fi.IsDir() || fi.Name() != "LOCK" {
-				return nil
-			}
-			// Only clean LOCK files under .dolt/noms/
-			if !strings.Contains(p, filepath.Join(".dolt", "noms")) {
-				return nil
-			}
-			// Probe the advisory lock to ensure no process is active
-			accessLockPath := filepath.Join(beadsDir, "dolt-access.lock")
-			if probeStale(accessLockPath) {
-				if err := os.Remove(p); err != nil {
-					errors = append(errors, fmt.Sprintf("noms LOCK %s: %v", filepath.Base(filepath.Dir(p)), err))
-				} else {
-					removed = append(removed, "noms/LOCK")
-				}
-			}
-			return nil
-		})
-	}
-
 	if len(removed) > 0 {
 		fmt.Printf("  Removed stale lock files: %s\n", strings.Join(removed, ", "))
 	}
@@ -129,18 +143,18 @@ func StaleLockFiles(path string) error {
 // probeStale checks if the given lock file is NOT held by any process.
 // Returns true if the lock is stale (safe to clean up).
 func probeStale(lockPath string) bool {
-	f, err := os.OpenFile(lockPath, os.O_RDWR, 0)
+	f, err := os.OpenFile(lockPath, os.O_RDWR, 0) //nolint:gosec // lockPath is constructed internally from .beads directory paths
 	if err != nil {
-		// File doesn't exist or can't open - treat as stale
+		// File doesn't exist or can't open — treat as stale (no active holder)
 		return true
 	}
 	defer f.Close()
 	// Try to acquire exclusive lock non-blocking
-	if err := lockfile.FlockExclusiveNonBlock(f); err != nil {
-		// Lock is held by another process - NOT stale
+	if err := lockfile.FlockExclusiveNonBlocking(f); err != nil {
+		// Lock is held by another process — NOT stale
 		return false
 	}
-	// We got the lock, meaning no one else holds it - stale
+	// We got the lock, meaning no one else holds it — stale
 	_ = lockfile.FlockUnlock(f)
 	return true
 }

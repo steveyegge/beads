@@ -293,6 +293,20 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 			}
 		}
 
+		// Ensure git is initialized — bd requires git for role config, sync branches,
+		// hooks, worktrees, and fingerprint computation. git init is idempotent so
+		// safe to call even if already in a git repo.
+		if !isGitRepo() {
+			gitInitCmd := exec.Command("git", "init")
+			if output, err := gitInitCmd.CombinedOutput(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to initialize git repository: %v\n%s\n", err, output)
+				os.Exit(1)
+			}
+			if !quiet {
+				fmt.Printf("  %s Initialized git repository\n", ui.RenderPass("✓"))
+			}
+		}
+
 		// Ensure parent directory exists for the storage backend (.beads/dolt).
 		if err := os.MkdirAll(initDBDir, 0750); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to create storage directory %s: %v\n", initDBDir, err)
@@ -379,7 +393,7 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 		// Store and verify the bd version (for version mismatch detection)
 		verifyMetadata(ctx, store, "bd_version", Version)
 
-		// Compute and store repository fingerprint (FR-015: skip outside git)
+		// Compute and store repository fingerprint (FR-015)
 		repoID, err := beads.ComputeRepoID()
 		if err != nil {
 			if !quiet {
@@ -713,8 +727,11 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 		fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
 		fmt.Printf("Run %s to get started.\n\n", ui.RenderAccent("bd quickstart"))
 
-		// Run bd doctor diagnostics to catch setup issues early
-		doctorResult := runDiagnostics(cwd)
+		// Run limited diagnostics to verify init succeeded.
+		// Uses runInitDiagnostics (not runDiagnostics) to only check things
+		// that should be true immediately after init — skips git-dependent,
+		// federation, and other post-setup checks that aren't applicable yet.
+		doctorResult := runInitDiagnostics(cwd)
 		// Check if there are any warnings or errors (not just critical failures)
 		hasIssues := false
 		for _, check := range doctorResult.Checks {

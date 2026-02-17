@@ -210,6 +210,35 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.52.0",
+		Date:    "2026-02-16",
+		Changes: []string{
+			"NEW: bd ready --include-ephemeral flag to include ephemeral issues in ready work",
+			"FIX: Doctor redirect target resolution (#1803)",
+			"FIX: Guard dolt directory creation with server-mode check (#1800)",
+			"FIX: Tilde expansion in core.hooksPath on Windows (#1798)",
+			"FIX: Worktree redirect path resolution from worktree root (#1791)",
+			"FIX: Block rename-prefix in git worktrees (#1792)",
+			"REMOVED: Dead git-portable sync functions (#1793)",
+		},
+	},
+	{
+		Version: "0.51.0",
+		Date:    "2026-02-16",
+		Changes: []string{
+			"REMOVED: Dolt-native cleanup — removed SQLite backend, JSONL sync, 3-way merge, tombstones, storage factory, daemon stubs (8-phase refactor)",
+			"CHANGED: bd sync is now a no-op — Dolt handles persistence directly",
+			"FIX: Dolt config test corruption in worktree environments (t.Setenv fix)",
+			"FIX: Batch DeleteIssues hang on large ID sets with correctness hardening",
+			"FIX: bd mol current step readiness uses analyzeMoleculeParallel",
+			"FIX: bd doctor AccessLock integration, --yes for repo fingerprint",
+			"FIX: GetReadyWork excludes workflow/identity types",
+			"PERF: CASCADE deletes cut deletion queries by 60%",
+			"PERF: Schema init skip when already at current version",
+			"DOCS: 10+ docs updated from SQLite to Dolt, deprecated docs removed",
+		},
+	},
+	{
 		Version: "0.50.3",
 		Date:    "2026-02-15",
 		Changes: []string{
