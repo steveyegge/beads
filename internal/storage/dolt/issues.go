@@ -73,7 +73,7 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 	var configPrefix string
 	err = tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
 	if err == sql.ErrNoRows || configPrefix == "" {
-		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
+		return fmt.Errorf("%w: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)", storage.ErrNotInitialized)
 	} else if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
 	}
@@ -144,7 +144,7 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 	var configPrefix string
 	err = tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
 	if err == sql.ErrNoRows || configPrefix == "" {
-		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
+		return fmt.Errorf("%w: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)", storage.ErrNotInitialized)
 	} else if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
 	}
@@ -220,7 +220,7 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 // validateIssueIDPrefix validates that the issue ID has the correct prefix
 func validateIssueIDPrefix(id, prefix string) error {
 	if !strings.HasPrefix(id, prefix+"-") {
-		return fmt.Errorf("issue ID %s does not match configured prefix %s", id, prefix)
+		return fmt.Errorf("%w: issue ID %s does not match configured prefix %s", storage.ErrPrefixMismatch, id, prefix)
 	}
 	return nil
 }
@@ -246,7 +246,8 @@ func parseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
 	return parentID, num, true
 }
 
-// GetIssue retrieves an issue by ID
+// GetIssue retrieves an issue by ID.
+// Returns storage.ErrNotFound (wrapped) if the issue does not exist.
 func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -254,9 +255,6 @@ func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, erro
 	issue, err := scanIssue(ctx, s.db, id)
 	if err != nil {
 		return nil, err
-	}
-	if issue == nil {
-		return nil, nil
 	}
 
 	// Fetch labels
@@ -269,7 +267,8 @@ func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, erro
 	return issue, nil
 }
 
-// GetIssueByExternalRef retrieves an issue by external reference
+// GetIssueByExternalRef retrieves an issue by external reference.
+// Returns storage.ErrNotFound (wrapped) if no issue with the given external reference exists.
 func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -277,7 +276,7 @@ func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef strin
 	var id string
 	err := s.db.QueryRowContext(ctx, "SELECT id FROM issues WHERE external_ref = ?", externalRef).Scan(&id)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, fmt.Errorf("%w: external_ref %s", storage.ErrNotFound, externalRef)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue by external_ref: %w", err)
@@ -291,9 +290,6 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 	oldIssue, err := s.GetIssue(ctx, id)
 	if err != nil {
 		return fmt.Errorf("failed to get issue for update: %w", err)
-	}
-	if oldIssue == nil {
-		return fmt.Errorf("issue %s not found", id)
 	}
 
 	// Build update query
@@ -363,9 +359,6 @@ func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) err
 	oldIssue, err := s.GetIssue(ctx, id)
 	if err != nil {
 		return fmt.Errorf("failed to get issue for claim: %w", err)
-	}
-	if oldIssue == nil {
-		return fmt.Errorf("issue %s not found", id)
 	}
 
 	now := time.Now().UTC()
@@ -1091,7 +1084,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 
 	issue, err := scanIssueFromRow(row)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, fmt.Errorf("%w: issue %s", storage.ErrNotFound, id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue: %w", err)
