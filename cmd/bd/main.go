@@ -223,6 +223,7 @@ var rootCmd = &cobra.Command{
 		applyVerbosityFlags()
 		validateEnvVars()
 		applyViperOverrides(cmd)
+		syncFlagBoundGlobals()
 		validateDoltAutoCommitFlag()
 
 		// --- Phase 2: Early exit for commands that don't need a database ---
@@ -254,19 +255,18 @@ var rootCmd = &cobra.Command{
 		warnMultipleDbs()
 		loadMoleculeTemplates(cmd)
 
-		// Sync all state to CommandContext for unified access
-		syncCommandContext()
+		// NOTE: No syncCommandContext() needed -- prerun functions now use
+		// set* accessors that write to both cmdCtx and the global.
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
-		// --no-db mode has been removed (memory backend removed)
-		if noDb {
+		if isNoDb() {
 			return
 		}
 
 		// Dolt auto-commit: after a successful write command (and after final flush),
 		// create a Dolt commit so changes don't remain only in the working set.
 		if commandDidWrite.Load() && !commandDidExplicitDoltCommit {
-			if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
+			if err := maybeAutoCommit(getRootContext(), doltAutoCommitParams{Command: cmd.Name()}); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: dolt auto-commit failed: %v\n", err)
 				os.Exit(1)
 			}
@@ -281,10 +281,12 @@ var rootCmd = &cobra.Command{
 				os.Exit(1)
 			} else if mode == doltAutoCommitOn {
 				// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
+				ctx := getRootContext()
+				s := getStore()
 				for tipID := range commandTipIDsShown {
 					key := fmt.Sprintf("tip_%s_last_shown", tipID)
 					value := time.Now().Format(time.RFC3339)
-					if err := store.SetMetadata(rootCtx, key, value); err != nil {
+					if err := s.SetMetadata(ctx, key, value); err != nil {
 						fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
 						os.Exit(1)
 					}
@@ -295,7 +297,7 @@ var rootCmd = &cobra.Command{
 					ids = append(ids, tipID)
 				}
 				msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
-				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
+				if err := maybeAutoCommit(ctx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
 					os.Exit(1)
 				}
@@ -303,21 +305,21 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Signal that store is closing (prevents background flush from accessing closed store)
-		storeMutex.Lock()
-		storeActive = false
-		storeMutex.Unlock()
+		lockStore()
+		setStoreActive(false)
+		unlockStore()
 
-		if store != nil {
-			_ = store.Close() // Best effort cleanup
+		if s := getStore(); s != nil {
+			_ = s.Close()
 		}
 
-		if profileFile != nil {
+		if pf := getProfileFile(); pf != nil {
 			pprof.StopCPUProfile()
-			_ = profileFile.Close() // Best effort cleanup
+			_ = pf.Close()
 		}
-		if traceFile != nil {
+		if tf := getTraceFile(); tf != nil {
 			trace.Stop()
-			_ = traceFile.Close() // Best effort cleanup
+			_ = tf.Close()
 		}
 
 		// Cancel the signal context to clean up resources

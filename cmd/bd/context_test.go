@@ -24,10 +24,10 @@ func TestGetRootContext_NilFallback(t *testing.T) {
 		}
 	})
 
-	t.Run("returns rootCtx when set", func(t *testing.T) {
+	t.Run("returns rootCtx when set via setRootContext", func(t *testing.T) {
 		expected := context.WithValue(context.Background(), "test", "value")
-		rootCtx = expected
 		cmdCtx = &CommandContext{}
+		setRootContext(expected, nil)
 
 		ctx := getRootContext()
 		if ctx != expected {

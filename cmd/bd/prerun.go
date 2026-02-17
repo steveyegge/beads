@@ -32,6 +32,27 @@ import (
 // sequence self-documenting. No behavior changes — purely structural.
 // --------------------------------------------------------------------------
 
+// syncFlagBoundGlobals pushes cobra flag-bound global values into cmdCtx.
+// Cobra's PersistentFlags().BoolVar() writes directly to package globals.
+// This function copies those values into the CommandContext so accessor
+// functions return the correct values. Must be called after applyViperOverrides
+// which may further modify the flag-bound globals.
+func syncFlagBoundGlobals() {
+	if cmdCtx == nil {
+		return
+	}
+	cmdCtx.DBPath = dbPath
+	cmdCtx.Actor = actor
+	cmdCtx.JSONOutput = jsonOutput
+	cmdCtx.SandboxMode = sandboxMode
+	cmdCtx.AllowStale = allowStale
+	cmdCtx.NoDb = noDb
+	cmdCtx.ReadonlyMode = readonlyMode
+	cmdCtx.LockTimeout = lockTimeout
+	cmdCtx.Verbose = verboseFlag
+	cmdCtx.Quiet = quietFlag
+}
+
 // resetWriteTracking resets per-command write tracking flags used by Dolt
 // auto-commit to decide whether a commit is needed after the command.
 func resetWriteTracking() {
@@ -44,12 +65,15 @@ func resetWriteTracking() {
 // setupSignalContext creates a context that cancels on SIGINT/SIGTERM for
 // graceful shutdown of long-running operations.
 func setupSignalContext() {
-	rootCtx, rootCancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	setRootContext(ctx, cancel)
 }
 
 // applyVerbosityFlags propagates --verbose and --quiet flags to the debug
 // package so all subsequent log output respects the user's preference.
 func applyVerbosityFlags() {
+	setVerbose(verboseFlag)
+	setQuiet(quietFlag)
 	debug.SetVerbose(verboseFlag)
 	debug.SetQuiet(quietFlag)
 }
@@ -77,22 +101,22 @@ func applyViperOverrides(cmd *cobra.Command) {
 	flagOverrides := make(map[string]flagOverrideEntry)
 
 	if !cmd.Flags().Changed("json") {
-		jsonOutput = config.GetBool("json")
+		setJSONOutput(config.GetBool("json"))
 	} else {
 		flagOverrides["json"] = flagOverrideEntry{jsonOutput, true}
 	}
 	if !cmd.Flags().Changed("readonly") {
-		readonlyMode = config.GetBool("readonly")
+		setReadonlyMode(config.GetBool("readonly"))
 	} else {
 		flagOverrides["readonly"] = flagOverrideEntry{readonlyMode, true}
 	}
 	if !cmd.Flags().Changed("db") && dbPath == "" {
-		dbPath = config.GetString("db")
+		setDBPath(config.GetString("db"))
 	} else if cmd.Flags().Changed("db") {
 		flagOverrides["db"] = flagOverrideEntry{dbPath, true}
 	}
 	if !cmd.Flags().Changed("actor") && actor == "" {
-		actor = config.GetString("actor")
+		setActor(config.GetString("actor"))
 	} else if cmd.Flags().Changed("actor") {
 		flagOverrides["actor"] = flagOverrideEntry{actor, true}
 	}
@@ -192,11 +216,11 @@ func setupProfiling(cmd *cobra.Command) {
 	}
 	timestamp := time.Now().Format("20060102-150405")
 	if f, _ := os.Create(fmt.Sprintf("bd-profile-%s-%s.prof", cmd.Name(), timestamp)); f != nil {
-		profileFile = f
+		setProfileFile(f)
 		_ = pprof.StartCPUProfile(f)
 	}
 	if f, _ := os.Create(fmt.Sprintf("bd-trace-%s-%s.out", cmd.Name(), timestamp)); f != nil {
-		traceFile = f
+		setTraceFile(f)
 		_ = trace.Start(f)
 	}
 }
@@ -206,7 +230,7 @@ func setupProfiling(cmd *cobra.Command) {
 func detectSandbox(cmd *cobra.Command) {
 	if !cmd.Flags().Changed("sandbox") {
 		if isSandboxed() {
-			sandboxMode = true
+			setSandboxMode(true)
 			fmt.Fprintf(os.Stderr, "\u2139\ufe0f  Sandbox detected, using direct mode\n")
 		}
 	}
@@ -223,7 +247,7 @@ func initNoDbIfEnabled() bool {
 		fmt.Fprintf(os.Stderr, "Error initializing --no-db mode: %v\n", err)
 		os.Exit(1)
 	}
-	actor = getActorWithGit()
+	setActor(getActorWithGit())
 	return true
 }
 
@@ -238,7 +262,7 @@ func discoverDatabasePath(cmd *cobra.Command, args []string) bool {
 
 	// Use public API to find database (same logic as extensions)
 	if foundDB := beads.FindDatabasePath(); foundDB != "" {
-		dbPath = foundDB
+		setDBPath(foundDB)
 		return false
 	}
 
@@ -275,12 +299,12 @@ func handleJsonlOnlyMode(beadsDir string) bool {
 	isNoDbMode := isNoDbModeConfigured(beadsDir)
 
 	if jsonlExists && isNoDbMode {
-		noDb = true
+		setNoDb(true)
 		if err := initializeNoDbMode(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error initializing JSONL-only mode: %v\n", err)
 			os.Exit(1)
 		}
-		actor = getActorWithGit()
+		setActor(getActorWithGit())
 		return true
 	}
 	return false
@@ -328,7 +352,7 @@ func setDefaultDbPath() {
 	if targetBeadsDir == "" {
 		targetBeadsDir = ".beads"
 	}
-	dbPath = utils.CanonicalizePath(filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName))
+	setDBPath(utils.CanonicalizePath(filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName)))
 }
 
 // emitNoDatabaseError prints context-aware error messages when no database is
@@ -356,7 +380,7 @@ func emitNoDatabaseError(cmd *cobra.Command, beadsDir string) {
 
 // setupActor resolves and sets the actor identity for the audit trail.
 func setupActor() {
-	actor = getActorWithGit()
+	setActor(getActorWithGit())
 }
 
 // trackVersionChanges records the current bd version and triggers auto-migration
@@ -422,7 +446,7 @@ func openStore(cmd *cobra.Command) {
 	}
 
 	doltCfg.Path = doltPath
-	store, err = dolt.New(rootCtx, doltCfg)
+	s, err := dolt.New(rootCtx, doltCfg)
 
 	storeIsReadOnly = doltCfg.ReadOnly
 
@@ -434,6 +458,7 @@ func openStore(cmd *cobra.Command) {
 		os.Exit(1)
 	}
 
+	setStore(s)
 	storeMutex.Lock()
 	storeActive = true
 	storeMutex.Unlock()
@@ -444,7 +469,7 @@ func openStore(cmd *cobra.Command) {
 func initHookRunner() {
 	if dbPath != "" {
 		beadsDir := filepath.Dir(dbPath)
-		hookRunner = hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
+		setHookRunner(hooks.NewRunner(filepath.Join(beadsDir, "hooks")))
 	}
 }
 
@@ -457,12 +482,13 @@ func warnMultipleDbs() {
 // loadMoleculeTemplates loads molecule templates from hierarchical catalog
 // locations after the store is open, skipping during import to avoid conflicts.
 func loadMoleculeTemplates(cmd *cobra.Command) {
-	if cmd.Name() == "import" || store == nil {
+	s := getStore()
+	if cmd.Name() == "import" || s == nil {
 		return
 	}
 	beadsDir := filepath.Dir(dbPath)
-	loader := molecules.NewLoader(store)
-	if result, err := loader.LoadAll(rootCtx, beadsDir); err != nil {
+	loader := molecules.NewLoader(s)
+	if result, err := loader.LoadAll(getRootContext(), beadsDir); err != nil {
 		debug.Logf("warning: failed to load molecules: %v", err)
 	} else if result.Loaded > 0 {
 		debug.Logf("loaded %d molecules from %v", result.Loaded, result.Sources)
