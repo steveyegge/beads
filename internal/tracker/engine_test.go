@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -52,7 +53,7 @@ func newMockTracker(name string) *mockTracker {
 func (m *mockTracker) Name() string                                    { return m.name }
 func (m *mockTracker) DisplayName() string                             { return m.name }
 func (m *mockTracker) ConfigPrefix() string                            { return m.name }
-func (m *mockTracker) Init(_ context.Context, _ *dolt.DoltStore) error { return nil }
+func (m *mockTracker) Init(_ context.Context, _ storage.Storage) error { return nil }
 func (m *mockTracker) Validate() error                                 { return nil }
 func (m *mockTracker) Close() error                                    { return nil }
 func (m *mockTracker) FieldMapper() FieldMapper                        { return m.fieldMapper }
