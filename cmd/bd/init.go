@@ -65,6 +65,12 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 		serverPort, _ := cmd.Flags().GetInt("server-port")
 		serverUser, _ := cmd.Flags().GetString("server-user")
 
+		// AGENTS.md template override (bd-8ef)
+		agentsTemplate, _ := cmd.Flags().GetString("agents-template")
+		if agentsTemplate == "" {
+			agentsTemplate = config.GetString("init.agents-template")
+		}
+
 		// Dolt is the only supported backend
 		backend := configfile.BackendDolt
 
@@ -657,7 +663,7 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 		// Generate AGENTS.md from template
 		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
 		if !stealth {
-			addAgentsInstructions(!quiet, prefix, beadsDir)
+			addAgentsInstructions(!quiet, prefix, beadsDir, agentsTemplate)
 		}
 
 		// Check for missing git upstream and warn if not configured
@@ -733,6 +739,9 @@ func init() {
 	initCmd.Flags().Bool("skip-hooks", false, "Skip git hooks installation")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if JSONL already has issues (may cause data loss)")
 	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
+
+	// AGENTS.md template override (bd-8ef)
+	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides lookup chain)")
 
 	// Dolt server mode flags (bd-dolt.2.2)
 	initCmd.Flags().Bool("server", false, "Explicitly configure Dolt in server mode for high-concurrency (default: embedded)")

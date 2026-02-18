@@ -13,7 +13,7 @@ import (
 
 // addAgentsInstructions generates AGENTS.md from the agents template during bd init.
 // The template is resolved via the lookup chain (see internal/templates/agents).
-func addAgentsInstructions(verbose bool, prefix string, beadsDir string) {
+func addAgentsInstructions(verbose bool, prefix string, beadsDir string, explicitTemplate string) {
 	agentFile := "AGENTS.md"
 
 	data := agents.TemplateData{
@@ -23,7 +23,8 @@ func addAgentsInstructions(verbose bool, prefix string, beadsDir string) {
 	}
 
 	opts := agents.LoadOptions{
-		BeadsDir: beadsDir,
+		ExplicitPath: explicitTemplate,
+		BeadsDir:     beadsDir,
 	}
 
 	if err := writeAgentsFile(agentFile, data, opts, verbose); err != nil {
