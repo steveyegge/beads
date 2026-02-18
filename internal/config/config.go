@@ -392,7 +392,7 @@ func SaveConfigValue(key string, value interface{}, beadsDir string) error {
 	// Read existing file contents to avoid dumping all merged viper state
 	// (defaults, env vars, overrides) into the config file.
 	existing := make(map[string]interface{})
-	if data, err := os.ReadFile(configPath); err == nil {
+	if data, err := os.ReadFile(filepath.Clean(configPath)); err == nil {
 		_ = yaml.Unmarshal(data, &existing)
 	}
 
@@ -403,7 +403,7 @@ func SaveConfigValue(key string, value interface{}, beadsDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	return os.WriteFile(configPath, out, 0o644)
+	return os.WriteFile(configPath, out, 0o600)
 }
 
 // setNestedKey sets a value in a nested map using a dot-separated key path.
