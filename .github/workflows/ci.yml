@@ -153,14 +153,16 @@ jobs:
           $tmpDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
           Push-Location $tmpDir
           try {
+            # Windows builds with CGO_ENABLED=0, so bd init falls back to JSONL-only mode.
+            # All subsequent commands use --no-db to work with the JSONL backend.
             & "$env:GITHUB_WORKSPACE/bd.exe" init --quiet --prefix smoke
-            $output = & "$env:GITHUB_WORKSPACE/bd.exe" create --title "Windows smoke test" --type task
+            $output = & "$env:GITHUB_WORKSPACE/bd.exe" --no-db create --title "Windows smoke test" --type task
             $id = ($output | Select-String -Pattern "smoke-\w+").Matches.Value
             echo "Created issue: $id"
-            & "$env:GITHUB_WORKSPACE/bd.exe" list
-            & "$env:GITHUB_WORKSPACE/bd.exe" show $id
-            & "$env:GITHUB_WORKSPACE/bd.exe" update $id --status in_progress
-            & "$env:GITHUB_WORKSPACE/bd.exe" close $id
+            & "$env:GITHUB_WORKSPACE/bd.exe" --no-db list
+            & "$env:GITHUB_WORKSPACE/bd.exe" --no-db show $id
+            & "$env:GITHUB_WORKSPACE/bd.exe" --no-db update $id --status in_progress
+            & "$env:GITHUB_WORKSPACE/bd.exe" --no-db close $id
             echo "All smoke tests passed!"
           } finally {
             Pop-Location
