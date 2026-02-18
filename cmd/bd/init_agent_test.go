@@ -234,6 +234,110 @@ func TestWriteAgentsFileWithExplicitTemplate(t *testing.T) {
 	}
 }
 
+func TestWriteAgentsFileExplicitOverridesProject(t *testing.T) {
+	dir := t.TempDir()
+
+	// Set up project-level template
+	beadsDir := filepath.Join(dir, ".beads")
+	tmplDir := filepath.Join(beadsDir, "templates")
+	if err := os.MkdirAll(tmplDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmplDir, "agents.md.tmpl"), []byte("PROJECT"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up explicit template
+	explicitPath := filepath.Join(dir, "explicit.tmpl")
+	if err := os.WriteFile(explicitPath, []byte("EXPLICIT"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	filename := filepath.Join(dir, "AGENTS.md")
+	data := agents.TemplateData{Prefix: "bd"}
+	opts := agents.LoadOptions{
+		ExplicitPath: explicitPath,
+		BeadsDir:     beadsDir,
+	}
+
+	if err := writeAgentsFile(filename, data, opts, false); err != nil {
+		t.Fatalf("writeAgentsFile error: %v", err)
+	}
+
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "EXPLICIT" {
+		t.Errorf("explicit should override project, got %q", string(content))
+	}
+}
+
+func TestAddAgentsInstructionsExplicitTemplate(t *testing.T) {
+	// Test the full addAgentsInstructions flow with --agents-template flag
+	dir := t.TempDir()
+
+	// Create explicit template
+	tmplPath := filepath.Join(dir, "my-agents.tmpl")
+	if err := os.WriteFile(tmplPath, []byte("Custom agents for {{.Prefix}}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to temp dir so AGENTS.md is created there
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	addAgentsInstructions(false, "test", beadsDir, tmplPath)
+
+	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("AGENTS.md not created: %v", err)
+	}
+	if string(content) != "Custom agents for test" {
+		t.Errorf("got %q, want 'Custom agents for test'", string(content))
+	}
+}
+
+func TestAddAgentsInstructionsEmptyExplicitUsesLookupChain(t *testing.T) {
+	// When explicitTemplate is "", the lookup chain should be used (falls to embedded)
+	dir := t.TempDir()
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	addAgentsInstructions(false, "bd", beadsDir, "")
+
+	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("AGENTS.md not created: %v", err)
+	}
+	if !strings.Contains(string(content), "BEGIN BEADS INTEGRATION") {
+		t.Error("empty explicit template should fall through to embedded default")
+	}
+}
+
 func TestMustGetwd(t *testing.T) {
 	result := mustGetwd()
 	if result == "" {
