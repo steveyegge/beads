@@ -1,10 +1,10 @@
-// Package agents provides template loading and rendering for AGENTS.md.
+// Package agents provides template loading for AGENTS.md.
 //
 // The AGENTS.md file is generated during bd init and bd setup to provide
 // AI coding agents with project instructions. Instead of hardcoded Go
-// string constants, this package loads from an editable template.
+// string constants, this package loads from an editable file.
 //
-// Template lookup chain (highest to lowest priority):
+// Lookup chain (highest to lowest priority):
 //  1. Explicit path (from --agents-template flag or init.agents-template config)
 //  2. .beads/templates/agents.md.tmpl (project-level, version-controlled)
 //  3. ~/.config/bd/templates/agents.md.tmpl (user-level)
@@ -13,12 +13,10 @@
 package agents
 
 import (
-	"bytes"
 	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
-	"text/template"
 
 	"github.com/steveyegge/beads/internal/debug"
 )
@@ -27,13 +25,6 @@ import (
 var defaultTemplate embed.FS
 
 const templateFile = "agents.md.tmpl"
-
-// TemplateData holds the variables available in agents.md.tmpl.
-type TemplateData struct {
-	Prefix       string // Issue prefix (e.g., "bd", "myproject")
-	ProjectName  string // Directory name of the project
-	BeadsVersion string // bd version string
-}
 
 // LoadOptions configures template resolution.
 type LoadOptions struct {
@@ -46,30 +37,19 @@ type LoadOptions struct {
 	BeadsDir string
 }
 
-// Render resolves, parses, and renders the AGENTS.md template with the given data.
-func Render(data TemplateData, opts LoadOptions) (string, error) {
+// Load resolves and returns the AGENTS.md content from the lookup chain.
+func Load(opts LoadOptions) (string, error) {
 	content, source, err := resolve(opts)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve template: %w", err)
 	}
 
 	debug.Logf("template: loaded %s from %s", templateFile, source)
-
-	tmpl, err := template.New(templateFile).Parse(string(content))
-	if err != nil {
-		return "", fmt.Errorf("failed to parse template (from %s): %w", source, err)
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to render template: %w", err)
-	}
-
-	return buf.String(), nil
+	return string(content), nil
 }
 
 // Source returns the path or description of where the template would be loaded from,
-// without actually parsing or rendering it. Useful for diagnostics.
+// without reading it. Useful for diagnostics.
 func Source(opts LoadOptions) string {
 	_, source, err := resolve(opts)
 	if err != nil {

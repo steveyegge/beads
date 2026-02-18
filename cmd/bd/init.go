@@ -669,7 +669,7 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 		// Generate AGENTS.md from template
 		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
 		if !stealth {
-			addAgentsInstructions(!quiet, prefix, beadsDir, agentsTemplate)
+			addAgentsInstructions(!quiet, beadsDir, agentsTemplate)
 		}
 
 		// Check for missing git upstream and warn if not configured

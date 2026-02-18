@@ -13,21 +13,15 @@ import (
 
 // addAgentsInstructions generates AGENTS.md from the agents template during bd init.
 // The template is resolved via the lookup chain (see internal/templates/agents).
-func addAgentsInstructions(verbose bool, prefix string, beadsDir string, explicitTemplate string) {
+func addAgentsInstructions(verbose bool, beadsDir string, explicitTemplate string) {
 	agentFile := "AGENTS.md"
-
-	data := agents.TemplateData{
-		Prefix:       prefix,
-		ProjectName:  filepath.Base(mustGetwd()),
-		BeadsVersion: Version,
-	}
 
 	opts := agents.LoadOptions{
 		ExplicitPath: explicitTemplate,
 		BeadsDir:     beadsDir,
 	}
 
-	if err := writeAgentsFile(agentFile, data, opts, verbose); err != nil {
+	if err := writeAgentsFile(agentFile, opts, verbose); err != nil {
 		if verbose {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update %s: %v\n", agentFile, err)
 		}
@@ -35,21 +29,21 @@ func addAgentsInstructions(verbose bool, prefix string, beadsDir string, explici
 }
 
 // writeAgentsFile creates or updates AGENTS.md using the template.
-// If the file doesn't exist, it renders the full template.
+// If the file doesn't exist, it loads the full template and writes it.
 // If it exists and already has a beads section, it's left alone.
-// If it exists without a beads section, the rendered content is appended.
-func writeAgentsFile(filename string, data agents.TemplateData, opts agents.LoadOptions, verbose bool) error {
+// If it exists without a beads section, the loaded content is appended.
+func writeAgentsFile(filename string, opts agents.LoadOptions, verbose bool) error {
 	//nolint:gosec // G304: filename comes from hardcoded caller
 	content, err := os.ReadFile(filename)
 	if os.IsNotExist(err) {
-		// File doesn't exist — render full template and write it
-		rendered, renderErr := agents.Render(data, opts)
-		if renderErr != nil {
-			return fmt.Errorf("failed to render template: %w", renderErr)
+		// File doesn't exist — load template and write it
+		loaded, loadErr := agents.Load(opts)
+		if loadErr != nil {
+			return fmt.Errorf("failed to load template: %w", loadErr)
 		}
 
 		// #nosec G306 - markdown needs to be readable
-		if err := os.WriteFile(filename, []byte(rendered), 0644); err != nil {
+		if err := os.WriteFile(filename, []byte(loaded), 0644); err != nil {
 			return fmt.Errorf("failed to create %s: %w", filename, err)
 		}
 		if verbose {
@@ -70,16 +64,16 @@ func writeAgentsFile(filename string, data agents.TemplateData, opts agents.Load
 		return nil
 	}
 
-	// Append the rendered template
-	rendered, renderErr := agents.Render(data, opts)
-	if renderErr != nil {
-		return fmt.Errorf("failed to render template: %w", renderErr)
+	// Append the loaded template
+	loaded, loadErr := agents.Load(opts)
+	if loadErr != nil {
+		return fmt.Errorf("failed to load template: %w", loadErr)
 	}
 
 	if !strings.HasSuffix(contentStr, "\n") {
 		contentStr += "\n"
 	}
-	contentStr += "\n" + rendered
+	contentStr += "\n" + loaded
 
 	// #nosec G306 - markdown needs to be readable
 	if err := os.WriteFile(filename, []byte(contentStr), 0644); err != nil {
@@ -89,15 +83,6 @@ func writeAgentsFile(filename string, data agents.TemplateData, opts agents.Load
 		fmt.Printf("  %s Added agent instructions to %s\n", ui.RenderPass("✓"), filename)
 	}
 	return nil
-}
-
-// mustGetwd returns the current working directory or "." on error.
-func mustGetwd() string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "."
-	}
-	return cwd
 }
 
 // setupClaudeSettings creates or updates .claude/settings.local.json with onboard instruction

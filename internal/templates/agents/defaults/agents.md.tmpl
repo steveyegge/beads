@@ -26,20 +26,20 @@ bd ready --json
 
 ```bash
 bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:{{.Prefix}}-123 --json
+bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
 ```
 
-**Claim and update:**
+**Claim and update** (example for a project with prefix "bd"):
 
 ```bash
-bd update {{.Prefix}}-42 --status in_progress --json
-bd update {{.Prefix}}-42 --priority 1 --json
+bd update bd-42 --status in_progress --json
+bd update bd-42 --priority 1 --json
 ```
 
 **Complete work:**
 
 ```bash
-bd close {{.Prefix}}-42 --reason "Completed" --json
+bd close bd-42 --reason "Completed" --json
 ```
 
 ### Issue Types

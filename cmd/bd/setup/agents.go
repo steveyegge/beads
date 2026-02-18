@@ -25,7 +25,6 @@ type agentsEnv struct {
 	agentsPath   string
 	stdout       io.Writer
 	stderr       io.Writer
-	templateData agents.TemplateData
 	templateOpts agents.LoadOptions
 }
 
@@ -37,17 +36,16 @@ type agentsIntegration struct {
 
 func defaultAgentsEnv() agentsEnv {
 	return agentsEnv{
-		agentsPath:   "AGENTS.md",
-		stdout:       os.Stdout,
-		stderr:       os.Stderr,
-		templateData: agents.TemplateData{Prefix: "bd"},
+		agentsPath: "AGENTS.md",
+		stdout:     os.Stdout,
+		stderr:     os.Stderr,
 	}
 }
 
-// renderBeadsSection renders the beads integration section from the template
-// and extracts the content between the BEGIN/END markers.
-func renderBeadsSection(env agentsEnv) (string, error) {
-	full, err := agents.Render(env.templateData, env.templateOpts)
+// loadBeadsSection loads the template and extracts the content between
+// the BEGIN/END BEADS INTEGRATION markers.
+func loadBeadsSection(env agentsEnv) (string, error) {
+	full, err := agents.Load(env.templateOpts)
 	if err != nil {
 		return "", err
 	}
@@ -55,7 +53,7 @@ func renderBeadsSection(env agentsEnv) (string, error) {
 	start := strings.Index(full, agentsBeginMarker)
 	end := strings.Index(full, agentsEndMarker)
 	if start == -1 || end == -1 || start > end {
-		return "", fmt.Errorf("rendered template missing beads integration markers")
+		return "", fmt.Errorf("template missing beads integration markers")
 	}
 
 	endOfEndMarker := end + len(agentsEndMarker)
@@ -70,9 +68,9 @@ func renderBeadsSection(env agentsEnv) (string, error) {
 func installAgents(env agentsEnv, integration agentsIntegration) error {
 	_, _ = fmt.Fprintf(env.stdout, "Installing %s integration...\n", integration.name)
 
-	beadsSection, err := renderBeadsSection(env)
+	beadsSection, err := loadBeadsSection(env)
 	if err != nil {
-		_, _ = fmt.Fprintf(env.stderr, "Error: failed to render template: %v\n", err)
+		_, _ = fmt.Fprintf(env.stderr, "Error: failed to load template: %v\n", err)
 		return err
 	}
 
@@ -102,10 +100,10 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 			_, _ = fmt.Fprintln(env.stdout, "✓ Added beads section to existing AGENTS.md")
 		}
 	} else {
-		fullContent, renderErr := agents.Render(env.templateData, env.templateOpts)
-		if renderErr != nil {
-			_, _ = fmt.Fprintf(env.stderr, "Error: failed to render template: %v\n", renderErr)
-			return renderErr
+		fullContent, loadErr := agents.Load(env.templateOpts)
+		if loadErr != nil {
+			_, _ = fmt.Fprintf(env.stderr, "Error: failed to load template: %v\n", loadErr)
+			return loadErr
 		}
 		if err := atomicWriteFile(env.agentsPath, []byte(fullContent)); err != nil {
 			_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
@@ -227,4 +225,3 @@ func removeBeadsSection(content string) string {
 
 	return content[:trimStart] + content[endOfEndMarker:]
 }
-
