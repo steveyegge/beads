@@ -58,6 +58,16 @@ func Source(opts LoadOptions) string {
 	return source
 }
 
+// EmbeddedContent returns the raw embedded default template content,
+// bypassing the lookup chain. Used by bd agents-template init/diff.
+func EmbeddedContent() (string, error) {
+	content, err := defaultTemplate.ReadFile("defaults/" + templateFile)
+	if err != nil {
+		return "", fmt.Errorf("embedded default template not found: %w", err)
+	}
+	return string(content), nil
+}
+
 // resolve walks the lookup chain and returns template content and its source.
 func resolve(opts LoadOptions) ([]byte, string, error) {
 	// 1. Explicit path (highest priority)

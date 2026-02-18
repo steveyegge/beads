@@ -43,11 +43,10 @@ With --stealth: configures per-repository git settings for invisible beads usage
   • Claude Code settings with bd onboard instruction
   Perfect for personal use without affecting repo collaborators.
 
-With --agents-template: uses a custom Go text/template file for generating AGENTS.md
-instead of the built-in default. The template receives {{.Prefix}}, {{.ProjectName}},
-and {{.BeadsVersion}} variables. Can also be set via config key init.agents-template.
-Without this flag, bd looks for .beads/templates/agents.md.tmpl before falling back
-to the embedded default.
+AGENTS.md customization: use 'bd agents-template init' to scaffold an editable copy
+of the default template, then edit .beads/templates/agents.md.tmpl before running
+bd init. The --agents-template flag is an escape hatch for CI/scripting that overrides
+the lookup chain with an explicit path. Can also be set via config key init.agents-template.
 
 If a dolt sql-server is detected running on port 3307 or 3306, server mode is automatically
 enabled for multi-writer access. Use --server to explicitly enable server mode, or set

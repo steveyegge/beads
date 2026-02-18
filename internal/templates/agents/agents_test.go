@@ -270,3 +270,31 @@ func TestLookupPrecedenceChain(t *testing.T) {
 		}
 	})
 }
+
+func TestEmbeddedContent(t *testing.T) {
+	content, err := EmbeddedContent()
+	if err != nil {
+		t.Fatalf("EmbeddedContent error: %v", err)
+	}
+	if !strings.Contains(content, "BEGIN BEADS INTEGRATION") {
+		t.Error("should contain beads integration markers")
+	}
+	if !strings.Contains(content, "Landing the Plane") {
+		t.Error("should contain landing the plane section")
+	}
+}
+
+func TestEmbeddedContentMatchesLoad(t *testing.T) {
+	// EmbeddedContent should return the same thing as Load with no options
+	embedded, err := EmbeddedContent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if embedded != loaded {
+		t.Error("EmbeddedContent() should match Load(LoadOptions{})")
+	}
+}

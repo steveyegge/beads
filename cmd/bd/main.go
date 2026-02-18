@@ -333,6 +333,7 @@ var rootCmd = &cobra.Command{
 			"help",
 			"hook", // manages its own store lifecycle; double-open deadlocks embedded Dolt (#1719)
 			"hooks",
+			"agents-template",
 			"human",
 			"init",
 			"merge",
