@@ -417,3 +417,217 @@ func TestUpdateBeadsSectionPreservesWhitespace(t *testing.T) {
 		t.Error("update should preserve surrounding content")
 	}
 }
+
+// --- New tests covering gaps from bd-54k wiring ---
+
+func TestDefaultAgentsEnv(t *testing.T) {
+	env := defaultAgentsEnv()
+	if env.agentsPath != "AGENTS.md" {
+		t.Errorf("expected agentsPath 'AGENTS.md', got %q", env.agentsPath)
+	}
+	if env.templateData.Prefix != "bd" {
+		t.Errorf("expected default prefix 'bd', got %q", env.templateData.Prefix)
+	}
+	if env.stdout == nil || env.stderr == nil {
+		t.Error("stdout and stderr should not be nil")
+	}
+}
+
+func TestRenderBeadsSectionWithCustomPrefix(t *testing.T) {
+	env := agentsEnv{
+		templateData: agents.TemplateData{Prefix: "myapp"},
+	}
+	section, err := renderBeadsSection(env)
+	if err != nil {
+		t.Fatalf("renderBeadsSection failed: %v", err)
+	}
+
+	if !strings.Contains(section, "myapp-42") {
+		t.Error("custom prefix should be substituted in beads section")
+	}
+	if !strings.Contains(section, "myapp-123") {
+		t.Error("custom prefix should appear in example commands")
+	}
+	if strings.Contains(section, "bd-42") {
+		t.Error("default prefix 'bd' should not appear when custom prefix is set")
+	}
+}
+
+func TestRenderBeadsSectionMissingMarkers(t *testing.T) {
+	dir := t.TempDir()
+	tmplPath := filepath.Join(dir, "no-markers.tmpl")
+	if err := os.WriteFile(tmplPath, []byte("No markers here"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	env := agentsEnv{
+		templateData: testTemplateData(),
+		templateOpts: agents.LoadOptions{ExplicitPath: tmplPath},
+	}
+	_, err := renderBeadsSection(env)
+	if err == nil {
+		t.Fatal("expected error when template has no markers")
+	}
+	if !strings.Contains(err.Error(), "missing beads integration markers") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestRenderBeadsSectionWithProjectTemplate(t *testing.T) {
+	dir := t.TempDir()
+	beadsDir := filepath.Join(dir, ".beads")
+	tmplDir := filepath.Join(beadsDir, "templates")
+	if err := os.MkdirAll(tmplDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	customTmpl := "<!-- BEGIN BEADS INTEGRATION -->\nCustom beads for {{.Prefix}}\n<!-- END BEADS INTEGRATION -->\n"
+	if err := os.WriteFile(filepath.Join(tmplDir, "agents.md.tmpl"), []byte(customTmpl), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	env := agentsEnv{
+		templateData: agents.TemplateData{Prefix: "custom"},
+		templateOpts: agents.LoadOptions{BeadsDir: beadsDir},
+	}
+	section, err := renderBeadsSection(env)
+	if err != nil {
+		t.Fatalf("renderBeadsSection failed: %v", err)
+	}
+	if !strings.Contains(section, "Custom beads for custom") {
+		t.Errorf("should use project-level template, got: %s", section)
+	}
+}
+
+func TestInstallFactoryAppendsToExistingWithoutMarkers(t *testing.T) {
+	env, stdout, _ := newFactoryTestEnv(t)
+	existingContent := "# My Existing Project\n\nSome documentation here."
+	if err := os.WriteFile(env.agentsPath, []byte(existingContent), 0644); err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
+
+	if err := installFactory(env); err != nil {
+		t.Fatalf("installFactory returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(env.agentsPath)
+	if err != nil {
+		t.Fatalf("failed to read AGENTS.md: %v", err)
+	}
+	content := string(data)
+
+	// Original content should be preserved
+	if !strings.Contains(content, "My Existing Project") {
+		t.Error("original content should be preserved")
+	}
+	if !strings.Contains(content, "Some documentation here") {
+		t.Error("original documentation should be preserved")
+	}
+
+	// Beads section should be appended
+	if !strings.Contains(content, agentsBeginMarker) {
+		t.Error("beads section should be appended")
+	}
+
+	if !strings.Contains(stdout.String(), "Added beads section") {
+		t.Error("expected 'Added beads section' message")
+	}
+}
+
+func TestInstallFactoryNewFileContainsAllSections(t *testing.T) {
+	env, _, _ := newFactoryTestEnv(t)
+	if err := installFactory(env); err != nil {
+		t.Fatalf("installFactory returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(env.agentsPath)
+	if err != nil {
+		t.Fatalf("failed to read AGENTS.md: %v", err)
+	}
+	content := string(data)
+
+	sections := []string{
+		"# Project Instructions for AI Agents",
+		agentsBeginMarker,
+		agentsEndMarker,
+		"## Build & Test",
+		"## Architecture Overview",
+		"## Conventions & Patterns",
+		"## Landing the Plane",
+		"git push",
+	}
+	for _, section := range sections {
+		if !strings.Contains(content, section) {
+			t.Errorf("new file missing section: %q", section)
+		}
+	}
+}
+
+func TestInstallFactoryWithCustomPrefix(t *testing.T) {
+	dir := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	env := factoryEnv{
+		agentsPath:   filepath.Join(dir, "AGENTS.md"),
+		stdout:       stdout,
+		stderr:       stderr,
+		templateData: agents.TemplateData{Prefix: "acme"},
+	}
+
+	if err := installFactory(env); err != nil {
+		t.Fatalf("installFactory returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(env.agentsPath)
+	if err != nil {
+		t.Fatalf("failed to read AGENTS.md: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "acme-42") {
+		t.Error("custom prefix should appear in generated file")
+	}
+	if strings.Contains(content, "{{.Prefix}}") {
+		t.Error("template variable should be substituted, not literal")
+	}
+}
+
+func TestInstallFactoryWithProjectTemplate(t *testing.T) {
+	dir := t.TempDir()
+	beadsDir := filepath.Join(dir, ".beads")
+	tmplDir := filepath.Join(beadsDir, "templates")
+	if err := os.MkdirAll(tmplDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	customTmpl := `# Custom AGENTS.md
+<!-- BEGIN BEADS INTEGRATION -->
+Custom beads section for {{.Prefix}}
+<!-- END BEADS INTEGRATION -->
+`
+	if err := os.WriteFile(filepath.Join(tmplDir, "agents.md.tmpl"), []byte(customTmpl), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	env := factoryEnv{
+		agentsPath:   filepath.Join(dir, "AGENTS.md"),
+		stdout:       stdout,
+		stderr:       stderr,
+		templateData: agents.TemplateData{Prefix: "proj"},
+		templateOpts: agents.LoadOptions{BeadsDir: beadsDir},
+	}
+
+	if err := installFactory(env); err != nil {
+		t.Fatalf("installFactory returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(env.agentsPath)
+	if err != nil {
+		t.Fatalf("failed to read AGENTS.md: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "Custom beads section for proj") {
+		t.Errorf("should use project-level template, got:\n%s", content)
+	}
+}

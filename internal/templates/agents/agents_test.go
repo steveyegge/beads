@@ -186,3 +186,243 @@ func TestSource(t *testing.T) {
 		})
 	}
 }
+
+// --- New tests covering gaps ---
+
+func TestProjectOverridesEmbedded(t *testing.T) {
+	dir := t.TempDir()
+	beadsDir := filepath.Join(dir, ".beads")
+	tmplDir := filepath.Join(beadsDir, "templates")
+	if err := os.MkdirAll(tmplDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	customContent := "Custom project template for {{.Prefix}}"
+	if err := os.WriteFile(filepath.Join(tmplDir, templateFile), []byte(customContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Render(TemplateData{Prefix: "proj"}, LoadOptions{BeadsDir: beadsDir})
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	// Should use project template, not embedded default
+	if strings.Contains(result, "BEGIN BEADS INTEGRATION") {
+		t.Error("should use project template, not embedded default")
+	}
+	if result != "Custom project template for proj" {
+		t.Errorf("got %q, want project template content", result)
+	}
+}
+
+func TestBeadsDirWithoutTemplate(t *testing.T) {
+	// BeadsDir exists but has no templates/ subdirectory — should fall through to embedded
+	dir := t.TempDir()
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Render(TemplateData{Prefix: "fall"}, LoadOptions{BeadsDir: beadsDir})
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	if !strings.Contains(result, "BEGIN BEADS INTEGRATION") {
+		t.Error("should fall through to embedded default when project template is absent")
+	}
+	if !strings.Contains(result, "fall-42") {
+		t.Error("prefix should be substituted in embedded fallback")
+	}
+}
+
+func TestRenderZeroValueTemplateData(t *testing.T) {
+	// Empty TemplateData should render without error; Prefix becomes empty string
+	result, err := Render(TemplateData{}, LoadOptions{})
+	if err != nil {
+		t.Fatalf("Render error with zero-value TemplateData: %v", err)
+	}
+	if !strings.Contains(result, "BEGIN BEADS INTEGRATION") {
+		t.Error("should still contain beads section")
+	}
+	// With empty prefix, "-42" should appear (no prefix before dash)
+	if !strings.Contains(result, "-42") {
+		t.Error("should contain '-42' even with empty prefix")
+	}
+	// Should NOT contain unresolved template vars
+	if strings.Contains(result, "{{") {
+		t.Error("should not contain unresolved template variables")
+	}
+}
+
+func TestRenderTemplateExecutionError(t *testing.T) {
+	dir := t.TempDir()
+	tmplPath := filepath.Join(dir, "bad-exec.tmpl")
+	// Valid parse but will fail on execute: call undefined function
+	if err := os.WriteFile(tmplPath, []byte(`{{call .Prefix}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Render(TemplateData{Prefix: "x"}, LoadOptions{ExplicitPath: tmplPath})
+	if err == nil {
+		t.Fatal("expected error for template execution failure")
+	}
+	if !strings.Contains(err.Error(), "render template") {
+		t.Errorf("error should mention render, got: %v", err)
+	}
+}
+
+func TestSourceExplicitPath(t *testing.T) {
+	dir := t.TempDir()
+	tmplPath := filepath.Join(dir, "my.tmpl")
+	if err := os.WriteFile(tmplPath, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Source(LoadOptions{ExplicitPath: tmplPath})
+	if got != tmplPath {
+		t.Errorf("Source() = %q, want %q", got, tmplPath)
+	}
+}
+
+func TestSourceProjectLevel(t *testing.T) {
+	dir := t.TempDir()
+	beadsDir := filepath.Join(dir, ".beads")
+	tmplDir := filepath.Join(beadsDir, "templates")
+	if err := os.MkdirAll(tmplDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	tmplPath := filepath.Join(tmplDir, templateFile)
+	if err := os.WriteFile(tmplPath, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Source(LoadOptions{BeadsDir: beadsDir})
+	if got != tmplPath {
+		t.Errorf("Source() = %q, want %q", got, tmplPath)
+	}
+}
+
+func TestEmbeddedTemplateStructure(t *testing.T) {
+	// Verify the embedded default template contains all required structural sections
+	result, err := Render(TemplateData{Prefix: "bd"}, LoadOptions{})
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+
+	sections := []string{
+		"# Project Instructions for AI Agents",
+		"<!-- BEGIN BEADS INTEGRATION -->",
+		"## Issue Tracking with bd (beads)",
+		"### Quick Start",
+		"### Issue Types",
+		"### Priorities",
+		"### Workflow for AI Agents",
+		"### Auto-Sync",
+		"### Important Rules",
+		"<!-- END BEADS INTEGRATION -->",
+		"## Build & Test",
+		"## Architecture Overview",
+		"## Conventions & Patterns",
+		"## Landing the Plane (Session Completion)",
+		"**MANDATORY WORKFLOW:**",
+		"**CRITICAL RULES:**",
+	}
+	for _, section := range sections {
+		if !strings.Contains(result, section) {
+			t.Errorf("embedded template missing section: %q", section)
+		}
+	}
+}
+
+func TestRenderAllVariables(t *testing.T) {
+	// Template currently only uses {{.Prefix}}, but verify other fields don't cause issues
+	data := TemplateData{
+		Prefix:       "acme",
+		ProjectName:  "acme-corp",
+		BeadsVersion: "2.5.0",
+	}
+	result, err := Render(data, LoadOptions{})
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	if !strings.Contains(result, "acme-42") {
+		t.Error("prefix not substituted")
+	}
+}
+
+func TestRenderCustomTemplateUsesAllFields(t *testing.T) {
+	dir := t.TempDir()
+	tmplPath := filepath.Join(dir, "full.tmpl")
+	content := "Prefix={{.Prefix}} Project={{.ProjectName}} Version={{.BeadsVersion}}"
+	if err := os.WriteFile(tmplPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	data := TemplateData{
+		Prefix:       "bd",
+		ProjectName:  "myproj",
+		BeadsVersion: "1.2.3",
+	}
+	result, err := Render(data, LoadOptions{ExplicitPath: tmplPath})
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	expected := "Prefix=bd Project=myproj Version=1.2.3"
+	if result != expected {
+		t.Errorf("got %q, want %q", result, expected)
+	}
+}
+
+func TestLookupPrecedenceChain(t *testing.T) {
+	// Verify the full precedence: explicit > project > embedded
+	// (user-level and system-level can't be reliably tested without monkeypatching)
+	dir := t.TempDir()
+
+	beadsDir := filepath.Join(dir, ".beads")
+	tmplDir := filepath.Join(beadsDir, "templates")
+	if err := os.MkdirAll(tmplDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmplDir, templateFile), []byte("PROJECT"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	explicitPath := filepath.Join(dir, "explicit.tmpl")
+	if err := os.WriteFile(explicitPath, []byte("EXPLICIT"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("explicit wins over project and embedded", func(t *testing.T) {
+		result, err := Render(TemplateData{}, LoadOptions{
+			ExplicitPath: explicitPath,
+			BeadsDir:     beadsDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result != "EXPLICIT" {
+			t.Errorf("expected EXPLICIT, got %q", result)
+		}
+	})
+
+	t.Run("project wins over embedded", func(t *testing.T) {
+		result, err := Render(TemplateData{}, LoadOptions{
+			BeadsDir: beadsDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result != "PROJECT" {
+			t.Errorf("expected PROJECT, got %q", result)
+		}
+	})
+
+	t.Run("embedded is the fallback", func(t *testing.T) {
+		result, err := Render(TemplateData{Prefix: "x"}, LoadOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(result, "BEGIN BEADS INTEGRATION") {
+			t.Error("expected embedded default")
+		}
+	})
+}
