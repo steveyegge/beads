@@ -168,22 +168,34 @@ func buildBlockingMaps(allDeps map[string][]*types.Dependency, closedIDs map[str
 // annotations in bd list output.
 func getClosedBlockerIDs(ctx context.Context, s storage.Storage, allDeps map[string][]*types.Dependency) map[string]bool {
 	// Collect unique blocker IDs
-	blockerIDs := make(map[string]bool)
+	blockerIDSet := make(map[string]bool)
 	for _, deps := range allDeps {
 		for _, dep := range deps {
 			if dep.Type.AffectsReadyWork() {
-				blockerIDs[dep.DependsOnID] = true
+				blockerIDSet[dep.DependsOnID] = true
 			}
 		}
 	}
 
+	if len(blockerIDSet) == 0 {
+		return make(map[string]bool)
+	}
+
+	// Convert set to slice for batch query
+	blockerIDs := make([]string, 0, len(blockerIDSet))
+	for id := range blockerIDSet {
+		blockerIDs = append(blockerIDs, id)
+	}
+
+	// Single batch query instead of N individual GetIssue calls
+	statuses, err := s.GetIssueStatuses(ctx, blockerIDs)
+	if err != nil {
+		return make(map[string]bool) // graceful degradation
+	}
+
 	closedIDs := make(map[string]bool)
-	for id := range blockerIDs {
-		issue, err := s.GetIssue(ctx, id)
-		if err != nil || issue == nil {
-			continue
-		}
-		if issue.Status == types.StatusClosed {
+	for id, status := range statuses {
+		if status == types.StatusClosed {
 			closedIDs[id] = true
 		}
 	}

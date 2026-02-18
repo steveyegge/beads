@@ -754,9 +754,9 @@ var listCmd = &cobra.Command{
 		// Best effort: display gracefully degrades with empty data
 		labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
 
-		// Load dependencies for blocking info display
+		// Load dependencies for blocking info display (scoped to displayed issues)
 		// Best effort: display gracefully degrades with empty data
-		allDepsForList, _ := activeStore.GetAllDependencyRecords(ctx)
+		allDepsForList, _ := activeStore.GetDependencyRecordsForIssues(ctx, issueIDs)
 		closedIDs := getClosedBlockerIDs(ctx, activeStore, allDepsForList)
 		blockedByMap, blocksMap, _ := buildBlockingMaps(allDepsForList, closedIDs)
 

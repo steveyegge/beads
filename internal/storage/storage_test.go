@@ -33,6 +33,9 @@ func (m *mockStorage) CreateIssuesWithFullOptions(ctx context.Context, issues []
 func (m *mockStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetIssueStatuses(ctx context.Context, issueIDs []string) (map[string]types.Status, error) {
+	return make(map[string]types.Status), nil
+}
 func (m *mockStorage) GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error) {
 	return nil, nil
 }

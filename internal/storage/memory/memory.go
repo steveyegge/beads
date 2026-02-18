@@ -331,6 +331,20 @@ func (m *MemoryStorage) CreateIssuesWithFullOptions(ctx context.Context, issues 
 	return m.CreateIssues(ctx, issues, actor)
 }
 
+// GetIssueStatuses retrieves just the status for a batch of issue IDs.
+func (m *MemoryStorage) GetIssueStatuses(ctx context.Context, issueIDs []string) (map[string]types.Status, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string]types.Status)
+	for _, id := range issueIDs {
+		if issue, exists := m.issues[id]; exists {
+			result[id] = issue.Status
+		}
+	}
+	return result, nil
+}
+
 // GetIssue retrieves an issue by ID
 func (m *MemoryStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	m.mu.RLock()

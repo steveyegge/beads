@@ -244,6 +244,45 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 // validateBatchIssues validates all issues in a batch and sets timestamps
 // Batch operation functions moved to batch_ops.go
 
+// GetIssueStatuses retrieves just the status for a batch of issue IDs.
+// Returns a map of issueID -> status. Missing issues are silently omitted.
+func (s *SQLiteStorage) GetIssueStatuses(ctx context.Context, issueIDs []string) (map[string]types.Status, error) {
+	if len(issueIDs) == 0 {
+		return make(map[string]types.Status), nil
+	}
+
+	s.checkFreshness()
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	placeholders := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, status FROM issues
+		WHERE id IN (%s)
+	`, buildPlaceholders(len(issueIDs))) // #nosec G201 -- placeholders are generated internally
+
+	rows, err := s.db.QueryContext(ctx, query, placeholders...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get issue statuses: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[string]types.Status)
+	for rows.Next() {
+		var id string
+		var status types.Status
+		if err := rows.Scan(&id, &status); err != nil {
+			return nil, fmt.Errorf("failed to scan issue status: %w", err)
+		}
+		result[id] = status
+	}
+	return result, rows.Err()
+}
+
 // GetIssue retrieves an issue by ID
 func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	// Check for external database file modifications (daemon mode)

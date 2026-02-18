@@ -262,6 +262,47 @@ func parseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
 	return parentID, num, true
 }
 
+// GetIssueStatuses retrieves just the status for a batch of issue IDs.
+// Returns a map of issueID -> status. Missing issues are silently omitted.
+func (s *DoltStore) GetIssueStatuses(ctx context.Context, issueIDs []string) (map[string]types.Status, error) {
+	if len(issueIDs) == 0 {
+		return make(map[string]types.Status), nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	placeholders := make([]string, len(issueIDs))
+	args := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
+	query := fmt.Sprintf(`
+		SELECT id, status FROM issues
+		WHERE id IN (%s)
+	`, joinStrings(placeholders, ","))
+
+	rows, err := s.queryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get issue statuses: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]types.Status)
+	for rows.Next() {
+		var id string
+		var status types.Status
+		if err := rows.Scan(&id, &status); err != nil {
+			return nil, fmt.Errorf("failed to scan issue status: %w", err)
+		}
+		result[id] = status
+	}
+	return result, rows.Err()
+}
+
 // GetIssue retrieves an issue by ID
 func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	s.mu.RLock()

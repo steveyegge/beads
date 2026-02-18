@@ -125,6 +125,9 @@ type Storage interface {
 	GetLabelsForIssues(ctx context.Context, issueIDs []string) (map[string][]string, error)
 	GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error)
 
+	// Batch status lookup (for efficient blocked-by filtering in bd list)
+	GetIssueStatuses(ctx context.Context, issueIDs []string) (map[string]types.Status, error)
+
 	// Ready Work & Blocking
 	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)
 	GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error)
