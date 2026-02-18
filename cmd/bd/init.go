@@ -654,10 +654,10 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 			}
 		}
 
-		// Add "landing the plane" instructions to AGENTS.md and @AGENTS.md
+		// Generate AGENTS.md from template
 		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
 		if !stealth {
-			addLandingThePlaneInstructions(!quiet)
+			addAgentsInstructions(!quiet, prefix, beadsDir)
 		}
 
 		// Check for missing git upstream and warn if not configured

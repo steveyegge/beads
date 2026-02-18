@@ -7,110 +7,96 @@ import (
 	"path/filepath"
 	"strings"
 
+	agents "github.com/steveyegge/beads/internal/templates/agents"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
-// landingThePlaneSection is the "landing the plane" instructions for AI agents
-// This gets appended to AGENTS.md and @AGENTS.md during bd init
-const landingThePlaneSection = `
-## Landing the Plane (Session Completion)
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until ` + "`git push`" + ` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ` + "```bash" + `
-   git pull --rebase
-   bd sync
-   git push
-   git status  # MUST show "up to date with origin"
-   ` + "```" + `
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until ` + "`git push`" + ` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-`
-
-// addLandingThePlaneInstructions adds "landing the plane" instructions to AGENTS.md
-func addLandingThePlaneInstructions(verbose bool) {
-	// File to update (AGENTS.md is the standard comprehensive documentation file)
+// addAgentsInstructions generates AGENTS.md from the agents template during bd init.
+// The template is resolved via the lookup chain (see internal/templates/agents).
+func addAgentsInstructions(verbose bool, prefix string, beadsDir string) {
 	agentFile := "AGENTS.md"
 
-	if err := updateAgentFile(agentFile, verbose); err != nil {
-		// Non-fatal - continue with other files
+	data := agents.TemplateData{
+		Prefix:       prefix,
+		ProjectName:  filepath.Base(mustGetwd()),
+		BeadsVersion: Version,
+	}
+
+	opts := agents.LoadOptions{
+		BeadsDir: beadsDir,
+	}
+
+	if err := writeAgentsFile(agentFile, data, opts, verbose); err != nil {
 		if verbose {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update %s: %v\n", agentFile, err)
 		}
 	}
 }
 
-// updateAgentFile creates or updates an agent instructions file with landing the plane section
-func updateAgentFile(filename string, verbose bool) error {
-	// Check if file exists
-	//nolint:gosec // G304: filename comes from hardcoded list in addLandingThePlaneInstructions
+// writeAgentsFile creates or updates AGENTS.md using the template.
+// If the file doesn't exist, it renders the full template.
+// If it exists and already has a beads section, it's left alone.
+// If it exists without a beads section, the rendered content is appended.
+func writeAgentsFile(filename string, data agents.TemplateData, opts agents.LoadOptions, verbose bool) error {
+	//nolint:gosec // G304: filename comes from hardcoded caller
 	content, err := os.ReadFile(filename)
 	if os.IsNotExist(err) {
-		// File doesn't exist - create it with basic structure
-		newContent := fmt.Sprintf(`# Agent Instructions
-
-This project uses **bd** (beads) for issue tracking. Run `+"`bd onboard`"+` to get started.
-
-## Quick Reference
-
-`+"```bash"+`
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
-`+"```"+`
-%s
-`, landingThePlaneSection)
+		// File doesn't exist — render full template and write it
+		rendered, renderErr := agents.Render(data, opts)
+		if renderErr != nil {
+			return fmt.Errorf("failed to render template: %w", renderErr)
+		}
 
 		// #nosec G306 - markdown needs to be readable
-		if err := os.WriteFile(filename, []byte(newContent), 0644); err != nil {
+		if err := os.WriteFile(filename, []byte(rendered), 0644); err != nil {
 			return fmt.Errorf("failed to create %s: %w", filename, err)
 		}
 		if verbose {
-			fmt.Printf("  %s Created %s with landing-the-plane instructions\n", ui.RenderPass("✓"), filename)
+			source := agents.Source(opts)
+			fmt.Printf("  %s Created %s (from %s)\n", ui.RenderPass("✓"), filename, source)
 		}
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("failed to read %s: %w", filename, err)
 	}
 
-	// File exists - check if it already has landing the plane section
-	if strings.Contains(string(content), "Landing the Plane") {
+	// File exists — check if it already has beads or landing-the-plane content
+	contentStr := string(content)
+	if strings.Contains(contentStr, "BEGIN BEADS INTEGRATION") || strings.Contains(contentStr, "Landing the Plane") {
 		if verbose {
-			fmt.Printf("  %s already has landing-the-plane instructions\n", filename)
+			fmt.Printf("  %s already has agent instructions\n", filename)
 		}
 		return nil
 	}
 
-	// Append the landing the plane section
-	newContent := string(content)
-	if !strings.HasSuffix(newContent, "\n") {
-		newContent += "\n"
+	// Append the rendered template
+	rendered, renderErr := agents.Render(data, opts)
+	if renderErr != nil {
+		return fmt.Errorf("failed to render template: %w", renderErr)
 	}
-	newContent += landingThePlaneSection
+
+	if !strings.HasSuffix(contentStr, "\n") {
+		contentStr += "\n"
+	}
+	contentStr += "\n" + rendered
 
 	// #nosec G306 - markdown needs to be readable
-	if err := os.WriteFile(filename, []byte(newContent), 0644); err != nil {
+	if err := os.WriteFile(filename, []byte(contentStr), 0644); err != nil {
 		return fmt.Errorf("failed to update %s: %w", filename, err)
 	}
 	if verbose {
-		fmt.Printf("  %s Added landing-the-plane instructions to %s\n", ui.RenderPass("✓"), filename)
+		fmt.Printf("  %s Added agent instructions to %s\n", ui.RenderPass("✓"), filename)
 	}
 	return nil
+}
+
+// mustGetwd returns the current working directory or "." on error.
+func mustGetwd() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return cwd
 }
 
 // setupClaudeSettings creates or updates .claude/settings.local.json with onboard instruction
