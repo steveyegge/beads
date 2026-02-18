@@ -338,6 +338,33 @@ func TestAddAgentsInstructionsEmptyExplicitUsesLookupChain(t *testing.T) {
 	}
 }
 
+func TestInitCmdAgentsTemplateFlag(t *testing.T) {
+	// Verify the --agents-template flag is registered on initCmd.
+	f := initCmd.Flags().Lookup("agents-template")
+	if f == nil {
+		t.Fatal("--agents-template flag not registered on initCmd")
+	}
+	if f.DefValue != "" {
+		t.Errorf("default should be empty, got %q", f.DefValue)
+	}
+}
+
+func TestInitCmdHelpMentionsAgentsTemplate(t *testing.T) {
+	// Verify the long help text documents --agents-template.
+	long := initCmd.Long
+	checks := []string{
+		"--agents-template",
+		"init.agents-template",
+		"{{.Prefix}}",
+		".beads/templates/agents.md.tmpl",
+	}
+	for _, want := range checks {
+		if !strings.Contains(long, want) {
+			t.Errorf("init --help Long text missing %q", want)
+		}
+	}
+}
+
 func TestMustGetwd(t *testing.T) {
 	result := mustGetwd()
 	if result == "" {
