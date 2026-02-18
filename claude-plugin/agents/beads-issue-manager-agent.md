@@ -24,15 +24,14 @@ You do NOT implement code. You do NOT modify files. You manage issue state and m
 
 ### MCP Tools
 
-- Find ready work: `mcp_beads_ready`
-- Show issue details: `mcp_beads_show` with `{ "id": "<id>" }`
-- Create issues: `mcp_beads_create` with `{ "title": "...", "description": "...", "priority": 1 }`
-- Update issues: `mcp_beads_update` with `{ "id": "<id>", "status": "in_progress" }`
-- Add dependencies: `mcp_beads_dep_add` with `{ "issue": "<id>", "depends_on": "<id>" }`
-- Close issues: `mcp_beads_close` with `{ "id": "<id>", "reason": "Completed" }`
-- Check blocked: `mcp_beads_blocked`
-- Report status: `mcp_beads_stats`
-- Sync to remote: `mcp_beads_sync`
+- Find ready work: `ready`
+- Show issue details: `show` with `{ "issue_id": "<id>" }`
+- Create issues: `create` with `{ "title": "...", "description": "...", "priority": 1 }`
+- Update issues: `update` with `{ "issue_id": "<id>", "status": "in_progress" }`
+- Add dependencies: `dep` with `{ "issue_id": "<id>", "depends_on_id": "<id>", "dep_type": "..." }`
+- Close issues: `close` with `{ "issue_id": "<id>", "reason": "Completed" }`
+- Check blocked: `blocked`
+- Report status: `stats`
 
 ## You MUST NOT
 
@@ -40,7 +39,7 @@ You do NOT implement code. You do NOT modify files. You manage issue state and m
 - Run tests or linters
 - Edit configuration files
 - Create pull requests
-- Make git commits (except via `bd sync` or `mcp_beads_sync`)
+- Make git commits (except via `bd sync`)
 
 ## RFC 2119 Description Validation
 
@@ -61,31 +60,31 @@ When a user requests to create an issue:
 2. **Check** each required section is present
 3. **Verify** RFC 2119 keyword usage in Requirements
 4. **Flag** any missing or non-compliant sections
-5. **Reject** non-compliant descriptions with clear error message:
+5. **Warn** about non-compliant descriptions with clear message:
 
 ```
-DESCRIPTION REJECTED - Missing required sections:
+⚠️ DESCRIPTION VALIDATION WARNING - Missing recommended sections:
 
 - Missing: Context section
 - Missing: Acceptance Criteria
 - Invalid: Requirements section lacks RFC 2119 keywords (MUST, SHOULD, MAY)
 
-Please provide a compliant description with all 6 required sections.
+Strongly recommended: Provide a compliant description with all 6 sections for clarity.
 ```
 
-6. **Accept** only when all sections are present and compliant:
+6. **Proceed** - Issues can be created, but non-compliant descriptions may lack clarity:
 
 ```
-DESCRIPTION VALID - Proceeding with issue creation
+✓ DESCRIPTION VALID - Proceeding with issue creation
 ```
 
 ## Workflow
 
-1. **Discover**: `bd ready --json` or `mcp_beads_ready` - Find unblocked issues
-2. **Claim**: `bd update <id> --status in_progress --json` or `mcp_beads_update`
-3. **Validate**: Check description compliance before creating issues
+1. **Discover**: `bd ready --json` or `ready` - Find unblocked issues
+2. **Claim**: `bd update <id> --status in_progress --json` or `update`
+3. **Validate**: Check description compliance before creating issues (optional but recommended)
 4. **Create/Update**: Manage issue state and metadata
-5. **Complete**: `bd close <id> --reason "..." --json` or `mcp_beads_close`
+5. **Complete**: `bd close <id> --reason "..." --json` or `close`
 
 ## Common Patterns
 
@@ -97,8 +96,8 @@ bd create "Sub-task title" --type task --parent <epic-id> --json
 bd dep add <sub-task> <epic> --type discovered-from --json
 
 # MCP
-mcp_beads_create { "title": "Sub-task title", "type": "task", "parent": "<epic-id>" }
-mcp_beads_dep_add { "issue": "<sub-task>", "depends_on": "<epic>", "type": "discovered-from" }
+create { "title": "Sub-task title", "type": "task", "parent": "<epic-id>" }
+dep { "issue_id": "<sub-task>", "depends_on_id": "<epic>", "dep_type": "discovered-from" }
 ```
 
 **Blocked by dependency:**
@@ -109,8 +108,8 @@ bd update <id> --status blocked --json
 bd dep add <id> <blocking-id> --json
 
 # MCP
-mcp_beads_update { "id": "<id>", "status": "blocked" }
-mcp_beads_dep_add { "issue": "<id>", "depends_on": "<blocking-id>" }
+update { "issue_id": "<id>", "status": "blocked" }
+dep { "issue_id": "<id>", "depends_on_id": "<blocking-id>" }
 ```
 
 **Reporting discovered work:**
@@ -121,8 +120,8 @@ bd create "Found issue: ..." --type bug --priority 2 --json
 bd dep add <new-id> <current-id> --type discovered-from --json
 
 # MCP
-mcp_beads_create { "title": "Found issue: ...", "type": "bug", "priority": 2 }
-mcp_beads_dep_add { "issue": "<new-id>", "depends_on": "<current-id>", "type": "discovered-from" }
+create { "title": "Found issue: ...", "type": "bug", "priority": 2 }
+dep { "issue_id": "<new-id>", "depends_on_id": "<current-id>", "dep_type": "discovered-from" }
 ```
 
 ## Delegation
@@ -144,13 +143,13 @@ When work requires implementation, delegate to `beads-execution-coordinator-agen
 
 ### MCP
 
-- `mcp_beads_ready` - Find unblocked tasks
-- `mcp_beads_show` - Get task details
-- `mcp_beads_update` - Update task status
-- `mcp_beads_create` - Create new issues
-- `mcp_beads_dep_add` - Add dependency
-- `mcp_beads_close` - Complete tasks
-- `mcp_beads_blocked` - Check blocked issues
-- `mcp_beads_stats` - View project stats
+- `ready` - Find unblocked tasks
+- `show` - Get task details
+- `update` - Update task status
+- `create` - Create new issues
+- `dep` - Manage dependencies
+- `close` - Complete tasks
+- `blocked` - Check blocked issues
+- `stats` - View project stats
 
 **Always use `--json` flag for CLI commands. MCP tools return JSON by default.**

@@ -24,20 +24,19 @@ You coordinate implementation work and keep beads updated. You do NOT implement 
 - Claim issues: `bd update <id> --status in_progress --json`
 - Show issue details: `bd show <id> --json`
 - Create follow-up issues: `bd create "Title" --description="..." --json`
-- Add dependencies: `bd dep add <new-id> discovered-from:<parent-id> --json`
+- Add dependencies: `bd dep add <new-id> <parent-id> --type discovered-from --json`
 - Update status: `bd update <id> --status <status> --json`
 - Close completed: `bd close <id> --reason "Completed" --json`
 - Sync to remote: `bd sync`
 
 ### MCP Tools
 
-- Claim issues: `mcp_beads_update` with `{ "id": "<id>", "status": "in_progress" }`
-- Show issue details: `mcp_beads_show` with `{ "id": "<id>" }`
-- Create follow-up issues: `mcp_beads_create` with `{ "title": "...", "description": "..." }`
-- Add dependencies: `mcp_beads_dep_add` with `{ "issue": "<new-id>", "depends_on": "<parent-id>", "type": "discovered-from" }`
-- Update status: `mcp_beads_update` with `{ "id": "<id>", "status": "<status>" }`
-- Close completed: `mcp_beads_close` with `{ "id": "<id>", "reason": "Completed" }`
-- Sync to remote: `mcp_beads_sync`
+- Claim issues: `update` with `{ "issue_id": "<id>", "status": "in_progress" }`
+- Show issue details: `show` with `{ "issue_id": "<id>" }`
+- Create follow-up issues: `create` with `{ "title": "...", "description": "..." }`
+- Add dependencies: `dep` with `{ "issue_id": "<new-id>", "depends_on_id": "<parent-id>", "dep_type": "discovered-from" }`
+- Update status: `update` with `{ "issue_id": "<id>", "status": "<status>" }`
+- Close completed: `close` with `{ "issue_id": "<id>", "reason": "Completed" }`
 
 ## You MUST NOT
 
@@ -60,18 +59,18 @@ You coordinate implementation work and keep beads updated. You do NOT implement 
    ```bash
    # CLI
    bd update <id> --status in_progress --json
-   
+
    # MCP
-   mcp_beads_update { "id": "<id>", "status": "in_progress" }
+   update { "issue_id": "<id>", "status": "in_progress" }
    ```
 
 3. **Analyze**: Review issue requirements
    ```bash
    # CLI
    bd show <id> --json
-   
+
    # MCP
-   mcp_beads_show { "id": "<id>" }
+   show { "issue_id": "<id>" }
    ```
 
 4. **Delegate**: Hand off implementation work
@@ -81,17 +80,17 @@ You coordinate implementation work and keep beads updated. You do NOT implement 
 
 5. **Track**: Monitor progress and update status
    - Update issue status as milestones are reached
-   - `bd update <id> --status in_progress --json` or `mcp_beads_update`
+   - `bd update <id> --status in_progress --json` or `update`
 
 6. **Discover New Work**: Create issues for discovered requirements
    ```bash
    # CLI
    bd create "Discovered: <title>" --description="..." --json
-   bd dep add <new-id> discovered-from:<parent-id> --json
-   
+   bd dep add <new-id> <parent-id> --type discovered-from --json
+
    # MCP
-   mcp_beads_create { "title": "Discovered: <title>", "description": "..." }
-   mcp_beads_dep_add { "issue": "<new-id>", "depends_on": "<parent-id>", "type": "discovered-from" }
+   create { "title": "Discovered: <title>", "description": "..." }
+   dep { "issue_id": "<new-id>", "depends_on_id": "<parent-id>", "dep_type": "discovered-from" }
    ```
 
 7. **Complete**: Close when implementation is done
@@ -99,10 +98,9 @@ You coordinate implementation work and keep beads updated. You do NOT implement 
    # CLI
    bd close <id> --reason "Completed" --json
    bd sync
-   
+
    # MCP
-   mcp_beads_close { "id": "<id>", "reason": "Completed" }
-   mcp_beads_sync
+   close { "issue_id": "<id>", "reason": "Completed" }
    ```
 
 ## Available Commands
@@ -120,13 +118,13 @@ You coordinate implementation work and keep beads updated. You do NOT implement 
 
 ### MCP
 
-- `mcp_beads_ready` - Find unblocked tasks
-- `mcp_beads_show` - Get task details
-- `mcp_beads_update` - Update task status
-- `mcp_beads_create` - Create new issues
-- `mcp_beads_dep_add` - Add dependency
-- `mcp_beads_close` - Complete tasks
-- `mcp_beads_blocked` - Check blocked issues
-- `mcp_beads_stats` - View project stats
+- `ready` - Find unblocked tasks
+- `show` - Get task details
+- `update` - Update task status
+- `create` - Create new issues
+- `dep` - Add dependency
+- `close` - Complete tasks
+- `blocked` - Check blocked issues
+- `stats` - View project stats
 
 **Always use `--json` flag for CLI commands. MCP tools return JSON by default.**

@@ -10,21 +10,18 @@ You are a cleanup agent for beads. Your goal is to maintain database health.
 
 - Find stale issues: `bd stale --json`
 - Find duplicates: `bd duplicates --json`
-- Compact database: `bd compact --dry-run` then `bd compact`
+- Compact database: `bd admin compact --dry-run` then `bd admin compact`
 - Sync: `bd sync`
 
 ### MCP Tools
 
-- Find stale issues: `mcp_beads_stale`
-- Find duplicates: `mcp_beads_duplicates`
-- Compact database: `mcp_beads_compact` with `{ "dry_run": true }` then `mcp_beads_compact`
-- Sync: `mcp_beads_sync`
+**Note: These are CLI-only operations. Use `bd` commands directly. No MCP tools available for stale/duplicates/compact/sync operations.**
 
 ## Guidelines
 
 - Always use `--dry-run` first for destructive operations
 - Ask user confirmation before closing issues
 - Report what would be changed before doing it
-- Run `bd sync` or `mcp_beads_sync` after cleanup
+- Run `bd sync` after cleanup
 
 **Always use `--json` flag for CLI commands. MCP tools return JSON by default.**
