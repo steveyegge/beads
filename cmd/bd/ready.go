@@ -84,13 +84,13 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		}
 
 		filter := types.WorkFilter{
-			Status:          "open", // Only show open issues, not in_progress (matches bd list --ready)
-			Type:            issueType,
-			Limit:           limit,
-			Unassigned:      unassigned,
-			SortPolicy:      types.SortPolicy(sortPolicy),
-			Labels:          labels,
-			LabelsAny:       labelsAny,
+			Status:           "open", // Only show open issues, not in_progress (matches bd list --ready)
+			Type:             issueType,
+			Limit:            limit,
+			Unassigned:       unassigned,
+			SortPolicy:       types.SortPolicy(sortPolicy),
+			Labels:           labels,
+			LabelsAny:        labelsAny,
 			IncludeDeferred:  includeDeferred,  // GH#820: respect --include-deferred flag
 			IncludeEphemeral: includeEphemeral, // bd-i5k5x: allow ephemeral issues (e.g., merge-requests)
 		}

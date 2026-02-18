@@ -473,7 +473,7 @@ func TestHasJSONLChangedSuite(t *testing.T) {
 		}
 
 		// Touch file to simulate git operation (new mtime, same content)
-		time.Sleep(10 * time.Millisecond) // Ensure time passes
+		time.Sleep(10 * time.Millisecond) // ensure timestamp advances
 		futureTime := time.Now().Add(1 * time.Second)
 		if err := os.Chtimes(jsonlPath, futureTime, futureTime); err != nil {
 			t.Fatalf("Failed to touch JSONL: %v", err)

@@ -436,9 +436,8 @@ func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
 	// Load previous export state for this worktree
 	prevState, _ := loadExportState(beadsDir, worktreeRoot)
 
-	// Create storage — use a local variable to avoid shadowing the global store.
-	doltPath := filepath.Join(beadsDir, "dolt")
-	hookStore, err := dolt.New(ctx, &dolt.Config{Path: doltPath})
+	// Open storage using config — use a local variable to avoid shadowing the global store.
+	hookStore, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not open database: %v\n", err)
 		return 0
@@ -628,9 +627,8 @@ func hookPostMerge(args []string) int {
 func hookPostMergeDolt(beadsDir string) int {
 	ctx := context.Background()
 
-	// Create storage
-	doltPath := filepath.Join(beadsDir, "dolt")
-	store, err := dolt.New(ctx, &dolt.Config{Path: doltPath})
+	// Open storage using config to get the correct database name (e.g. "beads_bd")
+	store, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not open database: %v\n", err)
 		return 0

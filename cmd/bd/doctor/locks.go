@@ -13,9 +13,9 @@ import (
 // staleLockThresholds defines the age thresholds for each lock type.
 // Lock files older than these thresholds are considered stale.
 var staleLockThresholds = map[string]time.Duration{
-	"bootstrap.lock":  5 * time.Minute, // Bootstrap should complete quickly
-	".sync.lock":      1 * time.Hour,   // Sync can be slow for large repos
-	"daemon.lock":     0,               // Legacy: handled separately via flock check
+	"bootstrap.lock":   5 * time.Minute, // Bootstrap should complete quickly
+	".sync.lock":       1 * time.Hour,   // Sync can be slow for large repos
+	"daemon.lock":      0,               // Legacy: handled separately via flock check
 	"dolt-access.lock": 5 * time.Minute, // Embedded dolt advisory lock
 }
 

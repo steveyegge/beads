@@ -76,6 +76,12 @@ func TestScanForArtifacts_SQLiteFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Create dolt/ directory so isDoltNative returns true (SQLite files
+	// are only flagged as artifacts when Dolt is the active backend)
+	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
 	// Create SQLite artifacts
 	for _, name := range []string{"beads.db", "beads.db-shm", "beads.db-wal", "beads.backup-20260204.db"} {
 		if err := os.WriteFile(filepath.Join(beadsDir, name), []byte("data"), 0644); err != nil {
@@ -327,6 +333,11 @@ func TestCheckClassicArtifacts_WithArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	beadsDir := filepath.Join(dir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create dolt/ directory so isDoltNative returns true
+	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0755); err != nil {
 		t.Fatal(err)
 	}
 

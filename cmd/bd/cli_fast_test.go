@@ -930,6 +930,7 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 	rootCtx = nil
 	rootCancel = nil
 
+	// Give SQLite time to release file locks before cleanup
 	time.Sleep(10 * time.Millisecond)
 
 	wOut.Close()

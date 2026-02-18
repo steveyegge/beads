@@ -36,8 +36,18 @@ func Initialize() error {
 	v.SetConfigType("yaml")
 
 	// Explicitly locate config.yaml and use SetConfigFile to avoid picking up config.json
-	// Precedence: project .beads/config.yaml > ~/.config/bd/config.yaml > ~/.beads/config.yaml
+	// Precedence: BEADS_DIR > project .beads/config.yaml > ~/.config/bd/config.yaml > ~/.beads/config.yaml
 	configFileSet := false
+
+	// 0. Check BEADS_DIR first (highest priority)
+	// This ensures bd commands with BEADS_DIR set find the correct config
+	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" && !configFileSet {
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if _, err := os.Stat(configPath); err == nil {
+			v.SetConfigFile(configPath)
+			configFileSet = true
+		}
+	}
 
 	// 1. Walk up from CWD to find project .beads/config.yaml
 	//    This allows commands to work from subdirectories
@@ -392,7 +402,7 @@ func SaveConfigValue(key string, value interface{}, beadsDir string) error {
 	// Read existing file contents to avoid dumping all merged viper state
 	// (defaults, env vars, overrides) into the config file.
 	existing := make(map[string]interface{})
-	if data, err := os.ReadFile(configPath); err == nil {
+	if data, err := os.ReadFile(filepath.Clean(configPath)); err == nil {
 		_ = yaml.Unmarshal(data, &existing)
 	}
 
@@ -403,7 +413,7 @@ func SaveConfigValue(key string, value interface{}, beadsDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	return os.WriteFile(configPath, out, 0o644)
+	return os.WriteFile(configPath, out, 0o600)
 }
 
 // setNestedKey sets a value in a nested map using a dot-separated key path.

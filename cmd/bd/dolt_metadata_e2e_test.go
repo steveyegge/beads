@@ -53,7 +53,11 @@ func TestE2E_InitDoltMetadataRoundtrip(t *testing.T) {
 	// Ensure daemon cleanup
 	t.Cleanup(func() {
 		_, _ = runBDExecAllowErrorWithEnv(t, tmpDir, env, "daemon", "stop")
-		time.Sleep(200 * time.Millisecond)
+		sockPath := filepath.Join(tmpDir, ".beads", "bd.sock")
+		waitFor(t, 2*time.Second, 50*time.Millisecond, func() bool {
+			_, err := os.Stat(sockPath)
+			return os.IsNotExist(err)
+		})
 	})
 
 	// Run doctor and verify no metadata warnings
@@ -126,7 +130,11 @@ func TestE2E_DoctorFixMetadataRoundtrip(t *testing.T) {
 	// Ensure daemon cleanup
 	t.Cleanup(func() {
 		_, _ = runBDExecAllowErrorWithEnv(t, tmpDir, env, "daemon", "stop")
-		time.Sleep(200 * time.Millisecond)
+		sockPath := filepath.Join(tmpDir, ".beads", "bd.sock")
+		waitFor(t, 2*time.Second, 50*time.Millisecond, func() bool {
+			_, err := os.Stat(sockPath)
+			return os.IsNotExist(err)
+		})
 	})
 
 	// Delete metadata to simulate a pre-Phase-1 database
@@ -205,7 +213,11 @@ func TestE2E_MigrateDoltMetadata(t *testing.T) {
 	// Ensure daemon cleanup
 	t.Cleanup(func() {
 		_, _ = runBDExecAllowErrorWithEnv(t, tmpDir, env, "daemon", "stop")
-		time.Sleep(200 * time.Millisecond)
+		sockPath := filepath.Join(tmpDir, ".beads", "bd.sock")
+		waitFor(t, 2*time.Second, 50*time.Millisecond, func() bool {
+			_, err := os.Stat(sockPath)
+			return os.IsNotExist(err)
+		})
 	})
 
 	// Delete repo_id and clone_id to simulate a pre-Phase-3 database
