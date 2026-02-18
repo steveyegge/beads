@@ -16,7 +16,6 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -240,7 +239,7 @@ func findDatabaseInBeadsDir(beadsDir string, _ bool) string {
 }
 
 // Storage provides the minimal interface for extension orchestration
-type Storage = *dolt.DoltStore
+type Storage = storage.Storage
 
 // Transaction provides atomic multi-operation support within a database transaction.
 // Use Storage.RunInTransaction() to obtain a Transaction instance.

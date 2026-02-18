@@ -17,6 +17,58 @@ import (
 // claimed by another user. The error message contains the current assignee.
 var ErrAlreadyClaimed = errors.New("issue already claimed")
 
+// Storage is the interface satisfied by *dolt.DoltStore.
+// Consumers depend on this interface rather than on the concrete type so that
+// alternative implementations (mocks, proxies, etc.) can be substituted.
+type Storage interface {
+	// Issue CRUD
+	CreateIssue(ctx context.Context, issue *types.Issue, actor string) error
+	CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error
+	GetIssue(ctx context.Context, id string) (*types.Issue, error)
+	GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error)
+	UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error
+	CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error
+	DeleteIssue(ctx context.Context, id string) error
+	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
+
+	// Dependencies
+	AddDependency(ctx context.Context, dep *types.Dependency, actor string) error
+	RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error
+	GetDependencies(ctx context.Context, issueID string) ([]*types.Issue, error)
+	GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error)
+	GetDependencyTree(ctx context.Context, issueID string, maxDepth int, showAllPaths bool, reverse bool) ([]*types.TreeNode, error)
+
+	// Labels
+	AddLabel(ctx context.Context, issueID, label, actor string) error
+	RemoveLabel(ctx context.Context, issueID, label, actor string) error
+	GetLabels(ctx context.Context, issueID string) ([]string, error)
+	GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error)
+
+	// Work queries
+	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)
+	GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error)
+	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
+
+	// Comments and events
+	AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
+	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
+	GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error)
+
+	// Statistics
+	GetStatistics(ctx context.Context) (*types.Statistics, error)
+
+	// Configuration
+	SetConfig(ctx context.Context, key, value string) error
+	GetConfig(ctx context.Context, key string) (string, error)
+	GetAllConfig(ctx context.Context) (map[string]string, error)
+
+	// Transactions
+	RunInTransaction(ctx context.Context, fn func(tx Transaction) error) error
+
+	// Lifecycle
+	Close() error
+}
+
 // Transaction provides atomic multi-operation support within a single database transaction.
 //
 // The Transaction interface exposes a subset of storage methods that execute within
