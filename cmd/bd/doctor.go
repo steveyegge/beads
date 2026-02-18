@@ -11,6 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
+	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -237,9 +239,15 @@ Examples:
 		if doctorDryRun {
 			previewFixes(result)
 		} else if doctorFix {
+			// Release any Dolt locks left by diagnostics before applying fixes.
+			releaseDiagnosticLocks(absPath)
 			applyFixes(result)
-			// Re-run diagnostics to show results
-			result = runDiagnostics(absPath)
+			// Note: we intentionally do NOT re-run diagnostics here.
+			// The embedded Dolt driver is a process-level singleton; if any
+			// Close() timed out during the first diagnostic pass, the leaked
+			// goroutine holds internal noms locks and a second open will
+			// deadlock. Users should run 'bd doctor' again to verify fixes.
+			fmt.Println("\nRun 'bd doctor' again to verify fixes.")
 		}
 
 		// Add timestamp and platform info for export
@@ -285,6 +293,41 @@ func init() {
 	doctorCmd.Flags().IntVar(&gastownDuplicatesThreshold, "gastown-duplicates-threshold", 1000, "Duplicate tolerance threshold for gastown mode (wisps are ephemeral)")
 	doctorCmd.Flags().BoolVar(&doctorServer, "server", false, "Run Dolt server mode health checks (connectivity, version, schema)")
 	doctorCmd.Flags().StringVar(&doctorMigration, "migration", "", "Run Dolt migration validation: 'pre' (before migration) or 'post' (after migration)")
+}
+
+// releaseDiagnosticLocks removes stale noms LOCK files that the diagnostics
+// phase may have left behind. The embedded Dolt driver's CloseWithTimeout can
+// leave goroutines (and their LOCK files) behind when it times out.
+// Only runs for embedded Dolt mode; skips server mode where locks belong to
+// the Dolt SQL server process.
+func releaseDiagnosticLocks(path string) {
+	beadsDir := filepath.Join(path, ".beads")
+	beadsDir = beads.FollowRedirect(beadsDir)
+
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return // Can't determine config, skip cleanup
+	}
+
+	// Only clean up in embedded Dolt mode.
+	if cfg.GetBackend() != configfile.BackendDolt || cfg.IsDoltServerMode() {
+		return
+	}
+
+	doltPath := cfg.DatabasePath(beadsDir)
+	entries, err := os.ReadDir(doltPath)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		nomsLock := filepath.Join(doltPath, entry.Name(), ".dolt", "noms", "LOCK")
+		if _, err := os.Stat(nomsLock); err == nil {
+			_ = os.Remove(nomsLock)
+		}
+	}
 }
 
 func runDiagnostics(path string) doctorResult {
