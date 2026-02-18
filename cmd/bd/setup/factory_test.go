@@ -7,9 +7,29 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	agents "github.com/steveyegge/beads/internal/templates/agents"
 )
 
+// testTemplateData returns TemplateData for use in tests.
+func testTemplateData() agents.TemplateData {
+	return agents.TemplateData{Prefix: "bd"}
+}
+
+// testBeadsSection renders the beads section from the default template for test assertions.
+func testBeadsSection(t *testing.T) string {
+	t.Helper()
+	env := agentsEnv{templateData: testTemplateData()}
+	section, err := renderBeadsSection(env)
+	if err != nil {
+		t.Fatalf("renderBeadsSection failed: %v", err)
+	}
+	return section
+}
+
 func TestUpdateBeadsSection(t *testing.T) {
+	beadsSection := testBeadsSection(t)
+
 	tests := []struct {
 		name     string
 		content  string
@@ -30,13 +50,13 @@ More content after`,
 
 Some content
 
-` + agentsBeadsSection + `
+` + beadsSection + `
 More content after`,
 		},
 		{
 			name:     "append when no markers exist",
 			content:  "# My Project\n\nSome content",
-			expected: "# My Project\n\nSome content\n\n" + agentsBeadsSection,
+			expected: "# My Project\n\nSome content\n\n" + beadsSection,
 		},
 		{
 			name: "handle section at end of file",
@@ -47,13 +67,13 @@ Old content
 <!-- END BEADS INTEGRATION -->`,
 			expected: `# My Project
 
-` + agentsBeadsSection,
+` + beadsSection,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := updateBeadsSection(tt.content)
+			got := updateBeadsSection(tt.content, beadsSection)
 			if got != tt.expected {
 				t.Errorf("updateBeadsSection() mismatch\ngot:\n%s\nwant:\n%s", got, tt.expected)
 			}
@@ -114,10 +134,37 @@ Content`,
 	}
 }
 
-func TestCreateNewAgentsFile(t *testing.T) {
-	content := createNewAgentsFile()
+func TestRenderBeadsSection(t *testing.T) {
+	env := agentsEnv{templateData: testTemplateData()}
+	section, err := renderBeadsSection(env)
+	if err != nil {
+		t.Fatalf("renderBeadsSection failed: %v", err)
+	}
 
 	// Verify it contains required elements
+	if !strings.HasPrefix(section, agentsBeginMarker) {
+		t.Error("section should start with begin marker")
+	}
+	trimmed := strings.TrimSpace(section)
+	if !strings.HasSuffix(trimmed, agentsEndMarker) {
+		t.Error("section should end with end marker")
+	}
+
+	required := []string{"bd create", "bd update", "bd close", "bd ready", "discovered-from"}
+	for _, token := range required {
+		if !strings.Contains(section, token) {
+			t.Errorf("beads section missing %q", token)
+		}
+	}
+}
+
+func TestCreateNewAgentsFromTemplate(t *testing.T) {
+	data := testTemplateData()
+	content, err := agents.Render(data, agents.LoadOptions{})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
 	if !strings.Contains(content, "# Project Instructions for AI Agents") {
 		t.Error("Missing header in new agents file")
 	}
@@ -145,9 +192,10 @@ func newFactoryTestEnv(t *testing.T) (factoryEnv, *bytes.Buffer, *bytes.Buffer) 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	return factoryEnv{
-		agentsPath: filepath.Join(dir, "AGENTS.md"),
-		stdout:     stdout,
-		stderr:     stderr,
+		agentsPath:   filepath.Join(dir, "AGENTS.md"),
+		stdout:       stdout,
+		stderr:       stderr,
+		templateData: testTemplateData(),
 	}, stdout, stderr
 }
 
@@ -247,7 +295,7 @@ func TestCheckFactoryScenarios(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		env, stdout, _ := newFactoryTestEnv(t)
-		if err := os.WriteFile(env.agentsPath, []byte(agentsBeadsSection), 0644); err != nil {
+		if err := os.WriteFile(env.agentsPath, []byte(agentsBeginMarker+"\nstuff\n"+agentsEndMarker), 0644); err != nil {
 			t.Fatalf("failed to seed file: %v", err)
 		}
 		if err := checkFactory(env); err != nil {
@@ -260,9 +308,11 @@ func TestCheckFactoryScenarios(t *testing.T) {
 }
 
 func TestRemoveFactoryScenarios(t *testing.T) {
+	beadsSection := testBeadsSection(t)
+
 	t.Run("remove section and keep file", func(t *testing.T) {
 		env, stdout, _ := newFactoryTestEnv(t)
-		content := "# Top\n\n" + agentsBeadsSection + "\n\n# Bottom"
+		content := "# Top\n\n" + beadsSection + "\n\n# Bottom"
 		if err := os.WriteFile(env.agentsPath, []byte(content), 0644); err != nil {
 			t.Fatalf("failed to seed AGENTS.md: %v", err)
 		}
@@ -283,7 +333,7 @@ func TestRemoveFactoryScenarios(t *testing.T) {
 
 	t.Run("delete file when only beads", func(t *testing.T) {
 		env, stdout, _ := newFactoryTestEnv(t)
-		if err := os.WriteFile(env.agentsPath, []byte(agentsBeadsSection), 0644); err != nil {
+		if err := os.WriteFile(env.agentsPath, []byte(beadsSection), 0644); err != nil {
 			t.Fatalf("failed to seed AGENTS.md: %v", err)
 		}
 		if err := removeFactory(env); err != nil {
@@ -311,7 +361,7 @@ func TestRemoveFactoryScenarios(t *testing.T) {
 func TestWrapperExitsOnError(t *testing.T) {
 	t.Run("InstallFactory", func(t *testing.T) {
 		cap := stubSetupExit(t)
-		env := factoryEnv{agentsPath: filepath.Join(t.TempDir(), "dir"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+		env := factoryEnv{agentsPath: filepath.Join(t.TempDir(), "dir"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, templateData: testTemplateData()}
 		if err := os.Mkdir(env.agentsPath, 0o755); err != nil {
 			t.Fatalf("failed to create directory: %v", err)
 		}
@@ -324,7 +374,7 @@ func TestWrapperExitsOnError(t *testing.T) {
 
 	t.Run("CheckFactory", func(t *testing.T) {
 		cap := stubSetupExit(t)
-		env := factoryEnv{agentsPath: filepath.Join(t.TempDir(), "missing"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+		env := factoryEnv{agentsPath: filepath.Join(t.TempDir(), "missing"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, templateData: testTemplateData()}
 		stubFactoryEnvProvider(t, env)
 		CheckFactory()
 		if !cap.called || cap.code != 1 {
@@ -334,8 +384,9 @@ func TestWrapperExitsOnError(t *testing.T) {
 
 	t.Run("RemoveFactory", func(t *testing.T) {
 		cap := stubSetupExit(t)
-		env := factoryEnv{agentsPath: filepath.Join(t.TempDir(), "AGENTS.md"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
-		if err := os.WriteFile(env.agentsPath, []byte(agentsBeadsSection), 0644); err != nil {
+		env := factoryEnv{agentsPath: filepath.Join(t.TempDir(), "AGENTS.md"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, templateData: testTemplateData()}
+		beadsSection := agentsBeginMarker + "\nstuff\n" + agentsEndMarker
+		if err := os.WriteFile(env.agentsPath, []byte(beadsSection), 0644); err != nil {
 			t.Fatalf("failed to seed file: %v", err)
 		}
 		if err := os.Chmod(env.agentsPath, 0o000); err != nil {
@@ -349,16 +400,6 @@ func TestWrapperExitsOnError(t *testing.T) {
 	})
 }
 
-func TestFactoryBeadsSectionContent(t *testing.T) {
-	section := agentsBeadsSection
-	required := []string{"bd create", "bd update", "bd close", "bd ready", "discovered-from"}
-	for _, token := range required {
-		if !strings.Contains(section, token) {
-			t.Errorf("agentsBeadsSection missing %q", token)
-		}
-	}
-}
-
 func TestFactoryMarkers(t *testing.T) {
 	if !strings.Contains(agentsBeginMarker, "BEGIN") {
 		t.Error("begin marker should mention BEGIN")
@@ -368,19 +409,10 @@ func TestFactoryMarkers(t *testing.T) {
 	}
 }
 
-func TestMarkersMatch(t *testing.T) {
-	if !strings.HasPrefix(agentsBeadsSection, agentsBeginMarker) {
-		t.Error("section should start with begin marker")
-	}
-	trimmed := strings.TrimSpace(agentsBeadsSection)
-	if !strings.HasSuffix(trimmed, agentsEndMarker) {
-		t.Error("section should end with end marker")
-	}
-}
-
 func TestUpdateBeadsSectionPreservesWhitespace(t *testing.T) {
-	content := "# Header\n\n" + agentsBeadsSection + "\n\n# Footer"
-	updated := updateBeadsSection(content)
+	beadsSection := testBeadsSection(t)
+	content := "# Header\n\n" + beadsSection + "\n\n# Footer"
+	updated := updateBeadsSection(content, beadsSection)
 	if !strings.Contains(updated, "# Header") || !strings.Contains(updated, "# Footer") {
 		t.Error("update should preserve surrounding content")
 	}
