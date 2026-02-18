@@ -212,6 +212,12 @@ func stopRepoDaemon(repoRoot string) {
 	// Best-effort stop - ignore errors (daemon may not be running)
 	_ = cmd.Run()
 
-	// Give daemon time to shutdown gracefully
-	time.Sleep(500 * time.Millisecond)
+	// Wait for daemon socket to disappear (graceful shutdown).
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(socketPath); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
