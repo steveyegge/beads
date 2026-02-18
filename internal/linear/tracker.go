@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -21,7 +21,7 @@ func init() {
 type Tracker struct {
 	client    *Client
 	config    *MappingConfig
-	store     *dolt.DoltStore
+	store     storage.Storage
 	teamID    string
 	projectID string
 }
@@ -30,7 +30,7 @@ func (t *Tracker) Name() string         { return "linear" }
 func (t *Tracker) DisplayName() string  { return "Linear" }
 func (t *Tracker) ConfigPrefix() string { return "linear" }
 
-func (t *Tracker) Init(ctx context.Context, store *dolt.DoltStore) error {
+func (t *Tracker) Init(ctx context.Context, store storage.Storage) error {
 	t.store = store
 
 	apiKey, err := t.getConfig(ctx, "linear.api_key", "LINEAR_API_KEY")
@@ -250,10 +250,10 @@ func BuildStateCacheFromTracker(ctx context.Context, t *Tracker) (*StateCache, e
 	return BuildStateCache(ctx, t.client)
 }
 
-// configLoaderAdapter wraps *dolt.DoltStore to implement linear.ConfigLoader.
+// configLoaderAdapter wraps storage.Storage to implement linear.ConfigLoader.
 type configLoaderAdapter struct {
 	ctx   context.Context
-	store *dolt.DoltStore
+	store storage.Storage
 }
 
 func (c *configLoaderAdapter) GetAllConfig() (map[string]string, error) {

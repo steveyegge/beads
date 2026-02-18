@@ -33,6 +33,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	embedded "github.com/dolthub/driver"
+
 	// Import MySQL driver for server mode connections
 	_ "github.com/go-sql-driver/mysql"
 
@@ -161,7 +162,38 @@ func isRetryableError(err error) bool {
 	if strings.Contains(errStr, "i/o timeout") {
 		return true
 	}
+	// Dolt server catalog race: after CREATE DATABASE, the server's in-memory
+	// catalog may not have registered the new database yet. The immediately
+	// following USE (implicit via DSN) fails with "Unknown database". This is
+	// transient and resolves once the catalog refreshes. (GH-1851)
+	if strings.Contains(errStr, "unknown database") {
+		return true
+	}
 	return false
+}
+
+// isLockError returns true if the error indicates a Dolt lock contention problem.
+// These errors occur when the embedded Dolt engine cannot access its noms storage
+// layer, typically because a stale LOCK file was left behind by a crashed process.
+func isLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "database is locked") ||
+		strings.Contains(errStr, "lock file") ||
+		strings.Contains(errStr, "noms lock") ||
+		strings.Contains(errStr, "locked by another dolt process")
+}
+
+// wrapLockError wraps lock-related errors with actionable guidance.
+// Non-lock errors and nil are returned unchanged.
+func wrapLockError(err error) error {
+	if !isLockError(err) {
+		return err
+	}
+	return fmt.Errorf("%w\n\nThe Dolt database is locked. This usually means a previous bd process "+
+		"crashed without releasing its lock.\nRun 'bd doctor --fix' to clean stale lock files.", err)
 }
 
 // withRetry executes an operation with retry for transient errors.
@@ -192,7 +224,7 @@ func (s *DoltStore) execContext(ctx context.Context, query string, args ...any) 
 		result, execErr = s.db.ExecContext(ctx, query, args...)
 		return execErr
 	})
-	return result, err
+	return result, wrapLockError(err)
 }
 
 // queryContext wraps s.db.QueryContext with server-mode retry for transient errors.
@@ -203,16 +235,16 @@ func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any)
 		rows, queryErr = s.db.QueryContext(ctx, query, args...)
 		return queryErr
 	})
-	return rows, err
+	return rows, wrapLockError(err)
 }
 
 // queryRowContext wraps s.db.QueryRowContext with server-mode retry for transient errors.
 // The scan function receives the *sql.Row and should call .Scan() on it.
 func (s *DoltStore) queryRowContext(ctx context.Context, scan func(*sql.Row) error, query string, args ...any) error {
-	return s.withRetry(ctx, func() error {
+	return wrapLockError(s.withRetry(ctx, func() error {
 		row := s.db.QueryRowContext(ctx, query, args...)
 		return scan(row)
-	})
+	}))
 }
 
 // New creates a new Dolt storage backend
@@ -323,7 +355,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			if accessLock != nil {
 				accessLock.Release()
 			}
-			return nil, fmt.Errorf("Dolt server unreachable at %s: %w\n\nThe Dolt server may not be running. Try:\n  gt dolt start    # If using Gas Town\n  dolt sql-server  # Manual start in database directory",
+			return nil, fmt.Errorf("Dolt server unreachable at %s: %w\n\nThe Dolt server may not be running. Try:\n  gt dolt start    # If using Gas Town\n  bd dolt start  # If using Beads directly",
 				addr, err)
 		}
 		_ = conn.Close()
@@ -400,7 +432,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		if accessLock != nil {
 			accessLock.Release()
 		}
-		return nil, fmt.Errorf("failed to ping Dolt database: %w", err)
+		return nil, wrapLockError(fmt.Errorf("failed to ping Dolt database: %w", err))
 	}
 
 	store := &DoltStore{
@@ -547,12 +579,34 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 			_ = db.Close()
 			// Check for connection refused - server likely not running
 			if strings.Contains(errLower, "connection refused") || strings.Contains(errLower, "connect: connection refused") {
-				return nil, "", fmt.Errorf("failed to connect to Dolt server at %s:%d: %w\n\nThe Dolt server may not be running. Try:\n  gt dolt start    # If using Gas Town\n  dolt sql-server  # Manual start in database directory",
+				return nil, "", fmt.Errorf("failed to connect to Dolt server at %s:%d: %w\n\nThe Dolt server may not be running. Try:\n  gt dolt start    # If using Gas Town\n  bd dolt start # If using Beads directly",
 					cfg.ServerHost, cfg.ServerPort, err)
 			}
 			return nil, "", fmt.Errorf("failed to create database: %w", err)
 		}
 		// Database already exists - that's fine, continue
+	}
+
+	// Wait for the Dolt server's in-memory catalog to register the new database.
+	// After CREATE DATABASE, there is a race where the server has created the
+	// database on disk but hasn't updated its catalog yet. Pinging db (which
+	// has the database in the DSN) will fail with "Unknown database" until the
+	// catalog catches up. We retry with exponential backoff. (GH-1851)
+	bo := backoff.NewExponentialBackOff()
+	bo.InitialInterval = 100 * time.Millisecond
+	bo.MaxElapsedTime = 10 * time.Second
+	if err := backoff.Retry(func() error {
+		pingErr := db.PingContext(ctx)
+		if pingErr != nil && isRetryableError(pingErr) {
+			return pingErr // retryable — backoff will retry
+		}
+		if pingErr != nil {
+			return backoff.Permanent(pingErr)
+		}
+		return nil
+	}, backoff.WithContext(bo, ctx)); err != nil {
+		_ = db.Close()
+		return nil, "", fmt.Errorf("database %q not available after CREATE DATABASE: %w", cfg.Database, err)
 	}
 
 	return db, connStr, nil

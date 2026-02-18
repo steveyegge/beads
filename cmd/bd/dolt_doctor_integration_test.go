@@ -50,7 +50,11 @@ func TestDoltDoctor_NoSQLiteWarningsAfterInitAndCreate(t *testing.T) {
 	// Ensure daemon cleanup so temp dir removal doesn't flake.
 	t.Cleanup(func() {
 		_, _ = runBDExecAllowErrorWithEnv(t, tmpDir, env, "daemon", "stop")
-		time.Sleep(200 * time.Millisecond)
+		sockPath := filepath.Join(tmpDir, ".beads", "bd.sock")
+		waitFor(t, 2*time.Second, 50*time.Millisecond, func() bool {
+			_, err := os.Stat(sockPath)
+			return os.IsNotExist(err)
+		})
 	})
 
 	// Create one issue so the store is definitely initialized.
