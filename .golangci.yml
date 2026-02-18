@@ -69,7 +69,7 @@ linters:
           - gosec
         text: "G306.*0700"
       # G204: Safe subprocess launches with validated arguments
-      - path: 'cmd/bd/doctor\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/gate\.go|cmd/bd/gate_discover\.go|cmd/bd/jira\.go|cmd/bd/show\.go|cmd/bd/stubs\.go|cmd/bd/sync\.go|internal/git/worktree\.go|internal/syncbranch/worktree\.go'
+      - path: 'cmd/bd/doctor\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/gate\.go|cmd/bd/gate_discover\.go|cmd/bd/jira\.go|cmd/bd/show\.go|cmd/bd/stubs\.go|cmd/bd/sync\.go|internal/git/worktree\.go|internal/syncbranch/worktree\.go|internal/beads/context\.go|internal/git/gitdir\.go|internal/utils/path\.go'
         linters:
           - gosec
         text: 'G204'
@@ -78,6 +78,31 @@ linters:
         linters:
           - gosec
         text: "G104"
+      # G703: Path traversal via taint analysis - paths are internally derived, not user input
+      - path: 'cmd/bd/setup/utils\.go|internal/config/config\.go|internal/molecules/molecules\.go'
+        linters:
+          - gosec
+        text: 'G703'
+      # G704: SSRF via taint analysis - URLs are operator-configured in CLI tool
+      - path: 'internal/gitlab/client\.go|internal/jira/client\.go|internal/linear/client\.go'
+        linters:
+          - gosec
+        text: 'G704'
+      # G705: XSS via taint analysis - CLI stderr output with integer formats, not web responses
+      - path: 'cmd/bd/compact\.go'
+        linters:
+          - gosec
+        text: 'G705'
+      # G117: Exported struct fields matching secret patterns - internal packages, no leak vector
+      - path: 'internal/compact/compactor\.go|internal/jira/client\.go|internal/linear/types\.go|internal/storage/versioned\.go'
+        linters:
+          - gosec
+        text: 'G117'
+      # G115: Integer overflow uintptr->int - Fd() returns small non-negative ints, required by unix.Flock API
+      - path: 'internal/lockfile/'
+        linters:
+          - gosec
+        text: 'G115'
       # errcheck: fmt.Fprintf errors are noise in CLI help text generation
       - path: 'cmd/bd/help_all\.go'
         linters:
