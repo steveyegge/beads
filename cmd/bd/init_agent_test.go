@@ -312,4 +312,3 @@ func TestInitCmdHelpMentionsAgentsTemplate(t *testing.T) {
 		}
 	}
 }
-
