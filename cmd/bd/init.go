@@ -510,6 +510,12 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 			if !quiet {
 				fmt.Printf("  Sync branch: %s\n", branch)
 			}
+			// Create worktree for the sync branch (non-fatal: repo may have no commits yet)
+			if _, err := syncbranch.EnsureWorktree(ctx); err != nil {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "Warning: could not create sync branch worktree: %v\n", err)
+				}
+			}
 		}
 
 		// Initialize last_import_time metadata to mark the database as synced.
@@ -588,6 +594,15 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 					exitCanceled()
 				}
 				os.Exit(1)
+			}
+		}
+
+		// Auto-commit Dolt state so bd doctor doesn't warn about uncommitted
+		// changes and users don't need a separate "bd vc commit" step.
+		if err := store.Commit(ctx, "bd init"); err != nil {
+			// Non-fatal: some setups (e.g. no tables yet) may have nothing to commit
+			if !strings.Contains(err.Error(), "nothing to commit") {
+				fmt.Fprintf(os.Stderr, "Warning: failed to commit initial state: %v\n", err)
 			}
 		}
 

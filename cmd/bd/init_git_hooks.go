@@ -214,7 +214,9 @@ fi
 ` + preCommitHookBody()
 }
 
-// preCommitHookBody returns the common pre-commit hook logic
+// preCommitHookBody returns the common pre-commit hook logic.
+// Delegates to 'bd hook pre-commit' which handles all backends (Dolt in-process
+// export, sync-branch routing, JSONL staging) without lock deadlocks.
 func preCommitHookBody() string {
 	return `# Check if bd is available
 if ! command -v bd >/dev/null 2>&1; then
@@ -222,58 +224,10 @@ if ! command -v bd >/dev/null 2>&1; then
     exit 0
 fi
 
-# Check if we're in a bd workspace
-# For worktrees, .beads is in the main repository root, not the worktree
-BEADS_DIR=""
-if git rev-parse --git-dir >/dev/null 2>&1; then
-    # Check if we're in a worktree
-    if [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]; then
-        # Worktree: .beads is in main repo root
-        MAIN_REPO_ROOT="$(git rev-parse --git-common-dir)"
-        MAIN_REPO_ROOT="$(dirname "$MAIN_REPO_ROOT")"
-        if [ -d "$MAIN_REPO_ROOT/.beads" ]; then
-            BEADS_DIR="$MAIN_REPO_ROOT/.beads"
-        fi
-    else
-        # Regular repo: check current directory
-        if [ -d .beads ]; then
-            BEADS_DIR=".beads"
-        fi
-    fi
-fi
-
-if [ -z "$BEADS_DIR" ]; then
-    exit 0
-fi
-
-# Skip for Dolt backend (uses its own sync mechanism, not JSONL)
-if [ -f "$BEADS_DIR/metadata.json" ]; then
-    if grep -q '"backend"[[:space:]]*:[[:space:]]*"dolt"' "$BEADS_DIR/metadata.json" 2>/dev/null; then
-        exit 0
-    fi
-fi
-
-# Flush pending changes to JSONL
-if ! bd sync --flush-only >/dev/null 2>&1; then
-    echo "Error: Failed to flush bd changes to storage" >&2
-    echo "Run 'bd sync --flush-only' manually to diagnose" >&2
-    exit 1
-fi
-
-# If the JSONL file was modified, stage it
-# For worktrees, the JSONL is in the main repo's working tree, not the worktree,
-# so we can't use git add. Skip this step for worktrees.
-if [ -f "$BEADS_DIR/issues.jsonl" ]; then
-    if [ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ]; then
-        # Regular repo: file is in the working tree, safe to add
-        git add "$BEADS_DIR/issues.jsonl" 2>/dev/null || true
-    fi
-    # For worktrees: .beads is in the main repo's working tree, not this worktree
-    # Git rejects adding files outside the worktree, so we skip it.
-    # The main repo will see the changes on the next pull/sync.
-fi
-
-exit 0
+# Delegate to bd hook pre-commit for all backends.
+# The Go code handles Dolt export in-process (no lock deadlocks),
+# sync-branch routing, and JSONL staging.
+exec bd hook pre-commit "$@"
 `
 }
 

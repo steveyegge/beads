@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -345,14 +346,6 @@ func hookPreCommit() int {
 		}
 	}
 
-	// Check if sync-branch is configured (changes go to separate branch)
-	if hookGetSyncBranch() != "" {
-		if cfg.ChainStrategy == ChainAfter {
-			return runChainedHookWithConfig("pre-commit", nil, cfg)
-		}
-		return 0
-	}
-
 	// Get worktree root for per-worktree state tracking
 	worktreeRoot, err := getWorktreeRoot()
 	if err != nil {
@@ -360,7 +353,9 @@ func hookPreCommit() int {
 		worktreeRoot = beadsDir // Fallback
 	}
 
-	// Check if we're using Dolt backend - use branch-then-merge pattern
+	// Check if we're using Dolt backend - use branch-then-merge pattern.
+	// Dolt export must run even when sync-branch is configured, otherwise
+	// the JSONL file never gets updated and bd doctor reports a count mismatch.
 	backend := dolt.GetBackendFromConfig(beadsDir)
 	if backend == configfile.BackendDolt {
 		exitCode := hookPreCommitDolt(beadsDir, worktreeRoot)
@@ -368,6 +363,15 @@ func hookPreCommit() int {
 			return runChainedHookWithConfig("pre-commit", nil, cfg)
 		}
 		return exitCode
+	}
+
+	// Non-Dolt backend: skip export when sync-branch is configured
+	// (changes go to separate branch, nothing to export here)
+	if hookGetSyncBranch() != "" {
+		if cfg.ChainStrategy == ChainAfter {
+			return runChainedHookWithConfig("pre-commit", nil, cfg)
+		}
+		return 0
 	}
 
 	// SQLite backend: Use existing sync --flush-only
@@ -432,20 +436,20 @@ func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
 	// Load previous export state for this worktree
 	prevState, _ := loadExportState(beadsDir, worktreeRoot)
 
-	// Open storage using config to get the correct database name (e.g. "beads_bd")
-	store, err := dolt.NewFromConfig(ctx, beadsDir)
+	// Open storage using config — use a local variable to avoid shadowing the global store.
+	hookStore, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not open database: %v\n", err)
 		return 0
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = hookStore.Close() }()
 
 	// Get current Dolt commit hash
-	currentDoltCommit, err := store.GetCurrentCommit(ctx)
+	currentDoltCommit, err := hookStore.GetCurrentCommit(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not get Dolt commit: %v\n", err)
 		// Fall back to full export without commit tracking
-		doExportAndSaveState(ctx, store, beadsDir, worktreeRoot, "")
+		doExportAndSaveState(ctx, hookStore, beadsDir, worktreeRoot, "")
 		return 0
 	}
 
@@ -457,7 +461,7 @@ func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
 
 	// Check if there are actual changes to export (optimization)
 	if prevState != nil && prevState.LastExportCommit != "" {
-		hasChanges, err := hasDoltChanges(ctx, store, prevState.LastExportCommit, currentDoltCommit)
+		hasChanges, err := hasDoltChanges(ctx, hookStore, prevState.LastExportCommit, currentDoltCommit)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not check for changes: %v\n", err)
 			// Continue with export to be safe
@@ -468,30 +472,34 @@ func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
 		}
 	}
 
-	doExportAndSaveState(ctx, store, beadsDir, worktreeRoot, currentDoltCommit)
+	doExportAndSaveState(ctx, hookStore, beadsDir, worktreeRoot, currentDoltCommit)
 	return 0
 }
 
 // doExportAndSaveState performs the export and saves state. Shared by main path and fallback.
-// When store is non-nil, exports in-process to avoid spawning a child `bd sync`
-// that would deadlock on the embedded Dolt lock (see issue #1841).
-// When store is nil, falls back to spawning `bd sync --flush-only`.
-func doExportAndSaveState(ctx context.Context, store *dolt.DoltStore, beadsDir, worktreeRoot, doltCommit string) {
+// Uses the already-open store directly to avoid spawning a subprocess that would
+// deadlock on the same Dolt access lock.
+func doExportAndSaveState(ctx context.Context, s *dolt.DoltStore, beadsDir, worktreeRoot, doltCommit string) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
-	// Export to JSONL — in-process when we already hold the Dolt lock
-	if store != nil {
-		if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not export to JSONL: %v\n", err)
-			return
-		}
-	} else if err := runJSONLExport(); err != nil {
+	// Export to JSONL using the already-open store
+	if err := exportToJSONLWithStore(ctx, s, jsonlPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not export to JSONL: %v\n", err)
 		return
 	}
 
-	// Stage JSONL files for git commit
-	stageJSONLFiles(ctx)
+	// Commit to sync branch if configured, otherwise stage for main
+	if sb := hookGetSyncBranch(); sb != "" {
+		repoRoot, err := syncbranch.GetRepoRoot(ctx)
+		if err == nil {
+			// Don't push during pre-commit hook — too slow
+			if _, err := syncbranch.CommitToSyncBranch(ctx, repoRoot, sb, jsonlPath, false); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to commit to sync branch: %v\n", err)
+			}
+		}
+	} else {
+		stageJSONLFiles(ctx)
+	}
 
 	// Save export state
 	jsonlHash, _ := computeJSONLHashForHook(jsonlPath)
@@ -526,12 +534,6 @@ func updateExportStateCommit(beadsDir, worktreeRoot, doltCommit string) {
 	prevState.LastExportCommit = doltCommit
 	prevState.LastExportTime = time.Now()
 	_ = saveExportState(beadsDir, worktreeRoot, prevState) // Best effort: export state is advisory
-}
-
-// runJSONLExport runs the actual JSONL export via bd sync.
-func runJSONLExport() error {
-	cmd := exec.Command("bd", "sync", "--flush-only")
-	return cmd.Run()
 }
 
 // stageJSONLFiles stages JSONL files for git commit (unless BEADS_NO_AUTO_STAGE is set).

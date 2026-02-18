@@ -1,16 +1,17 @@
 #!/usr/bin/env sh
-# bd-shim v1
+# bd-shim v2
 # bd-hooks-version: 0.52.0
 #
-# bd (beads) pre-commit hook - thin shim
+# bd (beads) pre-commit hook — thin shim
 #
-# This shim delegates to 'bd hook pre-commit' which contains
-# the actual hook logic. This pattern ensures hook behavior is always
-# in sync with the installed bd version - no manual updates needed.
+# Delegates to 'bd hook pre-commit' which contains the actual hook logic.
+# This pattern ensures hook behavior is always in sync with the installed
+# bd version — no manual updates needed.
 #
-# The 'bd hook' command (singular) supports:
+# The 'bd hook' command supports:
 # - Per-worktree export state tracking
-# - Dolt branch-then-merge pattern for cell-level conflict resolution
+# - Dolt in-process export (no lock deadlocks)
+# - Sync-branch routing
 # - Hook chaining configuration
 
 # Check if bd is available
