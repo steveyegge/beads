@@ -22,12 +22,22 @@ from beads_mcp.models import (
 
 @pytest.fixture(scope="session")
 def bd_executable():
-    """Verify bd is available in PATH."""
+    """Resolve bd executable, preferring explicit custom-fork path."""
+    configured = os.environ.get("BEADS_PATH") or os.environ.get("BEADS_BD_PATH")
+    if configured:
+        bd_path = shutil.which(configured) if "/" not in configured else configured
+        if not bd_path or not Path(bd_path).exists():
+            pytest.fail(
+                f"Configured bd executable not found: {configured}. "
+                "Set BEADS_PATH to a valid custom-fork bd binary."
+            )
+        return str(Path(bd_path).resolve())
+
     bd_path = shutil.which("bd")
     if not bd_path:
         pytest.fail(
             "bd executable not found in PATH. "
-            "Please install bd or add it to your PATH before running integration tests."
+            "Set BEADS_PATH to your custom-fork bd binary or add bd to PATH."
         )
     return bd_path
 

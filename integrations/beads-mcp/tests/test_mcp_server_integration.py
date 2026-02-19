@@ -1,8 +1,10 @@
 """Real integration tests for MCP server using fastmcp.Client."""
 
+import asyncio
 import os
 import shutil
 import tempfile
+from pathlib import Path
 
 import pytest
 from fastmcp.client import Client
@@ -10,26 +12,66 @@ from fastmcp.client import Client
 from beads_mcp.server import mcp
 
 
-def _tool_error_json_payload(exc: Exception) -> dict:
-    """Extract structured JSON payload from a FastMCP ToolError string."""
+def _workspace_root_from_context_output(output: str) -> str:
+    """Extract workspace root from context(show) output."""
+    for line in output.splitlines():
+        if line.startswith("Workspace root:"):
+            return line.split(":", 1)[1].strip()
+    raise AssertionError(f"Could not parse workspace root from context output: {output}")
+
+
+async def _run_bd_json(
+    bd_executable: str,
+    workspace_root: str,
+    *args: str,
+) -> dict:
+    """Run bd command with --json and return parsed object payload."""
+    process = await asyncio.create_subprocess_exec(
+        bd_executable,
+        *args,
+        "--json",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=workspace_root,
+    )
+    stdout, stderr = await process.communicate()
+    stdout_text = stdout.decode().strip()
+    stderr_text = stderr.decode().strip()
+    if not stdout_text:
+        raise AssertionError(
+            f"bd command returned empty stdout (code={process.returncode}): {stderr_text}"
+        )
     import json
 
-    message = str(exc)
-    start = message.find("{")
-    end = message.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise AssertionError(f"ToolError did not contain JSON payload: {message}")
-    return json.loads(message[start : end + 1])
+    try:
+        payload = json.loads(stdout_text)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"bd command did not return JSON (code={process.returncode}): {stdout_text} | {stderr_text}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise AssertionError(f"Expected JSON object payload, got {type(payload)}: {payload}")
+    return payload
 
 
 @pytest.fixture(scope="session")
 def bd_executable():
-    """Verify bd is available in PATH."""
+    """Resolve bd executable, preferring explicit custom-fork path."""
+    configured = os.environ.get("BEADS_PATH") or os.environ.get("BEADS_BD_PATH")
+    if configured:
+        bd_path = shutil.which(configured) if "/" not in configured else configured
+        if not bd_path or not Path(bd_path).exists():
+            pytest.fail(
+                f"Configured bd executable not found: {configured}. "
+                "Set BEADS_PATH to a valid custom-fork bd binary."
+            )
+        return str(Path(bd_path).resolve())
+
     bd_path = shutil.which("bd")
     if not bd_path:
         pytest.fail(
             "bd executable not found in PATH. "
-            "Please install bd or add it to your PATH before running integration tests."
+            "Set BEADS_PATH to your custom-fork bd binary or add bd to PATH."
         )
     return bd_path
 
@@ -93,6 +135,7 @@ async def mcp_client(bd_executable, temp_db, monkeypatch):
 
     # Disable daemon mode for tests (prevents daemon accumulation and timeouts)
     os.environ["BEADS_NO_DAEMON"] = "1"
+    os.environ["BEADS_PATH"] = bd_executable
 
     # Create test client
     async with Client(mcp) as client:
@@ -107,6 +150,7 @@ async def mcp_client(bd_executable, temp_db, monkeypatch):
     os.environ.pop("BEADS_DB", None)
     os.environ.pop("BEADS_DIR", None)
     os.environ.pop("BEADS_NO_DAEMON", None)
+    os.environ.pop("BEADS_PATH", None)
 
 
 @pytest.mark.asyncio
@@ -1096,100 +1140,104 @@ async def test_show_brief_deps(mcp_client):
 
 @pytest.mark.asyncio
 async def test_flow_claim_next_enforces_wip_gate(mcp_client, monkeypatch):
-    """flow(claim_next) should claim one issue then block additional claims for same actor."""
+    """flow(claim_next) should claim once, then return wip_blocked for same actor."""
     import json
 
     actor = "flow-test-actor"
-    monkeypatch.setenv("BEADS_ACTOR", actor)
+    monkeypatch.delenv("BEADS_ACTOR", raising=False)
+    monkeypatch.delenv("BD_ACTOR", raising=False)
 
     await mcp_client.call_tool("create", {"title": "Flow claim issue 1", "brief": False})
     await mcp_client.call_tool("create", {"title": "Flow claim issue 2", "brief": False})
 
     first = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": actor})
     first_payload = json.loads(first.content[0].text)
-    assert first_payload["claimed"] is True
-    assert first_payload["issue"]["status"] == "in_progress"
+    assert first_payload["ok"] is True
+    assert first_payload["command"] == "flow claim-next"
+    assert first_payload["result"] == "claimed"
+    assert first_payload["issue_id"]
+    assert first_payload["details"]["issue"]["status"] == "in_progress"
 
     second = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": actor})
     second_payload = json.loads(second.content[0].text)
-    assert second_payload["claimed"] is False
-    assert "WIP gate" in second_payload["message"]
+    assert second_payload["ok"] is True
+    assert second_payload["command"] == "flow claim-next"
+    assert second_payload["result"] == "wip_blocked"
+    assert first_payload["issue_id"] in second_payload["details"]["in_progress_ids"]
 
 
 @pytest.mark.asyncio
-async def test_flow_claim_next_requires_env_actor_for_actor_override(mcp_client, monkeypatch):
-    """flow(claim_next) should reject actor override when environment actor is unset."""
-    from fastmcp.exceptions import ToolError
-
-    monkeypatch.delenv("BEADS_ACTOR", raising=False)
-    monkeypatch.delenv("BD_ACTOR", raising=False)
-
-    await mcp_client.call_tool("create", {"title": "Claim test issue", "brief": False})
-
-    with pytest.raises(ToolError):
-        await mcp_client.call_tool("flow", {"action": "claim_next", "actor": "alice"})
-
-
-@pytest.mark.asyncio
-async def test_flow_claim_next_without_actor_config_returns_compact_no_claim(mcp_client, monkeypatch):
-    """flow(claim_next) should return claimed=false (not crash) when no actor identity exists."""
+async def test_flow_claim_next_without_actor_override_uses_default_identity_and_wip_gate(
+    mcp_client, monkeypatch
+):
+    """flow(claim_next) without explicit actor should still enforce WIP deterministically."""
     import json
 
     monkeypatch.delenv("BEADS_ACTOR", raising=False)
     monkeypatch.delenv("BD_ACTOR", raising=False)
 
     await mcp_client.call_tool("create", {"title": "No actor claim issue", "brief": False})
-    result = await mcp_client.call_tool("flow", {"action": "claim_next"})
-    payload = json.loads(result.content[0].text)
-    assert payload["claimed"] is False
-    assert "No actor configured" in payload["message"]
+    await mcp_client.call_tool("create", {"title": "No actor claim issue 2", "brief": False})
+
+    first = await mcp_client.call_tool("flow", {"action": "claim_next"})
+    first_payload = json.loads(first.content[0].text)
+    assert first_payload["ok"] is True
+    assert first_payload["command"] == "flow claim-next"
+    assert first_payload["result"] == "claimed"
+
+    second = await mcp_client.call_tool("flow", {"action": "claim_next"})
+    second_payload = json.loads(second.content[0].text)
+    assert second_payload["ok"] is True
+    assert second_payload["command"] == "flow claim-next"
+    assert second_payload["result"] == "wip_blocked"
 
 
 @pytest.mark.asyncio
-async def test_flow_claim_next_skips_non_open_ready_entries(mcp_client, monkeypatch):
-    """flow(claim_next) should not crash when ready list includes in_progress entries."""
+async def test_flow_claim_next_returns_no_ready_state_when_queue_empty(mcp_client):
+    """flow(claim_next) should return deterministic no_ready when queue is empty."""
     import json
 
-    actor = "flow-skip-test-actor"
-    monkeypatch.setenv("BEADS_ACTOR", actor)
-
-    created = await mcp_client.call_tool("create", {"title": "Single claim candidate", "brief": False})
-    issue = json.loads(created.content[0].text)
-
-    first = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": actor})
-    first_payload = json.loads(first.content[0].text)
-    assert first_payload["claimed"] is True
-    assert first_payload["issue"]["id"] == issue["id"]
-
-    second = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": actor})
-    second_payload = json.loads(second.content[0].text)
-    assert second_payload["claimed"] is False
-    assert "WIP gate" in second_payload["message"]
+    result = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": "flow-no-ready"})
+    payload = json.loads(result.content[0].text)
+    assert payload["ok"] is True
+    assert payload["command"] == "flow claim-next"
+    assert payload["result"] == "no_ready"
 
 
 @pytest.mark.asyncio
 async def test_flow_claim_next_contention_returns_non_error_payload(mcp_client, monkeypatch):
-    """flow(claim_next) should return claimed=false (not ToolError) when all claims contend."""
+    """flow(claim_next) contention state should be surfaced as normal payload."""
     import json
+    from beads_mcp import server as server_module
 
-    actor = "flow-contention-actor"
-    monkeypatch.setenv("BEADS_ACTOR", actor)
+    contention_payload = {
+        "ok": True,
+        "command": "flow claim-next",
+        "result": "contention",
+        "details": {
+            "actor": "flow-contention-actor",
+            "contention_ids": ["bd-1", "bd-2"],
+            "message": "Ready issues were contended during claim",
+        },
+        "events": ["claim_contention"],
+    }
 
-    await mcp_client.call_tool("create", {"title": "Contention issue 1", "brief": False})
-    await mcp_client.call_tool("create", {"title": "Contention issue 2", "brief": False})
+    async def fake_run_command(self, *args, **kwargs):
+        if len(args) >= 2 and args[0] == "flow" and args[1] == "claim-next":
+            return contention_payload
+        raise AssertionError(f"Unexpected command in contention test: {args}")
 
-    async def fake_claim(*args, **kwargs):
-        raise RuntimeError("simulated claim contention")
+    monkeypatch.setattr(server_module.BdCliClient, "_run_command", fake_run_command)
 
-    monkeypatch.setattr("beads_mcp.server.beads_update_issue", fake_claim)
-
-    result = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": actor, "ready_limit": 5})
+    result = await mcp_client.call_tool(
+        "flow", {"action": "claim_next", "actor": "flow-contention-actor", "ready_limit": 5}
+    )
     payload = json.loads(result.content[0].text)
 
-    assert payload["action"] == "claim_next"
-    assert payload["claimed"] is False
-    assert "No claimable ready work after contention checks." in payload["message"]
-    assert len(payload.get("claim_errors", [])) >= 2
+    assert payload["ok"] is True
+    assert payload["command"] == "flow claim-next"
+    assert payload["result"] == "contention"
+    assert payload["details"]["contention_ids"] == ["bd-1", "bd-2"]
 
 
 @pytest.mark.asyncio
@@ -1214,8 +1262,10 @@ async def test_flow_create_discovered_links_issue(mcp_client):
         },
     )
     payload = json.loads(created.content[0].text)
-    child_id = payload["created"]["id"]
-    assert payload["action"] == "create_discovered"
+    child_id = payload["issue_id"]
+    assert payload["ok"] is True
+    assert payload["command"] == "flow create-discovered"
+    assert payload["result"] == "created"
     assert child_id
 
     child = await mcp_client.call_tool("show", {"issue_id": child_id})
@@ -1226,20 +1276,22 @@ async def test_flow_create_discovered_links_issue(mcp_client):
 
 @pytest.mark.asyncio
 async def test_flow_create_discovered_fails_fast_on_missing_parent(mcp_client):
-    """flow(create_discovered) should fail before create when discovered_from target is missing."""
+    """flow(create_discovered) should return invalid_input before creating when parent is missing."""
     import json
-    from fastmcp.exceptions import ToolError
 
-    with pytest.raises(ToolError):
-        await mcp_client.call_tool(
-            "flow",
-            {
-                "action": "create_discovered",
-                "title": "Should not be created",
-                "description": "Missing parent",
-                "discovered_from_id": "bd-does-not-exist",
-            },
-        )
+    result = await mcp_client.call_tool(
+        "flow",
+        {
+            "action": "create_discovered",
+            "title": "Should not be created",
+            "description": "Missing parent",
+            "discovered_from_id": "bd-does-not-exist",
+        },
+    )
+    payload = json.loads(result.content[0].text)
+    assert payload["ok"] is False
+    assert payload["command"] == "flow create-discovered"
+    assert payload["result"] == "invalid_input"
 
     listed = await mcp_client.call_tool("list", {"query": "Should not be created"})
     listed_payload = json.loads(listed.content[0].text) if listed.content else []
@@ -1248,65 +1300,77 @@ async def test_flow_create_discovered_fails_fast_on_missing_parent(mcp_client):
 
 @pytest.mark.asyncio
 async def test_flow_create_discovered_link_error_returns_structured_remediation(mcp_client, monkeypatch):
-    """flow(create_discovered) should raise structured remediation payload on post-create link failure."""
+    """flow(create_discovered) should surface partial_state remediation payload without ToolError."""
     import json
-    from fastmcp.exceptions import ToolError
-
-    async def fake_add_dependency(*args, **kwargs):
-        return "Error: simulated discovered-from failure"
-
-    monkeypatch.setattr("beads_mcp.server.beads_add_dependency", fake_add_dependency)
+    from beads_mcp import server as server_module
+    from beads_mcp.bd_client import BdCommandError
 
     parent_result = await mcp_client.call_tool(
         "create", {"title": "Structured parent", "issue_type": "task", "brief": False}
     )
     parent = json.loads(parent_result.content[0].text)
 
-    with pytest.raises(ToolError) as exc_info:
-        await mcp_client.call_tool(
-            "flow",
-            {
-                "action": "create_discovered",
-                "title": "Structured child",
-                "description": "Force discovered-from link failure",
-                "discovered_from_id": parent["id"],
-            },
-        )
+    payload = {
+        "ok": False,
+        "command": "flow create-discovered",
+        "result": "partial_state",
+        "issue_id": "test-partial-create",
+        "details": {
+            "partial_state": "issue_created_without_discovered_from_link",
+            "depends_on_id": parent["id"],
+        },
+        "recovery_command": f"bd dep add test-partial-create {parent['id']} --type discovered-from",
+        "events": ["created", "dependency_add_failed"],
+    }
 
-    payload = _tool_error_json_payload(exc_info.value)
-    assert payload["action"] == "create_discovered"
-    assert payload["error"]["phase"] == "link_dependency"
+    async def fake_run_command(self, *args, **kwargs):
+        if len(args) >= 2 and args[0] == "flow" and args[1] == "create-discovered":
+            raise BdCommandError("simulated partial-state", stdout=json.dumps(payload), returncode=4)
+        raise AssertionError(f"Unexpected command in partial-state test: {args}")
+
+    monkeypatch.setattr(server_module.BdCliClient, "_run_command", fake_run_command)
+
+    result = await mcp_client.call_tool(
+        "flow",
+        {
+            "action": "create_discovered",
+            "title": "Structured child",
+            "description": "Force discovered-from link failure",
+            "discovered_from_id": parent["id"],
+        },
+    )
+    payload = json.loads(result.content[0].text)
+    assert payload["ok"] is False
+    assert payload["command"] == "flow create-discovered"
+    assert payload["result"] == "partial_state"
     assert payload["details"]["partial_state"] == "issue_created_without_discovered_from_link"
     assert payload["issue_id"]
-    assert "dep(" in payload["recovery_command"]
-
-    listed = await mcp_client.call_tool("list", {"query": "Structured child"})
-    listed_payload = json.loads(listed.content[0].text) if listed.content else []
-    assert len(listed_payload) == 1
-    assert listed_payload[0]["id"] == payload["issue_id"]
+    assert "bd dep add" in payload["recovery_command"]
 
 
 @pytest.mark.asyncio
 async def test_flow_close_safe_lints_reason_and_requires_verification(mcp_client):
-    """flow(close_safe) should reject unsafe reasons and close with verified evidence."""
+    """flow(close_safe) should return policy violation for unsafe reasons and close on safe input."""
     import json
-    from fastmcp.exceptions import ToolError
 
     issue_result = await mcp_client.call_tool(
         "create", {"title": "Close-safe target", "issue_type": "task", "brief": False}
     )
     issue = json.loads(issue_result.content[0].text)
 
-    with pytest.raises(ToolError):
-        await mcp_client.call_tool(
-            "flow",
-            {
-                "action": "close_safe",
-                "issue_id": issue["id"],
-                "reason": "Updated error handling in retry path",
-                "verification": "pytest integrations/beads-mcp/tests -q",
-            },
-        )
+    rejected = await mcp_client.call_tool(
+        "flow",
+        {
+            "action": "close_safe",
+            "issue_id": issue["id"],
+            "reason": "Updated error handling in retry path",
+            "verification": "pytest integrations/beads-mcp/tests -q",
+        },
+    )
+    rejected_payload = json.loads(rejected.content[0].text)
+    assert rejected_payload["ok"] is False
+    assert rejected_payload["command"] == "flow close-safe"
+    assert rejected_payload["result"] == "policy_violation"
 
     close_result = await mcp_client.call_tool(
         "flow",
@@ -1318,31 +1382,35 @@ async def test_flow_close_safe_lints_reason_and_requires_verification(mcp_client
         },
     )
     close_payload = json.loads(close_result.content[0].text)
-    assert close_payload["closed"] is True
-    assert close_payload["issue"]["status"] == "closed"
+    assert close_payload["ok"] is True
+    assert close_payload["command"] == "flow close-safe"
+    assert close_payload["result"] == "closed"
+    assert close_payload["details"]["issue"]["status"] == "closed"
 
 
 @pytest.mark.asyncio
 async def test_flow_block_with_context_fails_fast_on_missing_blocker(mcp_client):
-    """flow(block_with_context) should reject missing blocker before state mutation."""
+    """flow(block_with_context) should return invalid_input for missing blocker before mutation."""
     import json
-    from fastmcp.exceptions import ToolError
 
     issue_result = await mcp_client.call_tool(
         "create", {"title": "Block target", "issue_type": "task", "brief": False}
     )
     issue = json.loads(issue_result.content[0].text)
 
-    with pytest.raises(ToolError):
-        await mcp_client.call_tool(
-            "flow",
-            {
-                "action": "block_with_context",
-                "issue_id": issue["id"],
-                "context_pack": "state; repro; next",
-                "blocker_id": "bd-missing-blocker",
-            },
-        )
+    result = await mcp_client.call_tool(
+        "flow",
+        {
+            "action": "block_with_context",
+            "issue_id": issue["id"],
+            "context_pack": "state; repro; next",
+            "blocker_id": "bd-missing-blocker",
+        },
+    )
+    payload = json.loads(result.content[0].text)
+    assert payload["ok"] is False
+    assert payload["command"] == "flow block-with-context"
+    assert payload["result"] == "invalid_input"
 
     shown = await mcp_client.call_tool("show", {"issue_id": issue["id"]})
     shown_payload = json.loads(shown.content[0].text)
@@ -1352,14 +1420,10 @@ async def test_flow_block_with_context_fails_fast_on_missing_blocker(mcp_client)
 
 @pytest.mark.asyncio
 async def test_flow_block_with_context_link_error_returns_structured_remediation(mcp_client, monkeypatch):
-    """flow(block_with_context) should raise structured remediation payload on post-update link failure."""
+    """flow(block_with_context) should surface partial_state remediation payload without ToolError."""
     import json
-    from fastmcp.exceptions import ToolError
-
-    async def fake_add_dependency(*args, **kwargs):
-        return "Error: simulated blocks failure"
-
-    monkeypatch.setattr("beads_mcp.server.beads_add_dependency", fake_add_dependency)
+    from beads_mcp import server as server_module
+    from beads_mcp.bd_client import BdCommandError
 
     issue_result = await mcp_client.call_tool(
         "create", {"title": "Structured block target", "issue_type": "task", "brief": False}
@@ -1370,28 +1434,42 @@ async def test_flow_block_with_context_link_error_returns_structured_remediation
     )
     blocker = json.loads(blocker_result.content[0].text)
 
-    with pytest.raises(ToolError) as exc_info:
-        await mcp_client.call_tool(
-            "flow",
-            {
-                "action": "block_with_context",
-                "issue_id": issue["id"],
-                "context_pack": "state; repro; next",
-                "blocker_id": blocker["id"],
-            },
-        )
+    payload = {
+        "ok": False,
+        "command": "flow block-with-context",
+        "result": "partial_state",
+        "issue_id": issue["id"],
+        "details": {
+            "partial_state": "issue_blocked_without_blocker_link",
+            "depends_on_id": blocker["id"],
+        },
+        "recovery_command": f"bd dep add {issue['id']} {blocker['id']} --type blocks",
+        "events": ["blocked", "dependency_add_failed"],
+    }
 
-    payload = _tool_error_json_payload(exc_info.value)
-    assert payload["action"] == "block_with_context"
-    assert payload["error"]["phase"] == "link_dependency"
+    async def fake_run_command(self, *args, **kwargs):
+        if len(args) >= 2 and args[0] == "flow" and args[1] == "block-with-context":
+            raise BdCommandError("simulated partial-state", stdout=json.dumps(payload), returncode=4)
+        raise AssertionError(f"Unexpected command in partial-state test: {args}")
+
+    monkeypatch.setattr(server_module.BdCliClient, "_run_command", fake_run_command)
+
+    result = await mcp_client.call_tool(
+        "flow",
+        {
+            "action": "block_with_context",
+            "issue_id": issue["id"],
+            "context_pack": "state; repro; next",
+            "blocker_id": blocker["id"],
+        },
+    )
+    payload = json.loads(result.content[0].text)
+    assert payload["ok"] is False
+    assert payload["command"] == "flow block-with-context"
+    assert payload["result"] == "partial_state"
     assert payload["details"]["partial_state"] == "issue_blocked_without_blocker_link"
     assert payload["issue_id"] == issue["id"]
-    assert "dep(" in payload["recovery_command"]
-
-    shown = await mcp_client.call_tool("show", {"issue_id": issue["id"]})
-    shown_payload = json.loads(shown.content[0].text)
-    assert shown_payload["status"] == "blocked"
-    assert "Context pack:" in (shown_payload.get("notes") or "")
+    assert "bd dep add" in payload["recovery_command"]
 
 
 @pytest.mark.asyncio
@@ -1422,5 +1500,71 @@ async def test_flow_only_mode_blocks_direct_writes_but_allows_flow(mcp_client, m
         },
     )
     payload = json.loads(created.content[0].text)
-    assert payload["action"] == "create_discovered"
-    assert payload["created"]["id"]
+    assert payload["ok"] is True
+    assert payload["command"] == "flow create-discovered"
+    assert payload["result"] == "created"
+    assert payload["issue_id"]
+
+
+@pytest.mark.asyncio
+async def test_flow_claim_next_cli_mcp_parity_no_ready(mcp_client, bd_executable):
+    """Direct CLI and MCP flow should report the same deterministic no_ready state."""
+    import json
+
+    ctx = await mcp_client.call_tool("context", {"action": "show"})
+    workspace_root = _workspace_root_from_context_output(ctx.content[0].text)
+
+    direct = await _run_bd_json(
+        bd_executable,
+        workspace_root,
+        "--actor",
+        "parity-no-ready",
+        "flow",
+        "claim-next",
+        "--limit",
+        "5",
+    )
+    via_mcp_raw = await mcp_client.call_tool(
+        "flow", {"action": "claim_next", "actor": "parity-no-ready", "ready_limit": 5}
+    )
+    via_mcp = json.loads(via_mcp_raw.content[0].text)
+
+    assert direct["result"] == "no_ready"
+    assert via_mcp["result"] == "no_ready"
+    assert direct["command"] == via_mcp["command"] == "flow claim-next"
+
+
+@pytest.mark.asyncio
+async def test_flow_create_discovered_cli_mcp_parity_invalid_from(mcp_client, bd_executable):
+    """Direct CLI and MCP flow should report the same deterministic invalid_input state."""
+    import json
+
+    ctx = await mcp_client.call_tool("context", {"action": "show"})
+    workspace_root = _workspace_root_from_context_output(ctx.content[0].text)
+
+    direct = await _run_bd_json(
+        bd_executable,
+        workspace_root,
+        "--actor",
+        "parity-invalid-from",
+        "flow",
+        "create-discovered",
+        "--title",
+        "Parity child",
+        "--from",
+        "bd-does-not-exist",
+    )
+    via_mcp_raw = await mcp_client.call_tool(
+        "flow",
+        {
+            "action": "create_discovered",
+            "title": "Parity child",
+            "discovered_from_id": "bd-does-not-exist",
+            "actor": "parity-invalid-from",
+        },
+    )
+    via_mcp = json.loads(via_mcp_raw.content[0].text)
+
+    assert direct["result"] == "invalid_input"
+    assert via_mcp["result"] == "invalid_input"
+    assert direct["command"] == via_mcp["command"] == "flow create-discovered"
