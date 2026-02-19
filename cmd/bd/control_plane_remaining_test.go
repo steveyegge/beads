@@ -238,6 +238,19 @@ func TestPreflightGateEnforcement(t *testing.T) {
 	}
 }
 
+func TestPreflightGateRecoveryCommand(t *testing.T) {
+	assessment := preflightGateAssessment{Blockers: []string{"hardening.validation.on-create"}}
+	if got := preflightRecoveryCommand(assessment, false); got != "bd preflight gate --action claim --remediate-hardening" {
+		t.Fatalf("expected hardening remediation hint, got %q", got)
+	}
+	if got := preflightRecoveryCommand(assessment, true); got != "bd preflight gate --action claim" {
+		t.Fatalf("expected plain recovery when remediation already requested, got %q", got)
+	}
+	if got := preflightRecoveryCommand(preflightGateAssessment{Blockers: []string{"wip.gate"}}, false); got != "bd preflight gate --action claim" {
+		t.Fatalf("expected plain recovery for non-hardening blockers, got %q", got)
+	}
+}
+
 func TestPreflightGateUsesBoundedDiagnostics(t *testing.T) {
 	root := findRepoRootForContractTest(t)
 	preflightPath := filepath.Join(root, "cmd", "bd", "preflight.go")
@@ -792,23 +805,29 @@ func TestRecoverLoopPhase2StructuralDiagnostics(t *testing.T) {
 }
 
 func TestRecoverLoopPhase4WidenScope(t *testing.T) {
-	if got := resolveRecoverPhase4Outcome(1, 0, 0); got != "module_ready_found" {
+	if got := resolveRecoverPhase4Outcome(true, 1, 0, 0); got != "module_ready_found" {
 		t.Fatalf("expected module_ready_found, got %q", got)
 	}
-	if got := resolveRecoverPhase4Outcome(0, 2, 0); got != "unscoped_ready_found" {
+	if got := resolveRecoverPhase4Outcome(true, 0, 2, 0); got != "unscoped_ready_found" {
 		t.Fatalf("expected unscoped_ready_found, got %q", got)
 	}
-	if got := resolveRecoverPhase4Outcome(0, 0, 3); got != "unassigned_ready_found" {
+	if got := resolveRecoverPhase4Outcome(true, 0, 0, 3); got != "unassigned_ready_found" {
 		t.Fatalf("expected unassigned_ready_found, got %q", got)
 	}
-	if got := resolveRecoverPhase4Outcome(0, 0, 0); got != "no_ready_after_widen" {
+	if got := resolveRecoverPhase4Outcome(true, 0, 0, 0); got != "no_ready_after_widen" {
 		t.Fatalf("expected no_ready_after_widen, got %q", got)
+	}
+	if got := resolveRecoverPhase4Outcome(false, 4, 2, 0); got != "unscoped_ready_found" {
+		t.Fatalf("expected module-scope disabled to skip module outcome, got %q", got)
 	}
 }
 
 func TestRecoverSignatureAnchorPersistence(t *testing.T) {
 	if recoverSignatureCmd.Flags().Lookup("anchor") == nil {
 		t.Fatalf("recover signature missing --anchor flag")
+	}
+	if recoverSignatureCmd.Flags().Lookup("write-anchor") == nil {
+		t.Fatalf("recover signature missing --write-anchor flag")
 	}
 
 	note := buildRecoverSignatureAnchorNote(4, recoverSignature{

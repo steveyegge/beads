@@ -246,7 +246,7 @@ func runPreflightGate(cmd *cobra.Command, args []string) {
 			Command:         "preflight gate",
 			Result:          "blocked",
 			Details:         details,
-			RecoveryCommand: "bd preflight gate --action claim",
+			RecoveryCommand: preflightRecoveryCommand(assessment, preflightRemediateHardening),
 			Events:          []string{"preflight_blocked"},
 		}, exitCodePolicyViolation)
 		return
@@ -504,6 +504,22 @@ func evaluatePreflightGate(action, validationOnCreate string, requireDescription
 		WIPGateEnforced:     enforceWIP,
 		Action:              action,
 	}
+}
+
+func preflightRecoveryCommand(assessment preflightGateAssessment, remediationRequested bool) string {
+	if !remediationRequested && hasHardeningBlocker(assessment.Blockers) {
+		return "bd preflight gate --action claim --remediate-hardening"
+	}
+	return "bd preflight gate --action claim"
+}
+
+func hasHardeningBlocker(blockers []string) bool {
+	for _, blocker := range blockers {
+		if strings.HasPrefix(strings.TrimSpace(blocker), "hardening.") {
+			return true
+		}
+	}
+	return false
 }
 
 func runPreflight(cmd *cobra.Command, args []string) {

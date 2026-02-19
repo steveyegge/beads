@@ -33,6 +33,7 @@ var (
 	recoverSignatureMaxIterations int
 	recoverSignatureMaxMinutes    int
 	recoverSignatureAnchorID      string
+	recoverSignatureWriteAnchor   bool
 	recoverLoopParentID           string
 	recoverLoopModuleLabel        string
 	recoverLoopLimit              int
@@ -127,6 +128,33 @@ var recoverSignatureCmd = &cobra.Command{
 		}
 		if strings.TrimSpace(recoverSignatureAnchorID) != "" {
 			anchorWrite["attempted"] = true
+			if !recoverSignatureWriteAnchor {
+				finishEnvelope(commandEnvelope{
+					OK:      false,
+					Command: "recover signature",
+					Result:  "policy_violation",
+					Details: map[string]interface{}{
+						"message": "anchor note writes require --write-anchor",
+						"anchor":  strings.TrimSpace(recoverSignatureAnchorID),
+					},
+					RecoveryCommand: "rerun with --write-anchor to allow anchor note mutation",
+					Events:          []string{"recover_signature_failed"},
+				}, exitCodePolicyViolation)
+				return
+			}
+			if readonlyMode {
+				finishEnvelope(commandEnvelope{
+					OK:      false,
+					Command: "recover signature",
+					Result:  "policy_violation",
+					Details: map[string]interface{}{
+						"message": "anchor note writes are not allowed in read-only mode",
+						"anchor":  strings.TrimSpace(recoverSignatureAnchorID),
+					},
+					Events: []string{"recover_signature_failed"},
+				}, exitCodePolicyViolation)
+				return
+			}
 			anchorResult, err := resolveAndGetIssueWithRouting(ctx, store, recoverSignatureAnchorID)
 			if err != nil {
 				if anchorResult != nil {
@@ -360,20 +388,24 @@ var recoverLoopCmd = &cobra.Command{
 			"limbo_candidates": limboCandidates,
 		}
 
-		moduleOnlyReady, err := store.GetReadyWork(ctx, types.WorkFilter{
-			Status: types.StatusOpen,
-			Labels: recoverLoopScopedLabels(),
-			Limit:  recoverLoopLimit,
-		})
-		if err != nil {
-			finishEnvelope(commandEnvelope{
-				OK:      false,
-				Command: "recover loop",
-				Result:  "system_error",
-				Details: map[string]interface{}{"message": fmt.Sprintf("phase 4 module-only ready query failed: %v", err)},
-				Events:  []string{"recover_loop_failed"},
-			}, 1)
-			return
+		moduleScopeEnabled := strings.TrimSpace(recoverLoopModuleLabel) != ""
+		moduleOnlyReady := []*types.Issue{}
+		if moduleScopeEnabled {
+			moduleOnlyReady, err = store.GetReadyWork(ctx, types.WorkFilter{
+				Status: types.StatusOpen,
+				Labels: recoverLoopScopedLabels(),
+				Limit:  recoverLoopLimit,
+			})
+			if err != nil {
+				finishEnvelope(commandEnvelope{
+					OK:      false,
+					Command: "recover loop",
+					Result:  "system_error",
+					Details: map[string]interface{}{"message": fmt.Sprintf("phase 4 module-only ready query failed: %v", err)},
+					Events:  []string{"recover_loop_failed"},
+				}, 1)
+				return
+			}
 		}
 		unscopedReady, err := store.GetReadyWork(ctx, types.WorkFilter{
 			Status: types.StatusOpen,
@@ -405,11 +437,12 @@ var recoverLoopCmd = &cobra.Command{
 			return
 		}
 		phase4 := map[string]interface{}{
-			"module_only": recoverLoopSnapshot{Count: len(moduleOnlyReady), IDs: issueIDs(moduleOnlyReady)},
-			"unscoped":    recoverLoopSnapshot{Count: len(unscopedReady), IDs: issueIDs(unscopedReady)},
-			"unassigned":  recoverLoopSnapshot{Count: len(unassignedReady), IDs: issueIDs(unassignedReady)},
+			"module_scope_enabled": moduleScopeEnabled,
+			"module_only":          recoverLoopSnapshot{Count: len(moduleOnlyReady), IDs: issueIDs(moduleOnlyReady)},
+			"unscoped":             recoverLoopSnapshot{Count: len(unscopedReady), IDs: issueIDs(unscopedReady)},
+			"unassigned":           recoverLoopSnapshot{Count: len(unassignedReady), IDs: issueIDs(unassignedReady)},
 		}
-		phaseOutcomes["phase_4"] = resolveRecoverPhase4Outcome(len(moduleOnlyReady), len(unscopedReady), len(unassignedReady))
+		phaseOutcomes["phase_4"] = resolveRecoverPhase4Outcome(moduleScopeEnabled, len(moduleOnlyReady), len(unscopedReady), len(unassignedReady))
 
 		result := "recover_continue"
 		if phaseOutcomes["phase_4"] != "no_ready_after_widen" {
@@ -598,9 +631,9 @@ func blockedIssueIDs(issues []*types.BlockedIssue) []string {
 	return ids
 }
 
-func resolveRecoverPhase4Outcome(moduleReadyCount, unscopedReadyCount, unassignedReadyCount int) string {
+func resolveRecoverPhase4Outcome(moduleScopeEnabled bool, moduleReadyCount, unscopedReadyCount, unassignedReadyCount int) string {
 	switch {
-	case moduleReadyCount > 0:
+	case moduleScopeEnabled && moduleReadyCount > 0:
 		return "module_ready_found"
 	case unscopedReadyCount > 0:
 		return "unscoped_ready_found"
@@ -698,6 +731,7 @@ func init() {
 	recoverSignatureCmd.Flags().IntVar(&recoverSignatureMaxIterations, "max-iterations", 3, "Escalation iteration threshold")
 	recoverSignatureCmd.Flags().IntVar(&recoverSignatureMaxMinutes, "max-minutes", 30, "Escalation elapsed-minutes threshold")
 	recoverSignatureCmd.Flags().StringVar(&recoverSignatureAnchorID, "anchor", "", "Optional anchor issue ID to append convergence signature note")
+	recoverSignatureCmd.Flags().BoolVar(&recoverSignatureWriteAnchor, "write-anchor", false, "Allow --anchor to append convergence notes (mutating)")
 	recoverSignatureCmd.ValidArgsFunction = noCompletions
 	recoverLoopCmd.Flags().StringVar(&recoverLoopParentID, "parent", "", "Optional parent scope for recover-loop phase checks")
 	recoverLoopCmd.Flags().StringVar(&recoverLoopModuleLabel, "module-label", "", "Optional module/<name> label scope for scoped/module-only ready checks")
