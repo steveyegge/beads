@@ -25,6 +25,8 @@ type recoverLoopSnapshot struct {
 }
 
 var (
+	recoverStateFrom              string
+	recoverStateTo                string
 	recoverSignatureParentID      string
 	recoverSignatureLimit         int
 	recoverSignaturePrevious      string
@@ -49,6 +51,9 @@ var recoverSignatureCmd = &cobra.Command{
 	Use:   "signature",
 	Short: "Compute recover-loop convergence signature and escalation state",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, recoverStateFrom, recoverStateTo) {
+			return
+		}
 		ctx := rootCtx
 
 		var parentID *string
@@ -223,6 +228,9 @@ var recoverLoopCmd = &cobra.Command{
 	Use:   "loop",
 	Short: "Run deterministic recover-loop phase orchestration",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, recoverStateFrom, recoverStateTo) {
+			return
+		}
 		ctx := rootCtx
 
 		var parentID *string
@@ -723,6 +731,8 @@ func recoverRootBlockersFromBlocked(blocked []*types.BlockedIssue) []string {
 }
 
 func init() {
+	recoverCmd.PersistentFlags().StringVar(&recoverStateFrom, "state-from", "", "Current session state for lifecycle transition validation")
+	recoverCmd.PersistentFlags().StringVar(&recoverStateTo, "state-to", "", "Target session state for lifecycle transition validation")
 	recoverSignatureCmd.Flags().StringVar(&recoverSignatureParentID, "parent", "", "Optional parent scope for blocked-signature computation")
 	recoverSignatureCmd.Flags().IntVar(&recoverSignatureLimit, "limit", 20, "Maximum blocked issues to include in signature")
 	recoverSignatureCmd.Flags().StringVar(&recoverSignaturePrevious, "previous-signature", "", "Previous signature JSON for convergence comparison")

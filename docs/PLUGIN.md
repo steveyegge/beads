@@ -145,7 +145,7 @@ The beads workflow is designed for AI agents but works great for humans too:
 2. **Agent-managed lifecycle (recommended)**: use split agents and `flow` wrappers for claim/discovery/block/close
 3. **Work on it**: Implement, test, document
 4. **Discover new work**: create linked follow-ups via `flow(action="create_discovered", ...)`
-5. **Complete safely**: `flow(action="close_safe", issue_id=..., reason=..., verification=...)`
+5. **Complete safely**: `flow(action="close_safe", issue_id=..., reason=..., verification=..., require_traceability=true, require_spec_drift_proof=true, require_parent_cascade=true, require_priority_poll=true, non_hermetic=true)`
 6. **Repeat**: Check for newly unblocked tasks
 
 Manual/direct lifecycle mode is still available with `/beads:update` and `/beads:close`, but agent automation should prefer `flow`.
@@ -173,7 +173,7 @@ Manual/direct lifecycle mode is still available with `/beads:update` and `/beads
 - **`parent-child`** - Epic/subtask relationship
 - **`discovered-from`** - Track issues discovered during work
 
-Only `blocks` dependencies affect the ready work queue.
+Ready-work blockers include `blocks`, `parent-child`, `conditional-blocks`, and `waits-for`.
 
 ## Configuration
 
@@ -302,8 +302,8 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 # Block with context pack and optional blocker edge
 # MCP tool: flow(action="block_with_context", issue_id="bd-123", context_pack="...", blocker_id="bd-456")
 
-# Close safely with reason lint + verification evidence
-# MCP tool: flow(action="close_safe", issue_id="bd-123", reason="Implemented ...", verification="pytest ...")
+# Close safely with reason lint + verification evidence + strict close controls
+# MCP tool: flow(action="close_safe", issue_id="bd-123", reason="Implemented ...", verification="pytest ...", require_traceability=true, require_spec_drift_proof=true, require_parent_cascade=true, require_priority_poll=true, non_hermetic=true)
 
 # Execute lifecycle transition handlers (for example session abort)
 # MCP tool: flow(action="transition", transition_type="session_abort", reason="...", context_pack="...")

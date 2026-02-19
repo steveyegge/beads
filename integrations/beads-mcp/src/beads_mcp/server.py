@@ -441,6 +441,16 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
                 "context_pack": "str (required for block_with_context)",
                 "blocker_id": "str (optional for block_with_context; adds blocks dep)",
                 "transition_type": "str (required for transition; e.g. claim_failed|test_failed|session_abort)",
+                "require_traceability": "bool (optional for close_safe; enforce traceability chain)",
+                "require_spec_drift_proof": "bool (optional for close_safe; enforce docs-drift proof)",
+                "require_parent_cascade": "bool (optional for close_safe; block close when parent has open children)",
+                "allow_open_children": "bool (optional for close_safe; bypass parent cascade)",
+                "require_priority_poll": "bool (optional for close_safe; require fresh priority-poll evidence)",
+                "priority_poll_max_age": "str duration (optional for close_safe; default 30m)",
+                "require_evidence_tuple": "bool (optional for close_safe; require fresh EvidenceTuple)",
+                "non_hermetic": "bool (optional for close_safe; implies evidence tuple requirement)",
+                "evidence_max_age": "str duration (optional for close_safe; default 24h)",
+                "allow_secret_markers": "bool (optional for close_safe; exceptional/manual use)",
                 "priority": "int 0-4 (optional for create_discovered/claim_next filters)",
                 "issue_type": "bug|feature|task|epic|chore|decision (optional for create_discovered)",
                 "labels": "list[str] (optional for create_discovered/claim_next)",
@@ -898,6 +908,16 @@ async def flow(
     reason: str | None = None,
     verification: str | None = None,
     notes: str | None = None,
+    require_traceability: bool = False,
+    require_spec_drift_proof: bool = False,
+    require_parent_cascade: bool = False,
+    allow_open_children: bool = False,
+    require_priority_poll: bool = False,
+    priority_poll_max_age: str | None = None,
+    require_evidence_tuple: bool = False,
+    non_hermetic: bool = False,
+    evidence_max_age: str | None = None,
+    allow_secret_markers: bool = False,
     priority: int | None = None,
     issue_type: IssueType = "task",
     labels: list[str] | None = None,
@@ -967,6 +987,26 @@ async def flow(
             cli_args.extend(["--verified", verification])
         if notes:
             cli_args.extend(["--note", notes])
+        if require_traceability:
+            cli_args.append("--require-traceability")
+        if require_spec_drift_proof:
+            cli_args.append("--require-spec-drift-proof")
+        if require_parent_cascade:
+            cli_args.append("--require-parent-cascade")
+        if allow_open_children:
+            cli_args.append("--allow-open-children")
+        if require_priority_poll:
+            cli_args.append("--require-priority-poll")
+        if priority_poll_max_age:
+            cli_args.extend(["--priority-poll-max-age", priority_poll_max_age])
+        if require_evidence_tuple:
+            cli_args.append("--require-evidence-tuple")
+        if non_hermetic:
+            cli_args.append("--non-hermetic")
+        if evidence_max_age:
+            cli_args.extend(["--evidence-max-age", evidence_max_age])
+        if allow_secret_markers:
+            cli_args.append("--allow-secret-markers")
         if allow_failure_reason:
             cli_args.append("--allow-failure-reason")
         return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)

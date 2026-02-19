@@ -1087,7 +1087,6 @@ var flowTransitionCmd = &cobra.Command{
 		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
 			return
 		}
-		CheckReadonly("flow transition")
 		ctx := rootCtx
 
 		transitionType := normalizeTransitionType(flowTransitionType)
@@ -1116,6 +1115,9 @@ var flowTransitionCmd = &cobra.Command{
 				Events: []string{"transition_skipped"},
 			}, 1)
 			return
+		}
+		if !(transitionType == "session_abort" && flowTransitionNoWrite) {
+			CheckReadonly("flow transition")
 		}
 
 		switch transitionType {
@@ -2945,9 +2947,9 @@ func isSupportedTransitionType(transitionType string) bool {
 
 func transitionRequiresIssue(transitionType string) bool {
 	switch transitionType {
-	case "claim_failed":
+	case "claim_failed", "session_abort":
 		return false
-	case "transient_failure", "decomposition_invalid", "claim_became_blocked", "exec_blocked", "test_failed", "conditional_fallback_activate", "session_abort":
+	case "transient_failure", "decomposition_invalid", "claim_became_blocked", "exec_blocked", "test_failed", "conditional_fallback_activate":
 		return true
 	default:
 		return false

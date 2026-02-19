@@ -297,16 +297,24 @@ var landCmd = &cobra.Command{
 			return
 		}
 
+		skippedGate3Ops := skippedGate3Operations(choreographySteps)
+		resultName := "landed"
+		events := []string{"land_completed"}
+		if len(skippedGate3Ops) > 0 {
+			resultName = "landed_with_skipped_gate3"
+			events = append(events, "land_completed_partial")
+		}
 		finishEnvelope(commandEnvelope{
 			OK:      true,
 			Command: "land",
-			Result:  "landed",
+			Result:  resultName,
 			IssueID: resolvedEpicID,
 			Details: map[string]interface{}{
-				"actor": landingActor,
-				"steps": steps,
+				"actor":             landingActor,
+				"steps":             steps,
+				"skipped_gate3_ops": skippedGate3Ops,
 			},
-			Events: []string{"land_completed"},
+			Events: events,
 		}, 0)
 	},
 }
@@ -443,6 +451,21 @@ func runLandGate3Choreography(checkOnly, runPullRebase, runSync, runPush, runMer
 	}
 
 	return steps, nil
+}
+
+func skippedGate3Operations(steps []landStep) []string {
+	skipped := make([]string, 0)
+	for _, step := range steps {
+		if step.Status != "skipped" {
+			continue
+		}
+		switch step.Name {
+		case "gate3_pull_rebase", "gate3_sync", "gate3_push":
+			skipped = append(skipped, step.Name)
+		}
+	}
+	sort.Strings(skipped)
+	return skipped
 }
 
 func runSubprocess(name string, args ...string) (string, error) {

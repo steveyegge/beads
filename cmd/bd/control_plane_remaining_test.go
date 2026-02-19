@@ -917,6 +917,9 @@ func TestLandGate3SyncChoreography(t *testing.T) {
 	if len(steps) != 5 {
 		t.Fatalf("expected 5 gate3 steps, got %d (%v)", len(steps), steps)
 	}
+	if skipped := skippedGate3Operations(steps); len(skipped) != 0 {
+		t.Fatalf("expected no skipped Gate 3 operations in full choreography, got %v", skipped)
+	}
 
 	calls = calls[:0]
 	steps, err = runLandGate3Choreography(true, false, true, false, false, runner)
@@ -943,6 +946,9 @@ func TestLandGate3SyncChoreography(t *testing.T) {
 	}
 	if steps[0].Name != "gate3_pull_rebase" || steps[0].Status != "skipped" {
 		t.Fatalf("expected pull-rebase to be skipped by default, got %v", steps[0])
+	}
+	if skipped := skippedGate3Operations(steps); !reflect.DeepEqual(skipped, []string{"gate3_pull_rebase", "gate3_push", "gate3_sync"}) {
+		t.Fatalf("expected skipped Gate 3 operation set for non-mutating run, got %v", skipped)
 	}
 }
 
@@ -1354,7 +1360,7 @@ func TestTransitionHandlerConformance(t *testing.T) {
 		{raw: "exec_blocked", normalized: "exec_blocked", requiresIssue: true},
 		{raw: "test_failed", normalized: "test_failed", requiresIssue: true},
 		{raw: "conditional-fallback-activate", normalized: "conditional_fallback_activate", requiresIssue: true},
-		{raw: "session_abort", normalized: "session_abort", requiresIssue: true},
+		{raw: "session_abort", normalized: "session_abort", requiresIssue: false},
 	}
 	for _, tc := range expected {
 		gotType := normalizeTransitionType(tc.raw)
@@ -1635,6 +1641,30 @@ func TestLifecycleCommandsEnforceStateTransitions(t *testing.T) {
 	if landCmd.Flags().Lookup("state-to") == nil {
 		t.Fatalf("land command missing --state-to flag")
 	}
+	if recoverCmd.PersistentFlags().Lookup("state-from") == nil {
+		t.Fatalf("recover command missing --state-from flag")
+	}
+	if recoverCmd.PersistentFlags().Lookup("state-to") == nil {
+		t.Fatalf("recover command missing --state-to flag")
+	}
+	if resumeCmd.Flags().Lookup("state-from") == nil {
+		t.Fatalf("resume command missing --state-from flag")
+	}
+	if resumeCmd.Flags().Lookup("state-to") == nil {
+		t.Fatalf("resume command missing --state-to flag")
+	}
+	if preflightCmd.PersistentFlags().Lookup("state-from") == nil {
+		t.Fatalf("preflight command missing --state-from flag")
+	}
+	if preflightCmd.PersistentFlags().Lookup("state-to") == nil {
+		t.Fatalf("preflight command missing --state-to flag")
+	}
+	if reasonCmd.PersistentFlags().Lookup("state-from") == nil {
+		t.Fatalf("reason command missing --state-from flag")
+	}
+	if reasonCmd.PersistentFlags().Lookup("state-to") == nil {
+		t.Fatalf("reason command missing --state-to flag")
+	}
 
 	missingPair := assessLifecycleStateTransition("boot", "")
 	if missingPair.Pass || missingPair.Result != "invalid_input" {
@@ -1754,6 +1784,10 @@ func TestRuntimeParityManifestCoversCriticalControlPlaneSurface(t *testing.T) {
 		{path: []string{"flow", "claim-next"}, token: "--require-anchor"},
 		{path: []string{"flow", "close-safe"}, token: "--require-parent-cascade"},
 		{path: []string{"intake", "audit"}, token: "--write-proof"},
+		{path: []string{"preflight"}, token: "--state-from"},
+		{path: []string{"recover"}, token: "--state-from"},
+		{path: []string{"resume"}, token: "--state-from"},
+		{path: []string{"reason", "lint"}, token: "--state-from"},
 		{path: []string{"land"}, token: "--state-from"},
 	}
 	for _, req := range required {

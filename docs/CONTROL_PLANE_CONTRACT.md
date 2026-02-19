@@ -13,6 +13,13 @@ The following command surfaces are part of the v1 deterministic control plane:
 - `flow close-safe`
 - `flow transition`
 - `intake audit`
+- `intake map-sync`
+- `intake planning-exit`
+- `intake bulk-guard`
+- `preflight gate`
+- `preflight runtime-parity`
+- `recover loop`
+- `recover signature`
 - `resume`
 - `land`
 - `reason lint`
@@ -58,6 +65,7 @@ Typical result values include (non-exhaustive):
 - `gate_failed`
 - `operation_failed`
 - `check_passed`
+- `landed_with_skipped_gate3`
 - `ok`
 
 ## Exit-Code Policy

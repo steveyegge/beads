@@ -4,6 +4,8 @@ This folder defines role-specific guidance for planner, executor, and reviewer w
 
 `bd` CLI deterministic control behavior is authoritative; role playbooks cover judgment, sequencing, and communication.
 
+When `bd ready` is empty, split agents must run deterministic recover commands (`bd recover loop` + `bd recover signature`) before declaring no-work/landing.
+
 See:
 - `docs/agents/planner.md`
 - `docs/agents/executor.md`

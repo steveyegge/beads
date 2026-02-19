@@ -590,7 +590,7 @@ bd dep tree <issue-id> --max-depth 10
 bd dep remove <from-id> <to-id>
 ```
 
-Remember: Only `blocks` dependencies affect ready work.
+Remember: Ready-work blockers include `blocks`, `parent-child`, `conditional-blocks`, and `waits-for`.
 
 ### Circular dependency errors
 
@@ -620,8 +620,10 @@ bd dep tree <issue-id>
 
 Remember: Different dependency types have different meanings:
 - `blocks` - Hard blocker, affects ready work
+- `parent-child` - Hierarchical blocker (child inherits parent readiness constraints)
+- `conditional-blocks` - Blocks unless predecessor closes with failure reason
+- `waits-for` - Fanout gate blocker (wait for required child completion)
 - `related` - Soft relationship, doesn't block
-- `parent-child` - Hierarchical (child depends on parent)
 - `discovered-from` - Work discovered during another issue
 
 ## Performance Issues

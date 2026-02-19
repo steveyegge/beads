@@ -13,12 +13,17 @@ var resumeEpicID string
 var resumeSessionClosedCount int
 var resumeFileRereadCount int
 var resumeStateTransition bool
+var resumeStateFrom string
+var resumeStateTo string
 
 var resumeCmd = &cobra.Command{
 	Use:     "resume",
 	GroupID: "issues",
 	Short:   "Deterministic resume guard snapshot for an actor",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, resumeStateFrom, resumeStateTo) {
+			return
+		}
 		ctx := rootCtx
 		resumeActor := strings.TrimSpace(actor)
 		if resumeActor == "" {
@@ -186,6 +191,8 @@ func evaluateContextFreshnessSignals(sessionClosedCount, fileRereadCount int, st
 }
 
 func init() {
+	resumeCmd.Flags().StringVar(&resumeStateFrom, "state-from", "", "Current session state for lifecycle transition validation")
+	resumeCmd.Flags().StringVar(&resumeStateTo, "state-to", "", "Target session state for lifecycle transition validation")
 	resumeCmd.Flags().StringVar(&resumeEpicID, "epic", "", "Optional epic scope for WIP and anchor checks")
 	resumeCmd.Flags().IntVar(&resumeSessionClosedCount, "session-closed-count", 0, "Count of behavior-changing closes in current session")
 	resumeCmd.Flags().IntVar(&resumeFileRereadCount, "file-reread-count", 0, "Count of repeated file reads in current session")

@@ -19,6 +19,10 @@ Preserve legacy `@task-agent` usage by delegating to split roles:
    - Use execution-coordinator behavior to implement and verify changes.
 4. Landing:
    - Use cleanup-agent behavior to produce resumable handoff.
+5. Recovery:
+   - When scoped `ready` is empty, run deterministic recover loop before declaring idle:
+     - `bd recover loop --parent <epic-id> --module-label module/<name> --json`
+     - `bd recover signature --parent <epic-id> --iteration <n> --elapsed-minutes <m> --json`
 
 # Mandatory Write Policy
 

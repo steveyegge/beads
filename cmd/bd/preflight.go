@@ -64,6 +64,8 @@ var (
 	preflightSkipWIPGate        bool
 	preflightRemediateHardening bool
 	preflightRuntimeBinary      string
+	preflightStateFrom          string
+	preflightStateTo            string
 )
 
 var preflightCmd = &cobra.Command{
@@ -90,6 +92,8 @@ func init() {
 	preflightCmd.Flags().Bool("check", false, "Run checks automatically")
 	preflightCmd.Flags().Bool("fix", false, "Auto-fix issues where possible (not yet implemented)")
 	preflightCmd.Flags().Bool("json", false, "Output results as JSON")
+	preflightCmd.PersistentFlags().StringVar(&preflightStateFrom, "state-from", "", "Current session state for lifecycle transition validation")
+	preflightCmd.PersistentFlags().StringVar(&preflightStateTo, "state-to", "", "Target session state for lifecycle transition validation")
 	preflightGateCmd.Flags().StringVar(&preflightGateAction, "action", "claim", "Gate scope: claim or write")
 	preflightGateCmd.Flags().BoolVar(&preflightSkipWIPGate, "skip-wip-gate", false, "Skip WIP gate (resume-remediation only)")
 	preflightGateCmd.Flags().BoolVar(&preflightRemediateHardening, "remediate-hardening", false, "Auto-remediate hardening invariant keys before gate evaluation")
@@ -118,6 +122,9 @@ var preflightRuntimeParityCmd = &cobra.Command{
 }
 
 func runPreflightGate(cmd *cobra.Command, args []string) {
+	if !enforceLifecycleStateTransitionGuard(cmd, preflightStateFrom, preflightStateTo) {
+		return
+	}
 	ctx := rootCtx
 	action := strings.ToLower(strings.TrimSpace(preflightGateAction))
 	if action != "claim" && action != "write" {
@@ -339,6 +346,9 @@ func shortRepoID(id string) string {
 }
 
 func runPreflightRuntimeParity(cmd *cobra.Command, args []string) {
+	if !enforceLifecycleStateTransitionGuard(cmd, preflightStateFrom, preflightStateTo) {
+		return
+	}
 	binary := strings.TrimSpace(preflightRuntimeBinary)
 	if binary == "" {
 		binary = os.Args[0]
@@ -390,8 +400,10 @@ func runtimeCapabilityManifest() []runtimeCapabilityProbe {
 		{CommandPath: []string{"flow", "close-safe"}, MustContain: []string{"--require-parent-cascade", "--allow-open-children", "--require-priority-poll"}},
 		{CommandPath: []string{"intake"}, MustContain: []string{"audit", "map-sync", "planning-exit", "bulk-guard"}},
 		{CommandPath: []string{"intake", "audit"}, MustContain: []string{"--epic", "--write-proof"}},
-		{CommandPath: []string{"preflight"}, MustContain: []string{"gate", "runtime-parity"}},
-		{CommandPath: []string{"recover"}, MustContain: []string{"loop", "signature"}},
+		{CommandPath: []string{"preflight"}, MustContain: []string{"gate", "runtime-parity", "--state-from", "--state-to"}},
+		{CommandPath: []string{"recover"}, MustContain: []string{"loop", "signature", "--state-from", "--state-to"}},
+		{CommandPath: []string{"resume"}, MustContain: []string{"--state-from", "--state-to"}},
+		{CommandPath: []string{"reason", "lint"}, MustContain: []string{"--state-from", "--state-to"}},
 		{CommandPath: []string{"land"}, MustContain: []string{"--require-quality", "--require-handoff", "--state-from", "--state-to"}},
 		{CommandPath: []string{"dep"}, MustContain: []string{"tree", "cycles", "add"}},
 	}
