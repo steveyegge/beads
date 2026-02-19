@@ -37,6 +37,11 @@ type intakeMapData struct {
 	FindingMap   map[int]string
 }
 
+const (
+	intakeAuditModeOpenChildren = "open_children"
+	intakeAuditModeClosedEpic   = "closed_epic"
+)
+
 var intakeCmd = &cobra.Command{
 	Use:     "intake",
 	GroupID: "deps",
@@ -151,12 +156,8 @@ var intakeAuditCmd = &cobra.Command{
 			checks["FINDING_RECONCILE"] = "PASS"
 		}
 
-		statusOpen := types.StatusOpen
-		childrenFilter := types.IssueFilter{
-			Status:   &statusOpen,
-			ParentID: &epicResult.ResolvedID,
-			Limit:    0,
-		}
+		auditMode := resolveIntakeAuditMode(epicResult.Issue.Status)
+		childrenFilter := intakeAuditChildrenFilter(epicResult.ResolvedID, auditMode)
 		children, err := epicResult.Store.SearchIssues(ctx, "", childrenFilter)
 		if err != nil {
 			finishEnvelope(commandEnvelope{
@@ -259,8 +260,10 @@ var intakeAuditCmd = &cobra.Command{
 		actualReady = uniqueSortedIntakeStrings(actualReady)
 		if equalStringSets(expectedReady, actualReady) {
 			checks["READY_SET"] = "PASS"
-		} else {
+		} else if intakeAuditReadySetRequired(auditMode) {
 			addFailure("READY_SET")
+		} else {
+			checks["READY_SET"] = "N/A"
 		}
 
 		failedChecks = uniqueIntakeStrings(failedChecks)
@@ -277,6 +280,7 @@ var intakeAuditCmd = &cobra.Command{
 					"actual_ready":   actualReady,
 					"child_count":    len(children),
 					"plan_count":     parsed.PlanCount,
+					"audit_mode":     auditMode,
 				},
 				Events: []string{"intake_audit_failed"},
 			}, exitCodePolicyViolation)
@@ -312,10 +316,34 @@ var intakeAuditCmd = &cobra.Command{
 				"child_count":    len(children),
 				"plan_count":     parsed.PlanCount,
 				"expected_ready": expectedReady,
+				"audit_mode":     auditMode,
 			},
 			Events: []string{"intake_audit_passed"},
 		}, 0)
 	},
+}
+
+func resolveIntakeAuditMode(epicStatus types.Status) string {
+	if epicStatus == types.StatusClosed {
+		return intakeAuditModeClosedEpic
+	}
+	return intakeAuditModeOpenChildren
+}
+
+func intakeAuditChildrenFilter(parentID, mode string) types.IssueFilter {
+	filter := types.IssueFilter{
+		ParentID: &parentID,
+		Limit:    0,
+	}
+	if mode == intakeAuditModeOpenChildren {
+		statusOpen := types.StatusOpen
+		filter.Status = &statusOpen
+	}
+	return filter
+}
+
+func intakeAuditReadySetRequired(mode string) bool {
+	return mode == intakeAuditModeOpenChildren
 }
 
 var intakeBulkGuardCmd = &cobra.Command{

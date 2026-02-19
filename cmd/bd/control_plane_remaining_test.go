@@ -235,6 +235,35 @@ func TestPreflightGateEnforcement(t *testing.T) {
 	}
 }
 
+func TestPreflightGateUsesBoundedDiagnostics(t *testing.T) {
+	root := findRepoRootForContractTest(t)
+	preflightPath := filepath.Join(root, "cmd", "bd", "preflight.go")
+	data, err := os.ReadFile(preflightPath)
+	if err != nil {
+		t.Fatalf("read preflight.go: %v", err)
+	}
+	text := string(data)
+
+	if !strings.Contains(text, "runPreflightGateChecks(ctx, workingPath)") {
+		t.Fatalf("preflight gate must use bounded check helper")
+	}
+	if strings.Contains(text, "runDiagnostics(workingPath)") {
+		t.Fatalf("preflight gate must not invoke full doctor diagnostics")
+	}
+
+	requiredTokens := []string{
+		"preflightCheckRepoFingerprint(ctx)",
+		"doctor.CheckDatabaseConfig(path)",
+		"doctor.CheckSyncDivergence(path)",
+		"doctor.CheckIssuesTracking()",
+	}
+	for _, token := range requiredTokens {
+		if !strings.Contains(text, token) {
+			t.Fatalf("bounded preflight checks missing token %q", token)
+		}
+	}
+}
+
 func TestBootstrapAutoSetsHardeningInvariant(t *testing.T) {
 	updates := make(map[string]string)
 	setter := func(key, value string) error {
@@ -1772,6 +1801,32 @@ func TestIntakeMapSyncRewritesCanonicalBlock(t *testing.T) {
 	}
 	if strings.Contains(updated, "PLAN-1 -> old") {
 		t.Fatalf("old intake map content should be removed: %q", updated)
+	}
+}
+
+func TestIntakeAuditClosedEpicMode(t *testing.T) {
+	if got := resolveIntakeAuditMode(types.StatusClosed); got != intakeAuditModeClosedEpic {
+		t.Fatalf("expected closed epic mode, got %q", got)
+	}
+	if got := resolveIntakeAuditMode(types.StatusOpen); got != intakeAuditModeOpenChildren {
+		t.Fatalf("expected open-children mode for open epic, got %q", got)
+	}
+
+	openFilter := intakeAuditChildrenFilter("bd-parent", intakeAuditModeOpenChildren)
+	if openFilter.Status == nil || *openFilter.Status != types.StatusOpen {
+		t.Fatalf("open mode must enforce open-child filter, got %#v", openFilter)
+	}
+
+	closedFilter := intakeAuditChildrenFilter("bd-parent", intakeAuditModeClosedEpic)
+	if closedFilter.Status != nil {
+		t.Fatalf("closed-epic mode must query all children, got status filter %#v", closedFilter.Status)
+	}
+
+	if !intakeAuditReadySetRequired(intakeAuditModeOpenChildren) {
+		t.Fatalf("open-children mode should require ready-set equality")
+	}
+	if intakeAuditReadySetRequired(intakeAuditModeClosedEpic) {
+		t.Fatalf("closed-epic mode should not require ready-set equality")
 	}
 }
 

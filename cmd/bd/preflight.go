@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/cmd/bd/doctor"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -51,6 +53,8 @@ type preflightGateAssessment struct {
 var preflightCriticalDoctorWarnings = map[string]struct{}{
 	"Repo Fingerprint": {},
 	"DB-JSONL Sync":    {},
+	"Dolt-JSONL Sync":  {},
+	"Database Config":  {},
 	"Sync Divergence":  {},
 	"Issues Tracking":  {},
 }
@@ -152,7 +156,7 @@ func runPreflightGate(cmd *cobra.Command, args []string) {
 		}, 1)
 		return
 	}
-	diagnostics := runDiagnostics(workingPath)
+	checks := runPreflightGateChecks(ctx, workingPath)
 
 	wipGateEnforced := !preflightSkipWIPGate
 	wipCount := 0
@@ -198,7 +202,7 @@ func runPreflightGate(cmd *cobra.Command, args []string) {
 		action,
 		validationOnCreate,
 		requireDescription,
-		diagnostics.Checks,
+		checks,
 		wipCount,
 		wipGateEnforced,
 	)
@@ -246,6 +250,83 @@ func runPreflightGate(cmd *cobra.Command, args []string) {
 		Details: details,
 		Events:  []string{"preflight_passed"},
 	}, 0)
+}
+
+func runPreflightGateChecks(ctx context.Context, path string) []doctorCheck {
+	// Keep preflight gate bounded and deterministic: only checks that contribute
+	// to control-plane blockers are evaluated here.
+	raw := []doctor.DoctorCheck{
+		doctor.CheckInstallation(path),
+		preflightCheckRepoFingerprint(ctx),
+		doctor.CheckDatabaseConfig(path),
+		doctor.CheckSyncDivergence(path),
+		doctor.CheckIssuesTracking(),
+	}
+	out := make([]doctorCheck, 0, len(raw))
+	for _, check := range raw {
+		out = append(out, convertDoctorCheck(check))
+	}
+	return out
+}
+
+func preflightCheckRepoFingerprint(ctx context.Context) doctor.DoctorCheck {
+	if store == nil {
+		return doctor.DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  doctor.StatusWarning,
+			Message: "Store unavailable",
+		}
+	}
+
+	storedRepoID, err := store.GetMetadata(ctx, "repo_id")
+	if err != nil {
+		return doctor.DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  doctor.StatusWarning,
+			Message: "Unable to read repo fingerprint",
+			Detail:  err.Error(),
+		}
+	}
+	if strings.TrimSpace(storedRepoID) == "" {
+		return doctor.DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  doctor.StatusWarning,
+			Message: "Missing repo fingerprint metadata",
+		}
+	}
+
+	currentRepoID, err := beads.ComputeRepoID()
+	if err != nil {
+		return doctor.DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  doctor.StatusWarning,
+			Message: "Unable to compute current repo ID",
+			Detail:  err.Error(),
+		}
+	}
+
+	if storedRepoID != currentRepoID {
+		return doctor.DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  doctor.StatusError,
+			Message: "Database belongs to different repository",
+			Detail:  fmt.Sprintf("stored: %s, current: %s", shortRepoID(storedRepoID), shortRepoID(currentRepoID)),
+		}
+	}
+
+	return doctor.DoctorCheck{
+		Name:    "Repo Fingerprint",
+		Status:  doctor.StatusOK,
+		Message: fmt.Sprintf("Verified (%s)", shortRepoID(currentRepoID)),
+	}
+}
+
+func shortRepoID(id string) string {
+	trimmed := strings.TrimSpace(id)
+	if len(trimmed) <= 8 {
+		return trimmed
+	}
+	return trimmed[:8]
 }
 
 func runPreflightRuntimeParity(cmd *cobra.Command, args []string) {
