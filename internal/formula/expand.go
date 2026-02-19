@@ -81,6 +81,11 @@ func ApplyExpansions(steps []*Step, compose *ComposeRules, parser *Parser) ([]*S
 			return nil, fmt.Errorf("expand %q: %w", rule.Target, err)
 		}
 
+		// Propagate target step's dependencies to root steps of the expansion.
+		// Root steps are those whose needs/dependsOn only reference IDs within
+		// the expansion (or are empty) — they are the entry points.
+		propagateTargetDeps(targetStep, expandedSteps)
+
 		// Replace the target step with expanded steps
 		result = replaceStep(result, rule.Target, expandedSteps)
 		expanded[rule.Target] = true
@@ -92,11 +97,8 @@ func ApplyExpansions(steps []*Step, compose *ComposeRules, parser *Parser) ([]*S
 			result = UpdateDependenciesForExpansion(result, rule.Target, lastStepID)
 		}
 
-		// Update step map with new steps
-		for _, s := range expandedSteps {
-			stepMap[s.ID] = s
-		}
-		delete(stepMap, rule.Target)
+		// Rebuild stepMap from result so subsequent iterations see resolved deps
+		stepMap = buildStepMap(result)
 	}
 
 	// Apply map rules (pattern matching)
@@ -134,6 +136,10 @@ func ApplyExpansions(steps []*Step, compose *ComposeRules, parser *Parser) ([]*S
 			if err != nil {
 				return nil, fmt.Errorf("map %q -> %q: %w", rule.Select, targetStep.ID, err)
 			}
+
+			// Propagate target step's dependencies to root steps of the expansion
+			propagateTargetDeps(targetStep, expandedSteps)
+
 			result = replaceStep(result, targetStep.ID, expandedSteps)
 			expanded[targetStep.ID] = true
 
@@ -144,11 +150,8 @@ func ApplyExpansions(steps []*Step, compose *ComposeRules, parser *Parser) ([]*S
 				result = UpdateDependenciesForExpansion(result, targetStep.ID, lastStepID)
 			}
 
-			// Update step map
-			for _, s := range expandedSteps {
-				stepMap[s.ID] = s
-			}
-			delete(stepMap, targetStep.ID)
+			// Rebuild stepMap from result so subsequent iterations see resolved deps
+			stepMap = buildStepMap(result)
 		}
 	}
 
@@ -361,6 +364,49 @@ func UpdateDependenciesForExpansion(steps []*Step, expandedID string, lastExpand
 	return result
 }
 
+// propagateTargetDeps copies the target step's Needs and DependsOn to the root
+// steps of an expansion. Root steps are those whose existing dependencies only
+// reference other steps within the expansion (i.e., they have no external deps
+// from the template). This preserves cross-expansion dependency chains that would
+// otherwise be lost when the target step is replaced.
+func propagateTargetDeps(target *Step, expandedSteps []*Step) {
+	if len(target.Needs) == 0 && len(target.DependsOn) == 0 {
+		return
+	}
+
+	expandedIDs := make(map[string]bool, len(expandedSteps))
+	for _, s := range expandedSteps {
+		expandedIDs[s.ID] = true
+	}
+
+	for _, s := range expandedSteps {
+		isRoot := true
+		for _, n := range s.Needs {
+			if expandedIDs[n] {
+				isRoot = false
+				break
+			}
+		}
+		if isRoot {
+			for _, d := range s.DependsOn {
+				if expandedIDs[d] {
+					isRoot = false
+					break
+				}
+			}
+		}
+		if isRoot {
+			// Prepend target's deps (new slice to avoid aliasing)
+			if len(target.Needs) > 0 {
+				s.Needs = append(append([]string{}, target.Needs...), s.Needs...)
+			}
+			if len(target.DependsOn) > 0 {
+				s.DependsOn = append(append([]string{}, target.DependsOn...), s.DependsOn...)
+			}
+		}
+	}
+}
+
 // ApplyInlineExpansions applies Step.Expand fields to inline expansions.
 // Steps with the Expand field set are replaced by the referenced expansion template.
 // The step's ExpandVars are passed as variable overrides to the expansion.
@@ -413,6 +459,9 @@ func applyInlineExpansionsRecursive(steps []*Step, parser *Parser, depth int) ([
 			if err != nil {
 				return nil, fmt.Errorf("inline expand on step %q: %w", step.ID, err)
 			}
+
+			// Propagate the original step's dependencies to root steps of the expansion
+			propagateTargetDeps(step, expandedSteps)
 
 			// Recursively process expanded steps for nested inline expansions
 			processedSteps, err := applyInlineExpansionsRecursive(expandedSteps, parser, depth+1)
