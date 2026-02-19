@@ -50,13 +50,10 @@ jobs:
             "cc-x86_64-freebsd:x86_64-freebsd"; do
             name="${pair%%:*}"
             target="${pair##*:}"
-            # Each wrapper gets its own zig cache to avoid AccessDenied races
-            # when goreleaser builds multiple targets in parallel.
-            # Must unset first because repo/workflow env vars override exports.
-            cache_dir="/tmp/zigcc/cache-${target}"
-            mkdir -p "$cache_dir"
-            printf '#!/bin/sh\nunset ZIG_GLOBAL_CACHE_DIR ZIG_LOCAL_CACHE_DIR\nexport ZIG_GLOBAL_CACHE_DIR=%s\nexport ZIG_LOCAL_CACHE_DIR=%s\nexec zig cc -target %s "$@"\n' \
-              "$cache_dir" "$cache_dir" "$target" > "/tmp/zigcc/$name"
+            # Serialize zig calls per target with flock to prevent
+            # AccessDenied races when go build invokes CC in parallel.
+            printf '#!/bin/sh\nexec flock /tmp/zigcc/lock-%s zig cc -target %s "$@"\n' \
+              "$target" "$target" > "/tmp/zigcc/$name"
             chmod +x "/tmp/zigcc/$name"
           done
 
