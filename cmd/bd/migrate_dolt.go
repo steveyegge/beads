@@ -490,7 +490,8 @@ func importToDolt(ctx context.Context, store *dolt.DoltStore, data *migrationDat
 		)
 		if err != nil {
 			if strings.Contains(err.Error(), "Duplicate entry") ||
-				strings.Contains(err.Error(), "UNIQUE constraint") {
+				strings.Contains(err.Error(), "UNIQUE constraint") ||
+				strings.Contains(err.Error(), "duplicate primary key") {
 				skipped++
 				continue
 			}

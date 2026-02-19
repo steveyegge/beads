@@ -501,8 +501,11 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 		// Insert issue
 		if err := insertIssue(ctx, tx, issue); err != nil {
 			// Check for duplicate key (issue already exists)
+			// Handle all SQL engine formats: MySQL ("Duplicate entry"),
+			// SQLite ("UNIQUE constraint"), Dolt embedded ("duplicate primary key")
 			if strings.Contains(err.Error(), "Duplicate entry") ||
-				strings.Contains(err.Error(), "UNIQUE constraint") {
+				strings.Contains(err.Error(), "UNIQUE constraint") ||
+				strings.Contains(err.Error(), "duplicate primary key") {
 				skipped++
 				continue
 			}
@@ -515,7 +518,8 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 				INSERT INTO labels (issue_id, label)
 				VALUES (?, ?)
 			`, issue.ID, label)
-			if err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
+			if err != nil && !strings.Contains(err.Error(), "Duplicate entry") &&
+				!strings.Contains(err.Error(), "duplicate primary key") {
 				return imported, skipped, fmt.Errorf("failed to insert label for %s: %w", issue.ID, err)
 			}
 		}
@@ -539,7 +543,8 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 				VALUES (?, ?, ?, ?, ?)
 				ON DUPLICATE KEY UPDATE type = type
 			`, dep.IssueID, dep.DependsOnID, dep.Type, "bootstrap", time.Now().UTC())
-			if err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
+			if err != nil && !strings.Contains(err.Error(), "Duplicate entry") &&
+				!strings.Contains(err.Error(), "duplicate primary key") {
 				// Non-fatal for dependencies
 				fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to import dependency %s -> %s: %v\n",
 					dep.IssueID, dep.DependsOnID, err)
@@ -637,7 +642,8 @@ func importInteractionsBootstrap(ctx context.Context, store *DoltStore, interact
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE kind = kind
 		`, entry.ID, entry.Kind, entry.CreatedAt, entry.Actor, entry.IssueID, entry.Model, entry.Prompt, entry.Response, entry.Error, entry.ToolName, entry.ExitCode, entry.ParentID, entry.Label, entry.Reason, extraJSON)
-		if err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
+		if err != nil && !strings.Contains(err.Error(), "Duplicate entry") &&
+			!strings.Contains(err.Error(), "duplicate primary key") {
 			// Non-fatal - skip individual failures
 			fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to import interaction %s: %v\n", entry.ID, err)
 			continue
