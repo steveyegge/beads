@@ -68,7 +68,7 @@ var createCmd = &cobra.Command{
 		silent, _ := cmd.Flags().GetBool("silent")
 
 		// Warn if creating a test issue in production database (unless silent mode)
-		if isTestIssue(title) && !silent && !debug.IsQuiet() {
+		if validation.IsTestIssueTitle(title) && !silent && !debug.IsQuiet() {
 			fmt.Fprintf(os.Stderr, "%s Creating test issue in production database\n", ui.RenderWarn("⚠"))
 			fmt.Fprintf(os.Stderr, "  Title: %q appears to be test data\n", title)
 			fmt.Fprintf(os.Stderr, "  Recommendation: Use isolated test database with BEADS_DB\n")
@@ -79,7 +79,7 @@ var createCmd = &cobra.Command{
 		description, _ := getDescriptionFlag(cmd)
 
 		// Check if description is required by config
-		if description == "" && !isTestIssue(title) {
+		if description == "" && !validation.IsTestIssueTitle(title) {
 			if config.GetBool("create.require-description") {
 				FatalError("description is required (set create.require-description: false in config.yaml to disable)")
 			}
