@@ -13,6 +13,7 @@ enabling more efficient agent operation without sacrificing functionality.
 import asyncio
 import atexit
 import importlib.metadata
+import inspect
 import json
 import logging
 import os
@@ -149,7 +150,16 @@ def cleanup() -> None:
     for client in _daemon_clients:
         try:
             if hasattr(client, 'cleanup'):
-                client.cleanup()
+                result = client.cleanup()
+                if inspect.isawaitable(result):
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        # No active loop: run async cleanup to completion.
+                        asyncio.run(result)
+                    else:
+                        # Active loop: schedule cleanup task.
+                        loop.create_task(result)
                 logger.debug(f"Closed daemon client: {client}")
         except Exception as e:
             logger.warning(f"Error closing daemon client: {e}")

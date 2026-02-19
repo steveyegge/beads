@@ -30,6 +30,11 @@ def test_cleanup_handlers_registered():
 def test_cleanup_function_safe_to_call_multiple_times():
     """Test that cleanup function can be called multiple times safely."""
     from beads_mcp.server import cleanup, _daemon_clients
+    import beads_mcp.server as server
+
+    # Reset state for deterministic behavior.
+    server._cleanup_done = False
+    _daemon_clients.clear()
     
     # Mock client
     mock_client = MagicMock()
@@ -42,6 +47,29 @@ def test_cleanup_function_safe_to_call_multiple_times():
     
     # Client should only be cleaned up once
     assert mock_client.cleanup.call_count == 1
+    assert len(_daemon_clients) == 0
+
+
+def test_cleanup_handles_async_client_cleanup():
+    """Test that cleanup executes async client cleanup methods safely."""
+    from beads_mcp.server import cleanup, _daemon_clients
+    import beads_mcp.server as server
+
+    # Reset state for deterministic behavior.
+    server._cleanup_done = False
+    _daemon_clients.clear()
+
+    state = {"called": False}
+
+    class AsyncClient:
+        async def cleanup(self):
+            state["called"] = True
+
+    _daemon_clients.append(AsyncClient())
+
+    cleanup()
+
+    assert state["called"] is True
     assert len(_daemon_clients) == 0
 
 
