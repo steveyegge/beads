@@ -592,65 +592,6 @@ func CheckSyncBranchHookCompatibility(path string) DoctorCheck {
 	}
 }
 
-// CheckMergeDriver verifies that the git merge driver is correctly configured.
-func CheckMergeDriver(path string) DoctorCheck {
-	// Check if we're in a git repository using worktree-aware detection
-	_, err := git.GetGitDir()
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Git Merge Driver",
-			Status:  StatusOK,
-			Message: "N/A (not a git repository)",
-		}
-	}
-
-	// Get current merge driver configuration
-	cmd := exec.Command("git", "config", "merge.beads.driver")
-	cmd.Dir = path
-	output, err := cmd.Output()
-	if err != nil {
-		// Merge driver not configured
-		return DoctorCheck{
-			Name:    "Git Merge Driver",
-			Status:  StatusWarning,
-			Message: "Git merge driver not configured",
-			Fix:     "Run 'bd init' to configure the merge driver, or manually: git config merge.beads.driver \"bd merge %A %O %A %B\"",
-		}
-	}
-
-	currentConfig := strings.TrimSpace(string(output))
-	correctConfig := "bd merge %A %O %A %B"
-
-	// Check if using old incorrect placeholders
-	if strings.Contains(currentConfig, "%L") || strings.Contains(currentConfig, "%R") {
-		return DoctorCheck{
-			Name:    "Git Merge Driver",
-			Status:  StatusError,
-			Message: fmt.Sprintf("Incorrect merge driver config: %q (uses invalid %%L/%%R placeholders)", currentConfig),
-			Detail:  "Git only supports %O (base), %A (current), %B (other). Using %L/%R causes merge failures.",
-			Fix:     "Run 'bd doctor --fix' to update to correct config, or manually: git config merge.beads.driver \"bd merge %A %O %A %B\"",
-		}
-	}
-
-	// Check if config is correct
-	if currentConfig != correctConfig {
-		return DoctorCheck{
-			Name:    "Git Merge Driver",
-			Status:  StatusWarning,
-			Message: fmt.Sprintf("Non-standard merge driver config: %q", currentConfig),
-			Detail:  fmt.Sprintf("Expected: %q", correctConfig),
-			Fix:     fmt.Sprintf("Run 'bd doctor --fix' to update config, or manually: git config merge.beads.driver \"%s\"", correctConfig),
-		}
-	}
-
-	return DoctorCheck{
-		Name:    "Git Merge Driver",
-		Status:  StatusOK,
-		Message: "Correctly configured",
-		Detail:  currentConfig,
-	}
-}
-
 // CheckSyncBranchConfig checks if sync-branch is properly configured.
 func CheckSyncBranchConfig(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
@@ -919,11 +860,6 @@ func CheckGitHooksDoltCompatibility(path string) DoctorCheck {
 // fixGitHooks fixes missing or broken git hooks by calling bd hooks install.
 func fixGitHooks(path string) error {
 	return fix.GitHooks(path)
-}
-
-// fixMergeDriver fixes the git merge driver configuration to use correct placeholders.
-func fixMergeDriver(path string) error {
-	return fix.MergeDriver(path)
 }
 
 // fixSyncBranchHealth fixes database-JSONL sync issues.

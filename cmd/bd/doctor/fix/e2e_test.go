@@ -134,17 +134,6 @@ func TestUntrackedJSONL_E2E(t *testing.T) {
 	})
 }
 
-// TestMergeDriver_E2E tests MergeDriver is a no-op (merge engine removed).
-func TestMergeDriver_E2E(t *testing.T) {
-	t.Run("is a no-op", func(t *testing.T) {
-		dir := setupTestGitRepo(t)
-		err := MergeDriver(dir)
-		if err != nil {
-			t.Fatalf("MergeDriver should be a no-op, got error: %v", err)
-		}
-	})
-}
-
 // TestSyncBranchHealth_E2E tests the full SyncBranchHealth fix flow
 func TestSyncBranchHealth_E2E(t *testing.T) {
 	t.Run("resets sync branch when behind main", func(t *testing.T) {
@@ -724,16 +713,6 @@ func TestUntrackedJSONLWithUncommittedChanges_E2E(t *testing.T) {
 		output = runGit(t, dir, "status", "--porcelain", "README.md")
 		if !strings.Contains(output, " M") {
 			t.Error("unstaged changes should remain unstaged")
-		}
-	})
-}
-
-// TestMergeDriverWithLockedConfig_E2E is a no-op test (merge engine removed).
-func TestMergeDriverWithLockedConfig_E2E(t *testing.T) {
-	t.Run("is a no-op regardless of config state", func(t *testing.T) {
-		err := MergeDriver(t.TempDir())
-		if err != nil {
-			t.Fatalf("MergeDriver should be a no-op, got error: %v", err)
 		}
 	})
 }

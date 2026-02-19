@@ -369,36 +369,6 @@ func gitPull(ctx context.Context, configuredRemote string) error {
 	return nil
 }
 
-// checkMergeDriverConfig checks if the merge driver is misconfigured in the beads repository.
-// Uses RepoContext to ensure git commands run in the correct repository.
-func checkMergeDriverConfig() {
-	rc, err := beads.GetRepoContext()
-	if err != nil {
-		return // No beads context, skip check
-	}
-
-	ctx := context.Background()
-	// Get current merge driver configuration
-	cmd := rc.GitCmd(ctx, "config", "merge.beads.driver")
-	output, err := cmd.Output()
-	if err != nil {
-		// No merge driver configured - this is OK, user may not need it
-		return
-	}
-
-	currentConfig := strings.TrimSpace(string(output))
-
-	// Check if using old incorrect placeholders
-	if strings.Contains(currentConfig, "%L") || strings.Contains(currentConfig, "%R") {
-		fmt.Fprintf(os.Stderr, "\n⚠️  WARNING: Git merge driver is misconfigured!\n")
-		fmt.Fprintf(os.Stderr, "   Current: %s\n", currentConfig)
-		fmt.Fprintf(os.Stderr, "   Problem: Git only supports %%O (base), %%A (current), %%B (other)\n")
-		fmt.Fprintf(os.Stderr, "            Using %%L/%%R will cause merge failures!\n")
-		fmt.Fprintf(os.Stderr, "\n   Fix now: bd doctor --fix\n")
-		fmt.Fprintf(os.Stderr, "   Or manually: git config merge.beads.driver \"bd merge %%A %%O %%A %%B\"\n\n")
-	}
-}
-
 // gitHasUncommittedBeadsChanges checks if .beads/issues.jsonl has uncommitted changes.
 // This detects the failure mode where a previous sync exported but failed before commit.
 // Returns true if the JSONL file has staged or unstaged changes (M or A status).

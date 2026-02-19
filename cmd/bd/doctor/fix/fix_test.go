@@ -73,17 +73,6 @@ func TestGitHooks_Validation(t *testing.T) {
 	})
 }
 
-// TestMergeDriver_Validation tests MergeDriver is a no-op (merge engine removed).
-func TestMergeDriver_Validation(t *testing.T) {
-	t.Run("is a no-op", func(t *testing.T) {
-		dir := setupTestGitRepo(t)
-		err := MergeDriver(dir)
-		if err != nil {
-			t.Fatalf("MergeDriver should be a no-op, got error: %v", err)
-		}
-	})
-}
-
 // TestDBJSONLSync_Validation tests DBJSONLSync validation
 func TestDBJSONLSync_Validation(t *testing.T) {
 	t.Run("no database - nothing to do", func(t *testing.T) {

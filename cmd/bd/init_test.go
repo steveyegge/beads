@@ -714,9 +714,6 @@ func TestInitNoDbMode(t *testing.T) {
 	}
 }
 
-// TestInitMergeDriverAutoConfiguration removed: merge driver functions
-// (mergeDriverInstalled, installMergeDriver) were removed in Dolt-native pruning.
-
 // TestReadFirstIssueFromJSONL_ValidFile verifies reading first issue from valid JSONL
 func TestReadFirstIssueFromJSONL_ValidFile(t *testing.T) {
 	tempDir := t.TempDir()

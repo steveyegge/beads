@@ -276,8 +276,6 @@ func applyFixList(path string, fixes []doctorCheck) {
 			if mErr := fix.FixMissingMetadata(path, Version); mErr != nil && err == nil {
 				err = mErr
 			}
-		case "Git Merge Driver":
-			err = fix.MergeDriver(path)
 		case "Sync Branch Config":
 			// No auto-fix: sync-branch should be added to config.yaml (version controlled)
 			fmt.Printf("  ⚠ Add 'sync-branch: beads-sync' to .beads/config.yaml\n")

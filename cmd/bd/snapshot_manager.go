@@ -236,12 +236,12 @@ func (sm *SnapshotManager) Initialize() error {
 	return nil
 }
 
-// ComputeAcceptedDeletions identifies issues that were deleted remotely
+// ComputeAcceptedDeletions identifies issues that were deleted remotely.
 // An issue is an "accepted deletion" if:
 // - It exists in base (last import)
-// - It does NOT exist in merged (after 3-way merge)
+// - It does NOT exist in merged result
 //
-// Note (bd-pq5k): Deletion always wins over modification in the merge,
+// Note (bd-pq5k): Deletion always wins over modification,
 // so if an issue is deleted in the merged result, we accept it regardless
 // of local changes.
 func (sm *SnapshotManager) ComputeAcceptedDeletions(mergedPath string) ([]string, error) {
@@ -266,9 +266,7 @@ func (sm *SnapshotManager) ComputeAcceptedDeletions(mergedPath string) ([]string
 	for id := range baseIndex {
 		// Issue in base but not in merged
 		if !mergedIDs[id] {
-			// bd-pq5k: Deletion always wins over modification in 3-way merge
-			// If the merge resulted in deletion, accept it regardless of local changes
-			// The 3-way merge already determined that deletion should win
+			// bd-pq5k: Deletion always wins over modification
 			deletions = append(deletions, id)
 		}
 	}
