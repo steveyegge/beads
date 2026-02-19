@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# bd-shim v1
+# bd-shim v2
 # bd-hooks-version: 0.55.4
 #
 # bd (beads) pre-push hook - thin shim
