@@ -32,16 +32,6 @@ func DetectPendingMigrations(path string) []PendingMigration {
 		return pending
 	}
 
-	// Check for missing sync-branch config (sync migration)
-	if needsSyncMigration(path) {
-		pending = append(pending, PendingMigration{
-			Name:        "sync",
-			Description: "Configure sync branch for multi-clone setup",
-			Command:     "bd migrate sync beads-sync",
-			Priority:    3,
-		})
-	}
-
 	return pending
 }
 
@@ -97,11 +87,6 @@ func CheckPendingMigrations(path string) DoctorCheck {
 		Fix:      strings.Join(fixes, "\n"),
 		Category: CategoryMaintenance,
 	}
-}
-
-// needsSyncMigration always returns false now that sync-branch is removed.
-func needsSyncMigration(repoPath string) bool {
-	return false
 }
 
 // hasGitRemote checks if the repository has a git remote

@@ -7,6 +7,39 @@ import (
 	"testing"
 )
 
+// setupTestRepo creates a temporary git repository for testing.
+func setupTestRepo(t *testing.T) (repoPath string, cleanup func()) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	repoPath = filepath.Join(tmpDir, "test-repo")
+	if err := os.MkdirAll(repoPath, 0750); err != nil {
+		t.Fatalf("Failed to create test repo directory: %v", err)
+	}
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoPath
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to init git repo: %v\nOutput: %s", err, string(output))
+	}
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = repoPath
+	_ = cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = repoPath
+	_ = cmd.Run()
+	beadsDir := filepath.Join(repoPath, ".beads")
+	_ = os.MkdirAll(beadsDir, 0750)
+	_ = os.WriteFile(filepath.Join(beadsDir, "test.jsonl"), []byte("test data\n"), 0644)
+	_ = os.WriteFile(filepath.Join(repoPath, "other.txt"), []byte("other data\n"), 0644)
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = repoPath
+	_ = cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd.Dir = repoPath
+	_, _ = cmd.CombinedOutput()
+	cleanup = func() {}
+	return repoPath, cleanup
+}
+
 func TestGetGitHooksDirTildeExpansion(t *testing.T) {
 	// Use an explicit temporary HOME so tilde expansion is deterministic
 	// regardless of the environment (CI, containers, overridden HOME, etc.).

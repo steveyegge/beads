@@ -634,21 +634,3 @@ func FixLastTouchedTracking() error {
 	return nil
 }
 
-// CheckSyncBranchGitignore is a no-op now that sync-branch is removed.
-func CheckSyncBranchGitignore() DoctorCheck {
-	return DoctorCheck{
-		Name:    "Sync Branch Gitignore",
-		Status:  StatusOK,
-		Message: "N/A (sync-branch removed)",
-	}
-}
-
-// FixSyncBranchGitignore is a no-op now that sync-branch is removed.
-func FixSyncBranchGitignore() error {
-	return nil
-}
-
-// SetSyncBranchGitignoreFlags is a no-op now that sync-branch is removed.
-func SetSyncBranchGitignoreFlags(path string) error {
-	return nil
-}

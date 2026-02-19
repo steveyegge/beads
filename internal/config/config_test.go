@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // envSnapshot saves and clears BD_/BEADS_ environment variables.
@@ -67,7 +66,6 @@ func TestDefaults(t *testing.T) {
 		{"json", false, func(k string) interface{} { return GetBool(k) }},
 		{"db", "", func(k string) interface{} { return GetString(k) }},
 		{"actor", "", func(k string) interface{} { return GetString(k) }},
-		{"flush-debounce", 30 * time.Second, func(k string) interface{} { return GetDuration(k) }},
 	}
 
 	for _, tt := range tests {
@@ -92,7 +90,6 @@ func TestEnvironmentBinding(t *testing.T) {
 		{"BD_JSON", "json", "true", true, func(k string) interface{} { return GetBool(k) }},
 		{"BD_ACTOR", "actor", "testuser", "testuser", func(k string) interface{} { return GetString(k) }},
 		{"BD_DB", "db", "/tmp/test.db", "/tmp/test.db", func(k string) interface{} { return GetString(k) }},
-		{"BEADS_FLUSH_DEBOUNCE", "flush-debounce", "10s", 10 * time.Second, func(k string) interface{} { return GetDuration(k) }},
 	}
 
 	for _, tt := range tests {
@@ -129,7 +126,6 @@ func TestConfigFile(t *testing.T) {
 json: true
 no-daemon: true
 actor: configuser
-flush-debounce: 15s
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
@@ -170,10 +166,6 @@ flush-debounce: 15s
 	if got := GetString("actor"); got != "configuser" {
 		t.Errorf("GetString(actor) = %q, want \"configuser\"", got)
 	}
-
-	if got := GetDuration("flush-debounce"); got != 15*time.Second {
-		t.Errorf("GetDuration(flush-debounce) = %v, want 15s", got)
-	}
 }
 
 func TestLocalConfigOverride(t *testing.T) {
@@ -195,7 +187,6 @@ func TestLocalConfigOverride(t *testing.T) {
 json: false
 no-daemon: false
 actor: project-user
-flush-debounce: 15s
 `
 	configPath := filepath.Join(beadsDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
@@ -232,10 +223,6 @@ actor: local-user
 	// Test that non-overridden values from project config are preserved
 	if got := GetBool("json"); got != false {
 		t.Errorf("GetBool(json) = %v, want false (from project config)", got)
-	}
-
-	if got := GetDuration("flush-debounce"); got != 15*time.Second {
-		t.Errorf("GetDuration(flush-debounce) = %v, want 15s (from project config)", got)
 	}
 }
 

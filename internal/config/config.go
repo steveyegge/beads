@@ -130,15 +130,8 @@ func Initialize() error {
 	v.SetDefault("actor", "")
 	v.SetDefault("issue-prefix", "")
 	// Additional environment variables (not prefixed with BD_)
-	// These are bound explicitly for backward compatibility
-	_ = v.BindEnv("flush-debounce", "BEADS_FLUSH_DEBOUNCE")             // BindEnv only fails with zero args, which can't happen here
-	_ = v.BindEnv("identity", "BEADS_IDENTITY")                         // BindEnv only fails with zero args, which can't happen here
-	_ = v.BindEnv("remote-sync-interval", "BEADS_REMOTE_SYNC_INTERVAL") // BindEnv only fails with zero args, which can't happen here
-
-	// Set defaults for additional settings
-	v.SetDefault("flush-debounce", "30s")
+	_ = v.BindEnv("identity", "BEADS_IDENTITY") // BindEnv only fails with zero args, which can't happen here
 	v.SetDefault("identity", "")
-	v.SetDefault("remote-sync-interval", "30s")
 
 	// Dolt configuration defaults
 	// Controls whether beads should automatically create Dolt commits after write commands.

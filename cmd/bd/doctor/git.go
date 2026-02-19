@@ -426,15 +426,6 @@ func gitRevListCount(path string, rangeExpr string) (int, error) {
 	return n, nil
 }
 
-// CheckSyncBranchHookCompatibility is a no-op now that sync-branch is removed.
-func CheckSyncBranchHookCompatibility(path string) DoctorCheck {
-	return DoctorCheck{
-		Name:    "Sync Branch Hook Compatibility",
-		Status:  StatusOK,
-		Message: "N/A (sync-branch removed)",
-	}
-}
-
 // CheckMergeDriver verifies that the git merge driver is correctly configured.
 func CheckMergeDriver(path string) DoctorCheck {
 	// Check if we're in a git repository using worktree-aware detection
@@ -494,23 +485,6 @@ func CheckMergeDriver(path string) DoctorCheck {
 	}
 }
 
-// CheckSyncBranchConfig is a no-op now that sync-branch is removed.
-func CheckSyncBranchConfig(path string) DoctorCheck {
-	return DoctorCheck{
-		Name:    "Sync Branch Config",
-		Status:  StatusOK,
-		Message: "N/A (sync-branch removed)",
-	}
-}
-
-// CheckSyncBranchHealth is a no-op now that sync-branch is removed.
-func CheckSyncBranchHealth(path string) DoctorCheck {
-	return DoctorCheck{
-		Name:    "Sync Branch Health",
-		Status:  StatusOK,
-		Message: "N/A (sync-branch removed)",
-	}
-}
 
 // CheckGitHooksDoltCompatibility checks if installed git hooks are compatible with Dolt backend.
 // Hooks installed before Dolt support was added don't have the backend check and will
@@ -592,11 +566,6 @@ func CheckGitHooksDoltCompatibility(path string) DoctorCheck {
 // fixGitHooks fixes missing or broken git hooks by calling bd hooks install.
 func fixGitHooks(path string) error {
 	return fix.GitHooks(path)
-}
-
-// fixSyncBranchHealth fixes database-JSONL sync issues.
-func fixSyncBranchHealth(path string) error {
-	return fix.DBJSONLSync(path)
 }
 
 // FindOrphanedIssues identifies issues referenced in git commits but still open in the database.

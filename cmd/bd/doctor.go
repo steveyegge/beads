@@ -65,9 +65,6 @@ var (
 // ConfigKeyHintsDoctor is the config key for suppressing doctor hints
 const ConfigKeyHintsDoctor = "hints.doctor"
 
-// minSyncBranchHookVersion is the minimum hook version that supports sync-branch bypass (issue #532)
-const minSyncBranchHookVersion = "0.29.0"
-
 var doctorCmd = &cobra.Command{
 	Use:     "doctor [path]",
 	GroupID: "maint",
@@ -357,13 +354,6 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, hooksCheck)
 	// Don't fail overall check for missing hooks, just warn
 
-	// Check sync-branch hook compatibility (issue #532)
-	syncBranchHookCheck := convertWithCategory(doctor.CheckSyncBranchHookCompatibility(path), doctor.CategoryGit)
-	result.Checks = append(result.Checks, syncBranchHookCheck)
-	if syncBranchHookCheck.Status == statusError {
-		result.OverallOK = false
-	}
-
 	// Check git hooks Dolt compatibility (hooks without Dolt check cause errors)
 	doltHooksCheck := convertWithCategory(doctor.CheckGitHooksDoltCompatibility(path), doctor.CategoryGit)
 	result.Checks = append(result.Checks, doltHooksCheck)
@@ -589,11 +579,6 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, vestigialWorktreesCheck)
 	// Don't fail overall check for vestigial worktrees, just warn
 
-	// Check 14f: redirect + sync-branch conflict (bd-wayc3)
-	redirectSyncBranchCheck := convertDoctorCheck(doctor.CheckRedirectSyncBranchConflict(path))
-	result.Checks = append(result.Checks, redirectSyncBranchCheck)
-	// Don't fail overall check for redirect+sync-branch conflict, just warn
-
 	// Check 14g: last-touched file tracking (runtime state shouldn't be committed)
 	lastTouchedTrackingCheck := convertWithCategory(doctor.CheckLastTouchedNotTracked(), doctor.CategoryGit)
 	result.Checks = append(result.Checks, lastTouchedTrackingCheck)
@@ -614,25 +599,10 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, metadataCheck)
 	// Don't fail overall check for metadata, just warn
 
-	// Check 17: Sync branch configuration
-	syncBranchCheck := convertWithCategory(doctor.CheckSyncBranchConfig(path), doctor.CategoryGit)
-	result.Checks = append(result.Checks, syncBranchCheck)
-	// Don't fail overall check for missing sync.branch, just warn
-
-	// Check 17a: Sync branch health
-	syncBranchHealthCheck := convertWithCategory(doctor.CheckSyncBranchHealth(path), doctor.CategoryGit)
-	result.Checks = append(result.Checks, syncBranchHealthCheck)
-	// Don't fail overall check for sync branch health, just warn
-
 	// Check 17b: Orphaned issues - referenced in commits but still open
 	orphanedIssuesCheck := convertWithCategory(doctor.CheckOrphanedIssues(path), doctor.CategoryGit)
 	result.Checks = append(result.Checks, orphanedIssuesCheck)
 	// Don't fail overall check for orphaned issues, just warn
-
-	// Check 17c: Sync branch gitignore flags (GH#870)
-	syncBranchGitignoreCheck := convertWithCategory(doctor.CheckSyncBranchGitignore(), doctor.CategoryGit)
-	result.Checks = append(result.Checks, syncBranchGitignoreCheck)
-	// Don't fail overall check for sync branch gitignore, just warn
 
 	// Check 18: Deletions manifest (legacy)
 	deletionsCheck := convertWithCategory(doctor.CheckDeletionsManifest(path), doctor.CategoryMetadata)

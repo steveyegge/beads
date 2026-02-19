@@ -275,12 +275,6 @@ func applyFixList(path string, fixes []doctorCheck) {
 			if mErr := fix.FixMissingMetadata(path, Version); mErr != nil && err == nil {
 				err = mErr
 			}
-		case "Sync Branch Config":
-			// No auto-fix: sync-branch should be added to config.yaml (version controlled)
-			fmt.Printf("  ⚠ Add 'sync-branch: beads-sync' to .beads/config.yaml\n")
-			continue
-		case "Sync Branch Gitignore":
-			err = doctor.FixSyncBranchGitignore()
 		case "Database Config":
 			err = fix.DatabaseConfig(path)
 		case "JSONL Config":
@@ -289,8 +283,6 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.JSONLIntegrity(path)
 		case "Untracked Files":
 			err = fix.UntrackedJSONL(path)
-		case "Sync Branch Health":
-			// No-op: sync-branch removed (Dolt-in-Git replaces JSONL pipeline)
 		case "Merge Artifacts":
 			err = fix.MergeArtifacts(path)
 		case "Orphaned Dependencies":

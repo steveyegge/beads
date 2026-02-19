@@ -27,10 +27,6 @@ var YamlOnlyKeys = map[string]bool{
 	"actor":    true,
 	"identity": true,
 
-	// Timing settings
-	"flush-debounce":       true,
-	"remote-sync-interval": true,
-
 	// Git settings
 	"git.author":      true,
 	"git.no-gpg-sign": true,

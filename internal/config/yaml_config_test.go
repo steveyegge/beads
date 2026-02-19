@@ -15,7 +15,6 @@ func TestIsYamlOnlyKey(t *testing.T) {
 		// Exact matches
 		{"no-db", true},
 		{"json", true},
-		{"flush-debounce", true},
 		{"git.author", true},
 		{"git.no-gpg-sign", true},
 
@@ -95,11 +94,11 @@ func TestUpdateYamlKey(t *testing.T) {
 			expected: "actor: \"steve\"\nother: value",
 		},
 		{
-			name:     "handle duration value",
-			content:  "# flush-debounce: \"5s\"",
-			key:      "flush-debounce",
-			value:    "30s",
-			expected: "flush-debounce: 30s",
+			name:     "handle string value",
+			content:  "# actor: \"\"",
+			key:      "actor",
+			value:    "testuser",
+			expected: `actor: "testuser"`,
 		},
 		{
 			name:     "quote special characters",
