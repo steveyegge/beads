@@ -15,12 +15,7 @@ import (
 
 // bd-206: Test updating open issue to closed preserves closed_at
 func TestImportOpenToClosedTransition(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bd-test-open-to-closed-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	testStore := newTestStoreWithPrefix(t, dbPath, "bd")
@@ -40,7 +35,7 @@ func TestImportOpenToClosedTransition(t *testing.T) {
 		ClosedAt:    nil,
 	}
 
-	err = testStore.CreateIssue(ctx, openIssue, "test")
+	err := testStore.CreateIssue(ctx, openIssue, "test")
 	if err != nil {
 		t.Fatalf("Failed to create open issue: %v", err)
 	}
@@ -72,12 +67,7 @@ func TestImportOpenToClosedTransition(t *testing.T) {
 
 // bd-206: Test updating closed issue to open clears closed_at
 func TestImportClosedToOpenTransition(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bd-test-closed-to-open-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	testStore := newTestStoreWithPrefix(t, dbPath, "bd")
@@ -98,7 +88,7 @@ func TestImportClosedToOpenTransition(t *testing.T) {
 		ClosedAt:    &closedTime,
 	}
 
-	err = testStore.CreateIssue(ctx, closedIssue, "test")
+	err := testStore.CreateIssue(ctx, closedIssue, "test")
 	if err != nil {
 		t.Fatalf("Failed to create closed issue: %v", err)
 	}
