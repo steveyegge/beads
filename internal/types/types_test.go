@@ -1063,9 +1063,9 @@ func TestEntityRefURI(t *testing.T) {
 		{"missing platform", &EntityRef{Org: "steveyegge", ID: "polecat-nux"}, ""},
 		{"missing org", &EntityRef{Platform: "gastown", ID: "polecat-nux"}, ""},
 		{"missing id", &EntityRef{Platform: "gastown", Org: "steveyegge"}, ""},
-		{"full ref", &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "entity://hop/gastown/steveyegge/polecat-nux"},
-		{"with name", &EntityRef{Name: "polecat/Nux", Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "entity://hop/gastown/steveyegge/polecat-nux"},
-		{"github platform", &EntityRef{Platform: "github", Org: "anthropics", ID: "claude-code"}, "entity://hop/github/anthropics/claude-code"},
+		{"full ref", &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "hop://gastown/steveyegge/polecat-nux"},
+		{"with name", &EntityRef{Name: "polecat/Nux", Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "hop://gastown/steveyegge/polecat-nux"},
+		{"github platform", &EntityRef{Platform: "github", Org: "anthropics", ID: "claude-code"}, "hop://github/anthropics/claude-code"},
 	}
 
 	for _, tt := range tests {
@@ -1087,7 +1087,7 @@ func TestEntityRefString(t *testing.T) {
 		{"empty ref", &EntityRef{}, ""},
 		{"only name", &EntityRef{Name: "polecat/Nux"}, "polecat/Nux"},
 		{"full ref with name", &EntityRef{Name: "polecat/Nux", Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "polecat/Nux"},
-		{"full ref without name", &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "entity://hop/gastown/steveyegge/polecat-nux"},
+		{"full ref without name", &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "hop://gastown/steveyegge/polecat-nux"},
 		{"only id", &EntityRef{ID: "polecat-nux"}, "polecat-nux"},
 	}
 
@@ -1108,19 +1108,29 @@ func TestParseEntityURI(t *testing.T) {
 		expectErr bool
 	}{
 		{
-			name:   "valid URI",
-			uri:    "entity://hop/gastown/steveyegge/polecat-nux",
+			name:   "valid hop URI",
+			uri:    "hop://gastown/steveyegge/polecat-nux",
 			expect: &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"},
 		},
 		{
-			name:   "github URI",
-			uri:    "entity://hop/github/anthropics/claude-code",
+			name:   "github hop URI",
+			uri:    "hop://github/anthropics/claude-code",
 			expect: &EntityRef{Platform: "github", Org: "anthropics", ID: "claude-code"},
 		},
 		{
 			name:   "id with slashes",
-			uri:    "entity://hop/gastown/steveyegge/polecat/nux",
+			uri:    "hop://gastown/steveyegge/polecat/nux",
 			expect: &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat/nux"},
+		},
+		{
+			name:   "legacy entity URI still accepted",
+			uri:    "entity://hop/gastown/steveyegge/polecat-nux",
+			expect: &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"},
+		},
+		{
+			name:   "legacy github URI still accepted",
+			uri:    "entity://hop/github/anthropics/claude-code",
+			expect: &EntityRef{Platform: "github", Org: "anthropics", ID: "claude-code"},
 		},
 		{
 			name:      "wrong prefix",
@@ -1128,28 +1138,28 @@ func TestParseEntityURI(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name:      "missing hop",
+			name:      "entity without hop",
 			uri:       "entity://gastown/steveyegge/polecat-nux",
 			expectErr: true,
 		},
 		{
 			name:      "too few parts",
-			uri:       "entity://hop/gastown/steveyegge",
+			uri:       "hop://gastown/steveyegge",
 			expectErr: true,
 		},
 		{
 			name:      "empty platform",
-			uri:       "entity://hop//steveyegge/polecat-nux",
+			uri:       "hop:///steveyegge/polecat-nux",
 			expectErr: true,
 		},
 		{
 			name:      "empty org",
-			uri:       "entity://hop/gastown//polecat-nux",
+			uri:       "hop://gastown//polecat-nux",
 			expectErr: true,
 		},
 		{
 			name:      "empty id",
-			uri:       "entity://hop/gastown/steveyegge/",
+			uri:       "hop://gastown/steveyegge/",
 			expectErr: true,
 		},
 		{
