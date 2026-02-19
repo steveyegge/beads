@@ -62,18 +62,8 @@ func runCheckHealth(path string) {
 		issues = append(issues, issue)
 	}
 
-	// Check 2: Sync branch not configured (now reads from config.yaml, not DB)
-	if issue := doctor.CheckSyncBranchQuick(); issue != "" {
-		issues = append(issues, issue)
-	}
-
-	// Check 3: Outdated git hooks
+	// Check 2: Outdated git hooks
 	if issue := doctor.CheckHooksQuick(Version); issue != "" {
-		issues = append(issues, issue)
-	}
-
-	// Check 3: Sync-branch hook compatibility (issue #532)
-	if issue := doctor.CheckSyncBranchHookQuick(path); issue != "" {
 		issues = append(issues, issue)
 	}
 

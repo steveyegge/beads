@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
@@ -91,25 +90,6 @@ func findConfigPath(repoPath string) string {
 	return ""
 }
 
-// validateDurationConfig validates a duration config value.
-func validateDurationConfig(v *viper.Viper, key string, minDuration time.Duration) []string {
-	if !v.IsSet(key) {
-		return nil
-	}
-	durStr := v.GetString(key)
-	if durStr == "" {
-		return nil
-	}
-	d, err := time.ParseDuration(durStr)
-	if err != nil {
-		return []string{fmt.Sprintf("%s: invalid duration %q (expected format like \"30s\", \"1m\", \"500ms\")", key, durStr)}
-	}
-	if minDuration > 0 && d > 0 && d < minDuration {
-		return []string{fmt.Sprintf("%s: %q is too low (minimum %s)", key, durStr, minDuration)}
-	}
-	return nil
-}
-
 // validateBooleanConfigs validates boolean config values.
 func validateBooleanConfigs(v *viper.Viper, keys []string) []string {
 	var issues []string
@@ -187,10 +167,6 @@ func checkYAMLConfigValues(repoPath string) []string {
 		return issues
 	}
 
-	// Validate duration configs
-	issues = append(issues, validateDurationConfig(v, "flush-debounce", 0)...)
-	issues = append(issues, validateDurationConfig(v, "remote-sync-interval", 5*time.Second)...)
-
 	// Validate issue-prefix (should be alphanumeric with dashes/underscores, reasonably short)
 	if v.IsSet("issue-prefix") {
 		prefix := v.GetString("issue-prefix")
@@ -262,16 +238,6 @@ func checkYAMLConfigValues(repoPath string) []string {
 						}
 					}
 				}
-			}
-		}
-	}
-
-	// Validate sync-branch (should be a valid git branch name if set)
-	if v.IsSet("sync-branch") {
-		branch := v.GetString("sync-branch")
-		if branch != "" {
-			if !isValidBranchName(branch) {
-				issues = append(issues, fmt.Sprintf("sync-branch: %q is not a valid git branch name", branch))
 			}
 		}
 	}
@@ -435,15 +401,6 @@ func checkDatabaseConfigValues(repoPath string) []string {
 			case "open", "in_progress", "blocked", "closed":
 				issues = append(issues, fmt.Sprintf("status.custom: %q conflicts with built-in status", status))
 			}
-		}
-	}
-
-	// Check sync.branch if stored in database (legacy location)
-	var syncBranch string
-	err = db.QueryRow("SELECT value FROM config WHERE key = 'sync.branch'").Scan(&syncBranch)
-	if err == nil && syncBranch != "" {
-		if !isValidBranchName(syncBranch) {
-			issues = append(issues, fmt.Sprintf("sync.branch (database): %q is not a valid git branch name", syncBranch))
 		}
 	}
 

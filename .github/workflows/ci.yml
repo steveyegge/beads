@@ -88,33 +88,40 @@ jobs:
           git config --global user.name "CI Bot"
           git config --global user.email "ci@beads.test"
 
+      - name: Install gotestsum
+        if: matrix.coverage
+        run: go install gotest.tools/gotestsum@latest
+
       - name: Build
         run: go build -v ./cmd/bd
 
-      - name: Test
-        run: go test ${{ matrix.test-flags }} ./...
-
-      - name: Check coverage threshold
+      - name: Test (with coverage + JUnit XML)
         if: matrix.coverage
         run: |
-          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-          MIN_COVERAGE=38
-          WARN_COVERAGE=55
-          echo "Coverage: $COVERAGE%"
-          if (( $(echo "$COVERAGE < $MIN_COVERAGE" | bc -l) )); then
-            echo "Coverage is below ${MIN_COVERAGE}% threshold"
-            exit 1
-          elif (( $(echo "$COVERAGE < $WARN_COVERAGE" | bc -l) )); then
-            echo "Coverage is below ${WARN_COVERAGE}% (warning threshold)"
-          else
-            echo "Coverage meets threshold"
-          fi
+          gotestsum \
+            --junitfile junit.xml \
+            --format testdox \
+            -- -race -short -coverprofile=coverage.out ./...
 
-      - name: Upload coverage
+      - name: Test
+        if: ${{ !matrix.coverage }}
+        run: go test ${{ matrix.test-flags }} ./...
+
+      - name: Upload coverage to Codecov
+        if: matrix.coverage && !cancelled()
         uses: codecov/codecov-action@v5
-        if: matrix.coverage && success()
         with:
-          file: ./coverage.out
+          files: coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: Upload test results to Codecov
+        if: matrix.coverage && !cancelled()
+        uses: codecov/codecov-action@v5
+        with:
+          files: junit.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
           fail_ci_if_error: false
 
   # Windows smoke tests only - full test suite times out (see bd-bmev)

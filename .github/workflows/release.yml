@@ -37,7 +37,7 @@ jobs:
       - name: Install Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.13.0
+          version: 0.14.0
 
       - name: Create zig cross-compilation wrappers
         run: |
@@ -50,7 +50,10 @@ jobs:
             "cc-x86_64-freebsd:x86_64-freebsd"; do
             name="${pair%%:*}"
             target="${pair##*:}"
-            printf '#!/bin/sh\nexec zig cc -target %s "$@"\n' "$target" > "/tmp/zigcc/$name"
+            # Serialize zig calls per target with flock to prevent
+            # AccessDenied races when go build invokes CC in parallel.
+            printf '#!/bin/sh\nexec flock /tmp/zigcc/lock-%s zig cc -target %s "$@"\n' \
+              "$target" "$target" > "/tmp/zigcc/$name"
             chmod +x "/tmp/zigcc/$name"
           done
 
@@ -63,7 +66,7 @@ jobs:
           distribution: goreleaser
           version: '~> v2'
           args: >
-            release --clean
+            release --clean --parallelism 1
             ${{ github.repository != 'steveyegge/beads' && '--skip=publish --skip=announce' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

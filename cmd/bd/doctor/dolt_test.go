@@ -191,9 +191,9 @@ func TestLockContention(t *testing.T) {
 		t.Errorf("expected Detail to contain %q, got %q", "access lock", check.Detail)
 	}
 
-	// Fix suggestion mentions LOCK files
-	if !strings.Contains(check.Fix, "LOCK") {
-		t.Errorf("expected Fix to contain %q, got %q", "LOCK", check.Fix)
+	// Fix suggestion mentions lock files
+	if !strings.Contains(check.Fix, "lock") {
+		t.Errorf("expected Fix to contain %q, got %q", "lock", check.Fix)
 	}
 }
 

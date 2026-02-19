@@ -1,15 +1,12 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage/dolt"
-	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // ensureDirectMode makes sure the CLI is operating in direct-storage mode.
@@ -18,7 +15,7 @@ func ensureDirectMode(_ string) error {
 }
 
 // ensureStoreActive guarantees that a storage backend is initialized and tracked.
-// Uses the factory to respect metadata.json backend configuration (SQLite, Dolt embedded, or Dolt server).
+// Uses the factory to respect metadata.json backend configuration.
 func ensureStoreActive() error {
 	lockStore()
 	active := isStoreActive() && getStore() != nil
@@ -31,27 +28,7 @@ func ensureStoreActive() error {
 	beadsDir := beads.FindBeadsDir()
 	if beadsDir == "" {
 		return fmt.Errorf("no beads database found.\n" +
-			"Hint: run 'bd init' to create a database in the current directory,\n" +
-			"      or use 'bd --no-db' for JSONL-only mode")
-	}
-
-	// GH#1349: Ensure sync branch worktree exists if configured.
-	// This must happen before any JSONL operations to fix fresh clone scenario
-	// where findJSONLPath would otherwise fall back to main's stale JSONL.
-	if _, err := syncbranch.EnsureWorktree(context.Background()); err != nil {
-		// Log warning but don't fail - operations can still work with main's JSONL
-		// This allows graceful degradation if worktree creation fails
-		debug.Logf("Warning: could not ensure sync worktree: %v", err)
-	}
-
-	// Check if this is a JSONL-only project
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	if _, err := os.Stat(jsonlPath); err == nil {
-		// JSONL exists - check if no-db mode is configured
-		if isNoDbModeConfigured(beadsDir) {
-			return fmt.Errorf("this project uses JSONL-only mode (no SQLite database).\n" +
-				"Hint: use 'bd --no-db <command>' or set 'no-db: true' in config.yaml")
-		}
+			"Hint: run 'bd init' to create a database in the current directory")
 	}
 
 	// Use dolt.NewFromConfig to create the appropriate backend
@@ -59,10 +36,10 @@ func ensureStoreActive() error {
 	store, err := dolt.NewFromConfig(getRootContext(), beadsDir)
 	if err != nil {
 		// Check for fresh clone scenario (JSONL exists but no database)
+		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 		if _, statErr := os.Stat(jsonlPath); statErr == nil {
 			return fmt.Errorf("found JSONL file but no database: %s\n"+
-				"Hint: run 'bd init' to create the database and import issues,\n"+
-				"      or use 'bd --no-db' for JSONL-only mode", jsonlPath)
+				"Hint: run 'bd init' to create the database and import issues", jsonlPath)
 		}
 		return fmt.Errorf("failed to open database: %w", err)
 	}

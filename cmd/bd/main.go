@@ -27,6 +27,12 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// Command group IDs for help organization
+const (
+	GroupMaintenance  = "maintenance"
+	GroupIntegrations = "integrations"
+)
+
 var (
 	dbPath     string
 	actor      string
@@ -313,8 +319,8 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// GH#1093: Check noDbCommands BEFORE expensive operations (ensureForkProtection,
-		// signalOrchestratorActivity) to avoid spawning git subprocesses for simple commands
+		// GH#1093: Check noDbCommands BEFORE expensive operations (ensureForkProtection)
+		// to avoid spawning git subprocesses for simple commands
 		// like "bd version" that don't need database access.
 		noDbCommands := []string{
 			"__complete",       // Cobra's internal completion command (shell completions work without db)
@@ -362,10 +368,6 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
-		// Signal orchestrator daemon about bd activity (best-effort, for exponential backoff)
-		// GH#1093: Moved after noDbCommands check to avoid git subprocesses for simple commands
-		defer signalOrchestratorActivity()
-
 		// Protect forks from accidentally committing upstream issue database
 		ensureForkProtection()
 
@@ -390,18 +392,10 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Handle --no-db mode: load from JSONL, use in-memory storage
+		// --no-db mode has been removed; only Dolt is supported
 		if noDb {
-			if err := initializeNoDbMode(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error initializing --no-db mode: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Set actor for audit trail
-			actor = getActorWithGit()
-
-			// Skip database initialization - we're in memory mode
-			return
+			fmt.Fprintf(os.Stderr, "Error: --no-db mode has been removed; beads now requires Dolt (run 'bd init' to create a database)\n")
+			os.Exit(1)
 		}
 
 		// Initialize database path
@@ -410,28 +404,8 @@ var rootCmd = &cobra.Command{
 			if foundDB := beads.FindDatabasePath(); foundDB != "" {
 				dbPath = foundDB
 			} else {
-				// No database found - check if this is JSONL-only mode
+				// No database found
 				beadsDir := beads.FindBeadsDir()
-				if beadsDir != "" {
-					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-
-					// Check if JSONL exists and config.yaml has no-db: true
-					jsonlExists := false
-					if _, err := os.Stat(jsonlPath); err == nil {
-						jsonlExists = true
-					}
-
-					// Use proper YAML parsing to detect no-db mode
-					isNoDbMode := isNoDbModeConfigured(beadsDir)
-
-					// Legacy no-db projects must be migrated to Dolt.
-					if jsonlExists && isNoDbMode {
-						fmt.Fprintf(os.Stderr, "Error: project is configured with no-db mode, but no-db mode has been removed.\n")
-						fmt.Fprintf(os.Stderr, "Found JSONL file: %s\n", jsonlPath)
-						fmt.Fprintf(os.Stderr, "Hint: migrate this workspace by running 'bd init --force' to create Dolt storage.\n")
-						os.Exit(1)
-					}
-				}
 
 				// Allow some commands to run without a database
 				// - import: auto-initializes database if missing
@@ -479,14 +453,16 @@ var rootCmd = &cobra.Command{
 							fmt.Fprintf(os.Stderr, "\nFound JSONL file: %s\n", jsonlPath)
 							fmt.Fprintf(os.Stderr, "This looks like a fresh clone or JSONL-only project.\n\n")
 							fmt.Fprintf(os.Stderr, "Options:\n")
-							fmt.Fprintf(os.Stderr, "  • Run 'bd init' to create Dolt storage and import issues\n")
-							fmt.Fprintf(os.Stderr, "  • Set BEADS_DIR to a valid existing beads directory for this workspace\n")
+							fmt.Fprintf(os.Stderr, "  • Run 'bd init' to create database and import issues\n")
+							fmt.Fprintf(os.Stderr, "  • Use 'bd --no-db %s' for JSONL-only mode\n", cmd.Name())
+							fmt.Fprintf(os.Stderr, "  • Add 'no-db: true' to .beads/config.yaml for permanent JSONL-only mode\n")
 							os.Exit(1)
 						}
 					}
 
 					// Generic error - no beads directory or JSONL found
 					fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
+					fmt.Fprintf(os.Stderr, "      or use 'bd --no-db' to work with JSONL only (no database)\n")
 					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
 					os.Exit(1)
 				}
@@ -730,10 +706,6 @@ func main() {
 	// Cobra has created its default help command.
 	rootCmd.InitDefaultHelpCmd()
 	registerHelpAllFlag()
-	if err := validateUnknownHelpSubcommandProbe(rootCmd, os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(2)
-	}
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

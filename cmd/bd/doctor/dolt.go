@@ -125,7 +125,7 @@ func closeDoltDB(db *sql.DB, serverMode bool) {
 
 // doltConn holds an open Dolt connection with its advisory lock.
 // Used by doctor checks to coordinate database access and prevent
-// lock contention with daemons and concurrent bd processes.
+// lock contention with concurrent bd processes.
 type doltConn struct {
 	db         *sql.DB
 	serverMode bool
@@ -153,7 +153,7 @@ func (c *doltConn) Close() {
 
 // openDoltDBWithLock opens a Dolt connection with AccessLock coordination.
 // In embedded mode, acquires a shared AccessLock before opening the database
-// to prevent contention with daemons and other bd processes.
+// to prevent contention with concurrent bd processes.
 // In server mode, skips lock acquisition (server handles its own locking).
 //
 // Note: This does NOT honor the BD_SKIP_ACCESS_LOCK env var that DoltStore

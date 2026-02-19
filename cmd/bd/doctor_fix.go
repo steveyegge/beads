@@ -9,7 +9,6 @@ import (
 
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
-	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/ui"
 	"golang.org/x/term"
 )
@@ -276,14 +275,6 @@ func applyFixList(path string, fixes []doctorCheck) {
 			if mErr := fix.FixMissingMetadata(path, Version); mErr != nil && err == nil {
 				err = mErr
 			}
-		case "Git Merge Driver":
-			err = fix.MergeDriver(path)
-		case "Sync Branch Config":
-			// No auto-fix: sync-branch should be added to config.yaml (version controlled)
-			fmt.Printf("  ⚠ Add 'sync-branch: beads-sync' to .beads/config.yaml\n")
-			continue
-		case "Sync Branch Gitignore":
-			err = doctor.FixSyncBranchGitignore()
 		case "Database Config":
 			err = fix.DatabaseConfig(path)
 		case "JSONL Config":
@@ -292,14 +283,6 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.JSONLIntegrity(path)
 		case "Untracked Files":
 			err = fix.UntrackedJSONL(path)
-		case "Sync Branch Health":
-			// Get sync branch from config
-			syncBranch := syncbranch.GetFromYAML()
-			if syncBranch == "" {
-				fmt.Printf("  ⚠ No sync branch configured in config.yaml\n")
-				continue
-			}
-			err = fix.SyncBranchHealth(path, syncBranch)
 		case "Merge Artifacts":
 			err = fix.MergeArtifacts(path)
 		case "Orphaned Dependencies":

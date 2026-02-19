@@ -347,17 +347,6 @@ func TestGitHooks_EdgeCases(t *testing.T) {
 	})
 }
 
-// TestMergeDriver_EdgeCases verifies MergeDriver is a no-op (merge engine removed).
-func TestMergeDriver_EdgeCases(t *testing.T) {
-	t.Run("is a no-op", func(t *testing.T) {
-		dir := setupTestGitRepo(t)
-		err := MergeDriver(dir)
-		if err != nil {
-			t.Fatalf("MergeDriver should be a no-op, got error: %v", err)
-		}
-	})
-}
-
 // TestUntrackedJSONL_EdgeCases tests UntrackedJSONL with edge cases
 func TestUntrackedJSONL_EdgeCases(t *testing.T) {
 	t.Run("staged but uncommitted JSONL files", func(t *testing.T) {

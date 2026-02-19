@@ -32,10 +32,6 @@ func CheckChildParentDependencies(_ string) DoctorCheck {
 	return DoctorCheck{Name: "Child-Parent Dependencies", Status: StatusOK, Message: "Requires CGO"}
 }
 
-func CheckRedirectSyncBranchConflict(_ string) DoctorCheck {
-	return DoctorCheck{Name: "Redirect SyncBranch Conflict", Status: StatusOK, Message: "Requires CGO"}
-}
-
 func CheckGitConflicts(_ string) DoctorCheck {
 	return DoctorCheck{Name: "Git Conflicts", Status: StatusOK, Message: "Requires CGO"}
 }

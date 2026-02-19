@@ -120,6 +120,9 @@ func TestRunDoltPerformanceDiagnostics_DefaultDBName(t *testing.T) {
 		t.Fatalf("failed to write metadata.json: %v", err)
 	}
 
+	// Force embedded mode so a running Dolt server doesn't pollute results
+	t.Setenv("BEADS_DOLT_SERVER_MODE", "0")
+
 	metrics, err := RunDoltPerformanceDiagnostics(tmpDir, false)
 	if err != nil {
 		t.Fatalf("expected diagnostics to succeed with default db name, got error: %v", err)
