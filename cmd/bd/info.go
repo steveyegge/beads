@@ -210,6 +210,14 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.54.0",
+		Date:    "2026-02-18",
+		Changes: []string{
+			"FIX: Release CI zig cross-compilation cache race (--parallelism 1)",
+			"FIX: Android ARM64 build uses CGO_ENABLED=0 (server mode only)",
+		},
+	},
+	{
 		Version: "0.53.0",
 		Date:    "2026-02-18",
 		Changes: []string{

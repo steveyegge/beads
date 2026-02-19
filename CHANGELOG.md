@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-02-18
+
+### Fixed
+
+- **Release CI** — fix zig cross-compilation cache race by serializing goreleaser builds (`--parallelism 1`)
+- **Android ARM64 build** — disable CGO for Android target (server mode only)
+- **`.zig-cache/` in `.gitignore`** — prevent goreleaser dirty-git false positive
+
 ## [0.53.0] - 2026-02-18
 
 ### Added
