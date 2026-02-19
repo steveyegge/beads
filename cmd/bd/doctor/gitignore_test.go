@@ -1415,12 +1415,12 @@ func TestRequiredPatterns_ContainsRedirect(t *testing.T) {
 	}
 }
 
-// TestGitignoreTemplate_ContainsDaemonRotatedLogs verifies that rotated daemon
-// log files (daemon-*.log.gz) are gitignored to prevent log churn in commits.
+// TestGitignoreTemplate_ContainsLegacyDaemonPatterns verifies that legacy daemon
+// file patterns are still gitignored to prevent old files from being committed.
 // GH#1142, GH#919
-func TestGitignoreTemplate_ContainsDaemonRotatedLogs(t *testing.T) {
+func TestGitignoreTemplate_ContainsLegacyDaemonPatterns(t *testing.T) {
 	if !strings.Contains(GitignoreTemplate, "daemon-*.log.gz") {
-		t.Error("GitignoreTemplate should contain 'daemon-*.log.gz' pattern for rotated daemon logs")
+		t.Error("GitignoreTemplate should contain 'daemon-*.log.gz' pattern for legacy daemon log files")
 	}
 }
 
@@ -1700,7 +1700,7 @@ func TestRequiredPatterns_ContainsLastTouched(t *testing.T) {
 
 // TestGitignoreTemplate_ContainsJSONLLock verifies that the .beads/.gitignore template
 // includes .jsonl.lock to prevent the JSONL coordination lock file from being tracked.
-// The lock file is a runtime artifact in the same category as daemon.lock and .sync.lock.
+// The lock file is a runtime artifact in the same category as .sync.lock.
 func TestGitignoreTemplate_ContainsJSONLLock(t *testing.T) {
 	if !strings.Contains(GitignoreTemplate, ".jsonl.lock") {
 		t.Error("GitignoreTemplate should contain '.jsonl.lock' pattern")

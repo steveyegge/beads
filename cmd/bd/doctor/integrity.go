@@ -466,7 +466,7 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 			Name:    "Repo Fingerprint",
 			Status:  StatusError,
 			Message: "Legacy database (empty fingerprint)",
-			Detail:  "Database was created before version 0.17.5. Daemon will fail to start.",
+			Detail:  "Database was created before version 0.17.5. Operations may fail.",
 			Fix:     "Run 'bd migrate --update-repo-id' to add fingerprint",
 		}
 	}
