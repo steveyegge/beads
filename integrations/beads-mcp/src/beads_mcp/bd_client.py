@@ -512,6 +512,8 @@ class BdCliClient(BdClientBase):
             Updated issue
         """
         args = ["update", params.issue_id]
+        if params.claim:
+            args.append("--claim")
 
         if params.status:
             args.extend(["--status", params.status])

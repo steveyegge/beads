@@ -1080,3 +1080,125 @@ async def test_show_brief_deps(mcp_client):
     assert "status" in dep
     # BriefDep should NOT have full LinkedIssue fields
     assert "description" not in dep
+
+
+@pytest.mark.asyncio
+async def test_flow_claim_next_enforces_wip_gate(mcp_client, monkeypatch):
+    """flow(claim_next) should claim one issue then block additional claims for same actor."""
+    import json
+
+    actor = "flow-test-actor"
+    monkeypatch.setenv("BEADS_ACTOR", actor)
+
+    await mcp_client.call_tool("create", {"title": "Flow claim issue 1", "brief": False})
+    await mcp_client.call_tool("create", {"title": "Flow claim issue 2", "brief": False})
+
+    first = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": actor})
+    first_payload = json.loads(first.content[0].text)
+    assert first_payload["claimed"] is True
+    assert first_payload["issue"]["status"] == "in_progress"
+
+    second = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": actor})
+    second_payload = json.loads(second.content[0].text)
+    assert second_payload["claimed"] is False
+    assert "WIP gate" in second_payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_flow_create_discovered_links_issue(mcp_client):
+    """flow(create_discovered) should create issue and link with discovered-from."""
+    import json
+
+    parent_result = await mcp_client.call_tool(
+        "create", {"title": "Parent task", "issue_type": "task", "brief": False}
+    )
+    parent = json.loads(parent_result.content[0].text)
+
+    created = await mcp_client.call_tool(
+        "flow",
+        {
+            "action": "create_discovered",
+            "title": "Discovered follow-up",
+            "description": "Found while implementing parent.",
+            "discovered_from_id": parent["id"],
+            "issue_type": "bug",
+            "priority": 1,
+        },
+    )
+    payload = json.loads(created.content[0].text)
+    child_id = payload["created"]["id"]
+    assert payload["action"] == "create_discovered"
+    assert child_id
+
+    child = await mcp_client.call_tool("show", {"issue_id": child_id})
+    child_payload = json.loads(child.content[0].text)
+    dep_ids = [dep["id"] for dep in child_payload["dependencies"]]
+    assert parent["id"] in dep_ids
+
+
+@pytest.mark.asyncio
+async def test_flow_close_safe_lints_reason_and_requires_verification(mcp_client):
+    """flow(close_safe) should reject unsafe reasons and close with verified evidence."""
+    import json
+    from fastmcp.exceptions import ToolError
+
+    issue_result = await mcp_client.call_tool(
+        "create", {"title": "Close-safe target", "issue_type": "task", "brief": False}
+    )
+    issue = json.loads(issue_result.content[0].text)
+
+    with pytest.raises(ToolError):
+        await mcp_client.call_tool(
+            "flow",
+            {
+                "action": "close_safe",
+                "issue_id": issue["id"],
+                "reason": "Updated error handling in retry path",
+                "verification": "pytest integrations/beads-mcp/tests -q",
+            },
+        )
+
+    close_result = await mcp_client.call_tool(
+        "flow",
+        {
+            "action": "close_safe",
+            "issue_id": issue["id"],
+            "reason": "Updated retry policy and threshold checks",
+            "verification": "pytest integrations/beads-mcp/tests/test_mcp_server_integration.py -q",
+        },
+    )
+    close_payload = json.loads(close_result.content[0].text)
+    assert close_payload["closed"] is True
+    assert close_payload["issue"]["status"] == "closed"
+
+
+@pytest.mark.asyncio
+async def test_flow_only_mode_blocks_direct_writes_but_allows_flow(mcp_client, monkeypatch):
+    """When flow-only mode is enabled, direct lifecycle writes are blocked."""
+    import json
+    from fastmcp.exceptions import ToolError
+
+    parent_result = await mcp_client.call_tool(
+        "create", {"title": "Flow-only parent", "issue_type": "task", "brief": False}
+    )
+    parent = json.loads(parent_result.content[0].text)
+
+    monkeypatch.setenv("BEADS_MCP_FLOW_ONLY_WRITES", "1")
+
+    with pytest.raises(ToolError):
+        await mcp_client.call_tool(
+            "create", {"title": "Direct write should fail", "issue_type": "task", "brief": False}
+        )
+
+    created = await mcp_client.call_tool(
+        "flow",
+        {
+            "action": "create_discovered",
+            "title": "Flow-only child",
+            "description": "Created via flow wrapper",
+            "discovered_from_id": parent["id"],
+        },
+    )
+    payload = json.loads(created.content[0].text)
+    assert payload["action"] == "create_discovered"
+    assert payload["created"]["id"]

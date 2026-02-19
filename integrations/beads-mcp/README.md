@@ -67,6 +67,7 @@ Then use in Claude Desktop config:
 - `BEADS_ACTOR` - Actor name for audit trail (default: `$USER`)
 - `BEADS_NO_AUTO_FLUSH` - Disable automatic JSONL sync (default: `false`)
 - `BEADS_NO_AUTO_IMPORT` - Disable automatic JSONL import (default: `false`)
+- `BEADS_MCP_FLOW_ONLY_WRITES` - When true (`1|true|yes|on`), blocks direct lifecycle write tools (`create`, `update`, `dep`, `close`, `reopen`) and requires `flow` wrappers
 
 ## Multi-Repository Setup
 
@@ -218,6 +219,7 @@ await beads_ready_work(workspace_root="/Users/you/project-a")
 - `list` - List issues with filters (status, priority, type, assignee)
 - `ready` - Find tasks with no blockers ready to work on
 - `show` - Show detailed issue info including dependencies
+- `flow` - Deterministic lifecycle wrappers: `claim_next`, `create_discovered`, `block_with_context`, `close_safe`
 - `update` - Update issue (status, priority, design, notes, etc). Note: `status="closed"` or `status="open"` automatically route to `close` or `reopen` tools to respect approval workflows
 - `close` - Close completed issue
 - `dep` - Add dependency (blocks, related, parent-child, discovered-from)
@@ -225,6 +227,8 @@ await beads_ready_work(workspace_root="/Users/you/project-a")
 - `stats` - Get project statistics
 - `reopen` - Reopen a closed issue with optional reason
 - `set_context` - Set default workspace for subsequent calls (backward compatibility)
+
+For agentic workflows, prefer `flow` for lifecycle mutations. `flow` provides policy-safe wrappers for WIP-gated claim, discovered-work linking, blocked context packs, and close-reason/verification enforcement.
 
 ## Known Issues
 

@@ -15,6 +15,7 @@ import atexit
 import importlib.metadata
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -313,6 +314,7 @@ _TOOL_CATALOG = {
     "ready": "Find tasks ready to work on (no blockers)",
     "list": "List issues with filters (status, priority, type)",
     "show": "Show full details for a specific issue",
+    "flow": "Deterministic lifecycle wrappers (claim_next, create_discovered, block_with_context, close_safe)",
     "create": "Create a new issue (bug, feature, task, epic)",
     "update": "Update issue status, priority, or assignee",
     "close": "Close/complete an issue",
@@ -413,6 +415,29 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
             },
             "returns": "Full Issue object (or BriefIssue/dict based on params)",
             "example": "show(issue_id='bd-a1b2', brief_deps=True)"
+        },
+        "flow": {
+            "name": "flow",
+            "description": "Deterministic control-plane wrappers for lifecycle mutations",
+            "parameters": {
+                "action": "claim_next|create_discovered|block_with_context|close_safe (required)",
+                "issue_id": "str (required for block_with_context and close_safe)",
+                "title": "str (required for create_discovered)",
+                "description": "str (optional; used by create_discovered)",
+                "discovered_from_id": "str (required for create_discovered)",
+                "reason": "str (required for close_safe)",
+                "verification": "str (required for close_safe, appended as Verified: ... note)",
+                "context_pack": "str (required for block_with_context)",
+                "blocker_id": "str (optional for block_with_context; adds blocks dep)",
+                "priority": "int 0-4 (optional for create_discovered/claim_next filters)",
+                "issue_type": "bug|feature|task|epic|chore|decision (optional for create_discovered)",
+                "labels": "list[str] (optional for create_discovered/claim_next)",
+                "labels_any": "list[str] (optional for claim_next)",
+                "allow_failure_reason": "bool (default false, only for close_safe)",
+                "workspace_root": "str (optional)"
+            },
+            "returns": "Compact operation summary dict",
+            "example": "flow(action='claim_next')"
         },
         "create": {
             "name": "create",
@@ -766,6 +791,250 @@ def _truncate_description(issue: Issue, max_length: int) -> Issue:
     return issue
 
 
+_FLOW_ONLY_WRITES_ENV = "BEADS_MCP_FLOW_ONLY_WRITES"
+_SUCCESS_CLOSE_VERBS = {
+    "added",
+    "implemented",
+    "refactored",
+    "updated",
+    "removed",
+    "migrated",
+    "configured",
+    "extracted",
+    "replaced",
+    "consolidated",
+}
+_UNSAFE_CLOSE_KEYWORDS = (
+    "failed",
+    "rejected",
+    "wontfix",
+    "won't fix",
+    "canceled",
+    "cancelled",
+    "abandoned",
+    "blocked",
+    "error",
+    "timeout",
+    "aborted",
+)
+
+
+def _flow_only_writes_enabled() -> bool:
+    """Return True if direct lifecycle writes are disabled in favor of flow wrappers."""
+    return os.environ.get(_FLOW_ONLY_WRITES_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _enforce_flow_write_policy(tool_name: str) -> None:
+    """Reject direct lifecycle writes when flow-only mode is enabled."""
+    if _flow_only_writes_enabled():
+        raise ValueError(
+            f"Direct '{tool_name}' writes are disabled by {_FLOW_ONLY_WRITES_ENV}. "
+            "Use flow(action='...') wrappers instead."
+        )
+
+
+def _append_note(existing: str | None, line: str) -> str:
+    """Append a line to notes while preserving existing content."""
+    if existing and existing.strip():
+        return f"{existing.rstrip()}\n{line}"
+    return line
+
+
+def _validate_close_reason(reason: str, allow_failure_reason: bool) -> None:
+    """Validate close reason for conditional-block safety."""
+    stripped = reason.strip()
+    if not stripped:
+        raise ValueError("close_safe requires a non-empty reason")
+
+    lower = stripped.lower()
+    if lower.startswith("failed:"):
+        if allow_failure_reason:
+            return
+        raise ValueError(
+            "Failure close reasons are blocked by default. "
+            "Set allow_failure_reason=true when failure semantics are intentional."
+        )
+
+    first_token = re.split(r"[:\s]+", stripped, maxsplit=1)[0].lower()
+    if first_token not in _SUCCESS_CLOSE_VERBS:
+        expected = ", ".join(sorted(v.capitalize() for v in _SUCCESS_CLOSE_VERBS))
+        raise ValueError(
+            f"Unsafe success reason verb '{first_token}'. "
+            f"Start success reasons with one of: {expected}."
+        )
+
+    matched = next((kw for kw in _UNSAFE_CLOSE_KEYWORDS if kw in lower), None)
+    if matched is not None:
+        raise ValueError(
+            f"Unsafe close reason: contains keyword '{matched}' which can affect conditional blockers."
+        )
+
+
+def _to_compact_issue(issue: Issue) -> dict[str, Any]:
+    """Return compact issue shape for flow responses."""
+    return {
+        "id": issue.id,
+        "title": issue.title,
+        "status": issue.status,
+        "priority": issue.priority,
+    }
+
+
+@mcp.tool(
+    name="flow",
+    description="""Deterministic lifecycle wrappers.
+Actions:
+- claim_next: WIP-gated claim using ready queue + atomic claim
+- create_discovered: create issue + discovered-from link
+- block_with_context: mark blocked and append context pack notes
+- close_safe: lint close reason, append Verified note, then close""",
+)
+@with_workspace
+@require_context
+async def flow(
+    action: str,
+    issue_id: str | None = None,
+    title: str | None = None,
+    description: str = "",
+    discovered_from_id: str | None = None,
+    context_pack: str | None = None,
+    blocker_id: str | None = None,
+    reason: str | None = None,
+    verification: str | None = None,
+    notes: str | None = None,
+    priority: int | None = None,
+    issue_type: IssueType = "task",
+    labels: list[str] | None = None,
+    labels_any: list[str] | None = None,
+    ready_limit: int = 10,
+    ready_assignee: str | None = None,
+    actor: str | None = None,
+    allow_failure_reason: bool = False,
+    workspace_root: str | None = None,
+) -> dict[str, Any]:
+    """Run deterministic flow wrappers that enforce lifecycle policy."""
+    op = action.strip().lower()
+
+    if op == "claim_next":
+        resolved_actor = actor or os.environ.get("BD_ACTOR") or os.environ.get("BEADS_ACTOR")
+        if resolved_actor:
+            in_progress = await beads_list_issues(status="in_progress", assignee=resolved_actor, limit=5)
+            if in_progress:
+                return {
+                    "action": "claim_next",
+                    "claimed": False,
+                    "message": "WIP gate blocked claim; actor already has in_progress issue(s).",
+                    "actor": resolved_actor,
+                    "in_progress_ids": [i.id for i in in_progress],
+                }
+
+        ready_issues = await beads_ready_work(
+            limit=max(1, ready_limit),
+            priority=priority,
+            assignee=ready_assignee,
+            labels=labels,
+            labels_any=labels_any,
+        )
+        if not ready_issues:
+            return {
+                "action": "claim_next",
+                "claimed": False,
+                "message": "No ready work available.",
+            }
+
+        candidate = ready_issues[0]
+        claimed = await beads_update_issue(issue_id=candidate.id, claim=True)
+        claimed_issue = claimed[0] if isinstance(claimed, list) else claimed
+        return {
+            "action": "claim_next",
+            "claimed": True,
+            "issue": _to_compact_issue(claimed_issue),
+        }
+
+    if op == "create_discovered":
+        if not title:
+            raise ValueError("flow(action='create_discovered') requires title")
+        if not discovered_from_id:
+            raise ValueError("flow(action='create_discovered') requires discovered_from_id")
+
+        created = await beads_create_issue(
+            title=title,
+            description=description,
+            priority=priority if priority is not None else 2,
+            issue_type=issue_type,
+            labels=labels,
+        )
+        link_result = await beads_add_dependency(
+            issue_id=created.id,
+            depends_on_id=discovered_from_id,
+            dep_type="discovered-from",
+        )
+        return {
+            "action": "create_discovered",
+            "created": _to_compact_issue(created),
+            "link": link_result,
+        }
+
+    if op == "block_with_context":
+        if not issue_id:
+            raise ValueError("flow(action='block_with_context') requires issue_id")
+        if not context_pack:
+            raise ValueError("flow(action='block_with_context') requires context_pack")
+
+        current = await beads_show_issue(issue_id=issue_id)
+        merged_notes = _append_note(current.notes, f"Context pack: {context_pack}")
+        updated = await beads_update_issue(issue_id=issue_id, status="blocked", notes=merged_notes)
+        updated_issue = updated[0] if isinstance(updated, list) else updated
+
+        dep_result = None
+        if blocker_id:
+            dep_result = await beads_add_dependency(
+                issue_id=issue_id,
+                depends_on_id=blocker_id,
+                dep_type="blocks",
+            )
+        return {
+            "action": "block_with_context",
+            "issue": _to_compact_issue(updated_issue),
+            "dependency": dep_result,
+        }
+
+    if op == "close_safe":
+        if not issue_id:
+            raise ValueError("flow(action='close_safe') requires issue_id")
+        if not reason:
+            raise ValueError("flow(action='close_safe') requires reason")
+        if not verification:
+            raise ValueError("flow(action='close_safe') requires verification evidence")
+
+        _validate_close_reason(reason, allow_failure_reason=allow_failure_reason)
+
+        current = await beads_show_issue(issue_id=issue_id)
+        merged_notes = _append_note(current.notes, f"Verified: {verification}")
+        if notes:
+            merged_notes = _append_note(merged_notes, notes)
+        await beads_update_issue(issue_id=issue_id, notes=merged_notes)
+        closed = await beads_close_issue(issue_id=issue_id, reason=reason)
+
+        if not closed:
+            return {
+                "action": "close_safe",
+                "closed": False,
+                "issue_id": issue_id,
+                "message": "Close returned no issue payload.",
+            }
+        return {
+            "action": "close_safe",
+            "closed": True,
+            "issue": _to_compact_issue(closed[0]),
+        }
+
+    raise ValueError(
+        f"Unknown flow action: {action}. "
+        "Use claim_next, create_discovered, block_with_context, or close_safe."
+    )
+
+
 @mcp.tool(name="ready", description="Find tasks that have no blockers and are ready to be worked on. Returns minimal format for context efficiency.")
 @with_workspace
 async def ready_work(
@@ -989,6 +1258,7 @@ async def create_issue(
     Args:
         brief: If True (default), return minimal OperationResult; if False, return full Issue
     """
+    _enforce_flow_write_policy("create")
     issue = await beads_create_issue(
         title=title,
         description=description,
@@ -1034,6 +1304,7 @@ async def update_issue(
     Args:
         brief: If True (default), return minimal OperationResult; if False, return full Issue
     """
+    _enforce_flow_write_policy("update")
     # If trying to close via update, redirect to close_issue to preserve approval workflow
     if status == "closed":
         issues = await beads_close_issue(issue_id=issue_id, reason="Closed via update")
@@ -1080,6 +1351,7 @@ async def close_issue(
     Args:
         brief: If True (default), return minimal OperationResult list; if False, return full Issues
     """
+    _enforce_flow_write_policy("close")
     issues = await beads_close_issue(issue_id=issue_id, reason=reason)
 
     if not brief:
@@ -1105,6 +1377,7 @@ async def reopen_issue(
     Args:
         brief: If True (default), return minimal OperationResult list; if False, return full Issues
     """
+    _enforce_flow_write_policy("reopen")
     issues = await beads_reopen_issue(issue_ids=issue_ids, reason=reason)
 
     if brief:
@@ -1126,6 +1399,7 @@ async def add_dependency(
     workspace_root: str | None = None,
 ) -> str:
     """Add a dependency relationship between two issues."""
+    _enforce_flow_write_policy("dep")
     return await beads_add_dependency(
         issue_id=issue_id,
         depends_on_id=depends_on_id,

@@ -475,6 +475,7 @@ async def beads_create_issue(
 
 async def beads_update_issue(
     issue_id: Annotated[str, "Issue ID (e.g., bd-1)"],
+    claim: Annotated[bool, "Atomically claim issue (sets assignee/status server-side)"] = False,
     status: Annotated[IssueStatus | None, "New status (open, in_progress, blocked, deferred, closed, or custom)"] = None,
     priority: Annotated[int | None, "New priority (0-4)"] = None,
     assignee: Annotated[str | None, "New assignee"] = None,
@@ -508,6 +509,7 @@ async def beads_update_issue(
     client = await _get_client()
     params = UpdateIssueParams(
         issue_id=issue_id,
+        claim=claim,
         status=status,
         priority=priority,
         assignee=assignee,

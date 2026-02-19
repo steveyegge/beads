@@ -99,7 +99,11 @@ After installation, restart Claude Code to activate the MCP server.
 
 ### Agents
 
-- **`@task-agent`** - Autonomous agent that finds and completes ready tasks
+- **`@beads-issue-manager-agent`** - Lifecycle/write authority via deterministic `flow` wrappers
+- **`@beads-execution-coordinator-agent`** - Implements and verifies claimed tasks
+- **`@beads-query-agent`** - Read-only queue intelligence and context summaries
+- **`@beads-cleanup-agent`** - Landing/handoff cleanup with resumable state
+- **`@task-agent`** - Compatibility orchestrator that routes to split agents
 
 ## MCP Tools Available
 
@@ -110,11 +114,14 @@ The plugin includes a full-featured MCP server with these tools:
 - **`list`** - List issues with filters (status, priority, type, assignee)
 - **`ready`** - Find tasks with no blockers ready to work on
 - **`show`** - Show detailed issue info including dependencies
+- **`flow`** - Deterministic lifecycle wrappers (`claim_next`, `create_discovered`, `block_with_context`, `close_safe`)
 - **`update`** - Update issue (status, priority, design, notes, etc)
 - **`close`** - Close completed issue
 - **`dep`** - Add dependency (blocks, related, parent-child, discovered-from)
 - **`blocked`** - Get blocked issues
 - **`stats`** - Get project statistics
+
+For agent workflows, prefer `flow` for lifecycle writes and keep raw write tools for direct/manual usage.
 
 ### MCP Resources
 
@@ -255,19 +262,27 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 /beads:close bd-10 "Done, discovered bd-11 for rate limiting"
 ```
 
-### Using the Task Agent
+### Using Split Agents
 
 ```bash
-# Let the agent find and complete ready work
-@task-agent
+# Read-only queue snapshot
+@beads-query-agent
 
-# The agent will:
-# 1. Find ready work with `ready` tool
-# 2. Claim a task by updating status
-# 3. Execute the work
-# 4. Create issues for discoveries
-# 5. Close when complete
-# 6. Repeat
+# Claim/manage lifecycle via deterministic wrappers
+@beads-issue-manager-agent
+
+# Implement and verify claimed work
+@beads-execution-coordinator-agent
+
+# Land session and produce handoff
+@beads-cleanup-agent
+```
+
+Compatibility mode:
+
+```bash
+# Legacy single entrypoint (delegates to split-agent model)
+@task-agent
 ```
 
 ## Auto-Sync with Git
