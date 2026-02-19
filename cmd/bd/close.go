@@ -42,8 +42,31 @@ create, update, show, or close operation).`,
 			// Check -m alias (git commit convention)
 			reason, _ = cmd.Flags().GetString("message")
 		}
+		allowFailureReason, _ := cmd.Flags().GetBool("allow-failure-reason")
+		allowUnsafeReason, _ := cmd.Flags().GetBool("allow-unsafe-reason")
+		allowMissingVerified, _ := cmd.Flags().GetBool("allow-missing-verified")
+		verifiedEntriesRaw, _ := cmd.Flags().GetStringArray("verified")
+		verifiedEntries := make([]string, 0, len(verifiedEntriesRaw))
+		for _, entry := range verifiedEntriesRaw {
+			entry = strings.TrimSpace(entry)
+			if entry != "" {
+				verifiedEntries = append(verifiedEntries, entry)
+			}
+		}
+
+		if reason == "" && !allowUnsafeReason {
+			FatalErrorRespectJSON("--reason is required (use --allow-unsafe-reason to bypass)")
+		}
 		if reason == "" {
 			reason = "Closed"
+		}
+		if !allowUnsafeReason {
+			if err := lintCloseReason(reason, allowFailureReason); err != nil {
+				FatalErrorRespectJSON("close reason policy violation: %v (use --allow-unsafe-reason to bypass)", err)
+			}
+		}
+		if len(verifiedEntries) == 0 && !allowMissingVerified {
+			FatalErrorRespectJSON("at least one --verified entry is required (use --allow-missing-verified to bypass)")
 		}
 		force, _ := cmd.Flags().GetBool("force")
 		continueFlag, _ := cmd.Flags().GetBool("continue")
@@ -119,6 +142,23 @@ create, update, show, or close operation).`,
 				}
 			}
 
+			if len(verifiedEntries) > 0 {
+				existingNotes := ""
+				if issue != nil {
+					existingNotes = issue.Notes
+				}
+				notes := existingNotes
+				for _, entry := range verifiedEntries {
+					notes = appendNotesLine(notes, "Verified: "+entry)
+				}
+				if notes != existingNotes {
+					if err := store.UpdateIssue(ctx, id, map[string]interface{}{"notes": notes}, actor); err != nil {
+						fmt.Fprintf(os.Stderr, "Error appending verification notes for %s: %v\n", id, err)
+						continue
+					}
+				}
+			}
+
 			if err := store.CloseIssue(ctx, id, reason, actor, session); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
 				continue
@@ -183,6 +223,21 @@ create, update, show, or close operation).`,
 					result.Close()
 					fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
 					continue
+				}
+			}
+
+			if len(verifiedEntries) > 0 {
+				existingNotes := result.Issue.Notes
+				notes := existingNotes
+				for _, entry := range verifiedEntries {
+					notes = appendNotesLine(notes, "Verified: "+entry)
+				}
+				if notes != existingNotes {
+					if err := result.Store.UpdateIssue(ctx, result.ResolvedID, map[string]interface{}{"notes": notes}, actor); err != nil {
+						result.Close()
+						fmt.Fprintf(os.Stderr, "Error appending verification notes for %s: %v\n", id, err)
+						continue
+					}
 				}
 			}
 
@@ -259,6 +314,10 @@ func init() {
 	_ = closeCmd.Flags().MarkHidden("resolution") // Hidden alias for agent/CLI ergonomics
 	closeCmd.Flags().StringP("message", "m", "", "Alias for --reason (git commit convention)")
 	_ = closeCmd.Flags().MarkHidden("message") // Hidden alias for agent/CLI ergonomics
+	closeCmd.Flags().StringArray("verified", nil, "Verification evidence entry to append as 'Verified: <entry>' (repeatable)")
+	closeCmd.Flags().Bool("allow-failure-reason", false, "Allow failed: close reasons that would otherwise be rejected")
+	closeCmd.Flags().Bool("allow-unsafe-reason", false, "Bypass close-reason lint (manual/exceptional use)")
+	closeCmd.Flags().Bool("allow-missing-verified", false, "Allow close without --verified evidence (manual/exceptional use)")
 	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues or unsatisfied gates")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")

@@ -515,7 +515,9 @@ func TestCLI_Close(t *testing.T) {
 	json.Unmarshal([]byte(out), &issue)
 	id := issue["id"].(string)
 
-	runBDInProcess(t, tmpDir, "close", id, "--reason", "Done")
+	runBDInProcess(t, tmpDir, "close", id,
+		"--reason", "Implemented close flow for CLI fast test",
+		"--verified", "TestCLI_Close")
 
 	out = runBDInProcess(t, tmpDir, "show", id, "--json")
 	var closed []map[string]interface{}
@@ -523,8 +525,8 @@ func TestCLI_Close(t *testing.T) {
 	if closed[0]["status"] != "closed" {
 		t.Errorf("Expected status 'closed', got: %v", closed[0]["status"])
 	}
-	if closed[0]["close_reason"] != "Done" {
-		t.Errorf("Expected close_reason 'Done', got: %v", closed[0]["close_reason"])
+	if closed[0]["close_reason"] != "Implemented close flow for CLI fast test" {
+		t.Errorf("Expected updated close_reason, got: %v", closed[0]["close_reason"])
 	}
 }
 
@@ -775,7 +777,9 @@ func TestCLI_EndToEnd(t *testing.T) {
 	id := issue["id"].(string)
 
 	runBDExec(t, tmpDir, "update", id, "--status", "in_progress")
-	runBDExec(t, tmpDir, "close", id, "--reason", "Done")
+	runBDExec(t, tmpDir, "close", id,
+		"--reason", "Implemented end-to-end close flow",
+		"--verified", "TestCLI_EndToEnd")
 
 	out = runBDExec(t, tmpDir, "show", id, "--json")
 	var closed []map[string]interface{}
@@ -879,7 +883,9 @@ func TestCLI_Reopen(t *testing.T) {
 	id := issue["id"].(string)
 
 	// Close it
-	runBDInProcess(t, tmpDir, "close", id)
+	runBDInProcess(t, tmpDir, "close", id,
+		"--reason", "Implemented close before reopen flow",
+		"--verified", "TestCLI_Reopen")
 
 	// Reopen it
 	runBDInProcess(t, tmpDir, "reopen", id)

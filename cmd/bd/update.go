@@ -230,6 +230,7 @@ create, update, show, or close operation).`,
 
 		// Get claim flag
 		claimFlag, _ := cmd.Flags().GetBool("claim")
+		allowMultiWIP, _ := cmd.Flags().GetBool("allow-multi-wip")
 
 		if len(updates) == 0 && !claimFlag {
 			fmt.Println("No updates specified")
@@ -237,6 +238,39 @@ create, update, show, or close operation).`,
 		}
 
 		ctx := rootCtx
+
+		// Enforce WIP=1 by default for claim operations on legacy update path.
+		if claimFlag && !allowMultiWIP {
+			claimActor := strings.TrimSpace(actor)
+			if claimActor == "" {
+				FatalErrorRespectJSON("actor is required for --claim (use --actor or set BD_ACTOR/BEADS_ACTOR)")
+			}
+			if len(args) > 1 {
+				FatalErrorRespectJSON("WIP=1 policy blocks claiming multiple issues at once; use --allow-multi-wip to bypass")
+			}
+
+			statusInProgress := types.StatusInProgress
+			wipFilter := types.IssueFilter{
+				Status:   &statusInProgress,
+				Assignee: &claimActor,
+				Limit:    20,
+			}
+			currentWIP, err := store.SearchIssues(ctx, "", wipFilter)
+			if err != nil {
+				FatalErrorRespectJSON("failed to evaluate WIP gate before claim: %v", err)
+			}
+			if len(currentWIP) > 0 {
+				wipIDs := make([]string, 0, len(currentWIP))
+				for _, issue := range currentWIP {
+					wipIDs = append(wipIDs, issue.ID)
+				}
+				FatalErrorRespectJSON(
+					"WIP=1 gate blocked claim for actor %q; in_progress issues: %s (use --allow-multi-wip to bypass)",
+					claimActor,
+					strings.Join(wipIDs, ", "),
+				)
+			}
+		}
 
 		updatedIssues := []*types.Issue{}
 		var firstUpdatedID string // Track first successful update for last-touched
@@ -413,6 +447,7 @@ func init() {
 	updateCmd.Flags().StringSlice("set-labels", nil, "Set labels, replacing all existing (repeatable)")
 	updateCmd.Flags().String("parent", "", "New parent issue ID (reparents the issue, use empty string to remove parent)")
 	updateCmd.Flags().Bool("claim", false, "Atomically claim the issue (sets assignee to you, status to in_progress; fails if already claimed)")
+	updateCmd.Flags().Bool("allow-multi-wip", false, "Bypass WIP=1 gate for --claim (manual/exceptional use)")
 	updateCmd.Flags().String("session", "", "Claude Code session ID for status=closed (or set CLAUDE_SESSION_ID env var)")
 	// Time-based scheduling flags (GH#820)
 	// Examples:

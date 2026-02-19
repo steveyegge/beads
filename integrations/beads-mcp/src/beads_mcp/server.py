@@ -17,7 +17,6 @@ import inspect
 import json
 import logging
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -27,6 +26,7 @@ from typing import Any, Awaitable, Callable, TypeVar
 
 from fastmcp import FastMCP
 
+from beads_mcp.bd_client import BdCliClient, BdCommandError
 from beads_mcp.models import (
     BlockedIssue,
     BriefDep,
@@ -444,7 +444,7 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
                 "issue_type": "bug|feature|task|epic|chore|decision (optional for create_discovered)",
                 "labels": "list[str] (optional for create_discovered/claim_next)",
                 "labels_any": "list[str] (optional for claim_next)",
-                "actor": "str (optional for claim_next; must match BD_ACTOR/BEADS_ACTOR if set)",
+                "actor": "str (optional actor identity override; mapped to CLI --actor)",
                 "allow_failure_reason": "bool (default false, only for close_safe)",
                 "workspace_root": "str (optional)"
             },
@@ -804,31 +804,6 @@ def _truncate_description(issue: Issue, max_length: int) -> Issue:
 
 
 _FLOW_ONLY_WRITES_ENV = "BEADS_MCP_FLOW_ONLY_WRITES"
-_SUCCESS_CLOSE_VERBS = {
-    "added",
-    "implemented",
-    "refactored",
-    "updated",
-    "removed",
-    "migrated",
-    "configured",
-    "extracted",
-    "replaced",
-    "consolidated",
-}
-_UNSAFE_CLOSE_KEYWORDS = (
-    "failed",
-    "rejected",
-    "wontfix",
-    "won't fix",
-    "canceled",
-    "cancelled",
-    "abandoned",
-    "blocked",
-    "error",
-    "timeout",
-    "aborted",
-)
 
 
 def _flow_only_writes_enabled() -> bool:
@@ -845,106 +820,51 @@ def _enforce_flow_write_policy(tool_name: str) -> None:
         )
 
 
-def _append_note(existing: str | None, line: str) -> str:
-    """Append a line to notes while preserving existing content."""
-    if existing and existing.strip():
-        return f"{existing.rstrip()}\n{line}"
-    return line
+def _resolve_flow_workspace(workspace_root: str | None) -> str | None:
+    """Resolve the workspace root for direct CLI flow delegation."""
+    return (
+        workspace_root
+        or current_workspace.get()
+        or _workspace_context.get("BEADS_WORKING_DIR")
+        or os.environ.get("BEADS_WORKING_DIR")
+    )
 
 
-def _resolve_claim_actor(actor: str | None) -> str | None:
-    """Resolve claim actor from environment and validate optional override."""
-    env_actor = os.environ.get("BD_ACTOR") or os.environ.get("BEADS_ACTOR")
-    if actor is None:
-        return env_actor
-
-    actor = actor.strip()
-    if not actor:
-        return env_actor
-
-    if env_actor and actor != env_actor:
-        raise ValueError(
-            "claim_next actor mismatch: provided actor does not match BD_ACTOR/BEADS_ACTOR. "
-            "Set environment actor to the same value and retry."
-        )
-
-    if not env_actor:
-        raise ValueError(
-            "claim_next requires BD_ACTOR or BEADS_ACTOR to be set for deterministic WIP gating. "
-            "Set one of these environment variables and retry."
-        )
-    return env_actor
+def _decode_cli_error_payload(error: BdCommandError) -> dict[str, Any] | None:
+    """Decode structured JSON payload emitted by bd CLI on non-zero exit."""
+    for raw in (error.stdout, error.stderr):
+        text = (raw or "").strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
 
 
-def _is_dependency_error(result: str) -> bool:
-    """Return True when dependency add returned an error sentinel string."""
-    return result.strip().lower().startswith("error:")
-
-
-def _raise_structured_flow_error(
-    *,
-    action: str,
-    message: str,
-    phase: str,
-    issue_id: str | None = None,
-    recovery_command: str | None = None,
-    details: dict[str, Any] | None = None,
-) -> None:
-    """Raise a structured error payload for machine-actionable remediation."""
-    payload: dict[str, Any] = {
-        "action": action,
-        "error": {
-            "message": message,
-            "phase": phase,
-        },
-    }
-    if issue_id:
-        payload["issue_id"] = issue_id
-    if recovery_command:
-        payload["recovery_command"] = recovery_command
-    if details:
-        payload["details"] = details
-    raise ValueError(json.dumps(payload, sort_keys=True))
-
-
-def _validate_close_reason(reason: str, allow_failure_reason: bool) -> None:
-    """Validate close reason for conditional-block safety."""
-    stripped = reason.strip()
-    if not stripped:
-        raise ValueError("close_safe requires a non-empty reason")
-
-    lower = stripped.lower()
-    if lower.startswith("failed:"):
-        if allow_failure_reason:
-            return
-        raise ValueError(
-            "Failure close reasons are blocked by default. "
-            "Set allow_failure_reason=true when failure semantics are intentional."
-        )
-
-    first_token = re.split(r"[:\s]+", stripped, maxsplit=1)[0].lower()
-    if first_token not in _SUCCESS_CLOSE_VERBS:
-        expected = ", ".join(sorted(v.capitalize() for v in _SUCCESS_CLOSE_VERBS))
-        raise ValueError(
-            f"Unsafe success reason verb '{first_token}'. "
-            f"Start success reasons with one of: {expected}."
-        )
-
-    matched = next((kw for kw in _UNSAFE_CLOSE_KEYWORDS if kw in lower), None)
-    if matched is not None:
-        raise ValueError(
-            f"Unsafe close reason: contains keyword '{matched}' which can affect conditional blockers."
-        )
-
-
-def _to_compact_issue(issue: Issue) -> dict[str, Any]:
-    """Return compact issue shape for flow responses."""
-    return {
-        "id": issue.id,
-        "title": issue.title,
-        "status": issue.status,
-        "priority": issue.priority,
-    }
+async def _run_flow_cli(
+    *args: str,
+    workspace_root: str | None,
+    actor_override: str | None = None,
+) -> dict[str, Any]:
+    """Run `bd flow ... --json` and return deterministic payload."""
+    client = BdCliClient(
+        actor=actor_override,
+        working_dir=_resolve_flow_workspace(workspace_root),
+    )
+    try:
+        data = await client._run_command("flow", *args)
+        if not isinstance(data, dict):
+            raise ValueError(f"flow command returned non-object payload: {type(data)}")
+        return data
+    except BdCommandError as exc:
+        payload = _decode_cli_error_payload(exc)
+        if payload is not None and isinstance(payload.get("command"), str) and payload["command"].startswith("flow "):
+            return payload
+        raise ValueError(str(exc)) from exc
 
 
 @mcp.tool(
@@ -973,166 +893,61 @@ async def flow(
     issue_type: IssueType = "task",
     labels: list[str] | None = None,
     labels_any: list[str] | None = None,
+    parent_id: str | None = None,
     ready_limit: int = 10,
     ready_assignee: str | None = None,
     actor: str | None = None,
     allow_failure_reason: bool = False,
     workspace_root: str | None = None,
 ) -> dict[str, Any]:
-    """Run deterministic flow wrappers that enforce lifecycle policy."""
+    """Run deterministic flow wrappers through native bd CLI flow commands."""
     op = action.strip().lower()
 
     if op == "claim_next":
-        resolved_actor = _resolve_claim_actor(actor)
-        if not resolved_actor:
-            return {
-                "action": "claim_next",
-                "claimed": False,
-                "message": "No actor configured (set BD_ACTOR or BEADS_ACTOR) for WIP-gated claim.",
-            }
-
-        in_progress = await beads_list_issues(status="in_progress", assignee=resolved_actor, limit=5)
-        if in_progress:
-            return {
-                "action": "claim_next",
-                "claimed": False,
-                "message": "WIP gate blocked claim; actor already has in_progress issue(s).",
-                "actor": resolved_actor,
-                "in_progress_ids": [i.id for i in in_progress],
-            }
-
-        ready_issues = await beads_ready_work(
-            limit=max(1, ready_limit),
-            priority=priority,
-            assignee=ready_assignee,
-            labels=labels,
-            labels_any=labels_any,
-        )
-        # bd ready may include in_progress issues; claim_next only attempts open candidates.
-        candidates = [issue for issue in ready_issues if issue.status == "open"]
-        if not candidates:
-            return {
-                "action": "claim_next",
-                "claimed": False,
-                "message": "No open ready work available.",
-            }
-
-        claim_errors: list[str] = []
-        for candidate in candidates:
-            try:
-                claimed = await beads_update_issue(issue_id=candidate.id, claim=True)
-            except Exception as exc:
-                claim_errors.append(f"{candidate.id}: {exc}")
-                continue
-
-            if isinstance(claimed, list):
-                if not claimed:
-                    claim_errors.append(
-                        f"{candidate.id}: empty claim response (likely contention)"
-                    )
-                    continue
-                claimed_issue = claimed[0]
-            else:
-                claimed_issue = claimed
-            return {
-                "action": "claim_next",
-                "claimed": True,
-                "actor": resolved_actor,
-                "issue": _to_compact_issue(claimed_issue),
-            }
-
-        return {
-            "action": "claim_next",
-            "claimed": False,
-            "actor": resolved_actor,
-            "message": "No claimable ready work after contention checks.",
-            "claim_errors": claim_errors,
-        }
+        if ready_assignee:
+            raise ValueError("flow(action='claim_next') does not support ready_assignee; use actor identity for deterministic claiming")
+        cli_args: list[str] = ["claim-next", "--limit", str(max(1, ready_limit))]
+        if parent_id:
+            cli_args.extend(["--parent", parent_id])
+        if priority is not None:
+            cli_args.extend(["--priority", str(priority)])
+        for label in labels or []:
+            cli_args.extend(["--label", label])
+        for label in labels_any or []:
+            cli_args.extend(["--label-any", label])
+        return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
 
     if op == "create_discovered":
         if not title:
             raise ValueError("flow(action='create_discovered') requires title")
         if not discovered_from_id:
             raise ValueError("flow(action='create_discovered') requires discovered_from_id")
-
-        # Validate discovered-from target exists before creating child issue.
-        await beads_show_issue(issue_id=discovered_from_id)
-
-        created = await beads_create_issue(
-            title=title,
-            description=description,
-            priority=priority if priority is not None else 2,
-            issue_type=issue_type,
-            labels=labels,
-        )
-        link_result = await beads_add_dependency(
-            issue_id=created.id,
-            depends_on_id=discovered_from_id,
-            dep_type="discovered-from",
-        )
-        if _is_dependency_error(link_result):
-            _raise_structured_flow_error(
-                action="create_discovered",
-                message="Dependency link failed after issue creation.",
-                phase="link_dependency",
-                issue_id=created.id,
-                recovery_command=(
-                    f"dep(issue_id='{created.id}', depends_on_id='{discovered_from_id}', "
-                    "dep_type='discovered-from')"
-                ),
-                details={
-                    "partial_state": "issue_created_without_discovered_from_link",
-                    "dependency_result": link_result,
-                    "depends_on_id": discovered_from_id,
-                },
-            )
-        return {
-            "action": "create_discovered",
-            "created": _to_compact_issue(created),
-            "link": link_result,
-        }
+        cli_args = [
+            "create-discovered",
+            "--title", title,
+            "--from", discovered_from_id,
+            "--type", issue_type,
+            "--priority", str(priority if priority is not None else 2),
+        ]
+        if description:
+            cli_args.extend(["--description", description])
+        for label in labels or []:
+            cli_args.extend(["--label", label])
+        return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
 
     if op == "block_with_context":
         if not issue_id:
             raise ValueError("flow(action='block_with_context') requires issue_id")
         if not context_pack:
             raise ValueError("flow(action='block_with_context') requires context_pack")
+        cli_args = [
+            "block-with-context",
+            "--issue", issue_id,
+            "--context-pack", context_pack,
+        ]
         if blocker_id:
-            # Validate blocker exists before changing issue state to avoid partial transitions.
-            await beads_show_issue(issue_id=blocker_id)
-
-        current = await beads_show_issue(issue_id=issue_id)
-        merged_notes = _append_note(current.notes, f"Context pack: {context_pack}")
-        updated = await beads_update_issue(issue_id=issue_id, status="blocked", notes=merged_notes)
-        updated_issue = updated[0] if isinstance(updated, list) else updated
-
-        dep_result = None
-        if blocker_id:
-            dep_result = await beads_add_dependency(
-                issue_id=issue_id,
-                depends_on_id=blocker_id,
-                dep_type="blocks",
-            )
-            if _is_dependency_error(dep_result):
-                _raise_structured_flow_error(
-                    action="block_with_context",
-                    message="Blocker dependency link failed after issue state update.",
-                    phase="link_dependency",
-                    issue_id=issue_id,
-                    recovery_command=(
-                        f"dep(issue_id='{issue_id}', depends_on_id='{blocker_id}', dep_type='blocks')"
-                    ),
-                    details={
-                        "partial_state": "issue_blocked_without_blocker_link",
-                        "dependency_result": dep_result,
-                        "depends_on_id": blocker_id,
-                    },
-                )
-        return {
-            "action": "block_with_context",
-            "issue": _to_compact_issue(updated_issue),
-            "dependency": dep_result,
-        }
+            cli_args.extend(["--blocker", blocker_id])
+        return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
 
     if op == "close_safe":
         if not issue_id:
@@ -1141,28 +956,17 @@ async def flow(
             raise ValueError("flow(action='close_safe') requires reason")
         if not verification:
             raise ValueError("flow(action='close_safe') requires verification evidence")
-
-        _validate_close_reason(reason, allow_failure_reason=allow_failure_reason)
-
-        current = await beads_show_issue(issue_id=issue_id)
-        merged_notes = _append_note(current.notes, f"Verified: {verification}")
+        cli_args = [
+            "close-safe",
+            "--issue", issue_id,
+            "--reason", reason,
+            "--verified", verification,
+        ]
         if notes:
-            merged_notes = _append_note(merged_notes, notes)
-        await beads_update_issue(issue_id=issue_id, notes=merged_notes)
-        closed = await beads_close_issue(issue_id=issue_id, reason=reason)
-
-        if not closed:
-            return {
-                "action": "close_safe",
-                "closed": False,
-                "issue_id": issue_id,
-                "message": "Close returned no issue payload.",
-            }
-        return {
-            "action": "close_safe",
-            "closed": True,
-            "issue": _to_compact_issue(closed[0]),
-        }
+            cli_args.extend(["--note", notes])
+        if allow_failure_reason:
+            cli_args.append("--allow-failure-reason")
+        return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
 
     raise ValueError(
         f"Unknown flow action: {action}. "

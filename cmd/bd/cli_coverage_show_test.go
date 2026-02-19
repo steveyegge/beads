@@ -244,7 +244,10 @@ func TestCoverage_ShowUpdateClose(t *testing.T) {
 	}
 
 	// Close and verify JSON output.
-	closeOut, _ := runBDForCoverage(t, dir, "close", id, "--reason", "Done", "--json")
+	closeOut, _ := runBDForCoverage(t, dir, "close", id,
+		"--reason", "Implemented show coverage close",
+		"--verified", "TestCoverage_ShowWorkflow",
+		"--json")
 	closePayload := extractJSONPayload(closeOut)
 	var closed []map[string]interface{}
 	if err := json.Unmarshal([]byte(closePayload), &closed); err != nil {
@@ -270,12 +273,18 @@ func TestCoverage_TemplateAndPinnedProtections(t *testing.T) {
 	out, _ := runBDForCoverage(t, dir, "create", "Pinned issue", "-p", "1", "--json")
 	pinnedID := parseCreatedIssueID(t, out)
 	runBDForCoverage(t, dir, "update", pinnedID, "--status", string(types.StatusPinned), "--json")
-	_, closeErr := runBDForCoverage(t, dir, "close", pinnedID, "--reason", "Done")
+	_, closeErr := runBDForCoverage(t, dir, "close", pinnedID,
+		"--reason", "Implemented pinned close guard check",
+		"--verified", "TestCoverage_TemplateAndPinnedProtections")
 	if !strings.Contains(closeErr, "cannot close pinned issue") {
 		t.Fatalf("expected pinned close to be rejected, stderr: %s", closeErr)
 	}
 
-	forceOut, _ := runBDForCoverage(t, dir, "close", pinnedID, "--force", "--reason", "Done", "--json")
+	forceOut, _ := runBDForCoverage(t, dir, "close", pinnedID,
+		"--force",
+		"--reason", "Implemented forced pinned close",
+		"--verified", "TestCoverage_TemplateAndPinnedProtections",
+		"--json")
 	forcePayload := extractJSONPayload(forceOut)
 	var closed []map[string]interface{}
 	if err := json.Unmarshal([]byte(forcePayload), &closed); err != nil {
@@ -348,7 +357,9 @@ func TestCoverage_TemplateAndPinnedProtections(t *testing.T) {
 	if !strings.Contains(updErr, "cannot update template") {
 		t.Fatalf("expected template update to be rejected, stderr: %s", updErr)
 	}
-	_, closeTemplateErr := runBDForCoverage(t, dir, "close", template.ID, "--reason", "Done")
+	_, closeTemplateErr := runBDForCoverage(t, dir, "close", template.ID,
+		"--reason", "Implemented template close protection check",
+		"--verified", "TestCoverage_TemplateAndPinnedProtections")
 	if !strings.Contains(closeTemplateErr, "cannot close template") {
 		t.Fatalf("expected template close to be rejected, stderr: %s", closeTemplateErr)
 	}
