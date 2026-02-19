@@ -17,6 +17,9 @@ func TestOpen(t *testing.T) {
 	ctx := context.Background()
 	store, err := beads.Open(ctx, dbPath)
 	if err != nil {
+		if strings.Contains(err.Error(), "requires CGO") {
+			t.Skipf("embedded backend unavailable without CGO in this environment: %v", err)
+		}
 		t.Fatalf("Open failed: %v", err)
 	}
 	defer store.Close()
@@ -74,6 +77,9 @@ func TestOpenFromConfig_Embedded(t *testing.T) {
 	ctx := context.Background()
 	store, err := beads.OpenFromConfig(ctx, beadsDir)
 	if err != nil {
+		if strings.Contains(err.Error(), "requires CGO") {
+			t.Skipf("embedded backend unavailable without CGO in this environment: %v", err)
+		}
 		t.Fatalf("OpenFromConfig (embedded) failed: %v", err)
 	}
 	defer store.Close()
@@ -99,6 +105,9 @@ func TestOpenFromConfig_DefaultsToEmbedded(t *testing.T) {
 	ctx := context.Background()
 	store, err := beads.OpenFromConfig(ctx, beadsDir)
 	if err != nil {
+		if strings.Contains(err.Error(), "requires CGO") {
+			t.Skipf("embedded backend unavailable without CGO in this environment: %v", err)
+		}
 		t.Fatalf("OpenFromConfig (default) failed: %v", err)
 	}
 	defer store.Close()
@@ -144,6 +153,9 @@ func TestOpenFromConfig_NoMetadata(t *testing.T) {
 	ctx := context.Background()
 	store, err := beads.OpenFromConfig(ctx, beadsDir)
 	if err != nil {
+		if strings.Contains(err.Error(), "requires CGO") {
+			t.Skipf("embedded backend unavailable without CGO in this environment: %v", err)
+		}
 		t.Fatalf("OpenFromConfig (no metadata) failed: %v", err)
 	}
 	defer store.Close()

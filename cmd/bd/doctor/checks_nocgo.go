@@ -2,6 +2,13 @@
 
 package doctor
 
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
 // Non-CGO stubs for doctor checks that require Dolt database access.
 // These checks are skipped in non-CGO builds.
 
@@ -34,7 +41,12 @@ func CheckGitConflicts(_ string) DoctorCheck {
 }
 
 func CheckStaleClosedIssues(_ string) DoctorCheck {
-	return DoctorCheck{Name: "Stale Closed Issues", Status: StatusOK, Message: "Requires CGO"}
+	return DoctorCheck{
+		Name:     "Stale Closed Issues",
+		Status:   StatusOK,
+		Message:  "N/A (requires CGO)",
+		Category: CategoryMaintenance,
+	}
 }
 
 func CheckStaleMolecules(_ string) DoctorCheck {
@@ -45,8 +57,52 @@ func CheckPersistentMolIssues(_ string) DoctorCheck {
 	return DoctorCheck{Name: "Persistent Mol Issues", Status: StatusOK, Message: "Requires CGO"}
 }
 
-func CheckStaleMQFiles(_ string) DoctorCheck {
-	return DoctorCheck{Name: "Stale MQ Files", Status: StatusOK, Message: "Requires CGO"}
+func CheckStaleMQFiles(path string) DoctorCheck {
+	mqDir := filepath.Join(path, ".beads", "mq")
+	entries, err := os.ReadDir(mqDir)
+	if os.IsNotExist(err) {
+		return DoctorCheck{
+			Name:     "Legacy MQ Files",
+			Status:   StatusOK,
+			Message:  "No legacy merge queue files",
+			Category: CategoryMaintenance,
+		}
+	}
+	if err != nil {
+		return DoctorCheck{
+			Name:     "Legacy MQ Files",
+			Status:   StatusOK,
+			Message:  "N/A (unable to read .beads/mq)",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	var staleCount int
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(entry.Name(), ".json") {
+			staleCount++
+		}
+	}
+
+	if staleCount == 0 {
+		return DoctorCheck{
+			Name:     "Legacy MQ Files",
+			Status:   StatusOK,
+			Message:  "No legacy merge queue files",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	return DoctorCheck{
+		Name:     "Legacy MQ Files",
+		Status:   StatusWarning,
+		Message:  fmt.Sprintf("%d stale .beads/mq/*.json file(s)", staleCount),
+		Fix:      "Run 'bd doctor --fix' to remove stale merge queue files",
+		Category: CategoryMaintenance,
+	}
 }
 
 func CheckPatrolPollution(_ string) DoctorCheck {
@@ -54,9 +110,18 @@ func CheckPatrolPollution(_ string) DoctorCheck {
 }
 
 func CheckCompactionCandidates(_ string) DoctorCheck {
-	return DoctorCheck{Name: "Compaction Candidates", Status: StatusOK, Message: "Requires CGO"}
+	return DoctorCheck{
+		Name:     "Compaction Candidates",
+		Status:   StatusOK,
+		Message:  "N/A (requires CGO)",
+		Category: CategoryMaintenance,
+	}
 }
 
-func FixStaleMQFiles(_ string) error {
-	return nil
+func FixStaleMQFiles(path string) error {
+	mqDir := filepath.Join(path, ".beads", "mq")
+	if _, err := os.Stat(mqDir); os.IsNotExist(err) {
+		return nil
+	}
+	return os.RemoveAll(mqDir)
 }

@@ -44,19 +44,20 @@ func TestScanForArtifacts_JSONLInDoltDir(t *testing.T) {
 
 	report := ScanForArtifacts(dir)
 
-	// issues.jsonl, issues.jsonl.new, beads.left.jsonl should be found
+	// issues.jsonl.new and beads.left.jsonl should be found.
+	// issues.jsonl is tracked by design in dolt-native mode and is not an artifact.
 	// interactions.jsonl (empty) should be skipped
-	if len(report.JSONLArtifacts) != 3 {
-		t.Errorf("expected 3 JSONL artifacts, got %d", len(report.JSONLArtifacts))
+	if len(report.JSONLArtifacts) != 2 {
+		t.Errorf("expected 2 JSONL artifacts, got %d", len(report.JSONLArtifacts))
 		for _, f := range report.JSONLArtifacts {
 			t.Logf("  found: %s", f.Path)
 		}
 	}
 
-	// issues.jsonl should NOT be safe to delete
+	// issues.jsonl should NOT be reported as an artifact
 	for _, f := range report.JSONLArtifacts {
-		if filepath.Base(f.Path) == "issues.jsonl" && f.SafeDelete {
-			t.Error("issues.jsonl should NOT be safe to delete")
+		if filepath.Base(f.Path) == "issues.jsonl" {
+			t.Error("issues.jsonl should not be reported as an artifact")
 		}
 	}
 
