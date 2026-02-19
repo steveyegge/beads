@@ -325,7 +325,7 @@ _TOOL_CATALOG = {
     "ready": "Find tasks ready to work on (no blockers)",
     "list": "List issues with filters (status, priority, type)",
     "show": "Show full details for a specific issue",
-    "flow": "Deterministic lifecycle wrappers (claim_next, create_discovered, block_with_context, close_safe)",
+    "flow": "Deterministic lifecycle wrappers (claim_next, create_discovered, block_with_context, close_safe, transition)",
     "create": "Create a new issue (bug, feature, task, epic)",
     "update": "Update issue status, priority, or assignee",
     "close": "Close/complete an issue",
@@ -431,8 +431,8 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
             "name": "flow",
             "description": "Deterministic control-plane wrappers for lifecycle mutations",
             "parameters": {
-                "action": "claim_next|create_discovered|block_with_context|close_safe (required)",
-                "issue_id": "str (required for block_with_context and close_safe)",
+                "action": "claim_next|create_discovered|block_with_context|close_safe|transition (required)",
+                "issue_id": "str (required for block_with_context and close_safe; transition requirements depend on transition_type)",
                 "title": "str (required for create_discovered)",
                 "description": "str (optional; used by create_discovered)",
                 "discovered_from_id": "str (required for create_discovered)",
@@ -440,12 +440,19 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
                 "verification": "str (required for close_safe, appended as Verified: ... note)",
                 "context_pack": "str (required for block_with_context)",
                 "blocker_id": "str (optional for block_with_context; adds blocks dep)",
+                "transition_type": "str (required for transition; e.g. claim_failed|test_failed|session_abort)",
                 "priority": "int 0-4 (optional for create_discovered/claim_next filters)",
                 "issue_type": "bug|feature|task|epic|chore|decision (optional for create_discovered)",
                 "labels": "list[str] (optional for create_discovered/claim_next)",
                 "labels_any": "list[str] (optional for claim_next)",
                 "actor": "str (optional actor identity override; mapped to CLI --actor)",
                 "allow_failure_reason": "bool (default false, only for close_safe)",
+                "attempt": "int (optional for transition action=transient_failure)",
+                "max_attempts": "int (optional for transition action=transient_failure)",
+                "backoff": "str (optional for transition action=transient_failure)",
+                "escalate": "str (optional for transition action=transient_failure)",
+                "abort_handoff": "str (optional path for transition action=session_abort)",
+                "abort_no_bd_write": "bool (default false; transition action=session_abort only)",
                 "workspace_root": "str (optional)"
             },
             "returns": "Compact operation summary dict",
@@ -875,7 +882,8 @@ Actions:
 - claim_next: WIP-gated claim using ready queue + atomic claim
 - create_discovered: create issue + discovered-from link
 - block_with_context: mark blocked and append context pack notes
-- close_safe: lint close reason, append Verified note, then close""",
+- close_safe: lint close reason, append Verified note, then close
+- transition: execute deterministic transition handlers (including session_abort)""",
 )
 @with_workspace
 @require_context
@@ -899,6 +907,13 @@ async def flow(
     ready_assignee: str | None = None,
     actor: str | None = None,
     allow_failure_reason: bool = False,
+    transition_type: str | None = None,
+    attempt: int | None = None,
+    max_attempts: int | None = None,
+    backoff: str | None = None,
+    escalate: str | None = None,
+    abort_handoff: str | None = None,
+    abort_no_bd_write: bool = False,
     workspace_root: str | None = None,
 ) -> dict[str, Any]:
     """Run deterministic flow wrappers through native bd CLI flow commands."""
@@ -956,9 +971,35 @@ async def flow(
             cli_args.append("--allow-failure-reason")
         return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
 
+    if op == "transition":
+        cli_args = ["transition"]
+        if transition_type:
+            cli_args.extend(["--type", transition_type])
+        if issue_id:
+            cli_args.extend(["--issue", issue_id])
+        if blocker_id:
+            cli_args.extend(["--blocker", blocker_id])
+        if context_pack:
+            cli_args.extend(["--context", context_pack])
+        if reason:
+            cli_args.extend(["--reason", reason])
+        if attempt is not None:
+            cli_args.extend(["--attempt", str(attempt)])
+        if max_attempts is not None:
+            cli_args.extend(["--max-attempts", str(max_attempts)])
+        if backoff:
+            cli_args.extend(["--backoff", backoff])
+        if escalate:
+            cli_args.extend(["--escalate", escalate])
+        if abort_handoff:
+            cli_args.extend(["--abort-handoff", abort_handoff])
+        if abort_no_bd_write:
+            cli_args.append("--abort-no-bd-write")
+        return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
+
     raise ValueError(
         f"Unknown flow action: {action}. "
-        "Use claim_next, create_discovered, block_with_context, or close_safe."
+        "Use claim_next, create_discovered, block_with_context, close_safe, or transition."
     )
 
 

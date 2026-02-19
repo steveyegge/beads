@@ -182,6 +182,9 @@ func TestPreflightGateEnforcement(t *testing.T) {
 	if preflightGateCmd.Flags().Lookup("skip-wip-gate") == nil {
 		t.Fatalf("preflight gate missing --skip-wip-gate flag")
 	}
+	if preflightGateCmd.Flags().Lookup("remediate-hardening") == nil {
+		t.Fatalf("preflight gate missing --remediate-hardening flag")
+	}
 
 	pass := evaluatePreflightGate(
 		"claim",
@@ -417,12 +420,14 @@ func TestPreClaimQualityLint(t *testing.T) {
 		t.Fatalf("flow preclaim-lint missing --issue flag")
 	}
 
+	estimate := 60
 	okIssue := &types.Issue{
 		ID:                 "bd-ok",
 		IssueType:          types.TypeTask,
 		Description:        "## Context\n...\n\n## Verify\ngo test ./...",
 		AcceptanceCriteria: "observable behavior",
 		Labels:             []string{"module/control-plane", "area/infra"},
+		EstimatedMinutes:   &estimate,
 	}
 	okDeps := []*types.IssueWithDependencyMetadata{
 		{Issue: types.Issue{ID: "bd-parent"}, DependencyType: types.DepParentChild},
@@ -866,6 +871,9 @@ func TestLandGate3SyncChoreography(t *testing.T) {
 	if landCmd.Flags().Lookup("sync-merge") == nil {
 		t.Fatalf("land missing --sync-merge flag")
 	}
+	if landCmd.Flags().Lookup("pull-rebase") == nil {
+		t.Fatalf("land missing --pull-rebase flag")
+	}
 
 	calls := make([]string, 0)
 	runner := func(name string, args ...string) (string, error) {
@@ -873,7 +881,7 @@ func TestLandGate3SyncChoreography(t *testing.T) {
 		return "ok", nil
 	}
 
-	steps, err := runLandGate3Choreography(false, true, true, true, runner)
+	steps, err := runLandGate3Choreography(false, true, true, true, true, runner)
 	if err != nil {
 		t.Fatalf("expected gate3 choreography to succeed, got %v", err)
 	}
@@ -892,7 +900,7 @@ func TestLandGate3SyncChoreography(t *testing.T) {
 	}
 
 	calls = calls[:0]
-	steps, err = runLandGate3Choreography(true, true, false, false, runner)
+	steps, err = runLandGate3Choreography(true, false, true, false, false, runner)
 	if err != nil {
 		t.Fatalf("expected check-only choreography to succeed, got %v", err)
 	}
@@ -901,6 +909,21 @@ func TestLandGate3SyncChoreography(t *testing.T) {
 	}
 	if steps[0].Status != "skipped" || steps[1].Status != "skipped" {
 		t.Fatalf("expected initial check-only steps to be skipped, got %v", steps)
+	}
+
+	calls = calls[:0]
+	steps, err = runLandGate3Choreography(false, false, false, false, false, runner)
+	if err != nil {
+		t.Fatalf("expected non-mutating choreography to succeed, got %v", err)
+	}
+	expectedCalls = []string{
+		"bd sync --status",
+	}
+	if !reflect.DeepEqual(calls, expectedCalls) {
+		t.Fatalf("unexpected non-mutating gate3 call order: got %v want %v", calls, expectedCalls)
+	}
+	if steps[0].Name != "gate3_pull_rebase" || steps[0].Status != "skipped" {
+		t.Fatalf("expected pull-rebase to be skipped by default, got %v", steps[0])
 	}
 }
 
@@ -1432,9 +1455,9 @@ func TestPolicyDriftGuard(t *testing.T) {
 	pluginText := string(pluginData)
 
 	requiredPluginTokens := []string{
-		"CLI (deterministic enforcement)",
-		"Split agents (judgment)",
-		"MCP adapter (translation only)",
+		"CLI-owned",
+		"Split-agent-owned",
+		"MCP-owned",
 		"`flow`",
 	}
 	for _, token := range requiredPluginTokens {
@@ -1457,6 +1480,7 @@ func TestPolicyDriftGuard(t *testing.T) {
 		`if op == "create_discovered"`,
 		`if op == "block_with_context"`,
 		`if op == "close_safe"`,
+		`if op == "transition"`,
 	}
 	for _, token := range requiredServerTokens {
 		if !strings.Contains(serverText, token) {

@@ -46,6 +46,7 @@ func TestControlPlaneContract(t *testing.T) {
 		"`flow create-discovered`",
 		"`flow block-with-context`",
 		"`flow close-safe`",
+		"`flow transition`",
 		"`intake audit`",
 		"`resume`",
 		"`land`",

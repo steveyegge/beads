@@ -24,6 +24,7 @@ var (
 	landStateTo        string
 	landEpicID         string
 	landCheckOnly      bool
+	landRunPullRebase  bool
 	landRunSync        bool
 	landRunPush        bool
 	landRunSyncMerge   bool
@@ -256,7 +257,7 @@ var landCmd = &cobra.Command{
 		}
 
 		if landCheckOnly {
-			choreographySteps, _ := runLandGate3Choreography(true, landRunSync, landRunPush, landRunSyncMerge, runSubprocess)
+			choreographySteps, _ := runLandGate3Choreography(true, landRunPullRebase, landRunSync, landRunPush, landRunSyncMerge, runSubprocess)
 			steps = append(steps, choreographySteps...)
 			steps = append(steps, landStep{Name: "actions", Status: "skipped", Message: "check-only mode enabled"})
 			finishEnvelope(commandEnvelope{
@@ -279,7 +280,7 @@ var landCmd = &cobra.Command{
 			store = nil
 		}
 
-		choreographySteps, runErr := runLandGate3Choreography(false, landRunSync, landRunPush, landRunSyncMerge, runSubprocess)
+		choreographySteps, runErr := runLandGate3Choreography(false, landRunPullRebase, landRunSync, landRunPush, landRunSyncMerge, runSubprocess)
 		steps = append(steps, choreographySteps...)
 		if runErr != nil {
 			finishEnvelope(commandEnvelope{
@@ -372,13 +373,15 @@ func criticalWarningNamesFromChecks(checks []doctorCheck) []string {
 	return uniqueSortedStrings(critical)
 }
 
-func runLandGate3Choreography(checkOnly, runSync, runPush, runMerge bool, runner func(string, ...string) (string, error)) ([]landStep, error) {
+func runLandGate3Choreography(checkOnly, runPullRebase, runSync, runPush, runMerge bool, runner func(string, ...string) (string, error)) ([]landStep, error) {
 	steps := make([]landStep, 0, 5)
 	if checkOnly {
-		steps = append(steps,
-			landStep{Name: "gate3_pull_rebase", Status: "skipped", Message: "check-only mode"},
-			landStep{Name: "gate3_sync_status", Status: "skipped", Message: "check-only mode"},
-		)
+		if runPullRebase {
+			steps = append(steps, landStep{Name: "gate3_pull_rebase", Status: "skipped", Message: "check-only mode"})
+		} else {
+			steps = append(steps, landStep{Name: "gate3_pull_rebase", Status: "skipped", Message: "--pull-rebase not requested"})
+		}
+		steps = append(steps, landStep{Name: "gate3_sync_status", Status: "skipped", Message: "check-only mode"})
 		if runMerge {
 			steps = append(steps, landStep{Name: "gate3_sync_merge", Status: "skipped", Message: "check-only mode"})
 		}
@@ -395,11 +398,15 @@ func runLandGate3Choreography(checkOnly, runSync, runPush, runMerge bool, runner
 		return steps, nil
 	}
 
-	if _, err := runner("git", "pull", "--rebase"); err != nil {
-		steps = append(steps, landStep{Name: "gate3_pull_rebase", Status: "fail", Message: err.Error()})
-		return steps, err
+	if runPullRebase {
+		if _, err := runner("git", "pull", "--rebase"); err != nil {
+			steps = append(steps, landStep{Name: "gate3_pull_rebase", Status: "fail", Message: err.Error()})
+			return steps, err
+		}
+		steps = append(steps, landStep{Name: "gate3_pull_rebase", Status: "pass", Message: "git pull --rebase completed"})
+	} else {
+		steps = append(steps, landStep{Name: "gate3_pull_rebase", Status: "skipped", Message: "--pull-rebase not requested"})
 	}
-	steps = append(steps, landStep{Name: "gate3_pull_rebase", Status: "pass", Message: "git pull --rebase completed"})
 
 	if _, err := runner("bd", "sync", "--status"); err != nil {
 		steps = append(steps, landStep{Name: "gate3_sync_status", Status: "fail", Message: err.Error()})
@@ -453,6 +460,7 @@ func init() {
 	landCmd.Flags().StringVar(&landStateTo, "state-to", "", "Target session state for lifecycle transition validation")
 	landCmd.Flags().StringVar(&landEpicID, "epic", "", "Epic ID for landing gate scope")
 	landCmd.Flags().BoolVar(&landCheckOnly, "check-only", false, "Run gates without sync/push operations")
+	landCmd.Flags().BoolVar(&landRunPullRebase, "pull-rebase", false, "Run git pull --rebase during Gate 3 choreography")
 	landCmd.Flags().BoolVar(&landRunSync, "sync", false, "Run bd sync after gates pass")
 	landCmd.Flags().BoolVar(&landRunPush, "push", false, "Run git push after gates pass")
 	landCmd.Flags().BoolVar(&landRunSyncMerge, "sync-merge", false, "Run bd sync --merge during Gate 3 choreography")

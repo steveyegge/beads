@@ -60,9 +60,10 @@ var preflightCriticalDoctorWarnings = map[string]struct{}{
 }
 
 var (
-	preflightGateAction    string
-	preflightSkipWIPGate   bool
-	preflightRuntimeBinary string
+	preflightGateAction         string
+	preflightSkipWIPGate        bool
+	preflightRemediateHardening bool
+	preflightRuntimeBinary      string
 )
 
 var preflightCmd = &cobra.Command{
@@ -91,6 +92,7 @@ func init() {
 	preflightCmd.Flags().Bool("json", false, "Output results as JSON")
 	preflightGateCmd.Flags().StringVar(&preflightGateAction, "action", "claim", "Gate scope: claim or write")
 	preflightGateCmd.Flags().BoolVar(&preflightSkipWIPGate, "skip-wip-gate", false, "Skip WIP gate (resume-remediation only)")
+	preflightGateCmd.Flags().BoolVar(&preflightRemediateHardening, "remediate-hardening", false, "Auto-remediate hardening invariant keys before gate evaluation")
 	preflightRuntimeParityCmd.Flags().StringVar(&preflightRuntimeBinary, "binary", "", "Path to runtime bd binary to verify (defaults to current executable)")
 	preflightCmd.AddCommand(preflightGateCmd)
 	preflightCmd.AddCommand(preflightRuntimeParityCmd)
@@ -135,13 +137,19 @@ func runPreflightGate(cmd *cobra.Command, args []string) {
 	validationOnCreate, _ := store.GetConfig(ctx, "validation.on-create")
 	requireDescriptionRaw, _ := store.GetConfig(ctx, "create.require-description")
 	requireDescription := parseConfigBool(requireDescriptionRaw)
+	validationOnCreate = strings.TrimSpace(validationOnCreate)
 	hardeningBefore := map[string]interface{}{
-		"validation_on_create": strings.TrimSpace(validationOnCreate),
+		"validation_on_create": validationOnCreate,
 		"require_description":  requireDescription,
 	}
-	validationOnCreate, requireDescription, remediated, remediateErr := ensureHardeningInvariant(ctx)
+	remediated := false
+	var remediateErr error
+	if preflightRemediateHardening {
+		validationOnCreate, requireDescription, remediated, remediateErr = ensureHardeningInvariant(ctx)
+		validationOnCreate = strings.TrimSpace(validationOnCreate)
+	}
 	hardeningAfter := map[string]interface{}{
-		"validation_on_create": strings.TrimSpace(validationOnCreate),
+		"validation_on_create": validationOnCreate,
 		"require_description":  requireDescription,
 	}
 
@@ -216,19 +224,20 @@ func runPreflightGate(cmd *cobra.Command, args []string) {
 	}
 
 	details := map[string]interface{}{
-		"action":                      assessment.Action,
-		"blockers":                    assessment.Blockers,
-		"doctor_fail_count":           assessment.DoctorFailCount,
-		"doctor_critical_warn_count":  assessment.DoctorCriticalWarns,
-		"validation_on_create":        assessment.ValidationOnCreate,
-		"require_description":         assessment.RequireDescription,
-		"hardening_before":            assessment.HardeningBefore,
-		"hardening_after":             assessment.HardeningAfter,
-		"hardening_remediated":        assessment.HardeningRemediated,
-		"hardening_remediation_error": assessment.HardeningRemediateErr,
-		"wip_count":                   assessment.WIPCount,
-		"wip_gate_enforced":           assessment.WIPGateEnforced,
-		"wip_issue_ids":               wipIDs,
+		"action":                          assessment.Action,
+		"blockers":                        assessment.Blockers,
+		"doctor_fail_count":               assessment.DoctorFailCount,
+		"doctor_critical_warn_count":      assessment.DoctorCriticalWarns,
+		"validation_on_create":            assessment.ValidationOnCreate,
+		"require_description":             assessment.RequireDescription,
+		"hardening_before":                assessment.HardeningBefore,
+		"hardening_after":                 assessment.HardeningAfter,
+		"hardening_remediation_requested": preflightRemediateHardening,
+		"hardening_remediated":            assessment.HardeningRemediated,
+		"hardening_remediation_error":     assessment.HardeningRemediateErr,
+		"wip_count":                       assessment.WIPCount,
+		"wip_gate_enforced":               assessment.WIPGateEnforced,
+		"wip_issue_ids":                   wipIDs,
 	}
 
 	if !assessment.Pass {

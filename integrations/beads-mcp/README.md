@@ -219,7 +219,7 @@ await beads_ready_work(workspace_root="/Users/you/project-a")
 - `list` - List issues with filters (status, priority, type, assignee)
 - `ready` - Find tasks with no blockers ready to work on
 - `show` - Show detailed issue info including dependencies
-- `flow` - Deterministic lifecycle wrappers: `claim_next`, `create_discovered`, `block_with_context`, `close_safe`
+- `flow` - Deterministic lifecycle wrappers: `claim_next`, `create_discovered`, `block_with_context`, `close_safe`, `transition`
 - `update` - Update issue (status, priority, design, notes, etc). Note: `status="closed"` or `status="open"` automatically route to `close` or `reopen` tools to respect approval workflows
 - `close` - Close completed issue
 - `dep` - Add dependency (blocks, related, parent-child, discovered-from)
@@ -233,6 +233,7 @@ For agentic workflows, prefer `flow` for lifecycle mutations. `flow` provides po
 Notes for `flow`:
 - `claim_next` requires actor identity from `BD_ACTOR` or `BEADS_ACTOR` for deterministic WIP gating.
 - `create_discovered` and `block_with_context` validate dependency targets before mutating state.
+- `transition` delegates to `bd flow transition` and supports lifecycle handlers such as `session_abort`.
 - Rare post-mutation dependency races return a structured error payload with `issue_id`, `details.partial_state`, and `recovery_command`.
   - Example recovery command: `dep(issue_id='<id>', depends_on_id='<blocker>', dep_type='blocks')`
 

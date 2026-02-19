@@ -124,7 +124,7 @@ The plugin includes a full-featured MCP server with these tools:
 - **`list`** - List issues with filters (status, priority, type, assignee)
 - **`ready`** - Find tasks with no blockers ready to work on
 - **`show`** - Show detailed issue info including dependencies
-- **`flow`** - Deterministic lifecycle wrappers (`claim_next`, `create_discovered`, `block_with_context`, `close_safe`)
+- **`flow`** - Deterministic lifecycle wrappers (`claim_next`, `create_discovered`, `block_with_context`, `close_safe`, `transition`)
 - **`update`** - Update issue (status, priority, design, notes, etc)
 - **`close`** - Close completed issue
 - **`dep`** - Add dependency (blocks, related, parent-child, discovered-from)
@@ -304,6 +304,9 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 
 # Close safely with reason lint + verification evidence
 # MCP tool: flow(action="close_safe", issue_id="bd-123", reason="Implemented ...", verification="pytest ...")
+
+# Execute lifecycle transition handlers (for example session abort)
+# MCP tool: flow(action="transition", transition_type="session_abort", reason="...", context_pack="...")
 ```
 
 If a dependency link fails after a successful create/update (rare race), `flow` returns a structured error payload with:

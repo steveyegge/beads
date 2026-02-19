@@ -11,6 +11,7 @@ The following command surfaces are part of the v1 deterministic control plane:
 - `flow create-discovered`
 - `flow block-with-context`
 - `flow close-safe`
+- `flow transition`
 - `intake audit`
 - `resume`
 - `land`
