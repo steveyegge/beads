@@ -262,8 +262,12 @@ func measureQueryTime(ctx context.Context, db *sql.DB, query string) int64 {
 	return time.Since(start).Milliseconds()
 }
 
-// isDoltServerRunning checks if a dolt sql-server is responding
+// isDoltServerRunning checks if a dolt sql-server is responding.
+// Respects BEADS_DOLT_SERVER_MODE=0 to force embedded mode (useful in tests).
 func isDoltServerRunning(host string, port int) bool {
+	if os.Getenv("BEADS_DOLT_SERVER_MODE") == "0" {
+		return false
+	}
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 2*time.Second)
 	if err != nil {
 		return false
