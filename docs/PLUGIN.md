@@ -132,11 +132,13 @@ For agent workflows, prefer `flow` for lifecycle writes and keep raw write tools
 The beads workflow is designed for AI agents but works great for humans too:
 
 1. **Find ready work**: `/beads:ready`
-2. **Claim your task**: `/beads:update <id> in_progress`
+2. **Agent-managed lifecycle (recommended)**: use split agents and `flow` wrappers for claim/discovery/block/close
 3. **Work on it**: Implement, test, document
-4. **Discover new work**: Create issues for bugs/TODOs found during work
-5. **Complete**: `/beads:close <id> "Done: <summary>"`
+4. **Discover new work**: create linked follow-ups via `flow(action="create_discovered", ...)`
+5. **Complete safely**: `flow(action="close_safe", issue_id=..., reason=..., verification=...)`
 6. **Repeat**: Check for newly unblocked tasks
+
+Manual/direct lifecycle mode is still available with `/beads:update` and `/beads:close`, but agent automation should prefer `flow`.
 
 ## Issue Types
 
@@ -233,7 +235,7 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 
 ## Examples
 
-### Basic Task Management
+### Basic Task Management (Manual Mode)
 
 ```bash
 # Create a high-priority bug
@@ -249,7 +251,7 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 /beads:close bd-10 "Fixed auth token validation"
 ```
 
-### Discovering Work During Development
+### Discovering Work During Development (Manual Mode)
 
 ```bash
 # Working on bd-10, found a related bug
@@ -276,6 +278,22 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 
 # Land session and produce handoff
 @beads-cleanup-agent
+```
+
+### Flow Wrapper Examples (Agent Lifecycle)
+
+```bash
+# Claim next task with WIP gating
+# MCP tool: flow(action="claim_next")
+
+# Create discovered follow-up linked to current issue
+# MCP tool: flow(action="create_discovered", title="...", discovered_from_id="bd-123")
+
+# Block with context pack and optional blocker edge
+# MCP tool: flow(action="block_with_context", issue_id="bd-123", context_pack="...", blocker_id="bd-456")
+
+# Close safely with reason lint + verification evidence
+# MCP tool: flow(action="close_safe", issue_id="bd-123", reason="Implemented ...", verification="pytest ...")
 ```
 
 Compatibility mode:

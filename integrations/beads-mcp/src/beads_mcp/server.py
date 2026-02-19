@@ -433,6 +433,7 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
                 "issue_type": "bug|feature|task|epic|chore|decision (optional for create_discovered)",
                 "labels": "list[str] (optional for create_discovered/claim_next)",
                 "labels_any": "list[str] (optional for claim_next)",
+                "actor": "str (optional for claim_next; must match BD_ACTOR/BEADS_ACTOR if set)",
                 "allow_failure_reason": "bool (default false, only for close_safe)",
                 "workspace_root": "str (optional)"
             },
@@ -840,6 +841,35 @@ def _append_note(existing: str | None, line: str) -> str:
     return line
 
 
+def _resolve_claim_actor(actor: str | None) -> str | None:
+    """Resolve claim actor from environment and validate optional override."""
+    env_actor = os.environ.get("BD_ACTOR") or os.environ.get("BEADS_ACTOR")
+    if actor is None:
+        return env_actor
+
+    actor = actor.strip()
+    if not actor:
+        return env_actor
+
+    if env_actor and actor != env_actor:
+        raise ValueError(
+            "claim_next actor mismatch: provided actor does not match BD_ACTOR/BEADS_ACTOR. "
+            "Set environment actor to the same value and retry."
+        )
+
+    if not env_actor:
+        raise ValueError(
+            "claim_next requires BD_ACTOR or BEADS_ACTOR to be set for deterministic WIP gating. "
+            "Set one of these environment variables and retry."
+        )
+    return env_actor
+
+
+def _is_dependency_error(result: str) -> bool:
+    """Return True when dependency add returned an error sentinel string."""
+    return result.strip().lower().startswith("error:")
+
+
 def _validate_close_reason(reason: str, allow_failure_reason: bool) -> None:
     """Validate close reason for conditional-block safety."""
     stripped = reason.strip()
@@ -916,17 +946,23 @@ async def flow(
     op = action.strip().lower()
 
     if op == "claim_next":
-        resolved_actor = actor or os.environ.get("BD_ACTOR") or os.environ.get("BEADS_ACTOR")
-        if resolved_actor:
-            in_progress = await beads_list_issues(status="in_progress", assignee=resolved_actor, limit=5)
-            if in_progress:
-                return {
-                    "action": "claim_next",
-                    "claimed": False,
-                    "message": "WIP gate blocked claim; actor already has in_progress issue(s).",
-                    "actor": resolved_actor,
-                    "in_progress_ids": [i.id for i in in_progress],
-                }
+        resolved_actor = _resolve_claim_actor(actor)
+        if not resolved_actor:
+            return {
+                "action": "claim_next",
+                "claimed": False,
+                "message": "No actor configured (set BD_ACTOR or BEADS_ACTOR) for WIP-gated claim.",
+            }
+
+        in_progress = await beads_list_issues(status="in_progress", assignee=resolved_actor, limit=5)
+        if in_progress:
+            return {
+                "action": "claim_next",
+                "claimed": False,
+                "message": "WIP gate blocked claim; actor already has in_progress issue(s).",
+                "actor": resolved_actor,
+                "in_progress_ids": [i.id for i in in_progress],
+            }
 
         ready_issues = await beads_ready_work(
             limit=max(1, ready_limit),
@@ -935,20 +971,37 @@ async def flow(
             labels=labels,
             labels_any=labels_any,
         )
-        if not ready_issues:
+        # bd ready may include in_progress issues; claim_next only attempts open candidates.
+        candidates = [issue for issue in ready_issues if issue.status == "open"]
+        if not candidates:
             return {
                 "action": "claim_next",
                 "claimed": False,
-                "message": "No ready work available.",
+                "message": "No open ready work available.",
             }
 
-        candidate = ready_issues[0]
-        claimed = await beads_update_issue(issue_id=candidate.id, claim=True)
-        claimed_issue = claimed[0] if isinstance(claimed, list) else claimed
+        claim_errors: list[str] = []
+        for candidate in candidates:
+            try:
+                claimed = await beads_update_issue(issue_id=candidate.id, claim=True)
+            except Exception as exc:
+                claim_errors.append(f"{candidate.id}: {exc}")
+                continue
+
+            claimed_issue = claimed[0] if isinstance(claimed, list) else claimed
+            return {
+                "action": "claim_next",
+                "claimed": True,
+                "actor": resolved_actor,
+                "issue": _to_compact_issue(claimed_issue),
+            }
+
         return {
             "action": "claim_next",
-            "claimed": True,
-            "issue": _to_compact_issue(claimed_issue),
+            "claimed": False,
+            "actor": resolved_actor,
+            "message": "No claimable ready work after contention checks.",
+            "claim_errors": claim_errors,
         }
 
     if op == "create_discovered":
@@ -956,6 +1009,9 @@ async def flow(
             raise ValueError("flow(action='create_discovered') requires title")
         if not discovered_from_id:
             raise ValueError("flow(action='create_discovered') requires discovered_from_id")
+
+        # Validate discovered-from target exists before creating child issue.
+        await beads_show_issue(issue_id=discovered_from_id)
 
         created = await beads_create_issue(
             title=title,
@@ -969,6 +1025,10 @@ async def flow(
             depends_on_id=discovered_from_id,
             dep_type="discovered-from",
         )
+        if _is_dependency_error(link_result):
+            raise ValueError(
+                f"create_discovered failed to link dependency for {created.id}: {link_result}"
+            )
         return {
             "action": "create_discovered",
             "created": _to_compact_issue(created),
@@ -980,6 +1040,9 @@ async def flow(
             raise ValueError("flow(action='block_with_context') requires issue_id")
         if not context_pack:
             raise ValueError("flow(action='block_with_context') requires context_pack")
+        if blocker_id:
+            # Validate blocker exists before changing issue state to avoid partial transitions.
+            await beads_show_issue(issue_id=blocker_id)
 
         current = await beads_show_issue(issue_id=issue_id)
         merged_notes = _append_note(current.notes, f"Context pack: {context_pack}")
@@ -993,6 +1056,10 @@ async def flow(
                 depends_on_id=blocker_id,
                 dep_type="blocks",
             )
+            if _is_dependency_error(dep_result):
+                raise ValueError(
+                    f"block_with_context failed to add blocker dependency for {issue_id}: {dep_result}"
+                )
         return {
             "action": "block_with_context",
             "issue": _to_compact_issue(updated_issue),

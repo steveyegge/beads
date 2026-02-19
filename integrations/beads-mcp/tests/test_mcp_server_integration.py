@@ -1105,6 +1105,57 @@ async def test_flow_claim_next_enforces_wip_gate(mcp_client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_flow_claim_next_requires_env_actor_for_actor_override(mcp_client, monkeypatch):
+    """flow(claim_next) should reject actor override when environment actor is unset."""
+    from fastmcp.exceptions import ToolError
+
+    monkeypatch.delenv("BEADS_ACTOR", raising=False)
+    monkeypatch.delenv("BD_ACTOR", raising=False)
+
+    await mcp_client.call_tool("create", {"title": "Claim test issue", "brief": False})
+
+    with pytest.raises(ToolError):
+        await mcp_client.call_tool("flow", {"action": "claim_next", "actor": "alice"})
+
+
+@pytest.mark.asyncio
+async def test_flow_claim_next_without_actor_config_returns_compact_no_claim(mcp_client, monkeypatch):
+    """flow(claim_next) should return claimed=false (not crash) when no actor identity exists."""
+    import json
+
+    monkeypatch.delenv("BEADS_ACTOR", raising=False)
+    monkeypatch.delenv("BD_ACTOR", raising=False)
+
+    await mcp_client.call_tool("create", {"title": "No actor claim issue", "brief": False})
+    result = await mcp_client.call_tool("flow", {"action": "claim_next"})
+    payload = json.loads(result.content[0].text)
+    assert payload["claimed"] is False
+    assert "No actor configured" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_flow_claim_next_skips_non_open_ready_entries(mcp_client, monkeypatch):
+    """flow(claim_next) should not crash when ready list includes in_progress entries."""
+    import json
+
+    actor = "flow-skip-test-actor"
+    monkeypatch.setenv("BEADS_ACTOR", actor)
+
+    created = await mcp_client.call_tool("create", {"title": "Single claim candidate", "brief": False})
+    issue = json.loads(created.content[0].text)
+
+    first = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": actor})
+    first_payload = json.loads(first.content[0].text)
+    assert first_payload["claimed"] is True
+    assert first_payload["issue"]["id"] == issue["id"]
+
+    second = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": actor})
+    second_payload = json.loads(second.content[0].text)
+    assert second_payload["claimed"] is False
+    assert "WIP gate" in second_payload["message"]
+
+
+@pytest.mark.asyncio
 async def test_flow_create_discovered_links_issue(mcp_client):
     """flow(create_discovered) should create issue and link with discovered-from."""
     import json
@@ -1134,6 +1185,28 @@ async def test_flow_create_discovered_links_issue(mcp_client):
     child_payload = json.loads(child.content[0].text)
     dep_ids = [dep["id"] for dep in child_payload["dependencies"]]
     assert parent["id"] in dep_ids
+
+
+@pytest.mark.asyncio
+async def test_flow_create_discovered_fails_fast_on_missing_parent(mcp_client):
+    """flow(create_discovered) should fail before create when discovered_from target is missing."""
+    import json
+    from fastmcp.exceptions import ToolError
+
+    with pytest.raises(ToolError):
+        await mcp_client.call_tool(
+            "flow",
+            {
+                "action": "create_discovered",
+                "title": "Should not be created",
+                "description": "Missing parent",
+                "discovered_from_id": "bd-does-not-exist",
+            },
+        )
+
+    listed = await mcp_client.call_tool("list", {"query": "Should not be created"})
+    listed_payload = json.loads(listed.content[0].text) if listed.content else []
+    assert listed_payload == []
 
 
 @pytest.mark.asyncio
@@ -1170,6 +1243,34 @@ async def test_flow_close_safe_lints_reason_and_requires_verification(mcp_client
     close_payload = json.loads(close_result.content[0].text)
     assert close_payload["closed"] is True
     assert close_payload["issue"]["status"] == "closed"
+
+
+@pytest.mark.asyncio
+async def test_flow_block_with_context_fails_fast_on_missing_blocker(mcp_client):
+    """flow(block_with_context) should reject missing blocker before state mutation."""
+    import json
+    from fastmcp.exceptions import ToolError
+
+    issue_result = await mcp_client.call_tool(
+        "create", {"title": "Block target", "issue_type": "task", "brief": False}
+    )
+    issue = json.loads(issue_result.content[0].text)
+
+    with pytest.raises(ToolError):
+        await mcp_client.call_tool(
+            "flow",
+            {
+                "action": "block_with_context",
+                "issue_id": issue["id"],
+                "context_pack": "state; repro; next",
+                "blocker_id": "bd-missing-blocker",
+            },
+        )
+
+    shown = await mcp_client.call_tool("show", {"issue_id": issue["id"]})
+    shown_payload = json.loads(shown.content[0].text)
+    assert shown_payload["status"] == "open"
+    assert "Context pack:" not in (shown_payload.get("notes") or "")
 
 
 @pytest.mark.asyncio

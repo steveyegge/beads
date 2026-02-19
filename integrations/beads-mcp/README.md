@@ -230,6 +230,10 @@ await beads_ready_work(workspace_root="/Users/you/project-a")
 
 For agentic workflows, prefer `flow` for lifecycle mutations. `flow` provides policy-safe wrappers for WIP-gated claim, discovered-work linking, blocked context packs, and close-reason/verification enforcement.
 
+Notes for `flow`:
+- `claim_next` requires actor identity from `BD_ACTOR` or `BEADS_ACTOR` for deterministic WIP gating.
+- `create_discovered` and `block_with_context` validate dependency targets before mutating state.
+
 ## Known Issues
 
 ### ~~MCP Tools Not Loading in Claude Code~~ (Issue [#346](https://github.com/steveyegge/beads/issues/346)) - RESOLVED
