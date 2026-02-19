@@ -50,7 +50,12 @@ jobs:
             "cc-x86_64-freebsd:x86_64-freebsd"; do
             name="${pair%%:*}"
             target="${pair##*:}"
-            printf '#!/bin/sh\nexec zig cc -target %s "$@"\n' "$target" > "/tmp/zigcc/$name"
+            # Each wrapper gets its own zig cache to avoid AccessDenied races
+            # when goreleaser builds multiple targets in parallel
+            cache_dir="/tmp/zigcc/cache-${target}"
+            mkdir -p "$cache_dir"
+            printf '#!/bin/sh\nexport ZIG_GLOBAL_CACHE_DIR=%s\nexport ZIG_LOCAL_CACHE_DIR=%s\nexec zig cc -target %s "$@"\n' \
+              "$cache_dir" "$cache_dir" "$target" > "/tmp/zigcc/$name"
             chmod +x "/tmp/zigcc/$name"
           done
 
