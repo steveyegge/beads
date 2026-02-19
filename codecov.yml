@@ -1,0 +1,116 @@
+# Codecov configuration for beads (bd) CLI
+# https://docs.codecov.com/docs/codecovyml-reference
+#
+# Strategy: single upload, no flags. Domain-level views via components.
+
+codecov:
+  branch: main
+  max_report_age: off
+  notify:
+    after_n_builds: 1
+    wait_for_ci: true
+
+# Coverage status configuration
+coverage:
+  status:
+    project:
+      # Overall project coverage
+      default:
+        target: auto
+        threshold: 5%
+
+    # Patch coverage (for new code in PRs)
+    patch:
+      default:
+        target: 60%
+        threshold: 10%
+
+# Component management for domain-based coverage views
+# Components are purely configuration-driven — no upload-time setup needed
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 5%
+        informational: true
+
+  individual_components:
+    - component_id: cli-commands
+      name: CLI Commands
+      paths:
+        - cmd/**
+
+    - component_id: storage-engine
+      name: Storage & Database
+      paths:
+        - internal/storage/**
+        - internal/compact/**
+        - internal/configfile/**
+        - internal/lockfile/**
+
+    - component_id: sync-git
+      name: Sync & Git Operations
+      paths:
+        - internal/git/**
+        - internal/syncbranch/**
+        - internal/hooks/**
+
+    - component_id: query-engine
+      name: Query & Filtering
+      paths:
+        - internal/query/**
+        - internal/validation/**
+        - internal/timeparsing/**
+
+    - component_id: integrations
+      name: External Integrations
+      paths:
+        - internal/jira/**
+        - internal/linear/**
+        - internal/gitlab/**
+        - internal/tracker/**
+
+    - component_id: core-types
+      name: Core Types & Utilities
+      paths:
+        - internal/types/**
+        - internal/idgen/**
+        - internal/utils/**
+        - internal/beads/**
+        - internal/config/**
+
+# Files and paths to ignore from coverage
+ignore:
+  # Test files
+  - "**/*_test.go"
+  - "**/testdata/**"
+  - "**/testutil/**"
+  - "**/test_helpers*.go"
+
+  # Generated files
+  - "internal/formula/formulas/**"
+  - "**/*.generated.go"
+
+  # Build artifacts and dependencies
+  - "**/vendor/**"
+
+  # Documentation
+  - "**/*.md"
+  - "docs/**"
+
+  # Scripts and tooling
+  - "scripts/**"
+
+  # Templates
+  - "internal/templates/**"
+
+# Comment configuration for PR comments
+comment:
+  layout: "condensed_header,diff,components,tree"
+  behavior: default
+  require_changes: false
+
+# GitHub Checks configuration
+github_checks:
+  annotations: true
