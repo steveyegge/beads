@@ -19,6 +19,22 @@ Success means:
 - resumable handoff
 - clean landing state
 
+## Failure Patterns Mitigated
+
+This file is designed to prevent these common agent failures:
+- intent drift from user request
+- unplanned scope expansion
+- context loss across turns/sessions
+- unverifiable "done" claims
+- multi-agent overlap/race conditions
+- task graph wiring errors (missing links/cycles/orphans)
+- coding before intake mapping/audit gates
+- unsafe closes without acceptance evidence
+- dependency-state corruption from unsafe close reasons
+- liveness stalls from deferred/blocked work not resurfacing
+- interactive/destructive command misuse in automation
+- weak handoff artifacts with no exact next command
+
 ## Authority Order
 
 When instructions conflict, resolve in this order:
@@ -27,6 +43,9 @@ When instructions conflict, resolve in this order:
 3. `docs/CONTROL_PLANE_CONTRACT.md`
 4. split-agent docs (`claude-plugin/agents/*.md`, `docs/agents/*.md`)
 5. this file
+
+When conflict handling is required, record:
+- `Conflict: <sources>; Resolution: <decision>`
 
 ## Ownership Boundary
 
@@ -152,6 +171,37 @@ Use:
 ```bash
 bd reason lint --reason "<close reason>"
 ```
+
+## Auditability Protocol
+
+Minimum auditability requirements for every executed task:
+- task exists in `bd` before execution
+- task is linked to the correct parent outcome
+- close path includes verification evidence
+- close reason passes `bd reason lint`
+
+For non-routine decisions (ambiguity, override, gate bypass, force-close), append:
+- `Decision | Evidence | Risk | Follow-up ID: <decision> | <evidence> | <risk> | <id-or-none>`
+
+For non-hermetic checks, append evidence tuple:
+- `Evidence tuple: {ts:<UTC>, env:<env-id>, artifact:<id>}`
+
+## Output Protocol
+
+For claim/close/handoff/intake updates, report:
+- `commands | verification (or skipped reason) | state changes | next action`
+- include key assumptions and key files consulted when relevant
+
+## Decision Request Template
+
+When blocked >30 minutes or impact >1 hour, use:
+- `Decision: <one-line choice>`
+- `Blocker: <what cannot proceed>`
+- `State: <current behavior + constraints>`
+- `Options: A/B(/C) with benefit/cost`
+- `Rec: <recommended option + rationale>`
+- `Impact: <what changes>`
+- `Need: <explicit A/B/C or missing info>`
 
 ## Handoff Contract
 
