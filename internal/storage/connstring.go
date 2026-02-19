@@ -8,7 +8,10 @@ import (
 )
 
 // SQLiteConnString builds a SQLite connection string with standard pragmas.
-// It honors the BD_LOCK_TIMEOUT env var for busy timeout (default 30s).
+//
+// Includes busy_timeout (prevents "database is locked" under concurrency),
+// foreign_keys (enforces referential integrity), and time_format pragmas.
+// Honors the BD_LOCK_TIMEOUT env var for busy timeout (default 30s).
 // If readOnly is true, the connection is opened in read-only mode.
 // If path is already a file: URI, pragmas are appended only if absent.
 func SQLiteConnString(path string, readOnly bool) string {
@@ -17,7 +20,6 @@ func SQLiteConnString(path string, readOnly bool) string {
 		return ""
 	}
 
-	// Best-effort: honor the same env var viper uses (BD_LOCK_TIMEOUT).
 	busy := 30 * time.Second
 	if v := strings.TrimSpace(os.Getenv("BD_LOCK_TIMEOUT")); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -26,7 +28,6 @@ func SQLiteConnString(path string, readOnly bool) string {
 	}
 	busyMs := int64(busy / time.Millisecond)
 
-	// If it's already a URI, append pragmas if absent.
 	if strings.HasPrefix(path, "file:") {
 		conn := path
 		sep := "?"

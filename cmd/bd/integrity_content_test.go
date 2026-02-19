@@ -71,8 +71,8 @@ func TestContentBasedComparison(t *testing.T) {
 		t.Error("isJSONLNewer should return false when content matches (before timestamp manipulation)")
 	}
 
-	// Wait to ensure timestamp difference
-	time.Sleep(100 * time.Millisecond)
+	// ensure timestamp advances
+	time.Sleep(10 * time.Millisecond)
 
 	// Simulate daemon auto-export: touch JSONL to make it newer
 	// This simulates clock skew or filesystem timestamp quirks

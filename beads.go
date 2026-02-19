@@ -11,8 +11,7 @@ import (
 	"context"
 
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -23,21 +22,19 @@ type Storage = beads.Storage
 // Use Storage.RunInTransaction() to obtain a Transaction instance.
 type Transaction = beads.Transaction
 
-// NewSQLiteStorage is deprecated. Use NewStorage instead.
-// Retained for backward compatibility during the SQLite-to-Dolt transition.
-func NewSQLiteStorage(ctx context.Context, dbPath string) (Storage, error) {
-	return NewStorage(ctx, dbPath)
+// Open opens a Dolt-backed beads database at the given path.
+// This always opens in embedded mode. Use OpenFromConfig to respect
+// server mode settings from metadata.json.
+func Open(ctx context.Context, dbPath string) (Storage, error) {
+	return dolt.New(ctx, &dolt.Config{Path: dbPath})
 }
 
-// NewStorage creates a new storage instance at the given path using the Dolt backend.
-func NewStorage(ctx context.Context, dbPath string) (Storage, error) {
-	return factory.New(ctx, configfile.BackendDolt, dbPath)
-}
-
-// GetConfiguredBackend returns the backend type from the beads directory config.
-// Returns "dolt" if no config exists or backend is not specified.
-func GetConfiguredBackend(beadsDir string) string {
-	return beads.GetConfiguredBackend(beadsDir)
+// OpenFromConfig opens a beads database using configuration from metadata.json.
+// Unlike Open, this respects Dolt server mode settings and database name
+// configuration, connecting to the Dolt SQL server when dolt_mode is "server".
+// beadsDir is the path to the .beads directory.
+func OpenFromConfig(ctx context.Context, beadsDir string) (Storage, error) {
+	return dolt.NewFromConfig(ctx, beadsDir)
 }
 
 // FindDatabasePath finds the beads database in the current directory tree
@@ -90,9 +87,10 @@ type (
 	WorkFilter       = types.WorkFilter
 	StaleFilter      = types.StaleFilter
 	DependencyCounts = types.DependencyCounts
-	IssueWithCounts  = types.IssueWithCounts
-	SortPolicy       = types.SortPolicy
-	EpicStatus       = types.EpicStatus
+	IssueWithCounts              = types.IssueWithCounts
+	IssueWithDependencyMetadata  = types.IssueWithDependencyMetadata
+	SortPolicy                   = types.SortPolicy
+	EpicStatus                   = types.EpicStatus
 )
 
 // Status constants

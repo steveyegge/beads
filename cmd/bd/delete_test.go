@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -149,16 +149,13 @@ func TestBulkDeleteNoResurrection(t *testing.T) {
 
 	oldStore := store
 	oldDbPath := dbPath
-	oldAutoImportEnabled := autoImportEnabled
 	defer func() {
 		store = oldStore
 		dbPath = oldDbPath
-		autoImportEnabled = oldAutoImportEnabled
 	}()
 
 	store = s
 	dbPath = testDB
-	autoImportEnabled = true
 
 	result, err := s.DeleteIssues(ctx, toDelete, false, true, false)
 	if err != nil {
@@ -201,7 +198,7 @@ func TestBulkDeleteNoResurrection(t *testing.T) {
 	}
 }
 
-func exportToJSONLTest(t *testing.T, s storage.Storage, jsonlPath string) {
+func exportToJSONLTest(t *testing.T, s *dolt.DoltStore, jsonlPath string) {
 	t.Helper()
 	ctx := context.Background()
 	issues, err := s.SearchIssues(ctx, "", types.IssueFilter{})
@@ -271,155 +268,6 @@ func countJSONLIssuesTest(t *testing.T, jsonlPath string) int {
 		t.Fatalf("Scanner error: %v", err)
 	}
 	return count
-}
-
-// TestCreateTombstoneWrapper tests the createTombstone wrapper function
-func TestCreateTombstoneWrapper(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	testDB := filepath.Join(beadsDir, "beads.db")
-
-	s := newTestStore(t, testDB)
-	ctx := context.Background()
-
-	// Save and restore global store
-	oldStore := store
-	defer func() { store = oldStore }()
-	store = s
-
-	t.Run("successful tombstone creation", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:       "Test Issue",
-			Description: "Issue to be tombstoned",
-			Status:      types.StatusOpen,
-			Priority:    2,
-			IssueType:   "task",
-		}
-		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		err := createTombstone(ctx, issue.ID, "test-actor", "Test deletion reason")
-		if err != nil {
-			t.Fatalf("createTombstone failed: %v", err)
-		}
-
-		// Verify tombstone status
-		updated, err := s.GetIssue(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("GetIssue failed: %v", err)
-		}
-		if updated == nil {
-			t.Fatal("Issue should still exist as tombstone")
-		}
-		if updated.Status != types.StatusTombstone {
-			t.Errorf("Expected status %s, got %s", types.StatusTombstone, updated.Status)
-		}
-	})
-
-	t.Run("tombstone with actor and reason tracking", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:       "Issue with tracking",
-			Description: "Check actor/reason",
-			Status:      types.StatusOpen,
-			Priority:    1,
-			IssueType:   "bug",
-		}
-		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		actor := "admin-user"
-		reason := "Duplicate issue"
-		err := createTombstone(ctx, issue.ID, actor, reason)
-		if err != nil {
-			t.Fatalf("createTombstone failed: %v", err)
-		}
-
-		// Verify actor and reason were recorded
-		updated, err := s.GetIssue(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("GetIssue failed: %v", err)
-		}
-		if updated.DeletedBy != actor {
-			t.Errorf("Expected DeletedBy %q, got %q", actor, updated.DeletedBy)
-		}
-		if updated.DeleteReason != reason {
-			t.Errorf("Expected DeleteReason %q, got %q", reason, updated.DeleteReason)
-		}
-	})
-
-	t.Run("error when issue does not exist", func(t *testing.T) {
-		err := createTombstone(ctx, "nonexistent-issue-id", "actor", "reason")
-		if err == nil {
-			t.Error("Expected error for non-existent issue")
-		}
-	})
-
-	t.Run("verify tombstone preserves original type", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:       "Feature issue",
-			Description: "Should preserve type",
-			Status:      types.StatusOpen,
-			Priority:    2,
-			IssueType:   types.TypeFeature,
-		}
-		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		err := createTombstone(ctx, issue.ID, "actor", "reason")
-		if err != nil {
-			t.Fatalf("createTombstone failed: %v", err)
-		}
-
-		updated, err := s.GetIssue(ctx, issue.ID)
-		if err != nil {
-			t.Fatalf("GetIssue failed: %v", err)
-		}
-		if updated.OriginalType != string(types.TypeFeature) {
-			t.Errorf("Expected OriginalType %q, got %q", types.TypeFeature, updated.OriginalType)
-		}
-	})
-
-	t.Run("verify audit trail recorded", func(t *testing.T) {
-		issue := &types.Issue{
-			Title:       "Issue for audit",
-			Description: "Check event recording",
-			Status:      types.StatusOpen,
-			Priority:    2,
-			IssueType:   "task",
-		}
-		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
-			t.Fatalf("Failed to create issue: %v", err)
-		}
-
-		err := createTombstone(ctx, issue.ID, "audit-actor", "audit-reason")
-		if err != nil {
-			t.Fatalf("createTombstone failed: %v", err)
-		}
-
-		// Verify an event was recorded
-		events, err := s.GetEvents(ctx, issue.ID, 100)
-		if err != nil {
-			t.Fatalf("GetEvents failed: %v", err)
-		}
-
-		found := false
-		for _, e := range events {
-			if e.EventType == "deleted" && e.Actor == "audit-actor" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("Expected 'deleted' event in audit trail")
-		}
-	})
 }
 
 // TestDeleteIssueWrapper tests the deleteIssue wrapper function
@@ -554,28 +402,6 @@ func TestDeleteIssueWrapper(t *testing.T) {
 				statsBefore.TotalIssues, statsAfter.TotalIssues)
 		}
 	})
-}
-
-func TestCreateTombstoneUnsupportedStorage(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	oldStore := store
-	defer func() { store = oldStore }()
-
-	// Set store to nil - the type assertion will fail
-	store = nil
-
-	ctx := context.Background()
-	err := createTombstone(ctx, "any-id", "actor", "reason")
-	if err == nil {
-		t.Error("Expected error when storage is nil")
-	}
-	expectedMsg := "tombstone operation not supported by this storage backend"
-	if err.Error() != expectedMsg {
-		t.Errorf("Expected error %q, got %q", expectedMsg, err.Error())
-	}
 }
 
 func TestDeleteIssueUnsupportedStorage(t *testing.T) {

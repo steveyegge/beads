@@ -125,8 +125,6 @@ Examples:
 
 		ctx := rootCtx
 
-		requireFreshDB(ctx)
-
 		// Direct mode
 		if store == nil {
 			fmt.Fprintf(os.Stderr, "Error: no storage available\n")
@@ -148,17 +146,6 @@ Examples:
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
-		}
-
-		// If no issues found, check if git has issues and auto-import
-		if len(issues) == 0 {
-			if checkAndAutoImport(ctx, store) {
-				issues, err = store.SearchIssues(ctx, "", searchFilter)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-			}
 		}
 
 		// Apply predicate filter if needed (for OR queries)
@@ -200,7 +187,7 @@ Examples:
 				for i, issue := range issues {
 					issueIDs[i] = issue.ID
 				}
-				labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)    // Best effort: display gracefully degrades with empty data
+				labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)   // Best effort: display gracefully degrades with empty data
 				depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)  // Best effort: display gracefully degrades with empty data
 				commentCounts, _ := store.GetCommentCounts(ctx, issueIDs) // Best effort: display gracefully degrades with empty data
 

@@ -30,7 +30,7 @@ type Compactor struct {
 }
 
 // compactableStore defines the storage interface required for compaction.
-// This interface can be implemented by any storage backend (SQLite, Dolt, etc.)
+// This interface can be implemented by any storage backend
 // that wants to support the compaction feature.
 type compactableStore interface {
 	CheckEligibility(ctx context.Context, issueID string, tier int) (bool, string, error)
@@ -209,51 +209,4 @@ func (c *Compactor) CompactTier1Batch(ctx context.Context, issueIDs []string) ([
 
 	wg.Wait()
 	return results, nil
-}
-
-// CompactTier1Single compacts a single issue at Tier 1 and returns detailed results.
-// Deprecated: Use CompactTier1 instead. This method is kept for backward compatibility.
-func (c *Compactor) CompactTier1Single(ctx context.Context, issueID string) (*BatchResult, error) {
-	issue, err := c.store.GetIssue(ctx, issueID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch issue: %w", err)
-	}
-
-	originalSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
-
-	if err := c.CompactTier1(ctx, issueID); err != nil {
-		return &BatchResult{IssueID: issueID, OriginalSize: originalSize, Err: err}, nil
-	}
-
-	issueAfter, _ := c.store.GetIssue(ctx, issueID)
-	compactedSize := 0
-	if issueAfter != nil {
-		compactedSize = len(issueAfter.Description)
-	}
-
-	return &BatchResult{
-		IssueID:       issueID,
-		OriginalSize:  originalSize,
-		CompactedSize: compactedSize,
-	}, nil
-}
-
-// CompactTier2 is a placeholder for future Tier 2 compaction.
-// Tier 2 would involve more aggressive summarization and archival.
-func (c *Compactor) CompactTier2(ctx context.Context, issueID string) error {
-	// Get the issue
-	issue, err := c.store.GetIssue(ctx, issueID)
-	if err != nil {
-		return fmt.Errorf("failed to get issue: %w", err)
-	}
-
-	// Calculate original size
-	originalSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
-
-	// For now, just apply the metadata update without actual summarization
-	if err := c.store.ApplyCompaction(ctx, issueID, 2, originalSize, originalSize, ""); err != nil {
-		return fmt.Errorf("failed to apply compaction metadata: %w", err)
-	}
-
-	return nil
 }

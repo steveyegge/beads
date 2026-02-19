@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/formula"
-	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -152,7 +152,7 @@ func TestSubstituteVariables(t *testing.T) {
 
 // templateTestHelper provides helpers for Beads template tests
 type templateTestHelper struct {
-	s   storage.Storage
+	s   *dolt.DoltStore
 	ctx context.Context
 	t   *testing.T
 }
@@ -880,7 +880,7 @@ func TestExtractRequiredVariables_IgnoresUndeclaredVars(t *testing.T) {
 				{Title: "Deploy {{component}}", Description: "Deploy the component"},
 			},
 			varDefs: map[string]formula.VarDef{
-				"component": {Default: "api"},
+				"component": {Default: formula.StringPtr("api")},
 			},
 			wantRequired: []string{},
 		},
@@ -908,7 +908,7 @@ func TestExtractRequiredVariables_IgnoresUndeclaredVars(t *testing.T) {
 			},
 			varDefs: map[string]formula.VarDef{
 				"component": {Required: true},
-				"env":       {Default: "prod"},
+				"env":       {Default: formula.StringPtr("prod")},
 				// status_count is NOT declared - it's documentation
 			},
 			wantRequired: []string{"component"},

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
@@ -24,11 +23,10 @@ import (
 // DeletionMarker represents a compact deletion marker in JSONL format.
 // Format: {"id": "gt-123", "_deleted": true, "_deleted_at": "2026-01-17T10:30:00Z"}
 // These markers are used for incremental sync to propagate deletions efficiently
-// without sending full tombstone records.
+// without sending full deletion records.
 type DeletionMarker struct {
-	ID        string     `json:"id"`
-	Deleted   bool       `json:"_deleted"`
-	DeletedAt *time.Time `json:"_deleted_at,omitempty"`
+	ID      string `json:"id"`
+	Deleted bool   `json:"_deleted"`
 }
 
 // isDeletionMarker checks if a JSON line is a deletion marker.
@@ -60,8 +58,7 @@ Behavior:
   - Use --dedupe-after to find and merge content duplicates after import
   - Use --dry-run to preview changes without applying them
 
-NOTE: Import requires direct database access and does not work with daemon mode.
-      The command automatically uses --no-daemon when executed.`,
+NOTE: Import requires direct database access.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("import")
 		// Check for positional arguments (common mistake: bd import file.jsonl instead of bd import -i file.jsonl)
@@ -95,7 +92,6 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		clearDuplicateExternalRefs, _ := cmd.Flags().GetBool("clear-duplicate-external-refs")
 		orphanHandling, _ := cmd.Flags().GetString("orphan-handling")
 		force, _ := cmd.Flags().GetBool("force")
-		protectLeftSnapshot, _ := cmd.Flags().GetBool("protect-left-snapshot")
 		noGitHistory, _ := cmd.Flags().GetBool("no-git-history")
 		_ = noGitHistory // Accepted for compatibility with bd sync subprocess calls
 
@@ -152,52 +148,11 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			if bytes.HasPrefix(trimmed, []byte("<<<<<<< ")) ||
 				bytes.Equal(trimmed, []byte("=======")) ||
 				bytes.HasPrefix(trimmed, []byte(">>>>>>> ")) {
-				fmt.Fprintf(os.Stderr, "Git conflict markers detected in JSONL file (line %d)\n", lineNum)
-				fmt.Fprintf(os.Stderr, "→ Attempting automatic 3-way merge...\n\n")
-
-				// Attempt automatic merge using bd merge command
-				if err := attemptAutoMerge(input); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: Automatic merge failed: %v\n\n", err)
-					fmt.Fprintf(os.Stderr, "To resolve manually:\n")
-					fmt.Fprintf(os.Stderr, "  git checkout --ours .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n")
-					fmt.Fprintf(os.Stderr, "  git checkout --theirs .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n\n")
-					fmt.Fprintf(os.Stderr, "For advanced field-level merging, see: https://github.com/neongreen/mono/tree/main/beads-merge\n")
-					os.Exit(1)
-				}
-
-				fmt.Fprintf(os.Stderr, "✓ Automatic merge successful\n")
-				fmt.Fprintf(os.Stderr, "→ Restarting import with merged JSONL...\n\n")
-
-				// Re-open the input file to read the merged content
-				if input != "" {
-					// Close current file handle
-					if in != os.Stdin {
-						_ = in.Close()
-					}
-
-					// Re-open the merged file
-					// #nosec G304 - user-provided file path is intentional
-					f, err := os.Open(input)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error reopening merged file: %v\n", err)
-						os.Exit(1)
-					}
-					defer func() {
-						if err := f.Close(); err != nil {
-							fmt.Fprintf(os.Stderr, "Warning: failed to close input file: %v\n", err)
-						}
-					}()
-					in = f
-					scanner = bufio.NewScanner(in)
-					allIssues = nil       // Reset issues list
-					deletionMarkers = nil // Reset deletion markers list
-					lineNum = 0           // Reset line counter
-					continue              // Restart parsing from beginning
-				} else {
-					// Can't retry stdin - should not happen since git conflicts only in files
-					fmt.Fprintf(os.Stderr, "Error: Cannot retry merge from stdin\n")
-					os.Exit(1)
-				}
+				fmt.Fprintf(os.Stderr, "Error: Git conflict markers detected in JSONL file (line %d)\n\n", lineNum)
+				fmt.Fprintf(os.Stderr, "To resolve:\n")
+				fmt.Fprintf(os.Stderr, "  git checkout --ours .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n")
+				fmt.Fprintf(os.Stderr, "  git checkout --theirs .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n")
+				os.Exit(1)
 			}
 
 			// Check for deletion markers first
@@ -218,37 +173,9 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			}
 			issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 
-			// Migrate old JSONL format: auto-correct deleted status to tombstone
-			// This handles JSONL files from versions that used "deleted" instead of "tombstone"
-			// (GH#1223: Stuck in sync diversion loop)
-			if issue.Status == types.Status("deleted") && issue.DeletedAt != nil {
-				issue.Status = types.StatusTombstone
-				if debug.Enabled() {
-					debug.Logf("Auto-corrected status 'deleted' to 'tombstone' for issue %s\n", issue.ID)
-				}
-			}
-
-			// Fix: Any non-tombstone issue with deleted_at set is malformed and should be tombstone
-			// This catches issues that may have been corrupted or migrated incorrectly
-			if issue.Status != types.StatusTombstone && issue.DeletedAt != nil {
-				issue.Status = types.StatusTombstone
-				if debug.Enabled() {
-					debug.Logf("Auto-corrected status %s to 'tombstone' (had deleted_at) for issue %s\n", issue.Status, issue.ID)
-				}
-			}
-
 			if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
 				now := time.Now()
 				issue.ClosedAt = &now
-			}
-
-			// Ensure tombstones have deleted_at set (fix for malformed data)
-			if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
-				now := time.Now()
-				issue.DeletedAt = &now
-				if debug.Enabled() {
-					debug.Logf("Auto-added deleted_at timestamp for tombstone issue %s\n", issue.ID)
-				}
 			}
 
 			allIssues = append(allIssues, &issue)
@@ -309,23 +236,6 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			ClearDuplicateExternalRefs: clearDuplicateExternalRefs,
 			OrphanHandling:             orphanHandling,
 			DeletionIDs:                deletionIDs,
-		}
-
-		// If --protect-left-snapshot is set, read the left snapshot and build timestamp map
-		// GH#865: Use timestamp-aware protection - only protect if local is newer than incoming
-		if protectLeftSnapshot && input != "" {
-			beadsDir := filepath.Dir(input)
-			leftSnapshotPath := filepath.Join(beadsDir, "beads.left.jsonl")
-			if _, err := os.Stat(leftSnapshotPath); err == nil {
-				sm := NewSnapshotManager(input)
-				leftTimestamps, err := sm.BuildIDToTimestampMap(leftSnapshotPath)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to read left snapshot: %v\n", err)
-				} else if len(leftTimestamps) > 0 {
-					opts.ProtectLocalExportIDs = leftTimestamps
-					fmt.Fprintf(os.Stderr, "Protecting %d issue(s) from left snapshot (timestamp-aware)\n", len(leftTimestamps))
-				}
-			}
 		}
 
 		result, err := importIssuesCore(ctx, dbPath, store, allIssues, opts)
@@ -560,7 +470,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 // The function sets DB mtime to max(JSONL mtime, now) + 1ns to handle clock skew.
 // If jsonlPath is empty or can't be read, falls back to time.Now().
 //
-// Fixes issues #278, #301, #321: daemon export leaving JSONL newer than DB.
+// Fixes issues #278, #301, #321: export leaving JSONL newer than DB.
 func TouchDatabaseFile(dbPath, jsonlPath string) error {
 	targetTime := time.Now()
 
@@ -668,132 +578,6 @@ func countLinesInGitHEAD(filePath string, workDir string) int {
 	return lines
 }
 
-// attemptAutoMerge attempts to resolve git conflicts using bd merge 3-way merge.
-// GH#1110: Now uses RepoContext to ensure we operate on the beads repo.
-func attemptAutoMerge(conflictedPath string) error {
-	// Validate inputs
-	if conflictedPath == "" {
-		return fmt.Errorf("no file path provided for merge")
-	}
-
-	// Get git repository root from RepoContext
-	var gitRoot string
-	if rc, err := beads.GetRepoContext(); err == nil {
-		gitRoot = rc.RepoRoot
-	} else {
-		// Fallback to CWD-based lookup
-		gitRootCmd := exec.Command("git", "rev-parse", "--show-toplevel") // #nosec G204 -- fixed git invocation for repo root discovery
-		gitRootOutput, err := gitRootCmd.Output()
-		if err != nil {
-			return fmt.Errorf("not in a git repository: %w", err)
-		}
-		gitRoot = strings.TrimSpace(string(gitRootOutput))
-	}
-
-	// Convert conflicted path to absolute path relative to git root
-	absConflictedPath := conflictedPath
-	if !filepath.IsAbs(conflictedPath) {
-		absConflictedPath = filepath.Join(gitRoot, conflictedPath)
-	}
-
-	// Get base (merge-base), left (ours/HEAD), and right (theirs/MERGE_HEAD) versions
-	// These are the three inputs needed for 3-way merge
-
-	// Extract relative path from git root for git commands
-	relPath, err := filepath.Rel(gitRoot, absConflictedPath)
-	if err != nil {
-		relPath = conflictedPath
-	}
-
-	// Create temp directory for merge artifacts
-	tmpDir, err := os.MkdirTemp("", "bd-merge-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	basePath := filepath.Join(tmpDir, "base.jsonl")
-	leftPath := filepath.Join(tmpDir, "left.jsonl")
-	rightPath := filepath.Join(tmpDir, "right.jsonl")
-	outputPath := filepath.Join(tmpDir, "merged.jsonl")
-
-	// Extract base version (merge-base)
-	baseCmd := exec.Command("git", "show", fmt.Sprintf(":1:%s", relPath)) // #nosec G204 -- relPath limited to files tracked in current repo
-	baseCmd.Dir = gitRoot
-	baseContent, err := baseCmd.Output()
-	if err != nil {
-		// Stage 1 might not exist if file was added in both branches
-		// Create empty base in this case
-		baseContent = []byte{}
-	}
-	if err := os.WriteFile(basePath, baseContent, 0600); err != nil {
-		return fmt.Errorf("failed to write base version: %w", err)
-	}
-
-	// Extract left version (ours/HEAD)
-	leftCmd := exec.Command("git", "show", fmt.Sprintf(":2:%s", relPath)) // #nosec G204 -- relPath limited to files tracked in current repo
-	leftCmd.Dir = gitRoot
-	leftContent, err := leftCmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to extract 'ours' version: %w", err)
-	}
-	if err := os.WriteFile(leftPath, leftContent, 0600); err != nil {
-		return fmt.Errorf("failed to write left version: %w", err)
-	}
-
-	// Extract right version (theirs/MERGE_HEAD)
-	rightCmd := exec.Command("git", "show", fmt.Sprintf(":3:%s", relPath)) // #nosec G204 -- relPath limited to files tracked in current repo
-	rightCmd.Dir = gitRoot
-	rightContent, err := rightCmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to extract 'theirs' version: %w", err)
-	}
-	if err := os.WriteFile(rightPath, rightContent, 0600); err != nil {
-		return fmt.Errorf("failed to write right version: %w", err)
-	}
-
-	// Get current executable to call bd merge
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("cannot resolve current executable: %w", err)
-	}
-
-	// Invoke bd merge command
-	mergeCmd := exec.Command(exe, "merge", outputPath, basePath, leftPath, rightPath) // #nosec G204 -- executes current bd binary for deterministic merge
-	mergeOutput, err := mergeCmd.CombinedOutput()
-	if err != nil {
-		// Check exit code - bd merge returns 1 if there are conflicts, 2 for errors
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if exitErr.ExitCode() == 1 {
-				// Conflicts exist - merge tool did its best but couldn't resolve everything
-				return fmt.Errorf("merge conflicts could not be automatically resolved:\n%s", mergeOutput)
-			}
-		}
-		return fmt.Errorf("merge command failed: %w\n%s", err, mergeOutput)
-	}
-
-	// Merge succeeded - copy merged result back to original file
-	// #nosec G304 -- merged output created earlier in this function
-	mergedContent, err := os.ReadFile(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to read merged output: %w", err)
-	}
-
-	if err := os.WriteFile(absConflictedPath, mergedContent, 0600); err != nil {
-		return fmt.Errorf("failed to write merged result: %w", err)
-	}
-
-	// Stage the resolved file
-	stageCmd := exec.Command("git", "add", relPath) // #nosec G204 -- relPath constrained to file within current repo
-	stageCmd.Dir = gitRoot
-	if err := stageCmd.Run(); err != nil {
-		// Non-fatal - user can stage manually
-		fmt.Fprintf(os.Stderr, "Warning: failed to auto-stage merged file: %v\n", err)
-	}
-
-	return nil
-}
-
 // detectPrefixFromIssues extracts the common prefix from issue IDs
 // Uses utils.ExtractIssuePrefix which handles multi-part prefixes correctly
 func detectPrefixFromIssues(issues []*types.Issue) string {
@@ -833,7 +617,6 @@ func init() {
 	importCmd.Flags().Bool("clear-duplicate-external-refs", false, "Clear duplicate external_ref values (keeps first occurrence)")
 	importCmd.Flags().String("orphan-handling", "", "How to handle missing parent issues: strict/resurrect/skip/allow (default: use config or 'allow')")
 	importCmd.Flags().Bool("force", false, "Force metadata update even when database is already in sync with JSONL")
-	importCmd.Flags().Bool("protect-left-snapshot", false, "Protect issues in left snapshot from git-history-backfill")
 	importCmd.Flags().Bool("no-git-history", false, "Skip git history backfill for deletions (passed by bd sync)")
 	importCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output import statistics in JSON format")
 	rootCmd.AddCommand(importCmd)

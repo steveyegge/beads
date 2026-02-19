@@ -40,7 +40,7 @@ var statusCmd = &cobra.Command{
 	Long: `Show a quick snapshot of the issue database state and statistics.
 
 This command provides a summary of issue counts by state (open, in_progress,
-blocked, closed), ready work, extended statistics (tombstones, pinned issues,
+blocked, closed), ready work, extended statistics (pinned issues,
 average lead time), and recent activity over the last 24 hours from git history.
 
 Similar to how 'git status' shows working tree state, 'bd status' gives you
@@ -74,7 +74,6 @@ Examples:
 		var err error
 
 		ctx := rootCtx
-		requireFreshDB(ctx)
 
 		// Direct mode
 		stats, err = store.GetStatistics(ctx)
@@ -118,13 +117,10 @@ Examples:
 		fmt.Printf("  Ready to Work:          %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.ReadyIssues)))
 
 		// Extended statistics (only show if non-zero)
-		hasExtended := stats.TombstoneIssues > 0 || stats.PinnedIssues > 0 ||
+		hasExtended := stats.PinnedIssues > 0 ||
 			stats.EpicsEligibleForClosure > 0 || stats.AverageLeadTime > 0
 		if hasExtended {
 			fmt.Printf("\nExtended:\n")
-			if stats.TombstoneIssues > 0 {
-				fmt.Printf("  Deleted:                %d (tombstones)\n", stats.TombstoneIssues)
-			}
 			if stats.PinnedIssues > 0 {
 				fmt.Printf("  Pinned:                 %d\n", stats.PinnedIssues)
 			}

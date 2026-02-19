@@ -47,15 +47,29 @@ brew install beads
 
 ### [Mise-en-place](https://mise.jdx.dev)  (macOS/Linux/Windows)
 
+You can install beads using mise in 2 different ways:
+
+1. Install the latest github release
+
 ```bash
-mise install -g steveyegge/github:beads
+mise install github:steveyegge/beads
+mise use -g github:steveyegge/beads
 ```
+
+2.  Build the latest code from git using go:
+
+```bash
+mise install go:github.com/steveyegge/beads/cmd/bd@latest
+mise use -g go:github.com/steveyegge/beads/cmd/bd
+```
+
+**NOTE**: The `-g` enables beads globally.  To enable project-specific versions, omit that.
 
 **Why Mise?**
 - ✅ Same as Homebrew: simple, updates via `mise up`, works without Go, handles PATH
 - ✅ Supports all platforms
-- ✅ Always latest release
-- ✅ May optionally use different version for specific projects
+- ✅ Always the latest release
+- ✅ May optionally use a different version for specific projects
 
 ### Quick Install Script (All Platforms)
 

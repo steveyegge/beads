@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -226,8 +227,8 @@ func outputCookDryRun(resolved *formula.Formula, protoID string, runtimeMode boo
 		modeLabel = "runtime"
 		// Apply defaults for runtime mode display
 		for name, def := range resolved.Vars {
-			if _, provided := inputVars[name]; !provided && def.Default != "" {
-				inputVars[name] = def.Default
+			if _, provided := inputVars[name]; !provided && def.Default != nil {
+				inputVars[name] = *def.Default
 			}
 		}
 	}
@@ -267,8 +268,8 @@ func outputCookDryRun(resolved *formula.Formula, protoID string, runtimeMode boo
 			if def.Required {
 				attrs = append(attrs, "required")
 			}
-			if def.Default != "" {
-				attrs = append(attrs, fmt.Sprintf("default=%s", def.Default))
+			if def.Default != nil {
+				attrs = append(attrs, fmt.Sprintf("default=%s", *def.Default))
 			}
 			if len(def.Enum) > 0 {
 				attrs = append(attrs, fmt.Sprintf("enum=[%s]", strings.Join(def.Enum, ",")))
@@ -287,8 +288,8 @@ func outputCookEphemeral(resolved *formula.Formula, runtimeMode bool, inputVars 
 	if runtimeMode {
 		// Apply defaults from formula variable definitions
 		for name, def := range resolved.Vars {
-			if _, provided := inputVars[name]; !provided && def.Default != "" {
-				inputVars[name] = def.Default
+			if _, provided := inputVars[name]; !provided && def.Default != nil {
+				inputVars[name] = *def.Default
 			}
 		}
 
@@ -726,8 +727,8 @@ func resolveAndCookFormulaWithVars(formulaName string, searchPaths []string, con
 		// Merge with formula defaults for complete evaluation
 		mergedVars := make(map[string]string)
 		for name, def := range resolved.Vars {
-			if def != nil && def.Default != "" {
-				mergedVars[name] = def.Default
+			if def != nil && def.Default != nil {
+				mergedVars[name] = *def.Default
 			}
 		}
 		for k, v := range conditionVars {
@@ -768,7 +769,7 @@ func cookFormulaToSubgraphWithVars(f *formula.Formula, protoID string, vars map[
 
 // cookFormula creates a proto bead from a resolved formula.
 // protoID is the final ID for the proto (may include a prefix).
-func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula, protoID string) (*cookFormulaResult, error) {
+func cookFormula(ctx context.Context, s *dolt.DoltStore, f *formula.Formula, protoID string) (*cookFormulaResult, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no database connection")
 	}
@@ -944,7 +945,7 @@ func collectDependencies(step *formula.Step, idMapping map[string]string, deps *
 }
 
 // deleteProtoSubgraph deletes a proto and all its children.
-func deleteProtoSubgraph(ctx context.Context, s storage.Storage, protoID string) error {
+func deleteProtoSubgraph(ctx context.Context, s *dolt.DoltStore, protoID string) error {
 	// Load the subgraph
 	subgraph, err := loadTemplateSubgraph(ctx, s, protoID)
 	if err != nil {

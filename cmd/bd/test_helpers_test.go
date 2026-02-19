@@ -12,17 +12,28 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // testIDCounter ensures unique IDs across all test runs
 var testIDCounter atomic.Uint64
+
+// doltNewMutex serializes dolt.New() calls in tests. The Dolt embedded engine's
+// InitStatusVariables() has an internal race condition when called concurrently
+// from multiple goroutines (writes to a shared global map without synchronization).
+// Serializing store creation prevents this race while allowing tests to run their
+// assertions in parallel after the store is created.
+var doltNewMutex sync.Mutex
+
+// stdioMutex serializes tests that redirect os.Stdout or os.Stderr.
+// These process-global file descriptors cannot be safely redirected from
+// concurrent goroutines.
+var stdioMutex sync.Mutex
 
 // generateUniqueTestID creates a globally unique test ID using prefix, test name, and atomic counter.
 // This prevents ID collisions when multiple tests manipulate global state.
@@ -51,13 +62,11 @@ func initConfigForTest(t *testing.T) {
 	t.Cleanup(config.ResetForTesting)
 }
 
-// ensureTestMode sets BEADS_TEST_MODE environment variable to prevent production pollution
+// ensureTestMode is a no-op; BEADS_TEST_MODE is set once in TestMain.
+// Previously each test set/unset the env var, which raced under t.Parallel().
 func ensureTestMode(t *testing.T) {
 	t.Helper()
-	os.Setenv("BEADS_TEST_MODE", "1")
-	t.Cleanup(func() {
-		os.Unsetenv("BEADS_TEST_MODE")
-	})
+	// BEADS_TEST_MODE is set in TestMain and stays set for the entire test run.
 }
 
 // ensureCleanGlobalState resets global state that may have been modified by other tests.
@@ -71,10 +80,9 @@ func ensureCleanGlobalState(t *testing.T) {
 // savedGlobals holds a snapshot of package-level globals for safe restoration.
 // Used by saveAndRestoreGlobals to ensure test isolation.
 type savedGlobals struct {
-	dbPath           string
-	store            storage.Storage
-	storeActive      bool
-	autoFlushEnabled bool
+	dbPath      string
+	store       *dolt.DoltStore
+	storeActive bool
 }
 
 // saveAndRestoreGlobals snapshots all commonly-mutated package-level globals
@@ -95,10 +103,9 @@ type savedGlobals struct {
 func saveAndRestoreGlobals(t *testing.T) *savedGlobals {
 	t.Helper()
 	saved := &savedGlobals{
-		dbPath:           dbPath,
-		store:            store,
-		storeActive:      storeActive,
-		autoFlushEnabled: autoFlushEnabled,
+		dbPath:      dbPath,
+		store:       store,
+		storeActive: storeActive,
 	}
 	t.Cleanup(func() {
 		dbPath = saved.dbPath
@@ -106,79 +113,27 @@ func saveAndRestoreGlobals(t *testing.T) *savedGlobals {
 		storeMutex.Lock()
 		storeActive = saved.storeActive
 		storeMutex.Unlock()
-		autoFlushEnabled = saved.autoFlushEnabled
 	})
 	return saved
 }
 
-// failIfProductionDatabase checks if the database path is in a production directory
-// and fails the test to prevent test pollution (bd-2c5a)
-func failIfProductionDatabase(t *testing.T, dbPath string) {
+// newTestStore creates a dolt store with issue_prefix configured (bd-166)
+// This prevents "database not initialized" errors in tests
+func newTestStore(t *testing.T, dbPath string) *dolt.DoltStore {
 	t.Helper()
 
-	// CRITICAL (bd-2c5a): Set test mode flag
 	ensureTestMode(t)
 
-	// Get absolute path for comparison
-	absPath, err := filepath.Abs(dbPath)
+	// Serialize dolt.New() to avoid race in Dolt's InitStatusVariables (bd-cqjoi)
+	doltNewMutex.Lock()
+	ctx := context.Background()
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	doltNewMutex.Unlock()
 	if err != nil {
-		t.Logf("Warning: Could not get absolute path for %s: %v", dbPath, err)
-		return
-	}
-
-	// Use worktree-aware git directory detection
-	gitDir, err := git.GetGitDir()
-	if err != nil {
-		// Not a git repository, no pollution risk
-		return
-	}
-
-	// Check if database is in .beads/ directory of this git repository
-	beadsPath := ""
-	gitDirAbs, err := filepath.Abs(gitDir)
-	if err != nil {
-		t.Logf("Warning: Could not get absolute path for git dir %s: %v", gitDir, err)
-		return
-	}
-
-	// The .beads directory should be at the root of the git repository
-	// For worktrees, gitDir points to the main repo's .git directory
-	repoRoot := filepath.Dir(gitDirAbs)
-	beadsPath = filepath.Join(repoRoot, ".beads")
-
-	if strings.HasPrefix(absPath, beadsPath) {
-		// Database is in .beads/ directory of a git repository
-		// This is ONLY allowed if we're in a temp directory
-		if !strings.Contains(absPath, os.TempDir()) {
-			t.Fatalf("PRODUCTION DATABASE POLLUTION DETECTED (bd-2c5a):\n"+
-				"  Database: %s\n"+
-				"  Git repo: %s\n"+
-				"  Tests MUST use t.TempDir() or tempfile to create isolated databases.\n"+
-				"  This prevents test issues from polluting the production database.",
-				absPath, repoRoot)
-		}
-	}
-}
-
-// newTestStore creates a SQLite store with issue_prefix configured (bd-166)
-// This prevents "database not initialized" errors in tests
-func newTestStore(t *testing.T, dbPath string) storage.Storage {
-	t.Helper()
-
-	// CRITICAL (bd-2c5a): Ensure we're not polluting production database
-	failIfProductionDatabase(t, dbPath)
-
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		t.Fatalf("Failed to create database directory: %v", err)
-	}
-
-	store, err := sqlite.New(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
+		t.Fatalf("Failed to create dolt store: %v", err)
 	}
 
 	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
-	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		store.Close()
 		t.Fatalf("Failed to set issue_prefix: %v", err)
@@ -194,24 +149,22 @@ func newTestStore(t *testing.T, dbPath string) storage.Storage {
 	return store
 }
 
-// newTestStoreWithPrefix creates a SQLite store with custom issue_prefix configured
-func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) storage.Storage {
+// newTestStoreWithPrefix creates a dolt store with custom issue_prefix configured
+func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *dolt.DoltStore {
 	t.Helper()
 
-	// CRITICAL (bd-2c5a): Ensure we're not polluting production database
-	failIfProductionDatabase(t, dbPath)
+	ensureTestMode(t)
 
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		t.Fatalf("Failed to create database directory: %v", err)
-	}
-
-	store, err := sqlite.New(context.Background(), dbPath)
+	// Serialize dolt.New() to avoid race in Dolt's InitStatusVariables (bd-cqjoi)
+	doltNewMutex.Lock()
+	ctx := context.Background()
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	doltNewMutex.Unlock()
 	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
+		t.Fatalf("Failed to create dolt store: %v", err)
 	}
 
 	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
-	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
 		store.Close()
 		t.Fatalf("Failed to set issue_prefix: %v", err)
@@ -227,11 +180,22 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) storage.
 	return store
 }
 
-// openExistingTestDB opens an existing database without modifying it.
-// Used in tests where the database was already created by the code under test.
-func openExistingTestDB(t *testing.T, dbPath string) (storage.Storage, error) {
+// openExistingTestDB reopens an existing Dolt store for verification in tests.
+// It tries NewFromConfig first (reads metadata.json for correct database name),
+// then falls back to direct open for BEADS_DB or other non-standard paths.
+func openExistingTestDB(t *testing.T, dbPath string) (*dolt.DoltStore, error) {
 	t.Helper()
-	return sqlite.New(context.Background(), dbPath)
+	// Serialize dolt.New() to avoid race in Dolt's InitStatusVariables (bd-cqjoi)
+	doltNewMutex.Lock()
+	defer doltNewMutex.Unlock()
+	ctx := context.Background()
+	// Try NewFromConfig which reads metadata.json for correct database name
+	beadsDir := filepath.Dir(dbPath)
+	if store, err := dolt.NewFromConfig(ctx, beadsDir); err == nil {
+		return store, nil
+	}
+	// Fallback: open directly (for BEADS_DB cases without metadata.json)
+	return dolt.New(ctx, &dolt.Config{Path: dbPath})
 }
 
 // runCommandInDir runs a command in the specified directory
@@ -253,8 +217,12 @@ func runCommandInDirWithOutput(dir string, name string, args ...string) (string,
 }
 
 // captureStderr captures stderr output from fn and returns it as a string.
+// Uses stdioMutex to prevent races with concurrent os.Stderr redirection.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
+
+	stdioMutex.Lock()
+	defer stdioMutex.Unlock()
 
 	old := os.Stderr
 	r, w, err := os.Pipe()

@@ -112,7 +112,7 @@ For complete sync-branch documentation, see [PROTECTED_BRANCHES.md](PROTECTED_BR
 Main Repository
 ├── .git/                    # Shared git directory
 ├── .beads/                  # Shared database (main repo)
-│   ├── beads.db            # SQLite database
+│   ├── dolt/               # Dolt database directory
 │   ├── issues.jsonl        # Issue data (git-tracked)
 │   └── config.yaml         # Configuration
 ├── feature-branch/         # Worktree 1
@@ -124,7 +124,7 @@ Main Repository
 **Key points:**
 - ✅ **One database** - All worktrees share the same `.beads` directory in main repo
 - ✅ **Automatic discovery** - Database found regardless of which worktree you're in
-- ✅ **Concurrent access** - SQLite locking prevents corruption
+- ✅ **Concurrent access** - Database locking prevents corruption
 - ✅ **Git integration** - Issues sync via JSONL in main repo
 
 ### Worktree Detection & Daemon Safety
@@ -350,7 +350,7 @@ export BEADS_NO_DAEMON=1
 export BEADS_AUTO_START_DAEMON=false
 
 # Force specific database location
-export BEADS_DB=/path/to/specific/.beads/beads.db
+export BEADS_DB=/path/to/specific/.beads/dolt
 ```
 
 ### Configuration Options
@@ -359,7 +359,7 @@ export BEADS_DB=/path/to/specific/.beads/beads.db
 # Configure sync behavior
 bd config set sync.branch beads-sync  # Use separate sync branch
 
-# For git-portable workflows, enable daemon auto-commit/push (SQLite backend only):
+# For git-portable workflows:
 bd daemon start --auto-commit --auto-push
 ```
 
@@ -369,12 +369,12 @@ bd daemon start --auto-commit --auto-push
 
 - **Reduced overhead**: One database instead of per-worktree copies
 - **Instant sync**: Changes visible across all worktrees immediately
-- **Memory efficient**: Single SQLite instance vs multiple
+- **Memory efficient**: Single database instance vs multiple
 - **Git efficient**: One JSONL file to track vs multiple
 
 ### Concurrent Access
 
-- **SQLite locking**: Prevents corruption during simultaneous access
+- **Database locking**: Prevents corruption during simultaneous access (use Dolt server mode for multi-writer)
 - **Git operations**: Safe concurrent commits from different worktrees
 - **Sync coordination**: JSONL-based sync prevents conflicts
 

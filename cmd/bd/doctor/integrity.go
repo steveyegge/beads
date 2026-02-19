@@ -9,15 +9,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
-	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
-	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // CheckIDFormat checks whether issues use hash-based or sequential IDs
@@ -52,7 +50,7 @@ func CheckIDFormat(path string) DoctorCheck {
 	// Open the configured backend in read-only mode.
 	// This must work for both SQLite and Dolt.
 	ctx := context.Background()
-	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+	store, err := dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Issue IDs",
@@ -113,7 +111,7 @@ func CheckIDFormat(path string) DoctorCheck {
 		Name:    "Issue IDs",
 		Status:  StatusWarning,
 		Message: "sequential (e.g., bd-1, bd-2, ...)",
-		Fix:     "Run 'bd migrate hash-ids' to upgrade (prevents ID collisions in multi-worker scenarios)",
+		Fix:     "Sequential IDs may cause collisions in multi-worker scenarios. Re-initialize with 'bd init' to use hash-based IDs.",
 	}
 }
 
@@ -138,7 +136,7 @@ func CheckDependencyCycles(path string) DoctorCheck {
 
 	// Open the configured backend in read-only mode (works for both SQLite and Dolt)
 	ctx := context.Background()
-	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+	store, err := dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Dependency Cycles",
@@ -219,114 +217,7 @@ func CheckDependencyCycles(path string) DoctorCheck {
 	}
 }
 
-// CheckTombstones checks the health of tombstone records
-// Reports: total tombstones, expiring soon (within 7 days), already expired
-func CheckTombstones(path string) DoctorCheck {
-	_, beadsDir := getBackendAndBeadsDir(path)
-
-	// Determine database path
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		dbPath = cfg.DatabasePath(beadsDir)
-	}
-
-	// Skip if database doesn't exist
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:    "Tombstones",
-			Status:  StatusOK,
-			Message: "N/A (no database)",
-		}
-	}
-
-	// Open the configured backend in read-only mode (works for both SQLite and Dolt)
-	ctx := context.Background()
-	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Tombstones",
-			Status:  StatusWarning,
-			Message: "Unable to open database",
-			Detail:  err.Error(),
-		}
-	}
-	defer func() { _ = store.Close() }()
-	db := store.UnderlyingDB()
-
-	// Query tombstone statistics
-	var totalTombstones int
-	err = db.QueryRow("SELECT COUNT(*) FROM issues WHERE status = 'tombstone'").Scan(&totalTombstones)
-	if err != nil {
-		// Might be old schema without tombstone support
-		return DoctorCheck{
-			Name:    "Tombstones",
-			Status:  StatusOK,
-			Message: "N/A (schema may not support tombstones)",
-		}
-	}
-
-	if totalTombstones == 0 {
-		return DoctorCheck{
-			Name:    "Tombstones",
-			Status:  StatusOK,
-			Message: "None (no deleted issues)",
-		}
-	}
-
-	// Check for tombstones expiring within 7 days
-	// Default TTL is 30 days, so expiring soon means deleted_at older than 23 days ago
-	expiringThreshold := time.Now().Add(-23 * 24 * time.Hour).Format(time.RFC3339)
-	expiredThreshold := time.Now().Add(-30 * 24 * time.Hour).Format(time.RFC3339)
-
-	var expiringSoon, alreadyExpired int
-	err = db.QueryRow(`
-		SELECT COUNT(*) FROM issues
-		WHERE status = 'tombstone'
-		AND deleted_at IS NOT NULL
-		AND deleted_at < ?
-		AND deleted_at >= ?
-	`, expiringThreshold, expiredThreshold).Scan(&expiringSoon)
-	if err != nil {
-		expiringSoon = 0
-	}
-
-	err = db.QueryRow(`
-		SELECT COUNT(*) FROM issues
-		WHERE status = 'tombstone'
-		AND deleted_at IS NOT NULL
-		AND deleted_at < ?
-	`, expiredThreshold).Scan(&alreadyExpired)
-	if err != nil {
-		alreadyExpired = 0
-	}
-
-	// Build status message
-	if alreadyExpired > 0 {
-		return DoctorCheck{
-			Name:    "Tombstones",
-			Status:  StatusWarning,
-			Message: fmt.Sprintf("%d total, %d expired", totalTombstones, alreadyExpired),
-			Detail:  "Expired tombstones will be removed on next compact",
-			Fix:     "Run 'bd compact' to prune expired tombstones",
-		}
-	}
-
-	if expiringSoon > 0 {
-		return DoctorCheck{
-			Name:    "Tombstones",
-			Status:  StatusOK,
-			Message: fmt.Sprintf("%d total, %d expiring within 7 days", totalTombstones, expiringSoon),
-		}
-	}
-
-	return DoctorCheck{
-		Name:    "Tombstones",
-		Status:  StatusOK,
-		Message: fmt.Sprintf("%d total", totalTombstones),
-	}
-}
-
-// CheckDeletionsManifest checks the status of deletions.jsonl and suggests migration to tombstones
+// CheckDeletionsManifest checks the status of the legacy deletions.jsonl file
 func CheckDeletionsManifest(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
@@ -373,14 +264,13 @@ func CheckDeletionsManifest(path string) DoctorCheck {
 					count++
 				}
 			}
-			// Suggest migration to inline tombstones
 			if count > 0 {
 				return DoctorCheck{
 					Name:    "Deletions Manifest",
 					Status:  StatusWarning,
 					Message: fmt.Sprintf("Legacy format (%d entries)", count),
-					Detail:  "deletions.jsonl is deprecated in favor of inline tombstones",
-					Fix:     "Run 'bd migrate tombstones' to convert to inline tombstones",
+					Detail:  "deletions.jsonl is a legacy format no longer used",
+					Fix:     "Safe to delete deletions.jsonl (Dolt handles delete propagation natively)",
 				}
 			}
 			return DoctorCheck{
@@ -391,14 +281,14 @@ func CheckDeletionsManifest(path string) DoctorCheck {
 		}
 	}
 
-	// deletions.jsonl doesn't exist - this is the expected state with tombstones
+	// deletions.jsonl doesn't exist - this is the expected state
 	// Check for .migrated file to confirm migration happened
 	migratedPath := filepath.Join(beadsDir, "deletions.jsonl.migrated")
 	if _, err := os.Stat(migratedPath); err == nil {
 		return DoctorCheck{
 			Name:    "Deletions Manifest",
 			Status:  StatusOK,
-			Message: "Migrated to tombstones",
+			Message: "Migrated (legacy file removed)",
 		}
 	}
 
@@ -415,11 +305,11 @@ func CheckDeletionsManifest(path string) DoctorCheck {
 		}
 	}
 
-	// JSONL exists but no deletions tracking - this is fine for new repos using tombstones
+	// JSONL exists but no deletions tracking - expected for Dolt-native repos
 	return DoctorCheck{
 		Name:    "Deletions Manifest",
 		Status:  StatusOK,
-		Message: "Using inline tombstones",
+		Message: "Not needed (Dolt-native)",
 	}
 }
 
@@ -459,7 +349,7 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 	// For Dolt, read fingerprint from storage metadata (no sqlite assumptions).
 	if backend == configfile.BackendDolt {
 		ctx := context.Background()
-		store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+		store, err := dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})
 		if err != nil {
 			return DoctorCheck{
 				Name:    "Repo Fingerprint",
@@ -507,7 +397,7 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Database belongs to different repository",
 				Detail:  fmt.Sprintf("stored: %s, current: %s", storedRepoID[:8], currentRepoID[:8]),
-				Fix:     "Run 'bd migrate --update-repo-id' if URL changed, or 'rm -rf .beads && bd init --backend dolt' if wrong database",
+				Fix:     "Run 'bd migrate --update-repo-id' if URL changed, or 'rm -rf .beads && bd init' if wrong database",
 			}
 		}
 
@@ -553,12 +443,12 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 	err = db.QueryRow("SELECT value FROM metadata WHERE key = 'repo_id'").Scan(&storedRepoID)
 	if err != nil {
 		if err == sql.ErrNoRows || strings.Contains(err.Error(), "no such table") {
-			// Legacy database without repo_id - this is an error because daemon won't start
+			// Legacy database without repo_id
 			return DoctorCheck{
 				Name:    "Repo Fingerprint",
 				Status:  StatusError,
 				Message: "Legacy database (no fingerprint)",
-				Detail:  "Database was created before version 0.17.5. Daemon will fail to start.",
+				Detail:  "Database was created before version 0.17.5 and requires migration.",
 				Fix:     "Run 'bd migrate --update-repo-id' to add fingerprint",
 			}
 		}
@@ -570,13 +460,13 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 		}
 	}
 
-	// If repo_id is empty, treat as legacy - this is an error because daemon won't start
+	// If repo_id is empty, treat as legacy database requiring migration
 	if storedRepoID == "" {
 		return DoctorCheck{
 			Name:    "Repo Fingerprint",
 			Status:  StatusError,
 			Message: "Legacy database (empty fingerprint)",
-			Detail:  "Database was created before version 0.17.5. Daemon will fail to start.",
+			Detail:  "Database was created before version 0.17.5. Operations may fail.",
 			Fix:     "Run 'bd migrate --update-repo-id' to add fingerprint",
 		}
 	}
@@ -608,13 +498,6 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 		Status:  StatusOK,
 		Message: fmt.Sprintf("Verified (%s)", currentRepoID[:8]),
 	}
-}
-
-// Fix functions
-
-// FixMigrateTombstones converts legacy deletions.jsonl entries to inline tombstones
-func FixMigrateTombstones(path string) error {
-	return fix.MigrateTombstones(path)
 }
 
 // Helper functions

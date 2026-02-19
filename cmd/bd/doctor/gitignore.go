@@ -6,24 +6,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
-	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // GitignoreTemplate is the canonical .beads/.gitignore content
-const GitignoreTemplate = `# SQLite databases
-*.db
-*.db?*
-*.db-journal
-*.db-wal
-*.db-shm
+const GitignoreTemplate = `# Dolt database (managed by Dolt, not git)
+dolt/
+dolt-access.lock
 
-# Daemon runtime files
-daemon.lock
-daemon.log
-daemon-*.log.gz
-daemon.pid
+# Runtime files
 bd.sock
 sync-state.json
 last-touched
@@ -31,21 +21,9 @@ last-touched
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
 
-# Legacy database files
-db.sqlite
-bd.db
-
 # Worktree redirect file (contains relative path to main repo's .beads/)
 # Must not be committed as paths would be wrong in other clones
 redirect
-
-# Merge artifacts (temporary files from 3-way merge)
-beads.base.jsonl
-beads.base.meta.json
-beads.left.jsonl
-beads.left.meta.json
-beads.right.jsonl
-beads.right.meta.json
 
 # Sync state (local-only, per-machine)
 # These files are machine-specific and should not be shared across clones
@@ -54,9 +32,24 @@ beads.right.meta.json
 sync_base.jsonl
 export-state/
 
-# Dolt database (managed by Dolt remotes, not git)
-dolt/
-dolt-access.lock
+# Legacy files (from pre-Dolt versions)
+*.db
+*.db?*
+*.db-journal
+*.db-wal
+*.db-shm
+db.sqlite
+bd.db
+daemon.lock
+daemon.log
+daemon-*.log.gz
+daemon.pid
+beads.base.jsonl
+beads.base.meta.json
+beads.left.jsonl
+beads.left.meta.json
+beads.right.jsonl
+beads.right.meta.json
 
 # NOTE: Do NOT add negation patterns (e.g., !issues.jsonl) here.
 # They would override fork protection in .git/info/exclude, allowing
@@ -92,10 +85,10 @@ func CheckGitignore() DoctorCheck {
 	redirectPath := filepath.Join(".beads", "redirect")
 	// #nosec G304 -- redirect path is fixed to .beads/redirect
 	if data, err := os.ReadFile(redirectPath); err == nil {
-		target := strings.TrimSpace(string(data))
+		target := parseRedirectTarget(data)
 		if target != "" {
-			cwd, _ := os.Getwd()
-			resolvedTarget := filepath.Clean(filepath.Join(cwd, target))
+			beadsDir := filepath.Dir(redirectPath)
+			resolvedTarget := resolveRedirectTarget(beadsDir, target)
 			gitignorePath = filepath.Join(resolvedTarget, ".gitignore")
 		}
 	}
@@ -166,7 +159,6 @@ func FixGitignore() error {
 // CheckIssuesTracking verifies that issues.jsonl is tracked by git.
 // This catches cases where global gitignore patterns (e.g., *.jsonl) would
 // cause issues.jsonl to be ignored, breaking bd sync.
-// In sync-branch mode, the file may be intentionally ignored in working branches (GH#858).
 func CheckIssuesTracking() DoctorCheck {
 	issuesPath := filepath.Join(".beads", "issues.jsonl")
 
@@ -180,17 +172,6 @@ func CheckIssuesTracking() DoctorCheck {
 		}
 	}
 
-	// In sync-branch mode, JSONL files may be intentionally ignored in working branches.
-	// They are tracked only in the dedicated sync branch.
-	if branch := syncbranch.GetFromYAML(); branch != "" {
-		return DoctorCheck{
-			Name:    "Issues Tracking",
-			Status:  StatusOK,
-			Message: "N/A (sync-branch mode)",
-			Detail:  fmt.Sprintf("JSONL files tracked in '%s' branch only", branch),
-		}
-	}
-
 	// Check if git considers this file ignored
 	// git check-ignore exits 0 if ignored, 1 if not ignored, 128 if error
 	cmd := exec.Command("git", "check-ignore", "-q", issuesPath) // #nosec G204 - args are hardcoded paths
@@ -200,7 +181,7 @@ func CheckIssuesTracking() DoctorCheck {
 		// Exit code 0 means the file IS ignored - this is bad
 		// Get details about what's ignoring it
 		detailCmd := exec.Command("git", "check-ignore", "-v", issuesPath) // #nosec G204 - args are hardcoded paths
-		output, _ := detailCmd.Output() // Best effort: empty output means no gitignore details
+		output, _ := detailCmd.Output()                                    // Best effort: empty output means no gitignore details
 		detail := strings.TrimSpace(string(output))
 
 		return DoctorCheck{
@@ -294,6 +275,47 @@ func FixRedirectTracking() error {
 	return nil
 }
 
+// parseRedirectTarget extracts the first non-comment, non-empty redirect target.
+// It also strips a UTF-8 BOM if present.
+func parseRedirectTarget(data []byte) string {
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "\ufeff")
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return line
+	}
+
+	return ""
+}
+
+// resolveRedirectTarget resolves a redirect target relative to the .beads parent.
+// Absolute targets are cleaned and returned as-is.
+func resolveRedirectTarget(beadsDir string, target string) string {
+	if target == "" {
+		return ""
+	}
+
+	resolvedTarget := target
+	if !filepath.IsAbs(target) {
+		projectRoot := filepath.Dir(beadsDir)
+		resolvedTarget = filepath.Join(projectRoot, target)
+	}
+	resolvedTarget = filepath.Clean(resolvedTarget)
+	if absPath, err := filepath.Abs(resolvedTarget); err == nil {
+		resolvedTarget = absPath
+	}
+
+	return resolvedTarget
+}
+
 // CheckRedirectTargetValid verifies that the redirect target exists and has a valid beads database.
 // This catches cases where the redirect points to a non-existent directory or one without a database.
 func CheckRedirectTargetValid() DoctorCheck {
@@ -318,7 +340,7 @@ func CheckRedirectTargetValid() DoctorCheck {
 	}
 
 	// Parse redirect target
-	target := strings.TrimSpace(string(data))
+	target := parseRedirectTarget(data)
 	if target == "" {
 		return DoctorCheck{
 			Name:    "Redirect Target Valid",
@@ -328,17 +350,8 @@ func CheckRedirectTargetValid() DoctorCheck {
 		}
 	}
 
-	// Resolve the redirect path relative to the parent of .beads
-	cwd, err := os.Getwd()
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Redirect Target Valid",
-			Status:  StatusWarning,
-			Message: "Cannot determine current directory",
-		}
-	}
-
-	resolvedTarget := filepath.Clean(filepath.Join(cwd, target))
+	beadsDir := filepath.Dir(redirectPath)
+	resolvedTarget := resolveRedirectTarget(beadsDir, target)
 
 	// Check if target directory exists
 	info, err := os.Stat(resolvedTarget)
@@ -425,7 +438,7 @@ func CheckRedirectTargetSyncWorktree() DoctorCheck {
 		}
 	}
 
-	target := strings.TrimSpace(string(data))
+	target := parseRedirectTarget(data)
 	if target == "" {
 		return DoctorCheck{
 			Name:    "Redirect Target Sync",
@@ -435,16 +448,8 @@ func CheckRedirectTargetSyncWorktree() DoctorCheck {
 	}
 
 	// Resolve the target path
-	cwd, err := os.Getwd()
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Redirect Target Sync",
-			Status:  StatusOK,
-			Message: "N/A (cannot determine cwd)",
-		}
-	}
-
-	resolvedTarget := filepath.Clean(filepath.Join(cwd, target))
+	beadsDir := filepath.Dir(redirectPath)
+	resolvedTarget := resolveRedirectTarget(beadsDir, target)
 
 	// Check if the target has a sync-branch configured in config.yaml
 	configPath := filepath.Join(resolvedTarget, "config.yaml")
@@ -629,99 +634,3 @@ func FixLastTouchedTracking() error {
 	return nil
 }
 
-// CheckSyncBranchGitignore checks if git index flags are set on issues.jsonl when sync.branch is configured.
-// Without these flags, the file appears modified in git status even though changes go to the sync branch.
-// GH#797, GH#801, GH#870.
-func CheckSyncBranchGitignore() DoctorCheck {
-	// Only relevant when sync.branch is configured
-	branch := syncbranch.GetFromYAML()
-	if branch == "" {
-		return DoctorCheck{
-			Name:    "Sync Branch Gitignore",
-			Status:  StatusOK,
-			Message: "N/A (sync.branch not configured)",
-		}
-	}
-
-	issuesPath := filepath.Join(".beads", "issues.jsonl")
-
-	// Check if file exists
-	if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:    "Sync Branch Gitignore",
-			Status:  StatusOK,
-			Message: "No issues.jsonl yet",
-		}
-	}
-
-	// Check if file is tracked by git
-	cmd := exec.Command("git", "ls-files", "--error-unmatch", issuesPath) // #nosec G204 - args are hardcoded paths
-	if err := cmd.Run(); err != nil {
-		// File is not tracked - check if it's excluded
-		return DoctorCheck{
-			Name:    "Sync Branch Gitignore",
-			Status:  StatusOK,
-			Message: "issues.jsonl is not tracked (via .gitignore or exclude)",
-		}
-	}
-
-	// File is tracked - check for git index flags
-	cwd, err := os.Getwd()
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Sync Branch Gitignore",
-			Status:  StatusWarning,
-			Message: "Cannot determine current directory",
-		}
-	}
-
-	hasAnyFlag, _, err := fix.HasSyncBranchGitignoreFlags(cwd)
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Sync Branch Gitignore",
-			Status:  StatusWarning,
-			Message: "Cannot check git index flags",
-			Detail:  err.Error(),
-		}
-	}
-
-	if hasAnyFlag {
-		return DoctorCheck{
-			Name:    "Sync Branch Gitignore",
-			Status:  StatusOK,
-			Message: "Git index flags set (issues.jsonl hidden from git status)",
-		}
-	}
-
-	// No flags set - this is the problem case
-	return DoctorCheck{
-		Name:    "Sync Branch Gitignore",
-		Status:  StatusWarning,
-		Message: "issues.jsonl shows as modified (missing git index flags)",
-		Detail:  fmt.Sprintf("sync.branch='%s' configured but issues.jsonl appears in git status", branch),
-		Fix:     "Run 'bd doctor --fix' or 'bd sync' to set git index flags",
-	}
-}
-
-// FixSyncBranchGitignore sets git index flags on issues.jsonl when sync.branch is configured.
-func FixSyncBranchGitignore() error {
-	// Only relevant when sync.branch is configured
-	branch := syncbranch.GetFromYAML()
-	if branch == "" {
-		return nil // Not in sync-branch mode, nothing to do
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("cannot determine current directory: %w", err)
-	}
-
-	return fix.SyncBranchGitignore(cwd)
-}
-
-// SetSyncBranchGitignoreFlags sets git index flags on .beads/*.jsonl files.
-// This is called directly by init when --branch is specified, bypassing the
-// GetFromYAML() check since the in-memory config may not be updated yet.
-func SetSyncBranchGitignoreFlags(path string) error {
-	return fix.SyncBranchGitignore(path)
-}

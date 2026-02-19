@@ -593,10 +593,9 @@ func getRedirectTarget(worktreePath string) string {
 		return ""
 	}
 	target := strings.TrimSpace(string(data))
-	// Resolve relative paths
+	// Resolve relative paths from the worktree root (matching FollowRedirect behavior)
 	if !filepath.IsAbs(target) {
-		beadsDir := filepath.Join(worktreePath, ".beads")
-		target = filepath.Join(beadsDir, target)
+		target = filepath.Join(worktreePath, target)
 	}
 	target, _ = filepath.Abs(target)
 	return target

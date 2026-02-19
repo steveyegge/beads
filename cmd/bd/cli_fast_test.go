@@ -181,15 +181,7 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	dbPath = ""
 	actor = ""
 	jsonOutput = false
-	noDaemon = false
-	noAutoFlush = false
-	noAutoImport = false
 	sandboxMode = false
-	noDb = false
-	autoFlushEnabled = true
-	storeActive = false
-	flushFailureCount = 0
-	lastFlushError = nil
 	// Reset context state
 	rootCtx = nil
 	rootCancel = nil
@@ -934,18 +926,11 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 	dbPath = ""
 	actor = ""
 	jsonOutput = false
-	noDaemon = false
-	noAutoFlush = false
-	noAutoImport = false
 	sandboxMode = false
-	noDb = false
-	autoFlushEnabled = true
-	storeActive = false
-	flushFailureCount = 0
-	lastFlushError = nil
 	rootCtx = nil
 	rootCancel = nil
 
+	// Give SQLite time to release file locks before cleanup
 	time.Sleep(10 * time.Millisecond)
 
 	wOut.Close()

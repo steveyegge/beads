@@ -7,6 +7,156 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-02-18
+
+### Fixed
+
+- **Release CI** — fix zig cross-compilation cache race by serializing goreleaser builds (`--parallelism 1`)
+- **Android ARM64 build** — disable CGO for Android target (server mode only)
+- **`.zig-cache/` in `.gitignore`** — prevent goreleaser dirty-git false positive
+
+## [0.53.0] - 2026-02-18
+
+### Added
+
+- **Dolt-in-Git sync** — native Dolt push/pull via git remotes replaces the entire JSONL sync pipeline; `BootstrapFromGitRemote()`, `HasRemote()`, `sync.git-remote` config key
+- **`bd dolt start` / `bd dolt stop`** — explicit Dolt server management commands (#1813)
+- **`bd dolt commit`** — desire-path ergonomics for committing Dolt data (#1812)
+- **Server mode without CGO** — `OpenFromConfig()` exported for server-mode aware store opening (#1805)
+- **Hosted Dolt support** — TLS, authentication, and explicit branch configuration
+- **`bd mol wisp gc --closed`** — bulk purge of closed wisps
+- **`--no-parent` flag for `bd list`** — filter out child issues
+- **`bd ready` pretty format** — improved default output with priority sort, truncation footer, and parent epic context
+- **Dolt compaction methods** — `bd compact` support for Dolt databases
+- **Storage interface** — `Storage` interface decouples from concrete `DoltStore` (bd-l3o)
+- **Lock health diagnostics** — `bd doctor` detects and reports dolt-access.lock and noms LOCK issues
+- **Codecov integration** — component-based coverage tracking in CI
+
+### Fixed
+
+- **Pre-commit deadlock on embedded Dolt** — resolve hook deadlock (#1841, #1843)
+- **`bd doctor --fix` hang** — run fixes in-process instead of spawning subprocess (#1850)
+- **Dolt lock errors** — surface lock errors with actionable guidance instead of silent empty results (#1816)
+- **`BEADS_DIR` config loading** — respect `BEADS_DIR` when loading config.yaml (#1854)
+- **Dolt `Unknown database` retry** — retry on `Unknown database` after `CREATE DATABASE` (#1851, #1852)
+- **Windows `Expand-Archive`** — qualify to avoid Pscx module conflict (#1826)
+- **`bd init` git repo check** — ensures git repo exists and runs clean diagnostics
+- **`SaveConfigValue`** — preserves existing file contents (#1816)
+- **`molecule` core type** — treat molecule as core issue type (#1866)
+- **Formula `VarDef`** — distinguish "no default" from `default=""` (#1837)
+- **Worktree test isolation** — harden metadata.json isolation (bd-la2cl)
+- **Goroutine leak** — replace `time.Sleep` with `waitFor` in tests (#1822)
+
+### Removed
+
+- **JSONL sync-branch pipeline** — deleted `internal/syncbranch/` (5,720 lines), `snapshot_manager`, `deletion_tracking`, doctor sync-branch checks/fixes, and all associated tests (~11,000 lines total)
+- **Daemon infrastructure** — removed lockfile activity signal and orchestrator (bd-9u8zd)
+- **3-way merge engine remnants** — removed remaining merge code (bd-aswyy)
+- **Dead stubs** — `CheckBackendMigration`, `NeedsJSONL`, and other no-ops (bd-23nlq)
+- **Dead SQLite-only `bd repair` command**
+
+### Documentation
+
+- **BeadHub** — added to COMMUNITY_TOOLS.md
+- **beads-compound plugin** — added to Claude Code Orchestration section (#1814)
+- **Stale reference cleanup** — removed daemon/SQLite/JSONL/tombstone references from docs and comments
+
+## [0.52.0] - 2026-02-16
+
+### Added
+
+- **`bd ready --include-ephemeral`** — new flag to include ephemeral issues in ready work results
+
+### Fixed
+
+- **Doctor redirect target resolution** — fix path resolution for redirect targets (#1803)
+- **Dolt directory creation guard** — skip dolt directory creation when not in server mode (#1800)
+- **Tilde expansion in core.hooksPath on Windows** — properly expand `~` in git hook paths (#1798)
+- **Worktree redirect path resolution** — resolve redirect paths from worktree root, not `.beads/` dir (#1791)
+- **Block rename-prefix in worktrees** — prevent rename-prefix from running in git worktrees to avoid JSONL staleness (#1792)
+- **CI lint warnings** — resolve gosec G204 and unparam lint warnings (#1790)
+
+### Removed
+
+- **Dead git-portable sync functions** — remove unused `gitCommitBeadsDir` and `gitPush` (#1793)
+
+## [0.51.0] - 2026-02-16
+
+### Changed
+
+- **Dolt-native cleanup (dolt-1s40)** — massive 8-phase refactoring to remove all legacy SQLite/JSONL/daemon infrastructure:
+  - Phase 2: Remove daemon compat stub and `--no-daemon` flag
+  - Phase 3: Remove 3-way merge engine
+  - Phase 4: Remove tombstone/soft-delete system
+  - Phase 5: Remove JSONL sync layer
+  - Phase 6: Remove SQLite backend entirely
+  - Phase 7: Remove storage factory, memory backend, and provider abstraction; replace with direct Dolt calls
+  - Phase 8: CLI & config cleanup — remove remaining SQLite/daemon remnants
+- **Post-cleanup pruning** — removed 12 dead/duplicate DoltStore methods (650 lines), 5 legacy doctor checks (1,457 lines), internal/beads type aliases, stale no-op stubs and dead functions
+- **`bd sync` is now a no-op** — sync layer removed as Dolt handles persistence directly
+- **Dolt-native API renamed** — legacy storage API consolidated to direct DoltStore calls
+- **Server watchdog** — added Dolt server health monitoring
+
+### Fixed
+
+- **Dolt config test corruption** — tests calling `setDoltConfig()` used `FindBeadsDir()` which in worktree environments returned the rig's `.beads/` instead of the test's temp dir; fixed with `t.Setenv("BEADS_DIR", beadsDir)` (#1780)
+- **Dolt embedded mode database name** — read from `metadata.json` instead of hardcoding (#bd-pqn2e)
+- **Batch `DeleteIssues` hang** — queries batched to prevent hang on large ID sets, with correctness hardening and comprehensive tests (#1770)
+- **`bd mol current` step readiness** — use `analyzeMoleculeParallel` for accurate step readiness (#1786, #1276)
+- **`bd doctor` AccessLock** — migrate Dolt health checks to shared AccessLock connection with error-path tests and `CloseWithTimeout` documentation (#1780)
+- **`bd doctor --yes`** — honor `--yes` flag for repo fingerprint auto-fix (#1782)
+- **`bd doctor` sqliteConnString pragmas** — restore pragmas dropped by Phase 8 cleanup
+- **`GetReadyWork` type filtering** — exclude workflow/identity types from ready work results (#1774)
+- **`bd create` dependency direction** — swap dependency direction for explicit `blocks:` prefix (#1742)
+- **`bd dolt seed` custom types** — seed `types.custom` in default config (#1733)
+- **`message` built-in type** — add `message` as recognized built-in issue type (#1742)
+- **Routing redirect resolution** — lock relative redirect resolution for routed lookups (#1751)
+- **Schema init skip** — skip schema initialization when already at current version (#1765)
+- **Test race conditions** — serialize `dolt.New()` and stdio redirection to eliminate test races
+- **`deleteBatch` signature mismatch** — fix signature and unused types import
+- **gofmt** — formatting fixes across 24+ files
+- **Bounded lock contention** — enforce bounded lock retry behavior in syncbranch read/write tests (#1777)
+- **Malformed test names** — fix test names and remove obsolete SQLite-backend doctor tests
+
+### Performance
+
+- **CASCADE deletes** — leverage SQL CASCADE to cut deletion queries by 60%
+- **Schema init** — skip when already at current version, reducing startup overhead
+
+### Documentation
+
+- **SQLite → Dolt migration** — updated 10+ documentation files replacing stale SQLite references with Dolt (ARCHITECTURE.md, FAQ, TROUBLESHOOTING, WORKTREES, INTERNALS, and more)
+- **Deleted deprecated docs** — removed `EXTENDING.md` and `MULTI_REPO_HYDRATION.md` (SQLite-era, no longer applicable)
+- **INSTALLING.md** — revised for mise installation methods (#1756)
+- **CLAUDE.md** — fix stale file references and SQLite mentions
+- **Contributor docs** — updated stale SQLite references to Dolt
+- **Dolt migrate command** — fix typo (#1779)
+
+## [0.50.3] - 2026-02-15
+
+### Added
+
+- **SyncEngine hook system** — `PullHooks` (GenerateID, TransformIssue, ShouldImport) and `PushHooks` (FormatDescription, ContentEqual, ShouldPush, BuildStateCache/ResolveState) allow tracker-specific behaviors without modifying the engine
+- **Jira native integration** — extracted into `internal/jira/` package with REST API v3 client, ADF document conversion, field mapping, and full test coverage
+- **Tracker plugin registry** — `tracker.Register()` + `init()` pattern for auto-discovery of tracker implementations (Linear, GitLab, Jira)
+
+### Changed
+
+- **SyncEngine refactor** — all three tracker CLIs (Linear, GitLab, Jira) now use the shared `tracker.Engine` for Pull→Detect→Resolve→Push orchestration, eliminating ~800 lines of duplicated sync code
+- **Tracker adapters inlined** — moved from `internal/tracker/adapters/{linear,gitlab}` into `internal/{linear,gitlab}` as self-contained packages with `tracker.go` and `fieldmapper.go`
+
+### Fixed
+
+- **Jira State mapping bug** — removed stale `*StatusField` pointer assignment in `jiraToTrackerIssue` that could cause incorrect status mapping when Priority was set but Status was nil
+- **CI: Windows build** — renamed `test_wait_helper.go` to `_test.go` suffix so non-test builds don't try to resolve test-only symbols
+- **CI: gofmt** — fixed formatting across 14 files
+- **Formula variable validation** — use `Required` field for formula variable validation
+- **`bd slot` routing** — added routing and label-based agent check to slot commands
+
+### Performance
+
+- **Test suite** — replaced ~60 `git init` subprocess calls with cached template copy, reducing test setup overhead
+
 ## [0.50.2] - 2026-02-14
 
 ### Added

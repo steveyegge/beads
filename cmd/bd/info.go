@@ -61,8 +61,6 @@ Examples:
 		if store != nil {
 			ctx := rootCtx
 
-			requireFreshDB(ctx)
-
 			filter := types.IssueFilter{}
 			issues, err := store.SearchIssues(ctx, "", filter)
 			if err == nil {
@@ -211,6 +209,76 @@ type VersionChange struct {
 
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
+	{
+		Version: "0.54.0",
+		Date:    "2026-02-18",
+		Changes: []string{
+			"FIX: Release CI zig cross-compilation cache race (--parallelism 1)",
+			"FIX: Android ARM64 build uses CGO_ENABLED=0 (server mode only)",
+		},
+	},
+	{
+		Version: "0.53.0",
+		Date:    "2026-02-18",
+		Changes: []string{
+			"NEW: Dolt-in-Git sync — native Dolt push/pull via git remotes replaces JSONL pipeline",
+			"NEW: bd dolt start/stop — explicit Dolt server management (#1813)",
+			"NEW: bd dolt commit — desire-path ergonomics for Dolt data",
+			"NEW: Server mode without CGO — OpenFromConfig exported (#1805)",
+			"NEW: Hosted Dolt support — TLS, auth, explicit branch config",
+			"NEW: bd mol wisp gc --closed for bulk purge of closed wisps",
+			"NEW: Storage interface decouples from concrete DoltStore",
+			"NEW: Lock health diagnostics in bd doctor",
+			"FIX: Pre-commit deadlock on embedded Dolt (#1841)",
+			"FIX: bd doctor --fix hang — run fixes in-process (#1850)",
+			"FIX: Dolt lock errors surfaced with guidance (#1816)",
+			"FIX: BEADS_DIR config loading (#1854)",
+			"REMOVED: JSONL sync-branch pipeline (~11,000 lines deleted)",
+			"REMOVED: Daemon infrastructure, 3-way merge remnants, dead stubs",
+		},
+	},
+	{
+		Version: "0.52.0",
+		Date:    "2026-02-16",
+		Changes: []string{
+			"NEW: bd ready --include-ephemeral flag to include ephemeral issues in ready work",
+			"FIX: Doctor redirect target resolution (#1803)",
+			"FIX: Guard dolt directory creation with server-mode check (#1800)",
+			"FIX: Tilde expansion in core.hooksPath on Windows (#1798)",
+			"FIX: Worktree redirect path resolution from worktree root (#1791)",
+			"FIX: Block rename-prefix in git worktrees (#1792)",
+			"REMOVED: Dead git-portable sync functions (#1793)",
+		},
+	},
+	{
+		Version: "0.51.0",
+		Date:    "2026-02-16",
+		Changes: []string{
+			"REMOVED: Dolt-native cleanup — removed SQLite backend, JSONL sync, 3-way merge, tombstones, storage factory, daemon stubs (8-phase refactor)",
+			"CHANGED: bd sync is now a no-op — Dolt handles persistence directly",
+			"FIX: Dolt config test corruption in worktree environments (t.Setenv fix)",
+			"FIX: Batch DeleteIssues hang on large ID sets with correctness hardening",
+			"FIX: bd mol current step readiness uses analyzeMoleculeParallel",
+			"FIX: bd doctor AccessLock integration, --yes for repo fingerprint",
+			"FIX: GetReadyWork excludes workflow/identity types",
+			"PERF: CASCADE deletes cut deletion queries by 60%",
+			"PERF: Schema init skip when already at current version",
+			"DOCS: 10+ docs updated from SQLite to Dolt, deprecated docs removed",
+		},
+	},
+	{
+		Version: "0.50.3",
+		Date:    "2026-02-15",
+		Changes: []string{
+			"REFACTOR: All tracker CLIs (Linear, GitLab, Jira) now use shared SyncEngine — eliminates ~800 lines of duplicated sync code",
+			"NEW: SyncEngine PullHooks/PushHooks for tracker-specific behaviors (GenerateID, FormatDescription, ContentEqual, etc.)",
+			"NEW: Jira native integration in internal/jira/ with REST API v3, ADF conversion, field mapping",
+			"NEW: Tracker plugin registry with auto-discovery (tracker.Register + init())",
+			"FIX: Jira State mapping bug — stale pointer assignment could cause incorrect status mapping",
+			"FIX: CI Windows build — test helper file renamed to _test.go suffix",
+			"PERF: Test suite — cached git template replaces ~60 subprocess calls",
+		},
+	},
 	{
 		Version: "0.50.1",
 		Date:    "2026-02-14",
@@ -379,7 +447,7 @@ var versionChanges = []VersionChange{
 		Version: "0.47.2",
 		Date:    "2026-01-14",
 		Changes: []string{
-			"NEW: Dolt backend (experimental) - bd init --backend=dolt for version-controlled storage",
+			"NEW: Dolt backend - version-controlled storage with bd init",
 			"NEW: bd show --children flag - Display child issues inline with parent",
 			"NEW: Comprehensive NixOS support - Improved flake and home-manager integration",
 			"FIX: Redirect + sync-branch incompatibility - bd sync works in redirected repos (bd-wayc3)",
@@ -518,7 +586,6 @@ var versionChanges = []VersionChange{
 		Changes: []string{
 			"NEW: bd swarm commands - Create/status/validate for multi-agent batch coordination",
 			"NEW: bd repair command - Detect and repair orphaned foreign key references",
-			"NEW: bd compact --purge-tombstones - Dependency-aware tombstone cleanup",
 			"NEW: bd init --from-jsonl - Preserve manual JSONL edits on reinit",
 			"NEW: bd human command - Focused help menu for humans",
 			"NEW: bd show --short - Compact output mode for scripting",
@@ -622,7 +689,7 @@ var versionChanges = []VersionChange{
 			"CHANGED: bd mol run removed - Orchestration moved to gt commands",
 			"CHANGED: Wisp architecture simplified - Single DB with Wisp=true flag",
 			"FIX: Gate await fields preserved during upsert - Multirepo sync fix",
-			"FIX: Tombstones retain closed_at timestamp - Preserves close time in soft deletes",
+			"FIX: closed_at timestamp preserved during soft deletes",
 			"FIX: Git detection caching - Eliminates worktree slowness",
 			"FIX: installed_plugins.json v2 format - bd doctor handles new Claude Code format",
 			"FIX: git.IsWorktree() hang on Windows - bd init no longer hangs outside git repos",
@@ -644,7 +711,6 @@ var versionChanges = []VersionChange{
 			"NEW: Gate issue type - bd gate create/open/close for async coordination",
 			"NEW: bd list --pretty --watch - Built-in colorized viewer with live updates",
 			"NEW: bd search --after/--before/--priority/--content - Enhanced search filters",
-			"NEW: bd compact --prune - Standalone tombstone pruning",
 			"NEW: bd export --priority - Exact priority filter for exports",
 			"NEW: --resolution alias for --reason on bd close",
 			"NEW: Config-based close hooks - Custom scripts on issue close",
@@ -795,7 +861,7 @@ var versionChanges = []VersionChange{
 			"bd template instantiate - Create beads issues from Beads templates",
 			"--assignee flag for template instantiate - Auto-assign during instantiation",
 			"bd mail inbox --identity fix - Now properly filters by identity parameter",
-			"Orphan detection fixes - No longer warns about closed issues or tombstones",
+			"Orphan detection fixes - No longer warns about closed issues",
 			"EXPERIMENTAL: Graph link fields (relates_to, replies_to, duplicate_of, superseded_by) and mail commands are subject to breaking changes",
 		},
 	},
@@ -817,7 +883,7 @@ var versionChanges = []VersionChange{
 			"New dependency types: replies-to, relates-to, duplicates, supersedes",
 			"Windows build fixes - gosec lint errors resolved",
 			"Issue ID prefix extraction fix - Word-like suffixes now parse correctly",
-			"Legacy deletions.jsonl code removed - Fully migrated to inline tombstones",
+			"Legacy deletions.jsonl code removed - Dolt handles delete propagation natively",
 		},
 	},
 	{
@@ -830,8 +896,6 @@ var versionChanges = []VersionChange{
 			"bd show displays dependent issue status - Shows status for blocked-by/blocking issues",
 			"claude.local.md support - Local-only documentation, gitignored by default",
 			"Auto-disable daemon in git worktrees - Prevents database conflicts",
-			"Inline tombstones for soft-delete - Deleted issues become tombstones in issues.jsonl",
-			"bd migrate-tombstones command - Converts legacy deletions.jsonl to inline tombstones",
 			"Enhanced Git Worktree Support - Shared .beads database across worktrees",
 		},
 	},
@@ -839,9 +903,6 @@ var versionChanges = []VersionChange{
 		Version: "0.30.0",
 		Date:    "2025-12-15",
 		Changes: []string{
-			"TOMBSTONE ARCHITECTURE - Deleted issues become inline tombstones in issues.jsonl",
-			"bd migrate-tombstones - Convert legacy deletions.jsonl to inline tombstones",
-			"bd doctor tombstone health checks - Detects orphaned/expired tombstones",
 			"Git Worktree Support - Shared database across worktrees, worktree-aware hooks",
 			"MCP Context Engineering - 80-90% context reduction for MCP responses",
 			"bd thanks command - List contributors to your project",

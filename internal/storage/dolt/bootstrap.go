@@ -1,5 +1,3 @@
-//go:build cgo
-
 package dolt
 
 import (
@@ -8,15 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/lockfile"
-	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // BootstrapResult contains statistics about the bootstrap operation
@@ -36,12 +32,43 @@ type ParseError struct {
 	Snippet string
 }
 
+// BootstrapRoute holds route data for bootstrap import.
+// This is a local type to avoid importing internal/routing (which imports dolt, causing a cycle).
+type BootstrapRoute struct {
+	Prefix string
+	Path   string
+}
+
+// bootstrapInteractionEntry is a local type for deserializing interactions.jsonl entries.
+// Avoids importing internal/audit (which imports internal/beads → dolt, causing a cycle).
+type bootstrapInteractionEntry struct {
+	ID        string         `json:"id"`
+	Kind      string         `json:"kind"`
+	CreatedAt time.Time      `json:"created_at"`
+	Actor     string         `json:"actor,omitempty"`
+	IssueID   string         `json:"issue_id,omitempty"`
+	Model     string         `json:"model,omitempty"`
+	Prompt    string         `json:"prompt,omitempty"`
+	Response  string         `json:"response,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	ToolName  string         `json:"tool_name,omitempty"`
+	ExitCode  *int           `json:"exit_code,omitempty"`
+	ParentID  string         `json:"parent_id,omitempty"`
+	Label     string         `json:"label,omitempty"`
+	Reason    string         `json:"reason,omitempty"`
+	Extra     map[string]any `json:"extra,omitempty"`
+}
+
 // BootstrapConfig controls bootstrap behavior
 type BootstrapConfig struct {
 	BeadsDir    string        // Path to .beads directory
 	DoltPath    string        // Path to dolt subdirectory
 	LockTimeout time.Duration // Timeout waiting for bootstrap lock
 	Database    string        // Database name (e.g. "beads_hq"); defaults to "beads"
+
+	// Routes to import during bootstrap (loaded by caller from routes.jsonl).
+	// If nil, route import is skipped.
+	Routes []BootstrapRoute
 }
 
 // Bootstrap checks if Dolt DB needs bootstrapping from JSONL and performs it if needed.
@@ -89,6 +116,56 @@ func Bootstrap(ctx context.Context, cfg BootstrapConfig) (bool, *BootstrapResult
 	}
 
 	return true, result, nil
+}
+
+// BootstrapFromGitRemote clones a Dolt database from a git remote URL.
+// This is used when no local .beads/dolt/ exists but config.yaml has
+// sync.git-remote configured, enabling cold-start from a git remote
+// that already contains Dolt data on refs/dolt/data.
+//
+// dolt clone creates <target>/.dolt/ directly (no database subdirectory),
+// but the embedded driver expects <doltDir>/<database>/.dolt/. To reconcile,
+// we clone into <doltDir>/<database>/ so the embedded driver finds it.
+// If database is empty, "beads" is used.
+//
+// Returns true if the clone was performed, false if skipped (dolt dir already exists).
+func BootstrapFromGitRemote(ctx context.Context, doltDir, gitRemoteURL string) (bool, error) {
+	return BootstrapFromGitRemoteWithDB(ctx, doltDir, gitRemoteURL, "")
+}
+
+// BootstrapFromGitRemoteWithDB is like BootstrapFromGitRemote but allows
+// specifying the database name (used by the embedded driver for the
+// subdirectory structure).
+func BootstrapFromGitRemoteWithDB(ctx context.Context, doltDir, gitRemoteURL, database string) (bool, error) {
+	// Skip if Dolt database already exists
+	if doltExists(doltDir) {
+		return false, nil
+	}
+
+	if database == "" {
+		database = "beads"
+	}
+
+	// Verify dolt CLI is available
+	if _, err := exec.LookPath("dolt"); err != nil {
+		return false, fmt.Errorf("dolt CLI not found (required for git remote bootstrap): %w", err)
+	}
+
+	// Create the parent dolt directory
+	if err := os.MkdirAll(doltDir, 0o750); err != nil {
+		return false, fmt.Errorf("failed to create dolt directory: %w", err)
+	}
+
+	// Clone into <doltDir>/<database>/ so the embedded driver can find it.
+	// `dolt clone <url> <target>` creates <target>/.dolt/ directly.
+	cloneTarget := filepath.Join(doltDir, database)
+	cmd := exec.CommandContext(ctx, "dolt", "clone", gitRemoteURL, cloneTarget)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("dolt clone failed: %w\nOutput: %s", err, output)
+	}
+
+	fmt.Fprintf(os.Stderr, "Bootstrapped from git remote: %s\n", gitRemoteURL)
+	return true, nil
 }
 
 // doltExists checks if a Dolt database directory exists
@@ -259,9 +336,9 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 	}
 
 	// Import routes first (no dependencies)
-	routesImported, err := importRoutesBootstrap(ctx, store, cfg.BeadsDir)
+	routesImported, err := importRoutesBootstrap(ctx, store, cfg.Routes)
 	if err != nil {
-		// Non-fatal - routes.jsonl may not exist
+		// Non-fatal - routes may not exist
 		fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to import routes: %v\n", err)
 	}
 	result.RoutesImported = routesImported
@@ -369,17 +446,8 @@ func parseJSONLWithErrors(jsonlPath string) ([]*types.Issue, []ParseError) {
 		}
 
 		// Fix non-closed issue with closed_at set (corruption recovery)
-		if issue.Status != types.StatusClosed && issue.Status != types.StatusTombstone && issue.ClosedAt != nil {
+		if issue.Status != types.StatusClosed && issue.ClosedAt != nil {
 			issue.ClosedAt = nil
-		}
-
-		// Fix tombstone invariants (corruption recovery)
-		if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
-			now := time.Now()
-			issue.DeletedAt = &now
-		}
-		if issue.Status != types.StatusTombstone && issue.DeletedAt != nil {
-			issue.DeletedAt = nil
 		}
 
 		issues = append(issues, &issue)
@@ -403,7 +471,8 @@ func truncateSnippet(s string) string {
 	return s
 }
 
-// detectPrefixFromIssues detects the most common prefix from issues
+// detectPrefixFromIssues detects the most common prefix from issues.
+// Uses a simple first-hyphen extraction to avoid importing internal/utils (cycle).
 func detectPrefixFromIssues(issues []*types.Issue) string {
 	prefixCounts := make(map[string]int)
 
@@ -411,9 +480,11 @@ func detectPrefixFromIssues(issues []*types.Issue) string {
 		if issue.ID == "" {
 			continue
 		}
-		prefix := utils.ExtractIssuePrefix(issue.ID)
-		if prefix != "" {
-			prefixCounts[prefix]++
+		// Simple prefix extraction: take everything before the first hyphen.
+		// For bootstrap purposes this is sufficient (e.g., "bd-abc" → "bd").
+		idx := strings.Index(issue.ID, "-")
+		if idx > 0 {
+			prefixCounts[issue.ID[:idx]]++
 		}
 	}
 
@@ -442,16 +513,6 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 	}
 	defer func() { _ = tx.Rollback() }() // No-op after successful commit
 
-	// Pre-scan: identify IDs with tombstone versions (resurrection protection).
-	// If a JSONL has both a live and tombstone version of the same ID,
-	// the tombstone wins to prevent resurrecting deleted issues.
-	tombstoneIDs := make(map[string]bool)
-	for _, issue := range issues {
-		if issue.Status == types.StatusTombstone {
-			tombstoneIDs[issue.ID] = true
-		}
-	}
-
 	imported := 0
 	skipped := 0
 	seenIDs := make(map[string]bool)
@@ -460,13 +521,6 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 	for _, issue := range issues {
 		// Skip duplicates within batch
 		if seenIDs[issue.ID] {
-			skipped++
-			continue
-		}
-
-		// Tombstone resurrection protection: if this ID has a tombstone
-		// version anywhere in the file, skip the live version
-		if tombstoneIDs[issue.ID] && issue.Status != types.StatusTombstone {
 			skipped++
 			continue
 		}
@@ -559,13 +613,9 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 	return imported, skipped, nil
 }
 
-// importRoutesBootstrap imports routes from routes.jsonl during bootstrap
-// Returns the number of routes imported
-func importRoutesBootstrap(ctx context.Context, store *DoltStore, beadsDir string) (int, error) {
-	routes, err := routing.LoadRoutes(beadsDir)
-	if err != nil {
-		return 0, err
-	}
+// importRoutesBootstrap imports routes during bootstrap.
+// Routes are passed via BootstrapConfig to avoid importing internal/routing (cycle).
+func importRoutesBootstrap(ctx context.Context, store *DoltStore, routes []BootstrapRoute) (int, error) {
 	if len(routes) == 0 {
 		return 0, nil // No routes to import
 	}
@@ -625,7 +675,7 @@ func importInteractionsBootstrap(ctx context.Context, store *DoltStore, interact
 			continue
 		}
 
-		var entry audit.Entry
+		var entry bootstrapInteractionEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			// Skip malformed lines during bootstrap
 			continue

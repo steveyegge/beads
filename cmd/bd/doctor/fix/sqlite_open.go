@@ -1,3 +1,5 @@
+//go:build cgo
+
 package fix
 
 import "github.com/steveyegge/beads/internal/storage"

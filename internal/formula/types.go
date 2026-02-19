@@ -114,7 +114,9 @@ type VarDef struct {
 	Description string `json:"description,omitempty"`
 
 	// Default is the value to use if not provided.
-	Default string `json:"default,omitempty"`
+	// nil means no default (variable must be provided if referenced).
+	// Non-nil (including &"") means the variable has an explicit default.
+	Default *string `json:"default,omitempty"`
 
 	// Required indicates the variable must be provided (no default).
 	Required bool `json:"required,omitempty"`
@@ -142,7 +144,7 @@ func (v *VarDef) UnmarshalTOML(data interface{}) error {
 	switch val := data.(type) {
 	case string:
 		// Simple string value becomes the default
-		v.Default = val
+		v.Default = &val
 		return nil
 	case map[string]interface{}:
 		// Table format - parse each field
@@ -150,7 +152,7 @@ func (v *VarDef) UnmarshalTOML(data interface{}) error {
 			v.Description = desc
 		}
 		if def, ok := val["default"].(string); ok {
-			v.Default = def
+			v.Default = &def
 		}
 		if req, ok := val["required"].(bool); ok {
 			v.Required = req
@@ -542,7 +544,7 @@ func (f *Formula) Validate() error {
 			errs = append(errs, "vars: variable name cannot be empty")
 			continue
 		}
-		if v.Required && v.Default != "" {
+		if v.Required && v.Default != nil {
 			errs = append(errs, fmt.Sprintf("vars.%s: cannot have both required:true and default", name))
 		}
 	}
@@ -813,6 +815,9 @@ func findStepByID(step *Step, id string) *Step {
 	}
 	return nil
 }
+
+// StringPtr returns a pointer to s. Useful for constructing VarDef literals.
+func StringPtr(s string) *string { return &s }
 
 // GetBondPoint finds a bond point by ID.
 func (f *Formula) GetBondPoint(id string) *BondPoint {

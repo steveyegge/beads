@@ -13,10 +13,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Three-Layer Design
 
 1. **Storage Layer** (`internal/storage/`)
-   - Interface-based design in `storage.go`
-   - **Dolt** (primary) in `storage/dolt/` — version-controlled SQL with cell-level merge
-   - SQLite (legacy) in `storage/sqlite/` — still supported for simple setups
-   - Memory backend in `storage/memory/` for testing
+   - **Dolt** in `storage/dolt/` — version-controlled SQL database with cell-level merge
+   - Common types and interfaces in `storage.go`
 
 2. **RPC Layer** (`internal/rpc/`)
    - Client/server architecture using Unix domain sockets (Windows named pipes)
@@ -32,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Storage Architecture
 
-Beads uses **Dolt** as its primary storage backend — a version-controlled SQL database:
+Beads uses **Dolt** as its storage backend — a version-controlled SQL database:
 
 ```
 Dolt DB (.beads/dolt/)
@@ -51,8 +49,8 @@ Remote (shared across machines)
 Core implementation:
 - Dolt storage: `internal/storage/dolt/`
 - Export: `cmd/bd/export.go`
-- Import: `internal/importer/importer.go`
-- Sync: `cmd/bd/sync_helpers.go`, `cmd/bd/sync_conflict.go`
+- Import: `cmd/bd/import.go`
+- Sync: `cmd/bd/sync_helpers.go`, `cmd/bd/sync_git.go`
 
 ### Key Data Types
 
@@ -86,7 +84,7 @@ golangci-lint run ./...
 ## Testing Philosophy
 
 - Unit tests live next to implementation (`*_test.go`)
-- Integration tests use real databases (Dolt or SQLite temp files)
+- Integration tests use real Dolt databases (via embedded server in temp dirs)
 - Script-based tests in `cmd/bd/testdata/*.txt` (see `scripttest_test.go`)
 - RPC layer has extensive isolation and edge case coverage
 

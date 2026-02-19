@@ -234,8 +234,8 @@ func runFormulaShow(cmd *cobra.Command, args []string) {
 			if v.Required {
 				attrs = append(attrs, ui.RenderFail("required"))
 			}
-			if v.Default != "" {
-				attrs = append(attrs, fmt.Sprintf("default=%q", v.Default))
+			if v.Default != nil {
+				attrs = append(attrs, fmt.Sprintf("default=%q", *v.Default))
 			}
 			if len(v.Enum) > 0 {
 				attrs = append(attrs, fmt.Sprintf("enum=[%s]", strings.Join(v.Enum, ",")))

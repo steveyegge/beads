@@ -9,63 +9,22 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 )
 
-// TestFindDatabaseInBeadsDir_CanonicalDB tests finding the canonical beads.db file
-func TestFindDatabaseInBeadsDir_CanonicalDB(t *testing.T) {
+// TestFindDatabaseInBeadsDir_DoltDir tests finding the dolt database directory
+func TestFindDatabaseInBeadsDir_DoltDir(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create canonical beads.db
-	dbPath := filepath.Join(tmpDir, CanonicalDatabaseName)
-	if err := os.WriteFile(dbPath, []byte{}, 0644); err != nil {
+	// Create dolt directory (the canonical database location)
+	doltDir := filepath.Join(tmpDir, "dolt")
+	if err := os.MkdirAll(doltDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	result := findDatabaseInBeadsDir(tmpDir, false)
 
 	resultResolved, _ := filepath.EvalSymlinks(result)
-	expectedResolved, _ := filepath.EvalSymlinks(dbPath)
+	expectedResolved, _ := filepath.EvalSymlinks(doltDir)
 	if resultResolved != expectedResolved {
-		t.Errorf("findDatabaseInBeadsDir() = %q, want %q", result, dbPath)
-	}
-}
-
-// TestFindDatabaseInBeadsDir_LegacyDB tests finding legacy database names with warnings
-func TestFindDatabaseInBeadsDir_LegacyDB(t *testing.T) {
-	for _, legacyName := range LegacyDatabaseNames {
-		t.Run(legacyName, func(t *testing.T) {
-			tmpDir := t.TempDir()
-
-			dbPath := filepath.Join(tmpDir, legacyName)
-			if err := os.WriteFile(dbPath, []byte{}, 0644); err != nil {
-				t.Fatal(err)
-			}
-
-			// With warnOnIssues=true should still find the db
-			result := findDatabaseInBeadsDir(tmpDir, true)
-
-			resultResolved, _ := filepath.EvalSymlinks(result)
-			expectedResolved, _ := filepath.EvalSymlinks(dbPath)
-			if resultResolved != expectedResolved {
-				t.Errorf("findDatabaseInBeadsDir() = %q, want %q", result, dbPath)
-			}
-		})
-	}
-}
-
-// TestFindDatabaseInBeadsDir_MultipleDatabases tests the warning path for multiple DBs
-func TestFindDatabaseInBeadsDir_MultipleDatabases(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create multiple .db files (not canonical name)
-	for _, name := range []string{"one.db", "two.db"} {
-		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte{}, 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// Should find one of them (with warnings to stderr)
-	result := findDatabaseInBeadsDir(tmpDir, true)
-	if result == "" {
-		t.Error("findDatabaseInBeadsDir() returned empty string, expected a db path")
+		t.Errorf("findDatabaseInBeadsDir() = %q, want %q", result, doltDir)
 	}
 }
 
@@ -79,45 +38,22 @@ func TestFindDatabaseInBeadsDir_NoDatabase(t *testing.T) {
 	}
 }
 
-// TestFindDatabaseInBeadsDir_SkipsBackupAndVC tests that backup and vc.db files are skipped
-func TestFindDatabaseInBeadsDir_SkipsBackupAndVC(t *testing.T) {
+// TestFindDatabaseInBeadsDir_DoltFallback tests fallback to dolt dir without metadata.json
+func TestFindDatabaseInBeadsDir_DoltFallback(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create only backup and vc.db files (should be ignored)
-	for _, name := range []string{"beads.backup.db", "vc.db"} {
-		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte{}, 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	result := findDatabaseInBeadsDir(tmpDir, false)
-	if result != "" {
-		t.Errorf("findDatabaseInBeadsDir() should skip backup/vc files, got %q", result)
-	}
-}
-
-// TestFindDatabaseInBeadsDir_WithMetadataJSON tests the metadata.json config path
-func TestFindDatabaseInBeadsDir_WithMetadataJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create metadata.json with sqlite backend
-	metadataContent := `{"backend": "sqlite", "database": "beads.db"}`
-	if err := os.WriteFile(filepath.Join(tmpDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create the db file that metadata.json references
-	dbPath := filepath.Join(tmpDir, "beads.db")
-	if err := os.WriteFile(dbPath, []byte{}, 0644); err != nil {
+	// Create dolt directory without metadata.json
+	doltDir := filepath.Join(tmpDir, "dolt")
+	if err := os.MkdirAll(doltDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	result := findDatabaseInBeadsDir(tmpDir, false)
 
 	resultResolved, _ := filepath.EvalSymlinks(result)
-	expectedResolved, _ := filepath.EvalSymlinks(dbPath)
+	expectedResolved, _ := filepath.EvalSymlinks(doltDir)
 	if resultResolved != expectedResolved {
-		t.Errorf("findDatabaseInBeadsDir() = %q, want %q", result, dbPath)
+		t.Errorf("findDatabaseInBeadsDir() = %q, want %q", result, doltDir)
 	}
 }
 
@@ -146,41 +82,6 @@ func TestFindDatabaseInBeadsDir_DoltBackend(t *testing.T) {
 	}
 }
 
-// TestGetConfiguredBackend tests the GetConfiguredBackend function
-func TestGetConfiguredBackend(t *testing.T) {
-	t.Run("no config returns dolt", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		result := GetConfiguredBackend(tmpDir)
-		if result != "dolt" {
-			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "dolt")
-		}
-	})
-
-	t.Run("sqlite config returns dolt", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		metadataContent := `{"backend": "sqlite"}`
-		if err := os.WriteFile(filepath.Join(tmpDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
-			t.Fatal(err)
-		}
-		result := GetConfiguredBackend(tmpDir)
-		if result != "dolt" {
-			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "dolt")
-		}
-	})
-
-	t.Run("dolt config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		metadataContent := `{"backend": "dolt"}`
-		if err := os.WriteFile(filepath.Join(tmpDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
-			t.Fatal(err)
-		}
-		result := GetConfiguredBackend(tmpDir)
-		if result != "dolt" {
-			t.Errorf("GetConfiguredBackend() = %q, want %q", result, "dolt")
-		}
-	})
-}
-
 // TestFindAllDatabases_Unit tests FindAllDatabases without the integration tag
 func TestFindAllDatabases_Unit(t *testing.T) {
 	// Save original env
@@ -203,8 +104,13 @@ func TestFindAllDatabases_Unit(t *testing.T) {
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
 			t.Fatal(err)
 		}
-		dbPath := filepath.Join(beadsDir, "beads.db")
-		if err := os.WriteFile(dbPath, []byte{}, 0644); err != nil {
+		// Create metadata.json so hasBeadsProjectFiles returns true
+		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"backend":"dolt"}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Create dolt directory (canonical database location)
+		doltDir := filepath.Join(beadsDir, "dolt")
+		if err := os.MkdirAll(doltDir, 0755); err != nil {
 			t.Fatal(err)
 		}
 
@@ -310,7 +216,12 @@ func TestRepoContext_GitCmdCWD(t *testing.T) {
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(beadsDir, "beads.db"), []byte{}, 0644); err != nil {
+	// Create metadata.json so hasBeadsProjectFiles returns true
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"backend":"dolt"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Create dolt directory for database detection
+	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -567,13 +478,13 @@ func TestFindDatabaseInTree_WithBEADS_DIR(t *testing.T) {
 		t.Skipf("git not available: %v", err)
 	}
 
-	// Create .beads with db
+	// Create .beads with dolt directory
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	if err := os.WriteFile(dbPath, []byte{}, 0644); err != nil {
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(doltDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -591,9 +502,9 @@ func TestFindDatabaseInTree_WithBEADS_DIR(t *testing.T) {
 	}
 
 	resultResolved, _ := filepath.EvalSymlinks(result)
-	expectedResolved, _ := filepath.EvalSymlinks(dbPath)
+	expectedResolved, _ := filepath.EvalSymlinks(doltDir)
 	if resultResolved != expectedResolved {
-		t.Errorf("findDatabaseInTree() = %q, want %q", result, dbPath)
+		t.Errorf("findDatabaseInTree() = %q, want %q", result, doltDir)
 	}
 }
 
@@ -610,8 +521,8 @@ func TestFindBeadsDir_BEADS_DIR_WithProjectFiles(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// Create project files in the directory
-	if err := os.WriteFile(filepath.Join(tmpDir, "beads.db"), []byte{}, 0644); err != nil {
+	// Create metadata.json (project file that indicates a beads directory)
+	if err := os.WriteFile(filepath.Join(tmpDir, "metadata.json"), []byte(`{"backend":"dolt"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -622,16 +533,5 @@ func TestFindBeadsDir_BEADS_DIR_WithProjectFiles(t *testing.T) {
 	expectedResolved, _ := filepath.EvalSymlinks(tmpDir)
 	if resultResolved != expectedResolved {
 		t.Errorf("FindBeadsDir() = %q, want %q", result, tmpDir)
-	}
-}
-
-// TestNewStorage_Unit tests that deprecated NewStorage returns an error directing callers to factory.New
-func TestNewStorage_Unit(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	_, err := NewStorage(t.Context(), dbPath)
-	if err == nil {
-		t.Fatal("NewStorage() should return an error (deprecated)")
 	}
 }

@@ -11,12 +11,10 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/routing"
-	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -416,8 +414,8 @@ var createCmd = &cobra.Command{
 		}
 
 		// Switch to target repo for multi-repo support (bd-6x6g)
-		// When routing to a different repo, we bypass daemon mode and use direct storage
-		var targetStore storage.Storage
+		// When routing to a different repo, we use direct storage access
+		var targetStore *dolt.DoltStore
 		if repoPath != "." {
 			targetBeadsDir := routing.ExpandPath(repoPath)
 			debug.Logf("DEBUG: Routing to target repo: %s\n", targetBeadsDir)
@@ -430,7 +428,7 @@ var createCmd = &cobra.Command{
 			// Open new store for target repo using factory to respect backend config
 			targetBeadsDirPath := filepath.Join(targetBeadsDir, ".beads")
 			var err error
-			targetStore, err = factory.NewFromConfig(rootCtx, targetBeadsDirPath)
+			targetStore, err = dolt.NewFromConfig(rootCtx, targetBeadsDirPath)
 			if err != nil {
 				FatalError("failed to open target store: %v", err)
 			}
@@ -637,6 +635,10 @@ var createCmd = &cobra.Command{
 					continue
 				}
 				depType = types.DependencyType(strings.TrimSpace(parts[0]))
+				// "depends-on" is an alias — keep default direction (new issue depends on target)
+				if depType == "depends-on" {
+					depType = types.DepBlocks
+				}
 				dependsOnID = strings.TrimSpace(parts[1])
 			} else {
 				// Default to "blocks" if no type specified
@@ -655,6 +657,12 @@ var createCmd = &cobra.Command{
 				IssueID:     issue.ID,
 				DependsOnID: dependsOnID,
 				Type:        depType,
+			}
+			// When user explicitly says "blocks:X", they mean "new issue blocks X"
+			// So X depends on the new issue — swap direction
+			if depType == types.DepBlocks && strings.Contains(depSpec, ":") {
+				dep.IssueID = dependsOnID
+				dep.DependsOnID = issue.ID
 			}
 			if err := store.AddDependency(ctx, dep, actor); err != nil {
 				WarnError("failed to add dependency %s -> %s: %v", issue.ID, dependsOnID, err)
@@ -726,7 +734,7 @@ var createCmd = &cobra.Command{
 // flushRoutedRepo ensures the target repo's JSONL is updated after routing an issue.
 // This is critical for multi-repo hydration to work correctly (bd-fix-routing).
 // Always writes local JSONL as a safety net (even in dolt-native mode).
-func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
+func flushRoutedRepo(targetStore *dolt.DoltStore, repoPath string) {
 	ctx := context.Background()
 
 	// Expand the repo path and construct the .beads directory path
@@ -748,7 +756,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 	debug.Logf("attempting to flush routed repo at %s", targetBeadsDir)
 
 	// Export directly to JSONL
-	issues, err := targetStore.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
+	issues, err := targetStore.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		WarnError("failed to query issues for export: %v", err)
 		return
@@ -763,7 +771,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 }
 
 // performAtomicExport writes issues to JSONL using atomic temp file + rename
-func performAtomicExport(_ context.Context, jsonlPath string, issues []*types.Issue, _ storage.Storage) error {
+func performAtomicExport(_ context.Context, jsonlPath string, issues []*types.Issue, _ *dolt.DoltStore) error {
 	// Create temp file with PID suffix for atomic write
 	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
 
@@ -886,7 +894,7 @@ func buildLineageMetadata(origin, originHuman, executedBy string) json.RawMessag
 }
 
 // createInRig creates an issue in a different rig using --rig flag or auto-routing.
-// This bypasses the normal daemon/direct flow and directly creates in the target rig.
+// This directly creates in the target rig's database.
 func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef, specID string, wisp bool) {
 	ctx := rootCtx
 
@@ -903,7 +911,7 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 	}
 
 	// Open storage for the target rig using factory to respect backend config
-	targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
+	targetStore, err := dolt.NewFromConfig(ctx, targetBeadsDir)
 	if err != nil {
 		FatalError("failed to open rig %q database: %v", rigName, err)
 	}
@@ -1063,8 +1071,8 @@ func findTownBeadsDir() (string, error) {
 	return "", fmt.Errorf("no routes.jsonl found in any parent .beads directory")
 }
 
-// formatTimeForRPC converts a *time.Time to RFC3339 string for daemon RPC calls.
-// Returns empty string if t is nil, allowing the daemon to distinguish "not set" from "set to zero".
+// formatTimeForRPC converts a *time.Time to RFC3339 string for RPC calls.
+// Returns empty string if t is nil, to distinguish "not set" from "set to zero".
 func formatTimeForRPC(t *time.Time) string {
 	if t == nil {
 		return ""
@@ -1075,7 +1083,7 @@ func formatTimeForRPC(t *time.Time) string {
 // ensureBeadsDirForPath ensures a beads directory exists at the target path.
 // If the .beads directory doesn't exist, it creates it and initializes with
 // the same prefix as the source store (T010, T012: prefix inheritance).
-func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore storage.Storage) error {
+func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore *dolt.DoltStore) error {
 	beadsDir := filepath.Join(targetPath, ".beads")
 	dbPath := filepath.Join(beadsDir, "beads.db")
 
@@ -1102,13 +1110,13 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 		}
 	}
 
-	// Initialize database - it will be created when factory.New is called
+	// Initialize database - it will be created when dolt.New is called
 	// But we need to set the prefix if source store has one (T012: prefix inheritance)
 	if sourceStore != nil {
 		sourcePrefix, err := sourceStore.GetConfig(ctx, "issue_prefix")
 		if err == nil && sourcePrefix != "" {
 			// Open target store temporarily to set prefix
-			tempStore, err := factory.New(ctx, configfile.BackendDolt, dbPath)
+			tempStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 			if err != nil {
 				return fmt.Errorf("failed to initialize target database: %w", err)
 			}

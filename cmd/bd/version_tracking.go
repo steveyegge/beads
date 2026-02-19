@@ -11,7 +11,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
-	"github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // localVersionFile is the gitignored file that stores the last bd version used locally.
@@ -201,13 +201,11 @@ func findActualJSONLFile(beadsDir string) string {
 
 // autoMigrateOnVersionBump automatically migrates the database when CLI version changes.
 // This function is best-effort - failures are silent to avoid disrupting commands.
-// Called from PersistentPreRun after daemon check but before opening DB for main operation.
+// Called from PersistentPreRun before opening DB for main operation.
 //
-// IMPORTANT: This must be called AFTER determining we're in direct mode (no daemon)
-// and BEFORE opening the database, to avoid: 1) conflicts with daemon, 2) opening DB twice.
+// IMPORTANT: This must be called BEFORE opening the database to avoid opening DB twice.
 //
-// beadsDir is the path to the .beads directory. The function uses factory.NewFromConfig
-// to open the correct backend (SQLite or Dolt) based on metadata.json configuration.
+// beadsDir is the path to the .beads directory.
 func autoMigrateOnVersionBump(beadsDir string) {
 	// Only migrate if version upgrade was detected
 	if !versionUpgradeDetected {
@@ -246,7 +244,7 @@ func autoMigrateOnVersionBump(beadsDir string) {
 		ctx = context.Background()
 	}
 
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	store, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		// Failed to open database - skip migration
 		debug.Logf("auto-migrate: failed to open database: %v", err)

@@ -9,6 +9,84 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// TestGetRedirectTarget tests that getRedirectTarget resolves redirect paths correctly.
+// This is the fix for GH#1266: relative paths must be resolved from the worktree root
+// (parent of .beads/), not from .beads/ itself, matching FollowRedirect behavior.
+func TestGetRedirectTarget(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	t.Run("relative path resolved from worktree root", func(t *testing.T) {
+		worktreeDir := filepath.Join(tmpDir, "worktrees", "feat-branch")
+		worktreeBeadsDir := filepath.Join(worktreeDir, ".beads")
+		if err := os.MkdirAll(worktreeBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create worktree .beads dir: %v", err)
+		}
+
+		// Create the main .beads directory that the redirect points to
+		mainBeadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(mainBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create main .beads dir: %v", err)
+		}
+
+		// Write a relative redirect from worktree root to main .beads
+		redirectFile := filepath.Join(worktreeBeadsDir, "redirect")
+		if err := os.WriteFile(redirectFile, []byte("../../.beads\n"), 0644); err != nil {
+			t.Fatalf("failed to write redirect file: %v", err)
+		}
+
+		got := getRedirectTarget(worktreeDir)
+		if got == "" {
+			t.Fatal("getRedirectTarget returned empty string")
+		}
+
+		canonicalGot := utils.CanonicalizePath(got)
+		canonicalExpected := utils.CanonicalizePath(mainBeadsDir)
+
+		if canonicalGot != canonicalExpected {
+			t.Errorf("getRedirectTarget() mismatch:\n  got:      %s\n  expected: %s", canonicalGot, canonicalExpected)
+		}
+	})
+
+	t.Run("absolute path returned as-is", func(t *testing.T) {
+		worktreeDir := filepath.Join(tmpDir, "worktrees", "abs-test")
+		worktreeBeadsDir := filepath.Join(worktreeDir, ".beads")
+		if err := os.MkdirAll(worktreeBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create worktree .beads dir: %v", err)
+		}
+
+		absTarget := filepath.Join(tmpDir, "abs-target-beads")
+		if err := os.MkdirAll(absTarget, 0755); err != nil {
+			t.Fatalf("failed to create abs target dir: %v", err)
+		}
+
+		redirectFile := filepath.Join(worktreeBeadsDir, "redirect")
+		if err := os.WriteFile(redirectFile, []byte(absTarget+"\n"), 0644); err != nil {
+			t.Fatalf("failed to write redirect file: %v", err)
+		}
+
+		got := getRedirectTarget(worktreeDir)
+		canonicalGot := utils.CanonicalizePath(got)
+		canonicalExpected := utils.CanonicalizePath(absTarget)
+
+		if canonicalGot != canonicalExpected {
+			t.Errorf("getRedirectTarget() mismatch for absolute path:\n  got:      %s\n  expected: %s", canonicalGot, canonicalExpected)
+		}
+	})
+
+	t.Run("missing redirect file returns empty", func(t *testing.T) {
+		worktreeDir := filepath.Join(tmpDir, "worktrees", "no-redirect")
+		worktreeBeadsDir := filepath.Join(worktreeDir, ".beads")
+		if err := os.MkdirAll(worktreeBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create worktree .beads dir: %v", err)
+		}
+
+		got := getRedirectTarget(worktreeDir)
+		if got != "" {
+			t.Errorf("expected empty string for missing redirect, got %q", got)
+		}
+	})
+}
+
 // TestWorktreeRedirectDepth tests that worktree redirect paths are computed correctly
 // for different worktree directory depths. This is the fix for GH#1098.
 //

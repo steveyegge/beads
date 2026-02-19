@@ -14,7 +14,7 @@ const ConfigFileName = "metadata.json"
 type Config struct {
 	Database    string `json:"database"`
 	JSONLExport string `json:"jsonl_export,omitempty"`
-	Backend     string `json:"backend,omitempty"` // "sqlite" (default) or "dolt"
+	Backend     string `json:"backend,omitempty"` // always "dolt"
 
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
@@ -27,6 +27,7 @@ type Config struct {
 	DoltServerPort int    `json:"dolt_server_port,omitempty"` // Server port (default: 3307)
 	DoltServerUser string `json:"dolt_server_user,omitempty"` // MySQL user (default: root)
 	DoltDatabase   string `json:"dolt_database,omitempty"`    // SQL database name (default: beads)
+	DoltServerTLS  bool   `json:"dolt_server_tls,omitempty"`  // Enable TLS for server connections (required for Hosted Dolt)
 	// Note: Password should be set via BEADS_DOLT_PASSWORD env var for security
 
 	// Stale closed issues check configuration
@@ -110,27 +111,13 @@ func (c *Config) Save(beadsDir string) error {
 }
 
 func (c *Config) DatabasePath(beadsDir string) string {
-	backend := c.GetBackend()
-
-	if backend == BackendDolt {
-		// For dolt backend, always use "dolt" as the directory name.
-		// The Database field is irrelevant for dolt — data always lives at .beads/dolt/.
-		// Stale values like "town", "wyvern", "beads_rig" caused split-brain (see DOLT-HEALTH-P0.md).
-		if filepath.IsAbs(c.Database) {
-			return c.Database
-		}
-		return filepath.Join(beadsDir, "dolt")
+	// Always use "dolt" as the directory name.
+	// The Database field is irrelevant — data always lives at .beads/dolt/.
+	// Stale values like "town", "wyvern", "beads_rig" caused split-brain (see DOLT-HEALTH-P0.md).
+	if filepath.IsAbs(c.Database) {
+		return c.Database
 	}
-
-	// SQLite (default)
-	db := strings.TrimSpace(c.Database)
-	if db == "" {
-		db = "beads.db"
-	}
-	if filepath.IsAbs(db) {
-		return db
-	}
-	return filepath.Join(beadsDir, db)
+	return filepath.Join(beadsDir, "dolt")
 }
 
 func (c *Config) JSONLPath(beadsDir string) string {
@@ -162,14 +149,13 @@ func (c *Config) GetStaleClosedIssuesDays() int {
 
 // Backend constants
 const (
-	BackendSQLite = "sqlite"
-	BackendDolt   = "dolt"
+	BackendDolt = "dolt"
 )
 
 // BackendCapabilities describes behavioral constraints for a storage backend.
 //
 // This is intentionally small and stable: callers should use these flags to decide
-// whether to enable features like daemon/RPC/autostart and process spawning.
+// whether to enable features like RPC and process spawning.
 //
 // NOTE: The embedded Dolt driver is effectively single-writer at the OS-process level.
 // Even if multiple goroutines are safe within one process, multiple processes opening
@@ -177,8 +163,7 @@ const (
 // "read-only" failures. Therefore, Dolt is treated as single-process-only.
 type BackendCapabilities struct {
 	// SingleProcessOnly indicates the backend must not be accessed from multiple
-	// Beads OS processes concurrently (no daemon mode, no RPC client/server split,
-	// no helper-process spawning).
+	// Beads OS processes concurrently (embedded mode is single-writer).
 	SingleProcessOnly bool
 }
 
@@ -190,9 +175,7 @@ type BackendCapabilities struct {
 // handle server mode (which supports multi-process access).
 func CapabilitiesForBackend(backend string) BackendCapabilities {
 	switch strings.TrimSpace(strings.ToLower(backend)) {
-	case "", BackendSQLite:
-		return BackendCapabilities{SingleProcessOnly: false}
-	case BackendDolt:
+	case "", BackendDolt:
 		// Embedded Dolt is single-process-only.
 		// Server mode is handled by Config.GetCapabilities().
 		return BackendCapabilities{SingleProcessOnly: true}
@@ -213,12 +196,9 @@ func (c *Config) GetCapabilities() BackendCapabilities {
 	return CapabilitiesForBackend(backend)
 }
 
-// GetBackend returns the configured backend type, defaulting to SQLite.
+// GetBackend returns the configured backend type (always Dolt).
 func (c *Config) GetBackend() string {
-	if c.Backend == "" {
-		return BackendSQLite
-	}
-	return c.Backend
+	return BackendDolt
 }
 
 // Dolt mode constants
@@ -302,4 +282,20 @@ func (c *Config) GetDoltDatabase() string {
 		return c.DoltDatabase
 	}
 	return DefaultDoltDatabase
+}
+
+// GetDoltServerPassword returns the Dolt server password.
+// Checks BEADS_DOLT_PASSWORD env var (password should never be stored in config files).
+func (c *Config) GetDoltServerPassword() string {
+	return os.Getenv("BEADS_DOLT_PASSWORD")
+}
+
+// GetDoltServerTLS returns whether TLS is enabled for server connections.
+// Required for Hosted Dolt instances.
+// Checks BEADS_DOLT_SERVER_TLS env var first ("1" or "true"), then config.
+func (c *Config) GetDoltServerTLS() bool {
+	if t := os.Getenv("BEADS_DOLT_SERVER_TLS"); t != "" {
+		return t == "1" || strings.ToLower(t) == "true"
+	}
+	return c.DoltServerTLS
 }

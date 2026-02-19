@@ -6,11 +6,10 @@ package main
 import (
 	"context"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // CommandContext holds all runtime state for command execution.
@@ -33,22 +32,10 @@ type CommandContext struct {
 	Quiet        bool
 
 	// Runtime state
-	Store      storage.Storage
+	Store      *dolt.DoltStore
 	RootCtx    context.Context
 	RootCancel context.CancelFunc
 	HookRunner *hooks.Runner
-
-	// Auto-flush state (grouped with protecting mutex)
-	AutoFlushEnabled  bool
-	FlushMutex        sync.Mutex
-	StoreMutex        sync.Mutex // Protects Store access from background goroutine
-	StoreActive       bool       // Tracks if Store is available
-	FlushFailureCount int        // Consecutive flush failures
-	LastFlushError    error      // Last flush error for debugging
-	SkipFinalFlush    bool       // Set by sync command to prevent re-export
-
-	// Auto-import state
-	AutoImportEnabled bool
 
 	// Version tracking
 	VersionUpgradeDetected bool
@@ -71,10 +58,7 @@ var testModeUseGlobals bool
 // initCommandContext creates and initializes a new CommandContext.
 // Called from PersistentPreRun to set up runtime state.
 func initCommandContext() {
-	cmdCtx = &CommandContext{
-		AutoFlushEnabled:  true,
-		AutoImportEnabled: true,
-	}
+	cmdCtx = &CommandContext{}
 }
 
 // GetCommandContext returns the current CommandContext.
@@ -109,7 +93,7 @@ func shouldUseGlobals() bool {
 
 // getStore returns the current storage backend.
 // This is the primary way commands should access storage.
-func getStore() storage.Storage {
+func getStore() *dolt.DoltStore {
 	if shouldUseGlobals() {
 		return store // fallback to legacy global during transition
 	}
@@ -117,7 +101,7 @@ func getStore() storage.Storage {
 }
 
 // setStore updates the storage backend in the CommandContext.
-func setStore(s storage.Storage) {
+func setStore(s *dolt.DoltStore) {
 	if cmdCtx != nil {
 		cmdCtx.Store = s
 	}
@@ -213,39 +197,7 @@ func setHookRunner(h *hooks.Runner) {
 	hookRunner = h
 }
 
-// isAutoFlushEnabled returns true if auto-flush is enabled.
-func isAutoFlushEnabled() bool {
-	if shouldUseGlobals() {
-		return autoFlushEnabled
-	}
-	return cmdCtx.AutoFlushEnabled
-}
-
-// setAutoFlushEnabled updates the auto-flush flag.
-func setAutoFlushEnabled(enabled bool) {
-	if cmdCtx != nil {
-		cmdCtx.AutoFlushEnabled = enabled
-	}
-	autoFlushEnabled = enabled
-}
-
-// isAutoImportEnabled returns true if auto-import is enabled.
-func isAutoImportEnabled() bool {
-	if shouldUseGlobals() {
-		return autoImportEnabled
-	}
-	return cmdCtx.AutoImportEnabled
-}
-
-// setAutoImportEnabled updates the auto-import flag.
-func setAutoImportEnabled(enabled bool) {
-	if cmdCtx != nil {
-		cmdCtx.AutoImportEnabled = enabled
-	}
-	autoImportEnabled = enabled
-}
-
-// isJSONOutput returns true if JSON output mode is enabled.
+// isReadonlyMode returns true if read-only mode is enabled.
 func isReadonlyMode() bool {
 	if shouldUseGlobals() {
 		return readonlyMode
@@ -261,72 +213,24 @@ func getLockTimeout() time.Duration {
 	return cmdCtx.LockTimeout
 }
 
-// isSkipFinalFlush returns true if final flush should be skipped.
-func isSkipFinalFlush() bool {
-	if shouldUseGlobals() {
-		return skipFinalFlush
-	}
-	return cmdCtx.SkipFinalFlush
-}
-
-// setSkipFinalFlush updates the skip final flush flag.
-func setSkipFinalFlush(skip bool) {
-	if cmdCtx != nil {
-		cmdCtx.SkipFinalFlush = skip
-	}
-	skipFinalFlush = skip
-}
-
 // lockStore acquires the store mutex for thread-safe access.
 func lockStore() {
-	if cmdCtx != nil {
-		cmdCtx.StoreMutex.Lock()
-	} else {
-		storeMutex.Lock()
-	}
+	storeMutex.Lock()
 }
 
 // unlockStore releases the store mutex.
 func unlockStore() {
-	if cmdCtx != nil {
-		cmdCtx.StoreMutex.Unlock()
-	} else {
-		storeMutex.Unlock()
-	}
+	storeMutex.Unlock()
 }
 
 // isStoreActive returns true if the store is currently available.
 func isStoreActive() bool {
-	if cmdCtx != nil {
-		return cmdCtx.StoreActive
-	}
 	return storeActive
 }
 
 // setStoreActive updates the store active flag.
 func setStoreActive(active bool) {
-	if cmdCtx != nil {
-		cmdCtx.StoreActive = active
-	}
 	storeActive = active
-}
-
-// lockFlush acquires the flush mutex for thread-safe flush operations.
-func lockFlush() {
-	if cmdCtx != nil {
-		cmdCtx.FlushMutex.Lock()
-	} else {
-		flushMutex.Lock()
-	}
-}
-
-// unlockFlush releases the flush mutex.
-func unlockFlush() {
-	if cmdCtx != nil {
-		cmdCtx.FlushMutex.Unlock()
-	} else {
-		flushMutex.Unlock()
-	}
 }
 
 // isVerbose returns true if verbose mode is enabled.
@@ -467,7 +371,6 @@ func isAllowStale() bool {
 
 // syncCommandContext copies all legacy global values to the CommandContext.
 // This is called after initialization is complete to ensure cmdCtx has all values.
-// During the transition period, this keeps cmdCtx in sync with globals.
 func syncCommandContext() {
 	if shouldUseGlobals() {
 		return
@@ -490,16 +393,6 @@ func syncCommandContext() {
 	cmdCtx.RootCtx = rootCtx
 	cmdCtx.RootCancel = rootCancel
 	cmdCtx.HookRunner = hookRunner
-
-	// Auto-flush state
-	cmdCtx.AutoFlushEnabled = autoFlushEnabled
-	cmdCtx.StoreActive = storeActive
-	cmdCtx.FlushFailureCount = flushFailureCount
-	cmdCtx.LastFlushError = lastFlushError
-	cmdCtx.SkipFinalFlush = skipFinalFlush
-
-	// Auto-import state
-	cmdCtx.AutoImportEnabled = autoImportEnabled
 
 	// Version tracking
 	cmdCtx.VersionUpgradeDetected = versionUpgradeDetected

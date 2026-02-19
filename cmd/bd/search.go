@@ -201,26 +201,12 @@ Examples:
 
 		ctx := rootCtx
 
-		requireFreshDB(ctx)
-
 		// Direct mode - search using store
 		// The query parameter in SearchIssues already searches across title, description, and id
 		issues, err := store.SearchIssues(ctx, query, filter)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
-		}
-
-		// If no issues found, check if git has issues and auto-import
-		if len(issues) == 0 {
-			if checkAndAutoImport(ctx, store) {
-				// Re-run the search after import
-				issues, err = store.SearchIssues(ctx, query, filter)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-			}
 		}
 
 		// Apply sorting

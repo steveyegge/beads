@@ -8,7 +8,6 @@
 package beads
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +16,6 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -26,9 +24,6 @@ const CanonicalDatabaseName = "beads.db"
 
 // RedirectFileName is the name of the file that redirects to another .beads directory
 const RedirectFileName = "redirect"
-
-// LegacyDatabaseNames are old names that should be migrated
-var LegacyDatabaseNames = []string{"bd.db", "issues.db", "bugs.db"}
 
 // FollowRedirect checks if a .beads directory contains a redirect file and follows it.
 // If a redirect file exists, it returns the target .beads directory path.
@@ -216,152 +211,32 @@ func findLocalBeadsDir() string {
 	return ""
 }
 
-// findDatabaseInBeadsDir searches for a database file within a .beads directory.
-// It implements the standard search order:
-// 1. Check metadata.json first (single source of truth)
-//   - For SQLite backend: returns path to .db file
-//   - For Dolt backend: returns path to dolt/ directory
-//
-// 2. Fall back to canonical beads.db
-// 3. Search for *.db files, filtering out backups and vc.db
-//
-// If warnOnIssues is true, warnings are printed to stderr for:
-// - Multiple databases found (ambiguous state)
-// - Legacy database names that should be migrated
-//
+// findDatabaseInBeadsDir searches for a database within a .beads directory.
+// Checks metadata.json for the Dolt database path. For server mode, no local
+// directory is required. For embedded mode, the dolt/ directory must exist.
 // Returns empty string if no database is found.
-func findDatabaseInBeadsDir(beadsDir string, warnOnIssues bool) string {
+func findDatabaseInBeadsDir(beadsDir string, _ bool) string {
 	// Check for metadata.json first (single source of truth)
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		backend := cfg.GetBackend()
-		if backend == configfile.BackendDolt {
-			// For Dolt server mode, database is on the server - no local directory required
-			if cfg.IsDoltServerMode() {
-				return cfg.DatabasePath(beadsDir)
-			}
-			// For embedded Dolt, check if the configured database directory exists
-			doltPath := cfg.DatabasePath(beadsDir)
-			if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
-				return doltPath
-			}
-		} else {
-			// For SQLite, check if the .db file exists
-			dbPath := cfg.DatabasePath(beadsDir)
-			if _, err := os.Stat(dbPath); err == nil {
-				return dbPath
-			}
+		// For Dolt server mode, database is on the server - no local directory required
+		if cfg.IsDoltServerMode() {
+			return cfg.DatabasePath(beadsDir)
+		}
+		// For embedded Dolt, check if the configured database directory exists
+		doltPath := cfg.DatabasePath(beadsDir)
+		if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
+			return doltPath
 		}
 	}
 
-	// Fall back to canonical beads.db for backward compatibility
-	canonicalDB := filepath.Join(beadsDir, CanonicalDatabaseName)
-	if _, err := os.Stat(canonicalDB); err == nil {
-		return canonicalDB
+	// Fall back: check if dolt directory exists without metadata.json
+	doltPath := filepath.Join(beadsDir, "dolt")
+	if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
+		return doltPath
 	}
 
-	// Look for any .db file in the beads directory
-	matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
-	if err != nil || len(matches) == 0 {
-		return ""
-	}
-
-	// Filter out backup files and vc.db
-	var validDBs []string
-	for _, match := range matches {
-		baseName := filepath.Base(match)
-		// Skip backup files (contains ".backup" in name) and vc.db
-		if !strings.Contains(baseName, ".backup") && baseName != "vc.db" {
-			validDBs = append(validDBs, match)
-		}
-	}
-
-	if len(validDBs) == 0 {
-		return ""
-	}
-
-	if warnOnIssues {
-		// Warn about multiple databases found
-		if len(validDBs) > 1 {
-			fmt.Fprintf(os.Stderr, "Warning: Multiple database files found in %s:\n", beadsDir)
-			for _, db := range validDBs {
-				fmt.Fprintf(os.Stderr, "  - %s\n", filepath.Base(db))
-			}
-			fmt.Fprintf(os.Stderr, "Run 'bd init' to migrate to %s or manually remove old databases.\n\n", CanonicalDatabaseName)
-		}
-
-		// Warn about legacy database names
-		dbName := filepath.Base(validDBs[0])
-		if dbName != CanonicalDatabaseName {
-			for _, legacy := range LegacyDatabaseNames {
-				if dbName == legacy {
-					fmt.Fprintf(os.Stderr, "WARNING: Using legacy database name: %s\n", dbName)
-					fmt.Fprintf(os.Stderr, "Run 'bd migrate' to upgrade to canonical name: %s\n\n", CanonicalDatabaseName)
-					break
-				}
-			}
-		}
-	}
-
-	return validDBs[0]
+	return ""
 }
-
-// Issue represents a tracked work item with metadata, dependencies, and status.
-type (
-	Issue = types.Issue
-	// Status represents the current state of an issue (open, in progress, closed, blocked).
-	Status = types.Status
-	// IssueType represents the type of issue (bug, feature, task, epic, chore).
-	IssueType = types.IssueType
-	// Dependency represents a relationship between issues.
-	Dependency = types.Dependency
-	// DependencyType represents the type of dependency (blocks, related, parent-child, discovered-from).
-	DependencyType = types.DependencyType
-	// Comment represents a user comment on an issue.
-	Comment = types.Comment
-	// Event represents an audit log event.
-	Event = types.Event
-	// EventType represents the type of audit event.
-	EventType = types.EventType
-	// Label represents a tag attached to an issue.
-	Label = types.Label
-	// BlockedIssue represents an issue with blocking dependencies.
-	BlockedIssue = types.BlockedIssue
-	// TreeNode represents a node in a dependency tree.
-	TreeNode = types.TreeNode
-	// Statistics represents project-wide metrics.
-	Statistics = types.Statistics
-	// IssueFilter represents filtering criteria for issue queries.
-	IssueFilter = types.IssueFilter
-	// WorkFilter represents filtering criteria for work queries.
-	WorkFilter = types.WorkFilter
-	// SortPolicy determines how ready work is ordered.
-	SortPolicy = types.SortPolicy
-)
-
-// Status constants
-const (
-	StatusOpen       = types.StatusOpen
-	StatusInProgress = types.StatusInProgress
-	StatusBlocked    = types.StatusBlocked
-	StatusClosed     = types.StatusClosed
-)
-
-// IssueType constants (core types only - Gas Town types removed)
-const (
-	TypeBug     = types.TypeBug
-	TypeFeature = types.TypeFeature
-	TypeTask    = types.TypeTask
-	TypeEpic    = types.TypeEpic
-	TypeChore   = types.TypeChore
-)
-
-// DependencyType constants
-const (
-	DepBlocks         = types.DepBlocks
-	DepRelated        = types.DepRelated
-	DepParentChild    = types.DepParentChild
-	DepDiscoveredFrom = types.DepDiscoveredFrom
-)
 
 // Storage provides the minimal interface for extension orchestration
 type Storage = storage.Storage
@@ -369,29 +244,6 @@ type Storage = storage.Storage
 // Transaction provides atomic multi-operation support within a database transaction.
 // Use Storage.RunInTransaction() to obtain a Transaction instance.
 type Transaction = storage.Transaction
-
-// NewStorage opens a bd database for programmatic access.
-// Deprecated: callers should use storage/factory package to respect backend configuration.
-// This function is retained for backward compatibility but will be removed in a future release.
-func NewStorage(ctx context.Context, dbPath string) (Storage, error) {
-	// Cannot use factory here due to import cycle (beads -> factory -> beads).
-	// Callers should use storage/factory.New() directly instead.
-	return nil, fmt.Errorf("NewStorage is deprecated: use storage/factory.New() to create storage backends")
-}
-
-// GetConfiguredBackend returns the backend type from the beads directory config.
-// Returns "dolt" if no config exists or backend is not specified.
-func GetConfiguredBackend(beadsDir string) string {
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
-		return configfile.BackendDolt
-	}
-	backend := cfg.GetBackend()
-	if backend == "" || backend == configfile.BackendSQLite {
-		return configfile.BackendDolt
-	}
-	return backend
-}
 
 // FindDatabasePath discovers the bd database path using bd's standard search order:
 //  1. $BEADS_DIR environment variable (points to .beads directory)
@@ -698,11 +550,20 @@ func FindAllDatabases() []DatabaseInfo {
 			// Follow redirect if present
 			beadsDir = FollowRedirect(beadsDir)
 
-			// Found .beads/ directory, look for *.db files
-			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
-			if err == nil && len(matches) > 0 {
-				dbPath := matches[0]
+			// Look for database: dolt directory first, then legacy *.db files
+			dbPath := ""
+			doltDir := filepath.Join(beadsDir, "dolt")
+			if dInfo, dErr := os.Stat(doltDir); dErr == nil && dInfo.IsDir() {
+				dbPath = doltDir
+			} else {
+				// Legacy: check for *.db files (pre-migration)
+				matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
+				if err == nil && len(matches) > 0 {
+					dbPath = matches[0]
+				}
+			}
 
+			if dbPath != "" {
 				// Resolve symlinks to get canonical path for deduplication
 				canonicalPath := dbPath
 				if resolved, err := filepath.EvalSymlinks(dbPath); err == nil {
@@ -721,23 +582,13 @@ func FindAllDatabases() []DatabaseInfo {
 				}
 				seen[canonicalPath] = true
 
-				// Count issues if we can open the database (best-effort)
-				issueCount := -1
-				// Don't fail if we can't open/query the database - it might be locked
-				// or corrupted, but we still want to detect and warn about it
-				//
-				// Note: Issue counting requires storage/factory which cannot be imported
-				// here due to import cycle constraints. Callers needing issue counts
-				// should use storage/factory directly.
-
 				databases = append(databases, DatabaseInfo{
 					Path:       dbPath,
 					BeadsDir:   beadsDir,
-					IssueCount: issueCount,
+					IssueCount: -1,
 				})
 
 				// Stop searching upward - the closest .beads is the one to use
-				// Parent directories are out of scope in multi-workspace setups
 				break
 			}
 		}

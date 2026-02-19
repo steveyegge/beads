@@ -64,8 +64,6 @@ var showCmd = &cobra.Command{
 			return
 		}
 
-		requireFreshDB(ctx)
-
 		// Note: Direct mode uses resolveAndGetIssueWithRouting for prefix-based routing
 
 		// Handle --thread flag: show full conversation thread

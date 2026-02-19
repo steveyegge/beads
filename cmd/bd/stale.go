@@ -37,8 +37,6 @@ This helps identify:
 		// Direct mode
 		ctx := rootCtx
 
-		requireFreshDB(ctx)
-
 		issues, err := store.GetStaleIssues(ctx, filter)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)

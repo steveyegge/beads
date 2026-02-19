@@ -50,6 +50,11 @@ func TestMain(m *testing.M) {
 	// This ensures backward compatibility with tests that manipulate globals directly.
 	enableTestModeGlobals()
 
+	// Set BEADS_TEST_MODE once for the entire test run (bd-cqjoi).
+	// Previously each test set/unset this env var via ensureTestMode(),
+	// which raced under t.Parallel().
+	_ = os.Setenv("BEADS_TEST_MODE", "1")
+
 	// Prevent daemon auto-start and ensure tests don't interact with any running daemon.
 	// This prevents false positives in the test guard when a background daemon touches
 	// .beads files (like issues.jsonl via auto-sync) during test execution.
@@ -207,6 +212,12 @@ func stopRepoDaemon(repoRoot string) {
 	// Best-effort stop - ignore errors (daemon may not be running)
 	_ = cmd.Run()
 
-	// Give daemon time to shutdown gracefully
-	time.Sleep(500 * time.Millisecond)
+	// Wait for daemon socket to disappear (graceful shutdown).
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(socketPath); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }

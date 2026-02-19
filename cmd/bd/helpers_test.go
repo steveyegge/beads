@@ -3,11 +3,10 @@ package main
 import (
 	"testing"
 
-	"github.com/steveyegge/beads/internal/importer"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
-func TestIsNumeric(t *testing.T) {
+func TestIsNumericID_EdgeCases(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected bool
@@ -16,14 +15,14 @@ func TestIsNumeric(t *testing.T) {
 		{"123", true},
 		{"999", true},
 		{"abc", false},
-		{"", true}, // empty string returns true (loop never runs)
+		{"", false},
 		{"12a", false},
 	}
 
 	for _, tt := range tests {
-		result := isNumeric(tt.input)
+		result := isNumericID(tt.input)
 		if result != tt.expected {
-			t.Errorf("isNumeric(%q) = %v, want %v", tt.input, result, tt.expected)
+			t.Errorf("isNumericID(%q) = %v, want %v", tt.input, result, tt.expected)
 		}
 	}
 }
@@ -60,29 +59,6 @@ func TestExtractPrefix(t *testing.T) {
 		result := utils.ExtractIssuePrefix(tt.input)
 		if result != tt.expected {
 			t.Errorf("ExtractIssuePrefix(%q) = %q, want %q", tt.input, result, tt.expected)
-		}
-	}
-}
-
-func TestGetPrefixList(t *testing.T) {
-	prefixMap := map[string]int{
-		"bd":     5,
-		"custom": 3,
-		"test":   1,
-	}
-
-	result := importer.GetPrefixList(prefixMap)
-
-	// Should have 3 entries
-	if len(result) != 3 {
-		t.Errorf("Expected 3 entries, got %d", len(result))
-	}
-
-	// Function returns formatted strings like "bd- (5 issues)"
-	// Just check we got sensible output
-	for _, entry := range result {
-		if entry == "" {
-			t.Error("Got empty entry")
 		}
 	}
 }

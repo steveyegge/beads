@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -54,34 +54,12 @@ func sanitizeMetadataKey(key string) string {
 	return strings.ReplaceAll(key, ":", "_")
 }
 
-// getDebounceDuration returns the configured flush debounce duration.
-func getDebounceDuration() time.Duration {
-	duration := config.GetDuration("flush-debounce")
-	if duration == 0 {
-		return 5 * time.Second
-	}
-	return duration
-}
-
 // exportToJSONLWithStore exports issues to JSONL using the provided store.
 // If multi-repo mode is configured, routes issues to their respective JSONL files.
 // Otherwise, exports to a single JSONL file.
-func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
-	// Try multi-repo export first
-	if mrStore, ok := store.(storage.MultiRepoStorage); ok {
-		results, err := mrStore.ExportToMultiRepo(ctx)
-		if err != nil {
-			return fmt.Errorf("multi-repo export failed: %w", err)
-		}
-		if results != nil {
-			// Multi-repo mode active - export succeeded
-			return nil
-		}
-	}
-
-	// Single-repo mode - use existing logic
-	// Get all issues including tombstones for sync propagation
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
+func exportToJSONLWithStore(ctx context.Context, store *dolt.DoltStore, jsonlPath string) error {
+	// Get all issues for export
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		return fmt.Errorf("failed to get issues: %w", err)
 	}
@@ -181,20 +159,7 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 }
 
 // importToJSONLWithStore imports issues from JSONL using the provided store.
-func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
-	// Try multi-repo import first
-	if mrStore, ok := store.(storage.MultiRepoStorage); ok {
-		results, err := mrStore.HydrateFromMultiRepo(ctx)
-		if err != nil {
-			return fmt.Errorf("multi-repo import failed: %w", err)
-		}
-		if results != nil {
-			// Multi-repo mode active - import succeeded
-			return nil
-		}
-	}
-
-	// Single-repo mode - use existing logic
+func importToJSONLWithStore(ctx context.Context, store *dolt.DoltStore, jsonlPath string) error {
 	file, err := os.Open(jsonlPath) // #nosec G304 - controlled path from config
 	if err != nil {
 		return fmt.Errorf("failed to open JSONL: %w", err)
@@ -221,25 +186,9 @@ func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 		}
 		issue.SetDefaults()
 
-		// Migrate old JSONL format: auto-correct deleted status to tombstone
-		if issue.Status == types.Status("deleted") && issue.DeletedAt != nil {
-			issue.Status = types.StatusTombstone
-		}
-
-		// Fix: Any non-tombstone issue with deleted_at set is malformed
-		if issue.Status != types.StatusTombstone && issue.DeletedAt != nil {
-			issue.Status = types.StatusTombstone
-		}
-
 		if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
 			now := time.Now()
 			issue.ClosedAt = &now
-		}
-
-		// Ensure tombstones have deleted_at set
-		if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
-			now := time.Now()
-			issue.DeletedAt = &now
 		}
 
 		issues = append(issues, &issue)
@@ -260,8 +209,69 @@ func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 	return err
 }
 
+// exportToJSONL exports the current database state to the JSONL file.
+// Delegates to exportToJSONLWithStore using the global store.
+func exportToJSONL(ctx context.Context, jsonlPath string) error {
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("activating store: %w", err)
+	}
+	if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
+		return err
+	}
+	repoKey := getRepoKeyForPath(jsonlPath)
+	updateExportMetadata(ctx, store, jsonlPath, slog.Default(), repoKey)
+	return nil
+}
+
+// importFromJSONL imports issues from a JSONL file into the database.
+func importFromJSONL(ctx context.Context, jsonlPath string) error {
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("activating store: %w", err)
+	}
+	return importToJSONLWithStore(ctx, store, jsonlPath)
+}
+
+// loadIssuesFromJSONL reads a JSONL file and returns the parsed issues.
+func loadIssuesFromJSONL(jsonlPath string) ([]*types.Issue, error) {
+	file, err := os.Open(jsonlPath) // #nosec G304 - controlled path
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("opening JSONL: %w", err)
+	}
+	defer file.Close()
+
+	var issues []*types.Issue
+	scanner := bufio.NewScanner(file)
+	const maxScannerBuffer = 1024 * 1024 // 1MB
+	scanner.Buffer(make([]byte, 0, maxScannerBuffer), maxScannerBuffer)
+
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse JSONL line %d: %v\n", lineNum, err)
+			continue
+		}
+		issues = append(issues, &issue)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading JSONL: %w", err)
+	}
+
+	return issues, nil
+}
+
 // updateExportMetadata updates jsonl_content_hash and related metadata after a successful export.
-func updateExportMetadata(ctx context.Context, store storage.Storage, jsonlPath string, log *slog.Logger, keySuffix string) {
+func updateExportMetadata(ctx context.Context, store *dolt.DoltStore, jsonlPath string, log *slog.Logger, keySuffix string) {
 	if keySuffix != "" {
 		keySuffix = sanitizeMetadataKey(keySuffix)
 	}

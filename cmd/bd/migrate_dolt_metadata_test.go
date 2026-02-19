@@ -12,7 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // setupDoltMigrateWorkspace creates a temp beads workspace with a Dolt database
@@ -27,19 +27,15 @@ func setupDoltMigrateWorkspace(t *testing.T) (string, string, *configfile.Config
 		t.Fatalf("failed to create .beads directory: %v", err)
 	}
 
-	// Set up git repo for repo_id computation
-	cmd := exec.Command("git", "init")
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("git init failed: %v", err)
+	// Copy cached git template (bd-ktng optimization)
+	initGitTemplate()
+	if gitTemplateErr != nil {
+		t.Fatalf("git template init failed: %v", gitTemplateErr)
 	}
-	cmd = exec.Command("git", "config", "user.email", "test@test.com")
-	cmd.Dir = dir
-	_ = cmd.Run()
-	cmd = exec.Command("git", "config", "user.name", "Test User")
-	cmd.Dir = dir
-	_ = cmd.Run()
-	cmd = exec.Command("git", "config", "remote.origin.url", "https://github.com/test/migrate-metadata.git")
+	if err := copyGitDir(gitTemplateDir, dir); err != nil {
+		t.Fatalf("failed to copy git template: %v", err)
+	}
+	cmd := exec.Command("git", "config", "remote.origin.url", "https://github.com/test/migrate-metadata.git")
 	cmd.Dir = dir
 	_ = cmd.Run()
 
@@ -55,7 +51,8 @@ func setupDoltMigrateWorkspace(t *testing.T) (string, string, *configfile.Config
 	// Create the Dolt store via factory (bootstraps the database with schema)
 	ctx := context.Background()
 	doltPath := filepath.Join(beadsDir, "dolt")
-	store, err := factory.NewWithOptions(ctx, configfile.BackendDolt, doltPath, factory.Options{
+	store, err := dolt.New(ctx, &dolt.Config{
+		Path:     doltPath,
 		Database: "beads",
 	})
 	if err != nil {
@@ -115,7 +112,7 @@ func TestMigrateDoltFullMetadata(t *testing.T) {
 
 	// Verify all 3 metadata fields were written
 	ctx := context.Background()
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	store, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		t.Fatalf("failed to reopen store for verification: %v", err)
 	}
@@ -174,7 +171,7 @@ func TestMigrateDoltMetadataIdempotent(t *testing.T) {
 
 	// Read original values
 	ctx := context.Background()
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	store, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
@@ -195,7 +192,7 @@ func TestMigrateDoltMetadataIdempotent(t *testing.T) {
 	handleDoltMetadataUpdate(cfg, beadsDir, false)
 
 	// Verify values did not change
-	store2, err := factory.NewFromConfig(ctx, beadsDir)
+	store2, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		t.Fatalf("failed to reopen store: %v", err)
 	}
@@ -245,7 +242,7 @@ func TestMigrateDoltMetadataPartial(t *testing.T) {
 	// Pre-set only bd_version (simulate a pre-Phase-3 database that has
 	// already been migrated for version but not for identity fields)
 	ctx := context.Background()
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	store, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
@@ -259,7 +256,7 @@ func TestMigrateDoltMetadataPartial(t *testing.T) {
 	handleDoltMetadataUpdate(cfg, beadsDir, false)
 
 	// Verify: bd_version should remain as Version (not overwritten)
-	store2, err := factory.NewFromConfig(ctx, beadsDir)
+	store2, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		t.Fatalf("failed to reopen store: %v", err)
 	}

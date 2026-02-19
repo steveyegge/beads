@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -14,16 +13,15 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // isJSONLNewer checks if JSONL file is newer than database file.
 // Returns true if JSONL is newer AND has different content, false otherwise.
-// This prevents false positives from daemon auto-export timestamp skew.
 //
 // NOTE: This uses computeDBHash which is more expensive than hasJSONLChanged.
-// For daemon auto-import, prefer hasJSONLChanged() which uses metadata-based
+// For auto-import, prefer hasJSONLChanged() which uses metadata-based
 // content tracking and is safe against git operations.
 func isJSONLNewer(jsonlPath string) bool {
 	return isJSONLNewerWithStore(jsonlPath, nil)
@@ -31,7 +29,7 @@ func isJSONLNewer(jsonlPath string) bool {
 
 // isJSONLNewerWithStore is like isJSONLNewer but accepts an optional store parameter.
 // If st is nil, it will try to use the global store.
-func isJSONLNewerWithStore(jsonlPath string, st storage.Storage) bool {
+func isJSONLNewerWithStore(jsonlPath string, st *dolt.DoltStore) bool {
 	jsonlInfo, jsonlStatErr := os.Stat(jsonlPath)
 	if jsonlStatErr != nil {
 		return false
@@ -98,7 +96,7 @@ func computeJSONLHash(jsonlPath string) (string, error) {
 //
 // In multi-repo mode, keySuffix should be the stable repo identifier (e.g., ".", "../frontend").
 // The keySuffix must not contain the ':' separator character.
-func hasJSONLChanged(ctx context.Context, store storage.Storage, jsonlPath string, keySuffix string) bool {
+func hasJSONLChanged(ctx context.Context, store *dolt.DoltStore, jsonlPath string, keySuffix string) bool {
 	// Validate keySuffix doesn't contain the separator character
 	if keySuffix != "" && strings.Contains(keySuffix, ":") {
 		// Invalid keySuffix - treat as changed to trigger proper error handling
@@ -143,7 +141,7 @@ func hasJSONLChanged(ctx context.Context, store storage.Storage, jsonlPath strin
 
 // validatePreExport performs integrity checks before exporting database to JSONL.
 // Returns error if critical issues found that would cause data loss.
-func validatePreExport(ctx context.Context, store storage.Storage, jsonlPath string) error {
+func validatePreExport(ctx context.Context, store *dolt.DoltStore, jsonlPath string) error {
 	// Check if JSONL content has changed since last import - if so, must import first
 	// Uses content-based detection instead of mtime-based to avoid false positives from git operations
 	// Use getRepoKeyForPath to get stable repo identifier for multi-repo support
@@ -188,112 +186,15 @@ func validatePreExport(ctx context.Context, store storage.Storage, jsonlPath str
 }
 
 // checkDuplicateIDs detects duplicate issue IDs in the database.
-// Returns error if duplicates are found (indicates database corruption).
-func checkDuplicateIDs(ctx context.Context, store storage.Storage) error {
-	// Get access to underlying database
-	// This is a hack - we need to add a proper interface method for this
-	// For now, we'll use a type assertion to access the underlying *sql.DB
-	type dbGetter interface {
-		GetDB() interface{}
-	}
-
-	getter, ok := store.(dbGetter)
-	if !ok {
-		// If store doesn't expose GetDB, skip this check
-		// This is acceptable since duplicate IDs are prevented by UNIQUE constraint
-		return nil
-	}
-
-	db, ok := getter.GetDB().(*sql.DB)
-	if !ok || db == nil {
-		return nil
-	}
-
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, COUNT(*) as cnt 
-		FROM issues 
-		GROUP BY id 
-		HAVING cnt > 1
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to check for duplicate IDs: %w", err)
-	}
-	defer rows.Close()
-
-	var duplicates []string
-	for rows.Next() {
-		var id string
-		var count int
-		if err := rows.Scan(&id, &count); err != nil {
-			return fmt.Errorf("failed to scan duplicate ID row: %w", err)
-		}
-		duplicates = append(duplicates, fmt.Sprintf("%s (x%d)", id, count))
-	}
-
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating duplicate IDs: %w", err)
-	}
-
-	if len(duplicates) > 0 {
-		return fmt.Errorf("database corruption: duplicate IDs: %v", duplicates)
-	}
-
-	return nil
+// Dolt enforces UNIQUE constraints on issue IDs, so duplicates cannot occur.
+func checkDuplicateIDs(_ context.Context, _ *dolt.DoltStore) error {
+	return nil // Dolt UNIQUE constraint prevents duplicates
 }
 
 // checkOrphanedDeps finds dependencies pointing to or from non-existent issues.
-// Returns list of orphaned dependency IDs and any error encountered.
-func checkOrphanedDeps(ctx context.Context, store storage.Storage) ([]string, error) {
-	// Get access to underlying database
-	type dbGetter interface {
-		GetDB() interface{}
-	}
-
-	getter, ok := store.(dbGetter)
-	if !ok {
-		return nil, nil
-	}
-
-	db, ok := getter.GetDB().(*sql.DB)
-	if !ok || db == nil {
-		return nil, nil
-	}
-
-	// Check both sides: dependencies where either issue_id or depends_on_id doesn't exist
-	rows, err := db.QueryContext(ctx, `
-		SELECT DISTINCT d.issue_id 
-		FROM dependencies d 
-		LEFT JOIN issues i ON d.issue_id = i.id 
-		WHERE i.id IS NULL
-		UNION
-		SELECT DISTINCT d.depends_on_id 
-		FROM dependencies d 
-		LEFT JOIN issues i ON d.depends_on_id = i.id 
-		WHERE i.id IS NULL
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check for orphaned dependencies: %w", err)
-	}
-	defer rows.Close()
-
-	var orphaned []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("failed to scan orphaned dependency: %w", err)
-		}
-		orphaned = append(orphaned, id)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating orphaned dependencies: %w", err)
-	}
-
-	if len(orphaned) > 0 {
-		fmt.Fprintf(os.Stderr, "WARNING: Found %d orphaned dependency references: %v\n", len(orphaned), orphaned)
-	}
-
-	return orphaned, nil
+// TODO: Implement using Dolt store's query interface instead of direct SQL.
+func checkOrphanedDeps(_ context.Context, _ *dolt.DoltStore) ([]string, error) {
+	return nil, nil // Skip: needs Dolt-native implementation
 }
 
 // validatePostImport checks that import didn't cause data loss.
@@ -308,7 +209,7 @@ func validatePostImport(before, after int, _ string) error {
 }
 
 // validatePostImportWithExpectedDeletions checks that import didn't cause data loss,
-// accounting for expected deletions (e.g., tombstones).
+// accounting for expected deletions.
 // Returns error if issue count decreased unexpectedly (data loss) or nil if OK.
 //
 // Parameters:
@@ -320,7 +221,7 @@ func validatePostImportWithExpectedDeletions(before, after, expectedDeletions in
 	if after < before {
 		decrease := before - after
 
-		// Account for expected deletions (tombstones converted to actual deletions)
+		// Account for expected deletions
 		if expectedDeletions > 0 && decrease <= expectedDeletions {
 			fmt.Fprintf(os.Stderr, "Import complete: %d → %d issues (-%d, expected deletions)\n",
 				before, after, decrease)
@@ -328,8 +229,7 @@ func validatePostImportWithExpectedDeletions(before, after, expectedDeletions in
 		}
 
 		// Unexpected decrease - warn but don't fail
-		// With tombstones as the deletion mechanism, decreases are unusual
-		// but can happen during cleanup or migration
+		// Decreases are unusual but can happen during cleanup or migration
 		fmt.Fprintf(os.Stderr, "Warning: import reduced issue count: %d → %d (-%d)\n",
 			before, after, decrease)
 		return nil
@@ -344,32 +244,13 @@ func validatePostImportWithExpectedDeletions(before, after, expectedDeletions in
 
 // countDBIssues returns the total number of issues in the database.
 // This is the legacy interface kept for compatibility.
-func countDBIssues(ctx context.Context, store storage.Storage) (int, error) {
+func countDBIssues(ctx context.Context, store *dolt.DoltStore) (int, error) {
 	return countDBIssuesFast(ctx, store)
 }
 
-// countDBIssuesFast uses COUNT(*) if possible, falls back to SearchIssues.
-func countDBIssuesFast(ctx context.Context, store storage.Storage) (int, error) {
-	// Try fast path with COUNT(*) using direct SQL
-	// This is a hack until we add a proper CountIssues method to storage.Storage
-	type dbGetter interface {
-		GetDB() interface{}
-	}
-
-	if getter, ok := store.(dbGetter); ok {
-		if db, ok := getter.GetDB().(*sql.DB); ok && db != nil {
-			var count int
-			err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues").Scan(&count)
-			if err == nil {
-				return count, nil
-			}
-			// Fall through to slow path on error
-		}
-	}
-
-	// Fallback: load all issues and count them (slow but always works)
-	// Include tombstones to match JSONL count which includes tombstones
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
+// countDBIssuesFast counts all issues in the database.
+func countDBIssuesFast(ctx context.Context, store *dolt.DoltStore) (int, error) {
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		return 0, fmt.Errorf("failed to count database issues: %w", err)
 	}
@@ -378,7 +259,7 @@ func countDBIssuesFast(ctx context.Context, store storage.Storage) (int, error) 
 
 // dbNeedsExport checks if the database has changes that differ from JSONL.
 // Returns true if export is needed, false if DB and JSONL are already in sync.
-func dbNeedsExport(ctx context.Context, store storage.Storage, jsonlPath string) (bool, error) {
+func dbNeedsExport(ctx context.Context, store *dolt.DoltStore, jsonlPath string) (bool, error) {
 	// Check if JSONL exists
 	jsonlInfo, err := os.Stat(jsonlPath)
 	if os.IsNotExist(err) {
@@ -424,7 +305,7 @@ func dbNeedsExport(ctx context.Context, store storage.Storage, jsonlPath string)
 
 // computeDBHash computes a content hash of the database by exporting to memory.
 // This is used to compare DB content with JSONL content without relying on timestamps.
-func computeDBHash(ctx context.Context, store storage.Storage) (string, error) {
+func computeDBHash(ctx context.Context, store *dolt.DoltStore) (string, error) {
 	// Get all issues from DB
 	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {

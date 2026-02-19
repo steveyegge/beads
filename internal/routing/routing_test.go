@@ -567,3 +567,127 @@ func TestResolveBeadsDirForID_FollowsRedirect(t *testing.T) {
 		t.Errorf("ResolveBeadsDirForID() did not follow redirect:\n  got:  %s\n  want: %s", resolvedDir, actualBeadsDir)
 	}
 }
+
+// TestResolveBeadsDirForRig_FollowsRelativeRedirectFromRigRoot verifies that
+// relative redirect paths are resolved from the rig root (parent of .beads),
+// not from the .beads directory itself.
+func TestResolveBeadsDirForRig_FollowsRelativeRedirectFromRigRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tmpDir, err := filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	townBeadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	routesContent := `{"prefix": "crom-", "path": "crom"}
+`
+	if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(routesContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	stubBeadsDir := filepath.Join(tmpDir, "crom", ".beads")
+	if err := os.MkdirAll(stubBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	actualBeadsDir := filepath.Join(tmpDir, "crom", "mayor", "rig", ".beads")
+	if err := os.MkdirAll(actualBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(stubBeadsDir, "redirect"), []byte("mayor/rig/.beads\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(tmpDir)
+
+	resolvedDir, prefix, err := ResolveBeadsDirForRig("crom-", townBeadsDir)
+	if err != nil {
+		t.Fatalf("ResolveBeadsDirForRig() error = %v", err)
+	}
+	if prefix != "crom-" {
+		t.Errorf("ResolveBeadsDirForRig() prefix = %q, want %q", prefix, "crom-")
+	}
+
+	resolvedResolved, _ := filepath.EvalSymlinks(resolvedDir)
+	actualResolved, _ := filepath.EvalSymlinks(actualBeadsDir)
+	if resolvedResolved != actualResolved {
+		t.Errorf("ResolveBeadsDirForRig() should resolve redirect relative to rig root:\n  got:  %s\n  want: %s", resolvedDir, actualBeadsDir)
+	}
+}
+
+// TestResolveBeadsDirForID_FollowsRelativeRedirectFromRigRoot verifies that
+// ID-based prefix routing resolves relative redirects from the rig root.
+func TestResolveBeadsDirForID_FollowsRelativeRedirectFromRigRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tmpDir, err := filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	townBeadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	routesContent := `{"prefix": "crom-", "path": "crom"}
+`
+	if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(routesContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	stubBeadsDir := filepath.Join(tmpDir, "crom", ".beads")
+	if err := os.MkdirAll(stubBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	actualBeadsDir := filepath.Join(tmpDir, "crom", "mayor", "rig", ".beads")
+	if err := os.MkdirAll(actualBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(stubBeadsDir, "redirect"), []byte("mayor/rig/.beads\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	crewDir := filepath.Join(tmpDir, "crom", "crew", "flynn")
+	if err := os.MkdirAll(crewDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(crewDir)
+
+	ctx := context.Background()
+	resolvedDir, routed, err := ResolveBeadsDirForID(ctx, "crom-rig-crom", stubBeadsDir)
+	if err != nil {
+		t.Fatalf("ResolveBeadsDirForID() error = %v", err)
+	}
+	if !routed {
+		t.Fatal("ResolveBeadsDirForID() routed = false, want true")
+	}
+
+	resolvedResolved, _ := filepath.EvalSymlinks(resolvedDir)
+	actualResolved, _ := filepath.EvalSymlinks(actualBeadsDir)
+	if resolvedResolved != actualResolved {
+		t.Errorf("ResolveBeadsDirForID() should resolve redirect relative to rig root:\n  got:  %s\n  want: %s", resolvedDir, actualBeadsDir)
+	}
+}

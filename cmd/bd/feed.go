@@ -105,8 +105,6 @@ Examples:
 			interval = d
 		}
 
-		requireFreshDB(ctx)
-
 		// Track last seen event ID for watch mode
 		var lastSeenID int64
 

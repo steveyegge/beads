@@ -17,8 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -346,14 +345,6 @@ func hookPreCommit() int {
 		}
 	}
 
-	// Check if sync-branch is configured (changes go to separate branch)
-	if hookGetSyncBranch() != "" {
-		if cfg.ChainStrategy == ChainAfter {
-			return runChainedHookWithConfig("pre-commit", nil, cfg)
-		}
-		return 0
-	}
-
 	// Get worktree root for per-worktree state tracking
 	worktreeRoot, err := getWorktreeRoot()
 	if err != nil {
@@ -361,8 +352,10 @@ func hookPreCommit() int {
 		worktreeRoot = beadsDir // Fallback
 	}
 
-	// Check if we're using Dolt backend - use branch-then-merge pattern
-	backend := factory.GetBackendFromConfig(beadsDir)
+	// Check if we're using Dolt backend - use branch-then-merge pattern.
+	// Dolt export must run even when sync-branch is configured, otherwise
+	// the JSONL file never gets updated and bd doctor reports a count mismatch.
+	backend := dolt.GetBackendFromConfig(beadsDir)
 	if backend == configfile.BackendDolt {
 		exitCode := hookPreCommitDolt(beadsDir, worktreeRoot)
 		if cfg.ChainStrategy == ChainAfter && exitCode == 0 {
@@ -371,49 +364,7 @@ func hookPreCommit() int {
 		return exitCode
 	}
 
-	// SQLite backend: Use existing sync --flush-only
-	cmd := exec.Command("bd", "sync", "--flush-only", "--no-daemon")
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: Failed to flush bd changes to JSONL")
-		fmt.Fprintln(os.Stderr, "Run 'bd sync --flush-only' manually to diagnose")
-	}
-
-	// Stage JSONL files
-	if os.Getenv("BEADS_NO_AUTO_STAGE") == "" {
-		rc, rcErr := beads.GetRepoContext()
-		ctx := context.Background()
-		for _, f := range jsonlFilePaths {
-			if _, err := os.Stat(f); err == nil {
-				var gitAdd *exec.Cmd
-				if rcErr == nil {
-					gitAdd = rc.GitCmdCWD(ctx, "add", f)
-				} else {
-					// #nosec G204 -- f comes from jsonlFilePaths (controlled, hardcoded paths)
-					gitAdd = exec.Command("git", "add", f)
-				}
-				_ = gitAdd.Run() // Best effort: file may not be tracked in git
-			}
-		}
-	}
-
-	// Update export state
-	currentCommit, _ := getCurrentGitCommit()
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	jsonlHash, _ := computeJSONLHashForHook(jsonlPath)
-
-	state := &ExportState{
-		WorktreeRoot:     worktreeRoot,
-		LastExportCommit: currentCommit,
-		LastExportTime:   time.Now(),
-		JSONLHash:        jsonlHash,
-	}
-	if err := saveExportState(beadsDir, worktreeRoot, state); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not save export state: %v\n", err)
-	}
-
-	if cfg.ChainStrategy == ChainAfter {
-		return runChainedHookWithConfig("pre-commit", nil, cfg)
-	}
+	// Backend is always Dolt; non-Dolt paths removed.
 	return 0
 }
 
@@ -433,28 +384,20 @@ func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
 	// Load previous export state for this worktree
 	prevState, _ := loadExportState(beadsDir, worktreeRoot)
 
-	// Create storage from config
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	// Open storage using config — use a local variable to avoid shadowing the global store.
+	hookStore, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not open database: %v\n", err)
 		return 0
 	}
-	defer func() { _ = store.Close() }()
-
-	// Check if store supports versioned operations (required for Dolt)
-	vs, ok := storage.AsVersioned(store)
-	if !ok {
-		// Fall back to full export if not versioned
-		doExportAndSaveState(ctx, beadsDir, worktreeRoot, "")
-		return 0
-	}
+	defer func() { _ = hookStore.Close() }()
 
 	// Get current Dolt commit hash
-	currentDoltCommit, err := vs.GetCurrentCommit(ctx)
+	currentDoltCommit, err := hookStore.GetCurrentCommit(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not get Dolt commit: %v\n", err)
 		// Fall back to full export without commit tracking
-		doExportAndSaveState(ctx, beadsDir, worktreeRoot, "")
+		doExportAndSaveState(ctx, hookStore, beadsDir, worktreeRoot, "")
 		return 0
 	}
 
@@ -466,7 +409,7 @@ func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
 
 	// Check if there are actual changes to export (optimization)
 	if prevState != nil && prevState.LastExportCommit != "" {
-		hasChanges, err := hasDoltChanges(ctx, vs, prevState.LastExportCommit, currentDoltCommit)
+		hasChanges, err := hasDoltChanges(ctx, hookStore, prevState.LastExportCommit, currentDoltCommit)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not check for changes: %v\n", err)
 			// Continue with export to be safe
@@ -477,21 +420,22 @@ func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
 		}
 	}
 
-	doExportAndSaveState(ctx, beadsDir, worktreeRoot, currentDoltCommit)
+	doExportAndSaveState(ctx, hookStore, beadsDir, worktreeRoot, currentDoltCommit)
 	return 0
 }
 
 // doExportAndSaveState performs the export and saves state. Shared by main path and fallback.
-func doExportAndSaveState(ctx context.Context, beadsDir, worktreeRoot, doltCommit string) {
+// Uses the already-open store directly to avoid spawning a subprocess that would
+// deadlock on the same Dolt access lock.
+func doExportAndSaveState(ctx context.Context, s *dolt.DoltStore, beadsDir, worktreeRoot, doltCommit string) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
-	// Export to JSONL
-	if err := runJSONLExport(); err != nil {
+	// Export to JSONL using the already-open store
+	if err := exportToJSONLWithStore(ctx, s, jsonlPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not export to JSONL: %v\n", err)
 		return
 	}
 
-	// Stage JSONL files for git commit
 	stageJSONLFiles(ctx)
 
 	// Save export state
@@ -509,8 +453,8 @@ func doExportAndSaveState(ctx context.Context, beadsDir, worktreeRoot, doltCommi
 }
 
 // hasDoltChanges checks if there are any changes between two Dolt commits.
-func hasDoltChanges(ctx context.Context, vs storage.VersionedStorage, fromCommit, toCommit string) (bool, error) {
-	diffs, err := vs.Diff(ctx, fromCommit, toCommit)
+func hasDoltChanges(ctx context.Context, store *dolt.DoltStore, fromCommit, toCommit string) (bool, error) {
+	diffs, err := store.Diff(ctx, fromCommit, toCommit)
 	if err != nil {
 		return false, err
 	}
@@ -527,12 +471,6 @@ func updateExportStateCommit(beadsDir, worktreeRoot, doltCommit string) {
 	prevState.LastExportCommit = doltCommit
 	prevState.LastExportTime = time.Now()
 	_ = saveExportState(beadsDir, worktreeRoot, prevState) // Best effort: export state is advisory
-}
-
-// runJSONLExport runs the actual JSONL export via bd sync.
-func runJSONLExport() error {
-	cmd := exec.Command("bd", "sync", "--flush-only", "--no-daemon")
-	return cmd.Run()
 }
 
 // stageJSONLFiles stages JSONL files for git commit (unless BEADS_NO_AUTO_STAGE is set).
@@ -589,7 +527,7 @@ func hookPostMerge(args []string) int {
 	}
 
 	// Check if we're using Dolt backend - use branch-then-merge pattern
-	backend := factory.GetBackendFromConfig(beadsDir)
+	backend := dolt.GetBackendFromConfig(beadsDir)
 	if backend == configfile.BackendDolt {
 		exitCode := hookPostMergeDolt(beadsDir)
 		if cfg.ChainStrategy == ChainAfter && exitCode == 0 {
@@ -598,22 +536,7 @@ func hookPostMerge(args []string) int {
 		return exitCode
 	}
 
-	// SQLite backend: Use existing sync --import-only
-	cmd := exec.Command("bd", "sync", "--import-only", "--no-git-history", "--no-daemon")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: Failed to sync bd changes after merge")
-		fmt.Fprintln(os.Stderr, string(output))
-		fmt.Fprintln(os.Stderr, "Run 'bd doctor --fix' to diagnose and repair")
-	}
-
-	// Run quick health check
-	healthCmd := exec.Command("bd", "doctor", "--check-health")
-	_ = healthCmd.Run()
-
-	if cfg.ChainStrategy == ChainAfter {
-		return runChainedHookWithConfig("post-merge", args, cfg)
-	}
+	// Backend is always Dolt; non-Dolt paths removed.
 	return 0
 }
 
@@ -626,32 +549,16 @@ func hookPostMerge(args []string) int {
 func hookPostMergeDolt(beadsDir string) int {
 	ctx := context.Background()
 
-	// Create storage from config
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	// Open storage using config to get the correct database name (e.g. "beads_bd")
+	store, err := dolt.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not open database: %v\n", err)
 		return 0
 	}
 	defer func() { _ = store.Close() }()
 
-	// Check if Dolt store supports version control operations
-	doltStore, ok := store.(interface {
-		Branch(ctx context.Context, name string) error
-		Checkout(ctx context.Context, branch string) error
-		Merge(ctx context.Context, branch string) ([]storage.Conflict, error)
-		Commit(ctx context.Context, message string) error
-		CurrentBranch(ctx context.Context) (string, error)
-		DeleteBranch(ctx context.Context, branch string) error
-	})
-	if !ok {
-		// Not a Dolt store with version control, use regular import
-		cmd := exec.Command("bd", "sync", "--import-only", "--no-git-history", "--no-daemon")
-		_ = cmd.Run() // Best effort: import is supplementary to the main sync
-		return 0
-	}
-
 	// Get current branch
-	currentBranch, err := doltStore.CurrentBranch(ctx)
+	currentBranch, err := store.CurrentBranch(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not get current branch: %v\n", err)
 		return 0
@@ -659,13 +566,13 @@ func hookPostMergeDolt(beadsDir string) int {
 
 	// Create import branch
 	importBranch := "jsonl-import-" + time.Now().Format("20060102-150405")
-	if err := doltStore.Branch(ctx, importBranch); err != nil {
+	if err := store.Branch(ctx, importBranch); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not create import branch: %v\n", err)
 		return 0
 	}
 
 	// Checkout import branch
-	if err := doltStore.Checkout(ctx, importBranch); err != nil {
+	if err := store.Checkout(ctx, importBranch); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not checkout import branch: %v\n", err)
 		return 0
 	}
@@ -675,25 +582,25 @@ func hookPostMergeDolt(beadsDir string) int {
 	if err := importFromJSONLToStore(ctx, store, jsonlPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not import JSONL: %v\n", err)
 		// Checkout back to original branch
-		_ = doltStore.Checkout(ctx, currentBranch) // Best effort: restore branch on error path
+		_ = store.Checkout(ctx, currentBranch) // Best effort: restore branch on error path
 		return 0
 	}
 
 	// Commit changes on import branch
 	// This hook flow commits to Dolt explicitly; avoid redundant auto-commit in PersistentPostRun.
 	commandDidExplicitDoltCommit = true
-	if err := doltStore.Commit(ctx, "Import from JSONL"); err != nil {
+	if err := store.Commit(ctx, "Import from JSONL"); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not commit import: %v\n", err)
 	}
 
 	// Checkout back to original branch
-	if err := doltStore.Checkout(ctx, currentBranch); err != nil {
+	if err := store.Checkout(ctx, currentBranch); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not checkout original branch: %v\n", err)
 		return 0
 	}
 
 	// Merge import branch (Dolt provides cell-level merge)
-	conflicts, err := doltStore.Merge(ctx, importBranch)
+	conflicts, err := store.Merge(ctx, importBranch)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not merge import branch: %v\n", err)
 		return 0
@@ -706,13 +613,13 @@ func hookPostMergeDolt(beadsDir string) int {
 	// Commit the merge
 	// Still part of explicit hook commit flow.
 	commandDidExplicitDoltCommit = true
-	if err := doltStore.Commit(ctx, "Merge JSONL import"); err != nil {
+	if err := store.Commit(ctx, "Merge JSONL import"); err != nil {
 		// May fail if nothing to commit (fast-forward merge)
 		// This is expected, not an error
 	}
 
 	// Clean up import branch
-	if err := doltStore.DeleteBranch(ctx, importBranch); err != nil {
+	if err := store.DeleteBranch(ctx, importBranch); err != nil {
 		// Non-fatal - branch cleanup is best-effort
 		fmt.Fprintf(os.Stderr, "Warning: could not delete import branch %s: %v\n", importBranch, err)
 	}
@@ -793,7 +700,7 @@ func hookPostCheckout(args []string) int {
 	}
 
 	// Check if we're using Dolt backend
-	backend := factory.GetBackendFromConfig(beadsDir)
+	backend := dolt.GetBackendFromConfig(beadsDir)
 	if backend == configfile.BackendDolt {
 		exitCode := hookPostMergeDolt(beadsDir) // Same as post-merge for Dolt
 		// Update state after import
@@ -813,33 +720,7 @@ func hookPostCheckout(args []string) int {
 		return exitCode
 	}
 
-	// SQLite backend: Use existing sync --import-only
-	cmd := exec.Command("bd", "sync", "--import-only", "--no-git-history", "--no-daemon")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: Failed to sync bd changes after checkout")
-		fmt.Fprintln(os.Stderr, string(output))
-		fmt.Fprintln(os.Stderr, "Run 'bd doctor --fix' to diagnose and repair")
-	}
-
-	// Update state after import
-	newHash, _ := computeJSONLHashForHook(jsonlPath)
-	currentCommit, _ := getCurrentGitCommit()
-	state := &ExportState{
-		WorktreeRoot:     worktreeRoot,
-		LastExportCommit: currentCommit,
-		LastExportTime:   time.Now(),
-		JSONLHash:        newHash,
-	}
-	_ = saveExportState(beadsDir, worktreeRoot, state) // Best effort: export state is advisory
-
-	// Run quick health check
-	healthCmd := exec.Command("bd", "doctor", "--check-health")
-	_ = healthCmd.Run()
-
-	if cfg.ChainStrategy == ChainAfter {
-		return runChainedHookWithConfig("post-checkout", args, cfg)
-	}
+	// Backend is always Dolt; non-Dolt paths removed.
 	return 0
 }
 
@@ -848,7 +729,7 @@ func hookPostCheckout(args []string) int {
 // =============================================================================
 
 // importFromJSONLToStore imports issues from JSONL to a store.
-func importFromJSONLToStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
+func importFromJSONLToStore(ctx context.Context, store *dolt.DoltStore, jsonlPath string) error {
 	// Parse JSONL into issues
 	// #nosec G304 - jsonlPath is derived from beadsDir (trusted workspace path)
 	f, err := os.Open(jsonlPath)

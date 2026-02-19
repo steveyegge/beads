@@ -166,14 +166,13 @@ func TestValidatePreExportSuite(t *testing.T) {
 }
 
 func TestValidatePostImport(t *testing.T) {
-	// Note: With tombstones as the deletion mechanism, validatePostImport
-	// no longer fails on decreases - it only warns. The deletions.jsonl
-	// validation has been removed.
+	// Note: validatePostImport no longer fails on decreases - it only warns.
+	// The deletions.jsonl validation has been removed.
 
 	t.Run("issue count decreased warns but succeeds", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
-		// With tombstone-based deletions, decreases are allowed (just warn)
+		// Decreases are allowed (just warn)
 		err := validatePostImport(10, 5, jsonlPath)
 		if err != nil {
 			t.Errorf("Expected no error (just warning) for decreased count, got: %v", err)
@@ -200,8 +199,8 @@ func TestValidatePostImport(t *testing.T) {
 }
 
 func TestValidatePostImportWithExpectedDeletions(t *testing.T) {
-	// Note: With tombstones as the deletion mechanism, validatePostImportWithExpectedDeletions
-	// no longer fails on decreases - it only warns. The deletions.jsonl validation has been removed.
+	// Note: validatePostImportWithExpectedDeletions no longer fails on decreases -
+	// it only warns. The deletions.jsonl validation has been removed.
 
 	t.Run("decrease fully accounted for by expected deletions succeeds", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -474,7 +473,7 @@ func TestHasJSONLChangedSuite(t *testing.T) {
 		}
 
 		// Touch file to simulate git operation (new mtime, same content)
-		time.Sleep(10 * time.Millisecond) // Ensure time passes
+		time.Sleep(10 * time.Millisecond) // ensure timestamp advances
 		futureTime := time.Now().Add(1 * time.Second)
 		if err := os.Chtimes(jsonlPath, futureTime, futureTime); err != nil {
 			t.Fatalf("Failed to touch JSONL: %v", err)

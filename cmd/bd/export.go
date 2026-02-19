@@ -2,8 +2,6 @@ package main
 
 import (
 	"cmp"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,8 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/debug"
-	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
@@ -211,8 +208,8 @@ Examples:
 				os.Exit(1)
 			}
 			beadsDir := filepath.Dir(dbPath)
-			store, err = factory.NewFromConfigWithOptions(rootCtx, beadsDir, factory.Options{
-				LockTimeout: lockTimeout,
+			store, err = dolt.NewFromConfigWithOptions(rootCtx, beadsDir, &dolt.Config{
+				OpenTimeout: lockTimeout,
 			})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
@@ -220,8 +217,6 @@ Examples:
 			}
 			defer func() { _ = store.Close() }()
 		}
-
-		requireFreshDB(rootCtx)
 
 		// Handle --events and --events-reset flags
 		if eventsFlag || eventsReset {
@@ -252,19 +247,10 @@ Examples:
 		labelsAny = utils.NormalizeLabels(labelsAny)
 
 		// Build filter
-		// Tombstone export logic:
-		// - No status filter → include tombstones for sync propagation
-		// - --status=tombstone → include only tombstones (filter handles this)
-		// - --status=<other> → exclude tombstones (user wants specific status)
 		filter := types.IssueFilter{}
 		if statusFilter != "" {
 			status := types.Status(statusFilter)
 			filter.Status = &status
-			// Only include tombstones if explicitly filtering for them
-			filter.IncludeTombstones = (status == types.StatusTombstone)
-		} else {
-			// No status filter: include tombstones for sync propagation
-			filter.IncludeTombstones = true
 		}
 		if assignee != "" {
 			filter.Assignee = &assignee
@@ -606,30 +592,8 @@ Examples:
 			fmt.Fprintf(os.Stderr, "Skipped %d issue(s) with timestamp-only changes\n", skippedCount)
 		}
 
-		// Only clear dirty issues and auto-flush state if exporting to the default JSONL path
-		// This prevents clearing dirty flags when exporting to stdout or custom paths (e.g., bd export -o backup.jsonl)
-		if output == findJSONLPath() {
-			// Clear only the issues that were actually exported (fixes bd-52 race condition)
-			if err := store.ClearDirtyIssuesByID(ctx, exportedIDs); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
-			}
-
-			// Clear auto-flush state since we just manually exported
-			// This cancels any pending auto-flush timer and marks DB as clean
-			clearAutoFlushState()
-
-			// Store JSONL file hash for integrity validation
-			// nolint:gosec // G304: finalPath is validated JSONL export path
-			jsonlData, err := os.ReadFile(finalPath)
-			if err == nil {
-				hasher := sha256.New()
-				hasher.Write(jsonlData)
-				fileHash := hex.EncodeToString(hasher.Sum(nil))
-				if err := store.SetJSONLFileHash(ctx, fileHash); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to update jsonl_file_hash: %v\n", err)
-				}
-			}
-		}
+		// Suppress "unused" for exportedIDs (used in JSON stats below)
+		_ = exportedIDs
 
 		// If writing to file, atomically replace the target file
 		if tempFile != nil {
@@ -668,22 +632,6 @@ Examples:
 					fmt.Fprintf(os.Stderr, "  JSONL file: %d lines\n", actualCount)
 					fmt.Fprintf(os.Stderr, "  Mismatch indicates export failed to write all issues\n")
 					os.Exit(1)
-				}
-			}
-
-			// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
-			// Only do this when exporting to default JSONL path (not stdout or arbitrary outputs)
-			// This prevents validatePreExport from incorrectly blocking on next export
-			if output == findJSONLPath() {
-				// Dolt backend does not have a SQLite DB file, so only touch mtime for SQLite.
-				// Use store.Path() to get the actual database location, not the JSONL directory,
-				// since sync-branch exports write JSONL to a worktree but the DB stays in the main repo.
-				if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-					dbPath := sqliteStore.Path()
-					if err := TouchDatabaseFile(dbPath, finalPath); err != nil {
-						// Log warning but don't fail export
-						fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)
-					}
 				}
 			}
 		}

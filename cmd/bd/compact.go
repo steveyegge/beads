@@ -12,29 +12,26 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/compact"
-	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 var (
-	compactDryRun          bool
-	compactTier            int
-	compactAll             bool
-	compactID              string
-	compactForce           bool
-	compactBatch           int
-	compactWorkers         int
-	compactStats           bool
-	compactAnalyze         bool
-	compactApply           bool
-	compactAuto            bool
-	compactPrune           bool
-	compactPurgeTombstones bool
-	compactSummary         string
-	compactActor           string
-	compactLimit           int
-	compactOlderThan       int
-	compactDolt            bool
+	compactDryRun  bool
+	compactTier    int
+	compactAll     bool
+	compactID      string
+	compactForce   bool
+	compactBatch   int
+	compactWorkers int
+	compactStats   bool
+	compactAnalyze bool
+	compactApply   bool
+	compactAuto    bool
+	compactSummary string
+	compactActor   string
+	compactLimit   int
+	compactDolt    bool
 )
 
 var compactCmd = &cobra.Command{
@@ -46,7 +43,6 @@ Compaction reduces database size by summarizing closed issues that are no longer
 actively referenced. This is permanent graceful decay - original content is discarded.
 
 Modes:
-  - Prune: Remove expired tombstones from issues.jsonl (no API key needed)
   - Analyze: Export candidates for agent review (no API key needed)
   - Apply: Accept agent-provided summary (no API key needed)
   - Auto: AI-powered compaction (requires ANTHROPIC_API_KEY, legacy)
@@ -56,16 +52,6 @@ Tiers:
   - Tier 1: Semantic compression (30 days closed, 70% reduction)
   - Tier 2: Ultra compression (90 days closed, 95% reduction)
 
-Tombstone Cleanup:
-  Tombstones are soft-delete markers that prevent resurrection of deleted issues.
-
-  --prune: Remove tombstones by AGE (default 30 days). Safe but may keep
-           tombstones that could be deleted.
-
-  --purge-tombstones: Remove tombstones by DEPENDENCY ANALYSIS. More aggressive -
-           removes any tombstone that no open issues depend on, regardless of age.
-           Also cleans stale deps from closed issues to tombstones.
-
 Dolt Garbage Collection:
   With auto-commit per mutation, Dolt commit history grows over time. Use
   --dolt to run Dolt garbage collection and reclaim disk space.
@@ -74,15 +60,6 @@ Dolt Garbage Collection:
           This removes unreachable commits and compacts storage.
 
 Examples:
-  # Age-based pruning
-  bd compact --prune                       # Remove tombstones older than 30 days
-  bd compact --prune --older-than 7        # Remove tombstones older than 7 days
-  bd compact --prune --dry-run             # Preview what would be pruned
-
-  # Dependency-aware purging (more aggressive)
-  bd compact --purge-tombstones --dry-run  # Preview what would be purged
-  bd compact --purge-tombstones            # Remove tombstones with no open deps
-
   # Dolt garbage collection
   bd compact --dolt                        # Run Dolt GC
   bd compact --dolt --dry-run              # Preview without running GC
@@ -109,30 +86,13 @@ Examples:
 
 		// Handle compact stats first
 		if compactStats {
-			compactStore, ok := store.(storage.CompactableStorage)
-			if !ok {
-				fmt.Fprintf(os.Stderr, "Error: compact requires CompactableStorage (not supported by current backend)\n")
-				os.Exit(1)
-			}
-			runCompactStats(ctx, compactStore)
+			runCompactStats(ctx, store)
 			return
 		}
 
 		// Handle dolt GC mode
 		if compactDolt {
 			runCompactDolt()
-			return
-		}
-
-		// Handle prune mode (standalone tombstone pruning by age)
-		if compactPrune {
-			runCompactPrune()
-			return
-		}
-
-		// Handle purge-tombstones mode (dependency-aware tombstone cleanup)
-		if compactPurgeTombstones {
-			runCompactPurgeTombstones()
 			return
 		}
 
@@ -150,11 +110,11 @@ Examples:
 
 		// Check for exactly one mode
 		if activeModes == 0 {
-			fmt.Fprintf(os.Stderr, "Error: must specify one mode: --prune, --purge-tombstones, --analyze, --apply, or --auto\n")
+			fmt.Fprintf(os.Stderr, "Error: must specify one mode: --analyze, --apply, or --auto\n")
 			os.Exit(1)
 		}
 		if activeModes > 1 {
-			fmt.Fprintf(os.Stderr, "Error: cannot use multiple modes together (--prune, --purge-tombstones, --analyze, --apply, --auto are mutually exclusive)\n")
+			fmt.Fprintf(os.Stderr, "Error: cannot use multiple modes together (--analyze, --apply, --auto are mutually exclusive)\n")
 			os.Exit(1)
 		}
 
@@ -165,12 +125,7 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Hint: Ensure a beads database is initialized (run 'bd init')\n")
 				os.Exit(1)
 			}
-			compactStore, ok := store.(storage.CompactableStorage)
-			if !ok {
-				fmt.Fprintf(os.Stderr, "Error: compact --analyze requires CompactableStorage (not supported by current backend)\n")
-				os.Exit(1)
-			}
-			runCompactAnalyze(ctx, compactStore)
+			runCompactAnalyze(ctx, store)
 			return
 		}
 
@@ -189,12 +144,7 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Error: --apply requires --summary\n")
 				os.Exit(1)
 			}
-			compactStore, ok := store.(storage.CompactableStorage)
-			if !ok {
-				fmt.Fprintf(os.Stderr, "Error: compact --apply requires CompactableStorage (not supported by current backend)\n")
-				os.Exit(1)
-			}
-			runCompactApply(ctx, compactStore)
+			runCompactApply(ctx, store)
 			return
 		}
 
@@ -221,35 +171,29 @@ Examples:
 				os.Exit(1)
 			}
 
-			compactStore, ok := store.(storage.CompactableStorage)
-			if !ok {
-				fmt.Fprintf(os.Stderr, "Error: compact requires CompactableStorage (not supported by current backend)\n")
-				os.Exit(1)
-			}
-
 			config := &compact.Config{
 				APIKey:      apiKey,
 				Concurrency: compactWorkers,
 				DryRun:      compactDryRun,
 			}
 
-			compactor, err := compact.New(compactStore, apiKey, config)
+			compactor, err := compact.New(store, apiKey, config)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to create compactor: %v\n", err)
 				os.Exit(1)
 			}
 
 			if compactID != "" {
-				runCompactSingle(ctx, compactor, compactStore, compactID)
+				runCompactSingle(ctx, compactor, store, compactID)
 				return
 			}
 
-			runCompactAll(ctx, compactor, compactStore)
+			runCompactAll(ctx, compactor, store)
 		}
 	},
 }
 
-func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store storage.CompactableStorage, issueID string) {
+func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *dolt.DoltStore, issueID string) {
 	start := time.Now()
 
 	if !compactForce {
@@ -335,17 +279,9 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store s
 		originalSize, compactedSize, savingBytes,
 		float64(savingBytes)/float64(originalSize)*100)
 	fmt.Printf("  Time: %v\n", elapsed)
-
-	// Prune expired tombstones
-	if tombstonePruneResult, err := pruneExpiredTombstones(0); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to prune expired tombstones: %v\n", err)
-	} else if tombstonePruneResult != nil && tombstonePruneResult.PrunedCount > 0 {
-		fmt.Printf("\nTombstones pruned: %d expired (older than %d days)\n",
-			tombstonePruneResult.PrunedCount, tombstonePruneResult.TTLDays)
-	}
 }
 
-func runCompactAll(ctx context.Context, compactor *compact.Compactor, store storage.CompactableStorage) {
+func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *dolt.DoltStore) {
 	start := time.Now()
 
 	var candidates []string
@@ -464,17 +400,9 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 	if totalOriginal > 0 {
 		fmt.Printf("  Saved: %d bytes (%.1f%%)\n", totalSaved, float64(totalSaved)/float64(totalOriginal)*100)
 	}
-
-	// Prune expired tombstones
-	if tombstonePruneResult, err := pruneExpiredTombstones(0); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to prune expired tombstones: %v\n", err)
-	} else if tombstonePruneResult != nil && tombstonePruneResult.PrunedCount > 0 {
-		fmt.Printf("\nTombstones pruned: %d expired (older than %d days)\n",
-			tombstonePruneResult.PrunedCount, tombstonePruneResult.TTLDays)
-	}
 }
 
-func runCompactStats(ctx context.Context, store storage.CompactableStorage) {
+func runCompactStats(ctx context.Context, store *dolt.DoltStore) {
 	tier1, err := store.GetTier1Candidates(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to get Tier 1 candidates: %v\n", err)
@@ -528,7 +456,7 @@ func runCompactStats(ctx context.Context, store storage.CompactableStorage) {
 	}
 }
 
-func runCompactAnalyze(ctx context.Context, store storage.CompactableStorage) {
+func runCompactAnalyze(ctx context.Context, store *dolt.DoltStore) {
 	type Candidate struct {
 		ID                 string `json:"id"`
 		Title              string `json:"title"`
@@ -633,7 +561,7 @@ func runCompactAnalyze(ctx context.Context, store storage.CompactableStorage) {
 	fmt.Printf("Total: %d candidates\n", len(candidates))
 }
 
-func runCompactApply(ctx context.Context, store storage.CompactableStorage) {
+func runCompactApply(ctx context.Context, store *dolt.DoltStore) {
 	start := time.Now()
 
 	// Read summary
@@ -722,12 +650,6 @@ func runCompactApply(ctx context.Context, store storage.CompactableStorage) {
 
 	elapsed := time.Since(start)
 
-	// Prune expired tombstones from issues.jsonl
-	tombstonePruneResult, tombstoneErr := pruneExpiredTombstones(0)
-	if tombstoneErr != nil && !jsonOutput {
-		fmt.Fprintf(os.Stderr, "Warning: failed to prune expired tombstones: %v\n", tombstoneErr)
-	}
-
 	if jsonOutput {
 		output := map[string]interface{}{
 			"success":        true,
@@ -739,13 +661,6 @@ func runCompactApply(ctx context.Context, store storage.CompactableStorage) {
 			"reduction_pct":  reductionPct,
 			"elapsed_ms":     elapsed.Milliseconds(),
 		}
-		// Include tombstone pruning results
-		if tombstonePruneResult != nil && tombstonePruneResult.PrunedCount > 0 {
-			output["tombstones_pruned"] = map[string]interface{}{
-				"count":    tombstonePruneResult.PrunedCount,
-				"ttl_days": tombstonePruneResult.TTLDays,
-			}
-		}
 		outputJSON(output)
 		return
 	}
@@ -753,12 +668,6 @@ func runCompactApply(ctx context.Context, store storage.CompactableStorage) {
 	fmt.Printf("✓ Compacted %s (Tier %d)\n", compactID, compactTier)
 	fmt.Printf("  %d → %d bytes (saved %d, %.1f%%)\n", originalSize, compactedSize, savingBytes, reductionPct)
 	fmt.Printf("  Time: %v\n", elapsed)
-
-	// Report tombstone pruning results
-	if tombstonePruneResult != nil && tombstonePruneResult.PrunedCount > 0 {
-		fmt.Printf("\nTombstones pruned: %d expired tombstones (older than %d days) removed\n",
-			tombstonePruneResult.PrunedCount, tombstonePruneResult.TTLDays)
-	}
 }
 
 // runCompactDolt runs Dolt garbage collection on the .beads/dolt directory
@@ -922,9 +831,6 @@ func init() {
 	compactCmd.Flags().BoolVar(&compactAnalyze, "analyze", false, "Analyze mode: export candidates for agent review")
 	compactCmd.Flags().BoolVar(&compactApply, "apply", false, "Apply mode: accept agent-provided summary")
 	compactCmd.Flags().BoolVar(&compactAuto, "auto", false, "Auto mode: AI-powered compaction (legacy)")
-	compactCmd.Flags().BoolVar(&compactPrune, "prune", false, "Prune mode: remove expired tombstones from issues.jsonl (by age)")
-	compactCmd.Flags().IntVar(&compactOlderThan, "older-than", -1, "Prune tombstones older than N days (0=all, default: 30)")
-	compactCmd.Flags().BoolVar(&compactPurgeTombstones, "purge-tombstones", false, "Purge mode: remove tombstones with no open deps (by dependency analysis)")
 	compactCmd.Flags().StringVar(&compactSummary, "summary", "", "Path to summary file (use '-' for stdin)")
 	compactCmd.Flags().StringVar(&compactActor, "actor", "agent", "Actor name for audit trail")
 	compactCmd.Flags().IntVar(&compactLimit, "limit", 0, "Limit number of candidates (0 = no limit)")

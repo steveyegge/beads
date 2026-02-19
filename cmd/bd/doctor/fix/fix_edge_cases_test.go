@@ -1,14 +1,11 @@
 package fix
 
 import (
-	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestIsWithinWorkspace_PathTraversal tests path traversal attempts
@@ -350,68 +347,6 @@ func TestGitHooks_EdgeCases(t *testing.T) {
 	})
 }
 
-// TestMergeDriver_EdgeCases tests MergeDriver with edge cases
-func TestMergeDriver_EdgeCases(t *testing.T) {
-	t.Run("read-only git config file", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("skipping Unix permission test on Windows")
-		}
-		dir := setupTestGitRepo(t)
-		gitDir := filepath.Join(dir, ".git")
-		gitConfigPath := filepath.Join(gitDir, "config")
-
-		// Make both .git directory and config file read-only to truly prevent writes
-		// (git might otherwise create a new file and rename it)
-		if err := os.Chmod(gitConfigPath, 0400); err != nil {
-			t.Fatalf("failed to make config read-only: %v", err)
-		}
-		if err := os.Chmod(gitDir, 0500); err != nil {
-			t.Fatalf("failed to make .git read-only: %v", err)
-		}
-
-		// Restore write permissions at the end
-		defer func() {
-			_ = os.Chmod(gitDir, 0700)
-			_ = os.Chmod(gitConfigPath, 0600)
-		}()
-
-		// MergeDriver should fail with read-only config
-		err := MergeDriver(dir)
-		if err == nil {
-			t.Error("expected error when git config is read-only")
-		}
-	})
-
-	t.Run("succeeds after config was previously set", func(t *testing.T) {
-		dir := setupTestGitRepo(t)
-
-		// Set the merge driver config initially
-		err := MergeDriver(dir)
-		if err != nil {
-			t.Fatalf("first MergeDriver call failed: %v", err)
-		}
-
-		// Run again to verify it handles existing config
-		err = MergeDriver(dir)
-		if err != nil {
-			t.Errorf("MergeDriver should succeed when config already exists, got: %v", err)
-		}
-
-		// Verify the config is still correct
-		cmd := exec.Command("git", "config", "merge.beads.driver")
-		cmd.Dir = dir
-		output, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("failed to get git config: %v", err)
-		}
-
-		expected := "bd merge %A %O %A %B\n"
-		if string(output) != expected {
-			t.Errorf("expected %q, got %q", expected, string(output))
-		}
-	})
-}
-
 // TestUntrackedJSONL_EdgeCases tests UntrackedJSONL with edge cases
 func TestUntrackedJSONL_EdgeCases(t *testing.T) {
 	t.Run("staged but uncommitted JSONL files", func(t *testing.T) {
@@ -515,154 +450,6 @@ func TestUntrackedJSONL_EdgeCases(t *testing.T) {
 		output := runGit(t, dir, "status", "--porcelain")
 		if !strings.Contains(output, "?? data.jsonl") {
 			t.Error("expected file outside .beads to remain untracked")
-		}
-	})
-}
-
-// TestMigrateTombstones_EdgeCases tests MigrateTombstones with edge cases
-func TestMigrateTombstones_EdgeCases(t *testing.T) {
-	t.Run("malformed deletions.jsonl with corrupt JSON", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-
-		deletionsPath := filepath.Join(dir, ".beads", "deletions.jsonl")
-		jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-
-		// Create deletions.jsonl with mix of valid and malformed JSON
-		content := `{"id":"valid-1","ts":"2024-01-01T00:00:00Z","by":"user1"}
-{corrupt json line without proper structure
-{"id":"valid-2","ts":"2024-01-02T00:00:00Z","by":"user2","reason":"cleanup"}
-{"incomplete":"object"
-{"id":"valid-3","ts":"2024-01-03T00:00:00Z","by":"user3"}
-`
-		if err := os.WriteFile(deletionsPath, []byte(content), 0600); err != nil {
-			t.Fatalf("failed to create deletions.jsonl: %v", err)
-		}
-
-		// Create empty issues.jsonl
-		if err := os.WriteFile(jsonlPath, []byte(""), 0600); err != nil {
-			t.Fatalf("failed to create issues.jsonl: %v", err)
-		}
-
-		// Should succeed and migrate only valid records
-		err := MigrateTombstones(dir)
-		if err != nil {
-			t.Fatalf("expected MigrateTombstones to handle malformed JSON, got: %v", err)
-		}
-
-		// Verify only valid records were migrated
-		resultBytes, err := os.ReadFile(jsonlPath)
-		if err != nil {
-			t.Fatalf("failed to read issues.jsonl: %v", err)
-		}
-
-		lines := strings.Split(strings.TrimSpace(string(resultBytes)), "\n")
-		validCount := 0
-		for _, line := range lines {
-			if line == "" {
-				continue
-			}
-			var issue struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
-			}
-			if err := json.Unmarshal([]byte(line), &issue); err == nil && issue.Status == "tombstone" {
-				validCount++
-			}
-		}
-
-		if validCount != 3 {
-			t.Errorf("expected 3 valid tombstones, got %d", validCount)
-		}
-	})
-
-	t.Run("deletions without ID field are skipped", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-
-		deletionsPath := filepath.Join(dir, ".beads", "deletions.jsonl")
-		jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-
-		// Create deletions.jsonl with records missing ID
-		content := `{"id":"valid-1","ts":"2024-01-01T00:00:00Z","by":"user"}
-{"ts":"2024-01-02T00:00:00Z","by":"user2"}
-{"id":"","ts":"2024-01-03T00:00:00Z","by":"user3"}
-{"id":"valid-2","ts":"2024-01-04T00:00:00Z","by":"user4"}
-`
-		if err := os.WriteFile(deletionsPath, []byte(content), 0600); err != nil {
-			t.Fatalf("failed to create deletions.jsonl: %v", err)
-		}
-
-		// Create empty issues.jsonl
-		if err := os.WriteFile(jsonlPath, []byte(""), 0600); err != nil {
-			t.Fatalf("failed to create issues.jsonl: %v", err)
-		}
-
-		err := MigrateTombstones(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify only records with valid IDs were migrated
-		resultBytes, err := os.ReadFile(jsonlPath)
-		if err != nil {
-			t.Fatalf("failed to read issues.jsonl: %v", err)
-		}
-
-		lines := strings.Split(strings.TrimSpace(string(resultBytes)), "\n")
-		validCount := 0
-		for _, line := range lines {
-			if line == "" {
-				continue
-			}
-			var issue struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
-			}
-			if err := json.Unmarshal([]byte(line), &issue); err == nil && issue.ID != "" {
-				validCount++
-			}
-		}
-
-		if validCount != 2 {
-			t.Errorf("expected 2 valid tombstones, got %d", validCount)
-		}
-	})
-
-	t.Run("handles missing issues.jsonl", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-
-		deletionsPath := filepath.Join(dir, ".beads", "deletions.jsonl")
-		jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-
-		// Create deletions.jsonl
-		deletion := legacyDeletionRecord{
-			ID:        "test-123",
-			Timestamp: time.Now(),
-			Actor:     "testuser",
-		}
-		data, _ := json.Marshal(deletion)
-		if err := os.WriteFile(deletionsPath, append(data, '\n'), 0600); err != nil {
-			t.Fatalf("failed to create deletions.jsonl: %v", err)
-		}
-
-		// Don't create issues.jsonl - it should be created by MigrateTombstones
-
-		err := MigrateTombstones(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify issues.jsonl was created
-		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-			t.Error("expected issues.jsonl to be created")
-		}
-
-		// Verify tombstone was written
-		content, err := os.ReadFile(jsonlPath)
-		if err != nil {
-			t.Fatalf("failed to read issues.jsonl: %v", err)
-		}
-		if len(content) == 0 {
-			t.Error("expected tombstone to be written")
 		}
 	})
 }

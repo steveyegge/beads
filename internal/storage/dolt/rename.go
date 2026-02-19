@@ -1,5 +1,3 @@
-//go:build cgo
-
 package dolt
 
 import (
@@ -84,12 +82,6 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 	_, err = tx.ExecContext(ctx, `UPDATE compaction_snapshots SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
 	if err != nil {
 		return fmt.Errorf("failed to update compaction_snapshots: %w", err)
-	}
-
-	// Update references in export_hashes
-	_, err = tx.ExecContext(ctx, `UPDATE export_hashes SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
-	if err != nil {
-		return fmt.Errorf("failed to update export_hashes: %w", err)
 	}
 
 	// Update references in child_counters

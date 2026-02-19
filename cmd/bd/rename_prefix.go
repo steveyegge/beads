@@ -14,7 +14,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -64,7 +65,19 @@ NOTE: This is a rare operation. Most users never need this command.`,
 
 		ctx := rootCtx
 
-		// rename-prefix requires direct mode (not supported by daemon)
+		// Block rename-prefix in worktrees (same guard as init.go:168-186)
+		if isGitRepo() && git.IsWorktree() {
+			mainRepoRoot, _ := git.GetMainRepoRoot()
+			fmt.Fprintf(os.Stderr, "Error: cannot run 'bd rename-prefix' from a git worktree\n\n")
+			fmt.Fprintf(os.Stderr, "Worktrees share the .beads database from the main repository,\n")
+			fmt.Fprintf(os.Stderr, "but JSONL export targets the main worktree's file.\n\n")
+			fmt.Fprintf(os.Stderr, "Run this command from the main repository instead:\n")
+			fmt.Fprintf(os.Stderr, "  cd %s\n", mainRepoRoot)
+			fmt.Fprintf(os.Stderr, "  bd rename-prefix %s\n", newPrefix)
+			os.Exit(1)
+		}
+
+		// rename-prefix requires direct database access
 		if store == nil {
 			if err := ensureStoreActive(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -79,9 +92,6 @@ NOTE: This is a rare operation. Most users never need this command.`,
 
 		// Get JSONL path for sync operations
 		jsonlPath := findJSONLPath()
-
-		// Sync-branch pull was previously handled by the daemon.
-		// With daemon removed, sync-branch operations are handled by bd sync.
 
 		// Force import from JSONL to ensure DB has all issues before rename
 		// This prevents data loss if JSONL has issues from other workspaces
@@ -264,7 +274,7 @@ type issueSort struct {
 // repairPrefixes consolidates multiple prefixes into a single target prefix
 // Issues with the correct prefix are left unchanged.
 // Issues with incorrect prefixes get new hash-based IDs.
-func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, targetPrefix string, issues []*types.Issue, prefixes map[string]int, dryRun bool) error {
+func repairPrefixes(ctx context.Context, st *dolt.DoltStore, actorName string, targetPrefix string, issues []*types.Issue, prefixes map[string]int, dryRun bool) error {
 
 	// Separate issues into correct and incorrect prefix groups
 	var correctIssues []*types.Issue

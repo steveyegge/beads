@@ -8,9 +8,25 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// newTestDoltStore creates a DoltStore in a temp directory with the given issue prefix.
+func newTestDoltStore(t *testing.T, prefix string) *dolt.DoltStore {
+	t.Helper()
+	ctx := context.Background()
+	store, err := dolt.New(ctx, &dolt.Config{Path: filepath.Join(t.TempDir(), "test.db")})
+	if err != nil {
+		t.Fatalf("Failed to create dolt store: %v", err)
+	}
+	if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
+		store.Close()
+		t.Fatalf("Failed to set issue_prefix: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	return store
+}
 
 func newTestIssue(id string) *types.Issue {
 	return &types.Issue{
@@ -22,16 +38,13 @@ func newTestIssue(id string) *types.Issue {
 	}
 }
 
-// insertIssueDirectly inserts an issue via raw SQL, bypassing prefix validation.
-// This simulates cross-rig contamination where foreign-prefix issues end up in the DB.
-func insertIssueDirectly(t *testing.T, store *sqlite.SQLiteStorage, id string) {
+// insertIssueDirectly inserts an issue with a pre-set ID into the dolt store.
+// This simulates cross-rig contamination where foreign-prefix issues end up in the store.
+func insertIssueDirectly(t *testing.T, store *dolt.DoltStore, id string) {
 	t.Helper()
-	db := store.UnderlyingDB()
-	_, err := db.Exec(
-		"INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at) VALUES (?, ?, 'open', 2, 'task', datetime('now'), datetime('now'))",
-		id, "Test issue "+id,
-	)
-	if err != nil {
+	ctx := context.Background()
+	issue := newTestIssue(id)
+	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
 		t.Fatalf("failed to insert issue %s: %v", id, err)
 	}
 }
@@ -183,14 +196,12 @@ func TestCheckMigrationReadinessResult_NoJSONL(t *testing.T) {
 		t.Fatalf("failed to create .beads: %v", err)
 	}
 
-	check, result := CheckMigrationReadiness(tmpDir)
+	check, _ := CheckMigrationReadiness(tmpDir)
 
-	if check.Status != StatusError {
-		t.Errorf("status = %q, want %q", check.Status, StatusError)
-	}
-
-	if result.Ready {
-		t.Error("expected result.Ready = false for missing JSONL")
+	// With Dolt-only backend, GetBackend defaults to BackendDolt,
+	// so migration readiness returns OK ("Already using Dolt backend")
+	if check.Status != StatusOK {
+		t.Errorf("status = %q, want %q (Dolt-only backend returns OK)", check.Status, StatusOK)
 	}
 }
 
@@ -212,19 +223,13 @@ func TestCheckMigrationReadinessResult_ValidJSONL(t *testing.T) {
 		t.Fatalf("failed to create JSONL: %v", err)
 	}
 
-	check, result := CheckMigrationReadiness(tmpDir)
+	check, _ := CheckMigrationReadiness(tmpDir)
 
-	// Should be OK or Warning (no Dolt available is not an error for pre-migration)
+	// With Dolt-only backend, GetBackend defaults to BackendDolt,
+	// so migration readiness returns OK ("Already using Dolt backend")
+	// without validating JSONL (no migration needed)
 	if check.Status == StatusError {
-		t.Errorf("status = %q, did not want error for valid JSONL", check.Status)
-	}
-
-	if !result.JSONLValid {
-		t.Error("expected result.JSONLValid = true")
-	}
-
-	if result.JSONLCount != 2 {
-		t.Errorf("JSONLCount = %d, want 2", result.JSONLCount)
+		t.Errorf("status = %q, did not want error", check.Status)
 	}
 }
 
@@ -340,23 +345,7 @@ func TestMigrationValidationResult_JSONSerialization(t *testing.T) {
 
 func TestCategorizeDoltExtras_AllForeign(t *testing.T) {
 	ctx := context.Background()
-	tmpDir, err := os.MkdirTemp("", "bd-categorize-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	// Set local prefix to "bd"
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("failed to set prefix: %v", err)
-	}
+	store := newTestDoltStore(t, "bd")
 
 	// Create local issues via store
 	for _, id := range []string{"bd-001", "bd-002"} {
@@ -390,22 +379,7 @@ func TestCategorizeDoltExtras_AllForeign(t *testing.T) {
 
 func TestCategorizeDoltExtras_MixedEphemeralAndForeign(t *testing.T) {
 	ctx := context.Background()
-	tmpDir, err := os.MkdirTemp("", "bd-categorize-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("failed to set prefix: %v", err)
-	}
+	store := newTestDoltStore(t, "bd")
 
 	// Create local issues via store
 	for _, id := range []string{"bd-001", "bd-003"} {
@@ -433,22 +407,7 @@ func TestCategorizeDoltExtras_MixedEphemeralAndForeign(t *testing.T) {
 
 func TestCategorizeDoltExtras_AllEphemeral(t *testing.T) {
 	ctx := context.Background()
-	tmpDir, err := os.MkdirTemp("", "bd-categorize-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("failed to set prefix: %v", err)
-	}
+	store := newTestDoltStore(t, "bd")
 
 	// All extras are same-prefix (ephemeral)
 	for _, id := range []string{"bd-001", "bd-002", "bd-003"} {
@@ -471,22 +430,7 @@ func TestCategorizeDoltExtras_AllEphemeral(t *testing.T) {
 
 func TestCategorizeDoltExtras_NoExtras(t *testing.T) {
 	ctx := context.Background()
-	tmpDir, err := os.MkdirTemp("", "bd-categorize-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("failed to set prefix: %v", err)
-	}
+	store := newTestDoltStore(t, "bd")
 
 	for _, id := range []string{"bd-001", "bd-002"} {
 		if err := store.CreateIssue(ctx, newTestIssue(id), "test"); err != nil {

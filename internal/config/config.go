@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/steveyegge/beads/internal/debug"
+	"gopkg.in/yaml.v3"
 )
 
 // Sync trigger constants define when sync operations occur.
@@ -35,8 +36,18 @@ func Initialize() error {
 	v.SetConfigType("yaml")
 
 	// Explicitly locate config.yaml and use SetConfigFile to avoid picking up config.json
-	// Precedence: project .beads/config.yaml > ~/.config/bd/config.yaml > ~/.beads/config.yaml
+	// Precedence: BEADS_DIR > project .beads/config.yaml > ~/.config/bd/config.yaml > ~/.beads/config.yaml
 	configFileSet := false
+
+	// 0. Check BEADS_DIR first (highest priority)
+	// This ensures bd commands with BEADS_DIR set find the correct config
+	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" && !configFileSet {
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if _, err := os.Stat(configPath); err == nil {
+			v.SetConfigFile(configPath)
+			configFileSet = true
+		}
+	}
 
 	// 1. Walk up from CWD to find project .beads/config.yaml
 	//    This allows commands to work from subdirectories
@@ -108,34 +119,19 @@ func Initialize() error {
 	v.SetEnvPrefix("BD")
 
 	// Replace hyphens and dots with underscores for env var mapping
-	// This allows BD_NO_DAEMON to map to "no-daemon" config key
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	v.AutomaticEnv()
 
 	// Set defaults for all flags
 	v.SetDefault("json", false)
-	v.SetDefault("no-daemon", false)
-	v.SetDefault("no-auto-flush", false)
-	v.SetDefault("no-auto-import", false)
 	v.SetDefault("events-export", false)
 	v.SetDefault("no-db", false)
 	v.SetDefault("db", "")
 	v.SetDefault("actor", "")
 	v.SetDefault("issue-prefix", "")
-	v.SetDefault("lock-timeout", "30s")
-
 	// Additional environment variables (not prefixed with BD_)
-	// These are bound explicitly for backward compatibility
-	_ = v.BindEnv("flush-debounce", "BEADS_FLUSH_DEBOUNCE")           // BindEnv only fails with zero args, which can't happen here
-	_ = v.BindEnv("auto-start-daemon", "BEADS_AUTO_START_DAEMON")     // BindEnv only fails with zero args, which can't happen here
-	_ = v.BindEnv("identity", "BEADS_IDENTITY")                       // BindEnv only fails with zero args, which can't happen here
-	_ = v.BindEnv("remote-sync-interval", "BEADS_REMOTE_SYNC_INTERVAL") // BindEnv only fails with zero args, which can't happen here
-
-	// Set defaults for additional settings
-	v.SetDefault("flush-debounce", "30s")
-	v.SetDefault("auto-start-daemon", true)
+	_ = v.BindEnv("identity", "BEADS_IDENTITY") // BindEnv only fails with zero args, which can't happen here
 	v.SetDefault("identity", "")
-	v.SetDefault("remote-sync-interval", "30s")
 
 	// Dolt configuration defaults
 	// Controls whether beads should automatically create Dolt commits after write commands.
@@ -379,6 +375,53 @@ func LogOverride(override ConfigOverride) {
 	// Always emit to stderr when verbose mode is enabled (caller guards on verbose)
 	fmt.Fprintf(os.Stderr, "Config: %s overridden by %s (was: %v from %s, now: %v)\n",
 		override.Key, overrideDesc, override.OriginalValue, sourceDesc, override.EffectiveValue)
+}
+
+// SaveConfigValue sets a key-value pair and writes it to the config file.
+// If no config file is currently loaded, it creates config.yaml in the given beadsDir.
+// Only the specified key is modified; other file contents are preserved.
+func SaveConfigValue(key string, value interface{}, beadsDir string) error {
+	if v == nil {
+		return fmt.Errorf("config not initialized")
+	}
+	v.Set(key, value)
+
+	configPath := v.ConfigFileUsed()
+	if configPath == "" {
+		configPath = filepath.Join(beadsDir, "config.yaml")
+		v.SetConfigFile(configPath)
+	}
+
+	// Read existing file contents to avoid dumping all merged viper state
+	// (defaults, env vars, overrides) into the config file.
+	existing := make(map[string]interface{})
+	if data, err := os.ReadFile(filepath.Clean(configPath)); err == nil {
+		_ = yaml.Unmarshal(data, &existing)
+	}
+
+	// Set the single key using dot-path splitting for nested keys (e.g. "sync.mode").
+	setNestedKey(existing, key, value)
+
+	out, err := yaml.Marshal(existing)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+	return os.WriteFile(configPath, out, 0o600)
+}
+
+// setNestedKey sets a value in a nested map using a dot-separated key path.
+func setNestedKey(m map[string]interface{}, key string, value interface{}) {
+	parts := strings.SplitN(key, ".", 2)
+	if len(parts) == 1 {
+		m[key] = value
+		return
+	}
+	sub, ok := m[parts[0]].(map[string]interface{})
+	if !ok {
+		sub = make(map[string]interface{})
+		m[parts[0]] = sub
+	}
+	setNestedKey(sub, parts[1], value)
 }
 
 // GetString retrieves a string configuration value
@@ -740,21 +783,6 @@ func ShouldImportOnChange() bool {
 func NeedsDoltRemote() bool {
 	mode := GetSyncMode()
 	return mode == SyncModeDoltNative || mode == SyncModeBeltAndSuspenders
-}
-
-// NeedsJSONL returns true if the sync mode requires JSONL export.
-func NeedsJSONL() bool {
-	mode := GetSyncMode()
-	return mode == SyncModeGitPortable || mode == SyncModeRealtime || mode == SyncModeBeltAndSuspenders
-}
-
-// NeedsJSONLImport returns true if the sync mode should import from JSONL.
-// In dolt-native mode, imports are disabled to prevent stale JSONL from
-// overwriting dolt data. This is for use by internal/rpc which can't
-// import cmd/bd.
-func NeedsJSONLImport() bool {
-	mode := GetSyncMode()
-	return mode != SyncModeDoltNative
 }
 
 // GetCustomTypesFromYAML retrieves custom issue types from config.yaml.

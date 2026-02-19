@@ -14,8 +14,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/storage"
-	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -230,7 +229,8 @@ func CheckMigrationCompletion(path string) (DoctorCheck, MigrationValidationResu
 
 	// Check Dolt database health
 	ctx := context.Background()
-	store, err := storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
+	doltPath := filepath.Join(beadsDir, "dolt")
+	store, err := dolt.New(ctx, &dolt.Config{Path: doltPath, ReadOnly: true})
 	if err != nil {
 		result.Ready = false
 		result.DoltHealthy = false
@@ -367,7 +367,7 @@ func CheckDoltLocks(path string) DoctorCheck {
 			Status:   StatusWarning,
 			Message:  "Uncommitted changes detected",
 			Detail:   detail,
-			Fix:      "Changes will be auto-committed on next bd command",
+			Fix:      "Run 'bd vc commit -m \"commit changes\"' to commit, or changes will auto-commit on next bd command",
 			Category: CategoryMaintenance,
 		}
 	}
@@ -502,7 +502,7 @@ func compareSQLiteWithJSONL(dbPath string, jsonlIDs map[string]bool) (int, []str
 
 // compareDoltWithJSONL compares Dolt database with JSONL IDs.
 // Returns IDs in JSONL but not in Dolt (sample first 100).
-func compareDoltWithJSONL(ctx context.Context, store storage.Storage, jsonlIDs map[string]bool) []string {
+func compareDoltWithJSONL(ctx context.Context, store *dolt.DoltStore, jsonlIDs map[string]bool) []string {
 	var missing []string
 
 	for id := range jsonlIDs {
@@ -521,17 +521,18 @@ func compareDoltWithJSONL(ctx context.Context, store storage.Storage, jsonlIDs m
 // checkDoltLocks checks for uncommitted changes in Dolt.
 // Respects dolt_mode configuration: uses MySQL driver for server mode,
 // embedded driver for embedded mode.
+// Uses openDoltDBWithLock for AccessLock coordination.
 func checkDoltLocks(beadsDir string) (bool, string) {
-	db, serverMode, err := openDoltDB(beadsDir)
+	conn, err := openDoltDBWithLock(beadsDir)
 	if err != nil {
 		return false, ""
 	}
-	defer closeDoltDB(db, serverMode)
+	defer conn.Close()
 
 	ctx := context.Background()
 
 	// Check dolt_status for uncommitted changes
-	rows, err := db.QueryContext(ctx, "SELECT table_name, staged, status FROM dolt_status")
+	rows, err := conn.db.QueryContext(ctx, "SELECT table_name, staged, status FROM dolt_status")
 	if err != nil {
 		return false, ""
 	}
@@ -562,7 +563,7 @@ func checkDoltLocks(beadsDir string) (bool, string) {
 // categorizeDoltExtras finds issues in Dolt that aren't in JSONL and categorizes them
 // as either foreign-prefix (cross-rig contamination) or ephemeral (same-prefix).
 // Returns: foreignCount, foreignPrefixes map, ephemeralCount.
-func categorizeDoltExtras(ctx context.Context, store storage.Storage, jsonlIDs map[string]bool) (int, map[string]int, int) {
+func categorizeDoltExtras(ctx context.Context, store *dolt.DoltStore, jsonlIDs map[string]bool) (int, map[string]int, int) {
 	// Get the configured prefix for this rig
 	localPrefix, _ := store.GetConfig(ctx, "issue_prefix") // Best effort: empty prefix means no prefix-based validation
 

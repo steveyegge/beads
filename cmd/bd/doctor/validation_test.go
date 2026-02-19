@@ -226,9 +226,9 @@ func TestCheckDuplicateIssues_MixedOpenClosed(t *testing.T) {
 	}
 }
 
-// TestCheckDuplicateIssues_TombstonesExcluded verifies tombstoned issues
+// TestCheckDuplicateIssues_DeletedExcluded verifies deleted issues
 // are excluded from duplicate detection.
-func TestCheckDuplicateIssues_TombstonesExcluded(t *testing.T) {
+func TestCheckDuplicateIssues_DeletedExcluded(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.Mkdir(beadsDir, 0755); err != nil {
@@ -249,10 +249,10 @@ func TestCheckDuplicateIssues_TombstonesExcluded(t *testing.T) {
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
 
-	// Create tombstoned issues - these should NOT be flagged
+	// Create deleted issues - these should NOT be flagged
 	issues := []*types.Issue{
-		{Title: "Deleted issue", Description: "Was deleted", Status: types.StatusTombstone, Priority: 2, IssueType: types.TypeTask},
-		{Title: "Deleted issue", Description: "Was deleted", Status: types.StatusTombstone, Priority: 2, IssueType: types.TypeTask},
+		{Title: "Deleted issue", Description: "Was deleted", Status: types.StatusClosed, Priority: 2, IssueType: types.TypeTask},
+		{Title: "Deleted issue", Description: "Was deleted", Status: types.StatusClosed, Priority: 2, IssueType: types.TypeTask},
 	}
 
 	for _, issue := range issues {
@@ -266,7 +266,7 @@ func TestCheckDuplicateIssues_TombstonesExcluded(t *testing.T) {
 	check := CheckDuplicateIssues(tmpDir, false, 1000)
 
 	if check.Status != StatusOK {
-		t.Errorf("Status = %q, want %q (tombstones should be excluded)", check.Status, StatusOK)
+		t.Errorf("Status = %q, want %q (closed/deleted issues should be excluded)", check.Status, StatusOK)
 	}
 }
 
@@ -285,8 +285,18 @@ func TestCheckDuplicateIssues_NoDatabase(t *testing.T) {
 	if check.Status != StatusOK {
 		t.Errorf("Status = %q, want %q", check.Status, StatusOK)
 	}
-	if check.Message != "N/A (no database)" {
-		t.Errorf("Message = %q, want 'N/A (no database)'", check.Message)
+	// When no Dolt database exists, openStoreDB may create an empty one but
+	// the duplicate query will fail since no schema exists.
+	wantMessages := []string{"N/A (no database)", "N/A (unable to query issues)"}
+	found := false
+	for _, msg := range wantMessages {
+		if check.Message == msg {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Message = %q, want one of %v", check.Message, wantMessages)
 	}
 }
 

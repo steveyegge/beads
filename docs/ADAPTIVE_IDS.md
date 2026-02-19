@@ -139,10 +139,10 @@ Output shows:
 
 ### Location
 
-- Algorithm: `internal/storage/sqlite/adaptive_length.go`
-- ID generation: `internal/storage/sqlite/sqlite.go` (`generateHashID`)
-- Tests: `internal/storage/sqlite/adaptive_length_test.go`
-- E2E tests: `internal/storage/sqlite/adaptive_e2e_test.go`
+- Algorithm: `internal/storage/dolt/adaptive_length.go`
+- ID generation: `internal/storage/dolt/dolt.go` (`generateHashID`)
+- Tests: `internal/storage/dolt/adaptive_length_test.go`
+- E2E tests: `internal/storage/dolt/adaptive_e2e_test.go`
 
 ### Database Schema
 
@@ -158,7 +158,7 @@ INSERT INTO config (key, value) VALUES ('max_hash_length', '8');
 
 - Collision probability calculation: ~10ns per call
 - ID generation with adaptive length: ~300ns (same as before)
-- Database query to count issues: ~100μs (cached by SQLite)
+- Database query to count issues: ~100μs
 
 ## Migration
 

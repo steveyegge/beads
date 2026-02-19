@@ -128,15 +128,7 @@ func runBDForCoverage(t *testing.T, dir string, args ...string) (stdout string, 
 	dbPath = ""
 	actor = ""
 	jsonOutput = false
-	noDaemon = false
-	noAutoFlush = false
-	noAutoImport = false
 	sandboxMode = false
-	noDb = false
-	autoFlushEnabled = true
-	storeActive = false
-	flushFailureCount = 0
-	lastFlushError = nil
 	rootCtx = nil
 	rootCancel = nil
 

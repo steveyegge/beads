@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -24,20 +23,14 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
 
-		// Check if storage supports versioning
-		vs, ok := storage.AsVersioned(store)
-		if !ok {
-			FatalErrorRespectJSON("branch requires Dolt backend (current backend does not support versioning)")
-		}
-
 		// If no args, list branches
 		if len(args) == 0 {
-			branches, err := vs.ListBranches(ctx)
+			branches, err := store.ListBranches(ctx)
 			if err != nil {
 				FatalErrorRespectJSON("failed to list branches: %v", err)
 			}
 
-			currentBranch, err := vs.CurrentBranch(ctx)
+			currentBranch, err := store.CurrentBranch(ctx)
 			if err != nil {
 				// Non-fatal, just don't show current marker
 				currentBranch = ""
@@ -65,7 +58,7 @@ Examples:
 
 		// Create new branch
 		branchName := args[0]
-		if err := vs.Branch(ctx, branchName); err != nil {
+		if err := store.Branch(ctx, branchName); err != nil {
 			FatalErrorRespectJSON("failed to create branch: %v", err)
 		}
 

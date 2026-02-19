@@ -18,14 +18,10 @@ func TestFixFunctions_RequireBeadsDir(t *testing.T) {
 		fn   func(string) error
 	}{
 		{"GitHooks", GitHooks},
-		{"MergeDriver", MergeDriver},
 		{"DBJSONLSync", DBJSONLSync},
 		{"DatabaseVersion", DatabaseVersion},
 		{"SchemaCompatibility", SchemaCompatibility},
-		{"syncBranchConfig", syncBranchConfig},
-		{"SyncBranchHealth", func(dir string) error { return SyncBranchHealth(dir, "beads-sync") }},
 		{"UntrackedJSONL", UntrackedJSONL},
-		{"MigrateTombstones", MigrateTombstones},
 		{"ChildParentDependencies", func(dir string) error { return ChildParentDependencies(dir, false) }},
 		{"OrphanedDependencies", func(dir string) error { return OrphanedDependencies(dir, false) }},
 	}

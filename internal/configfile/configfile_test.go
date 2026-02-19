@@ -65,10 +65,11 @@ func TestLoadNonexistent(t *testing.T) {
 
 func TestDatabasePath(t *testing.T) {
 	beadsDir := "/home/user/project/.beads"
+	// DatabasePath always returns dolt path regardless of Database field
 	cfg := &Config{Database: "beads.db"}
 
 	got := cfg.DatabasePath(beadsDir)
-	want := filepath.Join(beadsDir, "beads.db")
+	want := filepath.Join(beadsDir, "dolt")
 
 	if got != want {
 		t.Errorf("DatabasePath() = %q, want %q", got, want)
@@ -219,8 +220,8 @@ func TestDoltServerMode(t *testing.T) {
 			want bool
 		}{
 			{
-				name: "sqlite backend",
-				cfg:  &Config{Backend: BackendSQLite},
+				name: "empty backend",
+				cfg:  &Config{Backend: ""},
 				want: false,
 			},
 			{
@@ -378,11 +379,11 @@ func TestIsDoltServerModeEnvVar(t *testing.T) {
 		}
 	})
 
-	t.Run("env var ignored for sqlite backend", func(t *testing.T) {
+	t.Run("env var with dolt backend enables server mode", func(t *testing.T) {
 		t.Setenv("BEADS_DOLT_SERVER_MODE", "1")
-		cfg := &Config{Backend: BackendSQLite}
-		if cfg.IsDoltServerMode() {
-			t.Error("IsDoltServerMode() = true, want false when env var set but sqlite backend")
+		cfg := &Config{Backend: ""}
+		if !cfg.IsDoltServerMode() {
+			t.Error("IsDoltServerMode() = false, want true when env var set with default backend")
 		}
 	})
 
@@ -401,11 +402,6 @@ func TestGetCapabilities(t *testing.T) {
 		cfg            *Config
 		wantSingleProc bool
 	}{
-		{
-			name:           "sqlite is multi-process",
-			cfg:            &Config{Backend: BackendSQLite},
-			wantSingleProc: false,
-		},
 		{
 			name:           "dolt embedded is single-process",
 			cfg:            &Config{Backend: BackendDolt, DoltMode: DoltModeEmbedded},

@@ -90,8 +90,8 @@ sync.mode: "dolt-native"
 		// It might succeed with empty results if no issues exist, but let's check files.
 	}
 
-	// Give any async operations time to complete.
-	time.Sleep(100 * time.Millisecond)
+	// Grace period for any async operations to manifest.
+	time.Sleep(50 * time.Millisecond)
 
 	// CRITICAL ASSERTION: beads.db must NOT exist.
 	// This is the main regression test for bd-m2jr.
@@ -188,7 +188,8 @@ sync.mode: "dolt-native"
 		t.Logf("create command output: %s", out)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	// Grace period for any async operations to manifest.
+	time.Sleep(50 * time.Millisecond)
 
 	// Verify no SQLite fallback.
 	sqliteDB := filepath.Join(beadsDir, "beads.db")

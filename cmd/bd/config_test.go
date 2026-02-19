@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
@@ -155,7 +154,7 @@ func TestConfigNamespaces(t *testing.T) {
 }
 
 // TestYamlOnlyConfigWithoutDatabase verifies that yaml-only config keys
-// (like no-db, no-daemon) can be set/get without requiring a SQLite database.
+// (like no-db) can be set/get without requiring a SQLite database.
 // This is the fix for GH#536 - the chicken-and-egg problem where you couldn't
 // run `bd config set no-db true` without first having a database.
 func TestYamlOnlyConfigWithoutDatabase(t *testing.T) {
@@ -184,7 +183,7 @@ func TestYamlOnlyConfigWithoutDatabase(t *testing.T) {
 	}
 
 	// Test that IsYamlOnlyKey correctly identifies yaml-only keys
-	yamlOnlyKeys := []string{"no-db", "no-daemon", "no-auto-flush", "json", "sync.branch", "routing.mode"}
+	yamlOnlyKeys := []string{"no-db", "json", "routing.mode"}
 	for _, key := range yamlOnlyKeys {
 		if !config.IsYamlOnlyKey(key) {
 			t.Errorf("Expected %q to be a yaml-only key", key)
@@ -201,7 +200,7 @@ func TestYamlOnlyConfigWithoutDatabase(t *testing.T) {
 }
 
 // setupTestDB creates a temporary test database
-func setupTestDB(t *testing.T) (storage.Storage, func()) {
+func setupTestDB(t *testing.T) (*dolt.DoltStore, func()) {
 	tmpDir, err := os.MkdirTemp("", "bd-test-config-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -233,18 +232,7 @@ func setupTestDB(t *testing.T) (storage.Storage, func()) {
 // TestBeadsRoleGitConfig verifies that beads.role is stored in git config,
 // not SQLite, so that bd doctor can find it (GH#1531).
 func TestBeadsRoleGitConfig(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bd-test-beads-role-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Initialize a git repo
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmpDir
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("git init failed: %v", err)
-	}
+	tmpDir := newGitRepo(t)
 
 	t.Run("set contributor role writes to git config", func(t *testing.T) {
 		cmd := exec.Command("git", "config", "beads.role", "contributor")

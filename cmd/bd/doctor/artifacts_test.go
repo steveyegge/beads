@@ -32,6 +32,8 @@ func TestScanForArtifacts_JSONLInDoltDir(t *testing.T) {
 	}
 
 	// Create JSONL artifacts
+	// Note: issues.jsonl is NOT an artifact (the pre-commit hook exports
+	// Dolt -> JSONL on every git commit so the file is tracked in git).
 	for _, name := range []string{"issues.jsonl", "issues.jsonl.new", "beads.left.jsonl"} {
 		if err := os.WriteFile(filepath.Join(beadsDir, name), []byte(`{"id":"test"}`), 0644); err != nil {
 			t.Fatal(err)
@@ -44,19 +46,20 @@ func TestScanForArtifacts_JSONLInDoltDir(t *testing.T) {
 
 	report := ScanForArtifacts(dir)
 
-	// issues.jsonl, issues.jsonl.new, beads.left.jsonl should be found
-	// interactions.jsonl (empty) should be skipped
-	if len(report.JSONLArtifacts) != 3 {
-		t.Errorf("expected 3 JSONL artifacts, got %d", len(report.JSONLArtifacts))
+	// issues.jsonl.new and beads.left.jsonl should be found.
+	// issues.jsonl is NOT an artifact (it's exported by the pre-commit hook).
+	// interactions.jsonl (empty) should be skipped.
+	if len(report.JSONLArtifacts) != 2 {
+		t.Errorf("expected 2 JSONL artifacts, got %d", len(report.JSONLArtifacts))
 		for _, f := range report.JSONLArtifacts {
 			t.Logf("  found: %s", f.Path)
 		}
 	}
 
-	// issues.jsonl should NOT be safe to delete
+	// issues.jsonl should NOT appear at all (it's not an artifact)
 	for _, f := range report.JSONLArtifacts {
-		if filepath.Base(f.Path) == "issues.jsonl" && f.SafeDelete {
-			t.Error("issues.jsonl should NOT be safe to delete")
+		if filepath.Base(f.Path) == "issues.jsonl" {
+			t.Error("issues.jsonl should NOT be detected as an artifact")
 		}
 	}
 
@@ -73,6 +76,12 @@ func TestScanForArtifacts_SQLiteFiles(t *testing.T) {
 
 	beadsDir := filepath.Join(dir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create dolt/ directory so isDoltNative returns true (SQLite files
+	// are only flagged as artifacts when Dolt is the active backend)
+	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -327,6 +336,11 @@ func TestCheckClassicArtifacts_WithArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	beadsDir := filepath.Join(dir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create dolt/ directory so isDoltNative returns true
+	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0755); err != nil {
 		t.Fatal(err)
 	}
 

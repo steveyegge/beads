@@ -5,9 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 )
 
 // setupTestWorkspace creates a temporary directory with a .beads directory
@@ -26,21 +24,14 @@ func setupTestGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := setupTestWorkspace(t)
 
-	// Initialize git repo
-	cmd := exec.Command("git", "init")
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+	// Initialize git repo from cached template
+	initGitTemplate()
+	if gitTemplateErr != nil {
+		t.Fatalf("git template init failed: %v", gitTemplateErr)
 	}
-
-	// Configure git user for commits
-	cmd = exec.Command("git", "config", "user.email", "test@test.com")
-	cmd.Dir = dir
-	_ = cmd.Run()
-
-	cmd = exec.Command("git", "config", "user.name", "Test User")
-	cmd.Dir = dir
-	_ = cmd.Run()
+	if err := copyGitDir(gitTemplateDir, dir); err != nil {
+		t.Fatalf("failed to copy git template: %v", err)
+	}
 
 	return dir
 }
@@ -81,31 +72,6 @@ func TestGitHooks_Validation(t *testing.T) {
 	})
 }
 
-// TestMergeDriver_Validation tests MergeDriver validation
-func TestMergeDriver_Validation(t *testing.T) {
-	t.Run("sets correct merge driver config", func(t *testing.T) {
-		dir := setupTestGitRepo(t)
-
-		err := MergeDriver(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify the config was set
-		cmd := exec.Command("git", "config", "merge.beads.driver")
-		cmd.Dir = dir
-		output, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("failed to get git config: %v", err)
-		}
-
-		expected := "bd merge %A %O %A %B\n"
-		if string(output) != expected {
-			t.Errorf("expected %q, got %q", expected, string(output))
-		}
-	})
-}
-
 // TestDBJSONLSync_Validation tests DBJSONLSync validation
 func TestDBJSONLSync_Validation(t *testing.T) {
 	t.Run("no database - nothing to do", func(t *testing.T) {
@@ -130,45 +96,6 @@ func TestDBJSONLSync_Validation(t *testing.T) {
 	})
 }
 
-// TestSyncBranchConfig_Validation tests syncBranchConfig validation
-func TestSyncBranchConfig_Validation(t *testing.T) {
-	t.Run("not a git repository", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-		err := syncBranchConfig(dir)
-		if err == nil {
-			t.Error("expected error for non-git repository")
-		}
-	})
-}
-
-// TestSyncBranchHealth_Validation tests SyncBranchHealth validation
-func TestSyncBranchHealth_Validation(t *testing.T) {
-	t.Run("no main or master branch", func(t *testing.T) {
-		dir := setupTestGitRepo(t)
-		// Create a commit on a different branch
-		cmd := exec.Command("git", "checkout", "-b", "other")
-		cmd.Dir = dir
-		_ = cmd.Run()
-
-		// Create a file and commit
-		testFile := filepath.Join(dir, "test.txt")
-		if err := os.WriteFile(testFile, []byte("test"), 0600); err != nil {
-			t.Fatalf("failed to create test file: %v", err)
-		}
-		cmd = exec.Command("git", "add", "test.txt")
-		cmd.Dir = dir
-		_ = cmd.Run()
-		cmd = exec.Command("git", "commit", "-m", "initial")
-		cmd.Dir = dir
-		_ = cmd.Run()
-
-		err := SyncBranchHealth(dir, "beads-sync")
-		if err == nil {
-			t.Error("expected error when neither main nor master exists")
-		}
-	})
-}
-
 // TestUntrackedJSONL_Validation tests UntrackedJSONL validation
 func TestUntrackedJSONL_Validation(t *testing.T) {
 	t.Run("not a git repository", func(t *testing.T) {
@@ -185,255 +112,6 @@ func TestUntrackedJSONL_Validation(t *testing.T) {
 		// Should succeed with no untracked files
 		if err != nil {
 			t.Errorf("expected no error, got: %v", err)
-		}
-	})
-}
-
-// TestMigrateTombstones tests the MigrateTombstones function
-func TestMigrateTombstones(t *testing.T) {
-	t.Run("no deletions.jsonl - nothing to migrate", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-		err := MigrateTombstones(dir)
-		if err != nil {
-			t.Errorf("expected no error when no deletions.jsonl exists, got: %v", err)
-		}
-	})
-
-	t.Run("empty deletions.jsonl", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-		deletionsPath := filepath.Join(dir, ".beads", "deletions.jsonl")
-		if err := os.WriteFile(deletionsPath, []byte(""), 0600); err != nil {
-			t.Fatalf("failed to create deletions.jsonl: %v", err)
-		}
-		err := MigrateTombstones(dir)
-		if err != nil {
-			t.Errorf("expected no error for empty deletions.jsonl, got: %v", err)
-		}
-	})
-
-	t.Run("migrates deletions to tombstones", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-
-		// Create deletions.jsonl with a deletion record
-		deletionsPath := filepath.Join(dir, ".beads", "deletions.jsonl")
-		deletion := legacyDeletionRecord{
-			ID:        "test-123",
-			Timestamp: time.Now(),
-			Actor:     "testuser",
-			Reason:    "test deletion",
-		}
-		data, _ := json.Marshal(deletion)
-		if err := os.WriteFile(deletionsPath, append(data, '\n'), 0600); err != nil {
-			t.Fatalf("failed to create deletions.jsonl: %v", err)
-		}
-
-		// Create empty issues.jsonl
-		jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-		if err := os.WriteFile(jsonlPath, []byte(""), 0600); err != nil {
-			t.Fatalf("failed to create issues.jsonl: %v", err)
-		}
-
-		err := MigrateTombstones(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify deletions.jsonl was renamed
-		if _, err := os.Stat(deletionsPath); !os.IsNotExist(err) {
-			t.Error("deletions.jsonl should have been renamed")
-		}
-		migratedPath := deletionsPath + ".migrated"
-		if _, err := os.Stat(migratedPath); os.IsNotExist(err) {
-			t.Error("deletions.jsonl.migrated should exist")
-		}
-
-		// Verify tombstone was written to issues.jsonl
-		content, err := os.ReadFile(jsonlPath)
-		if err != nil {
-			t.Fatalf("failed to read issues.jsonl: %v", err)
-		}
-		if len(content) == 0 {
-			t.Error("expected tombstone to be written to issues.jsonl")
-		}
-
-		// Verify the tombstone content
-		var issue struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-		}
-		if err := json.Unmarshal(content[:len(content)-1], &issue); err != nil {
-			t.Fatalf("failed to parse tombstone: %v", err)
-		}
-		if issue.ID != "test-123" {
-			t.Errorf("expected ID test-123, got %s", issue.ID)
-		}
-		if issue.Status != "tombstone" {
-			t.Errorf("expected status tombstone, got %s", issue.Status)
-		}
-	})
-
-	t.Run("skips already existing tombstones", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-
-		// Create deletions.jsonl with a deletion record
-		deletionsPath := filepath.Join(dir, ".beads", "deletions.jsonl")
-		deletion := legacyDeletionRecord{
-			ID:        "test-123",
-			Timestamp: time.Now(),
-			Actor:     "testuser",
-		}
-		data, _ := json.Marshal(deletion)
-		if err := os.WriteFile(deletionsPath, append(data, '\n'), 0600); err != nil {
-			t.Fatalf("failed to create deletions.jsonl: %v", err)
-		}
-
-		// Create issues.jsonl with an existing tombstone for the same ID
-		jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-		existingTombstone := map[string]interface{}{
-			"id":     "test-123",
-			"status": "tombstone",
-		}
-		existingData, _ := json.Marshal(existingTombstone)
-		if err := os.WriteFile(jsonlPath, append(existingData, '\n'), 0600); err != nil {
-			t.Fatalf("failed to create issues.jsonl: %v", err)
-		}
-
-		originalContent, _ := os.ReadFile(jsonlPath)
-
-		err := MigrateTombstones(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify issues.jsonl was not modified (tombstone already exists)
-		newContent, _ := os.ReadFile(jsonlPath)
-		if string(newContent) != string(originalContent) {
-			t.Error("issues.jsonl should not have been modified when tombstone already exists")
-		}
-	})
-}
-
-// TestLoadLegacyDeletions tests the loadLegacyDeletions helper
-func TestLoadLegacyDeletions(t *testing.T) {
-	t.Run("nonexistent file returns empty map", func(t *testing.T) {
-		records, err := loadLegacyDeletions("/nonexistent/path")
-		if err != nil {
-			t.Errorf("expected no error, got: %v", err)
-		}
-		if len(records) != 0 {
-			t.Errorf("expected empty map, got %d records", len(records))
-		}
-	})
-
-	t.Run("parses valid deletions", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "deletions.jsonl")
-
-		deletion := legacyDeletionRecord{
-			ID:        "test-abc",
-			Timestamp: time.Now(),
-			Actor:     "user",
-			Reason:    "testing",
-		}
-		data, _ := json.Marshal(deletion)
-		if err := os.WriteFile(path, append(data, '\n'), 0600); err != nil {
-			t.Fatalf("failed to write file: %v", err)
-		}
-
-		records, err := loadLegacyDeletions(path)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(records) != 1 {
-			t.Fatalf("expected 1 record, got %d", len(records))
-		}
-		if records["test-abc"].Actor != "user" {
-			t.Errorf("expected actor 'user', got %s", records["test-abc"].Actor)
-		}
-	})
-
-	t.Run("skips invalid lines", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "deletions.jsonl")
-
-		content := `{"id":"valid-1","ts":"2024-01-01T00:00:00Z","by":"user"}
-invalid json line
-{"id":"valid-2","ts":"2024-01-01T00:00:00Z","by":"user"}
-`
-		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-			t.Fatalf("failed to write file: %v", err)
-		}
-
-		records, err := loadLegacyDeletions(path)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(records) != 2 {
-			t.Fatalf("expected 2 valid records, got %d", len(records))
-		}
-	})
-
-	t.Run("skips records without ID", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "deletions.jsonl")
-
-		content := `{"id":"valid-1","ts":"2024-01-01T00:00:00Z","by":"user"}
-{"ts":"2024-01-01T00:00:00Z","by":"user"}
-`
-		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-			t.Fatalf("failed to write file: %v", err)
-		}
-
-		records, err := loadLegacyDeletions(path)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(records) != 1 {
-			t.Fatalf("expected 1 valid record, got %d", len(records))
-		}
-	})
-}
-
-// TestConvertLegacyDeletionToTombstone tests tombstone conversion
-func TestConvertLegacyDeletionToTombstone(t *testing.T) {
-	t.Run("converts with all fields", func(t *testing.T) {
-		ts := time.Now()
-		record := legacyDeletionRecord{
-			ID:        "test-xyz",
-			Timestamp: ts,
-			Actor:     "admin",
-			Reason:    "cleanup",
-		}
-
-		tombstone := convertLegacyDeletionToTombstone(record)
-
-		if tombstone.ID != "test-xyz" {
-			t.Errorf("expected ID test-xyz, got %s", tombstone.ID)
-		}
-		if tombstone.Status != "tombstone" {
-			t.Errorf("expected status tombstone, got %s", tombstone.Status)
-		}
-		if tombstone.DeletedBy != "admin" {
-			t.Errorf("expected DeletedBy admin, got %s", tombstone.DeletedBy)
-		}
-		if tombstone.DeleteReason != "cleanup" {
-			t.Errorf("expected DeleteReason cleanup, got %s", tombstone.DeleteReason)
-		}
-		if tombstone.DeletedAt == nil {
-			t.Error("expected DeletedAt to be set")
-		}
-	})
-
-	t.Run("handles zero timestamp", func(t *testing.T) {
-		record := legacyDeletionRecord{
-			ID:    "test-zero",
-			Actor: "user",
-		}
-
-		tombstone := convertLegacyDeletionToTombstone(record)
-
-		if tombstone.DeletedAt == nil {
-			t.Error("expected DeletedAt to be set even with zero timestamp")
 		}
 	})
 }
@@ -559,59 +237,6 @@ func TestDBJSONLSync_MissingDatabase(t *testing.T) {
 	err := DBJSONLSync(dir)
 	if err != nil {
 		t.Errorf("expected no error when database doesn't exist, got: %v", err)
-	}
-}
-
-// TestSyncBranchConfig_BranchDoesNotExist tests fixing config when branch doesn't exist
-func TestSyncBranchConfig_BranchDoesNotExist(t *testing.T) {
-	// Skip if running as test binary (can't execute bd subcommands)
-	skipIfTestBinary(t)
-
-	dir := setupTestGitRepo(t)
-
-	// Try to run fix without any commits (no branch exists yet)
-	err := syncBranchConfig(dir)
-	if err == nil {
-		t.Error("expected error when no branch exists")
-	}
-	if err != nil && !strings.Contains(err.Error(), "failed to get current branch") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-// TestSyncBranchConfig_InvalidRemoteURL tests fix behavior with invalid remote
-func TestSyncBranchConfig_InvalidRemoteURL(t *testing.T) {
-	// Skip if running as test binary (can't execute bd subcommands)
-	skipIfTestBinary(t)
-
-	dir := setupTestGitRepo(t)
-
-	// Create initial commit
-	testFile := filepath.Join(dir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test"), 0600); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
-	runGit(t, dir, "add", "test.txt")
-	runGit(t, dir, "commit", "-m", "initial commit")
-
-	// Add invalid remote
-	runGit(t, dir, "remote", "add", "origin", "invalid://bad-url")
-
-	// Fix should still succeed - it only sets config, doesn't interact with remote
-	err := syncBranchConfig(dir)
-	if err != nil {
-		t.Fatalf("unexpected error with invalid remote: %v", err)
-	}
-
-	// Verify config was set
-	cmd := exec.Command("git", "config", "sync.branch")
-	cmd.Dir = dir
-	output, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("failed to get sync.branch config: %v", err)
-	}
-	if strings.TrimSpace(string(output)) == "" {
-		t.Error("sync.branch config was not set")
 	}
 }
 

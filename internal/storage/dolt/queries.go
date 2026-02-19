@@ -1,5 +1,3 @@
-//go:build cgo
-
 package dolt
 
 import (
@@ -48,9 +46,6 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, "status = ?")
 		args = append(args, *filter.Status)
-	} else if !filter.IncludeTombstones {
-		whereClauses = append(whereClauses, "status != ?")
-		args = append(args, types.StatusTombstone)
 	}
 
 	if len(filter.ExcludeStatus) > 0 {
@@ -207,6 +202,11 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		args = append(args, parentID, parentID)
 	}
 
+	// No-parent filtering: exclude issues that are children of another issue
+	if filter.NoParent {
+		whereClauses = append(whereClauses, "id NOT IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child')")
+	}
+
 	// Molecule type filtering
 	if filter.MolType != nil {
 		whereClauses = append(whereClauses, "mol_type = ?")
@@ -291,7 +291,13 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 	} else {
 		statusClause = "status IN ('open', 'in_progress')"
 	}
-	whereClauses := []string{statusClause, "(ephemeral = 0 OR ephemeral IS NULL)"}
+	whereClauses := []string{
+		statusClause,
+		"(pinned = 0 OR pinned IS NULL)", // Exclude pinned issues (context markers, not work)
+	}
+	if !filter.IncludeEphemeral {
+		whereClauses = append(whereClauses, "(ephemeral = 0 OR ephemeral IS NULL)")
+	}
 	args := []interface{}{}
 	if filter.Status != "" {
 		args = append(args, string(filter.Status))
@@ -305,6 +311,23 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 	if filter.Type != "" {
 		whereClauses = append(whereClauses, "id IN (SELECT id FROM issues WHERE issue_type = ?)")
 		args = append(args, filter.Type)
+	} else {
+		// Exclude workflow/identity types from ready work by default.
+		// These are internal items, not actionable work for agents to claim:
+		// - merge-request: processed by Refinery
+		// - gate: async wait conditions
+		// - molecule: workflow containers
+		// - message: mail/communication items
+		// - agent: identity/state tracking beads
+		// - role: agent role definitions (reference metadata)
+		// - rig: rig identity beads (reference metadata)
+		excludeTypes := []string{"merge-request", "gate", "molecule", "message", "agent", "role", "rig"}
+		placeholders := make([]string, len(excludeTypes))
+		for i, t := range excludeTypes {
+			placeholders[i] = "?"
+			args = append(args, t)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT id FROM issues WHERE issue_type NOT IN (%s))", strings.Join(placeholders, ",")))
 	}
 	// Unassigned takes precedence over Assignee filter (matches memory storage)
 	if filter.Unassigned {
@@ -468,7 +491,6 @@ func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.Ep
 		SELECT id FROM issues
 		WHERE issue_type = 'epic'
 		  AND status != 'closed'
-		  AND status != 'tombstone'
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get epics: %w", err)
@@ -587,16 +609,15 @@ func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter
 func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 	stats := &types.Statistics{}
 
-	// Get counts (mirror SQLite semantics: exclude tombstones from TotalIssues, report separately).
+	// Get counts per status.
 	// Important: COALESCE to avoid NULL scans when the table is empty.
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
-			COALESCE(SUM(CASE WHEN status != 'tombstone' THEN 1 ELSE 0 END), 0) as total,
+			COUNT(*) as total,
 			COALESCE(SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END), 0) as open_count,
 			COALESCE(SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END), 0) as in_progress,
 			COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0) as closed,
 			COALESCE(SUM(CASE WHEN status = 'deferred' THEN 1 ELSE 0 END), 0) as deferred,
-			COALESCE(SUM(CASE WHEN status = 'tombstone' THEN 1 ELSE 0 END), 0) as tombstone,
 			COALESCE(SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END), 0) as pinned
 		FROM issues
 	`).Scan(
@@ -605,7 +626,6 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 		&stats.InProgressIssues,
 		&stats.ClosedIssues,
 		&stats.DeferredIssues,
-		&stats.TombstoneIssues,
 		&stats.PinnedIssues,
 	)
 	if err != nil {

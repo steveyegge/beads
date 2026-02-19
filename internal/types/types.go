@@ -72,12 +72,6 @@ type Issue struct {
 	Dependencies []*Dependency `json:"dependencies,omitempty"`
 	Comments     []*Comment    `json:"comments,omitempty"`
 
-	// ===== Tombstone Fields (soft-delete support) =====
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`    // When deleted
-	DeletedBy    string     `json:"deleted_by,omitempty"`    // Who deleted
-	DeleteReason string     `json:"delete_reason,omitempty"` // Why deleted
-	OriginalType string     `json:"original_type,omitempty"` // Issue type before deletion
-
 	// ===== Messaging Fields (inter-agent communication) =====
 	Sender    string   `json:"sender,omitempty"`    // Who sent this (for messages)
 	Ephemeral bool     `json:"ephemeral,omitempty"` // If true, not exported to JSONL
@@ -266,59 +260,6 @@ func (w hashFieldWriter) entityRef(e *EntityRef) {
 	}
 }
 
-// DefaultTombstoneTTL is the default time-to-live for tombstones (30 days)
-const DefaultTombstoneTTL = 30 * 24 * time.Hour
-
-// MinTombstoneTTL is the minimum allowed TTL (7 days) to prevent data loss
-const MinTombstoneTTL = 7 * 24 * time.Hour
-
-// ClockSkewGrace is added to TTL to handle clock drift between machines
-const ClockSkewGrace = 1 * time.Hour
-
-// IsTombstone returns true if the issue has been soft-deleted
-func (i *Issue) IsTombstone() bool {
-	return i.Status == StatusTombstone
-}
-
-// IsExpired returns true if the tombstone has exceeded its TTL.
-// Non-tombstone issues always return false.
-// ttl is the configured TTL duration:
-//   - If zero, DefaultTombstoneTTL (30 days) is used
-//   - If negative, the tombstone is immediately expired (for --hard mode)
-//   - If positive, ClockSkewGrace is added only for TTLs > 1 hour
-func (i *Issue) IsExpired(ttl time.Duration) bool {
-	// Non-tombstones never expire
-	if !i.IsTombstone() {
-		return false
-	}
-
-	// Tombstones without DeletedAt are not expired (safety: shouldn't happen in valid data)
-	if i.DeletedAt == nil {
-		return false
-	}
-
-	// Negative TTL means "immediately expired" - for --hard mode
-	if ttl < 0 {
-		return true
-	}
-
-	// Use default TTL if not specified
-	if ttl == 0 {
-		ttl = DefaultTombstoneTTL
-	}
-
-	// Only add clock skew grace period for normal TTLs (> 1 hour).
-	// For short TTLs (testing/development), skip grace period.
-	effectiveTTL := ttl
-	if ttl > ClockSkewGrace {
-		effectiveTTL = ttl + ClockSkewGrace
-	}
-
-	// Check if the tombstone has exceeded its TTL
-	expirationTime := i.DeletedAt.Add(effectiveTTL)
-	return time.Now().After(expirationTime)
-}
-
 // Validate checks if the issue has valid field values (built-in statuses only)
 func (i *Issue) Validate() error {
 	return i.ValidateWithCustomStatuses(nil)
@@ -352,19 +293,11 @@ func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
 		return fmt.Errorf("estimated_minutes cannot be negative")
 	}
 	// Enforce closed_at invariant: closed_at should be set if and only if status is closed
-	// Exception: tombstones may retain closed_at from before deletion
 	if i.Status == StatusClosed && i.ClosedAt == nil {
 		return fmt.Errorf("closed issues must have closed_at timestamp")
 	}
-	if i.Status != StatusClosed && i.Status != StatusTombstone && i.ClosedAt != nil {
+	if i.Status != StatusClosed && i.ClosedAt != nil {
 		return fmt.Errorf("non-closed issues cannot have closed_at timestamp")
-	}
-	// Enforce tombstone invariants: deleted_at must be set for tombstones, and only for tombstones
-	if i.Status == StatusTombstone && i.DeletedAt == nil {
-		return fmt.Errorf("tombstone issues must have deleted_at timestamp")
-	}
-	if i.Status != StatusTombstone && i.DeletedAt != nil {
-		return fmt.Errorf("non-tombstone issues cannot have deleted_at timestamp")
 	}
 	// Validate agent state if set
 	if !i.AgentState.IsValid() {
@@ -411,15 +344,8 @@ func (i *Issue) ValidateForImport(customStatuses []string) error {
 	if i.Status == StatusClosed && i.ClosedAt == nil {
 		return fmt.Errorf("closed issues must have closed_at timestamp")
 	}
-	if i.Status != StatusClosed && i.Status != StatusTombstone && i.ClosedAt != nil {
+	if i.Status != StatusClosed && i.ClosedAt != nil {
 		return fmt.Errorf("non-closed issues cannot have closed_at timestamp")
-	}
-	// Enforce tombstone invariants
-	if i.Status == StatusTombstone && i.DeletedAt == nil {
-		return fmt.Errorf("tombstone issues must have deleted_at timestamp")
-	}
-	if i.Status != StatusTombstone && i.DeletedAt != nil {
-		return fmt.Errorf("non-tombstone issues cannot have deleted_at timestamp")
 	}
 	// Validate agent state if set
 	if !i.AgentState.IsValid() {
@@ -465,15 +391,14 @@ const (
 	StatusBlocked    Status = "blocked"
 	StatusDeferred   Status = "deferred" // Deliberately put on ice for later
 	StatusClosed     Status = "closed"
-	StatusTombstone  Status = "tombstone" // Soft-deleted issue
-	StatusPinned     Status = "pinned"    // Persistent bead that stays open indefinitely
-	StatusHooked     Status = "hooked"    // Work attached to an agent's hook (GUPP)
+	StatusPinned     Status = "pinned" // Persistent bead that stays open indefinitely
+	StatusHooked     Status = "hooked" // Work attached to an agent's hook (GUPP)
 )
 
 // IsValid checks if the status value is valid (built-in statuses only)
 func (s Status) IsValid() bool {
 	switch s {
-	case StatusOpen, StatusInProgress, StatusBlocked, StatusDeferred, StatusClosed, StatusTombstone, StatusPinned, StatusHooked:
+	case StatusOpen, StatusInProgress, StatusBlocked, StatusDeferred, StatusClosed, StatusPinned, StatusHooked:
 		return true
 	}
 	return false
@@ -507,6 +432,8 @@ const (
 	TypeEpic     IssueType = "epic"
 	TypeChore    IssueType = "chore"
 	TypeDecision IssueType = "decision"
+	TypeMessage  IssueType = "message"
+	TypeMolecule IssueType = "molecule" // Molecule type for swarm coordination (internal use)
 )
 
 // TypeEvent is a system-internal type used by set-state for audit trail beads.
@@ -515,17 +442,18 @@ const (
 // ValidateWithCustom and treated as built-in for hydration trust (GH#1356).
 const TypeEvent IssueType = "event"
 
-// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, message)
+// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig)
 // were removed from beads core. They are now purely custom types with no built-in constants.
 // Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
 // (event was also a Gas Town type but was promoted to a built-in internal type above.)
+// (message was re-promoted to built-in for inter-agent communication — GH#1347.)
 
 // IsValid checks if the issue type is a core work type.
-// Only core work types (bug, feature, task, epic, chore, decision) are built-in.
-// Other types (molecule, gate, convoy, etc.) require types.custom configuration.
+// Core work types (bug, feature, task, epic, chore, decision, message) and molecule type are built-in.
+// Other types (gate, convoy, etc.) require types.custom configuration.
 func (t IssueType) IsValid() bool {
 	switch t {
-	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeDecision:
+	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeDecision, TypeMessage, TypeMolecule:
 		return true
 	}
 	return false
@@ -952,8 +880,7 @@ type Statistics struct {
 	BlockedIssues           int     `json:"blocked_issues"`
 	DeferredIssues          int     `json:"deferred_issues"` // Issues on ice
 	ReadyIssues             int     `json:"ready_issues"`
-	TombstoneIssues         int     `json:"tombstone_issues"` // Soft-deleted issues
-	PinnedIssues            int     `json:"pinned_issues"`    // Persistent issues
+	PinnedIssues            int     `json:"pinned_issues"` // Persistent issues
 	EpicsEligibleForClosure int     `json:"epics_eligible_for_closure"`
 	AverageLeadTime         float64 `json:"average_lead_time_hours"`
 }
@@ -996,9 +923,6 @@ type IssueFilter struct {
 	PriorityMin *int
 	PriorityMax *int
 
-	// Tombstone filtering
-	IncludeTombstones bool // If false (default), exclude tombstones from results
-
 	// Source repo filtering (for multi-repo support)
 	SourceRepo *string // Filter by source_repo field (nil = any)
 
@@ -1013,6 +937,7 @@ type IssueFilter struct {
 
 	// Parent filtering: filter children by parent issue ID
 	ParentID *string // Filter by parent issue (via parent-child dependency)
+	NoParent bool    // Exclude issues that are children of another issue
 
 	// Molecule type filtering
 	MolType *MolType // Filter by molecule type (nil = any, swarm/patrol/work)
@@ -1088,6 +1013,11 @@ type WorkFilter struct {
 
 	// Time-based deferral filtering (GH#820)
 	IncludeDeferred bool // If true, include issues with future defer_until timestamps
+
+	// Ephemeral issue filtering
+	// By default, GetReadyWork excludes ephemeral issues (wisps).
+	// Set to true to include them (e.g., for merge-request processing).
+	IncludeEphemeral bool
 
 	// Molecule step filtering
 	// By default, GetReadyWork excludes mol/wisp steps (IDs containing -mol- or -wisp-)

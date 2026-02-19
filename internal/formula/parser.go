@@ -374,8 +374,8 @@ func ValidateVars(formula *Formula, values map[string]string) error {
 		}
 
 		// Use default if not provided
-		if !provided && def.Default != "" {
-			val = def.Default
+		if !provided && def.Default != nil {
+			val = *def.Default
 		}
 
 		// Skip further validation if no value
@@ -426,8 +426,8 @@ func ApplyDefaults(formula *Formula, values map[string]string) map[string]string
 
 	// Apply defaults for missing values
 	for name, def := range formula.Vars {
-		if _, exists := result[name]; !exists && def.Default != "" {
-			result[name] = def.Default
+		if _, exists := result[name]; !exists && def.Default != nil {
+			result[name] = *def.Default
 		}
 	}
 
