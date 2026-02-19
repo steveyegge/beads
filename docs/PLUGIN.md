@@ -296,6 +296,13 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 # MCP tool: flow(action="close_safe", issue_id="bd-123", reason="Implemented ...", verification="pytest ...")
 ```
 
+If a dependency link fails after a successful create/update (rare race), `flow` returns a structured error payload with:
+- `issue_id`
+- `details.partial_state`
+- `recovery_command`
+
+Run the returned `recovery_command` to reconcile state (manual/advanced lifecycle mode).
+
 Compatibility mode:
 
 ```bash

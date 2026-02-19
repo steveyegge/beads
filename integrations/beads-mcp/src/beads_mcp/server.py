@@ -13,6 +13,7 @@ enabling more efficient agent operation without sacrificing functionality.
 import asyncio
 import atexit
 import importlib.metadata
+import json
 import logging
 import os
 import re
@@ -870,6 +871,32 @@ def _is_dependency_error(result: str) -> bool:
     return result.strip().lower().startswith("error:")
 
 
+def _raise_structured_flow_error(
+    *,
+    action: str,
+    message: str,
+    phase: str,
+    issue_id: str | None = None,
+    recovery_command: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Raise a structured error payload for machine-actionable remediation."""
+    payload: dict[str, Any] = {
+        "action": action,
+        "error": {
+            "message": message,
+            "phase": phase,
+        },
+    }
+    if issue_id:
+        payload["issue_id"] = issue_id
+    if recovery_command:
+        payload["recovery_command"] = recovery_command
+    if details:
+        payload["details"] = details
+    raise ValueError(json.dumps(payload, sort_keys=True))
+
+
 def _validate_close_reason(reason: str, allow_failure_reason: bool) -> None:
     """Validate close reason for conditional-block safety."""
     stripped = reason.strip()
@@ -988,7 +1015,15 @@ async def flow(
                 claim_errors.append(f"{candidate.id}: {exc}")
                 continue
 
-            claimed_issue = claimed[0] if isinstance(claimed, list) else claimed
+            if isinstance(claimed, list):
+                if not claimed:
+                    claim_errors.append(
+                        f"{candidate.id}: empty claim response (likely contention)"
+                    )
+                    continue
+                claimed_issue = claimed[0]
+            else:
+                claimed_issue = claimed
             return {
                 "action": "claim_next",
                 "claimed": True,
@@ -1026,8 +1061,20 @@ async def flow(
             dep_type="discovered-from",
         )
         if _is_dependency_error(link_result):
-            raise ValueError(
-                f"create_discovered failed to link dependency for {created.id}: {link_result}"
+            _raise_structured_flow_error(
+                action="create_discovered",
+                message="Dependency link failed after issue creation.",
+                phase="link_dependency",
+                issue_id=created.id,
+                recovery_command=(
+                    f"dep(issue_id='{created.id}', depends_on_id='{discovered_from_id}', "
+                    "dep_type='discovered-from')"
+                ),
+                details={
+                    "partial_state": "issue_created_without_discovered_from_link",
+                    "dependency_result": link_result,
+                    "depends_on_id": discovered_from_id,
+                },
             )
         return {
             "action": "create_discovered",
@@ -1057,8 +1104,19 @@ async def flow(
                 dep_type="blocks",
             )
             if _is_dependency_error(dep_result):
-                raise ValueError(
-                    f"block_with_context failed to add blocker dependency for {issue_id}: {dep_result}"
+                _raise_structured_flow_error(
+                    action="block_with_context",
+                    message="Blocker dependency link failed after issue state update.",
+                    phase="link_dependency",
+                    issue_id=issue_id,
+                    recovery_command=(
+                        f"dep(issue_id='{issue_id}', depends_on_id='{blocker_id}', dep_type='blocks')"
+                    ),
+                    details={
+                        "partial_state": "issue_blocked_without_blocker_link",
+                        "dependency_result": dep_result,
+                        "depends_on_id": blocker_id,
+                    },
                 )
         return {
             "action": "block_with_context",

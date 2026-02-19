@@ -10,6 +10,18 @@ from fastmcp.client import Client
 from beads_mcp.server import mcp
 
 
+def _tool_error_json_payload(exc: Exception) -> dict:
+    """Extract structured JSON payload from a FastMCP ToolError string."""
+    import json
+
+    message = str(exc)
+    start = message.find("{")
+    end = message.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise AssertionError(f"ToolError did not contain JSON payload: {message}")
+    return json.loads(message[start : end + 1])
+
+
 @pytest.fixture(scope="session")
 def bd_executable():
     """Verify bd is available in PATH."""
@@ -1156,6 +1168,31 @@ async def test_flow_claim_next_skips_non_open_ready_entries(mcp_client, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_flow_claim_next_contention_returns_non_error_payload(mcp_client, monkeypatch):
+    """flow(claim_next) should return claimed=false (not ToolError) when all claims contend."""
+    import json
+
+    actor = "flow-contention-actor"
+    monkeypatch.setenv("BEADS_ACTOR", actor)
+
+    await mcp_client.call_tool("create", {"title": "Contention issue 1", "brief": False})
+    await mcp_client.call_tool("create", {"title": "Contention issue 2", "brief": False})
+
+    async def fake_claim(*args, **kwargs):
+        raise RuntimeError("simulated claim contention")
+
+    monkeypatch.setattr("beads_mcp.server.beads_update_issue", fake_claim)
+
+    result = await mcp_client.call_tool("flow", {"action": "claim_next", "actor": actor, "ready_limit": 5})
+    payload = json.loads(result.content[0].text)
+
+    assert payload["action"] == "claim_next"
+    assert payload["claimed"] is False
+    assert "No claimable ready work after contention checks." in payload["message"]
+    assert len(payload.get("claim_errors", [])) >= 2
+
+
+@pytest.mark.asyncio
 async def test_flow_create_discovered_links_issue(mcp_client):
     """flow(create_discovered) should create issue and link with discovered-from."""
     import json
@@ -1207,6 +1244,46 @@ async def test_flow_create_discovered_fails_fast_on_missing_parent(mcp_client):
     listed = await mcp_client.call_tool("list", {"query": "Should not be created"})
     listed_payload = json.loads(listed.content[0].text) if listed.content else []
     assert listed_payload == []
+
+
+@pytest.mark.asyncio
+async def test_flow_create_discovered_link_error_returns_structured_remediation(mcp_client, monkeypatch):
+    """flow(create_discovered) should raise structured remediation payload on post-create link failure."""
+    import json
+    from fastmcp.exceptions import ToolError
+
+    async def fake_add_dependency(*args, **kwargs):
+        return "Error: simulated discovered-from failure"
+
+    monkeypatch.setattr("beads_mcp.server.beads_add_dependency", fake_add_dependency)
+
+    parent_result = await mcp_client.call_tool(
+        "create", {"title": "Structured parent", "issue_type": "task", "brief": False}
+    )
+    parent = json.loads(parent_result.content[0].text)
+
+    with pytest.raises(ToolError) as exc_info:
+        await mcp_client.call_tool(
+            "flow",
+            {
+                "action": "create_discovered",
+                "title": "Structured child",
+                "description": "Force discovered-from link failure",
+                "discovered_from_id": parent["id"],
+            },
+        )
+
+    payload = _tool_error_json_payload(exc_info.value)
+    assert payload["action"] == "create_discovered"
+    assert payload["error"]["phase"] == "link_dependency"
+    assert payload["details"]["partial_state"] == "issue_created_without_discovered_from_link"
+    assert payload["issue_id"]
+    assert "dep(" in payload["recovery_command"]
+
+    listed = await mcp_client.call_tool("list", {"query": "Structured child"})
+    listed_payload = json.loads(listed.content[0].text) if listed.content else []
+    assert len(listed_payload) == 1
+    assert listed_payload[0]["id"] == payload["issue_id"]
 
 
 @pytest.mark.asyncio
@@ -1271,6 +1348,50 @@ async def test_flow_block_with_context_fails_fast_on_missing_blocker(mcp_client)
     shown_payload = json.loads(shown.content[0].text)
     assert shown_payload["status"] == "open"
     assert "Context pack:" not in (shown_payload.get("notes") or "")
+
+
+@pytest.mark.asyncio
+async def test_flow_block_with_context_link_error_returns_structured_remediation(mcp_client, monkeypatch):
+    """flow(block_with_context) should raise structured remediation payload on post-update link failure."""
+    import json
+    from fastmcp.exceptions import ToolError
+
+    async def fake_add_dependency(*args, **kwargs):
+        return "Error: simulated blocks failure"
+
+    monkeypatch.setattr("beads_mcp.server.beads_add_dependency", fake_add_dependency)
+
+    issue_result = await mcp_client.call_tool(
+        "create", {"title": "Structured block target", "issue_type": "task", "brief": False}
+    )
+    issue = json.loads(issue_result.content[0].text)
+    blocker_result = await mcp_client.call_tool(
+        "create", {"title": "Structured blocker", "issue_type": "task", "brief": False}
+    )
+    blocker = json.loads(blocker_result.content[0].text)
+
+    with pytest.raises(ToolError) as exc_info:
+        await mcp_client.call_tool(
+            "flow",
+            {
+                "action": "block_with_context",
+                "issue_id": issue["id"],
+                "context_pack": "state; repro; next",
+                "blocker_id": blocker["id"],
+            },
+        )
+
+    payload = _tool_error_json_payload(exc_info.value)
+    assert payload["action"] == "block_with_context"
+    assert payload["error"]["phase"] == "link_dependency"
+    assert payload["details"]["partial_state"] == "issue_blocked_without_blocker_link"
+    assert payload["issue_id"] == issue["id"]
+    assert "dep(" in payload["recovery_command"]
+
+    shown = await mcp_client.call_tool("show", {"issue_id": issue["id"]})
+    shown_payload = json.loads(shown.content[0].text)
+    assert shown_payload["status"] == "blocked"
+    assert "Context pack:" in (shown_payload.get("notes") or "")
 
 
 @pytest.mark.asyncio
