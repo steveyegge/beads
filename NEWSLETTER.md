@@ -1,35 +1,66 @@
-# Beads Newsletter: v0.49.6
-**February 08, 2026**
+# Beads v0.53.0 — 11,000 Lines Deleted, Zero Features Lost
 
-## Hotfix: Embedded Dolt Mode Restored
+Beads v0.53.0 is the release where the sync pipeline finally gets out of the way. The entire JSONL intermediary layer is gone, replaced by native Dolt push/pull through git remotes. The result is a smaller, faster, more reliable `bd` with fewer moving parts to break.
 
-v0.49.6 is a same-day hotfix for v0.49.5. The previous release incorrectly removed
-embedded Dolt support from Beads. That removal was only intended for Gas Town
-(the multi-agent workspace manager), not for Beads itself.
+## The Big Change: Dolt-in-Git Replaces the JSONL Pipeline
 
-### What was restored
+Since v0.50, Dolt has been the default backend. But syncing between repos still went through an awkward dance: export to JSONL, commit to a git sync branch, push, pull on the other side, import back into Dolt. It worked, but it was ~11,000 lines of worktree management, snapshot diffing, 3-way merge logic, deletion tracking, and git hook plumbing.
 
-- **dolthub/driver dependency** and embedded connection path
-- **Advisory flock** (AccessLock) for concurrent process protection
-- **Embedded connector lifecycle** management in DoltStore
-- **CGO build tags** across ~45 files
-- **Vendored go-icu-regex** library for ICU regex support
-- **nocgo stub files** for non-CGO builds
-- **Bootstrap and embedded_uow** helpers
+All of that is gone. `bd sync` now calls Dolt's native `DOLT_PUSH` and `DOLT_PULL` stored procedures directly through git remotes. Your Dolt database travels inside your git repo the same way it always did, but without the JSONL translation layer in between.
 
-### What this means for users
+What was removed:
+- `internal/syncbranch/` -- 5,720 lines of worktree management
+- `snapshot_manager`, `deletion_tracking`, and the 3-way merge engine
+- Doctor sync-branch checks and fixes
+- Daemon infrastructure (lockfile activity signals, orchestrator)
+- The dead `bd repair` command
 
-If you were using embedded Dolt mode (the default for local development), v0.49.5
-would have broken your workflow by requiring a running `dolt sql-server`. v0.49.6
-restores the ability to use Dolt without a separate server process.
+Manual `bd export` and `bd import` remain available as escape hatches.
 
-If you were already using server mode, this release is fully compatible - no changes
-needed.
+## New: First-Class Dolt Server Commands
 
-### Upgrade
+Managing the Dolt server used to mean knowing the right incantation. Now there are proper commands:
 
-```bash
-brew upgrade beads
-# or
-curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+- **`bd dolt start` / `bd dolt stop`** -- explicit server lifecycle management
+- **`bd dolt commit`** -- commit your Dolt data without dropping into SQL
+- **Server mode without CGO** -- `OpenFromConfig()` is now exported, so server-mode connections work on pure-Go builds
+
+## New: Hosted Dolt Support
+
+Beads now supports connecting to Hosted Dolt instances with TLS, authentication, and explicit branch configuration. If your team runs a shared Dolt server, `bd` can talk to it directly.
+
+## New: Storage Interface
+
+The `Storage` interface decouples command logic from the concrete `DoltStore` implementation. This is groundwork for future flexibility -- testing with mock stores, alternate backends, or wrapping the store with middleware.
+
+## Quality-of-Life Additions
+
+- **`bd mol wisp gc --closed`** -- bulk purge closed wisps in one shot
+- **`--no-parent` on `bd list`** -- filter out child issues to see only top-level work
+- **`bd ready` pretty format** -- improved default output with priority sorting, truncation footer, and parent epic context
+- **`bd compact`** -- Dolt database compaction support
+- **Codecov integration** -- component-based coverage tracking in CI
+
+## Important Fixes
+
+**Pre-commit deadlock resolved.** If you hit hangs on `git commit` with embedded Dolt, this was a lock ordering issue in the hook path. Fixed in #1841/#1843.
+
+**`bd doctor --fix` no longer hangs.** The fix subcommand was spawning a subprocess that competed for the same database lock. It now runs in-process.
+
+**Dolt lock errors surfaced.** Previously, lock contention could produce silent empty results. Now you get an actionable error message telling you exactly what is stuck and how to fix it. `bd doctor` also detects stale `dolt-access.lock` and noms `LOCK` files.
+
+**Other fixes:** `BEADS_DIR` respected in config loading, `Unknown database` retry after `CREATE DATABASE`, Windows `Expand-Archive` module conflict resolved, `molecule` recognized as a core type, formula `VarDef` correctly distinguishes "no default" from `default=""`.
+
+## Upgrade
+
 ```
+brew upgrade bd
+```
+
+Or via the install script:
+
+```
+curl -fsSL https://beads.sh/install | sh
+```
+
+Existing projects need no migration -- the JSONL pipeline removal is purely internal. If you had a `sync.git-remote` configured, Dolt-in-Git will use it automatically.
