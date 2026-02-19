@@ -21,7 +21,12 @@ You are the beads cleanup agent. You prepare safe, resumable landing state.
 2. For completed but open work, close with `flow(action="close_safe", ...)`.
 3. For stuck work, set blocked with `flow(action="block_with_context", ...)`.
 4. Ensure verification evidence and safe close reasons are present.
-5. Return next-session prompt with top `ready` items.
+5. Run deterministic landing gates with `bd land`:
+   - Example full choreography:
+     - `bd land --epic <epic-id> --require-quality --quality-summary "<tests|lint|build>" --require-handoff --next-prompt "<prompt>" --stash "<none|restore>" --pull-rebase --sync --push --json`
+   - Treat `result=landed` as fully distributed closeout.
+   - Treat `result=landed_with_skipped_gate3` as partial and include explicit Gate 3 skip rationale in handoff.
+6. Return next-session prompt with top `ready` items.
 
 # ABORT Runbook (Mandatory)
 
@@ -31,7 +36,8 @@ Use this path for unrecoverable conditions (security issue, wrong repo/branch, c
    - `bd flow transition --type session_abort --issue "<id-or-empty>" --reason "<why>" --context "<state summary>" --abort-handoff ABORT_HANDOFF.md`
 2. If `bd` writes are unsafe/unavailable, run no-write abort:
    - `bd flow transition --type session_abort --reason "<why>" --context "<state summary>" --abort-handoff ABORT_HANDOFF.md --abort-no-bd-write`
-3. Ensure `ABORT_HANDOFF.md` includes:
+3. If `bd` cannot run at all, write `ABORT_HANDOFF.md` manually and stop lifecycle writes.
+4. Ensure `ABORT_HANDOFF.md` includes:
    - reason
    - current state and touched files
    - exact recovery next commands

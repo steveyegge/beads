@@ -17,12 +17,12 @@ Preserve legacy `@task-agent` usage by delegating to split roles:
    - Use issue-manager behavior to claim/close/block/create-discovered via `flow`.
 3. Execution:
    - Use execution-coordinator behavior to implement and verify changes.
-4. Landing:
-   - Use cleanup-agent behavior to produce resumable handoff.
-5. Recovery:
+4. Recovery:
    - When scoped `ready` is empty, run deterministic recover loop before declaring idle:
      - `bd recover loop --parent <epic-id> --module-label module/<name> --json`
      - `bd recover signature --parent <epic-id> --iteration <n> --elapsed-minutes <m> --json`
+5. Landing:
+   - Use cleanup-agent behavior to run `bd land` gates and produce resumable handoff.
 
 # Mandatory Write Policy
 
@@ -49,6 +49,8 @@ When any delegated role identifies unrecoverable risk (security, wrong repo, cor
   - `bd flow transition --type session_abort --issue "<id-or-empty>" --reason "<why>" --context "<state summary>" --abort-handoff ABORT_HANDOFF.md`
 - No-write fallback:
   - `bd flow transition --type session_abort --reason "<why>" --context "<state summary>" --abort-handoff ABORT_HANDOFF.md --abort-no-bd-write`
+- If `bd` is unavailable:
+  - write `ABORT_HANDOFF.md` manually with reason, state, touched files, and exact recovery commands.
 
 Require `ABORT_HANDOFF.md` to capture reason, touched files/state, and exact recovery commands for the next session.
 

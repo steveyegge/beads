@@ -272,6 +272,7 @@ func TestPreflightGateUsesBoundedDiagnostics(t *testing.T) {
 		"doctor.CheckDatabaseConfig(path)",
 		"doctor.CheckSyncDivergence(path)",
 		"doctor.CheckIssuesTracking()",
+		"preflightCheckReadyQueue(ctx)",
 	}
 	for _, token := range requiredTokens {
 		if !strings.Contains(text, token) {
@@ -386,6 +387,32 @@ func TestCloseSafeSecretAndSpecDriftChecks(t *testing.T) {
 	}
 	if specDriftProofSatisfied(false, "no proof present") {
 		t.Fatalf("expected missing docs diff and missing DOC-DRIFT tag to fail proof check")
+	}
+}
+
+func TestCloseSafeSpecDriftChecksStagedAndUnstagedDiffs(t *testing.T) {
+	root := findRepoRootForContractTest(t)
+	flowPath := filepath.Join(root, "cmd", "bd", "flow.go")
+	data, err := os.ReadFile(flowPath)
+	if err != nil {
+		t.Fatalf("read flow.go: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"diff", "--name-only"`) {
+		t.Fatalf("spec-drift proof must inspect unstaged diff paths")
+	}
+	if !strings.Contains(text, `"diff", "--cached", "--name-only"`) {
+		t.Fatalf("spec-drift proof must inspect staged diff paths")
+	}
+
+	if !docsProofPresentInDiffOutput("docs/CONTROL_PLANE_CONTRACT.md\n") {
+		t.Fatalf("expected docs path to satisfy spec-drift proof")
+	}
+	if !docsProofPresentInDiffOutput("README.md\n") {
+		t.Fatalf("expected README path to satisfy spec-drift proof")
+	}
+	if docsProofPresentInDiffOutput("cmd/bd/flow.go\ninternal/types/types.go\n") {
+		t.Fatalf("did not expect non-doc code paths to satisfy spec-drift proof")
 	}
 }
 
@@ -819,6 +846,27 @@ func TestRecoverLoopPhase4WidenScope(t *testing.T) {
 	}
 	if got := resolveRecoverPhase4Outcome(false, 4, 2, 0); got != "unscoped_ready_found" {
 		t.Fatalf("expected module-scope disabled to skip module outcome, got %q", got)
+	}
+}
+
+func TestRecoverLoopResultSelection(t *testing.T) {
+	if got := resolveRecoverLoopResult(map[string]string{
+		"phase_3": "limbo_detected",
+		"phase_4": "unscoped_ready_found",
+	}); got != "recover_limbo_detected" {
+		t.Fatalf("expected limbo to take precedence over widened ready, got %q", got)
+	}
+	if got := resolveRecoverLoopResult(map[string]string{
+		"phase_3": "clear",
+		"phase_4": "unassigned_ready_found",
+	}); got != "recover_ready_found_widened" {
+		t.Fatalf("expected widened-ready result, got %q", got)
+	}
+	if got := resolveRecoverLoopResult(map[string]string{
+		"phase_3": "clear",
+		"phase_4": "no_ready_after_widen",
+	}); got != "recover_continue" {
+		t.Fatalf("expected recover_continue when widen finds no ready work, got %q", got)
 	}
 }
 

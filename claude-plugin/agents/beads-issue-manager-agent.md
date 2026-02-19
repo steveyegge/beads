@@ -36,6 +36,8 @@ You are the beads issue manager agent. You own lifecycle transitions and depende
 5. If ready queue is empty, run deterministic recovery before declaring idle:
    - `bd recover loop --parent <epic-id> --module-label module/<name> --json`
    - `bd recover signature --parent <epic-id> --iteration <n> --elapsed-minutes <m> --json`
+   - If recover loop returns `recover_ready_found` or `recover_ready_found_widened`, return to step 1.
+   - If recover loop returns `recover_limbo_detected`, keep queue in recovery until limbo is resolved.
    - Escalate if recover signature returns `escalation_required`.
 
 # Close-Reason and Evidence Rules

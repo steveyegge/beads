@@ -452,12 +452,7 @@ var recoverLoopCmd = &cobra.Command{
 		}
 		phaseOutcomes["phase_4"] = resolveRecoverPhase4Outcome(moduleScopeEnabled, len(moduleOnlyReady), len(unscopedReady), len(unassignedReady))
 
-		result := "recover_continue"
-		if phaseOutcomes["phase_4"] != "no_ready_after_widen" {
-			result = "recover_ready_found_widened"
-		} else if phaseOutcomes["phase_3"] == "limbo_detected" {
-			result = "recover_limbo_detected"
-		}
+		result := resolveRecoverLoopResult(phaseOutcomes)
 
 		finishEnvelope(commandEnvelope{
 			OK:      true,
@@ -650,6 +645,16 @@ func resolveRecoverPhase4Outcome(moduleScopeEnabled bool, moduleReadyCount, unsc
 	default:
 		return "no_ready_after_widen"
 	}
+}
+
+func resolveRecoverLoopResult(phaseOutcomes map[string]string) string {
+	if phaseOutcomes["phase_3"] == "limbo_detected" {
+		return "recover_limbo_detected"
+	}
+	if phaseOutcomes["phase_4"] != "no_ready_after_widen" {
+		return "recover_ready_found_widened"
+	}
+	return "recover_continue"
 }
 
 func recoverOpenGateIDs(ctx context.Context, parentID *string, limit int) ([]string, []string, error) {

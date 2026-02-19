@@ -3365,11 +3365,19 @@ func buildLivingStateDigestBlock(ts time.Time, wipSummary, lastClosed string, re
 }
 
 func docsProofPresentInWorkingTree() (bool, error) {
-	out, err := runSubprocess("git", "diff", "--name-only")
+	unstaged, err := runSubprocess("git", "diff", "--name-only")
 	if err != nil {
 		return false, err
 	}
-	for _, raw := range strings.Split(out, "\n") {
+	staged, err := runSubprocess("git", "diff", "--cached", "--name-only")
+	if err != nil {
+		return false, err
+	}
+	return docsProofPresentInDiffOutput(unstaged + "\n" + staged), nil
+}
+
+func docsProofPresentInDiffOutput(output string) bool {
+	for _, raw := range strings.Split(output, "\n") {
 		path := strings.TrimSpace(raw)
 		if path == "" {
 			continue
@@ -3377,10 +3385,10 @@ func docsProofPresentInWorkingTree() (bool, error) {
 		up := strings.ToUpper(path)
 		if strings.HasPrefix(path, "docs/") || strings.Contains(path, "/docs/") ||
 			strings.Contains(up, "README") || strings.Contains(up, "ARCHITECTURE") || strings.Contains(up, "SPEC") {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 func init() {

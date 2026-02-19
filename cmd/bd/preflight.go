@@ -277,12 +277,41 @@ func runPreflightGateChecks(ctx context.Context, path string) []doctorCheck {
 		doctor.CheckDatabaseConfig(path),
 		doctor.CheckSyncDivergence(path),
 		doctor.CheckIssuesTracking(),
+		preflightCheckReadyQueue(ctx),
 	}
 	out := make([]doctorCheck, 0, len(raw))
 	for _, check := range raw {
 		out = append(out, convertDoctorCheck(check))
 	}
 	return out
+}
+
+func preflightCheckReadyQueue(ctx context.Context) doctor.DoctorCheck {
+	if store == nil {
+		return doctor.DoctorCheck{
+			Name:    "Ready Queue Probe",
+			Status:  doctor.StatusError,
+			Message: "Store unavailable",
+		}
+	}
+
+	ready, err := store.GetReadyWork(ctx, types.WorkFilter{
+		Status: types.StatusOpen,
+		Limit:  1,
+	})
+	if err != nil {
+		return doctor.DoctorCheck{
+			Name:    "Ready Queue Probe",
+			Status:  doctor.StatusError,
+			Message: "Ready queue query failed",
+			Detail:  err.Error(),
+		}
+	}
+	return doctor.DoctorCheck{
+		Name:    "Ready Queue Probe",
+		Status:  doctor.StatusOK,
+		Message: fmt.Sprintf("Ready queue query succeeded (count=%d)", len(ready)),
+	}
 }
 
 func preflightCheckRepoFingerprint(ctx context.Context) doctor.DoctorCheck {
