@@ -42,9 +42,9 @@ Preserve legacy `@task-agent` usage by delegating to split roles:
 When any delegated role identifies unrecoverable risk (security, wrong repo, corrupted state), route immediately to `session_abort`:
 
 - Writable path:
-  - `flow(action="transition", type="session_abort", issue_id="<id-or-empty>", reason="<why>", context="<state summary>", abort_handoff="ABORT_HANDOFF.md")`
+  - `bd flow transition --type session_abort --issue "<id-or-empty>" --reason "<why>" --context "<state summary>" --abort-handoff ABORT_HANDOFF.md`
 - No-write fallback:
-  - `flow(action="transition", type="session_abort", reason="<why>", context="<state summary>", abort_handoff="ABORT_HANDOFF.md", abort_no_bd_write=true)`
+  - `bd flow transition --type session_abort --reason "<why>" --context "<state summary>" --abort-handoff ABORT_HANDOFF.md --abort-no-bd-write`
 
 Require `ABORT_HANDOFF.md` to capture reason, touched files/state, and exact recovery commands for the next session.
 

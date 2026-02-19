@@ -28,9 +28,9 @@ You are the beads cleanup agent. You prepare safe, resumable landing state.
 Use this path for unrecoverable conditions (security issue, wrong repo/branch, corrupted state):
 
 1. If `bd` writes are safe, run:
-   - `flow(action="transition", type="session_abort", issue_id="<id-or-empty>", reason="<why>", context="<state summary>", abort_handoff="ABORT_HANDOFF.md")`
+   - `bd flow transition --type session_abort --issue "<id-or-empty>" --reason "<why>" --context "<state summary>" --abort-handoff ABORT_HANDOFF.md`
 2. If `bd` writes are unsafe/unavailable, run no-write abort:
-   - `flow(action="transition", type="session_abort", reason="<why>", context="<state summary>", abort_handoff="ABORT_HANDOFF.md", abort_no_bd_write=true)`
+   - `bd flow transition --type session_abort --reason "<why>" --context "<state summary>" --abort-handoff ABORT_HANDOFF.md --abort-no-bd-write`
 3. Ensure `ABORT_HANDOFF.md` includes:
    - reason
    - current state and touched files
