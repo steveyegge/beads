@@ -19,6 +19,7 @@ The `bd setup` command uses a **recipe-based architecture** to configure beads i
 | `gemini` | `~/.gemini/settings.json` | SessionStart/PreCompress hooks |
 | `factory` | `AGENTS.md` | Marked section |
 | `codex` | `AGENTS.md` | Marked section |
+| `mux` | `AGENTS.md` | Marked section |
 | `aider` | `.aider.conf.yml` + `.aider/` | Multi-file config |
 
 ## Quick Start
@@ -35,6 +36,7 @@ bd setup claude     # Claude Code
 bd setup gemini     # Gemini CLI
 bd setup factory    # Factory.ai Droid
 bd setup codex      # Codex CLI
+bd setup mux        # Mux
 bd setup aider      # Aider
 
 # Verify installation
@@ -158,6 +160,36 @@ Creates or updates `AGENTS.md` with the beads integration section (same markers 
 ### Notes
 
 - Restart Codex if it's already running to pick up the new instructions.
+
+## Mux
+
+Mux reads layered instruction files, including workspace `AGENTS.md`. Adding the beads section is enough to get Mux and beads working together.
+
+### Installation
+
+```bash
+bd setup mux            # Root AGENTS.md
+bd setup mux --project  # Root AGENTS.md + .mux/AGENTS.md
+bd setup mux --global   # Root AGENTS.md + ~/.mux/AGENTS.md
+```
+
+### What Gets Installed
+
+Creates or updates `AGENTS.md` with the beads integration section (same markers as Factory.ai and Codex).
+
+### Notes
+
+- Mux instruction file behavior is documented at [https://mux.coder.com/AGENTS.md](https://mux.coder.com/AGENTS.md).
+- Restart the workspace session if Mux is already running.
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--check` | Check root integration (and with layer flags, also check those layers) |
+| `--remove` | Remove root integration (and with layer flags, also remove those layers) |
+| `--project` | Install/check/remove workspace-layer instructions in `.mux/AGENTS.md` |
+| `--global` | Install/check/remove global-layer instructions in `~/.mux/AGENTS.md` |
 
 ## Claude Code
 
@@ -375,14 +407,14 @@ This respects Aider's philosophy of keeping humans in control while still levera
 
 ## Comparison
 
-| Feature | Factory.ai | Claude Code | Gemini CLI | Cursor | Aider |
-|---------|-----------|-------------|------------|--------|-------|
-| Command execution | Automatic | Automatic | Automatic | Automatic | Manual (/run) |
-| Context injection | AGENTS.md | Hooks | Hooks | Rules file | Config file |
-| Global install | No (per-project) | Yes | Yes | No (per-project) | No (per-project) |
-| Stealth mode | N/A | Yes | Yes | N/A | N/A |
-| Standard format | Yes (AGENTS.md) | No (proprietary) | No (proprietary) | No (proprietary) | No (proprietary) |
-| Multi-tool compatible | Yes | No | No | No | No |
+| Feature | Factory.ai | Codex | Mux | Claude Code | Gemini CLI | Cursor | Aider |
+|---------|-----------|-------|-----|-------------|------------|--------|-------|
+| Command execution | Automatic | Automatic | Automatic | Automatic | Automatic | Automatic | Manual (/run) |
+| Context injection | AGENTS.md | AGENTS.md | AGENTS.md | Hooks | Hooks | Rules file | Config file |
+| Global install | No (per-project) | No (per-project) | No (per-project) | Yes | Yes | No (per-project) | No (per-project) |
+| Stealth mode | N/A | N/A | N/A | Yes | Yes | N/A | N/A |
+| Standard format | Yes (AGENTS.md) | Yes (AGENTS.md) | Yes (AGENTS.md) | No (proprietary) | No (proprietary) | No (proprietary) | No (proprietary) |
+| Multi-tool compatible | Yes | Yes | Yes | No | No | No | No |
 
 ## Best Practices
 

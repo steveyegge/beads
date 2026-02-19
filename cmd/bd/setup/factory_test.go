@@ -77,6 +77,8 @@ Beads content
 
 More content`,
 			expected: `# My Project
+
+
 More content`,
 		},
 		{
@@ -90,7 +92,9 @@ Beads content
 <!-- END BEADS INTEGRATION -->`,
 			expected: `# My Project
 
-Content`,
+Content
+
+`,
 		},
 		{
 			name:     "no markers - return unchanged",
@@ -101,6 +105,11 @@ Content`,
 			name:     "only begin marker - return unchanged",
 			content:  "# My Project\n<!-- BEGIN BEADS INTEGRATION -->\nContent",
 			expected: "# My Project\n<!-- BEGIN BEADS INTEGRATION -->\nContent",
+		},
+		{
+			name:     "preserve surrounding whitespace and unrelated content",
+			content:  "Header\n\n" + agentsBeadsSection + "\n\nFooter\n",
+			expected: "Header\n\n\n\nFooter\n",
 		},
 	}
 
@@ -281,7 +290,7 @@ func TestRemoveFactoryScenarios(t *testing.T) {
 		}
 	})
 
-	t.Run("delete file when only beads", func(t *testing.T) {
+	t.Run("clear file when only beads", func(t *testing.T) {
 		env, stdout, _ := newFactoryTestEnv(t)
 		if err := os.WriteFile(env.agentsPath, []byte(agentsBeadsSection), 0644); err != nil {
 			t.Fatalf("failed to seed AGENTS.md: %v", err)
@@ -289,11 +298,15 @@ func TestRemoveFactoryScenarios(t *testing.T) {
 		if err := removeFactory(env); err != nil {
 			t.Fatalf("removeFactory returned error: %v", err)
 		}
-		if _, err := os.Stat(env.agentsPath); !os.IsNotExist(err) {
-			t.Fatal("AGENTS.md should be removed")
+		data, err := os.ReadFile(env.agentsPath)
+		if err != nil {
+			t.Fatalf("failed to read AGENTS.md after remove: %v", err)
 		}
-		if !strings.Contains(stdout.String(), "file was empty") {
-			t.Error("expected deletion message")
+		if strings.TrimSpace(string(data)) != "" {
+			t.Fatal("AGENTS.md should remain present but empty when only beads section existed")
+		}
+		if !strings.Contains(stdout.String(), "Removed beads section") {
+			t.Error("expected removal message")
 		}
 	})
 
