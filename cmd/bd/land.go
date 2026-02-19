@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -22,6 +23,7 @@ var (
 	landCheckOnly      bool
 	landRunSync        bool
 	landRunPush        bool
+	landRunSyncMerge   bool
 	landRequireQuality bool
 	landQualitySummary string
 	landRequireHandoff bool
@@ -173,6 +175,27 @@ var landCmd = &cobra.Command{
 			gateFailed = true
 			steps = append(steps, landStep{Name: "gate3_git_clean", Status: "fail", Message: "git working tree is dirty"})
 		}
+		criticalWarnings, warnErr := landCriticalDoctorWarnings()
+		if warnErr != nil {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "land",
+				Result:  "system_error",
+				Details: map[string]interface{}{"message": fmt.Sprintf("failed to evaluate critical doctor warnings: %v", warnErr)},
+				Events:  []string{"land_failed"},
+			}, 1)
+			return
+		}
+		if len(criticalWarnings) > 0 {
+			gateFailed = true
+			steps = append(steps, landStep{
+				Name:    "gate3_critical_warnings",
+				Status:  "fail",
+				Message: "critical doctor warnings promoted to blockers: " + strings.Join(criticalWarnings, ","),
+			})
+		} else {
+			steps = append(steps, landStep{Name: "gate3_critical_warnings", Status: "pass", Message: "no critical doctor warnings"})
+		}
 
 		qualityStep := evaluateLandQualityGate(landRequireQuality, landQualitySummary)
 		steps = append(steps, qualityStep)
@@ -227,6 +250,8 @@ var landCmd = &cobra.Command{
 		}
 
 		if landCheckOnly {
+			choreographySteps, _ := runLandGate3Choreography(true, landRunSync, landRunPush, landRunSyncMerge, runSubprocess)
+			steps = append(steps, choreographySteps...)
 			steps = append(steps, landStep{Name: "actions", Status: "skipped", Message: "check-only mode enabled"})
 			finishEnvelope(commandEnvelope{
 				OK:      true,
@@ -248,46 +273,21 @@ var landCmd = &cobra.Command{
 			store = nil
 		}
 
-		if landRunSync {
-			if _, err := runSubprocess("bd", "sync"); err != nil {
-				steps = append(steps, landStep{Name: "gate3_sync", Status: "fail", Message: err.Error()})
-				finishEnvelope(commandEnvelope{
-					OK:      false,
-					Command: "land",
-					Result:  "operation_failed",
-					IssueID: resolvedEpicID,
-					Details: map[string]interface{}{
-						"actor": landingActor,
-						"steps": steps,
-					},
-					Events: []string{"land_failed_sync"},
-				}, 1)
-				return
-			}
-			steps = append(steps, landStep{Name: "gate3_sync", Status: "pass", Message: "bd sync completed"})
-		} else {
-			steps = append(steps, landStep{Name: "gate3_sync", Status: "skipped", Message: "--sync not requested"})
-		}
-
-		if landRunPush {
-			if _, err := runSubprocess("git", "push"); err != nil {
-				steps = append(steps, landStep{Name: "gate3_push", Status: "fail", Message: err.Error()})
-				finishEnvelope(commandEnvelope{
-					OK:      false,
-					Command: "land",
-					Result:  "operation_failed",
-					IssueID: resolvedEpicID,
-					Details: map[string]interface{}{
-						"actor": landingActor,
-						"steps": steps,
-					},
-					Events: []string{"land_failed_push"},
-				}, 1)
-				return
-			}
-			steps = append(steps, landStep{Name: "gate3_push", Status: "pass", Message: "git push completed"})
-		} else {
-			steps = append(steps, landStep{Name: "gate3_push", Status: "skipped", Message: "--push not requested"})
+		choreographySteps, runErr := runLandGate3Choreography(false, landRunSync, landRunPush, landRunSyncMerge, runSubprocess)
+		steps = append(steps, choreographySteps...)
+		if runErr != nil {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "land",
+				Result:  "operation_failed",
+				IssueID: resolvedEpicID,
+				Details: map[string]interface{}{
+					"actor": landingActor,
+					"steps": steps,
+				},
+				Events: []string{"land_gate3_failed"},
+			}, 1)
+			return
 		}
 
 		finishEnvelope(commandEnvelope{
@@ -339,6 +339,95 @@ func evaluateLandHandoffGate(requireHandoff bool, nextPrompt, stash string) land
 	return landStep{Name: "gate4_handoff", Status: "pass", Message: "next prompt and stash fields recorded"}
 }
 
+func landCriticalDoctorWarnings() ([]string, error) {
+	workingPath, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	diagnostics := runDiagnostics(workingPath)
+	return criticalWarningNamesFromChecks(diagnostics.Checks), nil
+}
+
+func criticalWarningNamesFromChecks(checks []doctorCheck) []string {
+	critical := make([]string, 0)
+	for _, check := range checks {
+		if strings.ToLower(strings.TrimSpace(check.Status)) != statusWarning {
+			continue
+		}
+		if _, ok := preflightCriticalDoctorWarnings[check.Name]; ok {
+			critical = append(critical, check.Name)
+		}
+	}
+	sort.Strings(critical)
+	return uniqueSortedStrings(critical)
+}
+
+func runLandGate3Choreography(checkOnly, runSync, runPush, runMerge bool, runner func(string, ...string) (string, error)) ([]landStep, error) {
+	steps := make([]landStep, 0, 5)
+	if checkOnly {
+		steps = append(steps,
+			landStep{Name: "gate3_pull_rebase", Status: "skipped", Message: "check-only mode"},
+			landStep{Name: "gate3_sync_status", Status: "skipped", Message: "check-only mode"},
+		)
+		if runMerge {
+			steps = append(steps, landStep{Name: "gate3_sync_merge", Status: "skipped", Message: "check-only mode"})
+		}
+		if runSync {
+			steps = append(steps, landStep{Name: "gate3_sync", Status: "skipped", Message: "check-only mode"})
+		} else {
+			steps = append(steps, landStep{Name: "gate3_sync", Status: "skipped", Message: "--sync not requested"})
+		}
+		if runPush {
+			steps = append(steps, landStep{Name: "gate3_push", Status: "skipped", Message: "check-only mode"})
+		} else {
+			steps = append(steps, landStep{Name: "gate3_push", Status: "skipped", Message: "--push not requested"})
+		}
+		return steps, nil
+	}
+
+	if _, err := runner("git", "pull", "--rebase"); err != nil {
+		steps = append(steps, landStep{Name: "gate3_pull_rebase", Status: "fail", Message: err.Error()})
+		return steps, err
+	}
+	steps = append(steps, landStep{Name: "gate3_pull_rebase", Status: "pass", Message: "git pull --rebase completed"})
+
+	if _, err := runner("bd", "sync", "--status"); err != nil {
+		steps = append(steps, landStep{Name: "gate3_sync_status", Status: "fail", Message: err.Error()})
+		return steps, err
+	}
+	steps = append(steps, landStep{Name: "gate3_sync_status", Status: "pass", Message: "bd sync --status completed"})
+
+	if runMerge {
+		if _, err := runner("bd", "sync", "--merge"); err != nil {
+			steps = append(steps, landStep{Name: "gate3_sync_merge", Status: "fail", Message: err.Error()})
+			return steps, err
+		}
+		steps = append(steps, landStep{Name: "gate3_sync_merge", Status: "pass", Message: "bd sync --merge completed"})
+	}
+
+	if runSync {
+		if _, err := runner("bd", "sync"); err != nil {
+			steps = append(steps, landStep{Name: "gate3_sync", Status: "fail", Message: err.Error()})
+			return steps, err
+		}
+		steps = append(steps, landStep{Name: "gate3_sync", Status: "pass", Message: "bd sync completed"})
+	} else {
+		steps = append(steps, landStep{Name: "gate3_sync", Status: "skipped", Message: "--sync not requested"})
+	}
+
+	if runPush {
+		if _, err := runner("git", "push"); err != nil {
+			steps = append(steps, landStep{Name: "gate3_push", Status: "fail", Message: err.Error()})
+			return steps, err
+		}
+		steps = append(steps, landStep{Name: "gate3_push", Status: "pass", Message: "git push completed"})
+	} else {
+		steps = append(steps, landStep{Name: "gate3_push", Status: "skipped", Message: "--push not requested"})
+	}
+
+	return steps, nil
+}
+
 func runSubprocess(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Env = os.Environ()
@@ -354,6 +443,7 @@ func init() {
 	landCmd.Flags().BoolVar(&landCheckOnly, "check-only", false, "Run gates without sync/push operations")
 	landCmd.Flags().BoolVar(&landRunSync, "sync", false, "Run bd sync after gates pass")
 	landCmd.Flags().BoolVar(&landRunPush, "push", false, "Run git push after gates pass")
+	landCmd.Flags().BoolVar(&landRunSyncMerge, "sync-merge", false, "Run bd sync --merge during Gate 3 choreography")
 	landCmd.Flags().BoolVar(&landRequireQuality, "require-quality", false, "Require Gate 2 quality evidence summary")
 	landCmd.Flags().StringVar(&landQualitySummary, "quality-summary", "", "Gate 2 quality evidence summary (tests/lint/build results)")
 	landCmd.Flags().BoolVar(&landRequireHandoff, "require-handoff", false, "Require Gate 4 next prompt + stash fields")

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -18,6 +19,11 @@ type recoverSignature struct {
 	BlockedCount int      `json:"blocked_count"`
 }
 
+type recoverLoopSnapshot struct {
+	Count int      `json:"count"`
+	IDs   []string `json:"ids"`
+}
+
 var (
 	recoverSignatureParentID      string
 	recoverSignatureLimit         int
@@ -26,7 +32,9 @@ var (
 	recoverSignatureElapsedMinute int
 	recoverSignatureMaxIterations int
 	recoverSignatureMaxMinutes    int
+	recoverSignatureAnchorID      string
 	recoverLoopParentID           string
+	recoverLoopModuleLabel        string
 	recoverLoopLimit              int
 )
 
@@ -113,6 +121,57 @@ var recoverSignatureCmd = &cobra.Command{
 			exitCode = exitCodePolicyViolation
 		}
 
+		anchorWrite := map[string]interface{}{
+			"attempted": false,
+			"written":   false,
+		}
+		if strings.TrimSpace(recoverSignatureAnchorID) != "" {
+			anchorWrite["attempted"] = true
+			anchorResult, err := resolveAndGetIssueWithRouting(ctx, store, recoverSignatureAnchorID)
+			if err != nil {
+				if anchorResult != nil {
+					anchorResult.Close()
+				}
+				finishEnvelope(commandEnvelope{
+					OK:      false,
+					Command: "recover signature",
+					Result:  "invalid_input",
+					Details: map[string]interface{}{"message": fmt.Sprintf("failed to resolve anchor %q: %v", recoverSignatureAnchorID, err)},
+					Events:  []string{"recover_signature_failed"},
+				}, 1)
+				return
+			}
+			if anchorResult == nil || anchorResult.Issue == nil {
+				if anchorResult != nil {
+					anchorResult.Close()
+				}
+				finishEnvelope(commandEnvelope{
+					OK:      false,
+					Command: "recover signature",
+					Result:  "invalid_input",
+					Details: map[string]interface{}{"message": fmt.Sprintf("anchor %q not found", recoverSignatureAnchorID)},
+					Events:  []string{"recover_signature_failed"},
+				}, 1)
+				return
+			}
+			note := buildRecoverSignatureAnchorNote(recoverSignatureIteration, current)
+			updated := appendNotesLine(anchorResult.Issue.Notes, note)
+			if err := anchorResult.Store.UpdateIssue(ctx, anchorResult.ResolvedID, map[string]interface{}{"notes": updated}, actor); err != nil {
+				anchorResult.Close()
+				finishEnvelope(commandEnvelope{
+					OK:      false,
+					Command: "recover signature",
+					Result:  "system_error",
+					Details: map[string]interface{}{"message": fmt.Sprintf("failed to append anchor signature note: %v", err)},
+					Events:  []string{"recover_signature_failed"},
+				}, 1)
+				return
+			}
+			anchorWrite["written"] = true
+			anchorWrite["anchor_id"] = anchorResult.ResolvedID
+			anchorResult.Close()
+		}
+
 		finishEnvelope(commandEnvelope{
 			OK:      !escalationRequired,
 			Command: "recover signature",
@@ -125,6 +184,7 @@ var recoverSignatureCmd = &cobra.Command{
 				"max_iterations":      recoverSignatureMaxIterations,
 				"max_minutes":         recoverSignatureMaxMinutes,
 				"escalation_required": escalationRequired,
+				"anchor_write":        anchorWrite,
 			},
 			Events: []string{"recover_signature_computed"},
 		}, exitCode)
@@ -153,9 +213,10 @@ var recoverLoopCmd = &cobra.Command{
 			parentID = &resolvedParent
 		}
 
-		readyIssues, err := store.GetReadyWork(ctx, types.WorkFilter{
+		scopedReadyIssues, err := store.GetReadyWork(ctx, types.WorkFilter{
 			Status:   types.StatusOpen,
 			ParentID: parentID,
+			Labels:   recoverLoopScopedLabels(),
 			Limit:    recoverLoopLimit,
 		})
 		if err != nil {
@@ -168,10 +229,61 @@ var recoverLoopCmd = &cobra.Command{
 			}, 1)
 			return
 		}
+		phase1 := map[string]interface{}{
+			"gate_check": map[string]interface{}{"status": "pass"},
+		}
+		nativeGateIDs, fallbackGateIDs, err := recoverOpenGateIDs(ctx, parentID, recoverLoopLimit)
+		if err != nil {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "recover loop",
+				Result:  "system_error",
+				Details: map[string]interface{}{"message": fmt.Sprintf("gate diagnosis failed: %v", err)},
+				Events:  []string{"recover_loop_failed"},
+			}, 1)
+			return
+		}
+		phase1["gate_check"] = map[string]interface{}{
+			"status":              "pass",
+			"native_open_count":   len(nativeGateIDs),
+			"native_open_ids":     nativeGateIDs,
+			"fallback_open_count": len(fallbackGateIDs),
+			"fallback_open_ids":   fallbackGateIDs,
+		}
+		phase1["scoped_ready"] = recoverLoopSnapshot{Count: len(scopedReadyIssues), IDs: issueIDs(scopedReadyIssues)}
+
+		phaseOutcomes := map[string]string{
+			"phase_1": "continue",
+			"phase_2": "skipped",
+			"phase_3": "skipped",
+			"phase_4": "skipped",
+		}
+		phase1Outcome, stopAfterPhase1 := recoverPhase1Outcome(len(scopedReadyIssues))
+		phaseOutcomes["phase_1"] = phase1Outcome
+		if stopAfterPhase1 {
+			phase1["blocked"] = map[string]interface{}{"status": "skipped", "reason": "ready_found"}
+			finishEnvelope(commandEnvelope{
+				OK:      true,
+				Command: "recover loop",
+				Result:  "recover_ready_found",
+				Details: map[string]interface{}{
+					"phase_outcomes": phaseOutcomes,
+					"phase_1":        phase1,
+					"scope": map[string]interface{}{
+						"parent_id":    strings.TrimSpace(recoverLoopParentID),
+						"module_label": strings.TrimSpace(recoverLoopModuleLabel),
+						"limit":        recoverLoopLimit,
+					},
+				},
+				Events: []string{"recover_loop_phases_evaluated"},
+			}, 0)
+			return
+		}
 
 		blockedIssues, err := store.GetBlockedIssues(ctx, types.WorkFilter{
 			Status:   types.StatusOpen,
 			ParentID: parentID,
+			Labels:   recoverLoopScopedLabels(),
 			Limit:    recoverLoopLimit,
 		})
 		if err != nil {
@@ -184,6 +296,7 @@ var recoverLoopCmd = &cobra.Command{
 			}, 1)
 			return
 		}
+		phase1["blocked"] = recoverLoopSnapshot{Count: len(blockedIssues), IDs: blockedIssueIDs(blockedIssues)}
 
 		cycles, err := store.DetectCycles(ctx)
 		if err != nil {
@@ -196,11 +309,34 @@ var recoverLoopCmd = &cobra.Command{
 			}, 1)
 			return
 		}
+		phaseOutcomes["phase_2"] = recoverPhase2Outcome(len(cycles), len(blockedIssues))
+
+		staleCandidates, hookedIDs, err := recoverStructuralDiagnostics(ctx, parentID, recoverLoopLimit)
+		if err != nil {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "recover loop",
+				Result:  "system_error",
+				Details: map[string]interface{}{"message": fmt.Sprintf("phase 2 diagnostics failed: %v", err)},
+				Events:  []string{"recover_loop_failed"},
+			}, 1)
+			return
+		}
+		rootBlockerIDs := recoverRootBlockersFromBlocked(blockedIssues)
+		phase2 := map[string]interface{}{
+			"cycle_count":        len(cycles),
+			"stale_wip_ids":      staleCandidates,
+			"hooked_ids":         hookedIDs,
+			"root_blocker_ids":   rootBlockerIDs,
+			"native_gate_open":   nativeGateIDs,
+			"fallback_gate_open": fallbackGateIDs,
+		}
 
 		statusOpen := types.StatusOpen
 		openIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{
 			Status:   &statusOpen,
 			ParentID: parentID,
+			Labels:   recoverLoopScopedLabels(),
 			Limit:    recoverLoopLimit,
 		})
 		if err != nil {
@@ -214,13 +350,71 @@ var recoverLoopCmd = &cobra.Command{
 			return
 		}
 
-		limboCandidates := detectRecoverLimboCandidates(openIssues, readyIssues, blockedIssues)
-		phases := buildRecoverLoopPhaseOutcomes(len(readyIssues), len(blockedIssues), len(cycles), len(limboCandidates))
+		limboCandidates := detectRecoverLimboCandidates(openIssues, scopedReadyIssues, blockedIssues)
+		phaseOutcomes["phase_3"] = "clear"
+		if len(limboCandidates) > 0 {
+			phaseOutcomes["phase_3"] = "limbo_detected"
+		}
+		phase3 := map[string]interface{}{
+			"limbo_count":      len(limboCandidates),
+			"limbo_candidates": limboCandidates,
+		}
+
+		moduleOnlyReady, err := store.GetReadyWork(ctx, types.WorkFilter{
+			Status: types.StatusOpen,
+			Labels: recoverLoopScopedLabels(),
+			Limit:  recoverLoopLimit,
+		})
+		if err != nil {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "recover loop",
+				Result:  "system_error",
+				Details: map[string]interface{}{"message": fmt.Sprintf("phase 4 module-only ready query failed: %v", err)},
+				Events:  []string{"recover_loop_failed"},
+			}, 1)
+			return
+		}
+		unscopedReady, err := store.GetReadyWork(ctx, types.WorkFilter{
+			Status: types.StatusOpen,
+			Limit:  recoverLoopLimit,
+		})
+		if err != nil {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "recover loop",
+				Result:  "system_error",
+				Details: map[string]interface{}{"message": fmt.Sprintf("phase 4 unscoped ready query failed: %v", err)},
+				Events:  []string{"recover_loop_failed"},
+			}, 1)
+			return
+		}
+		unassignedReady, err := store.GetReadyWork(ctx, types.WorkFilter{
+			Status:     types.StatusOpen,
+			Unassigned: true,
+			Limit:      recoverLoopLimit,
+		})
+		if err != nil {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "recover loop",
+				Result:  "system_error",
+				Details: map[string]interface{}{"message": fmt.Sprintf("phase 4 unassigned ready query failed: %v", err)},
+				Events:  []string{"recover_loop_failed"},
+			}, 1)
+			return
+		}
+		phase4 := map[string]interface{}{
+			"module_only": recoverLoopSnapshot{Count: len(moduleOnlyReady), IDs: issueIDs(moduleOnlyReady)},
+			"unscoped":    recoverLoopSnapshot{Count: len(unscopedReady), IDs: issueIDs(unscopedReady)},
+			"unassigned":  recoverLoopSnapshot{Count: len(unassignedReady), IDs: issueIDs(unassignedReady)},
+		}
+		phaseOutcomes["phase_4"] = resolveRecoverPhase4Outcome(len(moduleOnlyReady), len(unscopedReady), len(unassignedReady))
 
 		result := "recover_continue"
-		if phases["phase_1"] == "ready_found" {
-			result = "recover_ready_found"
-		} else if phases["phase_3"] == "limbo_detected" {
+		if phaseOutcomes["phase_4"] != "no_ready_after_widen" {
+			result = "recover_ready_found_widened"
+		} else if phaseOutcomes["phase_3"] == "limbo_detected" {
 			result = "recover_limbo_detected"
 		}
 
@@ -229,14 +423,16 @@ var recoverLoopCmd = &cobra.Command{
 			Command: "recover loop",
 			Result:  result,
 			Details: map[string]interface{}{
-				"phase_outcomes":    phases,
-				"ready_count":       len(readyIssues),
-				"blocked_count":     len(blockedIssues),
-				"cycle_count":       len(cycles),
-				"limbo_candidates":  limboCandidates,
-				"limbo_count":       len(limboCandidates),
-				"scope_parent_id":   recoverLoopParentID,
-				"scope_issue_limit": recoverLoopLimit,
+				"phase_outcomes": phaseOutcomes,
+				"phase_1":        phase1,
+				"phase_2":        phase2,
+				"phase_3":        phase3,
+				"phase_4":        phase4,
+				"scope": map[string]interface{}{
+					"parent_id":    strings.TrimSpace(recoverLoopParentID),
+					"module_label": strings.TrimSpace(recoverLoopModuleLabel),
+					"limit":        recoverLoopLimit,
+				},
 			},
 			Events: []string{"recover_loop_phases_evaluated"},
 		}, 0)
@@ -259,6 +455,33 @@ func buildRecoverSignature(blocked []*types.BlockedIssue) recoverSignature {
 		BlockerEdges: edges,
 		BlockedCount: len(blocked),
 	}
+}
+
+func recoverPhase1Outcome(scopedReadyCount int) (string, bool) {
+	if scopedReadyCount > 0 {
+		return "ready_found", true
+	}
+	return "continue", false
+}
+
+func recoverPhase2Outcome(cycleCount, blockedCount int) string {
+	if cycleCount > 0 {
+		return "cycles_detected"
+	}
+	if blockedCount > 0 {
+		return "blocked_detected"
+	}
+	return "clean"
+}
+
+func buildRecoverSignatureAnchorNote(iteration int, sig recoverSignature) string {
+	return fmt.Sprintf(
+		"Recover iteration %d: blocked_ids=%s; blocker_edges=%s; blocked_count=%d",
+		iteration,
+		strings.Join(sig.BlockedIDs, ","),
+		strings.Join(sig.BlockerEdges, ","),
+		sig.BlockedCount,
+	)
 }
 
 func recoverSignaturesEqual(a, b recoverSignature) bool {
@@ -343,6 +566,129 @@ func buildRecoverLoopPhaseOutcomes(readyCount, blockedCount, cycleCount, limboCo
 	}
 }
 
+func recoverLoopScopedLabels() []string {
+	label := strings.TrimSpace(recoverLoopModuleLabel)
+	if label == "" {
+		return nil
+	}
+	return []string{label}
+}
+
+func issueIDs(issues []*types.Issue) []string {
+	ids := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		if issue == nil {
+			continue
+		}
+		ids = append(ids, issue.ID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func blockedIssueIDs(issues []*types.BlockedIssue) []string {
+	ids := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		if issue == nil {
+			continue
+		}
+		ids = append(ids, issue.ID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func resolveRecoverPhase4Outcome(moduleReadyCount, unscopedReadyCount, unassignedReadyCount int) string {
+	switch {
+	case moduleReadyCount > 0:
+		return "module_ready_found"
+	case unscopedReadyCount > 0:
+		return "unscoped_ready_found"
+	case unassignedReadyCount > 0:
+		return "unassigned_ready_found"
+	default:
+		return "no_ready_after_widen"
+	}
+}
+
+func recoverOpenGateIDs(ctx context.Context, parentID *string, limit int) ([]string, []string, error) {
+	statusOpen := types.StatusOpen
+	typeGate := types.IssueType("gate")
+	nativeGates, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		Status:    &statusOpen,
+		IssueType: &typeGate,
+		ParentID:  parentID,
+		Limit:     limit,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	nativeIDs := issueIDs(nativeGates)
+
+	fallbackLabel := "type/gate"
+	fallbackGates, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		Status:   &statusOpen,
+		Labels:   []string{fallbackLabel},
+		ParentID: parentID,
+		Limit:    limit,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	fallbackIDs := issueIDs(fallbackGates)
+	return nativeIDs, fallbackIDs, nil
+}
+
+func recoverStructuralDiagnostics(ctx context.Context, parentID *string, limit int) ([]string, []string, error) {
+	inProgress := types.StatusInProgress
+	inProgressIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		Status:   &inProgress,
+		ParentID: parentID,
+		Limit:    limit,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	stale := make([]string, 0)
+	now := time.Now().UTC()
+	for _, issue := range inProgressIssues {
+		if issue == nil {
+			continue
+		}
+		if issue.UpdatedAt.IsZero() {
+			continue
+		}
+		if now.Sub(issue.UpdatedAt.UTC()) > 2*time.Hour {
+			stale = append(stale, issue.ID)
+		}
+	}
+	sort.Strings(stale)
+
+	hooked := types.StatusHooked
+	hookedIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		Status:   &hooked,
+		ParentID: parentID,
+		Limit:    limit,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	hookedIDs := issueIDs(hookedIssues)
+	return stale, hookedIDs, nil
+}
+
+func recoverRootBlockersFromBlocked(blocked []*types.BlockedIssue) []string {
+	if len(blocked) == 0 || blocked[0] == nil {
+		return nil
+	}
+	root := make([]string, 0, len(blocked[0].BlockedBy))
+	for _, blocker := range blocked[0].BlockedBy {
+		root = append(root, blocker)
+	}
+	sort.Strings(root)
+	return uniqueSortedStrings(root)
+}
+
 func init() {
 	recoverSignatureCmd.Flags().StringVar(&recoverSignatureParentID, "parent", "", "Optional parent scope for blocked-signature computation")
 	recoverSignatureCmd.Flags().IntVar(&recoverSignatureLimit, "limit", 20, "Maximum blocked issues to include in signature")
@@ -351,8 +697,10 @@ func init() {
 	recoverSignatureCmd.Flags().IntVar(&recoverSignatureElapsedMinute, "elapsed-minutes", 0, "Recover-loop elapsed minutes")
 	recoverSignatureCmd.Flags().IntVar(&recoverSignatureMaxIterations, "max-iterations", 3, "Escalation iteration threshold")
 	recoverSignatureCmd.Flags().IntVar(&recoverSignatureMaxMinutes, "max-minutes", 30, "Escalation elapsed-minutes threshold")
+	recoverSignatureCmd.Flags().StringVar(&recoverSignatureAnchorID, "anchor", "", "Optional anchor issue ID to append convergence signature note")
 	recoverSignatureCmd.ValidArgsFunction = noCompletions
 	recoverLoopCmd.Flags().StringVar(&recoverLoopParentID, "parent", "", "Optional parent scope for recover-loop phase checks")
+	recoverLoopCmd.Flags().StringVar(&recoverLoopModuleLabel, "module-label", "", "Optional module/<name> label scope for scoped/module-only ready checks")
 	recoverLoopCmd.Flags().IntVar(&recoverLoopLimit, "limit", 20, "Maximum issues per recover-loop phase query")
 	recoverLoopCmd.ValidArgsFunction = noCompletions
 

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -31,27 +33,32 @@ type PreflightResult struct {
 }
 
 type preflightGateAssessment struct {
-	Pass                 bool     `json:"pass"`
-	Blockers             []string `json:"blockers"`
-	DoctorFailCount      int      `json:"doctor_fail_count"`
-	DoctorCriticalWarns  int      `json:"doctor_critical_warn_count"`
-	ValidationOnCreate   string   `json:"validation_on_create"`
-	RequireDescription   bool     `json:"require_description"`
-	WIPCount             int      `json:"wip_count"`
-	WIPGateEnforced      bool     `json:"wip_gate_enforced"`
-	Action               string   `json:"action"`
+	Pass                  bool                   `json:"pass"`
+	Blockers              []string               `json:"blockers"`
+	DoctorFailCount       int                    `json:"doctor_fail_count"`
+	DoctorCriticalWarns   int                    `json:"doctor_critical_warn_count"`
+	ValidationOnCreate    string                 `json:"validation_on_create"`
+	RequireDescription    bool                   `json:"require_description"`
+	HardeningBefore       map[string]interface{} `json:"hardening_before,omitempty"`
+	HardeningAfter        map[string]interface{} `json:"hardening_after,omitempty"`
+	HardeningRemediated   bool                   `json:"hardening_remediated,omitempty"`
+	HardeningRemediateErr string                 `json:"hardening_remediation_error,omitempty"`
+	WIPCount              int                    `json:"wip_count"`
+	WIPGateEnforced       bool                   `json:"wip_gate_enforced"`
+	Action                string                 `json:"action"`
 }
 
 var preflightCriticalDoctorWarnings = map[string]struct{}{
 	"Repo Fingerprint": {},
-	"DB-JSONL Sync":   {},
-	"Sync Divergence": {},
-	"Issues Tracking": {},
+	"DB-JSONL Sync":    {},
+	"Sync Divergence":  {},
+	"Issues Tracking":  {},
 }
 
 var (
-	preflightGateAction  string
-	preflightSkipWIPGate bool
+	preflightGateAction    string
+	preflightSkipWIPGate   bool
+	preflightRuntimeBinary string
 )
 
 var preflightCmd = &cobra.Command{
@@ -80,7 +87,9 @@ func init() {
 	preflightCmd.Flags().Bool("json", false, "Output results as JSON")
 	preflightGateCmd.Flags().StringVar(&preflightGateAction, "action", "claim", "Gate scope: claim or write")
 	preflightGateCmd.Flags().BoolVar(&preflightSkipWIPGate, "skip-wip-gate", false, "Skip WIP gate (resume-remediation only)")
+	preflightRuntimeParityCmd.Flags().StringVar(&preflightRuntimeBinary, "binary", "", "Path to runtime bd binary to verify (defaults to current executable)")
 	preflightCmd.AddCommand(preflightGateCmd)
+	preflightCmd.AddCommand(preflightRuntimeParityCmd)
 
 	rootCmd.AddCommand(preflightCmd)
 }
@@ -89,6 +98,17 @@ var preflightGateCmd = &cobra.Command{
 	Use:   "gate",
 	Short: "Run deterministic control-plane readiness gates",
 	Run:   runPreflightGate,
+}
+
+type runtimeCapabilityProbe struct {
+	CommandPath []string `json:"command_path"`
+	MustContain []string `json:"must_contain"`
+}
+
+var preflightRuntimeParityCmd = &cobra.Command{
+	Use:   "runtime-parity",
+	Short: "Validate runtime binary capability surface against control-plane manifest",
+	Run:   runPreflightRuntimeParity,
 }
 
 func runPreflightGate(cmd *cobra.Command, args []string) {
@@ -110,7 +130,16 @@ func runPreflightGate(cmd *cobra.Command, args []string) {
 
 	validationOnCreate, _ := store.GetConfig(ctx, "validation.on-create")
 	requireDescriptionRaw, _ := store.GetConfig(ctx, "create.require-description")
-	requireDescription, _ := strconv.ParseBool(strings.TrimSpace(requireDescriptionRaw))
+	requireDescription := parseConfigBool(requireDescriptionRaw)
+	hardeningBefore := map[string]interface{}{
+		"validation_on_create": strings.TrimSpace(validationOnCreate),
+		"require_description":  requireDescription,
+	}
+	validationOnCreate, requireDescription, remediated, remediateErr := ensureHardeningInvariant(ctx)
+	hardeningAfter := map[string]interface{}{
+		"validation_on_create": strings.TrimSpace(validationOnCreate),
+		"require_description":  requireDescription,
+	}
 
 	workingPath, err := os.Getwd()
 	if err != nil {
@@ -173,17 +202,29 @@ func runPreflightGate(cmd *cobra.Command, args []string) {
 		wipCount,
 		wipGateEnforced,
 	)
+	assessment.HardeningBefore = hardeningBefore
+	assessment.HardeningAfter = hardeningAfter
+	assessment.HardeningRemediated = remediated
+	if remediateErr != nil {
+		assessment.HardeningRemediateErr = remediateErr.Error()
+		assessment.Pass = false
+		assessment.Blockers = append(assessment.Blockers, "hardening.remediation_failed")
+	}
 
 	details := map[string]interface{}{
-		"action":                     assessment.Action,
-		"blockers":                   assessment.Blockers,
-		"doctor_fail_count":          assessment.DoctorFailCount,
-		"doctor_critical_warn_count": assessment.DoctorCriticalWarns,
-		"validation_on_create":       assessment.ValidationOnCreate,
-		"require_description":        assessment.RequireDescription,
-		"wip_count":                  assessment.WIPCount,
-		"wip_gate_enforced":          assessment.WIPGateEnforced,
-		"wip_issue_ids":              wipIDs,
+		"action":                      assessment.Action,
+		"blockers":                    assessment.Blockers,
+		"doctor_fail_count":           assessment.DoctorFailCount,
+		"doctor_critical_warn_count":  assessment.DoctorCriticalWarns,
+		"validation_on_create":        assessment.ValidationOnCreate,
+		"require_description":         assessment.RequireDescription,
+		"hardening_before":            assessment.HardeningBefore,
+		"hardening_after":             assessment.HardeningAfter,
+		"hardening_remediated":        assessment.HardeningRemediated,
+		"hardening_remediation_error": assessment.HardeningRemediateErr,
+		"wip_count":                   assessment.WIPCount,
+		"wip_gate_enforced":           assessment.WIPGateEnforced,
+		"wip_issue_ids":               wipIDs,
 	}
 
 	if !assessment.Pass {
@@ -205,6 +246,125 @@ func runPreflightGate(cmd *cobra.Command, args []string) {
 		Details: details,
 		Events:  []string{"preflight_passed"},
 	}, 0)
+}
+
+func runPreflightRuntimeParity(cmd *cobra.Command, args []string) {
+	binary := strings.TrimSpace(preflightRuntimeBinary)
+	if binary == "" {
+		binary = os.Args[0]
+	}
+
+	manifest := runtimeCapabilityManifest()
+	failures := evaluateRuntimeCapabilityManifest(manifest, func(path []string) (string, error) {
+		return probeCapabilityHelp(binary, path)
+	})
+	if len(failures) > 0 {
+		finishEnvelope(commandEnvelope{
+			OK:      false,
+			Command: "preflight runtime-parity",
+			Result:  "capability_mismatch",
+			Details: map[string]interface{}{
+				"binary":         binary,
+				"failure_count":  len(failures),
+				"failures":       failures,
+				"manifest_count": len(manifest),
+			},
+			RecoveryCommand: "Rebuild and refresh the pinned runtime binary from current source",
+			Events:          []string{"runtime_parity_failed"},
+		}, exitCodePolicyViolation)
+		return
+	}
+
+	finishEnvelope(commandEnvelope{
+		OK:      true,
+		Command: "preflight runtime-parity",
+		Result:  "capability_match",
+		Details: map[string]interface{}{
+			"binary":         binary,
+			"manifest_count": len(manifest),
+		},
+		Events: []string{"runtime_parity_passed"},
+	}, 0)
+}
+
+func parseConfigBool(raw string) bool {
+	parsed, err := strconv.ParseBool(strings.TrimSpace(raw))
+	return err == nil && parsed
+}
+
+func runtimeCapabilityManifest() []runtimeCapabilityProbe {
+	return []runtimeCapabilityProbe{
+		{CommandPath: nil, MustContain: []string{"flow", "intake", "preflight", "recover", "land", "cutover"}},
+		{CommandPath: []string{"flow"}, MustContain: []string{"claim-next", "preclaim-lint", "baseline-verify", "transition", "close-safe"}},
+		{CommandPath: []string{"intake"}, MustContain: []string{"audit", "map-sync", "planning-exit", "bulk-guard"}},
+		{CommandPath: []string{"preflight"}, MustContain: []string{"gate", "runtime-parity"}},
+		{CommandPath: []string{"recover"}, MustContain: []string{"loop", "signature"}},
+		{CommandPath: []string{"dep"}, MustContain: []string{"tree", "cycles", "add"}},
+	}
+}
+
+func evaluateRuntimeCapabilityManifest(manifest []runtimeCapabilityProbe, probe func(path []string) (string, error)) []string {
+	failures := make([]string, 0)
+	for _, item := range manifest {
+		helpText, err := probe(item.CommandPath)
+		path := "root"
+		if len(item.CommandPath) > 0 {
+			path = strings.Join(item.CommandPath, " ")
+		}
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: help probe failed: %v", path, err))
+			continue
+		}
+		for _, token := range item.MustContain {
+			if !strings.Contains(helpText, token) {
+				failures = append(failures, fmt.Sprintf("%s: missing token %q", path, token))
+			}
+		}
+	}
+	sort.Strings(failures)
+	return failures
+}
+
+func probeCapabilityHelp(binary string, commandPath []string) (string, error) {
+	args := make([]string, 0, len(commandPath)+1)
+	args = append(args, commandPath...)
+	args = append(args, "--help")
+	out, err := exec.Command(binary, args...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s %s failed: %v | %s", binary, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+func ensureHardeningInvariant(ctx context.Context) (string, bool, bool, error) {
+	validationOnCreate, _ := store.GetConfig(ctx, "validation.on-create")
+	requireDescriptionRaw, _ := store.GetConfig(ctx, "create.require-description")
+	requireDescription := parseConfigBool(requireDescriptionRaw)
+	return remediateHardeningInvariant(validationOnCreate, requireDescription, func(key, value string) error {
+		return store.SetConfig(ctx, key, value)
+	})
+}
+
+func remediateHardeningInvariant(validationOnCreate string, requireDescription bool, setter func(key, value string) error) (string, bool, bool, error) {
+	remediated := false
+	currentValidation := strings.TrimSpace(validationOnCreate)
+	currentRequireDescription := requireDescription
+
+	if currentValidation != "error" {
+		if err := setter("validation.on-create", "error"); err != nil {
+			return validationOnCreate, requireDescription, remediated, fmt.Errorf("failed to set validation.on-create=error: %w", err)
+		}
+		currentValidation = "error"
+		remediated = true
+	}
+	if !currentRequireDescription {
+		if err := setter("create.require-description", "true"); err != nil {
+			return currentValidation, currentRequireDescription, remediated, fmt.Errorf("failed to set create.require-description=true: %w", err)
+		}
+		currentRequireDescription = true
+		remediated = true
+	}
+	return currentValidation, currentRequireDescription, remediated, nil
 }
 
 func evaluatePreflightGate(action, validationOnCreate string, requireDescription bool, checks []doctorCheck, wipCount int, enforceWIP bool) preflightGateAssessment {

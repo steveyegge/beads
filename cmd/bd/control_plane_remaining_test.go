@@ -235,6 +235,51 @@ func TestPreflightGateEnforcement(t *testing.T) {
 	}
 }
 
+func TestBootstrapAutoSetsHardeningInvariant(t *testing.T) {
+	updates := make(map[string]string)
+	setter := func(key, value string) error {
+		updates[key] = value
+		return nil
+	}
+	validation, requireDescription, remediated, err := remediateHardeningInvariant("warn", false, setter)
+	if err != nil {
+		t.Fatalf("expected hardening remediation to succeed, got %v", err)
+	}
+	if !remediated {
+		t.Fatalf("expected remediation marker to be true")
+	}
+	if validation != "error" {
+		t.Fatalf("expected validation.on-create to be normalized to error, got %q", validation)
+	}
+	if !requireDescription {
+		t.Fatalf("expected create.require-description to be normalized to true")
+	}
+	if updates["validation.on-create"] != "error" {
+		t.Fatalf("expected validation remediation write, got %v", updates)
+	}
+	if updates["create.require-description"] != "true" {
+		t.Fatalf("expected description remediation write, got %v", updates)
+	}
+
+	updates = make(map[string]string)
+	validation, requireDescription, remediated, err = remediateHardeningInvariant("error", true, func(key, value string) error {
+		updates[key] = value
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected no-op remediation to succeed, got %v", err)
+	}
+	if remediated {
+		t.Fatalf("expected remediated=false for compliant hardening values")
+	}
+	if validation != "error" || !requireDescription {
+		t.Fatalf("expected compliant values to remain unchanged, got validation=%q requireDescription=%v", validation, requireDescription)
+	}
+	if len(updates) != 0 {
+		t.Fatalf("expected no writes for compliant values, got %v", updates)
+	}
+}
+
 func TestDeferLivenessEnforcement(t *testing.T) {
 	if deferCmd.Flags().Lookup("allow-unbounded") == nil {
 		t.Fatalf("defer command missing --allow-unbounded opt-out")
@@ -348,6 +393,35 @@ func TestPreClaimQualityLint(t *testing.T) {
 	}
 	if violations := collectPreclaimViolations(badIssue, nil); len(violations) == 0 {
 		t.Fatalf("expected violations for invalid pre-claim issue")
+	}
+}
+
+func TestPreclaimLintRequiresEstimateOrSplitMarker(t *testing.T) {
+	deps := []*types.IssueWithDependencyMetadata{
+		{Issue: types.Issue{ID: "bd-parent"}, DependencyType: types.DepParentChild},
+	}
+
+	withSplitMarker := &types.Issue{
+		ID:                 "bd-split",
+		IssueType:          types.TypeTask,
+		Description:        "## Context\nsplit-required: follow-up atomization planned\n\n## Verify\ngo test ./cmd/bd -run TestX -count=1",
+		AcceptanceCriteria: "observable behavior",
+		Labels:             []string{"module/control-plane", "area/infra"},
+	}
+	if violations := collectPreclaimViolations(withSplitMarker, deps); len(violations) != 0 {
+		t.Fatalf("expected split marker to satisfy atomicity estimate rule, got %v", violations)
+	}
+
+	missingBoth := &types.Issue{
+		ID:                 "bd-missing-estimate",
+		IssueType:          types.TypeTask,
+		Description:        "## Context\nno estimate metadata present\n\n## Verify\ngo test ./cmd/bd -run TestX -count=1",
+		AcceptanceCriteria: "observable behavior",
+		Labels:             []string{"module/control-plane", "area/infra"},
+	}
+	violations := collectPreclaimViolations(missingBoth, deps)
+	if !strings.Contains(strings.Join(violations, ","), "estimate_or_split.missing") {
+		t.Fatalf("expected estimate_or_split.missing violation, got %v", violations)
 	}
 }
 
@@ -631,6 +705,79 @@ func TestRecoverLoopDeterministicPhases(t *testing.T) {
 	}
 }
 
+func TestRecoverLoopPhase1Sequence(t *testing.T) {
+	if recoverLoopCmd.Flags().Lookup("module-label") == nil {
+		t.Fatalf("recover loop missing --module-label flag")
+	}
+
+	outcome, stop := recoverPhase1Outcome(1)
+	if outcome != "ready_found" || !stop {
+		t.Fatalf("expected phase 1 to stop on ready work, got outcome=%q stop=%v", outcome, stop)
+	}
+
+	outcome, stop = recoverPhase1Outcome(0)
+	if outcome != "continue" || stop {
+		t.Fatalf("expected phase 1 to continue when scoped ready is empty, got outcome=%q stop=%v", outcome, stop)
+	}
+}
+
+func TestRecoverLoopPhase2StructuralDiagnostics(t *testing.T) {
+	if got := recoverPhase2Outcome(1, 3); got != "cycles_detected" {
+		t.Fatalf("expected cycles to dominate phase 2 outcome, got %q", got)
+	}
+	if got := recoverPhase2Outcome(0, 2); got != "blocked_detected" {
+		t.Fatalf("expected blocked detection in phase 2 outcome, got %q", got)
+	}
+	if got := recoverPhase2Outcome(0, 0); got != "clean" {
+		t.Fatalf("expected clean phase 2 outcome, got %q", got)
+	}
+
+	root := recoverRootBlockersFromBlocked([]*types.BlockedIssue{
+		{BlockedBy: []string{"bd-b2", "bd-b1", "bd-b1"}},
+	})
+	if !reflect.DeepEqual(root, []string{"bd-b1", "bd-b2"}) {
+		t.Fatalf("expected sorted unique root blockers, got %v", root)
+	}
+}
+
+func TestRecoverLoopPhase4WidenScope(t *testing.T) {
+	if got := resolveRecoverPhase4Outcome(1, 0, 0); got != "module_ready_found" {
+		t.Fatalf("expected module_ready_found, got %q", got)
+	}
+	if got := resolveRecoverPhase4Outcome(0, 2, 0); got != "unscoped_ready_found" {
+		t.Fatalf("expected unscoped_ready_found, got %q", got)
+	}
+	if got := resolveRecoverPhase4Outcome(0, 0, 3); got != "unassigned_ready_found" {
+		t.Fatalf("expected unassigned_ready_found, got %q", got)
+	}
+	if got := resolveRecoverPhase4Outcome(0, 0, 0); got != "no_ready_after_widen" {
+		t.Fatalf("expected no_ready_after_widen, got %q", got)
+	}
+}
+
+func TestRecoverSignatureAnchorPersistence(t *testing.T) {
+	if recoverSignatureCmd.Flags().Lookup("anchor") == nil {
+		t.Fatalf("recover signature missing --anchor flag")
+	}
+
+	note := buildRecoverSignatureAnchorNote(4, recoverSignature{
+		BlockedIDs:   []string{"bd-1", "bd-2"},
+		BlockerEdges: []string{"bd-1|bd-9"},
+		BlockedCount: 2,
+	})
+	required := []string{
+		"Recover iteration 4:",
+		"blocked_ids=bd-1,bd-2",
+		"blocker_edges=bd-1|bd-9",
+		"blocked_count=2",
+	}
+	for _, token := range required {
+		if !strings.Contains(note, token) {
+			t.Fatalf("anchor note missing %q in %q", token, note)
+		}
+	}
+}
+
 func TestLandFullGateCoverage(t *testing.T) {
 	if landCmd.Flags().Lookup("require-quality") == nil {
 		t.Fatalf("land missing --require-quality flag")
@@ -666,6 +813,65 @@ func TestLandFullGateCoverage(t *testing.T) {
 	}
 	if step := evaluateLandHandoffGate(true, "Continue work on bd-1", "none"); step.Status != "pass" {
 		t.Fatalf("expected pass handoff gate when required fields present, got %+v", step)
+	}
+}
+
+func TestLandGate3SyncChoreography(t *testing.T) {
+	if landCmd.Flags().Lookup("sync-merge") == nil {
+		t.Fatalf("land missing --sync-merge flag")
+	}
+
+	calls := make([]string, 0)
+	runner := func(name string, args ...string) (string, error) {
+		calls = append(calls, strings.TrimSpace(name+" "+strings.Join(args, " ")))
+		return "ok", nil
+	}
+
+	steps, err := runLandGate3Choreography(false, true, true, true, runner)
+	if err != nil {
+		t.Fatalf("expected gate3 choreography to succeed, got %v", err)
+	}
+	expectedCalls := []string{
+		"git pull --rebase",
+		"bd sync --status",
+		"bd sync --merge",
+		"bd sync",
+		"git push",
+	}
+	if !reflect.DeepEqual(calls, expectedCalls) {
+		t.Fatalf("unexpected gate3 command call order: got %v want %v", calls, expectedCalls)
+	}
+	if len(steps) != 5 {
+		t.Fatalf("expected 5 gate3 steps, got %d (%v)", len(steps), steps)
+	}
+
+	calls = calls[:0]
+	steps, err = runLandGate3Choreography(true, true, false, false, runner)
+	if err != nil {
+		t.Fatalf("expected check-only choreography to succeed, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no subprocess calls in check-only mode, got %v", calls)
+	}
+	if steps[0].Status != "skipped" || steps[1].Status != "skipped" {
+		t.Fatalf("expected initial check-only steps to be skipped, got %v", steps)
+	}
+}
+
+func TestLandGate3PromotesCriticalWarningsToBlocker(t *testing.T) {
+	warnings := criticalWarningNamesFromChecks([]doctorCheck{
+		{Name: "Repo Fingerprint", Status: statusWarning},
+		{Name: "DB-JSONL Sync", Status: statusWarning},
+		{Name: "non-critical", Status: statusWarning},
+		{Name: "Repo Fingerprint", Status: statusOK},
+	})
+	if !reflect.DeepEqual(warnings, []string{"DB-JSONL Sync", "Repo Fingerprint"}) {
+		t.Fatalf("expected sorted critical warning names, got %v", warnings)
+	}
+
+	none := criticalWarningNamesFromChecks([]doctorCheck{{Name: "Issues Tracking", Status: statusOK}})
+	if len(none) != 0 {
+		t.Fatalf("expected no promoted warnings for non-warning statuses, got %v", none)
 	}
 }
 
@@ -1308,6 +1514,82 @@ func TestStrictModeRequiresExplicitIDs(t *testing.T) {
 	t.Setenv("BD_STRICT_CONTROL", "0")
 	if strictControlExplicitIDsEnabled(false) {
 		t.Fatalf("BD_STRICT_CONTROL=0 should disable strict mode without flag")
+	}
+}
+
+func TestCapabilityProbeFailsUnknownHelpSubcommand(t *testing.T) {
+	err := validateUnknownHelpSubcommandProbe(rootCmd, []string{"flow", "definitely-not-a-subcommand", "--help"})
+	if err == nil {
+		t.Fatalf("expected unknown help subcommand probe to fail")
+	}
+	if !strings.Contains(err.Error(), "unknown subcommand") {
+		t.Fatalf("expected unknown-subcommand diagnostic, got %v", err)
+	}
+
+	if err := validateUnknownHelpSubcommandProbe(rootCmd, []string{"flow", "claim-next", "--help"}); err != nil {
+		t.Fatalf("expected valid flow subcommand help probe to pass, got %v", err)
+	}
+	if err := validateUnknownHelpSubcommandProbe(rootCmd, []string{"flow", "--help"}); err != nil {
+		t.Fatalf("expected top-level help probe to pass, got %v", err)
+	}
+}
+
+func TestRuntimeBinaryCapabilityParityManifest(t *testing.T) {
+	manifest := runtimeCapabilityManifest()
+	helpByPath := make(map[string]string, len(manifest))
+	for _, item := range manifest {
+		key := strings.Join(item.CommandPath, " ")
+		helpByPath[key] = strings.Join(item.MustContain, "\n")
+	}
+
+	failures := evaluateRuntimeCapabilityManifest(manifest, func(path []string) (string, error) {
+		return helpByPath[strings.Join(path, " ")], nil
+	})
+	if len(failures) != 0 {
+		t.Fatalf("expected manifest parity check to pass when all tokens are present, got %v", failures)
+	}
+
+	helpByPath["flow"] = "claim-next\nclose-safe"
+	failures = evaluateRuntimeCapabilityManifest(manifest, func(path []string) (string, error) {
+		return helpByPath[strings.Join(path, " ")], nil
+	})
+	if len(failures) == 0 {
+		t.Fatalf("expected parity check to fail when required flow tokens are missing")
+	}
+	joined := strings.Join(failures, "\n")
+	if !strings.Contains(joined, `flow: missing token "preclaim-lint"`) {
+		t.Fatalf("expected missing-token diagnostics, got %v", failures)
+	}
+}
+
+func TestStrictControlMandatoryAnchorAndParentCascade(t *testing.T) {
+	if flowClaimNextCmd.Flags().Lookup("allow-missing-anchor") == nil {
+		t.Fatalf("flow claim-next missing --allow-missing-anchor flag")
+	}
+	if flowCloseSafeCmd.Flags().Lookup("allow-open-children") == nil {
+		t.Fatalf("flow close-safe missing --allow-open-children flag")
+	}
+
+	t.Setenv("BD_STRICT_CONTROL", "true")
+	if !effectiveRequireAnchor(false, false) {
+		t.Fatalf("strict control should require anchor by default")
+	}
+	if effectiveRequireAnchor(false, true) {
+		t.Fatalf("--allow-missing-anchor should bypass strict default")
+	}
+	if !effectiveRequireParentCascade(false, false) {
+		t.Fatalf("strict control should require parent cascade by default")
+	}
+	if effectiveRequireParentCascade(false, true) {
+		t.Fatalf("--allow-open-children should bypass strict default")
+	}
+
+	t.Setenv("BD_STRICT_CONTROL", "0")
+	if effectiveRequireAnchor(false, false) {
+		t.Fatalf("strict defaults should disable when BD_STRICT_CONTROL=0")
+	}
+	if effectiveRequireParentCascade(false, false) {
+		t.Fatalf("strict defaults should disable for parent cascade when BD_STRICT_CONTROL=0")
 	}
 }
 

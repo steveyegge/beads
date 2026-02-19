@@ -736,6 +736,10 @@ func main() {
 	// Cobra has created its default help command.
 	rootCmd.InitDefaultHelpCmd()
 	registerHelpAllFlag()
+	if err := validateUnknownHelpSubcommandProbe(rootCmd, os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

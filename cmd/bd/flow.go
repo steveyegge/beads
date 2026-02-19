@@ -24,6 +24,7 @@ var (
 	flowClaimLimit                int
 	flowClaimPriority             int
 	flowClaimRequireAnchor        bool
+	flowClaimAllowMissingAnchor   bool
 	flowClaimAnchorLabel          string
 	flowPreclaimIssue             string
 	flowBaselineIssue             string
@@ -70,6 +71,7 @@ var (
 	flowCloseAllowSecretMarkers  bool
 	flowCloseRequireTraceability bool
 	flowCloseRequireParentCheck  bool
+	flowCloseAllowOpenChildren   bool
 	flowCloseForce               bool
 	flowCloseRequirePriorityPoll bool
 	flowClosePriorityPollMaxAge  string
@@ -124,14 +126,15 @@ var flowClaimNextCmd = &cobra.Command{
 			}
 			resolvedParent = &pid
 		}
-		if flowClaimRequireAnchor {
+		requireAnchor := effectiveRequireAnchor(flowClaimRequireAnchor, flowClaimAllowMissingAnchor)
+		if requireAnchor {
 			if resolvedParent == nil {
 				finishEnvelope(commandEnvelope{
 					OK:      false,
 					Command: "flow claim-next",
 					Result:  "policy_violation",
 					Details: map[string]interface{}{
-						"message": "--require-anchor requires --parent",
+						"message": "--require-anchor requires --parent (strict-control defaults can be bypassed with --allow-missing-anchor)",
 					},
 					Events: []string{"claim_skipped"},
 				}, exitCodePolicyViolation)
@@ -2275,7 +2278,8 @@ var flowCloseSafeCmd = &cobra.Command{
 			}
 		}
 
-		if flowCloseRequireParentCheck {
+		requireParentCascade := effectiveRequireParentCascade(flowCloseRequireParentCheck, flowCloseAllowOpenChildren)
+		if requireParentCascade {
 			unclosedChildren, err := unresolvedParentChildren(ctx, result.ResolvedID)
 			if err != nil {
 				finishEnvelope(commandEnvelope{
@@ -2558,10 +2562,59 @@ func collectPreclaimViolations(issue *types.Issue, deps []*types.IssueWithDepend
 	if !hasParentChildDependency(issue.IssueType, deps) {
 		violations = append(violations, "dependency_shape.missing_parent_child")
 	}
-	if issue.EstimatedMinutes != nil && *issue.EstimatedMinutes > 180 {
-		violations = append(violations, "estimate.exceeds_180")
+	hasSplitMarker := hasExplicitSplitMarker(issue)
+	hasBoundedEstimate := issue.EstimatedMinutes != nil && *issue.EstimatedMinutes > 0 && *issue.EstimatedMinutes <= 180
+	if !hasBoundedEstimate && !hasSplitMarker {
+		if issue.EstimatedMinutes != nil && *issue.EstimatedMinutes > 180 {
+			violations = append(violations, "estimate.exceeds_180")
+		} else {
+			violations = append(violations, "estimate_or_split.missing")
+		}
 	}
 	return violations
+}
+
+func hasExplicitSplitMarker(issue *types.Issue) bool {
+	if issue == nil {
+		return false
+	}
+	haystack := strings.ToLower(strings.Join([]string{
+		issue.Description,
+		issue.AcceptanceCriteria,
+		issue.Notes,
+	}, "\n"))
+	markers := []string{
+		"split-required",
+		"split_required",
+		"split marker",
+		"split:",
+	}
+	for _, marker := range markers {
+		if strings.Contains(haystack, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func effectiveRequireAnchor(requireAnchorFlag, allowMissingAnchor bool) bool {
+	if requireAnchorFlag {
+		return true
+	}
+	if allowMissingAnchor {
+		return false
+	}
+	return strictControlExplicitIDsEnabled(false)
+}
+
+func effectiveRequireParentCascade(requireParentFlag, allowOpenChildren bool) bool {
+	if requireParentFlag {
+		return true
+	}
+	if allowOpenChildren {
+		return false
+	}
+	return strictControlExplicitIDsEnabled(false)
 }
 
 func resolveAnchorLabel(explicit string, labels []string) string {
@@ -3303,6 +3356,7 @@ func init() {
 	flowClaimNextCmd.Flags().IntVar(&flowClaimPriority, "priority", 0, "Priority filter (0-4)")
 	flowClaimNextCmd.Flags().IntVar(&flowClaimLimit, "limit", 10, "Maximum ready candidates to scan")
 	flowClaimNextCmd.Flags().BoolVar(&flowClaimRequireAnchor, "require-anchor", false, "Require exactly one pinned anchor for module/milestone slice before claim")
+	flowClaimNextCmd.Flags().BoolVar(&flowClaimAllowMissingAnchor, "allow-missing-anchor", false, "Bypass strict-control default anchor requirement")
 	flowClaimNextCmd.Flags().StringVar(&flowClaimAnchorLabel, "anchor-label", "", "Anchor label to enforce when --require-anchor is set (for example module/<name>)")
 	flowClaimNextCmd.ValidArgsFunction = noCompletions
 
@@ -3358,6 +3412,7 @@ func init() {
 	flowCloseSafeCmd.Flags().BoolVar(&flowCloseRequireSpecDrift, "require-spec-drift-proof", false, "Require docs diff or DOC-DRIFT tag in notes before close")
 	flowCloseSafeCmd.Flags().BoolVar(&flowCloseRequireTraceability, "require-traceability", false, "Require traceability chain to parent outcome before close")
 	flowCloseSafeCmd.Flags().BoolVar(&flowCloseRequireParentCheck, "require-parent-cascade", false, "Require parent-close cascade check (no open parent-child dependents)")
+	flowCloseSafeCmd.Flags().BoolVar(&flowCloseAllowOpenChildren, "allow-open-children", false, "Bypass strict-control default parent-cascade enforcement")
 	flowCloseSafeCmd.Flags().BoolVar(&flowCloseRequireEvidence, "require-evidence-tuple", false, "Require a fresh EvidenceTuple note entry before close")
 	flowCloseSafeCmd.Flags().BoolVar(&flowCloseNonHermetic, "non-hermetic", false, "Mark verification flow as non-hermetic and require EvidenceTuple automatically")
 	flowCloseSafeCmd.Flags().StringVar(&flowCloseEvidenceMaxAge, "evidence-max-age", "24h", "Maximum allowed EvidenceTuple age when --require-evidence-tuple is set")
