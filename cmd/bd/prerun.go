@@ -439,14 +439,14 @@ func openStore(cmd *cobra.Command) {
 
 	// Bootstrap embedded dolt if needed
 	if !doltCfg.ServerMode {
-		if bErr := bootstrapEmbeddedDolt(rootCtx, doltPath, doltCfg); bErr != nil {
+		if bErr := bootstrapEmbeddedDolt(getRootContext(), doltPath, doltCfg); bErr != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", bErr)
 			os.Exit(1)
 		}
 	}
 
 	doltCfg.Path = doltPath
-	s, err := dolt.New(rootCtx, doltCfg)
+	s, err := dolt.New(getRootContext(), doltCfg)
 
 	storeIsReadOnly = doltCfg.ReadOnly
 
