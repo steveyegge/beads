@@ -14,6 +14,7 @@ import (
 
 var (
 	setupProject bool
+	setupGlobal  bool
 	setupCheck   bool
 	setupRemove  bool
 	setupStealth bool
@@ -30,10 +31,13 @@ var setupCmd = &cobra.Command{
 	Long: `Setup integration files for AI editors and coding assistants.
 
 Recipes define where beads workflow instructions are written. Built-in recipes
-include cursor, claude, gemini, aider, factory, codex, windsurf, cody, and kilocode.
+include cursor, claude, gemini, aider, factory, codex, mux, junie, windsurf, cody, and kilocode.
 
 Examples:
   bd setup cursor          # Install Cursor IDE integration
+  bd setup mux --project   # Install Mux workspace layer (.mux/AGENTS.md)
+  bd setup mux --global    # Install Mux global layer (~/.mux/AGENTS.md)
+  bd setup mux --project --global  # Install both Mux layers
   bd setup --list          # Show all available recipes
   bd setup --print         # Print the template to stdout
   bd setup -o rules.md     # Write template to custom path
@@ -169,6 +173,9 @@ func runRecipe(name string) {
 	case "codex":
 		runCodexRecipe()
 		return
+	case "mux":
+		runMuxRecipe()
+		return
 	case "aider":
 		runAiderRecipe()
 		return
@@ -302,6 +309,18 @@ func runCodexRecipe() {
 	setup.InstallCodex()
 }
 
+func runMuxRecipe() {
+	if setupCheck {
+		setup.CheckMux(setupProject, setupGlobal)
+		return
+	}
+	if setupRemove {
+		setup.RemoveMux(setupProject, setupGlobal)
+		return
+	}
+	setup.InstallMux(setupProject, setupGlobal)
+}
+
 func runAiderRecipe() {
 	if setupCheck {
 		setup.CheckAider()
@@ -349,7 +368,8 @@ func init() {
 	// Per-recipe flags
 	setupCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if integration is installed")
 	setupCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove the integration")
-	setupCmd.Flags().BoolVar(&setupProject, "project", false, "Install for this project only (claude/gemini)")
+	setupCmd.Flags().BoolVar(&setupProject, "project", false, "Install for this project only (claude/gemini/mux)")
+	setupCmd.Flags().BoolVar(&setupGlobal, "global", false, "Install globally (mux only; writes ~/.mux/AGENTS.md)")
 	setupCmd.Flags().BoolVar(&setupStealth, "stealth", false, "Use stealth mode (claude/gemini)")
 
 	rootCmd.AddCommand(setupCmd)

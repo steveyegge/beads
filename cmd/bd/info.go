@@ -215,6 +215,7 @@ var versionChanges = []VersionChange{
 		Changes: []string{
 			"FIX: Release CI zig cross-compilation cache race (--parallelism 1)",
 			"FIX: Android ARM64 build uses CGO_ENABLED=0 (server mode only)",
+			"NEW: Mux setup recipe with layered AGENTS and managed hooks",
 		},
 	},
 	{

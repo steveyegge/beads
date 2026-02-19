@@ -107,6 +107,8 @@ var (
 	errBeadsSectionMissing = errors.New("beads section missing")
 )
 
+const muxAgentInstructionsURL = "https://mux.coder.com/AGENTS.md"
+
 type agentsEnv struct {
 	agentsPath string
 	stdout     io.Writer
@@ -117,6 +119,7 @@ type agentsIntegration struct {
 	name         string
 	setupCommand string
 	readHint     string
+	docsURL      string
 }
 
 func defaultAgentsEnv() agentsEnv {
@@ -169,6 +172,9 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 	if integration.readHint != "" {
 		_, _ = fmt.Fprintf(env.stdout, "\n%s\n", integration.readHint)
 	}
+	if integration.docsURL != "" {
+		_, _ = fmt.Fprintf(env.stdout, "Review guide: %s\n", integration.docsURL)
+	}
 	_, _ = fmt.Fprintln(env.stdout, "No additional configuration needed!")
 	return nil
 }
@@ -214,15 +220,6 @@ func removeAgents(env agentsEnv, integration agentsIntegration) error {
 	}
 
 	newContent := removeBeadsSection(content)
-	trimmed := strings.TrimSpace(newContent)
-	if trimmed == "" {
-		if err := os.Remove(env.agentsPath); err != nil {
-			_, _ = fmt.Fprintf(env.stderr, "Error: failed to remove %s: %v\n", env.agentsPath, err)
-			return err
-		}
-		_, _ = fmt.Fprintf(env.stdout, "✓ Removed %s (file was empty after removing beads section)\n", env.agentsPath)
-		return nil
-	}
 
 	if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
 		_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
@@ -262,20 +259,23 @@ func removeBeadsSection(content string) string {
 		return content
 	}
 
-	// Find the next newline after end marker
+	// Remove exactly the managed section, including a single trailing newline
+	// immediately after the end marker if present. We intentionally do NOT trim
+	// surrounding whitespace or unrelated content to keep user file content intact.
 	endOfEndMarker := end + len(agentsEndMarker)
-	nextNewline := strings.Index(content[endOfEndMarker:], "\n")
-	if nextNewline != -1 {
-		endOfEndMarker += nextNewline + 1
+	if endOfEndMarker < len(content) {
+		switch content[endOfEndMarker] {
+		case '\r':
+			endOfEndMarker++
+			if endOfEndMarker < len(content) && content[endOfEndMarker] == '\n' {
+				endOfEndMarker++
+			}
+		case '\n':
+			endOfEndMarker++
+		}
 	}
 
-	// Also remove leading blank lines before the section
-	trimStart := start
-	for trimStart > 0 && (content[trimStart-1] == '\n' || content[trimStart-1] == '\r') {
-		trimStart--
-	}
-
-	return content[:trimStart] + content[endOfEndMarker:]
+	return content[:start] + content[endOfEndMarker:]
 }
 
 // createNewAgentsFile creates a new AGENTS.md with a basic template
