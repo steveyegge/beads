@@ -330,6 +330,104 @@ func (s *DoltStore) GetDependencyRecordsForIssues(ctx context.Context, issueIDs 
 	return result, rows.Err()
 }
 
+// GetBlockingInfoForIssues returns blocking dependency records relevant to a set of issue IDs.
+// It fetches both directions:
+//   - Dependencies where issue_id is in the set ("this issue is blocked by X")
+//   - Dependencies where depends_on_id is in the set ("this issue blocks Y")
+//
+// It also returns a set of closed blocker IDs for filtering stale blocked-by annotations.
+// This replaces the expensive pattern of GetAllDependencyRecords + getClosedBlockerIDs
+// which loaded the entire dependency table and did N+1 issue lookups. (bd-7di)
+func (s *DoltStore) GetBlockingInfoForIssues(ctx context.Context, issueIDs []string) (
+	blockedByMap map[string][]string, // issueID -> list of IDs blocking it
+	blocksMap map[string][]string, // issueID -> list of IDs it blocks
+	err error,
+) {
+	blockedByMap = make(map[string][]string)
+	blocksMap = make(map[string][]string)
+
+	if len(issueIDs) == 0 {
+		return blockedByMap, blocksMap, nil
+	}
+
+	placeholders := make([]string, len(issueIDs))
+	args := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// Query 1: Get "blocked by" relationships — deps where issue_id is in our set
+	// and the dependency type affects ready work (blocks, parent-child).
+	// nolint:gosec // G201: inClause contains only ? placeholders, actual values passed via args
+	blockedByQuery := fmt.Sprintf(`
+		SELECT d.issue_id, d.depends_on_id, d.type, COALESCE(i.status, '') AS blocker_status
+		FROM dependencies d
+		LEFT JOIN issues i ON i.id = d.depends_on_id
+		WHERE d.issue_id IN (%s) AND d.type IN ('blocks', 'parent-child')
+	`, inClause)
+
+	rows, qErr := s.queryContext(ctx, blockedByQuery, args...)
+	if qErr != nil {
+		return nil, nil, fmt.Errorf("failed to get blocked-by info: %w", qErr)
+	}
+	for rows.Next() {
+		var issueID, blockerID, depType, blockerStatus string
+		if scanErr := rows.Scan(&issueID, &blockerID, &depType, &blockerStatus); scanErr != nil {
+			_ = rows.Close()
+			return nil, nil, scanErr
+		}
+		// Skip closed blockers — the dependency record is preserved, but a
+		// closed blocker no longer blocks work.
+		if types.Status(blockerStatus) == types.StatusClosed {
+			continue
+		}
+		blockedByMap[issueID] = append(blockedByMap[issueID], blockerID)
+	}
+	_ = rows.Close()
+	if rowErr := rows.Err(); rowErr != nil {
+		return nil, nil, rowErr
+	}
+
+	// Query 2: Get "blocks" relationships — deps where depends_on_id is in our set
+	// (shows what the displayed issues block).
+	// nolint:gosec // G201: inClause contains only ? placeholders, actual values passed via args
+	blocksQuery := fmt.Sprintf(`
+		SELECT d.depends_on_id, d.issue_id, d.type, COALESCE(i.status, '') AS blocker_status
+		FROM dependencies d
+		LEFT JOIN issues i ON i.id = d.depends_on_id
+		WHERE d.depends_on_id IN (%s) AND d.type IN ('blocks', 'parent-child')
+	`, inClause)
+
+	rows2, qErr2 := s.queryContext(ctx, blocksQuery, args...)
+	if qErr2 != nil {
+		return nil, nil, fmt.Errorf("failed to get blocks info: %w", qErr2)
+	}
+	for rows2.Next() {
+		var blockerID, blockedID, depType, blockerStatus string
+		if scanErr := rows2.Scan(&blockerID, &blockedID, &depType, &blockerStatus); scanErr != nil {
+			_ = rows2.Close()
+			return nil, nil, scanErr
+		}
+		// Skip if the blocker (our displayed issue) is closed
+		if types.Status(blockerStatus) == types.StatusClosed {
+			continue
+		}
+		// Skip parent-child in "blocks" map (those are structural, not blocking)
+		if depType == "parent-child" {
+			continue
+		}
+		blocksMap[blockerID] = append(blocksMap[blockerID], blockedID)
+	}
+	_ = rows2.Close()
+	if rowErr2 := rows2.Err(); rowErr2 != nil {
+		return nil, nil, rowErr2
+	}
+
+	return blockedByMap, blocksMap, nil
+}
+
 // GetDependencyCounts returns dependency counts for multiple issues
 func (s *DoltStore) GetDependencyCounts(ctx context.Context, issueIDs []string) (map[string]*types.DependencyCounts, error) {
 	if len(issueIDs) == 0 {

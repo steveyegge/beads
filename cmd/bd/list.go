@@ -742,11 +742,11 @@ var listCmd = &cobra.Command{
 		// Best effort: display gracefully degrades with empty data
 		labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
 
-		// Load dependencies for blocking info display
+		// Load blocking info for displayed issues only (bd-7di).
+		// Previously loaded ALL dependency records which was O(total_issues) and took 2-4s.
+		// Now scoped to only the displayed issues, making it O(displayed_issues).
 		// Best effort: display gracefully degrades with empty data
-		allDepsForList, _ := activeStore.GetAllDependencyRecords(ctx)
-		closedIDs := getClosedBlockerIDs(ctx, activeStore, allDepsForList)
-		blockedByMap, blocksMap, _ := buildBlockingMaps(allDepsForList, closedIDs)
+		blockedByMap, blocksMap, _ := activeStore.GetBlockingInfoForIssues(ctx, issueIDs)
 
 		// Build output in buffer for pager support (bd-jdz3)
 		var buf strings.Builder
