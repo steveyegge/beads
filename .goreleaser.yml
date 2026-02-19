@@ -29,6 +29,9 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
   - id: bd-linux-arm64
     main: ./cmd/bd
@@ -48,6 +51,9 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
   - id: bd-android-arm64
     main: ./cmd/bd
@@ -86,6 +92,9 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
   - id: bd-darwin-arm64
     main: ./cmd/bd
@@ -106,6 +115,9 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
   - id: bd-windows-amd64
     main: ./cmd/bd
@@ -128,6 +140,7 @@ builds:
       - -buildmode=exe
     hooks:
       post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
         # Sign Windows executable with Authenticode certificate
         # Requires WINDOWS_SIGNING_CERT_PFX_BASE64 and WINDOWS_SIGNING_CERT_PASSWORD secrets
         - ./scripts/sign-windows.sh "{{ .Path }}"
@@ -154,6 +167,7 @@ builds:
       - -buildmode=exe
     hooks:
       post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
         # Sign Windows executable with Authenticode certificate
         # Requires WINDOWS_SIGNING_CERT_PFX_BASE64 and WINDOWS_SIGNING_CERT_PASSWORD secrets
         - ./scripts/sign-windows.sh "{{ .Path }}"
@@ -177,6 +191,9 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
 archives:
   - id: bd-archive
