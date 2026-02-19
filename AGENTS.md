@@ -40,7 +40,7 @@ This file is designed to prevent these common agent failures:
 When instructions conflict, resolve in this order:
 1. user instruction
 2. `bd` source behavior and `bd <cmd> --help`
-3. `docs/CONTROL_PLANE_CONTRACT.md`
+3. the inlined Control-Plane Contract section in this file
 4. split-agent docs (`claude-plugin/agents/*.md`, `docs/agents/*.md`)
 5. this file
 
@@ -61,6 +61,70 @@ When conflict handling is required, record:
   - prioritization and tradeoffs
   - architecture decisions
   - handoff writing quality
+
+## Control-Plane Contract (Inlined)
+
+Deterministic `bd` command surfaces:
+- `flow claim-next`
+- `flow create-discovered`
+- `flow block-with-context`
+- `flow close-safe`
+- `flow transition`
+- `intake audit`
+- `intake map-sync`
+- `intake planning-exit`
+- `intake bulk-guard`
+- `preflight gate`
+- `preflight runtime-parity`
+- `recover loop`
+- `recover signature`
+- `resume`
+- `land`
+- `reason lint`
+
+All control-plane commands in JSON mode are expected to emit:
+
+```json
+{
+  "ok": true,
+  "command": "flow claim-next",
+  "result": "claimed",
+  "issue_id": "bd-123",
+  "details": {},
+  "recovery_command": "bd ready --limit 5",
+  "events": ["claimed"]
+}
+```
+
+Envelope fields:
+- `ok`: boolean command outcome
+- `command`: canonical command identifier
+- `result`: deterministic result-state enum
+- `issue_id`: issue identifier when relevant
+- `details`: structured context payload
+- `recovery_command`: remediation command when applicable
+- `events`: deterministic event tags
+
+Common result values (non-exhaustive):
+- `claimed`
+- `wip_blocked`
+- `no_ready`
+- `contention`
+- `policy_violation`
+- `partial_state`
+- `invalid_input`
+- `system_error`
+- `gate_failed`
+- `operation_failed`
+- `check_passed`
+- `landed_with_skipped_gate3`
+- `ok`
+
+Exit codes:
+- `0`: success or non-fatal deterministic state outcome
+- `1`: generic command/system error
+- `3`: policy violation
+- `4`: partial state
 
 ## Cold Start (Run First)
 
@@ -227,12 +291,9 @@ For blocked/deferred work, include context pack order:
 
 ## Canonical References
 
-- Deterministic control-plane contract: `docs/CONTROL_PLANE_CONTRACT.md`
-- Coverage matrix (old AGENTS -> current owners): `docs/control-plane/agents-control-flow-matrix-2026-02-19.md`
 - Split orchestrator: `claude-plugin/agents/task-agent.md`
 - Split roles:
   - `claude-plugin/agents/beads-query-agent.md`
   - `claude-plugin/agents/beads-issue-manager-agent.md`
   - `claude-plugin/agents/beads-execution-coordinator-agent.md`
   - `claude-plugin/agents/beads-cleanup-agent.md`
-- Detailed development guidance and test commands: `AGENT_INSTRUCTIONS.md`
