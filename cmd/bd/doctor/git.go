@@ -2,7 +2,6 @@ package doctor
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,8 +9,6 @@ import (
 	"regexp"
 	"strings"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
@@ -1026,14 +1023,6 @@ func FindOrphanedIssues(gitPath string, provider types.IssueProvider) ([]OrphanI
 	return orphanedIssues, nil
 }
 
-// findOrphanedIssuesFromPath is a convenience function for callers that don't have a provider.
-// Note: Cross-repo orphan detection via local database provider has been removed
-// along with the SQLite backend. This function now returns an error; callers
-// should use FindOrphanedIssues with an explicit IssueProvider instead.
-func findOrphanedIssuesFromPath(path string) ([]OrphanIssue, error) {
-	return nil, fmt.Errorf("cross-repo orphan detection requires an explicit IssueProvider (local database provider removed)")
-}
-
 // CheckOrphanedIssues detects issues referenced in git commits but still open.
 // This catches cases where someone implemented a fix with "(bd-xxx)" in the commit
 // message but forgot to run "bd close".
@@ -1047,105 +1036,4 @@ func CheckOrphanedIssues(path string) DoctorCheck {
 		Message:  "N/A (not yet implemented for Dolt backend)",
 		Category: CategoryGit,
 	}
-
-	// Unreachable: legacy SQLite-based implementation below preserved for reference
-	// during Dolt reimplementation.
-
-	// Skip if not in a git repo (check from path directory)
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	cmd.Dir = path
-	if err := cmd.Run(); err != nil {
-		return DoctorCheck{
-			Name:     "Orphaned Issues",
-			Status:   StatusOK,
-			Message:  "N/A (not a git repository)",
-			Category: CategoryGit,
-		}
-	}
-
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
-	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-
-	// Skip if no .beads directory
-	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:     "Orphaned Issues",
-			Status:   StatusOK,
-			Message:  "N/A (no .beads directory)",
-			Category: CategoryGit,
-		}
-	}
-
-	// Get database path from config or use canonical name
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:     "Orphaned Issues",
-			Status:   StatusOK,
-			Message:  "N/A (no database)",
-			Category: CategoryGit,
-		}
-	}
-
-	// Use the shared findOrphanedIssuesFromPath function (creates its own provider)
-	orphans, err := findOrphanedIssuesFromPath(path)
-	if err != nil {
-		return DoctorCheck{
-			Name:     "Orphaned Issues",
-			Status:   StatusOK,
-			Message:  "N/A (unable to check orphaned issues)",
-			Category: CategoryGit,
-		}
-	}
-
-	// Check for "no open issues" case - this requires checking the database
-	// since FindOrphanedIssues silently returns empty slice
-	db, err := openDBReadOnly(dbPath)
-	if err == nil {
-		defer db.Close()
-		rows, err := db.Query("SELECT COUNT(*) FROM issues WHERE status IN ('open', 'in_progress')")
-		if err == nil {
-			defer rows.Close()
-			if rows.Next() {
-				var count int
-				if err := rows.Scan(&count); err == nil && count == 0 {
-					return DoctorCheck{
-						Name:     "Orphaned Issues",
-						Status:   StatusOK,
-						Message:  "No open issues to check",
-						Category: CategoryGit,
-					}
-				}
-			}
-		}
-	}
-
-	if len(orphans) == 0 {
-		return DoctorCheck{
-			Name:     "Orphaned Issues",
-			Status:   StatusOK,
-			Message:  "No issues referenced in commits but still open",
-			Category: CategoryGit,
-		}
-	}
-
-	// Build detail message
-	var details []string
-	for _, orphan := range orphans {
-		details = append(details, fmt.Sprintf("%s (commit %s)", orphan.IssueID, orphan.LatestCommit))
-	}
-
-	return DoctorCheck{
-		Name:     "Orphaned Issues",
-		Status:   StatusWarning,
-		Message:  fmt.Sprintf("%d issue(s) referenced in commits but still open", len(orphans)),
-		Detail:   strings.Join(details, ", "),
-		Fix:      "Run 'bd show <id>' to check if implemented, then 'bd close <id>' if done",
-		Category: CategoryGit,
-	}
-}
-
-// openDBReadOnly opens a SQLite database in read-only mode
-func openDBReadOnly(dbPath string) (*sql.DB, error) {
-	return sql.Open("sqlite3", sqliteConnString(dbPath, true))
 }
