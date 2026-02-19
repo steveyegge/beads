@@ -15,11 +15,48 @@ import (
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage/dolt"
-	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
 )
+
+type parsedDependencySpec struct {
+	depType      types.DependencyType
+	dependsOnID  string
+	explicitType bool
+}
+
+func parseDependencySpec(raw string) (parsedDependencySpec, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return parsedDependencySpec{}, true, nil
+	}
+
+	spec := parsedDependencySpec{}
+	if strings.Contains(raw, ":") {
+		spec.explicitType = true
+		parts := strings.SplitN(raw, ":", 2)
+		if len(parts) != 2 {
+			return parsedDependencySpec{}, false, fmt.Errorf("expected format 'type:id' or 'id'")
+		}
+		spec.depType = types.DependencyType(strings.TrimSpace(parts[0]))
+		if spec.depType == "depends-on" {
+			spec.depType = types.DepBlocks
+		}
+		spec.dependsOnID = strings.TrimSpace(parts[1])
+	} else {
+		spec.depType = types.DepBlocks
+		spec.dependsOnID = raw
+	}
+
+	if spec.dependsOnID == "" {
+		return parsedDependencySpec{}, false, fmt.Errorf("missing dependency target id")
+	}
+	if !spec.depType.IsValid() {
+		return parsedDependencySpec{}, false, fmt.Errorf("invalid type %q (valid: blocks, related, parent-child, discovered-from)", spec.depType)
+	}
+	return spec, false, nil
+}
 
 var createCmd = &cobra.Command{
 	Use:     "create [title]",
@@ -161,34 +198,19 @@ var createCmd = &cobra.Command{
 			FatalError("--event-category, --event-actor, --event-target, and --event-payload flags require --type=event")
 		}
 
-		// Parse --due flag (GH#820)
-		// Uses layered parsing: compact duration → NLP → date-only → RFC3339
-		var dueAt *time.Time
+		// Parse time-based scheduling flags.
 		dueStr, _ := cmd.Flags().GetString("due")
-		if dueStr != "" {
-			t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
-			if err != nil {
-				FatalError("invalid --due format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", dueStr)
-			}
-			dueAt = &t
+		dueAt, err := parseSchedulingFlag("due", dueStr, time.Now())
+		if err != nil {
+			FatalError("%v", err)
 		}
 
-		// Parse --defer flag (GH#820)
-		var deferUntil *time.Time
 		deferStr, _ := cmd.Flags().GetString("defer")
-		if deferStr != "" {
-			t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
-			if err != nil {
-				FatalError("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
-			}
-			// Warn if defer date is in the past (user probably meant future)
-			if t.Before(time.Now()) && !silent && !debug.IsQuiet() {
-				fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
-					ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
-				fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
-			}
-			deferUntil = &t
+		deferUntil, err := parseSchedulingFlag("defer", deferStr, time.Now())
+		if err != nil {
+			FatalError("%v", err)
 		}
+		warnIfPastDeferredTime(deferUntil, !silent && !debug.IsQuiet())
 
 		// Handle --dry-run flag (before --rig to ensure it works with cross-rig creation)
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -498,30 +520,25 @@ var createCmd = &cobra.Command{
 		}
 
 		ctx := rootCtx
+		parsedDeps := make([]parsedDependencySpec, 0, len(deps))
+		for _, depRaw := range deps {
+			spec, skip, parseErr := parseDependencySpec(depRaw)
+			if parseErr != nil {
+				FatalError("invalid dependency spec %q: %v", depRaw, parseErr)
+			}
+			if skip {
+				continue
+			}
+			parsedDeps = append(parsedDeps, spec)
+		}
 
 		// Check if any dependencies are discovered-from type
 		// If so, inherit source_repo from the parent issue
 		var discoveredFromParentID string
-		for _, depSpec := range deps {
-			depSpec = strings.TrimSpace(depSpec)
-			if depSpec == "" {
-				continue
-			}
-
-			var depType types.DependencyType
-			var dependsOnID string
-
-			if strings.Contains(depSpec, ":") {
-				parts := strings.SplitN(depSpec, ":", 2)
-				if len(parts) == 2 {
-					depType = types.DependencyType(strings.TrimSpace(parts[0]))
-					dependsOnID = strings.TrimSpace(parts[1])
-
-					if depType == types.DepDiscoveredFrom && dependsOnID != "" {
-						discoveredFromParentID = dependsOnID
-						break
-					}
-				}
+		for _, depSpec := range parsedDeps {
+			if depSpec.depType == types.DepDiscoveredFrom {
+				discoveredFromParentID = depSpec.dependsOnID
+				break
 			}
 		}
 
@@ -582,55 +599,21 @@ var createCmd = &cobra.Command{
 		}
 
 		// Add dependencies if specified (format: type:id or just id for default "blocks" type)
-		for _, depSpec := range deps {
-			// Skip empty specs (e.g., from trailing commas)
-			depSpec = strings.TrimSpace(depSpec)
-			if depSpec == "" {
-				continue
-			}
-
-			var depType types.DependencyType
-			var dependsOnID string
-
-			// Parse format: "type:id" or just "id" (defaults to "blocks")
-			if strings.Contains(depSpec, ":") {
-				parts := strings.SplitN(depSpec, ":", 2)
-				if len(parts) != 2 {
-					WarnError("invalid dependency format '%s', expected 'type:id' or 'id'", depSpec)
-					continue
-				}
-				depType = types.DependencyType(strings.TrimSpace(parts[0]))
-				// "depends-on" is an alias — keep default direction (new issue depends on target)
-				if depType == "depends-on" {
-					depType = types.DepBlocks
-				}
-				dependsOnID = strings.TrimSpace(parts[1])
-			} else {
-				// Default to "blocks" if no type specified
-				depType = types.DepBlocks
-				dependsOnID = depSpec
-			}
-
-			// Validate dependency type
-			if !depType.IsValid() {
-				WarnError("invalid dependency type '%s' (valid: blocks, related, parent-child, discovered-from)", depType)
-				continue
-			}
-
+		for _, depSpec := range parsedDeps {
 			// Add the dependency
 			dep := &types.Dependency{
 				IssueID:     issue.ID,
-				DependsOnID: dependsOnID,
-				Type:        depType,
+				DependsOnID: depSpec.dependsOnID,
+				Type:        depSpec.depType,
 			}
 			// When user explicitly says "blocks:X", they mean "new issue blocks X"
 			// So X depends on the new issue — swap direction
-			if depType == types.DepBlocks && strings.Contains(depSpec, ":") {
-				dep.IssueID = dependsOnID
+			if depSpec.depType == types.DepBlocks && depSpec.explicitType {
+				dep.IssueID = depSpec.dependsOnID
 				dep.DependsOnID = issue.ID
 			}
 			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				WarnError("failed to add dependency %s -> %s: %v", issue.ID, dependsOnID, err)
+				WarnError("failed to add dependency %s -> %s: %v", dep.IssueID, dep.DependsOnID, err)
 			}
 		}
 
@@ -888,26 +871,20 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		wispType = types.WispType(wispTypeStr)
 	}
 
-	// Extract time-based scheduling flags (bd-xwvo fix)
-	var dueAt *time.Time
+	// Extract time-based scheduling flags.
 	dueStr, _ := cmd.Flags().GetString("due")
-	if dueStr != "" {
-		t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
-		if err != nil {
-			FatalError("invalid --due format %q", dueStr)
-		}
-		dueAt = &t
+	dueAt, err := parseSchedulingFlag("due", dueStr, time.Now())
+	if err != nil {
+		FatalError("%v", err)
 	}
 
-	var deferUntil *time.Time
 	deferStr, _ := cmd.Flags().GetString("defer")
-	if deferStr != "" {
-		t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
-		if err != nil {
-			FatalError("invalid --defer format %q", deferStr)
-		}
-		deferUntil = &t
+	deferUntil, err := parseSchedulingFlag("defer", deferStr, time.Now())
+	if err != nil {
+		FatalError("%v", err)
 	}
+	// Keep cross-rig behavior aligned with direct create flow.
+	warnIfPastDeferredTime(deferUntil, !debug.IsQuiet())
 
 	// Create issue with explicit ID if provided, otherwise CreateIssue will generate one
 	issue := &types.Issue{

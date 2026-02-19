@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -172,11 +171,11 @@ create, update, show, or close operation).`,
 				// Empty string clears the due date
 				updates["due_at"] = nil
 			} else {
-				t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
+				dueAt, err := parseSchedulingFlag("due", dueStr, time.Now())
 				if err != nil {
-					FatalErrorRespectJSON("invalid --due format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", dueStr)
+					FatalErrorRespectJSON("%v", err)
 				}
-				updates["due_at"] = t
+				updates["due_at"] = *dueAt
 			}
 		}
 		if cmd.Flags().Changed("defer") {
@@ -185,17 +184,12 @@ create, update, show, or close operation).`,
 				// Empty string clears the defer_until
 				updates["defer_until"] = nil
 			} else {
-				t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
+				deferUntil, err := parseSchedulingFlag("defer", deferStr, time.Now())
 				if err != nil {
-					FatalErrorRespectJSON("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
+					FatalErrorRespectJSON("%v", err)
 				}
-				// Warn if defer date is in the past (user probably meant future)
-				if t.Before(time.Now()) && !jsonOutput {
-					fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
-						ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
-					fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
-				}
-				updates["defer_until"] = t
+				warnIfPastDeferredTime(deferUntil, !jsonOutput)
+				updates["defer_until"] = *deferUntil
 			}
 		}
 		// Ephemeral/persistent flags

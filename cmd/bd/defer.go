@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -33,21 +32,17 @@ Examples:
 		CheckReadonly("defer")
 
 		// Parse --until flag (GH#820)
-		var deferUntil *time.Time
 		untilStr, _ := cmd.Flags().GetString("until")
-		if untilStr != "" {
-			t, err := timeparsing.ParseRelativeTime(untilStr, time.Now())
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: invalid --until format %q. Examples: +1h, tomorrow, next monday, 2025-01-15\n", untilStr)
-				os.Exit(1)
-			}
-			deferUntil = &t
+		deferUntil, err := parseSchedulingFlag("until", untilStr, time.Now())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
 
 		ctx := rootCtx
 
 		// Resolve partial IDs
-		_, err := utils.ResolvePartialIDs(ctx, store, args)
+		_, err = utils.ResolvePartialIDs(ctx, store, args)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
