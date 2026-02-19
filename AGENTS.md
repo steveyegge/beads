@@ -1,102 +1,188 @@
-# Agent Instructions
+# AGENTS.md - bd Control-Plane Bootloader
 
-See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for full instructions.
+This file is the operating system for AI agent behavior in this repo.
+It exists to enforce deterministic execution over probabilistic model behavior.
 
-This file exists for compatibility with tools that look for AGENTS.md.
+## Purpose
 
-## Key Sections
+Use this workflow to prevent:
+- intent drift
+- scope creep
+- context loss across sessions
+- unverifiable completion claims
+- coordination and dependency-state failures
 
-- **Issue Tracking** - How to use bd for work management
-- **Development Guidelines** - Code standards and testing
-- **Visual Design System** - Status icons, colors, and semantic styling for CLI output
+Success means:
+- deterministic state transitions in `bd`
+- verification evidence recorded
+- safe close reasons
+- resumable handoff
+- clean landing state
 
-## Control-Plane Ownership Boundary
+## Authority Order
 
-- **CLI-owned (deterministic, machine-checkable):** lifecycle guards, readiness/blocking semantics, close-reason policy, intake/preflight audits, and structured result envelopes.
-- **Split-agent-owned (judgment/strategy):** intent interpretation, decomposition choices, prioritization, architectural tradeoffs, and human-facing handoff quality.
-- **MCP-owned (adapter only):** translate tool calls to CLI commands and return CLI outcomes without re-implementing lifecycle policy.
+When instructions conflict, resolve in this order:
+1. user instruction
+2. `bd` source behavior and `bd <cmd> --help`
+3. `docs/CONTROL_PLANE_CONTRACT.md`
+4. split-agent docs (`claude-plugin/agents/*.md`, `docs/agents/*.md`)
+5. this file
 
-See `docs/CONTROL_PLANE_CONTRACT.md` for deterministic CLI contract details and `docs/PLUGIN.md` for split-agent workflow guidance.
+## Ownership Boundary
 
-## Visual Design Anti-Patterns
+- `bd` deterministic owner:
+  - preflight gates
+  - lifecycle transitions
+  - intake audits
+  - recovery loop/signature
+  - landing gates
+  - reason lint and result envelopes
+- split-agent judgment owner:
+  - decomposition strategy
+  - prioritization and tradeoffs
+  - architecture decisions
+  - handoff writing quality
 
-**NEVER use emoji-style icons** (🔴🟠🟡🔵⚪) in CLI output. They cause cognitive overload.
+## Cold Start (Run First)
 
-**ALWAYS use small Unicode symbols** with semantic colors:
-- Status: `○ ◐ ● ✓ ❄`
-- Priority: `● P0` (filled circle with color)
+Before any claim or lifecycle write:
 
-See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for full development guidelines.
-
-## Agent Warning: Interactive Commands
-
-**DO NOT use `bd edit`** - it opens an interactive editor ($EDITOR) which AI agents cannot use.
-
-Use `bd update` with flags instead:
 ```bash
-bd update <id> --description "new description"
-bd update <id> --title "new title"
-bd update <id> --design "design notes"
-bd update <id> --notes "additional notes"
-bd update <id> --acceptance "acceptance criteria"
+bd where
+bd preflight gate --action claim --json
+bd ready --limit 5 --json
 ```
 
-## Testing Commands (No Ambiguity)
+If preflight does not return pass, do not claim or write. Remediate first.
 
-- Default local test command: `make test` (or `./scripts/test.sh`).
-- Full CGO-enabled suite: `make test-full-cgo` (or `./scripts/test-cgo.sh ./...`).
-- On macOS, do **not** run raw `CGO_ENABLED=1 go test ./...` unless ICU flags are set; use the script/Make target above.
-- If you need package- or test-scoped CGO runs:
+## State Machine
+
+Required execution order:
+
+`BOOT -> PLANNING -> INTAKE -> EXECUTING <-> RECOVERING -> LANDING -> END`
+
+Abort path is always available:
+
+`* -> ABORT -> END`
+
+Do not reorder stages.
+
+## Mandatory Write Policy
+
+For lifecycle transitions, use `bd flow` wrappers:
+- `bd flow claim-next`
+- `bd flow create-discovered`
+- `bd flow block-with-context`
+- `bd flow close-safe`
+- `bd flow transition`
+
+Do not use interactive lifecycle mutation paths.
+Do not use `bd edit`.
+
+## Deterministic Execution Loop
+
+1. Select candidate from `bd ready`.
+2. Run preclaim lint:
+   - `bd flow preclaim-lint --issue <id>`
+3. Claim:
+   - `bd flow claim-next ...`
+4. Execute and verify required behavior.
+5. Close with strict checks:
+   - `bd flow close-safe --issue <id> --reason "<safe reason>" --verification "<command+result>" --require-traceability --require-spec-drift-proof --require-priority-poll --require-parent-cascade`
+
+Never claim tests/commands ran unless they were executed.
+
+## Intake Hard Gate
+
+If plan items are 2+ or decomposition creates 4+ tasks:
+- complete mapping/audit before claim or coding
+- require `INTAKE_AUDIT=PASS`
+
+Use:
+
 ```bash
-./scripts/test-cgo.sh ./cmd/bd/...
-./scripts/test-cgo.sh -run '^TestName$' ./cmd/bd/...
+bd intake map-sync ...
+bd intake audit --epic <id> --write-proof --json
 ```
 
-## Non-Interactive Shell Commands
+## Recover Loop (When Scoped Ready Is Empty)
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
+Run deterministic recovery before declaring idle:
 
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
-
-**Use these forms instead:**
 ```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
-
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
+bd recover loop --parent <epic-id> --module-label module/<name> --json
+bd recover signature --parent <epic-id> --iteration <n> --elapsed-minutes <m> --json
 ```
 
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+Interpret results:
+- `recover_ready_found` or `recover_ready_found_widened`: return to execute loop
+- `recover_limbo_detected`: stay in recovery until resolved
+- signature escalation required: escalate with explicit decision request
 
-## Landing the Plane (Session Completion)
+## Landing
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+Use deterministic landing engine:
 
-**MANDATORY WORKFLOW:**
+```bash
+bd land --epic <epic-id> --require-quality --quality-summary "<tests|lint|build>" --require-handoff --next-prompt "<prompt>" --stash "<none|restore>" --pull-rebase --sync --push --json
+```
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+Result handling:
+- `landed`: complete
+- `landed_with_skipped_gate3`: partial; include explicit skip rationale in handoff
 
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
+## Abort Runbook
+
+For unrecoverable conditions:
+
+1. Writable abort:
+   - `bd flow transition --type session_abort --issue "<id-or-empty>" --reason "<why>" --context "<state summary>" --abort-handoff ABORT_HANDOFF.md`
+2. No-write abort:
+   - `bd flow transition --type session_abort --reason "<why>" --context "<state summary>" --abort-handoff ABORT_HANDOFF.md --abort-no-bd-write`
+3. If `bd` cannot run:
+   - write `ABORT_HANDOFF.md` manually with reason, state, touched files, exact recovery commands
+
+## Close-Reason Safety
+
+Success close reasons must be safe and deterministic.
+Do not include failure-trigger keywords in success reasons.
+
+Use:
+
+```bash
+bd reason lint --reason "<close reason>"
+```
+
+## Handoff Contract
+
+Always provide:
+- commands executed
+- verification evidence
+- state changes
+- next ready items
+- next session prompt
+- stash status (`none` or restore command)
+
+For blocked/deferred work, include context pack order:
+`state; repro; next; files; blockers`
+
+## Operational Guardrails
+
+- Track work in `bd`, not markdown TODO lists.
+- Do not manually edit `.beads/issues.jsonl`.
+- Prefer non-interactive shell flags (`-f`, `-y`, batch mode).
+- Keep one active WIP per actor unless preempted by explicit policy.
+- Preserve invariants: external contracts, data integrity, security boundaries.
+- Internal refactors may break internal interfaces if invariants are preserved.
+
+## Canonical References
+
+- Deterministic control-plane contract: `docs/CONTROL_PLANE_CONTRACT.md`
+- Coverage matrix (old AGENTS -> current owners): `docs/control-plane/agents-control-flow-matrix-2026-02-19.md`
+- Split orchestrator: `claude-plugin/agents/task-agent.md`
+- Split roles:
+  - `claude-plugin/agents/beads-query-agent.md`
+  - `claude-plugin/agents/beads-issue-manager-agent.md`
+  - `claude-plugin/agents/beads-execution-coordinator-agent.md`
+  - `claude-plugin/agents/beads-cleanup-agent.md`
+- Detailed development guidance and test commands: `AGENT_INSTRUCTIONS.md`
