@@ -62,6 +62,25 @@ When conflict handling is required, record:
   - architecture decisions
   - handoff writing quality
 
+## Scope of This File
+
+`AGENTS.md` is a policy bootloader, not an implementation manual.
+
+Keep in this file:
+- mission, failure model, authority order, and ownership boundary
+- high-level state flow and mandatory write policy
+- auditability, output protocol, and decision/escalation formats
+- invariant/scope discipline and handoff requirements
+
+Reference (do not duplicate) in this file:
+- deterministic command internals in `bd` (`flow`, `intake`, `preflight`, `recover`, `land`, `reason`)
+- split-agent orchestration details in `claude-plugin/agents/*.md` and `docs/agents/*.md`
+
+Do not embed here:
+- long shell pipelines/scripts (`jq`/`awk` orchestration, embedded audits)
+- backend/daemon edge-case deep dives that drift quickly
+- duplicated command recipes already covered by `bd <cmd> --help` or control-plane docs
+
 ## Cold Start (Run First)
 
 Before any claim or lifecycle write:
