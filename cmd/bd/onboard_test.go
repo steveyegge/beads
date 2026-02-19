@@ -9,7 +9,7 @@ import (
 func TestOnboardCommand(t *testing.T) {
 	t.Run("onboard output contains key sections", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := renderOnboardInstructions(&buf); err != nil {
+		if err := renderOnboardInstructions(&buf, onboardTemplateMinimal); err != nil {
 			t.Fatalf("renderOnboardInstructions() error = %v", err)
 		}
 		output := buf.String()
@@ -52,6 +52,31 @@ func TestOnboardCommand(t *testing.T) {
 		// Verify it's actually minimal (less than 500 chars)
 		if len(agentsContent) > 500 {
 			t.Errorf("agentsContent should be minimal (<500 chars), got %d chars", len(agentsContent))
+		}
+	})
+
+	t.Run("control-flow templates resolve", func(t *testing.T) {
+		templates := []string{
+			onboardTemplateMinimal,
+			onboardTemplateControlFlow,
+			onboardTemplateSplitControl,
+		}
+		for _, templateName := range templates {
+			var buf bytes.Buffer
+			if err := renderOnboardInstructions(&buf, templateName); err != nil {
+				t.Fatalf("renderOnboardInstructions(%q) error = %v", templateName, err)
+			}
+			output := buf.String()
+			if !strings.Contains(output, "BEGIN AGENTS.MD CONTENT") {
+				t.Fatalf("expected AGENTS payload markers for template %q", templateName)
+			}
+		}
+	})
+
+	t.Run("invalid template is rejected", func(t *testing.T) {
+		_, _, err := resolveOnboardTemplate("does-not-exist")
+		if err == nil {
+			t.Fatalf("expected invalid template to return error")
 		}
 	})
 

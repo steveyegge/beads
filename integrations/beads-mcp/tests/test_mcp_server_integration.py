@@ -1401,6 +1401,56 @@ async def test_flow_close_safe_lints_reason_and_requires_verification(mcp_client
 
 
 @pytest.mark.asyncio
+async def test_flow_close_safe_forwards_force_and_multi_entries(mcp_client, monkeypatch):
+    """flow(close_safe) should preserve --force and repeated --verified/--note entries."""
+    import json
+    from beads_mcp import server as server_module
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_flow_cli(*args, workspace_root, actor_override=None):
+        captured["args"] = list(args)
+        captured["workspace_root"] = workspace_root
+        captured["actor_override"] = actor_override
+        return {
+            "ok": True,
+            "command": "flow close-safe",
+            "result": "closed",
+            "issue_id": "bd-close-forward",
+            "details": {},
+            "events": ["closed"],
+        }
+
+    monkeypatch.setattr(server_module, "_run_flow_cli", fake_run_flow_cli)
+
+    result = await mcp_client.call_tool(
+        "flow",
+        {
+            "action": "close_safe",
+            "issue_id": "bd-close-forward",
+            "reason": "Updated retry policy and threshold checks",
+            "verification": ["pytest -q tests/a.py", "pytest -q tests/b.py"],
+            "notes": ["line one", "line two"],
+            "force": True,
+        },
+    )
+    payload = json.loads(result.content[0].text)
+    assert payload["ok"] is True
+    assert payload["result"] == "closed"
+
+    args = captured.get("args")
+    assert isinstance(args, list)
+    assert args[0] == "close-safe"
+    assert "--force" in args
+    assert args.count("--verified") == 2
+    assert "pytest -q tests/a.py" in args
+    assert "pytest -q tests/b.py" in args
+    assert args.count("--note") == 2
+    assert "line one" in args
+    assert "line two" in args
+
+
+@pytest.mark.asyncio
 async def test_flow_block_with_context_fails_fast_on_missing_blocker(mcp_client):
     """flow(block_with_context) should return invalid_input for missing blocker before mutation."""
     import json

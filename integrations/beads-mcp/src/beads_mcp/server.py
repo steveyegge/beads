@@ -437,7 +437,9 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
                 "description": "str (optional; used by create_discovered)",
                 "discovered_from_id": "str (required for create_discovered)",
                 "reason": "str (required for close_safe)",
-                "verification": "str (required for close_safe, appended as Verified: ... note)",
+                "verification": "str|list[str] (required for close_safe, appended as one or more Verified: ... notes)",
+                "notes": "str|list[str] (optional for close_safe; appended as one or more notes)",
+                "force": "bool (optional for close_safe; maps to CLI --force)",
                 "context_pack": "str (required for block_with_context)",
                 "blocker_id": "str (optional for block_with_context; adds blocks dep)",
                 "transition_type": "str (required for transition; e.g. claim_failed|test_failed|session_abort)",
@@ -906,8 +908,9 @@ async def flow(
     context_pack: str | None = None,
     blocker_id: str | None = None,
     reason: str | None = None,
-    verification: str | None = None,
-    notes: str | None = None,
+    verification: str | list[str] | None = None,
+    notes: str | list[str] | None = None,
+    force: bool = False,
     require_traceability: bool = False,
     require_spec_drift_proof: bool = False,
     require_parent_cascade: bool = False,
@@ -983,10 +986,20 @@ async def flow(
             cli_args.extend(["--issue", issue_id])
         if reason:
             cli_args.extend(["--reason", reason])
-        if verification:
-            cli_args.extend(["--verified", verification])
-        if notes:
-            cli_args.extend(["--note", notes])
+        verification_entries = (
+            verification if isinstance(verification, list) else [verification] if verification else []
+        )
+        note_entries = notes if isinstance(notes, list) else [notes] if notes else []
+        for entry in verification_entries:
+            entry_text = str(entry).strip()
+            if entry_text:
+                cli_args.extend(["--verified", entry_text])
+        for note in note_entries:
+            note_text = str(note).strip()
+            if note_text:
+                cli_args.extend(["--note", note_text])
+        if force:
+            cli_args.append("--force")
         if require_traceability:
             cli_args.append("--require-traceability")
         if require_spec_drift_proof:

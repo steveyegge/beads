@@ -171,7 +171,7 @@ Do not use `bd edit`.
    - `bd flow claim-next ...`
 4. Execute and verify required behavior.
 5. Close with strict checks:
-   - `bd flow close-safe --issue <id> --reason "<safe reason>" --verification "<command+result>" --require-traceability --require-spec-drift-proof --require-priority-poll --require-parent-cascade`
+   - `bd flow close-safe --issue <id> --reason "<safe reason>" --verified "<command+result>" --require-traceability --require-spec-drift-proof --require-priority-poll --require-parent-cascade`
 
 Never claim tests/commands ran unless they were executed.
 

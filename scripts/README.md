@@ -200,6 +200,24 @@ BD_BIN=/tmp/beads-bd-new2 ./scripts/bd_intake_audit.sh bd-bmf
 
 ---
 
+## generate_control_plane_contract.sh
+
+Generates `docs/CONTROL_PLANE_CONTRACT.md` from the canonical inlined contract in `AGENTS.md`.
+
+### Usage
+
+```bash
+./scripts/generate_control_plane_contract.sh
+```
+
+### What It Does
+
+- Extracts the `Control-Plane Contract (Inlined)` section from `AGENTS.md`
+- Rewrites `docs/CONTROL_PLANE_CONTRACT.md` from that single source
+- Keeps command/result envelope docs in sync with agent bootloader policy text
+
+---
+
 ## Future Scripts
 
 Additional maintenance scripts may be added here as needed.

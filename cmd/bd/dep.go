@@ -1085,37 +1085,59 @@ var depAddBatchCmd = &cobra.Command{
 
 			cycleDetected := false
 			cycleCount := 0
+			var cycleRollbackErr error
+			rollbackAddedEdge := func() error {
+				return store.RemoveDependency(ctx, fromID, toID, actor)
+			}
 			if depBatchGuardCycles {
-				cycles, cycleErr := store.DetectCycles(ctx)
+				var cycleErr error
+				cycleCount, cycleDetected, cycleRollbackErr, cycleErr = depBatchRunCycleGuard(ctx, func(ctx context.Context) (int, error) {
+					cycles, err := store.DetectCycles(ctx)
+					return len(cycles), err
+				}, func(ctx context.Context) error {
+					return rollbackAddedEdge()
+				})
 				if cycleErr != nil {
-					results = append(results, map[string]interface{}{
+					failure := map[string]interface{}{
 						"edge":          edgeSpec,
 						"issue_id":      fromID,
 						"depends_on_id": toID,
 						"type":          depBatchType,
 						"status":        "failed",
-						"error":         fmt.Sprintf("cycle guard failed: %v", cycleErr),
-					})
+						"error":         fmt.Sprintf("cycle guard failed after add: %v", cycleErr),
+					}
+					if cycleRollbackErr != nil {
+						failure["rollback_error"] = cycleRollbackErr.Error()
+						failure["recovery_command"] = fmt.Sprintf("bd dep remove %s %s", fromID, toID)
+					} else {
+						failure["rolled_back"] = true
+					}
+					results = append(results, failure)
 					if depBatchShouldStop(depBatchStopOnError, true, false) {
 						stoppedEarly = true
 						break
 					}
 					continue
 				}
-				cycleCount = len(cycles)
-				cycleDetected = cycleCount > 0
 			}
 
 			if cycleDetected {
-				results = append(results, map[string]interface{}{
+				failure := map[string]interface{}{
 					"edge":          edgeSpec,
 					"issue_id":      fromID,
 					"depends_on_id": toID,
 					"type":          depBatchType,
 					"status":        "failed",
-					"error":         "cycle detected by guardrail",
+					"error":         "cycle detected by guardrail; added edge rolled back",
 					"cycle_count":   cycleCount,
-				})
+				}
+				if cycleRollbackErr != nil {
+					failure["rollback_error"] = cycleRollbackErr.Error()
+					failure["recovery_command"] = fmt.Sprintf("bd dep remove %s %s", fromID, toID)
+				} else {
+					failure["rolled_back"] = true
+				}
+				results = append(results, failure)
 				if depBatchShouldStop(depBatchStopOnError, true, true) {
 					stoppedEarly = true
 					break
@@ -1193,6 +1215,25 @@ func depBatchShouldStop(stopOnError bool, edgeFailed bool, cycleDetected bool) b
 		return false
 	}
 	return edgeFailed || cycleDetected
+}
+
+// depBatchRunCycleGuard runs cycle detection after an edge is added and rolls it back
+// when guard evaluation fails or detects a cycle.
+func depBatchRunCycleGuard(
+	ctx context.Context,
+	detectCycleCount func(context.Context) (int, error),
+	rollbackAddedEdge func(context.Context) error,
+) (cycleCount int, cycleDetected bool, rollbackErr error, guardErr error) {
+	cycleCount, guardErr = detectCycleCount(ctx)
+	if guardErr != nil {
+		rollbackErr = rollbackAddedEdge(ctx)
+		return cycleCount, false, rollbackErr, guardErr
+	}
+	cycleDetected = cycleCount > 0
+	if cycleDetected {
+		rollbackErr = rollbackAddedEdge(ctx)
+	}
+	return cycleCount, cycleDetected, rollbackErr, nil
 }
 
 // IsExternalRef returns true if the dependency reference is an external reference.

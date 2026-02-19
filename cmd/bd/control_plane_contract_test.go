@@ -40,8 +40,8 @@ func TestControlPlaneContract(t *testing.T) {
 	contract := string(data)
 
 	requiredDocTokens := []string{
-		"# Control-Plane Contract (v1)",
-		"## Command Map",
+		"# Control-Plane Contract (Generated)",
+		"Deterministic `bd` command surfaces:",
 		"`flow claim-next`",
 		"`flow create-discovered`",
 		"`flow block-with-context`",
@@ -51,7 +51,7 @@ func TestControlPlaneContract(t *testing.T) {
 		"`resume`",
 		"`land`",
 		"`reason lint`",
-		"## JSON Envelope",
+		"All control-plane commands in JSON mode are expected to emit:",
 		"\"ok\"",
 		"\"command\"",
 		"\"result\"",
@@ -59,9 +59,9 @@ func TestControlPlaneContract(t *testing.T) {
 		"\"details\"",
 		"\"recovery_command\"",
 		"\"events\"",
-		"## Exit-Code Policy",
-		"`3`: `policy_violation`",
-		"`4`: `partial_state`",
+		"Exit codes:",
+		"- `3`: policy violation",
+		"- `4`: partial state",
 	}
 
 	for _, token := range requiredDocTokens {

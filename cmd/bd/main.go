@@ -424,16 +424,12 @@ var rootCmd = &cobra.Command{
 					// Use proper YAML parsing to detect no-db mode
 					isNoDbMode := isNoDbModeConfigured(beadsDir)
 
-					// If JSONL-only mode is configured, auto-enable it
+					// Legacy no-db projects must be migrated to Dolt.
 					if jsonlExists && isNoDbMode {
-						noDb = true
-						if err := initializeNoDbMode(); err != nil {
-							fmt.Fprintf(os.Stderr, "Error initializing JSONL-only mode: %v\n", err)
-							os.Exit(1)
-						}
-						// Set actor for audit trail
-						actor = getActorWithGit()
-						return
+						fmt.Fprintf(os.Stderr, "Error: project is configured with no-db mode, but no-db mode has been removed.\n")
+						fmt.Fprintf(os.Stderr, "Found JSONL file: %s\n", jsonlPath)
+						fmt.Fprintf(os.Stderr, "Hint: migrate this workspace by running 'bd init --force' to create Dolt storage.\n")
+						os.Exit(1)
 					}
 				}
 
@@ -483,16 +479,14 @@ var rootCmd = &cobra.Command{
 							fmt.Fprintf(os.Stderr, "\nFound JSONL file: %s\n", jsonlPath)
 							fmt.Fprintf(os.Stderr, "This looks like a fresh clone or JSONL-only project.\n\n")
 							fmt.Fprintf(os.Stderr, "Options:\n")
-							fmt.Fprintf(os.Stderr, "  • Run 'bd init' to create database and import issues\n")
-							fmt.Fprintf(os.Stderr, "  • Use 'bd --no-db %s' for JSONL-only mode\n", cmd.Name())
-							fmt.Fprintf(os.Stderr, "  • Add 'no-db: true' to .beads/config.yaml for permanent JSONL-only mode\n")
+							fmt.Fprintf(os.Stderr, "  • Run 'bd init' to create Dolt storage and import issues\n")
+							fmt.Fprintf(os.Stderr, "  • Set BEADS_DIR to a valid existing beads directory for this workspace\n")
 							os.Exit(1)
 						}
 					}
 
 					// Generic error - no beads directory or JSONL found
 					fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
-					fmt.Fprintf(os.Stderr, "      or use 'bd --no-db' to work with JSONL only (no database)\n")
 					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
 					os.Exit(1)
 				}

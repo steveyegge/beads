@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 REQUIRED_FLOW_SUBCOMMANDS = (
@@ -49,10 +50,6 @@ def _candidate_paths() -> list[str]:
     if repo_bd:
         candidates.append(repo_bd)
 
-    tmp_bd = _resolve_path("/tmp/beads-bd-new2")
-    if tmp_bd:
-        candidates.append(tmp_bd)
-
     path_bd = _resolve_path("bd")
     if path_bd:
         candidates.append(path_bd)
@@ -68,7 +65,7 @@ def _candidate_paths() -> list[str]:
 
 
 def probe_bd_capabilities(bd_executable: str) -> None:
-    """Fail-fast probe for required flow subcommands."""
+    """Fail-fast probe for required flow subcommands plus runtime write viability."""
     process = subprocess.run(
         [bd_executable, "flow", "--help"],
         capture_output=True,
@@ -89,6 +86,41 @@ def probe_bd_capabilities(bd_executable: str) -> None:
             f"bd binary `{bd_executable}` is missing required flow subcommands: {', '.join(missing)}. "
             "Set BEADS_PATH/BEADS_BD_PATH to your custom-fork bd binary."
         )
+
+    # Ensure the candidate can actually perform write operations in an isolated workspace.
+    with tempfile.TemporaryDirectory(prefix="beads_mcp_probe_", dir="/tmp") as workspace_root:
+        env = os.environ.copy()
+        env.pop("BEADS_DB", None)
+        env.pop("BEADS_DIR", None)
+        init = subprocess.run(
+            [bd_executable, "init", "--prefix", "probe", "--quiet"],
+            capture_output=True,
+            text=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            cwd=workspace_root,
+            env=env,
+        )
+        if init.returncode != 0:
+            raise RuntimeError(
+                f"`{bd_executable} init` failed in probe workspace (code {init.returncode}): "
+                f"{(init.stderr or init.stdout).strip()}"
+            )
+
+        create = subprocess.run(
+            [bd_executable, "create", "probe issue", "-p", "2", "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            cwd=workspace_root,
+            env=env,
+        )
+        if create.returncode != 0:
+            raise RuntimeError(
+                f"`{bd_executable} create` failed after probe init (code {create.returncode}): "
+                f"{(create.stderr or create.stdout).strip()}"
+            )
 
 
 def resolve_bd_executable() -> str:

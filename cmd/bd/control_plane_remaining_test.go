@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -1469,6 +1470,43 @@ func extractTransitionTypesFromDocMarkdown(markdown string) []string {
 	return uniqueIntakeStrings(out)
 }
 
+func extractInlinedControlPlaneContract(agentsContent string) (string, error) {
+	const startMarker = "## Control-Plane Contract (Inlined)"
+	const endMarker = "## Cold Start"
+
+	start := strings.Index(agentsContent, startMarker)
+	if start < 0 {
+		return "", fmt.Errorf("start marker %q not found", startMarker)
+	}
+	start += len(startMarker)
+
+	rest := agentsContent[start:]
+	end := strings.Index(rest, endMarker)
+	if end < 0 {
+		return "", fmt.Errorf("end marker %q not found", endMarker)
+	}
+
+	section := strings.TrimSpace(rest[:end])
+	if section == "" {
+		return "", fmt.Errorf("inlined control-plane contract section is empty")
+	}
+	return section, nil
+}
+
+func renderGeneratedControlPlaneContractDoc(agentsContent string) (string, error) {
+	section, err := extractInlinedControlPlaneContract(agentsContent)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(`# Control-Plane Contract (Generated)
+
+> Source: `+"`AGENTS.md`"+` section `+"`Control-Plane Contract (Inlined)`"+`.
+> Regenerate with `+"`./scripts/generate_control_plane_contract.sh`"+`.
+
+%s
+`, section), nil
+}
+
 func TestDocsTransitionsMatchSupportedTransitionTypes(t *testing.T) {
 	root := findRepoRootForContractTest(t)
 	docPath := filepath.Join(root, "docs", "control-plane", "supported-transition-types.md")
@@ -1481,6 +1519,29 @@ func TestDocsTransitionsMatchSupportedTransitionTypes(t *testing.T) {
 	supported := uniqueIntakeStrings(supportedTransitionTypes())
 	if !reflect.DeepEqual(documented, supported) {
 		t.Fatalf("documented transition set drifted from supportedTransitionTypes(): documented=%v supported=%v", documented, supported)
+	}
+}
+
+func TestControlPlaneContractDocParityWithAgentsSource(t *testing.T) {
+	root := findRepoRootForContractTest(t)
+	agentsPath := filepath.Join(root, "AGENTS.md")
+	agentsData, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	expected, err := renderGeneratedControlPlaneContractDoc(string(agentsData))
+	if err != nil {
+		t.Fatalf("render generated contract doc: %v", err)
+	}
+
+	contractPath := filepath.Join(root, "docs", "CONTROL_PLANE_CONTRACT.md")
+	contractData, err := os.ReadFile(contractPath)
+	if err != nil {
+		t.Fatalf("read docs/CONTROL_PLANE_CONTRACT.md: %v", err)
+	}
+
+	if strings.TrimSpace(string(contractData)) != strings.TrimSpace(expected) {
+		t.Fatalf("docs/CONTROL_PLANE_CONTRACT.md drifted from AGENTS source; run ./scripts/generate_control_plane_contract.sh")
 	}
 }
 
