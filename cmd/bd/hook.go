@@ -689,18 +689,14 @@ func hookPostCheckout(args []string) int {
 		return 0
 	}
 
-	// Detect git worktree and show warning
+	// Detect git worktree and show notice
 	if isGitWorktree() {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "╔══════════════════════════════════════════════════════════════════════════╗")
 		fmt.Fprintln(os.Stderr, "║ Welcome to beads in git worktree!                                        ║")
 		fmt.Fprintln(os.Stderr, "╠══════════════════════════════════════════════════════════════════════════╣")
-		fmt.Fprintln(os.Stderr, "║ Note: Daemon mode is not recommended with git worktrees.                 ║")
-		fmt.Fprintln(os.Stderr, "║ Worktrees share the same database, and the daemon may commit changes     ║")
-		fmt.Fprintln(os.Stderr, "║ to the wrong branch.                                                     ║")
-		fmt.Fprintln(os.Stderr, "║                                                                          ║")
-		fmt.Fprintln(os.Stderr, "║ RECOMMENDED: Disable daemon for this session:                            ║")
-		fmt.Fprintln(os.Stderr, "║   export BEADS_NO_DAEMON=1                                               ║")
+		fmt.Fprintln(os.Stderr, "║ Note: Worktrees share the same database. Auto-commit changes may         ║")
+		fmt.Fprintln(os.Stderr, "║ go to the wrong branch. Run 'bd doctor' for recommendations.             ║")
 		fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════════════════════════════╝")
 		fmt.Fprintln(os.Stderr, "")
 	}
