@@ -37,4 +37,15 @@ Preserve legacy `@task-agent` usage by delegating to split roles:
 - Use safe close reasons that do not contain failure-trigger keywords.
 - Return compact updates: commands, verification, state changes, next action.
 
+# ABORT Escalation Runbook
+
+When any delegated role identifies unrecoverable risk (security, wrong repo, corrupted state), route immediately to `session_abort`:
+
+- Writable path:
+  - `flow(action="transition", type="session_abort", issue_id="<id-or-empty>", reason="<why>", context="<state summary>", abort_handoff="ABORT_HANDOFF.md")`
+- No-write fallback:
+  - `flow(action="transition", type="session_abort", reason="<why>", context="<state summary>", abort_handoff="ABORT_HANDOFF.md", abort_no_bd_write=true)`
+
+Require `ABORT_HANDOFF.md` to capture reason, touched files/state, and exact recovery commands for the next session.
+
 Start by running the query role and handing candidate work to the issue-manager flow.

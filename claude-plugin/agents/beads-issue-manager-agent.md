@@ -20,6 +20,8 @@ You are the beads issue manager agent. You own lifecycle transitions and depende
 # Core Loop
 
 1. Find claimable work:
+   - Before the first claim in each session, run `bd preflight gate --action claim --json`.
+   - Treat any non-pass result as a hard blocker; do not claim until remediated.
    - Use `ready`/`list`/`show` to inspect scope.
    - Claim with `flow(action="claim_next", ...)`.
 2. Hand off claimed work to execution:

@@ -18,6 +18,8 @@ import (
 )
 
 var (
+	flowStateFrom                 string
+	flowStateTo                   string
 	flowClaimParent               string
 	flowClaimLabels               []string
 	flowClaimLabelsAny            []string
@@ -92,6 +94,9 @@ var flowClaimNextCmd = &cobra.Command{
 	Use:   "claim-next",
 	Short: "Claim next ready issue with WIP=1 gate",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
+			return
+		}
 		CheckReadonly("flow claim-next")
 		ctx := rootCtx
 
@@ -423,6 +428,9 @@ var flowPreclaimLintCmd = &cobra.Command{
 	Use:   "preclaim-lint",
 	Short: "Run deterministic pre-claim quality lint for one issue",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
+			return
+		}
 		ctx := rootCtx
 
 		if strings.TrimSpace(flowPreclaimIssue) == "" {
@@ -516,6 +524,9 @@ var flowBaselineVerifyCmd = &cobra.Command{
 	Use:   "baseline-verify",
 	Short: "Run deterministic baseline verify and no-code-close eligibility check",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
+			return
+		}
 		ctx := rootCtx
 
 		if strings.TrimSpace(flowBaselineIssue) == "" {
@@ -627,6 +638,9 @@ var flowPriorityPollCmd = &cobra.Command{
 	Use:   "priority-poll",
 	Short: "Run deterministic P0 queue poll and optionally record poll evidence on an issue",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
+			return
+		}
 		ctx := rootCtx
 
 		priority := 0
@@ -721,6 +735,9 @@ var flowSupersedeCoarseCmd = &cobra.Command{
 	Use:   "supersede-coarse",
 	Short: "Apply deterministic supersession protocol for coarse tasks",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
+			return
+		}
 		CheckReadonly("flow supersede-coarse")
 		ctx := rootCtx
 
@@ -919,6 +936,9 @@ var flowExecutionRollbackCmd = &cobra.Command{
 	Use:   "execution-rollback",
 	Short: "Create deterministic corrective task for a previously closed/incorrect issue",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
+			return
+		}
 		CheckReadonly("flow execution-rollback")
 		ctx := rootCtx
 
@@ -1064,6 +1084,9 @@ var flowTransitionCmd = &cobra.Command{
 	Use:   "transition",
 	Short: "Apply deterministic transition handler primitive",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
+			return
+		}
 		CheckReadonly("flow transition")
 		ctx := rootCtx
 
@@ -1778,6 +1801,9 @@ var flowCreateDiscoveredCmd = &cobra.Command{
 	Use:   "create-discovered",
 	Short: "Create discovered issue and link discovered-from dependency",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
+			return
+		}
 		CheckReadonly("flow create-discovered")
 		ctx := rootCtx
 
@@ -1943,6 +1969,9 @@ var flowBlockWithContextCmd = &cobra.Command{
 	Use:   "block-with-context",
 	Short: "Block issue with context pack and optional blocker dependency",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
+			return
+		}
 		CheckReadonly("flow block-with-context")
 		ctx := rootCtx
 
@@ -2111,6 +2140,9 @@ var flowCloseSafeCmd = &cobra.Command{
 	Use:   "close-safe",
 	Short: "Close issue with close-reason lint and verification evidence",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, flowStateFrom, flowStateTo) {
+			return
+		}
 		CheckReadonly("flow close-safe")
 		ctx := rootCtx
 
@@ -3350,6 +3382,8 @@ func docsProofPresentInWorkingTree() (bool, error) {
 }
 
 func init() {
+	flowCmd.PersistentFlags().StringVar(&flowStateFrom, "state-from", "", "Current session state for lifecycle transition validation")
+	flowCmd.PersistentFlags().StringVar(&flowStateTo, "state-to", "", "Target session state for lifecycle transition validation")
 	flowClaimNextCmd.Flags().StringVar(&flowClaimParent, "parent", "", "Filter ready queue by parent epic/issue")
 	flowClaimNextCmd.Flags().StringSliceVar(&flowClaimLabels, "label", nil, "AND label filter (repeat flag)")
 	flowClaimNextCmd.Flags().StringSliceVar(&flowClaimLabelsAny, "label-any", nil, "OR label filter (repeat flag)")

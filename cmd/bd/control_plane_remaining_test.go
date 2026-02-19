@@ -264,6 +264,23 @@ func TestPreflightGateUsesBoundedDiagnostics(t *testing.T) {
 	}
 }
 
+func TestLandUsesBoundedCriticalDiagnostics(t *testing.T) {
+	root := findRepoRootForContractTest(t)
+	landPath := filepath.Join(root, "cmd", "bd", "land.go")
+	data, err := os.ReadFile(landPath)
+	if err != nil {
+		t.Fatalf("read land.go: %v", err)
+	}
+	text := string(data)
+
+	if !strings.Contains(text, "runPreflightGateChecks(ctx, workingPath)") {
+		t.Fatalf("land critical warning evaluation must use bounded preflight checks")
+	}
+	if strings.Contains(text, "runDiagnostics(workingPath)") {
+		t.Fatalf("land critical warning evaluation must not invoke full doctor diagnostics")
+	}
+}
+
 func TestBootstrapAutoSetsHardeningInvariant(t *testing.T) {
 	updates := make(map[string]string)
 	setter := func(key, value string) error {
@@ -1338,6 +1355,39 @@ func TestTransitionHandlerConformance(t *testing.T) {
 	}
 }
 
+func extractTransitionTypesFromDocMarkdown(markdown string) []string {
+	lines := strings.Split(markdown, "\n")
+	out := make([]string, 0)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		candidate := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+		candidate = strings.Trim(candidate, "`")
+		if candidate == "" {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	return uniqueIntakeStrings(out)
+}
+
+func TestDocsTransitionsMatchSupportedTransitionTypes(t *testing.T) {
+	root := findRepoRootForContractTest(t)
+	docPath := filepath.Join(root, "docs", "control-plane", "supported-transition-types.md")
+	data, err := os.ReadFile(docPath)
+	if err != nil {
+		t.Fatalf("read supported transition doc: %v", err)
+	}
+
+	documented := extractTransitionTypesFromDocMarkdown(string(data))
+	supported := uniqueIntakeStrings(supportedTransitionTypes())
+	if !reflect.DeepEqual(documented, supported) {
+		t.Fatalf("documented transition set drifted from supportedTransitionTypes(): documented=%v supported=%v", documented, supported)
+	}
+}
+
 func TestAgentsScriptReferencesCliCommands(t *testing.T) {
 	root := findRepoRootForContractTest(t)
 	agentsPath := filepath.Join(root, "AGENTS.md")
@@ -1523,6 +1573,51 @@ func TestSessionStateStageOrderValidation(t *testing.T) {
 	}
 }
 
+func TestLifecycleCommandsEnforceStateTransitions(t *testing.T) {
+	if flowCmd.PersistentFlags().Lookup("state-from") == nil {
+		t.Fatalf("flow command missing --state-from flag")
+	}
+	if flowCmd.PersistentFlags().Lookup("state-to") == nil {
+		t.Fatalf("flow command missing --state-to flag")
+	}
+	if intakeCmd.PersistentFlags().Lookup("state-from") == nil {
+		t.Fatalf("intake command missing --state-from flag")
+	}
+	if intakeCmd.PersistentFlags().Lookup("state-to") == nil {
+		t.Fatalf("intake command missing --state-to flag")
+	}
+	if landCmd.Flags().Lookup("state-from") == nil {
+		t.Fatalf("land command missing --state-from flag")
+	}
+	if landCmd.Flags().Lookup("state-to") == nil {
+		t.Fatalf("land command missing --state-to flag")
+	}
+
+	missingPair := assessLifecycleStateTransition("boot", "")
+	if missingPair.Pass || missingPair.Result != "invalid_input" {
+		t.Fatalf("expected missing state pair to be invalid_input, got %+v", missingPair)
+	}
+
+	invalid := assessLifecycleStateTransition("boot", "executing")
+	if invalid.Pass {
+		t.Fatalf("expected BOOT->EXECUTING to be blocked")
+	}
+	if invalid.Result != "policy_violation" {
+		t.Fatalf("expected policy_violation for invalid lifecycle transition, got %q", invalid.Result)
+	}
+	if invalid.ExitCode != exitCodePolicyViolation {
+		t.Fatalf("expected policy violation exit code %d, got %d", exitCodePolicyViolation, invalid.ExitCode)
+	}
+	if len(invalid.AllowedNext) == 0 || invalid.AllowedNext[0] != "PLANNING" {
+		t.Fatalf("expected BOOT allowed-next guidance, got %v", invalid.AllowedNext)
+	}
+
+	valid := assessLifecycleStateTransition("executing", "recovering")
+	if !valid.Pass || valid.Result != "pass" {
+		t.Fatalf("expected EXECUTING->RECOVERING to pass, got %+v", valid)
+	}
+}
+
 func TestStrictModeRequiresExplicitIDs(t *testing.T) {
 	if updateCmd.Flags().Lookup("strict-control") == nil {
 		t.Fatalf("update command missing --strict-control flag")
@@ -1588,6 +1683,40 @@ func TestRuntimeBinaryCapabilityParityManifest(t *testing.T) {
 	joined := strings.Join(failures, "\n")
 	if !strings.Contains(joined, `flow: missing token "preclaim-lint"`) {
 		t.Fatalf("expected missing-token diagnostics, got %v", failures)
+	}
+}
+
+func TestRuntimeParityManifestCoversCriticalControlPlaneSurface(t *testing.T) {
+	manifest := runtimeCapabilityManifest()
+	hasProbeToken := func(path []string, token string) bool {
+		for _, probe := range manifest {
+			if !reflect.DeepEqual(probe.CommandPath, path) {
+				continue
+			}
+			for _, candidate := range probe.MustContain {
+				if candidate == token {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	required := []struct {
+		path  []string
+		token string
+	}{
+		{path: nil, token: "state"},
+		{path: []string{"flow"}, token: "execution-rollback"},
+		{path: []string{"flow", "claim-next"}, token: "--require-anchor"},
+		{path: []string{"flow", "close-safe"}, token: "--require-parent-cascade"},
+		{path: []string{"intake", "audit"}, token: "--write-proof"},
+		{path: []string{"land"}, token: "--state-from"},
+	}
+	for _, req := range required {
+		if !hasProbeToken(req.path, req.token) {
+			t.Fatalf("runtime parity manifest missing token %q for path %v", req.token, req.path)
+		}
 	}
 }
 
@@ -1827,6 +1956,36 @@ func TestIntakeAuditClosedEpicMode(t *testing.T) {
 	}
 	if intakeAuditReadySetRequired(intakeAuditModeClosedEpic) {
 		t.Fatalf("closed-epic mode should not require ready-set equality")
+	}
+}
+
+func TestIntakeAuditClosedEpicWarnsOnHistoricalReadyWaveDrift(t *testing.T) {
+	warn := buildClosedEpicReadyWaveDriftWarning(
+		intakeAuditModeClosedEpic,
+		[]string{"bd-1", "bd-2"},
+		[]string{"bd-1", "bd-3"},
+	)
+	if warn == nil {
+		t.Fatalf("expected closed-epic mismatch to emit drift warning metadata")
+	}
+	if warn["warning"] != "historical_ready_wave_drift" {
+		t.Fatalf("expected historical drift warning marker, got %v", warn["warning"])
+	}
+
+	missing, ok := warn["missing_from_actual"].([]string)
+	if !ok || len(missing) != 1 || missing[0] != "bd-2" {
+		t.Fatalf("expected missing_from_actual=[bd-2], got %v", warn["missing_from_actual"])
+	}
+	unexpected, ok := warn["unexpected_in_actual"].([]string)
+	if !ok || len(unexpected) != 1 || unexpected[0] != "bd-3" {
+		t.Fatalf("expected unexpected_in_actual=[bd-3], got %v", warn["unexpected_in_actual"])
+	}
+
+	if got := buildClosedEpicReadyWaveDriftWarning(intakeAuditModeOpenChildren, []string{"bd-1"}, []string{}); got != nil {
+		t.Fatalf("open-children mode should not emit closed-epic warning metadata, got %v", got)
+	}
+	if got := buildClosedEpicReadyWaveDriftWarning(intakeAuditModeClosedEpic, []string{"bd-1"}, []string{"bd-1"}); got != nil {
+		t.Fatalf("matching ready sets should not emit drift warning metadata, got %v", got)
 	}
 }
 

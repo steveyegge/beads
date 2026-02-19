@@ -109,9 +109,11 @@ After installation, restart Claude Code to activate the MCP server.
 
 Use this ownership split to avoid policy drift:
 
-- **CLI (deterministic enforcement):** readiness truth, claim/write guards, close safety, intake audits, and deterministic result states.
-- **Split agents (judgment):** intent translation, decomposition strategy, prioritization/preemption choices, and architectural tradeoffs.
-- **MCP adapter (translation only):** pass lifecycle operations to `bd flow ...` and surface CLI payloads without local policy forks.
+| Owner | Scope |
+|---|---|
+| `CLI-owned` | Deterministic enforcement: readiness truth, claim/write guards, intake audits, close safety, and deterministic result states. |
+| `Split-agent-owned` | Judgment and strategy: intent translation, decomposition strategy, prioritization/preemption choices, and architectural tradeoffs. |
+| `MCP-owned` | Adapter translation only: pass lifecycle operations to `bd flow ...` and surface CLI payloads without local policy forks. |
 
 ## MCP Tools Available
 

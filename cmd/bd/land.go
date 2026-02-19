@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +20,8 @@ type landStep struct {
 }
 
 var (
+	landStateFrom      string
+	landStateTo        string
 	landEpicID         string
 	landCheckOnly      bool
 	landRunSync        bool
@@ -36,6 +39,9 @@ var landCmd = &cobra.Command{
 	GroupID: "sync",
 	Short:   "Run deterministic landing gates for an epic/session",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, landStateFrom, landStateTo) {
+			return
+		}
 		ctx := rootCtx
 		landingActor := strings.TrimSpace(actor)
 		if landingActor == "" {
@@ -344,8 +350,12 @@ func landCriticalDoctorWarnings() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	diagnostics := runDiagnostics(workingPath)
-	return criticalWarningNamesFromChecks(diagnostics.Checks), nil
+	ctx := rootCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	checks := runPreflightGateChecks(ctx, workingPath)
+	return criticalWarningNamesFromChecks(checks), nil
 }
 
 func criticalWarningNamesFromChecks(checks []doctorCheck) []string {
@@ -439,6 +449,8 @@ func runSubprocess(name string, args ...string) (string, error) {
 }
 
 func init() {
+	landCmd.Flags().StringVar(&landStateFrom, "state-from", "", "Current session state for lifecycle transition validation")
+	landCmd.Flags().StringVar(&landStateTo, "state-to", "", "Target session state for lifecycle transition validation")
 	landCmd.Flags().StringVar(&landEpicID, "epic", "", "Epic ID for landing gate scope")
 	landCmd.Flags().BoolVar(&landCheckOnly, "check-only", false, "Run gates without sync/push operations")
 	landCmd.Flags().BoolVar(&landRunSync, "sync", false, "Run bd sync after gates pass")

@@ -375,11 +375,15 @@ func parseConfigBool(raw string) bool {
 
 func runtimeCapabilityManifest() []runtimeCapabilityProbe {
 	return []runtimeCapabilityProbe{
-		{CommandPath: nil, MustContain: []string{"flow", "intake", "preflight", "recover", "land", "cutover"}},
-		{CommandPath: []string{"flow"}, MustContain: []string{"claim-next", "preclaim-lint", "baseline-verify", "transition", "close-safe"}},
+		{CommandPath: nil, MustContain: []string{"flow", "intake", "preflight", "recover", "land", "cutover", "state"}},
+		{CommandPath: []string{"flow"}, MustContain: []string{"claim-next", "preclaim-lint", "baseline-verify", "transition", "close-safe", "priority-poll", "execution-rollback"}},
+		{CommandPath: []string{"flow", "claim-next"}, MustContain: []string{"--require-anchor", "--allow-missing-anchor"}},
+		{CommandPath: []string{"flow", "close-safe"}, MustContain: []string{"--require-parent-cascade", "--allow-open-children", "--require-priority-poll"}},
 		{CommandPath: []string{"intake"}, MustContain: []string{"audit", "map-sync", "planning-exit", "bulk-guard"}},
+		{CommandPath: []string{"intake", "audit"}, MustContain: []string{"--epic", "--write-proof"}},
 		{CommandPath: []string{"preflight"}, MustContain: []string{"gate", "runtime-parity"}},
 		{CommandPath: []string{"recover"}, MustContain: []string{"loop", "signature"}},
+		{CommandPath: []string{"land"}, MustContain: []string{"--require-quality", "--require-handoff", "--state-from", "--state-to"}},
 		{CommandPath: []string{"dep"}, MustContain: []string{"tree", "cycles", "add"}},
 	}
 }

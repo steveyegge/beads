@@ -14,6 +14,8 @@ import (
 )
 
 var (
+	intakeStateFrom          string
+	intakeStateTo            string
 	intakeAuditEpicID        string
 	intakeAuditWriteProof    bool
 	intakeGuardParentID      string
@@ -52,6 +54,9 @@ var intakeAuditCmd = &cobra.Command{
 	Use:   "audit",
 	Short: "Audit intake mapping and dependency/readiness contract",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, intakeStateFrom, intakeStateTo) {
+			return
+		}
 		ctx := rootCtx
 		epicID := strings.TrimSpace(intakeAuditEpicID)
 		if epicID == "" {
@@ -258,6 +263,7 @@ var intakeAuditCmd = &cobra.Command{
 			actualReady = append(actualReady, issue.ID)
 		}
 		actualReady = uniqueSortedIntakeStrings(actualReady)
+		readyDriftWarning := buildClosedEpicReadyWaveDriftWarning(auditMode, expectedReady, actualReady)
 		if equalStringSets(expectedReady, actualReady) {
 			checks["READY_SET"] = "PASS"
 		} else if intakeAuditReadySetRequired(auditMode) {
@@ -274,13 +280,15 @@ var intakeAuditCmd = &cobra.Command{
 				Result:  "contract_violation",
 				IssueID: epicResult.ResolvedID,
 				Details: map[string]interface{}{
-					"checks":         checks,
-					"failed_checks":  failedChecks,
-					"expected_ready": expectedReady,
-					"actual_ready":   actualReady,
-					"child_count":    len(children),
-					"plan_count":     parsed.PlanCount,
-					"audit_mode":     auditMode,
+					"checks":                        checks,
+					"failed_checks":                 failedChecks,
+					"expected_ready":                expectedReady,
+					"actual_ready":                  actualReady,
+					"child_count":                   len(children),
+					"plan_count":                    parsed.PlanCount,
+					"audit_mode":                    auditMode,
+					"historical_ready_wave_drift":   readyDriftWarning,
+					"historical_ready_wave_warning": readyDriftWarning != nil,
 				},
 				Events: []string{"intake_audit_failed"},
 			}, exitCodePolicyViolation)
@@ -311,12 +319,15 @@ var intakeAuditCmd = &cobra.Command{
 			Result:  "pass",
 			IssueID: epicResult.ResolvedID,
 			Details: map[string]interface{}{
-				"checks":         checks,
-				"write_proof":    intakeAuditWriteProof,
-				"child_count":    len(children),
-				"plan_count":     parsed.PlanCount,
-				"expected_ready": expectedReady,
-				"audit_mode":     auditMode,
+				"checks":                        checks,
+				"write_proof":                   intakeAuditWriteProof,
+				"child_count":                   len(children),
+				"plan_count":                    parsed.PlanCount,
+				"expected_ready":                expectedReady,
+				"actual_ready":                  actualReady,
+				"audit_mode":                    auditMode,
+				"historical_ready_wave_drift":   readyDriftWarning,
+				"historical_ready_wave_warning": readyDriftWarning != nil,
 			},
 			Events: []string{"intake_audit_passed"},
 		}, 0)
@@ -350,6 +361,9 @@ var intakeBulkGuardCmd = &cobra.Command{
 	Use:   "bulk-guard",
 	Short: "Run deterministic bulk-write safety guard checks",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, intakeStateFrom, intakeStateTo) {
+			return
+		}
 		ctx := rootCtx
 		parentID := strings.TrimSpace(intakeGuardParentID)
 		if parentID == "" {
@@ -439,6 +453,9 @@ var intakePlanningExitCmd = &cobra.Command{
 	Use:   "planning-exit",
 	Short: "Run deterministic planning-exit structure/readiness audit",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, intakeStateFrom, intakeStateTo) {
+			return
+		}
 		ctx := rootCtx
 		parentID := strings.TrimSpace(intakePlanningParentID)
 		if parentID == "" {
@@ -616,6 +633,9 @@ var intakeMapSyncCmd = &cobra.Command{
 	Use:   "map-sync",
 	Short: "Rewrite canonical INTAKE-MAP block in parent epic notes",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !enforceLifecycleStateTransitionGuard(cmd, intakeStateFrom, intakeStateTo) {
+			return
+		}
 		ctx := rootCtx
 		epicID := strings.TrimSpace(intakeMapSyncEpicID)
 		if epicID == "" {
@@ -1059,6 +1079,40 @@ func equalStringSets(a, b []string) bool {
 	return true
 }
 
+func setDifferenceSorted(left, right []string) []string {
+	rightSet := make(map[string]struct{}, len(right))
+	for _, id := range right {
+		rightSet[id] = struct{}{}
+	}
+	out := make([]string, 0)
+	for _, id := range left {
+		if _, ok := rightSet[id]; ok {
+			continue
+		}
+		out = append(out, id)
+	}
+	return uniqueSortedIntakeStrings(out)
+}
+
+func buildClosedEpicReadyWaveDriftWarning(mode string, expectedReady, actualReady []string) map[string]interface{} {
+	if mode != intakeAuditModeClosedEpic {
+		return nil
+	}
+	if equalStringSets(expectedReady, actualReady) {
+		return nil
+	}
+
+	missingFromActual := setDifferenceSorted(expectedReady, actualReady)
+	unexpectedInActual := setDifferenceSorted(actualReady, expectedReady)
+	return map[string]interface{}{
+		"warning":              "historical_ready_wave_drift",
+		"expected_ready":       uniqueSortedIntakeStrings(expectedReady),
+		"actual_ready":         uniqueSortedIntakeStrings(actualReady),
+		"missing_from_actual":  missingFromActual,
+		"unexpected_in_actual": unexpectedInActual,
+	}
+}
+
 func evaluateBulkWriteGuard(cycleCount, readyCount int, allowEmptyReady bool) (bool, []string) {
 	violations := make([]string, 0)
 	if cycleCount > 0 {
@@ -1158,6 +1212,8 @@ func buildIntakeProofBlock(hasFindings bool) string {
 }
 
 func init() {
+	intakeCmd.PersistentFlags().StringVar(&intakeStateFrom, "state-from", "", "Current session state for lifecycle transition validation")
+	intakeCmd.PersistentFlags().StringVar(&intakeStateTo, "state-to", "", "Target session state for lifecycle transition validation")
 	intakeAuditCmd.Flags().StringVar(&intakeAuditEpicID, "epic", "", "Parent epic ID to audit")
 	intakeAuditCmd.Flags().BoolVar(&intakeAuditWriteProof, "write-proof", false, "Append INTAKE_AUDIT=PASS proof block on success")
 	intakeAuditCmd.ValidArgsFunction = noCompletions
