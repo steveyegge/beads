@@ -78,7 +78,8 @@ var createCmd = &cobra.Command{
 			if dryRun {
 				FatalError("--dry-run is not supported with --file flag")
 			}
-			createIssuesFromMarkdown(cmd, file)
+			parentID, _ := cmd.Flags().GetString("parent")
+			createIssuesFromMarkdown(cmd, file, strings.TrimSpace(parentID))
 			return
 		}
 

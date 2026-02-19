@@ -816,7 +816,8 @@ def _enforce_flow_write_policy(tool_name: str) -> None:
     if _flow_only_writes_enabled():
         raise ValueError(
             f"Direct '{tool_name}' writes are disabled by {_FLOW_ONLY_WRITES_ENV}. "
-            "Use flow(action='...') wrappers instead."
+            "Direct lifecycle write tools are deprecated in this mode; "
+            "use flow(action='...') wrappers instead."
         )
 
 
@@ -904,8 +905,6 @@ async def flow(
     op = action.strip().lower()
 
     if op == "claim_next":
-        if ready_assignee:
-            raise ValueError("flow(action='claim_next') does not support ready_assignee; use actor identity for deterministic claiming")
         cli_args: list[str] = ["claim-next", "--limit", str(max(1, ready_limit))]
         if parent_id:
             cli_args.extend(["--parent", parent_id])
@@ -918,17 +917,15 @@ async def flow(
         return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
 
     if op == "create_discovered":
-        if not title:
-            raise ValueError("flow(action='create_discovered') requires title")
-        if not discovered_from_id:
-            raise ValueError("flow(action='create_discovered') requires discovered_from_id")
         cli_args = [
             "create-discovered",
-            "--title", title,
-            "--from", discovered_from_id,
             "--type", issue_type,
             "--priority", str(priority if priority is not None else 2),
         ]
+        if title:
+            cli_args.extend(["--title", title])
+        if discovered_from_id:
+            cli_args.extend(["--from", discovered_from_id])
         if description:
             cli_args.extend(["--description", description])
         for label in labels or []:
@@ -936,32 +933,23 @@ async def flow(
         return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
 
     if op == "block_with_context":
-        if not issue_id:
-            raise ValueError("flow(action='block_with_context') requires issue_id")
-        if not context_pack:
-            raise ValueError("flow(action='block_with_context') requires context_pack")
-        cli_args = [
-            "block-with-context",
-            "--issue", issue_id,
-            "--context-pack", context_pack,
-        ]
+        cli_args = ["block-with-context"]
+        if issue_id:
+            cli_args.extend(["--issue", issue_id])
+        if context_pack:
+            cli_args.extend(["--context-pack", context_pack])
         if blocker_id:
             cli_args.extend(["--blocker", blocker_id])
         return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
 
     if op == "close_safe":
-        if not issue_id:
-            raise ValueError("flow(action='close_safe') requires issue_id")
-        if not reason:
-            raise ValueError("flow(action='close_safe') requires reason")
-        if not verification:
-            raise ValueError("flow(action='close_safe') requires verification evidence")
-        cli_args = [
-            "close-safe",
-            "--issue", issue_id,
-            "--reason", reason,
-            "--verified", verification,
-        ]
+        cli_args = ["close-safe"]
+        if issue_id:
+            cli_args.extend(["--issue", issue_id])
+        if reason:
+            cli_args.extend(["--reason", reason])
+        if verification:
+            cli_args.extend(["--verified", verification])
         if notes:
             cli_args.extend(["--note", notes])
         if allow_failure_reason:

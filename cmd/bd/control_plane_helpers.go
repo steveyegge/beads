@@ -31,9 +31,9 @@ type commandEnvelope struct {
 	OK              bool                   `json:"ok"`
 	Command         string                 `json:"command"`
 	Result          string                 `json:"result"`
-	IssueID         string                 `json:"issue_id,omitempty"`
-	Details         map[string]interface{} `json:"details,omitempty"`
-	RecoveryCommand string                 `json:"recovery_command,omitempty"`
+	IssueID         string                 `json:"issue_id"`
+	Details         map[string]interface{} `json:"details"`
+	RecoveryCommand string                 `json:"recovery_command"`
 	Events          []string               `json:"events"`
 }
 
@@ -125,4 +125,17 @@ func lintCloseReason(reason string, allowFailureReason bool) error {
 		}
 	}
 	return nil
+}
+
+func strictControlExplicitIDsEnabled(flag bool) bool {
+	if flag {
+		return true
+	}
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv("BD_STRICT_CONTROL")))
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

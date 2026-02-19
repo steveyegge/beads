@@ -153,5 +153,27 @@ def test_cleanup_logs_lifecycle_events(caplog):
     assert any("Cleanup complete" in msg for msg in log_messages)
 
 
+def test_deprec_flow_only_write_policy_message(monkeypatch):
+    """Direct lifecycle writes should emit an explicit deprecation notice in flow-only mode."""
+    import beads_mcp.server as server
+
+    monkeypatch.setenv("BEADS_MCP_FLOW_ONLY_WRITES", "1")
+    with pytest.raises(ValueError) as exc:
+        server._enforce_flow_write_policy("update")
+
+    message = str(exc.value)
+    assert "disabled by BEADS_MCP_FLOW_ONLY_WRITES" in message
+    assert "deprecated" in message.lower()
+    assert "flow(action='...')" in message
+
+
+def test_deprec_flow_only_write_policy_disabled_allows_direct_calls(monkeypatch):
+    """Deprecation gate should only apply when flow-only mode is explicitly enabled."""
+    import beads_mcp.server as server
+
+    monkeypatch.delenv("BEADS_MCP_FLOW_ONLY_WRITES", raising=False)
+    server._enforce_flow_write_policy("update")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -24,9 +24,13 @@ create, update, show, or close operation).`,
 	Args: cobra.MinimumNArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("close")
+		strictControl, _ := cmd.Flags().GetBool("strict-control")
 
 		// If no IDs provided, use last touched issue
 		if len(args) == 0 {
+			if strictControlExplicitIDsEnabled(strictControl) {
+				FatalErrorRespectJSON("strict control mode requires explicit issue IDs for close")
+			}
 			lastTouched := GetLastTouchedID()
 			if lastTouched == "" {
 				FatalErrorRespectJSON("no issue ID provided and no last touched issue")
@@ -45,13 +49,31 @@ create, update, show, or close operation).`,
 		allowFailureReason, _ := cmd.Flags().GetBool("allow-failure-reason")
 		allowUnsafeReason, _ := cmd.Flags().GetBool("allow-unsafe-reason")
 		allowMissingVerified, _ := cmd.Flags().GetBool("allow-missing-verified")
+		requireEvidenceTuple, _ := cmd.Flags().GetBool("require-evidence-tuple")
+		evidenceMaxAgeRaw, _ := cmd.Flags().GetString("evidence-max-age")
 		verifiedEntriesRaw, _ := cmd.Flags().GetStringArray("verified")
+		forceAuditEntriesRaw, _ := cmd.Flags().GetStringArray("force-audit-note")
 		verifiedEntries := make([]string, 0, len(verifiedEntriesRaw))
 		for _, entry := range verifiedEntriesRaw {
 			entry = strings.TrimSpace(entry)
 			if entry != "" {
 				verifiedEntries = append(verifiedEntries, entry)
 			}
+		}
+		forceAuditEntries := make([]string, 0, len(forceAuditEntriesRaw))
+		for _, entry := range forceAuditEntriesRaw {
+			entry = strings.TrimSpace(entry)
+			if entry != "" {
+				forceAuditEntries = append(forceAuditEntries, entry)
+			}
+		}
+		evidenceMaxAge := 24 * time.Hour
+		if requireEvidenceTuple {
+			parsedEvidenceAge, err := time.ParseDuration(strings.TrimSpace(evidenceMaxAgeRaw))
+			if err != nil || parsedEvidenceAge <= 0 {
+				FatalErrorRespectJSON("invalid --evidence-max-age %q (must be positive duration like 24h)", evidenceMaxAgeRaw)
+			}
+			evidenceMaxAge = parsedEvidenceAge
 		}
 
 		if reason == "" && !allowUnsafeReason {
@@ -142,20 +164,38 @@ create, update, show, or close operation).`,
 				}
 			}
 
-			if len(verifiedEntries) > 0 {
+			if requireEvidenceTuple {
 				existingNotes := ""
 				if issue != nil {
 					existingNotes = issue.Notes
 				}
-				notes := existingNotes
-				for _, entry := range verifiedEntries {
-					notes = appendNotesLine(notes, "Verified: "+entry)
+				if err := validateEvidenceTupleNotes(existingNotes, time.Now().UTC(), evidenceMaxAge); err != nil {
+					fmt.Fprintf(os.Stderr, "cannot close %s: evidence tuple policy violation: %v\n", id, err)
+					continue
 				}
-				if notes != existingNotes {
-					if err := store.UpdateIssue(ctx, id, map[string]interface{}{"notes": notes}, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error appending verification notes for %s: %v\n", id, err)
-						continue
-					}
+			}
+
+			existingNotes := ""
+			if issue != nil {
+				existingNotes = issue.Notes
+			}
+			notes := existingNotes
+			for _, entry := range verifiedEntries {
+				notes = appendNotesLine(notes, "Verified: "+entry)
+			}
+			for _, entry := range forceAuditEntries {
+				notes = appendNotesLine(notes, entry)
+			}
+			if force {
+				if err := validateForceCloseAuditNotes(notes); err != nil {
+					fmt.Fprintf(os.Stderr, "cannot close %s: force-close audit policy violation: %v\n", id, err)
+					continue
+				}
+			}
+			if notes != existingNotes {
+				if err := store.UpdateIssue(ctx, id, map[string]interface{}{"notes": notes}, actor); err != nil {
+					fmt.Fprintf(os.Stderr, "Error appending close notes for %s: %v\n", id, err)
+					continue
 				}
 			}
 
@@ -226,18 +266,34 @@ create, update, show, or close operation).`,
 				}
 			}
 
-			if len(verifiedEntries) > 0 {
-				existingNotes := result.Issue.Notes
-				notes := existingNotes
-				for _, entry := range verifiedEntries {
-					notes = appendNotesLine(notes, "Verified: "+entry)
+			if requireEvidenceTuple {
+				if err := validateEvidenceTupleNotes(result.Issue.Notes, time.Now().UTC(), evidenceMaxAge); err != nil {
+					result.Close()
+					fmt.Fprintf(os.Stderr, "cannot close %s: evidence tuple policy violation: %v\n", id, err)
+					continue
 				}
-				if notes != existingNotes {
-					if err := result.Store.UpdateIssue(ctx, result.ResolvedID, map[string]interface{}{"notes": notes}, actor); err != nil {
-						result.Close()
-						fmt.Fprintf(os.Stderr, "Error appending verification notes for %s: %v\n", id, err)
-						continue
-					}
+			}
+
+			existingNotes := result.Issue.Notes
+			notes := existingNotes
+			for _, entry := range verifiedEntries {
+				notes = appendNotesLine(notes, "Verified: "+entry)
+			}
+			for _, entry := range forceAuditEntries {
+				notes = appendNotesLine(notes, entry)
+			}
+			if force {
+				if err := validateForceCloseAuditNotes(notes); err != nil {
+					result.Close()
+					fmt.Fprintf(os.Stderr, "cannot close %s: force-close audit policy violation: %v\n", id, err)
+					continue
+				}
+			}
+			if notes != existingNotes {
+				if err := result.Store.UpdateIssue(ctx, result.ResolvedID, map[string]interface{}{"notes": notes}, actor); err != nil {
+					result.Close()
+					fmt.Fprintf(os.Stderr, "Error appending close notes for %s: %v\n", id, err)
+					continue
 				}
 			}
 
@@ -318,6 +374,10 @@ func init() {
 	closeCmd.Flags().Bool("allow-failure-reason", false, "Allow failed: close reasons that would otherwise be rejected")
 	closeCmd.Flags().Bool("allow-unsafe-reason", false, "Bypass close-reason lint (manual/exceptional use)")
 	closeCmd.Flags().Bool("allow-missing-verified", false, "Allow close without --verified evidence (manual/exceptional use)")
+	closeCmd.Flags().Bool("require-evidence-tuple", false, "Require a fresh EvidenceTuple note entry before close")
+	closeCmd.Flags().String("evidence-max-age", "24h", "Maximum allowed EvidenceTuple age when --require-evidence-tuple is set")
+	closeCmd.Flags().Bool("strict-control", false, "Require explicit IDs (disable implicit last-touched close behavior)")
+	closeCmd.Flags().StringArray("force-audit-note", nil, "Force-close audit note entry (repeatable)")
 	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues or unsatisfied gates")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
@@ -388,4 +448,18 @@ func checkGateSatisfaction(issue *types.Issue) error {
 	}
 
 	return fmt.Errorf("gate condition not satisfied: %s (use --force to override)", reason)
+}
+
+func validateForceCloseAuditNotes(notes string) error {
+	required := []string{
+		"Force-close rationale",
+		"Open blockers at close",
+		"Why bypass is safe now",
+	}
+	for _, marker := range required {
+		if !strings.Contains(notes, marker) {
+			return fmt.Errorf("missing required force-close audit field %q", marker)
+		}
+	}
+	return nil
 }

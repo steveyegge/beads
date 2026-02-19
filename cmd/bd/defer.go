@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -33,6 +34,23 @@ Examples:
 
 		// Parse --until flag (GH#820)
 		untilStr, _ := cmd.Flags().GetString("until")
+		allowUnbounded, _ := cmd.Flags().GetBool("allow-unbounded")
+		if err := validateDeferLiveness(untilStr, allowUnbounded); err != nil {
+			if jsonOutput {
+				finishEnvelope(commandEnvelope{
+					OK:      false,
+					Command: "defer",
+					Result:  "policy_violation",
+					Details: map[string]interface{}{
+						"message": err.Error(),
+					},
+					RecoveryCommand: "bd defer <id> --until <time>",
+					Events:          []string{"defer_rejected"},
+				}, exitCodePolicyViolation)
+			}
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(exitCodePolicyViolation)
+		}
 		deferUntil, err := parseSchedulingFlag("until", untilStr, time.Now())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -95,6 +113,17 @@ Examples:
 func init() {
 	// Time-based scheduling flag (GH#820)
 	deferCmd.Flags().String("until", "", "Defer until specific time (e.g., +1h, tomorrow, next monday)")
+	deferCmd.Flags().Bool("allow-unbounded", false, "Allow defer without --until (manual/exceptional use)")
 	deferCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(deferCmd)
+}
+
+func validateDeferLiveness(untilRaw string, allowUnbounded bool) error {
+	if strings.TrimSpace(untilRaw) != "" {
+		return nil
+	}
+	if allowUnbounded {
+		return nil
+	}
+	return fmt.Errorf("unbounded defer is blocked; provide --until <time> or pass --allow-unbounded")
 }

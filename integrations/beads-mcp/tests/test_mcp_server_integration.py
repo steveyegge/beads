@@ -10,6 +10,7 @@ import pytest
 from fastmcp.client import Client
 
 from beads_mcp.server import mcp
+from tests._bd_binary import REQUIRED_FLOW_SUBCOMMANDS, probe_bd_capabilities, resolve_bd_executable
 
 
 def _workspace_root_from_context_output(output: str) -> str:
@@ -56,24 +57,35 @@ async def _run_bd_json(
 
 @pytest.fixture(scope="session")
 def bd_executable():
-    """Resolve bd executable, preferring explicit custom-fork path."""
-    configured = os.environ.get("BEADS_PATH") or os.environ.get("BEADS_BD_PATH")
-    if configured:
-        bd_path = shutil.which(configured) if "/" not in configured else configured
-        if not bd_path or not Path(bd_path).exists():
-            pytest.fail(
-                f"Configured bd executable not found: {configured}. "
-                "Set BEADS_PATH to a valid custom-fork bd binary."
-            )
-        return str(Path(bd_path).resolve())
+    """Resolve bd executable via capability-probed custom-fork candidates."""
+    try:
+        return resolve_bd_executable()
+    except RuntimeError as exc:
+        pytest.fail(str(exc))
 
-    bd_path = shutil.which("bd")
-    if not bd_path:
-        pytest.fail(
-            "bd executable not found in PATH. "
-            "Set BEADS_PATH to your custom-fork bd binary or add bd to PATH."
-        )
-    return bd_path
+
+def test_binary_resolver_returns_absolute_executable_path(bd_executable):
+    """Binary resolver should produce a concrete executable path."""
+    assert Path(bd_executable).is_absolute()
+    assert os.access(bd_executable, os.X_OK)
+
+
+def test_binary_probe_confirms_required_flow_subcommands(bd_executable):
+    """Binary capability probe should enforce required control-plane flow commands."""
+    probe_bd_capabilities(bd_executable)
+    import subprocess
+
+    help_result = subprocess.run(
+        [bd_executable, "flow", "--help"],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    help_text = f"{help_result.stdout}\n{help_result.stderr}"
+    for subcommand in REQUIRED_FLOW_SUBCOMMANDS:
+        assert subcommand in help_text
 
 
 @pytest.fixture

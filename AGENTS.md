@@ -10,6 +10,14 @@ This file exists for compatibility with tools that look for AGENTS.md.
 - **Development Guidelines** - Code standards and testing
 - **Visual Design System** - Status icons, colors, and semantic styling for CLI output
 
+## Control-Plane Ownership Boundary
+
+- **CLI-owned (deterministic, machine-checkable):** lifecycle guards, readiness/blocking semantics, close-reason policy, intake/preflight audits, and structured result envelopes.
+- **Split-agent-owned (judgment/strategy):** intent interpretation, decomposition choices, prioritization, architectural tradeoffs, and human-facing handoff quality.
+- **MCP-owned (adapter only):** translate tool calls to CLI commands and return CLI outcomes without re-implementing lifecycle policy.
+
+See `docs/CONTROL_PLANE_CONTRACT.md` for deterministic CLI contract details and `docs/PLUGIN.md` for split-agent workflow guidance.
+
 ## Visual Design Anti-Patterns
 
 **NEVER use emoji-style icons** (🔴🟠🟡🔵⚪) in CLI output. They cause cognitive overload.

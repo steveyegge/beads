@@ -27,9 +27,13 @@ create, update, show, or close operation).`,
 	Args: cobra.MinimumNArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("update")
+		strictControl, _ := cmd.Flags().GetBool("strict-control")
 
 		// If no IDs provided, use last touched issue
 		if len(args) == 0 {
+			if strictControlExplicitIDsEnabled(strictControl) {
+				FatalErrorRespectJSON("strict control mode requires explicit issue IDs for update")
+			}
 			lastTouched := GetLastTouchedID()
 			if lastTouched == "" {
 				FatalErrorRespectJSON("no issue ID provided and no last touched issue")
@@ -448,6 +452,7 @@ func init() {
 	updateCmd.Flags().String("parent", "", "New parent issue ID (reparents the issue, use empty string to remove parent)")
 	updateCmd.Flags().Bool("claim", false, "Atomically claim the issue (sets assignee to you, status to in_progress; fails if already claimed)")
 	updateCmd.Flags().Bool("allow-multi-wip", false, "Bypass WIP=1 gate for --claim (manual/exceptional use)")
+	updateCmd.Flags().Bool("strict-control", false, "Require explicit IDs (disable implicit last-touched update behavior)")
 	updateCmd.Flags().String("session", "", "Claude Code session ID for status=closed (or set CLAUDE_SESSION_ID env var)")
 	// Time-based scheduling flags (GH#820)
 	// Examples:

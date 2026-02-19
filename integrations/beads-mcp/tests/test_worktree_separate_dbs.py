@@ -20,28 +20,16 @@ import pytest
 from fastmcp.client import Client
 
 from beads_mcp.server import mcp
+from tests._bd_binary import resolve_bd_executable
 
 
 @pytest.fixture(scope="session")
 def bd_executable():
-    """Resolve bd executable, preferring explicit custom-fork path."""
-    configured = os.environ.get("BEADS_PATH") or os.environ.get("BEADS_BD_PATH")
-    if configured:
-        bd_path = shutil.which(configured) if "/" not in configured else configured
-        if not bd_path or not Path(bd_path).exists():
-            pytest.fail(
-                f"Configured bd executable not found: {configured}. "
-                "Set BEADS_PATH to a valid custom-fork bd binary."
-            )
-        return str(Path(bd_path).resolve())
-
-    bd_path = shutil.which("bd")
-    if not bd_path:
-        pytest.fail(
-            "bd executable not found in PATH. "
-            "Set BEADS_PATH to your custom-fork bd binary or add bd to PATH."
-        )
-    return bd_path
+    """Resolve bd executable via capability-probed custom-fork candidates."""
+    try:
+        return resolve_bd_executable()
+    except RuntimeError as exc:
+        pytest.fail(str(exc))
 
 
 @pytest.fixture

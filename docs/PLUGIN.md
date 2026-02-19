@@ -105,6 +105,14 @@ After installation, restart Claude Code to activate the MCP server.
 - **`@beads-cleanup-agent`** - Landing/handoff cleanup with resumable state
 - **`@task-agent`** - Compatibility orchestrator that routes to split agents
 
+### CLI vs Split-Agent Boundary
+
+Use this ownership split to avoid policy drift:
+
+- **CLI (deterministic enforcement):** readiness truth, claim/write guards, close safety, intake audits, and deterministic result states.
+- **Split agents (judgment):** intent translation, decomposition strategy, prioritization/preemption choices, and architectural tradeoffs.
+- **MCP adapter (translation only):** pass lifecycle operations to `bd flow ...` and surface CLI payloads without local policy forks.
+
 ## MCP Tools Available
 
 The plugin includes a full-featured MCP server with these tools:

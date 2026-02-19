@@ -18,10 +18,15 @@ type landStep struct {
 }
 
 var (
-	landEpicID    string
-	landCheckOnly bool
-	landRunSync   bool
-	landRunPush   bool
+	landEpicID         string
+	landCheckOnly      bool
+	landRunSync        bool
+	landRunPush        bool
+	landRequireQuality bool
+	landQualitySummary string
+	landRequireHandoff bool
+	landNextPrompt     string
+	landStash          string
 )
 
 var landCmd = &cobra.Command{
@@ -169,6 +174,42 @@ var landCmd = &cobra.Command{
 			steps = append(steps, landStep{Name: "gate3_git_clean", Status: "fail", Message: "git working tree is dirty"})
 		}
 
+		qualityStep := evaluateLandQualityGate(landRequireQuality, landQualitySummary)
+		steps = append(steps, qualityStep)
+		if qualityStep.Status == "fail" {
+			gateFailed = true
+		}
+
+		readyIssues, readyErr := store.GetReadyWork(ctx, types.WorkFilter{
+			Status: types.StatusOpen,
+			Limit:  5,
+		})
+		if readyErr != nil {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "land",
+				Result:  "system_error",
+				Details: map[string]interface{}{"message": fmt.Sprintf("failed to query handoff ready snapshot: %v", readyErr)},
+				Events:  []string{"land_failed"},
+			}, 1)
+			return
+		}
+		readyIDs := make([]string, 0, len(readyIssues))
+		for _, issue := range readyIssues {
+			readyIDs = append(readyIDs, issue.ID)
+		}
+		if len(readyIDs) == 0 {
+			steps = append(steps, landStep{Name: "gate4_ready_snapshot", Status: "pass", Message: "ready snapshot: none"})
+		} else {
+			steps = append(steps, landStep{Name: "gate4_ready_snapshot", Status: "pass", Message: "ready snapshot: " + strings.Join(readyIDs, ",")})
+		}
+
+		handoffStep := evaluateLandHandoffGate(landRequireHandoff, landNextPrompt, landStash)
+		steps = append(steps, handoffStep)
+		if handoffStep.Status == "fail" {
+			gateFailed = true
+		}
+
 		if gateFailed {
 			finishEnvelope(commandEnvelope{
 				OK:      false,
@@ -271,6 +312,33 @@ func gitStatusDirty() (bool, error) {
 	return strings.TrimSpace(out) != "", nil
 }
 
+func evaluateLandQualityGate(requireQuality bool, summary string) landStep {
+	if !requireQuality {
+		return landStep{Name: "gate2_quality", Status: "skipped", Message: "quality evidence not required"}
+	}
+	if strings.TrimSpace(summary) == "" {
+		return landStep{Name: "gate2_quality", Status: "fail", Message: "quality evidence missing (provide --quality-summary)"}
+	}
+	return landStep{Name: "gate2_quality", Status: "pass", Message: strings.TrimSpace(summary)}
+}
+
+func evaluateLandHandoffGate(requireHandoff bool, nextPrompt, stash string) landStep {
+	if !requireHandoff {
+		return landStep{Name: "gate4_handoff", Status: "skipped", Message: "handoff fields not required"}
+	}
+	missing := make([]string, 0, 2)
+	if strings.TrimSpace(nextPrompt) == "" {
+		missing = append(missing, "next-prompt")
+	}
+	if strings.TrimSpace(stash) == "" {
+		missing = append(missing, "stash")
+	}
+	if len(missing) > 0 {
+		return landStep{Name: "gate4_handoff", Status: "fail", Message: "missing handoff fields: " + strings.Join(missing, ",")}
+	}
+	return landStep{Name: "gate4_handoff", Status: "pass", Message: "next prompt and stash fields recorded"}
+}
+
 func runSubprocess(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Env = os.Environ()
@@ -286,6 +354,11 @@ func init() {
 	landCmd.Flags().BoolVar(&landCheckOnly, "check-only", false, "Run gates without sync/push operations")
 	landCmd.Flags().BoolVar(&landRunSync, "sync", false, "Run bd sync after gates pass")
 	landCmd.Flags().BoolVar(&landRunPush, "push", false, "Run git push after gates pass")
+	landCmd.Flags().BoolVar(&landRequireQuality, "require-quality", false, "Require Gate 2 quality evidence summary")
+	landCmd.Flags().StringVar(&landQualitySummary, "quality-summary", "", "Gate 2 quality evidence summary (tests/lint/build results)")
+	landCmd.Flags().BoolVar(&landRequireHandoff, "require-handoff", false, "Require Gate 4 next prompt + stash fields")
+	landCmd.Flags().StringVar(&landNextPrompt, "next-prompt", "", "Gate 4 next-session prompt text")
+	landCmd.Flags().StringVar(&landStash, "stash", "", "Gate 4 stash field value (for example: none)")
 	landCmd.ValidArgsFunction = noCompletions
 
 	rootCmd.AddCommand(landCmd)

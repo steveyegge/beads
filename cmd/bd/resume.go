@@ -10,6 +10,9 @@ import (
 )
 
 var resumeEpicID string
+var resumeSessionClosedCount int
+var resumeFileRereadCount int
+var resumeStateTransition bool
 
 var resumeCmd = &cobra.Command{
 	Use:     "resume",
@@ -69,9 +72,9 @@ var resumeCmd = &cobra.Command{
 		for _, issue := range wipIssues {
 			wipCompact = append(wipCompact, compactIssue(issue))
 			actions = append(actions, map[string]interface{}{
-				"issue_id": issue.ID,
-				"title":    issue.Title,
-				"actions":  []string{"resume", "close", "block", "relinquish"},
+				"issue_id":       issue.ID,
+				"title":          issue.Title,
+				"action_classes": buildResumeGuardActions(issue.ID),
 			})
 		}
 
@@ -111,26 +114,82 @@ var resumeCmd = &cobra.Command{
 		if len(wipIssues) > 0 {
 			result = "resume_required"
 		}
+		freshnessSignals := evaluateContextFreshnessSignals(
+			resumeSessionClosedCount,
+			resumeFileRereadCount,
+			resumeStateTransition,
+		)
+		if len(freshnessSignals) > 0 {
+			if result == "resume_required" {
+				result = "resume_required_context_refresh"
+			} else {
+				result = "context_refresh_recommended"
+			}
+		}
 
 		finishEnvelope(commandEnvelope{
 			OK:      true,
 			Command: "resume",
 			Result:  result,
 			Details: map[string]interface{}{
-				"actor":               resumeActor,
-				"current_wip":         wipCompact,
-				"required_actions":    actions,
-				"anchor_digest":       anchor,
-				"wip_count":           len(wipIssues),
-				"epic_scope_resolved": resolvedEpic,
+				"actor":                       resumeActor,
+				"current_wip":                 wipCompact,
+				"required_actions":            actions,
+				"anchor_digest":               anchor,
+				"wip_count":                   len(wipIssues),
+				"epic_scope_resolved":         resolvedEpic,
+				"context_freshness_signals":   freshnessSignals,
+				"context_refresh_recommended": len(freshnessSignals) > 0,
 			},
 			Events: []string{"resume_snapshot"},
 		}, 0)
 	},
 }
 
+func buildResumeGuardActions(issueID string) []map[string]string {
+	id := strings.TrimSpace(issueID)
+	if id == "" {
+		return []map[string]string{}
+	}
+	return []map[string]string{
+		{
+			"class":        "resume",
+			"next_command": fmt.Sprintf("bd show %s --json", id),
+		},
+		{
+			"class":        "close",
+			"next_command": fmt.Sprintf("bd flow close-safe --issue %s --reason \"Updated: <summary>; verified with <command>\" --verified \"<command> -> <result>\"", id),
+		},
+		{
+			"class":        "block",
+			"next_command": fmt.Sprintf("bd flow block-with-context --issue %s --context-pack \"state=<state>; failing test/repro=<repro>; next=<command>; links/files=<paths>; blockers=<ids>\"", id),
+		},
+		{
+			"class":        "relinquish",
+			"next_command": fmt.Sprintf("bd update %s --assignee \"\" --status open --append-notes \"Context pack: state=<state>; next=<command>\"", id),
+		},
+	}
+}
+
+func evaluateContextFreshnessSignals(sessionClosedCount, fileRereadCount int, stateTransition bool) []string {
+	signals := make([]string, 0, 3)
+	if sessionClosedCount >= 3 {
+		signals = append(signals, "session_close_threshold")
+	}
+	if fileRereadCount >= 5 {
+		signals = append(signals, "file_reread_threshold")
+	}
+	if stateTransition {
+		signals = append(signals, "state_transition")
+	}
+	return signals
+}
+
 func init() {
 	resumeCmd.Flags().StringVar(&resumeEpicID, "epic", "", "Optional epic scope for WIP and anchor checks")
+	resumeCmd.Flags().IntVar(&resumeSessionClosedCount, "session-closed-count", 0, "Count of behavior-changing closes in current session")
+	resumeCmd.Flags().IntVar(&resumeFileRereadCount, "file-reread-count", 0, "Count of repeated file reads in current session")
+	resumeCmd.Flags().BoolVar(&resumeStateTransition, "state-transition", false, "Whether execution/recovery state transition occurred")
 	resumeCmd.ValidArgsFunction = noCompletions
 	rootCmd.AddCommand(resumeCmd)
 }

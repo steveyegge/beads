@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // CheckResult represents the result of a single preflight check.
@@ -27,6 +29,30 @@ type PreflightResult struct {
 	Passed  bool          `json:"passed"`
 	Summary string        `json:"summary"`
 }
+
+type preflightGateAssessment struct {
+	Pass                 bool     `json:"pass"`
+	Blockers             []string `json:"blockers"`
+	DoctorFailCount      int      `json:"doctor_fail_count"`
+	DoctorCriticalWarns  int      `json:"doctor_critical_warn_count"`
+	ValidationOnCreate   string   `json:"validation_on_create"`
+	RequireDescription   bool     `json:"require_description"`
+	WIPCount             int      `json:"wip_count"`
+	WIPGateEnforced      bool     `json:"wip_gate_enforced"`
+	Action               string   `json:"action"`
+}
+
+var preflightCriticalDoctorWarnings = map[string]struct{}{
+	"Repo Fingerprint": {},
+	"DB-JSONL Sync":   {},
+	"Sync Divergence": {},
+	"Issues Tracking": {},
+}
+
+var (
+	preflightGateAction  string
+	preflightSkipWIPGate bool
+)
 
 var preflightCmd = &cobra.Command{
 	Use:     "preflight",
@@ -52,8 +78,178 @@ func init() {
 	preflightCmd.Flags().Bool("check", false, "Run checks automatically")
 	preflightCmd.Flags().Bool("fix", false, "Auto-fix issues where possible (not yet implemented)")
 	preflightCmd.Flags().Bool("json", false, "Output results as JSON")
+	preflightGateCmd.Flags().StringVar(&preflightGateAction, "action", "claim", "Gate scope: claim or write")
+	preflightGateCmd.Flags().BoolVar(&preflightSkipWIPGate, "skip-wip-gate", false, "Skip WIP gate (resume-remediation only)")
+	preflightCmd.AddCommand(preflightGateCmd)
 
 	rootCmd.AddCommand(preflightCmd)
+}
+
+var preflightGateCmd = &cobra.Command{
+	Use:   "gate",
+	Short: "Run deterministic control-plane readiness gates",
+	Run:   runPreflightGate,
+}
+
+func runPreflightGate(cmd *cobra.Command, args []string) {
+	ctx := rootCtx
+	action := strings.ToLower(strings.TrimSpace(preflightGateAction))
+	if action != "claim" && action != "write" {
+		finishEnvelope(commandEnvelope{
+			OK:      false,
+			Command: "preflight gate",
+			Result:  "invalid_input",
+			Details: map[string]interface{}{
+				"message": "invalid --action value (expected claim or write)",
+				"action":  preflightGateAction,
+			},
+			Events: []string{"preflight_invalid_input"},
+		}, 1)
+		return
+	}
+
+	validationOnCreate, _ := store.GetConfig(ctx, "validation.on-create")
+	requireDescriptionRaw, _ := store.GetConfig(ctx, "create.require-description")
+	requireDescription, _ := strconv.ParseBool(strings.TrimSpace(requireDescriptionRaw))
+
+	workingPath, err := os.Getwd()
+	if err != nil {
+		finishEnvelope(commandEnvelope{
+			OK:      false,
+			Command: "preflight gate",
+			Result:  "system_error",
+			Details: map[string]interface{}{"message": fmt.Sprintf("failed to resolve working directory: %v", err)},
+			Events:  []string{"preflight_failed"},
+		}, 1)
+		return
+	}
+	diagnostics := runDiagnostics(workingPath)
+
+	wipGateEnforced := !preflightSkipWIPGate
+	wipCount := 0
+	wipIDs := []string{}
+	if wipGateEnforced {
+		preflightActor := strings.TrimSpace(actor)
+		if preflightActor == "" {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "preflight gate",
+				Result:  "invalid_input",
+				Details: map[string]interface{}{
+					"message": "actor is required when WIP gate is enabled (use --actor or BD_ACTOR/BEADS_ACTOR)",
+				},
+				Events: []string{"preflight_invalid_input"},
+			}, 1)
+			return
+		}
+		inProgress := types.StatusInProgress
+		filter := types.IssueFilter{
+			Status:   &inProgress,
+			Assignee: &preflightActor,
+			Limit:    50,
+		}
+		wipIssues, qErr := store.SearchIssues(ctx, "", filter)
+		if qErr != nil {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "preflight gate",
+				Result:  "system_error",
+				Details: map[string]interface{}{"message": fmt.Sprintf("wip gate query failed: %v", qErr)},
+				Events:  []string{"preflight_failed"},
+			}, 1)
+			return
+		}
+		wipCount = len(wipIssues)
+		for _, issue := range wipIssues {
+			wipIDs = append(wipIDs, issue.ID)
+		}
+	}
+
+	assessment := evaluatePreflightGate(
+		action,
+		validationOnCreate,
+		requireDescription,
+		diagnostics.Checks,
+		wipCount,
+		wipGateEnforced,
+	)
+
+	details := map[string]interface{}{
+		"action":                     assessment.Action,
+		"blockers":                   assessment.Blockers,
+		"doctor_fail_count":          assessment.DoctorFailCount,
+		"doctor_critical_warn_count": assessment.DoctorCriticalWarns,
+		"validation_on_create":       assessment.ValidationOnCreate,
+		"require_description":        assessment.RequireDescription,
+		"wip_count":                  assessment.WIPCount,
+		"wip_gate_enforced":          assessment.WIPGateEnforced,
+		"wip_issue_ids":              wipIDs,
+	}
+
+	if !assessment.Pass {
+		finishEnvelope(commandEnvelope{
+			OK:              false,
+			Command:         "preflight gate",
+			Result:          "blocked",
+			Details:         details,
+			RecoveryCommand: "bd preflight gate --action claim",
+			Events:          []string{"preflight_blocked"},
+		}, exitCodePolicyViolation)
+		return
+	}
+
+	finishEnvelope(commandEnvelope{
+		OK:      true,
+		Command: "preflight gate",
+		Result:  "pass",
+		Details: details,
+		Events:  []string{"preflight_passed"},
+	}, 0)
+}
+
+func evaluatePreflightGate(action, validationOnCreate string, requireDescription bool, checks []doctorCheck, wipCount int, enforceWIP bool) preflightGateAssessment {
+	failCount := 0
+	criticalWarnCount := 0
+	blockers := make([]string, 0)
+
+	for _, check := range checks {
+		switch strings.ToLower(strings.TrimSpace(check.Status)) {
+		case "fail", statusError:
+			failCount++
+		case statusWarning:
+			if _, critical := preflightCriticalDoctorWarnings[check.Name]; critical {
+				criticalWarnCount++
+			}
+		}
+	}
+
+	if strings.TrimSpace(validationOnCreate) != "error" {
+		blockers = append(blockers, "hardening.validation.on-create")
+	}
+	if !requireDescription {
+		blockers = append(blockers, "hardening.create.require-description")
+	}
+	if failCount > 0 {
+		blockers = append(blockers, "doctor.fail_or_error")
+	}
+	if criticalWarnCount > 0 {
+		blockers = append(blockers, "doctor.critical_warning")
+	}
+	if enforceWIP && wipCount > 0 {
+		blockers = append(blockers, "wip.gate")
+	}
+
+	return preflightGateAssessment{
+		Pass:                len(blockers) == 0,
+		Blockers:            blockers,
+		DoctorFailCount:     failCount,
+		DoctorCriticalWarns: criticalWarnCount,
+		ValidationOnCreate:  strings.TrimSpace(validationOnCreate),
+		RequireDescription:  requireDescription,
+		WIPCount:            wipCount,
+		WIPGateEnforced:     enforceWIP,
+		Action:              action,
+	}
 }
 
 func runPreflight(cmd *cobra.Command, args []string) {
