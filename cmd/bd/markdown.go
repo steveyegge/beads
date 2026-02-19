@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -303,9 +305,9 @@ func parseMarkdownFile(path string) ([]*IssueTemplate, error) {
 }
 
 // createIssuesFromMarkdown parses a markdown file and creates multiple issues from it
-func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
+func createIssuesFromMarkdown(_ *cobra.Command, markdownPath string, parentIDRaw string) {
 	// Parse markdown file first (doesn't require store access)
-	templates, err := parseMarkdownFile(filepath)
+	templates, err := parseMarkdownFile(markdownPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing markdown file: %v\n", err)
 		os.Exit(1)
@@ -328,6 +330,16 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 	ctx := rootCtx
 	createdIssues := []*types.Issue{}
 	failedIssues := []string{}
+	parentLinkFailures := make([]map[string]string, 0)
+	resolvedParentID := ""
+
+	if strings.TrimSpace(parentIDRaw) != "" {
+		resolvedParentID, err = utils.ResolvePartialID(ctx, store, parentIDRaw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error resolving parent %q: %v\n", parentIDRaw, err)
+			os.Exit(1)
+		}
+	}
 
 	// Create each issue
 	for _, template := range templates {
@@ -394,6 +406,29 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 			}
 		}
 
+		if resolvedParentID != "" {
+			parentDep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: resolvedParentID,
+				Type:        types.DepParentChild,
+			}
+			if err := store.AddDependency(ctx, parentDep, actor); err != nil {
+				failure := map[string]string{
+					"title":     issue.Title,
+					"issue_id":  issue.ID,
+					"parent_id": resolvedParentID,
+					"error":     err.Error(),
+				}
+				parentLinkFailures = append(parentLinkFailures, failure)
+				encoded, marshalErr := json.Marshal(failure)
+				if marshalErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: parent link failed for %s -> %s: %v\n", issue.ID, resolvedParentID, err)
+				} else {
+					fmt.Fprintf(os.Stderr, "PARENT_LINK_FAILURE %s\n", string(encoded))
+				}
+			}
+		}
+
 		createdIssues = append(createdIssues, issue)
 	}
 
@@ -406,11 +441,26 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 	}
 
 	if jsonOutput {
-		outputJSON(createdIssues)
+		if resolvedParentID == "" {
+			outputJSON(createdIssues)
+			return
+		}
+		outputJSON(map[string]interface{}{
+			"created":              createdIssues,
+			"parent_id":            resolvedParentID,
+			"parent_link_failures": parentLinkFailures,
+		})
 	} else {
-		fmt.Printf("%s Created %d issues from %s:\n", ui.RenderPass("✓"), len(createdIssues), filepath)
+		fmt.Printf("%s Created %d issues from %s:\n", ui.RenderPass("✓"), len(createdIssues), markdownPath)
 		for _, issue := range createdIssues {
 			fmt.Printf("  %s: %s [P%d, %s]\n", issue.ID, issue.Title, issue.Priority, issue.IssueType)
+		}
+		if resolvedParentID != "" {
+			if len(parentLinkFailures) == 0 {
+				fmt.Printf("%s Linked %d issues to parent %s\n", ui.RenderPass("✓"), len(createdIssues), resolvedParentID)
+			} else {
+				fmt.Printf("%s Parent-link failures: %d (see stderr PARENT_LINK_FAILURE lines)\n", ui.RenderWarn("⚠"), len(parentLinkFailures))
+			}
 		}
 	}
 }

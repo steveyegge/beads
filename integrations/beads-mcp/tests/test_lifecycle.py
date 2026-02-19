@@ -30,6 +30,11 @@ def test_cleanup_handlers_registered():
 def test_cleanup_function_safe_to_call_multiple_times():
     """Test that cleanup function can be called multiple times safely."""
     from beads_mcp.server import cleanup, _daemon_clients
+    import beads_mcp.server as server
+
+    # Reset state for deterministic behavior.
+    server._cleanup_done = False
+    _daemon_clients.clear()
     
     # Mock client
     mock_client = MagicMock()
@@ -42,6 +47,29 @@ def test_cleanup_function_safe_to_call_multiple_times():
     
     # Client should only be cleaned up once
     assert mock_client.cleanup.call_count == 1
+    assert len(_daemon_clients) == 0
+
+
+def test_cleanup_handles_async_client_cleanup():
+    """Test that cleanup executes async client cleanup methods safely."""
+    from beads_mcp.server import cleanup, _daemon_clients
+    import beads_mcp.server as server
+
+    # Reset state for deterministic behavior.
+    server._cleanup_done = False
+    _daemon_clients.clear()
+
+    state = {"called": False}
+
+    class AsyncClient:
+        async def cleanup(self):
+            state["called"] = True
+
+    _daemon_clients.append(AsyncClient())
+
+    cleanup()
+
+    assert state["called"] is True
     assert len(_daemon_clients) == 0
 
 
@@ -123,6 +151,28 @@ def test_cleanup_logs_lifecycle_events(caplog):
     log_messages = [record.message for record in caplog.records]
     assert any("Cleaning up" in msg for msg in log_messages)
     assert any("Cleanup complete" in msg for msg in log_messages)
+
+
+def test_deprec_flow_only_write_policy_message(monkeypatch):
+    """Direct lifecycle writes should emit an explicit deprecation notice in flow-only mode."""
+    import beads_mcp.server as server
+
+    monkeypatch.setenv("BEADS_MCP_FLOW_ONLY_WRITES", "1")
+    with pytest.raises(ValueError) as exc:
+        server._enforce_flow_write_policy("update")
+
+    message = str(exc.value)
+    assert "disabled by BEADS_MCP_FLOW_ONLY_WRITES" in message
+    assert "deprecated" in message.lower()
+    assert "flow(action='...')" in message
+
+
+def test_deprec_flow_only_write_policy_disabled_allows_direct_calls(monkeypatch):
+    """Deprecation gate should only apply when flow-only mode is explicitly enabled."""
+    import beads_mcp.server as server
+
+    monkeypatch.delenv("BEADS_MCP_FLOW_ONLY_WRITES", raising=False)
+    server._enforce_flow_write_policy("update")
 
 
 if __name__ == "__main__":

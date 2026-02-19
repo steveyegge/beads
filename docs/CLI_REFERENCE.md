@@ -751,7 +751,7 @@ bd kv list --json                      # Machine-readable output
 - `parent-child` - Epic/subtask relationship
 - `discovered-from` - Track issues discovered during work
 
-Only `blocks` dependencies affect the ready work queue.
+Ready-work blockers include `blocks`, `parent-child`, `conditional-blocks`, and `waits-for`.
 
 **Note:** When creating an issue with a `discovered-from` dependency, the new issue automatically inherits the parent's `source_repo` field.
 

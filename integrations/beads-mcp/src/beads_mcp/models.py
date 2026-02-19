@@ -175,6 +175,7 @@ class UpdateIssueParams(BaseModel):
     """Parameters for updating an issue."""
 
     issue_id: str
+    claim: bool = False
     status: IssueStatus | None = None
     priority: int | None = Field(default=None, ge=0, le=4)
     assignee: str | None = None

@@ -1,5 +1,6 @@
 """Integration tests for MCP tools."""
 
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -372,6 +373,136 @@ async def test_update_issue_multiple_fields(sample_issue):
     assert result.priority == 0
     assert result.title == "Updated title"
     mock_client.update.assert_called_once()
+
+
+def test_flow_delegate_claim_next_ignores_local_ready_assignee_validation():
+    """flow(claim_next) should delegate to CLI even when ready_assignee is provided."""
+    from beads_mcp import server
+
+    handler = None
+    for attr in ("fn", "func", "_fn", "_func", "handler", "_handler"):
+        candidate = getattr(server.flow, attr, None)
+        if callable(candidate):
+            handler = candidate
+            break
+    if handler is None and callable(server.flow):
+        handler = server.flow
+    if handler is None:
+        raise TypeError(f"Could not resolve callable flow handler from {type(server.flow)!r}")
+
+    delegated = {"ok": False, "command": "flow claim-next", "result": "invalid_input"}
+    with patch("beads_mcp.server._run_flow_cli", new=AsyncMock(return_value=delegated)) as mock_run_flow:
+        result = asyncio.run(handler(action="claim_next", ready_assignee="legacy-arg"))
+
+    assert result == delegated
+    mock_run_flow.assert_awaited_once()
+
+
+def test_flow_delegate_create_discovered_missing_inputs():
+    """flow(create_discovered) should delegate missing-input handling to CLI."""
+    from beads_mcp import server
+
+    handler = None
+    for attr in ("fn", "func", "_fn", "_func", "handler", "_handler"):
+        candidate = getattr(server.flow, attr, None)
+        if callable(candidate):
+            handler = candidate
+            break
+    if handler is None and callable(server.flow):
+        handler = server.flow
+    if handler is None:
+        raise TypeError(f"Could not resolve callable flow handler from {type(server.flow)!r}")
+
+    delegated = {"ok": False, "command": "flow create-discovered", "result": "invalid_input"}
+    with patch("beads_mcp.server._run_flow_cli", new=AsyncMock(return_value=delegated)) as mock_run_flow:
+        result = asyncio.run(handler(action="create_discovered"))
+
+    assert result == delegated
+    mock_run_flow.assert_awaited_once()
+
+
+def test_flow_delegate_block_with_context_missing_inputs():
+    """flow(block_with_context) should delegate missing-input handling to CLI."""
+    from beads_mcp import server
+
+    handler = None
+    for attr in ("fn", "func", "_fn", "_func", "handler", "_handler"):
+        candidate = getattr(server.flow, attr, None)
+        if callable(candidate):
+            handler = candidate
+            break
+    if handler is None and callable(server.flow):
+        handler = server.flow
+    if handler is None:
+        raise TypeError(f"Could not resolve callable flow handler from {type(server.flow)!r}")
+
+    delegated = {"ok": False, "command": "flow block-with-context", "result": "invalid_input"}
+    with patch("beads_mcp.server._run_flow_cli", new=AsyncMock(return_value=delegated)) as mock_run_flow:
+        result = asyncio.run(handler(action="block_with_context"))
+
+    assert result == delegated
+    mock_run_flow.assert_awaited_once()
+
+
+def test_flow_delegate_close_safe_missing_verification():
+    """flow(close_safe) should delegate verification policy checks to CLI."""
+    from beads_mcp import server
+
+    handler = None
+    for attr in ("fn", "func", "_fn", "_func", "handler", "_handler"):
+        candidate = getattr(server.flow, attr, None)
+        if callable(candidate):
+            handler = candidate
+            break
+    if handler is None and callable(server.flow):
+        handler = server.flow
+    if handler is None:
+        raise TypeError(f"Could not resolve callable flow handler from {type(server.flow)!r}")
+
+    delegated = {"ok": False, "command": "flow close-safe", "result": "policy_violation"}
+    with patch("beads_mcp.server._run_flow_cli", new=AsyncMock(return_value=delegated)) as mock_run_flow:
+        result = asyncio.run(handler(action="close_safe", issue_id="bd-1", reason="Implemented delegation path"))
+
+    assert result == delegated
+    mock_run_flow.assert_awaited_once()
+
+
+def test_flow_delegate_transition_session_abort():
+    """flow(transition) should delegate session_abort handlers directly to CLI."""
+    from beads_mcp import server
+
+    handler = None
+    for attr in ("fn", "func", "_fn", "_func", "handler", "_handler"):
+        candidate = getattr(server.flow, attr, None)
+        if callable(candidate):
+            handler = candidate
+            break
+    if handler is None and callable(server.flow):
+        handler = server.flow
+    if handler is None:
+        raise TypeError(f"Could not resolve callable flow handler from {type(server.flow)!r}")
+
+    delegated = {"ok": True, "command": "flow transition", "result": "session_aborted"}
+    with patch("beads_mcp.server._run_flow_cli", new=AsyncMock(return_value=delegated)) as mock_run_flow:
+        result = asyncio.run(
+            handler(
+                action="transition",
+                transition_type="session_abort",
+                issue_id="bd-1",
+                reason="unsafe workspace state",
+                context_pack="state summary",
+            )
+        )
+
+    assert result == delegated
+    mock_run_flow.assert_awaited_once()
+    awaited = mock_run_flow.await_args
+    args = awaited.args
+    kwargs = awaited.kwargs
+    assert args[0] == "transition"
+    assert "--type" in args and "session_abort" in args
+    assert "--reason" in args and "unsafe workspace state" in args
+    assert kwargs["actor_override"] is None
 
 
 @pytest.mark.asyncio

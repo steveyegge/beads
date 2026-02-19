@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/hooks"
-	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -28,9 +27,13 @@ create, update, show, or close operation).`,
 	Args: cobra.MinimumNArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("update")
+		strictControl, _ := cmd.Flags().GetBool("strict-control")
 
 		// If no IDs provided, use last touched issue
 		if len(args) == 0 {
+			if strictControlExplicitIDsEnabled(strictControl) {
+				FatalErrorRespectJSON("strict control mode requires explicit issue IDs for update")
+			}
 			lastTouched := GetLastTouchedID()
 			if lastTouched == "" {
 				FatalErrorRespectJSON("no issue ID provided and no last touched issue")
@@ -172,11 +175,11 @@ create, update, show, or close operation).`,
 				// Empty string clears the due date
 				updates["due_at"] = nil
 			} else {
-				t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
+				dueAt, err := parseSchedulingFlag("due", dueStr, time.Now())
 				if err != nil {
-					FatalErrorRespectJSON("invalid --due format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", dueStr)
+					FatalErrorRespectJSON("%v", err)
 				}
-				updates["due_at"] = t
+				updates["due_at"] = *dueAt
 			}
 		}
 		if cmd.Flags().Changed("defer") {
@@ -185,17 +188,12 @@ create, update, show, or close operation).`,
 				// Empty string clears the defer_until
 				updates["defer_until"] = nil
 			} else {
-				t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
+				deferUntil, err := parseSchedulingFlag("defer", deferStr, time.Now())
 				if err != nil {
-					FatalErrorRespectJSON("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
+					FatalErrorRespectJSON("%v", err)
 				}
-				// Warn if defer date is in the past (user probably meant future)
-				if t.Before(time.Now()) && !jsonOutput {
-					fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
-						ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
-					fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
-				}
-				updates["defer_until"] = t
+				warnIfPastDeferredTime(deferUntil, !jsonOutput)
+				updates["defer_until"] = *deferUntil
 			}
 		}
 		// Ephemeral/persistent flags
@@ -236,6 +234,7 @@ create, update, show, or close operation).`,
 
 		// Get claim flag
 		claimFlag, _ := cmd.Flags().GetBool("claim")
+		allowMultiWIP, _ := cmd.Flags().GetBool("allow-multi-wip")
 
 		if len(updates) == 0 && !claimFlag {
 			fmt.Println("No updates specified")
@@ -243,6 +242,39 @@ create, update, show, or close operation).`,
 		}
 
 		ctx := rootCtx
+
+		// Enforce WIP=1 by default for claim operations on legacy update path.
+		if claimFlag && !allowMultiWIP {
+			claimActor := strings.TrimSpace(actor)
+			if claimActor == "" {
+				FatalErrorRespectJSON("actor is required for --claim (use --actor or set BD_ACTOR/BEADS_ACTOR)")
+			}
+			if len(args) > 1 {
+				FatalErrorRespectJSON("WIP=1 policy blocks claiming multiple issues at once; use --allow-multi-wip to bypass")
+			}
+
+			statusInProgress := types.StatusInProgress
+			wipFilter := types.IssueFilter{
+				Status:   &statusInProgress,
+				Assignee: &claimActor,
+				Limit:    20,
+			}
+			currentWIP, err := store.SearchIssues(ctx, "", wipFilter)
+			if err != nil {
+				FatalErrorRespectJSON("failed to evaluate WIP gate before claim: %v", err)
+			}
+			if len(currentWIP) > 0 {
+				wipIDs := make([]string, 0, len(currentWIP))
+				for _, issue := range currentWIP {
+					wipIDs = append(wipIDs, issue.ID)
+				}
+				FatalErrorRespectJSON(
+					"WIP=1 gate blocked claim for actor %q; in_progress issues: %s (use --allow-multi-wip to bypass)",
+					claimActor,
+					strings.Join(wipIDs, ", "),
+				)
+			}
+		}
 
 		updatedIssues := []*types.Issue{}
 		var firstUpdatedID string // Track first successful update for last-touched
@@ -419,6 +451,8 @@ func init() {
 	updateCmd.Flags().StringSlice("set-labels", nil, "Set labels, replacing all existing (repeatable)")
 	updateCmd.Flags().String("parent", "", "New parent issue ID (reparents the issue, use empty string to remove parent)")
 	updateCmd.Flags().Bool("claim", false, "Atomically claim the issue (sets assignee to you, status to in_progress; fails if already claimed)")
+	updateCmd.Flags().Bool("allow-multi-wip", false, "Bypass WIP=1 gate for --claim (manual/exceptional use)")
+	updateCmd.Flags().Bool("strict-control", false, "Require explicit IDs (disable implicit last-touched update behavior)")
 	updateCmd.Flags().String("session", "", "Claude Code session ID for status=closed (or set CLAUDE_SESSION_ID env var)")
 	// Time-based scheduling flags (GH#820)
 	// Examples:

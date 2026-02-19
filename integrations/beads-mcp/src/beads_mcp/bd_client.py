@@ -59,11 +59,13 @@ class BdCommandError(BdError):
     """Raised when bd command fails."""
 
     stderr: str
+    stdout: str
     returncode: int
 
-    def __init__(self, message: str, stderr: str = "", returncode: int = 1):
+    def __init__(self, message: str, stderr: str = "", stdout: str = "", returncode: int = 1):
         super().__init__(message)
         self.stderr = stderr
+        self.stdout = stdout
         self.returncode = returncode
 
 
@@ -303,9 +305,12 @@ class BdCliClient(BdClientBase):
             raise BdNotFoundError(BdNotFoundError.installation_message(self.bd_path)) from e
 
         if process.returncode != 0:
+            stdout_text = stdout.decode()
+            stderr_text = stderr.decode()
             raise BdCommandError(
-                f"bd command failed: {stderr.decode()}",
-                stderr=stderr.decode(),
+                f"bd command failed: {stderr_text or stdout_text}",
+                stderr=stderr_text,
+                stdout=stdout_text,
                 returncode=process.returncode or 1,
             )
 
@@ -512,6 +517,8 @@ class BdCliClient(BdClientBase):
             Updated issue
         """
         args = ["update", params.issue_id]
+        if params.claim:
+            args.append("--claim")
 
         if params.status:
             args.extend(["--status", params.status])
@@ -553,7 +560,17 @@ class BdCliClient(BdClientBase):
         Returns:
             List containing closed issue
         """
-        args = ["close", params.issue_id, "--reason", params.reason]
+        # Raw close is a manual/advanced path. Keep it compatible with stricter
+        # CLI defaults by using explicit policy opt-outs. Managed lifecycle
+        # writes should use flow(close_safe) instead.
+        args = [
+            "close",
+            params.issue_id,
+            "--reason",
+            params.reason,
+            "--allow-unsafe-reason",
+            "--allow-missing-verified",
+        ]
 
         data = await self._run_command(*args)
         if not isinstance(data, list):

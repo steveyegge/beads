@@ -13,6 +13,8 @@ enabling more efficient agent operation without sacrificing functionality.
 import asyncio
 import atexit
 import importlib.metadata
+import inspect
+import json
 import logging
 import os
 import signal
@@ -24,6 +26,7 @@ from typing import Any, Awaitable, Callable, TypeVar
 
 from fastmcp import FastMCP
 
+from beads_mcp.bd_client import BdCliClient, BdCommandError
 from beads_mcp.models import (
     BlockedIssue,
     BriefDep,
@@ -147,7 +150,16 @@ def cleanup() -> None:
     for client in _daemon_clients:
         try:
             if hasattr(client, 'cleanup'):
-                client.cleanup()
+                result = client.cleanup()
+                if inspect.isawaitable(result):
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        # No active loop: run async cleanup to completion.
+                        asyncio.run(result)
+                    else:
+                        # Active loop: schedule cleanup task.
+                        loop.create_task(result)
                 logger.debug(f"Closed daemon client: {client}")
         except Exception as e:
             logger.warning(f"Error closing daemon client: {e}")
@@ -313,6 +325,7 @@ _TOOL_CATALOG = {
     "ready": "Find tasks ready to work on (no blockers)",
     "list": "List issues with filters (status, priority, type)",
     "show": "Show full details for a specific issue",
+    "flow": "Deterministic lifecycle wrappers (claim_next, create_discovered, block_with_context, close_safe, transition)",
     "create": "Create a new issue (bug, feature, task, epic)",
     "update": "Update issue status, priority, or assignee",
     "close": "Close/complete an issue",
@@ -413,6 +426,49 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
             },
             "returns": "Full Issue object (or BriefIssue/dict based on params)",
             "example": "show(issue_id='bd-a1b2', brief_deps=True)"
+        },
+        "flow": {
+            "name": "flow",
+            "description": "Deterministic control-plane wrappers for lifecycle mutations",
+            "parameters": {
+                "action": "claim_next|create_discovered|block_with_context|close_safe|transition (required)",
+                "issue_id": "str (required for block_with_context and close_safe; transition requirements depend on transition_type)",
+                "title": "str (required for create_discovered)",
+                "description": "str (optional; used by create_discovered)",
+                "discovered_from_id": "str (required for create_discovered)",
+                "reason": "str (required for close_safe)",
+                "verification": "str|list[str] (required for close_safe, appended as one or more Verified: ... notes)",
+                "notes": "str|list[str] (optional for close_safe; appended as one or more notes)",
+                "force": "bool (optional for close_safe; maps to CLI --force)",
+                "context_pack": "str (required for block_with_context)",
+                "blocker_id": "str (optional for block_with_context; adds blocks dep)",
+                "transition_type": "str (required for transition; e.g. claim_failed|test_failed|session_abort)",
+                "require_traceability": "bool (optional for close_safe; enforce traceability chain)",
+                "require_spec_drift_proof": "bool (optional for close_safe; enforce docs-drift proof)",
+                "require_parent_cascade": "bool (optional for close_safe; block close when parent has open children)",
+                "allow_open_children": "bool (optional for close_safe; bypass parent cascade)",
+                "require_priority_poll": "bool (optional for close_safe; require fresh priority-poll evidence)",
+                "priority_poll_max_age": "str duration (optional for close_safe; default 30m)",
+                "require_evidence_tuple": "bool (optional for close_safe; require fresh EvidenceTuple)",
+                "non_hermetic": "bool (optional for close_safe; implies evidence tuple requirement)",
+                "evidence_max_age": "str duration (optional for close_safe; default 24h)",
+                "allow_secret_markers": "bool (optional for close_safe; exceptional/manual use)",
+                "priority": "int 0-4 (optional for create_discovered/claim_next filters)",
+                "issue_type": "bug|feature|task|epic|chore|decision (optional for create_discovered)",
+                "labels": "list[str] (optional for create_discovered/claim_next)",
+                "labels_any": "list[str] (optional for claim_next)",
+                "actor": "str (optional actor identity override; mapped to CLI --actor)",
+                "allow_failure_reason": "bool (default false, only for close_safe)",
+                "attempt": "int (optional for transition action=transient_failure)",
+                "max_attempts": "int (optional for transition action=transient_failure)",
+                "backoff": "str (optional for transition action=transient_failure)",
+                "escalate": "str (optional for transition action=transient_failure)",
+                "abort_handoff": "str (optional path for transition action=session_abort)",
+                "abort_no_bd_write": "bool (default false; transition action=session_abort only)",
+                "workspace_root": "str (optional)"
+            },
+            "returns": "Compact operation summary dict",
+            "example": "flow(action='claim_next')"
         },
         "create": {
             "name": "create",
@@ -766,6 +822,240 @@ def _truncate_description(issue: Issue, max_length: int) -> Issue:
     return issue
 
 
+_FLOW_ONLY_WRITES_ENV = "BEADS_MCP_FLOW_ONLY_WRITES"
+
+
+def _flow_only_writes_enabled() -> bool:
+    """Return True if direct lifecycle writes are disabled in favor of flow wrappers."""
+    return os.environ.get(_FLOW_ONLY_WRITES_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _enforce_flow_write_policy(tool_name: str) -> None:
+    """Reject direct lifecycle writes when flow-only mode is enabled."""
+    if _flow_only_writes_enabled():
+        raise ValueError(
+            f"Direct '{tool_name}' writes are disabled by {_FLOW_ONLY_WRITES_ENV}. "
+            "Direct lifecycle write tools are deprecated in this mode; "
+            "use flow(action='...') wrappers instead."
+        )
+
+
+def _resolve_flow_workspace(workspace_root: str | None) -> str | None:
+    """Resolve the workspace root for direct CLI flow delegation."""
+    return (
+        workspace_root
+        or current_workspace.get()
+        or _workspace_context.get("BEADS_WORKING_DIR")
+        or os.environ.get("BEADS_WORKING_DIR")
+    )
+
+
+def _decode_cli_error_payload(error: BdCommandError) -> dict[str, Any] | None:
+    """Decode structured JSON payload emitted by bd CLI on non-zero exit."""
+    for raw in (error.stdout, error.stderr):
+        text = (raw or "").strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+async def _run_flow_cli(
+    *args: str,
+    workspace_root: str | None,
+    actor_override: str | None = None,
+) -> dict[str, Any]:
+    """Run `bd flow ... --json` and return deterministic payload."""
+    client = BdCliClient(
+        actor=actor_override,
+        working_dir=_resolve_flow_workspace(workspace_root),
+    )
+    try:
+        data = await client._run_command("flow", *args)
+        if not isinstance(data, dict):
+            raise ValueError(f"flow command returned non-object payload: {type(data)}")
+        return data
+    except BdCommandError as exc:
+        payload = _decode_cli_error_payload(exc)
+        if payload is not None and isinstance(payload.get("command"), str) and payload["command"].startswith("flow "):
+            return payload
+        raise ValueError(str(exc)) from exc
+
+
+@mcp.tool(
+    name="flow",
+    description="""Deterministic lifecycle wrappers.
+Actions:
+- claim_next: WIP-gated claim using ready queue + atomic claim
+- create_discovered: create issue + discovered-from link
+- block_with_context: mark blocked and append context pack notes
+- close_safe: lint close reason, append Verified note, then close
+- transition: execute deterministic transition handlers (including session_abort)""",
+)
+@with_workspace
+@require_context
+async def flow(
+    action: str,
+    issue_id: str | None = None,
+    title: str | None = None,
+    description: str = "",
+    discovered_from_id: str | None = None,
+    context_pack: str | None = None,
+    blocker_id: str | None = None,
+    reason: str | None = None,
+    verification: str | list[str] | None = None,
+    notes: str | list[str] | None = None,
+    force: bool = False,
+    require_traceability: bool = False,
+    require_spec_drift_proof: bool = False,
+    require_parent_cascade: bool = False,
+    allow_open_children: bool = False,
+    require_priority_poll: bool = False,
+    priority_poll_max_age: str | None = None,
+    require_evidence_tuple: bool = False,
+    non_hermetic: bool = False,
+    evidence_max_age: str | None = None,
+    allow_secret_markers: bool = False,
+    priority: int | None = None,
+    issue_type: IssueType = "task",
+    labels: list[str] | None = None,
+    labels_any: list[str] | None = None,
+    parent_id: str | None = None,
+    ready_limit: int = 10,
+    ready_assignee: str | None = None,
+    actor: str | None = None,
+    allow_failure_reason: bool = False,
+    transition_type: str | None = None,
+    attempt: int | None = None,
+    max_attempts: int | None = None,
+    backoff: str | None = None,
+    escalate: str | None = None,
+    abort_handoff: str | None = None,
+    abort_no_bd_write: bool = False,
+    workspace_root: str | None = None,
+) -> dict[str, Any]:
+    """Run deterministic flow wrappers through native bd CLI flow commands."""
+    op = action.strip().lower()
+
+    if op == "claim_next":
+        cli_args: list[str] = ["claim-next", "--limit", str(max(1, ready_limit))]
+        if parent_id:
+            cli_args.extend(["--parent", parent_id])
+        if priority is not None:
+            cli_args.extend(["--priority", str(priority)])
+        for label in labels or []:
+            cli_args.extend(["--label", label])
+        for label in labels_any or []:
+            cli_args.extend(["--label-any", label])
+        return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
+
+    if op == "create_discovered":
+        cli_args = [
+            "create-discovered",
+            "--type", issue_type,
+            "--priority", str(priority if priority is not None else 2),
+        ]
+        if title:
+            cli_args.extend(["--title", title])
+        if discovered_from_id:
+            cli_args.extend(["--from", discovered_from_id])
+        if description:
+            cli_args.extend(["--description", description])
+        for label in labels or []:
+            cli_args.extend(["--label", label])
+        return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
+
+    if op == "block_with_context":
+        cli_args = ["block-with-context"]
+        if issue_id:
+            cli_args.extend(["--issue", issue_id])
+        if context_pack:
+            cli_args.extend(["--context-pack", context_pack])
+        if blocker_id:
+            cli_args.extend(["--blocker", blocker_id])
+        return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
+
+    if op == "close_safe":
+        cli_args = ["close-safe"]
+        if issue_id:
+            cli_args.extend(["--issue", issue_id])
+        if reason:
+            cli_args.extend(["--reason", reason])
+        verification_entries = (
+            verification if isinstance(verification, list) else [verification] if verification else []
+        )
+        note_entries = notes if isinstance(notes, list) else [notes] if notes else []
+        for entry in verification_entries:
+            entry_text = str(entry).strip()
+            if entry_text:
+                cli_args.extend(["--verified", entry_text])
+        for note in note_entries:
+            note_text = str(note).strip()
+            if note_text:
+                cli_args.extend(["--note", note_text])
+        if force:
+            cli_args.append("--force")
+        if require_traceability:
+            cli_args.append("--require-traceability")
+        if require_spec_drift_proof:
+            cli_args.append("--require-spec-drift-proof")
+        if require_parent_cascade:
+            cli_args.append("--require-parent-cascade")
+        if allow_open_children:
+            cli_args.append("--allow-open-children")
+        if require_priority_poll:
+            cli_args.append("--require-priority-poll")
+        if priority_poll_max_age:
+            cli_args.extend(["--priority-poll-max-age", priority_poll_max_age])
+        if require_evidence_tuple:
+            cli_args.append("--require-evidence-tuple")
+        if non_hermetic:
+            cli_args.append("--non-hermetic")
+        if evidence_max_age:
+            cli_args.extend(["--evidence-max-age", evidence_max_age])
+        if allow_secret_markers:
+            cli_args.append("--allow-secret-markers")
+        if allow_failure_reason:
+            cli_args.append("--allow-failure-reason")
+        return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
+
+    if op == "transition":
+        cli_args = ["transition"]
+        if transition_type:
+            cli_args.extend(["--type", transition_type])
+        if issue_id:
+            cli_args.extend(["--issue", issue_id])
+        if blocker_id:
+            cli_args.extend(["--blocker", blocker_id])
+        if context_pack:
+            cli_args.extend(["--context", context_pack])
+        if reason:
+            cli_args.extend(["--reason", reason])
+        if attempt is not None:
+            cli_args.extend(["--attempt", str(attempt)])
+        if max_attempts is not None:
+            cli_args.extend(["--max-attempts", str(max_attempts)])
+        if backoff:
+            cli_args.extend(["--backoff", backoff])
+        if escalate:
+            cli_args.extend(["--escalate", escalate])
+        if abort_handoff:
+            cli_args.extend(["--abort-handoff", abort_handoff])
+        if abort_no_bd_write:
+            cli_args.append("--abort-no-bd-write")
+        return await _run_flow_cli(*cli_args, workspace_root=workspace_root, actor_override=actor)
+
+    raise ValueError(
+        f"Unknown flow action: {action}. "
+        "Use claim_next, create_discovered, block_with_context, close_safe, or transition."
+    )
+
+
 @mcp.tool(name="ready", description="Find tasks that have no blockers and are ready to be worked on. Returns minimal format for context efficiency.")
 @with_workspace
 async def ready_work(
@@ -989,6 +1279,7 @@ async def create_issue(
     Args:
         brief: If True (default), return minimal OperationResult; if False, return full Issue
     """
+    _enforce_flow_write_policy("create")
     issue = await beads_create_issue(
         title=title,
         description=description,
@@ -1034,6 +1325,7 @@ async def update_issue(
     Args:
         brief: If True (default), return minimal OperationResult; if False, return full Issue
     """
+    _enforce_flow_write_policy("update")
     # If trying to close via update, redirect to close_issue to preserve approval workflow
     if status == "closed":
         issues = await beads_close_issue(issue_id=issue_id, reason="Closed via update")
@@ -1080,6 +1372,7 @@ async def close_issue(
     Args:
         brief: If True (default), return minimal OperationResult list; if False, return full Issues
     """
+    _enforce_flow_write_policy("close")
     issues = await beads_close_issue(issue_id=issue_id, reason=reason)
 
     if not brief:
@@ -1105,6 +1398,7 @@ async def reopen_issue(
     Args:
         brief: If True (default), return minimal OperationResult list; if False, return full Issues
     """
+    _enforce_flow_write_policy("reopen")
     issues = await beads_reopen_issue(issue_ids=issue_ids, reason=reason)
 
     if brief:
@@ -1126,6 +1420,7 @@ async def add_dependency(
     workspace_root: str | None = None,
 ) -> str:
     """Add a dependency relationship between two issues."""
+    _enforce_flow_write_policy("dep")
     return await beads_add_dependency(
         issue_id=issue_id,
         depends_on_id=depends_on_id,

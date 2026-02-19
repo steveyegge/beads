@@ -83,6 +83,11 @@ Examples:
 	},
 }
 
+var (
+	stateTransitionFrom string
+	stateTransitionTo   string
+)
+
 var setStateCmd = &cobra.Command{
 	Use:     "set-state <issue-id> <dimension>=<value>",
 	GroupID: "issues",
@@ -312,12 +317,87 @@ Example:
 	},
 }
 
+var stateValidateTransitionCmd = &cobra.Command{
+	Use:   "validate-transition",
+	Short: "Validate deterministic session-state transition ordering",
+	Run: func(cmd *cobra.Command, args []string) {
+		from := strings.TrimSpace(stateTransitionFrom)
+		to := strings.TrimSpace(stateTransitionTo)
+		if from == "" || to == "" {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "state validate-transition",
+				Result:  "invalid_input",
+				Details: map[string]interface{}{"message": "--from and --to are required"},
+				Events:  []string{"state_transition_failed"},
+			}, 1)
+			return
+		}
+
+		valid, normalizedFrom, normalizedTo, allowedNext := validateSessionStateTransition(from, to)
+		result := "pass"
+		exitCode := 0
+		ok := true
+		if !valid {
+			result = "policy_violation"
+			exitCode = exitCodePolicyViolation
+			ok = false
+		}
+
+		finishEnvelope(commandEnvelope{
+			OK:      ok,
+			Command: "state validate-transition",
+			Result:  result,
+			Details: map[string]interface{}{
+				"from":         normalizedFrom,
+				"to":           normalizedTo,
+				"allowed_next": allowedNext,
+			},
+			Events: []string{"state_transition_checked"},
+		}, exitCode)
+	},
+}
+
+func validateSessionStateTransition(from, to string) (bool, string, string, []string) {
+	normalizedFrom := strings.ToUpper(strings.TrimSpace(from))
+	normalizedTo := strings.ToUpper(strings.TrimSpace(to))
+
+	graph := map[string][]string{
+		"BOOT":       {"PLANNING", "ABORT"},
+		"PLANNING":   {"INTAKE", "EXECUTING", "ABORT"},
+		"INTAKE":     {"EXECUTING", "ABORT"},
+		"EXECUTING":  {"RECOVERING", "LANDING", "ABORT"},
+		"RECOVERING": {"EXECUTING", "LANDING", "ABORT"},
+		"LANDING":    {"END", "ABORT"},
+		"ABORT":      {"END"},
+		"END":        {},
+	}
+
+	allowed, ok := graph[normalizedFrom]
+	if !ok {
+		return false, normalizedFrom, normalizedTo, []string{}
+	}
+	if normalizedFrom == normalizedTo {
+		return true, normalizedFrom, normalizedTo, allowed
+	}
+	for _, candidate := range allowed {
+		if candidate == normalizedTo {
+			return true, normalizedFrom, normalizedTo, allowed
+		}
+	}
+	return false, normalizedFrom, normalizedTo, allowed
+}
+
 func init() {
 	// set-state flags
 	setStateCmd.Flags().String("reason", "", "Reason for the state change (recorded in event)")
+	stateValidateTransitionCmd.Flags().StringVar(&stateTransitionFrom, "from", "", "Session state to transition from")
+	stateValidateTransitionCmd.Flags().StringVar(&stateTransitionTo, "to", "", "Session state to transition to")
+	stateValidateTransitionCmd.ValidArgsFunction = noCompletions
 
 	// Add subcommands
 	stateCmd.AddCommand(stateListCmd)
+	stateCmd.AddCommand(stateValidateTransitionCmd)
 
 	rootCmd.AddCommand(stateCmd)
 	rootCmd.AddCommand(setStateCmd)

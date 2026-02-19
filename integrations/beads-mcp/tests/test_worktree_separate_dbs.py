@@ -20,18 +20,16 @@ import pytest
 from fastmcp.client import Client
 
 from beads_mcp.server import mcp
+from tests._bd_binary import resolve_bd_executable
 
 
 @pytest.fixture(scope="session")
 def bd_executable():
-    """Verify bd is available in PATH."""
-    bd_path = shutil.which("bd")
-    if not bd_path:
-        pytest.fail(
-            "bd executable not found in PATH. "
-            "Please install bd or add it to your PATH before running integration tests."
-        )
-    return bd_path
+    """Resolve bd executable via capability-probed custom-fork candidates."""
+    try:
+        return resolve_bd_executable()
+    except RuntimeError as exc:
+        pytest.fail(str(exc))
 
 
 @pytest.fixture
@@ -77,7 +75,7 @@ async def git_worktree_with_separate_dbs(bd_executable):
         # Initialize beads in main repo BEFORE creating worktree
         # Use --no-daemon to avoid interference from running daemon with cached paths
         init_result = subprocess.run(
-            ["bd", "--no-daemon", "init", "--prefix", "main"],
+            [bd_executable, "--no-daemon", "init", "--prefix", "main"],
             cwd=main_repo,
             capture_output=True,
             text=True,
@@ -107,12 +105,12 @@ async def git_worktree_with_separate_dbs(bd_executable):
         )
 
         # Re-sync after commit to avoid staleness check issues
-        subprocess.run(["bd", "--no-daemon", "sync"], cwd=main_repo, capture_output=True)
+        subprocess.run([bd_executable, "--no-daemon", "sync"], cwd=main_repo, capture_output=True)
         
         # Initialize beads in worktree (separate database, different prefix)
         # Use --no-daemon to avoid interference from running daemon
         init_result = subprocess.run(
-            ["bd", "--no-daemon", "init", "--prefix", "feature"],
+            [bd_executable, "--no-daemon", "init", "--prefix", "feature"],
             cwd=worktree,
             capture_output=True,
             text=True,
@@ -137,7 +135,7 @@ async def git_worktree_with_separate_dbs(bd_executable):
             raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout, result.stderr)
 
         # Re-sync after commit to avoid staleness check issues
-        subprocess.run(["bd", "--no-daemon", "sync"], cwd=worktree, capture_output=True)
+        subprocess.run([bd_executable, "--no-daemon", "sync"], cwd=worktree, capture_output=True)
 
         yield main_repo, worktree, temp_dir
         
@@ -154,7 +152,7 @@ async def test_separate_databases_are_isolated(git_worktree_with_separate_dbs, b
     
     # Create issue in main repo (use --no-daemon to avoid daemon interference)
     result = subprocess.run(
-        ["bd", "--no-daemon", "create", "Main repo issue", "-p", "1", "--json"],
+        [bd_executable, "--no-daemon", "create", "Main repo issue", "-p", "1", "--json"],
         cwd=main_repo,
         capture_output=True,
         text=True,
@@ -165,7 +163,7 @@ async def test_separate_databases_are_isolated(git_worktree_with_separate_dbs, b
     
     # Create issue in worktree
     result = subprocess.run(
-        ["bd", "--no-daemon", "create", "Worktree issue", "-p", "1", "--json"],
+        [bd_executable, "--no-daemon", "create", "Worktree issue", "-p", "1", "--json"],
         cwd=worktree,
         capture_output=True,
         text=True,
@@ -176,7 +174,7 @@ async def test_separate_databases_are_isolated(git_worktree_with_separate_dbs, b
     
     # List issues in main repo
     result = subprocess.run(
-        ["bd", "--no-daemon", "list", "--json"],
+        [bd_executable, "--no-daemon", "list", "--json"],
         cwd=main_repo,
         capture_output=True,
         text=True,
@@ -187,7 +185,7 @@ async def test_separate_databases_are_isolated(git_worktree_with_separate_dbs, b
 
     # List issues in worktree
     result = subprocess.run(
-        ["bd", "--no-daemon", "list", "--json"],
+        [bd_executable, "--no-daemon", "list", "--json"],
         cwd=worktree,
         capture_output=True,
         text=True,
@@ -212,7 +210,7 @@ async def test_changes_sync_via_git(git_worktree_with_separate_dbs, bd_executabl
     
     # Create and commit issue in main repo
     result = subprocess.run(
-        ["bd", "--no-daemon", "create", "Shared issue", "-p", "1", "--json"],
+        [bd_executable, "--no-daemon", "create", "Shared issue", "-p", "1", "--json"],
         cwd=main_repo,
         capture_output=True,
         text=True,
@@ -222,7 +220,7 @@ async def test_changes_sync_via_git(git_worktree_with_separate_dbs, bd_executabl
 
     # Export to JSONL (should happen automatically, but force it)
     subprocess.run(
-        ["bd", "--no-daemon", "export", "-o", ".beads/issues.jsonl"],
+        [bd_executable, "--no-daemon", "export", "-o", ".beads/issues.jsonl"],
         cwd=main_repo,
         check=True,
         capture_output=True,
@@ -251,7 +249,7 @@ async def test_changes_sync_via_git(git_worktree_with_separate_dbs, bd_executabl
     
     # Import the changes into worktree database
     result = subprocess.run(
-        ["bd", "--no-daemon", "import", "-i", ".beads/issues.jsonl"],
+        [bd_executable, "--no-daemon", "import", "-i", ".beads/issues.jsonl"],
         cwd=worktree,
         capture_output=True,
         text=True,
@@ -260,7 +258,7 @@ async def test_changes_sync_via_git(git_worktree_with_separate_dbs, bd_executabl
     # If import succeeded, verify the issue is now visible
     if result.returncode == 0:
         result = subprocess.run(
-            ["bd", "--no-daemon", "list", "--json"],
+            [bd_executable, "--no-daemon", "list", "--json"],
             cwd=worktree,
             capture_output=True,
             text=True,
@@ -335,7 +333,7 @@ async def test_worktree_database_discovery(git_worktree_with_separate_dbs, bd_ex
 
     # Test main repo can find its database (use --no-daemon to avoid daemon interference)
     result = subprocess.run(
-        ["bd", "--no-daemon", "list", "--json"],
+        [bd_executable, "--no-daemon", "list", "--json"],
         cwd=main_repo,
         capture_output=True,
         text=True,
@@ -344,7 +342,7 @@ async def test_worktree_database_discovery(git_worktree_with_separate_dbs, bd_ex
 
     # Test worktree can find its database
     result = subprocess.run(
-        ["bd", "--no-daemon", "list", "--json"],
+        [bd_executable, "--no-daemon", "list", "--json"],
         cwd=worktree,
         capture_output=True,
         text=True,
@@ -363,7 +361,7 @@ async def test_jsonl_export_works_in_worktrees(git_worktree_with_separate_dbs, b
 
     # Create issue in worktree (use --no-daemon to avoid daemon interference)
     subprocess.run(
-        ["bd", "--no-daemon", "create", "Feature issue", "-p", "1"],
+        [bd_executable, "--no-daemon", "create", "Feature issue", "-p", "1"],
         cwd=worktree,
         check=True,
         capture_output=True,
@@ -371,7 +369,7 @@ async def test_jsonl_export_works_in_worktrees(git_worktree_with_separate_dbs, b
 
     # Export from worktree
     subprocess.run(
-        ["bd", "--no-daemon", "export", "-o", ".beads/issues.jsonl"],
+        [bd_executable, "--no-daemon", "export", "-o", ".beads/issues.jsonl"],
         cwd=worktree,
         check=True,
         capture_output=True,
@@ -391,7 +389,7 @@ async def test_no_daemon_flag_works_in_worktree(git_worktree_with_separate_dbs, 
     
     # Create issue with --no-daemon flag
     result = subprocess.run(
-        ["bd", "--no-daemon", "create", "No daemon issue", "-p", "1", "--json"],
+        [bd_executable, "--no-daemon", "create", "No daemon issue", "-p", "1", "--json"],
         cwd=worktree,
         capture_output=True,
         text=True,
@@ -403,7 +401,7 @@ async def test_no_daemon_flag_works_in_worktree(git_worktree_with_separate_dbs, 
     
     # List with --no-daemon
     result = subprocess.run(
-        ["bd", "--no-daemon", "list", "--json"],
+        [bd_executable, "--no-daemon", "list", "--json"],
         cwd=worktree,
         capture_output=True,
         text=True,

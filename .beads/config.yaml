@@ -62,3 +62,7 @@ types.custom: "agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merg
 status.custom: "resolved"
 
 sync.mode: "dolt-native"
+
+validation.on-create: "error"
+
+create.require-description: true

@@ -99,7 +99,21 @@ After installation, restart Claude Code to activate the MCP server.
 
 ### Agents
 
-- **`@task-agent`** - Autonomous agent that finds and completes ready tasks
+- **`@beads-issue-manager-agent`** - Lifecycle/write authority via deterministic `flow` wrappers
+- **`@beads-execution-coordinator-agent`** - Implements and verifies claimed tasks
+- **`@beads-query-agent`** - Read-only queue intelligence and context summaries
+- **`@beads-cleanup-agent`** - Landing/handoff cleanup with resumable state
+- **`@task-agent`** - Compatibility orchestrator that routes to split agents
+
+### CLI vs Split-Agent Boundary
+
+Use this ownership split to avoid policy drift:
+
+| Owner | Scope |
+|---|---|
+| `CLI-owned` | Deterministic enforcement: readiness truth, claim/write guards, intake audits, close safety, and deterministic result states. |
+| `Split-agent-owned` | Judgment and strategy: intent translation, decomposition strategy, prioritization/preemption choices, and architectural tradeoffs. |
+| `MCP-owned` | Adapter translation only: pass lifecycle operations to `bd flow ...` and surface CLI payloads without local policy forks. |
 
 ## MCP Tools Available
 
@@ -110,11 +124,14 @@ The plugin includes a full-featured MCP server with these tools:
 - **`list`** - List issues with filters (status, priority, type, assignee)
 - **`ready`** - Find tasks with no blockers ready to work on
 - **`show`** - Show detailed issue info including dependencies
+- **`flow`** - Deterministic lifecycle wrappers (`claim_next`, `create_discovered`, `block_with_context`, `close_safe`, `transition`)
 - **`update`** - Update issue (status, priority, design, notes, etc)
 - **`close`** - Close completed issue
 - **`dep`** - Add dependency (blocks, related, parent-child, discovered-from)
 - **`blocked`** - Get blocked issues
 - **`stats`** - Get project statistics
+
+For agent workflows, prefer `flow` for lifecycle writes and keep raw write tools for direct/manual usage.
 
 ### MCP Resources
 
@@ -125,11 +142,13 @@ The plugin includes a full-featured MCP server with these tools:
 The beads workflow is designed for AI agents but works great for humans too:
 
 1. **Find ready work**: `/beads:ready`
-2. **Claim your task**: `/beads:update <id> in_progress`
+2. **Agent-managed lifecycle (recommended)**: use split agents and `flow` wrappers for claim/discovery/block/close
 3. **Work on it**: Implement, test, document
-4. **Discover new work**: Create issues for bugs/TODOs found during work
-5. **Complete**: `/beads:close <id> "Done: <summary>"`
+4. **Discover new work**: create linked follow-ups via `flow(action="create_discovered", ...)`
+5. **Complete safely**: `flow(action="close_safe", issue_id=..., reason=..., verification=..., require_traceability=true, require_spec_drift_proof=true, require_parent_cascade=true, require_priority_poll=true, non_hermetic=true)`
 6. **Repeat**: Check for newly unblocked tasks
+
+Manual/direct lifecycle mode is still available with `/beads:update` and `/beads:close`, but agent automation should prefer `flow`.
 
 ## Issue Types
 
@@ -154,7 +173,7 @@ The beads workflow is designed for AI agents but works great for humans too:
 - **`parent-child`** - Epic/subtask relationship
 - **`discovered-from`** - Track issues discovered during work
 
-Only `blocks` dependencies affect the ready work queue.
+Ready-work blockers include `blocks`, `parent-child`, `conditional-blocks`, and `waits-for`.
 
 ## Configuration
 
@@ -226,7 +245,7 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 
 ## Examples
 
-### Basic Task Management
+### Basic Task Management (Manual Mode)
 
 ```bash
 # Create a high-priority bug
@@ -242,7 +261,7 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 /beads:close bd-10 "Fixed auth token validation"
 ```
 
-### Discovering Work During Development
+### Discovering Work During Development (Manual Mode)
 
 ```bash
 # Working on bd-10, found a related bug
@@ -255,19 +274,53 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 /beads:close bd-10 "Done, discovered bd-11 for rate limiting"
 ```
 
-### Using the Task Agent
+### Using Split Agents
 
 ```bash
-# Let the agent find and complete ready work
-@task-agent
+# Read-only queue snapshot
+@beads-query-agent
 
-# The agent will:
-# 1. Find ready work with `ready` tool
-# 2. Claim a task by updating status
-# 3. Execute the work
-# 4. Create issues for discoveries
-# 5. Close when complete
-# 6. Repeat
+# Claim/manage lifecycle via deterministic wrappers
+@beads-issue-manager-agent
+
+# Implement and verify claimed work
+@beads-execution-coordinator-agent
+
+# Land session and produce handoff
+@beads-cleanup-agent
+```
+
+### Flow Wrapper Examples (Agent Lifecycle)
+
+```bash
+# Claim next task with WIP gating
+# MCP tool: flow(action="claim_next")
+
+# Create discovered follow-up linked to current issue
+# MCP tool: flow(action="create_discovered", title="...", discovered_from_id="bd-123")
+
+# Block with context pack and optional blocker edge
+# MCP tool: flow(action="block_with_context", issue_id="bd-123", context_pack="...", blocker_id="bd-456")
+
+# Close safely with reason lint + verification evidence + strict close controls
+# MCP tool: flow(action="close_safe", issue_id="bd-123", reason="Implemented ...", verification="pytest ...", require_traceability=true, require_spec_drift_proof=true, require_parent_cascade=true, require_priority_poll=true, non_hermetic=true)
+
+# Execute lifecycle transition handlers (for example session abort)
+# MCP tool: flow(action="transition", transition_type="session_abort", reason="...", context_pack="...")
+```
+
+If a dependency link fails after a successful create/update (rare race), `flow` returns a structured error payload with:
+- `issue_id`
+- `details.partial_state`
+- `recovery_command`
+
+Run the returned `recovery_command` to reconcile state (manual/advanced lifecycle mode).
+
+Compatibility mode:
+
+```bash
+# Legacy single entrypoint (delegates to split-agent model)
+@task-agent
 ```
 
 ## Auto-Sync with Git

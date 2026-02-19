@@ -32,7 +32,7 @@ var initCmd = &cobra.Command{
 	Long: `Initialize bd in the current directory by creating a .beads/ directory
 and database file. Optionally specify a custom issue prefix.
 
-With --no-db: creates .beads/ directory and issues.jsonl file instead of database.
+Note: --no-db mode has been removed. bd now requires Dolt storage.
 
 With --from-jsonl: imports from the current .beads/issues.jsonl file on disk instead
 of scanning git history. Use this after manual JSONL cleanup
@@ -67,6 +67,13 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 
 		// Dolt is the only supported backend
 		backend := configfile.BackendDolt
+
+		if noDb {
+			fmt.Fprintf(os.Stderr, "Error: --no-db mode has been removed; beads now requires Dolt\n")
+			fmt.Fprintf(os.Stderr, "Hint: run 'bd init --server --server-port 3307' for server mode without embedded CGO,\n")
+			fmt.Fprintf(os.Stderr, "      or rebuild bd with CGO enabled for embedded mode.\n")
+			os.Exit(1)
+		}
 
 		// Initialize config (PersistentPreRun doesn't run for init command)
 		if err := config.Initialize(); err != nil {
@@ -218,58 +225,6 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 				os.Exit(1)
 			}
 
-			// Handle --no-db mode: create issues.jsonl file instead of database
-			if noDb {
-				// Create empty issues.jsonl file
-				jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-				if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-					// nolint:gosec // G306: JSONL file needs to be readable by other tools
-					if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to create issues.jsonl: %v\n", err)
-						os.Exit(1)
-					}
-				}
-
-				// Create empty interactions.jsonl file (append-only agent audit log)
-				interactionsPath := filepath.Join(beadsDir, "interactions.jsonl")
-				if _, err := os.Stat(interactionsPath); os.IsNotExist(err) {
-					// nolint:gosec // G306: JSONL file needs to be readable by other tools
-					if err := os.WriteFile(interactionsPath, []byte{}, 0644); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to create interactions.jsonl: %v\n", err)
-						os.Exit(1)
-					}
-				}
-
-				// Create metadata.json for --no-db mode
-				cfg := configfile.DefaultConfig()
-				if err := cfg.Save(beadsDir); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
-					// Non-fatal - continue anyway
-				}
-
-				// Create config.yaml with no-db: true and the prefix
-				if err := createConfigYaml(beadsDir, true, prefix); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
-					// Non-fatal - continue anyway
-				}
-
-				// Create README.md
-				if err := createReadme(beadsDir); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create README.md: %v\n", err)
-					// Non-fatal - continue anyway
-				}
-
-				if !quiet {
-					fmt.Printf("\n%s bd initialized successfully in --no-db mode!\n\n", ui.RenderPass("✓"))
-					fmt.Printf("  Mode: %s\n", ui.RenderAccent("no-db (JSONL-only)"))
-					fmt.Printf("  Issues file: %s\n", ui.RenderAccent(jsonlPath))
-					fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
-					fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
-					fmt.Printf("Run %s to get started.\n\n", ui.RenderAccent("bd --no-db quickstart"))
-				}
-				return
-			}
-
 			// Create/update .gitignore in .beads directory (only if missing or outdated)
 			gitignorePath := filepath.Join(beadsDir, ".gitignore")
 			check := doctor.CheckGitignore()
@@ -323,52 +278,10 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 		var store *dolt.DoltStore
 		store, err = dolt.New(ctx, &dolt.Config{Path: storagePath, Database: dbName})
 		if err != nil {
-			// If the backend requires CGO but this is a nocgo build, fall back to JSONL-only mode.
-			// This enables Windows CI (CGO_ENABLED=0) and other pure-Go builds to use bd init.
-			errMsg := err.Error()
-			if strings.Contains(errMsg, "requires CGO") || strings.Contains(errMsg, "without CGO support") {
-				if !quiet {
-					fmt.Fprintf(os.Stderr, "Note: %s backend requires CGO (not available in this build).\n", backend)
-					fmt.Fprintf(os.Stderr, "Falling back to JSONL-only mode.\n\n")
-				}
-
-				// Create issues.jsonl
-				jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-				if _, statErr := os.Stat(jsonlPath); os.IsNotExist(statErr) {
-					// nolint:gosec // G306: JSONL file needs to be readable by other tools
-					if writeErr := os.WriteFile(jsonlPath, []byte{}, 0644); writeErr != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to create issues.jsonl: %v\n", writeErr)
-						os.Exit(1)
-					}
-				}
-
-				// Create metadata.json
-				metaCfg := configfile.DefaultConfig()
-				if saveErr := metaCfg.Save(beadsDir); saveErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", saveErr)
-				}
-
-				// Create config.yaml with no-db: true and the prefix
-				if cfgErr := createConfigYaml(beadsDir, true, prefix); cfgErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", cfgErr)
-				}
-
-				// Create README.md
-				if readmeErr := createReadme(beadsDir); readmeErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create README.md: %v\n", readmeErr)
-				}
-
-				if !quiet {
-					fmt.Printf("\n%s bd initialized in JSONL-only mode (CGO not available)\n\n", ui.RenderPass("✓"))
-					fmt.Printf("  Mode: %s\n", ui.RenderAccent("no-db (JSONL-only)"))
-					fmt.Printf("  Issues file: %s\n", ui.RenderAccent(jsonlPath))
-					fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
-					fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
-				}
-				return
-			}
-
 			fmt.Fprintf(os.Stderr, "Error: failed to create %s database: %v\n", backend, err)
+			if strings.Contains(err.Error(), "requires CGO") || strings.Contains(err.Error(), "without CGO support") {
+				fmt.Fprintf(os.Stderr, "Hint: use 'bd init --server --server-port 3307' (Dolt sql-server) or rebuild with CGO enabled.\n")
+			}
 			os.Exit(1)
 		}
 
@@ -380,6 +293,18 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 		// Set the issue prefix in config
 		if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to set issue prefix: %v\n", err)
+			_ = store.Close()
+			os.Exit(1)
+		}
+
+		// Harden create-time validation defaults for newly initialized repositories.
+		if err := store.SetConfig(ctx, "validation.on-create", "error"); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to set validation.on-create default: %v\n", err)
+			_ = store.Close()
+			os.Exit(1)
+		}
+		if err := store.SetConfig(ctx, "create.require-description", "true"); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to set create.require-description default: %v\n", err)
 			_ = store.Close()
 			os.Exit(1)
 		}

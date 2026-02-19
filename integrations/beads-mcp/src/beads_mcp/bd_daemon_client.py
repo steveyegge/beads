@@ -306,6 +306,8 @@ class BdDaemonClient(BdClientBase):
             Updated issue
         """
         args: Dict[str, Any] = {"id": params.issue_id}
+        if params.claim:
+            args["claim"] = True
         if params.status:
             args["status"] = params.status
         if params.priority is not None:

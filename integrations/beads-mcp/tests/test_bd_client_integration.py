@@ -1,13 +1,13 @@
 """Real integration tests for BdClient using actual bd binary."""
 
 import os
-import shutil
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from beads_mcp.bd_client import BdClient, BdCommandError
+from tests._bd_binary import resolve_bd_executable
 from beads_mcp.models import (
     AddDependencyParams,
     CloseIssueParams,
@@ -22,14 +22,11 @@ from beads_mcp.models import (
 
 @pytest.fixture(scope="session")
 def bd_executable():
-    """Verify bd is available in PATH."""
-    bd_path = shutil.which("bd")
-    if not bd_path:
-        pytest.fail(
-            "bd executable not found in PATH. "
-            "Please install bd or add it to your PATH before running integration tests."
-        )
-    return bd_path
+    """Resolve bd executable via capability-probed custom-fork candidates."""
+    try:
+        return resolve_bd_executable()
+    except RuntimeError as exc:
+        pytest.fail(str(exc))
 
 
 @pytest.fixture

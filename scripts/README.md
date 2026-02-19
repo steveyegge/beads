@@ -178,6 +178,46 @@ malicious due to heuristic detection. See `docs/ANTIVIRUS.md` for details.
 
 ---
 
+## bd_intake_audit.sh
+
+Runs the canonical intake contract audit for a parent epic and writes proof on success.
+
+### Usage
+
+```bash
+# Use system bd in PATH
+./scripts/bd_intake_audit.sh bd-bmf
+
+# Use an explicit binary path
+BD_BIN=/tmp/beads-bd-new2 ./scripts/bd_intake_audit.sh bd-bmf
+```
+
+### What It Does
+
+- Delegates directly to `bd intake audit --epic <id> --write-proof --json`
+- Preserves `bd` exit code semantics for pass/fail contract gating
+- Supports passing extra `intake audit` flags after the epic ID
+
+---
+
+## generate_control_plane_contract.sh
+
+Generates `docs/CONTROL_PLANE_CONTRACT.md` from the canonical inlined contract in `AGENTS.md`.
+
+### Usage
+
+```bash
+./scripts/generate_control_plane_contract.sh
+```
+
+### What It Does
+
+- Extracts the `Control-Plane Contract (Inlined)` section from `AGENTS.md`
+- Rewrites `docs/CONTROL_PLANE_CONTRACT.md` from that single source
+- Keeps command/result envelope docs in sync with agent bootloader policy text
+
+---
+
 ## Future Scripts
 
 Additional maintenance scripts may be added here as needed.

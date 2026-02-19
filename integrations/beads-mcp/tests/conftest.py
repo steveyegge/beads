@@ -13,6 +13,17 @@ import pytest
 def pytest_configure(config):
     """Called before test collection starts - ensure we're not polluting production."""
     # CRITICAL (bd-2c5a): Prevent tests from polluting production database
+
+    # Ensure local package imports resolve when pytest is launched from repo root.
+    src_dir = Path(__file__).resolve().parents[1] / "src"
+    if str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+
+    # Prefer project-local virtualenv deps when running from repo root.
+    py_ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    site_packages = Path(__file__).resolve().parents[1] / ".venv" / "lib" / py_ver / "site-packages"
+    if site_packages.exists() and str(site_packages) not in sys.path:
+        sys.path.insert(0, str(site_packages))
     
     # Set test mode flag
     os.environ["BEADS_TEST_MODE"] = "1"

@@ -961,6 +961,281 @@ func validateExternalRef(ref string) error {
 	return nil
 }
 
+var (
+	depBatchEdges       []string
+	depBatchType        string
+	depBatchStopOnError bool
+	depBatchGuardCycles bool
+)
+
+var depAddBatchCmd = &cobra.Command{
+	Use:   "add-batch",
+	Short: "Add dependencies in batch with deterministic per-edge results and guardrails",
+	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("dep add-batch")
+		ctx := rootCtx
+
+		if len(depBatchEdges) == 0 {
+			finishEnvelope(commandEnvelope{
+				OK:      false,
+				Command: "dep add-batch",
+				Result:  "invalid_input",
+				Details: map[string]interface{}{"message": "at least one --edge is required"},
+				Events:  []string{"dep_batch_failed"},
+			}, 1)
+			return
+		}
+
+		results := make([]map[string]interface{}, 0, len(depBatchEdges))
+		stoppedEarly := false
+		for _, edgeSpec := range depBatchEdges {
+			fromArg, toArg, parseErr := parseDepBatchEdge(edgeSpec)
+			if parseErr != nil {
+				results = append(results, map[string]interface{}{
+					"edge":   edgeSpec,
+					"status": "failed",
+					"error":  parseErr.Error(),
+				})
+				if depBatchShouldStop(depBatchStopOnError, true, false) {
+					stoppedEarly = true
+					break
+				}
+				continue
+			}
+
+			fromID, err := utils.ResolvePartialID(ctx, store, fromArg)
+			if err != nil {
+				results = append(results, map[string]interface{}{
+					"edge":   edgeSpec,
+					"status": "failed",
+					"error":  fmt.Sprintf("resolve from-id %q: %v", fromArg, err),
+				})
+				if depBatchShouldStop(depBatchStopOnError, true, false) {
+					stoppedEarly = true
+					break
+				}
+				continue
+			}
+
+			isExternalRef := strings.HasPrefix(toArg, "external:")
+			toID := toArg
+			if isExternalRef {
+				if err := validateExternalRef(toArg); err != nil {
+					results = append(results, map[string]interface{}{
+						"edge":   edgeSpec,
+						"status": "failed",
+						"error":  err.Error(),
+					})
+					if depBatchShouldStop(depBatchStopOnError, true, false) {
+						stoppedEarly = true
+						break
+					}
+					continue
+				}
+			} else {
+				resolvedTo, err := utils.ResolvePartialID(ctx, store, toArg)
+				if err != nil {
+					results = append(results, map[string]interface{}{
+						"edge":   edgeSpec,
+						"status": "failed",
+						"error":  fmt.Sprintf("resolve depends-on-id %q: %v", toArg, err),
+					})
+					if depBatchShouldStop(depBatchStopOnError, true, false) {
+						stoppedEarly = true
+						break
+					}
+					continue
+				}
+				toID = resolvedTo
+			}
+
+			if isChildOf(fromID, toID) {
+				results = append(results, map[string]interface{}{
+					"edge":   edgeSpec,
+					"status": "failed",
+					"error":  fmt.Sprintf("cannot add dependency: %s is already child of %s", fromID, toID),
+				})
+				if depBatchShouldStop(depBatchStopOnError, true, false) {
+					stoppedEarly = true
+					break
+				}
+				continue
+			}
+
+			dep := &types.Dependency{
+				IssueID:     fromID,
+				DependsOnID: toID,
+				Type:        types.DependencyType(depBatchType),
+			}
+			if err := store.AddDependency(ctx, dep, actor); err != nil {
+				results = append(results, map[string]interface{}{
+					"edge":          edgeSpec,
+					"issue_id":      fromID,
+					"depends_on_id": toID,
+					"type":          depBatchType,
+					"status":        "failed",
+					"error":         err.Error(),
+				})
+				if depBatchShouldStop(depBatchStopOnError, true, false) {
+					stoppedEarly = true
+					break
+				}
+				continue
+			}
+
+			cycleDetected := false
+			cycleCount := 0
+			var cycleRollbackErr error
+			rollbackAddedEdge := func() error {
+				return store.RemoveDependency(ctx, fromID, toID, actor)
+			}
+			if depBatchGuardCycles {
+				var cycleErr error
+				cycleCount, cycleDetected, cycleRollbackErr, cycleErr = depBatchRunCycleGuard(ctx, func(ctx context.Context) (int, error) {
+					cycles, err := store.DetectCycles(ctx)
+					return len(cycles), err
+				}, func(ctx context.Context) error {
+					return rollbackAddedEdge()
+				})
+				if cycleErr != nil {
+					failure := map[string]interface{}{
+						"edge":          edgeSpec,
+						"issue_id":      fromID,
+						"depends_on_id": toID,
+						"type":          depBatchType,
+						"status":        "failed",
+						"error":         fmt.Sprintf("cycle guard failed after add: %v", cycleErr),
+					}
+					if cycleRollbackErr != nil {
+						failure["rollback_error"] = cycleRollbackErr.Error()
+						failure["recovery_command"] = fmt.Sprintf("bd dep remove %s %s", fromID, toID)
+					} else {
+						failure["rolled_back"] = true
+					}
+					results = append(results, failure)
+					if depBatchShouldStop(depBatchStopOnError, true, false) {
+						stoppedEarly = true
+						break
+					}
+					continue
+				}
+			}
+
+			if cycleDetected {
+				failure := map[string]interface{}{
+					"edge":          edgeSpec,
+					"issue_id":      fromID,
+					"depends_on_id": toID,
+					"type":          depBatchType,
+					"status":        "failed",
+					"error":         "cycle detected by guardrail; added edge rolled back",
+					"cycle_count":   cycleCount,
+				}
+				if cycleRollbackErr != nil {
+					failure["rollback_error"] = cycleRollbackErr.Error()
+					failure["recovery_command"] = fmt.Sprintf("bd dep remove %s %s", fromID, toID)
+				} else {
+					failure["rolled_back"] = true
+				}
+				results = append(results, failure)
+				if depBatchShouldStop(depBatchStopOnError, true, true) {
+					stoppedEarly = true
+					break
+				}
+				continue
+			}
+
+			results = append(results, map[string]interface{}{
+				"edge":          edgeSpec,
+				"issue_id":      fromID,
+				"depends_on_id": toID,
+				"type":          depBatchType,
+				"status":        "added",
+			})
+		}
+
+		failedCount := 0
+		for _, row := range results {
+			if status, _ := row["status"].(string); status != "added" {
+				failedCount++
+			}
+		}
+		result := "completed"
+		ok := true
+		exitCode := 0
+		if failedCount > 0 {
+			result = "partial"
+			ok = false
+			exitCode = exitCodePolicyViolation
+		}
+		finishEnvelope(commandEnvelope{
+			OK:      ok,
+			Command: "dep add-batch",
+			Result:  result,
+			Details: map[string]interface{}{
+				"total_edges":   len(depBatchEdges),
+				"processed":     len(results),
+				"failed":        failedCount,
+				"stopped_early": stoppedEarly,
+				"results":       results,
+			},
+			Events: []string{"dep_batch_completed"},
+		}, exitCode)
+	},
+}
+
+func parseDepBatchEdge(raw string) (string, string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", "", fmt.Errorf("empty edge specification")
+	}
+	if strings.Contains(trimmed, "->") {
+		parts := strings.SplitN(trimmed, "->", 2)
+		from := strings.TrimSpace(parts[0])
+		to := strings.TrimSpace(parts[1])
+		if from == "" || to == "" {
+			return "", "", fmt.Errorf("invalid edge %q (expected <issue-id>-><depends-on-id>)", raw)
+		}
+		return from, to, nil
+	}
+	parts := strings.SplitN(trimmed, ":", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid edge %q (expected <issue-id>:<depends-on-id> or <issue-id>-><depends-on-id>)", raw)
+	}
+	from := strings.TrimSpace(parts[0])
+	to := strings.TrimSpace(parts[1])
+	if from == "" || to == "" {
+		return "", "", fmt.Errorf("invalid edge %q (empty issue-id or depends-on-id)", raw)
+	}
+	return from, to, nil
+}
+
+func depBatchShouldStop(stopOnError bool, edgeFailed bool, cycleDetected bool) bool {
+	if !stopOnError {
+		return false
+	}
+	return edgeFailed || cycleDetected
+}
+
+// depBatchRunCycleGuard runs cycle detection after an edge is added and rolls it back
+// when guard evaluation fails or detects a cycle.
+func depBatchRunCycleGuard(
+	ctx context.Context,
+	detectCycleCount func(context.Context) (int, error),
+	rollbackAddedEdge func(context.Context) error,
+) (cycleCount int, cycleDetected bool, rollbackErr error, guardErr error) {
+	cycleCount, guardErr = detectCycleCount(ctx)
+	if guardErr != nil {
+		rollbackErr = rollbackAddedEdge(ctx)
+		return cycleCount, false, rollbackErr, guardErr
+	}
+	cycleDetected = cycleCount > 0
+	if cycleDetected {
+		rollbackErr = rollbackAddedEdge(ctx)
+	}
+	return cycleCount, cycleDetected, rollbackErr, nil
+}
+
 // IsExternalRef returns true if the dependency reference is an external reference.
 func IsExternalRef(ref string) bool {
 	return strings.HasPrefix(ref, "external:")
@@ -1086,6 +1361,10 @@ func init() {
 	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|tracks|related|parent-child|discovered-from|until|caused-by|validates|relates-to|supersedes)")
 	depAddCmd.Flags().String("blocked-by", "", "Issue ID that blocks the first issue (alternative to positional arg)")
 	depAddCmd.Flags().String("depends-on", "", "Issue ID that the first issue depends on (alias for --blocked-by)")
+	depAddBatchCmd.Flags().StringArrayVar(&depBatchEdges, "edge", nil, "Dependency edge in form <issue-id>:<depends-on-id> (repeat flag)")
+	depAddBatchCmd.Flags().StringVar(&depBatchType, "type", "blocks", "Dependency type applied to all edges in batch")
+	depAddBatchCmd.Flags().BoolVar(&depBatchStopOnError, "stop-on-error", true, "Stop processing on first failed edge")
+	depAddBatchCmd.Flags().BoolVar(&depBatchGuardCycles, "guard-cycles", true, "Run cycle guard after each added edge and stop when cycles are detected")
 
 	depTreeCmd.Flags().Bool("show-all-paths", false, "Show all paths to nodes (no deduplication for diamond dependencies)")
 	depTreeCmd.Flags().IntP("max-depth", "d", 50, "Maximum tree depth to display (safety limit)")
@@ -1100,11 +1379,13 @@ func init() {
 
 	// Issue ID completions for dep subcommands
 	depAddCmd.ValidArgsFunction = issueIDCompletion
+	depAddBatchCmd.ValidArgsFunction = noCompletions
 	depRemoveCmd.ValidArgsFunction = issueIDCompletion
 	depListCmd.ValidArgsFunction = issueIDCompletion
 	depTreeCmd.ValidArgsFunction = issueIDCompletion
 
 	depCmd.AddCommand(depAddCmd)
+	depCmd.AddCommand(depAddBatchCmd)
 	depCmd.AddCommand(depRemoveCmd)
 	depCmd.AddCommand(depListCmd)
 	depCmd.AddCommand(depTreeCmd)

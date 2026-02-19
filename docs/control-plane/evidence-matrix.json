@@ -1,0 +1,77 @@
+{
+  "generated_at": "2026-02-19T09:00:00Z",
+  "items": [
+    {
+      "checklist_item": "Control-plane JSON envelope schema and exit-code contract",
+      "command_behavior": "Deterministic command responses emit a stable envelope with explicit exit policy",
+      "code_location": "cmd/bd/control_plane_helpers.go, cmd/bd/control_plane_contract_test.go",
+      "test_proof": "TestControlPlaneJSONEnvelope, TestControlPlaneContract",
+      "status": "PASS"
+    },
+    {
+      "checklist_item": "WIP-gated claim queue semantics",
+      "command_behavior": "flow claim-next enforces single-WIP gate and deterministic claim outcomes",
+      "code_location": "cmd/bd/flow.go (flow claim-next)",
+      "test_proof": "TestFlowParityCommands, TestPostClaimViabilityDeferredBlockers",
+      "status": "PASS"
+    },
+    {
+      "checklist_item": "Mechanical transition handlers",
+      "command_behavior": "flow transition handles deterministic claim/block/test/fallback/abort transitions",
+      "code_location": "cmd/bd/flow.go (flow transition)",
+      "test_proof": "TestMechanicalTransitionHandlers, TestTransitionHandlerConformance",
+      "status": "PASS"
+    },
+    {
+      "checklist_item": "Transient failure retry and escalation",
+      "command_behavior": "Transient retry attempts use bounded backoff and deterministic escalation",
+      "code_location": "cmd/bd/flow.go (transient_failure helpers)",
+      "test_proof": "TestTransientFailureRetryPolicyDeterministic",
+      "status": "PASS"
+    },
+    {
+      "checklist_item": "Decomposition-invalid damper threshold",
+      "command_behavior": "Repeated decomposition_invalid attempts trigger deterministic escalation signaling",
+      "code_location": "cmd/bd/flow.go (decomposition damper helpers)",
+      "test_proof": "TestDecompositionInvalidDamperThreshold",
+      "status": "PASS"
+    },
+    {
+      "checklist_item": "Pre-claim machine lint and atomicity checks",
+      "command_behavior": "Pre-claim lint enforces description/acceptance/verify path and bounded estimate",
+      "code_location": "cmd/bd/flow.go (preclaim lint helpers)",
+      "test_proof": "TestPreClaimQualityLint, TestAtomicityLintEstimateAndVerifyPath",
+      "status": "PASS"
+    },
+    {
+      "checklist_item": "Landing gates and handoff determinism",
+      "command_behavior": "land command enforces deterministic gate checks for hygiene, quality, and handoff fields",
+      "code_location": "cmd/bd/land.go",
+      "test_proof": "TestLandFullGateCoverage",
+      "status": "PASS"
+    },
+    {
+      "checklist_item": "Policy-drift guard for split-agent and MCP boundaries",
+      "command_behavior": "CI guard verifies deterministic policy remains CLI-owned and disallows script drift in docs/MCP",
+      "code_location": "cmd/bd/control_plane_remaining_test.go (TestPolicyDriftGuard)",
+      "test_proof": "TestPolicyDriftGuard",
+      "status": "PASS"
+    },
+    {
+      "checklist_item": "Release cutover gate for unresolved GAP remediation",
+      "command_behavior": "Release cutover must fail when any GAP row points to unresolved remediation",
+      "code_location": "cmd/bd/cutover.go (planned)",
+      "test_proof": "TestCutoverGateBlocksUnresolvedGaps",
+      "status": "GAP",
+      "remediation_issue_id": "bd-bmf.24"
+    },
+    {
+      "checklist_item": "Final migration verification and parity report",
+      "command_behavior": "End-state migration verification must publish closure evidence and residual risk summary",
+      "code_location": "docs/control-plane/evidence-matrix.json, bd final verification workflow",
+      "test_proof": "bd intake audit --epic <epic-id> --json",
+      "status": "GAP",
+      "remediation_issue_id": "bd-bmf.16"
+    }
+  ]
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 // showDetectPollutionDeprecationHint shows a hint about bd doctor consolidation
@@ -179,16 +180,6 @@ type pollutionResult struct {
 	reasons []string
 }
 
-// testPrefixPattern matches common test issue title prefixes.
-// Compiled once at package level for use in isTestIssue and detectTestPollution.
-var testPrefixPattern = regexp.MustCompile(`^(test|benchmark|sample|tmp|temp|debug|dummy)[-_\s]`)
-
-// isTestIssue checks if an issue title looks like a test issue based on common test prefixes.
-// This function is used both for warnings during creation and for pollution detection.
-func isTestIssue(title string) bool {
-	return testPrefixPattern.MatchString(strings.ToLower(title))
-}
-
 func detectTestPollution(issues []*types.Issue) []pollutionResult {
 	var results []pollutionResult
 	sequentialPattern := regexp.MustCompile(`^[a-z]+-\d+$`)
@@ -207,7 +198,7 @@ func detectTestPollution(issues []*types.Issue) []pollutionResult {
 		title := strings.ToLower(issue.Title)
 
 		// Check for test prefixes (strong signal)
-		if testPrefixPattern.MatchString(title) {
+		if validation.IsTestIssueTitle(title) {
 			score += 0.7
 			reasons = append(reasons, "Title starts with test prefix")
 		}
