@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-02-20
+
+### Fixed
+
+- **Release CI: zig upgrade** — upgrade zig 0.13.0 → 0.14.0 to fix `AccessDenied` bug in cross-compilation (ziglang/zig#20689)
+- **Release CI: macOS libresolv** — work around zig 0.14.0 `libresolv` resolution by using versioned `-lresolv.9` (ziglang/zig#16674)
+- **Release CI: Android ARM64** — disable CGO for Android target (server mode only)
+- **5 pre-existing test failures** — resolve test failures and Dolt panic (bd-iqsw6v)
+- **Doctor daemon references** — remove daemon references for post-daemon architecture
+
+### Removed
+
+- **~5K lines dead code** — classic cleanup of obsolete sync pipeline remnants
+
 ## [0.54.0] - 2026-02-18
 
 ### Fixed

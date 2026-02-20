@@ -210,6 +210,16 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.55.0",
+		Date:    "2026-02-20",
+		Changes: []string{
+			"FIX: Release CI upgraded zig 0.13→0.14 fixing AccessDenied cross-compilation bug",
+			"FIX: macOS libresolv resolution with zig 0.14 (-lresolv.9 workaround)",
+			"FIX: 5 pre-existing test failures and Dolt panic resolved",
+			"REMOVED: ~5K lines dead code from classic sync cleanup",
+		},
+	},
+	{
 		Version: "0.54.0",
 		Date:    "2026-02-18",
 		Changes: []string{
