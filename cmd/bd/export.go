@@ -430,13 +430,33 @@ Examples:
 		})
 
 		// Populate dependencies for all issues in one query (avoids N+1 problem)
+		// Bug fix: include both directions of dependencies
+		// - where issue is child (issue_id == issue.ID)
+		// - where issue is parent (depends_on_id == issue.ID)
 		allDeps, err := store.GetAllDependencyRecords(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting dependencies: %v\n", err)
 			os.Exit(1)
 		}
+
+		// Build reverse index for parent-to-child relationships
+		parentDeps := make(map[string][]*types.Dependency)
+		for _, deps := range allDeps {
+			for _, dep := range deps {
+				parentDeps[dep.DependsOnID] = append(parentDeps[dep.DependsOnID], dep)
+			}
+		}
+
+		// Populate both directions for each issue
 		for _, issue := range issues {
-			issue.Dependencies = allDeps[issue.ID]
+			// Add dependencies where issue is the child
+			if childDeps, ok := allDeps[issue.ID]; ok {
+				issue.Dependencies = append(issue.Dependencies, childDeps...)
+			}
+			// Add dependencies where issue is the parent
+			if parentChildDeps, ok := parentDeps[issue.ID]; ok {
+				issue.Dependencies = append(issue.Dependencies, parentChildDeps...)
+			}
 		}
 
 		// Populate labels and comments for all issues (batch APIs)
