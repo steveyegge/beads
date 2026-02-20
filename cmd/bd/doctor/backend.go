@@ -17,3 +17,15 @@ func getBackendAndBeadsDir(repoPath string) (backend string, beadsDir string) {
 	}
 	return cfg.GetBackend(), beadsDir
 }
+
+// getDoltDatabase returns the configured Dolt database name for the given
+// .beads directory. Falls back to the default ("beads") when the config
+// cannot be loaded. This must be passed to dolt.Config.Database so that
+// doctor checks work with non-default database names (GH#1904).
+func getDoltDatabase(beadsDir string) string {
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return configfile.DefaultDoltDatabase
+	}
+	return cfg.GetDoltDatabase()
+}
