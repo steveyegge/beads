@@ -421,6 +421,11 @@ func insertIssueTx(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 	return err
 }
 
+// scanIssueTx is an intentionally minimal projection for transaction-scoped reads.
+// It selects only the ~21 columns needed within transactions (e.g., import, batch ops)
+// rather than the full ~50 columns in issueSelectColumns / scanIssueFrom.
+// This is a deliberate trade-off: transactions need core fields for logic decisions,
+// not the full hydration needed by export/display paths.
 func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, error) {
 	var issue types.Issue
 	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
