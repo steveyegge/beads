@@ -18,8 +18,22 @@ import (
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// ephemeralTracer is the OTel tracer for ephemeral-store spans.
+var ephemeralTracer = otel.Tracer("github.com/steveyegge/beads/storage/ephemeral")
+
+// ephemeralSpanAttrs returns common span attributes for the SQLite ephemeral store.
+func ephemeralSpanAttrs() []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.String("db.system", "sqlite"),
+	}
+}
 
 // Store is a SQLite-backed store for ephemeral beads.
 type Store struct {
@@ -121,14 +135,31 @@ func (s *Store) Path() string {
 
 // Count returns the number of issues in the ephemeral store.
 func (s *Store) Count(ctx context.Context) (int, error) {
+	_, span := ephemeralTracer.Start(ctx, "ephemeral.count",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(ephemeralSpanAttrs()...),
+	)
 	var count int
 	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues").Scan(&count)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetAttributes(attribute.Int("db.result_count", count))
+	}
+	span.End()
 	return count, err
 }
 
 // Nuke deletes all data from the ephemeral store.
 // This is a fast operation that doesn't leave history behind.
-func (s *Store) Nuke(ctx context.Context) error {
+func (s *Store) Nuke(ctx context.Context) (retErr error) {
+	ctx, span := ephemeralTracer.Start(ctx, "ephemeral.nuke",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(ephemeralSpanAttrs()...),
+	)
+	defer func() { endEphemeralSpan(span, retErr) }()
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -150,6 +181,15 @@ func (s *Store) Nuke(ctx context.Context) error {
 	}
 
 	return tx.Commit()
+}
+
+// endEphemeralSpan records an error (if any) and ends the span.
+func endEphemeralSpan(span trace.Span, err error) {
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.End()
 }
 
 // IsEphemeralID returns true if the ID belongs to an ephemeral issue (contains "-wisp-").

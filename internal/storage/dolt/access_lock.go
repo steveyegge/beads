@@ -1,11 +1,15 @@
 package dolt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/steveyegge/beads/internal/lockfile"
 )
@@ -55,8 +59,14 @@ func AcquireAccessLock(doltDir string, exclusive bool, timeout time.Duration) (*
 		lockFn = lockfile.FlockExclusiveNonBlock
 	}
 
+	start := time.Now()
+	lockAttrs := metric.WithAttributes(
+		attribute.Bool("dolt.lock.exclusive", exclusive),
+	)
+
 	// Try once immediately
 	if err := lockFn(f); err == nil {
+		doltMetrics.lockWaitMs.Record(context.Background(), 0, lockAttrs)
 		return &AccessLock{file: f, path: lockPath}, nil
 	} else if !errors.Is(err, lockfile.ErrLockBusy) {
 		_ = f.Close() // Best effort cleanup on lock acquisition failure
@@ -69,6 +79,8 @@ func AcquireAccessLock(doltDir string, exclusive bool, timeout time.Duration) (*
 		time.Sleep(lockPollInterval)
 
 		if err := lockFn(f); err == nil {
+			waitMs := float64(time.Since(start).Milliseconds())
+			doltMetrics.lockWaitMs.Record(context.Background(), waitMs, lockAttrs)
 			return &AccessLock{file: f, path: lockPath}, nil
 		} else if !errors.Is(err, lockfile.ErrLockBusy) {
 			_ = f.Close() // Best effort cleanup on lock acquisition failure
