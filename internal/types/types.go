@@ -1044,6 +1044,10 @@ type WorkFilter struct {
 	// By default, GetReadyWork excludes mol/wisp steps (IDs containing -mol- or -wisp-)
 	// Set to true for internal callers that need to see mol steps (e.g., findGateReadyMolecules)
 	IncludeMolSteps bool
+
+	// Metadata field filtering (GH#1406)
+	MetadataFields map[string]string // Top-level key=value equality; AND semantics (all must match)
+	HasMetadataKey string            // Existence check: issue has this top-level key set (non-null)
 }
 
 // StaleFilter is used to filter stale issue queries

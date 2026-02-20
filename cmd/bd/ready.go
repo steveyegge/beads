@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -106,6 +108,33 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if molType != nil {
 			filter.MolType = molType
 		}
+
+		// Metadata filters (GH#1406)
+		metadataFieldFlags, _ := cmd.Flags().GetStringArray("metadata-field")
+		if len(metadataFieldFlags) > 0 {
+			filter.MetadataFields = make(map[string]string, len(metadataFieldFlags))
+			for _, mf := range metadataFieldFlags {
+				k, v, ok := strings.Cut(mf, "=")
+				if !ok || k == "" {
+					fmt.Fprintf(os.Stderr, "Error: invalid --metadata-field: expected key=value, got %q\n", mf)
+					os.Exit(1)
+				}
+				if err := storage.ValidateMetadataKey(k); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: invalid --metadata-field key: %v\n", err)
+					os.Exit(1)
+				}
+				filter.MetadataFields[k] = v
+			}
+		}
+		hasMetadataKey, _ := cmd.Flags().GetString("has-metadata-key")
+		if hasMetadataKey != "" {
+			if err := storage.ValidateMetadataKey(hasMetadataKey); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid --has-metadata-key: %v\n", err)
+				os.Exit(1)
+			}
+			filter.HasMetadataKey = hasMetadataKey
+		}
+
 		// Validate sort policy
 		if !filter.SortPolicy.IsValid() {
 			FatalError("invalid sort policy '%s'. Valid values: hybrid, priority, oldest", sortPolicy)
@@ -502,6 +531,9 @@ func init() {
 	readyCmd.Flags().Bool("include-ephemeral", false, "Include ephemeral issues (wisps) in results")
 	readyCmd.Flags().Bool("gated", false, "Find molecules ready for gate-resume dispatch")
 	readyCmd.Flags().String("rig", "", "Query a different rig's database (e.g., --rig gastown, --rig gt-, --rig gt)")
+	// Metadata filtering (GH#1406)
+	readyCmd.Flags().StringArray("metadata-field", nil, "Filter by metadata field (key=value, repeatable)")
+	readyCmd.Flags().String("has-metadata-key", "", "Filter issues that have this metadata key set")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	rootCmd.AddCommand(blockedCmd)
