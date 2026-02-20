@@ -24,6 +24,7 @@ import (
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/molecules"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/ephemeral"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -569,6 +570,14 @@ var rootCmd = &cobra.Command{
 			}
 			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
 			os.Exit(1)
+		}
+
+		// Initialize ephemeral store (SQLite) for wisp/molecule storage
+		ephPath := filepath.Join(beadsDir, "ephemeral.sqlite3")
+		if es, esErr := ephemeral.New(ephPath, ""); esErr != nil {
+			debug.Logf("warning: failed to open ephemeral store: %v", esErr)
+		} else {
+			store.SetEphemeralStore(es)
 		}
 
 		// Mark store as active for flush goroutine safety

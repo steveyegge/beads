@@ -33,6 +33,12 @@ redirect
 sync_base.jsonl
 export-state/
 
+# Ephemeral store (SQLite - wisps/molecules, intentionally not versioned)
+ephemeral.sqlite3
+ephemeral.sqlite3-journal
+ephemeral.sqlite3-wal
+ephemeral.sqlite3-shm
+
 # Legacy files (from pre-Dolt versions)
 *.db
 *.db?*
@@ -77,6 +83,7 @@ var requiredPatterns = []string{
 	"export-state/",
 	"dolt/",
 	"dolt-access.lock",
+	"ephemeral.sqlite3",
 }
 
 // CheckGitignore checks if .beads/.gitignore is up to date

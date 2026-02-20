@@ -5,6 +5,12 @@
 *.db-wal
 *.db-shm
 
+# Ephemeral store (SQLite - wisps/molecules, intentionally not versioned)
+ephemeral.sqlite3
+ephemeral.sqlite3-journal
+ephemeral.sqlite3-wal
+ephemeral.sqlite3-shm
+
 # Daemon runtime files
 daemon.lock
 daemon.log

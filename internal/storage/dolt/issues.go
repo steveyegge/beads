@@ -17,6 +17,11 @@ import (
 
 // CreateIssue creates a new issue
 func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
+	// Route ephemeral issues to SQLite store
+	if issue.Ephemeral && s.ephemeralStore != nil {
+		return s.ephemeralStore.CreateIssue(ctx, issue, actor)
+	}
+
 	// Fetch custom statuses and types for validation
 	customStatuses, err := s.GetCustomStatuses(ctx)
 	if err != nil {
@@ -246,6 +251,11 @@ func parseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
 
 // GetIssue retrieves an issue by ID
 func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
+	// Route ephemeral IDs to SQLite store
+	if IsEphemeralID(id) && s.ephemeralStore != nil {
+		return s.ephemeralStore.GetIssue(ctx, id)
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -286,6 +296,11 @@ func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef strin
 
 // UpdateIssue updates fields on an issue
 func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
+	// Route ephemeral IDs to SQLite store
+	if IsEphemeralID(id) && s.ephemeralStore != nil {
+		return s.ephemeralStore.UpdateIssue(ctx, id, updates, actor)
+	}
+
 	oldIssue, err := s.GetIssue(ctx, id)
 	if err != nil {
 		return fmt.Errorf("failed to get issue for update: %w", err)
@@ -358,6 +373,14 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 // It sets the assignee to actor and status to "in_progress" only if the issue
 // currently has no assignee. Returns storage.ErrAlreadyClaimed if already claimed.
 func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) error {
+	// Route ephemeral IDs to SQLite store (claim = update assignee)
+	if IsEphemeralID(id) && s.ephemeralStore != nil {
+		return s.ephemeralStore.UpdateIssue(ctx, id, map[string]interface{}{
+			"assignee": actor,
+			"status":   "in_progress",
+		}, actor)
+	}
+
 	oldIssue, err := s.GetIssue(ctx, id)
 	if err != nil {
 		return fmt.Errorf("failed to get issue for claim: %w", err)
@@ -418,6 +441,11 @@ func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) err
 
 // CloseIssue closes an issue with a reason
 func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
+	// Route ephemeral IDs to SQLite store
+	if IsEphemeralID(id) && s.ephemeralStore != nil {
+		return s.ephemeralStore.CloseIssue(ctx, id, reason, actor, session)
+	}
+
 	now := time.Now().UTC()
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -451,6 +479,11 @@ func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, ac
 
 // DeleteIssue permanently removes an issue
 func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
+	// Route ephemeral IDs to SQLite store
+	if IsEphemeralID(id) && s.ephemeralStore != nil {
+		return s.ephemeralStore.DeleteIssue(ctx, id)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)

@@ -13,6 +13,16 @@ import (
 
 // SearchIssues finds issues matching query and filters
 func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	// Route ephemeral-only queries to SQLite store
+	if filter.Ephemeral != nil && *filter.Ephemeral && s.ephemeralStore != nil {
+		return s.ephemeralStore.SearchIssues(ctx, query, filter)
+	}
+
+	// If searching by IDs that are all ephemeral, route to ephemeral
+	if len(filter.IDs) > 0 && allEphemeral(filter.IDs) && s.ephemeralStore != nil {
+		return s.ephemeralStore.SearchIssues(ctx, query, filter)
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
