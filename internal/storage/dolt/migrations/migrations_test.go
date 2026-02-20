@@ -152,3 +152,52 @@ func TestTableExists(t *testing.T) {
 		t.Fatal("nonexistent table should not exist")
 	}
 }
+
+func TestDetectOrphanedChildren(t *testing.T) {
+	db := openTestDolt(t)
+
+	// No orphans in empty database
+	if err := DetectOrphanedChildren(db); err != nil {
+		t.Fatalf("orphan detection failed on empty db: %v", err)
+	}
+
+	// Insert a parent and its child — no orphans
+	_, err := db.Exec(`INSERT INTO issues (id, title, status) VALUES ('bd-parent1', 'Parent', 'open')`)
+	if err != nil {
+		t.Fatalf("failed to insert parent: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('bd-parent1.1', 'Child 1', 'open')`)
+	if err != nil {
+		t.Fatalf("failed to insert child: %v", err)
+	}
+
+	if err := DetectOrphanedChildren(db); err != nil {
+		t.Fatalf("orphan detection failed with valid parent-child: %v", err)
+	}
+
+	// Insert an orphan (child whose parent doesn't exist)
+	_, err = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('bd-missing.2', 'Orphan Child', 'open')`)
+	if err != nil {
+		t.Fatalf("failed to insert orphan: %v", err)
+	}
+
+	// Should succeed (logs orphans but doesn't error)
+	if err := DetectOrphanedChildren(db); err != nil {
+		t.Fatalf("orphan detection should not error on orphans: %v", err)
+	}
+
+	// Insert a deeply nested orphan (parent of intermediate level missing)
+	_, err = db.Exec(`INSERT INTO issues (id, title, status) VALUES ('bd-gone.1.3', 'Deep Orphan', 'closed')`)
+	if err != nil {
+		t.Fatalf("failed to insert deep orphan: %v", err)
+	}
+
+	if err := DetectOrphanedChildren(db); err != nil {
+		t.Fatalf("orphan detection should not error on deep orphans: %v", err)
+	}
+
+	// Idempotent — running again should be fine
+	if err := DetectOrphanedChildren(db); err != nil {
+		t.Fatalf("orphan detection should be idempotent: %v", err)
+	}
+}

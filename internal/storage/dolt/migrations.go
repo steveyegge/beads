@@ -21,6 +21,7 @@ type Migration struct {
 var migrationsList = []Migration{
 	{"wisp_type_column", migrations.MigrateWispTypeColumn},
 	{"spec_id_column", migrations.MigrateSpecIDColumn},
+	{"orphan_detection", migrations.DetectOrphanedChildren},
 }
 
 // RunMigrations executes all registered Dolt migrations in order.
