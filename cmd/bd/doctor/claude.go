@@ -409,7 +409,7 @@ func CheckDocumentationBdPrimeReference(repoPath string) DoctorCheck {
 
 // isClaudePresent returns true when the Claude CLI binary exists in PATH or the
 // ~/.claude/ directory is present.  CLAUDECODE=1 can be set by AI coding tools
-// other than Claude Code itself, so checking for actual Claude artefacts prevents
+// other than Claude Code itself, so checking for actual Claude artifacts prevents
 // spurious warnings for users who never installed Claude Code.
 func isClaudePresent() bool {
 	if _, err := exec.LookPath("claude"); err == nil {
