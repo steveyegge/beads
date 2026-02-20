@@ -1,7 +1,7 @@
 { pkgs, self }:
 pkgs.buildGoModule {
   pname = "beads";
-  version = "0.55.3";
+  version = "0.55.4";
 
   src = self;
 

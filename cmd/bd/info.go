@@ -210,6 +210,13 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.55.4",
+		Date:    "2026-02-20",
+		Changes: []string{
+			"FIX: Release CI FreeBSD — CGO_ENABLED=0 (zig sysroot lacks stdlib.h)",
+		},
+	},
+	{
 		Version: "0.55.3",
 		Date:    "2026-02-20",
 		Changes: []string{
