@@ -33,6 +33,11 @@ var doltNewMutex sync.Mutex
 // stdioMutex serializes tests that redirect os.Stdout or os.Stderr.
 // These process-global file descriptors cannot be safely redirected from
 // concurrent goroutines.
+//
+// IMPORTANT: Any parallel test that creates a cobra.Command and calls
+// Execute() or Help() MUST call cmd.SetOut(&bytes.Buffer{}) to prevent
+// cobra's OutOrStdout() from reading os.Stdout, which races with
+// captureStdout(). See TestSearchCommand_MissingQueryShowsHelp for an example.
 var stdioMutex sync.Mutex
 
 // generateUniqueTestID creates a globally unique test ID using prefix, test name, and atomic counter.
