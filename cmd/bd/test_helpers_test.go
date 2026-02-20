@@ -34,10 +34,13 @@ var doltNewMutex sync.Mutex
 // These process-global file descriptors cannot be safely redirected from
 // concurrent goroutines.
 //
-// IMPORTANT: Any parallel test that creates a cobra.Command and calls
-// Execute() or Help() MUST call cmd.SetOut(&bytes.Buffer{}) to prevent
-// cobra's OutOrStdout() from reading os.Stdout, which races with
-// captureStdout(). See TestSearchCommand_MissingQueryShowsHelp for an example.
+// IMPORTANT: Any test that calls cobra's Help(), Execute(), or Print*()
+// MUST NOT be parallel (no t.Parallel()), OR must serialize those calls
+// under stdioMutex. Setting cmd.SetOut() is NOT sufficient because cobra's
+// OutOrStdout() eagerly evaluates os.Stdout as the default argument even
+// when outWriter is set — the Go race detector catches this read.
+//
+// TestCobraParallelPolicyGuard in stdio_race_guard_test.go enforces this.
 var stdioMutex sync.Mutex
 
 // generateUniqueTestID creates a globally unique test ID using prefix, test name, and atomic counter.
