@@ -407,6 +407,36 @@ func propagateTargetDeps(target *Step, expandedSteps []*Step) {
 	}
 }
 
+// MaterializeExpansion converts a standalone expansion formula into a cookable
+// form by expanding its Template into Steps. A synthetic target step is created
+// using targetID as the step ID and the formula's own name/description for
+// {target.title} and {target.description} placeholders.
+//
+// This enables expansion formulas to be directly instantiated via wisp/pour
+// without requiring a Compose wrapper (bd-qzb).
+//
+// No-op if the formula is not an expansion type, has no Template, or already
+// has Steps.
+func MaterializeExpansion(f *Formula, targetID string, vars map[string]string) error {
+	if f.Type != TypeExpansion || len(f.Template) == 0 || len(f.Steps) > 0 {
+		return nil
+	}
+
+	target := &Step{
+		ID:          targetID,
+		Title:       f.Formula,
+		Description: f.Description,
+	}
+
+	expandedSteps, err := expandStep(target, f.Template, 0, vars)
+	if err != nil {
+		return fmt.Errorf("materializing expansion %q: %w", f.Formula, err)
+	}
+
+	f.Steps = expandedSteps
+	return nil
+}
+
 // ApplyInlineExpansions applies Step.Expand fields to inline expansions.
 // Steps with the Expand field set are replaced by the referenced expansion template.
 // The step's ExpandVars are passed as variable overrides to the expansion.

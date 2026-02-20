@@ -736,6 +736,27 @@ func resolveAndCookFormulaWithVars(formulaName string, searchPaths []string, con
 		resolved.Steps = filteredSteps
 	}
 
+	// Handle standalone expansion formulas (bd-qzb).
+	// Expansion formulas store content in Template, not Steps. Materialize
+	// the template into Steps using a synthetic "main" target so the normal
+	// cooking pipeline can process them.
+	if resolved.Type == formula.TypeExpansion && len(resolved.Template) > 0 {
+		expansionVars := make(map[string]string)
+		for name, def := range resolved.Vars {
+			if def != nil && def.Default != nil {
+				expansionVars[name] = *def.Default
+			}
+		}
+		if conditionVars != nil {
+			for k, v := range conditionVars {
+				expansionVars[k] = v
+			}
+		}
+		if err := formula.MaterializeExpansion(resolved, "main", expansionVars); err != nil {
+			return nil, fmt.Errorf("standalone expansion %q: %w", formulaName, err)
+		}
+	}
+
 	// Cook to in-memory subgraph, including variable definitions for default handling
 	return cookFormulaToSubgraphWithVars(resolved, resolved.Formula, resolved.Vars)
 }
