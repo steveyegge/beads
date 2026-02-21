@@ -1,5 +1,3 @@
-//go:build cgo
-
 package main
 
 import (
@@ -26,9 +24,7 @@ var doltCmd = &cobra.Command{
 	Short:   "Configure Dolt database settings",
 	Long: `Configure and manage Dolt database settings and server lifecycle.
 
-Dolt can run in two modes:
-  - embedded: In-process database (default, single-process only)
-  - server:   Connect to external dolt sql-server (multi-process, high-concurrency)
+Beads connects to a running dolt sql-server for all database operations.
 
 Commands:
   bd dolt show         Show current Dolt configuration with connection test
@@ -41,7 +37,6 @@ Commands:
   bd dolt pull         Pull commits from Dolt remote
 
 Configuration keys for 'bd dolt set':
-  mode      Connection mode: "embedded" or "server"
   database  Database name (default: issue prefix or "beads")
   host      Server host (default: 127.0.0.1)
   port      Server port (default: 3307)
@@ -53,7 +48,6 @@ Flags for 'bd dolt set':
 Examples:
   bd dolt start                              Start server with configured settings
   bd dolt stop                               Stop the running server
-  bd dolt set mode server
   bd dolt set database myproject
   bd dolt set host 192.168.1.100 --update-config
   bd dolt test`,
@@ -73,8 +67,7 @@ var doltSetCmd = &cobra.Command{
 	Long: `Set a Dolt configuration value in metadata.json.
 
 Keys:
-  mode      Connection mode: "embedded" or "server"
-  database  Database name for server mode
+  database  Database name (default: issue prefix or "beads")
   host      Server host (default: 127.0.0.1)
   port      Server port (default: 3307)
   user      MySQL user (default: root)
@@ -82,7 +75,6 @@ Keys:
 Use --update-config to also write to config.yaml for team-wide defaults.
 
 Examples:
-  bd dolt set mode server
   bd dolt set database myproject
   bd dolt set host 192.168.1.100
   bd dolt set port 3307 --update-config`,
@@ -285,12 +277,11 @@ func showDoltConfig(testConnection bool) {
 			"backend": backend,
 		}
 		if backend == configfile.BackendDolt {
-			result["mode"] = cfg.GetDoltMode()
 			result["database"] = cfg.GetDoltDatabase()
 			result["host"] = cfg.GetDoltServerHost()
 			result["port"] = cfg.GetDoltServerPort()
 			result["user"] = cfg.GetDoltServerUser()
-			if cfg.IsDoltServerMode() && testConnection {
+			if testConnection {
 				result["connection_ok"] = testServerConnection(cfg)
 			}
 		}
@@ -305,21 +296,17 @@ func showDoltConfig(testConnection bool) {
 
 	fmt.Println("Dolt Configuration")
 	fmt.Println("==================")
-	fmt.Printf("  Mode:     %s\n", cfg.GetDoltMode())
 	fmt.Printf("  Database: %s\n", cfg.GetDoltDatabase())
+	fmt.Printf("  Host:     %s\n", cfg.GetDoltServerHost())
+	fmt.Printf("  Port:     %d\n", cfg.GetDoltServerPort())
+	fmt.Printf("  User:     %s\n", cfg.GetDoltServerUser())
 
-	if cfg.IsDoltServerMode() {
-		fmt.Printf("  Host:     %s\n", cfg.GetDoltServerHost())
-		fmt.Printf("  Port:     %d\n", cfg.GetDoltServerPort())
-		fmt.Printf("  User:     %s\n", cfg.GetDoltServerUser())
-
-		if testConnection {
-			fmt.Println()
-			if testServerConnection(cfg) {
-				fmt.Printf("  %s\n", ui.RenderPass("✓ Server connection OK"))
-			} else {
-				fmt.Printf("  %s\n", ui.RenderWarn("✗ Server not reachable"))
-			}
+	if testConnection {
+		fmt.Println()
+		if testServerConnection(cfg) {
+			fmt.Printf("  %s\n", ui.RenderPass("✓ Server connection OK"))
+		} else {
+			fmt.Printf("  %s\n", ui.RenderWarn("✗ Server not reachable"))
 		}
 	}
 
@@ -355,13 +342,8 @@ func setDoltConfig(key, value string, updateConfig bool) {
 
 	switch key {
 	case "mode":
-		if value != configfile.DoltModeEmbedded && value != configfile.DoltModeServer {
-			fmt.Fprintf(os.Stderr, "Error: mode must be '%s' or '%s'\n",
-				configfile.DoltModeEmbedded, configfile.DoltModeServer)
-			os.Exit(1)
-		}
-		cfg.DoltMode = value
-		yamlKey = "dolt.mode"
+		fmt.Fprintf(os.Stderr, "Error: mode is no longer configurable; beads always uses server mode\n")
+		os.Exit(1)
 
 	case "database":
 		if value == "" {
@@ -611,11 +593,6 @@ func startDoltServer() {
 
 	fmt.Printf("  %s\n", ui.RenderPass(fmt.Sprintf("✓ Server started (PID %d)", pid)))
 	fmt.Println()
-	if !cfg.IsDoltServerMode() {
-		fmt.Println("To use server mode:")
-		fmt.Println("  bd dolt set mode server")
-		fmt.Println()
-	}
 	fmt.Println("To stop the server:")
 	fmt.Println("  bd dolt stop")
 }
@@ -626,8 +603,6 @@ func stopDoltServer() {
 		fmt.Fprintf(os.Stderr, "Error: not in a beads repository (no .beads directory found)\n")
 		os.Exit(1)
 	}
-
-	cfg, _ := configfile.Load(beadsDir)
 
 	dataDir := filepath.Join(beadsDir, "dolt")
 
@@ -675,13 +650,9 @@ func stopDoltServer() {
 
 	fmt.Printf("%s\n", ui.RenderPass("✓ Server stopped"))
 
-	// Warn if still in server mode
-	if cfg != nil && cfg.IsDoltServerMode() {
-		fmt.Println()
-		fmt.Println("Note: You are still in server mode. bd commands will fail")
-		fmt.Println("until the server is restarted or you switch to embedded mode:")
-		fmt.Println("  bd dolt set mode embedded")
-	}
+	fmt.Println()
+	fmt.Println("Note: bd commands require a running server.")
+	fmt.Println("Restart with: bd dolt start")
 }
 
 // logDoltConfigChange appends an audit entry to .beads/dolt-config.log.

@@ -27,13 +27,10 @@ var versionCmd = &cobra.Command{
 		commit := resolveCommitHash()
 		branch := resolveBranch()
 
-		cgo := cgoAvailable()
-
 		if jsonOutput {
 			result := map[string]interface{}{
 				"version": Version,
 				"build":   Build,
-				"cgo":     cgo,
 			}
 			if commit != "" {
 				result["commit"] = commit
@@ -43,16 +40,12 @@ var versionCmd = &cobra.Command{
 			}
 			outputJSON(result)
 		} else {
-			var cgoSuffix string
-			if !cgo {
-				cgoSuffix = " [NO CGO - embedded Dolt unavailable]"
-			}
 			if commit != "" && branch != "" {
-				fmt.Printf("bd version %s (%s: %s@%s)%s\n", Version, Build, branch, shortCommit(commit), cgoSuffix)
+				fmt.Printf("bd version %s (%s: %s@%s)\n", Version, Build, branch, shortCommit(commit))
 			} else if commit != "" {
-				fmt.Printf("bd version %s (%s: %s)%s\n", Version, Build, shortCommit(commit), cgoSuffix)
+				fmt.Printf("bd version %s (%s: %s)\n", Version, Build, shortCommit(commit))
 			} else {
-				fmt.Printf("bd version %s (%s)%s\n", Version, Build, cgoSuffix)
+				fmt.Printf("bd version %s (%s)\n", Version, Build)
 			}
 		}
 	},

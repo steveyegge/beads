@@ -73,11 +73,9 @@ func TestVersionCommand(t *testing.T) {
 		if result["build"] == "" {
 			t.Error("Expected build field to be non-empty")
 		}
-		// Verify cgo field is present and true (test file has //go:build cgo)
-		if cgo, ok := result["cgo"]; !ok {
-			t.Error("Expected cgo field to be present")
-		} else if cgo != true {
-			t.Errorf("Expected cgo=true in CGO build, got %v", cgo)
+		// cgo field removed — server-only operation, no CGO bifurcation
+		if _, ok := result["cgo"]; ok {
+			t.Error("cgo field should no longer be present in version output")
 		}
 	})
 

@@ -1,5 +1,3 @@
-//go:build cgo
-
 package main
 
 import (
@@ -41,17 +39,16 @@ func TestDoltShowConfigNotInRepo(t *testing.T) {
 	}
 }
 
-func TestDoltShowConfigEmbeddedMode(t *testing.T) {
+func TestDoltShowConfigDefaultMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("failed to create .beads dir: %v", err)
 	}
 
-	// Create metadata.json with Dolt backend in embedded mode
+	// Create metadata.json with Dolt backend
 	cfg := configfile.DefaultConfig()
 	cfg.Backend = configfile.BackendDolt
-	cfg.DoltMode = configfile.DoltModeEmbedded
 	cfg.DoltDatabase = "testdb"
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
@@ -78,11 +75,11 @@ func TestDoltShowConfigEmbeddedMode(t *testing.T) {
 			t.Skip("output capture failed")
 		}
 
-		if !containsAny(output, "embedded", "Mode") {
-			t.Errorf("output should show embedded mode: %s", output)
-		}
 		if !containsAny(output, "testdb", "Database") {
 			t.Errorf("output should show database name: %s", output)
+		}
+		if !containsAny(output, "Host", "Port", "User") {
+			t.Errorf("output should show server connection info: %s", output)
 		}
 	})
 
@@ -105,11 +102,12 @@ func TestDoltShowConfigEmbeddedMode(t *testing.T) {
 		if result["backend"] != "dolt" {
 			t.Errorf("expected backend 'dolt', got %v", result["backend"])
 		}
-		if result["mode"] != "embedded" {
-			t.Errorf("expected mode 'embedded', got %v", result["mode"])
-		}
 		if result["database"] != "testdb" {
 			t.Errorf("expected database 'testdb', got %v", result["database"])
+		}
+		// mode field should no longer be present
+		if _, ok := result["mode"]; ok {
+			t.Error("mode field should no longer be in JSON output")
 		}
 	})
 }
@@ -154,9 +152,6 @@ func TestDoltShowConfigServerMode(t *testing.T) {
 			t.Skip("output capture failed")
 		}
 
-		if !containsAny(output, "server", "Mode") {
-			t.Errorf("output should show server mode: %s", output)
-		}
 		if !containsAny(output, "192.168.1.100", "Host") {
 			t.Errorf("output should show host: %s", output)
 		}
@@ -184,9 +179,6 @@ func TestDoltShowConfigServerMode(t *testing.T) {
 			t.Skipf("output not pure JSON: %s", output)
 		}
 
-		if result["mode"] != "server" {
-			t.Errorf("expected mode 'server', got %v", result["mode"])
-		}
 		if result["host"] != "192.168.1.100" {
 			t.Errorf("expected host '192.168.1.100', got %v", result["host"])
 		}
@@ -210,7 +202,6 @@ func TestDoltSetConfigValidation(t *testing.T) {
 	// Create metadata.json with Dolt backend
 	cfg := configfile.DefaultConfig()
 	cfg.Backend = configfile.BackendDolt
-	cfg.DoltMode = configfile.DoltModeEmbedded
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
 	}
@@ -226,35 +217,6 @@ func TestDoltSetConfigValidation(t *testing.T) {
 		t.Fatalf("failed to chdir: %v", err)
 	}
 	defer func() { _ = os.Chdir(oldCwd) }()
-
-	t.Run("set mode to server", func(t *testing.T) {
-		origJsonOutput := jsonOutput
-		defer func() { jsonOutput = origJsonOutput }()
-		jsonOutput = false
-
-		setDoltConfig("mode", "server", false)
-
-		// Verify the change persisted
-		loadedCfg, err := configfile.Load(beadsDir)
-		if err != nil {
-			t.Fatalf("failed to load config: %v", err)
-		}
-		if loadedCfg.DoltMode != configfile.DoltModeServer {
-			t.Errorf("expected mode 'server', got %s", loadedCfg.DoltMode)
-		}
-	})
-
-	t.Run("set mode to embedded", func(t *testing.T) {
-		setDoltConfig("mode", "embedded", false)
-
-		loadedCfg, err := configfile.Load(beadsDir)
-		if err != nil {
-			t.Fatalf("failed to load config: %v", err)
-		}
-		if loadedCfg.DoltMode != configfile.DoltModeEmbedded {
-			t.Errorf("expected mode 'embedded', got %s", loadedCfg.DoltMode)
-		}
-	})
 
 	t.Run("set database", func(t *testing.T) {
 		setDoltConfig("database", "mydb", false)
@@ -314,7 +276,6 @@ func TestDoltSetConfigJSONOutput(t *testing.T) {
 
 	cfg := configfile.DefaultConfig()
 	cfg.Backend = configfile.BackendDolt
-	cfg.DoltMode = configfile.DoltModeEmbedded
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
 	}
@@ -333,7 +294,7 @@ func TestDoltSetConfigJSONOutput(t *testing.T) {
 	defer func() { jsonOutput = origJsonOutput }()
 	jsonOutput = true
 
-	output := captureDoltSetOutput(t, "mode", "server", false)
+	output := captureDoltSetOutput(t, "database", "myproject", false)
 
 	if output == "" {
 		t.Skip("output capture failed")
@@ -344,11 +305,11 @@ func TestDoltSetConfigJSONOutput(t *testing.T) {
 		t.Skipf("output not pure JSON: %s", output)
 	}
 
-	if result["key"] != "mode" {
-		t.Errorf("expected key 'mode', got %v", result["key"])
+	if result["key"] != "database" {
+		t.Errorf("expected key 'database', got %v", result["key"])
 	}
-	if result["value"] != "server" {
-		t.Errorf("expected value 'server', got %v", result["value"])
+	if result["value"] != "myproject" {
+		t.Errorf("expected value 'myproject', got %v", result["value"])
 	}
 	if result["location"] != "metadata.json" {
 		t.Errorf("expected location 'metadata.json', got %v", result["location"])
@@ -389,7 +350,7 @@ func TestDoltSetConfigWithUpdateConfig(t *testing.T) {
 	jsonOutput = true
 
 	// Set with --update-config
-	output := captureDoltSetOutput(t, "mode", "server", true)
+	output := captureDoltSetOutput(t, "database", "myproject", true)
 
 	if output == "" {
 		t.Skip("output capture failed")
@@ -556,7 +517,6 @@ func TestDoltStopNoServerRunning(t *testing.T) {
 
 	cfg := configfile.DefaultConfig()
 	cfg.Backend = configfile.BackendDolt
-	cfg.DoltMode = configfile.DoltModeEmbedded
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
 	}
