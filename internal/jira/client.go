@@ -147,7 +147,7 @@ func (c *Client) SearchIssues(ctx context.Context, jql string) ([]Issue, error) 
 			"maxResults": {fmt.Sprintf("%d", maxResults)},
 		}
 
-		apiURL := fmt.Sprintf("%s/rest/api/3/search?%s", c.URL, params.Encode())
+		apiURL := fmt.Sprintf("%s/rest/api/3/search/jql?%s", c.URL, params.Encode())
 
 		body, err := c.doRequest(ctx, "GET", apiURL, nil)
 		if err != nil {
