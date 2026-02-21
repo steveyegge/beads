@@ -113,7 +113,7 @@ func (t *ephemeralTransaction) UpdateIssue(ctx context.Context, id string, updat
 	args = append(args, formatTime(time.Now().UTC()))
 	args = append(args, id)
 
-	_, err := t.tx.ExecContext(ctx, "UPDATE issues SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", args...)
+	_, err := t.tx.ExecContext(ctx, "UPDATE issues SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", args...) // nolint:gosec // G202: setClauses are safe "col = ?" strings
 	return err
 }
 
@@ -233,4 +233,3 @@ func (t *ephemeralTransaction) ImportIssueComment(ctx context.Context, issueID, 
 func (t *ephemeralTransaction) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
 	return t.store.GetIssueComments(ctx, issueID)
 }
-

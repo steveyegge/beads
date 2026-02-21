@@ -55,7 +55,7 @@ func (s *Store) GetEvents(ctx context.Context, issueID string, limit int) ([]*ty
 	query := `SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
 		FROM events WHERE issue_id = ? ORDER BY created_at DESC`
 	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
+		query += fmt.Sprintf(" LIMIT %d", limit) // nolint:gosec // G202: limit is an int, not user string
 	}
 
 	rows, err := s.db.QueryContext(ctx, query, issueID)

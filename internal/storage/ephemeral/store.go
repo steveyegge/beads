@@ -48,7 +48,7 @@ func New(dbPath string, prefix string) (*Store, error) {
 
 	// Verify connection
 	if err := db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("ping ephemeral db: %w", err)
 	}
 
@@ -59,7 +59,7 @@ func New(dbPath string, prefix string) (*Store, error) {
 	}
 
 	if err := s.initSchema(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("init ephemeral schema: %w", err)
 	}
 
@@ -137,7 +137,7 @@ func (s *Store) Nuke(ctx context.Context) error {
 
 	tables := []string{"events", "comments", "labels", "dependencies", "issues", "config"}
 	for _, t := range tables {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM "+t); err != nil {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+t); err != nil { // nolint:gosec // G202: t is from hardcoded table list
 			return fmt.Errorf("nuke table %s: %w", t, err)
 		}
 	}
