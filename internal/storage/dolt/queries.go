@@ -18,9 +18,18 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		return s.ephemeralStore.SearchIssues(ctx, query, filter)
 	}
 
-	// If searching by IDs that are all ephemeral, route to ephemeral
+	// If searching by IDs that are all ephemeral, route to ephemeral.
+	// Fall through to Dolt if ephemeral returns empty (handles wisps that were
+	// created in Dolt via transaction before the ephemeral routing fix).
 	if len(filter.IDs) > 0 && allEphemeral(filter.IDs) && s.ephemeralStore != nil {
-		return s.ephemeralStore.SearchIssues(ctx, query, filter)
+		results, err := s.ephemeralStore.SearchIssues(ctx, query, filter)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) > 0 {
+			return results, nil
+		}
+		// Fall through to Dolt for backwards compatibility
 	}
 
 	s.mu.RLock()

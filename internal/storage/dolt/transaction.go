@@ -87,6 +87,15 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ID = generatedID
 	}
 
+	// Route ephemeral issues to the ephemeral SQLite store.
+	// Without this, wisps created via transactions (e.g., spawnMolecule/cloneSubgraph)
+	// would be stored in Dolt, but then looked up via the ephemeral store by
+	// SearchIssues/GetIssue (which route based on "-wisp-" in the ID), causing
+	// "not found" errors during bd mol bond.
+	if issue.Ephemeral && t.store.ephemeralStore != nil {
+		return t.store.ephemeralStore.CreateIssue(ctx, issue, actor)
+	}
+
 	return insertIssueTx(ctx, t.tx, issue)
 }
 
@@ -223,6 +232,11 @@ func (t *doltTransaction) DeleteIssue(ctx context.Context, id string) error {
 
 // AddDependency adds a dependency within the transaction
 func (t *doltTransaction) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+	// Route ephemeral dependencies to the ephemeral store (matches CreateIssue routing)
+	if IsEphemeralID(dep.IssueID) && t.store.ephemeralStore != nil {
+		return t.store.ephemeralStore.AddDependency(ctx, dep, actor)
+	}
+
 	_, err := t.tx.ExecContext(ctx, `
 		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, thread_id)
 		VALUES (?, ?, ?, NOW(), ?, ?)

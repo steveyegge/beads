@@ -272,9 +272,18 @@ func parseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
 
 // GetIssue retrieves an issue by ID
 func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
-	// Route ephemeral IDs to SQLite store
+	// Route ephemeral IDs to SQLite store.
+	// Fall through to Dolt if not found (handles wisps created in Dolt
+	// via transaction before the ephemeral routing fix).
 	if IsEphemeralID(id) && s.ephemeralStore != nil {
-		return s.ephemeralStore.GetIssue(ctx, id)
+		issue, err := s.ephemeralStore.GetIssue(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if issue != nil {
+			return issue, nil
+		}
+		// Fall through to Dolt for backwards compatibility
 	}
 
 	s.mu.RLock()
