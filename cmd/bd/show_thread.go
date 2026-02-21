@@ -21,13 +21,11 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) {
 
 	startMsg, err = store.GetIssue(ctx, messageID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching message %s: %v\n", messageID, err)
-		os.Exit(1)
+		FatalError("fetching message %s: %v", messageID, err)
 	}
 
 	if startMsg == nil {
-		fmt.Fprintf(os.Stderr, "Message %s not found\n", messageID)
-		os.Exit(1)
+		FatalError("message %s not found", messageID)
 	}
 
 	// Find the root of the thread by following replies-to dependencies upward

@@ -51,14 +51,13 @@ func runShip(cmd *cobra.Command, args []string) {
 
 	issues, err = store.GetIssuesByLabel(ctx, exportLabel)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing issues: %v\n", err)
-		os.Exit(1)
+		FatalError("listing issues: %v", err)
 	}
 
 	if len(issues) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: no issue found with label '%s'\n", exportLabel)
-		fmt.Fprintf(os.Stderr, "Hint: add the label first: bd label add <issue-id> %s\n", exportLabel)
-		os.Exit(1)
+		FatalErrorWithHint(
+			fmt.Sprintf("no issue found with label '%s'", exportLabel),
+			fmt.Sprintf("add the label first: bd label add <issue-id> %s", exportLabel))
 	}
 
 	if len(issues) > 1 {
@@ -66,25 +65,23 @@ func runShip(cmd *cobra.Command, args []string) {
 		for _, issue := range issues {
 			fmt.Fprintf(os.Stderr, "  %s: %s (%s)\n", issue.ID, issue.Title, issue.Status)
 		}
-		fmt.Fprintf(os.Stderr, "Hint: only one issue should have this label\n")
-		os.Exit(1)
+		FatalError("only one issue should have this label")
 	}
 
 	issue := issues[0]
 
 	// Validate issue is closed (unless --force)
 	if issue.Status != types.StatusClosed && !force {
-		fmt.Fprintf(os.Stderr, "Error: issue %s is not closed (status: %s)\n", issue.ID, issue.Status)
-		fmt.Fprintf(os.Stderr, "Hint: close the issue first, or use --force to override\n")
-		os.Exit(1)
+		FatalErrorWithHint(
+			fmt.Sprintf("issue %s is not closed (status: %s)", issue.ID, issue.Status),
+			"close the issue first, or use --force to override")
 	}
 
 	// Check if already shipped (use direct store access)
 	hasProvides := false
 	labels, err := store.GetLabels(ctx, issue.ID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting labels: %v\n", err)
-		os.Exit(1)
+		FatalError("getting labels: %v", err)
 	}
 	for _, l := range labels {
 		if l == providesLabel {
@@ -124,8 +121,7 @@ func runShip(cmd *cobra.Command, args []string) {
 
 	// Add provides:<capability> label (use direct store access)
 	if err := store.AddLabel(ctx, issue.ID, providesLabel, actor); err != nil {
-		fmt.Fprintf(os.Stderr, "Error adding label: %v\n", err)
-		os.Exit(1)
+		FatalError("adding label: %v", err)
 	}
 
 	if jsonOutput {

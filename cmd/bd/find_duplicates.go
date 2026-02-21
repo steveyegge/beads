@@ -83,15 +83,13 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) {
 
 	// Validate method
 	if method != "mechanical" && method != "ai" {
-		fmt.Fprintf(os.Stderr, "Error: invalid method %q (use: mechanical, ai)\n", method)
-		os.Exit(1)
+		FatalError("invalid method %q (use: mechanical, ai)", method)
 	}
 
 	// AI method requires API key
 	if method == "ai" {
 		if os.Getenv("ANTHROPIC_API_KEY") == "" {
-			fmt.Fprintf(os.Stderr, "Error: --method ai requires ANTHROPIC_API_KEY environment variable\n")
-			os.Exit(1)
+			FatalError("--method ai requires ANTHROPIC_API_KEY environment variable")
 		}
 	}
 
@@ -107,8 +105,7 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) {
 
 	issues, err = store.SearchIssues(ctx, "", filter)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching issues: %v\n", err)
-		os.Exit(1)
+		FatalError("fetching issues: %v", err)
 	}
 
 	// Default: filter out closed issues unless status flag is set

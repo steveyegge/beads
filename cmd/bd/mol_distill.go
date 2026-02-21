@@ -104,8 +104,7 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 
 	// mol distill requires direct store access for reading the epic
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		os.Exit(1)
+		FatalError("no database connection")
 	}
 
 	varFlags, _ := cmd.Flags().GetStringArray("var")
@@ -115,15 +114,13 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 	// Resolve epic ID
 	epicID, err := utils.ResolvePartialID(ctx, store, args[0])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: '%s' not found\n", args[0])
-		os.Exit(1)
+		FatalError("'%s' not found", args[0])
 	}
 
 	// Load the epic subgraph
 	subgraph, err := loadTemplateSubgraph(ctx, store, epicID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading epic: %v\n", err)
-		os.Exit(1)
+		FatalError("loading epic: %v", err)
 	}
 
 	// Determine formula name
@@ -142,8 +139,7 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 		for _, v := range varFlags {
 			findText, varName, err := parseDistillVar(v, searchableText)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 			replacements[findText] = varName
 		}
@@ -160,9 +156,7 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 		// Find first writable formula directory
 		outputPath = findWritableFormulaDir(formulaName)
 		if outputPath == "" {
-			fmt.Fprintf(os.Stderr, "Error: no writable formula directory found\n")
-			fmt.Fprintf(os.Stderr, "Try: mkdir -p .beads/formulas\n")
-			os.Exit(1)
+			FatalErrorWithHint("no writable formula directory found", "Try: mkdir -p .beads/formulas")
 		}
 	}
 
@@ -184,21 +178,18 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 	// Ensure output directory exists
 	dir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating directory %s: %v\n", dir, err)
-		os.Exit(1)
+		FatalError("creating directory %s: %v", dir, err)
 	}
 
 	// Write formula
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error encoding formula: %v\n", err)
-		os.Exit(1)
+		FatalError("encoding formula: %v", err)
 	}
 
 	// #nosec G306 -- Formula files are not sensitive
 	if err := os.WriteFile(outputPath, data, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing formula: %v\n", err)
-		os.Exit(1)
+		FatalError("writing formula: %v", err)
 	}
 
 	result := &DistillResult{
