@@ -41,10 +41,10 @@ With --stealth: configures per-repository git settings for invisible beads usage
   • Claude Code settings with bd onboard instruction
   Perfect for personal use without affecting repo collaborators.
 
-If a dolt sql-server is detected running on port 3307 or 3306, server mode is automatically
-enabled for multi-writer access. Use --server to explicitly enable server mode, or set
-connection details with --server-host, --server-port, and --server-user. Password should
-be set via BEADS_DOLT_PASSWORD environment variable.`,
+Beads requires a running dolt sql-server for database operations. If a server is detected
+on port 3307 or 3306, it is used automatically. Set connection details with --server-host,
+--server-port, and --server-user. Password should be set via BEADS_DOLT_PASSWORD
+environment variable.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
@@ -57,8 +57,8 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 		// Dolt bootstraps from issues.jsonl automatically on first open.
 		_, _ = cmd.Flags().GetBool("from-jsonl")
 
-		// Dolt server mode flags (bd-dolt.2.2)
-		serverMode, _ := cmd.Flags().GetBool("server")
+		// Dolt server connection flags
+		_, _ = cmd.Flags().GetBool("server") // no-op, kept for backward compatibility
 		serverHost, _ := cmd.Flags().GetString("server-host")
 		serverPort, _ := cmd.Flags().GetInt("server-port")
 		serverUser, _ := cmd.Flags().GetString("server-user")
@@ -266,55 +266,29 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 		if prefix != "" {
 			dbName = "beads_" + prefix
 		}
+		// Build server-mode config. Beads always uses dolt sql-server (no embedded mode).
+		doltCfg := &dolt.Config{
+			Path:       storagePath,
+			Database:   dbName,
+			ServerMode: true,
+		}
+		if serverHost != "" {
+			doltCfg.ServerHost = serverHost
+		}
+		if serverPort != 0 {
+			doltCfg.ServerPort = serverPort
+		}
+		if serverUser != "" {
+			doltCfg.ServerUser = serverUser
+		}
+
 		var store *dolt.DoltStore
-		store, err = dolt.New(ctx, &dolt.Config{Path: storagePath, Database: dbName})
+		store, err = dolt.New(ctx, doltCfg)
 		if err != nil {
-			// If the backend requires CGO but this is a nocgo build, fall back to JSONL-only mode.
-			// This enables Windows CI (CGO_ENABLED=0) and other pure-Go builds to use bd init.
-			errMsg := err.Error()
-			if strings.Contains(errMsg, "requires CGO") || strings.Contains(errMsg, "without CGO support") {
-				if !quiet {
-					fmt.Fprintf(os.Stderr, "Note: %s backend requires CGO (not available in this build).\n", backend)
-					fmt.Fprintf(os.Stderr, "Falling back to JSONL-only mode.\n\n")
-				}
-
-				// Create issues.jsonl
-				jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-				if _, statErr := os.Stat(jsonlPath); os.IsNotExist(statErr) {
-					// nolint:gosec // G306: JSONL file needs to be readable by other tools
-					if writeErr := os.WriteFile(jsonlPath, []byte{}, 0644); writeErr != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to create issues.jsonl: %v\n", writeErr)
-						os.Exit(1)
-					}
-				}
-
-				// Create metadata.json
-				metaCfg := configfile.DefaultConfig()
-				if saveErr := metaCfg.Save(beadsDir); saveErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", saveErr)
-				}
-
-				// Create config.yaml with no-db: true and the prefix
-				if cfgErr := createConfigYaml(beadsDir, true, prefix); cfgErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", cfgErr)
-				}
-
-				// Create README.md
-				if readmeErr := createReadme(beadsDir); readmeErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to create README.md: %v\n", readmeErr)
-				}
-
-				if !quiet {
-					fmt.Printf("\n%s bd initialized in JSONL-only mode (CGO not available)\n\n", ui.RenderPass("✓"))
-					fmt.Printf("  Mode: %s\n", ui.RenderAccent("no-db (JSONL-only)"))
-					fmt.Printf("  Issues file: %s\n", ui.RenderAccent(jsonlPath))
-					fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
-					fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
-				}
-				return
-			}
-
-			fmt.Fprintf(os.Stderr, "Error: failed to create %s database: %v\n", backend, err)
+			fmt.Fprintf(os.Stderr, "Error: failed to connect to dolt server: %v\n", err)
+			fmt.Fprintf(os.Stderr, "\nBeads requires a running dolt sql-server. Start one with:\n")
+			fmt.Fprintf(os.Stderr, "  gt dolt start    (if using Gas Town)\n")
+			fmt.Fprintf(os.Stderr, "  dolt sql-server  (standalone)\n")
 			os.Exit(1)
 		}
 
@@ -406,18 +380,16 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 					cfg.DoltDatabase = "beads_" + prefix
 				}
 
-				// Save server mode configuration (bd-dolt.2.2)
-				if serverMode {
-					cfg.DoltMode = configfile.DoltModeServer
-					if serverHost != "" {
-						cfg.DoltServerHost = serverHost
-					}
-					if serverPort != 0 {
-						cfg.DoltServerPort = serverPort
-					}
-					if serverUser != "" {
-						cfg.DoltServerUser = serverUser
-					}
+				// Always server mode (embedded Dolt removed per Tim Sehn directive)
+				cfg.DoltMode = configfile.DoltModeServer
+				if serverHost != "" {
+					cfg.DoltServerHost = serverHost
+				}
+				if serverPort != 0 {
+					cfg.DoltServerPort = serverPort
+				}
+				if serverUser != "" {
+					cfg.DoltServerUser = serverUser
 				}
 			}
 
@@ -627,22 +599,20 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 
 		fmt.Printf("\n%s bd initialized successfully!\n\n", ui.RenderPass("✓"))
 		fmt.Printf("  Backend: %s\n", ui.RenderAccent(backend))
-		if serverMode {
-			host := serverHost
-			if host == "" {
-				host = configfile.DefaultDoltServerHost
-			}
-			port := serverPort
-			if port == 0 {
-				port = configfile.DefaultDoltServerPort
-			}
-			user := serverUser
-			if user == "" {
-				user = configfile.DefaultDoltServerUser
-			}
-			fmt.Printf("  Mode: %s\n", ui.RenderAccent("server"))
-			fmt.Printf("  Server: %s\n", ui.RenderAccent(fmt.Sprintf("%s@%s:%d", user, host, port)))
+		host := serverHost
+		if host == "" {
+			host = configfile.DefaultDoltServerHost
 		}
+		port := serverPort
+		if port == 0 {
+			port = configfile.DefaultDoltServerPort
+		}
+		user := serverUser
+		if user == "" {
+			user = configfile.DefaultDoltServerUser
+		}
+		fmt.Printf("  Mode: %s\n", ui.RenderAccent("server"))
+		fmt.Printf("  Server: %s\n", ui.RenderAccent(fmt.Sprintf("%s@%s:%d", user, host, port)))
 		fmt.Printf("  Database: %s\n", ui.RenderAccent(storagePath))
 		fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
 		fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
@@ -686,8 +656,8 @@ func init() {
 	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
 	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides embedded default)")
 
-	// Dolt server mode flags (bd-dolt.2.2)
-	initCmd.Flags().Bool("server", false, "Explicitly configure Dolt in server mode for high-concurrency (default: embedded)")
+	// Dolt server connection flags
+	initCmd.Flags().Bool("server", false, "No-op (server mode is always enabled); kept for backward compatibility")
 	initCmd.Flags().String("server-host", "", "Dolt server host (default: 127.0.0.1)")
 	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3307)")
 	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")

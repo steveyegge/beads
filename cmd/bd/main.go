@@ -192,7 +192,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables auto-sync")
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
-	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on|batch). Default: batch for embedded, off for server mode. Override via config key dolt.auto-commit")
+	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on|batch). Default: off. Override via config key dolt.auto-commit")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
@@ -331,12 +331,12 @@ var rootCmd = &cobra.Command{
 			"dolt",
 			"fish",
 			"help",
-			"hook", // manages its own store lifecycle; double-open deadlocks embedded Dolt (#1719)
+			"hook", // manages its own store lifecycle (#1719)
 			"hooks",
 			"human",
 			"init",
 			"merge",
-			"migrate", // manages its own store lifecycle; double-open deadlocks embedded Dolt (#1668)
+			"migrate", // manages its own store lifecycle (#1668)
 			"onboard",
 			"powershell",
 			"prime",
@@ -366,23 +366,6 @@ var rootCmd = &cobra.Command{
 		// Also skip for --version flag on root command (cmdName would be "bd")
 		if v, _ := cmd.Flags().GetBool("version"); v {
 			return
-		}
-
-		// Early CGO check: non-CGO binaries cannot use the embedded Dolt backend,
-		// which is the only local storage option since v0.51.0. Detect this before
-		// any database operation to provide a clear, actionable error instead of
-		// confusing "no beads database found" messages. Server mode (pure Go MySQL
-		// driver) is allowed through. (GH#1856)
-		if !cgoAvailable() {
-			fmt.Fprintf(os.Stderr, "Error: this bd binary was built without CGO support\n\n")
-			fmt.Fprintf(os.Stderr, "Since bd v0.51.0, the embedded Dolt database backend requires CGO.\n")
-			fmt.Fprintf(os.Stderr, "This binary cannot create or open local databases.\n\n")
-			fmt.Fprintf(os.Stderr, "Solutions:\n")
-			fmt.Fprintf(os.Stderr, "  • Install via Homebrew:  brew install beads\n")
-			fmt.Fprintf(os.Stderr, "  • Download from releases: https://github.com/steveyegge/beads/releases\n")
-			fmt.Fprintf(os.Stderr, "  • Build from source:      CGO_ENABLED=1 go install github.com/steveyegge/beads/cmd/bd@latest\n\n")
-			fmt.Fprintf(os.Stderr, "For more info: https://github.com/steveyegge/beads/issues/1856\n")
-			os.Exit(1)
 		}
 
 		// Protect forks from accidentally committing upstream issue database
@@ -525,54 +508,27 @@ var rootCmd = &cobra.Command{
 			ReadOnly: useReadOnly,
 		}
 
-		// Set advisory lock timeout for dolt embedded mode.
-		// Reads get a shorter timeout (shared lock, less contention expected).
-		// Writes get a longer timeout (exclusive lock, may need to wait for readers).
-		if useReadOnly {
-			doltCfg.OpenTimeout = 5 * time.Second
-		} else {
-			doltCfg.OpenTimeout = 15 * time.Second
-		}
-
-		// Load config to get database name and server mode settings
+		// Load config to get database name and server connection settings
 		cfg, cfgErr := configfile.Load(beadsDir)
 		if cfgErr == nil && cfg != nil {
 			// Always set database name (needed for bootstrap to find
 			// prefix-based databases like "beads_hq"; see #1669)
 			doltCfg.Database = cfg.GetDoltDatabase()
 
-			if cfg.IsDoltServerMode() {
-				doltCfg.ServerMode = true
-				doltCfg.ServerHost = cfg.GetDoltServerHost()
-				doltCfg.ServerPort = cfg.GetDoltServerPort()
-				doltCfg.ServerUser = cfg.GetDoltServerUser()
-				doltCfg.ServerPassword = cfg.GetDoltServerPassword()
-				doltCfg.ServerTLS = cfg.GetDoltServerTLS()
-			}
+			// Always server mode — embedded Dolt removed per Tim Sehn directive
+			doltCfg.ServerMode = true
+			doltCfg.ServerHost = cfg.GetDoltServerHost()
+			doltCfg.ServerPort = cfg.GetDoltServerPort()
+			doltCfg.ServerUser = cfg.GetDoltServerUser()
+			doltCfg.ServerPassword = cfg.GetDoltServerPassword()
+			doltCfg.ServerTLS = cfg.GetDoltServerTLS()
 		}
 
-		// Apply mode-aware default for dolt-auto-commit if neither flag nor
-		// config explicitly set it. Server mode defaults to OFF because the
-		// server handles commits via its own transaction lifecycle; firing
-		// DOLT_COMMIT after every write under concurrent load causes
-		// 'database is read only' errors. Embedded mode defaults to BATCH
-		// so that multiple operations accumulate in the working set and are
-		// committed together at logical boundaries (bd sync, bd dolt commit),
-		// reducing commit bloat from per-command commits.
+		// Server mode defaults auto-commit to OFF because the server handles
+		// commits via its own transaction lifecycle; firing DOLT_COMMIT after
+		// every write under concurrent load causes 'database is read only' errors.
 		if strings.TrimSpace(doltAutoCommit) == "" {
-			if doltCfg.ServerMode {
-				doltAutoCommit = string(doltAutoCommitOff)
-			} else {
-				doltAutoCommit = string(doltAutoCommitBatch)
-			}
-		}
-
-		// Bootstrap embedded dolt if needed
-		if !doltCfg.ServerMode {
-			if bErr := bootstrapEmbeddedDolt(rootCtx, doltPath, doltCfg); bErr != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", bErr)
-				os.Exit(1)
-			}
+			doltAutoCommit = string(doltAutoCommitOff)
 		}
 
 		doltCfg.Path = doltPath
