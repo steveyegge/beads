@@ -263,6 +263,7 @@ var rootCmd = &cobra.Command{
 			oteltrace.WithAttributes(
 				attribute.String("bd.command", cmd.Name()),
 				attribute.String("bd.version", Version),
+				attribute.String("bd.args", strings.Join(os.Args[1:], " ")),
 			),
 		)
 
