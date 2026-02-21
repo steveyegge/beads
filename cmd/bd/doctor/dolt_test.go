@@ -104,22 +104,23 @@ func TestRunDoltHealthChecks_DoltBackendNoDatabase(t *testing.T) {
 		t.Fatalf("expected at least 1 check, got %d", len(checks))
 	}
 
-	// With dolt backend but no actual database, expect an error on first check
-	if checks[0].Status != StatusError {
-		t.Errorf("expected StatusError for dolt backend without DB, got %s", checks[0].Status)
+	// The embedded Dolt driver auto-initializes an empty directory into a
+	// working database, so connection succeeds even without a pre-existing DB.
+	// Verify the first check is the connection check and it returns OK.
+	if checks[0].Name != "Dolt Connection" {
+		t.Errorf("expected first check to be 'Dolt Connection', got %q", checks[0].Name)
+	}
+	if checks[0].Status != StatusOK {
+		t.Errorf("expected StatusOK for auto-initialized dolt DB, got %s: %s", checks[0].Status, checks[0].Message)
 	}
 
-	// Verify lock file is cleaned up after error
-	lockPath := filepath.Join(beadsDir, "dolt-access.lock")
-	// Lock file may exist (flock semantics) but should be unlocked.
-	// Test that we can acquire an exclusive lock, proving it was released.
+	// Verify lock file is cleaned up after checks
 	exLock, err := dolt.AcquireAccessLock(doltDir, true, 1*time.Second)
 	if err != nil {
-		t.Errorf("could not acquire exclusive lock after RunDoltHealthChecks error: %v", err)
+		t.Errorf("could not acquire exclusive lock after RunDoltHealthChecks: %v", err)
 	} else {
 		exLock.Release()
 	}
-	_ = lockPath // used for documentation
 }
 
 func TestRunDoltHealthChecks_CheckNameAndCategory(t *testing.T) {

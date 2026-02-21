@@ -19,11 +19,11 @@ type doltAutoCommitParams struct {
 // maybeAutoCommit creates a Dolt commit after a successful write command when enabled.
 //
 // Semantics:
-// - Only applies when dolt auto-commit is "on" AND the active store is versioned (Dolt).
-// - In "batch" mode, commits are deferred — changes accumulate in the working set
-//   until an explicit commit point (bd sync, bd dolt commit).
-// - Uses Dolt's "commit all" behavior under the hood (DOLT_COMMIT -Am).
-// - Treats "nothing to commit" as a no-op.
+//   - Only applies when dolt auto-commit is "on" AND the active store is versioned (Dolt).
+//   - In "batch" mode, commits are deferred — changes accumulate in the working set
+//     until an explicit commit point (bd sync, bd dolt commit).
+//   - Uses Dolt's "commit all" behavior under the hood (DOLT_COMMIT -Am).
+//   - Treats "nothing to commit" as a no-op.
 func maybeAutoCommit(ctx context.Context, p doltAutoCommitParams) error {
 	mode, err := getDoltAutoCommitMode()
 	if err != nil {
