@@ -71,7 +71,7 @@ The diagram colors are determined by your Mermaid theme (default, dark, forest, 
 
 ## Examples
 
-- `bd dep add bd-10 bd-20 --type blocks`: bd-10 blocks bd-20
+- `bd dep add bd-10 bd-20 --type blocks`: bd-10 depends on bd-20 (bd-20 blocks bd-10)
 - `bd dep tree bd-20`: Show what blocks bd-20 (dependency tree going UP)
 - `bd dep tree bd-1 --reverse`: Show what was discovered from bd-1 (dependent tree going DOWN)
 - `bd dep tree bd-1 --reverse --max-depth 3`: Show discovery tree with depth limit
