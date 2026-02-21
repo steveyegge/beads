@@ -1,60 +1,57 @@
 # Observability (OpenTelemetry)
 
-Beads envoie ses métriques via OTLP HTTP. La télémétrie est **inactive par défaut** — aucun overhead quand aucune variable n'est définie.
+Beads exports metrics via OTLP HTTP. Telemetry is **disabled by default** — zero overhead when no variable is set.
 
-## Stack locale recommandée
+## Recommended local stack
 
-| Service | Port | Rôle |
+| Service | Port | Role |
 |---------|------|------|
-| VictoriaMetrics | 8428 | Métriques OTLP |
-| VictoriaLogs | 9428 | Logs OTLP |
-| Grafana | 9429 | Visualisation |
+| VictoriaMetrics | 8428 | OTLP metrics storage |
+| VictoriaLogs | 9428 | OTLP log storage |
+| Grafana | 9429 | Dashboards |
 
 ```bash
-# Depuis le dossier opentelemetry/ de ton stack perso
+# From your personal stack's opentelemetry/ folder
 docker compose up -d
 ```
 
 ## Configuration
 
-Deux variables suffisent. Les ajouter au shell ou au `.env` du workspace :
+One variable is enough. Add it to your shell profile or workspace `.env`:
 
 ```bash
 export BD_OTEL_METRICS_URL=http://localhost:8428/opentelemetry/api/v1/push
-export BD_OTEL_LOGS_URL=http://localhost:9428/insert/opentelemetry/v1/logs
 ```
 
-À partir de là, chaque commande `bd` envoie automatiquement ses métriques.
+Every `bd` command will then automatically push its metrics.
 
-### Profil shell (recommandé)
+### Shell profile (recommended)
 
 ```bash
-# ~/.zshrc ou ~/.bashrc
+# ~/.zshrc or ~/.bashrc
 export BD_OTEL_METRICS_URL=http://localhost:8428/opentelemetry/api/v1/push
-export BD_OTEL_LOGS_URL=http://localhost:9428/insert/opentelemetry/v1/logs
 ```
 
-### Variables d'environnement
+### Environment variables
 
-| Variable | Exemple | Description |
+| Variable | Example | Description |
 |----------|---------|-------------|
-| `BD_OTEL_METRICS_URL` | `http://localhost:8428/opentelemetry/api/v1/push` | Push métriques vers VictoriaMetrics. Active la télémétrie. |
-| `BD_OTEL_LOGS_URL` | `http://localhost:9428/insert/opentelemetry/v1/logs` | Push logs vers VictoriaLogs (réservé). |
-| `BD_OTEL_STDOUT` | `true` | Écrit spans et métriques sur stderr (dev/debug). Active aussi la télémétrie. |
+| `BD_OTEL_METRICS_URL` | `http://localhost:8428/opentelemetry/api/v1/push` | Push metrics to VictoriaMetrics. Activates telemetry. |
+| `BD_OTEL_STDOUT` | `true` | Write spans and metrics to stderr (dev/debug). Also activates telemetry. |
 
-### Mode debug local
+### Local debug mode
 
 ```bash
 BD_OTEL_STDOUT=true bd list
 ```
 
-## Vérification
+## Verification
 
 ```bash
-bd list   # déclenche des métriques → visible dans VictoriaMetrics
+bd list   # triggers metrics → visible in VictoriaMetrics
 ```
 
-Requête de vérification dans Grafana (datasource VictoriaMetrics) :
+Verification query in Grafana (VictoriaMetrics datasource):
 
 ```promql
 bd_storage_operations_total
@@ -62,62 +59,79 @@ bd_storage_operations_total
 
 ---
 
-## Métriques
+## Metrics
 
-### Commandes CLI
+### Storage (`bd_storage_*`)
 
-| Métrique | Type | Description |
-|----------|------|-------------|
-| *(via spans stdout uniquement)* | — | Les spans de commande ne sont émis que si `BD_OTEL_STDOUT=true` |
+| Metric | Type | Attributes | Description |
+|--------|------|------------|-------------|
+| `bd_storage_operations_total` | Counter | `db.operation` | Storage operations executed |
+| `bd_storage_operation_duration_ms` | Histogram | `db.operation` | Operation duration (ms) |
+| `bd_storage_errors_total` | Counter | `db.operation` | Storage errors |
 
-### Stockage (`bd_storage_*`)
+> These metrics are emitted by `InstrumentedStorage`, the beads SDK wrapper.
 
-| Métrique | Type | Attributs | Description |
-|----------|------|-----------|-------------|
-| `bd_storage_operations_total` | Counter | `db.operation` | Opérations storage exécutées |
-| `bd_storage_operation_duration_ms` | Histogram | `db.operation` | Durée des opérations (ms) |
-| `bd_storage_errors_total` | Counter | `db.operation` | Erreurs storage |
+### Dolt database (`bd_db_*`)
 
-> Ces métriques sont émises par `InstrumentedStorage`, le wrapper SDK beads.
-
-### Base de données Dolt (`bd_db_*`)
-
-| Métrique | Type | Attributs | Description |
-|----------|------|-----------|-------------|
-| `bd_db_retry_count_total` | Counter | — | Retries SQL en mode serveur |
-| `bd_db_lock_wait_ms` | Histogram | `dolt_lock_exclusive` | Attente pour acquérir `dolt-access.lock` |
+| Metric | Type | Attributes | Description |
+|--------|------|------------|-------------|
+| `bd_db_retry_count_total` | Counter | — | SQL retries in server mode |
+| `bd_db_lock_wait_ms` | Histogram | `dolt_lock_exclusive` | Wait time to acquire `dolt-access.lock` |
 
 ### Issues (`bd_issue_*`)
 
-| Métrique | Type | Attributs | Description |
-|----------|------|-----------|-------------|
-| `bd_issue_count` | Gauge | `status` | Nombre d'issues par statut |
+| Metric | Type | Attributes | Description |
+|--------|------|------------|-------------|
+| `bd_issue_count` | Gauge | `status` | Number of issues by status |
 
-Valeurs de `status` : `open`, `in_progress`, `closed`, `deferred`.
+`status` values: `open`, `in_progress`, `closed`, `deferred`.
 
-### IA (`bd_ai_*`)
+### AI (`bd_ai_*`)
 
-| Métrique | Type | Attributs | Description |
-|----------|------|-----------|-------------|
-| `bd_ai_input_tokens_total` | Counter | `bd_ai_model` | Tokens d'entrée Anthropic |
-| `bd_ai_output_tokens_total` | Counter | `bd_ai_model` | Tokens de sortie Anthropic |
-| `bd_ai_request_duration_ms` | Histogram | `bd_ai_model` | Latence des appels API |
+| Metric | Type | Attributes | Description |
+|--------|------|------------|-------------|
+| `bd_ai_input_tokens_total` | Counter | `bd_ai_model` | Anthropic input tokens |
+| `bd_ai_output_tokens_total` | Counter | `bd_ai_model` | Anthropic output tokens |
+| `bd_ai_request_duration_ms` | Histogram | `bd_ai_model` | API call latency |
 
 ---
 
 ## Traces (spans)
 
-Les spans ne sont exportés que si `BD_OTEL_STDOUT=true` — il n'y a pas de backend trace dans la stack locale recommandée.
+Spans are only exported when `BD_OTEL_STDOUT=true` — there is no trace backend in the recommended local stack.
 
 | Span | Source | Description |
 |------|--------|-------------|
-| `bd.command.<name>` | CLI | Durée totale de la commande |
-| `dolt.exec` / `dolt.query` / `dolt.query_row` | SQL | Chaque opération SQL |
-| `dolt.commit` / `dolt.push` / `dolt.pull` / `dolt.merge` | Dolt VC | Procédures de contrôle de version |
-| `ephemeral.count` / `ephemeral.nuke` | SQLite | Opérations sur le store éphémère |
-| `hook.exec` | Hooks | Exécution d'un hook (span racine, fire-and-forget) |
-| `tracker.sync` / `tracker.pull` / `tracker.push` | Sync | Phases de synchronisation tracker |
-| `anthropic.messages.new` | IA | Appels API Claude |
+| `bd.command.<name>` | CLI | Total duration of the command |
+| `dolt.exec` / `dolt.query` / `dolt.query_row` | SQL | Each SQL operation |
+| `dolt.commit` / `dolt.push` / `dolt.pull` / `dolt.merge` | Dolt VC | Version control procedures |
+| `ephemeral.count` / `ephemeral.nuke` | SQLite | Ephemeral store operations |
+| `hook.exec` | Hooks | Hook execution (root span, fire-and-forget) |
+| `tracker.sync` / `tracker.pull` / `tracker.push` | Sync | Tracker sync phases |
+| `anthropic.messages.new` | AI | Claude API calls |
+
+### Notable attributes
+
+**`bd.command.<name>`**
+
+| Attribute | Description |
+|-----------|-------------|
+| `bd.command` | Subcommand name (`list`, `create`, …) |
+| `bd.version` | bd version |
+| `bd.args` | Raw arguments passed to the command (e.g. `"create 'title' -p 2"`) |
+| `bd.actor` | Actor (resolved from git config / env) |
+
+**`hook.exec`**
+
+| Attribute / Event | Description |
+|-------------------|-------------|
+| `hook.event` | Event type (`create`, `update`, `close`) |
+| `hook.path` | Absolute path to the script |
+| `bd.issue_id` | ID of the triggering issue |
+| event `hook.stdout` | Script standard output (truncated to 1 024 bytes) |
+| event `hook.stderr` | Script error output (truncated to 1 024 bytes) |
+
+The `hook.stdout` / `hook.stderr` events carry two attributes: `output` (the text) and `bytes` (original size before truncation).
 
 ---
 
@@ -129,13 +143,13 @@ cmd/bd/main.go
       ├─ BD_OTEL_STDOUT=true  → TracerProvider stdout + MeterProvider stdout
       └─ BD_OTEL_METRICS_URL  → MeterProvider HTTP → VictoriaMetrics
 
-internal/storage/dolt/        → bd_db_* métriques + spans dolt.*
-internal/storage/ephemeral/   → spans ephemeral.*
-internal/hooks/               → spans hook.exec
-internal/tracker/             → spans tracker.*
-internal/compact/             → bd_ai_* métriques + spans anthropic.*
-internal/telemetry/storage.go → bd_storage_* métriques (SDK wrapper)
+internal/storage/dolt/        → bd_db_* metrics + dolt.* spans
+internal/storage/ephemeral/   → ephemeral.* spans
+internal/hooks/               → hook.exec span
+internal/tracker/             → tracker.* spans
+internal/compact/             → bd_ai_* metrics + anthropic.* spans
+internal/telemetry/storage.go → bd_storage_* metrics (SDK wrapper)
 ```
 
-Quand aucune variable n'est définie, `telemetry.Init()` installe des providers **no-op** :
-les chemins chauds n'exécutent que des appels no-op sans allocation mémoire.
+When neither variable is set, `telemetry.Init()` installs **no-op** providers:
+hot paths execute only no-op calls with no memory allocation.
