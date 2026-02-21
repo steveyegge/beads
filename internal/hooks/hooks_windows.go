@@ -69,8 +69,10 @@ func (r *Runner) runHook(hookPath, event string, issue *types.Issue) (retErr err
 			_ = cmd.Process.Kill()
 		}
 		<-done
+		addHookOutputEvents(span, &stdout, &stderr)
 		return ctx.Err()
 	case err := <-done:
+		addHookOutputEvents(span, &stdout, &stderr)
 		return err
 	}
 }
