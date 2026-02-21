@@ -265,9 +265,18 @@ func parseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
 
 // GetIssue retrieves an issue by ID
 func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
-	// Route ephemeral IDs to SQLite store
+	// Route ephemeral IDs to SQLite store first, fall through to Dolt if not found.
+	// Wisps created via RunInTransaction (e.g., mol wisp → cloneSubgraph) are written
+	// to Dolt because doltTransaction.CreateIssue doesn't route to ephemeral storage.
 	if IsEphemeralID(id) && s.ephemeralStore != nil {
-		return s.ephemeralStore.GetIssue(ctx, id)
+		issue, err := s.ephemeralStore.GetIssue(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if issue != nil {
+			return issue, nil
+		}
+		// Not in ephemeral store — fall through to check Dolt
 	}
 
 	s.mu.RLock()
@@ -316,9 +325,13 @@ func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef strin
 
 // UpdateIssue updates fields on an issue
 func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
-	// Route ephemeral IDs to SQLite store
+	// Route ephemeral IDs to SQLite store if the issue actually lives there.
+	// Wisps created via transactions may live in Dolt despite having ephemeral IDs.
 	if IsEphemeralID(id) && s.ephemeralStore != nil {
-		return s.ephemeralStore.UpdateIssue(ctx, id, updates, actor)
+		if eph, _ := s.ephemeralStore.GetIssue(ctx, id); eph != nil {
+			return s.ephemeralStore.UpdateIssue(ctx, id, updates, actor)
+		}
+		// Not in ephemeral store — fall through to Dolt
 	}
 
 	oldIssue, err := s.GetIssue(ctx, id)
