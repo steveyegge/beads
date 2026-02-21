@@ -2,9 +2,11 @@ package dolt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -39,11 +41,11 @@ func partitionIDs(ids []string) (ephIDs, doltIDs []string) {
 // clearing the Ephemeral flag. Used by mol squash to crystallize wisps.
 func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor string) error {
 	issue, err := s.getWisp(ctx, id)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil // Not found in wisps, nothing to promote
+	}
 	if err != nil {
 		return err
-	}
-	if issue == nil {
-		return nil // Not found in wisps, nothing to promote
 	}
 
 	// Clear ephemeral flag for persistent storage

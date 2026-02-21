@@ -611,7 +611,7 @@ func (s *DoltStore) buildDependencyTree(ctx context.Context, issueID string, dep
 	visited[issueID] = true
 
 	issue, err := s.GetIssue(ctx, issueID)
-	if err != nil || issue == nil {
+	if err != nil {
 		return nil, err
 	}
 

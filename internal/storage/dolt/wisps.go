@@ -113,7 +113,7 @@ func scanIssueFromTable(ctx context.Context, db *sql.DB, table, id string) (*typ
 
 	issue, err := scanIssueFrom(row)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, fmt.Errorf("%w: issue %s", storage.ErrNotFound, id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue from %s: %w", table, err)
@@ -205,7 +205,7 @@ func scanIssueTxFromTable(ctx context.Context, tx *sql.Tx, table, id string) (*t
 
 	issue, err := scanIssueFrom(row)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, fmt.Errorf("%w: issue %s", storage.ErrNotFound, id)
 	}
 	if err != nil {
 		return nil, err

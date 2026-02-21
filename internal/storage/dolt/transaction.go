@@ -196,9 +196,7 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		if err != nil {
 			return nil, err
 		}
-		if issue != nil {
-			issues = append(issues, issue)
-		}
+		issues = append(issues, issue)
 	}
 	return issues, nil
 }
@@ -416,12 +414,9 @@ func (t *doltTransaction) GetMetadata(ctx context.Context, key string) (string, 
 }
 
 func (t *doltTransaction) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
-	iss, err := t.GetIssue(ctx, issueID)
+	_, err := t.GetIssue(ctx, issueID)
 	if err != nil {
 		return nil, err
-	}
-	if iss == nil {
-		return nil, fmt.Errorf("issue %s not found", issueID)
 	}
 
 	table := "comments"

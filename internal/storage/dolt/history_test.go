@@ -3,8 +3,10 @@
 package dolt
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -200,13 +202,9 @@ func TestGetIssueAsOf_NonExistentIssue(t *testing.T) {
 	}
 
 	// Query non-existent issue at valid commit
-	result, err := store.getIssueAsOf(ctx, "nonexistent", hash)
-	if err != nil {
-		t.Fatalf("getIssueAsOf failed: %v", err)
-	}
-
-	if result != nil {
-		t.Error("expected nil for non-existent issue")
+	_, err = store.getIssueAsOf(ctx, "nonexistent", hash)
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for non-existent issue, got: %v", err)
 	}
 }
 
