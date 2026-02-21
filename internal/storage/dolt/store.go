@@ -5,15 +5,12 @@
 // by making the database itself version-controlled.
 //
 // Dolt capabilities:
-//   - Embedded access via github.com/dolthub/driver (no server required, CGO only)
 //   - Native version control (commit, push, pull, branch, merge)
 //   - Time-travel queries via AS OF and dolt_history_* tables
 //   - Cell-level merge for conflict resolution
-//   - Server mode for multi-writer scenarios (federation, no CGO required)
+//   - Server mode for multi-writer scenarios (federation, pure Go)
 //
-// Connection modes:
-//   - Embedded: No server required, database/sql interface via dolthub/driver (CGO)
-//   - Server: Connect to running dolt sql-server for multi-writer scenarios (pure Go)
+// All operations require a running dolt sql-server. Connect via MySQL protocol (pure Go).
 package dolt
 
 import (
@@ -21,7 +18,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"strings"
@@ -39,19 +35,12 @@ import (
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
-	db         *sql.DB
-	dbPath     string       // Path to Dolt database directory
-	closed     atomic.Bool  // Tracks whether Close() has been called
-	connStr    string       // Connection string for reconnection
-	mu         sync.RWMutex // Protects concurrent access
-	readOnly   bool         // True if opened in read-only mode
-	serverMode bool         // True if connected to dolt sql-server (vs embedded)
-	accessLock *AccessLock  // Advisory flock preventing concurrent dolt LOCK contention
-
-	// embeddedConnector is non-nil only in embedded mode. It must be closed to release
-	// filesystem locks held by the embedded engine. Typed as io.Closer to avoid
-	// importing the CGO-dependent dolthub/driver in this file.
-	embeddedConnector io.Closer
+	db       *sql.DB
+	dbPath   string       // Path to Dolt database directory
+	closed   atomic.Bool  // Tracks whether Close() has been called
+	connStr  string       // Connection string for reconnection
+	mu       sync.RWMutex // Protects concurrent access
+	readOnly bool         // True if opened in read-only mode
 
 	// Watchdog for server mode auto-recovery
 	watchdogCancel context.CancelFunc
@@ -195,12 +184,7 @@ func wrapLockError(err error) error {
 }
 
 // withRetry executes an operation with retry for transient errors.
-// Only active in server mode; embedded mode has driver-level retry.
 func (s *DoltStore) withRetry(ctx context.Context, op func() error) error {
-	if !s.serverMode {
-		return op()
-	}
-
 	bo := newServerRetryBackoff()
 	return backoff.Retry(func() error {
 		err := op()
@@ -293,8 +277,7 @@ func applyConfigDefaults(cfg *Config) {
 }
 
 // New creates a new Dolt storage backend.
-// In server mode, connects to a running dolt sql-server via MySQL protocol (pure Go, no CGO).
-// In embedded mode, opens Dolt in-process (requires CGO).
+// Connects to a running dolt sql-server via MySQL protocol (pure Go).
 func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	if cfg.Path == "" {
 		return nil, fmt.Errorf("database path is required")
@@ -302,14 +285,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 
 	applyConfigDefaults(cfg)
 
-	if cfg.ServerMode {
-		return newServerMode(ctx, cfg)
-	}
-
-	// newEmbeddedMode is defined per build tag:
-	// - store_embedded.go (cgo): full embedded Dolt initialization
-	// - store_nocgo.go (!cgo): returns errNoCGO
-	return newEmbeddedMode(ctx, cfg)
+	return newServerMode(ctx, cfg)
 }
 
 // newServerMode creates a DoltStore connected to a running dolt sql-server.
@@ -348,7 +324,6 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		remoteUser:     cfg.RemoteUser,
 		remotePassword: cfg.RemotePassword,
 		readOnly:       cfg.ReadOnly,
-		serverMode:     true,
 	}
 
 	// Schema initialization for server mode (idempotent).
@@ -361,8 +336,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// Branch-per-polecat: if BD_BRANCH is set, checkout polecat-specific branch.
 	// Each polecat writes to its own Dolt branch to eliminate optimistic lock
 	// contention between concurrent writers. Merges happen at gt done time.
-	// Only applies in server mode (embedded mode doesn't support concurrent writers).
-	if bdBranch := os.Getenv("BD_BRANCH"); bdBranch != "" && cfg.ServerMode {
+	if bdBranch := os.Getenv("BD_BRANCH"); bdBranch != "" {
 		// Force single connection to ensure branch checkout applies to all operations.
 		// This is safe because each polecat is a separate bd process.
 		db.SetMaxOpenConns(1)
@@ -661,21 +635,7 @@ func (s *DoltStore) Close() error {
 			}
 		}
 	}
-	// For embedded mode, ensure the underlying engine is closed to release filesystem locks.
-	if s.embeddedConnector != nil {
-		cerr := doltutil.CloseWithTimeout("embeddedConnector", s.embeddedConnector.Close)
-		// Ignore context cancellation noise from Dolt shutdown plumbing.
-		if cerr != nil && !errors.Is(cerr, context.Canceled) {
-			err = errors.Join(err, cerr)
-		}
-		s.embeddedConnector = nil
-	}
 	s.db = nil
-	// Release advisory lock after db and connector are closed
-	if s.accessLock != nil {
-		s.accessLock.Release()
-		s.accessLock = nil
-	}
 	return err
 }
 

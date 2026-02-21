@@ -119,73 +119,32 @@ func closeDoltDB(db *sql.DB, serverMode bool) {
 	}
 }
 
-// doltConn holds an open Dolt connection with its advisory lock.
-// Used by doctor checks to coordinate database access and prevent
-// lock contention with concurrent bd processes.
+// doltConn holds an open Dolt connection.
+// Used by doctor checks to coordinate database access.
 type doltConn struct {
 	db         *sql.DB
 	serverMode bool
 	cfg        *configfile.Config // config for server mode detail (host:port)
-	lock       *dolt.AccessLock   // nil in server mode
 }
 
-// Close releases the database connection and advisory lock.
-// Releases DB first (may take time for embedded mode), then lock.
-//
-// Note on CloseWithTimeout behavior: In embedded mode, closeDoltDB uses
-// doltutil.CloseWithTimeout which runs db.Close() in a goroutine with a 5s
-// timeout. If the timeout fires, the goroutine keeps running in the background
-// and may leave a noms LOCK file behind (.beads/dolt/beads/.dolt/noms/LOCK).
-// We intentionally do NOT clean up noms LOCK files here because:
-//   - Doctor holds a shared AccessLock, not exclusive — other processes may be active
-//   - The noms LOCK is managed by the Dolt storage engine — external removal risks corruption
-//   - LOCK file cleanup belongs in doctor --fix, not in connection teardown
+// Close releases the database connection.
 func (c *doltConn) Close() {
 	closeDoltDB(c.db, c.serverMode)
-	if c.lock != nil {
-		c.lock.Release()
-	}
 }
 
-// openDoltDBWithLock opens a Dolt connection with AccessLock coordination.
-// In embedded mode, acquires a shared AccessLock before opening the database
-// to prevent contention with concurrent bd processes.
-// In server mode, skips lock acquisition (server handles its own locking).
-//
-// Note: This does NOT honor the BD_SKIP_ACCESS_LOCK env var that DoltStore
-// checks (store.go:265). Doctor is read-only and short-lived, so the shared
-// lock is always appropriate. The env var is a debugging escape hatch for
-// write-path operations where lock contention is more disruptive.
+// openDoltDBWithLock opens a Dolt connection for doctor checks.
 func openDoltDBWithLock(beadsDir string) (*doltConn, error) {
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	isServer := cfg != nil && cfg.IsDoltServerMode()
-
-	var lock *dolt.AccessLock
-	if !isServer {
-		doltDir := filepath.Join(beadsDir, "dolt")
-		absPath, err := filepath.Abs(doltDir)
-		if err != nil {
-			return nil, fmt.Errorf("abs path: %w", err)
-		}
-		lock, err = dolt.AcquireAccessLock(absPath, false, 15*time.Second)
-		if err != nil {
-			return nil, fmt.Errorf("acquire access lock: %w", err)
-		}
-	}
-
 	db, serverMode, err := openDoltDB(beadsDir)
 	if err != nil {
-		if lock != nil {
-			lock.Release()
-		}
 		return nil, err
 	}
 
-	return &doltConn{db: db, serverMode: serverMode, cfg: cfg, lock: lock}, nil
+	return &doltConn{db: db, serverMode: serverMode, cfg: cfg}, nil
 }
 
 // GetBackend returns the configured backend type from configuration.
@@ -202,8 +161,8 @@ func IsDoltBackend(beadsDir string) bool {
 }
 
 // RunDoltHealthChecks runs all Dolt-specific health checks using a single
-// shared connection with AccessLock coordination. Returns one check per
-// health dimension. Non-Dolt backends get N/A results for all dimensions.
+// shared connection. Returns one check per health dimension. Non-Dolt
+// backends get N/A results for all dimensions.
 func RunDoltHealthChecks(path string) []DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
@@ -276,7 +235,7 @@ func checkConnectionWithDB(conn *doltConn) DoctorCheck {
 
 // CheckDoltConnection verifies connectivity to the Dolt database.
 // This is the standalone entry point; RunDoltHealthChecks is preferred
-// for coordinated access with AccessLock.
+// for coordinated access.
 func CheckDoltConnection(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
@@ -366,7 +325,7 @@ func checkSchemaWithDB(conn *doltConn) DoctorCheck {
 
 // CheckDoltSchema verifies the Dolt database has required tables.
 // This is the standalone entry point; RunDoltHealthChecks is preferred
-// for coordinated access with AccessLock.
+// for coordinated access.
 func CheckDoltSchema(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
@@ -451,7 +410,7 @@ func checkIssueCountWithDB(conn *doltConn, beadsDir string) DoctorCheck {
 
 // CheckDoltIssueCount compares issue count in Dolt vs JSONL.
 // This is the standalone entry point; RunDoltHealthChecks is preferred
-// for coordinated access with AccessLock.
+// for coordinated access.
 func CheckDoltIssueCount(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
@@ -534,7 +493,7 @@ func checkStatusWithDB(conn *doltConn) DoctorCheck {
 
 // CheckDoltStatus reports uncommitted changes in Dolt.
 // This is the standalone entry point; RunDoltHealthChecks is preferred
-// for coordinated access with AccessLock.
+// for coordinated access.
 func CheckDoltStatus(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 

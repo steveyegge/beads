@@ -16,9 +16,7 @@ func TestWatchdog_DisableWatchdog(t *testing.T) {
 		DisableWatchdog: true,
 	}
 
-	store := &DoltStore{
-		serverMode: true,
-	}
+	store := &DoltStore{}
 
 	// Should not start watchdog
 	store.startWatchdog(cfg)
@@ -31,24 +29,6 @@ func TestWatchdog_DisableWatchdog(t *testing.T) {
 	}
 }
 
-func TestWatchdog_NotStartedInEmbeddedMode(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := &Config{
-		Path:       tmpDir,
-		ServerMode: false,
-	}
-
-	store := &DoltStore{
-		serverMode: false,
-	}
-
-	store.startWatchdog(cfg)
-
-	if store.watchdogCancel != nil {
-		t.Error("watchdog should not start in embedded mode")
-	}
-}
-
 func TestWatchdog_CleansUpOnClose(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := &Config{
@@ -56,9 +36,7 @@ func TestWatchdog_CleansUpOnClose(t *testing.T) {
 		ServerMode: true,
 	}
 
-	store := &DoltStore{
-		serverMode: true,
-	}
+	store := &DoltStore{}
 
 	// Start the watchdog
 	store.startWatchdog(cfg)
@@ -91,7 +69,7 @@ func TestWatchdog_BacksOffAfterRepeatedFailures(t *testing.T) {
 	}
 
 	state := &watchdogState{healthy: true}
-	store := &DoltStore{serverMode: true}
+	store := &DoltStore{}
 
 	ctx := context.Background()
 
@@ -114,7 +92,7 @@ func TestWatchdog_HealthCheckFailsWhenNoServer(t *testing.T) {
 		ServerPort: 39998, // Port nothing is listening on
 	}
 
-	store := &DoltStore{serverMode: true}
+	store := &DoltStore{}
 
 	if store.isServerHealthy(cfg) {
 		t.Error("isServerHealthy should return false when no server is running")

@@ -7,75 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/steveyegge/beads/internal/lockfile"
-	"github.com/steveyegge/beads/internal/storage/dolt"
 )
-
-func TestAccessLock_FileCreated(t *testing.T) {
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	doltDir := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0o755); err != nil {
-		t.Fatalf("failed to create dolt dir: %v", err)
-	}
-
-	// Acquire a shared lock directly using the dolt package
-	lock, err := dolt.AcquireAccessLock(doltDir, false, 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to acquire lock: %v", err)
-	}
-
-	// Verify lock file exists at .beads/dolt-access.lock (parent of doltDir)
-	lockPath := filepath.Join(beadsDir, "dolt-access.lock")
-	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
-		t.Error("lock file not created at expected path")
-	}
-
-	lock.Release()
-}
-
-func TestAccessLock_ReleaseIdempotent(t *testing.T) {
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	doltDir := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0o755); err != nil {
-		t.Fatalf("failed to create dolt dir: %v", err)
-	}
-
-	lock, err := dolt.AcquireAccessLock(doltDir, false, 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to acquire lock: %v", err)
-	}
-
-	// Multiple releases should not panic
-	lock.Release()
-	lock.Release()
-}
-
-func TestAccessLock_ReleaseAllowsReacquisition(t *testing.T) {
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	doltDir := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0o755); err != nil {
-		t.Fatalf("failed to create dolt dir: %v", err)
-	}
-
-	lock, err := dolt.AcquireAccessLock(doltDir, false, 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to acquire lock: %v", err)
-	}
-
-	lock.Release()
-
-	// After release, another exclusive lock should succeed immediately
-	exLock, err := dolt.AcquireAccessLock(doltDir, true, 1*time.Second)
-	if err != nil {
-		t.Fatalf("exclusive lock after release failed: %v", err)
-	}
-	exLock.Release()
-}
 
 // TestRunDoltHealthChecks_NonDoltBackend was removed: SQLite backend no longer
 // exists. GetBackend() always returns "dolt" after the dolt-native cleanup.
@@ -94,7 +28,7 @@ func TestRunDoltHealthChecks_DoltBackendNoDatabase(t *testing.T) {
 		t.Fatalf("failed to write config: %v", err)
 	}
 
-	// Create the dolt directory (needed for lock acquisition)
+	// Create the dolt directory
 	doltDir := filepath.Join(beadsDir, "dolt")
 	if err := os.MkdirAll(doltDir, 0o755); err != nil {
 		t.Fatalf("failed to create dolt dir: %v", err)
@@ -105,22 +39,9 @@ func TestRunDoltHealthChecks_DoltBackendNoDatabase(t *testing.T) {
 		t.Fatalf("expected at least 1 check, got %d", len(checks))
 	}
 
-	// The embedded Dolt driver auto-initializes an empty directory into a
-	// working database, so connection succeeds even without a pre-existing DB.
-	// Verify the first check is the connection check and it returns OK.
+	// Verify the first check is the connection check.
 	if checks[0].Name != "Dolt Connection" {
 		t.Errorf("expected first check to be 'Dolt Connection', got %q", checks[0].Name)
-	}
-	if checks[0].Status != StatusOK {
-		t.Errorf("expected StatusOK for auto-initialized dolt DB, got %s: %s", checks[0].Status, checks[0].Message)
-	}
-
-	// Verify lock file is cleaned up after checks
-	exLock, err := dolt.AcquireAccessLock(doltDir, true, 1*time.Second)
-	if err != nil {
-		t.Errorf("could not acquire exclusive lock after RunDoltHealthChecks: %v", err)
-	} else {
-		exLock.Release()
 	}
 }
 
@@ -142,69 +63,11 @@ func TestRunDoltHealthChecks_CheckNameAndCategory(t *testing.T) {
 	}
 }
 
-func TestLockContention(t *testing.T) {
-	// Verifies that RunDoltHealthChecks returns a StatusError with proper
-	// error messages when an exclusive lock is already held (simulating
-	// another process). The 15s lock timeout in openDoltDBWithLock is
-	// hardcoded, so this test takes ~15s to complete.
-	if testing.Short() {
-		t.Skip("skipping lock contention test in short mode (takes ~15s)")
-	}
-
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	doltDir := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0o755); err != nil {
-		t.Fatalf("failed to create dolt dir: %v", err)
-	}
-
-	// Write metadata.json marking this as dolt backend
-	configContent := []byte(`{"backend":"dolt"}`)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), configContent, 0o644); err != nil {
-		t.Fatalf("failed to write config: %v", err)
-	}
-
-	// Acquire an EXCLUSIVE lock to block shared acquisition by RunDoltHealthChecks.
-	// openDoltDBWithLock tries shared lock with 15s timeout; it will fail because
-	// exclusive lock is held.
-	exLock, err := dolt.AcquireAccessLock(doltDir, true, 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to acquire exclusive lock: %v", err)
-	}
-	defer exLock.Release()
-
-	checks := RunDoltHealthChecks(tmpDir)
-	if len(checks) < 1 {
-		t.Fatalf("expected at least 1 check on lock contention, got %d", len(checks))
-	}
-
-	check := checks[0]
-
-	// Verify error status and check name
-	if check.Status != StatusError {
-		t.Errorf("expected StatusError, got %s", check.Status)
-	}
-	if check.Name != "Dolt Connection" {
-		t.Errorf("expected check name %q, got %q", "Dolt Connection", check.Name)
-	}
-
-	// The error wraps as "acquire access lock: dolt access lock timeout ..."
-	if !strings.Contains(check.Detail, "access lock") {
-		t.Errorf("expected Detail to contain %q, got %q", "access lock", check.Detail)
-	}
-
-	// Fix suggestion mentions lock files
-	if !strings.Contains(check.Fix, "lock") {
-		t.Errorf("expected Fix to contain %q, got %q", "lock", check.Fix)
-	}
-}
-
 func TestServerMode_NoLockAcquired(t *testing.T) {
-	// Verifies that server mode skips lock acquisition entirely.
+	// Verifies that server mode connection errors are reported correctly.
 	// BEADS_DOLT_SERVER_MODE=1 triggers server mode, which attempts MySQL
 	// connection instead of embedded Dolt. We force a non-listening port
-	// so the connection always fails, regardless of whether a real Dolt
-	// server is running on the machine.
+	// so the connection always fails.
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	doltDir := filepath.Join(beadsDir, "dolt")
@@ -228,21 +91,15 @@ func TestServerMode_NoLockAcquired(t *testing.T) {
 
 	check := checks[0]
 
-	// Server mode should fail with a connection error, NOT a lock error
+	// Server mode should fail with a connection error
 	if check.Status != StatusError {
 		t.Errorf("expected StatusError (server unreachable), got %s", check.Status)
 	}
 
-	// The error should NOT be about lock acquisition — server mode skips locking
+	// The error should NOT be about lock acquisition
 	if strings.Contains(check.Detail, "access lock") {
 		t.Errorf("server mode should not attempt lock acquisition, but Detail contains %q: %s",
 			"access lock", check.Detail)
-	}
-
-	// Verify no lock file was created at .beads/dolt-access.lock
-	lockPath := filepath.Join(beadsDir, "dolt-access.lock")
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Errorf("lock file should not exist in server mode, but found at %s", lockPath)
 	}
 }
 
@@ -329,35 +186,6 @@ func TestCheckLockHealth_HeldNomsLOCK(t *testing.T) {
 	}
 	if !strings.Contains(check.Detail, "noms LOCK") {
 		t.Errorf("expected detail to mention noms LOCK, got: %s", check.Detail)
-	}
-}
-
-func TestCheckLockHealth_DetectsHeldAdvisoryLock(t *testing.T) {
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	doltDir := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	configContent := []byte(`{"backend":"dolt"}`)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), configContent, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Hold the advisory lock
-	lock, err := dolt.AcquireAccessLock(doltDir, true, 2*time.Second)
-	if err != nil {
-		t.Fatalf("failed to acquire advisory lock: %v", err)
-	}
-	defer lock.Release()
-
-	check := CheckLockHealth(tmpDir)
-	if check.Status != StatusWarning {
-		t.Errorf("expected Warning status with advisory lock held, got %s", check.Status)
-	}
-	if !strings.Contains(check.Detail, "advisory lock") {
-		t.Errorf("expected detail to mention advisory lock, got: %s", check.Detail)
 	}
 }
 
