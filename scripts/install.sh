@@ -258,11 +258,36 @@ check_go() {
     fi
 }
 
+# Verify a built/installed binary has CGO enabled.
+verify_binary_has_cgo() {
+    local binary_path=$1
+    local install_method=$2
+
+    if [[ ! -f "$binary_path" ]]; then
+        log_error "Expected binary not found at $binary_path"
+        return 1
+    fi
+
+    if ! command -v strings &> /dev/null; then
+        log_warning "'strings' not found; unable to verify CGO metadata for $binary_path"
+        return 0
+    fi
+
+    if strings "$binary_path" | awk '/^build[[:space:]]+CGO_ENABLED=0$/ { found=1 } END { exit(found?0:1) }'; then
+        log_error "Binary produced by ${install_method} was built without CGO support"
+        log_warning "Dolt embedded mode requires CGO. Install ICU headers and retry."
+        return 1
+    fi
+
+    log_success "Verified CGO support in $binary_path"
+    return 0
+}
+
 # Install using go install (fallback)
 install_with_go() {
     log_info "Installing bd using 'go install'..."
 
-    if go install github.com/steveyegge/beads/cmd/bd@latest; then
+    if CGO_ENABLED=1 go install github.com/steveyegge/beads/cmd/bd@latest; then
         log_success "bd installed successfully via go install"
 
         # Record where we expect the binary to have been installed
@@ -275,6 +300,10 @@ install_with_go() {
             bin_dir="$(go env GOPATH)/bin"
         fi
         LAST_INSTALL_PATH="$bin_dir/bd"
+
+        if ! verify_binary_has_cgo "$LAST_INSTALL_PATH" "go install"; then
+            return 1
+        fi
 
         # Re-sign for macOS to avoid Gatekeeper delays
         resign_for_macos "$bin_dir/bd"
@@ -313,7 +342,13 @@ build_from_source() {
         cd beads
         log_info "Building binary..."
 
-        if go build -o bd ./cmd/bd; then
+        if CGO_ENABLED=1 go build -o bd ./cmd/bd; then
+            if ! verify_binary_has_cgo "./bd" "source build"; then
+                cd - > /dev/null || cd "$HOME"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
+
             # Determine install location
             local install_dir
             if [[ -w /usr/local/bin ]]; then
@@ -523,7 +558,7 @@ main() {
     echo ""
     echo "Or install from source:"
     echo "  1. Install Go from https://go.dev/dl/"
-    echo "  2. Run: go install github.com/steveyegge/beads/cmd/bd@latest"
+    echo "  2. Run: CGO_ENABLED=1 go install github.com/steveyegge/beads/cmd/bd@latest"
     echo ""
     exit 1
 }
