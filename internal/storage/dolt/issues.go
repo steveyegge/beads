@@ -19,6 +19,27 @@ import (
 func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
 	// Route ephemeral issues to SQLite store
 	if issue.Ephemeral && s.ephemeralStore != nil {
+		// Generate ID before routing — the ephemeral store has no ID generation.
+		if issue.ID == "" {
+			now := time.Now().UTC()
+			if issue.CreatedAt.IsZero() {
+				issue.CreatedAt = now
+			}
+			if issue.UpdatedAt.IsZero() {
+				issue.UpdatedAt = now
+			}
+			configPrefix, _ := s.GetConfig(ctx, "issue_prefix")
+			if configPrefix == "" {
+				return fmt.Errorf("database not initialized: issue_prefix config is missing")
+			}
+			prefix := configPrefix
+			if issue.PrefixOverride != "" {
+				prefix = issue.PrefixOverride
+			}
+			prefix = prefix + "-wisp"
+			// Generate hash-based ID with collision check against ephemeral store
+			issue.ID = idgen.GenerateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, 6, 0)
+		}
 		return s.ephemeralStore.CreateIssue(ctx, issue, actor)
 	}
 
