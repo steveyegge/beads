@@ -133,8 +133,13 @@ func TestCheckStaleClosedIssues_DisabledSmallCount(t *testing.T) {
 	}
 }
 
-// Test #3: Disabled (threshold=0), large closed count (≥10k) → warning
+// Test #3: Disabled (threshold=0), large closed count (≥threshold) → warning
 func TestCheckStaleClosedIssues_DisabledLargeCount(t *testing.T) {
+	// Override threshold to avoid inserting 10k rows (saves ~50s).
+	orig := largeClosedIssuesThreshold
+	largeClosedIssuesThreshold = 100
+	t.Cleanup(func() { largeClosedIssuesThreshold = orig })
+
 	tmpDir := setupStaleClosedTestDB(t, largeClosedIssuesThreshold, time.Now().AddDate(0, 0, -60), nil, 0)
 
 	check := CheckStaleClosedIssues(tmpDir)
