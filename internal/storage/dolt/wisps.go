@@ -189,99 +189,28 @@ func getAdaptiveIDLengthFromTable(ctx context.Context, tx *sql.Tx, table, prefix
 }
 
 // insertIssueTxIntoTable is the transaction-context version for inserting into a named table.
-//
-//nolint:gosec // G201: table is a hardcoded constant from wispIssueTable
+// Delegates to insertIssueIntoTable to ensure all columns are written.
 func insertIssueTxIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *types.Issue) error {
-	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (
-			id, content_hash, title, description, design, acceptance_criteria, notes,
-			status, priority, issue_type, assignee, estimated_minutes,
-			created_at, created_by, owner, updated_at, closed_at,
-			sender, ephemeral, wisp_type, pinned, is_template, crystallizes
-		) VALUES (
-			?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?
-		)
-	`, table),
-		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
-		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
-		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt,
-		issue.Sender, issue.Ephemeral, string(issue.WispType), issue.Pinned, issue.IsTemplate, issue.Crystallizes,
-	)
-	return err
+	return insertIssueIntoTable(ctx, tx, table, issue)
 }
 
-// scanIssueTxFromTable is the transaction-context minimal scan from a named table.
+// scanIssueTxFromTable scans a full issue from a named table within a transaction.
+// Delegates to the unified scanIssueFrom to ensure all columns are hydrated.
 //
 //nolint:gosec // G201: table is a hardcoded constant from wispIssueTable
 func scanIssueTxFromTable(ctx context.Context, tx *sql.Tx, table, id string) (*types.Issue, error) {
-	var issue types.Issue
-	var createdAtStr, updatedAtStr sql.NullString
-	var closedAt sql.NullTime
-	var estimatedMinutes sql.NullInt64
-	var assignee, owner, contentHash sql.NullString
-	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
+	row := tx.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT %s FROM %s WHERE id = ?
+	`, issueSelectColumns, table), id)
 
-	err := tx.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
-		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at,
-		       ephemeral, pinned, is_template, crystallizes
-		FROM %s
-		WHERE id = ?
-	`, table), id).Scan(
-		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
-		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
-		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt,
-		&ephemeral, &pinned, &isTemplate, &crystallizes,
-	)
-
+	issue, err := scanIssueFrom(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	if createdAtStr.Valid {
-		issue.CreatedAt = parseTimeString(createdAtStr.String)
-	}
-	if updatedAtStr.Valid {
-		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
-	}
-	if contentHash.Valid {
-		issue.ContentHash = contentHash.String
-	}
-	if closedAt.Valid {
-		issue.ClosedAt = &closedAt.Time
-	}
-	if estimatedMinutes.Valid {
-		mins := int(estimatedMinutes.Int64)
-		issue.EstimatedMinutes = &mins
-	}
-	if assignee.Valid {
-		issue.Assignee = assignee.String
-	}
-	if owner.Valid {
-		issue.Owner = owner.String
-	}
-	if ephemeral.Valid && ephemeral.Int64 != 0 {
-		issue.Ephemeral = true
-	}
-	if pinned.Valid && pinned.Int64 != 0 {
-		issue.Pinned = true
-	}
-	if isTemplate.Valid && isTemplate.Int64 != 0 {
-		issue.IsTemplate = true
-	}
-	if crystallizes.Valid && crystallizes.Int64 != 0 {
-		issue.Crystallizes = true
-	}
-
-	return &issue, nil
+	return issue, nil
 }
 
 // wispPrefix returns the ID prefix for wisp ID generation.
