@@ -16,51 +16,14 @@ import (
 // Wisps are stored in dolt_ignored tables (wisps, wisp_labels, wisp_dependencies,
 // wisp_events, wisp_comments) to avoid Dolt history bloat. All operations use the
 // same Dolt SQL connection — no separate store or transaction routing needed.
-
-// wispIssueTable returns the table name for issue storage based on ID.
-func wispIssueTable(id string) string {
-	if IsEphemeralID(id) {
-		return "wisps"
-	}
-	return "issues"
-}
-
-// wispLabelTable returns the label table name based on issue ID.
-func wispLabelTable(issueID string) string {
-	if IsEphemeralID(issueID) {
-		return "wisp_labels"
-	}
-	return "labels"
-}
-
-// wispDepTable returns the dependency table name based on issue ID.
-func wispDepTable(issueID string) string {
-	if IsEphemeralID(issueID) {
-		return "wisp_dependencies"
-	}
-	return "dependencies"
-}
-
-// wispEventTable returns the event table name based on issue ID.
-func wispEventTable(issueID string) string {
-	if IsEphemeralID(issueID) {
-		return "wisp_events"
-	}
-	return "events"
-}
-
-// wispCommentTable returns the comment table name based on issue ID.
-func wispCommentTable(issueID string) string {
-	if IsEphemeralID(issueID) {
-		return "wisp_comments"
-	}
-	return "comments"
-}
+//
+// Table routing is done inline by callers (e.g., transaction.go checks
+// IsEphemeralID and selects the appropriate table name directly).
 
 // insertIssueIntoTable inserts an issue into the specified table.
 // The table must be either "issues" or "wisps" (same schema).
 //
-//nolint:gosec // G201: table is a hardcoded constant from wispIssueTable
+//nolint:gosec // G201: table is a hardcoded constant ("issues" or "wisps")
 func insertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *types.Issue) error {
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (
@@ -103,7 +66,7 @@ func insertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *
 
 // scanIssueFromTable scans a single issue from the specified table.
 //
-//nolint:gosec // G201: table is a hardcoded constant from wispIssueTable
+//nolint:gosec // G201: table is a hardcoded constant ("issues" or "wisps")
 func scanIssueFromTable(ctx context.Context, db *sql.DB, table, id string) (*types.Issue, error) {
 	row := db.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT %s
@@ -123,7 +86,7 @@ func scanIssueFromTable(ctx context.Context, db *sql.DB, table, id string) (*typ
 
 // recordEventInTable records an event in the specified events table.
 //
-//nolint:gosec // G201: table is a hardcoded constant from wispEventTable
+//nolint:gosec // G201: table is a hardcoded constant ("events" or "wisp_events")
 func recordEventInTable(ctx context.Context, tx *sql.Tx, table, issueID string, eventType types.EventType, actor, oldValue, newValue string) error {
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (issue_id, event_type, actor, old_value, new_value)
@@ -197,7 +160,7 @@ func insertIssueTxIntoTable(ctx context.Context, tx *sql.Tx, table string, issue
 // scanIssueTxFromTable scans a full issue from a named table within a transaction.
 // Delegates to the unified scanIssueFrom to ensure all columns are hydrated.
 //
-//nolint:gosec // G201: table is a hardcoded constant from wispIssueTable
+//nolint:gosec // G201: table is a hardcoded constant ("issues" or "wisps")
 func scanIssueTxFromTable(ctx context.Context, tx *sql.Tx, table, id string) (*types.Issue, error) {
 	row := tx.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT %s FROM %s WHERE id = ?
@@ -332,6 +295,12 @@ func (s *DoltStore) getWispLabels(ctx context.Context, issueID string) ([]string
 
 // updateWisp updates fields on a wisp in the wisps table.
 func (s *DoltStore) updateWisp(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
+	// Fetch old wisp for closed_at auto-management
+	oldIssue, err := s.getWisp(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get wisp for update: %w", err)
+	}
+
 	setClauses := []string{"updated_at = ?"}
 	args := []interface{}{time.Now().UTC()}
 
@@ -358,11 +327,14 @@ func (s *DoltStore) updateWisp(ctx context.Context, id string, updates map[strin
 		}
 	}
 
+	// Auto-manage closed_at (same as UpdateIssue for issues table)
+	setClauses, args = manageClosedAt(oldIssue, updates, setClauses, args)
+
 	args = append(args, id)
 
 	// nolint:gosec // G201: setClauses contains only column names
 	query := fmt.Sprintf("UPDATE wisps SET %s WHERE id = ?", strings.Join(setClauses, ", "))
-	_, err := s.execContext(ctx, query, args...)
+	_, err = s.execContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update wisp: %w", err)
 	}
@@ -464,7 +436,7 @@ func (s *DoltStore) claimWisp(ctx context.Context, id string, actor string) erro
 
 	if rowsAffected == 0 {
 		var currentAssignee string
-		err := s.db.QueryRowContext(ctx, `SELECT assignee FROM wisps WHERE id = ?`, id).Scan(&currentAssignee)
+		err := tx.QueryRowContext(ctx, `SELECT assignee FROM wisps WHERE id = ?`, id).Scan(&currentAssignee)
 		if err != nil {
 			return fmt.Errorf("failed to get current assignee: %w", err)
 		}

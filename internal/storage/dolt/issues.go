@@ -544,12 +544,42 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		return &types.DeleteIssuesResult{}, nil
 	}
 
+	// Partition IDs into regular issues and wisps
+	var issueIDs, wispIDs []string
+	for _, id := range ids {
+		if IsEphemeralID(id) {
+			wispIDs = append(wispIDs, id)
+		} else {
+			issueIDs = append(issueIDs, id)
+		}
+	}
+
+	// Delete wisps via their dedicated method (no cascade/force support for wisps)
+	result := &types.DeleteIssuesResult{}
+	for _, wid := range wispIDs {
+		if !dryRun {
+			if err := s.deleteWisp(ctx, wid); err != nil {
+				return nil, fmt.Errorf("failed to delete wisp %s: %w", wid, err)
+			}
+		}
+		result.DeletedCount++
+	}
+
+	// If only wisps, return early
+	if len(issueIDs) == 0 {
+		return result, nil
+	}
+
+	// Continue with regular issue deletion
+	ids = issueIDs
+
 	idSet := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		idSet[id] = true
 	}
 
-	result := &types.DeleteIssuesResult{}
+	wispDeletedCount := result.DeletedCount
+	result = &types.DeleteIssuesResult{}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -703,7 +733,7 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	result.DependenciesCount = depsCount
 	result.LabelsCount = labelsCount
 	result.EventsCount = eventsCount
-	result.DeletedCount = len(expandedIDs)
+	result.DeletedCount = len(expandedIDs) + wispDeletedCount
 
 	if dryRun {
 		return result, nil
@@ -743,7 +773,7 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		rowsAffected, _ := deleteResult.RowsAffected()
 		totalDeleted += int(rowsAffected)
 	}
-	result.DeletedCount = totalDeleted
+	result.DeletedCount = totalDeleted + wispDeletedCount
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
