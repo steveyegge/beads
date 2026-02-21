@@ -58,14 +58,14 @@ type DoltStore struct {
 	watchdogDone   chan struct{}
 
 	// Per-invocation caches (lifetime = DoltStore lifetime)
-	customStatusCache    []string // cached result of GetCustomStatuses
-	customStatusCached   bool     // true once customStatusCache has been populated
-	customTypeCache      []string // cached result of GetCustomTypes
-	customTypeCached     bool     // true once customTypeCache has been populated
-	blockedIDsCache      []string // cached result of computeBlockedIDs
-	blockedIDsCacheMap   map[string]bool
-	blockedIDsCached     bool // true once blockedIDsCache has been populated
-	cacheMu              sync.Mutex
+	customStatusCache  []string // cached result of GetCustomStatuses
+	customStatusCached bool     // true once customStatusCache has been populated
+	customTypeCache    []string // cached result of GetCustomTypes
+	customTypeCached   bool     // true once customTypeCache has been populated
+	blockedIDsCache    []string // cached result of computeBlockedIDs
+	blockedIDsCacheMap map[string]bool
+	blockedIDsCached   bool // true once blockedIDsCache has been populated
+	cacheMu            sync.Mutex
 
 	// Version control config
 	committerName  string
