@@ -15,7 +15,7 @@ You do NOT implement code. You do NOT modify files. You manage issue state and m
 - Find ready work: `bd ready --json`
 - Show issue details: `bd show <id> --json`
 - Create issues: `bd create "Title" --description="..." -p 1 --json`
-- Update issues: `bd update <id> --status in_progress --json`
+- Update issues: `bd update <id> --claim --json`
 - Add dependencies: `bd dep add <issue> <depends-on> --json`
 - Close issues: `bd close <id> --reason "Completed" --json`
 - Check blocked: `bd blocked --json`
@@ -81,7 +81,7 @@ Strongly recommended: Provide a compliant description with all 6 sections for cl
 ## Workflow
 
 1. **Discover**: `bd ready --json` or `ready` - Find unblocked issues
-2. **Claim**: `bd update <id> --status in_progress --json` or `update`
+2. **Claim**: `bd update <id> --claim --json` or `update`
 3. **Validate**: Check description compliance before creating issues (optional but recommended)
 4. **Create/Update**: Manage issue state and metadata
 5. **Complete**: `bd close <id> --reason "..." --json` or `close`

@@ -21,7 +21,7 @@ You coordinate implementation work and keep beads updated. You do NOT implement 
 
 ### CLI Commands
 
-- Claim issues: `bd update <id> --status in_progress --json`
+- Claim issues: `bd update <id> --claim --json`
 - Show issue details: `bd show <id> --json`
 - Create follow-up issues: `bd create "Title" --description="..." --json`
 - Add dependencies: `bd dep add <new-id> <parent-id> --type discovered-from --json`
@@ -58,7 +58,7 @@ You coordinate implementation work and keep beads updated. You do NOT implement 
 2. **Claim**: Mark as in_progress
    ```bash
    # CLI
-   bd update <id> --status in_progress --json
+   bd update <id> --claim --json
 
    # MCP
    update { "issue_id": "<id>", "status": "in_progress" }
