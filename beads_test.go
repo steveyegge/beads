@@ -2,6 +2,8 @@ package beads_test
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,20 +118,27 @@ func TestOpenFromConfig_ServerModeFailsWithoutServer(t *testing.T) {
 		t.Fatalf("failed to create .beads dir: %v", err)
 	}
 
-	// Use a port that's very unlikely to have a server
-	metadata := `{"backend":"dolt","database":"dolt","dolt_mode":"server","dolt_server_host":"127.0.0.1","dolt_server_port":39999}`
+	// Dynamically find an unused port by binding to :0 then closing
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to find free port: %v", err)
+	}
+	freePort := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	metadata := fmt.Sprintf(`{"backend":"dolt","database":"dolt","dolt_mode":"server","dolt_server_host":"127.0.0.1","dolt_server_port":%d}`, freePort)
 	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadata), 0644); err != nil {
 		t.Fatalf("failed to write metadata.json: %v", err)
 	}
 
 	ctx := context.Background()
-	_, err := beads.OpenFromConfig(ctx, beadsDir)
-	if err == nil {
+	_, openErr := beads.OpenFromConfig(ctx, beadsDir)
+	if openErr == nil {
 		t.Fatal("OpenFromConfig (server mode) should fail when no server is running")
 	}
 	// Should contain "unreachable" from the fail-fast TCP check
-	if !strings.Contains(err.Error(), "unreachable") {
-		t.Errorf("expected 'unreachable' in error, got: %v", err)
+	if !strings.Contains(openErr.Error(), "unreachable") {
+		t.Errorf("expected 'unreachable' in error, got: %v", openErr)
 	}
 }
 
