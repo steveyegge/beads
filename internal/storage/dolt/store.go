@@ -244,7 +244,7 @@ func (s *DoltStore) doltSpanAttrs() []attribute.KeyValue {
 	return []attribute.KeyValue{
 		attribute.String("db.system", "dolt"),
 		attribute.Bool("db.readonly", s.readOnly),
-		attribute.Bool("db.server_mode", s.serverMode),
+		attribute.Bool("db.server_mode", true), // always server mode after embedded removal
 	}
 }
 
