@@ -434,13 +434,6 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, roleCheck)
 	// Don't fail overall check for role config, just warn - URL heuristic fallback still works
 
-	// Check 7d: JSONL integrity (malformed lines, missing IDs)
-	jsonlIntegrityCheck := convertWithCategory(doctor.CheckJSONLIntegrity(path), doctor.CategoryData)
-	result.Checks = append(result.Checks, jsonlIntegrityCheck)
-	if jsonlIntegrityCheck.Status == statusWarning || jsonlIntegrityCheck.Status == statusError {
-		result.OverallOK = false
-	}
-
 	// Check 7e: Stale lock files (bootstrap, sync, daemon, startup)
 	staleLockCheck := convertDoctorCheck(doctor.CheckStaleLockFiles(path))
 	result.Checks = append(result.Checks, staleLockCheck)
@@ -480,14 +473,6 @@ func runDiagnostics(path string) doctorResult {
 	// Check 8h: Dolt server mode configuration check
 	doltModeCheck := convertWithCategory(doctor.CheckDoltServerModeMismatch(path), doctor.CategoryFederation)
 	result.Checks = append(result.Checks, doltModeCheck)
-
-	// Check 9a: Sync divergence (JSONL/SQLite/git) - GH#885
-	syncDivergenceCheck := convertWithCategory(doctor.CheckSyncDivergence(path), doctor.CategoryData)
-	result.Checks = append(result.Checks, syncDivergenceCheck)
-	if syncDivergenceCheck.Status == statusError {
-		result.OverallOK = false
-	}
-	// Warning-level divergence is informational, doesn't fail overall
 
 	// Check 9: Permissions
 	permCheck := convertWithCategory(doctor.CheckPermissions(path), doctor.CategoryCore)

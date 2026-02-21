@@ -205,24 +205,17 @@ var repoSyncCmd = &cobra.Command{
 	Short: "Manually trigger multi-repo sync",
 	Long: `Trigger synchronization from all configured repositories.
 
-This hydrates issues from all repos in repos.additional into the
-local database, then exports any local changes back to JSONL.`,
+This triggers Dolt push/pull for configured repositories.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := ensureDirectMode("repo sync requires direct database access"); err != nil {
 			return err
 		}
 
-		ctx := rootCtx
-
-		// Import from all repos
-		jsonlPath := findJSONLPath()
-		if err := importToJSONLWithStore(ctx, store, jsonlPath); err != nil {
-			return fmt.Errorf("import failed: %w", err)
-		}
-
-		// Export to all repos
-		if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
-			return fmt.Errorf("export failed: %w", err)
+		// Dolt handles sync natively via push/pull
+		if hasRemote, err := store.HasRemote(rootCtx, "origin"); err == nil && hasRemote {
+			if err := store.Push(rootCtx); err != nil {
+				return fmt.Errorf("dolt push failed: %w", err)
+			}
 		}
 
 		if jsonOutput {

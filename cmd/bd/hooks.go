@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
 )
 
@@ -520,81 +518,18 @@ func runChainedHook(hookName string, args []string) int {
 	return 0
 }
 
-// runPreCommitHook flushes pending changes to JSONL before commit.
-// Returns 0 on success (or if not applicable), 1 if unstaged beads changes detected.
+// runPreCommitHook runs chained hooks before commit.
+// Returns 0 on success (or if not applicable).
 func runPreCommitHook() int {
 	// Run chained hook first (if exists)
 	if exitCode := runChainedHook("pre-commit", nil); exitCode != 0 {
 		return exitCode
 	}
-
-	// Check if we're in a bd workspace
-	if _, err := os.Stat(".beads"); os.IsNotExist(err) {
-		return 0 // Not a bd workspace, nothing to do
-	}
-
-	// In dolt-native mode, Dolt is the source of truth — skip JSONL export
-	if config.GetSyncMode() == config.SyncModeDoltNative {
-		return 0
-	}
-
-	// Flush pending changes to JSONL
-	// Use --flush-only to skip git operations (we're already in a git hook)
-	cmd := exec.Command("bd", "sync", "--flush-only")
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: Failed to flush bd changes to JSONL")
-		fmt.Fprintln(os.Stderr, "Run 'bd sync --flush-only' manually to diagnose")
-		// Don't block the commit - user may have removed beads or have other issues
-	}
-
-	// Stage JSONL files for commit
-	// By default, we auto-stage for convenience. Users with conflicting git hooks
-	// (e.g., hooks that read the staging area) can set BEADS_NO_AUTO_STAGE=1 to
-	// disable this and stage manually. See: https://github.com/steveyegge/beads/issues/826
-	if os.Getenv("BEADS_NO_AUTO_STAGE") != "" {
-		// Safe mode: check for unstaged changes and block if found
-		var unstaged []string
-		for _, f := range jsonlFilePaths {
-			if _, err := os.Stat(f); err == nil {
-				if hasUnstagedChanges(f) {
-					unstaged = append(unstaged, f)
-				}
-			}
-		}
-
-		if len(unstaged) > 0 {
-			fmt.Fprintln(os.Stderr, "❌ Unstaged beads changes detected:")
-			for _, f := range unstaged {
-				fmt.Fprintf(os.Stderr, "   %s\n", f)
-			}
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "Run: git add .beads/")
-			return 1
-		}
-	} else {
-		// Default: auto-stage JSONL files
-		rc, rcErr := beads.GetRepoContext()
-		ctx := context.Background()
-		for _, f := range jsonlFilePaths {
-			if _, err := os.Stat(f); err == nil {
-				var gitAdd *exec.Cmd
-				if rcErr == nil {
-					gitAdd = rc.GitCmdCWD(ctx, "add", f)
-				} else {
-					// Fallback if RepoContext unavailable
-					// #nosec G204 -- f comes from jsonlFilePaths (controlled, hardcoded paths)
-					gitAdd = exec.Command("git", "add", f)
-				}
-				_ = gitAdd.Run() // Ignore errors - file may not exist
-			}
-		}
-	}
-
 	return 0
 }
 
-// runPostMergeHook imports JSONL after pull/merge.
-// Returns 0 on success (or if not applicable), non-zero on error.
+// runPostMergeHook runs chained hooks after merge.
+// Returns 0 on success (or if not applicable).
 //
 //nolint:unparam // Always returns 0 by design - warnings don't block merges
 func runPostMergeHook() int {
@@ -602,147 +537,22 @@ func runPostMergeHook() int {
 	if exitCode := runChainedHook("post-merge", nil); exitCode != 0 {
 		return exitCode
 	}
-
-	// Skip during rebase
-	if isRebaseInProgress() {
-		return 0
-	}
-
-	// Check if we're in a bd workspace
-	if _, err := os.Stat(".beads"); os.IsNotExist(err) {
-		return 0
-	}
-
-	// In dolt-native mode, Dolt is the source of truth — skip JSONL import
-	if config.GetSyncMode() == config.SyncModeDoltNative {
-		return 0
-	}
-
-	// Check if any JSONL file exists
-	if !hasBeadsJSONL() {
-		return 0
-	}
-
-	// Run bd sync --import-only --no-git-history
-	cmd := exec.Command("bd", "sync", "--import-only", "--no-git-history")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: Failed to sync bd changes after merge")
-		fmt.Fprintln(os.Stderr, string(output))
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Run 'bd doctor --fix' to diagnose and repair")
-		// Don't fail the merge, just warn
-	}
-
-	// Run quick health check
-	healthCmd := exec.Command("bd", "doctor", "--check-health")
-	_ = healthCmd.Run() // Ignore errors
-
 	return 0
 }
 
-// runPrePushHook prevents pushing stale JSONL.
+// runPrePushHook runs chained hooks before push.
 // Returns 0 to allow push, non-zero to block.
 func runPrePushHook(args []string) int {
 	// Run chained hook first (if exists)
 	if exitCode := runChainedHook("pre-push", args); exitCode != 0 {
 		return exitCode
 	}
-
-	// Check if we're in a bd workspace
-	if _, err := os.Stat(".beads"); os.IsNotExist(err) {
-		return 0
-	}
-
-	// In dolt-native mode, Dolt is the source of truth — skip JSONL checks
-	if config.GetSyncMode() == config.SyncModeDoltNative {
-		return 0
-	}
-
-	// Skip if bd sync is already in progress (prevents circular error)
-	if os.Getenv("BD_SYNC_IN_PROGRESS") != "" {
-		return 0
-	}
-
-	// Get RepoContext for git operations (needed for flush and staging)
-	rc, rcErr := beads.GetRepoContext()
-	ctx := context.Background()
-
-	// Flush pending bd changes
-	flushCmd := exec.Command("bd", "sync", "--flush-only")
-	_ = flushCmd.Run() // Ignore errors
-
-	// Auto-stage JSONL files after flush to prevent race condition.
-	// Without this, flush creates uncommitted changes that the check below
-	// would detect, causing an infinite loop. See: GH#1208
-	for _, f := range jsonlFilePaths {
-		if _, err := os.Stat(f); err == nil {
-			var gitAdd *exec.Cmd
-			if rcErr == nil {
-				gitAdd = rc.GitCmdCWD(ctx, "add", f)
-			} else {
-				// #nosec G204 -- f comes from jsonlFilePaths (controlled, hardcoded paths)
-				gitAdd = exec.Command("git", "add", f)
-			}
-			_ = gitAdd.Run() // Ignore errors - file may not exist
-		}
-	}
-
-	// Check for uncommitted JSONL changes
-	files := []string{}
-	for _, f := range jsonlFilePaths {
-		// Check if file exists or is tracked
-		if _, err := os.Stat(f); err == nil {
-			files = append(files, f)
-		} else {
-			// Check if tracked by git
-			var checkCmd *exec.Cmd
-			if rcErr == nil {
-				checkCmd = rc.GitCmdCWD(ctx, "ls-files", "--error-unmatch", f)
-			} else {
-				// #nosec G204 - f is from jsonlFilePaths (controlled, hardcoded paths)
-				checkCmd = exec.Command("git", "ls-files", "--error-unmatch", f)
-			}
-			if checkCmd.Run() == nil {
-				files = append(files, f)
-			}
-		}
-	}
-
-	if len(files) == 0 {
-		return 0
-	}
-
-	// Check for uncommitted changes using git status
-	statusArgs := append([]string{"status", "--porcelain", "--"}, files...)
-	var statusCmd *exec.Cmd
-	if rcErr == nil {
-		statusCmd = rc.GitCmdCWD(ctx, statusArgs...)
-	} else {
-		// #nosec G204 - statusArgs built from hardcoded list and git subcommands
-		statusCmd = exec.Command("git", statusArgs...)
-	}
-	output, _ := statusCmd.Output()
-	if len(output) > 0 {
-		fmt.Fprintln(os.Stderr, "❌ Error: Uncommitted changes detected")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Before pushing, ensure all changes are committed. This includes:")
-		fmt.Fprintln(os.Stderr, "  • bd JSONL updates (run 'bd sync')")
-		fmt.Fprintln(os.Stderr, "  • any other modified files (run 'git status' to review)")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Run 'bd sync' to commit these changes:")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "  bd sync")
-		fmt.Fprintln(os.Stderr, "")
-		return 1
-	}
-
 	return 0
 }
 
-// runPostCheckoutHook imports JSONL after branch checkout.
+// runPostCheckoutHook runs chained hooks after branch checkout.
 // args: [previous-HEAD, new-HEAD, flag] where flag=1 for branch checkout
-// Returns 0 on success (or if not applicable), non-zero on error.
+// Returns 0 on success (or if not applicable).
 //
 //nolint:unparam // Always returns 0 by design - warnings don't block checkouts
 func runPostCheckoutHook(args []string) int {
@@ -750,67 +560,6 @@ func runPostCheckoutHook(args []string) int {
 	if exitCode := runChainedHook("post-checkout", args); exitCode != 0 {
 		return exitCode
 	}
-
-	// Only run on branch checkouts (flag=1)
-	if len(args) >= 3 && args[2] != "1" {
-		return 0
-	}
-
-	// Skip during rebase
-	if isRebaseInProgress() {
-		return 0
-	}
-
-	// Check if we're in a bd workspace
-	if _, err := os.Stat(".beads"); os.IsNotExist(err) {
-		return 0
-	}
-
-	// In dolt-native mode, Dolt is the source of truth — skip JSONL import
-	if config.GetSyncMode() == config.SyncModeDoltNative {
-		return 0
-	}
-
-	// Detect git worktree and show warning
-	if isGitWorktree() {
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "╔══════════════════════════════════════════════════════════════════════════╗")
-		fmt.Fprintln(os.Stderr, "║ Welcome to beads in git worktree!                                        ║")
-		fmt.Fprintln(os.Stderr, "╠══════════════════════════════════════════════════════════════════════════╣")
-		fmt.Fprintln(os.Stderr, "║ Note: Daemon mode is not recommended with git worktrees.                 ║")
-		fmt.Fprintln(os.Stderr, "║ Worktrees share the same database, and the daemon may commit changes     ║")
-		fmt.Fprintln(os.Stderr, "║ to the wrong branch.                                                     ║")
-		fmt.Fprintln(os.Stderr, "║                                                                          ║")
-		fmt.Fprintln(os.Stderr, "║ RECOMMENDED: Disable daemon for this session:                            ║")
-		fmt.Fprintln(os.Stderr, "║   export BEADS_NO_DAEMON=1                                               ║")
-		fmt.Fprintln(os.Stderr, "║                                                                          ║")
-		fmt.Fprintln(os.Stderr, "║ For more information:                                                    ║")
-		fmt.Fprintln(os.Stderr, "║   - Run: bd doctor                                                       ║")
-		fmt.Fprintln(os.Stderr, "║   - Read: docs/GIT_INTEGRATION.md (lines 10-53)                          ║")
-		fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════════════════════════════╝")
-		fmt.Fprintln(os.Stderr, "")
-	}
-
-	// Check if any JSONL file exists
-	if !hasBeadsJSONL() {
-		return 0
-	}
-
-	// Run bd sync --import-only --no-git-history
-	cmd := exec.Command("bd", "sync", "--import-only", "--no-git-history")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: Failed to sync bd changes after checkout")
-		fmt.Fprintln(os.Stderr, string(output))
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Run 'bd doctor --fix' to diagnose and repair")
-		// Don't fail the checkout, just warn
-	}
-
-	// Run quick health check
-	healthCmd := exec.Command("bd", "doctor", "--check-health")
-	_ = healthCmd.Run() // Ignore errors
-
 	return 0
 }
 
@@ -994,59 +743,6 @@ func isRebaseInProgress() bool {
 	return false
 }
 
-// hasBeadsJSONL checks if any JSONL file exists in .beads/.
-func hasBeadsJSONL() bool {
-	for _, f := range jsonlFilePaths {
-		if _, err := os.Stat(f); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-// hasUnstagedChanges checks if a file has uncommitted changes (modified or untracked).
-// Returns true if the file needs to be staged before commit.
-func hasUnstagedChanges(path string) bool {
-	// Check git status for this specific file
-	rc, rcErr := beads.GetRepoContext()
-	var cmd *exec.Cmd
-	if rcErr == nil {
-		cmd = rc.GitCmdCWD(context.Background(), "status", "--porcelain", "--", path)
-	} else {
-		// #nosec G204 - path is from hardcoded list in caller
-		cmd = exec.Command("git", "status", "--porcelain", "--", path)
-	}
-	output, err := cmd.Output()
-	if err != nil {
-		return false // If git fails, assume no changes
-	}
-
-	// Parse porcelain output: XY filename
-	// X = staged status, Y = unstaged status
-	// We care about Y (unstaged) being non-space, OR the file being untracked (??)
-	status := strings.TrimSpace(string(output))
-	if status == "" {
-		return false // No changes
-	}
-
-	// Check each line (usually just one for a single file)
-	for _, line := range strings.Split(status, "\n") {
-		if len(line) < 2 {
-			continue
-		}
-		x, y := line[0], line[1]
-		// Untracked file
-		if x == '?' && y == '?' {
-			return true
-		}
-		// Modified but not staged (Y is M, D, etc.)
-		if y != ' ' {
-			return true
-		}
-	}
-
-	return false
-}
 
 var hooksRunCmd = &cobra.Command{
 	Use:   "run <hook-name> [args...]",
@@ -1055,10 +751,10 @@ var hooksRunCmd = &cobra.Command{
 thin shim scripts installed in .git/hooks/.
 
 Supported hooks:
-  - pre-commit: Flush pending changes to JSONL before commit
-  - post-merge: Import JSONL after pull/merge
-  - pre-push: Prevent pushing stale JSONL
-  - post-checkout: Import JSONL after branch checkout
+  - pre-commit: Run chained hooks before commit
+  - post-merge: Run chained hooks after pull/merge
+  - pre-push: Run chained hooks before push
+  - post-checkout: Run chained hooks after branch checkout
   - prepare-commit-msg: Add agent identity trailers for forensics
 
 The thin shim pattern ensures hook logic is always in sync with the

@@ -59,61 +59,10 @@ This is read-only and does not modify the database or git state.`,
 			os.Exit(1)
 		}
 
-		commitHash := *issue.CompactedAtCommit
-
-		// Find JSONL path
-		jsonlPath := findJSONLPath()
-		if jsonlPath == "" {
-			fmt.Fprintf(os.Stderr, "Error: not in a bd workspace (no .beads directory found)\n")
-			os.Exit(1)
-		}
-
-		// Get current git HEAD for restoration
-		currentHead, err := getCurrentGitHead()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: cannot determine current git HEAD: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Check for uncommitted changes
-		hasChanges, err := gitHasUncommittedChanges()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking git status: %v\n", err)
-			os.Exit(1)
-		}
-		if hasChanges {
-			fmt.Fprintf(os.Stderr, "Error: you have uncommitted changes\n")
-			fmt.Fprintf(os.Stderr, "Hint: commit or stash changes before running restore\n")
-			os.Exit(1)
-		}
-
-		// Checkout the historical commit
-		if err := gitCheckout(commitHash); err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking out commit %s: %v\n", commitHash, err)
-			os.Exit(1)
-		}
-
-		// Ensure we return to current state
-		defer func() {
-			if err := gitCheckout(currentHead); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to return to %s: %v\n", currentHead, err)
-			}
-		}()
-
-		// Read the issue from JSONL at this commit
-		historicalIssue, err := readIssueFromJSONL(jsonlPath, issueID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading issue from historical JSONL: %v\n", err)
-			os.Exit(1)
-		}
-
-		if historicalIssue == nil {
-			fmt.Fprintf(os.Stderr, "Error: issue %s not found in JSONL at commit %s\n", issueID, commitHash)
-			os.Exit(1)
-		}
-
-		// Display the restored issue
-		displayRestoredIssue(historicalIssue, commitHash)
+		// TODO(gt-vemg9q.2): Replace with dolt_history_ table query
+		fmt.Fprintf(os.Stderr, "Error: bd restore requires Dolt history tables (JSONL restore removed)\n")
+		fmt.Fprintf(os.Stderr, "Hint: use 'bd show %s --as-of <commit>' for historical data\n", issueID)
+		os.Exit(1)
 	},
 }
 

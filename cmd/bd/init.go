@@ -2,9 +2,7 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,7 +17,6 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/dolt"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 	"golang.org/x/term"
@@ -709,73 +706,6 @@ func migrateOldDatabases(targetPath string, quiet bool) error {
 	}
 
 	return nil
-}
-
-// readFirstIssueFromJSONL reads the first issue from a JSONL file
-func readFirstIssueFromJSONL(path string) (*types.Issue, error) {
-	// #nosec G304 -- helper reads JSONL file chosen by current bd command
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open JSONL file: %w", err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-
-		// skip empty lines
-		if line == "" {
-			continue
-		}
-
-		var issue types.Issue
-		if err := json.Unmarshal([]byte(line), &issue); err == nil {
-			return &issue, nil
-		} else {
-			// Skip malformed lines with warning
-			fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
-			continue
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading JSONL file: %w", err)
-	}
-
-	return nil, nil
-}
-
-// readFirstIssueFromGit reads the first issue from a git ref (bd-0is: supports sync-branch)
-func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
-	output, err := readFromGitRef(jsonlPath, gitRef)
-	if err != nil {
-		return nil, err
-	}
-
-	scanner := bufio.NewScanner(bytes.NewReader(output))
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// skip empty lines
-		if line == "" {
-			continue
-		}
-
-		var issue types.Issue
-		if err := json.Unmarshal([]byte(line), &issue); err == nil {
-			return &issue, nil
-		}
-		// Skip malformed lines silently (called during auto-detection)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error scanning git content: %w", err)
-	}
-
-	return nil, nil
 }
 
 // checkExistingBeadsDataAt checks for existing database at a specific beadsDir path.

@@ -382,7 +382,17 @@ func CheckDoltLocks(path string) DoctorCheck {
 
 // Helper functions
 
-// Note: findJSONLFile is defined in sync_divergence.go
+// findJSONLFile locates the JSONL file in a .beads directory.
+// Temporary: will be removed with Phase 2c (doctor JSONL cleanup).
+func findJSONLFile(beadsDir string) string {
+	for _, name := range []string{"issues.jsonl", "beads.jsonl"} {
+		p := filepath.Join(beadsDir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
 
 // getSQLiteDBPath returns the path to the SQLite database.
 func getSQLiteDBPath(beadsDir string) string {

@@ -279,8 +279,6 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.DatabaseConfig(path)
 		case "JSONL Config":
 			err = fix.LegacyJSONLConfig(path)
-		case "JSONL Integrity":
-			err = fix.JSONLIntegrity(path)
 		case "Untracked Files":
 			err = fix.UntrackedJSONL(path)
 		case "Merge Artifacts":

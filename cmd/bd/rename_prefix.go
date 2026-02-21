@@ -88,36 +88,6 @@ NOTE: This is a rare operation. Most users never need this command.`,
 			FatalError("%v", err)
 		}
 
-		// Get JSONL path for sync operations
-		jsonlPath := findJSONLPath()
-
-		// Force import from JSONL to ensure DB has all issues before rename
-		// This prevents data loss if JSONL has issues from other workspaces
-		if !dryRun && jsonlPath != "" {
-			if _, err := os.Stat(jsonlPath); err == nil {
-				// JSONL exists - force import to sync all issues to DB
-				issues, err := parseJSONLFile(jsonlPath)
-				if err != nil {
-					FatalError("failed to read JSONL before rename: %v", err)
-				}
-				if len(issues) > 0 {
-					opts := ImportOptions{
-						DryRun:               false,
-						SkipUpdate:           false,
-						Strict:               false,
-						SkipPrefixValidation: true, // Allow any prefix during rename
-					}
-					result, err := importIssuesCore(ctx, dbPath, store, issues, opts)
-					if err != nil {
-						FatalError("failed to sync JSONL before rename: %v", err)
-					}
-					if result.Created > 0 || result.Updated > 0 {
-						fmt.Printf("Synced %d issues from JSONL before rename\n", result.Created+result.Updated)
-					}
-				}
-			}
-		}
-
 		oldPrefix, err := store.GetConfig(ctx, "issue_prefix")
 		if err != nil || oldPrefix == "" {
 			FatalError("failed to get current prefix: %v", err)
@@ -191,22 +161,6 @@ NOTE: This is a rare operation. Most users never need this command.`,
 
 		if err := renamePrefixInDB(ctx, oldPrefix, newPrefix, issues); err != nil {
 			FatalError("failed to rename prefix: %v", err)
-		}
-
-		// Force export to JSONL with new IDs
-		// Safe because we imported all JSONL issues before rename
-		if jsonlPath != "" {
-			// Clear metadata hashes so integrity check doesn't fail
-			_ = store.SetMetadata(ctx, "jsonl_content_hash", "") // Best effort: stale hashes will be recomputed on next export
-			_ = store.SetMetadata(ctx, "export_hashes", "")      // Best effort: stale hashes will be recomputed on next export
-
-			// Export renamed issues directly to JSONL
-			if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to export: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Run 'bd export --force' to update JSONL\n")
-			} else {
-				fmt.Printf("Updated %s with new IDs\n", jsonlPath)
-			}
 		}
 
 		fmt.Printf("%s Successfully renamed prefix from %s to %s\n", ui.RenderPass("✓"), ui.RenderAccent(oldPrefix), ui.RenderAccent(newPrefix))
@@ -398,23 +352,6 @@ func repairPrefixes(ctx context.Context, st *dolt.DoltStore, actorName string, t
 	// Set the new prefix in config
 	if err := st.SetConfig(ctx, "issue_prefix", targetPrefix); err != nil {
 		return fmt.Errorf("failed to update config: %w", err)
-	}
-
-	// Force export to JSONL with new IDs
-	// Safe because we imported all JSONL issues before repair (done in caller)
-	jsonlPath := findJSONLPath()
-	if jsonlPath != "" {
-		// Clear metadata hashes so integrity check doesn't fail
-		_ = st.SetMetadata(ctx, "jsonl_content_hash", "") // Best effort: stale hashes will be recomputed on next export
-		_ = st.SetMetadata(ctx, "export_hashes", "")      // Best effort: stale hashes will be recomputed on next export
-
-		// Export renamed issues directly to JSONL
-		if err := exportToJSONLWithStore(ctx, st, jsonlPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to export: %v\n", err)
-			fmt.Fprintf(os.Stderr, "Run 'bd export --force' to update JSONL\n")
-		} else {
-			fmt.Printf("Updated %s with new IDs\n", jsonlPath)
-		}
 	}
 
 	fmt.Printf("\n%s Successfully consolidated %d prefixes into %s\n",

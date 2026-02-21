@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -219,8 +218,6 @@ Force: Delete and orphan dependents
 		if err := deleteIssue(ctx, issueID); err != nil {
 			FatalError("deleting issue: %v", err)
 		}
-		// Remove the issue from the JSONL file as well
-		_ = removeIssueFromJSONL(issueID)
 		totalDepsRemoved := outgoingRemoved + inboundRemoved
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
@@ -241,71 +238,6 @@ func deleteIssue(ctx context.Context, issueID string) error {
 	return store.DeleteIssue(ctx, issueID)
 }
 
-// removeIssueFromJSONL removes a deleted issue from the JSONL file
-// Auto-flush cannot see deletions because the dirty_issues row is deleted with the issue
-func removeIssueFromJSONL(issueID string) error {
-	path := findJSONLPath()
-	if path == "" {
-		return nil // No JSONL file yet
-	}
-	// Read all issues except the deleted one
-	// #nosec G304 - controlled path from config
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // No file, nothing to clean
-		}
-		return fmt.Errorf("failed to open storage file: %w", err)
-	}
-	var issues []*types.Issue
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		var iss types.Issue
-		if err := json.Unmarshal([]byte(line), &iss); err != nil {
-			// Skip malformed lines
-			continue
-		}
-		if iss.ID != issueID {
-			issues = append(issues, &iss)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("failed to read storage file: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("failed to close storage file: %w", err)
-	}
-	// Write to temp file atomically
-	temp := fmt.Sprintf("%s.tmp.%d", path, os.Getpid())
-	// #nosec G304 - controlled path from config
-	out, err := os.OpenFile(temp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	enc := json.NewEncoder(out)
-	for _, iss := range issues {
-		if err := enc.Encode(iss); err != nil {
-			_ = out.Close()
-			_ = os.Remove(temp)
-			return fmt.Errorf("failed to write issue: %w", err)
-		}
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(temp)
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-	// Atomic rename
-	if err := os.Rename(temp, path); err != nil {
-		_ = os.Remove(temp)
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
-	return nil
-}
 
 // deleteBatch handles deletion of multiple issues
 //
@@ -527,7 +459,6 @@ func deleteBatchFallback(issueIDs []string, force bool, dryRun bool, cascade boo
 			fmt.Fprintf(os.Stderr, "Error deleting issue %s: %v\n", issueID, err)
 			continue
 		}
-		_ = removeIssueFromJSONL(issueID)
 		deletedCount++
 	}
 
