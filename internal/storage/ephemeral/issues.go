@@ -240,7 +240,7 @@ func (s *Store) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issu
 		args[i] = id
 	}
 
-	query := "SELECT " + issueSelectColumns + " FROM issues WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	query := "SELECT " + issueSelectColumns + " FROM issues WHERE id IN (" + strings.Join(placeholders, ",") + ")" // nolint:gosec // G202: placeholders is safe "?,?,…"
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get ephemeral issues by IDs: %w", err)
@@ -285,7 +285,7 @@ func (s *Store) UpdateIssue(ctx context.Context, id string, updates map[string]i
 	args = append(args, formatTime(time.Now().UTC()))
 
 	args = append(args, id)
-	query := "UPDATE issues SET " + strings.Join(setClauses, ", ") + " WHERE id = ?"
+	query := "UPDATE issues SET " + strings.Join(setClauses, ", ") + " WHERE id = ?" // nolint:gosec // G202: setClauses are safe "col = ?" strings
 
 	result, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -483,7 +483,7 @@ func (s *Store) SearchIssues(ctx context.Context, query string, filter types.Iss
 		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
-	sqlQuery := "SELECT " + issueSelectColumns + " FROM issues" + whereStr + " ORDER BY created_at DESC" + limitSQL
+	sqlQuery := "SELECT " + issueSelectColumns + " FROM issues" + whereStr + " ORDER BY created_at DESC" + limitSQL // nolint:gosec // G202: whereStr/limitSQL built from safe placeholders
 
 	rows, err := s.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
@@ -505,32 +505,32 @@ func (s *Store) SearchIssues(ctx context.Context, query string, filter types.Iss
 // mapFieldToColumn maps update field names to SQL column names.
 func mapFieldToColumn(field string) string {
 	mapping := map[string]string{
-		"title":            "title",
-		"description":      "description",
-		"design":           "design",
-		"notes":            "notes",
-		"status":           "status",
-		"priority":         "priority",
-		"issue_type":       "issue_type",
-		"assignee":         "assignee",
-		"owner":            "owner",
-		"close_reason":     "close_reason",
-		"closed_at":        "closed_at",
+		"title":             "title",
+		"description":       "description",
+		"design":            "design",
+		"notes":             "notes",
+		"status":            "status",
+		"priority":          "priority",
+		"issue_type":        "issue_type",
+		"assignee":          "assignee",
+		"owner":             "owner",
+		"close_reason":      "close_reason",
+		"closed_at":         "closed_at",
 		"closed_by_session": "closed_by_session",
-		"due_at":           "due_at",
-		"defer_until":      "defer_until",
-		"hook_bead":        "hook_bead",
-		"role_bead":        "role_bead",
-		"agent_state":      "agent_state",
-		"last_activity":    "last_activity",
-		"mol_type":         "mol_type",
-		"wisp_type":        "wisp_type",
-		"metadata":         "metadata",
-		"spec_id":          "spec_id",
-		"external_ref":     "external_ref",
-		"source_repo":      "source_repo",
-		"pinned":           "pinned",
-		"ephemeral":        "ephemeral",
+		"due_at":            "due_at",
+		"defer_until":       "defer_until",
+		"hook_bead":         "hook_bead",
+		"role_bead":         "role_bead",
+		"agent_state":       "agent_state",
+		"last_activity":     "last_activity",
+		"mol_type":          "mol_type",
+		"wisp_type":         "wisp_type",
+		"metadata":          "metadata",
+		"spec_id":           "spec_id",
+		"external_ref":      "external_ref",
+		"source_repo":       "source_repo",
+		"pinned":            "pinned",
+		"ephemeral":         "ephemeral",
 	}
 	return mapping[field]
 }

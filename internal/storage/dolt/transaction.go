@@ -83,10 +83,10 @@ func (s *DoltStore) runRoutingTransaction(ctx context.Context, fn func(tx storag
 type routingTransaction struct {
 	store    *DoltStore
 	ctx      context.Context
-	doltTx   *doltTransaction           // non-nil when routing to Dolt
-	ephTx    *ephemeral.Tx              // non-nil when routing to ephemeral
-	sqlTx    *sql.Tx                    // underlying Dolt tx (if started)
-	resolved bool                       // true once the target store is determined
+	doltTx   *doltTransaction // non-nil when routing to Dolt
+	ephTx    *ephemeral.Tx    // non-nil when routing to ephemeral
+	sqlTx    *sql.Tx          // underlying Dolt tx (if started)
+	resolved bool             // true once the target store is determined
 }
 
 // ensureDolt lazily starts a Dolt transaction.

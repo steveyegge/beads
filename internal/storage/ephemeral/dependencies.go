@@ -97,6 +97,7 @@ func (s *Store) GetDependencyRecordsForIssues(ctx context.Context, issueIDs []st
 		args[i] = id
 	}
 
+	// nolint:gosec // G202: placeholders is a safe []string{"?","?",…} — no user input
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT issue_id, depends_on_id, type, created_at, created_by, thread_id
 		 FROM dependencies WHERE issue_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
@@ -141,6 +142,7 @@ func (s *Store) GetBlockingInfoForIssues(ctx context.Context, issueIDs []string)
 	in := strings.Join(placeholders, ",")
 
 	// Issues that block us (where we are the issue_id)
+	// nolint:gosec // G202: in is a safe "?,?,…" placeholder string — no user input
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT d.issue_id, d.depends_on_id FROM dependencies d
 		 JOIN issues i ON i.id = d.depends_on_id
@@ -164,6 +166,7 @@ func (s *Store) GetBlockingInfoForIssues(ctx context.Context, issueIDs []string)
 	}
 
 	// Issues we block (where we are the depends_on_id)
+	// nolint:gosec // G202: in is a safe "?,?,…" placeholder string — no user input
 	rows2, err := s.db.QueryContext(ctx,
 		`SELECT d.depends_on_id, d.issue_id FROM dependencies d
 		 WHERE d.depends_on_id IN (`+in+`)
