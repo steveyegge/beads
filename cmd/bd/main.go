@@ -590,9 +590,6 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Wisps are now stored in the Dolt wisps table (dolt_ignored).
-		// No separate ephemeral store needed.
-
 		// Mark store as active for flush goroutine safety
 		storeMutex.Lock()
 		storeActive = true

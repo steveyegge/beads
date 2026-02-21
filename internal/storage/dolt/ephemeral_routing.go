@@ -5,30 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/steveyegge/beads/internal/storage/ephemeral"
 	"github.com/steveyegge/beads/internal/types"
 )
-
-// SetEphemeralStore is a no-op retained for backward compatibility.
-// Wisp routing now uses the Dolt wisps table instead of a separate SQLite store.
-// Callers that still call SetEphemeralStore will not break, but the store is ignored.
-func (s *DoltStore) SetEphemeralStore(es *ephemeral.Store) {
-	// No-op: wisps are now stored in the Dolt wisps table.
-	// If the caller passed a non-nil store, close it to release resources.
-	if es != nil {
-		_ = es.Close()
-	}
-}
-
-// EphemeralStore returns nil. Retained for backward compatibility.
-func (s *DoltStore) EphemeralStore() *ephemeral.Store {
-	return nil
-}
-
-// HasEphemeralStore returns false. Wisps are now in the Dolt wisps table.
-func (s *DoltStore) HasEphemeralStore() bool {
-	return false
-}
 
 // IsEphemeralID returns true if the ID belongs to an ephemeral issue.
 func IsEphemeralID(id string) bool {
@@ -55,25 +33,6 @@ func partitionIDs(ids []string) (ephIDs, doltIDs []string) {
 		}
 	}
 	return
-}
-
-// SearchIssuesDoltOnly queries Dolt directly, bypassing ephemeral routing.
-// Used by migration to find ephemeral issues still in Dolt.
-func (s *DoltStore) SearchIssuesDoltOnly(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
-	// Clear Ephemeral filter to prevent routing, since we want Dolt results
-	filter.Ephemeral = nil
-	results, err := s.SearchIssues(ctx, query, filter)
-	if err != nil {
-		return nil, err
-	}
-	// Filter to only ephemeral issues
-	var ephIssues []*types.Issue
-	for _, issue := range results {
-		if issue.Ephemeral {
-			ephIssues = append(ephIssues, issue)
-		}
-	}
-	return ephIssues, nil
 }
 
 // PromoteFromEphemeral copies an issue from the wisps table to the issues table,
