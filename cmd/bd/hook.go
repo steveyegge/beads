@@ -379,7 +379,16 @@ func hookPreCommit() int {
 // 4. Exports to JSONL and saves new state
 //
 // Future: Use dolt_diff() for incremental export and BD_ACTOR filtering.
-func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
+func hookPreCommitDolt(beadsDir, worktreeRoot string) (exitCode int) {
+	// Recover from panics in the embedded Dolt engine (e.g. nil pointer in
+	// DoltDB.SetCrashOnFatalError). The hook must never crash git commit.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "Warning: beads pre-commit hook recovered from panic: %v\n", r)
+			exitCode = 0
+		}
+	}()
+
 	// In dolt-native mode, Dolt is the source of truth — skip JSONL export
 	if config.GetSyncMode() == config.SyncModeDoltNative {
 		return 0
