@@ -204,8 +204,15 @@ var doltCommitCmd = &cobra.Command{
 	Long: `Create a Dolt commit from any uncommitted changes in the working set.
 
 This is the primary commit point for batch mode. When auto-commit is set to
-"batch", changes accumulate in the working set across multiple bd commands and
-are committed together here with a descriptive summary message.
+"batch" (the default for embedded mode), changes accumulate in the working set
+across multiple bd commands and are committed together here with a descriptive
+summary message.
+
+DURABILITY NOTE: In batch mode, uncommitted changes persist in the Dolt working
+set (on disk) but are NOT protected by Dolt's commit history. They can be lost
+if you run dolt checkout, dolt reset, or similar operations that discard the
+working set. A SIGTERM/SIGHUP will attempt to flush pending changes before exit.
+Use "on" mode (--dolt-auto-commit=on) if you need every write immediately committed.
 
 Also useful before push operations that require a clean working set, or when
 auto-commit was off or changes were made externally.

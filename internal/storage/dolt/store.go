@@ -730,6 +730,8 @@ func (s *DoltStore) CommitPending(ctx context.Context, actor string) (bool, erro
 
 // buildBatchCommitMessage generates a descriptive commit message summarizing
 // what changed since the last commit by querying dolt_diff against HEAD.
+// Diffs the issues table for counts and checks auxiliary tables (labels,
+// comments, events, metadata) for non-issue changes.
 func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) string {
 	if actor == "" {
 		actor = s.committerName
@@ -758,9 +760,14 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 				}
 			}
 		}
+		// Check for iteration errors (e.g., connection dropped mid-scan)
+		if rowsErr := rows.Err(); rowsErr != nil {
+			// Non-fatal: fall through to generic message
+			added, modified, removed = 0, 0, 0
+		}
 	}
 
-	// Build descriptive message
+	// Build descriptive message from issue-level changes
 	var parts []string
 	if added > 0 {
 		parts = append(parts, fmt.Sprintf("%d created", added))
@@ -770,6 +777,26 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 	}
 	if removed > 0 {
 		parts = append(parts, fmt.Sprintf("%d deleted", removed))
+	}
+
+	// Check auxiliary tables for changes not captured by the issues diff.
+	// Each table contributes a short summary fragment if it has changes.
+	auxTables := []struct {
+		table string
+		label string
+	}{
+		{"labels", "labels"},
+		{"comments", "comments"},
+		{"events", "events"},
+		{"metadata", "metadata"},
+	}
+	for _, aux := range auxTables {
+		var cnt int
+		auxErr := s.db.QueryRowContext(ctx, fmt.Sprintf(
+			"SELECT COUNT(*) FROM dolt_diff('HEAD', 'WORKING', '%s')", aux.table)).Scan(&cnt) //nolint:gosec // G201: table names are hardcoded constants above
+		if auxErr == nil && cnt > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", cnt, aux.label))
+		}
 	}
 
 	if len(parts) == 0 {
