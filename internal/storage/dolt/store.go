@@ -250,21 +250,19 @@ func applyConfigDefaults(cfg *Config) {
 		cfg.Remote = "origin"
 	}
 
-	// Server mode defaults
-	if cfg.ServerMode {
-		if cfg.ServerHost == "" {
-			cfg.ServerHost = "127.0.0.1"
-		}
-		if cfg.ServerPort == 0 {
-			cfg.ServerPort = DefaultSQLPort
-		}
-		if cfg.ServerUser == "" {
-			cfg.ServerUser = "root"
-		}
-		// Check environment variable for password (more secure than command-line)
-		if cfg.ServerPassword == "" {
-			cfg.ServerPassword = os.Getenv("BEADS_DOLT_PASSWORD")
-		}
+	// Server connection defaults (always applied — server mode is the only mode)
+	if cfg.ServerHost == "" {
+		cfg.ServerHost = "127.0.0.1"
+	}
+	if cfg.ServerPort == 0 {
+		cfg.ServerPort = DefaultSQLPort
+	}
+	if cfg.ServerUser == "" {
+		cfg.ServerUser = "root"
+	}
+	// Check environment variable for password (more secure than command-line)
+	if cfg.ServerPassword == "" {
+		cfg.ServerPassword = os.Getenv("BEADS_DOLT_PASSWORD")
 	}
 
 	// Remote credentials for Hosted Dolt push/pull (env vars take precedence)
