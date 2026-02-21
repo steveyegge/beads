@@ -604,10 +604,11 @@ be set via BEADS_DOLT_PASSWORD environment variable.`,
 			}
 		}
 
-		// Add "landing the plane" instructions to AGENTS.md and @AGENTS.md
+		// Add agent instructions to AGENTS.md
 		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
 		if !stealth {
-			addLandingThePlaneInstructions(!quiet)
+			agentsTemplate, _ := cmd.Flags().GetString("agents-template")
+			addAgentsInstructions(!quiet, agentsTemplate)
 		}
 
 		// Check for missing git upstream and warn if not configured
@@ -683,6 +684,7 @@ func init() {
 	initCmd.Flags().Bool("skip-hooks", false, "Skip git hooks installation")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if JSONL already has issues (may cause data loss)")
 	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
+	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides embedded default)")
 
 	// Dolt server mode flags (bd-dolt.2.2)
 	initCmd.Flags().Bool("server", false, "Explicitly configure Dolt in server mode for high-concurrency (default: embedded)")
