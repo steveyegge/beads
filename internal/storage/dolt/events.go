@@ -11,9 +11,9 @@ import (
 
 // AddComment adds a comment event to an issue
 func (s *DoltStore) AddComment(ctx context.Context, issueID, actor, comment string) error {
-	table := "events"
-	if IsEphemeralID(issueID) {
-		table = "wisp_events"
+	table := wispEventTable(issueID)
+	if IsEphemeralID(issueID) && !s.isActiveWisp(ctx, issueID) {
+		table = "events" // Promoted wisp — use permanent table
 	}
 
 	//nolint:gosec // G201: table is hardcoded
@@ -29,9 +29,9 @@ func (s *DoltStore) AddComment(ctx context.Context, issueID, actor, comment stri
 
 // GetEvents retrieves events for an issue
 func (s *DoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error) {
-	table := "events"
-	if IsEphemeralID(issueID) {
-		table = "wisp_events"
+	table := wispEventTable(issueID)
+	if IsEphemeralID(issueID) && !s.isActiveWisp(ctx, issueID) {
+		table = "events" // Promoted wisp — use permanent table
 	}
 
 	//nolint:gosec // G201: table is hardcoded
@@ -85,12 +85,12 @@ func (s *DoltStore) AddIssueComment(ctx context.Context, issueID, author, text s
 // ImportIssueComment adds a comment during import, preserving the original timestamp.
 // This prevents comment timestamp drift across JSONL sync cycles.
 func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
-	// Verify issue exists — route to wisps table for ephemeral IDs
-	issueTable := "issues"
-	commentTable := "comments"
-	if IsEphemeralID(issueID) {
-		issueTable = "wisps"
-		commentTable = "wisp_comments"
+	// Verify issue exists — route to wisps table for active wisps
+	issueTable := wispIssueTable(issueID)
+	commentTable := wispCommentTable(issueID)
+	if IsEphemeralID(issueID) && !s.isActiveWisp(ctx, issueID) {
+		issueTable = "issues"
+		commentTable = "comments"
 	}
 
 	var exists bool
@@ -128,9 +128,9 @@ func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, tex
 
 // GetIssueComments retrieves all comments for an issue
 func (s *DoltStore) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
-	table := "comments"
-	if IsEphemeralID(issueID) {
-		table = "wisp_comments"
+	table := wispCommentTable(issueID)
+	if IsEphemeralID(issueID) && !s.isActiveWisp(ctx, issueID) {
+		table = "comments" // Promoted wisp — use permanent table
 	}
 
 	//nolint:gosec // G201: table is hardcoded

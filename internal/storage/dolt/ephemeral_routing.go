@@ -15,6 +15,18 @@ func IsEphemeralID(id string) bool {
 	return strings.Contains(id, "-wisp-")
 }
 
+// isActiveWisp checks if an ephemeral-looking ID still exists in the wisps table.
+// Returns false if the ID is not ephemeral, or if the wisp was promoted/deleted.
+// Used by CRUD methods to decide whether to route to wisp tables or fall through
+// to permanent tables (handles promoted wisps correctly).
+func (s *DoltStore) isActiveWisp(ctx context.Context, id string) bool {
+	if !IsEphemeralID(id) {
+		return false
+	}
+	wisp, _ := s.getWisp(ctx, id)
+	return wisp != nil
+}
+
 // allEphemeral returns true if all IDs in the slice are ephemeral.
 func allEphemeral(ids []string) bool {
 	for _, id := range ids {
@@ -38,14 +50,20 @@ func partitionIDs(ids []string) (ephIDs, doltIDs []string) {
 }
 
 // PromoteFromEphemeral copies an issue from the wisps table to the issues table,
-// clearing the Ephemeral flag. Used by mol squash to crystallize wisps.
+// clearing the Ephemeral flag. Used by bd promote and mol squash to crystallize wisps.
+//
+// Uses direct SQL inserts to bypass IsEphemeralID routing, which would otherwise
+// redirect label/dependency/event writes back to wisp tables.
 func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor string) error {
 	issue, err := s.getWisp(ctx, id)
 	if errors.Is(err, storage.ErrNotFound) {
-		return nil // Not found in wisps, nothing to promote
+		return fmt.Errorf("wisp %s not found", id)
 	}
 	if err != nil {
 		return err
+	}
+	if issue == nil {
+		return fmt.Errorf("wisp %s not found", id)
 	}
 
 	// Clear ephemeral flag for persistent storage
@@ -56,33 +74,56 @@ func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor s
 		return fmt.Errorf("failed to promote wisp to issues: %w", err)
 	}
 
-	// Copy labels from wisp_labels to labels
+	// Copy labels directly to permanent labels table (bypass IsEphemeralID routing)
 	labels, err := s.getWispLabels(ctx, id)
 	if err != nil {
 		return err
 	}
 	for _, label := range labels {
-		if err := s.AddLabel(ctx, id, label, actor); err != nil {
-			return err
+		if _, err := s.execContext(ctx,
+			`INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)`,
+			id, label); err != nil {
+			return fmt.Errorf("failed to copy label %q: %w", label, err)
 		}
 	}
 
-	// Copy dependencies from wisp_dependencies to dependencies
+	// Copy dependencies directly to permanent dependencies table
 	deps, err := s.getWispDependencyRecords(ctx, id)
 	if err != nil {
 		return err
 	}
 	for _, dep := range deps {
-		if err := s.AddDependency(ctx, dep, actor); err != nil {
-			// Skip if target doesn't exist in Dolt (external ref to other wisp)
-			if strings.Contains(err.Error(), "not found") {
+		metadata := dep.Metadata
+		if metadata == "" {
+			metadata = "{}"
+		}
+		if _, err := s.execContext(ctx, `
+			INSERT IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy, metadata, dep.ThreadID); err != nil {
+			// Skip if target doesn't exist (external ref to other wisp)
+			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "foreign key") {
 				continue
 			}
-			return err
+			return fmt.Errorf("failed to copy dependency: %w", err)
 		}
 	}
 
-	// Delete from wisps table
+	// Copy events via INSERT...SELECT (best-effort: don't fail promotion over history)
+	_, _ = s.execContext(ctx, `
+		INSERT IGNORE INTO events (issue_id, event_type, actor, old_value, new_value, comment, created_at)
+		SELECT issue_id, event_type, actor, old_value, new_value, comment, created_at
+		FROM wisp_events WHERE issue_id = ?
+	`, id)
+
+	// Copy comments via INSERT...SELECT
+	_, _ = s.execContext(ctx, `
+		INSERT IGNORE INTO comments (issue_id, author, text, created_at)
+		SELECT issue_id, author, text, created_at
+		FROM wisp_comments WHERE issue_id = ?
+	`, id)
+
+	// Delete from wisps table (and all wisp_* auxiliary tables)
 	return s.deleteWisp(ctx, id)
 }
 

@@ -15,16 +15,17 @@ var promoteCmd = &cobra.Command{
 	Use:     "promote <wisp-id>",
 	GroupID: "issues",
 	Short:   "Promote a wisp to a permanent bead",
-	Long: `Promote a wisp (ephemeral issue) to a permanent bead (Level 1).
+	Long: `Promote a wisp (ephemeral issue) to a permanent bead.
 
-This sets ephemeral=false on the issue, making it persistent and exportable
-to JSONL. The original ID is preserved so all links keep working.
+This copies the issue from the wisps table (dolt_ignored) to the permanent
+issues table (Dolt-versioned), preserving labels, dependencies, events, and
+comments. The original ID is preserved so all links keep working.
 
 A comment is added recording the promotion and optional reason.
 
 Examples:
-  bd promote bd-abc123
-  bd promote bd-abc123 --reason "Worth tracking long-term"`,
+  bd promote bd-wisp-abc123
+  bd promote bd-wisp-abc123 --reason "Worth tracking long-term"`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("promote")
@@ -34,16 +35,15 @@ Examples:
 
 		ctx := rootCtx
 
-		// Build promotion comment
-		comment := "Promoted from Level 0"
-		if reason != "" {
-			comment += ": " + reason
-		}
-
-		// Direct mode
 		if store == nil {
 			FatalErrorWithHint("database not initialized",
 				"run 'bd init' to create a database")
+		}
+
+		// Handle cross-rig routing
+		if needsRouting(id) {
+			promoteRouted(id, reason)
+			return
 		}
 
 		fullID, err := utils.ResolvePartialID(ctx, store, id)
@@ -63,21 +63,23 @@ Examples:
 			FatalErrorRespectJSON("%s is not a wisp (already persistent)", fullID)
 		}
 
-		// Set ephemeral=false
-		updates := map[string]interface{}{
-			"wisp": false,
-		}
-		if err := store.UpdateIssue(ctx, fullID, updates, actor); err != nil {
+		// Promote: copy from wisps to issues table, preserving labels/deps/events/comments
+		if err := store.PromoteFromEphemeral(ctx, fullID, actor); err != nil {
 			FatalErrorRespectJSON("promoting %s: %v", fullID, err)
 		}
 
-		// Add promotion comment
+		// Add promotion comment (issue is now in permanent table, AddComment routes correctly
+		// via GetIssue fallback)
+		comment := "Promoted from wisp to permanent bead"
+		if reason != "" {
+			comment += ": " + reason
+		}
 		if err := store.AddComment(ctx, fullID, actor, comment); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", fullID, err)
 		}
 
 		if jsonOutput {
-			updated, _ := store.GetIssue(ctx, fullID) // Best effort: nil issue handled by subsequent nil check
+			updated, _ := store.GetIssue(ctx, fullID)
 			if updated != nil {
 				outputJSON(updated)
 			}
@@ -88,7 +90,7 @@ Examples:
 }
 
 // promoteRouted handles promotion for cross-rig routed issues.
-func promoteRouted(id, comment string) {
+func promoteRouted(id, reason string) {
 	result, err := resolveAndGetIssueWithRouting(rootCtx, store, id)
 	if err != nil {
 		FatalErrorRespectJSON("resolving %s: %v", id, err)
@@ -105,19 +107,20 @@ func promoteRouted(id, comment string) {
 		FatalErrorRespectJSON("%s is not a wisp (already persistent)", id)
 	}
 
-	updates := map[string]interface{}{
-		"wisp": false,
-	}
-	if err := result.Store.UpdateIssue(rootCtx, result.ResolvedID, updates, actor); err != nil {
+	if err := result.Store.PromoteFromEphemeral(rootCtx, result.ResolvedID, actor); err != nil {
 		FatalErrorRespectJSON("promoting %s: %v", id, err)
 	}
 
+	comment := "Promoted from wisp to permanent bead"
+	if reason != "" {
+		comment += ": " + reason
+	}
 	if err := result.Store.AddComment(rootCtx, result.ResolvedID, actor, comment); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", id, err)
 	}
 
 	if jsonOutput {
-		updated, _ := result.Store.GetIssue(rootCtx, result.ResolvedID) // Best effort: nil issue handled by subsequent nil check
+		updated, _ := result.Store.GetIssue(rootCtx, result.ResolvedID)
 		if updated != nil {
 			outputJSON(updated)
 		}

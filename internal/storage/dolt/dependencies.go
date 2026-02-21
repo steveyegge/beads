@@ -13,8 +13,8 @@ import (
 // Uses an explicit transaction so writes persist when @@autocommit is OFF
 // (e.g. Dolt server started with --no-auto-commit).
 func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
-	// Route to wisp_dependencies if the issue is ephemeral
-	if IsEphemeralID(dep.IssueID) {
+	// Route to wisp_dependencies if the issue is an active wisp
+	if s.isActiveWisp(ctx, dep.IssueID) {
 		return s.addWispDependency(ctx, dep, actor)
 	}
 
@@ -87,8 +87,8 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 // RemoveDependency removes a dependency between two issues.
 // Uses an explicit transaction so writes persist when @@autocommit is OFF.
 func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
-	// Route to wisp_dependencies if the issue is ephemeral
-	if IsEphemeralID(issueID) {
+	// Route to wisp_dependencies if the issue is an active wisp
+	if s.isActiveWisp(ctx, issueID) {
 		return s.removeWispDependency(ctx, issueID, dependsOnID)
 	}
 
@@ -110,8 +110,7 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 
 // GetDependencies retrieves issues that this issue depends on
 func (s *DoltStore) GetDependencies(ctx context.Context, issueID string) ([]*types.Issue, error) {
-	// Route to wisp_dependencies if the issue is ephemeral
-	if IsEphemeralID(issueID) {
+	if s.isActiveWisp(ctx, issueID) {
 		return s.getWispDependencies(ctx, issueID)
 	}
 
@@ -131,8 +130,7 @@ func (s *DoltStore) GetDependencies(ctx context.Context, issueID string) ([]*typ
 
 // GetDependents retrieves issues that depend on this issue
 func (s *DoltStore) GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error) {
-	// Route to wisp_dependencies if the issue is ephemeral
-	if IsEphemeralID(issueID) {
+	if s.isActiveWisp(ctx, issueID) {
 		return s.getWispDependents(ctx, issueID)
 	}
 
@@ -152,8 +150,7 @@ func (s *DoltStore) GetDependents(ctx context.Context, issueID string) ([]*types
 
 // GetDependenciesWithMetadata returns dependencies with metadata
 func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
-	// Route ephemeral IDs to wisp_dependencies
-	if IsEphemeralID(issueID) {
+	if s.isActiveWisp(ctx, issueID) {
 		return s.getWispDependenciesWithMetadata(ctx, issueID)
 	}
 
@@ -223,8 +220,7 @@ func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID str
 
 // GetDependentsWithMetadata returns dependents with metadata
 func (s *DoltStore) GetDependentsWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
-	// Route ephemeral IDs to wisp_dependencies
-	if IsEphemeralID(issueID) {
+	if s.isActiveWisp(ctx, issueID) {
 		return s.getWispDependentsWithMetadata(ctx, issueID)
 	}
 
@@ -294,8 +290,7 @@ func (s *DoltStore) GetDependentsWithMetadata(ctx context.Context, issueID strin
 
 // GetDependencyRecords returns raw dependency records for an issue
 func (s *DoltStore) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
-	// Route to wisp_dependencies if the issue is ephemeral
-	if IsEphemeralID(issueID) {
+	if s.isActiveWisp(ctx, issueID) {
 		return s.getWispDependencyRecords(ctx, issueID)
 	}
 

@@ -269,8 +269,8 @@ func parseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
 // GetIssue retrieves an issue by ID.
 // Returns storage.ErrNotFound (wrapped) if the issue does not exist.
 func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
-	// Route ephemeral IDs to wisps table
-	if IsEphemeralID(id) {
+	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
+	if s.isActiveWisp(ctx, id) {
 		return s.getWisp(ctx, id)
 	}
 
@@ -310,8 +310,8 @@ func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef strin
 
 // UpdateIssue updates fields on an issue
 func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
-	// Route ephemeral IDs to wisps table
-	if IsEphemeralID(id) {
+	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
+	if s.isActiveWisp(ctx, id) {
 		return s.updateWisp(ctx, id, updates, actor)
 	}
 
@@ -384,8 +384,8 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 // It sets the assignee to actor and status to "in_progress" only if the issue
 // currently has no assignee. Returns storage.ErrAlreadyClaimed if already claimed.
 func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) error {
-	// Route ephemeral IDs to wisps table
-	if IsEphemeralID(id) {
+	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
+	if s.isActiveWisp(ctx, id) {
 		return s.claimWisp(ctx, id, actor)
 	}
 
@@ -446,8 +446,8 @@ func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) err
 
 // CloseIssue closes an issue with a reason
 func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
-	// Route ephemeral IDs to wisps table
-	if IsEphemeralID(id) {
+	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
+	if s.isActiveWisp(ctx, id) {
 		return s.closeWisp(ctx, id, reason, actor, session)
 	}
 
@@ -484,8 +484,8 @@ func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, ac
 
 // DeleteIssue permanently removes an issue
 func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
-	// Route ephemeral IDs to wisps table
-	if IsEphemeralID(id) {
+	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
+	if s.isActiveWisp(ctx, id) {
 		return s.deleteWisp(ctx, id)
 	}
 

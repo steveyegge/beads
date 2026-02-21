@@ -10,7 +10,7 @@ import (
 
 // AddLabel adds a label to an issue
 func (s *DoltStore) AddLabel(ctx context.Context, issueID, label, actor string) error {
-	if IsEphemeralID(issueID) {
+	if s.isActiveWisp(ctx, issueID) {
 		return s.addWispLabel(ctx, issueID, label, actor)
 	}
 	_, err := s.execContext(ctx, `
@@ -32,7 +32,7 @@ func (s *DoltStore) AddLabel(ctx context.Context, issueID, label, actor string) 
 
 // RemoveLabel removes a label from an issue
 func (s *DoltStore) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
-	if IsEphemeralID(issueID) {
+	if s.isActiveWisp(ctx, issueID) {
 		return s.removeWispLabel(ctx, issueID, label)
 	}
 	_, err := s.execContext(ctx, `
@@ -54,7 +54,7 @@ func (s *DoltStore) RemoveLabel(ctx context.Context, issueID, label, actor strin
 
 // GetLabels retrieves all labels for an issue
 func (s *DoltStore) GetLabels(ctx context.Context, issueID string) ([]string, error) {
-	if IsEphemeralID(issueID) {
+	if s.isActiveWisp(ctx, issueID) {
 		return s.getWispLabels(ctx, issueID)
 	}
 	rows, err := s.queryContext(ctx, `
