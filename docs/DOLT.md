@@ -248,8 +248,11 @@ bd config set dolt.mode server
 
 # Dolt settings
 dolt:
-  # Auto-commit Dolt history after writes (default: on for embedded, off for server)
-  auto-commit: on        # on | off
+  # Auto-commit Dolt history after writes
+  #   on    — commit after every write (safest, more commit noise)
+  #   batch — accumulate in working set, commit at boundaries (default: embedded)
+  #   off   — never auto-commit (default: server mode)
+  auto-commit: batch     # on | off | batch
 
   # Server mode settings (when mode: server)
   mode: embedded         # embedded | server
@@ -290,22 +293,39 @@ bd vc commit -m "Checkpoint before refactor"
 
 ### Auto-Commit Behavior
 
-In **embedded mode** (default), each `bd` write command creates a Dolt commit:
+In **embedded mode** (default), auto-commit is set to **batch**. Writes persist
+in the Dolt working set immediately (crash-safe at the working-set level) but
+are NOT committed to Dolt history until a commit boundary is reached:
+
+- `bd sync` — commits pending changes before syncing
+- `bd dolt commit` — explicit commit point
+- Process exit via SIGTERM/SIGHUP — flushes pending changes before shutdown
+
+This reduces commit noise compared to per-command commits while ensuring changes
+are not lost on graceful shutdown.
+
+**Durability tradeoff:** In batch mode, if the process is killed with SIGKILL
+(which cannot be caught) or crashes unexpectedly, uncommitted changes exist only
+in the Dolt working set. They are NOT lost — they remain in the working set and
+will be committed on the next `bd sync` or `bd dolt commit`. However, they will
+not appear in `bd vc log` until committed.
+
+For maximum durability (commit after every write), set `auto-commit: on`:
 
 ```bash
-bd create "New issue"    # Creates issue + Dolt commit
+bd --dolt-auto-commit on create "New issue"    # Creates issue + Dolt commit
 ```
 
 In **server mode**, auto-commit defaults to OFF because the server manages its
 own transaction lifecycle. Firing `DOLT_COMMIT` after every write under
 concurrent load causes 'database is read only' errors.
 
-Override for batch operations (embedded) or explicit commits (server):
+Override for explicit batch operations:
 
 ```bash
 bd --dolt-auto-commit off create "Issue 1"
 bd --dolt-auto-commit off create "Issue 2"
-bd vc commit -m "Batch: created issues"
+bd dolt commit -m "Batch: created issues"
 ```
 
 ## Server Management (Gas Town)

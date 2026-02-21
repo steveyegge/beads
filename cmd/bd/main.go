@@ -724,7 +724,53 @@ func main() {
 	rootCmd.InitDefaultHelpCmd()
 	registerHelpAllFlag()
 
+	// Install a signal handler that flushes pending batch commits on
+	// SIGTERM/SIGHUP before exiting. In batch mode, writes accumulate in
+	// the Dolt working set without being committed. If the process is
+	// killed (e.g., systemd stop, container shutdown), PersistentPostRun
+	// may not execute. This handler ensures accumulated changes are
+	// committed before exit.
+	installBatchFlushSignalHandler()
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// installBatchFlushSignalHandler registers a goroutine that catches
+// SIGTERM and SIGHUP, flushes any pending batch commits, and exits.
+// SIGINT is intentionally excluded — it is handled by signal.NotifyContext
+// in PersistentPreRun for normal cancellation flow.
+func installBatchFlushSignalHandler() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGTERM, syscall.SIGHUP)
+
+	go func() {
+		sig := <-ch
+
+		// Attempt to flush pending batch commits before exiting.
+		storeMutex.Lock()
+		active := storeActive
+		st := store
+		storeMutex.Unlock()
+
+		if active && st != nil {
+			if mode, err := getDoltAutoCommitMode(); err == nil && mode == doltAutoCommitBatch {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				committed, flushErr := st.CommitPending(ctx, getActor())
+				cancel()
+				if flushErr != nil {
+					fmt.Fprintf(os.Stderr, "bd: signal %s: batch flush failed: %v\n", sig, flushErr)
+				} else if committed {
+					fmt.Fprintf(os.Stderr, "bd: signal %s: flushed pending batch commit\n", sig)
+				}
+			}
+			_ = st.Close()
+		}
+
+		// Re-raise with default handler so the exit code reflects the signal.
+		signal.Reset(sig)
+		p, _ := os.FindProcess(os.Getpid())
+		_ = p.Signal(sig)
+	}()
 }

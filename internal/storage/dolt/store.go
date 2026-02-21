@@ -745,29 +745,15 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 		actor = s.committerName
 	}
 
-	// Count issue-level changes by diff type
+	// Count issue-level changes by diff type across all content tables.
+	// Previously only the issues table was diffed; changes to labels,
+	// comments, events, and dependencies got the generic fallback message.
 	var added, modified, removed int
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT diff_type, COUNT(*) as cnt
-		FROM dolt_diff('HEAD', 'WORKING', 'issues')
-		GROUP BY diff_type
-	`)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var diffType string
-			var count int
-			if scanErr := rows.Scan(&diffType, &count); scanErr == nil {
-				switch diffType {
-				case "added":
-					added = count
-				case "modified":
-					modified = count
-				case "removed":
-					removed = count
-				}
-			}
-		}
+	for _, table := range []string{"issues", "labels", "comments", "events", "dependencies"} {
+		a, m, r := s.countDiffByType(ctx, table)
+		added += a
+		modified += m
+		removed += r
 	}
 
 	// Build descriptive message
@@ -786,6 +772,38 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 		return fmt.Sprintf("bd: batch commit by %s", actor)
 	}
 	return fmt.Sprintf("bd: batch commit by %s — %s", actor, strings.Join(parts, ", "))
+}
+
+// countDiffByType returns (added, modified, removed) row counts for a table
+// by querying dolt_diff between HEAD and the working set.
+func (s *DoltStore) countDiffByType(ctx context.Context, table string) (added, modified, removed int) {
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT diff_type, COUNT(*) as cnt
+		FROM dolt_diff('HEAD', 'WORKING', '%s')
+		GROUP BY diff_type
+	`, table)) //nolint:gosec // table names are hardcoded literals above
+	if err != nil {
+		return 0, 0, 0
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var diffType string
+		var count int
+		if scanErr := rows.Scan(&diffType, &count); scanErr == nil {
+			switch diffType {
+			case "added":
+				added = count
+			case "modified":
+				modified = count
+			case "removed":
+				removed = count
+			}
+		}
+	}
+	if rows.Err() != nil {
+		return 0, 0, 0
+	}
+	return added, modified, removed
 }
 
 // Push pushes commits to the remote.
