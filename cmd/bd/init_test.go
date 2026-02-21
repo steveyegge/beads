@@ -824,13 +824,8 @@ func captureStdout(t *testing.T, fn func() error) string {
 // TestInitPromptRoleConfig tests the beads.role git config read/write functions
 func TestInitPromptRoleConfig(t *testing.T) {
 	t.Run("getBeadsRole returns empty when not configured", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := newGitRepo(t)
 		t.Chdir(tmpDir)
-
-		// Initialize git repo
-		if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
-			t.Fatalf("Failed to init git: %v", err)
-		}
 
 		role, hasRole := getBeadsRole()
 		if hasRole {
@@ -842,13 +837,8 @@ func TestInitPromptRoleConfig(t *testing.T) {
 	})
 
 	t.Run("setBeadsRole and getBeadsRole roundtrip", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := newGitRepo(t)
 		t.Chdir(tmpDir)
-
-		// Initialize git repo
-		if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
-			t.Fatalf("Failed to init git: %v", err)
-		}
 
 		// Set role to contributor
 		if err := setBeadsRole("contributor"); err != nil {
@@ -897,13 +887,8 @@ func TestInitPromptSkippedWithFlags(t *testing.T) {
 		// Reset Cobra flags
 		initCmd.Flags().Set("contributor", "false")
 
-		tmpDir := t.TempDir()
+		tmpDir := newGitRepo(t)
 		t.Chdir(tmpDir)
-
-		// Initialize git repo
-		if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
-			t.Fatalf("Failed to init git: %v", err)
-		}
 
 		// Verify no role is set initially
 		role, hasRole := getBeadsRole()
@@ -938,13 +923,8 @@ func TestInitPromptSkippedWithFlags(t *testing.T) {
 		// Reset Cobra flags
 		initCmd.Flags().Set("team", "false")
 
-		tmpDir := t.TempDir()
+		tmpDir := newGitRepo(t)
 		t.Chdir(tmpDir)
-
-		// Initialize git repo
-		if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
-			t.Fatalf("Failed to init git: %v", err)
-		}
 
 		// Verify no role is set initially
 		role, hasRole := getBeadsRole()
@@ -1038,13 +1018,8 @@ func TestInitPromptExistingRole(t *testing.T) {
 		initCmd.Flags().Set("team", "false")
 		initCmd.Flags().Set("force", "false")
 
-		tmpDir := t.TempDir()
+		tmpDir := newGitRepo(t)
 		t.Chdir(tmpDir)
-
-		// Initialize git repo
-		if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
-			t.Fatalf("Failed to init git: %v", err)
-		}
 
 		// Set role before init
 		if err := setBeadsRole("contributor"); err != nil {
@@ -1571,15 +1546,10 @@ func TestInitDoltMetadata(t *testing.T) {
 	initCmd.Flags().Set("quiet", "false")
 	initCmd.Flags().Set("backend", "")
 
-	tmpDir := t.TempDir()
+	tmpDir := newGitRepo(t)
 	t.Chdir(tmpDir)
 
-	// Create a git repo so ComputeRepoID succeeds (needs remote.origin.url)
-	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
-		t.Fatalf("git init failed: %v", err)
-	}
-	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@example.com")
-	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test User")
+	// Add remote.origin.url so ComputeRepoID succeeds
 	_ = runCommandInDir(tmpDir, "git", "config", "remote.origin.url", "https://github.com/test/repo.git")
 
 	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
