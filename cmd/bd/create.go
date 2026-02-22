@@ -667,10 +667,15 @@ var createCmd = &cobra.Command{
 			}
 		}
 
-		// If issue was routed to a different repo, flush its JSONL immediately
-		// so the issue appears in bd list when hydration is enabled (bd-fix-routing)
-		if repoPath != "." {
-			flushRoutedRepo(targetStore, repoPath)
+		// If issue was routed to a different repo, commit+push so other
+		// agents/rigs see the new issue immediately (dolt-native sync).
+		if repoPath != "." && targetStore != nil {
+			if _, err := targetStore.CommitPending(ctx, actor); err != nil {
+				debug.Logf("warning: failed to commit routed repo: %v", err)
+			}
+			if err := targetStore.Push(ctx); err != nil {
+				debug.Logf("warning: failed to push routed repo: %v", err)
+			}
 		}
 
 		// Run create hook
@@ -697,91 +702,6 @@ var createCmd = &cobra.Command{
 	},
 }
 
-// flushRoutedRepo ensures the target repo's JSONL is updated after routing an issue.
-// This is critical for multi-repo hydration to work correctly (bd-fix-routing).
-// Always writes local JSONL as a safety net (even in dolt-native mode).
-func flushRoutedRepo(targetStore *dolt.DoltStore, repoPath string) {
-	ctx := context.Background()
-
-	// Expand the repo path and construct the .beads directory path
-	targetBeadsDir := routing.ExpandPath(repoPath)
-	if !filepath.IsAbs(targetBeadsDir) {
-		// If relative path, make it absolute
-		absPath, err := filepath.Abs(targetBeadsDir)
-		if err != nil {
-			debug.Logf("warning: failed to get absolute path for %s: %v", targetBeadsDir, err)
-			return
-		}
-		targetBeadsDir = absPath
-	}
-
-	// Construct JSONL path
-	beadsDir := filepath.Join(targetBeadsDir, ".beads")
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-
-	debug.Logf("attempting to flush routed repo at %s", targetBeadsDir)
-
-	// Export directly to JSONL
-	issues, err := targetStore.SearchIssues(ctx, "", types.IssueFilter{})
-	if err != nil {
-		WarnError("failed to query issues for export: %v", err)
-		return
-	}
-
-	if err := performAtomicExport(ctx, jsonlPath, issues, targetStore); err != nil {
-		WarnError("failed to export to target repo: %v", err)
-		return
-	}
-
-	debug.Logf("successfully exported to %s", jsonlPath)
-}
-
-// performAtomicExport writes issues to JSONL using atomic temp file + rename
-func performAtomicExport(_ context.Context, jsonlPath string, issues []*types.Issue, _ *dolt.DoltStore) error {
-	// Create temp file with PID suffix for atomic write
-	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
-
-	// Ensure we clean up temp file on error
-	defer func() {
-		// Remove temp file if it still exists (rename failed or error occurred)
-		if _, err := os.Stat(tempPath); err == nil {
-			_ = os.Remove(tempPath) // Best effort cleanup of temp file
-		}
-	}()
-
-	// Open temp file for writing
-	tempFile, err := os.Create(tempPath) //nolint:gosec // tempPath is safely constructed from jsonlPath
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-
-	// Write issues as JSONL
-	encoder := json.NewEncoder(tempFile)
-	for _, issue := range issues {
-		if err := encoder.Encode(issue); err != nil {
-			_ = tempFile.Close() // Best effort cleanup
-			return fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
-		}
-	}
-
-	// Sync to disk before rename
-	if err := tempFile.Sync(); err != nil {
-		_ = tempFile.Close() // Best effort cleanup
-		return fmt.Errorf("failed to sync temp file: %w", err)
-	}
-
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	// Atomic rename
-	if err := os.Rename(tempPath, jsonlPath); err != nil {
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
-
-	return nil
-}
-
 func init() {
 	createCmd.Flags().StringP("file", "f", "", "Create multiple issues from markdown file")
 	createCmd.Flags().String("title", "", "Issue title (alternative to positional argument)")
@@ -804,7 +724,7 @@ func init() {
 	createCmd.Flags().String("rig", "", "Create issue in a different rig (e.g., --rig beads)")
 	createCmd.Flags().String("prefix", "", "Create issue in rig by prefix (e.g., --prefix bd- or --prefix bd or --prefix beads)")
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
-	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
+	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (short-lived, subject to TTL compaction)")
 	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")
 	createCmd.Flags().String("wisp-type", "", "Wisp type for TTL-based compaction: heartbeat, ping, patrol, gc_report, recovery, error, escalation")
 	createCmd.Flags().Bool("validate", false, "Validate description contains required sections for issue type")
@@ -1028,15 +948,6 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore *
 	// Create .beads directory
 	if err := os.MkdirAll(beadsDir, 0750); err != nil {
 		return fmt.Errorf("cannot create .beads directory: %w", err)
-	}
-
-	// Create issues.jsonl if it doesn't exist
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-		// #nosec G306 -- planning repo JSONL must be shareable across collaborators
-		if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
-			return fmt.Errorf("failed to create issues.jsonl: %w", err)
-		}
 	}
 
 	// Initialize database - it will be created when dolt.New is called

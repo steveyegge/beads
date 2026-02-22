@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -69,8 +68,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		if isGitRepo() && git.IsWorktree() {
 			mainRepoRoot, _ := git.GetMainRepoRoot()
 			fmt.Fprintf(os.Stderr, "Error: cannot run 'bd rename-prefix' from a git worktree\n\n")
-			fmt.Fprintf(os.Stderr, "Worktrees share the .beads database from the main repository,\n")
-			fmt.Fprintf(os.Stderr, "but JSONL export targets the main worktree's file.\n\n")
+			fmt.Fprintf(os.Stderr, "Worktrees share the .beads database from the main repository.\n\n")
 			fmt.Fprintf(os.Stderr, "Run this command from the main repository instead:\n")
 			fmt.Fprintf(os.Stderr, "  cd %s\n", mainRepoRoot)
 			fmt.Fprintf(os.Stderr, "  bd rename-prefix %s\n", newPrefix)
@@ -461,43 +459,6 @@ func generateRepairHashID(prefix string, issue *types.Issue, actor string, usedI
 	}
 
 	return newID, nil
-}
-
-// parseJSONLFile reads and parses a JSONL file into a slice of issues
-func parseJSONLFile(jsonlPath string) ([]*types.Issue, error) {
-	// #nosec G304 - jsonlPath is from findJSONLPath() which uses trusted paths
-	f, err := os.Open(jsonlPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open JSONL file: %w", err)
-	}
-	defer f.Close()
-
-	var issues []*types.Issue
-	scanner := bufio.NewScanner(f)
-	// Increase buffer to handle large JSON lines
-	scanner.Buffer(make([]byte, 0, 1024), 2*1024*1024) // 2MB max line size
-
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		var issue types.Issue
-		if err := json.Unmarshal([]byte(line), &issue); err != nil {
-			return nil, fmt.Errorf("parse error at line %d: %w", lineNum, err)
-		}
-		issue.SetDefaults()
-		issues = append(issues, &issue)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanner error: %w", err)
-	}
-
-	return issues, nil
 }
 
 func init() {
