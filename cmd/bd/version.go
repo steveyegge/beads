@@ -12,7 +12,7 @@ import (
 
 var (
 	// Version is the current version of bd (overridden by ldflags at build time)
-	Version = "0.54.0"
+	Version = "0.55.4"
 	// Build can be set via ldflags at compile time
 	Build = "dev"
 	// Commit and branch the git revision the binary was built from (optional ldflag)
@@ -28,7 +28,7 @@ var versionCmd = &cobra.Command{
 		branch := resolveBranch()
 
 		if jsonOutput {
-			result := map[string]string{
+			result := map[string]interface{}{
 				"version": Version,
 				"build":   Build,
 			}

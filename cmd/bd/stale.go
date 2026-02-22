@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,8 +25,7 @@ This helps identify:
 		// Use global jsonOutput set by PersistentPreRun
 		// Validate status if provided
 		if status != "" && status != "open" && status != "in_progress" && status != "blocked" && status != "deferred" {
-			fmt.Fprintf(os.Stderr, "Error: invalid status '%s'. Valid values: open, in_progress, blocked, deferred\n", status)
-			os.Exit(1)
+			FatalError("invalid status '%s'. Valid values: open, in_progress, blocked, deferred", status)
 		}
 		filter := types.StaleFilter{
 			Days:   days,
@@ -39,8 +37,7 @@ This helps identify:
 
 		issues, err := store.GetStaleIssues(ctx, filter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 		if jsonOutput {
 			if issues == nil {

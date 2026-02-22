@@ -206,7 +206,7 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 		// Stealth mode or local-only: only flush to JSONL, no git operations
 		closeProtocol = "Before saying \"done\": bd sync --flush-only"
 	} else if ephemeral {
-		closeProtocol = "Before saying \"done\": git status → git add → bd sync --from-main → git commit (no push - ephemeral branch)"
+		closeProtocol = "Before saying \"done\": git status → git add → bd sync → git commit (no push - ephemeral branch)"
 	} else if noPush {
 		closeProtocol = "Before saying \"done\": git status → git add → bd sync → git commit (push disabled - run git push manually)"
 	} else {
@@ -265,20 +265,20 @@ bd sync --flush-only        # Export to JSONL
 	} else if ephemeral {
 		closeProtocol = `[ ] 1. git status              (check what changed)
 [ ] 2. git add <files>         (stage code changes)
-[ ] 3. bd sync --from-main     (pull beads updates from main)
+[ ] 3. bd sync     (pull beads updates from main)
 [ ] 4. git commit -m "..."     (commit code changes)`
 		closeNote = "**Note:** This is an ephemeral branch (no upstream). Code is merged to main locally, not pushed."
 		syncSection = `### Sync & Collaboration
-- ` + "`bd sync --from-main`" + ` - Pull beads updates from main (for ephemeral branches)
+- ` + "`bd sync`" + ` - Pull beads updates from main (for ephemeral branches)
 - ` + "`bd sync --status`" + ` - Check sync status without syncing`
 		completingWorkflow = `**Completing work:**
 ` + "```bash" + `
 bd close <id1> <id2> ...    # Close all completed issues at once
-bd sync --from-main         # Pull latest beads from main
+bd sync         # Pull latest beads from main
 git add . && git commit -m "..."  # Commit your changes
 # Merge to main when ready (local merge, not push)
 ` + "```"
-		gitWorkflowRule = "Git workflow: run `bd sync --from-main` at session end"
+		gitWorkflowRule = "Git workflow: run `bd sync` at session end"
 	} else if noPush {
 		closeProtocol = `[ ] 1. git status              (check what changed)
 [ ] 2. git add <files>         (stage code changes)

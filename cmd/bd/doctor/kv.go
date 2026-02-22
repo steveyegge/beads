@@ -70,7 +70,7 @@ func CheckKVSyncStatus(path string) DoctorCheck {
 		}
 	}
 
-	// In git-portable or realtime mode, KV data is local-only
+	// In git-portable mode, KV data is local-only
 	return DoctorCheck{
 		Name:     "KV Store Sync",
 		Status:   StatusWarning,

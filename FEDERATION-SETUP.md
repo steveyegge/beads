@@ -47,7 +47,6 @@ export BD_FEDERATION_SOVEREIGNTY="T2"
 | Mode | Description | Federation Support |
 |------|-------------|-------------------|
 | `git-portable` | JSONL export to git (default) | No |
-| `realtime` | JSONL on every change | No |
 | `dolt-native` | Dolt remotes only | Yes |
 | `belt-and-suspenders` | Dolt + JSONL backup | Yes |
 

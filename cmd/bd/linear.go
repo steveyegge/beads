@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/debug"
@@ -165,18 +164,15 @@ func runLinearSync(cmd *cobra.Command, args []string) {
 	}
 
 	if preferLocal && preferLinear {
-		fmt.Fprintf(os.Stderr, "Error: cannot use both --prefer-local and --prefer-linear\n")
-		os.Exit(1)
+		FatalError("cannot use both --prefer-local and --prefer-linear")
 	}
 
 	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: database not available: %v\n", err)
-		os.Exit(1)
+		FatalError("database not available: %v", err)
 	}
 
 	if err := validateLinearConfig(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	ctx := rootCtx
@@ -184,8 +180,7 @@ func runLinearSync(cmd *cobra.Command, args []string) {
 	// Create and initialize the Linear tracker
 	lt := &linear.Tracker{}
 	if err := lt.Init(ctx, store); err != nil {
-		fmt.Fprintf(os.Stderr, "Error initializing Linear tracker: %v\n", err)
-		os.Exit(1)
+		FatalError("initializing Linear tracker: %v", err)
 	}
 
 	// Create the sync engine
@@ -355,8 +350,7 @@ func runLinearStatus(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
 	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	apiKey, _ := getLinearConfig(ctx, "linear.api_key")
@@ -367,8 +361,7 @@ func runLinearStatus(cmd *cobra.Command, args []string) {
 
 	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	withLinearRef := 0
@@ -447,8 +440,7 @@ func runLinearTeams(cmd *cobra.Command, args []string) {
 
 	teams, err := client.FetchTeams(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching teams: %v\n", err)
-		os.Exit(1)
+		FatalError("fetching teams: %v", err)
 	}
 
 	if len(teams) == 0 {
@@ -525,7 +517,7 @@ func getLinearConfig(ctx context.Context, key string) (value string, source stri
 			return value, "project config (bd config)"
 		}
 	} else if dbPath != "" {
-		tempStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath, OpenTimeout: 5 * time.Second})
+		tempStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
 		if err == nil {
 			defer func() { _ = tempStore.Close() }()
 			value, _ = tempStore.GetConfig(ctx, key) // Best effort: empty value is valid fallback

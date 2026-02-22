@@ -515,9 +515,7 @@ func runFormulaConvert(cmd *cobra.Command, args []string) {
 	}
 
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: formula name or path required\n")
-		fmt.Fprintf(os.Stderr, "Usage: bd formula convert <name|path> [--all]\n")
-		os.Exit(1)
+		FatalErrorWithHint("formula name or path required", "Usage: bd formula convert <name|path> [--all]")
 	}
 
 	name := args[0]
@@ -528,8 +526,7 @@ func runFormulaConvert(cmd *cobra.Command, args []string) {
 		// Direct path provided
 		jsonPath = name
 	} else if strings.HasSuffix(name, formula.FormulaExtTOML) {
-		fmt.Fprintf(os.Stderr, "Error: %s is already a TOML file\n", name)
-		os.Exit(1)
+		FatalError("%s is already a TOML file", name)
 	} else {
 		// Search for the formula in search paths
 		jsonPath = findFormulaJSON(name)
@@ -547,15 +544,13 @@ func runFormulaConvert(cmd *cobra.Command, args []string) {
 	parser := formula.NewParser()
 	f, err := parser.ParseFile(jsonPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", jsonPath, err)
-		os.Exit(1)
+		FatalError("parsing %s: %v", jsonPath, err)
 	}
 
 	// Convert to TOML
 	tomlData, err := formulaToTOML(f)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error converting to TOML: %v\n", err)
-		os.Exit(1)
+		FatalError("converting to TOML: %v", err)
 	}
 
 	if convertStdout {
@@ -568,8 +563,7 @@ func runFormulaConvert(cmd *cobra.Command, args []string) {
 
 	// Write the TOML file
 	if err := os.WriteFile(tomlPath, tomlData, 0600); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", tomlPath, err)
-		os.Exit(1)
+		FatalError("writing %s: %v", tomlPath, err)
 	}
 
 	fmt.Printf("✓ Converted: %s\n", tomlPath)

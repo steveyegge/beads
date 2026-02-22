@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.4] - 2026-02-20
+
+### Fixed
+
+- **Release CI: FreeBSD build** — disable CGO for FreeBSD target; zig sysroot lacks stdlib.h
+
+## [0.55.3] - 2026-02-20
+
+### Fixed
+
+- **Release CI: macOS builds** — disable CGO for darwin targets; zig sysroot lacks macOS frameworks (CoreFoundation, Security) and libresolv; pure-Go build via `gms_pure_go` + `netgo` tags
+
+## [0.55.2] - 2026-02-20
+
+### Fixed
+
+- **Release CI: libresolv** — strip `-lresolv` entirely from zig wrappers instead of replacing with `-lresolv.9` (zig sysroot has neither); macOS builds use `netgo` tag so libresolv is not needed
+- **Release formula** — added rate limit warnings to prevent burning GitHub API quota during CI wait
+
+## [0.55.1] - 2026-02-20
+
+### Fixed
+
+- **Release workflow YAML** — heredoc in zig wrapper step broke YAML literal block parsing; replaced with echo commands
+- **Version consistency** — marketplace.json was not bumped in v0.55.0
+- **Go formatting** — ran gofmt on 8 files
+- **Lint** — fixed unused parameter and dead code in config.go
+
+## [0.55.0] - 2026-02-20
+
+### Fixed
+
+- **Release CI: zig upgrade** — upgrade zig 0.13.0 → 0.14.0 to fix `AccessDenied` bug in cross-compilation (ziglang/zig#20689)
+- **Release CI: macOS libresolv** — work around zig 0.14.0 `libresolv` resolution by using versioned `-lresolv.9` (ziglang/zig#16674)
+- **Release CI: Android ARM64** — disable CGO for Android target (server mode only)
+- **5 pre-existing test failures** — resolve test failures and Dolt panic (bd-iqsw6v)
+- **Doctor daemon references** — remove daemon references for post-daemon architecture
+
+### Removed
+
+- **~5K lines dead code** — classic cleanup of obsolete sync pipeline remnants
+
 ## [0.54.0] - 2026-02-18
 
 ### Fixed

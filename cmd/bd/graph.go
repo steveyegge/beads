@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -76,25 +75,21 @@ Examples:
 
 		// Validate args
 		if graphAll && len(args) > 0 {
-			fmt.Fprintf(os.Stderr, "Error: cannot specify issue ID with --all flag\n")
-			os.Exit(1)
+			FatalError("cannot specify issue ID with --all flag")
 		}
 		if !graphAll && len(args) == 0 {
-			fmt.Fprintf(os.Stderr, "Error: issue ID required (or use --all for all open issues)\n")
-			os.Exit(1)
+			FatalErrorWithHint("issue ID required", "Use --all for all open issues")
 		}
 
 		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
+			FatalError("no database connection")
 		}
 
 		// Handle --all flag: show graph for all open issues
 		if graphAll {
 			subgraphs, err := loadAllGraphSubgraphs(ctx, store)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading all issues: %v\n", err)
-				os.Exit(1)
+				FatalError("loading all issues: %v", err)
 			}
 
 			if len(subgraphs) == 0 {
@@ -131,15 +126,13 @@ Examples:
 		// Single issue mode
 		issueID, err := utils.ResolvePartialID(ctx, store, args[0])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: issue '%s' not found\n", args[0])
-			os.Exit(1)
+			FatalError("issue '%s' not found", args[0])
 		}
 
 		// Load the subgraph
 		subgraph, err := loadGraphSubgraph(ctx, store, issueID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading graph: %v\n", err)
-			os.Exit(1)
+			FatalError("loading graph: %v", err)
 		}
 
 		// Compute layout

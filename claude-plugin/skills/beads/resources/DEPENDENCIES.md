@@ -123,12 +123,12 @@ Effect: Can't start auth-2 until setup-1 complete
 ### Creating blocks Dependencies
 
 ```bash
-bd dep add prerequisite-issue blocked-issue
+bd dep add blocked-issue prerequisite-issue
 # or explicitly:
-bd dep add prerequisite-issue blocked-issue --type blocks
+bd dep add blocked-issue prerequisite-issue --type blocks
 ```
 
-**Direction matters**: `from_id` blocks `to_id`. Think: "prerequisite blocks dependent".
+**Direction matters**: `from_id` depends on `to_id`. Think: "dependent depends on prerequisite".
 
 ### Common Patterns
 
@@ -454,10 +454,10 @@ Context: Issues discovered as side effect of refactoring
 ### Creating discovered-from Dependencies
 
 ```bash
-bd dep add original-work-id discovered-issue-id --type discovered-from
+bd dep add discovered-issue-id original-work-id --type discovered-from
 ```
 
-**Direction matters**: `to_id` was discovered while working on `from_id`.
+**Direction matters**: `from_id` was discovered while working on `to_id`.
 
 ### Common Patterns
 
@@ -614,21 +614,21 @@ Everything blocks everything else in strict sequential order.
 
 **Wrong**:
 ```bash
-bd dep add api-endpoint database-schema
+bd dep add database-schema api-endpoint
 
-Meaning: api-endpoint blocks database-schema
+Meaning: database-schema depends on api-endpoint (schema needs endpoint?!)
 ```
 
-**Problem**: Backwards! Schema should block endpoint, not other way around.
+**Problem**: Backwards! The endpoint depends on the schema, not the other way around.
 
 **Right**:
 ```bash
-bd dep add database-schema api-endpoint
+bd dep add api-endpoint database-schema
 
-Meaning: database-schema blocks api-endpoint
+Meaning: api-endpoint depends on database-schema (endpoint needs schema ✓)
 ```
 
-**Mnemonic**: "from_id blocks to_id" or "prerequisite blocks dependent"
+**Mnemonic**: "from_id depends on to_id" or "dependent depends on prerequisite"
 
 ---
 

@@ -28,7 +28,7 @@ type watchdogState struct {
 // startWatchdog begins background health monitoring for server mode.
 // It periodically checks server health and attempts restart on failure.
 func (s *DoltStore) startWatchdog(cfg *Config) {
-	if !s.serverMode || cfg.DisableWatchdog {
+	if cfg.DisableWatchdog {
 		return
 	}
 

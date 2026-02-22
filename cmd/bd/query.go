@@ -95,8 +95,7 @@ Examples:
 		// Parse the query
 		node, err := query.Parse(queryStr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing query: %v\n", err)
-			os.Exit(1)
+			FatalError("parsing query: %v", err)
 		}
 
 		// If --parse-only, just show the parsed AST
@@ -109,8 +108,7 @@ Examples:
 		eval := query.NewEvaluator(time.Now())
 		result, err := eval.Evaluate(node)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error evaluating query: %v\n", err)
-			os.Exit(1)
+			FatalError("evaluating query: %v", err)
 		}
 
 		// Apply limit if specified
@@ -127,8 +125,7 @@ Examples:
 
 		// Direct mode
 		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no storage available\n")
-			os.Exit(1)
+			FatalError("no storage available")
 		}
 
 		// If we need predicate filtering, we may need to fetch more results
@@ -144,8 +141,7 @@ Examples:
 
 		issues, err := store.SearchIssues(ctx, "", searchFilter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		// Apply predicate filter if needed (for OR queries)

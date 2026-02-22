@@ -54,14 +54,12 @@ func InstallCursor() {
 
 	// Ensure parent directory exists
 	if err := EnsureDir(filepath.Dir(rulesPath), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	// Write beads rules file (overwrite if exists)
 	if err := atomicWriteFile(rulesPath, []byte(cursorRulesTemplate)); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: write rules: %v\n", err)
-		os.Exit(1)
+		FatalError("write rules: %v", err)
 	}
 
 	fmt.Printf("\n✓ Cursor integration installed\n")
@@ -73,10 +71,8 @@ func InstallCursor() {
 func CheckCursor() {
 	rulesPath := ".cursor/rules/beads.mdc"
 
-	if _, err := os.Stat(rulesPath); os.IsNotExist(err) {
-		fmt.Println("✗ Cursor integration not installed")
-		fmt.Println("  Run: bd setup cursor")
-		os.Exit(1)
+	if !FileExists(rulesPath) {
+		FatalErrorWithHint("Cursor integration not installed", "Run: bd setup cursor")
 	}
 
 	fmt.Println("✓ Cursor integration installed:", rulesPath)
@@ -93,8 +89,7 @@ func RemoveCursor() {
 			fmt.Println("No rules file found")
 			return
 		}
-		fmt.Fprintf(os.Stderr, "Error: failed to remove file: %v\n", err)
-		os.Exit(1)
+		FatalError("failed to remove file: %v", err)
 	}
 
 	fmt.Println("✓ Removed Cursor integration")

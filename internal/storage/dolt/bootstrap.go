@@ -219,7 +219,7 @@ func findJSONLPath(beadsDir string) string {
 	}
 
 	for _, path := range candidates {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() && info.Size() > 0 {
 			return path
 		}
 	}
@@ -315,7 +315,7 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 	}
 
 	if len(issues) == 0 {
-		return nil, fmt.Errorf("no valid issues found in JSONL file %s", jsonlPath)
+		return &BootstrapResult{}, nil
 	}
 
 	// Detect prefix from issues
@@ -328,10 +328,14 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 	}
 	defer func() { _ = store.Close() }() // Best effort cleanup
 
-	// Set issue prefix
+	// Set issue prefix (only if not already configured — avoid clobbering
+	// when multiple rigs share the same Dolt database)
 	if result.PrefixDetected != "" {
-		if err := store.SetConfig(ctx, "issue_prefix", result.PrefixDetected); err != nil {
-			return nil, fmt.Errorf("failed to set issue_prefix: %w", err)
+		existing, _ := store.GetConfig(ctx, "issue_prefix")
+		if existing == "" {
+			if err := store.SetConfig(ctx, "issue_prefix", result.PrefixDetected); err != nil {
+				return nil, fmt.Errorf("failed to set issue_prefix: %w", err)
+			}
 		}
 	}
 

@@ -3,7 +3,6 @@ package main
 import (
 	"cmp"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
@@ -94,8 +93,7 @@ Examples:
 		}
 
 		if groupCount > 1 {
-			fmt.Fprintf(os.Stderr, "Error: only one --by-* flag can be specified\n")
-			os.Exit(1)
+			FatalError("only one --by-* flag can be specified")
 		}
 
 		// Normalize labels
@@ -146,48 +144,42 @@ Examples:
 		if createdAfter != "" {
 			t, err := parseTimeFlag(createdAfter)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --created-after: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --created-after: %v", err)
 			}
 			filter.CreatedAfter = &t
 		}
 		if createdBefore != "" {
 			t, err := parseTimeFlag(createdBefore)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --created-before: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --created-before: %v", err)
 			}
 			filter.CreatedBefore = &t
 		}
 		if updatedAfter != "" {
 			t, err := parseTimeFlag(updatedAfter)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --updated-after: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --updated-after: %v", err)
 			}
 			filter.UpdatedAfter = &t
 		}
 		if updatedBefore != "" {
 			t, err := parseTimeFlag(updatedBefore)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --updated-before: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --updated-before: %v", err)
 			}
 			filter.UpdatedBefore = &t
 		}
 		if closedAfter != "" {
 			t, err := parseTimeFlag(closedAfter)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --closed-after: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --closed-after: %v", err)
 			}
 			filter.ClosedAfter = &t
 		}
 		if closedBefore != "" {
 			t, err := parseTimeFlag(closedBefore)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --closed-before: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --closed-before: %v", err)
 			}
 			filter.ClosedBefore = &t
 		}
@@ -207,8 +199,7 @@ Examples:
 
 		issues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		// If no grouping, just print count
@@ -237,8 +228,7 @@ Examples:
 			var err error
 			labelsMap, err = store.GetLabelsForIssues(ctx, issueIDs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting labels: %v\n", err)
-				os.Exit(1)
+				FatalError("getting labels: %v", err)
 			}
 		}
 

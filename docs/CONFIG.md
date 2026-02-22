@@ -103,7 +103,6 @@ The sync mode controls how beads synchronizes data with git and/or Dolt remotes.
 | Mode | Description |
 |------|-------------|
 | `git-portable` | (default) Export JSONL on push, import on pull. Standard git-based workflow. |
-| `realtime` | Export JSONL on every database change. Legacy behavior, higher I/O. |
 | `dolt-native` | Use Dolt remotes directly for sync. JSONL is not used for sync (but manual `bd import` / `bd export` still work). |
 | `belt-and-suspenders` | Both Dolt remote AND JSONL backup. Maximum redundancy. |
 
@@ -141,7 +140,7 @@ For Dolt-native or belt-and-suspenders modes:
 ```yaml
 # .beads/config.yaml
 sync:
-  mode: git-portable    # git-portable | realtime | dolt-native | belt-and-suspenders
+  mode: git-portable    # git-portable | dolt-native | belt-and-suspenders
   export_on: push       # push | change
   import_on: pull       # pull | change
 
@@ -157,7 +156,6 @@ federation:
 #### When to Use Each Mode
 
 - **git-portable** (default): Best for most teams. JSONL is committed to git, works with any git hosting.
-- **realtime**: Use when you need instant JSONL updates (e.g., file watchers, CI triggers on JSONL changes).
 - **dolt-native**: Use when you have Dolt infrastructure and want database-level sync; JSONL remains available for portability/audits/manual workflows.
 - **belt-and-suspenders**: Use for critical data where you want both Dolt sync AND git-portable backup.
 

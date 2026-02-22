@@ -99,7 +99,7 @@ Discovery Workflow:
 - [ ] Notice bug, improvement, or follow-up work
 - [ ] Assess: Can defer or is blocker?
 - [ ] Create issue with bd create "Issue title"
-- [ ] Add discovered-from dependency: bd dep add current-id new-id --type discovered-from
+- [ ] Add discovered-from dependency: bd dep add new-id current-id --type discovered-from
 - [ ] If blocker: pause and switch; if not: continue current work
 - [ ] Issue persists for future sessions
 ```

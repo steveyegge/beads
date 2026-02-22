@@ -61,7 +61,7 @@ func TestVersionCommand(t *testing.T) {
 		output := buf.String()
 
 		// Parse JSON output
-		var result map[string]string
+		var result map[string]interface{}
 		if err := json.Unmarshal([]byte(output), &result); err != nil {
 			t.Fatalf("Failed to parse JSON output: %v", err)
 		}
@@ -72,6 +72,10 @@ func TestVersionCommand(t *testing.T) {
 		}
 		if result["build"] == "" {
 			t.Error("Expected build field to be non-empty")
+		}
+		// cgo field removed — server-only operation, no CGO bifurcation
+		if _, ok := result["cgo"]; ok {
+			t.Error("cgo field should no longer be present in version output")
 		}
 	})
 
@@ -186,7 +190,7 @@ func TestVersionOutputWithCommitAndBranch(t *testing.T) {
 		buf.ReadFrom(r)
 		output := buf.String()
 
-		var result map[string]string
+		var result map[string]interface{}
 		if err := json.Unmarshal([]byte(output), &result); err != nil {
 			t.Fatalf("Failed to parse JSON output: %v", err)
 		}

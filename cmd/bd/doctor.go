@@ -176,8 +176,7 @@ Examples:
 		// Convert to absolute path
 		absPath, err := filepath.Abs(checkPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to resolve path: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to resolve path: %v", err)
 		}
 
 		// Run performance diagnostics if --perf flag is set
@@ -205,9 +204,7 @@ Examples:
 				runArtifactsCheck(absPath, doctorClean, doctorYes)
 				return
 			default:
-				fmt.Fprintf(os.Stderr, "Error: unknown check %q\n", doctorCheckFlag)
-				fmt.Fprintf(os.Stderr, "Available checks: artifacts, pollution, validate\n")
-				os.Exit(1)
+				FatalErrorWithHint(fmt.Sprintf("unknown check %q", doctorCheckFlag), "Available checks: artifacts, pollution, validate")
 			}
 		}
 
@@ -240,10 +237,9 @@ Examples:
 			releaseDiagnosticLocks(absPath)
 			applyFixes(result)
 			// Note: we intentionally do NOT re-run diagnostics here.
-			// The embedded Dolt driver is a process-level singleton; if any
-			// Close() timed out during the first diagnostic pass, the leaked
-			// goroutine holds internal noms locks and a second open will
-			// deadlock. Users should run 'bd doctor' again to verify fixes.
+			// If any Close() timed out during the first diagnostic pass,
+			// leaked goroutines may hold internal noms locks and a second
+			// open could deadlock. Users should run 'bd doctor' again to verify fixes.
 			fmt.Println("\nRun 'bd doctor' again to verify fixes.")
 		}
 
@@ -256,8 +252,7 @@ Examples:
 		// Export to file if --output specified
 		if doctorOutput != "" {
 			if err := exportDiagnostics(result, doctorOutput); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to export diagnostics: %v\n", err)
-				os.Exit(1)
+				FatalError("failed to export diagnostics: %v", err)
 			}
 			fmt.Printf("✓ Diagnostics exported to %s\n", doctorOutput)
 		}
@@ -293,10 +288,8 @@ func init() {
 }
 
 // releaseDiagnosticLocks removes stale noms LOCK files that the diagnostics
-// phase may have left behind. The embedded Dolt driver's CloseWithTimeout can
-// leave goroutines (and their LOCK files) behind when it times out.
-// Only runs for embedded Dolt mode; skips server mode where locks belong to
-// the Dolt SQL server process.
+// phase may have left behind. CloseWithTimeout can leave goroutines (and
+// their LOCK files) behind when it times out.
 func releaseDiagnosticLocks(path string) {
 	beadsDir := filepath.Join(path, ".beads")
 	beadsDir = beads.FollowRedirect(beadsDir)
@@ -306,8 +299,8 @@ func releaseDiagnosticLocks(path string) {
 		return // Can't determine config, skip cleanup
 	}
 
-	// Only clean up in embedded Dolt mode.
-	if cfg.GetBackend() != configfile.BackendDolt || cfg.IsDoltServerMode() {
+	// Only clean up for Dolt backend.
+	if cfg.GetBackend() != configfile.BackendDolt {
 		return
 	}
 
@@ -455,6 +448,14 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
+	// Dolt health checks (connection, schema, sync, status via AccessLock)
+	// Run BEFORE federation checks: federation opens Dolt connections that may
+	// leave noms LOCK files on disk. CheckLockHealth (inside RunDoltHealthChecks)
+	// must run first to avoid false positives from doctor's own connections (#1925).
+	for _, dc := range doctor.RunDoltHealthChecks(path) {
+		result.Checks = append(result.Checks, convertDoctorCheck(dc))
+	}
+
 	// Federation health checks (bd-wkumz.6)
 	// Check 8d: Federation remotesapi port accessibility
 	remotesAPICheck := convertWithCategory(doctor.CheckFederationRemotesAPI(path), doctor.CategoryFederation)
@@ -476,7 +477,7 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false // Unresolved conflicts are a real problem
 	}
 
-	// Check 8h: Dolt init vs embedded mode mismatch
+	// Check 8h: Dolt server mode configuration check
 	doltModeCheck := convertWithCategory(doctor.CheckDoltServerModeMismatch(path), doctor.CategoryFederation)
 	result.Checks = append(result.Checks, doltModeCheck)
 
@@ -691,11 +692,6 @@ func runDiagnostics(path string) doctorResult {
 	kvSyncCheck := convertDoctorCheck(doctor.CheckKVSyncStatus(path))
 	result.Checks = append(result.Checks, kvSyncCheck)
 	// Don't fail overall check for KV sync warning, just inform
-
-	// Dolt health checks (connection, schema, sync, status via AccessLock)
-	for _, dc := range doctor.RunDoltHealthChecks(path) {
-		result.Checks = append(result.Checks, convertDoctorCheck(dc))
-	}
 
 	// Check 32: Dolt locks (uncommitted changes)
 	doltLocksCheck := convertDoctorCheck(doctor.CheckDoltLocks(path))
@@ -1023,8 +1019,7 @@ func runMigrationValidation(path string, phase string) {
 		check = convertDoctorCheck(dc)
 		result = mr
 	default:
-		fmt.Fprintf(os.Stderr, "Error: invalid migration phase %q (use 'pre' or 'post')\n", phase)
-		os.Exit(1)
+		FatalError("invalid migration phase %q (use 'pre' or 'post')", phase)
 	}
 
 	// JSON output for machine consumption

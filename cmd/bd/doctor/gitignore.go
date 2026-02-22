@@ -15,6 +15,7 @@ dolt-access.lock
 
 # Runtime files
 bd.sock
+bd.sock.startlock
 sync-state.json
 last-touched
 
@@ -31,6 +32,12 @@ redirect
 .jsonl.lock
 sync_base.jsonl
 export-state/
+
+# Ephemeral store (SQLite - wisps/molecules, intentionally not versioned)
+ephemeral.sqlite3
+ephemeral.sqlite3-journal
+ephemeral.sqlite3-wal
+ephemeral.sqlite3-shm
 
 # Legacy files (from pre-Dolt versions)
 *.db
@@ -69,12 +76,14 @@ var requiredPatterns = []string{
 	"*.db?*",
 	"redirect",
 	"last-touched",
+	"bd.sock.startlock",
 	".sync.lock",
 	".jsonl.lock",
 	"sync_base.jsonl",
 	"export-state/",
 	"dolt/",
 	"dolt-access.lock",
+	"ephemeral.sqlite3",
 }
 
 // CheckGitignore checks if .beads/.gitignore is up to date
@@ -633,4 +642,3 @@ func FixLastTouchedTracking() error {
 
 	return nil
 }
-

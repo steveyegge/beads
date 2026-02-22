@@ -2,12 +2,12 @@ package main
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
+
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"os"
-	"regexp"
-	"strings"
 )
 
 var duplicatesCmd = &cobra.Command{
@@ -37,8 +37,7 @@ Example:
 		// Get all issues
 		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching issues: %v\n", err)
-			os.Exit(1)
+			FatalError("fetching issues: %v", err)
 		}
 		// Filter out closed issues - they're done, no point detecting duplicates
 		openIssues := make([]*types.Issue, 0, len(allIssues))

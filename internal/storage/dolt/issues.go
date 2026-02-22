@@ -17,6 +17,11 @@ import (
 
 // CreateIssue creates a new issue
 func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
+	// Route ephemeral issues to wisps table
+	if issue.Ephemeral {
+		return s.createWisp(ctx, issue, actor)
+	}
+
 	// Fetch custom statuses and types for validation
 	customStatuses, err := s.GetCustomStatuses(ctx)
 	if err != nil {
@@ -71,7 +76,7 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 	var configPrefix string
 	err = tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
 	if err == sql.ErrNoRows || configPrefix == "" {
-		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
+		return fmt.Errorf("%w: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)", storage.ErrNotInitialized)
 	} else if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
 	}
@@ -122,6 +127,23 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 		return nil
 	}
 
+	// Route all-ephemeral batches to wisps table
+	allEph := true
+	for _, issue := range issues {
+		if !issue.Ephemeral {
+			allEph = false
+			break
+		}
+	}
+	if allEph {
+		for _, issue := range issues {
+			if err := s.createWisp(ctx, issue, actor); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	// Fetch custom statuses and types for validation
 	customStatuses, err := s.GetCustomStatuses(ctx)
 	if err != nil {
@@ -142,7 +164,7 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 	var configPrefix string
 	err = tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
 	if err == sql.ErrNoRows || configPrefix == "" {
-		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
+		return fmt.Errorf("%w: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)", storage.ErrNotInitialized)
 	} else if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
 	}
@@ -218,7 +240,7 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 // validateIssueIDPrefix validates that the issue ID has the correct prefix
 func validateIssueIDPrefix(id, prefix string) error {
 	if !strings.HasPrefix(id, prefix+"-") {
-		return fmt.Errorf("issue ID %s does not match configured prefix %s", id, prefix)
+		return fmt.Errorf("%w: issue ID %s does not match configured prefix %s", storage.ErrPrefixMismatch, id, prefix)
 	}
 	return nil
 }
@@ -244,71 +266,32 @@ func parseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
 	return parentID, num, true
 }
 
-// GetIssueStatuses retrieves just the status for a batch of issue IDs.
-// Returns a map of issueID -> status. Missing issues are silently omitted.
-func (s *DoltStore) GetIssueStatuses(ctx context.Context, issueIDs []string) (map[string]types.Status, error) {
-	if len(issueIDs) == 0 {
-		return make(map[string]types.Status), nil
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	placeholders := make([]string, len(issueIDs))
-	args := make([]interface{}, len(issueIDs))
-	for i, id := range issueIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-
-	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
-	query := fmt.Sprintf(`
-		SELECT id, status FROM issues
-		WHERE id IN (%s)
-	`, joinStrings(placeholders, ","))
-
-	rows, err := s.queryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get issue statuses: %w", err)
-	}
-	defer rows.Close()
-
-	result := make(map[string]types.Status)
-	for rows.Next() {
-		var id string
-		var status types.Status
-		if err := rows.Scan(&id, &status); err != nil {
-			return nil, fmt.Errorf("failed to scan issue status: %w", err)
-		}
-		result[id] = status
-	}
-	return result, rows.Err()
-}
-
-// GetIssue retrieves an issue by ID
+// GetIssue retrieves an issue by ID.
+// Returns storage.ErrNotFound (wrapped) if the issue does not exist.
 func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
+	if s.isActiveWisp(ctx, id) {
+		return s.getWisp(ctx, id)
+	}
 
+	s.mu.RLock()
 	issue, err := scanIssue(ctx, s.db, id)
 	if err != nil {
+		s.mu.RUnlock()
 		return nil, err
 	}
-	if issue == nil {
-		return nil, nil
-	}
-
 	// Fetch labels
 	labels, err := s.GetLabels(ctx, issue.ID)
+	s.mu.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get labels: %w", err)
 	}
 	issue.Labels = labels
-
 	return issue, nil
 }
 
-// GetIssueByExternalRef retrieves an issue by external reference
+// GetIssueByExternalRef retrieves an issue by external reference.
+// Returns storage.ErrNotFound (wrapped) if no issue with the given external reference exists.
 func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -316,7 +299,7 @@ func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef strin
 	var id string
 	err := s.db.QueryRowContext(ctx, "SELECT id FROM issues WHERE external_ref = ?", externalRef).Scan(&id)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, fmt.Errorf("%w: external_ref %s", storage.ErrNotFound, externalRef)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue by external_ref: %w", err)
@@ -327,12 +310,14 @@ func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef strin
 
 // UpdateIssue updates fields on an issue
 func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
+	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
+	if s.isActiveWisp(ctx, id) {
+		return s.updateWisp(ctx, id, updates, actor)
+	}
+
 	oldIssue, err := s.GetIssue(ctx, id)
 	if err != nil {
 		return fmt.Errorf("failed to get issue for update: %w", err)
-	}
-	if oldIssue == nil {
-		return fmt.Errorf("issue %s not found", id)
 	}
 
 	// Build update query
@@ -399,12 +384,14 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 // It sets the assignee to actor and status to "in_progress" only if the issue
 // currently has no assignee. Returns storage.ErrAlreadyClaimed if already claimed.
 func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) error {
+	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
+	if s.isActiveWisp(ctx, id) {
+		return s.claimWisp(ctx, id, actor)
+	}
+
 	oldIssue, err := s.GetIssue(ctx, id)
 	if err != nil {
 		return fmt.Errorf("failed to get issue for claim: %w", err)
-	}
-	if oldIssue == nil {
-		return fmt.Errorf("issue %s not found", id)
 	}
 
 	now := time.Now().UTC()
@@ -459,6 +446,11 @@ func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) err
 
 // CloseIssue closes an issue with a reason
 func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
+	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
+	if s.isActiveWisp(ctx, id) {
+		return s.closeWisp(ctx, id, reason, actor, session)
+	}
+
 	now := time.Now().UTC()
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -492,6 +484,11 @@ func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, ac
 
 // DeleteIssue permanently removes an issue
 func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
+	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
+	if s.isActiveWisp(ctx, id) {
+		return s.deleteWisp(ctx, id)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -538,8 +535,7 @@ func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
 // If both are false, returns an error if any issue has dependents.
 // If dryRun is true, only computes statistics without deleting.
 // deleteBatchSize controls the maximum number of IDs per IN-clause query.
-// Kept small to avoid choking embedded Dolt (go-mysql-server with MaxOpenConns=1)
-// where large parameter counts cause hangs. See steveyegge/beads#1692.
+// Kept small to avoid large IN-clause queries. See steveyegge/beads#1692.
 const deleteBatchSize = 50
 
 func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool, force bool, dryRun bool) (*types.DeleteIssuesResult, error) {
@@ -910,185 +906,20 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 }
 
 func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error) {
-	var issue types.Issue
-	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
-	var closedAt, compactedAt, lastActivity, dueAt, deferUntil sql.NullTime
-	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
-	var assignee, externalRef, specID, compactedAtCommit, owner sql.NullString
-	var contentHash, sourceRepo, closeReason sql.NullString
-	var workType, sourceSystem sql.NullString
-	var sender, wispType, molType, eventKind, actor, target, payload sql.NullString
-	var awaitType, awaitID, waiters sql.NullString
-	var hookBead, roleBead, agentState, roleType, rig sql.NullString
-	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
-	var qualityScore sql.NullFloat64
-	var metadata sql.NullString
-
-	err := db.QueryRowContext(ctx, `
-		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
-		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
-		       sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       event_kind, actor, target, payload,
-		       due_at, defer_until,
-		       quality_score, work_type, source_system, metadata
+	row := db.QueryRowContext(ctx, `
+		SELECT `+issueSelectColumns+`
 		FROM issues
 		WHERE id = ?
-	`, id).Scan(
-		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
-		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
-		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &specID,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
-		&sender, &ephemeral, &wispType, &pinned, &isTemplate, &crystallizes,
-		&awaitType, &awaitID, &timeoutNs, &waiters,
-		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
-		&eventKind, &actor, &target, &payload,
-		&dueAt, &deferUntil,
-		&qualityScore, &workType, &sourceSystem, &metadata,
-	)
+	`, id)
 
+	issue, err := scanIssueFrom(row)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, fmt.Errorf("%w: issue %s", storage.ErrNotFound, id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue: %w", err)
 	}
-
-	// Parse timestamp strings (TEXT columns require manual parsing)
-	if createdAtStr.Valid {
-		issue.CreatedAt = parseTimeString(createdAtStr.String)
-	}
-	if updatedAtStr.Valid {
-		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
-	}
-
-	// Map nullable fields
-	if contentHash.Valid {
-		issue.ContentHash = contentHash.String
-	}
-	if closedAt.Valid {
-		issue.ClosedAt = &closedAt.Time
-	}
-	if estimatedMinutes.Valid {
-		mins := int(estimatedMinutes.Int64)
-		issue.EstimatedMinutes = &mins
-	}
-	if assignee.Valid {
-		issue.Assignee = assignee.String
-	}
-	if owner.Valid {
-		issue.Owner = owner.String
-	}
-	if externalRef.Valid {
-		issue.ExternalRef = &externalRef.String
-	}
-	if specID.Valid {
-		issue.SpecID = specID.String
-	}
-	if compactedAt.Valid {
-		issue.CompactedAt = &compactedAt.Time
-	}
-	if compactedAtCommit.Valid {
-		issue.CompactedAtCommit = &compactedAtCommit.String
-	}
-	if originalSize.Valid {
-		issue.OriginalSize = int(originalSize.Int64)
-	}
-	if sourceRepo.Valid {
-		issue.SourceRepo = sourceRepo.String
-	}
-	if closeReason.Valid {
-		issue.CloseReason = closeReason.String
-	}
-	if sender.Valid {
-		issue.Sender = sender.String
-	}
-	if ephemeral.Valid && ephemeral.Int64 != 0 {
-		issue.Ephemeral = true
-	}
-	if wispType.Valid {
-		issue.WispType = types.WispType(wispType.String)
-	}
-	if pinned.Valid && pinned.Int64 != 0 {
-		issue.Pinned = true
-	}
-	if isTemplate.Valid && isTemplate.Int64 != 0 {
-		issue.IsTemplate = true
-	}
-	if crystallizes.Valid && crystallizes.Int64 != 0 {
-		issue.Crystallizes = true
-	}
-	if awaitType.Valid {
-		issue.AwaitType = awaitType.String
-	}
-	if awaitID.Valid {
-		issue.AwaitID = awaitID.String
-	}
-	if timeoutNs.Valid {
-		issue.Timeout = time.Duration(timeoutNs.Int64)
-	}
-	if waiters.Valid && waiters.String != "" {
-		issue.Waiters = parseJSONStringArray(waiters.String)
-	}
-	if hookBead.Valid {
-		issue.HookBead = hookBead.String
-	}
-	if roleBead.Valid {
-		issue.RoleBead = roleBead.String
-	}
-	if agentState.Valid {
-		issue.AgentState = types.AgentState(agentState.String)
-	}
-	if lastActivity.Valid {
-		issue.LastActivity = &lastActivity.Time
-	}
-	if roleType.Valid {
-		issue.RoleType = roleType.String
-	}
-	if rig.Valid {
-		issue.Rig = rig.String
-	}
-	if molType.Valid {
-		issue.MolType = types.MolType(molType.String)
-	}
-	if eventKind.Valid {
-		issue.EventKind = eventKind.String
-	}
-	if actor.Valid {
-		issue.Actor = actor.String
-	}
-	if target.Valid {
-		issue.Target = target.String
-	}
-	if payload.Valid {
-		issue.Payload = payload.String
-	}
-	if dueAt.Valid {
-		issue.DueAt = &dueAt.Time
-	}
-	if deferUntil.Valid {
-		issue.DeferUntil = &deferUntil.Time
-	}
-	if qualityScore.Valid {
-		qs := float32(qualityScore.Float64)
-		issue.QualityScore = &qs
-	}
-	if workType.Valid {
-		issue.WorkType = types.WorkType(workType.String)
-	}
-	if sourceSystem.Valid {
-		issue.SourceSystem = sourceSystem.String
-	}
-	// Custom metadata field (GH#1406)
-	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
-		issue.Metadata = []byte(metadata.String)
-	}
-
-	return &issue, nil
+	return issue, nil
 }
 
 func recordEvent(ctx context.Context, tx *sql.Tx, issueID string, eventType types.EventType, actor, oldValue, newValue string) error {

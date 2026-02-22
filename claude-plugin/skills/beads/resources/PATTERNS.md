@@ -57,7 +57,7 @@ NEXT: Need user input on budget constraints before finalizing recommendations"
 
 **Pattern**:
 1. Create issue immediately: `bd create "Found: inventory system needs refactoring"`
-2. Link provenance: `bd dep add main-task new-issue --type discovered-from`
+2. Link provenance: `bd dep add new-issue main-task --type discovered-from`
 3. Assess urgency: blocker or can defer?
 4. **If blocker**:
    - `bd update main-task --status blocked`
@@ -317,7 +317,7 @@ When closing reveals new work:
 bd create "Optimize token lookup query" -t task -p 2
 
 # Link the provenance
-bd dep add auth-5 perf-99 --type discovered-from
+bd dep add perf-99 auth-5 --type discovered-from
 
 # Now close original
 bd close auth-5 --reason "OAuth refresh implemented. Discovered perf optimization needed (filed perf-99)."

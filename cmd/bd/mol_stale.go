@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -62,14 +61,12 @@ func runMolStale(cmd *cobra.Command, args []string) {
 	var err error
 
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		os.Exit(1)
+		FatalError("no database connection")
 	}
 
 	result, err = findStaleMolecules(ctx, store, blockingOnly, unassignedOnly, showAll)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	if jsonOutput {

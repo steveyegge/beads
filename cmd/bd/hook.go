@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -64,8 +65,7 @@ Configuration (.beads/config.yaml):
 		case "post-checkout":
 			exitCode = hookPostCheckout(hookArgs)
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown hook: %s\n", hookName)
-			os.Exit(1)
+			FatalError("unknown hook: %s", hookName)
 		}
 
 		os.Exit(exitCode)
@@ -379,6 +379,11 @@ func hookPreCommit() int {
 //
 // Future: Use dolt_diff() for incremental export and BD_ACTOR filtering.
 func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
+	// In dolt-native mode, Dolt is the source of truth — skip JSONL export
+	if config.GetSyncMode() == config.SyncModeDoltNative {
+		return 0
+	}
+
 	ctx := context.Background()
 
 	// Load previous export state for this worktree

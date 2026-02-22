@@ -29,6 +29,9 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
   - id: bd-linux-arm64
     main: ./cmd/bd
@@ -48,6 +51,9 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
   - id: bd-android-arm64
     main: ./cmd/bd
@@ -71,11 +77,10 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=1
-      - CC=/tmp/zigcc/cc-x86_64-macos
-      - GOMAXPROCS=1
+      - CGO_ENABLED=0
     tags:
       - gms_pure_go
+      - netgo
     goos:
       - darwin
     goarch:
@@ -86,16 +91,18 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
   - id: bd-darwin-arm64
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=1
-      - CC=/tmp/zigcc/cc-aarch64-macos
-      - GOMAXPROCS=1
+      - CGO_ENABLED=0
     tags:
       - gms_pure_go
+      - netgo
     goos:
       - darwin
     goarch:
@@ -106,6 +113,9 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
   - id: bd-windows-amd64
     main: ./cmd/bd
@@ -128,6 +138,7 @@ builds:
       - -buildmode=exe
     hooks:
       post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
         # Sign Windows executable with Authenticode certificate
         # Requires WINDOWS_SIGNING_CERT_PFX_BASE64 and WINDOWS_SIGNING_CERT_PASSWORD secrets
         - ./scripts/sign-windows.sh "{{ .Path }}"
@@ -138,7 +149,7 @@ builds:
     env:
       - CGO_ENABLED=1
       - CC=/tmp/zigcc/cc-aarch64-windows-gnu
-      - GOMAXPROCS=1
+
     tags:
       - gms_pure_go
     goos:
@@ -154,6 +165,7 @@ builds:
       - -buildmode=exe
     hooks:
       post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
         # Sign Windows executable with Authenticode certificate
         # Requires WINDOWS_SIGNING_CERT_PFX_BASE64 and WINDOWS_SIGNING_CERT_PASSWORD secrets
         - ./scripts/sign-windows.sh "{{ .Path }}"
@@ -162,9 +174,7 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=1
-      - CC=/tmp/zigcc/cc-x86_64-freebsd
-      - GOMAXPROCS=1
+      - CGO_ENABLED=0
     tags:
       - gms_pure_go
     goos:
@@ -177,6 +187,9 @@ builds:
       - -X main.Build={{.ShortCommit}}
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
 archives:
   - id: bd-archive

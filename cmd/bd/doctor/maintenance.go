@@ -27,8 +27,9 @@ import (
 // want time-based pruning must explicitly enable it in metadata.json.
 // Future: Consider adding max_database_size_mb for size-based thresholds.
 
-// largeClosedIssuesThreshold triggers a warning to enable stale cleanup
-const largeClosedIssuesThreshold = 10000
+// largeClosedIssuesThreshold triggers a warning to enable stale cleanup.
+// Var (not const) so tests can override to avoid inserting 10k rows.
+var largeClosedIssuesThreshold = 10000
 
 func CheckStaleClosedIssues(path string) DoctorCheck {
 	_, beadsDir := getBackendAndBeadsDir(path)
@@ -131,7 +132,7 @@ func CheckStaleMolecules(path string) DoctorCheck {
 	// Open database using Dolt
 	ctx := context.Background()
 	doltPath := filepath.Join(beadsDir, "dolt")
-	store, err := dolt.New(ctx, &dolt.Config{Path: doltPath, ReadOnly: true})
+	store, err := dolt.New(ctx, &dolt.Config{Path: doltPath, ReadOnly: true, Database: doltDatabaseName(beadsDir)})
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Stale Molecules",

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -737,12 +739,9 @@ func TestDoltStoreDeleteIssue(t *testing.T) {
 	}
 
 	// Verify it's gone
-	retrieved, err = store.GetIssue(ctx, issue.ID)
-	if err != nil {
-		t.Fatalf("failed to get issue after delete: %v", err)
-	}
-	if retrieved != nil {
-		t.Error("expected issue to be deleted")
+	_, err = store.GetIssue(ctx, issue.ID)
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound after delete, got: %v", err)
 	}
 }
 
@@ -797,12 +796,9 @@ func TestDeleteIssuesBatchPerformance(t *testing.T) {
 
 	// Verify all issues are actually gone
 	for i := 1; i <= issueCount; i++ {
-		got, err := store.GetIssue(ctx, fmt.Sprintf("batch-del-%d", i))
-		if err != nil {
-			t.Fatalf("failed to get issue %d after delete: %v", i, err)
-		}
-		if got != nil {
-			t.Errorf("issue batch-del-%d should be deleted", i)
+		_, err := store.GetIssue(ctx, fmt.Sprintf("batch-del-%d", i))
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("expected ErrNotFound for issue %d after delete, got: %v", i, err)
 		}
 	}
 }
@@ -996,12 +992,9 @@ func TestDeleteIssuesForceWithOrphans(t *testing.T) {
 
 	// Verify parent and child1 are deleted
 	for _, id := range []string{"f-parent", "f-child1"} {
-		got, err := store.GetIssue(ctx, id)
-		if err != nil {
-			t.Fatalf("failed to get %s: %v", id, err)
-		}
-		if got != nil {
-			t.Errorf("%s should be deleted", id)
+		_, err := store.GetIssue(ctx, id)
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("expected ErrNotFound for %s, got: %v", id, err)
 		}
 	}
 	// child2 should still exist
@@ -1060,12 +1053,9 @@ func TestDeleteIssuesBatchBoundary(t *testing.T) {
 
 			// Verify all gone
 			for _, id := range ids {
-				got, err := store.GetIssue(ctx, id)
-				if err != nil {
-					t.Fatalf("GetIssue(%s) failed: %v", id, err)
-				}
-				if got != nil {
-					t.Errorf("issue %s should be deleted", id)
+				_, err := store.GetIssue(ctx, id)
+				if !errors.Is(err, storage.ErrNotFound) {
+					t.Fatalf("expected ErrNotFound for %s, got: %v", id, err)
 				}
 			}
 		})
@@ -1124,12 +1114,9 @@ func TestDeleteIssuesCircularDeps(t *testing.T) {
 
 	// Verify all deleted
 	for _, id := range []string{"circ-a", "circ-b", "circ-c"} {
-		got, err := store.GetIssue(ctx, id)
-		if err != nil {
-			t.Fatalf("GetIssue(%s) failed: %v", id, err)
-		}
-		if got != nil {
-			t.Errorf("%s should be deleted", id)
+		_, err := store.GetIssue(ctx, id)
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("expected ErrNotFound for %s, got: %v", id, err)
 		}
 	}
 }
@@ -1178,12 +1165,9 @@ func TestDeleteIssuesDiamondDeps(t *testing.T) {
 	}
 
 	for _, id := range []string{"dia-root", "dia-left", "dia-right", "dia-bottom"} {
-		got, err := store.GetIssue(ctx, id)
-		if err != nil {
-			t.Fatalf("GetIssue(%s) failed: %v", id, err)
-		}
-		if got != nil {
-			t.Errorf("%s should be deleted", id)
+		_, err := store.GetIssue(ctx, id)
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("expected ErrNotFound for %s, got: %v", id, err)
 		}
 	}
 }

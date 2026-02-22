@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
 )
 
@@ -28,7 +29,10 @@ func getEmbeddedHooks() (map[string]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to read embedded hook %s: %w", name, err)
 		}
-		hooks[name] = string(content)
+		// Normalize line endings to LF — embedded templates may contain CRLF
+		// when built on Windows or from an NTFS-mounted filesystem (e.g. WSL).
+		// Git hooks with CRLF fail: /usr/bin/env: 'sh\r': No such file or directory
+		hooks[name] = strings.ReplaceAll(string(content), "\r\n", "\n")
 	}
 
 	return hooks, nil
@@ -216,29 +220,11 @@ Installed hooks:
 
 		embeddedHooks, err := getEmbeddedHooks()
 		if err != nil {
-			if jsonOutput {
-				output := map[string]interface{}{
-					"error": err.Error(),
-				}
-				jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-				fmt.Println(string(jsonBytes))
-			} else {
-				fmt.Fprintf(os.Stderr, "Error loading hooks: %v\n", err)
-			}
-			os.Exit(1)
+			FatalErrorRespectJSON("loading hooks: %v", err)
 		}
 
 		if err := installHooksWithOptions(embeddedHooks, force, shared, chain, beadsHooks); err != nil {
-			if jsonOutput {
-				output := map[string]interface{}{
-					"error": err.Error(),
-				}
-				jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-				fmt.Println(string(jsonBytes))
-			} else {
-				fmt.Fprintf(os.Stderr, "Error installing hooks: %v\n", err)
-			}
-			os.Exit(1)
+			FatalErrorRespectJSON("installing hooks: %v", err)
 		}
 
 		if jsonOutput {
@@ -283,16 +269,7 @@ var hooksUninstallCmd = &cobra.Command{
 	Long:  `Remove bd git hooks from .git/hooks/ directory.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := uninstallHooks(); err != nil {
-			if jsonOutput {
-				output := map[string]interface{}{
-					"error": err.Error(),
-				}
-				jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-				fmt.Println(string(jsonBytes))
-			} else {
-				fmt.Fprintf(os.Stderr, "Error uninstalling hooks: %v\n", err)
-			}
-			os.Exit(1)
+			FatalErrorRespectJSON("uninstalling hooks: %v", err)
 		}
 
 		if jsonOutput {
@@ -556,6 +533,11 @@ func runPreCommitHook() int {
 		return 0 // Not a bd workspace, nothing to do
 	}
 
+	// In dolt-native mode, Dolt is the source of truth — skip JSONL export
+	if config.GetSyncMode() == config.SyncModeDoltNative {
+		return 0
+	}
+
 	// Flush pending changes to JSONL
 	// Use --flush-only to skip git operations (we're already in a git hook)
 	cmd := exec.Command("bd", "sync", "--flush-only")
@@ -631,6 +613,11 @@ func runPostMergeHook() int {
 		return 0
 	}
 
+	// In dolt-native mode, Dolt is the source of truth — skip JSONL import
+	if config.GetSyncMode() == config.SyncModeDoltNative {
+		return 0
+	}
+
 	// Check if any JSONL file exists
 	if !hasBeadsJSONL() {
 		return 0
@@ -664,6 +651,11 @@ func runPrePushHook(args []string) int {
 
 	// Check if we're in a bd workspace
 	if _, err := os.Stat(".beads"); os.IsNotExist(err) {
+		return 0
+	}
+
+	// In dolt-native mode, Dolt is the source of truth — skip JSONL checks
+	if config.GetSyncMode() == config.SyncModeDoltNative {
 		return 0
 	}
 
@@ -771,6 +763,11 @@ func runPostCheckoutHook(args []string) int {
 
 	// Check if we're in a bd workspace
 	if _, err := os.Stat(".beads"); os.IsNotExist(err) {
+		return 0
+	}
+
+	// In dolt-native mode, Dolt is the source of truth — skip JSONL import
+	if config.GetSyncMode() == config.SyncModeDoltNative {
 		return 0
 	}
 
@@ -1084,8 +1081,7 @@ installed bd version - upgrading bd automatically updates hook behavior.`,
 		case "prepare-commit-msg":
 			exitCode = runPrepareCommitMsgHook(hookArgs)
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown hook: %s\n", hookName)
-			os.Exit(1)
+			FatalError("unknown hook: %s", hookName)
 		}
 
 		os.Exit(exitCode)

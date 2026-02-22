@@ -195,7 +195,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables auto-sync")
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
-	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on). Default: on for embedded, off for server mode. Override via config key dolt.auto-commit")
+	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on|batch). Default: off. Override via config key dolt.auto-commit")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
@@ -252,8 +252,7 @@ var rootCmd = &cobra.Command{
 
 		// Block dangerous env var overrides that could cause data fragmentation (bd-hevyw).
 		if err := checkBlockedEnvVars(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		// Apply viper configuration if flags weren't explicitly set
@@ -318,8 +317,7 @@ var rootCmd = &cobra.Command{
 
 		// Validate Dolt auto-commit mode early so all commands fail fast on invalid config.
 		if _, err := getDoltAutoCommitMode(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		// GH#1093: Check noDbCommands BEFORE expensive operations (ensureForkProtection)
@@ -334,12 +332,12 @@ var rootCmd = &cobra.Command{
 			"dolt",
 			"fish",
 			"help",
-			"hook", // manages its own store lifecycle; double-open deadlocks embedded Dolt (#1719)
+			"hook", // manages its own store lifecycle (#1719)
 			"hooks",
 			"human",
 			"init",
 			"merge",
-			"migrate", // manages its own store lifecycle; double-open deadlocks embedded Dolt (#1668)
+			"migrate", // manages its own store lifecycle (#1668)
 			"onboard",
 			"powershell",
 			"prime",
@@ -397,8 +395,7 @@ var rootCmd = &cobra.Command{
 
 		// --no-db mode has been removed; only Dolt is supported
 		if noDb {
-			fmt.Fprintf(os.Stderr, "Error: --no-db mode has been removed; beads now requires Dolt (run 'bd init' to create a database)\n")
-			os.Exit(1)
+			FatalError("--no-db mode has been removed; beads now requires Dolt (run 'bd init' to create a database)")
 		}
 
 		// Initialize database path
@@ -457,15 +454,13 @@ var rootCmd = &cobra.Command{
 							fmt.Fprintf(os.Stderr, "This looks like a fresh clone or JSONL-only project.\n\n")
 							fmt.Fprintf(os.Stderr, "Options:\n")
 							fmt.Fprintf(os.Stderr, "  • Run 'bd init' to create database and import issues\n")
-							fmt.Fprintf(os.Stderr, "  • Use 'bd --no-db %s' for JSONL-only mode\n", cmd.Name())
-							fmt.Fprintf(os.Stderr, "  • Add 'no-db: true' to .beads/config.yaml for permanent JSONL-only mode\n")
+							fmt.Fprintf(os.Stderr, "  • Add 'no-db: true' to .beads/config.yaml for JSONL-only mode\n")
 							os.Exit(1)
 						}
 					}
 
 					// Generic error - no beads directory or JSONL found
 					fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
-					fmt.Fprintf(os.Stderr, "      or use 'bd --no-db' to work with JSONL only (no database)\n")
 					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
 					os.Exit(1)
 				}
@@ -513,52 +508,25 @@ var rootCmd = &cobra.Command{
 			ReadOnly: useReadOnly,
 		}
 
-		// Set advisory lock timeout for dolt embedded mode.
-		// Reads get a shorter timeout (shared lock, less contention expected).
-		// Writes get a longer timeout (exclusive lock, may need to wait for readers).
-		if useReadOnly {
-			doltCfg.OpenTimeout = 5 * time.Second
-		} else {
-			doltCfg.OpenTimeout = 15 * time.Second
-		}
-
-		// Load config to get database name and server mode settings
+		// Load config to get database name and server connection settings
 		cfg, cfgErr := configfile.Load(beadsDir)
 		if cfgErr == nil && cfg != nil {
 			// Always set database name (needed for bootstrap to find
 			// prefix-based databases like "beads_hq"; see #1669)
 			doltCfg.Database = cfg.GetDoltDatabase()
 
-			if cfg.IsDoltServerMode() {
-				doltCfg.ServerMode = true
-				doltCfg.ServerHost = cfg.GetDoltServerHost()
-				doltCfg.ServerPort = cfg.GetDoltServerPort()
-				doltCfg.ServerUser = cfg.GetDoltServerUser()
-				doltCfg.ServerPassword = cfg.GetDoltServerPassword()
-				doltCfg.ServerTLS = cfg.GetDoltServerTLS()
-			}
+			doltCfg.ServerHost = cfg.GetDoltServerHost()
+			doltCfg.ServerPort = cfg.GetDoltServerPort()
+			doltCfg.ServerUser = cfg.GetDoltServerUser()
+			doltCfg.ServerPassword = cfg.GetDoltServerPassword()
+			doltCfg.ServerTLS = cfg.GetDoltServerTLS()
 		}
 
-		// Apply mode-aware default for dolt-auto-commit if neither flag nor
-		// config explicitly set it. Server mode defaults to OFF because the
-		// server handles commits via its own transaction lifecycle; firing
-		// DOLT_COMMIT after every write under concurrent load causes
-		// 'database is read only' errors. Embedded mode defaults to ON so
-		// each write is durably committed.
+		// Server mode defaults auto-commit to OFF because the server handles
+		// commits via its own transaction lifecycle; firing DOLT_COMMIT after
+		// every write under concurrent load causes 'database is read only' errors.
 		if strings.TrimSpace(doltAutoCommit) == "" {
-			if doltCfg.ServerMode {
-				doltAutoCommit = string(doltAutoCommitOff)
-			} else {
-				doltAutoCommit = string(doltAutoCommitOn)
-			}
-		}
-
-		// Bootstrap embedded dolt if needed
-		if !doltCfg.ServerMode {
-			if bErr := bootstrapEmbeddedDolt(rootCtx, doltPath, doltCfg); bErr != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", bErr)
-				os.Exit(1)
-			}
+			doltAutoCommit = string(doltAutoCommitOff)
 		}
 
 		doltCfg.Path = doltPath
@@ -572,8 +540,7 @@ var rootCmd = &cobra.Command{
 			if handleFreshCloneError(err, beadsDir) {
 				os.Exit(1)
 			}
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to open database: %v", err)
 		}
 
 		// Mark store as active for flush goroutine safety
@@ -627,8 +594,7 @@ var rootCmd = &cobra.Command{
 		// create a Dolt commit so changes don't remain only in the working set.
 		if commandDidWrite.Load() && !commandDidExplicitDoltCommit {
 			if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: dolt auto-commit failed: %v\n", err)
-				os.Exit(1)
+				FatalError("dolt auto-commit failed: %v", err)
 			}
 		}
 
@@ -637,16 +603,14 @@ var rootCmd = &cobra.Command{
 		if commandDidWriteTipMetadata && len(commandTipIDsShown) > 0 {
 			// Only applies when dolt auto-commit is enabled and backend is versioned (Dolt).
 			if mode, err := getDoltAutoCommitMode(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
-				os.Exit(1)
+				FatalError("dolt tip auto-commit failed: %v", err)
 			} else if mode == doltAutoCommitOn {
 				// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
 				for tipID := range commandTipIDsShown {
 					key := fmt.Sprintf("tip_%s_last_shown", tipID)
 					value := time.Now().Format(time.RFC3339)
 					if err := store.SetMetadata(rootCtx, key, value); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
-						os.Exit(1)
+						FatalError("dolt tip auto-commit failed: %v", err)
 					}
 				}
 
@@ -656,8 +620,7 @@ var rootCmd = &cobra.Command{
 				}
 				msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
 				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
-					os.Exit(1)
+					FatalError("dolt tip auto-commit failed: %v", err)
 				}
 			}
 		}

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,8 +15,8 @@ import (
 
 var readyCmd = &cobra.Command{
 	Use:   "ready",
-	Short: "Show ready work (open, no blockers)",
-	Long: `Show ready work (open issues with no blockers).
+	Short: "Show ready work (open, no active blockers)",
+	Long: `Show ready work (open issues with no active blockers).
 
 Excludes in_progress, blocked, deferred, and hooked issues. This uses the
 GetReadyWork API which applies blocker-aware semantics to find truly claimable work.
@@ -65,8 +64,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if molTypeStr != "" {
 			mt := types.MolType(molTypeStr)
 			if !mt.IsValid() {
-				fmt.Fprintf(os.Stderr, "Error: invalid mol-type %q (must be swarm, patrol, or work)\n", molTypeStr)
-				os.Exit(1)
+				FatalError("invalid mol-type %q (must be swarm, patrol, or work)", molTypeStr)
 			}
 			molType = &mt
 		}
@@ -110,8 +108,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		}
 		// Validate sort policy
 		if !filter.SortPolicy.IsValid() {
-			fmt.Fprintf(os.Stderr, "Error: invalid sort policy '%s'. Valid values: hybrid, priority, oldest\n", sortPolicy)
-			os.Exit(1)
+			FatalError("invalid sort policy '%s'. Valid values: hybrid, priority, oldest", sortPolicy)
 		}
 		// Direct mode
 		ctx := rootCtx
@@ -121,8 +118,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if rigOverride != "" {
 			rigStore, err := openStoreForRig(ctx, rigOverride)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 			defer func() { _ = rigStore.Close() }()
 			activeStore = rigStore
@@ -131,8 +127,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 
 		issues, err := activeStore.GetReadyWork(ctx, filter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 		if jsonOutput {
 			// Always output array, even if empty
@@ -193,7 +188,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		// Determine display mode: --plain or --pretty=false triggers plain format
 		usePlain := plainFormat || !prettyFormat
 		if usePlain {
-			fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
+			fmt.Printf("\n%s Ready work (%d issues with no active blockers):\n\n", ui.RenderAccent("📋"), len(issues))
 			for i, issue := range issues {
 				fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
 					ui.RenderPriority(issue.Priority),
@@ -332,7 +327,7 @@ func displayReadyList(issues []*types.Issue, parentEpicMap map[string]string) {
 	// Summary footer
 	fmt.Println()
 	fmt.Println(strings.Repeat("-", 80))
-	fmt.Printf("Ready: %d issues with no blockers\n", len(issues))
+	fmt.Printf("Ready: %d issues with no active blockers\n", len(issues))
 	fmt.Println()
 	fmt.Println("Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred")
 }
@@ -343,22 +338,19 @@ func runMoleculeReady(_ *cobra.Command, molIDArg string) {
 
 	// Molecule-ready requires direct store access for subgraph loading
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		os.Exit(1)
+		FatalError("no database connection")
 	}
 
 	// Resolve molecule ID
 	moleculeID, err := utils.ResolvePartialID(ctx, store, molIDArg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: molecule '%s' not found\n", molIDArg)
-		os.Exit(1)
+		FatalError("molecule '%s' not found", molIDArg)
 	}
 
 	// Load molecule subgraph
 	subgraph, err := loadTemplateSubgraph(ctx, store, moleculeID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-		os.Exit(1)
+		FatalError("loading molecule: %v", err)
 	}
 
 	// Get parallel analysis to find ready steps

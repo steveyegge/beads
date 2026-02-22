@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -138,9 +139,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	// Wisp create requires direct store access (daemon auto-bypassed for wisp ops)
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-		os.Exit(1)
+		FatalErrorWithHint("no database connection", "run 'bd init' or 'bd import' to initialize the database")
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -151,8 +150,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 	for _, v := range varFlags {
 		parts := strings.SplitN(v, "=", 2)
 		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "Error: invalid variable format '%s', expected 'key=value'\n", v)
-			os.Exit(1)
+			FatalError("invalid variable format '%s', expected 'key=value'", v)
 		}
 		vars[parts[0]] = parts[1]
 	}
@@ -189,8 +187,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 				Labels: []string{MoleculeLabel},
 			})
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error searching for proto: %v\n", err)
-				os.Exit(1)
+				FatalError("searching for proto: %v", err)
 			}
 			found := false
 			for _, issue := range issues {
@@ -201,33 +198,27 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 				}
 			}
 			if !found {
-				fmt.Fprintf(os.Stderr, "Error: '%s' not found as formula or proto\n", args[0])
-				fmt.Fprintf(os.Stderr, "Hint: run 'bd formula list' to see available formulas\n")
-				os.Exit(1)
+				FatalErrorWithHint(fmt.Sprintf("'%s' not found as formula or proto", args[0]), "run 'bd formula list' to see available formulas")
 			}
 		}
 
 		// Load the proto
-		// Note: GetIssue returns (nil, nil) for not-found, so check both
 		protoIssue, err := store.GetIssue(ctx, protoID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading proto %s: %v\n", protoID, err)
-			os.Exit(1)
-		}
-		if protoIssue == nil {
-			fmt.Fprintf(os.Stderr, "Error: proto not found: %s\n", protoID)
-			os.Exit(1)
+			if errors.Is(err, storage.ErrNotFound) {
+				FatalError("proto not found: %s", protoID)
+			} else {
+				FatalError("loading proto %s: %v", protoID, err)
+			}
 		}
 		if !isProtoIssue(protoIssue) {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a proto (missing '%s' label)\n", protoID, MoleculeLabel)
-			os.Exit(1)
+			FatalError("%s is not a proto (missing '%s' label)", protoID, MoleculeLabel)
 		}
 
 		// Load the proto subgraph from DB
 		subgraph, err = loadTemplateSubgraph(ctx, store, protoID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading proto: %v\n", err)
-			os.Exit(1)
+			FatalError("loading proto: %v", err)
 		}
 	}
 
@@ -243,9 +234,10 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 		}
 	}
 	if len(missingVars) > 0 {
-		fmt.Fprintf(os.Stderr, "Error: missing required variables: %s\n", strings.Join(missingVars, ", "))
-		fmt.Fprintf(os.Stderr, "Provide them with: --var %s=<value>\n", missingVars[0])
-		os.Exit(1)
+		FatalErrorWithHint(
+			fmt.Sprintf("missing required variables: %s", strings.Join(missingVars, ", ")),
+			fmt.Sprintf("Provide them with: --var %s=<value>", missingVars[0]),
+		)
 	}
 
 	if dryRun {
@@ -262,8 +254,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 	// Use wisp prefix for distinct visual recognition (see types.IDPrefixWisp)
 	result, err := spawnMolecule(ctx, store, subgraph, vars, "", actor, true, types.IDPrefixWisp)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating wisp: %v\n", err)
-		os.Exit(1)
+		FatalError("creating wisp: %v", err)
 	}
 
 	// Wisp issues are in main db but don't trigger JSONL export (Ephemeral flag excludes them)
@@ -299,8 +290,7 @@ func isProtoIssue(issue *types.Issue) bool {
 // resolvePartialIDDirect resolves a partial ID directly from store
 func resolvePartialIDDirect(ctx context.Context, partial string) (string, error) {
 	// Try direct lookup first
-	// Note: GetIssue returns (nil, nil) for not-found, so check both
-	if issue, err := store.GetIssue(ctx, partial); err == nil && issue != nil {
+	if issue, err := store.GetIssue(ctx, partial); err == nil {
 		return issue.ID, nil
 	}
 	// Search by prefix
@@ -367,11 +357,11 @@ func runWispList(cmd *cobra.Command, args []string) {
 	ephemeralFlag := true
 	filter := types.IssueFilter{
 		Ephemeral: &ephemeralFlag,
+		Limit:     5000,
 	}
 	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing wisps: %v\n", err)
-		os.Exit(1)
+		FatalError("listing wisps: %v", err)
 	}
 
 	// Filter closed issues unless --all is specified
@@ -550,16 +540,13 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		var err error
 		ageThreshold, err = time.ParseDuration(ageStr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: invalid --age duration: %v\n", err)
-			os.Exit(1)
+			FatalError("invalid --age duration: %v", err)
 		}
 	}
 
 	// Wisp gc requires direct store access for deletion (daemon auto-bypassed for wisp ops)
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-		os.Exit(1)
+		FatalErrorWithHint("no database connection", "run 'bd init' or 'bd import' to initialize the database")
 	}
 
 	// --closed mode: purge all closed wisps (batch deletion)
@@ -572,11 +559,11 @@ func runWispGC(cmd *cobra.Command, args []string) {
 	ephemeralFlag := true
 	filter := types.IssueFilter{
 		Ephemeral: &ephemeralFlag,
+		Limit:     5000,
 	}
 	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing wisps: %v\n", err)
-		os.Exit(1)
+		FatalError("listing wisps: %v", err)
 	}
 
 	// Find old/abandoned wisps
@@ -647,12 +634,12 @@ func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool) {
 	filter := types.IssueFilter{
 		Status:    &statusClosed,
 		Ephemeral: &ephemeralTrue,
+		Limit:     5000,
 	}
 
 	closedIssues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing closed wisps: %v\n", err)
-		os.Exit(1)
+		FatalError("listing closed wisps: %v", err)
 	}
 
 	// Filter out pinned issues (protected from cleanup)

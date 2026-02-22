@@ -1079,7 +1079,7 @@ func (i *Issue) GetConstituents() []BondRef {
 
 // EntityRef is a structured reference to an entity (human, agent, or org).
 // This is the foundation for HOP entity tracking and CV chains.
-// Can be rendered as a URI: entity://hop/<platform>/<org>/<id>
+// Can be rendered as a URI: hop://<platform>/<org>/<id>
 //
 // Example usage:
 //
@@ -1089,7 +1089,7 @@ func (i *Issue) GetConstituents() []BondRef {
 //	    Org:      "steveyegge",
 //	    ID:       "polecat-nux",
 //	}
-//	uri := ref.URI() // "entity://hop/gastown/steveyegge/polecat-nux"
+//	uri := ref.URI() // "hop://gastown/steveyegge/polecat-nux"
 type EntityRef struct {
 	// Name is the human-readable identifier (e.g., "polecat/Nux", "mayor")
 	Name string `json:"name,omitempty"`
@@ -1113,13 +1113,13 @@ func (e *EntityRef) IsEmpty() bool {
 }
 
 // URI returns the entity as a HOP URI.
-// Format: entity://hop/<platform>/<org>/<id>
+// Format: hop://<platform>/<org>/<id>
 // Returns empty string if Platform, Org, or ID is missing.
 func (e *EntityRef) URI() string {
 	if e == nil || e.Platform == "" || e.Org == "" || e.ID == "" {
 		return ""
 	}
-	return fmt.Sprintf("entity://hop/%s/%s/%s", e.Platform, e.Org, e.ID)
+	return fmt.Sprintf("hop://%s/%s/%s", e.Platform, e.Org, e.ID)
 }
 
 // String returns a human-readable representation.
@@ -1171,18 +1171,26 @@ func (v *Validation) IsValidOutcome() bool {
 }
 
 // ParseEntityURI parses a HOP entity URI into an EntityRef.
-// Format: entity://hop/<platform>/<org>/<id>
+// Format: hop://<platform>/<org>/<id>
+// Also accepts legacy entity://hop/<platform>/<org>/<id> for backward compatibility.
 // Returns nil and error if the URI is invalid.
 func ParseEntityURI(uri string) (*EntityRef, error) {
-	const prefix = "entity://hop/"
-	if !strings.HasPrefix(uri, prefix) {
-		return nil, fmt.Errorf("invalid entity URI: must start with %q", prefix)
+	const hopPrefix = "hop://"
+	const legacyPrefix = "entity://hop/"
+
+	var rest string
+	switch {
+	case strings.HasPrefix(uri, hopPrefix):
+		rest = uri[len(hopPrefix):]
+	case strings.HasPrefix(uri, legacyPrefix):
+		rest = uri[len(legacyPrefix):]
+	default:
+		return nil, fmt.Errorf("invalid entity URI: must start with %q (or legacy %q)", hopPrefix, legacyPrefix)
 	}
 
-	rest := uri[len(prefix):]
 	parts := strings.SplitN(rest, "/", 3)
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		return nil, fmt.Errorf("invalid entity URI: expected entity://hop/<platform>/<org>/<id>, got %q", uri)
+		return nil, fmt.Errorf("invalid entity URI: expected hop://<platform>/<org>/<id>, got %q", uri)
 	}
 
 	return &EntityRef{

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -71,8 +70,7 @@ Use --limit or --range to view specific steps:
 		}
 
 		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
+			FatalError("no database connection")
 		}
 
 		// Parse range flag if provided
@@ -81,8 +79,7 @@ Use --limit or --range to view specific steps:
 			var err error
 			rangeStart, rangeEnd, err = parseRange(rangeStr)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: invalid range '%s': %v\n", rangeStr, err)
-				os.Exit(1)
+				FatalError("invalid range '%s': %v", rangeStr, err)
 			}
 		}
 
@@ -95,15 +92,13 @@ Use --limit or --range to view specific steps:
 			// Explicit molecule ID given
 			moleculeID, err := utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: molecule '%s' not found\n", args[0])
-				os.Exit(1)
+				FatalError("molecule '%s' not found", args[0])
 			}
 
 			// Check child count first for large molecule detection
 			stats, err := store.GetMoleculeProgress(ctx, moleculeID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-				os.Exit(1)
+				FatalError("loading molecule: %v", err)
 			}
 
 			// If large molecule and no explicit flags, show summary
@@ -114,8 +109,7 @@ Use --limit or --range to view specific steps:
 
 			progress, err := getMoleculeProgress(ctx, store, moleculeID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-				os.Exit(1)
+				FatalError("loading molecule: %v", err)
 			}
 
 			// Apply limit or range filtering

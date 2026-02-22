@@ -69,8 +69,7 @@ Examples:
 		CheckReadonly("kv set")
 
 		if err := ensureDirectMode("kv set requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		key := args[0]
@@ -108,8 +107,7 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := ensureDirectMode("kv get requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		key := args[0]
@@ -156,8 +154,7 @@ Examples:
 		CheckReadonly("kv clear")
 
 		if err := ensureDirectMode("kv clear requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		key := args[0]
@@ -193,8 +190,7 @@ Examples:
   bd kv list --json`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := ensureDirectMode("kv list requires direct database access"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		ctx := rootCtx

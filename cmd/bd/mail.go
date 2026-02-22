@@ -59,8 +59,7 @@ Examples:
 		// Parse the delegate command (e.g., "gt mail" -> ["gt", "mail"])
 		parts := strings.Fields(delegate)
 		if len(parts) == 0 {
-			fmt.Fprintf(os.Stderr, "Error: invalid mail delegate: %q\n", delegate)
-			os.Exit(1)
+			FatalError("invalid mail delegate: %q", delegate)
 		}
 
 		// Build the full command with our args appended
@@ -79,8 +78,7 @@ Examples:
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				os.Exit(exitErr.ExitCode())
 			}
-			fmt.Fprintf(os.Stderr, "Error running %s: %v\n", delegate, err)
-			os.Exit(1)
+			FatalError("running %s: %v", delegate, err)
 		}
 	},
 }

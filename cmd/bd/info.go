@@ -210,11 +210,40 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.55.4",
+		Date:    "2026-02-20",
+		Changes: []string{
+			"FIX: Release CI FreeBSD — CGO_ENABLED=0 (zig sysroot lacks stdlib.h)",
+			"FIX: Release CI macOS — CGO_ENABLED=0 for darwin (zig sysroot lacks frameworks)",
+			"FIX: Release CI libresolv — strip -lresolv from zig wrappers (macOS uses netgo)",
+		},
+	},
+	{
+		Version: "0.55.1",
+		Date:    "2026-02-20",
+		Changes: []string{
+			"FIX: Release workflow YAML broken by heredoc in zig wrapper step",
+			"FIX: Version consistency (marketplace.json missed in v0.55.0 bump)",
+			"FIX: Go formatting and lint issues in 9 files",
+		},
+	},
+	{
+		Version: "0.55.0",
+		Date:    "2026-02-20",
+		Changes: []string{
+			"FIX: Release CI upgraded zig 0.13→0.14 fixing AccessDenied cross-compilation bug",
+			"FIX: macOS libresolv resolution with zig 0.14 (-lresolv.9 workaround)",
+			"FIX: 5 pre-existing test failures and Dolt panic resolved",
+			"REMOVED: ~5K lines dead code from classic sync cleanup",
+		},
+	},
+	{
 		Version: "0.54.0",
 		Date:    "2026-02-18",
 		Changes: []string{
 			"FIX: Release CI zig cross-compilation cache race (--parallelism 1)",
 			"FIX: Android ARM64 build uses CGO_ENABLED=0 (server mode only)",
+			"FIX: macOS cross-builds use netgo tag with zig 0.14.0",
 		},
 	},
 	{

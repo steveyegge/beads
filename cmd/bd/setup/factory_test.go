@@ -7,9 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/templates/agents"
 )
 
 func TestUpdateBeadsSection(t *testing.T) {
+	beadsSection := agents.EmbeddedBeadsSection()
+
 	tests := []struct {
 		name     string
 		content  string
@@ -30,13 +34,13 @@ More content after`,
 
 Some content
 
-` + agentsBeadsSection + `
+` + beadsSection + `
 More content after`,
 		},
 		{
 			name:     "append when no markers exist",
 			content:  "# My Project\n\nSome content",
-			expected: "# My Project\n\nSome content\n\n" + agentsBeadsSection,
+			expected: "# My Project\n\nSome content\n\n" + beadsSection,
 		},
 		{
 			name: "handle section at end of file",
@@ -47,7 +51,7 @@ Old content
 <!-- END BEADS INTEGRATION -->`,
 			expected: `# My Project
 
-` + agentsBeadsSection,
+` + beadsSection,
 		},
 	}
 
@@ -247,7 +251,8 @@ func TestCheckFactoryScenarios(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		env, stdout, _ := newFactoryTestEnv(t)
-		if err := os.WriteFile(env.agentsPath, []byte(agentsBeadsSection), 0644); err != nil {
+		beadsSection := agents.EmbeddedBeadsSection()
+		if err := os.WriteFile(env.agentsPath, []byte(beadsSection), 0644); err != nil {
 			t.Fatalf("failed to seed file: %v", err)
 		}
 		if err := checkFactory(env); err != nil {
@@ -262,7 +267,8 @@ func TestCheckFactoryScenarios(t *testing.T) {
 func TestRemoveFactoryScenarios(t *testing.T) {
 	t.Run("remove section and keep file", func(t *testing.T) {
 		env, stdout, _ := newFactoryTestEnv(t)
-		content := "# Top\n\n" + agentsBeadsSection + "\n\n# Bottom"
+		beadsSection := agents.EmbeddedBeadsSection()
+		content := "# Top\n\n" + beadsSection + "\n\n# Bottom"
 		if err := os.WriteFile(env.agentsPath, []byte(content), 0644); err != nil {
 			t.Fatalf("failed to seed AGENTS.md: %v", err)
 		}
@@ -283,7 +289,8 @@ func TestRemoveFactoryScenarios(t *testing.T) {
 
 	t.Run("delete file when only beads", func(t *testing.T) {
 		env, stdout, _ := newFactoryTestEnv(t)
-		if err := os.WriteFile(env.agentsPath, []byte(agentsBeadsSection), 0644); err != nil {
+		beadsSection := agents.EmbeddedBeadsSection()
+		if err := os.WriteFile(env.agentsPath, []byte(beadsSection), 0644); err != nil {
 			t.Fatalf("failed to seed AGENTS.md: %v", err)
 		}
 		if err := removeFactory(env); err != nil {
@@ -335,7 +342,8 @@ func TestWrapperExitsOnError(t *testing.T) {
 	t.Run("RemoveFactory", func(t *testing.T) {
 		cap := stubSetupExit(t)
 		env := factoryEnv{agentsPath: filepath.Join(t.TempDir(), "AGENTS.md"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
-		if err := os.WriteFile(env.agentsPath, []byte(agentsBeadsSection), 0644); err != nil {
+		beadsSection := agents.EmbeddedBeadsSection()
+		if err := os.WriteFile(env.agentsPath, []byte(beadsSection), 0644); err != nil {
 			t.Fatalf("failed to seed file: %v", err)
 		}
 		if err := os.Chmod(env.agentsPath, 0o000); err != nil {
@@ -350,11 +358,11 @@ func TestWrapperExitsOnError(t *testing.T) {
 }
 
 func TestFactoryBeadsSectionContent(t *testing.T) {
-	section := agentsBeadsSection
+	section := agents.EmbeddedBeadsSection()
 	required := []string{"bd create", "bd update", "bd close", "bd ready", "discovered-from"}
 	for _, token := range required {
 		if !strings.Contains(section, token) {
-			t.Errorf("agentsBeadsSection missing %q", token)
+			t.Errorf("EmbeddedBeadsSection() missing %q", token)
 		}
 	}
 }
@@ -369,17 +377,19 @@ func TestFactoryMarkers(t *testing.T) {
 }
 
 func TestMarkersMatch(t *testing.T) {
-	if !strings.HasPrefix(agentsBeadsSection, agentsBeginMarker) {
+	beadsSection := agents.EmbeddedBeadsSection()
+	if !strings.HasPrefix(beadsSection, agentsBeginMarker) {
 		t.Error("section should start with begin marker")
 	}
-	trimmed := strings.TrimSpace(agentsBeadsSection)
+	trimmed := strings.TrimSpace(beadsSection)
 	if !strings.HasSuffix(trimmed, agentsEndMarker) {
 		t.Error("section should end with end marker")
 	}
 }
 
 func TestUpdateBeadsSectionPreservesWhitespace(t *testing.T) {
-	content := "# Header\n\n" + agentsBeadsSection + "\n\n# Footer"
+	beadsSection := agents.EmbeddedBeadsSection()
+	content := "# Header\n\n" + beadsSection + "\n\n# Footer"
 	updated := updateBeadsSection(content)
 	if !strings.Contains(updated, "# Header") || !strings.Contains(updated, "# Footer") {
 		t.Error("update should preserve surrounding content")

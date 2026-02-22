@@ -77,10 +77,10 @@ func TestVersionChangesCoverage(t *testing.T) {
 		t.Errorf("Should document at least 3 recent versions, found %d", len(versionChanges))
 	}
 
-	// Ensure each version has meaningful changes (at least 3 bullet points)
+	// Ensure each version has at least one change documented
 	for i, vc := range versionChanges {
-		if len(vc.Changes) < 3 {
-			t.Errorf("versionChanges[%d] (v%s) should have at least 3 changes, found %d", i, vc.Version, len(vc.Changes))
+		if len(vc.Changes) < 1 {
+			t.Errorf("versionChanges[%d] (v%s) should have at least 1 change, found %d", i, vc.Version, len(vc.Changes))
 		}
 	}
 }

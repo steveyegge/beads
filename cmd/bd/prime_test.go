@@ -31,8 +31,8 @@ func TestOutputContextFunction(t *testing.T) {
 			stealthMode:   false,
 			ephemeralMode: true,
 			localOnlyMode: false,
-			expectText:    []string{"Beads Workflow Context", "bd sync --from-main", "ephemeral branch"},
-			rejectText:    []string{"bd sync --flush-only", "git push"},
+			expectText:    []string{"Beads Workflow Context", "bd sync", "ephemeral branch"},
+			rejectText:    []string{"bd sync --flush-only", "git push", "--from-main"},
 		},
 		{
 			name:          "CLI Stealth",
@@ -85,8 +85,8 @@ func TestOutputContextFunction(t *testing.T) {
 			stealthMode:   false,
 			ephemeralMode: true,
 			localOnlyMode: false,
-			expectText:    []string{"Beads Issue Tracker Active", "bd sync --from-main", "ephemeral branch"},
-			rejectText:    []string{"bd sync --flush-only", "git push"},
+			expectText:    []string{"Beads Issue Tracker Active", "bd sync", "ephemeral branch"},
+			rejectText:    []string{"bd sync --flush-only", "git push", "--from-main"},
 		},
 		{
 			name:          "MCP Stealth",
