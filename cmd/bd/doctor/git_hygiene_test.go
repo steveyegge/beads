@@ -100,8 +100,13 @@ func TestCheckGitWorkingTree(t *testing.T) {
 func TestCheckGitUpstream(t *testing.T) {
 	t.Run("no upstream", func(t *testing.T) {
 		dir := mkTmpDirInTmp(t, "bd-git-up-*")
+		remote := mkTmpDirInTmp(t, "bd-git-remote-noup-*")
+		runGit(t, remote, "init", "--bare", "--initial-branch=main")
+
 		initRepo(t, dir, "main")
 		commitFile(t, dir, "README.md", "# test\n", "initial")
+		// Add a remote but don't push -u, so there's no upstream tracking branch.
+		runGit(t, dir, "remote", "add", "origin", remote)
 
 		check := CheckGitUpstream(dir)
 		if check.Status != StatusWarning {
@@ -109,6 +114,17 @@ func TestCheckGitUpstream(t *testing.T) {
 		}
 		if !strings.Contains(check.Message, "No upstream") {
 			t.Fatalf("message=%q want to mention upstream", check.Message)
+		}
+	})
+
+	t.Run("no remotes", func(t *testing.T) {
+		dir := mkTmpDirInTmp(t, "bd-git-norem-*")
+		initRepo(t, dir, "main")
+		commitFile(t, dir, "README.md", "# test\n", "initial")
+
+		check := CheckGitUpstream(dir)
+		if check.Status != StatusOK {
+			t.Fatalf("status=%q want %q (msg=%q)", check.Status, StatusOK, check.Message)
 		}
 	})
 

@@ -337,6 +337,18 @@ func CheckGitUpstream(path string) DoctorCheck {
 	}
 	branch := strings.TrimSpace(string(branchOut))
 
+	// Check if any remotes exist — no point warning about upstream if there's no remote
+	remoteCmd := exec.Command("git", "remote")
+	remoteCmd.Dir = path
+	remoteOut, err := remoteCmd.Output()
+	if err != nil || strings.TrimSpace(string(remoteOut)) == "" {
+		return DoctorCheck{
+			Name:    "Git Upstream",
+			Status:  StatusOK,
+			Message: "N/A — no remotes configured",
+		}
+	}
+
 	cmd = exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 	cmd.Dir = path
 	upOut, err := cmd.Output()
