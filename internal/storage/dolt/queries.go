@@ -523,7 +523,7 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 	var results []*types.BlockedIssue
 	for id, blockerIDs := range blockerMap {
 		issue, ok := issueMap[id]
-		if !ok {
+		if !ok || issue == nil {
 			continue
 		}
 
@@ -655,7 +655,7 @@ func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.Ep
 		}
 
 		issue, ok := epicIssueMap[epicID]
-		if !ok {
+		if !ok || issue == nil {
 			continue
 		}
 
