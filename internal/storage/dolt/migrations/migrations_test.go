@@ -1,70 +1,89 @@
-//go:build cgo
-
 package migrations
 
 import (
 	"database/sql"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
-	embedded "github.com/dolthub/driver"
-
-	"github.com/steveyegge/beads/internal/storage/doltutil"
+	_ "github.com/go-sql-driver/mysql"
 )
 
-// openTestDolt creates a temporary embedded Dolt database for testing.
+// openTestDolt starts a temporary dolt sql-server and returns a connection.
 func openTestDolt(t *testing.T) *sql.DB {
 	t.Helper()
+
+	// Check that dolt binary is available
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("dolt binary not found, skipping migration test")
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "testdb")
 	if err := os.MkdirAll(dbPath, 0755); err != nil {
 		t.Fatalf("failed to create db dir: %v", err)
 	}
 
-	absPath, err := filepath.Abs(dbPath)
-	if err != nil {
-		t.Fatalf("failed to get abs path: %v", err)
+	// Initialize dolt repo
+	initCmd := exec.Command("dolt", "init")
+	initCmd.Dir = dbPath
+	initCmd.Env = append(os.Environ(), "DOLT_ROOT_PATH="+tmpDir)
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("dolt init failed: %v\n%s", err, out)
 	}
 
-	// First connect without database to create it
-	initDSN := fmt.Sprintf("file://%s?commitname=test&commitemail=test@test.com", absPath)
-	initCfg, err := embedded.ParseDSN(initDSN)
-	if err != nil {
-		t.Fatalf("failed to parse init DSN: %v", err)
+	// Create beads database
+	sqlCmd := exec.Command("dolt", "sql", "-q", "CREATE DATABASE IF NOT EXISTS beads")
+	sqlCmd.Dir = dbPath
+	sqlCmd.Env = append(os.Environ(), "DOLT_ROOT_PATH="+tmpDir)
+	if out, err := sqlCmd.CombinedOutput(); err != nil {
+		t.Fatalf("create database failed: %v\n%s", err, out)
 	}
 
-	initConnector, err := embedded.NewConnector(initCfg)
-	if err != nil {
-		t.Fatalf("failed to create init connector: %v", err)
-	}
+	// Find a free port
+	port := 13307 + os.Getpid()%1000
 
-	initDB := sql.OpenDB(initConnector)
-	_, err = initDB.Exec("CREATE DATABASE IF NOT EXISTS beads")
-	if err != nil {
-		_ = doltutil.CloseWithTimeout("initDB", initDB.Close)
-		_ = doltutil.CloseWithTimeout("initConnector", initConnector.Close)
-		t.Fatalf("failed to create database: %v", err)
+	// Start dolt sql-server
+	serverCmd := exec.Command("dolt", "sql-server",
+		"--host", "127.0.0.1",
+		"--port", fmt.Sprintf("%d", port),
+		"--user", "root",
+		"--no-auto-commit",
+	)
+	serverCmd.Dir = dbPath
+	serverCmd.Env = append(os.Environ(), "DOLT_ROOT_PATH="+tmpDir)
+	if err := serverCmd.Start(); err != nil {
+		t.Fatalf("failed to start dolt sql-server: %v", err)
 	}
-	_ = doltutil.CloseWithTimeout("initDB", initDB.Close)
-	_ = doltutil.CloseWithTimeout("initConnector", initConnector.Close)
+	t.Cleanup(func() {
+		_ = serverCmd.Process.Kill()
+		_ = serverCmd.Wait()
+	})
 
-	// Now connect with database specified
-	dsn := fmt.Sprintf("file://%s?commitname=test&commitemail=test@test.com&database=beads", absPath)
-	cfg, err := embedded.ParseDSN(dsn)
-	if err != nil {
-		t.Fatalf("failed to parse DSN: %v", err)
+	// Wait for server to be ready
+	dsn := fmt.Sprintf("root@tcp(127.0.0.1:%d)/beads", port)
+	var db *sql.DB
+	var err error
+	for i := 0; i < 30; i++ {
+		db, err = sql.Open("mysql", dsn)
+		if err == nil {
+			if pingErr := db.Ping(); pingErr == nil {
+				break
+			}
+			_ = db.Close()
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
-
-	connector, err := embedded.NewConnector(cfg)
 	if err != nil {
-		t.Fatalf("failed to create connector: %v", err)
+		t.Fatalf("failed to connect to dolt server: %v", err)
 	}
-	t.Cleanup(func() { _ = doltutil.CloseWithTimeout("connector", connector.Close) })
-
-	db := sql.OpenDB(connector)
-	t.Cleanup(func() { _ = doltutil.CloseWithTimeout("db", db.Close) })
+	if pingErr := db.Ping(); pingErr != nil {
+		t.Fatalf("dolt server not ready after retries: %v", pingErr)
+	}
+	t.Cleanup(func() { _ = db.Close() })
 
 	// Create minimal issues table without wisp_type (simulating old schema)
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS issues (
@@ -245,9 +264,6 @@ func TestMigrateWispsTable(t *testing.T) {
 	}
 
 	// After dolt_add('-A'), wisps should remain unstaged due to dolt_ignore.
-	// Note: Dolt still shows ignored tables in dolt_status as "new table"
-	// with staged=false (similar to gitignored files), but they will never
-	// be committed because dolt_add skips them.
 	var staged bool
 	err = db.QueryRow("SELECT staged FROM dolt_status WHERE table_name = 'wisps'").Scan(&staged)
 	if err == nil && staged {
