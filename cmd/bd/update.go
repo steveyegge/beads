@@ -245,6 +245,7 @@ create, update, show, or close operation).`,
 		ctx := rootCtx
 
 		updatedIssues := []*types.Issue{}
+		hasErrors := false
 		var firstUpdatedID string // Track first successful update for last-touched
 		for _, id := range args {
 			// Resolve and get issue with routing (e.g., gt-xyz routes to gastown)
@@ -254,6 +255,7 @@ create, update, show, or close operation).`,
 					result.Close()
 				}
 				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				hasErrors = true
 				continue
 			}
 			if result == nil || result.Issue == nil {
@@ -261,6 +263,7 @@ create, update, show, or close operation).`,
 					result.Close()
 				}
 				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+				hasErrors = true
 				continue
 			}
 			issue := result.Issue
@@ -269,6 +272,7 @@ create, update, show, or close operation).`,
 			if err := validateIssueUpdatable(id, issue); err != nil {
 				fmt.Fprintf(os.Stderr, "%s\n", err)
 				result.Close()
+				hasErrors = true
 				continue
 			}
 
@@ -277,6 +281,7 @@ create, update, show, or close operation).`,
 				if err := issueStore.ClaimIssue(ctx, result.ResolvedID, actor); err != nil {
 					fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)
 					result.Close()
+					hasErrors = true
 					continue
 				}
 			}
@@ -301,6 +306,7 @@ create, update, show, or close operation).`,
 				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
 					fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
 					result.Close()
+					hasErrors = true
 					continue
 				}
 			}
@@ -320,6 +326,7 @@ create, update, show, or close operation).`,
 				if err := applyLabelUpdates(ctx, issueStore, result.ResolvedID, actor, setLabels, addLabels, removeLabels); err != nil {
 					fmt.Fprintf(os.Stderr, "Error updating labels for %s: %v\n", id, err)
 					result.Close()
+					hasErrors = true
 					continue
 				}
 			}
@@ -332,11 +339,13 @@ create, update, show, or close operation).`,
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "Error getting parent %s: %v\n", newParent, err)
 						result.Close()
+						hasErrors = true
 						continue
 					}
 					if parentIssue == nil {
 						fmt.Fprintf(os.Stderr, "Error: parent issue %s not found\n", newParent)
 						result.Close()
+						hasErrors = true
 						continue
 					}
 				}
@@ -346,6 +355,7 @@ create, update, show, or close operation).`,
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error getting dependencies for %s: %v\n", id, err)
 					result.Close()
+					hasErrors = true
 					continue
 				}
 				for _, dep := range deps {
@@ -367,6 +377,7 @@ create, update, show, or close operation).`,
 					if err := issueStore.AddDependency(ctx, newDep, actor); err != nil {
 						fmt.Fprintf(os.Stderr, "Error adding parent dependency: %v\n", err)
 						result.Close()
+						hasErrors = true
 						continue
 					}
 				}
@@ -400,6 +411,11 @@ create, update, show, or close operation).`,
 
 		if jsonOutput && len(updatedIssues) > 0 {
 			outputJSON(updatedIssues)
+		}
+
+		// Exit non-zero if any issues failed to update
+		if hasErrors {
+			os.Exit(1)
 		}
 	},
 }

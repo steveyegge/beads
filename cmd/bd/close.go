@@ -87,6 +87,7 @@ create, update, show, or close operation).`,
 		// Direct mode
 		closedIssues := []*types.Issue{}
 		closedCount := 0
+		hasErrors := false
 
 		// Handle local IDs
 		for _, id := range resolvedIDs {
@@ -95,6 +96,7 @@ create, update, show, or close operation).`,
 
 			if err := validateIssueClosable(id, issue, force); err != nil {
 				fmt.Fprintf(os.Stderr, "%s\n", err)
+				hasErrors = true
 				continue
 			}
 
@@ -102,6 +104,7 @@ create, update, show, or close operation).`,
 			if !force {
 				if err := checkGateSatisfaction(issue); err != nil {
 					fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, err)
+					hasErrors = true
 					continue
 				}
 			}
@@ -111,16 +114,19 @@ create, update, show, or close operation).`,
 				blocked, blockers, err := store.IsBlocked(ctx, id)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
+					hasErrors = true
 					continue
 				}
 				if blocked && len(blockers) > 0 {
 					fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
+					hasErrors = true
 					continue
 				}
 			}
 
 			if err := store.CloseIssue(ctx, id, reason, actor, session); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
+				hasErrors = true
 				continue
 			}
 
@@ -146,6 +152,7 @@ create, update, show, or close operation).`,
 			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				hasErrors = true
 				continue
 			}
 			if result == nil || result.Issue == nil {
@@ -153,12 +160,14 @@ create, update, show, or close operation).`,
 					result.Close()
 				}
 				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+				hasErrors = true
 				continue
 			}
 
 			if err := validateIssueClosable(result.ResolvedID, result.Issue, force); err != nil {
 				result.Close()
 				fmt.Fprintf(os.Stderr, "%s\n", err)
+				hasErrors = true
 				continue
 			}
 
@@ -167,6 +176,7 @@ create, update, show, or close operation).`,
 				if err := checkGateSatisfaction(result.Issue); err != nil {
 					result.Close()
 					fmt.Fprintf(os.Stderr, "cannot close %s: %s\n", id, err)
+					hasErrors = true
 					continue
 				}
 			}
@@ -177,11 +187,13 @@ create, update, show, or close operation).`,
 				if err != nil {
 					result.Close()
 					fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
+					hasErrors = true
 					continue
 				}
 				if blocked && len(blockers) > 0 {
 					result.Close()
 					fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
+					hasErrors = true
 					continue
 				}
 			}
@@ -189,6 +201,7 @@ create, update, show, or close operation).`,
 			if err := result.Store.CloseIssue(ctx, result.ResolvedID, reason, actor, session); err != nil {
 				result.Close()
 				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
+				hasErrors = true
 				continue
 			}
 
@@ -249,6 +262,11 @@ create, update, show, or close operation).`,
 
 		if jsonOutput && len(closedIssues) > 0 {
 			outputJSON(closedIssues)
+		}
+
+		// Exit non-zero if any issues failed to close
+		if hasErrors {
+			os.Exit(1)
 		}
 	},
 }
