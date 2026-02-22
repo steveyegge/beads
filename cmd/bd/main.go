@@ -252,7 +252,7 @@ var rootCmd = &cobra.Command{
 		// pending batch commits before canceling the context.
 		rootCtx, rootCancel = setupGracefulShutdown()
 
-		// Initialize OTel (no-op unless BD_OTEL_ENABLED=true).
+		// Initialize OTel (no-op unless BD_OTEL_METRICS_URL or BD_OTEL_STDOUT=true).
 		// Must run before any DB access so SQL spans nest under command spans.
 		if err := telemetry.Init(rootCtx, "bd", Version); err != nil {
 			debug.Logf("warning: telemetry init failed: %v", err)

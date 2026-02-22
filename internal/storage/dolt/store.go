@@ -62,6 +62,10 @@ type DoltStore struct {
 	blockedIDsCached   bool // true once blockedIDsCache has been populated
 	cacheMu            sync.Mutex
 
+	// OTel span attribute cache (avoids per-call allocation)
+	spanAttrsOnce  sync.Once
+	spanAttrsCache []attribute.KeyValue
+
 	// Version control config
 	committerName  string
 	committerEmail string
@@ -239,12 +243,17 @@ func init() {
 }
 
 // doltSpanAttrs returns the fixed attributes shared by all SQL spans.
+// Cached to avoid allocating on every call (hot path when telemetry is disabled
+// still flows through no-op tracers).
 func (s *DoltStore) doltSpanAttrs() []attribute.KeyValue {
-	return []attribute.KeyValue{
-		attribute.String("db.system", "dolt"),
-		attribute.Bool("db.readonly", s.readOnly),
-		attribute.Bool("db.server_mode", true), // always server mode after embedded removal
-	}
+	s.spanAttrsOnce.Do(func() {
+		s.spanAttrsCache = []attribute.KeyValue{
+			attribute.String("db.system", "dolt"),
+			attribute.Bool("db.readonly", s.readOnly),
+			attribute.Bool("db.server_mode", true), // always server mode after embedded removal
+		}
+	})
+	return s.spanAttrsCache
 }
 
 // spanSQL truncates a SQL string to keep spans readable.
@@ -1053,27 +1062,27 @@ func (s *DoltStore) Checkout(ctx context.Context, branch string) (retErr error) 
 
 // Merge merges the specified branch into the current branch.
 // Returns any merge conflicts if present. Implements storage.VersionedStorage.
-func (s *DoltStore) Merge(ctx context.Context, branch string) ([]storage.Conflict, error) {
+func (s *DoltStore) Merge(ctx context.Context, branch string) (conflicts []storage.Conflict, retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.merge",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(append(s.doltSpanAttrs(),
 			attribute.String("dolt.merge_branch", branch),
 		)...),
 	)
+	defer func() { endSpan(span, retErr) }()
+
 	// DOLT_MERGE may create a merge commit; pass explicit author for determinism.
 	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE('--author', ?, ?)", s.commitAuthorString(), branch)
 	if err != nil {
 		// Check if the error is due to conflicts
-		conflicts, conflictErr := s.GetConflicts(ctx)
-		if conflictErr == nil && len(conflicts) > 0 {
-			span.SetAttributes(attribute.Int("dolt.conflicts", len(conflicts)))
-			span.End()
-			return conflicts, nil
+		mergeConflicts, conflictErr := s.GetConflicts(ctx)
+		if conflictErr == nil && len(mergeConflicts) > 0 {
+			span.SetAttributes(attribute.Int("dolt.conflicts", len(mergeConflicts)))
+			return mergeConflicts, nil
 		}
-		endSpan(span, fmt.Errorf("failed to merge branch %s: %w", branch, err))
-		return nil, fmt.Errorf("failed to merge branch %s: %w", branch, err)
+		retErr = fmt.Errorf("failed to merge branch %s: %w", branch, err)
+		return nil, retErr
 	}
-	span.End()
 	return nil, nil
 }
 
