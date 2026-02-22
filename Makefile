@@ -1,6 +1,6 @@
 # Makefile for beads project
 
-.PHONY: all build test test-full-cgo bench bench-quick clean install help check-up-to-date fmt fmt-check
+.PHONY: all build test test-full-cgo test-regression bench bench-quick clean install help check-up-to-date fmt fmt-check
 
 # Default target
 all: build
@@ -66,6 +66,13 @@ test:
 test-full-cgo:
 	@echo "Running full CGO-enabled tests..."
 	@./scripts/test-cgo.sh ./...
+
+# Run differential regression tests (baseline v0.49.6 vs current worktree).
+# Downloads baseline binary on first run; cached in ~/Library/Caches/beads-regression/.
+# Override baseline: BD_REGRESSION_BASELINE_BIN=/path/to/bd make test-regression
+test-regression:
+	@echo "Running regression tests (baseline vs candidate)..."
+	go test -tags=regression -timeout=10m -v ./tests/regression/...
 
 # Run performance benchmarks against Dolt storage backend
 # Requires CGO and Dolt; generates CPU profile files
@@ -147,6 +154,7 @@ help:
 	@echo "  make build        - Build the bd binary"
 	@echo "  make test         - Run all tests"
 	@echo "  make test-full-cgo - Run full CGO-enabled test suite"
+	@echo "  make test-regression - Run differential regression tests (baseline vs candidate)"
 	@echo "  make bench        - Run performance benchmarks (generates CPU profiles)"
 	@echo "  make bench-quick  - Run quick benchmarks (shorter benchtime)"
 	@echo "  make install      - Install bd to ~/.local/bin (with codesign on macOS, includes 'beads' alias)"

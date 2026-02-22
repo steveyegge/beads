@@ -1,0 +1,35 @@
+name: Regression Tests
+
+on:
+  # Run on merges to main
+  push:
+    branches: [main]
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  regression:
+    name: Differential Regression (v0.49.6 baseline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+
+      - name: Cache baseline binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/beads-regression
+          key: regression-baseline-${{ hashFiles('tests/regression/BASELINE_VERSION') }}
+
+      - name: Run regression tests
+        run: go test -tags=regression -timeout=10m -v ./tests/regression/...
