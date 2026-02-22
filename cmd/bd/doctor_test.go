@@ -468,45 +468,6 @@ func TestCheckPermissions(t *testing.T) {
 	}
 }
 
-func TestCountJSONLIssuesWithMalformedLines(t *testing.T) {
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create JSONL file with mixed valid and invalid JSON
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	jsonlContent := `{"id":"test-001","title":"Valid 1"}
-invalid json line here
-{"id":"test-002","title":"Valid 2"}
-{"broken": incomplete
-{"id":"test-003","title":"Valid 3"}
-`
-	if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	count, prefixes, err := doctor.CountJSONLIssues(jsonlPath)
-
-	// Should count valid issues (3)
-	if count != 3 {
-		t.Errorf("Expected 3 issues, got %d", count)
-	}
-
-	// Should have 1 error for malformed lines
-	if err == nil {
-		t.Error("Expected error for malformed lines, got nil")
-	}
-	if !strings.Contains(err.Error(), "skipped") {
-		t.Errorf("Expected error about skipped lines, got: %v", err)
-	}
-
-	// Should have extracted prefix
-	if prefixes["test"] != 3 {
-		t.Errorf("Expected 3 'test' prefixes, got %d", prefixes["test"])
-	}
-}
 func TestCheckGitHooks(t *testing.T) {
 	tests := []struct {
 		name           string

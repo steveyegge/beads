@@ -1,7 +1,6 @@
 package fix
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,30 +67,6 @@ func TestGitHooks_Validation(t *testing.T) {
 		}
 		if err.Error() != "not a git repository" {
 			t.Errorf("unexpected error: %v", err)
-		}
-	})
-}
-
-// TestDBJSONLSync_Validation tests DBJSONLSync validation
-func TestDBJSONLSync_Validation(t *testing.T) {
-	t.Run("no database - nothing to do", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-		err := DBJSONLSync(dir)
-		if err != nil {
-			t.Errorf("expected no error when no database exists, got: %v", err)
-		}
-	})
-
-	t.Run("no JSONL - nothing to do", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-		// Create a database file
-		dbPath := filepath.Join(dir, ".beads", "beads.db")
-		if err := os.WriteFile(dbPath, []byte("test"), 0600); err != nil {
-			t.Fatalf("failed to create test db: %v", err)
-		}
-		err := DBJSONLSync(dir)
-		if err != nil {
-			t.Errorf("expected no error when no JSONL exists, got: %v", err)
 		}
 	})
 }
@@ -214,108 +189,4 @@ func TestIsWithinWorkspace(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestDBJSONLSync_MissingDatabase tests DBJSONLSync when database doesn't exist
-func TestDBJSONLSync_MissingDatabase(t *testing.T) {
-	dir := setupTestWorkspace(t)
-	beadsDir := filepath.Join(dir, ".beads")
-
-	// Create only JSONL file
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	issue := map[string]interface{}{
-		"id":     "test-no-db",
-		"title":  "No DB Test",
-		"status": "open",
-	}
-	data, _ := json.Marshal(issue)
-	if err := os.WriteFile(jsonlPath, append(data, '\n'), 0600); err != nil {
-		t.Fatalf("failed to create jsonl: %v", err)
-	}
-
-	// Should return without error since there's nothing to sync
-	err := DBJSONLSync(dir)
-	if err != nil {
-		t.Errorf("expected no error when database doesn't exist, got: %v", err)
-	}
-}
-
-func TestCountJSONLIssues(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty_JSONL", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-		jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-
-		// Create empty JSONL
-		if err := os.WriteFile(jsonlPath, []byte(""), 0644); err != nil {
-			t.Fatalf("failed to create JSONL: %v", err)
-		}
-
-		count, err := countJSONLIssues(jsonlPath)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count != 0 {
-			t.Errorf("expected 0, got %d", count)
-		}
-	})
-
-	t.Run("valid_issues", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-		jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-
-		// Create JSONL with 3 issues
-		jsonl := []byte(`{"id":"bd-1","title":"First"}
-{"id":"bd-2","title":"Second"}
-{"id":"bd-3","title":"Third"}
-`)
-		if err := os.WriteFile(jsonlPath, jsonl, 0644); err != nil {
-			t.Fatalf("failed to create JSONL: %v", err)
-		}
-
-		count, err := countJSONLIssues(jsonlPath)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count != 3 {
-			t.Errorf("expected 3, got %d", count)
-		}
-	})
-
-	t.Run("mixed_valid_and_invalid", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-		jsonlPath := filepath.Join(dir, ".beads", "issues.jsonl")
-
-		// Create JSONL with 2 valid and some invalid lines
-		jsonl := []byte(`{"id":"bd-1","title":"First"}
-invalid json line
-{"id":"bd-2","title":"Second"}
-{"title":"No ID"}
-`)
-		if err := os.WriteFile(jsonlPath, jsonl, 0644); err != nil {
-			t.Fatalf("failed to create JSONL: %v", err)
-		}
-
-		count, err := countJSONLIssues(jsonlPath)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count != 2 {
-			t.Errorf("expected 2, got %d", count)
-		}
-	})
-
-	t.Run("nonexistent_file", func(t *testing.T) {
-		dir := setupTestWorkspace(t)
-		jsonlPath := filepath.Join(dir, ".beads", "nonexistent.jsonl")
-
-		count, err := countJSONLIssues(jsonlPath)
-		if err == nil {
-			t.Error("expected error for nonexistent file")
-		}
-		if count != 0 {
-			t.Errorf("expected 0, got %d", count)
-		}
-	})
 }

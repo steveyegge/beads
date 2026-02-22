@@ -1,10 +1,8 @@
 package doctor
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,26 +32,12 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 	if backend == configfile.BackendDolt {
 		doltPath := filepath.Join(beadsDir, "dolt")
 		if _, err := os.Stat(doltPath); os.IsNotExist(err) {
-			// If JSONL exists, treat as fresh clone / needs init.
-			issuesJSONL := filepath.Join(beadsDir, "issues.jsonl")
-			beadsJSONL := filepath.Join(beadsDir, "beads.jsonl")
-			_, issuesErr := os.Stat(issuesJSONL)
-			_, beadsErr := os.Stat(beadsJSONL)
-			if issuesErr == nil || beadsErr == nil {
-				return DoctorCheck{
-					Name:    "Database",
-					Status:  StatusWarning,
-					Message: "Fresh clone detected (no dolt database)",
-					Detail:  "Storage: Dolt",
-					Fix:     "Run 'bd init' to create and hydrate the dolt database",
-				}
-			}
 			return DoctorCheck{
 				Name:    "Database",
 				Status:  StatusError,
 				Message: "No dolt database found",
 				Detail:  "Storage: Dolt",
-				Fix:     "Run 'bd init' to create database",
+				Fix:     "Run 'bd init' to create database (will clone from remote if configured)",
 			}
 		}
 
@@ -65,7 +49,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Unable to open database",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init",
+				Fix:     "Run 'bd doctor --fix' or manually: rm -rf .beads/dolt && bd init",
 			}
 		}
 		defer func() { _ = store.Close() }()
@@ -77,7 +61,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Unable to read database version",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Database may be corrupted. Run 'bd doctor --fix' to recover from JSONL backup",
+				Fix:     "Database may be corrupted. Run 'bd doctor --fix' to recover",
 			}
 		}
 		if dbVersion == "" {
@@ -119,51 +103,6 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 
 	// Check if database file exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// Check if JSONL exists
-		// Check canonical (issues.jsonl) first, then legacy (beads.jsonl)
-		issuesJSONL := filepath.Join(beadsDir, "issues.jsonl")
-		beadsJSONL := filepath.Join(beadsDir, "beads.jsonl")
-
-		var jsonlPath string
-		if _, err := os.Stat(issuesJSONL); err == nil {
-			jsonlPath = issuesJSONL
-		} else if _, err := os.Stat(beadsJSONL); err == nil {
-			jsonlPath = beadsJSONL
-		}
-
-		if jsonlPath != "" {
-			// JSONL exists but no database - check if this is no-db mode or fresh clone
-			// Use proper YAML parsing to detect no-db mode
-			if isNoDbModeConfigured(beadsDir) {
-				return DoctorCheck{
-					Name:    "Database",
-					Status:  StatusOK,
-					Message: "JSONL-only mode",
-					Detail:  "Using issues.jsonl (no SQLite database)",
-				}
-			}
-
-			// This is a fresh clone - JSONL exists but no database and not no-db mode
-			// Count issues and detect prefix for helpful suggestion
-			issueCount := countIssuesInJSONLFile(jsonlPath)
-			prefix := detectPrefixFromJSONL(jsonlPath)
-
-			message := "Fresh clone detected (no database)"
-			detail := fmt.Sprintf("Found %d issue(s) in JSONL that need to be imported", issueCount)
-			fix := "Run 'bd init' to hydrate the database from JSONL"
-			if prefix != "" {
-				fix = fmt.Sprintf("Run 'bd init' to hydrate the database (detected prefix: %s)", prefix)
-			}
-
-			return DoctorCheck{
-				Name:    "Database",
-				Status:  StatusWarning,
-				Message: message,
-				Detail:  detail,
-				Fix:     fix,
-			}
-		}
-
 		return DoctorCheck{
 			Name:    "Database",
 			Status:  StatusError,
@@ -246,7 +185,7 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Database schema is incomplete or incompatible",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init",
+				Fix:     "Run: rm -rf .beads/dolt && bd init",
 			}
 		}
 
@@ -366,7 +305,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 				Status:  StatusError,
 				Message: "Failed to open database",
 				Detail:  fmt.Sprintf("Storage: Dolt\n\nError: %v", err),
-				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup, or manually: rm -rf .beads/dolt && bd init",
+				Fix:     "Run: rm -rf .beads/dolt && bd init (will clone from remote if configured)",
 			}
 		}
 		defer func() { _ = store.Close() }()
@@ -417,14 +356,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 	// Open database in read-only mode for integrity check
 	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
 	if err != nil {
-		// Check if JSONL recovery is possible
-		jsonlCount, _, jsonlErr := CountJSONLIssues(filepath.Join(beadsDir, "issues.jsonl"))
-		if jsonlErr != nil {
-			jsonlCount, _, jsonlErr = CountJSONLIssues(filepath.Join(beadsDir, "beads.jsonl"))
-		}
-		jsonlAvailable := jsonlErr == nil && jsonlCount > 0
-
-		errorType, recoverySteps := classifyDatabaseError(err.Error(), jsonlCount, jsonlAvailable)
+		errorType, recoverySteps := classifyDatabaseError(err.Error())
 		return DoctorCheck{
 			Name:    "Database Integrity",
 			Status:  StatusError,
@@ -439,14 +371,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 	// This checks the entire database for corruption
 	rows, err := db.Query("PRAGMA integrity_check")
 	if err != nil {
-		// Check if JSONL recovery is possible
-		jsonlCount, _, jsonlErr := CountJSONLIssues(filepath.Join(beadsDir, "issues.jsonl"))
-		if jsonlErr != nil {
-			jsonlCount, _, jsonlErr = CountJSONLIssues(filepath.Join(beadsDir, "beads.jsonl"))
-		}
-		jsonlAvailable := jsonlErr == nil && jsonlCount > 0
-
-		errorType, recoverySteps := classifyDatabaseError(err.Error(), jsonlCount, jsonlAvailable)
+		errorType, recoverySteps := classifyDatabaseError(err.Error())
 		// Override default error type for this specific case
 		if errorType == "Failed to open database" {
 			errorType = "Failed to run integrity check"
@@ -479,35 +404,18 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 		}
 	}
 
-	// Any other result indicates corruption - check if JSONL recovery is possible
-	jsonlCount, _, jsonlErr := CountJSONLIssues(filepath.Join(beadsDir, "issues.jsonl"))
-	if jsonlErr != nil {
-		// Try alternate name
-		jsonlCount, _, jsonlErr = CountJSONLIssues(filepath.Join(beadsDir, "beads.jsonl"))
-	}
-
-	if jsonlErr == nil && jsonlCount > 0 {
-		return DoctorCheck{
-			Name:    "Database Integrity",
-			Status:  StatusError,
-			Message: fmt.Sprintf("Database corruption detected (JSONL has %d issues for recovery)", jsonlCount),
-			Detail:  strings.Join(results, "; "),
-			Fix:     "Run 'bd doctor --fix' to recover from JSONL backup",
-		}
-	}
-
 	return DoctorCheck{
 		Name:    "Database Integrity",
 		Status:  StatusError,
 		Message: "Database corruption detected",
 		Detail:  strings.Join(results, "; "),
-		Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild from JSONL (if available), or restore from backup",
+		Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild, or restore from backup",
 	}
 }
 
 // Fix functions
 
-// FixDatabaseConfig auto-detects and fixes metadata.json database/JSONL config mismatches
+// FixDatabaseConfig auto-detects and fixes metadata.json database config mismatches
 func FixDatabaseConfig(path string) error {
 	return fix.DatabaseConfig(path)
 }
@@ -515,8 +423,8 @@ func FixDatabaseConfig(path string) error {
 // Helper functions
 
 // classifyDatabaseError classifies a database error and returns appropriate recovery guidance.
-// Returns the error type description and recovery steps based on error message and JSONL availability.
-func classifyDatabaseError(errMsg string, jsonlCount int, jsonlAvailable bool) (errorType, recoverySteps string) {
+// Returns the error type description and recovery steps.
+func classifyDatabaseError(errMsg string) (errorType, recoverySteps string) {
 	switch {
 	case strings.Contains(errMsg, "database is locked"):
 		errorType = "Database is locked"
@@ -527,40 +435,24 @@ func classifyDatabaseError(errMsg string, jsonlCount int, jsonlAvailable bool) (
 
 	case strings.Contains(errMsg, "not a database") || strings.Contains(errMsg, "file is not a database"):
 		errorType = "File is not a valid SQLite database"
-		if jsonlAvailable {
-			recoverySteps = fmt.Sprintf("Database file is corrupted beyond repair.\n\n"+
-				"Recovery steps:\n"+
-				"1. Backup corrupt database: mv .beads/beads.db .beads/beads.db.broken\n"+
-				"2. Rebuild from JSONL (%d issues): bd doctor --fix --force --source=jsonl\n"+
-				"3. Verify: bd stats", jsonlCount)
-		} else {
-			recoverySteps = "Database file is corrupted and no JSONL backup found.\n" +
-				"Manual recovery required:\n" +
-				"1. Restore from git: git checkout HEAD -- .beads/issues.jsonl\n" +
-				"2. Rebuild database: bd doctor --fix --force"
-		}
+		recoverySteps = "Database file is corrupted beyond repair.\n\n" +
+			"Recovery steps:\n" +
+			"1. Backup corrupt database: mv .beads/beads.db .beads/beads.db.broken\n" +
+			"2. Re-initialize: bd init\n" +
+			"3. Verify: bd stats"
 
 	case strings.Contains(errMsg, "migration") || strings.Contains(errMsg, "validation failed"):
 		errorType = "Database migration or validation failed"
-		if jsonlAvailable {
-			recoverySteps = fmt.Sprintf("Database has validation errors (possibly orphaned dependencies).\n\n"+
-				"Recovery steps:\n"+
-				"1. Backup database: mv .beads/beads.db .beads/beads.db.broken\n"+
-				"2. Rebuild from JSONL (%d issues): bd doctor --fix --force --source=jsonl\n"+
-				"3. Verify: bd stats\n\n"+
-				"Alternative: bd doctor --fix --force (attempts to repair in-place)", jsonlCount)
-		} else {
-			recoverySteps = "Database validation failed and no JSONL backup available.\n" +
-				"Try: bd doctor --fix --force"
-		}
+		recoverySteps = "Database has validation errors (possibly orphaned dependencies).\n\n" +
+			"Recovery steps:\n" +
+			"1. Backup database: mv .beads/beads.db .beads/beads.db.broken\n" +
+			"2. Re-initialize: bd init\n" +
+			"3. Verify: bd stats\n\n" +
+			"Alternative: bd doctor --fix --force (attempts to repair in-place)"
 
 	default:
 		errorType = "Failed to open database"
-		if jsonlAvailable {
-			recoverySteps = fmt.Sprintf("Run 'bd doctor --fix --source=jsonl' to rebuild from JSONL (%d issues)", jsonlCount)
-		} else {
-			recoverySteps = "Run 'bd doctor --fix --force' to attempt recovery"
-		}
+		recoverySteps = "Run 'bd doctor --fix --force' to attempt recovery"
 	}
 	return
 }
@@ -592,82 +484,6 @@ func getDatabaseVersionFromPath(dbPath string) string {
 	}
 
 	return "unknown"
-}
-
-// CountJSONLIssues counts issues in the JSONL file and returns the count, prefixes, and any error
-func CountJSONLIssues(jsonlPath string) (int, map[string]int, error) {
-	// jsonlPath is safe: constructed from filepath.Join(beadsDir, hardcoded name)
-	file, err := os.Open(jsonlPath) //nolint:gosec
-	if err != nil {
-		return 0, nil, fmt.Errorf("failed to open JSONL file: %w", err)
-	}
-	defer file.Close()
-
-	count := 0
-	prefixes := make(map[string]int)
-	errorCount := 0
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
-		// Parse JSON to get the ID
-		var issue map[string]interface{}
-		if err := json.Unmarshal(line, &issue); err != nil {
-			errorCount++
-			continue
-		}
-
-		if id, ok := issue["id"].(string); ok && id != "" {
-			count++
-			// Extract prefix (everything before the last dash)
-			lastDash := strings.LastIndex(id, "-")
-			if lastDash != -1 {
-				prefixes[id[:lastDash]]++
-			} else {
-				prefixes[id]++
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return count, prefixes, fmt.Errorf("failed to read JSONL file: %w", err)
-	}
-
-	if errorCount > 0 {
-		return count, prefixes, fmt.Errorf("skipped %d malformed lines in JSONL", errorCount)
-	}
-
-	return count, prefixes, nil
-}
-
-// countIssuesInJSONLFile counts the number of valid issues in a JSONL file
-// This is a wrapper around CountJSONLIssues that returns only the count
-func countIssuesInJSONLFile(jsonlPath string) int {
-	count, _, _ := CountJSONLIssues(jsonlPath) // Best effort: zero count / nil prefixes are safe defaults for diagnostic
-	return count
-}
-
-// detectPrefixFromJSONL detects the most common prefix in a JSONL file
-func detectPrefixFromJSONL(jsonlPath string) string {
-	_, prefixes, _ := CountJSONLIssues(jsonlPath) // Best effort: zero count / nil prefixes are safe defaults for diagnostic
-	if len(prefixes) == 0 {
-		return ""
-	}
-
-	// Find the most common prefix
-	var mostCommonPrefix string
-	maxCount := 0
-	for prefix, count := range prefixes {
-		if count > maxCount {
-			maxCount = count
-			mostCommonPrefix = prefix
-		}
-	}
-	return mostCommonPrefix
 }
 
 // isNoDbModeConfigured checks if no-db: true is set in config.yaml

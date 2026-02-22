@@ -208,12 +208,9 @@ func applyFixList(path string, fixes []doctorCheck) {
 		"Permissions",
 		"Daemon Health",
 		"Database Config",
-		"JSONL Config",
 		"Database Integrity",
 		"Database",
 		"Schema Compatibility",
-		"JSONL Integrity",
-		"Sync Divergence",
 	}
 	priority := make(map[string]int, len(order))
 	for i, name := range order {
@@ -254,7 +251,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 		case "Git Hooks":
 			err = fix.GitHooks(path)
 		case "Sync Divergence":
-			err = fix.SyncDivergence(path)
+			fmt.Printf("  ⚠ Sync divergence fix removed (Dolt-native sync)\n")
+			continue
 		case "Permissions":
 			err = fix.Permissions(path)
 		case "Database":
@@ -264,9 +262,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 				err = mErr
 			}
 		case "Database Integrity":
-			// Corruption detected - try recovery from JSONL
-			// Pass force and source flags for enhanced recovery
-			err = fix.DatabaseCorruptionRecoveryWithOptions(path, doctorForce, doctorSource)
+			// Corruption detected - backup and reinitialize
+			err = fix.DatabaseIntegrity(path)
 		case "Schema Compatibility":
 			err = fix.SchemaCompatibility(path)
 		case "Repo Fingerprint":
@@ -278,7 +275,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 		case "Database Config":
 			err = fix.DatabaseConfig(path)
 		case "JSONL Config":
-			err = fix.LegacyJSONLConfig(path)
+			fmt.Printf("  ⚠ JSONL config migration removed (Dolt-native sync)\n")
+			continue
 		case "Untracked Files":
 			err = fix.UntrackedJSONL(path)
 		case "Merge Artifacts":

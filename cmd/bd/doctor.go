@@ -49,8 +49,6 @@ var (
 	doctorOutput               string // export diagnostics to file
 	doctorFixChildParent       bool   // opt-in fix for child→parent deps
 	doctorVerbose              bool   // show detailed output during fixes
-	doctorForce                bool   // force repair mode, bypass validation where safe
-	doctorSource               string // source of truth selection: auto, jsonl, db
 	perfMode                   bool
 	checkHealthMode            bool
 	doctorCheckFlag            string // run specific check (e.g., "pollution")
@@ -279,8 +277,6 @@ func init() {
 	doctorCmd.Flags().BoolVar(&doctorDryRun, "dry-run", false, "Preview fixes without making changes")
 	doctorCmd.Flags().BoolVar(&doctorFixChildParent, "fix-child-parent", false, "Remove child→parent dependencies (opt-in)")
 	doctorCmd.Flags().BoolVarP(&doctorVerbose, "verbose", "v", false, "Show all checks (default shows only warnings/errors)")
-	doctorCmd.Flags().BoolVar(&doctorForce, "force", false, "Force repair mode: attempt recovery even when database cannot be opened")
-	doctorCmd.Flags().StringVar(&doctorSource, "source", "auto", "Choose source of truth for recovery: auto (detect), jsonl (prefer JSONL), db (prefer database)")
 	doctorCmd.Flags().BoolVar(&doctorGastown, "gastown", false, "Running in gastown multi-workspace mode (routes.jsonl is expected, higher duplicate tolerance)")
 	doctorCmd.Flags().IntVar(&gastownDuplicatesThreshold, "gastown-duplicates-threshold", 1000, "Duplicate tolerance threshold for gastown mode (wisps are ephemeral)")
 	doctorCmd.Flags().BoolVar(&doctorServer, "server", false, "Run Dolt server mode health checks (connectivity, version, schema)")

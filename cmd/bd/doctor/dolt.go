@@ -112,7 +112,7 @@ func RunDoltHealthChecks(path string) []DoctorCheck {
 		return []DoctorCheck{
 			{Name: "Dolt Connection", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryCore},
 			{Name: "Dolt Schema", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryCore},
-			{Name: "Dolt-JSONL Sync", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryData},
+			{Name: "Dolt Issue Count", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryData},
 			{Name: "Dolt Status", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryData},
 			{Name: "Dolt Lock Health", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryRuntime},
 		}
@@ -138,7 +138,7 @@ func RunDoltHealthChecks(path string) []DoctorCheck {
 	return []DoctorCheck{
 		checkConnectionWithDB(conn),
 		checkSchemaWithDB(conn),
-		checkIssueCountWithDB(conn, beadsDir),
+		checkIssueCountWithDB(conn),
 		checkStatusWithDB(conn),
 		lockCheck,
 	}
@@ -271,35 +271,15 @@ func CheckDoltSchema(path string) DoctorCheck {
 	return checkSchemaWithDB(conn)
 }
 
-// checkIssueCountWithDB compares issue count in Dolt vs JSONL using an existing connection.
+// checkIssueCountWithDB reports the issue count in Dolt using an existing connection.
 // Separated from CheckDoltIssueCount to allow connection reuse across checks.
-// Requires beadsDir to locate JSONL files.
-func checkIssueCountWithDB(conn *doltConn, beadsDir string) DoctorCheck {
-	// Get JSONL count (before DB query — keep original order)
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	jsonlCount, _, err := CountJSONLIssues(jsonlPath)
-	if err != nil {
-		// Try alternate path
-		jsonlPath = filepath.Join(beadsDir, "beads.jsonl")
-		jsonlCount, _, err = CountJSONLIssues(jsonlPath)
-		if err != nil {
-			return DoctorCheck{
-				Name:     "Dolt-JSONL Sync",
-				Status:   StatusWarning,
-				Message:  "Could not read JSONL file",
-				Detail:   err.Error(),
-				Category: CategoryData,
-			}
-		}
-	}
-
-	// Get Dolt count
+func checkIssueCountWithDB(conn *doltConn) DoctorCheck {
 	ctx := context.Background()
 	var doltCount int
-	err = conn.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues").Scan(&doltCount)
+	err := conn.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues").Scan(&doltCount)
 	if err != nil {
 		return DoctorCheck{
-			Name:     "Dolt-JSONL Sync",
+			Name:     "Dolt Issue Count",
 			Status:   StatusError,
 			Message:  "Failed to count Dolt issues",
 			Detail:   err.Error(),
@@ -307,25 +287,15 @@ func checkIssueCountWithDB(conn *doltConn, beadsDir string) DoctorCheck {
 		}
 	}
 
-	if doltCount != jsonlCount {
-		return DoctorCheck{
-			Name:     "Dolt-JSONL Sync",
-			Status:   StatusWarning,
-			Message:  fmt.Sprintf("Count mismatch: Dolt has %d, JSONL has %d", doltCount, jsonlCount),
-			Fix:      "Run 'bd sync' to synchronize",
-			Category: CategoryData,
-		}
-	}
-
 	return DoctorCheck{
-		Name:     "Dolt-JSONL Sync",
+		Name:     "Dolt Issue Count",
 		Status:   StatusOK,
-		Message:  fmt.Sprintf("Synced (%d issues)", doltCount),
+		Message:  fmt.Sprintf("%d issues", doltCount),
 		Category: CategoryData,
 	}
 }
 
-// CheckDoltIssueCount compares issue count in Dolt vs JSONL.
+// CheckDoltIssueCount reports the issue count in Dolt.
 // This is the standalone entry point; RunDoltHealthChecks is preferred
 // for coordinated access.
 func CheckDoltIssueCount(path string) DoctorCheck {
@@ -334,7 +304,7 @@ func CheckDoltIssueCount(path string) DoctorCheck {
 	// Only run for Dolt backend
 	if !IsDoltBackend(beadsDir) {
 		return DoctorCheck{
-			Name:     "Dolt-JSONL Sync",
+			Name:     "Dolt Issue Count",
 			Status:   StatusOK,
 			Message:  "N/A (not using Dolt backend)",
 			Category: CategoryData,
@@ -344,7 +314,7 @@ func CheckDoltIssueCount(path string) DoctorCheck {
 	conn, err := openDoltConn(beadsDir)
 	if err != nil {
 		return DoctorCheck{
-			Name:     "Dolt-JSONL Sync",
+			Name:     "Dolt Issue Count",
 			Status:   StatusError,
 			Message:  "Failed to open Dolt database",
 			Detail:   err.Error(),
@@ -353,7 +323,7 @@ func CheckDoltIssueCount(path string) DoctorCheck {
 	}
 	defer conn.Close()
 
-	return checkIssueCountWithDB(conn, beadsDir)
+	return checkIssueCountWithDB(conn)
 }
 
 // checkStatusWithDB reports uncommitted changes in Dolt using an existing connection.

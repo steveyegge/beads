@@ -6,19 +6,15 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 )
 
 // DatabaseIntegrity attempts to recover from database corruption by:
-//  1. Backing up the corrupt database (and WAL/SHM if present)
-//  2. Re-initializing the database from the working tree JSONL export
+//  1. Backing up the corrupt database
+//  2. Re-initializing via bd init (which will clone from remote if configured)
 //
-// This is intentionally conservative: it will not delete JSONL, and it preserves the
-// original DB as a backup for forensic recovery.
-//
-// For Dolt backends, delegates to doltCorruptionRecovery which removes the corrupted
-// dolt directory and reinitializes from JSONL via bd init.
+// For Dolt backends: backs up .beads/dolt and reinitializes via bd init --force.
+// For SQLite backends: backs up the .db file and reinitializes via bd init.
 func DatabaseIntegrity(path string) error {
 	if err := validateBeadsWorkspace(path); err != nil {
 		return err
@@ -31,40 +27,74 @@ func DatabaseIntegrity(path string) error {
 
 	beadsDir := filepath.Join(absPath, ".beads")
 
-	// Dolt backend: use Dolt-specific recovery
+	// Dolt backend: backup and reinitialize
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
-		return doltCorruptionRecovery(absPath, beadsDir)
+		return doltIntegrityRecovery(absPath, beadsDir)
 	}
 
-	// Resolve database path (respects metadata.json database override).
+	// SQLite backend: backup and reinitialize
+	return sqliteIntegrityRecovery(absPath, beadsDir)
+}
+
+// doltIntegrityRecovery backs up the corrupted Dolt database and reinitializes.
+func doltIntegrityRecovery(path, beadsDir string) error {
+	doltPath := filepath.Join(beadsDir, "dolt")
+
+	// Check if dolt directory exists
+	if _, err := os.Stat(doltPath); os.IsNotExist(err) {
+		return fmt.Errorf("no Dolt database to recover at %s", doltPath)
+	}
+
+	// Back up corrupted dolt directory
+	ts := time.Now().UTC().Format("20060102T150405Z")
+	backupPath := doltPath + "." + ts + ".corrupt.backup"
+	fmt.Printf("  Backing up corrupted Dolt database to %s\n", filepath.Base(backupPath))
+	if err := os.Rename(doltPath, backupPath); err != nil {
+		return fmt.Errorf("failed to backup corrupted Dolt database: %w", err)
+	}
+
+	// Get bd binary path
+	bdBinary, err := getBdBinary()
+	if err != nil {
+		// Restore corrupted database on failure
+		_ = os.Rename(backupPath, doltPath)
+		return err
+	}
+
+	// Reinitialize: bd init --force -q
+	// bd init will clone from remote if sync.git-remote is configured.
+	fmt.Printf("  Reinitializing Dolt database (will clone from remote if configured)\n")
+	initCmd := newBdCmd(bdBinary, "init", "--force", "-q", "--skip-hooks")
+	initCmd.Dir = path
+	initCmd.Stdout = os.Stdout
+	initCmd.Stderr = os.Stderr
+
+	if err := initCmd.Run(); err != nil {
+		// Restore backup on failure
+		fmt.Printf("  Warning: recovery failed, restoring corrupted Dolt database from %s\n", filepath.Base(backupPath))
+		_ = os.RemoveAll(doltPath)
+		_ = os.Rename(backupPath, doltPath)
+		return fmt.Errorf("failed to reinitialize Dolt database: %w", err)
+	}
+
+	fmt.Printf("  Recovered Dolt database\n")
+	fmt.Printf("  Corrupted database preserved at: %s\n", filepath.Base(backupPath))
+	return nil
+}
+
+// sqliteIntegrityRecovery backs up the corrupted SQLite database and reinitializes.
+func sqliteIntegrityRecovery(path, beadsDir string) error {
+	// Resolve database path
 	var dbPath string
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
 		dbPath = cfg.DatabasePath(beadsDir)
 	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+		dbPath = filepath.Join(beadsDir, "beads.db")
 	}
 
-	// Find JSONL source of truth.
-	jsonlPath := ""
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		if cfg.JSONLExport != "" && !isSystemJSONLFilename(cfg.JSONLExport) {
-			candidate := cfg.JSONLPath(beadsDir)
-			if _, err := os.Stat(candidate); err == nil {
-				jsonlPath = candidate
-			}
-		}
-	}
-	if jsonlPath == "" {
-		for _, name := range []string{"issues.jsonl", "beads.jsonl"} {
-			candidate := filepath.Join(beadsDir, name)
-			if _, err := os.Stat(candidate); err == nil {
-				jsonlPath = candidate
-				break
-			}
-		}
-	}
-	if jsonlPath == "" {
-		return fmt.Errorf("cannot auto-recover: no JSONL export found in %s", beadsDir)
+	// Check if database exists
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return fmt.Errorf("no database to recover at %s", dbPath)
 	}
 
 	// Back up corrupt DB and its sidecar files.
@@ -76,40 +106,26 @@ func DatabaseIntegrity(path string) error {
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 		sidecar := dbPath + suffix
 		if _, err := os.Stat(sidecar); err == nil {
-			_ = moveFile(sidecar, backupDB+suffix) // Best effort rollback: if restore fails, manual recovery from backup needed
+			_ = moveFile(sidecar, backupDB+suffix)
 		}
 	}
 
-	// Rebuild by importing from the working tree JSONL into a fresh database.
+	// Reinitialize via bd init
 	bdBinary, err := getBdBinary()
 	if err != nil {
 		return err
 	}
 
-	// Use import (not init) so we always hydrate from the working tree JSONL, not git-tracked blobs.
-	args := []string{"--db", dbPath, "import", "-i", jsonlPath, "--force", "--no-git-history"}
-	cmd := newBdCmd(bdBinary, args...)
-	cmd.Dir = absPath
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	fmt.Printf("  Reinitializing database\n")
+	initCmd := newBdCmd(bdBinary, "init", "--force", "-q", "--skip-hooks")
+	initCmd.Dir = path
+	initCmd.Stdout = os.Stdout
+	initCmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
-		// Best-effort rollback: attempt to restore the original DB, while preserving the backup.
-		failedTS := time.Now().UTC().Format("20060102T150405Z")
-		if _, statErr := os.Stat(dbPath); statErr == nil {
-			failedDB := dbPath + "." + failedTS + ".failed.init.db"
-			_ = moveFile(dbPath, failedDB) // Best effort rollback: if restore fails, manual recovery from backup needed
-			for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-				_ = moveFile(dbPath+suffix, failedDB+suffix) // Best effort rollback: if restore fails, manual recovery from backup needed
-			}
-		}
-		_ = copyFile(backupDB, dbPath) // Best effort rollback: if restore fails, manual recovery from backup needed
-		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-			if _, statErr := os.Stat(backupDB + suffix); statErr == nil {
-				_ = copyFile(backupDB+suffix, dbPath+suffix) // Best effort rollback: if restore fails, manual recovery from backup needed
-			}
-		}
-		return fmt.Errorf("failed to rebuild database from JSONL: %w (backup: %s)", err, backupDB)
+	if err := initCmd.Run(); err != nil {
+		// Best-effort rollback
+		_ = copyFile(backupDB, dbPath)
+		return fmt.Errorf("failed to reinitialize database: %w (backup: %s)", err, backupDB)
 	}
 
 	return nil

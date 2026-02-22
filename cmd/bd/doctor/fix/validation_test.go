@@ -18,7 +18,6 @@ func TestFixFunctions_RequireBeadsDir(t *testing.T) {
 		fn   func(string) error
 	}{
 		{"GitHooks", GitHooks},
-		{"DBJSONLSync", DBJSONLSync},
 		{"DatabaseVersion", DatabaseVersion},
 		{"SchemaCompatibility", SchemaCompatibility},
 		{"UntrackedJSONL", UntrackedJSONL},
