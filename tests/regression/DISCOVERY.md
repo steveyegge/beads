@@ -11,6 +11,7 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 |------|-------------|---------|
 | 2026-02-22 | Manual testing of dep tree, blocking, close guard, labels, status filtering, reparenting, concurrency, validation | Found 14 bugs, confirmed 23 protocol invariants. Wrote `discovery_test.go` (34 tests). |
 | 2026-02-22 | Audit of all bugs for fix vs wontfix | 5-6 clear fix PRs, 2 need design discussion, 5-6 wontfix/by-design |
+| 2026-02-22 | Code review of labels.go, schema.go, dependencies.go for BUG-5 and BUG-7 root cause | BUG-5 upgraded to INVESTIGATE (not clearly wontfix). BUG-7 downgraded to FILE ISSUE (intentionally coded upsert, needs product decision). BUG-4 upgraded to DOCS FIX (help text promises "blocked" as a status). |
 
 ## Audit Summary
 
@@ -19,24 +20,34 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | BUG-1 | WONTFIX | `bd export` removal was intentional (Dolt migration). Test harness needs adaptation, not a product bug. |
 | BUG-2 | **FIX PR** | Real user complaint (GH#1954). Clear root cause, small fix. |
 | BUG-3 | **FIX PR** | Follows from BUG-2 fix. Bundle together. |
-| BUG-4 | WONTFIX | "blocked" is computed by design. At most fix the help text that lists it as a status value. |
-| BUG-5 | WONTFIX | Dolt transaction isolation issue. Not a beads-level bug. |
+| BUG-4 | **DOCS FIX** | "blocked" is computed by design, but help text for `list --status` and `count --status` explicitly lists it as a valid value. At minimum the help text should be corrected. |
+| BUG-5 | **INVESTIGATE** | Labels use `INSERT IGNORE` into junction table (no read-modify-write), but each INSERT is its own `BeginTx/Commit` via `execContext`. Concurrent Dolt working-set commits may lose writes. Not proven to be purely Dolt — beads could mitigate by batching INSERT+event in single tx, or serializing. |
 | BUG-6 | WONTFIX | By-design for collaboration. Only affects test infrastructure. |
-| BUG-7 | **FIX PR** | Silent data loss of blocking relationships. Clear fix. |
+| BUG-7 | **FILE ISSUE** | `ON DUPLICATE KEY UPDATE type = VALUES(type)` at `dependencies.go:78` is intentionally coded. `PRIMARY KEY (issue_id, depends_on_id)` excludes `type`. This is a deliberate upsert, not a bug per se — but the silent data loss of blocking relationships needs a product decision: allow multiple types per pair, reject, or warn. |
 | BUG-8 | FILE ISSUE | Real but needs design discussion — LIKE clause may be intentional for performance. |
 | BUG-9 | WONTFIX | Documented in help text already. |
 | BUG-10 | **FIX PR** | Commands should exit non-zero when all operations fail. |
 | BUG-11 | **FIX PR** | Missing status validation on update. Bundle with BUG-12+14. |
 | BUG-12 | **FIX PR** | Missing empty-title validation on update. Bundle with BUG-11+14. |
-| BUG-13 | FILE ISSUE | Edge case — needs Steve's opinion on desired reopen-of-deferred behavior. |
+| BUG-13 | FILE ISSUE | Edge case. `bd list --deferred` (filters on `defer_until IS NOT NULL`) may still surface these issues, so "invisible" is overstated. Needs Steve's opinion on desired reopen-of-deferred behavior. |
 | BUG-14 | **FIX PR** | Missing empty-label validation. Bundle with BUG-11+12. |
 
 ### Planned mini fix PRs
 
 1. **BUG-2+3**: dep tree ParentID + ready annotation (highest value — addresses GH#1954)
-2. **BUG-7**: dep add silent type overwrite (data loss)
-3. **BUG-10**: exit codes for close guard / claim failures
-4. **BUG-11+12+14**: input validation gaps (status, title, label)
+2. **BUG-10**: exit codes for close guard / claim failures
+3. **BUG-11+12+14**: input validation gaps (status, title, label)
+4. **BUG-4**: docs fix — remove "blocked" from `--status` help text, point to `bd blocked`
+
+### File issues first (need product decisions)
+
+5. **BUG-7**: dep add type overwrite — intentionally coded upsert, needs decision on semantics
+6. **BUG-8**: reparent dual parent — LIKE clause vs dependency-only parent lookup
+7. **BUG-13**: reopen-of-deferred — what status should it get?
+
+### Investigate further
+
+8. **BUG-5**: concurrent label race — need to determine if Dolt working-set merge is the root cause or if beads-level batching/serialization would fix it
 
 ---
 
@@ -375,9 +386,18 @@ adds label "lab2" to issues "id" and "lab1".
 
 ## PROTOCOL TEST IDEAS
 
-These should be ported to `cmd/bd/protocol/protocol_test.go` as invariant checks.
+These are candidates for porting to the protocol test suite (PR #1910) once it
+lands. Tests are classified as:
 
-### PT-1: Close guard respects dep types
+- **DATA INTEGRITY**: invariants about data correctness (cycle prevention,
+  dep cleanup, data preservation). These are hard protocol guarantees.
+- **POLICY/UX**: invariants about behavior that could reasonably change
+  (epic auto-close, claim semantics, message text). Useful as regression
+  tests but not immutable protocol.
+- **MESSAGE CONTRACT**: tests that assert specific CLI output strings.
+  Brittle — useful for regression detection but will break if wording changes.
+
+### PT-1: Close guard respects dep types — DATA INTEGRITY
 
 ```
 GIVEN issue A with caused-by dep on open issue B
@@ -391,7 +411,7 @@ THEN close is rejected with suggestion to use --force
 
 Already tested manually — works correctly. Good protocol invariant to formalize.
 
-### PT-2: Epic lifecycle — children don't auto-close parent
+### PT-2: Epic lifecycle — children don't auto-close parent — POLICY/UX
 
 ```
 GIVEN epic E with children C1, C2
@@ -402,9 +422,10 @@ WHEN close E
 THEN E is closed
 ```
 
-Works correctly. Good invariant.
+Works correctly. Note: auto-close-on-all-children-done is a reasonable
+alternative policy. This test documents current behavior, not a hard invariant.
 
-### PT-3: Delete cleans up dependency links
+### PT-3: Delete cleans up dependency links — DATA INTEGRITY
 
 ```
 GIVEN A depends on B (blocks)
@@ -413,9 +434,9 @@ THEN A has no dependencies
 AND A appears in bd ready output
 ```
 
-Works correctly. Good invariant.
+Works correctly. CASCADE DELETE on FK ensures this at the schema level.
 
-### PT-4: Reopen preserves dependencies
+### PT-4: Reopen preserves dependencies — DATA INTEGRITY
 
 ```
 GIVEN A depends on B (caused-by)
@@ -423,9 +444,9 @@ WHEN close A, then reopen A
 THEN A still has dep on B
 ```
 
-Works correctly. Good invariant.
+Works correctly.
 
-### PT-5: `dep tree` shows full tree (BLOCKED by BUG-2)
+### PT-5: `dep tree` shows full tree (BLOCKED by BUG-2) — DATA INTEGRITY
 
 ```
 GIVEN diamond dependency: A→B, A→C, B→D, C→D
@@ -436,7 +457,7 @@ AND D appears twice (or once with "shown above" marker)
 
 Currently broken — only root shows. Needs BUG-2 fix first.
 
-### PT-6: Ready semantics exclude blocked issues
+### PT-6: Ready semantics exclude blocked issues — DATA INTEGRITY
 
 ```
 GIVEN A→B (blocks), A→C (blocks), D (no deps)
@@ -447,9 +468,9 @@ AND C is in ready list (no blockers)
 AND D is in ready list
 ```
 
-Works correctly. Good invariant.
+Works correctly.
 
-### PT-7: Deferred issues excluded from ready
+### PT-7: Deferred issues excluded from ready — DATA INTEGRITY
 
 ```
 GIVEN A deferred until 2099-12-31
@@ -459,9 +480,9 @@ WHEN undefer A
 THEN A IS in ready list
 ```
 
-Works correctly. Good invariant.
+Works correctly.
 
-### PT-8: Concurrent create is safe
+### PT-8: Concurrent create is safe — DATA INTEGRITY
 
 ```
 WHEN 10 parallel bd create commands
@@ -469,9 +490,9 @@ THEN all 10 issues exist with unique IDs
 AND count matches expected total
 ```
 
-Works correctly. Good invariant.
+Works correctly.
 
-### PT-9: Concurrent label add is NOT safe (documents BUG-5)
+### PT-9: Concurrent label add is NOT safe (documents BUG-5) — DATA INTEGRITY
 
 ```
 WHEN 5 parallel bd label add <id> "label-N"
@@ -480,7 +501,7 @@ THEN only 0-4 labels survive (lost update race)
 
 This would be a regression test to verify when the fix lands.
 
-### PT-10: `list --status blocked` should match `blocked` output
+### PT-10: `list --status blocked` should match `blocked` output — POLICY/UX
 
 ```
 GIVEN A→B (blocks), both open
@@ -491,7 +512,7 @@ AND counts should match
 
 Currently fails — documents BUG-4.
 
-### PT-11: Status transitions round-trip
+### PT-11: Status transitions round-trip — DATA INTEGRITY
 
 ```
 open → in_progress → open → closed → open (via update)
@@ -501,7 +522,7 @@ All transitions preserve issue data (deps, labels, comments)
 
 Works correctly.
 
-### PT-12: Notes append vs overwrite
+### PT-12: Notes append vs overwrite — DATA INTEGRITY
 
 ```
 GIVEN issue with notes "Original"
@@ -513,7 +534,7 @@ THEN notes = "Replaced\nExtra" (append with newline)
 
 Works correctly.
 
-### PT-13: Special characters in fields
+### PT-13: Special characters in fields — DATA INTEGRITY
 
 ```
 GIVEN bd create --title 'Test "quotes" & <brackets>'
@@ -522,7 +543,7 @@ THEN show --json correctly escapes and preserves the title
 
 Works correctly.
 
-### PT-14: Export command existence (BLOCKED by BUG-1)
+### PT-14: Export command existence (BLOCKED by BUG-1) — POLICY/UX
 
 ```
 WHEN bd export
@@ -531,7 +552,7 @@ THEN command exists and produces JSONL output
 
 Currently fails — export removed from main.
 
-### PT-15: Supersede creates dependency and closes issue
+### PT-15: Supersede creates dependency and closes issue — DATA INTEGRITY
 
 ```
 GIVEN issue A and B
@@ -542,7 +563,7 @@ AND A has supersedes dependency on B
 
 Works correctly (though close_reason is empty — see OBS-1).
 
-### PT-16: Duplicate marks issue as closed with dependency
+### PT-16: Duplicate marks issue as closed with dependency — DATA INTEGRITY
 
 ```
 GIVEN issue A and B
@@ -553,7 +574,7 @@ AND B has duplicate-of dependency on A
 
 Works correctly (though close_reason is empty — see OBS-1).
 
-### PT-17: Type change round-trip
+### PT-17: Type change round-trip — DATA INTEGRITY
 
 ```
 GIVEN task T
@@ -563,7 +584,7 @@ THEN type=epic
 
 Works correctly.
 
-### PT-18: Transitive blocking chain
+### PT-18: Transitive blocking chain — DATA INTEGRITY
 
 ```
 GIVEN A→B→C→D (all blocks)
@@ -575,7 +596,7 @@ WHEN close B: only A becomes ready
 
 Works correctly. Good chain-invariant test.
 
-### PT-19: Circular dependency prevention
+### PT-19: Circular dependency prevention — DATA INTEGRITY
 
 ```
 GIVEN A→B→C (blocks)
@@ -587,7 +608,7 @@ AND dep cycles shows no cycles
 
 Works correctly. Critical invariant.
 
-### PT-20: Close --force overrides close guard
+### PT-20: Close --force overrides close guard — POLICY/UX
 
 ```
 GIVEN A→B (blocks), B is open
@@ -599,7 +620,7 @@ THEN A is closed
 
 Works correctly.
 
-### PT-21: Claim semantics (atomic)
+### PT-21: Claim semantics (atomic) — POLICY/UX + MESSAGE CONTRACT
 
 ```
 WHEN update X --claim
@@ -610,7 +631,7 @@ THEN error "already claimed"
 
 Works correctly.
 
-### PT-22: Create with --parent creates dotted ID
+### PT-22: Create with --parent creates dotted ID — DATA INTEGRITY
 
 ```
 WHEN create --title "Child" --parent P
@@ -621,7 +642,7 @@ AND child has parent-child dep on P
 
 Works correctly.
 
-### PT-23: Create with --deps creates blocks dependency
+### PT-23: Create with --deps creates blocks dependency — DATA INTEGRITY
 
 ```
 WHEN create --title "X" --deps B
@@ -631,7 +652,7 @@ AND X is in blocked list
 
 Works correctly.
 
-### PT-24: count --by-status, --by-type, --by-priority grouping
+### PT-24: count --by-status, --by-type, --by-priority grouping — DATA INTEGRITY
 
 ```
 GIVEN mixed issues with various statuses, types, priorities
@@ -643,7 +664,7 @@ AND totals match count without filter
 
 Works correctly.
 
-### PT-25: Due date and defer round-trip
+### PT-25: Due date and defer round-trip — DATA INTEGRITY
 
 ```
 GIVEN issue I
@@ -655,7 +676,7 @@ THEN status=deferred, defer_until has 2099-12-31 date
 
 Works correctly.
 
-### PT-26: dep rm unblocks issue
+### PT-26: dep rm unblocks issue — DATA INTEGRITY
 
 ```
 GIVEN A→B (blocks)
@@ -666,7 +687,7 @@ AND A is NOT in blocked list
 
 Works correctly.
 
-### PT-27: Self-dependency prevention
+### PT-27: Self-dependency prevention — DATA INTEGRITY
 
 ```
 WHEN dep add A A --type blocks
@@ -675,7 +696,7 @@ THEN error "would create a cycle"
 
 Works correctly (caught by cycle detection).
 
-### PT-28: Create with --deps creates blocking dep
+### PT-28: Create with --deps creates blocking dep — DATA INTEGRITY
 
 ```
 GIVEN issue B
@@ -687,7 +708,7 @@ AND X is NOT in ready list
 
 Works correctly.
 
-### PT-29: Label add/remove round-trip
+### PT-29: Label add/remove round-trip — DATA INTEGRITY
 
 ```
 GIVEN issue I with no labels
@@ -700,7 +721,7 @@ THEN I has 1 label ("urgent")
 
 Works correctly.
 
-### PT-30: Comments preserved through close/reopen
+### PT-30: Comments preserved through close/reopen — DATA INTEGRITY
 
 ```
 GIVEN issue I with 2 comments
@@ -710,7 +731,7 @@ THEN I still has 2 comments
 
 Works correctly.
 
-### PT-31: Due date round-trip
+### PT-31: Due date round-trip — DATA INTEGRITY
 
 ```
 GIVEN issue I
@@ -720,7 +741,7 @@ THEN show --json has due_at containing "2099-06-15"
 
 Works correctly.
 
-### PT-32: Status transition round-trip
+### PT-32: Status transition round-trip — DATA INTEGRITY
 
 ```
 open → in_progress → open → closed → open (reopen)
@@ -728,6 +749,31 @@ All transitions work, data preserved at each step
 ```
 
 Works correctly.
+
+---
+
+## PRIOR ART: Dolt migration bugs already fixed
+
+These were found and fixed before this discovery session. Documented here so
+future investigators don't re-discover them. All are merged to main.
+
+| PR | What it fixed | Why it matters for regression testing |
+|---|---|---|
+| #1969 (nmelo) | `execContext` didn't commit writes under `--no-auto-commit` | Root cause of many "data disappears" bugs. `execContext` now wraps each statement in `BeginTx/Commit`. Directly relevant to BUG-5 investigation — concurrent `Commit()` to Dolt working set may still race. |
+| #1966 (turian) | Labels, comments, deps lost during batch import | `ImportIssues` didn't persist associated data. |
+| #1967 (turian) | `scanIssueIDs` lost ORDER BY | `ready` and `list` returned results in wrong order. |
+| #1968 (turian) | `UpdateIssue` didn't normalize metadata/waiters | Nullable JSON fields stored as `null` instead of `{}`, breaking downstream code. |
+| #1914 (turian) | Column drift in issue scan projection | Centralized column list prevents SELECT * from silently gaining/losing columns after schema migration. |
+| #1816 (sjsyrek) | Silent empty results on Dolt lock errors | Dolt lock contention returned empty results instead of errors. |
+| #1797 (sjsyrek) | Locking, migration, compaction stability | Major stabilization pass on Dolt backend. |
+| #1948 (Xexr) | Parent-child deps mixed with blocking deps in `bd list` | `list --parent` was showing blocking deps as children. |
+| #1909 (zjrosen) | `AddDependency`/`RemoveDependency` not in explicit transactions | Writes could be lost under `--no-auto-commit`. Directly relevant to BUG-7 — the upsert at `dependencies.go:78` is now inside an explicit tx. |
+
+### Key Dolt constraints learned from prior fixes
+
+- **`execContext` wraps in BeginTx/Commit**: Every write is its own mini-transaction (store.go:214). This means two writes to the same table from different goroutines each commit independently to the Dolt working set, which can race.
+- **Close rows before nested queries**: Dolt with `MaxOpenConns=1` deadlocks if you open a second query while iterating the first. This is why `GetIssuesByLabel` collects IDs first, closes rows, then fetches issues.
+- **Schema version check skips init**: PR #1765 added version check so `ensureSchema` doesn't re-run DDL on every command. If you add a new table/column, bump the schema version.
 
 ---
 
