@@ -501,3 +501,147 @@ func TestCookFormulaToSubgraph_GateParentChild(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// Standalone Expansion Tests (bd-qzb)
+// =============================================================================
+
+// TestCookFormulaToSubgraph_StandaloneExpansion tests that a materialized
+// expansion formula produces the correct subgraph with root epic + children.
+func TestCookFormulaToSubgraph_StandaloneExpansion(t *testing.T) {
+	f := &formula.Formula{
+		Formula:     "rule-of-five",
+		Description: "Iterative refinement",
+		Version:     1,
+		Type:        formula.TypeExpansion,
+		Template: []*formula.Step{
+			{ID: "{target}.draft", Title: "Draft: {target.title}"},
+			{ID: "{target}.refine-1", Title: "Refine 1", Needs: []string{"{target}.draft"}},
+			{ID: "{target}.refine-2", Title: "Refine 2", Needs: []string{"{target}.refine-1"}},
+			{ID: "{target}.refine-3", Title: "Refine 3", Needs: []string{"{target}.refine-2"}},
+			{ID: "{target}.refine-4", Title: "Refine 4", Needs: []string{"{target}.refine-3"}},
+		},
+	}
+
+	// Materialize the expansion (converts Template -> Steps)
+	err := formula.MaterializeExpansion(f, "main", nil)
+	if err != nil {
+		t.Fatalf("MaterializeExpansion failed: %v", err)
+	}
+
+	// Cook to subgraph
+	subgraph, err := cookFormulaToSubgraph(f, "rule-of-five")
+	if err != nil {
+		t.Fatalf("cookFormulaToSubgraph failed: %v", err)
+	}
+
+	// Should have: 1 root epic + 5 child steps = 6 issues
+	if len(subgraph.Issues) != 6 {
+		t.Errorf("expected 6 issues, got %d", len(subgraph.Issues))
+		for _, issue := range subgraph.Issues {
+			t.Logf("  Issue: %s (%s) %s", issue.ID, issue.IssueType, issue.Title)
+		}
+	}
+
+	// Root epic
+	if subgraph.Root.ID != "rule-of-five" {
+		t.Errorf("Root.ID = %q, want %q", subgraph.Root.ID, "rule-of-five")
+	}
+	if subgraph.Root.IssueType != types.TypeEpic {
+		t.Errorf("Root.IssueType = %q, want %q", subgraph.Root.IssueType, types.TypeEpic)
+	}
+
+	// Verify child issue IDs
+	expectedChildIDs := []string{
+		"rule-of-five.main.draft",
+		"rule-of-five.main.refine-1",
+		"rule-of-five.main.refine-2",
+		"rule-of-five.main.refine-3",
+		"rule-of-five.main.refine-4",
+	}
+	for _, expID := range expectedChildIDs {
+		found := false
+		for _, issue := range subgraph.Issues {
+			if issue.ID == expID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected child issue %q not found in subgraph", expID)
+		}
+	}
+
+	// Verify dependency chain: each refine step depends on the previous
+	// Dependencies include parent-child + needs (blocks)
+	depMap := make(map[string][]string) // issueID -> depends on
+	for _, dep := range subgraph.Dependencies {
+		if dep.Type == "blocks" {
+			depMap[dep.IssueID] = append(depMap[dep.IssueID], dep.DependsOnID)
+		}
+	}
+
+	// refine-1 should block on draft
+	if deps, ok := depMap["rule-of-five.main.refine-1"]; !ok || len(deps) == 0 {
+		t.Error("refine-1 should have a blocking dependency")
+	} else {
+		found := false
+		for _, d := range deps {
+			if d == "rule-of-five.main.draft" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("refine-1 should depend on draft, got deps: %v", deps)
+		}
+	}
+}
+
+// TestCookFormulaToSubgraph_StandaloneExpansionWithWorkflowVars tests that
+// {{double-brace}} vars survive materialization and appear in cooked issues.
+func TestCookFormulaToSubgraph_StandaloneExpansionWithWorkflowVars(t *testing.T) {
+	f := &formula.Formula{
+		Formula:     "scoped-expansion",
+		Description: "Expansion with workflow vars",
+		Version:     1,
+		Type:        formula.TypeExpansion,
+		Template: []*formula.Step{
+			{
+				ID:          "{target}.work",
+				Title:       "Work on {{feature}}",
+				Description: "Build {{feature}} per brief: {{brief}}",
+			},
+		},
+	}
+
+	err := formula.MaterializeExpansion(f, "main", nil)
+	if err != nil {
+		t.Fatalf("MaterializeExpansion failed: %v", err)
+	}
+
+	subgraph, err := cookFormulaToSubgraph(f, "scoped-expansion")
+	if err != nil {
+		t.Fatalf("cookFormulaToSubgraph failed: %v", err)
+	}
+
+	// Find the work issue
+	var workIssue *types.Issue
+	for _, issue := range subgraph.Issues {
+		if issue.ID == "scoped-expansion.main.work" {
+			workIssue = issue
+			break
+		}
+	}
+
+	if workIssue == nil {
+		t.Fatal("work issue not found in subgraph")
+	}
+
+	// {{double-brace}} vars should be preserved for later substitution
+	if workIssue.Title != "Work on {{feature}}" {
+		t.Errorf("Title = %q, want %q", workIssue.Title, "Work on {{feature}}")
+	}
+	if workIssue.Description != "Build {{feature}} per brief: {{brief}}" {
+		t.Errorf("Description = %q, want {{vars}} preserved", workIssue.Description)
+	}
+}
