@@ -543,6 +543,25 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		return &types.DeleteIssuesResult{}, nil
 	}
 
+	// Route wisp IDs to deleteWisp (wisps live in separate tables).
+	// Wisps are ephemeral, so cascade/force semantics don't apply.
+	ephIDs, regularIDs := partitionIDs(ids)
+	wispDeletedCount := 0
+	for _, wispID := range ephIDs {
+		if dryRun {
+			wispDeletedCount++
+			continue
+		}
+		if err := s.deleteWisp(ctx, wispID); err != nil {
+			return nil, fmt.Errorf("failed to delete wisp %s: %w", wispID, err)
+		}
+		wispDeletedCount++
+	}
+	if len(regularIDs) == 0 {
+		return &types.DeleteIssuesResult{DeletedCount: wispDeletedCount}, nil
+	}
+	ids = regularIDs
+
 	idSet := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		idSet[id] = true
@@ -742,7 +761,7 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		rowsAffected, _ := deleteResult.RowsAffected()
 		totalDeleted += int(rowsAffected)
 	}
-	result.DeletedCount = totalDeleted
+	result.DeletedCount = totalDeleted + wispDeletedCount
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
