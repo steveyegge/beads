@@ -51,6 +51,10 @@ func setupDoltMigrateWorkspace(t *testing.T) (string, string, *configfile.Config
 	// Create the Dolt store via factory (bootstraps the database with schema)
 	ctx := context.Background()
 	doltPath := filepath.Join(beadsDir, "dolt")
+	// Create local marker directory (server mode doesn't create it automatically)
+	if err := os.MkdirAll(doltPath, 0750); err != nil {
+		t.Fatalf("failed to create dolt dir: %v", err)
+	}
 	store, err := dolt.New(ctx, &dolt.Config{
 		Path:     doltPath,
 		Database: "beads",

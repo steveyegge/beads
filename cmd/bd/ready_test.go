@@ -116,7 +116,7 @@ func TestReadySuite(t *testing.T) {
 
 	// --- Defer data ---
 	futureDefer := time.Now().Add(24 * time.Hour)
-	pastDefer := time.Now().Add(-1 * time.Hour)
+	pastDefer := time.Now().Add(-25 * time.Hour) // 25h to account for UTC/local timezone mismatch
 	deferIssues := []*types.Issue{
 		{ID: "test-future-defer", Title: "Future deferred task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, DeferUntil: &futureDefer, CreatedAt: time.Now()},
 		{ID: "test-past-defer", Title: "Past deferred task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, DeferUntil: &pastDefer, CreatedAt: time.Now()},

@@ -18,8 +18,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -152,6 +154,13 @@ func isRetryableError(err error) bool {
 	if strings.Contains(errStr, "unknown database") {
 		return true
 	}
+	// Dolt internal race: after CREATE DATABASE, information_schema queries
+	// on the new database may fail with "no root value found in session" if
+	// the server hasn't finished initializing the database's root value.
+	// This is transient and resolves on retry.
+	if strings.Contains(errStr, "no root value found") {
+		return true
+	}
 	return false
 }
 
@@ -241,7 +250,16 @@ func (s *DoltStore) queryRowContext(ctx context.Context, scan func(*sql.Row) err
 // applyConfigDefaults fills in default values for unset Config fields.
 func applyConfigDefaults(cfg *Config) {
 	if cfg.Database == "" {
-		cfg.Database = "beads"
+		if os.Getenv("BEADS_TEST_MODE") == "1" && cfg.Path != "" {
+			// Test mode: derive unique database name from path for isolation.
+			// Each test creates a unique temp directory, so hashing the path
+			// gives each test its own database on the shared test server.
+			h := fnv.New64a()
+			h.Write([]byte(cfg.Path))
+			cfg.Database = fmt.Sprintf("testdb_%x", h.Sum64())
+		} else {
+			cfg.Database = "beads"
+		}
 	}
 	if cfg.CommitterName == "" {
 		cfg.CommitterName = os.Getenv("GIT_AUTHOR_NAME")
@@ -264,7 +282,16 @@ func applyConfigDefaults(cfg *Config) {
 		cfg.ServerHost = "127.0.0.1"
 	}
 	if cfg.ServerPort == 0 {
-		cfg.ServerPort = DefaultSQLPort
+		// Check environment variable for port override (used by test harness to
+		// redirect all connections to a dedicated test server on a dynamic port).
+		if envPort := os.Getenv("BEADS_DOLT_PORT"); envPort != "" {
+			if p, err := strconv.Atoi(envPort); err == nil && p > 0 {
+				cfg.ServerPort = p
+			}
+		}
+		if cfg.ServerPort == 0 {
+			cfg.ServerPort = DefaultSQLPort
+		}
 	}
 	if cfg.ServerUser == "" {
 		cfg.ServerUser = "root"
@@ -333,11 +360,24 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		readOnly:       cfg.ReadOnly,
 	}
 
-	// Schema initialization on main (tracked tables only).
-	// This ensures main has committed schema before we create branches from it.
-	// Must happen before branch checkout so new branches inherit the schema.
+	// Schema initialization for server mode (idempotent).
+	// Short retry for Dolt "no root value found in session" race: after
+	// CREATE DATABASE, information_schema queries may fail transiently
+	// even though Ping succeeded. This resolves within ~1s.
 	if !cfg.ReadOnly {
-		if err := store.initSchema(ctx); err != nil {
+		schemaBO := backoff.NewExponentialBackOff()
+		schemaBO.InitialInterval = 100 * time.Millisecond
+		schemaBO.MaxElapsedTime = 5 * time.Second
+		if err := backoff.Retry(func() error {
+			schemaErr := store.initSchema(ctx)
+			if schemaErr != nil && isRetryableError(schemaErr) {
+				return schemaErr
+			}
+			if schemaErr != nil {
+				return backoff.Permanent(schemaErr)
+			}
+			return nil
+		}, backoff.WithContext(schemaBO, ctx)); err != nil {
 			return nil, fmt.Errorf("failed to initialize schema: %w", err)
 		}
 	}

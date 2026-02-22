@@ -241,9 +241,11 @@ environment variable.`,
 			}
 		}
 
-		// Ensure parent directory exists for the storage backend (.beads/dolt).
-		if err := os.MkdirAll(initDBDir, 0750); err != nil {
-			FatalError("failed to create storage directory %s: %v", initDBDir, err)
+		// Ensure storage directory exists (.beads/dolt).
+		// In server mode, dolt.New() connects via TCP and doesn't create local directories,
+		// so we create the marker directory explicitly.
+		if err := os.MkdirAll(initDBPath, 0750); err != nil {
+			FatalError("failed to create storage directory %s: %v", initDBPath, err)
 		}
 
 		ctx := rootCtx

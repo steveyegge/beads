@@ -231,7 +231,8 @@ func TestRemapDependencies_PreservesMetadata(t *testing.T) {
 	if bDepRecords[0].Type != types.DepDiscoveredFrom {
 		t.Errorf("Expected type=discovered-from, got %s", bDepRecords[0].Type)
 	}
-	if bDepRecords[0].Metadata != `{"reason": "found during work"}` {
+	// Compare as normalized JSON (MySQL/Dolt normalizes JSON whitespace on storage)
+	if bDepRecords[0].Metadata != `{"reason":"found during work"}` && bDepRecords[0].Metadata != `{"reason": "found during work"}` {
 		t.Errorf("Metadata not preserved: got %s", bDepRecords[0].Metadata)
 	}
 }

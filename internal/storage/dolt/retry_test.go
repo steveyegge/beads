@@ -85,6 +85,11 @@ func TestIsRetryableError(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:     "no root value found in session",
+			err:      errors.New("Error 1105 (HY000): no root value found in session"),
+			expected: true,
+		},
+		{
 			name:     "syntax error - not retryable",
 			err:      errors.New("Error 1064: You have an error in your SQL syntax"),
 			expected: false,

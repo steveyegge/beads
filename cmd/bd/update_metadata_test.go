@@ -59,8 +59,18 @@ func TestUpdateMetadataInlineJSON(t *testing.T) {
 	if updated.Metadata == nil {
 		t.Fatal("metadata should not be nil after update")
 	}
-	if string(updated.Metadata) != metadata {
-		t.Errorf("expected metadata %q, got %q", metadata, string(updated.Metadata))
+	// Compare as parsed JSON (MySQL/Dolt normalizes JSON whitespace on storage)
+	var expectedJSON, actualJSON interface{}
+	if err := json.Unmarshal([]byte(metadata), &expectedJSON); err != nil {
+		t.Fatalf("failed to parse expected metadata: %v", err)
+	}
+	if err := json.Unmarshal(updated.Metadata, &actualJSON); err != nil {
+		t.Fatalf("failed to parse actual metadata: %v", err)
+	}
+	expectedBytes, _ := json.Marshal(expectedJSON)
+	actualBytes, _ := json.Marshal(actualJSON)
+	if string(expectedBytes) != string(actualBytes) {
+		t.Errorf("expected metadata %s, got %s", expectedBytes, actualBytes)
 	}
 }
 

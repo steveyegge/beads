@@ -1231,7 +1231,7 @@ func TestHierarchicalChildren(t *testing.T) {
 
 	// Test full hierarchy (should return all 6 issues)
 	t.Run("full_hierarchy", func(t *testing.T) {
-		issues, err := getHierarchicalChildren(ctx, store, "", 0, parent.ID)
+		issues, err := getHierarchicalChildren(ctx, store, "", parent.ID)
 		if err != nil {
 			t.Fatalf("getHierarchicalChildren failed: %v", err)
 		}
@@ -1242,7 +1242,7 @@ func TestHierarchicalChildren(t *testing.T) {
 
 	// Test child subset (should return child1 + its 2 grandchildren = 3 total)
 	t.Run("child_subset", func(t *testing.T) {
-		issues, err := getHierarchicalChildren(ctx, store, "", 0, child1.ID)
+		issues, err := getHierarchicalChildren(ctx, store, "", child1.ID)
 		if err != nil {
 			t.Fatalf("getHierarchicalChildren for child1 failed: %v", err)
 		}
@@ -1253,7 +1253,7 @@ func TestHierarchicalChildren(t *testing.T) {
 
 	// Test leaf node (should return only itself)
 	t.Run("leaf_node", func(t *testing.T) {
-		issues, err := getHierarchicalChildren(ctx, store, "", 0, grandchild11.ID)
+		issues, err := getHierarchicalChildren(ctx, store, "", grandchild11.ID)
 		if err != nil {
 			t.Fatalf("getHierarchicalChildren for leaf failed: %v", err)
 		}
@@ -1264,7 +1264,7 @@ func TestHierarchicalChildren(t *testing.T) {
 
 	// Test error case - non-existent parent
 	t.Run("nonexistent_parent", func(t *testing.T) {
-		_, err := getHierarchicalChildren(ctx, store, "", 0, "nonexistent-id")
+		_, err := getHierarchicalChildren(ctx, store, "", "nonexistent-id")
 		if err == nil || !strings.Contains(err.Error(), "not found") {
 			t.Error("Expected 'not found' error for nonexistent parent")
 		}

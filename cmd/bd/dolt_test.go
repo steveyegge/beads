@@ -134,6 +134,8 @@ func TestDoltShowConfigServerMode(t *testing.T) {
 	// Override BEADS_DIR so FindBeadsDir() returns our temp .beads,
 	// not the rig's .beads (which happens in worktree environments).
 	t.Setenv("BEADS_DIR", beadsDir)
+	// Clear test server port override so GetDoltServerPort() returns metadata.json value
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
 	oldCwd, _ := os.Getwd()
 	if err := os.Chdir(tmpDir); err != nil {
@@ -380,6 +382,8 @@ func TestTestServerConnection(t *testing.T) {
 	})
 
 	t.Run("localhost with unlikely port", func(t *testing.T) {
+		// Clear test server port override so GetDoltServerPort() returns 59999
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 		cfg := configfile.DefaultConfig()
 		cfg.DoltServerHost = "127.0.0.1"
 		cfg.DoltServerPort = 59999 // Unlikely to be in use
@@ -427,6 +431,8 @@ func TestDoltConfigGetters(t *testing.T) {
 	})
 
 	t.Run("GetDoltServerPort defaults", func(t *testing.T) {
+		// Clear test server port override so GetDoltServerPort() returns the struct default
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 		cfg := configfile.DefaultConfig()
 		if cfg.GetDoltServerPort() != configfile.DefaultDoltServerPort {
 			t.Errorf("expected default port %d, got %d",
