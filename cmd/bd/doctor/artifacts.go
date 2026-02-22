@@ -270,7 +270,7 @@ func scanJSONLArtifacts(beadsDir string, report *ArtifactReport) {
 // Only flags SQLite files as artifacts if Dolt is the active backend.
 // If SQLite is still the active backend, beads.db is the live database.
 func scanSQLiteArtifacts(beadsDir string, report *ArtifactReport) {
-	if !isDoltNative(beadsDir) {
+	if !IsDoltBackend(beadsDir) {
 		return
 	}
 
