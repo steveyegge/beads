@@ -59,9 +59,7 @@ func runMolBurn(cmd *cobra.Command, args []string) {
 
 	// mol burn requires direct store access (daemon auto-bypassed for wisp ops)
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-		os.Exit(1)
+		FatalErrorWithHint("no database connection", "run 'bd init' or 'bd import' to initialize the database")
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -82,15 +80,13 @@ func burnSingleMolecule(ctx context.Context, moleculeID string, dryRun, force bo
 	// Resolve molecule ID in main store
 	resolvedID, err := utils.ResolvePartialID(ctx, store, moleculeID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving molecule ID %s: %v\n", moleculeID, err)
-		os.Exit(1)
+		FatalError("resolving molecule ID %s: %v", moleculeID, err)
 	}
 
 	// Load the molecule
 	rootIssue, err := store.GetIssue(ctx, resolvedID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-		os.Exit(1)
+		FatalError("loading molecule: %v", err)
 	}
 
 	// Branch based on molecule phase
@@ -244,8 +240,7 @@ func burnWispMolecule(ctx context.Context, resolvedID string, dryRun, force bool
 	// Load the molecule subgraph
 	subgraph, err := loadTemplateSubgraph(ctx, store, resolvedID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading wisp molecule: %v\n", err)
-		os.Exit(1)
+		FatalError("loading wisp molecule: %v", err)
 	}
 
 	// Collect wisp issue IDs to delete (only delete wisps, not regular children)
@@ -305,8 +300,7 @@ func burnWispMolecule(ctx context.Context, resolvedID string, dryRun, force bool
 	// Perform the burn
 	result, err := burnWisps(ctx, store, wispIDs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error burning wisp: %v\n", err)
-		os.Exit(1)
+		FatalError("burning wisp: %v", err)
 	}
 	result.MoleculeID = resolvedID
 
@@ -325,8 +319,7 @@ func burnPersistentMolecule(ctx context.Context, resolvedID string, dryRun, forc
 	// Load the molecule subgraph to show what will be deleted
 	subgraph, err := loadTemplateSubgraph(ctx, store, resolvedID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-		os.Exit(1)
+		FatalError("loading molecule: %v", err)
 	}
 
 	// Collect all issue IDs in the molecule

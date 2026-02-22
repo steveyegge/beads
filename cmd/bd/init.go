@@ -76,16 +76,14 @@ environment variable.`,
 		// This prevents accidental re-initialization in fresh clones
 		if !force {
 			if err := checkExistingBeadsData(prefix); err != nil {
-				fmt.Fprintf(os.Stderr, "%v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 		}
 
 		// Handle stealth mode setup
 		if stealth {
 			if err := setupStealthMode(!quiet); err != nil {
-				fmt.Fprintf(os.Stderr, "Error setting up stealth mode: %v\n", err)
-				os.Exit(1)
+				FatalError("setting up stealth mode: %v", err)
 			}
 
 			// In stealth mode, skip git hooks installation
@@ -112,8 +110,7 @@ environment variable.`,
 			// Auto-detect from directory name
 			cwd, err := os.Getwd()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
-				os.Exit(1)
+				FatalError("failed to get current directory: %v", err)
 			}
 			prefix = filepath.Base(cwd)
 		}
@@ -149,8 +146,7 @@ environment variable.`,
 		// For worktrees, .beads should always be in the main repository root
 		cwd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to get current directory: %v", err)
 		}
 
 		// Check if we're in a git worktree
@@ -165,8 +161,7 @@ environment variable.`,
 		if isWorktree {
 			mainRepoRoot, err := git.GetMainRepoRoot()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to get main repository root: %v\n", err)
-				os.Exit(1)
+				FatalError("failed to get main repository root: %v", err)
 			}
 
 			fmt.Fprintf(os.Stderr, "Error: cannot run 'bd init' from within a git worktree\n\n")
@@ -212,8 +207,7 @@ environment variable.`,
 		if useLocalBeads {
 			// Create .beads directory
 			if err := os.MkdirAll(beadsDir, 0750); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to create .beads directory: %v\n", err)
-				os.Exit(1)
+				FatalError("failed to create .beads directory: %v", err)
 			}
 
 			// Create/update .gitignore in .beads directory (only if missing or outdated)
@@ -243,8 +237,7 @@ environment variable.`,
 		if !isGitRepo() {
 			gitInitCmd := exec.Command("git", "init")
 			if output, err := gitInitCmd.CombinedOutput(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to initialize git repository: %v\n%s\n", err, output)
-				os.Exit(1)
+				FatalError("failed to initialize git repository: %v\n%s", err, output)
 			}
 			if !quiet {
 				fmt.Printf("  %s Initialized git repository\n", ui.RenderPass("✓"))
@@ -253,8 +246,7 @@ environment variable.`,
 
 		// Ensure parent directory exists for the storage backend (.beads/dolt).
 		if err := os.MkdirAll(initDBDir, 0750); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to create storage directory %s: %v\n", initDBDir, err)
-			os.Exit(1)
+			FatalError("failed to create storage directory %s: %v", initDBDir, err)
 		}
 
 		ctx := rootCtx
@@ -302,9 +294,8 @@ environment variable.`,
 		existing, _ := store.GetConfig(ctx, "issue_prefix")
 		if existing == "" {
 			if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to set issue prefix: %v\n", err)
 				_ = store.Close()
-				os.Exit(1)
+				FatalError("failed to set issue prefix: %v", err)
 			}
 		}
 
@@ -462,14 +453,12 @@ environment variable.`,
 				canceled := isCanceled(err)
 				if canceled {
 					fmt.Fprintln(os.Stderr, "Setup canceled.")
-				} else {
-					fmt.Fprintf(os.Stderr, "Error running contributor wizard: %v\n", err)
 				}
 				_ = store.Close()
 				if canceled {
 					exitCanceled()
 				}
-				os.Exit(1)
+				FatalError("running contributor wizard: %v", err)
 			}
 		}
 
@@ -479,14 +468,12 @@ environment variable.`,
 				canceled := isCanceled(err)
 				if canceled {
 					fmt.Fprintln(os.Stderr, "Setup canceled.")
-				} else {
-					fmt.Fprintf(os.Stderr, "Error running team wizard: %v\n", err)
 				}
 				_ = store.Close()
 				if canceled {
 					exitCanceled()
 				}
-				os.Exit(1)
+				FatalError("running team wizard: %v", err)
 			}
 		}
 

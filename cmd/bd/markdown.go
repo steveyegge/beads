@@ -307,13 +307,11 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 	// Parse markdown file first (doesn't require store access)
 	templates, err := parseMarkdownFile(filepath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing markdown file: %v\n", err)
-		os.Exit(1)
+		FatalError("parsing markdown file: %v", err)
 	}
 
 	if len(templates) == 0 {
-		fmt.Fprintf(os.Stderr, "No issues found in markdown file\n")
-		os.Exit(1)
+		FatalError("no issues found in markdown file")
 	}
 
 	// Ensure globals are initialized

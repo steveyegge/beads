@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -48,8 +47,7 @@ func runMolSeed(cmd *cobra.Command, args []string) {
 	for _, v := range varFlags {
 		parts := strings.SplitN(v, "=", 2)
 		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "Error: invalid variable format '%s', expected 'key=value'\n", v)
-			os.Exit(1)
+			FatalError("invalid variable format '%s', expected 'key=value'", v)
 		}
 		vars[parts[0]] = parts[1]
 	}
@@ -57,8 +55,7 @@ func runMolSeed(cmd *cobra.Command, args []string) {
 	if patrol {
 		// Verify all patrol formulas
 		if err := verifyPatrolFormulas(vars); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 		if !jsonOutput {
 			fmt.Println("✓ All patrol formulas accessible")
@@ -72,15 +69,13 @@ func runMolSeed(cmd *cobra.Command, args []string) {
 	}
 
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: formula name required (or use --patrol flag)\n")
-		os.Exit(1)
+		FatalError("formula name required (or use --patrol flag)")
 	}
 
 	// Verify single formula
 	formulaName := args[0]
 	if err := verifyFormula(formulaName, vars); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	if !jsonOutput {

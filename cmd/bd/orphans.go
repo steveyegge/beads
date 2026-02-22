@@ -40,8 +40,7 @@ Examples:
 		path := "."
 		orphans, err := findOrphanedIssues(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		fix, _ := cmd.Flags().GetBool("fix")

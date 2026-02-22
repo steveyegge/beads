@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -36,8 +35,7 @@ Example:
 
 		// mol progress requires direct store access
 		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
+			FatalError("no database connection")
 		}
 
 		var moleculeID string
@@ -45,8 +43,7 @@ Example:
 			// Explicit molecule ID given
 			resolved, err := utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: molecule '%s' not found\n", args[0])
-				os.Exit(1)
+				FatalError("molecule '%s' not found", args[0])
 			}
 			moleculeID = resolved
 		} else {
@@ -67,8 +64,7 @@ Example:
 
 		stats, err := store.GetMoleculeProgress(ctx, moleculeID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		if jsonOutput {

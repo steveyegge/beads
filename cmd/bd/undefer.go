@@ -30,8 +30,7 @@ Examples:
 		// Resolve partial IDs
 		_, err := utils.ResolvePartialIDs(ctx, store, args)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		undeferredIssues := []*types.Issue{}

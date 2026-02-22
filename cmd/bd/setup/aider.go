@@ -158,26 +158,22 @@ func InstallAider() {
 
 	// Ensure .aider directory exists
 	if err := EnsureDir(".aider", 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	// Write config file
 	if err := atomicWriteFile(configPath, []byte(aiderConfigTemplate)); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: write config: %v\n", err)
-		os.Exit(1)
+		FatalError("write config: %v", err)
 	}
 
 	// Write instructions file (loaded by AI)
 	if err := atomicWriteFile(instructionsPath, []byte(aiderBeadsInstructions)); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: write instructions: %v\n", err)
-		os.Exit(1)
+		FatalError("write instructions: %v", err)
 	}
 
 	// Write README (for humans)
 	if err := atomicWriteFile(readmePath, []byte(aiderReadmeTemplate)); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: write README: %v\n", err)
-		os.Exit(1)
+		FatalError("write README: %v", err)
 	}
 
 	fmt.Printf("\n✓ Aider integration installed\n")
@@ -195,10 +191,8 @@ func InstallAider() {
 func CheckAider() {
 	configPath := ".aider.conf.yml"
 
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		fmt.Println("✗ Aider integration not installed")
-		fmt.Println("  Run: bd setup aider")
-		os.Exit(1)
+	if !FileExists(configPath) {
+		FatalErrorWithHint("Aider integration not installed", "Run: bd setup aider")
 	}
 
 	fmt.Println("✓ Aider integration installed:", configPath)
@@ -218,8 +212,7 @@ func RemoveAider() {
 	// Remove config
 	if err := os.Remove(configPath); err != nil {
 		if !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Error: failed to remove config: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to remove config: %v", err)
 		}
 	} else {
 		removed = true
@@ -228,8 +221,7 @@ func RemoveAider() {
 	// Remove instructions
 	if err := os.Remove(instructionsPath); err != nil {
 		if !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Error: failed to remove instructions: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to remove instructions: %v", err)
 		}
 	} else {
 		removed = true
@@ -238,17 +230,14 @@ func RemoveAider() {
 	// Remove README
 	if err := os.Remove(readmePath); err != nil {
 		if !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Error: failed to remove README: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to remove README: %v", err)
 		}
 	} else {
 		removed = true
 	}
 
 	// Try to remove .aider directory if empty
-	if err := os.Remove(aiderDir); err != nil {
-		// Ignore error - directory might not be empty or might not exist
-	}
+	_ = os.Remove(aiderDir)
 
 	if !removed {
 		fmt.Println("No Aider integration files found")

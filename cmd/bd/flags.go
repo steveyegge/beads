@@ -43,8 +43,7 @@ func getDescriptionFlag(cmd *cobra.Command) (string, bool) {
 		bodyFile, _ := cmd.Flags().GetString("body-file")
 		descFile, _ := cmd.Flags().GetString("description-file")
 		if bodyFile != descFile {
-			fmt.Fprintf(os.Stderr, "Error: cannot specify both --body-file and --description-file with different values\n")
-			os.Exit(1)
+			FatalError("cannot specify both --body-file and --description-file with different values")
 		}
 	}
 
@@ -59,14 +58,12 @@ func getDescriptionFlag(cmd *cobra.Command) (string, bool) {
 
 		// Error if both file and string flags are specified
 		if descChanged || bodyChanged || messageChanged {
-			fmt.Fprintf(os.Stderr, "Error: cannot specify both --body-file and --description/--body/--message\n")
-			os.Exit(1)
+			FatalError("cannot specify both --body-file and --description/--body/--message")
 		}
 
 		content, err := readBodyFile(filePath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading body file: %v\n", err)
-			os.Exit(1)
+			FatalError("reading body file: %v", err)
 		}
 		return content, true
 	}
@@ -105,8 +102,7 @@ func getDescriptionFlag(cmd *cobra.Command) (string, bool) {
 		}
 		content, err := readBodyFile("-")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading from stdin: %v\n", err)
-			os.Exit(1)
+			FatalError("reading from stdin: %v", err)
 		}
 		return content, true
 	}

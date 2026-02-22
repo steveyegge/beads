@@ -76,8 +76,7 @@ NOTE: Import requires direct database access.`,
 		// Ensure database directory exists (auto-create if needed)
 		dbDir := filepath.Dir(dbPath)
 		if err := os.MkdirAll(dbDir, 0750); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to create database directory: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to create database directory: %v", err)
 		}
 
 		// We'll check if database needs initialization after reading the JSONL
@@ -113,8 +112,7 @@ NOTE: Import requires direct database access.`,
 			// #nosec G304 - user-provided file path is intentional
 			f, err := os.Open(input)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error opening input file: %v\n", err)
-				os.Exit(1)
+				FatalError("opening input file: %v", err)
 			}
 			defer func() {
 				if err := f.Close(); err != nil {
@@ -168,8 +166,7 @@ NOTE: Import requires direct database access.`,
 			// Parse JSON as regular issue
 			var issue types.Issue
 			if err := json.Unmarshal([]byte(line), &issue); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing line %d: %v\n", lineNum, err)
-				os.Exit(1)
+				FatalError("parsing line %d: %v", lineNum, err)
 			}
 			issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 
@@ -182,8 +179,7 @@ NOTE: Import requires direct database access.`,
 		}
 
 		if err := scanner.Err(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
-			os.Exit(1)
+			FatalError("reading input: %v", err)
 		}
 
 		// Check if database needs initialization (prefix not set)
@@ -199,8 +195,7 @@ NOTE: Import requires direct database access.`,
 				// But avoid using ".beads" as prefix - go up one level
 				cwd, err := os.Getwd()
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
-					os.Exit(1)
+					FatalError("failed to get current directory: %v", err)
 				}
 				dirName := filepath.Base(cwd)
 				if dirName == ".beads" || dirName == "beads" {
@@ -214,8 +209,7 @@ NOTE: Import requires direct database access.`,
 			detectedPrefix = strings.TrimRight(detectedPrefix, "-")
 
 			if err := store.SetConfig(initCtx, "issue_prefix", detectedPrefix); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to set issue prefix: %v\n", err)
-				os.Exit(1)
+				FatalError("failed to set issue prefix: %v", err)
 			}
 
 			fmt.Fprintf(os.Stderr, "✓ Initialized database with prefix '%s' (detected from %s)\n", detectedPrefix, prefixSource)
@@ -274,8 +268,7 @@ NOTE: Import requires direct database access.`,
 				fmt.Fprintf(os.Stderr, "This may indicate manual ID manipulation or a bug.\n")
 				os.Exit(1)
 			}
-			fmt.Fprintf(os.Stderr, "Import failed: %v\n", err)
-			os.Exit(1)
+			FatalError("import failed: %v", err)
 		}
 
 		// Handle dry-run mode
@@ -412,8 +405,7 @@ NOTE: Import requires direct database access.`,
 			// Get all issues (fresh after import)
 			allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error fetching issues for deduplication: %v\n", err)
-				os.Exit(1)
+				FatalError("fetching issues for deduplication: %v", err)
 			}
 
 			duplicateGroups := findDuplicateGroups(allIssues)

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 
 	"github.com/spf13/cobra"
@@ -51,15 +50,13 @@ func runMolReadyGated(cmd *cobra.Command, args []string) {
 
 	// --gated mode requires direct store access
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		os.Exit(1)
+		FatalError("no database connection")
 	}
 
 	// Find gate-ready molecules
 	molecules, err := findGateReadyMolecules(ctx, store)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	if jsonOutput {

@@ -75,8 +75,7 @@ func runGateDiscover(cmd *cobra.Command, args []string) {
 	// Step 1: Find open gh:run gates without await_id
 	gates, err := findPendingGates()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error finding gates: %v\n", err)
-		os.Exit(1)
+		FatalError("finding gates: %v", err)
 	}
 
 	if len(gates) == 0 {
@@ -94,8 +93,7 @@ func runGateDiscover(cmd *cobra.Command, args []string) {
 	// Step 2: Query recent GitHub workflow runs
 	runs, err := queryGitHubRuns(branchFilter, limit)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error querying GitHub runs: %v\n", err)
-		os.Exit(1)
+		FatalError("querying GitHub runs: %v", err)
 	}
 
 	if len(runs) == 0 {

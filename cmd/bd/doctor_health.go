@@ -85,8 +85,7 @@ func runDeepValidation(path string) {
 	if jsonOutput {
 		jsonBytes, err := doctor.DeepValidationResultJSON(result)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 		fmt.Println(string(jsonBytes))
 	} else {
@@ -105,8 +104,7 @@ func runServerHealth(path string) {
 	if jsonOutput {
 		jsonBytes, err := json.Marshal(result)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to marshal health check result: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to marshal health check result: %v", err)
 		}
 		fmt.Println(string(jsonBytes))
 	} else {

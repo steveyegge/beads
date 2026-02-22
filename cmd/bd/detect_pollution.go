@@ -53,8 +53,7 @@ NOTE: Review detected issues carefully before using --clean. False positives are
 		// Get all issues
 		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching issues: %v\n", err)
-			os.Exit(1)
+			FatalError("fetching issues: %v", err)
 		}
 
 		// Detect pollution
@@ -152,8 +151,7 @@ NOTE: Review detected issues carefully before using --clean. False positives are
 		// Backup to JSONL before deleting
 		backupPath := ".beads/pollution-backup.jsonl"
 		if err := backupPollutedIssues(polluted, backupPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Error backing up issues: %v\n", err)
-			os.Exit(1)
+			FatalError("backing up issues: %v", err)
 		}
 		fmt.Printf("Backed up %d issues to %s\n", len(polluted), backupPath)
 

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -87,12 +86,10 @@ var templateListCmd = &cobra.Command{
 			var err error
 			beadsTemplates, err = store.GetIssuesByLabel(ctx, BeadsTemplateLabel)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading templates: %v\n", err)
-				os.Exit(1)
+				FatalError("loading templates: %v", err)
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
+			FatalError("no database connection")
 		}
 
 		if jsonOutput {
@@ -136,12 +133,10 @@ var templateShowCmd = &cobra.Command{
 			var err error
 			templateID, err = utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: template '%s' not found\n", args[0])
-				os.Exit(1)
+				FatalError("template '%s' not found", args[0])
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
+			FatalError("no database connection")
 		}
 
 		// Load and show Beads template
@@ -149,8 +144,7 @@ var templateShowCmd = &cobra.Command{
 		var err error
 		subgraph, err = loadTemplateSubgraph(ctx, store, templateID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading template: %v\n", err)
-			os.Exit(1)
+			FatalError("loading template: %v", err)
 		}
 
 		showBeadsTemplate(subgraph)
@@ -212,8 +206,7 @@ Example:
 		for _, v := range varFlags {
 			parts := strings.SplitN(v, "=", 2)
 			if len(parts) != 2 {
-				fmt.Fprintf(os.Stderr, "Error: invalid variable format '%s', expected 'key=value'\n", v)
-				os.Exit(1)
+				FatalError("invalid variable format '%s', expected 'key=value'", v)
 			}
 			vars[parts[0]] = parts[1]
 		}
@@ -224,12 +217,10 @@ Example:
 			var err error
 			templateID, err = utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving template ID %s: %v\n", args[0], err)
-				os.Exit(1)
+				FatalError("resolving template ID %s: %v", args[0], err)
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
+			FatalError("no database connection")
 		}
 
 		// Load the template subgraph
@@ -237,8 +228,7 @@ Example:
 		var err error
 		subgraph, err = loadTemplateSubgraph(ctx, store, templateID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading template: %v\n", err)
-			os.Exit(1)
+			FatalError("loading template: %v", err)
 		}
 
 		// Check for missing variables
@@ -250,9 +240,10 @@ Example:
 			}
 		}
 		if len(missingVars) > 0 {
-			fmt.Fprintf(os.Stderr, "Error: missing required variables: %s\n", strings.Join(missingVars, ", "))
-			fmt.Fprintf(os.Stderr, "Provide them with: --var %s=<value>\n", missingVars[0])
-			os.Exit(1)
+			FatalErrorWithHint(
+				fmt.Sprintf("missing required variables: %s", strings.Join(missingVars, ", ")),
+				fmt.Sprintf("Provide them with: --var %s=<value>", missingVars[0]),
+			)
 		}
 
 		if dryRun {
@@ -285,8 +276,7 @@ Example:
 		var result *InstantiateResult
 		result, err = cloneSubgraph(ctx, store, subgraph, opts)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error instantiating template: %v\n", err)
-			os.Exit(1)
+			FatalError("instantiating template: %v", err)
 		}
 
 		if jsonOutput {

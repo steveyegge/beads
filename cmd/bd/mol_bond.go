@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -90,8 +89,7 @@ func runMolBond(cmd *cobra.Command, args []string) {
 
 	// mol bond requires direct store access
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		os.Exit(1)
+		FatalError("no database connection")
 	}
 
 	bondType, _ := cmd.Flags().GetString("type")
@@ -104,8 +102,7 @@ func runMolBond(cmd *cobra.Command, args []string) {
 
 	// Validate phase flags are not both set
 	if ephemeral && pour {
-		fmt.Fprintf(os.Stderr, "Error: cannot use both --ephemeral and --pour\n")
-		os.Exit(1)
+		FatalError("cannot use both --ephemeral and --pour")
 	}
 
 	// All issues go in the main store; ephemeral vs pour determines the Wisp flag
@@ -115,8 +112,7 @@ func runMolBond(cmd *cobra.Command, args []string) {
 
 	// Validate bond type
 	if bondType != types.BondTypeSequential && bondType != types.BondTypeParallel && bondType != types.BondTypeConditional {
-		fmt.Fprintf(os.Stderr, "Error: invalid bond type '%s', must be: sequential, parallel, or conditional\n", bondType)
-		os.Exit(1)
+		FatalError("invalid bond type '%s', must be: sequential, parallel, or conditional", bondType)
 	}
 
 	// Parse variables
@@ -124,8 +120,7 @@ func runMolBond(cmd *cobra.Command, args []string) {
 	for _, v := range varFlags {
 		parts := strings.SplitN(v, "=", 2)
 		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "Error: invalid variable format '%s', expected 'key=value'\n", v)
-			os.Exit(1)
+			FatalError("invalid variable format '%s', expected 'key=value'", v)
 		}
 		vars[parts[0]] = parts[1]
 	}
@@ -134,13 +129,11 @@ func runMolBond(cmd *cobra.Command, args []string) {
 	if dryRun {
 		issueA, formulaA, err := resolveOrDescribe(ctx, store, args[0])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 		issueB, formulaB, err := resolveOrDescribe(ctx, store, args[1])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		idA := args[0]
@@ -207,13 +200,11 @@ func runMolBond(cmd *cobra.Command, args []string) {
 	// Pass vars for step condition filtering (bd-7zka.1)
 	subgraphA, cookedA, err := resolveOrCookToSubgraph(ctx, store, args[0], vars)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 	subgraphB, cookedB, err := resolveOrCookToSubgraph(ctx, store, args[1], vars)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	// No cleanup needed - in-memory subgraphs don't pollute the DB
@@ -253,8 +244,7 @@ func runMolBond(cmd *cobra.Command, args []string) {
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error bonding: %v\n", err)
-		os.Exit(1)
+		FatalError("bonding: %v", err)
 	}
 
 	if jsonOutput {

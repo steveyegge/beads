@@ -315,8 +315,7 @@ var listCmd = &cobra.Command{
 		if molTypeStr != "" {
 			mt := types.MolType(molTypeStr)
 			if !mt.IsValid() {
-				fmt.Fprintf(os.Stderr, "Error: invalid mol-type %q (must be swarm, patrol, or work)\n", molTypeStr)
-				os.Exit(1)
+				FatalError("invalid mol-type %q (must be swarm, patrol, or work)", molTypeStr)
 			}
 			molType = &mt
 		}
@@ -327,8 +326,7 @@ var listCmd = &cobra.Command{
 		if wispTypeStr != "" {
 			wt := types.WispType(wispTypeStr)
 			if !wt.IsValid() {
-				fmt.Fprintf(os.Stderr, "Error: invalid wisp-type %q (must be heartbeat, ping, patrol, gc_report, recovery, error, or escalation)\n", wispTypeStr)
-				os.Exit(1)
+				FatalError("invalid wisp-type %q (must be heartbeat, ping, patrol, gc_report, recovery, error, or escalation)", wispTypeStr)
 			}
 			wispType = &wt
 		}
@@ -409,8 +407,7 @@ var listCmd = &cobra.Command{
 			priorityStr, _ := cmd.Flags().GetString("priority")
 			priority, err := validation.ValidatePriority(priorityStr)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 			filter.Priority = &priority
 		}
@@ -461,48 +458,42 @@ var listCmd = &cobra.Command{
 		if createdAfter != "" {
 			t, err := parseTimeFlag(createdAfter)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --created-after: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --created-after: %v", err)
 			}
 			filter.CreatedAfter = &t
 		}
 		if createdBefore != "" {
 			t, err := parseTimeFlag(createdBefore)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --created-before: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --created-before: %v", err)
 			}
 			filter.CreatedBefore = &t
 		}
 		if updatedAfter != "" {
 			t, err := parseTimeFlag(updatedAfter)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --updated-after: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --updated-after: %v", err)
 			}
 			filter.UpdatedAfter = &t
 		}
 		if updatedBefore != "" {
 			t, err := parseTimeFlag(updatedBefore)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --updated-before: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --updated-before: %v", err)
 			}
 			filter.UpdatedBefore = &t
 		}
 		if closedAfter != "" {
 			t, err := parseTimeFlag(closedAfter)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --closed-after: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --closed-after: %v", err)
 			}
 			filter.ClosedAfter = &t
 		}
 		if closedBefore != "" {
 			t, err := parseTimeFlag(closedBefore)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --closed-before: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --closed-before: %v", err)
 			}
 			filter.ClosedBefore = &t
 		}
@@ -522,24 +513,21 @@ var listCmd = &cobra.Command{
 		if cmd.Flags().Changed("priority-min") {
 			priorityMin, err := validation.ValidatePriority(priorityMinStr)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --priority-min: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --priority-min: %v", err)
 			}
 			filter.PriorityMin = &priorityMin
 		}
 		if cmd.Flags().Changed("priority-max") {
 			priorityMax, err := validation.ValidatePriority(priorityMaxStr)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --priority-max: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --priority-max: %v", err)
 			}
 			filter.PriorityMax = &priorityMax
 		}
 
 		// Pinned filtering: --pinned and --no-pinned are mutually exclusive
 		if pinnedFlag && noPinnedFlag {
-			fmt.Fprintf(os.Stderr, "Error: --pinned and --no-pinned are mutually exclusive\n")
-			os.Exit(1)
+			FatalError("--pinned and --no-pinned are mutually exclusive")
 		}
 		if pinnedFlag {
 			pinned := true
@@ -564,8 +552,7 @@ var listCmd = &cobra.Command{
 
 		// Parent filtering: filter children by parent issue
 		if parentID != "" && noParent {
-			fmt.Fprintf(os.Stderr, "Error: --parent and --no-parent are mutually exclusive\n")
-			os.Exit(1)
+			FatalError("--parent and --no-parent are mutually exclusive")
 		}
 		if parentID != "" {
 			filter.ParentID = &parentID
@@ -591,32 +578,28 @@ var listCmd = &cobra.Command{
 		if deferAfter != "" {
 			t, err := parseTimeFlag(deferAfter)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --defer-after: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --defer-after: %v", err)
 			}
 			filter.DeferAfter = &t
 		}
 		if deferBefore != "" {
 			t, err := parseTimeFlag(deferBefore)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --defer-before: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --defer-before: %v", err)
 			}
 			filter.DeferBefore = &t
 		}
 		if dueAfter != "" {
 			t, err := parseTimeFlag(dueAfter)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --due-after: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --due-after: %v", err)
 			}
 			filter.DueAfter = &t
 		}
 		if dueBefore != "" {
 			t, err := parseTimeFlag(dueBefore)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing --due-before: %v\n", err)
-				os.Exit(1)
+				FatalError("parsing --due-before: %v", err)
 			}
 			filter.DueBefore = &t
 		}
@@ -632,8 +615,7 @@ var listCmd = &cobra.Command{
 		if rigOverride != "" {
 			rigStore, err := openStoreForRig(ctx, rigOverride)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 			defer func() { _ = rigStore.Close() }() // Best effort cleanup
 			activeStore = rigStore
@@ -642,8 +624,7 @@ var listCmd = &cobra.Command{
 		// Direct mode
 		issues, err := activeStore.SearchIssues(ctx, "", filter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		// Apply sorting
@@ -661,8 +642,7 @@ var listCmd = &cobra.Command{
 			if parentID != "" {
 				treeIssues, err := getHierarchicalChildren(ctx, activeStore, "", 0, parentID)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
+					FatalError("%v", err)
 				}
 
 				if len(treeIssues) == 0 {
@@ -692,8 +672,7 @@ var listCmd = &cobra.Command{
 		// Handle format flag
 		if formatStr != "" {
 			if err := outputFormattedList(ctx, activeStore, issues, formatStr); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 			return
 		}

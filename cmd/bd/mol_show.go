@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -34,20 +33,17 @@ Example:
 
 		// mol show requires direct store access for subgraph loading
 		if store == nil {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-			os.Exit(1)
+			FatalError("no database connection")
 		}
 
 		moleculeID, err := utils.ResolvePartialID(ctx, store, args[0])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: molecule '%s' not found\n", args[0])
-			os.Exit(1)
+			FatalError("molecule '%s' not found", args[0])
 		}
 
 		subgraph, err := loadTemplateSubgraph(ctx, store, moleculeID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-			os.Exit(1)
+			FatalError("loading molecule: %v", err)
 		}
 
 		if molShowParallel {

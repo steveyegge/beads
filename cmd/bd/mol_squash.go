@@ -68,9 +68,7 @@ func runMolSquash(cmd *cobra.Command, args []string) {
 
 	// mol squash requires direct store access (daemon auto-bypassed for wisp ops)
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
-		os.Exit(1)
+		FatalErrorWithHint("no database connection", "run 'bd init' or 'bd import' to initialize the database")
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -80,15 +78,13 @@ func runMolSquash(cmd *cobra.Command, args []string) {
 	// Resolve molecule ID in main store
 	moleculeID, err := utils.ResolvePartialID(ctx, store, args[0])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving molecule ID %s: %v\n", args[0], err)
-		os.Exit(1)
+		FatalError("resolving molecule ID %s: %v", args[0], err)
 	}
 
 	// Load the molecule subgraph from main store
 	subgraph, err := loadTemplateSubgraph(ctx, store, moleculeID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading molecule: %v\n", err)
-		os.Exit(1)
+		FatalError("loading molecule: %v", err)
 	}
 
 	// Filter to only ephemeral children (exclude root)
@@ -141,8 +137,7 @@ func runMolSquash(cmd *cobra.Command, args []string) {
 	// Perform the squash
 	result, err := squashMolecule(ctx, store, subgraph.Root, wispChildren, keepChildren, summary, actor)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error squashing molecule: %v\n", err)
-		os.Exit(1)
+		FatalError("squashing molecule: %v", err)
 	}
 
 	if jsonOutput {

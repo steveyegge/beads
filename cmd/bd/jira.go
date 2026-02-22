@@ -100,18 +100,15 @@ func runJiraSync(cmd *cobra.Command, args []string) {
 	}
 
 	if preferLocal && preferJira {
-		fmt.Fprintf(os.Stderr, "Error: cannot use both --prefer-local and --prefer-jira\n")
-		os.Exit(1)
+		FatalError("cannot use both --prefer-local and --prefer-jira")
 	}
 
 	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: database not available: %v\n", err)
-		os.Exit(1)
+		FatalError("database not available: %v", err)
 	}
 
 	if err := validateJiraConfig(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	ctx := rootCtx
@@ -119,8 +116,7 @@ func runJiraSync(cmd *cobra.Command, args []string) {
 	// Create and initialize the Jira tracker
 	jt := &jira.Tracker{}
 	if err := jt.Init(ctx, store); err != nil {
-		fmt.Fprintf(os.Stderr, "Error initializing Jira tracker: %v\n", err)
-		os.Exit(1)
+		FatalError("initializing Jira tracker: %v", err)
 	}
 
 	// Create the sync engine
@@ -210,8 +206,7 @@ func runJiraStatus(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
 	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	jiraURL, _ := store.GetConfig(ctx, "jira.url")
@@ -222,8 +217,7 @@ func runJiraStatus(cmd *cobra.Command, args []string) {
 
 	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		FatalError("%v", err)
 	}
 
 	withJiraRef := 0

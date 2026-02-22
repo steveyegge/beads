@@ -55,8 +55,7 @@ func runPour(cmd *cobra.Command, args []string) {
 
 	// Pour requires direct store access for cloning
 	if store == nil {
-		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		os.Exit(1)
+		FatalError("no database connection")
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -70,8 +69,7 @@ func runPour(cmd *cobra.Command, args []string) {
 	for _, v := range varFlags {
 		parts := strings.SplitN(v, "=", 2)
 		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "Error: invalid variable format '%s', expected 'key=value'\n", v)
-			os.Exit(1)
+			FatalError("invalid variable format '%s', expected 'key=value'", v)
 		}
 		vars[parts[0]] = parts[1]
 	}
@@ -108,27 +106,23 @@ func runPour(cmd *cobra.Command, args []string) {
 		// Try to load as existing proto bead (legacy path)
 		resolvedID, err := utils.ResolvePartialID(ctx, store, args[0])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %s not found as formula or proto ID\n", args[0])
-			os.Exit(1)
+			FatalError("%s not found as formula or proto ID", args[0])
 		}
 		protoID = resolvedID
 
 		// Verify it's a proto
 		protoIssue, err := store.GetIssue(ctx, protoID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading proto %s: %v\n", protoID, err)
-			os.Exit(1)
+			FatalError("loading proto %s: %v", protoID, err)
 		}
 		if !isProto(protoIssue) {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a proto (missing '%s' label)\n", protoID, MoleculeLabel)
-			os.Exit(1)
+			FatalError("%s is not a proto (missing '%s' label)", protoID, MoleculeLabel)
 		}
 
 		// Load the proto subgraph from DB
 		subgraph, err = loadTemplateSubgraph(ctx, store, protoID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading proto: %v\n", err)
-			os.Exit(1)
+			FatalError("loading proto: %v", err)
 		}
 	}
 
@@ -144,22 +138,18 @@ func runPour(cmd *cobra.Command, args []string) {
 	for _, attachArg := range attachFlags {
 		attachID, err := utils.ResolvePartialID(ctx, store, attachArg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving attachment ID %s: %v\n", attachArg, err)
-			os.Exit(1)
+			FatalError("resolving attachment ID %s: %v", attachArg, err)
 		}
 		attachIssue, err := store.GetIssue(ctx, attachID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading attachment %s: %v\n", attachID, err)
-			os.Exit(1)
+			FatalError("loading attachment %s: %v", attachID, err)
 		}
 		if !isProto(attachIssue) {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a proto (missing '%s' label)\n", attachID, MoleculeLabel)
-			os.Exit(1)
+			FatalError("%s is not a proto (missing '%s' label)", attachID, MoleculeLabel)
 		}
 		attachSubgraph, err := loadTemplateSubgraph(ctx, store, attachID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading attachment subgraph %s: %v\n", attachID, err)
-			os.Exit(1)
+			FatalError("loading attachment subgraph %s: %v", attachID, err)
 		}
 		attachments = append(attachments, attachmentInfo{
 			id:       attachID,
@@ -195,9 +185,10 @@ func runPour(cmd *cobra.Command, args []string) {
 		}
 	}
 	if len(missingVars) > 0 {
-		fmt.Fprintf(os.Stderr, "Error: missing required variables: %s\n", strings.Join(missingVars, ", "))
-		fmt.Fprintf(os.Stderr, "Provide them with: --var %s=<value>\n", missingVars[0])
-		os.Exit(1)
+		FatalErrorWithHint(
+			fmt.Sprintf("missing required variables: %s", strings.Join(missingVars, ", ")),
+			fmt.Sprintf("Provide them with: --var %s=<value>", missingVars[0]),
+		)
 	}
 
 	if dryRun {
@@ -224,8 +215,7 @@ func runPour(cmd *cobra.Command, args []string) {
 	// Use mol prefix for distinct visual recognition (see types.IDPrefixMol)
 	result, err := spawnMolecule(ctx, store, subgraph, vars, assignee, actor, false, types.IDPrefixMol)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error pouring proto: %v\n", err)
-		os.Exit(1)
+		FatalError("pouring proto: %v", err)
 	}
 
 	// Attach bonded protos
@@ -233,16 +223,14 @@ func runPour(cmd *cobra.Command, args []string) {
 	if len(attachments) > 0 {
 		spawnedMol, err := store.GetIssue(ctx, result.NewEpicID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading spawned mol: %v\n", err)
-			os.Exit(1)
+			FatalError("loading spawned mol: %v", err)
 		}
 
 		for _, attach := range attachments {
 			// pour command always creates persistent (Wisp=false) issues
 			bondResult, err := bondProtoMol(ctx, store, attach.issue, spawnedMol, attachType, vars, "", actor, false, true)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error attaching %s: %v\n", attach.id, err)
-				os.Exit(1)
+				FatalError("attaching %s: %v", attach.id, err)
 			}
 			totalAttached += bondResult.Spawned
 		}

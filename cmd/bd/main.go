@@ -249,8 +249,7 @@ var rootCmd = &cobra.Command{
 
 		// Block dangerous env var overrides that could cause data fragmentation (bd-hevyw).
 		if err := checkBlockedEnvVars(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		// Apply viper configuration if flags weren't explicitly set
@@ -315,8 +314,7 @@ var rootCmd = &cobra.Command{
 
 		// Validate Dolt auto-commit mode early so all commands fail fast on invalid config.
 		if _, err := getDoltAutoCommitMode(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		// GH#1093: Check noDbCommands BEFORE expensive operations (ensureForkProtection)
@@ -394,8 +392,7 @@ var rootCmd = &cobra.Command{
 
 		// --no-db mode has been removed; only Dolt is supported
 		if noDb {
-			fmt.Fprintf(os.Stderr, "Error: --no-db mode has been removed; beads now requires Dolt (run 'bd init' to create a database)\n")
-			os.Exit(1)
+			FatalError("--no-db mode has been removed; beads now requires Dolt (run 'bd init' to create a database)")
 		}
 
 		// Initialize database path
@@ -542,8 +539,7 @@ var rootCmd = &cobra.Command{
 			if handleFreshCloneError(err, beadsDir) {
 				os.Exit(1)
 			}
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to open database: %v", err)
 		}
 
 		// Mark store as active for flush goroutine safety
@@ -590,8 +586,7 @@ var rootCmd = &cobra.Command{
 		// create a Dolt commit so changes don't remain only in the working set.
 		if commandDidWrite.Load() && !commandDidExplicitDoltCommit {
 			if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: dolt auto-commit failed: %v\n", err)
-				os.Exit(1)
+				FatalError("dolt auto-commit failed: %v", err)
 			}
 		}
 
@@ -600,16 +595,14 @@ var rootCmd = &cobra.Command{
 		if commandDidWriteTipMetadata && len(commandTipIDsShown) > 0 {
 			// Only applies when dolt auto-commit is enabled and backend is versioned (Dolt).
 			if mode, err := getDoltAutoCommitMode(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
-				os.Exit(1)
+				FatalError("dolt tip auto-commit failed: %v", err)
 			} else if mode == doltAutoCommitOn {
 				// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
 				for tipID := range commandTipIDsShown {
 					key := fmt.Sprintf("tip_%s_last_shown", tipID)
 					value := time.Now().Format(time.RFC3339)
 					if err := store.SetMetadata(rootCtx, key, value); err != nil {
-						fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
-						os.Exit(1)
+						FatalError("dolt tip auto-commit failed: %v", err)
 					}
 				}
 
@@ -619,8 +612,7 @@ var rootCmd = &cobra.Command{
 				}
 				msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
 				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
-					os.Exit(1)
+					FatalError("dolt tip auto-commit failed: %v", err)
 				}
 			}
 		}

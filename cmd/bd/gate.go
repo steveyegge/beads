@@ -73,8 +73,7 @@ By default, shows only open gates. Use --all to include closed gates.`,
 		// Direct mode
 		issues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		if jsonOutput {
@@ -186,13 +185,11 @@ This is used by 'gt done --phase-complete' to register for gate wake notificatio
 
 		issue, err = store.GetIssue(ctx, gateID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: gate not found: %s\n", gateID)
-			os.Exit(1)
+			FatalError("gate not found: %s", gateID)
 		}
 
 		if issue.IssueType != "gate" {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a gate issue (type=%s)\n", gateID, issue.IssueType)
-			os.Exit(1)
+			FatalError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
 		}
 
 		// Check if waiter is already registered
@@ -211,8 +208,7 @@ This is used by 'gt done --phase-complete' to register for gate wake notificatio
 			"waiters": newWaiters,
 		}
 		if err := store.UpdateIssue(ctx, gateID, updates, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Error updating gate: %v\n", err)
-			os.Exit(1)
+			FatalError("updating gate: %v", err)
 		}
 
 		fmt.Printf("%s Added waiter to gate %s: %s\n", ui.RenderPass("✓"), gateID, waiter)
@@ -237,13 +233,11 @@ This is similar to 'bd show' but validates that the issue is a gate.`,
 
 		issue, err = store.GetIssue(ctx, gateID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: gate not found: %s\n", gateID)
-			os.Exit(1)
+			FatalError("gate not found: %s", gateID)
 		}
 
 		if issue.IssueType != "gate" {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a gate issue (type=%s)\n", gateID, issue.IssueType)
-			os.Exit(1)
+			FatalError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
 		}
 
 		if jsonOutput {
@@ -300,19 +294,16 @@ Use --reason to provide context for why the gate was resolved.`,
 
 		issue, err = store.GetIssue(ctx, gateID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: gate not found: %s\n", gateID)
-			os.Exit(1)
+			FatalError("gate not found: %s", gateID)
 		}
 
 		if issue.IssueType != "gate" {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a gate issue (type=%s)\n", gateID, issue.IssueType)
-			os.Exit(1)
+			FatalError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
 		}
 
 		// Close the gate
 		if err := store.CloseIssue(ctx, gateID, reason, actor, ""); err != nil {
-			fmt.Fprintf(os.Stderr, "Error closing gate: %v\n", err)
-			os.Exit(1)
+			FatalError("closing gate: %v", err)
 		}
 
 		fmt.Printf("%s Gate resolved: %s\n", ui.RenderPass("✓"), gateID)
@@ -382,8 +373,7 @@ Examples:
 
 		gates, err = store.SearchIssues(ctx, "", filter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		// Filter by type if specified

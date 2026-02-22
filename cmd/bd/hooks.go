@@ -220,29 +220,11 @@ Installed hooks:
 
 		embeddedHooks, err := getEmbeddedHooks()
 		if err != nil {
-			if jsonOutput {
-				output := map[string]interface{}{
-					"error": err.Error(),
-				}
-				jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-				fmt.Println(string(jsonBytes))
-			} else {
-				fmt.Fprintf(os.Stderr, "Error loading hooks: %v\n", err)
-			}
-			os.Exit(1)
+			FatalErrorRespectJSON("loading hooks: %v", err)
 		}
 
 		if err := installHooksWithOptions(embeddedHooks, force, shared, chain, beadsHooks); err != nil {
-			if jsonOutput {
-				output := map[string]interface{}{
-					"error": err.Error(),
-				}
-				jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-				fmt.Println(string(jsonBytes))
-			} else {
-				fmt.Fprintf(os.Stderr, "Error installing hooks: %v\n", err)
-			}
-			os.Exit(1)
+			FatalErrorRespectJSON("installing hooks: %v", err)
 		}
 
 		if jsonOutput {
@@ -287,16 +269,7 @@ var hooksUninstallCmd = &cobra.Command{
 	Long:  `Remove bd git hooks from .git/hooks/ directory.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := uninstallHooks(); err != nil {
-			if jsonOutput {
-				output := map[string]interface{}{
-					"error": err.Error(),
-				}
-				jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-				fmt.Println(string(jsonBytes))
-			} else {
-				fmt.Fprintf(os.Stderr, "Error uninstalling hooks: %v\n", err)
-			}
-			os.Exit(1)
+			FatalErrorRespectJSON("uninstalling hooks: %v", err)
 		}
 
 		if jsonOutput {
@@ -1108,8 +1081,7 @@ installed bd version - upgrading bd automatically updates hook behavior.`,
 		case "prepare-commit-msg":
 			exitCode = runPrepareCommitMsgHook(hookArgs)
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown hook: %s\n", hookName)
-			os.Exit(1)
+			FatalError("unknown hook: %s", hookName)
 		}
 
 		os.Exit(exitCode)

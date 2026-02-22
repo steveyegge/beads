@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/steveyegge/beads/cmd/bd/doctor"
@@ -129,7 +128,6 @@ func runArtifactsCheck(path string, clean bool, yes bool) {
 
 	// Perform cleanup
 	if err := fix.ClassicArtifacts(path); err != nil {
-		fmt.Fprintf(os.Stderr, "Error during cleanup: %v\n", err)
-		os.Exit(1)
+		FatalError("during cleanup: %v", err)
 	}
 }

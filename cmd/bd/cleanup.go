@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -56,8 +55,7 @@ SEE ALSO:
 		// Ensure we have storage
 		if store == nil {
 			if err := ensureStoreActive(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 		}
 
@@ -84,8 +82,7 @@ SEE ALSO:
 		// Get all closed issues matching filter
 		closedIssues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing issues: %v\n", err)
-			os.Exit(1)
+			FatalError("listing issues: %v", err)
 		}
 
 		// Filter out pinned issues - they are protected from cleanup (bd-b2k)
@@ -143,8 +140,9 @@ SEE ALSO:
 			if wispOnly {
 				issueType = "closed wisp"
 			}
-			fmt.Fprintf(os.Stderr, "Would delete %d %s issue(s). Use --force to confirm or --dry-run to preview.\n", len(issueIDs), issueType)
-			os.Exit(1)
+			FatalErrorWithHint(
+				fmt.Sprintf("would delete %d %s issue(s)", len(issueIDs), issueType),
+				"Use --force to confirm or --dry-run to preview.")
 		}
 
 		if !jsonOutput {

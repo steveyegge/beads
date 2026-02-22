@@ -25,8 +25,7 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 		// Resolve partial IDs
 		_, err := utils.ResolvePartialIDs(ctx, store, args)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 		reopenedIssues := []*types.Issue{}
 		// Direct storage access

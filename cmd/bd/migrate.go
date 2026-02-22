@@ -88,10 +88,9 @@ Subcommands:
 					"error":   "config_load_failed",
 					"message": err.Error(),
 				})
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
+				os.Exit(1)
 			}
-			os.Exit(1)
+			FatalError("failed to load config: %v", err)
 		}
 
 		// Handle Dolt metadata update
@@ -127,10 +126,9 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, beadsDir string, dryRun bo
 				"error":   "open_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to open Dolt database: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to open Dolt database: %v", err)
 	}
 	defer func() { _ = store.Close() }()
 
@@ -221,10 +219,9 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, beadsDir string, dryRun bo
 					"error":   "version_update_failed",
 					"message": err.Error(),
 				})
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: failed to update version: %v\n", err)
+				os.Exit(1)
 			}
-			os.Exit(1)
+			FatalError("failed to update version: %v", err)
 		}
 		versionUpdated = true
 
@@ -322,11 +319,9 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 				"error":   "no_database",
 				"message": "No beads database found. Run 'bd init' first.",
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
-			fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to initialize bd\n")
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalErrorWithHint("no beads database found", "run 'bd init' to initialize bd")
 	}
 
 	// Compute new repo ID
@@ -337,10 +332,9 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 				"error":   "compute_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to compute repository ID: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to compute repository ID: %v", err)
 	}
 
 	// Open database
@@ -351,10 +345,9 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 				"error":   "open_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to open database: %v", err)
 	}
 	defer func() { _ = store.Close() }()
 
@@ -367,10 +360,9 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 				"error":   "read_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to read repo_id: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to read repo_id: %v", err)
 	}
 
 	oldDisplay := "none"
@@ -415,10 +407,9 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 				"error":   "update_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to update repo_id: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to update repo_id: %v", err)
 	}
 
 	if jsonOutput {
@@ -444,11 +435,9 @@ func handleInspect() {
 				"error":   "no_beads_directory",
 				"message": "No .beads directory found. Run 'bd init' first.",
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no .beads directory found\n")
-			fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to initialize bd\n")
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalErrorWithHint("no .beads directory found", "run 'bd init' to initialize bd")
 	}
 
 	// Load config
@@ -459,10 +448,9 @@ func handleInspect() {
 				"error":   "config_load_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to load config: %v", err)
 	}
 
 	// Check if database exists (don't create it)
@@ -476,10 +464,9 @@ func handleInspect() {
 				"error":   "database_stat_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to check database: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to check database: %v", err)
 	}
 
 	// If database doesn't exist, return inspection with defaults
@@ -516,10 +503,9 @@ func handleInspect() {
 				"error":   "database_open_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to open database: %v", err)
 	}
 	defer func() { _ = store.Close() }()
 
@@ -616,11 +602,9 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 				"error":   "invalid_branch",
 				"message": "Branch name cannot be empty or contain whitespace",
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: invalid branch name '%s'\n", branch)
-			fmt.Fprintf(os.Stderr, "Branch name cannot be empty or contain whitespace\n")
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalErrorWithHint(fmt.Sprintf("invalid branch name '%s'", branch), "branch name cannot be empty or contain whitespace")
 	}
 
 	// Find .beads directory
@@ -631,11 +615,9 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 				"error":   "no_beads_directory",
 				"message": "No .beads directory found. Run 'bd init' first.",
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no .beads directory found\n")
-			fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to initialize bd\n")
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalErrorWithHint("no .beads directory found", "run 'bd init' to initialize bd")
 	}
 
 	// Load config
@@ -646,10 +628,9 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 				"error":   "config_load_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to load config: %v", err)
 	}
 
 	// Check database exists
@@ -660,11 +641,9 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 				"error":   "database_missing",
 				"message": "Database not found. Run 'bd init' first.",
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: database not found: %s\n", targetPath)
-			fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to initialize bd\n")
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalErrorWithHint(fmt.Sprintf("database not found: %s", targetPath), "run 'bd init' to initialize bd")
 	}
 
 	// Open database
@@ -675,10 +654,9 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 				"error":   "database_open_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to open database: %v", err)
 	}
 	defer func() { _ = store.Close() }()
 
@@ -728,10 +706,9 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 				"error":   "config_update_failed",
 				"message": err.Error(),
 			})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: failed to set sync.branch: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		FatalError("failed to set sync.branch: %v", err)
 	}
 
 	// Success output

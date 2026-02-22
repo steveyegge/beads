@@ -65,8 +65,7 @@ Configuration (.beads/config.yaml):
 		case "post-checkout":
 			exitCode = hookPostCheckout(hookArgs)
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown hook: %s\n", hookName)
-			os.Exit(1)
+			FatalError("unknown hook: %s", hookName)
 		}
 
 		os.Exit(exitCode)

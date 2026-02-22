@@ -80,14 +80,12 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		// rename-prefix requires direct database access
 		if store == nil {
 			if err := ensureStoreActive(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 		}
 
 		if err := validatePrefix(newPrefix); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		// Get JSONL path for sync operations
@@ -100,8 +98,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 				// JSONL exists - force import to sync all issues to DB
 				issues, err := parseJSONLFile(jsonlPath)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to read JSONL before rename: %v\n", err)
-					os.Exit(1)
+					FatalError("failed to read JSONL before rename: %v", err)
 				}
 				if len(issues) > 0 {
 					opts := ImportOptions{
@@ -112,8 +109,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 					}
 					result, err := importIssuesCore(ctx, dbPath, store, issues, opts)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to sync JSONL before rename: %v\n", err)
-						os.Exit(1)
+						FatalError("failed to sync JSONL before rename: %v", err)
 					}
 					if result.Created > 0 || result.Updated > 0 {
 						fmt.Printf("Synced %d issues from JSONL before rename\n", result.Created+result.Updated)
@@ -124,8 +120,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 
 		oldPrefix, err := store.GetConfig(ctx, "issue_prefix")
 		if err != nil || oldPrefix == "" {
-			fmt.Fprintf(os.Stderr, "Error: failed to get current prefix: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to get current prefix: %v", err)
 		}
 
 		newPrefix = strings.TrimRight(newPrefix, "-")
@@ -133,8 +128,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		// Check for multiple prefixes first
 		issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to list issues: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to list issues: %v", err)
 		}
 
 		prefixes := detectPrefixes(issues)
@@ -149,23 +143,22 @@ NOTE: This is a rare operation. Most users never need this command.`,
 			fmt.Fprintf(os.Stderr, "\n")
 
 			if !repair {
-				fmt.Fprintf(os.Stderr, "Error: cannot rename with multiple prefixes. Use --repair to consolidate.\n")
-				fmt.Fprintf(os.Stderr, "Example: bd rename-prefix %s --repair\n", newPrefix)
-				os.Exit(1)
+				FatalErrorWithHint(
+					"cannot rename with multiple prefixes. Use --repair to consolidate.",
+					fmt.Sprintf("Example: bd rename-prefix %s --repair", newPrefix),
+				)
 			}
 
 			// Repair mode: consolidate all prefixes to newPrefix
 			if err := repairPrefixes(ctx, store, actor, newPrefix, issues, prefixes, dryRun); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to repair prefixes: %v\n", err)
-				os.Exit(1)
+				FatalError("failed to repair prefixes: %v", err)
 			}
 			return
 		}
 
 		// Single prefix case - check if trying to rename to same prefix
 		if len(prefixes) == 1 && oldPrefix == newPrefix {
-			fmt.Fprintf(os.Stderr, "Error: new prefix is the same as current prefix: %s\n", oldPrefix)
-			os.Exit(1)
+			FatalError("new prefix is the same as current prefix: %s", oldPrefix)
 		}
 
 		// issues already fetched above
@@ -173,8 +166,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 			fmt.Printf("No issues to rename. Updating prefix to %s\n", newPrefix)
 			if !dryRun {
 				if err := store.SetConfig(ctx, "issue_prefix", newPrefix); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to update prefix: %v\n", err)
-					os.Exit(1)
+					FatalError("failed to update prefix: %v", err)
 				}
 			}
 			return
@@ -198,8 +190,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		fmt.Printf("Renaming %d issues from prefix '%s' to '%s'...\n", len(issues), oldPrefix, newPrefix)
 
 		if err := renamePrefixInDB(ctx, oldPrefix, newPrefix, issues); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to rename prefix: %v\n", err)
-			os.Exit(1)
+			FatalError("failed to rename prefix: %v", err)
 		}
 
 		// Force export to JSONL with new IDs
