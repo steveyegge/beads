@@ -4,6 +4,7 @@ package regression
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1702,6 +1703,764 @@ func TestEmptyAndWhitespaceFields(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Epic lifecycle: children-of-closed-blocker ready semantics (GH#1495)
+// ---------------------------------------------------------------------------
+
+// TestEpicAllChildrenClosedNotBlocked creates an epic with children, closes
+// all children, then verifies the epic is not reported as BLOCKED by
+// bd blocked. GH#1495: completed epics show BLOCKED with "0 dependencies".
+func TestEpicAllChildrenClosedNotBlocked(t *testing.T) {
+	scenario := func(w *workspace) string {
+		epic := w.create("--title", "Release epic", "--type", "epic", "--priority", "1")
+		c1 := w.create("--title", "Task A", "--type", "task", "--parent", epic)
+		c2 := w.create("--title", "Task B", "--type", "task", "--parent", epic)
+		c3 := w.create("--title", "Task C", "--type", "task", "--parent", epic)
+
+		w.run("close", c1, "--reason", "done")
+		w.run("close", c2, "--reason", "done")
+		w.run("close", c3, "--reason", "done")
+		return epic
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	bEpic := scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	cEpic := scenario(candidateWS)
+
+	// Epic should appear in ready (no open blockers) in both backends
+	bReady := parseReadyIDs(t, baselineWS)
+	cReady := parseReadyIDs(t, candidateWS)
+
+	if bReady[bEpic] != cReady[cEpic] {
+		t.Errorf("epic ready: baseline=%v candidate=%v (GH#1495: completed epic shows BLOCKED)",
+			bReady[bEpic], cReady[cEpic])
+	}
+
+	// Also check bd blocked --json: epic should NOT appear
+	bBlocked, _ := baselineWS.tryRun("blocked", "--json")
+	cBlocked, _ := candidateWS.tryRun("blocked", "--json")
+
+	bBlockedTitles := extractTitleOrder(t, bBlocked)
+	cBlockedTitles := extractTitleOrder(t, cBlocked)
+
+	bHasEpic := false
+	for _, title := range bBlockedTitles {
+		if title == "Release epic" {
+			bHasEpic = true
+		}
+	}
+	cHasEpic := false
+	for _, title := range cBlockedTitles {
+		if title == "Release epic" {
+			cHasEpic = true
+		}
+	}
+	if bHasEpic != cHasEpic {
+		t.Errorf("epic in blocked: baseline=%v candidate=%v", bHasEpic, cHasEpic)
+	}
+
+	diffNormalized(t,
+		baselineWS.export(), candidateWS.export(),
+		canonicalIDMap(baselineWS.createdIDs),
+		canonicalIDMap(candidateWS.createdIDs),
+	)
+}
+
+// TestBlockedEpicChildrenNotReady creates an epic blocked by another issue,
+// then creates child tasks under the epic. Children should NOT appear in
+// bd ready if their parent epic is blocked. GH#1495 issue 3.
+func TestBlockedEpicChildrenNotReady(t *testing.T) {
+	scenario := func(w *workspace) (epic, blocker string, children [3]string) {
+		blocker = w.create("--title", "Prerequisite work", "--type", "task", "--priority", "1")
+		epic = w.create("--title", "Gated epic", "--type", "epic", "--priority", "2")
+		w.run("dep", "add", epic, blocker)
+
+		children[0] = w.create("--title", "Child X", "--type", "task", "--parent", epic)
+		children[1] = w.create("--title", "Child Y", "--type", "task", "--parent", epic)
+		children[2] = w.create("--title", "Child Z", "--type", "task", "--parent", epic)
+		return
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	_, _, bChildren := scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	_, _, cChildren := scenario(candidateWS)
+
+	bReady := parseReadyIDs(t, baselineWS)
+	cReady := parseReadyIDs(t, candidateWS)
+
+	for i := range bChildren {
+		bR := bReady[bChildren[i]]
+		cR := cReady[cChildren[i]]
+		if bR != cR {
+			t.Errorf("child[%d] ready: baseline=%v candidate=%v (GH#1495: children of blocked epic in ready)",
+				i, bR, cR)
+		}
+	}
+
+	diffNormalized(t,
+		baselineWS.export(), candidateWS.export(),
+		canonicalIDMap(baselineWS.createdIDs),
+		canonicalIDMap(candidateWS.createdIDs),
+	)
+}
+
+// ---------------------------------------------------------------------------
+// Close guard: non-blocks dep types (GH#1524)
+// ---------------------------------------------------------------------------
+
+// TestCloseGuardNonBlocksDepTypes creates issues linked via non-blocks
+// dependency types (caused-by, validates, tracks) and attempts to close
+// the target. GH#1524: close guard may reject close for non-blocks deps
+// or inconsistently allow it depending on backend.
+func TestCloseGuardNonBlocksDepTypes(t *testing.T) {
+	depTypes := []string{"caused-by", "validates", "tracks"}
+
+	for _, dt := range depTypes {
+		t.Run(dt, func(t *testing.T) {
+			scenario := func(w *workspace) (source, target string) {
+				target = w.create("--title", "Target ("+dt+")", "--type", "task", "--priority", "1")
+				source = w.create("--title", "Source via "+dt, "--type", "task", "--priority", "2")
+				w.run("dep", "add", source, target, "--type", dt)
+				return
+			}
+
+			baselineWS := newWorkspace(t, baselineBin)
+			_, bTarget := scenario(baselineWS)
+			candidateWS := newWorkspace(t, candidateBin)
+			_, cTarget := scenario(candidateWS)
+
+			// Try closing the target — should succeed since non-blocks deps
+			// should not prevent close
+			_, bErr := baselineWS.tryRun("close", bTarget, "--reason", "done")
+			_, cErr := candidateWS.tryRun("close", cTarget, "--reason", "done")
+
+			if (bErr == nil) != (cErr == nil) {
+				t.Errorf("close target with %s dep: baseline err=%v candidate err=%v",
+					dt, bErr, cErr)
+			}
+
+			diffNormalized(t,
+				baselineWS.export(), candidateWS.export(),
+				canonicalIDMap(baselineWS.createdIDs),
+				canonicalIDMap(candidateWS.createdIDs),
+			)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bd list --all with --label filter (GH#1840)
+// ---------------------------------------------------------------------------
+
+// TestListAllOverridesLimitWithLabel creates >50 issues with a label and
+// verifies that bd list --all --label returns all of them, not just 50.
+// GH#1840: bd list --all has a default limit of 50 when combined with --label.
+func TestListAllOverridesLimitWithLabel(t *testing.T) {
+	// Create issues in both workspaces — more than the default limit
+	scenario := func(w *workspace) {
+		for i := 0; i < 55; i++ {
+			id := w.create("--title", fmt.Sprintf("Issue %03d", i), "--type", "task")
+			w.run("label", "add", id, "batch")
+		}
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	scenario(candidateWS)
+
+	bOut, bErr := baselineWS.tryRun("list", "--all", "--label", "batch", "--json")
+	cOut, cErr := candidateWS.tryRun("list", "--all", "--label", "batch", "--json")
+
+	if bErr != nil {
+		t.Skip("pre-existing bug (baseline): v0.49.6 does not support --all --label combination")
+	}
+	if cErr != nil {
+		t.Fatalf("bd list --all --label works in baseline but fails in candidate: %v", cErr)
+	}
+
+	bTitles := extractTitleOrder(t, bOut)
+	cTitles := extractTitleOrder(t, cOut)
+
+	if len(bTitles) != len(cTitles) {
+		t.Errorf("list --all --label count: baseline=%d candidate=%d (GH#1840: limit of 50 with --label)",
+			len(bTitles), len(cTitles))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bd list resolved blockers annotation (GH#1858)
+// ---------------------------------------------------------------------------
+
+// TestListResolvedBlockerAnnotation creates a blocking dependency, closes
+// the blocker, and checks that bd list text output does NOT show
+// "(blocked by: ...)" for the unblocked issue.
+// GH#1858: bd list shows resolved blockers as still blocking.
+func TestListResolvedBlockerAnnotation(t *testing.T) {
+	scenario := func(w *workspace) (blocker, blocked string) {
+		blocker = w.create("--title", "Blocker task", "--type", "task", "--priority", "1")
+		blocked = w.create("--title", "Previously blocked", "--type", "task", "--priority", "2")
+		w.run("dep", "add", blocked, blocker)
+		w.run("close", blocker, "--reason", "done")
+		return
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	scenario(candidateWS)
+
+	bOut := baselineWS.run("list", "--status", "open")
+	cOut := candidateWS.run("list", "--status", "open")
+
+	bHasBlocked := strings.Contains(bOut, "blocked by")
+	cHasBlocked := strings.Contains(cOut, "blocked by")
+
+	if bHasBlocked != cHasBlocked {
+		t.Errorf("list 'blocked by' annotation after blocker closed: baseline=%v candidate=%v (GH#1858)",
+			bHasBlocked, cHasBlocked)
+	}
+
+	// Also verify ready agrees
+	bReady := parseReadyIDs(t, baselineWS)
+	cReady := parseReadyIDs(t, candidateWS)
+
+	bReadyTitles := extractTitleOrder(t, baselineWS.run("ready", "--json"))
+	cReadyTitles := extractTitleOrder(t, candidateWS.run("ready", "--json"))
+	sort.Strings(bReadyTitles)
+	sort.Strings(cReadyTitles)
+
+	if strings.Join(bReadyTitles, "|") != strings.Join(cReadyTitles, "|") {
+		t.Errorf("ready set differs: baseline=%v candidate=%v", bReadyTitles, cReadyTitles)
+	}
+
+	_ = bReady
+	_ = cReady
+
+	diffNormalized(t,
+		baselineWS.export(), candidateWS.export(),
+		canonicalIDMap(baselineWS.createdIDs),
+		canonicalIDMap(candidateWS.createdIDs),
+	)
+}
+
+// ---------------------------------------------------------------------------
+// bd dep tree (GH#1954)
+// ---------------------------------------------------------------------------
+
+// TestDepTreeOutput creates a parent-child hierarchy and verifies that
+// bd dep tree produces output that includes all children.
+// GH#1954: bd dep tree epic-id command no longer works.
+func TestDepTreeOutput(t *testing.T) {
+	scenario := func(w *workspace) string {
+		epic := w.create("--title", "My Epic", "--type", "epic")
+		c1 := w.create("--title", "Feature 1", "--type", "feature", "--parent", epic)
+		w.create("--title", "Task 1a", "--type", "task", "--parent", c1)
+		w.create("--title", "Task 1b", "--type", "task", "--parent", c1)
+		c2 := w.create("--title", "Feature 2", "--type", "feature", "--parent", epic)
+		w.create("--title", "Task 2a", "--type", "task", "--parent", c2)
+		return epic
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	bEpic := scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	cEpic := scenario(candidateWS)
+
+	bOut, bErr := baselineWS.tryRun("dep", "tree", bEpic)
+	cOut, cErr := candidateWS.tryRun("dep", "tree", cEpic)
+
+	if bErr != nil && cErr != nil {
+		t.Skip("pre-existing bug (baseline): bd dep tree fails in both versions")
+	}
+	if bErr == nil && cErr != nil {
+		t.Fatalf("bd dep tree works in baseline but fails in candidate: %v\nOutput: %s", cErr, cOut)
+	}
+	if bErr != nil && cErr == nil {
+		t.Log("bd dep tree fails in baseline but works in candidate (new/fixed command)")
+		return
+	}
+
+	// Both succeeded — verify both mention all children
+	childTitles := []string{"Feature 1", "Feature 2", "Task 1a", "Task 1b", "Task 2a"}
+	for _, title := range childTitles {
+		bHas := strings.Contains(bOut, title)
+		cHas := strings.Contains(cOut, title)
+		if bHas != cHas {
+			t.Errorf("dep tree contains %q: baseline=%v candidate=%v (GH#1954)", title, bHas, cHas)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Export/import with nested epic trees (GH#1926, GH#1927)
+// ---------------------------------------------------------------------------
+
+// TestExportImportEpicTree creates a multi-level epic tree (epic → features
+// → tasks), exports, imports into a fresh workspace, and verifies the full
+// tree structure survives — especially parent-to-child dep edges.
+// GH#1926: export omits parent-to-child dep rows.
+// GH#1927: import doesn't reconstruct the tree from partial dep edges.
+func TestExportImportEpicTree(t *testing.T) {
+	// Build rich tree in baseline
+	baselineWS := newWorkspace(t, baselineBin)
+	epic := baselineWS.create("--title", "Root epic", "--type", "epic", "--priority", "1")
+	feat1 := baselineWS.create("--title", "Feature A", "--type", "feature", "--parent", epic)
+	feat2 := baselineWS.create("--title", "Feature B", "--type", "feature", "--parent", epic)
+	task1 := baselineWS.create("--title", "Task A1", "--type", "task", "--parent", feat1)
+	task2 := baselineWS.create("--title", "Task A2", "--type", "task", "--parent", feat1)
+	task3 := baselineWS.create("--title", "Task B1", "--type", "task", "--parent", feat2)
+
+	baselineWS.run("label", "add", epic, "release-1.0")
+	baselineWS.run("comment", feat1, "Design review complete")
+	baselineWS.run("dep", "add", task2, task1) // task2 blocks on task1
+
+	// Export
+	exportFile := filepath.Join(baselineWS.dir, "tree-export.jsonl")
+	baselineWS.run("export", "-o", exportFile)
+	exportData, err := os.ReadFile(exportFile)
+	if err != nil {
+		t.Fatalf("reading export: %v", err)
+	}
+
+	// Import into candidate
+	candidateWS := newWorkspace(t, candidateBin)
+	importFile := filepath.Join(candidateWS.dir, "tree-import.jsonl")
+	if err := os.WriteFile(importFile, exportData, 0o644); err != nil {
+		t.Fatalf("writing import: %v", err)
+	}
+	candidateWS.run("import", "-i", importFile)
+
+	// Re-export from candidate and compare
+	candidateRaw := candidateWS.export()
+
+	// Parse both
+	baselineIssues := parseJSONLByID(t, string(exportData))
+	candidateIssues := parseJSONLByID(t, candidateRaw)
+
+	// Verify all 6 issues survived
+	allIDs := []string{epic, feat1, feat2, task1, task2, task3}
+	for _, id := range allIDs {
+		if _, ok := candidateIssues[id]; !ok {
+			t.Errorf("issue %s missing from candidate after import (GH#1926/1927)", id)
+		}
+	}
+
+	// Verify dep counts match
+	for _, id := range allIDs {
+		bIssue := baselineIssues[id]
+		cIssue := candidateIssues[id]
+		if bIssue == nil || cIssue == nil {
+			continue
+		}
+		bDeps := countDeps(bIssue)
+		cDeps := countDeps(cIssue)
+		if bDeps != cDeps {
+			t.Errorf("issue %s deps: baseline=%d candidate=%d (tree structure lost on import)",
+				id, bDeps, cDeps)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Rapid update does not corrupt data (GH#1973, GH#1969)
+// ---------------------------------------------------------------------------
+
+// TestRapidLabelAddRemoveStability adds and removes labels in rapid
+// succession, verifying all operations take effect and no labels are
+// silently dropped. GH#1969: writes via execContext silently rolled back
+// when --no-auto-commit was set.
+func TestRapidLabelAddRemoveStability(t *testing.T) {
+	compareExports(t, func(w *workspace) {
+		id := w.create("--title", "Label churn", "--type", "task")
+
+		// Rapid add/remove/add cycle
+		w.run("label", "add", id, "alpha")
+		w.run("label", "add", id, "beta")
+		w.run("label", "add", id, "gamma")
+		w.run("label", "remove", id, "beta")
+		w.run("label", "add", id, "delta")
+		w.run("label", "remove", id, "alpha")
+		w.run("label", "add", id, "epsilon")
+		w.run("label", "add", id, "beta") // re-add previously removed
+
+		// Expected final set: beta, gamma, delta, epsilon
+	})
+}
+
+// TestRapidDepAddRemoveStability adds and removes dependencies in rapid
+// succession, verifying the final dep graph is correct.
+func TestRapidDepAddRemoveStability(t *testing.T) {
+	compareExports(t, func(w *workspace) {
+		a := w.create("--title", "Hub", "--type", "task")
+		b := w.create("--title", "Spoke B", "--type", "task")
+		c := w.create("--title", "Spoke C", "--type", "task")
+		d := w.create("--title", "Spoke D", "--type", "task")
+
+		w.run("dep", "add", a, b)
+		w.run("dep", "add", a, c)
+		w.run("dep", "add", a, d)
+		w.run("dep", "remove", a, c)  // remove middle
+		w.run("dep", "add", a, c)     // re-add
+		w.run("dep", "remove", a, b)  // remove first
+	})
+}
+
+// TestRapidCommentAddStability adds many comments in rapid succession,
+// verifying none are silently dropped. GH#1969: comments added via
+// AddIssueComment were rolled back without --auto-commit.
+func TestRapidCommentAddStability(t *testing.T) {
+	compareExports(t, func(w *workspace) {
+		id := w.create("--title", "Comment burst", "--type", "task")
+
+		for i := 0; i < 10; i++ {
+			w.run("comment", id, fmt.Sprintf("Comment number %d", i))
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Children command (bd children)
+// ---------------------------------------------------------------------------
+
+// TestChildrenCommand creates a parent with children and verifies bd children
+// returns the correct set.
+func TestChildrenCommand(t *testing.T) {
+	scenario := func(w *workspace) (parent string, children [3]string) {
+		parent = w.create("--title", "Parent epic", "--type", "epic")
+		children[0] = w.create("--title", "Child 1", "--type", "task", "--parent", parent)
+		children[1] = w.create("--title", "Child 2", "--type", "task", "--parent", parent)
+		children[2] = w.create("--title", "Child 3", "--type", "task", "--parent", parent)
+		return
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	bParent, _ := scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	cParent, _ := scenario(candidateWS)
+
+	bOut, bErr := baselineWS.tryRun("children", bParent, "--json")
+	cOut, cErr := candidateWS.tryRun("children", cParent, "--json")
+
+	if bErr != nil && cErr != nil {
+		t.Skip("pre-existing: bd children fails in both versions")
+	}
+	if bErr != nil && cErr == nil {
+		t.Log("bd children fails in baseline but works in candidate (new command)")
+		return
+	}
+	if bErr == nil && cErr != nil {
+		t.Fatalf("bd children works in baseline but fails in candidate: %v", cErr)
+	}
+
+	bTitles := extractTitleOrder(t, bOut)
+	cTitles := extractTitleOrder(t, cOut)
+	sort.Strings(bTitles)
+	sort.Strings(cTitles)
+
+	if strings.Join(bTitles, "|") != strings.Join(cTitles, "|") {
+		t.Errorf("children output differs:\n  baseline:  %v\n  candidate: %v", bTitles, cTitles)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bd blocked command parity
+// ---------------------------------------------------------------------------
+
+// TestBlockedCommandParity creates a dependency graph with blocked and
+// unblocked issues, runs bd blocked --json, and verifies both backends
+// agree on which issues are blocked.
+func TestBlockedCommandParity(t *testing.T) {
+	scenario := func(w *workspace) {
+		a := w.create("--title", "Open blocker", "--type", "task", "--priority", "1")
+		w.create("--title", "Blocked by A", "--type", "task", "--priority", "2")
+		w.create("--title", "Unblocked task", "--type", "task", "--priority", "3")
+		b := w.create("--title", "Closed blocker", "--type", "task", "--priority", "1")
+		w.create("--title", "Was blocked by B", "--type", "task", "--priority", "2")
+
+		// Set up deps using the IDs from createdIDs
+		ids := w.createdIDs
+		w.run("dep", "add", ids[1], a)  // "Blocked by A" depends on A
+		w.run("dep", "add", ids[4], b)  // "Was blocked by B" depends on B
+		w.run("close", b, "--reason", "done")
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	scenario(candidateWS)
+
+	bOut, bErr := baselineWS.tryRun("blocked", "--json")
+	cOut, cErr := candidateWS.tryRun("blocked", "--json")
+
+	if bErr != nil {
+		t.Skip("pre-existing: bd blocked --json fails in baseline")
+	}
+	if cErr != nil {
+		t.Fatalf("bd blocked --json fails in candidate: %v", cErr)
+	}
+
+	bTitles := extractTitleOrder(t, bOut)
+	cTitles := extractTitleOrder(t, cOut)
+	sort.Strings(bTitles)
+	sort.Strings(cTitles)
+
+	if strings.Join(bTitles, "|") != strings.Join(cTitles, "|") {
+		t.Errorf("blocked set differs:\n  baseline:  %v\n  candidate: %v", bTitles, cTitles)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bd count command parity
+// ---------------------------------------------------------------------------
+
+// TestCountCommandParity creates issues in various states and verifies
+// bd count returns consistent numbers across backends.
+func TestCountCommandParity(t *testing.T) {
+	scenario := func(w *workspace) {
+		w.create("--title", "Open 1", "--type", "task")
+		w.create("--title", "Open 2", "--type", "bug")
+		w.create("--title", "Open 3", "--type", "feature")
+		id4 := w.create("--title", "Closed 1", "--type", "task")
+		id5 := w.create("--title", "Closed 2", "--type", "bug")
+		w.run("close", id4, "--reason", "done")
+		w.run("close", id5, "--reason", "wontfix")
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	scenario(candidateWS)
+
+	bOut, bErr := baselineWS.tryRun("count")
+	cOut, cErr := candidateWS.tryRun("count")
+
+	if bErr != nil {
+		t.Skip("pre-existing: bd count fails in baseline")
+	}
+	if cErr != nil {
+		t.Fatalf("bd count fails in candidate: %v", cErr)
+	}
+
+	// Counts should match (even if format differs, the numbers should)
+	if strings.TrimSpace(bOut) != strings.TrimSpace(cOut) {
+		t.Logf("count output differs (may be format only):\n  baseline:  %s\n  candidate: %s",
+			strings.TrimSpace(bOut), strings.TrimSpace(cOut))
+	}
+
+	// More precise: count --status open
+	bOpen, bErr2 := baselineWS.tryRun("count", "--status", "open")
+	cOpen, cErr2 := candidateWS.tryRun("count", "--status", "open")
+
+	if bErr2 != nil || cErr2 != nil {
+		return // skip if --status not supported
+	}
+
+	if strings.TrimSpace(bOpen) != strings.TrimSpace(cOpen) {
+		t.Errorf("count --status open: baseline=%q candidate=%q",
+			strings.TrimSpace(bOpen), strings.TrimSpace(cOpen))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bd show --json field completeness
+// ---------------------------------------------------------------------------
+
+// TestShowJSONFieldCompleteness creates an issue with every possible field
+// set, then verifies bd show --json returns all of them. This catches
+// scan projection bugs (GH#1914) where new columns are missing from
+// individual issue hydration.
+func TestShowJSONFieldCompleteness(t *testing.T) {
+	scenario := func(w *workspace) string {
+		id := w.create(
+			"--title", "Fully loaded issue",
+			"--type", "feature",
+			"--priority", "1",
+			"--description", "Complete description",
+			"--design", "Architecture doc",
+			"--acceptance", "All tests pass",
+			"--notes", "Implementation notes",
+			"--assignee", "alice",
+			"--estimate", "240",
+		)
+		w.run("update", id, "--due", "2099-06-15")
+		w.run("update", id, "--defer", "2099-03-01")
+		w.run("label", "add", id, "critical")
+		w.run("label", "add", id, "backend")
+		w.run("dep", "add", id, w.create("--title", "Dep target", "--type", "task"))
+		w.run("comment", id, "Review comment")
+		return id
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	bID := scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	cID := scenario(candidateWS)
+
+	bRaw := baselineWS.run("show", bID, "--json")
+	cRaw := candidateWS.run("show", cID, "--json")
+
+	// Parse and compare field presence
+	bFields := parseJSONFieldNames(t, bRaw)
+	cFields := parseJSONFieldNames(t, cRaw)
+
+	// Every field in baseline should exist in candidate
+	for _, f := range bFields {
+		found := false
+		for _, cf := range cFields {
+			if f == cf {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("field %q present in baseline show --json but missing from candidate (GH#1914)", f)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bd query DSL parity
+// ---------------------------------------------------------------------------
+
+// TestQueryDSLParity runs identical bd query expressions against both
+// backends and verifies they return the same results.
+func TestQueryDSLParity(t *testing.T) {
+	scenario := func(w *workspace) {
+		id1 := w.create("--title", "Auth module", "--type", "feature", "--priority", "1", "--assignee", "alice")
+		w.run("label", "add", id1, "security")
+		id2 := w.create("--title", "DB migration", "--type", "task", "--priority", "2", "--assignee", "bob")
+		w.run("label", "add", id2, "backend")
+		id3 := w.create("--title", "UI polish", "--type", "bug", "--priority", "3", "--assignee", "alice")
+		w.run("label", "add", id3, "frontend")
+		id4 := w.create("--title", "Docs update", "--type", "task", "--priority", "4")
+		w.run("close", id4, "--reason", "done")
+	}
+
+	queries := []string{
+		"status:open priority:1",
+		"type:task",
+		"assignee:alice",
+		"status:closed",
+		"type:bug status:open",
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	scenario(candidateWS)
+
+	for _, q := range queries {
+		t.Run(q, func(t *testing.T) {
+			bOut, bErr := baselineWS.tryRun("query", q, "--json")
+			cOut, cErr := candidateWS.tryRun("query", q, "--json")
+
+			if bErr != nil {
+				t.Skipf("pre-existing: bd query %q fails in baseline", q)
+			}
+			if cErr != nil {
+				t.Fatalf("bd query %q fails in candidate: %v", q, cErr)
+			}
+
+			bTitles := extractTitleOrder(t, bOut)
+			cTitles := extractTitleOrder(t, cOut)
+			sort.Strings(bTitles)
+			sort.Strings(cTitles)
+
+			if strings.Join(bTitles, "|") != strings.Join(cTitles, "|") {
+				t.Errorf("query %q results differ:\n  baseline:  %v\n  candidate: %v",
+					q, bTitles, cTitles)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bd stale command parity
+// ---------------------------------------------------------------------------
+
+// TestStaleCommandParity verifies bd stale returns consistent results.
+func TestStaleCommandParity(t *testing.T) {
+	scenario := func(w *workspace) {
+		w.create("--title", "Fresh issue", "--type", "task")
+		w.create("--title", "Another fresh", "--type", "bug")
+	}
+
+	baselineWS := newWorkspace(t, baselineBin)
+	scenario(baselineWS)
+	candidateWS := newWorkspace(t, candidateBin)
+	scenario(candidateWS)
+
+	// With a very short threshold, both should show the same issues
+	bOut, bErr := baselineWS.tryRun("stale", "--days", "0", "--json")
+	cOut, cErr := candidateWS.tryRun("stale", "--days", "0", "--json")
+
+	if bErr != nil {
+		t.Skip("pre-existing: bd stale fails in baseline")
+	}
+	if cErr != nil {
+		t.Fatalf("bd stale fails in candidate: %v", cErr)
+	}
+
+	bTitles := extractTitleOrder(t, bOut)
+	cTitles := extractTitleOrder(t, cOut)
+	sort.Strings(bTitles)
+	sort.Strings(cTitles)
+
+	if strings.Join(bTitles, "|") != strings.Join(cTitles, "|") {
+		t.Errorf("stale results differ:\n  baseline:  %v\n  candidate: %v",
+			bTitles, cTitles)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Large export round-trip stress test
+// ---------------------------------------------------------------------------
+
+// TestLargeExportImportRoundTrip creates a substantial number of issues
+// with rich data (labels, deps, comments) and verifies export → import
+// preserves everything. This catches batch-processing bugs that only
+// appear at scale.
+func TestLargeExportImportRoundTrip(t *testing.T) {
+	baselineWS := newWorkspace(t, baselineBin)
+
+	// Create 20 issues with interconnected deps, labels, comments
+	var ids []string
+	for i := 0; i < 20; i++ {
+		id := baselineWS.create("--title", fmt.Sprintf("Issue %03d", i),
+			"--type", "task", "--priority", fmt.Sprintf("%d", i%5))
+		ids = append(ids, id)
+		baselineWS.run("label", "add", id, fmt.Sprintf("batch-%d", i%3))
+		baselineWS.run("comment", id, fmt.Sprintf("Comment on issue %d", i))
+	}
+	// Create dependency chain
+	for i := 1; i < len(ids); i += 3 {
+		baselineWS.run("dep", "add", ids[i], ids[i-1])
+	}
+
+	// Export
+	exportFile := filepath.Join(baselineWS.dir, "bulk-export.jsonl")
+	baselineWS.run("export", "-o", exportFile)
+	exportData, err := os.ReadFile(exportFile)
+	if err != nil {
+		t.Fatalf("reading export: %v", err)
+	}
+
+	// Import into candidate
+	candidateWS := newWorkspace(t, candidateBin)
+	importFile := filepath.Join(candidateWS.dir, "bulk-import.jsonl")
+	if err := os.WriteFile(importFile, exportData, 0o644); err != nil {
+		t.Fatalf("writing import: %v", err)
+	}
+	candidateWS.run("import", "-i", importFile)
+
+	// Compare
+	candidateRaw := candidateWS.export()
+	diffNormalized(t, string(exportData), candidateRaw, nil, nil)
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -1741,6 +2500,51 @@ func setToSortedSlice(s map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// parseJSONFieldNames parses JSON output (array or single object) and returns
+// all top-level field names from the first object.
+func parseJSONFieldNames(t *testing.T, output string) []string {
+	t.Helper()
+
+	// Try JSON array first
+	var arr []map[string]any
+	if err := json.Unmarshal([]byte(output), &arr); err == nil && len(arr) > 0 {
+		var keys []string
+		for k := range arr[0] {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return keys
+	}
+
+	// Try single object
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(output), &obj); err == nil {
+		var keys []string
+		for k := range obj {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return keys
+	}
+
+	// Try JSONL
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err == nil {
+			var keys []string
+			for k := range m {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			return keys
+		}
+	}
+	return nil
 }
 
 // extractTitleOrder parses bd ready --json output and returns titles in order.
