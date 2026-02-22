@@ -196,14 +196,8 @@ func getClosedBlockerIDs(ctx context.Context, s *dolt.DoltStore, allDeps map[str
 		blockerIDs = append(blockerIDs, id)
 	}
 
-	// Single batch query instead of N individual GetIssue calls
-	statuses, err := s.GetIssueStatuses(ctx, blockerIDs)
-	if err != nil {
-		return make(map[string]bool) // graceful degradation
-	}
-
 	closedIDs := make(map[string]bool)
-	for id := range blockerIDs {
+	for _, id := range blockerIDs {
 		issue, err := s.GetIssue(ctx, id)
 		if err != nil || issue == nil {
 			// Treat missing or unreachable blockers as resolved — a blocker
