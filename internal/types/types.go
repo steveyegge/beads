@@ -752,6 +752,8 @@ const (
 )
 
 // ParseWaitsForGateMetadata extracts the waits-for gate type from dependency metadata.
+// Note: spawner identity comes from dependencies.depends_on_id in storage/query paths;
+// metadata.spawner_id is parsed for compatibility/future explicit targeting.
 // Returns WaitsForAllChildren on empty/invalid metadata for backward compatibility.
 func ParseWaitsForGateMetadata(metadata string) string {
 	if strings.TrimSpace(metadata) == "" {
