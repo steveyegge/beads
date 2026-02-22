@@ -16,17 +16,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
-// openDoltDB opens a connection to the Dolt SQL server via MySQL protocol.
-// All Dolt operations require a running dolt sql-server.
-func openDoltDB(beadsDir string) (*sql.DB, error) {
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
-	}
-
-	return openDoltDBViaServer(cfg)
-}
-
 // openDoltDBViaServer connects to the Dolt SQL server using the MySQL protocol.
 // The database is selected in the DSN, so no USE statement is needed.
 // If cfg is nil, default connection parameters are used.

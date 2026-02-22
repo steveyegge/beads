@@ -61,7 +61,7 @@ func CheckFederationRemotesAPI(path string) DoctorCheck {
 			return DoctorCheck{
 				Name:     "Federation remotesapi",
 				Status:   StatusOK,
-				Message:  "N/A (embedded mode, no remotes check needed)",
+				Message:  "N/A (server not running, no remotes check needed)",
 				Category: CategoryFederation,
 			}
 		}
