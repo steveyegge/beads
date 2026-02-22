@@ -725,6 +725,28 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 				}
 			}
 		}
+		// Check for iteration errors (e.g., connection lost mid-scan)
+		if rowsErr := rows.Err(); rowsErr != nil {
+			return fmt.Sprintf("bd: batch commit by %s", actor)
+		}
+	}
+
+	// Count changes in related tables for a more complete summary.
+	// These tables often change alongside issues (labels, comments, events).
+	var extraParts []string
+	for _, table := range []struct {
+		name  string
+		label string
+	}{
+		{"labels", "labels"},
+		{"comments", "comments"},
+		{"events", "events"},
+		{"metadata", "metadata"},
+	} {
+		count := s.countTableDiffs(ctx, table.name)
+		if count > 0 {
+			extraParts = append(extraParts, fmt.Sprintf("%d %s", count, table.label))
+		}
 	}
 
 	// Build descriptive message
@@ -738,11 +760,34 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 	if removed > 0 {
 		parts = append(parts, fmt.Sprintf("%d deleted", removed))
 	}
+	parts = append(parts, extraParts...)
 
 	if len(parts) == 0 {
 		return fmt.Sprintf("bd: batch commit by %s", actor)
 	}
 	return fmt.Sprintf("bd: batch commit by %s — %s", actor, strings.Join(parts, ", "))
+}
+
+// countTableDiffs returns the number of changed rows in a table since HEAD.
+// Returns 0 on any error (best-effort enrichment for commit messages).
+func (s *DoltStore) countTableDiffs(ctx context.Context, table string) int {
+	var count int
+	// Use queryRowContext for safe parameterization... but dolt_diff requires
+	// a table name literal, not a parameter. Validate against known tables.
+	switch table {
+	case "labels", "comments", "events", "metadata":
+		// known safe
+	default:
+		return 0
+	}
+	//nolint:gosec // G201: table name validated by switch above
+	err := s.db.QueryRowContext(ctx, fmt.Sprintf(
+		"SELECT COUNT(*) FROM dolt_diff('HEAD', 'WORKING', '%s')", table,
+	)).Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
 }
 
 // Push pushes commits to the remote.

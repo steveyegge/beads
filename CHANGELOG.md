@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Batch commit: SIGTERM/SIGHUP flush** — when `--dolt-auto-commit=batch`, pending changes in the Dolt working set are now committed on graceful shutdown (SIGTERM, SIGHUP, normal exit). Previously, accumulated DML writes could be lost if the process was terminated before an explicit `bd sync` or `bd dolt commit`.
+- **Batch commit message: additional tables** — `buildBatchCommitMessage` now diffs labels, comments, events, and metadata tables in addition to issues, producing more descriptive commit messages for batch operations.
+- **Batch commit message: rows.Err() check** — added missing error check after iterating dolt_diff results in `buildBatchCommitMessage`.
+
 ## [0.55.4] - 2026-02-20
 
 ### Fixed

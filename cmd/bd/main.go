@@ -192,7 +192,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables auto-sync")
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
-	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on|batch). Default: off. Override via config key dolt.auto-commit")
+	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on|batch). Default: off. Override via config key dolt.auto-commit\n  batch: writes accumulate in working set; committed on bd sync, bd dolt commit, or graceful exit (SIGTERM/SIGHUP)")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
@@ -241,7 +241,7 @@ var rootCmd = &cobra.Command{
 		commandTipIDsShown = make(map[string]struct{})
 
 		// Set up signal-aware context for graceful cancellation
-		rootCtx, rootCancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		rootCtx, rootCancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 
 		// Apply verbosity flags early (before any output)
 		debug.SetVerbose(verboseFlag)
@@ -614,6 +614,23 @@ var rootCmd = &cobra.Command{
 				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
 					FatalError("dolt tip auto-commit failed: %v", err)
 				}
+			}
+		}
+
+		// Batch mode graceful flush: commit any pending changes before shutdown.
+		// When auto-commit is "batch", DML writes accumulate in the Dolt working set
+		// without being committed. On graceful exit (SIGTERM, SIGHUP, normal exit),
+		// flush these to a Dolt commit so they aren't lost. Uses a fresh context
+		// because rootCtx may have been cancelled by a signal.
+		if store != nil && !commandDidExplicitDoltCommit {
+			if mode, err := getDoltAutoCommitMode(); err == nil && mode == doltAutoCommitBatch {
+				flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if committed, flushErr := store.CommitPending(flushCtx, getActor()); flushErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: batch commit flush on exit failed: %v\n", flushErr)
+				} else if committed {
+					fmt.Fprintf(os.Stderr, "Flushed pending batch commit on exit\n")
+				}
+				flushCancel()
 			}
 		}
 
