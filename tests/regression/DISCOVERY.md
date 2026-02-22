@@ -1,9 +1,42 @@
 # Regression Discovery Log
 
-Systematic bug hunting and protocol test ideas from manual testing
-against current main (Dolt server mode) compared to v0.49.6 baseline.
+This is an **exploratory log** from systematic regression testing of the
+SQLite→Dolt backend migration. It documents bugs found, protocol invariants
+confirmed, and test ideas for future work. Not all findings here are
+actionable — some are by-design tradeoffs. The audit column tracks triage.
 
-Date: 2026-02-22
+## Session Log
+
+| Date | What we did | Outcome |
+|------|-------------|---------|
+| 2026-02-22 | Manual testing of dep tree, blocking, close guard, labels, status filtering, reparenting, concurrency, validation | Found 14 bugs, confirmed 23 protocol invariants. Wrote `discovery_test.go` (34 tests). |
+| 2026-02-22 | Audit of all bugs for fix vs wontfix | 5-6 clear fix PRs, 2 need design discussion, 5-6 wontfix/by-design |
+
+## Audit Summary
+
+| Bug | Verdict | Reasoning |
+|-----|---------|-----------|
+| BUG-1 | WONTFIX | `bd export` removal was intentional (Dolt migration). Test harness needs adaptation, not a product bug. |
+| BUG-2 | **FIX PR** | Real user complaint (GH#1954). Clear root cause, small fix. |
+| BUG-3 | **FIX PR** | Follows from BUG-2 fix. Bundle together. |
+| BUG-4 | WONTFIX | "blocked" is computed by design. At most fix the help text that lists it as a status value. |
+| BUG-5 | WONTFIX | Dolt transaction isolation issue. Not a beads-level bug. |
+| BUG-6 | WONTFIX | By-design for collaboration. Only affects test infrastructure. |
+| BUG-7 | **FIX PR** | Silent data loss of blocking relationships. Clear fix. |
+| BUG-8 | FILE ISSUE | Real but needs design discussion — LIKE clause may be intentional for performance. |
+| BUG-9 | WONTFIX | Documented in help text already. |
+| BUG-10 | **FIX PR** | Commands should exit non-zero when all operations fail. |
+| BUG-11 | **FIX PR** | Missing status validation on update. Bundle with BUG-12+14. |
+| BUG-12 | **FIX PR** | Missing empty-title validation on update. Bundle with BUG-11+14. |
+| BUG-13 | FILE ISSUE | Edge case — needs Steve's opinion on desired reopen-of-deferred behavior. |
+| BUG-14 | **FIX PR** | Missing empty-label validation. Bundle with BUG-11+12. |
+
+### Planned mini fix PRs
+
+1. **BUG-2+3**: dep tree ParentID + ready annotation (highest value — addresses GH#1954)
+2. **BUG-7**: dep add silent type overwrite (data loss)
+3. **BUG-10**: exit codes for close guard / claim failures
+4. **BUG-11+12+14**: input validation gaps (status, title, label)
 
 ---
 
