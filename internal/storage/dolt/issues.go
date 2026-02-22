@@ -232,6 +232,57 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 		if err := recordEvent(ctx, tx, issue.ID, types.EventCreated, actor, "", ""); err != nil {
 			return fmt.Errorf("failed to record event for %s: %w", issue.ID, err)
 		}
+
+		// Persist labels from the issue struct into the labels table (GH#1844).
+		// Without this, labels parsed from JSONL are silently dropped on import.
+		for _, label := range issue.Labels {
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO labels (issue_id, label)
+				VALUES (?, ?)
+				ON DUPLICATE KEY UPDATE label = label
+			`, issue.ID, label)
+			if err != nil {
+				return fmt.Errorf("failed to insert label %q for %s: %w", label, issue.ID, err)
+			}
+		}
+
+		// Persist comments from the issue struct into the comments table (GH#1844).
+		for _, comment := range issue.Comments {
+			createdAt := comment.CreatedAt
+			if createdAt.IsZero() {
+				createdAt = time.Now().UTC()
+			}
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO comments (issue_id, author, text, created_at)
+				VALUES (?, ?, ?, ?)
+			`, issue.ID, comment.Author, comment.Text, createdAt)
+			if err != nil {
+				return fmt.Errorf("failed to insert comment for %s: %w", issue.ID, err)
+			}
+		}
+	}
+
+	// Second pass: persist dependencies after all issues exist (GH#1844).
+	// Dependencies reference other issues, so they must be inserted after all
+	// issues are in the table to satisfy foreign-key-like existence checks.
+	for _, issue := range issues {
+		for _, dep := range issue.Dependencies {
+			// Verify the target issue exists in this batch or already in the DB
+			var exists int
+			err := tx.QueryRowContext(ctx, "SELECT 1 FROM issues WHERE id = ?", dep.DependsOnID).Scan(&exists)
+			if err != nil {
+				continue // Target doesn't exist — skip silently
+			}
+
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, created_at)
+				VALUES (?, ?, ?, ?, ?)
+				ON DUPLICATE KEY UPDATE type = type
+			`, dep.IssueID, dep.DependsOnID, dep.Type, actor, dep.CreatedAt)
+			if err != nil {
+				return fmt.Errorf("failed to insert dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
+			}
+		}
 	}
 
 	return tx.Commit()
