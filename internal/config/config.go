@@ -149,7 +149,7 @@ func Initialize() error {
 
 	// Sync mode configuration (hq-ew1mbr.3)
 	// See docs/CONFIG.md for detailed documentation
-	v.SetDefault("sync.mode", SyncModeGitPortable)  // git-portable | dolt-native | belt-and-suspenders
+	v.SetDefault("sync.mode", SyncModeDoltNative)
 	v.SetDefault("sync.export_on", SyncTriggerPush) // push | change
 	v.SetDefault("sync.import_on", SyncTriggerPull) // pull | change
 
@@ -653,7 +653,7 @@ func GetIdentity(flagValue string) string {
 
 // SyncConfig holds the sync mode configuration.
 type SyncConfig struct {
-	Mode     SyncMode // git-portable, dolt-native, belt-and-suspenders
+	Mode     SyncMode // dolt-native (only supported mode)
 	ExportOn string   // push, change
 	ImportOn string   // pull, change
 }

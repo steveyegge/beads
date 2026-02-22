@@ -7,91 +7,14 @@ import (
 )
 
 func TestGetSyncMode(t *testing.T) {
-	tests := []struct {
-		name           string
-		configValue    string
-		expectedMode   SyncMode
-		expectsWarning bool
-	}{
-		{
-			name:           "empty returns default",
-			configValue:    "",
-			expectedMode:   SyncModeGitPortable,
-			expectsWarning: false,
-		},
-		{
-			name:           "git-portable is valid",
-			configValue:    "git-portable",
-			expectedMode:   SyncModeGitPortable,
-			expectsWarning: false,
-		},
-		{
-			name:           "dolt-native is valid",
-			configValue:    "dolt-native",
-			expectedMode:   SyncModeDoltNative,
-			expectsWarning: false,
-		},
-		{
-			name:           "belt-and-suspenders is valid",
-			configValue:    "belt-and-suspenders",
-			expectedMode:   SyncModeBeltAndSuspenders,
-			expectsWarning: false,
-		},
-		{
-			name:           "mixed case is normalized",
-			configValue:    "Git-Portable",
-			expectedMode:   SyncModeGitPortable,
-			expectsWarning: false,
-		},
-		{
-			name:           "invalid value returns default with warning",
-			configValue:    "invalid-mode",
-			expectedMode:   SyncModeGitPortable,
-			expectsWarning: true,
-		},
-		{
-			name:           "typo returns default with warning",
-			configValue:    "git-portabel",
-			expectedMode:   SyncModeGitPortable,
-			expectsWarning: true,
-		},
+	// GetSyncMode always returns dolt-native regardless of config
+	ResetForTesting()
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Reset viper for test
-			ResetForTesting()
-			if err := Initialize(); err != nil {
-				t.Fatalf("Initialize failed: %v", err)
-			}
-
-			// Set the config value
-			if tt.configValue != "" {
-				Set("sync.mode", tt.configValue)
-			}
-
-			// Capture warnings using ConfigWarningWriter
-			var buf bytes.Buffer
-			oldWriter := ConfigWarningWriter
-			ConfigWarningWriter = &buf
-			defer func() { ConfigWarningWriter = oldWriter }()
-
-			result := GetSyncMode()
-
-			stderrOutput := buf.String()
-
-			if result != tt.expectedMode {
-				t.Errorf("GetSyncMode() = %q, want %q", result, tt.expectedMode)
-			}
-
-			hasWarning := strings.Contains(stderrOutput, "Warning:")
-			if tt.expectsWarning && !hasWarning {
-				t.Errorf("Expected warning in output, got none. output=%q", stderrOutput)
-			}
-			if !tt.expectsWarning && hasWarning {
-				t.Errorf("Unexpected warning in output: %q", stderrOutput)
-			}
-		})
+	if got := GetSyncMode(); got != SyncModeDoltNative {
+		t.Errorf("GetSyncMode() = %q, want %q", got, SyncModeDoltNative)
 	}
 }
 
@@ -304,36 +227,31 @@ func TestGetSovereignty(t *testing.T) {
 }
 
 func TestConfigWarningsToggle(t *testing.T) {
-	// Reset viper for test
+	// Test warning toggle using conflict strategy (sync mode is now hardcoded)
 	ResetForTesting()
 	if err := Initialize(); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
 
-	// Set an invalid value
-	Set("sync.mode", "invalid-mode")
+	Set("conflict.strategy", "invalid-strategy")
 
-	// Capture warnings
 	var buf bytes.Buffer
 	oldWriter := ConfigWarningWriter
 	ConfigWarningWriter = &buf
 
-	// With warnings enabled (default)
 	ConfigWarnings = true
-	_ = GetSyncMode()
+	_ = GetConflictStrategy()
 	if !strings.Contains(buf.String(), "Warning:") {
 		t.Error("Expected warning with ConfigWarnings=true, got none")
 	}
 
-	// With warnings disabled
 	buf.Reset()
 	ConfigWarnings = false
-	_ = GetSyncMode()
+	_ = GetConflictStrategy()
 	if strings.Contains(buf.String(), "Warning:") {
 		t.Error("Expected no warning with ConfigWarnings=false, got one")
 	}
 
-	// Restore defaults
 	ConfigWarnings = true
 	ConfigWarningWriter = oldWriter
 }
@@ -343,11 +261,10 @@ func TestIsValidSyncMode(t *testing.T) {
 		mode  string
 		valid bool
 	}{
-		{"git-portable", true},
 		{"dolt-native", true},
-		{"belt-and-suspenders", true},
-		{"Git-Portable", true}, // case insensitive
-		{"realtime", false},    // removed: no longer a valid mode
+		{"Dolt-Native", true},     // case insensitive
+		{"git-portable", false},   // removed
+		{"belt-and-suspenders", false}, // removed
 		{"invalid", false},
 		{"", false},
 	}
@@ -408,14 +325,11 @@ func TestIsValidSovereignty(t *testing.T) {
 
 func TestValidSyncModes(t *testing.T) {
 	modes := ValidSyncModes()
-	if len(modes) != 3 {
-		t.Errorf("ValidSyncModes() returned %d modes, want 3", len(modes))
+	if len(modes) != 1 {
+		t.Errorf("ValidSyncModes() returned %d modes, want 1", len(modes))
 	}
-	expected := []string{"git-portable", "dolt-native", "belt-and-suspenders"}
-	for i, m := range modes {
-		if m != expected[i] {
-			t.Errorf("ValidSyncModes()[%d] = %q, want %q", i, m, expected[i])
-		}
+	if modes[0] != "dolt-native" {
+		t.Errorf("ValidSyncModes()[0] = %q, want %q", modes[0], "dolt-native")
 	}
 }
 
@@ -446,8 +360,8 @@ func TestValidSovereigntyTiers(t *testing.T) {
 }
 
 func TestSyncModeString(t *testing.T) {
-	if got := SyncModeGitPortable.String(); got != "git-portable" {
-		t.Errorf("SyncModeGitPortable.String() = %q, want %q", got, "git-portable")
+	if got := SyncModeDoltNative.String(); got != "dolt-native" {
+		t.Errorf("SyncModeDoltNative.String() = %q, want %q", got, "dolt-native")
 	}
 }
 

@@ -301,7 +301,7 @@ var configValidateCmd = &cobra.Command{
 	Long: `Validate sync-related configuration settings.
 
 Checks:
-  - sync.mode is a valid value (git-portable, dolt-native, belt-and-suspenders)
+  - sync.mode is a valid value (dolt-native)
   - conflict.strategy is valid (newest, ours, theirs, manual)
   - federation.sovereignty is valid (T1, T2, T3, T4, or empty)
   - federation.remote is set when sync.mode requires it
@@ -402,9 +402,9 @@ func validateSyncConfig(repoPath string) []string {
 		issues = append(issues, fmt.Sprintf("federation.sovereignty: %q is invalid (valid values: %s, or empty for no restriction)", federationSov, strings.Join(config.ValidSovereigntyTiers(), ", ")))
 	}
 
-	// Validate federation.remote when required by sync mode
-	if (syncMode == string(config.SyncModeDoltNative) || syncMode == string(config.SyncModeBeltAndSuspenders)) && federationRemote == "" {
-		issues = append(issues, "federation.remote: required when sync.mode is 'dolt-native' or 'belt-and-suspenders'")
+	// Validate federation.remote is set (required for Dolt sync)
+	if federationRemote == "" {
+		issues = append(issues, "federation.remote: required for Dolt sync")
 	}
 
 	// Validate remote URL format

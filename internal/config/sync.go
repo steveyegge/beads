@@ -29,27 +29,24 @@ func logConfigWarning(format string, args ...interface{}) {
 type SyncMode string
 
 const (
-	// SyncModeGitPortable exports JSONL on push, imports on pull (default)
-	SyncModeGitPortable SyncMode = "git-portable"
-	// SyncModeDoltNative uses Dolt remote directly (dolthub://, gs://, s3://)
+	// SyncModeDoltNative uses Dolt remote directly (the only supported mode)
 	SyncModeDoltNative SyncMode = "dolt-native"
-	// SyncModeBeltAndSuspenders uses Dolt remote + JSONL backup
+
+	// Deprecated: SyncModeGitPortable is no longer supported. Kept for config migration.
+	SyncModeGitPortable SyncMode = "git-portable"
+	// Deprecated: SyncModeBeltAndSuspenders is no longer supported. Kept for config migration.
 	SyncModeBeltAndSuspenders SyncMode = "belt-and-suspenders"
 )
 
 // validSyncModes is the set of allowed sync mode values
 var validSyncModes = map[SyncMode]bool{
-	SyncModeGitPortable:       true,
-	SyncModeDoltNative:        true,
-	SyncModeBeltAndSuspenders: true,
+	SyncModeDoltNative: true,
 }
 
 // ValidSyncModes returns the list of valid sync mode values.
 func ValidSyncModes() []string {
 	return []string{
-		string(SyncModeGitPortable),
 		string(SyncModeDoltNative),
-		string(SyncModeBeltAndSuspenders),
 	}
 }
 
@@ -175,26 +172,10 @@ func IsValidSovereignty(sovereignty string) bool {
 	return validSovereigntyTiers[Sovereignty(strings.ToUpper(strings.TrimSpace(sovereignty)))]
 }
 
-// GetSyncMode retrieves the sync mode configuration.
-// Returns the configured mode, or SyncModeGitPortable (default) if not set or invalid.
-// Logs a warning if an invalid value is configured (unless ConfigWarnings is false).
-//
-// Config key: sync.mode
-// Valid values: git-portable, dolt-native, belt-and-suspenders
+// GetSyncMode always returns SyncModeDoltNative.
+// The sync mode config key is deprecated; Dolt-native is the only supported mode.
 func GetSyncMode() SyncMode {
-	value := GetString("sync.mode")
-	if value == "" {
-		return SyncModeGitPortable // Default
-	}
-
-	mode := SyncMode(strings.ToLower(strings.TrimSpace(value)))
-	if !validSyncModes[mode] {
-		logConfigWarning("Warning: invalid sync.mode %q in config (valid: %s), using default 'git-portable'\n",
-			value, strings.Join(ValidSyncModes(), ", "))
-		return SyncModeGitPortable
-	}
-
-	return mode
+	return SyncModeDoltNative
 }
 
 // GetConflictStrategy retrieves the conflict resolution strategy configuration.
