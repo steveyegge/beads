@@ -185,7 +185,7 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		if table == "wisps" {
 			depTable = "wisp_dependencies"
 		}
-		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM %s WHERE type = 'parent-child' AND depends_on_id = ?) OR id LIKE CONCAT(?, '.%%'))", depTable))
+		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM %s WHERE type = 'parent-child' AND depends_on_id = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')))", depTable, depTable))
 		args = append(args, parentID, parentID)
 	}
 

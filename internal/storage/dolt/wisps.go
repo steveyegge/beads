@@ -589,7 +589,7 @@ func (s *DoltStore) searchWisps(ctx context.Context, query string, filter types.
 
 	if filter.ParentID != nil {
 		parentID := *filter.ParentID
-		whereClauses = append(whereClauses, "(id IN (SELECT issue_id FROM wisp_dependencies WHERE type = 'parent-child' AND depends_on_id = ?) OR id LIKE CONCAT(?, '.%'))")
+		whereClauses = append(whereClauses, "(id IN (SELECT issue_id FROM wisp_dependencies WHERE type = 'parent-child' AND depends_on_id = ?) OR (id LIKE CONCAT(?, '.%') AND id NOT IN (SELECT issue_id FROM wisp_dependencies WHERE type = 'parent-child')))")
 		args = append(args, parentID, parentID)
 	}
 
