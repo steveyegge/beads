@@ -190,11 +190,11 @@ func startLocalDoltServer(dataDir, host string, port int, quiet bool) error {
 	// Check for dolt binary
 	doltPath, err := exec.LookPath("dolt")
 	if err != nil {
-		return fmt.Errorf("dolt binary not found in PATH\n\n"+
-			"Beads requires Dolt for database operations. Install it:\n"+
-			"  https://docs.dolthub.com/introduction/installation\n\n"+
-			"On Windows:  winget install DoltHub.Dolt\n"+
-			"On macOS:    brew install dolt\n"+
+		return fmt.Errorf("dolt binary not found in PATH\n\n" +
+			"Beads requires Dolt for database operations. Install it:\n" +
+			"  https://docs.dolthub.com/introduction/installation\n\n" +
+			"On Windows:  winget install DoltHub.Dolt\n" +
+			"On macOS:    brew install dolt\n" +
 			"On Linux:    curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash")
 	}
 
