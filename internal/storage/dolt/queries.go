@@ -539,17 +539,27 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 		return nil, err
 	}
 
-	// Step 2: Get all blocking dependencies (single-table scan)
+	// Step 2: Get canonical blocked set via computeBlockedIDs, which handles
+	// both 'blocks' and 'waits-for' dependencies with full gate evaluation.
+	blockedIDList, err := s.computeBlockedIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute blocked IDs: %w", err)
+	}
+	blockedSet := make(map[string]bool, len(blockedIDList))
+	for _, id := range blockedIDList {
+		blockedSet[id] = true
+	}
+
+	// Step 3: Get blocking + waits-for deps to build BlockedBy lists
 	depRows, err := s.queryContext(ctx, `
 		SELECT issue_id, depends_on_id FROM dependencies
-		WHERE type = 'blocks'
+		WHERE type IN ('blocks', 'waits-for')
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get blocking dependencies: %w", err)
 	}
 
-	// Step 3: Filter in Go — both sides must be active
-	// blockerMap: blocked_issue_id -> list of active blocker IDs
+	// blockerMap: blocked_issue_id -> list of active blocker/spawner IDs
 	blockerMap := make(map[string][]string)
 	for depRows.Next() {
 		var issueID, blockerID string
@@ -557,7 +567,8 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 			_ = depRows.Close() // Best effort cleanup on error path
 			return nil, err
 		}
-		if activeIDs[issueID] && activeIDs[blockerID] {
+		// Only include if computeBlockedIDs confirmed this issue is blocked
+		if blockedSet[issueID] && activeIDs[blockerID] {
 			blockerMap[issueID] = append(blockerMap[issueID], blockerID)
 		}
 	}
