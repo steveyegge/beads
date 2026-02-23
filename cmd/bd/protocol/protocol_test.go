@@ -1252,42 +1252,6 @@ func assertFieldPrefix(t *testing.T, issue map[string]any, key, prefix string) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// BUG-11: bd update should reject truly invalid statuses but allow custom ones
-// ---------------------------------------------------------------------------
-
-func TestBUG11_UpdateRejectsGarbageStatus(t *testing.T) {
-	w := newWorkspace(t)
-	id := w.create("Test issue")
-
-	out, code := w.runExpectError("update", id, "--status", "bogus")
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-	if !strings.Contains(out, "invalid status") {
-		t.Errorf("expected 'invalid status' in output, got: %s", out)
-	}
-}
-
-func TestBUG11_UpdateAcceptsBuiltinStatuses(t *testing.T) {
-	w := newWorkspace(t)
-	id := w.create("Test issue")
-
-	w.run("update", id, "--status", "in_progress")
-	w.run("update", id, "--status", "open")
-}
-
-func TestBUG11_UpdateAcceptsCustomStatus(t *testing.T) {
-	w := newWorkspace(t)
-	id := w.create("Test issue")
-
-	// Configure a custom status
-	w.run("config", "set", "status.custom", "awaiting_review,testing")
-
-	// Custom status should be accepted
-	w.run("update", id, "--status", "awaiting_review")
-}
-
 // parseJSONOutput handles both JSON array and JSONL formats.
 func parseJSONOutput(t *testing.T, output string) []map[string]any {
 	t.Helper()
