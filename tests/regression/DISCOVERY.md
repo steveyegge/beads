@@ -25,13 +25,13 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | BUG-4 | **DOCS FIX** | **PR OPEN** | PR #2017 |
 | BUG-5 | **INVESTIGATE** | OPEN | — |
 | BUG-6 | WONTFIX | RESOLVED | Unique prefix per workspace |
-| BUG-7 | **FILE ISSUE** | OPEN | — |
-| BUG-8 | FILE ISSUE | OPEN | — |
+| BUG-7 | **FILE ISSUE** | **FILED** | GH#2018 |
+| BUG-8 | FILE ISSUE | **FILED** | GH#2019 |
 | BUG-9 | WONTFIX | RESOLVED | — |
 | BUG-10 | **FIX PR** | **PR OPEN** | PR #2014 |
 | BUG-11 | **FIX PR** | **PR OPEN** | PR #1994 |
 | BUG-12 | **FIX PR** | **PR OPEN** | PR #1994 |
-| BUG-13 | FILE ISSUE | OPEN | — |
+| BUG-13 | FILE ISSUE | **FILED** | GH#2020 |
 | BUG-14 | **FIX PR** | **PR OPEN** | PR #1994 |
 
 ### Shipped fix PRs (all include protocol tests)
@@ -41,11 +41,11 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 3. **BUG-11+12+14**: input validation gaps (status, title, label) — PR #1994
 4. **BUG-4**: clarify --status flag vs bd blocked — PR #2017
 
-### File issues (need product decisions)
+### Filed issues (need PO decisions)
 
-5. **BUG-7**: dep add type overwrite — intentionally coded upsert, needs decision on semantics
-6. **BUG-8**: reparent dual parent — LIKE clause vs dependency-only parent lookup
-7. **BUG-13**: reopen-of-deferred — what status should it get?
+5. **BUG-7**: dep add type overwrite — GH#2018
+6. **BUG-8**: reparent dual parent — GH#2019
+7. **BUG-13**: reopen-of-deferred — GH#2020
 
 ### Investigate further
 
