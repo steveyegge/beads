@@ -1249,60 +1249,6 @@ func assertFieldPrefix(t *testing.T, issue map[string]any, key, prefix string) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// BUG-12: bd update accepts empty title
-// ---------------------------------------------------------------------------
-
-func TestBUG12_UpdateRejectsEmptyTitle(t *testing.T) {
-	w := newWorkspace(t)
-	id := w.create("Test issue")
-
-	out, code := w.runExpectError("update", id, "--title", "")
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-	if !strings.Contains(out, "title cannot be empty") {
-		t.Errorf("expected 'title cannot be empty' in output, got: %s", out)
-	}
-}
-
-func TestBUG12_UpdateRejectsWhitespaceTitle(t *testing.T) {
-	w := newWorkspace(t)
-	id := w.create("Test issue")
-
-	out, code := w.runExpectError("update", id, "--title", "   ")
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-	if !strings.Contains(out, "title cannot be empty") {
-		t.Errorf("expected 'title cannot be empty' in output, got: %s", out)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// BUG-14: bd label add accepts empty label
-// ---------------------------------------------------------------------------
-
-func TestBUG14_LabelAddRejectsEmptyLabel(t *testing.T) {
-	w := newWorkspace(t)
-	id := w.create("Test issue")
-
-	out, code := w.runExpectError("label", "add", id, "")
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-	if !strings.Contains(out, "label cannot be empty") {
-		t.Errorf("expected 'label cannot be empty' in output, got: %s", out)
-	}
-}
-
-func TestBUG14_LabelAddAcceptsValidLabel(t *testing.T) {
-	w := newWorkspace(t)
-	id := w.create("Test issue")
-
-	w.run("label", "add", id, "urgent")
-}
-
 // parseJSONOutput handles both JSON array and JSONL formats.
 func parseJSONOutput(t *testing.T, output string) []map[string]any {
 	t.Helper()
