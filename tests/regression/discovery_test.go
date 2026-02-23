@@ -947,3 +947,49 @@ func TestProtocol_CommentAddAndPreserve(t *testing.T) {
 		t.Errorf("comments should be preserved after close/reopen, got %d", len(comments))
 	}
 }
+
+// =============================================================================
+// CANDIDATE-ONLY DISCOVERY: SILENT LOSS SEAMS
+// =============================================================================
+
+// TestDiscovery_ExternalBlockerIgnoredByReady verifies that issues with external
+// blocking dependencies are correctly excluded from bd ready.
+//
+// FINDING: computeBlockedIDs() in queries.go only marks issues blocked if BOTH
+// issue AND blocker are in the local activeIDs map. External blockers (e.g.
+// "external:project:capability") are never in activeIDs, so issues blocked by
+// external deps silently appear in bd ready as if unblocked.
+//
+// Classification: DECISION — maintainer must decide whether external blockers
+// should gate readiness or remain advisory-only.
+func TestDiscovery_ExternalBlockerIgnoredByReady(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Externally blocked", "--type", "task", "--priority", "2")
+	b := w.create("--title", "Locally blocked", "--type", "task", "--priority", "2")
+	blocker := w.create("--title", "Local blocker", "--type", "task", "--priority", "1")
+
+	// Add an external blocker to a
+	w.run("dep", "add", a, "external:otherproject:some-capability", "--type", "blocks")
+
+	// Add a local blocker to b (control group)
+	w.run("dep", "add", b, blocker, "--type", "blocks")
+
+	// b should NOT be in ready (locally blocked — control)
+	readyIDs := parseIDs(t, w.run("ready", "-n", "0", "--json"))
+	if containsID(readyIDs, b) {
+		t.Fatalf("control: locally blocked issue %s should NOT be in ready", b)
+	}
+
+	// a should NOT be in ready (externally blocked)
+	if containsID(readyIDs, a) {
+		t.Errorf("DISCOVERY: externally blocked issue %s appears in bd ready — external blockers are silently ignored by computeBlockedIDs()", a)
+	}
+
+	// Also verify close guard: closing an externally-blocked issue should warn
+	out := w.run("close", a)
+	showOut := parseJSON(t, w.run("show", a, "--json"))
+	if showOut[0]["status"] == "closed" {
+		t.Errorf("DISCOVERY: close guard did not prevent closing externally-blocked issue %s; close output: %s", a, out)
+	}
+}
