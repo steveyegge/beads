@@ -277,8 +277,11 @@ func (w *workspace) runEnv() []string {
 		"GIT_CONFIG_NOSYSTEM=1",
 	}
 	if testDoltServerPort != 0 {
-		env = append(env, "BEADS_DOLT_PORT="+strconv.Itoa(testDoltServerPort))
-		env = append(env, "BEADS_TEST_MODE=1")
+		portStr := strconv.Itoa(testDoltServerPort)
+		env = append(env,
+			"BEADS_DOLT_PORT="+portStr,
+			"BEADS_DOLT_SERVER_PORT="+portStr,
+		)
 	}
 	if v := os.Getenv("TMPDIR"); v != "" {
 		env = append(env, "TMPDIR="+v)
