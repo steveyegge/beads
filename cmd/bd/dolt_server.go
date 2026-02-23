@@ -212,7 +212,7 @@ func startLocalDoltServer(dataDir, host string, port int, quiet bool) error {
 
 	// Open log file
 	logPath := filepath.Join(dataDir, "sql-server.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) // #nosec G304 -- path derived from beadsDir, not user input
 	if err != nil {
 		return fmt.Errorf("failed to open log file %s: %w", logPath, err)
 	}
@@ -266,7 +266,7 @@ func startLocalDoltServer(dataDir, host string, port int, quiet bool) error {
 
 // stopLocalDoltServer stops a Dolt server using its PID file.
 func stopLocalDoltServer(pidPath string) error {
-	data, err := os.ReadFile(pidPath)
+	data, err := os.ReadFile(pidPath) // #nosec G304 -- path derived from beadsDir, not user input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("no PID file found at %s — server may not be running", pidPath)
