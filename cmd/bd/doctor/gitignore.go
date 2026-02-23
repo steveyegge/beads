@@ -29,8 +29,6 @@ redirect
 # Sync state (local-only, per-machine)
 # These files are machine-specific and should not be shared across clones
 .sync.lock
-.jsonl.lock
-sync_base.jsonl
 export-state/
 
 # Ephemeral store (SQLite - wisps/molecules, intentionally not versioned)
@@ -51,35 +49,19 @@ daemon.lock
 daemon.log
 daemon-*.log.gz
 daemon.pid
-beads.base.jsonl
-beads.base.meta.json
-beads.left.jsonl
-beads.left.meta.json
-beads.right.jsonl
-beads.right.meta.json
-
-# NOTE: Do NOT add negation patterns (e.g., !issues.jsonl) here.
-# They would override fork protection in .git/info/exclude, allowing
-# contributors to accidentally commit upstream issue databases.
-# The JSONL files (issues.jsonl, interactions.jsonl) and config files
-# are tracked by git by default since no pattern above ignores them.
+# NOTE: Do NOT add negation patterns here.
+# They would override fork protection in .git/info/exclude.
+# Config files (metadata.json, config.yaml) are tracked by git by default
+# since no pattern above ignores them.
 `
 
 // requiredPatterns are patterns that MUST be in .beads/.gitignore
 var requiredPatterns = []string{
-	"beads.base.jsonl",
-	"beads.left.jsonl",
-	"beads.right.jsonl",
-	"beads.base.meta.json",
-	"beads.left.meta.json",
-	"beads.right.meta.json",
 	"*.db?*",
 	"redirect",
 	"last-touched",
 	"bd.sock.startlock",
 	".sync.lock",
-	".jsonl.lock",
-	"sync_base.jsonl",
 	"export-state/",
 	"dolt/",
 	"dolt-access.lock",
@@ -126,7 +108,7 @@ func CheckGitignore() DoctorCheck {
 		return DoctorCheck{
 			Name:    "Gitignore",
 			Status:  "warning",
-			Message: "Outdated .beads/.gitignore (missing merge artifact patterns)",
+			Message: "Outdated .beads/.gitignore (missing required patterns)",
 			Detail:  "Missing: " + strings.Join(missing, ", "),
 			Fix:     "Run: bd doctor --fix or bd init (safe to re-run)",
 		}
@@ -163,51 +145,6 @@ func FixGitignore() error {
 	}
 
 	return nil
-}
-
-// CheckIssuesTracking verifies that issues.jsonl is tracked by git.
-// This catches cases where global gitignore patterns (e.g., *.jsonl) would
-// cause issues.jsonl to be ignored, breaking bd sync.
-func CheckIssuesTracking() DoctorCheck {
-	issuesPath := filepath.Join(".beads", "issues.jsonl")
-
-	// First check if the file exists
-	if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
-		// File doesn't exist yet - not an error, bd init may not have been run
-		return DoctorCheck{
-			Name:    "Issues Tracking",
-			Status:  "ok",
-			Message: "No issues.jsonl yet (will be created on first issue)",
-		}
-	}
-
-	// Check if git considers this file ignored
-	// git check-ignore exits 0 if ignored, 1 if not ignored, 128 if error
-	cmd := exec.Command("git", "check-ignore", "-q", issuesPath) // #nosec G204 - args are hardcoded paths
-	err := cmd.Run()
-
-	if err == nil {
-		// Exit code 0 means the file IS ignored - this is bad
-		// Get details about what's ignoring it
-		detailCmd := exec.Command("git", "check-ignore", "-v", issuesPath) // #nosec G204 - args are hardcoded paths
-		output, _ := detailCmd.Output()                                    // Best effort: empty output means no gitignore details
-		detail := strings.TrimSpace(string(output))
-
-		return DoctorCheck{
-			Name:    "Issues Tracking",
-			Status:  "warning",
-			Message: "issues.jsonl is ignored by git (bd sync will fail)",
-			Detail:  detail,
-			Fix:     "Check global gitignore: git config --global core.excludesfile",
-		}
-	}
-
-	// Exit code 1 means not ignored (good), any other error we ignore
-	return DoctorCheck{
-		Name:    "Issues Tracking",
-		Status:  "ok",
-		Message: "issues.jsonl is tracked by git",
-	}
 }
 
 // CheckRedirectNotTracked verifies that .beads/redirect is NOT tracked by git.
@@ -493,7 +430,7 @@ func CheckRedirectTargetSyncWorktree() DoctorCheck {
 			Status:  StatusWarning,
 			Message: "Redirect target missing beads-sync worktree",
 			Detail:  fmt.Sprintf("Expected worktree at: %s", worktreePath),
-			Fix:     fmt.Sprintf("Run 'bd sync' in %s to create the worktree", targetRepoRoot),
+			Fix:     fmt.Sprintf("Run 'bd init' in %s to set up beads", targetRepoRoot),
 		}
 	}
 

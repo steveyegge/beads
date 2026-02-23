@@ -83,7 +83,7 @@ func (s *DoltStore) AddIssueComment(ctx context.Context, issueID, author, text s
 }
 
 // ImportIssueComment adds a comment during import, preserving the original timestamp.
-// This prevents comment timestamp drift across JSONL sync cycles.
+// This prevents comment timestamp drift across import/export cycles.
 func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
 	// Verify issue exists — route to wisps table for active wisps
 	issueTable := wispIssueTable(issueID)

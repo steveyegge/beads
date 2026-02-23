@@ -17,8 +17,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	oteltrace "go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/attribute"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
@@ -28,6 +26,8 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/telemetry"
 	"github.com/steveyegge/beads/internal/utils"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // Command group IDs for help organization
@@ -52,9 +52,6 @@ var (
 	// Store concurrency protection
 	storeMutex  sync.Mutex // Protects store access from background goroutine
 	storeActive = false    // Tracks if store is available
-
-	// No-db mode
-	noDb bool // Use --no-db mode: load from JSONL, write back after each command
 
 	// Version upgrade tracking
 	versionUpgradeDetected = false // Set to true if bd version changed since last run
@@ -114,7 +111,7 @@ var readOnlyCommands = map[string]bool{
 	"duplicates": true,
 	"comments":   true, // list comments (not add)
 	"current":    true, // bd sync mode current
-	// NOTE: "export" is NOT read-only - it writes to clear dirty issues and update jsonl_file_hash
+	// NOTE: "export" is NOT read-only - it writes to clear dirty issues
 }
 
 // isReadOnlyCommand returns true if the command only reads from the database.
@@ -342,7 +339,7 @@ var rootCmd = &cobra.Command{
 			FatalError("%v", err)
 		}
 
-		// GH#1093: Check noDbCommands BEFORE expensive operations (ensureForkProtection)
+		// GH#1093: Check noDbCommands BEFORE expensive operations
 		// to avoid spawning git subprocesses for simple commands
 		// like "bd version" that don't need database access.
 		noDbCommands := []string{
@@ -392,9 +389,6 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
-		// Protect forks from accidentally committing upstream issue database
-		ensureForkProtection()
-
 		// Performance profiling setup
 		if profileEnabled {
 			timestamp := time.Now().Format("20060102-150405")
@@ -416,10 +410,10 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// --no-db mode has been removed; only Dolt is supported
-		if noDb {
-			FatalError("--no-db mode has been removed; beads now requires Dolt (run 'bd init' to create a database)")
-		}
+		// Auto-migrate SQLite to Dolt if a legacy beads.db is detected (bd-3dx).
+		// This must run BEFORE database path resolution because FindDatabasePath()
+		// only looks for Dolt databases — a SQLite-only .beads/ would be invisible.
+		autoMigrateSQLiteToDolt()
 
 		// Initialize database path
 		if dbPath == "" {
@@ -427,10 +421,7 @@ var rootCmd = &cobra.Command{
 			if foundDB := beads.FindDatabasePath(); foundDB != "" {
 				dbPath = foundDB
 			} else {
-				// No database found
-				beadsDir := beads.FindBeadsDir()
-
-				// Allow some commands to run without a database
+				// No database found — allow some commands to run without a database
 				// - import: auto-initializes database if missing
 				// - setup: creates editor integration files (no DB needed)
 				// - config set/get for yaml-only keys: writes to config.yaml, not db (GH#536)
@@ -441,48 +432,9 @@ var rootCmd = &cobra.Command{
 					}
 				}
 
-				// Allow read-only commands to auto-bootstrap from JSONL (GH#b09)
-				// This enables `bd show` after cold-start when DB is missing.
-				// IMPORTANT: If metadata.json says the backend is Dolt, we must NOT
-				// silently create a different database — that causes contamination.
-				// Error out instead so the user can fix the Dolt connection. (gt-r1nex)
-				canAutoBootstrap := false
-				if isReadOnlyCommand(cmd.Name()) && beadsDir != "" {
-					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-					if _, err := os.Stat(jsonlPath); err == nil {
-						configuredBackend := dolt.GetBackendFromConfig(beadsDir)
-						if configuredBackend == configfile.BackendDolt {
-							// Dolt backend configured but database not found — don't auto-bootstrap
-							fmt.Fprintf(os.Stderr, "Error: Dolt backend configured but database not found\n")
-							fmt.Fprintf(os.Stderr, "The .beads/metadata.json specifies backend: dolt\n")
-							fmt.Fprintf(os.Stderr, "but no Dolt database was found. Check that the Dolt server is running.\n")
-							fmt.Fprintf(os.Stderr, "\nHint: run 'bd doctor --fix' to diagnose and repair\n")
-							os.Exit(1)
-						}
-						canAutoBootstrap = true
-						debug.Logf("cold-start bootstrap: JSONL exists, allowing auto-create for %s", cmd.Name())
-					}
-				}
-
-				if cmd.Name() != "import" && cmd.Name() != "setup" && !isYamlOnlyConfigOp && !canAutoBootstrap {
+				if cmd.Name() != "import" && cmd.Name() != "setup" && !isYamlOnlyConfigOp {
 					// No database found - provide context-aware error message
 					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
-
-					// Check if JSONL exists without no-db mode configured
-					if beadsDir != "" {
-						jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-						if _, err := os.Stat(jsonlPath); err == nil {
-							// JSONL exists but no-db mode not configured
-							fmt.Fprintf(os.Stderr, "\nFound JSONL file: %s\n", jsonlPath)
-							fmt.Fprintf(os.Stderr, "This looks like a fresh clone or JSONL-only project.\n\n")
-							fmt.Fprintf(os.Stderr, "Options:\n")
-							fmt.Fprintf(os.Stderr, "  • Run 'bd init' to create database and import issues\n")
-							fmt.Fprintf(os.Stderr, "  • Add 'no-db: true' to .beads/config.yaml for JSONL-only mode\n")
-							os.Exit(1)
-						}
-					}
-
-					// Generic error - no beads directory or JSONL found
 					fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
 					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
 					os.Exit(1)
@@ -564,7 +516,7 @@ var rootCmd = &cobra.Command{
 
 		if err != nil {
 			// Check for fresh clone scenario
-			if handleFreshCloneError(err, beadsDir) {
+			if handleFreshCloneError(err) {
 				os.Exit(1)
 			}
 			FatalError("failed to open database: %v", err)
@@ -605,11 +557,6 @@ var rootCmd = &cobra.Command{
 		syncCommandContext()
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
-		// --no-db mode has been removed (memory backend removed)
-		if noDb {
-			return
-		}
-
 		// Dolt auto-commit: after a successful write command (and after final flush),
 		// create a Dolt commit so changes don't remain only in the working set.
 		if commandDidWrite.Load() && !commandDidExplicitDoltCommit {

@@ -184,10 +184,10 @@ var hooksCmd = &cobra.Command{
 	Long: `Install, uninstall, or list git hooks that provide automatic bd sync.
 
 The hooks ensure that:
-- pre-commit: Flushes pending changes to JSONL before commit
-- post-merge: Imports updated JSONL after pull/merge
-- pre-push: Prevents pushing stale JSONL
-- post-checkout: Imports JSONL after branch checkout
+- pre-commit: Syncs pending changes before commit
+- post-merge: Syncs database after pull/merge
+- pre-push: Validates database state before push
+- post-checkout: Syncs database after branch checkout
 - prepare-commit-msg: Adds agent identity trailers for forensics`,
 }
 
@@ -205,10 +205,10 @@ Use --chain to preserve existing hooks and run them before bd hooks. This is
 useful if you have pre-commit framework hooks or other custom hooks.
 
 Installed hooks:
-  - pre-commit: Flush changes to JSONL before commit
-  - post-merge: Import JSONL after pull/merge
-  - pre-push: Prevent pushing stale JSONL
-  - post-checkout: Import JSONL after branch checkout
+  - pre-commit: Sync changes before commit
+  - post-merge: Sync database after pull/merge
+  - pre-push: Validate database state before push
+  - post-checkout: Sync database after branch checkout
   - prepare-commit-msg: Add agent identity trailers (for orchestrator agents)`,
 	Run: func(cmd *cobra.Command, args []string) {
 		force, _ := cmd.Flags().GetBool("force")
@@ -742,7 +742,6 @@ func isRebaseInProgress() bool {
 	}
 	return false
 }
-
 
 var hooksRunCmd = &cobra.Command{
 	Use:   "run <hook-name> [args...]",

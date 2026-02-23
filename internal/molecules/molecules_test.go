@@ -1,5 +1,3 @@
-//go:build cgo
-
 package molecules
 
 import (
@@ -74,7 +72,7 @@ func TestLoader_LoadAll(t *testing.T) {
 	// Create a test database
 	store, err := dolt.New(ctx, &dolt.Config{Path: t.TempDir()})
 	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
+		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
 	defer store.Close()
 
@@ -147,7 +145,7 @@ func TestLoader_SkipExistingMolecules(t *testing.T) {
 	// Create a test database
 	store, err := dolt.New(ctx, &dolt.Config{Path: t.TempDir()})
 	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
+		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
 	defer store.Close()
 

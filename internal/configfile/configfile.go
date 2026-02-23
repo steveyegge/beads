@@ -12,9 +12,8 @@ import (
 const ConfigFileName = "metadata.json"
 
 type Config struct {
-	Database    string `json:"database"`
-	JSONLExport string `json:"jsonl_export,omitempty"`
-	Backend     string `json:"backend,omitempty"` // always "dolt"
+	Database string `json:"database"`
+	Backend  string `json:"backend,omitempty"` // always "dolt"
 
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
@@ -43,8 +42,7 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		Database:    "beads.db",
-		JSONLExport: "issues.jsonl", // Canonical name (bd-6xd)
+		Database: "beads.db",
 	}
 }
 
@@ -118,13 +116,6 @@ func (c *Config) DatabasePath(beadsDir string) string {
 		return c.Database
 	}
 	return filepath.Join(beadsDir, "dolt")
-}
-
-func (c *Config) JSONLPath(beadsDir string) string {
-	if c.JSONLExport == "" {
-		return filepath.Join(beadsDir, "issues.jsonl")
-	}
-	return filepath.Join(beadsDir, c.JSONLExport)
 }
 
 // DefaultDeletionsRetentionDays is the default retention period for deletion records.

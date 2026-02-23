@@ -29,10 +29,6 @@ var initCmd = &cobra.Command{
 	Long: `Initialize bd in the current directory by creating a .beads/ directory
 and database file. Optionally specify a custom issue prefix.
 
-With --from-jsonl: imports from the current .beads/issues.jsonl file on disk instead
-of scanning git history. Use this after manual JSONL cleanup
-to prevent deleted issues from reappearing during re-initialization.
-
 With --stealth: configures per-repository git settings for invisible beads usage:
   • .git/info/exclude to prevent beads files from being committed
   • Claude Code settings with bd onboard instruction
@@ -50,10 +46,6 @@ environment variable.`,
 		stealth, _ := cmd.Flags().GetBool("stealth")
 		skipHooks, _ := cmd.Flags().GetBool("skip-hooks")
 		force, _ := cmd.Flags().GetBool("force")
-		// fromJSONL flag is accepted but no longer used for SQLite import;
-		// Dolt bootstraps from issues.jsonl automatically on first open.
-		_, _ = cmd.Flags().GetBool("from-jsonl")
-
 		// Dolt server connection flags
 		_, _ = cmd.Flags().GetBool("server") // no-op, kept for backward compatibility
 		serverHost, _ := cmd.Flags().GetString("server-host")
@@ -69,8 +61,8 @@ environment variable.`,
 			// Non-fatal - continue with defaults
 		}
 
-		// Safety guard: check for existing JSONL with issues
-		// This prevents accidental re-initialization in fresh clones
+		// Safety guard: check for existing beads data
+		// This prevents accidental re-initialization
 		if !force {
 			if err := checkExistingBeadsData(prefix); err != nil {
 				FatalError("%v", err)
@@ -342,16 +334,7 @@ environment variable.`,
 				// Preserve existing config
 				cfg = existingCfg
 			} else {
-				// Create new config, detecting JSONL filename from existing files
 				cfg = configfile.DefaultConfig()
-				// Check if beads.jsonl exists but issues.jsonl doesn't (legacy)
-				issuesPath := filepath.Join(beadsDir, "issues.jsonl")
-				beadsPath := filepath.Join(beadsDir, "beads.jsonl")
-				if _, err := os.Stat(beadsPath); err == nil {
-					if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
-						cfg.JSONLExport = "beads.jsonl" // Legacy filename
-					}
-				}
 			}
 
 			// Always store backend explicitly in metadata.json
@@ -409,10 +392,7 @@ environment variable.`,
 			// Non-fatal - continue anyway
 		}
 
-		// Import issues on init:
-		// Dolt backend bootstraps itself from `.beads/issues.jsonl` on first open
-		// (factory_dolt.go) when present, so no explicit import is needed here.
-		// The --from-jsonl flag is handled by Dolt's bootstrap mechanism automatically.
+		// Dolt backend bootstraps itself on first open — no explicit import needed.
 
 		// Prompt for contributor mode if:
 		// - In a git repo (needed to set beads.role config)
@@ -637,8 +617,7 @@ func init() {
 	initCmd.Flags().Bool("stealth", false, "Enable stealth mode: global gitattributes and gitignore, no local repo tracking")
 	initCmd.Flags().Bool("setup-exclude", false, "Configure .git/info/exclude to keep beads files local (for forks)")
 	initCmd.Flags().Bool("skip-hooks", false, "Skip git hooks installation")
-	initCmd.Flags().Bool("force", false, "Force re-initialization even if JSONL already has issues (may cause data loss)")
-	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
+	initCmd.Flags().Bool("force", false, "Force re-initialization even if database already has issues (may cause data loss)")
 	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides embedded default)")
 
 	// Dolt server connection flags
@@ -800,8 +779,7 @@ Aborting.`, ui.RenderWarn("⚠"), dbPath, ui.RenderAccent("bd list"), beadsDir, 
 // and returns an error if found (safety guard for bd-emg)
 //
 // Note: This only blocks when a database already exists (workspace is initialized).
-// Fresh clones with JSONL but no database are allowed - init will create the database
-// and import from JSONL automatically (bd-4h9: fixes circular dependency with doctor --fix).
+// Fresh clones without a database are allowed — init will create the database.
 //
 // For worktrees, checks the main repository root instead of current directory
 // since worktrees should share the database with the main repository.

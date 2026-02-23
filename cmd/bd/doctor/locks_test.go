@@ -160,7 +160,10 @@ func TestCheckStaleLockFiles(t *testing.T) {
 		}
 	})
 
-	t.Run("fresh noms LOCK not stale", func(t *testing.T) {
+	// GH#1981: noms LOCK files are no longer checked by CheckStaleLockFiles.
+	// Age-based detection produced false positives because Dolt never deletes
+	// these files. Use CheckLockHealth (flock probing) instead.
+	t.Run("noms LOCK ignored by staleness check", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		nomsDir := filepath.Join(tmpDir, ".beads", "dolt", "beads", ".dolt", "noms")
 		if err := os.MkdirAll(nomsDir, 0755); err != nil {
@@ -171,57 +174,15 @@ func TestCheckStaleLockFiles(t *testing.T) {
 		if err := os.WriteFile(lockPath, []byte("lock"), 0600); err != nil {
 			t.Fatal(err)
 		}
-
-		result := CheckStaleLockFiles(tmpDir)
-		if result.Status != StatusOK {
-			t.Errorf("expected OK for fresh noms LOCK, got %s: %s", result.Status, result.Message)
-		}
-	})
-
-	t.Run("stale noms LOCK detected", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		nomsDir := filepath.Join(tmpDir, ".beads", "dolt", "beads", ".dolt", "noms")
-		if err := os.MkdirAll(nomsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-
-		lockPath := filepath.Join(nomsDir, "LOCK")
-		if err := os.WriteFile(lockPath, []byte("lock"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		// Even an old noms LOCK should not trigger a warning
 		oldTime := time.Now().Add(-10 * time.Minute)
 		if err := os.Chtimes(lockPath, oldTime, oldTime); err != nil {
 			t.Fatal(err)
 		}
 
 		result := CheckStaleLockFiles(tmpDir)
-		if result.Status != StatusWarning {
-			t.Errorf("expected Warning for stale noms LOCK, got %s: %s", result.Status, result.Message)
-		}
-	})
-
-	t.Run("stale noms LOCK multi-database", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		beadsDir := filepath.Join(tmpDir, ".beads")
-
-		for _, dbName := range []string{"beads", "other"} {
-			nomsDir := filepath.Join(beadsDir, "dolt", dbName, ".dolt", "noms")
-			if err := os.MkdirAll(nomsDir, 0755); err != nil {
-				t.Fatal(err)
-			}
-			lockPath := filepath.Join(nomsDir, "LOCK")
-			if err := os.WriteFile(lockPath, []byte("lock"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			oldTime := time.Now().Add(-10 * time.Minute)
-			if err := os.Chtimes(lockPath, oldTime, oldTime); err != nil {
-				t.Fatal(err)
-			}
-		}
-
-		result := CheckStaleLockFiles(tmpDir)
-		if result.Status != StatusWarning {
-			t.Errorf("expected Warning for multiple stale noms LOCKs, got %s: %s", result.Status, result.Message)
+		if result.Status != StatusOK {
+			t.Errorf("expected OK for noms LOCK (not checked by staleness), got %s: %s", result.Status, result.Message)
 		}
 	})
 

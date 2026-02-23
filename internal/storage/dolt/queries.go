@@ -419,12 +419,27 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 			args = append(args, label)
 		}
 	}
+	// Parent filtering: filter to children of specified parent (GH#2009)
+	if filter.ParentID != nil {
+		parentID := *filter.ParentID
+		whereClauses = append(whereClauses, "(id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?) OR id LIKE CONCAT(?, '.%'))")
+		args = append(args, parentID, parentID)
+	}
 
 	// Exclude blocked issues: pre-compute blocked set using separate single-table
 	// queries to avoid Dolt's joinIter panic (join_iters.go:192).
 	// Correlated EXISTS/NOT EXISTS subqueries across tables trigger the same panic.
 	blockedIDs, err := s.computeBlockedIDs(ctx)
 	if err == nil && len(blockedIDs) > 0 {
+		// Also exclude children of blocked parents (GH#1495):
+		// If a parent/epic is blocked, its children should not appear as ready work.
+		childrenOfBlocked, childErr := s.getChildrenOfIssues(ctx, blockedIDs)
+		if childErr == nil {
+			for _, childID := range childrenOfBlocked {
+				blockedIDs = append(blockedIDs, childID)
+			}
+		}
+
 		placeholders := make([]string, len(blockedIDs))
 		for i, id := range blockedIDs {
 			placeholders[i] = "?"
@@ -565,8 +580,32 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 		issueMap[issue.ID] = issue
 	}
 
+	// Parent filtering: restrict to children of specified parent (GH#2009)
+	var parentChildSet map[string]bool
+	if filter.ParentID != nil {
+		parentChildSet = make(map[string]bool)
+		parentID := *filter.ParentID
+		children, childErr := s.getChildrenOfIssues(ctx, []string{parentID})
+		if childErr == nil {
+			for _, childID := range children {
+				parentChildSet[childID] = true
+			}
+		}
+		// Also include dotted-ID children (e.g., "parent.1.2")
+		for id := range blockerMap {
+			if strings.HasPrefix(id, parentID+".") {
+				parentChildSet[id] = true
+			}
+		}
+	}
+
 	var results []*types.BlockedIssue
 	for id, blockerIDs := range blockerMap {
+		// Skip issues not under requested parent (GH#2009)
+		if parentChildSet != nil && !parentChildSet[id] {
+			continue
+		}
+
 		issue, ok := issueMap[id]
 		if !ok || issue == nil {
 			continue
@@ -884,7 +923,7 @@ func (s *DoltStore) computeBlockedIDs(ctx context.Context) ([]string, error) {
 				needsClosedChildren = true
 			}
 			waitsForDeps = append(waitsForDeps, waitsForDep{
-				issueID:   issueID,
+				issueID: issueID,
 				// depends_on_id is the canonical spawner ID for waits-for edges.
 				// metadata.spawner_id is parsed for compatibility but not required here.
 				spawnerID: dependsOnID,
@@ -1028,6 +1067,40 @@ func (s *DoltStore) invalidateBlockedIDsCache() {
 	s.cacheMu.Unlock()
 }
 
+// getChildrenOfIssues returns IDs of direct children (parent-child deps) of the given issue IDs.
+// Used to propagate blocked status from parents to children (GH#1495).
+func (s *DoltStore) getChildrenOfIssues(ctx context.Context, parentIDs []string) ([]string, error) {
+	if len(parentIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(parentIDs))
+	args := make([]interface{}, len(parentIDs))
+	for i, id := range parentIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	// nolint:gosec // G201: placeholders are generated values, data passed via args
+	query := fmt.Sprintf(`
+		SELECT issue_id FROM dependencies
+		WHERE type = 'parent-child' AND depends_on_id IN (%s)
+	`, strings.Join(placeholders, ","))
+	rows, err := s.queryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var children []string
+	for rows.Next() {
+		var childID string
+		if err := rows.Scan(&childID); err != nil {
+			return nil, err
+		}
+		children = append(children, childID)
+	}
+	return children, rows.Err()
+}
+
 // GetMoleculeProgress returns progress stats for a molecule
 func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {
 	stats := &types.MoleculeProgressStats{
@@ -1145,3 +1218,4 @@ func (s *DoltStore) GetNextChildID(ctx context.Context, parentID string) (string
 
 	return fmt.Sprintf("%s.%d", parentID, nextChild), nil
 }
+

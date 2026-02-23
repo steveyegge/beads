@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.56.1] - 2026-02-23
+
+### Fixed
+
+- **Release CI** — remove `verify-cgo.sh` post-hook from darwin and freebsd builds which intentionally use `CGO_ENABLED=0` (cross-compilation without CGO)
+
+## [0.56.0] - 2026-02-23
+
+### Removed
+
+- **Embedded Dolt mode** — beads now requires a running Dolt SQL server. The embedded Dolt driver (`dolthub/driver`) and all CGO build-tag bifurcation have been removed. Binary size drops from 168MB to ~41MB. Use `bd dolt start` or `dolt sql-server` to run the server.
+- **SQLite ephemeral store** — ephemeral issues (wisps) now live in Dolt-backed `wisps` table with `dolt_ignore`, replacing the separate SQLite database. Run `bd migrate wisps` to migrate existing data.
+- **JSONL sync pipeline** — the entire JSONL-based sync system (`bd sync`, git-portable mode, belt-and-suspenders mode) has been removed. Dolt-native push/pull via git remotes is the only sync mechanism. `bd sync` is now a deprecated no-op.
+- **JSONL bootstrap** — clone initialization uses Dolt clone only; JSONL bootstrap path removed.
+- **JSONL plumbing** — cross-rig JSONL flush, JSONL recovery in doctor, and JSONL-based restore have been removed.
+
+### Added
+
+- **Metadata query support** — `bd list`, `bd search`, and `bd query` now support `--metadata-field key=value` and `has_metadata_key` filters (#1908)
+- **Metadata visibility** — `bd show` and `bd list --long` display metadata in human-readable format (#1905)
+- **Wisps table** — ephemeral issues stored in dedicated Dolt-backed table with `dolt_ignore` for compaction-friendly lifecycle
+- **`bd migrate wisps`** — migration command for SQLite-to-Dolt ephemeral data
+- **Batch auto-commit mode** — reduces Dolt commit bloat by batching writes with SIGTERM/SIGHUP flush
+- **`--agents-template` flag** — `bd init` now supports named AGENTS.md templates via `embed.FS`
+- **Mux setup recipe** — `bd setup mux` with layered AGENTS.md and managed hooks
+- **Standalone formula execution** — `bd mol wisp` supports expansion formulas (#1903)
+- **Sentinel errors** — `ErrNotFound`, `ErrNotInitialized`, `ErrPrefixMismatch` for cleaner error handling
+- **`--skip-prefix-validation`** — `bd import` flag for legacy data migration
+- **Protocol invariant test suite** — data integrity and blocking semantics regression tests (#1910)
+- **OpenTelemetry instrumentation** — opt-in OTLP tracing for hooks and storage operations (#1940)
+- **Transaction infrastructure** — `RunInTransaction` with commit messages, isolation, retry, and batch wrapping for Dolt concurrency
+
+### Fixed
+
+- **`bd ready` ordering** — respect SortPolicy and preserve result ordering (#1883)
+- **`waits-for` readiness** — `bd ready` and molecule analysis now correctly handle `waits-for` dependencies (#1900)
+- **Dependency tree parent ID** — populate ParentID in tree output and show [BLOCKED] for root (#1992)
+- **Parent-child display** — `bd list` now separates parent-child deps from blocking deps (#1948)
+- **Hook shim templates** — use `bd hooks run` instead of nonexistent `bd hook` command
+- **Cross-expansion dependencies** — `bd mol cook` propagates deps across formula expansions (#1901)
+- **Wisp auto-close** — wisp root automatically closes after squash (#1898)
+- **Dolt server writes** — commit via `execContext` when server runs with `--no-auto-commit`
+- **Metadata normalization** — normalize metadata and waiters in `UpdateIssue`
+- **Batch import** — persist labels, comments, and deps during import
+- **Noms LOCK detection** — use `flock` probe instead of file existence (#1960)
+- **Doctor backend awareness** — deep validation checks configured backend, not directory presence
+- **Doctor federation** — use configured database name in federation and health checks (#1904, #1924, #1925)
+- **Doctor orphan deps** — exclude `external:` deps from orphan check (#1593)
+- **Jira sync** — use correct API v3 `/search/jql` endpoint (#1953)
+- **Plugin dep order** — correct inverted `bd dep add` argument order in plugin docs (#1928)
+- **Wisp routing** — fix multiple ephemeral store routing gaps for create, read, promote, and gc
+- **Prime output** — remove stale `--from-main` flag reference
+- **`bd list` resolved blockers** — treat missing/unreachable blockers as resolved (#1884)
+- **Wisp search parity** — add ~15 missing filter fields to `searchWisps`
+- **Wisp label hydration** — hydrate labels in `getWispsByIDs` for search results
+- **Query nil guard** — prevent panic in `GetBlockedIssues` and `GetEpicsEligibleForClosure`
+- **Issue prefix clobber** — guard `SetConfig` to prevent overwrite when rigs share a Dolt database
+- **Atomic bond/squash** — `bd mol bond`, `bd mol squash`, and `bd mol cook` now run in single transactions (bd-wvplu, bd-4kgbq)
+- **`bd ready` parent filter** — pass `--parent` filter to `GetReadyWork`/`GetBlockedIssues` and propagate blocked status to children (#2009, #1495)
+- **`bd list` sort/limit** — `--limit` now applies after `--sort`; trim whitespace in `bd edit` (#1237, #1234)
+- **Doctor lock false positive** — use `flock` probe for noms LOCK, remove stale `bd sync` references (#1981, #2007)
+- **Repo sync consistency** — cross-prefix hydration and close guard consistency (#1945, #1524)
+- **DOLT_COMMIT in CRUD** — all write operations now produce Dolt commits for history tracking
+- **Double JSON encoding** — fix daemon-mode RPC response unmarshaling across show, dep, label, reopen (bd-4ec8)
+- **G304 gosec finding** — annotate `os.ReadFile` in tips.go with `#nosec` for constructed paths (bd-8g8)
+- **Stale daemon references** — remove obsolete `bd daemon` references from all documentation (#1982)
+
+### Performance
+
+- **Binary size** — 168MB → ~41MB (dropped `dolthub/driver` and wazero WASM runtime)
+- **Linux/Windows startup** — eliminated 2-second wazero JIT compilation penalty on every invocation
+- **Test suite** — doctor tests 89s → 28s; shared DB pattern across cmd/bd suites
+- **Test isolation** — dolt package and cmd/bd tests now isolated from production Dolt server (bd-2lf6)
+- **N+1 queries** — batch dependency/label/comment queries with per-invocation caching (#1874)
+
 ## [0.55.4] - 2026-02-20
 
 ### Fixed

@@ -202,7 +202,7 @@ func applyFixesInteractive(path string, issues []doctorCheck) {
 func applyFixList(path string, fixes []doctorCheck) {
 	// Apply fixes in a dependency-aware order.
 	// Rough dependency chain:
-	// permissions/lock cleanup → config sanity → DB integrity/migrations → DB↔JSONL sync.
+	// permissions/lock cleanup → config sanity → DB integrity/migrations.
 	order := []string{
 		"Lock Files",
 		"Permissions",
@@ -278,7 +278,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			fmt.Printf("  ⚠ JSONL config migration removed (Dolt-native sync)\n")
 			continue
 		case "Untracked Files":
-			err = fix.UntrackedJSONL(path)
+			fmt.Printf("  ⚠ Untracked JSONL fix removed (Dolt-native storage)\n")
+			continue
 		case "Merge Artifacts":
 			err = fix.MergeArtifacts(path)
 		case "Orphaned Dependencies":
@@ -300,7 +301,7 @@ func applyFixList(path string, fixes []doctorCheck) {
 			continue
 		case "Git Conflicts":
 			// No auto-fix: git conflicts require manual resolution
-			fmt.Printf("  ⚠ Resolve conflicts manually: git checkout --ours or --theirs .beads/issues.jsonl\n")
+			fmt.Printf("  ⚠ Resolve conflicts manually\n")
 			continue
 		case "Stale Closed Issues":
 			// consolidate cleanup into doctor --fix

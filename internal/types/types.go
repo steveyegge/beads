@@ -15,7 +15,7 @@ import (
 type Issue struct {
 	// ===== Core Identification =====
 	ID          string `json:"id"`
-	ContentHash string `json:"-"` // Internal: SHA256 of canonical content - NOT exported to JSONL
+	ContentHash string `json:"-"` // Internal: SHA256 of canonical content
 
 	// ===== Issue Content =====
 	Title              string `json:"title"`
@@ -62,7 +62,7 @@ type Issue struct {
 	CompactedAtCommit *string    `json:"compacted_at_commit,omitempty"` // Git commit hash when compacted
 	OriginalSize      int        `json:"original_size,omitempty"`
 
-	// ===== Internal Routing (not exported to JSONL) =====
+	// ===== Internal Routing (not synced via git) =====
 	SourceRepo     string `json:"-"` // Which repo owns this issue (multi-repo support)
 	IDPrefix       string `json:"-"` // Override prefix for ID generation (appends to config prefix)
 	PrefixOverride string `json:"-"` // Completely replace config prefix (for cross-rig creation)
@@ -74,7 +74,7 @@ type Issue struct {
 
 	// ===== Messaging Fields (inter-agent communication) =====
 	Sender    string   `json:"sender,omitempty"`    // Who sent this (for messages)
-	Ephemeral bool     `json:"ephemeral,omitempty"` // If true, not exported to JSONL
+	Ephemeral bool     `json:"ephemeral,omitempty"` // If true, not synced via git
 	WispType  WispType `json:"wisp_type,omitempty"` // Classification for TTL-based compaction (gt-9br)
 	// NOTE: RepliesTo, RelatesTo, DuplicateOf, SupersededBy moved to dependencies table
 	// per Decision 004 (Edge Schema Consolidation). Use dependency API instead.
@@ -360,21 +360,18 @@ func (i *Issue) ValidateForImport(customStatuses []string) error {
 	return nil
 }
 
-// SetDefaults applies default values for fields omitted during JSONL import.
+// SetDefaults applies default values for fields that may be omitted during deserialization.
 // Call this after json.Unmarshal to ensure missing fields have proper defaults:
 //   - Status: defaults to StatusOpen if empty
 //   - Priority: defaults to 2 if zero (note: P0 issues must explicitly set priority=0)
 //   - IssueType: defaults to TypeTask if empty
-//
-// This enables smaller JSONL output by using omitempty on these fields.
 func (i *Issue) SetDefaults() {
 	if i.Status == "" {
 		i.Status = StatusOpen
 	}
 	// Note: priority 0 (P0) is a valid value, so we can't distinguish between
-	// "explicitly set to 0" and "omitted". For JSONL compactness, we treat
-	// priority 0 in JSONL as P0, not as "use default". This is the expected
-	// behavior since P0 issues are explicitly marked.
+	// "explicitly set to 0" and "omitted". We treat priority 0 as P0,
+	// not as "use default". P0 issues are explicitly marked.
 	// Priority default of 2 only applies to new issues via Create, not import.
 	if i.IssueType == "" {
 		i.IssueType = TypeTask

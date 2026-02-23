@@ -13,12 +13,24 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
+// skipIfNoDolt skips the test when no Dolt server is available.
+// Checks both binary availability and test server status.
+func skipIfNoDolt(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("skipping: dolt not installed")
+	}
+	if testDoltServerPort == 0 {
+		t.Skip("skipping: Dolt test server not running")
+	}
+}
+
 func TestInitCommand(t *testing.T) {
+	skipIfNoDolt(t)
 	tests := []struct {
 		name           string
 		prefix         string
@@ -143,10 +155,8 @@ func TestInitCommand(t *testing.T) {
 					"daemon.log",
 					"daemon.pid",
 					"bd.sock",
-					"beads.base.jsonl",
-					"beads.left.jsonl",
-					"beads.right.jsonl",
-					"Do NOT add negation patterns", // Comment explaining fork protection
+					"dolt/",
+					"dolt-access.lock",
 				}
 				for _, pattern := range expectedPatterns {
 					if !strings.Contains(gitignoreStr, pattern) {
@@ -176,6 +186,7 @@ func TestInitCommand(t *testing.T) {
 // on errors, which makes it difficult to test in a unit test context.
 
 func TestInitAlreadyInitialized(t *testing.T) {
+	skipIfNoDolt(t)
 	// Reset global state
 	origDBPath := dbPath
 	defer func() { dbPath = origDBPath }()
@@ -362,116 +373,6 @@ func TestInitWithCustomDBPath(t *testing.T) {
 			t.Error(".beads/ directory should not be created in CWD when BEADS_DB is set")
 		}
 	})
-}
-
-func TestInitNoDbMode(t *testing.T) {
-	t.Skip("no-db mode has been removed; beads now requires Dolt")
-	// Reset global state
-	origDBPath := dbPath
-	origNoDb := noDb
-	defer func() {
-		dbPath = origDBPath
-		noDb = origNoDb
-	}()
-	dbPath = ""
-	noDb = false
-
-	// Reset Cobra flags - critical for --no-db to work correctly
-	rootCmd.PersistentFlags().Set("no-db", "false")
-
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	// Set BEADS_DIR to prevent git repo detection from finding project's .beads
-	origBeadsDir := os.Getenv("BEADS_DIR")
-	os.Setenv("BEADS_DIR", filepath.Join(tmpDir, ".beads"))
-	// Reset caches so RepoContext picks up new BEADS_DIR and CWD
-	beads.ResetCaches()
-	git.ResetCaches()
-	defer func() {
-		if origBeadsDir != "" {
-			os.Setenv("BEADS_DIR", origBeadsDir)
-		} else {
-			os.Unsetenv("BEADS_DIR")
-		}
-		// Reset caches on cleanup too
-		beads.ResetCaches()
-		git.ResetCaches()
-	}()
-
-	// Initialize with --no-db flag
-	rootCmd.SetArgs([]string{"init", "--no-db", "--prefix", "test", "--quiet"})
-
-	t.Logf("DEBUG: noDb before Execute=%v", noDb)
-
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init with --no-db failed: %v", err)
-	}
-
-	t.Logf("DEBUG: noDb after Execute=%v", noDb)
-
-	// Debug: Check where files were created
-	beadsDirEnv := os.Getenv("BEADS_DIR")
-	t.Logf("DEBUG: tmpDir=%s", tmpDir)
-	t.Logf("DEBUG: BEADS_DIR=%s", beadsDirEnv)
-	t.Logf("DEBUG: CWD=%s", func() string { cwd, _ := os.Getwd(); return cwd }())
-
-	// Check what files exist in tmpDir
-	entries, _ := os.ReadDir(tmpDir)
-	t.Logf("DEBUG: entries in tmpDir: %v", entries)
-	if beadsDirEnv != "" {
-		beadsEntries, err := os.ReadDir(beadsDirEnv)
-		t.Logf("DEBUG: entries in BEADS_DIR: %v (err: %v)", beadsEntries, err)
-	}
-
-	// Verify issues.jsonl was created
-	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
-	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-		// Also check at BEADS_DIR directly
-		beadsDirJsonlPath := filepath.Join(beadsDirEnv, "issues.jsonl")
-		if _, err2 := os.Stat(beadsDirJsonlPath); err2 == nil {
-			t.Logf("DEBUG: issues.jsonl found at BEADS_DIR path: %s", beadsDirJsonlPath)
-		}
-		t.Error("issues.jsonl was not created in --no-db mode")
-	}
-
-	// Verify config.yaml was created with no-db: true
-	configPath := filepath.Join(tmpDir, ".beads", "config.yaml")
-	configContent, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("Failed to read config.yaml: %v", err)
-	}
-
-	configStr := string(configContent)
-	if !strings.Contains(configStr, "no-db: true") {
-		t.Error("config.yaml should contain 'no-db: true' in --no-db mode")
-	}
-	if !strings.Contains(configStr, "issue-prefix:") {
-		t.Error("config.yaml should contain issue-prefix in --no-db mode")
-	}
-
-	// Reset config so it picks up the newly created config.yaml
-	// (simulates a new process invocation which would load fresh config)
-	initConfigForTest(t)
-
-	// Verify config has correct values
-	if !config.GetBool("no-db") {
-		t.Error("config should have no-db=true after init --no-db")
-	}
-	if config.GetString("issue-prefix") != "test" {
-		t.Errorf("config should have issue-prefix='test', got %q", config.GetString("issue-prefix"))
-	}
-
-	// NOTE: Testing subsequent command execution in the same process is complex
-	// due to cobra's flag caching and global state. The key functionality
-	// (init creating proper config.yaml for no-db mode) is verified above.
-	// Real-world usage works correctly since each command is a fresh process.
-
-	// Verify no SQLite database was created
-	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-	if _, err := os.Stat(dbPath); err == nil {
-		t.Error("SQLite database should not be created in --no-db mode")
-	}
 }
 
 // TestSetupClaudeSettings_InvalidJSON verifies that invalid JSON in existing
@@ -783,6 +684,7 @@ func TestInitPromptRoleConfig(t *testing.T) {
 
 // TestInitPromptSkippedWithFlags verifies that --contributor and --team flags skip the prompt
 func TestInitPromptSkippedWithFlags(t *testing.T) {
+	skipIfNoDolt(t)
 	t.Run("contributor flag skips prompt and runs wizard", func(t *testing.T) {
 		// Reset global state
 		origDBPath := dbPath
@@ -875,6 +777,7 @@ func TestInitPromptTTYDetection(t *testing.T) {
 
 // TestInitPromptNonGitRepo verifies prompt is skipped in non-git directories
 func TestInitPromptNonGitRepo(t *testing.T) {
+	skipIfNoDolt(t)
 	// Reset global state
 	origDBPath := dbPath
 	defer func() { dbPath = origDBPath }()
@@ -912,6 +815,7 @@ func TestInitPromptNonGitRepo(t *testing.T) {
 
 // TestInitPromptExistingRole verifies behavior when beads.role is already set
 func TestInitPromptExistingRole(t *testing.T) {
+	skipIfNoDolt(t)
 	t.Run("existing role is preserved on reinit with --force", func(t *testing.T) {
 		// Reset global state
 		origDBPath := dbPath
@@ -978,6 +882,7 @@ func TestInitPromptExistingRole(t *testing.T) {
 // not in the local .beads directory. (GH#bd-0qel)
 // TestInitRedirect groups redirect-related init tests.
 func TestInitRedirect(t *testing.T) {
+	skipIfNoDolt(t)
 	resetRedirectState := func(t *testing.T) {
 		t.Helper()
 		origDBPath := dbPath
@@ -1118,6 +1023,7 @@ func TestInitRedirect(t *testing.T) {
 // TestInitBEADS_DIR groups BEADS_DIR-related init tests.
 // Tests requirements FR-001, FR-002, FR-004, NFR-001.
 func TestInitBEADS_DIR(t *testing.T) {
+	skipIfNoDolt(t)
 	// resetBeadsDirState resets global state and env vars for each subtest.
 	resetBeadsDirState := func(t *testing.T) {
 		t.Helper()
@@ -1436,6 +1342,7 @@ func TestInit_WithBEADS_DIR_DoltBackend(t *testing.T) {
 // all 3 tracking metadata fields (bd_version, repo_id, clone_id) via verifyMetadata.
 // Covers FR-001, FR-002, FR-003, FR-004.
 func TestInitDoltMetadata(t *testing.T) {
+	skipIfNoDolt(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping Dolt metadata test on Windows")
 	}
@@ -1522,6 +1429,7 @@ func openDoltStoreForTest(t *testing.T, ctx context.Context, doltPath, dbName st
 // verifyMetadata now takes *dolt.DoltStore (concrete type), making interface-based
 // mocking impossible. The failure paths are simple error-to-stderr logic.
 func TestVerifyMetadataSuccess(t *testing.T) {
+	skipIfNoDolt(t)
 	ctx := context.Background()
 
 	tmpDir := t.TempDir()
@@ -1548,6 +1456,7 @@ func TestVerifyMetadataSuccess(t *testing.T) {
 // Verifies warning output; actual metadata persistence checked by e2e tests.
 // Covers FR-015 (skip repo_id outside git).
 func TestInitDoltMetadataNoGit(t *testing.T) {
+	skipIfNoDolt(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping Dolt metadata test on Windows")
 	}

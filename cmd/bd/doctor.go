@@ -363,6 +363,12 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
+	// GH#1981: Run lock health check BEFORE any checks that open embedded
+	// Dolt databases. Earlier checks (CheckDatabaseVersion, CheckSchemaCompatibility,
+	// etc.) create noms LOCK files via flock(); if CheckLockHealth runs after them,
+	// it detects those same-process locks as "held by another process" (false positive).
+	earlyLockCheck := doctor.CheckLockHealth(path)
+
 	// Check 2: Database version
 	dbCheck := convertWithCategory(doctor.CheckDatabaseVersion(path, Version), doctor.CategoryCore)
 	result.Checks = append(result.Checks, dbCheck)
@@ -437,11 +443,10 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Dolt health checks (connection, schema, sync, status via AccessLock)
-	// Run BEFORE federation checks: federation opens Dolt connections that may
-	// leave noms LOCK files on disk. CheckLockHealth (inside RunDoltHealthChecks)
-	// must run first to avoid false positives from doctor's own connections (#1925).
-	for _, dc := range doctor.RunDoltHealthChecks(path) {
+	// Dolt health checks (connection, schema, issue count, status).
+	// GH#1981: Pass the pre-computed lock check (run before any embedded Dolt
+	// opens) to avoid false positives from doctor's own noms LOCK files.
+	for _, dc := range doctor.RunDoltHealthChecksWithLock(path, earlyLockCheck) {
 		result.Checks = append(result.Checks, convertDoctorCheck(dc))
 	}
 
@@ -536,11 +541,6 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, gitignoreCheck)
 	// Don't fail overall check for gitignore, just warn
 
-	// Check 14a: issues.jsonl tracking (catches global gitignore conflicts)
-	issuesTrackingCheck := convertWithCategory(doctor.CheckIssuesTracking(), doctor.CategoryGit)
-	result.Checks = append(result.Checks, issuesTrackingCheck)
-	// Don't fail overall check for tracking issues, just warn
-
 	// Check 14b: redirect file tracking (worktree redirect files shouldn't be committed)
 	redirectTrackingCheck := convertWithCategory(doctor.CheckRedirectNotTracked(), doctor.CategoryGit)
 	result.Checks = append(result.Checks, redirectTrackingCheck)
@@ -621,12 +621,6 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, pollutionCheck)
 	// Don't fail overall check for test pollution, just warn
 
-	// Check 25: Git conflicts in JSONL (from bd validate)
-	conflictsCheck := convertDoctorCheck(doctor.CheckGitConflicts(path))
-	result.Checks = append(result.Checks, conflictsCheck)
-	if conflictsCheck.Status == statusError {
-		result.OverallOK = false
-	}
 
 	// Check 26: Stale closed issues (maintenance)
 	staleClosedCheck := convertDoctorCheck(doctor.CheckStaleClosedIssues(path))

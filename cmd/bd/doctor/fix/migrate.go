@@ -13,8 +13,8 @@ import (
 )
 
 // DatabaseVersion fixes database version mismatches by updating metadata in-process.
-// For fresh clones (no database), it creates a new Dolt store which auto-bootstraps
-// from JSONL. For existing databases, it updates version metadata directly.
+// For fresh clones (no database), it creates a new Dolt store.
+// For existing databases, it updates version metadata directly.
 //
 // This runs in-process to avoid Dolt lock contention that occurs when spawning
 // bd subcommands while the parent process holds database connections. (GH#1805)
@@ -47,8 +47,8 @@ func DatabaseVersionWithBdVersion(path string, bdVersion string) error {
 	ctx := context.Background()
 
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// No database - create a new Dolt store (auto-bootstraps from JSONL)
-		fmt.Println("  → No database found, creating Dolt store (will bootstrap from JSONL)...")
+		// No database - create a new Dolt store
+		fmt.Println("  → No database found, creating Dolt store...")
 
 		store, err := dolt.NewFromConfig(ctx, beadsDir)
 		if err != nil {
@@ -101,17 +101,6 @@ func DatabaseVersionWithBdVersion(path string, bdVersion string) error {
 
 	fmt.Println("  → Metadata updated")
 	return nil
-}
-
-// findJSONLPath returns the path to the JSONL file in the beads directory.
-// Delegates to utils.FindJSONLInDir for path discovery but returns empty
-// string if no JSONL file actually exists on disk.
-func findJSONLPath(beadsDir string) string {
-	path := utils.FindJSONLInDir(beadsDir)
-	if _, err := os.Stat(path); err == nil {
-		return path
-	}
-	return ""
 }
 
 // SchemaCompatibility fixes schema compatibility issues by updating database metadata

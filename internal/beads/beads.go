@@ -290,7 +290,7 @@ func FindDatabasePath() string {
 // Returns true if the directory contains any of:
 // - metadata.json or config.yaml (project configuration)
 // - Any *.db file (excluding backups and vc.db)
-// - Any *.jsonl file (JSONL-only mode or git-tracked issues)
+// - A dolt/ directory (Dolt database)
 //
 // Returns false for directories that only contain daemon registry files.
 // This prevents FindBeadsDir from returning ~/.beads/ which only has registry.json.
@@ -303,6 +303,11 @@ func hasBeadsProjectFiles(beadsDir string) bool {
 		return true
 	}
 
+	// Check for Dolt database directory
+	if info, err := os.Stat(filepath.Join(beadsDir, "dolt")); err == nil && info.IsDir() {
+		return true
+	}
+
 	// Check for database files (excluding backups and vc.db)
 	dbMatches, _ := filepath.Glob(filepath.Join(beadsDir, "*.db"))
 	for _, match := range dbMatches {
@@ -312,17 +317,11 @@ func hasBeadsProjectFiles(beadsDir string) bool {
 		}
 	}
 
-	// Check for JSONL files (JSONL-only mode or fresh clone)
-	jsonlMatches, _ := filepath.Glob(filepath.Join(beadsDir, "*.jsonl"))
-	if len(jsonlMatches) > 0 {
-		return true
-	}
-
 	return false
 }
 
-// FindBeadsDir finds the .beads/ directory in the current directory tree
-// Returns empty string if not found. Supports both database and JSONL-only mode.
+// FindBeadsDir finds the .beads/ directory in the current directory tree.
+// Returns empty string if not found.
 // Stops at the git repository root to avoid finding unrelated directories.
 // Validates that the directory contains actual project files.
 // Redirect files are supported: if a .beads/redirect file exists, its contents
@@ -413,21 +412,6 @@ func FindBeadsDir() string {
 	}
 
 	return ""
-}
-
-// FindJSONLPath returns the expected JSONL file path for the given database path.
-// It searches for existing *.jsonl files in the database directory and returns
-// the first one found, preferring issues.jsonl over beads.jsonl.
-//
-// This function does not create directories or files - it only discovers paths.
-// Use this when you need to know where bd stores its JSONL export.
-func FindJSONLPath(dbPath string) string {
-	if dbPath == "" {
-		return ""
-	}
-
-	// Get the directory containing the database and delegate to shared utility
-	return utils.FindJSONLInDir(filepath.Dir(dbPath))
 }
 
 // DatabaseInfo contains information about a discovered beads database

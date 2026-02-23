@@ -8,7 +8,7 @@ import (
 )
 
 // Sync mode configuration values (from hq-ew1mbr.3)
-// These control how Dolt syncs with JSONL/remotes.
+// These control how Dolt syncs with remotes.
 
 // ConfigWarnings controls whether warnings are logged for invalid config values.
 // Set to false to suppress warnings (useful for tests or scripts).
@@ -31,11 +31,6 @@ type SyncMode string
 const (
 	// SyncModeDoltNative uses Dolt remote directly (the only supported mode)
 	SyncModeDoltNative SyncMode = "dolt-native"
-
-	// Deprecated: SyncModeGitPortable is no longer supported. Kept for config migration.
-	SyncModeGitPortable SyncMode = "git-portable"
-	// Deprecated: SyncModeBeltAndSuspenders is no longer supported. Kept for config migration.
-	SyncModeBeltAndSuspenders SyncMode = "belt-and-suspenders"
 )
 
 // validSyncModes is the set of allowed sync mode values

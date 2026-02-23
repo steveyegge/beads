@@ -18,7 +18,7 @@ It is auto-generated and version-stamped to track bd upgrades.
 ### Why bd?
 
 - Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Auto-syncs to JSONL for version control
+- Git-friendly: Dolt provides version control with branching and merging
 - Agent-optimized: JSON output, ready work detection, discovered-from links
 - Prevents duplicate tracking systems and confusion
 
@@ -70,13 +70,13 @@ bd close bd-42 --reason "Completed" --json
 4. **Discover new work?** Create linked issue:
    - `bd create "Found bug" -p 1 --deps discovered-from:<parent-id>`
 5. **Complete**: `bd close <id> --reason "Done"`
-6. **Commit together**: Always commit the `.beads/issues.jsonl` file together with the code changes so issue state stays in sync with code state
+6. **Sync**: Run `bd sync` at end of sessions to ensure changes are committed and pushed
 
 ### Auto-Sync
 
-bd automatically syncs with git:
-- Exports to `.beads/issues.jsonl` after changes (5s debounce)
-- Imports from JSONL when newer (e.g., after `git pull`)
+bd uses Dolt for storage and sync:
+- All changes are stored directly in the Dolt database
+- `bd sync` handles commit, pull, merge, and push via Dolt-native replication
 - No manual export/import needed!
 
 ### GitHub Copilot Integration
@@ -132,6 +132,60 @@ history/
 - ✅ Preserves planning history for archeological research
 - ✅ Reduces noise when browsing the project
 
+### Counter Mode (Sequential IDs)
+
+By default, beads assigns hash-based IDs (e.g., `bd-a3f2`). For projects that prefer
+human-readable sequential IDs (e.g., `bd-1`, `bd-2`), enable counter mode:
+
+```bash
+bd config set issue_id_mode counter
+```
+
+**When to use counter mode:**
+
+- Project-management workflows where stakeholders reference issue numbers in conversations
+- Multi-agent coordination where readable IDs reduce confusion (e.g., "fix bd-42")
+- Teams migrating from Jira/Linear/GitHub Issues that expect sequential numbering
+
+**When to keep hash IDs (default):**
+
+- Multi-agent or multi-branch workflows where issues may be created concurrently on different branches
+- Hash IDs are collision-free by construction; counter IDs can diverge if parallel branches both create issues
+
+**How to enable:**
+
+```bash
+# Enable for this project
+bd config set issue_id_mode counter
+
+# New issues now get sequential IDs
+bd create "Fix login bug" -p 1    # → bd-1
+bd create "Add dark mode" -p 2    # → bd-2
+```
+
+**Migration considerations:**
+
+If the repo already has hash-based IDs, those existing IDs are unchanged. New issues created
+after enabling counter mode will start from 1 (or wherever the counter currently sits). To
+avoid collisions with any existing sequential IDs (e.g., from a previous counter-mode period),
+check the highest integer ID in use before switching.
+
+**Explicit --id overrides counter mode:**
+
+Passing `--id` on `bd create` always uses the provided ID and does not increment the counter:
+
+```bash
+bd create "Backport fix" -p 1 --id bd-special
+# → bd-special (counter unchanged)
+```
+
+**Per-prefix isolation:**
+
+Each prefix has its own counter. If this project routes to multiple prefixes, each prefix
+counts independently (e.g., `bd-1`, `bd-2` and `plug-1`, `plug-2` are separate sequences).
+
+See [docs/CONFIG.md](../docs/CONFIG.md) for full `issue_id_mode` reference.
+
 ### Important Rules
 
 - ✅ Use bd for ALL task tracking
@@ -156,15 +210,15 @@ For more details, see README.md and QUICKSTART.md.
 
 **Key Features:**
 - Dependency-aware issue tracking
-- Auto-sync with Git via JSONL
+- Auto-sync via Dolt-native replication
 - AI-optimized CLI with JSON output
-- Built-in daemon for background operations
+- Dolt server mode for background operations
 - MCP server integration for Claude and other AI assistants
 
 ## Tech Stack
 
 - **Language**: Go 1.21+
-- **Storage**: SQLite (internal/storage/sqlite/)
+- **Storage**: Dolt (version-controlled SQL database)
 - **CLI Framework**: Cobra
 - **Testing**: Go standard testing + table-driven tests
 - **CI/CD**: GitHub Actions
@@ -174,7 +228,7 @@ For more details, see README.md and QUICKSTART.md.
 
 ### Testing
 - Always write tests for new features
-- Use `BEADS_DB=/tmp/test.db` to avoid polluting production database
+- Use `t.TempDir()` in Go tests to avoid polluting production database
 - Run `go test -short ./...` before committing
 - Never create test issues in production DB (use temporary DB)
 
@@ -185,9 +239,8 @@ For more details, see README.md and QUICKSTART.md.
 - Update docs when changing behavior
 
 ### Git Workflow
-- Always commit `.beads/issues.jsonl` with code changes
 - Run `bd sync` at end of work sessions
-- Install git hooks: `bd hooks install` (ensures DB ↔ JSONL consistency)
+- Install git hooks: `bd hooks install`
 
 ## Issue Tracking with bd
 
@@ -238,14 +291,13 @@ beads/
 ├── internal/
 │   ├── types/           # Core data types
 │   └── storage/         # Storage layer
-│       └── sqlite/      # SQLite implementation
+│       └── dolt/        # Dolt implementation
 ├── integrations/
 │   └── beads-mcp/       # MCP server (Python)
 ├── examples/            # Integration examples
 ├── docs/                # Documentation
 └── .beads/
-    ├── beads.db         # SQLite database (DO NOT COMMIT)
-    └── issues.jsonl     # Git-synced issue storage
+    └── dolt/            # Dolt database (source of truth)
 ```
 
 ## Available Resources
@@ -272,10 +324,10 @@ Use the beads MCP server for native function calls instead of shell commands:
 - ✅ Use bd for ALL task tracking
 - ✅ Always use `--json` flag for programmatic use
 - ✅ Run `bd sync` at end of sessions
-- ✅ Test with `BEADS_DB=/tmp/test.db`
+- ✅ Test with `t.TempDir()` in Go tests
 - ❌ Do NOT create markdown TODO lists
 - ❌ Do NOT create test issues in production DB
-- ❌ Do NOT commit `.beads/beads.db` (JSONL only)
+- ❌ Do NOT manually modify `.beads/dolt/`
 
 ---
 

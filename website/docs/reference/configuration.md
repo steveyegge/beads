@@ -48,6 +48,24 @@ prefix = "bd"                 # Issue ID prefix
 hash_length = 4               # Hash length in IDs
 ```
 
+**Issue ID mode** controls whether new issues get hash-based or sequential IDs:
+
+```bash
+# Use sequential IDs: bd-1, bd-2, bd-3, ...
+bd config set issue_id_mode counter
+
+# Use hash-based IDs (default): bd-a3f2, bd-7f3a8, ...
+bd config set issue_id_mode hash
+```
+
+| Mode | Example ID | Best for |
+|------|-----------|----------|
+| `hash` (default) | `bd-a3f2` | Multi-agent, multi-branch workflows |
+| `counter` | `bd-1` | Single-writer, project-management UIs |
+
+Counter IDs are sequential and human-friendly. Hash IDs are collision-free across concurrent
+branches. See [docs/CONFIG.md](/docs/CONFIG.md) for migration guidance and full details.
+
 ### Import
 
 ```toml
@@ -67,9 +85,7 @@ dedupe_on_import = false      # Run duplicate detection after import
 
 ```toml
 [export]
-path = ".beads/issues.jsonl"  # Export file location
-auto_export = true            # Auto-export on changes
-debounce_seconds = 5          # Debounce interval
+path = ".beads/issues.jsonl"  # Default export file path (for bd export command)
 ```
 
 ### Git

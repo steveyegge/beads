@@ -140,157 +140,6 @@ func TestFindDatabasePathNotFound(t *testing.T) {
 	_ = result
 }
 
-func TestFindJSONLPathWithExistingFile(t *testing.T) {
-	// Create temporary directory
-	tmpDir, err := os.MkdirTemp("", "beads-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Create a .jsonl file
-	jsonlPath := filepath.Join(tmpDir, "custom.jsonl")
-	f, err := os.Create(jsonlPath)
-	if err != nil {
-		t.Fatalf("Failed to create jsonl file: %v", err)
-	}
-	f.Close()
-
-	// Create a fake database path in the same directory
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	// Should find the existing .jsonl file
-	result := FindJSONLPath(dbPath)
-	if result != jsonlPath {
-		t.Errorf("Expected '%s', got '%s'", jsonlPath, result)
-	}
-}
-
-func TestFindJSONLPathDefault(t *testing.T) {
-	// Create temporary directory
-	tmpDir, err := os.MkdirTemp("", "beads-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Create a fake database path (no .jsonl files exist)
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	// bd-6xd: Should return default issues.jsonl (canonical name)
-	result := FindJSONLPath(dbPath)
-	expected := filepath.Join(tmpDir, "issues.jsonl")
-	if result != expected {
-		t.Errorf("Expected '%s', got '%s'", expected, result)
-	}
-}
-
-func TestFindJSONLPathEmpty(t *testing.T) {
-	// Empty database path should return empty string
-	result := FindJSONLPath("")
-	if result != "" {
-		t.Errorf("Expected empty string for empty db path, got '%s'", result)
-	}
-}
-
-func TestFindJSONLPathMultipleFiles(t *testing.T) {
-	// Create temporary directory
-	tmpDir, err := os.MkdirTemp("", "beads-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Create multiple .jsonl files
-	jsonlFiles := []string{"issues.jsonl", "backup.jsonl", "archive.jsonl"}
-	for _, filename := range jsonlFiles {
-		f, err := os.Create(filepath.Join(tmpDir, filename))
-		if err != nil {
-			t.Fatalf("Failed to create jsonl file: %v", err)
-		}
-		f.Close()
-	}
-
-	// Create a fake database path
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	// Should return the first .jsonl file found (lexicographically sorted by Glob)
-	result := FindJSONLPath(dbPath)
-	// Verify it's one of the .jsonl files we created
-	found := false
-	for _, filename := range jsonlFiles {
-		if result == filepath.Join(tmpDir, filename) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("Expected one of the created .jsonl files, got '%s'", result)
-	}
-}
-
-// TestFindJSONLPathSkipsDeletions verifies that FindJSONLPath skips deletions.jsonl
-// and merge artifacts to prevent corruption (bd-tqo fix)
-func TestFindJSONLPathSkipsDeletions(t *testing.T) {
-	tests := []struct {
-		name     string
-		files    []string
-		expected string
-	}{
-		{
-			name:     "prefers issues.jsonl over deletions.jsonl",
-			files:    []string{"deletions.jsonl", "issues.jsonl"},
-			expected: "issues.jsonl",
-		},
-		{
-			name:     "skips deletions.jsonl when only option",
-			files:    []string{"deletions.jsonl"},
-			expected: "issues.jsonl", // Falls back to default
-		},
-		{
-			name:     "skips merge artifacts",
-			files:    []string{"beads.base.jsonl", "beads.left.jsonl", "issues.jsonl"},
-			expected: "issues.jsonl",
-		},
-		{
-			name:     "prefers issues over beads",
-			files:    []string{"beads.jsonl", "issues.jsonl"},
-			expected: "issues.jsonl",
-		},
-		{
-			name:     "uses beads.jsonl as legacy fallback",
-			files:    []string{"beads.jsonl", "deletions.jsonl"},
-			expected: "beads.jsonl",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "beads-jsonl-test-*")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer os.RemoveAll(tmpDir)
-
-			// Create test files
-			for _, file := range tt.files {
-				path := filepath.Join(tmpDir, file)
-				if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			dbPath := filepath.Join(tmpDir, "test.db")
-			result := FindJSONLPath(dbPath)
-			expected := filepath.Join(tmpDir, tt.expected)
-
-			if result != expected {
-				t.Errorf("FindJSONLPath() = %q, want %q", result, expected)
-			}
-		})
-	}
-}
-
 // TestHasBeadsProjectFiles verifies that hasBeadsProjectFiles correctly
 // distinguishes between project directories and daemon-only directories (bd-420)
 func TestHasBeadsProjectFiles(t *testing.T) {
@@ -312,11 +161,6 @@ func TestHasBeadsProjectFiles(t *testing.T) {
 		{
 			name:     "has database",
 			files:    []string{"beads.db"},
-			expected: true,
-		},
-		{
-			name:     "has issues.jsonl",
-			files:    []string{"issues.jsonl"},
 			expected: true,
 		},
 		{
@@ -776,7 +620,7 @@ func TestFindBeadsDirWithRedirect(t *testing.T) {
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(targetDir, "issues.jsonl"), []byte("{}"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(targetDir, "metadata.json"), []byte(`{"database":"dolt"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 

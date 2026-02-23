@@ -44,9 +44,9 @@ func CheckGitHooks(cliVersion string) DoctorCheck {
 
 	// Recommended hooks and their purposes
 	recommendedHooks := map[string]string{
-		"pre-commit": "Flushes pending bd changes to JSONL before commit",
-		"post-merge": "Imports updated JSONL after git pull/merge",
-		"pre-push":   "Exports database to JSONL before push",
+		"pre-commit": "Syncs pending bd changes before commit",
+		"post-merge": "Syncs database after git pull/merge",
+		"pre-push":   "Validates database state before push",
 	}
 	var missingHooks []string
 	var installedHooks []string
@@ -197,8 +197,18 @@ func findOutdatedBDHookVersions(
 		if err != nil {
 			continue
 		}
-		hookVersion, ok := parseBDHookVersion(string(content))
+		contentStr := string(content)
+		hookVersion, ok := parseBDHookVersion(contentStr)
 		if !ok || !IsValidSemver(hookVersion) {
+			// No version comment found. If this is a bd hook (has shim marker,
+			// inline marker, or calls bd hooks run), treat it as outdated since
+			// all current hook templates include a version comment. (GH#1466)
+			if isBdHookContent(contentStr) {
+				outdated = append(outdated, fmt.Sprintf("%s@unknown", hookName))
+				if oldest == "" {
+					oldest = "0.0.0"
+				}
+			}
 			continue
 		}
 		if CompareVersions(hookVersion, cliVersion) < 0 {
@@ -209,6 +219,13 @@ func findOutdatedBDHookVersions(
 		}
 	}
 	return outdated, oldest
+}
+
+// isBdHookContent checks if hook content is a bd hook (shim, inline, or calls bd hooks run).
+func isBdHookContent(content string) bool {
+	return strings.Contains(content, bdShimMarker) ||
+		strings.Contains(content, bdInlineHookMarker) ||
+		bdHooksRunPattern.MatchString(content)
 }
 
 func parseBDHookVersion(content string) (string, bool) {
@@ -394,7 +411,7 @@ func CheckGitUpstream(path string) DoctorCheck {
 			Status:  StatusWarning,
 			Message: fmt.Sprintf("Behind upstream by %d commit(s)", behind),
 			Detail:  fmt.Sprintf("Branch: %s, upstream: %s", branch, upstream),
-			Fix:     "Run 'git pull --rebase' (then re-run bd sync / bd doctor)",
+			Fix:     "Run 'git pull --rebase' (then re-run bd doctor)",
 		}
 	}
 
@@ -557,7 +574,7 @@ func CheckGitHooksDoltCompatibility(path string) DoctorCheck {
 		Name:    "Git Hooks Dolt Compatibility",
 		Status:  StatusError,
 		Message: "Git hooks incompatible with Dolt backend",
-		Detail:  "Installed hooks attempt JSONL sync which fails with Dolt. This causes errors on git pull/commit.",
+		Detail:  "Installed hooks are outdated and incompatible with the Dolt backend.",
 		Fix:     "Run 'bd hooks install --force' to update hooks for Dolt compatibility",
 	}
 }

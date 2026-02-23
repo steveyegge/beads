@@ -128,7 +128,7 @@ Examples:
 			FatalErrorRespectJSON("reading edited file: %v", err)
 		}
 
-		newValue := string(editedContent)
+		newValue := strings.TrimSpace(string(editedContent))
 
 		// Check if the value changed
 		if newValue == currentValue {
@@ -137,7 +137,7 @@ Examples:
 		}
 
 		// Validate title if editing title
-		if fieldToEdit == "title" && strings.TrimSpace(newValue) == "" {
+		if fieldToEdit == "title" && newValue == "" {
 			FatalErrorRespectJSON("title cannot be empty")
 		}
 

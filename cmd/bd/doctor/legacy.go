@@ -235,50 +235,6 @@ func CheckDatabaseConfig(repoPath string) DoctorCheck {
 		}
 	}
 
-	// Check if configured JSONL exists
-	if cfg.JSONLExport != "" {
-		if cfg.JSONLExport == "deletions.jsonl" || cfg.JSONLExport == "interactions.jsonl" || cfg.JSONLExport == "molecules.jsonl" {
-			return DoctorCheck{
-				Name:    "Database Config",
-				Status:  "error",
-				Message: fmt.Sprintf("Invalid jsonl_export %q (system file)", cfg.JSONLExport),
-				Detail:  "metadata.json jsonl_export must reference the git-tracked issues export (typically issues.jsonl), not a system log file.",
-				Fix:     "Run 'bd doctor --fix' to reset metadata.json jsonl_export to issues.jsonl, then commit the change.",
-			}
-		}
-
-		jsonlPath := cfg.JSONLPath(beadsDir)
-		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-			// Check if other .jsonl files exist
-			entries, _ := os.ReadDir(beadsDir) // Best effort: nil entries means no legacy files to check
-			var otherJSONLs []string
-			for _, entry := range entries {
-				if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {
-					name := entry.Name()
-					// Skip backups
-					lowerName := strings.ToLower(name)
-					if !strings.Contains(lowerName, "backup") &&
-						!strings.Contains(lowerName, ".orig") &&
-						!strings.Contains(lowerName, ".bak") &&
-						!strings.Contains(lowerName, "~") &&
-						!strings.HasPrefix(lowerName, "backup_") &&
-						name != "deletions.jsonl" &&
-						name != "interactions.jsonl" &&
-						name != "molecules.jsonl" &&
-						!strings.Contains(lowerName, ".base.jsonl") &&
-						!strings.Contains(lowerName, ".left.jsonl") &&
-						!strings.Contains(lowerName, ".right.jsonl") {
-						otherJSONLs = append(otherJSONLs, name)
-					}
-				}
-			}
-			if len(otherJSONLs) > 0 {
-				issues = append(issues, fmt.Sprintf("Configured JSONL '%s' not found, but found: %s",
-					cfg.JSONLExport, strings.Join(otherJSONLs, ", ")))
-			}
-		}
-	}
-
 	if len(issues) == 0 {
 		return DoctorCheck{
 			Name:    "Database Config",

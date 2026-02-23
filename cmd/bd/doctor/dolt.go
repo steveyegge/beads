@@ -105,7 +105,18 @@ func IsDoltBackend(beadsDir string) bool {
 // RunDoltHealthChecks runs all Dolt-specific health checks using a single
 // shared server connection. Returns one check per health dimension.
 // Non-Dolt backends get N/A results for all dimensions.
+//
+// Note: Prefer RunDoltHealthChecksWithLock when the lock check has already
+// been run early (before any embedded Dolt opens) to avoid false positives.
 func RunDoltHealthChecks(path string) []DoctorCheck {
+	return RunDoltHealthChecksWithLock(path, CheckLockHealth(path))
+}
+
+// RunDoltHealthChecksWithLock is like RunDoltHealthChecks but accepts a
+// pre-computed lock health check result. This allows the caller to run
+// CheckLockHealth before any checks that open embedded Dolt databases,
+// avoiding false positives from doctor's own noms LOCK files (GH#1981).
+func RunDoltHealthChecksWithLock(path string, lockCheck DoctorCheck) []DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	if !IsDoltBackend(beadsDir) {
@@ -117,9 +128,6 @@ func RunDoltHealthChecks(path string) []DoctorCheck {
 			{Name: "Dolt Lock Health", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryRuntime},
 		}
 	}
-
-	// Run lock health check before opening database (it doesn't need a connection)
-	lockCheck := CheckLockHealth(path)
 
 	conn, err := openDoltConn(beadsDir)
 	if err != nil {

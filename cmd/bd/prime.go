@@ -44,7 +44,7 @@ Workflow customization:
 - Place a .beads/PRIME.md file to override the default output entirely.
 - Use --export to dump the default content for customization.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Find .beads/ directory (supports both database and JSONL-only mode)
+		// Find .beads/ directory
 		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
 			// Not in a beads project - silent exit with success
@@ -203,14 +203,14 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 
 	var closeProtocol string
 	if stealthMode || localOnly {
-		// Stealth mode or local-only: only flush to JSONL, no git operations
-		closeProtocol = "Before saying \"done\": bd sync --flush-only"
+		// Stealth mode or local-only: close issues, no git operations
+		closeProtocol = "Before saying \"done\": bd close <completed-ids>"
 	} else if ephemeral {
-		closeProtocol = "Before saying \"done\": git status → git add → bd sync → git commit (no push - ephemeral branch)"
+		closeProtocol = "Before saying \"done\": git status → git add → git commit (no push - ephemeral branch)"
 	} else if noPush {
-		closeProtocol = "Before saying \"done\": git status → git add → bd sync → git commit (push disabled - run git push manually)"
+		closeProtocol = "Before saying \"done\": git status → git add → git commit (push disabled - run git push manually)"
 	} else {
-		closeProtocol = "Before saying \"done\": git status → git add → bd sync → git commit → bd sync → git push"
+		closeProtocol = "Before saying \"done\": git status → git add → git commit → git push"
 	}
 
 	redirectNotice := getRedirectNotice(false)
@@ -246,14 +246,13 @@ func outputCLIContext(w io.Writer, stealthMode bool) error {
 	var gitWorkflowRule string
 
 	if stealthMode || localOnly {
-		// Stealth mode or local-only: only flush to JSONL, no git operations
-		closeProtocol = `[ ] bd sync --flush-only    (export beads to JSONL only)`
+		// Stealth mode or local-only: close issues, no git operations
+		closeProtocol = `[ ] bd close <id1> <id2> ...   (close completed issues)`
 		syncSection = `### Sync & Collaboration
-- ` + "`bd sync --flush-only`" + ` - Export to JSONL`
+- ` + "`bd search <query>`" + ` - Search issues by keyword`
 		completingWorkflow = `**Completing work:**
 ` + "```bash" + `
 bd close <id1> <id2> ...    # Close all completed issues at once
-bd sync --flush-only        # Export to JSONL
 ` + "```"
 		// Only show local-only note if not in stealth mode (stealth is explicit user choice)
 		if localOnly && !stealthMode {
@@ -265,54 +264,55 @@ bd sync --flush-only        # Export to JSONL
 	} else if ephemeral {
 		closeProtocol = `[ ] 1. git status              (check what changed)
 [ ] 2. git add <files>         (stage code changes)
-[ ] 3. bd sync     (pull beads updates from main)
+[ ] 3. bd dolt pull            (pull beads updates from main)
 [ ] 4. git commit -m "..."     (commit code changes)`
 		closeNote = "**Note:** This is an ephemeral branch (no upstream). Code is merged to main locally, not pushed."
 		syncSection = `### Sync & Collaboration
-- ` + "`bd sync`" + ` - Pull beads updates from main (for ephemeral branches)
-- ` + "`bd sync --status`" + ` - Check sync status without syncing`
+- ` + "`bd dolt pull`" + ` - Pull beads updates from Dolt remote
+- ` + "`bd dolt push`" + ` - Push beads to Dolt remote
+- ` + "`bd search <query>`" + ` - Search issues by keyword`
 		completingWorkflow = `**Completing work:**
 ` + "```bash" + `
 bd close <id1> <id2> ...    # Close all completed issues at once
-bd sync         # Pull latest beads from main
+bd dolt pull                # Pull latest beads from main
 git add . && git commit -m "..."  # Commit your changes
 # Merge to main when ready (local merge, not push)
 ` + "```"
-		gitWorkflowRule = "Git workflow: run `bd sync` at session end"
+		gitWorkflowRule = "Git workflow: run `bd dolt pull` at session start"
 	} else if noPush {
 		closeProtocol = `[ ] 1. git status              (check what changed)
 [ ] 2. git add <files>         (stage code changes)
-[ ] 3. bd sync                 (commit beads changes)
-[ ] 4. git commit -m "..."     (commit code)
-[ ] 5. bd sync                 (commit any new beads changes)`
+[ ] 3. git commit -m "..."     (commit code)
+[ ] 4. git push                (push when ready)`
 		closeNote = "**Note:** Push disabled via config. Run `git push` manually when ready."
 		syncSection = `### Sync & Collaboration
-- ` + "`bd sync`" + ` - Sync with git remote (run at session end)
-- ` + "`bd sync --status`" + ` - Check sync status without syncing`
+- ` + "`bd dolt push`" + ` - Push beads to Dolt remote
+- ` + "`bd dolt pull`" + ` - Pull beads from Dolt remote
+- ` + "`bd search <query>`" + ` - Search issues by keyword`
 		completingWorkflow = `**Completing work:**
 ` + "```bash" + `
 bd close <id1> <id2> ...    # Close all completed issues at once
-bd sync                     # Sync beads (push disabled)
+git add . && git commit -m "..."  # Commit code changes
 # git push                  # Run manually when ready
 ` + "```"
-		gitWorkflowRule = "Git workflow: run `bd sync` at session end (push disabled)"
+		gitWorkflowRule = "Git workflow: beads auto-commit to Dolt (push disabled)"
 	} else {
 		closeProtocol = `[ ] 1. git status              (check what changed)
 [ ] 2. git add <files>         (stage code changes)
-[ ] 3. bd sync                 (commit beads changes)
-[ ] 4. git commit -m "..."     (commit code)
-[ ] 5. bd sync                 (commit any new beads changes)
-[ ] 6. git push                (push to remote)`
+[ ] 3. git commit -m "..."     (commit code)
+[ ] 4. git push                (push to remote)`
 		closeNote = "**NEVER skip this.** Work is not done until pushed."
 		syncSection = `### Sync & Collaboration
-- ` + "`bd sync`" + ` - Sync with git remote (run at session end)
-- ` + "`bd sync --status`" + ` - Check sync status without syncing`
+- ` + "`bd dolt push`" + ` - Push beads to Dolt remote
+- ` + "`bd dolt pull`" + ` - Pull beads from Dolt remote
+- ` + "`bd search <query>`" + ` - Search issues by keyword`
 		completingWorkflow = `**Completing work:**
 ` + "```bash" + `
 bd close <id1> <id2> ...    # Close all completed issues at once
-bd sync                     # Push to remote
+git add . && git commit -m "..."  # Commit code changes
+git push                    # Push to remote
 ` + "```"
-		gitWorkflowRule = "Git workflow: hooks auto-sync, run `bd sync` at session end"
+		gitWorkflowRule = "Git workflow: beads auto-commit to Dolt, run `git push` at session end"
 	}
 
 	redirectNotice := getRedirectNotice(true)

@@ -49,22 +49,13 @@ func trackBdVersion() {
 		_ = writeLocalVersion(localVersionPath, Version) // Best effort: version tracking is advisory
 	}
 
-	// Also ensure metadata.json exists with proper defaults (for JSONL export name)
-	// but don't use it for version tracking anymore
+	// Ensure metadata.json exists with proper defaults
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
 		return
 	}
 	if cfg == nil {
-		// No config file yet - create one
 		cfg = configfile.DefaultConfig()
-
-		// Auto-detect actual JSONL file instead of using hardcoded default
-		// This prevents mismatches when metadata.json gets deleted (git clean, merge conflict, etc.)
-		if actualJSONL := findActualJSONLFile(beadsDir); actualJSONL != "" {
-			cfg.JSONLExport = actualJSONL
-		}
-
 		_ = cfg.Save(beadsDir) // Best effort
 	}
 }
@@ -148,55 +139,6 @@ func maybeShowUpgradeNotification() {
 	fmt.Println("💊 Run 'bd doctor' to verify upgrade completed cleanly")
 
 	fmt.Println()
-}
-
-// findActualJSONLFile scans .beads/ for the actual JSONL file in use.
-// Prefers issues.jsonl over beads.jsonl (canonical name), skips backups and merge artifacts.
-// Returns empty string if no JSONL file is found.
-func findActualJSONLFile(beadsDir string) string {
-	entries, err := os.ReadDir(beadsDir)
-	if err != nil {
-		return ""
-	}
-
-	var candidates []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-
-		// Must end with .jsonl
-		if !strings.HasSuffix(name, ".jsonl") {
-			continue
-		}
-
-		// Skip merge artifacts and backups
-		lowerName := strings.ToLower(name)
-		if strings.Contains(lowerName, "backup") ||
-			strings.Contains(lowerName, ".orig") ||
-			strings.Contains(lowerName, ".bak") ||
-			strings.Contains(lowerName, "~") ||
-			strings.HasPrefix(lowerName, "backup_") {
-			continue
-		}
-
-		candidates = append(candidates, name)
-	}
-
-	if len(candidates) == 0 {
-		return ""
-	}
-
-	// Prefer issues.jsonl over beads.jsonl (canonical name)
-	for _, name := range candidates {
-		if name == "issues.jsonl" {
-			return name
-		}
-	}
-
-	// Fall back to first candidate (including beads.jsonl as legacy)
-	return candidates[0]
 }
 
 // autoMigrateOnVersionBump automatically migrates the database when CLI version changes.

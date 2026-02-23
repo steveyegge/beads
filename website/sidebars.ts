@@ -20,8 +20,6 @@ const sidebars: SidebarsConfig = {
       items: [
         'core-concepts/index',
         'core-concepts/issues',
-        'core-concepts/daemon',
-        'core-concepts/jsonl-sync',
         'core-concepts/hash-ids',
       ],
     },

@@ -18,7 +18,7 @@ import (
 //
 // Wisps are ephemeral issues with Ephemeral=true in the main database.
 // They're used for patrol cycles and operational loops that shouldn't
-// be exported to JSONL (and thus not synced via git).
+// be synced via git.
 //
 // Commands:
 //   bd mol wisp list    - List all wisps in current context
@@ -33,7 +33,7 @@ When called with a proto-id argument, creates a wisp from that proto.
 When called with a subcommand (list, gc), manages existing wisps.
 
 Wisps are issues with Ephemeral=true in the main database. They're stored
-locally but NOT exported to JSONL (and thus not synced via git).
+locally but NOT synced via git.
 
 WHEN TO USE WISP vs POUR:
   wisp (vapor): Ephemeral work that auto-cleans up
@@ -109,7 +109,7 @@ var wispCreateCmd = &cobra.Command{
 	Long: `Create a wisp from a proto - sublimation from solid to vapor.
 
 This is the chemistry-inspired command for creating ephemeral work from templates.
-The resulting wisp is stored in the main database with Ephemeral=true and NOT exported to JSONL.
+The resulting wisp is stored in the main database with Ephemeral=true and NOT synced via git.
 
 Phase transition: Proto (solid) -> Wisp (vapor)
 
@@ -121,7 +121,7 @@ Use wisp for:
 
 The wisp will:
   - Be stored in main database with Ephemeral=true flag
-  - NOT be exported to JSONL (and thus not synced via git)
+  - NOT be synced via git
   - Either evaporate (burn) or condense to digest (squash)
 
 Examples:
@@ -242,7 +242,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	if dryRun {
 		fmt.Printf("\nDry run: would create wisp with %d issues from proto %s\n\n", len(subgraph.Issues), protoID)
-		fmt.Printf("Storage: main database (ephemeral=true, not exported to JSONL)\n\n")
+		fmt.Printf("Storage: main database (ephemeral=true, not synced via git)\n\n")
 		for _, issue := range subgraph.Issues {
 			newTitle := substituteVariables(issue.Title, vars)
 			fmt.Printf("  - %s (from %s)\n", newTitle, issue.ID)
@@ -250,14 +250,14 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Spawn as ephemeral in main database (Ephemeral=true, skips JSONL export)
+	// Spawn as ephemeral in main database (Ephemeral=true, not synced via git)
 	// Use wisp prefix for distinct visual recognition (see types.IDPrefixWisp)
 	result, err := spawnMolecule(ctx, store, subgraph, vars, "", actor, true, types.IDPrefixWisp)
 	if err != nil {
 		FatalError("creating wisp: %v", err)
 	}
 
-	// Wisp issues are in main db but don't trigger JSONL export (Ephemeral flag excludes them)
+	// Wisp issues are in main db but not synced via git (Ephemeral flag excludes them)
 
 	if jsonOutput {
 		type wispCreateResult struct {
@@ -270,7 +270,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("%s Created wisp: %d issues\n", ui.RenderPass("✓"), result.Created)
 	fmt.Printf("  Root issue: %s\n", result.NewEpicID)
-	fmt.Printf("  Phase: vapor (ephemeral, not exported to JSONL)\n")
+	fmt.Printf("  Phase: vapor (ephemeral, not synced via git)\n")
 	fmt.Printf("\nNext steps:\n")
 	fmt.Printf("  bd close %s.<step>       # Complete steps\n", result.NewEpicID)
 	fmt.Printf("  bd mol squash %s         # Condense to digest (promotes to persistent)\n", result.NewEpicID)
@@ -315,7 +315,7 @@ var wispListCmd = &cobra.Command{
 	Long: `List all wisps (ephemeral molecules) in the current context.
 
 Wisps are issues with Ephemeral=true in the main database. They are stored
-locally but not exported to JSONL (and thus not synced via git).
+locally but not synced via git.
 
 The list shows:
   - ID: Issue ID of the wisp

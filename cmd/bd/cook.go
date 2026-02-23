@@ -837,20 +837,14 @@ func cookFormula(ctx context.Context, s *dolt.DoltStore, f *formula.Formula, pro
 		collectDependencies(step, idMapping, &deps)
 	}
 
-	// Create all issues using batch with skip prefix validation
-	opts := storage.BatchCreateOptions{
-		SkipPrefixValidation: true, // Molecules use mol-* prefix
-		OrphanHandling:       storage.OrphanAllow,
-	}
-	if err := s.CreateIssuesWithFullOptions(ctx, issues, actor, opts); err != nil {
-		return nil, fmt.Errorf("failed to create issues: %w", err)
-	}
-
-	// Track if we need cleanup on failure
-	issuesCreated := true
-
-	// Add labels and dependencies in a transaction
+	// Create issues, labels, and dependencies in a single atomic transaction.
+	// This prevents orphaned issues if label/dependency creation fails.
 	err := transact(ctx, s, fmt.Sprintf("bd: cook formula %s", protoID), func(tx storage.Transaction) error {
+		// Create all issues
+		if err := tx.CreateIssues(ctx, issues, actor); err != nil {
+			return fmt.Errorf("failed to create issues: %w", err)
+		}
+
 		// Add labels
 		for _, l := range labels {
 			if err := tx.AddLabel(ctx, l.issueID, l.label, actor); err != nil {
@@ -869,18 +863,6 @@ func cookFormula(ctx context.Context, s *dolt.DoltStore, f *formula.Formula, pro
 	})
 
 	if err != nil {
-		// Clean up: delete the issues we created since labels/deps failed
-		if issuesCreated {
-			cleanupErr := transact(ctx, s, "bd: cook cleanup failed formula", func(tx storage.Transaction) error {
-				for i := len(issues) - 1; i >= 0; i-- {
-					_ = tx.DeleteIssue(ctx, issues[i].ID) // Best effort cleanup
-				}
-				return nil
-			})
-			if cleanupErr != nil {
-				return nil, fmt.Errorf("%w (cleanup also failed: %v)", err, cleanupErr)
-			}
-		}
 		return nil, err
 	}
 

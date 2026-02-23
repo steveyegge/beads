@@ -45,8 +45,8 @@ func TestOnboardCommand(t *testing.T) {
 		if !strings.Contains(agentsContent, "bd close") {
 			t.Error("agentsContent should include quick reference to 'bd close'")
 		}
-		if !strings.Contains(agentsContent, "bd sync") {
-			t.Error("agentsContent should include quick reference to 'bd sync'")
+		if !strings.Contains(agentsContent, "bd dolt push") {
+			t.Error("agentsContent should include quick reference to 'bd dolt push'")
 		}
 
 		// Verify it's actually minimal (less than 500 chars)

@@ -45,26 +45,10 @@ Thumbs.db
 .beads/bd.sock
 .beads/.exclusive-lock
 
-# .beads directory files (keep JSONL only)
+# .beads directory files
 .beads/.gitignore
 .beads/db.sqlite
 .beads/bd.db
-
-# Keep JSONL exports (source of truth for git)
-!.beads/*.jsonl
-
-# 3-way merge snapshot files (local-only, for deletion tracking)
-.beads/beads.base.jsonl
-.beads/beads.left.jsonl
-.beads/beads.base.meta.json
-.beads/beads.left.meta.json
-
-# Note: .beads/deletions.jsonl is intentionally NOT ignored
-# It must be tracked in git for cross-clone deletion propagation (bd-imj)
-
-# Git merge driver temp files (created during conflicts with numbered extensions)
-.beads/*.json[0-9]
-.beads/*.jsonl[0-9]
 
 # Ignore nix result
 result
@@ -83,7 +67,6 @@ Formula/bd.rb
 
 # Git worktrees
 .worktrees/
-.beads/pollution-backup.jsonl
 
 # npm package - exclude downloaded binaries and archives
 npm-package/bin/bd
@@ -132,7 +115,6 @@ state.json
 output
 bd_test
 .beads/export-state/
-.beads/issues.jsonl
 .beads/beads.db
 
 # Gas Town (added by gt)

@@ -1,13 +1,11 @@
-//go:build cgo
-
 package dolt
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"

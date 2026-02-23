@@ -329,20 +329,6 @@ func checkMetadataConfigValues(repoPath string) []string {
 		}
 	}
 
-	// Validate jsonl_export filename
-	if cfg.JSONLExport != "" {
-		switch cfg.JSONLExport {
-		case "deletions.jsonl", "interactions.jsonl", "molecules.jsonl":
-			issues = append(issues, fmt.Sprintf("metadata.json jsonl_export: %q is a system file and should not be configured as a JSONL export (expected issues.jsonl)", cfg.JSONLExport))
-		}
-		if strings.Contains(cfg.JSONLExport, string(os.PathSeparator)) || strings.Contains(cfg.JSONLExport, "/") {
-			issues = append(issues, fmt.Sprintf("metadata.json jsonl_export: %q should be a filename, not a path", cfg.JSONLExport))
-		}
-		if !strings.HasSuffix(cfg.JSONLExport, ".jsonl") {
-			issues = append(issues, fmt.Sprintf("metadata.json jsonl_export: %q should have .jsonl extension", cfg.JSONLExport))
-		}
-	}
-
 	// Validate deletions_retention_days
 	if cfg.DeletionsRetentionDays < 0 {
 		issues = append(issues, fmt.Sprintf("metadata.json deletions_retention_days: %d is invalid (must be >= 0)", cfg.DeletionsRetentionDays))

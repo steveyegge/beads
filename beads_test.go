@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,7 +13,16 @@ import (
 	"github.com/steveyegge/beads"
 )
 
+func skipIfNoDolt(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("Dolt not installed, skipping test")
+	}
+}
+
 func TestOpen(t *testing.T) {
+	skipIfNoDolt(t)
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test-dolt")
 
@@ -40,24 +50,6 @@ func TestFindBeadsDir(t *testing.T) {
 	dir := beads.FindBeadsDir()
 	// Just verify it doesn't panic
 	_ = dir
-}
-
-func TestFindJSONLPath(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-
-	// Create the directory
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		t.Fatalf("failed to create directory: %v", err)
-	}
-
-	jsonlPath := beads.FindJSONLPath(dbPath)
-	// bd-6xd: Default is now issues.jsonl (canonical name)
-	expectedPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
-
-	if jsonlPath != expectedPath {
-		t.Errorf("FindJSONLPath returned %s, expected %s", jsonlPath, expectedPath)
-	}
 }
 
 func TestOpenFromConfig_Embedded(t *testing.T) {
@@ -143,7 +135,8 @@ func TestOpenFromConfig_ServerModeFailsWithoutServer(t *testing.T) {
 }
 
 func TestOpenFromConfig_NoMetadata(t *testing.T) {
-	// Missing metadata.json should use defaults (embedded mode)
+	skipIfNoDolt(t)
+	// Missing metadata.json should use defaults (server mode)
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {

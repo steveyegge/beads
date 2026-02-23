@@ -124,6 +124,9 @@ type workspace struct {
 
 func newWorkspace(t *testing.T) *workspace {
 	t.Helper()
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("skipping: dolt not installed")
+	}
 	bd := buildBD(t)
 	dir := t.TempDir()
 	w := &workspace{dir: dir, bd: bd, t: t}

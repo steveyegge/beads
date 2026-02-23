@@ -736,8 +736,28 @@ func (s *DoltStore) DetectCycles(ctx context.Context) ([][]*types.Issue, error) 
 	return cycles, nil
 }
 
-// IsBlocked checks if an issue has open blockers
+// IsBlocked checks if an issue has open blockers.
+// Uses computeBlockedIDs for authoritative blocked status, consistent with
+// GetReadyWork. This covers all blocking dependency types (blocks, waits-for)
+// with full gate evaluation semantics. (GH#1524)
 func (s *DoltStore) IsBlocked(ctx context.Context, issueID string) (bool, []string, error) {
+	// Use computeBlockedIDs as the single source of truth for blocked status.
+	// This ensures the close guard is consistent with ready work calculation.
+	_, err := s.computeBlockedIDs(ctx)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to compute blocked IDs: %w", err)
+	}
+
+	s.cacheMu.Lock()
+	isBlocked := s.blockedIDsCacheMap[issueID]
+	s.cacheMu.Unlock()
+
+	if !isBlocked {
+		return false, nil, nil
+	}
+
+	// Issue is blocked — gather blocker IDs for display.
+	// Check direct 'blocks' dependencies first.
 	rows, err := s.queryContext(ctx, `
 		SELECT d.depends_on_id
 		FROM dependencies d
@@ -749,18 +769,41 @@ func (s *DoltStore) IsBlocked(ctx context.Context, issueID string) (bool, []stri
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to check blockers: %w", err)
 	}
-	defer rows.Close()
 
 	var blockers []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
 			return false, nil, err
 		}
 		blockers = append(blockers, id)
 	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return false, nil, err
+	}
 
-	return len(blockers) > 0, blockers, rows.Err()
+	// If blocked by non-'blocks' dependency (e.g., waits-for gate),
+	// include the waits-for spawner IDs so callers get a non-empty list.
+	if len(blockers) == 0 {
+		wfRows, err := s.queryContext(ctx, `
+			SELECT depends_on_id FROM dependencies
+			WHERE issue_id = ? AND type = 'waits-for'
+		`, issueID)
+		if err == nil {
+			for wfRows.Next() {
+				var id string
+				if err := wfRows.Scan(&id); err != nil {
+					break
+				}
+				blockers = append(blockers, id+" (waits-for)")
+			}
+			_ = wfRows.Close()
+		}
+	}
+
+	return true, blockers, nil
 }
 
 // GetNewlyUnblockedByClose finds issues that become unblocked when an issue is closed

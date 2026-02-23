@@ -1,66 +1,57 @@
-# Beads v0.53.0 — 11,000 Lines Deleted, Zero Features Lost
+# Beads v0.55.4 - v0.56.1 — The Great Purge
 
-Beads v0.53.0 is the release where the sync pipeline finally gets out of the way. The entire JSONL intermediary layer is gone, replaced by native Dolt push/pull through git remotes. The result is a smaller, faster, more reliable `bd` with fewer moving parts to break.
+**February 20 - February 23, 2026**
 
-## The Big Change: Dolt-in-Git Replaces the JSONL Pipeline
+Beads v0.56 is a structural release. Three major subsystems have been removed entirely, the binary is a quarter of its former size, and everything runs on Dolt natively. If v0.53 deleted the sync pipeline, v0.56 finishes the job by removing the last three legacy subsystems: the embedded Dolt driver, the SQLite ephemeral store, and the remaining JSONL plumbing.
 
-Since v0.50, Dolt has been the default backend. But syncing between repos still went through an awkward dance: export to JSONL, commit to a git sync branch, push, pull on the other side, import back into Dolt. It worked, but it was ~11,000 lines of worktree management, snapshot diffing, 3-way merge logic, deletion tracking, and git hook plumbing.
+## 168MB to 41MB
 
-All of that is gone. `bd sync` now calls Dolt's native `DOLT_PUSH` and `DOLT_PULL` stored procedures directly through git remotes. Your Dolt database travels inside your git repo the same way it always did, but without the JSONL translation layer in between.
+The headline number tells the story. The embedded Dolt driver (`dolthub/driver`) pulled in the entire wazero WebAssembly runtime, which added ~127MB of binary weight and a 2-second JIT compilation penalty on every invocation on Linux and Windows. Beads now requires an external Dolt SQL server (`bd dolt start` or `dolt sql-server`), and in exchange, startup is instant and the binary ships at ~41MB across all platforms.
 
-What was removed:
-- `internal/syncbranch/` -- 5,720 lines of worktree management
-- `snapshot_manager`, `deletion_tracking`, and the 3-way merge engine
-- Doctor sync-branch checks and fixes
-- Legacy daemon infrastructure (lockfile activity signals, orchestrator)
-- The dead `bd repair` command
+The CGO build-tag bifurcation that split the codebase into `cgo` and `nocgo` variants is also gone. One build path, one binary, everywhere.
 
-Manual `bd export` and `bd import` remain available as escape hatches.
+## Wisps Move to Dolt
 
-## New: First-Class Dolt Server Commands
+The SQLite ephemeral store was always a workaround — wisps needed fast, uncommitted writes that wouldn't bloat Dolt history. The solution is `dolt_ignore`: a dedicated `wisps` table that Dolt tracks locally but excludes from push/pull. Wisps get the same query engine as regular issues without the sync overhead.
 
-Managing the Dolt server used to mean knowing the right incantation. Now there are proper commands:
+Run `bd migrate wisps` to move existing ephemeral data from SQLite to the new table.
 
-- **`bd dolt start` / `bd dolt stop`** -- explicit server lifecycle management
-- **`bd dolt commit`** -- commit your Dolt data without dropping into SQL
-- **Server mode without CGO** -- `OpenFromConfig()` is now exported, so server-mode connections work on pure-Go builds
+## JSONL Is Fully Gone
 
-## New: Hosted Dolt Support
+The remaining ~500 JSONL references have been purged. `bd sync` is a deprecated no-op. JSONL bootstrap, JSONL recovery in `bd doctor`, JSONL-based restore — all removed. The fork protection code that checked whether you were using JSONL or Dolt is dead code now (commit `9da90394`). Dolt-native push/pull via git remotes is the only sync path.
 
-Beads now supports connecting to Hosted Dolt instances with TLS, authentication, and explicit branch configuration. If your team runs a shared Dolt server, `bd` can talk to it directly.
+## New Capabilities
 
-## New: Storage Interface
+**Metadata is queryable.** `bd list --metadata-field key=value`, `bd search`, and `bd query` all support metadata filters now. `bd show` and `bd list --long` display metadata in human-readable format rather than hiding it in JSON blobs. PRs [#1908](https://github.com/steveyegge/beads/pull/1908) and [#1905](https://github.com/steveyegge/beads/pull/1905).
 
-The `Storage` interface decouples command logic from the concrete `DoltStore` implementation. This is groundwork for future flexibility -- testing with mock stores, alternate backends, or wrapping the store with middleware.
+**OpenTelemetry instrumentation** is available as an opt-in. Hook and storage operations emit OTLP traces for debugging complex molecule execution flows. PR [#1940](https://github.com/steveyegge/beads/pull/1940).
 
-## Quality-of-Life Additions
+**Transaction infrastructure** wraps Dolt operations in proper transactions with isolation, retry, and batch semantics. `bd mol bond`, `bd mol squash`, and `bd mol cook` are now atomic — no more half-created molecules on failure. Commit messages flow through to Dolt history, making `dolt log` useful for auditing what `bd` did and when.
 
-- **`bd mol wisp gc --closed`** -- bulk purge closed wisps in one shot
-- **`--no-parent` on `bd list`** -- filter out child issues to see only top-level work
-- **`bd ready` pretty format** -- improved default output with priority sorting, truncation footer, and parent epic context
-- **`bd compact`** -- Dolt database compaction support
-- **Codecov integration** -- component-based coverage tracking in CI
+**Standalone formula execution** lets `bd mol wisp` run expansion formulas directly, without needing a parent molecule. PR [#1903](https://github.com/steveyegge/beads/pull/1903).
 
-## Important Fixes
+## Community Contributions
 
-**Pre-commit deadlock resolved.** If you hit hangs on `git commit` with embedded Dolt, this was a lock ordering issue in the hook path. Fixed in #1841/#1843.
+This release includes work from 15+ contributors. Notable community fixes: Joseph Turian contributed metadata normalization, ready ordering, doctor improvements, and gosec compliance. Xexr fixed cross-expansion dependency propagation in `bd mol cook` and parent-child display in `bd list`. Nelson Melo fixed Dolt comment persistence. Marco Del Pin tackled early CGO detection. EmreEG added backend-aware deep validation to `bd doctor`. ZenchantLive cleaned up stale daemon references. Wenjix fixed the Jira API v3 search endpoint. Mike Macpherson removed stale `--from-main` references.
 
-**`bd doctor --fix` no longer hangs.** The fix subcommand was spawning a subprocess that competed for the same database lock. It now runs in-process.
+## 30+ Bug Fixes
 
-**Dolt lock errors surfaced.** Previously, lock contention could produce silent empty results. Now you get an actionable error message telling you exactly what is stuck and how to fix it. `bd doctor` also detects stale `dolt-access.lock` and noms `LOCK` files.
+The full list is in [CHANGELOG.md](CHANGELOG.md), but highlights: `bd ready` now respects SortPolicy and correctly handles `waits-for` dependencies. The `--limit` flag on `bd list` applies after `--sort` (not before). Doctor no longer false-positives on noms LOCK files — it uses `flock` probes instead of file existence. Hook shim templates use the correct `bd hooks run` command. N+1 query patterns in dependency/label loading are batched with per-invocation caching (PR [#1874](https://github.com/steveyegge/beads/pull/1874)).
 
-**Other fixes:** `BEADS_DIR` respected in config loading, `Unknown database` retry after `CREATE DATABASE`, Windows `Expand-Archive` module conflict resolved, `molecule` recognized as a core type, formula `VarDef` correctly distinguishes "no default" from `default=""`.
+## Breaking Changes
+
+**Embedded Dolt mode is removed.** If you were running without an external Dolt server, you now need one: `bd dolt start` launches a local instance. This is the only breaking change, and `bd doctor` will detect the situation and guide you.
+
+**`bd sync` is a no-op.** It prints a deprecation notice. Use `dolt push`/`dolt pull` directly, or configure git remotes for automatic sync.
 
 ## Upgrade
 
-```
+```bash
 brew upgrade bd
+# or
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 ```
 
-Or via the install script:
+After upgrading, run `bd migrate wisps` if you have existing ephemeral data, and ensure you have a Dolt server running (`bd dolt start`).
 
-```
-curl -fsSL https://beads.sh/install | sh
-```
-
-Existing projects need no migration -- the JSONL pipeline removal is purely internal. If you had a `sync.git-remote` configured, Dolt-in-Git will use it automatically.
+Full changelog: [CHANGELOG.md](CHANGELOG.md) | GitHub release: [v0.56.1](https://github.com/steveyegge/beads/releases/tag/v0.56.1)

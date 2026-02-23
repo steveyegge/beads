@@ -66,28 +66,11 @@ func CheckStaleLockFiles(path string) DoctorCheck {
 		}
 	}
 
-	// Check Dolt internal LOCK files (noms layer filesystem lock).
-	// These live at .beads/dolt/<database>/.dolt/noms/LOCK and are created
-	// by the embedded Dolt engine. If a process crashes without closing
-	// the embedded connector, the LOCK file persists and blocks future opens.
-	doltDir := filepath.Join(beadsDir, "dolt")
-	if dbEntries, err := os.ReadDir(doltDir); err == nil {
-		for _, dbEntry := range dbEntries {
-			if !dbEntry.IsDir() {
-				continue
-			}
-			nomsLock := filepath.Join(doltDir, dbEntry.Name(), ".dolt", "noms", "LOCK")
-			if info, err := os.Stat(nomsLock); err == nil {
-				age := time.Since(info.ModTime())
-				if age > 5*time.Minute {
-					lockName := fmt.Sprintf("dolt/%s/.dolt/noms/LOCK", dbEntry.Name())
-					staleFiles = append(staleFiles, lockName)
-					details = append(details, fmt.Sprintf("%s: age %s (Dolt internal lock from crashed process)",
-						lockName, age.Round(time.Second)))
-				}
-			}
-		}
-	}
+	// Note: Dolt internal noms LOCK files (.beads/dolt/<db>/.dolt/noms/LOCK)
+	// are NOT checked here. These files are created by the embedded Dolt engine
+	// and are never deleted, even after a clean close. Age-based detection
+	// produces false positives because the file persists indefinitely.
+	// Use CheckLockHealth() (which probes flock state) instead. (GH#1981)
 
 	// Check startup lock (bd.sock.startlock)
 	// Look for any .startlock files in beadsDir

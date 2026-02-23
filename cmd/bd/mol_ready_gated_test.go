@@ -26,7 +26,7 @@ func setupGatedTestDB(t *testing.T) (*dolt.DoltStore, func()) {
 	store, err := dolt.New(context.Background(), &dolt.Config{Path: testDB})
 	if err != nil {
 		os.RemoveAll(tmpDir)
-		t.Fatalf("Failed to create test database: %v", err)
+		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
 
 	// Set issue_prefix (required for beads)

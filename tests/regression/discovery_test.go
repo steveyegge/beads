@@ -4,7 +4,7 @@
 // on 2026-02-22. These tests exercise the candidate binary ONLY (not differential)
 // since bd export was removed from main (BUG-1 in DISCOVERY.md).
 //
-// These tests require a running Dolt server on 127.0.0.1:3307.
+// TestMain starts an isolated Dolt server on a dynamic port (via BEADS_DOLT_PORT).
 // Each test uses a unique prefix to avoid cross-contamination (BUG-6).
 package regression
 

@@ -21,4 +21,5 @@ if ! command -v bd >/dev/null 2>&1; then
     exit 0
 fi
 
+export BD_GIT_HOOK=1
 exec bd hooks run prepare-commit-msg "$@"

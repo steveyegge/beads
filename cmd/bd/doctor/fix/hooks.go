@@ -553,7 +553,8 @@ func GitHooks(path string) error {
 	}
 
 	// Build command arguments
-	args := []string{"hooks", "install"}
+	// Use --force to cleanly replace outdated hooks without creating backups (GH#1466)
+	args := []string{"hooks", "install", "--force"}
 
 	// If external hook managers detected, use --chain to preserve them
 	if len(externalManagers) > 0 {

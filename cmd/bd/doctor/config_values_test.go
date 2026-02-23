@@ -132,8 +132,7 @@ func TestCheckMetadataConfigValues(t *testing.T) {
 	// Test with valid metadata (Dolt backend)
 	t.Run("valid metadata", func(t *testing.T) {
 		metadataContent := `{
-  "database": "dolt",
-  "jsonl_export": "issues.jsonl"
+  "database": "dolt"
 }`
 		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
 			t.Fatalf("failed to write metadata.json: %v", err)
@@ -148,7 +147,6 @@ func TestCheckMetadataConfigValues(t *testing.T) {
 	t.Run("valid dolt metadata", func(t *testing.T) {
 		metadataContent := `{
   "database": "dolt",
-  "jsonl_export": "issues.jsonl",
   "backend": "dolt"
 }`
 		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
@@ -164,8 +162,7 @@ func TestCheckMetadataConfigValues(t *testing.T) {
 	// Test with path in database field
 	t.Run("path in database field", func(t *testing.T) {
 		metadataContent := `{
-  "database": "/path/to/beads.db",
-  "jsonl_export": "issues.jsonl"
+  "database": "/path/to/beads.db"
 }`
 		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
 			t.Fatalf("failed to write metadata.json: %v", err)
@@ -174,37 +171,6 @@ func TestCheckMetadataConfigValues(t *testing.T) {
 		issues := checkMetadataConfigValues(tmpDir)
 		if len(issues) == 0 {
 			t.Error("expected issues for path in database field")
-		}
-	})
-
-	// Test with wrong extension for jsonl
-	t.Run("wrong jsonl extension", func(t *testing.T) {
-		metadataContent := `{
-  "database": "beads.db",
-  "jsonl_export": "issues.json"
-}`
-		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
-			t.Fatalf("failed to write metadata.json: %v", err)
-		}
-
-		issues := checkMetadataConfigValues(tmpDir)
-		if len(issues) == 0 {
-			t.Error("expected issues for wrong jsonl extension")
-		}
-	})
-
-	t.Run("jsonl_export cannot be system file", func(t *testing.T) {
-		metadataContent := `{
-  "database": "beads.db",
-  "jsonl_export": "interactions.jsonl"
-}`
-		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
-			t.Fatalf("failed to write metadata.json: %v", err)
-		}
-
-		issues := checkMetadataConfigValues(tmpDir)
-		if len(issues) == 0 {
-			t.Error("expected issues for system jsonl_export")
 		}
 	})
 }

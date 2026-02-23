@@ -7,7 +7,7 @@ type OrphanHandling string
 const (
 	// OrphanStrict fails import on missing parent (safest)
 	OrphanStrict OrphanHandling = "strict"
-	// OrphanResurrect auto-resurrects missing parents from JSONL history
+	// OrphanResurrect auto-resurrects missing parents from database history
 	OrphanResurrect OrphanHandling = "resurrect"
 	// OrphanSkip skips orphaned issues with warning
 	OrphanSkip OrphanHandling = "skip"

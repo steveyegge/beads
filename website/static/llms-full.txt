@@ -49,7 +49,7 @@ bd ready
 |---------|-------------|
 | **Issues** | Work items with priorities, types, labels, and dependencies |
 | **Dependencies** | `blocks`, `parent-child`, `discovered-from`, `related` |
-| **Daemon** | Background process for auto-sync and performance |
+| **Dolt Server** | Database server for multi-writer access and performance |
 | **Formulas** | Declarative workflow templates (TOML or JSON) |
 | **Molecules** | Work graphs with parent-child relationships |
 | **Gates** | Async coordination primitives (human, timer, GitHub) |
@@ -166,6 +166,54 @@ This creates/updates `.aider.conf.yml` with beads context.
 bd setup aider --check
 ```
 
+## GitHub Copilot
+
+For VS Code with GitHub Copilot, use the MCP server:
+
+```bash
+# Install MCP server
+uv tool install beads-mcp
+```
+
+Create `.vscode/mcp.json` in your project:
+
+```json
+{
+  "servers": {
+    "beads": {
+      "command": "beads-mcp"
+    }
+  }
+}
+```
+
+**For all projects:** Add to VS Code user-level MCP config:
+
+| Platform | Path |
+|----------|------|
+| macOS | `~/Library/Application Support/Code/User/mcp.json` |
+| Linux | `~/.config/Code/User/mcp.json` |
+| Windows | `%APPDATA%\Code\User\mcp.json` |
+
+```json
+{
+  "servers": {
+    "beads": {
+      "command": "beads-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Initialize beads and reload VS Code:
+
+```bash
+bd init --quiet
+```
+
+See [GitHub Copilot Integration](/integrations/github-copilot) for detailed setup.
+
 ## Context Injection with `bd prime`
 
 All integrations use `bd prime` to inject context:
@@ -238,8 +286,8 @@ Run a complete health check:
 # Check version
 bd version
 
-# Check daemon
-bd info
+# Check project health
+bd doctor
 
 # Check hooks
 bd hooks status
@@ -282,6 +330,31 @@ The installer will:
 - Install via `go install` if Go is available
 - Fall back to building from source if needed
 - Guide you through PATH setup if necessary
+
+## Build Dependencies (go install / from source)
+
+If you install via `go install` or build from source, you need system dependencies for CGO:
+
+macOS (Homebrew):
+```bash
+brew install icu4c zstd
+```
+
+Linux (Debian/Ubuntu):
+```bash
+sudo apt-get install -y libicu-dev libzstd-dev
+```
+
+Linux (Fedora/RHEL):
+```bash
+sudo dnf install -y libicu-devel libzstd-devel
+```
+
+If you see `unicode/uregex.h` missing on macOS, `icu4c` is keg-only. Use:
+```bash
+ICU_PREFIX="$(brew --prefix icu4c)"
+CGO_CFLAGS="-I${ICU_PREFIX}/include" CGO_CPPFLAGS="-I${ICU_PREFIX}/include" CGO_LDFLAGS="-L${ICU_PREFIX}/lib" go install github.com/steveyegge/beads/cmd/bd@latest
+```
 
 ## Platform-Specific Installation
 
@@ -350,10 +423,14 @@ Beads ships with native Windows support—no MSYS or MinGW required.
 irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
 ```
 
+The script installs a prebuilt Windows release if available. Go is only required for `go install` or building from source.
+
 **Via go install**:
 ```pwsh
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
+
+If you see `unicode/uregex.h` missing while building, use the PowerShell install script instead.
 
 ## IDE and Editor Integrations
 
@@ -446,6 +523,18 @@ CGO_ENABLED=1 go install github.com/steveyegge/beads/cmd/bd@latest
 
 ## Updating bd
 
+### Quick install script (macOS/Linux/FreeBSD)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+```
+
+### PowerShell installer (Windows)
+
+```pwsh
+irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
+```
+
 ### Homebrew
 
 ```bash
@@ -457,6 +546,8 @@ brew upgrade beads
 ```bash
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
+
+For post-upgrade steps (hooks, migrations), see [Upgrading](/getting-started/upgrading).
 
 ## Next Steps
 
@@ -483,6 +574,9 @@ First time in a repository:
 # Basic setup
 bd init
 
+# Dolt backend (version-controlled SQL database)
+bd init --backend dolt
+
 # For AI agents (non-interactive)
 bd init --quiet
 
@@ -501,7 +595,11 @@ The wizard will:
 - Import existing issues from git (if any)
 - Prompt to install git hooks (recommended)
 - Prompt to configure git merge driver (recommended)
-- Auto-start daemon for sync
+
+Notes:
+- SQLite backend stores data in `.beads/beads.db`.
+- Dolt backend stores data in `.beads/dolt/` and records `"database": "dolt"` in `.beads/metadata.json`.
+- Dolt backend uses a Dolt server for database access (`bd dolt start/stop`).
 
 ## Your First Issues
 
@@ -643,6 +741,30 @@ bd info --whats-new --json  # Machine-readable
 
 ## Upgrading
 
+Use the command that matches your install method.
+
+| Install method | Platforms | Command |
+|---|---|---|
+| Quick install script | macOS, Linux, FreeBSD | `curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh \| bash` |
+| PowerShell installer | Windows | `irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 \| iex` |
+| Homebrew | macOS, Linux | `brew upgrade beads` |
+| go install | macOS, Linux, FreeBSD, Windows | `go install github.com/steveyegge/beads/cmd/bd@latest` |
+| npm | macOS, Linux, Windows | `npm update -g @beads/bd` |
+| bun | macOS, Linux, Windows | `bun install -g --trust @beads/bd` |
+| From source (Unix shell) | macOS, Linux, FreeBSD | `git pull && go build -o bd ./cmd/bd` |
+
+### Quick install script (macOS/Linux/FreeBSD)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+```
+
+### PowerShell installer (Windows)
+
+```pwsh
+irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
+```
+
 ### Homebrew
 
 ```bash
@@ -666,7 +788,7 @@ sudo mv bd /usr/local/bin/
 
 ## After Upgrading
 
-**Important:** After upgrading, update your hooks and restart daemons:
+**Important:** After upgrading, update your hooks:
 
 ```bash
 # 1. Check what changed
@@ -675,11 +797,11 @@ bd info --whats-new
 # 2. Update git hooks to match new version
 bd hooks install
 
-# 3. Restart all daemons
-bd daemons killall
-
-# 4. Check for any outdated hooks
+# 3. Check for any outdated hooks
 bd info  # Shows warnings if hooks are outdated
+
+# 4. If using Dolt backend, restart the server
+bd dolt stop && bd dolt start
 ```
 
 **Why update hooks?** Git hooks are versioned with bd. Outdated hooks may miss new auto-sync features or bug fixes.
@@ -702,28 +824,7 @@ bd migrate
 bd migrate --cleanup --yes
 ```
 
-## Daemon Version Mismatches
-
-If you see daemon version mismatch warnings:
-
-```bash
-# List all running daemons
-bd daemons list --json
-
-# Check for version mismatches
-bd daemons health --json
-
-# Restart all daemons with new version
-bd daemons killall --json
-```
-
 ## Troubleshooting Upgrades
-
-### Old daemon still running
-
-```bash
-bd daemons killall
-```
 
 ### Hooks out of date
 
@@ -788,13 +889,13 @@ Four types of relationships:
 | `discovered-from` | Track issues found during work | No |
 | `related` | Soft relationship | No |
 
-### Daemon
+### Dolt Server Mode
 
-Background process per workspace:
-- Auto-starts on first command
-- Handles auto-sync with 5s debounce
-- Socket at `.beads/bd.sock`
-- Manage with `bd daemons` commands
+Dolt provides the database backend for beads:
+- Start with `bd dolt start`
+- Handles auto-commit and sync
+- Logs available at `.beads/dolt/sql-server.log`
+- Check health with `bd doctor`
 
 ### JSONL Sync
 
@@ -819,174 +920,9 @@ Declarative workflow templates:
 ## Navigation
 
 - [Issues & Dependencies](/core-concepts/issues)
-- [Daemon Architecture](/core-concepts/daemon)
+- [Dolt Server Mode](/core-concepts/dolt-server)
 - [JSONL Sync](/core-concepts/jsonl-sync)
 - [Hash-based IDs](/core-concepts/hash-ids)
-
-</document>
-
-<document path="docs/core-concepts/daemon.md">
-
-
-# Daemon Architecture
-
-Beads runs a background daemon for auto-sync and performance.
-
-## Overview
-
-Each workspace gets its own daemon process:
-- Auto-starts on first `bd` command
-- Handles database ↔ JSONL synchronization
-- Listens on `.beads/bd.sock` (Unix) or `.beads/bd.pipe` (Windows)
-- Version checking prevents mismatches after upgrades
-
-## How It Works
-
-```
-CLI Command
-    ↓
-RPC to Daemon
-    ↓
-Daemon executes
-    ↓
-Auto-sync to JSONL (5s debounce)
-```
-
-Without daemon, commands access the database directly (slower, no auto-sync).
-
-## Managing Daemons
-
-```bash
-# List all running daemons
-bd daemons list
-bd daemons list --json
-
-# Check health and version mismatches
-bd daemons health
-bd daemons health --json
-
-# View daemon logs
-bd daemons logs . -n 100
-
-# Restart all daemons
-bd daemons killall
-bd daemons killall --json
-```
-
-## Daemon Info
-
-```bash
-bd info
-```
-
-Shows:
-- Daemon status (running/stopped)
-- Daemon version vs CLI version
-- Socket location
-- Auto-sync status
-
-## Disabling Daemon
-
-Use `--no-daemon` flag to bypass the daemon:
-
-```bash
-bd --no-daemon ready
-bd --no-daemon list
-```
-
-**When to disable:**
-- Git worktrees (required)
-- CI/CD pipelines
-- Resource-constrained environments
-- Debugging sync issues
-
-## Event-Driven Mode (Experimental)
-
-Event-driven mode replaces 5-second polling with instant reactivity:
-
-```bash
-# Enable globally
-export BEADS_DAEMON_MODE=events
-bd daemons killall  # Restart to apply
-```
-
-**Benefits:**
-- Less than 500ms latency (vs 5s polling)
-- ~60% less CPU usage
-- Instant sync after changes
-
-**How to verify:**
-```bash
-bd info | grep "daemon mode"
-```
-
-## Troubleshooting
-
-### Daemon not starting
-
-```bash
-# Check if socket exists
-ls -la .beads/bd.sock
-
-# Try direct mode
-bd --no-daemon info
-
-# Restart daemon
-bd daemons killall
-bd info
-```
-
-### Version mismatch
-
-After upgrading bd:
-
-```bash
-bd daemons killall
-bd info  # Should show matching versions
-```
-
-### Sync not happening
-
-```bash
-# Force sync
-bd sync
-
-# Check daemon logs
-bd daemons logs . -n 50
-
-# Verify git status
-git status .beads/
-```
-
-### Port/socket conflicts
-
-```bash
-# Kill all daemons
-bd daemons killall
-
-# Remove stale socket
-rm -f .beads/bd.sock
-
-# Restart
-bd info
-```
-
-## Configuration
-
-Daemon behavior can be configured:
-
-```bash
-# Set sync debounce interval
-bd config set daemon.sync_interval 10s
-
-# Disable auto-start
-bd config set daemon.auto_start false
-
-# Set log level
-bd config set daemon.log_level debug
-```
-
-See [Configuration](/reference/configuration) for all options.
 
 </document>
 
@@ -1302,185 +1238,6 @@ bd list --status open --priority 1 --type bug --json
 
 </document>
 
-<document path="docs/core-concepts/jsonl-sync.md">
-
-
-# JSONL Sync
-
-How beads synchronizes issues across git.
-
-## The Magic
-
-Beads uses a dual-storage architecture:
-
-```
-SQLite DB (.beads/beads.db, gitignored)
-    ↕ auto-sync (5s debounce)
-JSONL (.beads/issues.jsonl, git-tracked)
-    ↕ git push/pull
-Remote JSONL (shared across machines)
-```
-
-**Why this design?**
-- SQLite for fast local queries
-- JSONL for git-friendly versioning
-- Automatic sync keeps them aligned
-
-## Auto-Sync Behavior
-
-### Export (SQLite → JSONL)
-
-Triggers:
-- Any database change
-- After 5 second debounce (batches multiple changes)
-- Manual `bd sync`
-
-```bash
-# Force immediate export
-bd sync
-
-# Check what would be exported
-bd export --dry-run
-```
-
-### Import (JSONL → SQLite)
-
-Triggers:
-- After `git pull` (via git hooks)
-- When JSONL is newer than database
-- Manual `bd import`
-
-```bash
-# Force import
-bd import -i .beads/issues.jsonl
-
-# Preview import
-bd import -i .beads/issues.jsonl --dry-run
-```
-
-## Git Hooks
-
-Install hooks for seamless sync:
-
-```bash
-bd hooks install
-```
-
-Hooks installed:
-- **pre-commit** - Exports to JSONL before commit
-- **post-merge** - Imports from JSONL after pull
-- **pre-push** - Ensures sync before push
-
-## Manual Sync
-
-```bash
-# Full sync cycle: export + commit + push
-bd sync
-
-# Just export
-bd export
-
-# Just import
-bd import -i .beads/issues.jsonl
-```
-
-## Conflict Resolution
-
-When JSONL conflicts occur during git merge:
-
-### With Merge Driver (Recommended)
-
-The beads merge driver handles JSONL conflicts automatically:
-
-```bash
-# Install merge driver
-bd init  # Prompts for merge driver setup
-```
-
-The driver:
-- Merges non-conflicting changes
-- Preserves both sides for real conflicts
-- Uses latest timestamp for same-issue edits
-
-### Without Merge Driver
-
-Manual resolution:
-
-```bash
-# After merge conflict
-git checkout --ours .beads/issues.jsonl   # or --theirs
-bd import -i .beads/issues.jsonl
-bd sync
-```
-
-## Orphan Handling
-
-When importing issues with missing parents:
-
-```bash
-# Configure orphan handling
-bd config set import.orphan_handling allow     # Import anyway (default)
-bd config set import.orphan_handling resurrect # Restore deleted parents
-bd config set import.orphan_handling skip      # Skip orphans
-bd config set import.orphan_handling strict    # Fail on orphans
-```
-
-Per-command override:
-
-```bash
-bd import -i issues.jsonl --orphan-handling resurrect
-```
-
-## Deletion Tracking
-
-Deleted issues are tracked in `.beads/deletions.jsonl`:
-
-```bash
-# Delete issue (records to manifest)
-bd delete bd-42
-
-# View deletions
-bd deleted
-bd deleted --since=30d
-
-# Deletions propagate via git
-git pull  # Imports deletions from remote
-```
-
-## Troubleshooting Sync
-
-### JSONL out of sync
-
-```bash
-# Force full sync
-bd sync
-
-# Check sync status
-bd info
-```
-
-### Import errors
-
-```bash
-# Check import status
-bd import -i .beads/issues.jsonl --dry-run
-
-# Allow orphans if needed
-bd import -i .beads/issues.jsonl --orphan-handling allow
-```
-
-### Duplicate detection
-
-```bash
-# Find duplicates after import
-bd duplicates
-
-# Auto-merge duplicates
-bd duplicates --auto-merge
-```
-
-</document>
-
 <document path="docs/architecture/index.md">
 
 
@@ -1637,50 +1394,49 @@ When working across multiple machines or clones:
 
 See [Sync Failures Recovery](/recovery/sync-failures) for data loss prevention in multi-machine workflows (Pattern A5/C3).
 
-## The Daemon
+## Dolt Server Mode
 
-The Beads daemon (`bd daemon`) handles background synchronization:
+The Dolt server handles background synchronization and database operations:
 
-- Watches for file changes
-- Triggers sync on changes
+- Manages the Dolt database backend
+- Handles auto-commit for change tracking
 - Keeps SQLite in sync with JSONL
-- Manages lock files
+- Logs available at `.beads/dolt/sql-server.log`
 
 :::tip
-The daemon is optional but recommended for multi-agent workflows.
+Start the Dolt server with `bd dolt start`. Check health with `bd doctor`.
 :::
 
-### Running Without the Daemon
+### Embedded Mode (No Server)
 
-For CI/CD pipelines, containers, and single-use scenarios, run commands without spawning a daemon:
+For CI/CD pipelines, containers, and single-use scenarios, no server is needed. Beads operates in embedded mode automatically when no Dolt server is running:
 
 ```bash
-bd --no-daemon create "CI-generated issue"
-bd --no-daemon sync
+bd create "CI-generated issue"
+bd sync
 ```
 
-**When to use `--no-daemon`:**
+**When embedded mode is appropriate:**
 - CI/CD pipelines (Jenkins, GitHub Actions)
 - Docker containers
 - Ephemeral environments
 - Scripts that should not leave background processes
-- Debugging daemon-related issues
 
-### Daemon in Multi-Clone Scenarios
+### Multi-Clone Scenarios
 
 :::warning Race Conditions in Multi-Clone Workflows
-When multiple git clones of the same repository run daemons simultaneously, race conditions can occur during push/pull operations. This is particularly common in:
+When multiple git clones of the same repository run sync operations simultaneously, race conditions can occur during push/pull operations. This is particularly common in:
 - Multi-agent AI workflows (multiple Claude/GPT instances)
 - Developer workstations with multiple checkouts
 - Worktree-based development workflows
 
 **Prevention:**
-1. Use `bd daemons killall` before switching between clones
-2. Ensure only one clone's daemon is active at a time
-3. Consider `--no-daemon` mode for automated workflows
+1. Stop the Dolt server (`bd dolt stop`) before switching between clones
+2. Dolt handles worktrees natively in server mode
+3. Use embedded mode for automated workflows
 :::
 
-See [Sync Failures Recovery](/recovery/sync-failures) for daemon race condition troubleshooting (Pattern B2).
+See [Sync Failures Recovery](/recovery/sync-failures) for sync race condition troubleshooting (Pattern B2).
 
 ## Recovery Model
 
@@ -1697,7 +1453,7 @@ The following sequence demonstrates how the architecture enables quick recovery.
 This sequence resolves the majority of reported issues:
 
 ```bash
-bd daemons killall           # Stop daemons (prevents race conditions)
+bd dolt stop                 # Stop Dolt server (prevents race conditions)
 git worktree prune           # Clean orphaned worktrees
 rm .beads/beads.db*          # Remove potentially corrupted database
 bd sync --import-only        # Rebuild from JSONL source of truth
@@ -1786,7 +1542,6 @@ bd [global-flags] <command> [command-flags] [arguments]
 | Flag | Description |
 |------|-------------|
 | `--db <path>` | Use specific database file |
-| `--no-daemon` | Bypass daemon, direct database access |
 | `--json` | Output in JSON format |
 | `--quiet` | Suppress non-essential output |
 | `--verbose` | Verbose output |
@@ -1858,7 +1613,7 @@ Most frequently used:
 | `bd info` | Show system info |
 | `bd version` | Show version |
 | `bd config` | Manage configuration |
-| `bd daemons` | Manage daemons |
+| `bd doctor` | Check system health |
 | `bd hooks` | Manage git hooks |
 
 ### Workflows
@@ -2915,20 +2670,23 @@ bd hooks uninstall
 
 ## Auto-Sync Behavior
 
-### With Daemon (Default)
+### With Dolt Server Mode (Default)
 
-The daemon handles sync automatically:
-- Exports to JSONL after changes (5s debounce)
+When the Dolt server is running, sync is handled automatically:
+- Dolt auto-commit tracks changes
+- JSONL export happens after changes (5s debounce)
 - Imports from JSONL when newer
 
-### Without Daemon
+Start the Dolt server with `bd dolt start`.
 
-Use `--no-daemon` flag:
-- Changes only written to SQLite
+### Embedded Mode (No Server)
+
+In CI/CD pipelines and ephemeral environments, no server is needed:
+- Changes written directly to the database
 - Must manually export/sync
 
 ```bash
-bd --no-daemon create "Task"
+bd create "CI-generated task"
 bd export  # Manual export needed
 ```
 
@@ -2977,7 +2735,7 @@ git pull  # Imports deletions from remote
 1. **Always sync at session end** - `bd sync`
 2. **Install git hooks** - `bd hooks install`
 3. **Use merge driver** - Avoids manual conflict resolution
-4. **Check sync status** - `bd info` shows daemon/sync state
+4. **Check sync status** - `bd info` shows sync state
 
 </document>
 
@@ -4470,9 +4228,8 @@ bd prime
 # Force sync
 bd sync
 
-# Check daemon
-bd info
-bd daemons health
+# Check system health
+bd doctor
 ```
 
 ### Database not found
@@ -4485,6 +4242,370 @@ bd init --quiet
 ## See Also
 
 - [MCP Server](/integrations/mcp-server) - For MCP-only environments
+- [IDE Setup](/getting-started/ide-setup) - Other editors
+
+</document>
+
+<document path="docs/integrations/github-copilot.md">
+
+
+# GitHub Copilot Integration
+
+How to use beads with GitHub Copilot in VS Code.
+
+## Setup
+
+### Quick Setup
+
+1. Install beads-mcp:
+   ```bash
+   uv tool install beads-mcp
+   ```
+
+2. Create `.vscode/mcp.json` in your project:
+   ```json
+   {
+     "servers": {
+       "beads": {
+         "command": "beads-mcp"
+       }
+     }
+   }
+   ```
+
+   **For all projects:** Add to VS Code user-level MCP config:
+
+   | Platform | Path |
+   |----------|------|
+   | macOS | `~/Library/Application Support/Code/User/mcp.json` |
+   | Linux | `~/.config/Code/User/mcp.json` |
+   | Windows | `%APPDATA%\Code\User\mcp.json` |
+
+   ```json
+   {
+     "servers": {
+       "beads": {
+         "command": "beads-mcp",
+         "args": []
+       }
+     }
+   }
+   ```
+
+3. Initialize beads:
+   ```bash
+   bd init --quiet
+   ```
+
+4. Reload VS Code
+
+### Verify Setup
+
+Ask Copilot Chat: "What beads issues are ready to work on?"
+
+## Using Natural Language
+
+With MCP configured, interact naturally:
+
+```
+You: Create a bug for the login timeout
+Copilot: Created bd-42: Login timeout bug
+
+You: What issues are ready?
+Copilot: 3 issues ready: bd-42, bd-99, bd-17
+
+You: Close bd-42, it's fixed
+Copilot: Closed bd-42
+```
+
+## MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `beads_ready` | List unblocked issues |
+| `beads_create` | Create new issue |
+| `beads_show` | Show issue details |
+| `beads_update` | Update issue |
+| `beads_close` | Close issue |
+| `beads_sync` | Sync to git |
+| `beads_dep_add` | Add dependency |
+| `beads_dep_tree` | Show dependency tree |
+
+## Copilot Instructions
+
+Optionally add `.github/copilot-instructions.md`:
+
+```markdown
+## Issue Tracking
+
+This project uses **bd (beads)** for issue tracking.
+Run `bd prime` for workflow context.
+
+Quick reference:
+- `bd ready` - Find unblocked work
+- `bd create "Title" --type task --priority 2` - Create issue
+- `bd close <id>` - Complete work
+- `bd sync` - Sync with git
+```
+
+## Troubleshooting
+
+### Tools not appearing
+
+1. Check VS Code 1.96+
+2. Verify mcp.json syntax is valid JSON
+3. Reload VS Code window
+4. Check Output panel for MCP errors
+
+### "beads-mcp not found"
+
+```bash
+# Check installation
+which beads-mcp
+
+# Reinstall if needed
+uv tool install beads-mcp --force
+```
+
+### No database found
+
+```bash
+bd init --quiet
+```
+
+## FAQ
+
+### Do I need to clone beads?
+
+**No.** Beads is a system-wide CLI tool. Install once, use everywhere. The `.beads/` directory in your project only contains the issue database.
+
+### What about git hooks?
+
+Git hooks are optional. They auto-sync issues but you can skip them during `bd init` and manually run `bd sync` instead.
+
+## See Also
+
+- [MCP Server](/integrations/mcp-server) - Detailed MCP configuration
+- [Installation](/getting-started/installation) - Full install guide
+- [Detailed Copilot Guide](https://github.com/steveyegge/beads/blob/main/docs/COPILOT_INTEGRATION.md) - Comprehensive documentation
+
+</document>
+
+<document path="docs/integrations/junie.md">
+
+
+# Junie Integration
+
+How to use beads with Junie (JetBrains AI Agent).
+
+## Setup
+
+### Quick Setup
+
+```bash
+bd setup junie
+```
+
+This creates:
+- **`.junie/guidelines.md`** - Agent instructions for beads workflow
+- **`.junie/mcp/mcp.json`** - MCP server configuration
+
+### Verify Setup
+
+```bash
+bd setup junie --check
+```
+
+## How It Works
+
+1. **Session starts** → Junie reads `.junie/guidelines.md` for workflow context
+2. **MCP tools available** → Junie can use beads MCP tools directly
+3. **You work** → Use `bd` CLI commands or MCP tools
+4. **Session ends** → Run `bd sync` to save work to git
+
+## Configuration Files
+
+### Guidelines (`.junie/guidelines.md`)
+
+Contains workflow instructions that Junie reads automatically:
+- Core workflow rules
+- Command reference
+- Issue types and priorities
+- MCP tool documentation
+
+### MCP Config (`.junie/mcp/mcp.json`)
+
+Configures the beads MCP server:
+
+```json
+{
+  "mcpServers": {
+    "beads": {
+      "command": "bd",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+## MCP Tools
+
+With MCP configured, Junie can use these tools directly:
+
+| Tool | Description |
+| --- | --- |
+| `mcp_beads_ready` | Find tasks ready for work |
+| `mcp_beads_list` | List issues with filters |
+| `mcp_beads_show` | Show issue details |
+| `mcp_beads_create` | Create new issues |
+| `mcp_beads_update` | Update issue status/priority |
+| `mcp_beads_close` | Close completed issues |
+| `mcp_beads_dep` | Manage dependencies |
+| `mcp_beads_blocked` | Show blocked issues |
+| `mcp_beads_stats` | Get issue statistics |
+
+## CLI Commands
+
+You can also use the `bd` CLI directly:
+
+### Creating Issues
+
+```bash
+# Always include description for context
+bd create "Fix authentication bug" \
+  --description="Login fails with special characters in password" \
+  -t bug -p 1 --json
+
+# Link discovered issues
+bd create "Found SQL injection" \
+  --description="User input not sanitized in query builder" \
+  --deps discovered-from:bd-42 --json
+```
+
+### Working on Issues
+
+```bash
+# Find ready work
+bd ready --json
+
+# Start work
+bd update bd-42 --status in_progress --json
+
+# Complete work
+bd close bd-42 --reason "Fixed in commit abc123" --json
+```
+
+### Querying
+
+```bash
+# List open issues
+bd list --status open --json
+
+# Show issue details
+bd show bd-42 --json
+
+# Check blocked issues
+bd blocked --json
+```
+
+### Syncing
+
+```bash
+# ALWAYS run at session end
+bd sync
+```
+
+## Best Practices
+
+### Always Use `--json`
+
+```bash
+bd list --json          # Parse programmatically
+bd create "Task" --json # Get issue ID from output
+bd show bd-42 --json    # Structured data
+```
+
+### Always Include Descriptions
+
+```bash
+# Good
+bd create "Fix auth bug" \
+  --description="Login fails when password contains quotes" \
+  -t bug -p 1 --json
+
+# Bad - no context for future work
+bd create "Fix auth bug" -t bug -p 1 --json
+```
+
+### Link Related Work
+
+```bash
+# When you discover issues during work
+bd create "Found related bug" \
+  --deps discovered-from:bd-current --json
+```
+
+### Sync Before Session End
+
+```bash
+# ALWAYS run before ending
+bd sync
+```
+
+## Troubleshooting
+
+### Guidelines not loaded
+
+```bash
+# Check setup
+bd setup junie --check
+
+# Reinstall if needed
+bd setup junie
+```
+
+### MCP tools not available
+
+```bash
+# Verify MCP config exists
+cat .junie/mcp/mcp.json
+
+# Test MCP server
+bd mcp --help
+```
+
+### Changes not syncing
+
+```bash
+# Force sync
+bd sync
+
+# Check system health
+bd doctor
+```
+
+### Database not found
+
+```bash
+# Initialize beads
+bd init --quiet
+```
+
+## Removing Integration
+
+```bash
+bd setup junie --remove
+```
+
+This removes:
+- `.junie/guidelines.md`
+- `.junie/mcp/mcp.json`
+- Empty `.junie/mcp/` and `.junie/` directories
+
+## See Also
+
+- [MCP Server](/integrations/mcp-server) - MCP server details
+- [Claude Code](/integrations/claude-code) - Similar hook-based integration
 - [IDE Setup](/getting-started/ide-setup) - Other editors
 
 </document>
@@ -4561,6 +4682,43 @@ Add to MCP settings:
   }
 }
 ```
+
+### VS Code / GitHub Copilot
+
+Create `.vscode/mcp.json` in your project:
+
+```json
+{
+  "servers": {
+    "beads": {
+      "command": "beads-mcp"
+    }
+  }
+}
+```
+
+**For all projects:** Add to VS Code user-level MCP config:
+
+| Platform | Path |
+|----------|------|
+| macOS | `~/Library/Application Support/Code/User/mcp.json` |
+| Linux | `~/.config/Code/User/mcp.json` |
+| Windows | `%APPDATA%\Code\User\mcp.json` |
+
+```json
+{
+  "servers": {
+    "beads": {
+      "command": "beads-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+**Note:** Requires VS Code 1.96+ with MCP support enabled.
+
+See [GitHub Copilot Integration](/integrations/github-copilot) for complete setup guide.
 
 ## Available Tools
 
@@ -4662,8 +4820,8 @@ Before diving into specific runbooks, try these quick checks:
 # Check Beads status
 bd status
 
-# Verify daemon is running
-bd daemon status
+# Verify Dolt server is running
+bd doctor
 
 # Check for blocked issues
 bd blocked
@@ -4777,9 +4935,9 @@ If you see `-wal` or `-shm` files alongside `beads.db`, a transaction may have b
 Back up your `.beads/` directory before proceeding.
 :::
 
-**Step 1:** Stop the daemon
+**Step 1:** Stop the Dolt server
 ```bash
-bd daemon stop
+bd dolt stop
 ```
 
 **Step 2:** Back up current state
@@ -4798,16 +4956,16 @@ bd status
 bd list
 ```
 
-**Step 5:** Restart daemon
+**Step 5:** Restart the Dolt server
 ```bash
-bd daemon start
+bd dolt start
 ```
 
 ## Prevention
 
 - Avoid interrupting `bd sync` operations
-- Let the daemon handle synchronization
-- Use `bd daemon stop` before system shutdown
+- Let the Dolt server handle synchronization
+- Use `bd dolt stop` before system shutdown
 
 </document>
 
@@ -4888,32 +5046,32 @@ This runbook helps you recover from `bd sync` failures.
 - `bd sync` hangs or times out
 - Network-related error messages
 - "failed to push" or "failed to pull" errors
-- Daemon not responding
+- Dolt server not responding
 
 ## Diagnosis
 
 ```bash
-# Check daemon status
-bd daemon status
+# Check Dolt server health
+bd doctor
 
 # Check sync state
 bd status
 
-# View daemon logs
-cat .beads/daemon.log | tail -50
+# View Dolt server logs
+tail -50 .beads/dolt/sql-server.log
 ```
 
 ## Solution
 
-**Step 1:** Stop the daemon
+**Step 1:** Stop the Dolt server
 ```bash
-bd daemon stop
+bd dolt stop
 ```
 
 **Step 2:** Check for lock files
 ```bash
 ls -la .beads/*.lock
-# Remove stale locks if daemon is definitely stopped
+# Remove stale locks if Dolt server is definitely stopped
 rm -f .beads/*.lock
 ```
 
@@ -4922,9 +5080,9 @@ rm -f .beads/*.lock
 bd doctor --fix
 ```
 
-**Step 4:** Restart daemon
+**Step 4:** Restart the Dolt server
 ```bash
-bd daemon start
+bd dolt start
 ```
 
 **Step 5:** Verify sync works
@@ -4938,7 +5096,7 @@ bd status
 | Cause | Solution |
 |-------|----------|
 | Network timeout | Retry with better connection |
-| Stale lock file | Remove lock after stopping daemon |
+| Stale lock file | Remove lock after stopping Dolt server |
 | Corrupted state | Use `bd doctor --fix` |
 | Git conflicts | See [Merge Conflicts](/recovery/merge-conflicts) |
 
@@ -4946,7 +5104,7 @@ bd status
 
 - Ensure stable network before sync
 - Let sync complete before closing terminal
-- Use `bd daemon stop` before system shutdown
+- Use `bd dolt stop` before system shutdown
 
 </document>
 
@@ -5110,18 +5268,24 @@ bd config set database.cache_size 10000
 
 ### Many Concurrent Agents
 
+Beads uses Dolt server mode to handle concurrent access from multiple agents.
+The server manages transaction isolation automatically.
+
 ```bash
-# Use event-driven daemon
-export BEADS_DAEMON_MODE=events
-bd daemons killall
+# Start the Dolt server
+bd dolt start
+
+# Check server health
+bd doctor
 ```
 
 ### CI/CD Optimization
 
+In CI/CD environments, beads uses embedded mode by default (no server required):
+
 ```bash
-# Disable daemon in CI
-export BEADS_NO_DAEMON=true
-bd --no-daemon list
+# Just run commands directly — no special flags needed
+bd list
 ```
 
 </document>
@@ -5197,16 +5361,6 @@ auto_export = true            # Auto-export on changes
 debounce_seconds = 5          # Debounce interval
 ```
 
-### Daemon
-
-```toml
-[daemon]
-auto_start = true             # Auto-start daemon
-sync_interval = "5s"          # Sync check interval
-log_level = "info"            # debug|info|warn|error
-mode = "poll"                 # poll|events (experimental)
-```
-
 ### Git
 
 ```toml
@@ -5238,8 +5392,6 @@ prune_on_sync = true          # Auto-prune old records
 | Variable | Description |
 |----------|-------------|
 | `BEADS_DB` | Database path |
-| `BEADS_NO_DAEMON` | Disable daemon |
-| `BEADS_DAEMON_MODE` | Daemon mode (poll/events) |
 | `BEADS_LOG_LEVEL` | Log level |
 | `BEADS_CONFIG` | Config file path |
 
@@ -5248,9 +5400,6 @@ prune_on_sync = true          # Auto-prune old records
 ```bash
 # Override database
 bd --db /tmp/test.db list
-
-# Disable daemon for single command
-bd --no-daemon create "Task"
 ```
 
 ## Example Configuration
@@ -5265,11 +5414,6 @@ hash_length = 6
 [import]
 orphan_handling = "resurrect"
 dedupe_on_import = true
-
-[daemon]
-auto_start = true
-sync_interval = "10s"
-mode = "events"
 
 [git]
 auto_commit = true
@@ -5327,22 +5471,21 @@ Sequential IDs (`#1`, `#2`) break when:
 
 Hash-based IDs are globally unique without coordination.
 
-### Why a daemon?
+### How does the Dolt server work?
 
-The daemon provides:
-- Auto-sync with 5-second debounce
-- Batched operations for performance
-- Background monitoring
+Beads uses Dolt server mode for concurrent access:
+- Transaction isolation for multiple agents
+- SQL-based queries for performance
+- Automatic retry on conflicts
 
-Use `--no-daemon` when not needed (CI, worktrees).
+In CI/CD or single-agent environments, beads uses embedded mode automatically (no server required).
 
 ## Usage
 
 ### How do I sync issues to git?
 
 ```bash
-# Auto-sync via daemon (default)
-# Or manual sync:
+# Manual sync:
 bd sync
 ```
 
@@ -5365,11 +5508,8 @@ Yes! That's what beads was designed for:
 ### How do I use beads in CI/CD?
 
 ```bash
-# Disable daemon in CI
-export BEADS_NO_DAEMON=true
-
-# Or per-command
-bd --no-daemon list
+# Just run commands directly — beads uses embedded mode in CI
+bd list
 ```
 
 ## Workflows
@@ -5418,23 +5558,23 @@ bd import --from github --repo owner/repo
 
 ## Troubleshooting
 
-### Why is the daemon not starting?
+### Why is the Dolt server not starting?
 
 ```bash
-# Remove stale socket
-rm -f .beads/bd.sock
+# Check server status
+bd doctor
 
-# Restart
-bd daemons killall
-bd info
+# Check server logs
+cat .beads/dolt/sql-server.log
+
+# Restart the server
+bd dolt stop
+bd dolt start
 ```
 
 ### Why aren't my changes syncing?
 
 ```bash
-# Check daemon status
-bd info
-
 # Force sync
 bd sync
 
@@ -5473,7 +5613,7 @@ Beads uses git for:
 ├── issues.jsonl       # Issue data (git-tracked)
 ├── deletions.jsonl    # Deletion manifest (git-tracked)
 ├── config.toml        # Project config (git-tracked)
-└── bd.sock            # Daemon socket (gitignored)
+└── dolt/              # Dolt server data (gitignored)
 ```
 
 ## Git Hooks
@@ -5546,15 +5686,13 @@ This:
 
 ## Git Worktrees
 
-Beads requires `--no-daemon` in git worktrees:
+Beads works in git worktrees using embedded mode:
 
 ```bash
-# In worktree
-bd --no-daemon create "Task"
-bd --no-daemon list
+# In worktree — just run commands directly
+bd create "Task"
+bd list
 ```
-
-Why: Daemon uses `.beads/bd.sock` which conflicts across worktrees.
 
 ## Branch Workflows
 
@@ -5616,7 +5754,7 @@ bd duplicates --auto-merge
 2. **Use merge driver** - Avoid manual conflict resolution
 3. **Sync regularly** - `bd sync` at session end
 4. **Pull before work** - Get latest issues
-5. **Use `--no-daemon` in worktrees**
+5. **Worktrees use embedded mode automatically**
 
 </document>
 
@@ -5672,8 +5810,8 @@ bd --db .beads/beads.db list
 ### Database locked
 
 ```bash
-# Stop daemon
-bd daemons killall
+# Stop the Dolt server if running
+bd dolt stop
 
 # Try again
 bd list
@@ -5687,20 +5825,20 @@ rm .beads/beads.db
 bd import -i .beads/issues.jsonl
 ```
 
-## Daemon Issues
+## Dolt Server Issues
 
-### Daemon not starting
+### Server not starting
 
 ```bash
-# Check status
-bd info
+# Check server health
+bd doctor
 
-# Remove stale socket
-rm -f .beads/bd.sock
+# Check server logs
+cat .beads/dolt/sql-server.log
 
-# Restart
-bd daemons killall
-bd info
+# Restart the server
+bd dolt stop
+bd dolt start
 ```
 
 ### Version mismatch
@@ -5708,16 +5846,8 @@ bd info
 After upgrading bd:
 
 ```bash
-bd daemons killall
-bd info
-```
-
-### High CPU usage
-
-```bash
-# Switch to event-driven mode
-export BEADS_DAEMON_MODE=events
-bd daemons killall
+bd dolt stop
+bd dolt start
 ```
 
 ## Sync Issues
@@ -5727,9 +5857,6 @@ bd daemons killall
 ```bash
 # Force sync
 bd sync
-
-# Check daemon
-bd info | grep daemon
 
 # Check hooks
 bd hooks status
@@ -5831,7 +5958,7 @@ bd --verbose list
 ### Logs
 
 ```bash
-bd daemons logs . -n 100
+cat .beads/dolt/sql-server.log
 ```
 
 ### System info

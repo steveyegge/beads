@@ -145,7 +145,7 @@ func runTeamWizard(ctx context.Context, store *dolt.DoltStore) error {
 		fmt.Println("  • Periodically merge", syncBranch, "to main via PR")
 	}
 
-	fmt.Println("  • Dolt handles sync natively — run 'bd sync' to sync changes")
+	fmt.Println("  • Dolt handles sync natively — run 'bd dolt push' to push changes")
 	fmt.Println()
 	fmt.Printf("Try it: %s\n", ui.RenderAccent("bd create \"Team planning issue\" -p 2"))
 	fmt.Println()

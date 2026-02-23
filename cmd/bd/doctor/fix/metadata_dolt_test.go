@@ -18,6 +18,9 @@ import (
 // Returns the workspace root path.
 func setupDoltWorkspace(t *testing.T) string {
 	t.Helper()
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("Dolt not installed, skipping test")
+	}
 
 	dir := t.TempDir()
 	beadsDir := filepath.Join(dir, ".beads")
@@ -54,7 +57,7 @@ func setupDoltWorkspace(t *testing.T) string {
 		Database: "beads",
 	})
 	if err != nil {
-		t.Fatalf("failed to create Dolt store: %v", err)
+		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("failed to close Dolt store: %v", err)

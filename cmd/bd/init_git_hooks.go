@@ -213,16 +213,15 @@ fi
 #
 # bd (beads) pre-commit hook
 #
-# This hook ensures that any pending bd issue changes are flushed to
-# .beads/issues.jsonl before the commit is created, preventing the
-# stale JSONL from being committed.
+# This hook ensures that any pending bd issue changes are synced
+# before the commit is created.
 
 ` + preCommitHookBody()
 }
 
 // preCommitHookBody returns the common pre-commit hook logic.
-// Delegates to 'bd hook pre-commit' which handles all backends (Dolt
-// export, sync-branch routing, JSONL staging) without lock deadlocks.
+// Delegates to 'bd hooks run pre-commit' which handles Dolt export
+// and sync-branch routing without lock deadlocks.
 func preCommitHookBody() string {
 	return `# Check if bd is available
 if ! command -v bd >/dev/null 2>&1; then
@@ -230,14 +229,15 @@ if ! command -v bd >/dev/null 2>&1; then
     exit 0
 fi
 
-# Delegate to bd hook pre-commit for all backends.
-# The Go code handles Dolt export in-process (no lock deadlocks),
-# sync-branch routing, and JSONL staging.
-exec bd hook pre-commit "$@"
+# Delegate to bd hooks run pre-commit.
+# The Go code handles Dolt export in-process (no lock deadlocks)
+# and sync-branch routing.
+exec bd hooks run pre-commit "$@"
 `
 }
 
-// buildPostMergeHook generates the post-merge hook content
+// buildPostMergeHook generates the post-merge hook content.
+// With the Dolt backend, post-merge only needs to run chained hooks.
 func buildPostMergeHook(chainHooks bool, existingHooks []hookInfo) string {
 	if chainHooks {
 		// Find existing post-merge hook (already renamed to .old by caller)
@@ -254,6 +254,7 @@ func buildPostMergeHook(chainHooks bool, existingHooks []hookInfo) string {
 # bd (beads) post-merge hook (chained)
 #
 # This hook chains bd functionality with your existing post-merge hook.
+# Dolt backend handles sync internally.
 
 # Run existing hook first
 if [ -x "` + existingPostMerge + `" ]; then
@@ -264,68 +265,16 @@ if [ -x "` + existingPostMerge + `" ]; then
     fi
 fi
 
-` + postMergeHookBody()
+exit 0
+`
 	}
 
 	return `#!/bin/sh
 #
 # bd (beads) post-merge hook
 #
-# This hook imports updated issues from .beads/issues.jsonl after a
-# git pull or merge, ensuring the database stays in sync with git.
-
-` + postMergeHookBody()
-}
-
-// postMergeHookBody returns the common post-merge hook logic
-func postMergeHookBody() string {
-	return `# Check if bd is available
-if ! command -v bd >/dev/null 2>&1; then
-    echo "Warning: bd command not found, skipping post-merge import" >&2
-    exit 0
-fi
-
-# Check if we're in a bd workspace
-# For worktrees, .beads is in the main repository root, not the worktree
-BEADS_DIR=""
-if git rev-parse --git-dir >/dev/null 2>&1; then
-    # Check if we're in a worktree
-    if [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]; then
-        # Worktree: .beads is in main repo root
-        MAIN_REPO_ROOT="$(git rev-parse --git-common-dir)"
-        MAIN_REPO_ROOT="$(dirname "$MAIN_REPO_ROOT")"
-        if [ -d "$MAIN_REPO_ROOT/.beads" ]; then
-            BEADS_DIR="$MAIN_REPO_ROOT/.beads"
-        fi
-    else
-        # Regular repo: check current directory
-        if [ -d .beads ]; then
-            BEADS_DIR=".beads"
-        fi
-    fi
-fi
-
-if [ -z "$BEADS_DIR" ]; then
-    exit 0
-fi
-
-# Skip for Dolt backend (uses its own sync mechanism, not JSONL import)
-if [ -f "$BEADS_DIR/metadata.json" ]; then
-    if grep -q '"backend"[[:space:]]*:[[:space:]]*"dolt"' "$BEADS_DIR/metadata.json" 2>/dev/null; then
-        exit 0
-    fi
-fi
-
-# Check if issues.jsonl exists and was updated
-if [ ! -f "$BEADS_DIR/issues.jsonl" ]; then
-    exit 0
-fi
-
-# Import the updated JSONL
-if ! bd import -i "$BEADS_DIR/issues.jsonl" >/dev/null 2>&1; then
-    echo "Warning: Failed to import bd changes after merge" >&2
-    echo "Run 'bd import -i $BEADS_DIR/issues.jsonl' manually to see the error" >&2
-fi
+# Dolt backend handles sync internally, so this hook is a no-op.
+# It exists to support chaining with user hooks.
 
 exit 0
 `
@@ -437,8 +386,8 @@ fi
 #
 # bd (beads) pre-commit hook (jujutsu mode)
 #
-# This hook ensures that any pending bd issue changes are flushed to
-# .beads/issues.jsonl before the commit.
+# This hook ensures that any pending bd issue changes are flushed
+# before the commit.
 #
 # Simplified for jujutsu: no staging needed, jj auto-commits working copy changes.
 

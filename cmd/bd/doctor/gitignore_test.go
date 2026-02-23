@@ -913,7 +913,7 @@ func TestCheckGitignore_VariousStatuses(t *testing.T) {
 			description:    "returns ok when gitignore matches template",
 		},
 		{
-			name: "missing one merge artifact pattern",
+			name: "missing required patterns",
 			setupFunc: func(t *testing.T, tmpDir string) {
 				beadsDir := filepath.Join(tmpDir, ".beads")
 				if err := os.Mkdir(beadsDir, 0750); err != nil {
@@ -922,11 +922,6 @@ func TestCheckGitignore_VariousStatuses(t *testing.T) {
 				content := `*.db
 *.db?*
 daemon.log
-beads.base.jsonl
-beads.left.jsonl
-beads.base.meta.json
-beads.left.meta.json
-beads.right.meta.json
 `
 				gitignorePath := filepath.Join(beadsDir, ".gitignore")
 				if err := os.WriteFile(gitignorePath, []byte(content), 0600); err != nil {
@@ -935,7 +930,7 @@ beads.right.meta.json
 			},
 			expectedStatus: StatusWarning,
 			expectedFix:    "Run: bd doctor --fix or bd init (safe to re-run)",
-			description:    "returns warning when missing beads.right.jsonl",
+			description:    "returns warning when missing required patterns like dolt/ and redirect",
 		},
 		{
 			name: "missing multiple required patterns",
@@ -1430,8 +1425,7 @@ func TestGitignoreTemplate_ContainsLegacyDaemonPatterns(t *testing.T) {
 // GH#974
 func TestGitignoreTemplate_ContainsSyncStateFiles(t *testing.T) {
 	syncStateFiles := []string{
-		".sync.lock",      // Concurrency guard
-		"sync_base.jsonl", // Base state for 3-way merge (per-machine)
+		".sync.lock", // Concurrency guard
 	}
 
 	for _, pattern := range syncStateFiles {
@@ -1447,7 +1441,6 @@ func TestGitignoreTemplate_ContainsSyncStateFiles(t *testing.T) {
 func TestRequiredPatterns_ContainsSyncStatePatterns(t *testing.T) {
 	syncStatePatterns := []string{
 		".sync.lock",
-		"sync_base.jsonl",
 	}
 
 	for _, expected := range syncStatePatterns {
@@ -1695,30 +1688,6 @@ func TestRequiredPatterns_ContainsLastTouched(t *testing.T) {
 	}
 	if !found {
 		t.Error("requiredPatterns should include 'last-touched'")
-	}
-}
-
-// TestGitignoreTemplate_ContainsJSONLLock verifies that the .beads/.gitignore template
-// includes .jsonl.lock to prevent the JSONL coordination lock file from being tracked.
-// The lock file is a runtime artifact in the same category as .sync.lock.
-func TestGitignoreTemplate_ContainsJSONLLock(t *testing.T) {
-	if !strings.Contains(GitignoreTemplate, ".jsonl.lock") {
-		t.Error("GitignoreTemplate should contain '.jsonl.lock' pattern")
-	}
-}
-
-// TestRequiredPatterns_ContainsJSONLLock verifies that bd doctor validates
-// the presence of the .jsonl.lock pattern in .beads/.gitignore.
-func TestRequiredPatterns_ContainsJSONLLock(t *testing.T) {
-	found := false
-	for _, pattern := range requiredPatterns {
-		if pattern == ".jsonl.lock" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("requiredPatterns should include '.jsonl.lock'")
 	}
 }
 

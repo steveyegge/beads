@@ -6,7 +6,7 @@ This document explains our approach to `golangci-lint` warnings in this codebase
 
 Running `golangci-lint run ./...` currently reports **22 issues** as of Nov 6, 2025. These are not actual code quality problems - they are false positives or intentional patterns that reflect idiomatic Go practice.
 
-**Historical note**: The count was ~200 before extensive cleanup in October 2025, reduced to 34 by Oct 27, and now 22 after removing legacy daemon code. The remaining issues represent the acceptable baseline that doesn't warrant fixing.
+**Historical note**: The count was ~200 before extensive cleanup in October 2025, reduced to 34 by Oct 27, and now 22 after removing legacy code. The remaining issues represent the acceptable baseline that doesn't warrant fixing.
 
 ## Issue Breakdown
 
@@ -51,8 +51,8 @@ All file paths are either:
 **Status**: Acceptable for user-facing database files
 
 - G301: 0755 for database directories (allows other users to read)
-- G302: 0644 for JSONL files (version controlled, needs to be readable)
-- G306: 0644 for new JSONL files (consistency with existing files)
+- G302: 0644 for data files (needs to be readable)
+- G306: 0644 for new data files (consistency with existing files)
 
 **Pattern 4**: G201/G202 - SQL string formatting/concatenation (3 issues)
 **Status**: Safe - using placeholders and bounded queries
