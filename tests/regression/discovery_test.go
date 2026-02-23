@@ -2421,3 +2421,139 @@ func TestProtocol_CommentAddAndPreserve(t *testing.T) {
 		t.Errorf("comments should be preserved after close/reopen, got %d", len(comments))
 	}
 }
+
+// === Session 8: Lifecycle validation, ready filters, children, duplicate cycles ===
+
+// TestDiscovery_ReopenAlreadyOpenSucceeds verifies that bd reopen on an
+// already-open issue should fail with an error, not silently succeed.
+// BUG-56: reopen.go has no validation that issue is actually closed before
+// reopening. The forReopen() validator exists in validation/issue.go but
+// is never called.
+func TestDiscovery_ReopenAlreadyOpenSucceeds(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Already open issue", "--type", "task", "--priority", "2")
+
+	// Verify issue is open
+	data := parseJSON(t, w.run("show", a, "--json"))
+	status, _ := data[0]["status"].(string)
+	if status != "open" {
+		t.Fatalf("expected status open, got %s", status)
+	}
+
+	// Bug: reopen on an already-open issue should fail
+	_, err := w.tryRun("reopen", a)
+	if err == nil {
+		// Reopen succeeded — this is the bug. It should reject reopening
+		// an issue that is not closed.
+		t.Errorf("DISCOVERY: bd reopen on already-open issue %s succeeded silently — "+
+			"should error 'issue is not closed' or similar. "+
+			"File: cmd/bd/reopen.go (no status validation). "+
+			"The forReopen() validator in validation/issue.go is never called.", a)
+	}
+}
+
+// TestDiscovery_UndeferNonDeferredSucceeds verifies that bd undefer on a
+// non-deferred issue should fail, not silently succeed.
+// BUG-57: undefer.go has no validation that issue is actually deferred.
+func TestDiscovery_UndeferNonDeferredSucceeds(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Never deferred", "--type", "task", "--priority", "2")
+
+	// Verify issue is open (not deferred)
+	data := parseJSON(t, w.run("show", a, "--json"))
+	status, _ := data[0]["status"].(string)
+	if status != "open" {
+		t.Fatalf("expected status open, got %s", status)
+	}
+
+	// Bug: undefer on a non-deferred issue should fail
+	_, err := w.tryRun("undefer", a)
+	if err == nil {
+		t.Errorf("DISCOVERY: bd undefer on non-deferred issue %s succeeded silently — "+
+			"should error 'issue is not deferred' or similar. "+
+			"File: cmd/bd/undefer.go (no status validation).", a)
+	}
+}
+
+// TestDiscovery_ReadyPriorityOutOfRange verifies that bd ready --priority 5
+// should reject the value since valid priorities are 0-4.
+// BUG-58: ready.go accepts any integer for --priority without validation.
+func TestDiscovery_ReadyPriorityOutOfRange(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	// Create a P4 issue so there IS ready work
+	w.create("--title", "P4 task", "--type", "task", "--priority", "4")
+
+	// Control: valid priority filter works
+	_, err := w.tryRun("ready", "--priority", "4", "--json")
+	if err != nil {
+		t.Skipf("bd ready --priority not available: %v", err)
+	}
+
+	// Bug: priority 5 is out of range (valid: 0-4) but accepted silently
+	out, err := w.tryRun("ready", "--priority", "5", "--json")
+	if err == nil {
+		// Command succeeded — check if it returned empty (silent wrong results)
+		// or if it actually validated the range
+		ids := parseIDs(t, out)
+		if len(ids) == 0 {
+			t.Errorf("DISCOVERY: bd ready --priority 5 accepted without error, returned empty — "+
+				"should reject out-of-range priority (valid: 0-4). "+
+				"File: cmd/bd/ready.go:96-98 (no validation).")
+		}
+	}
+	// If err != nil, command properly rejected invalid priority — correct behavior
+}
+
+// TestDiscovery_ChildrenNonexistentParentSilentEmpty verifies that
+// bd children <nonexistent-id> should error, not return empty.
+// BUG-59: children command doesn't validate parent existence.
+func TestDiscovery_ChildrenNonexistentParentSilentEmpty(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	// Create a real issue to ensure the workspace works
+	w.create("--title", "Real issue", "--type", "task", "--priority", "2")
+
+	// Bug: children of nonexistent parent returns empty with no error
+	_, err := w.tryRun("children", "nonexistent-parent-xyz", "--json")
+	if err == nil {
+		t.Errorf("DISCOVERY: bd children nonexistent-parent-xyz returned success — "+
+			"should error 'parent issue not found'. Compare: bd show nonexistent-parent-xyz errors. "+
+			"File: cmd/bd/children.go (no parent existence validation).")
+	}
+}
+
+// TestDiscovery_DuplicateCycleUndetected verifies that creating a duplicate
+// cycle (A dup of B, B dup of A) is not detected.
+// BUG-60: Cycle detection only runs for 'blocks' dep type (see also BUG-25).
+// duplicate-of deps can create cycles without any error.
+func TestDiscovery_DuplicateCycleUndetected(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Issue A", "--type", "task", "--priority", "2")
+	b := w.create("--title", "Issue B", "--type", "task", "--priority", "2")
+
+	// Mark A as duplicate of B (closes A)
+	w.run("duplicate", a, "--of", b)
+
+	// Reopen A so we can test further
+	w.run("reopen", a)
+
+	// Now mark B as duplicate of A — this creates a cycle: A→B→A
+	_, err := w.tryRun("duplicate", b, "--of", a)
+	if err == nil {
+		// Both operations succeeded — verify the cycle exists
+		// Check that B is now closed (marked as dup of A)
+		bData := parseJSON(t, w.run("show", b, "--json"))
+		bStatus, _ := bData[0]["status"].(string)
+		if bStatus == "closed" {
+			t.Errorf("DISCOVERY: bd duplicate created a cycle — A duplicate-of B, B duplicate-of A — "+
+				"no error detected. Both issues are duplicates of each other, which is semantically "+
+				"incoherent. File: cmd/bd/duplicate.go (no cycle check). "+
+				"Cycle detection at dependencies.go:54 only checks 'blocks' type.")
+		}
+	}
+	// If err != nil, duplicate correctly detected the cycle — would be surprising
+}

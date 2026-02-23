@@ -19,6 +19,7 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | 2026-02-22 | **Session 5: Filter, flag interaction, migration seams** | Found 4 more bugs (BUG-28 through 31). Dead label-pattern filter, claim+status overwrite, --ready overrides --status, assignee empty string. Code review: pull doesn't check merge conflicts, schema migration non-transactional, import drops deps/comments silently. |
 | 2026-02-22 | **Session 6: Routing, validation, sort, edge cases** | Found 10 more bugs (BUG-32 through 42) + 2 protocol tests (BUG-35, 39). Stale negative days, sort unknown field, reparent cycle, reversed ranges, negative limit, whitespace title, config ambiguity, dep rm false positive. Code review: createInRig skips prefix validation, same-prefix rig ambiguity, batch import no UTC. |
 | 2026-02-22 | **Session 7: State corruption, filter conflicts, hierarchy** | Found 4 more bugs (BUG-43 through 46) + 5 protocol tests (BUG-47 through 51). Deferred without date, comma status, assignee conflict, child of closed parent. Documented: custom dep types, in_progress vs claim, --all filter, empty type rejection, show JSON array. |
+| 2026-02-22 | **Session 8: Lifecycle validation, ready filters, duplicate cycles** | Found 5 more bugs (BUG-56 through 60). Reopen already-open, undefer non-deferred, ready out-of-range priority, children nonexistent parent, duplicate cycle undetected. |
 
 ## Audit Summary
 
@@ -79,6 +80,11 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | BUG-53 | **BUG** | OPEN (not PR'd yet) | — |
 | BUG-54 | **PROTOCOL** | PASS (docs behavior) | — |
 | BUG-55 | **PROTOCOL** | PASS (correct) | — |
+| BUG-56 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-57 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-58 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-59 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-60 | **BUG** | OPEN (not PR'd yet) | — |
 
 ### Shipped fix PRs (all include protocol tests)
 
@@ -135,6 +141,11 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 45. **BUG-53**: update --due past date no warning (unlike --defer)
 46. **BUG-54**: list --id requires exact match, no partial resolution (PROTOCOL)
 47. **BUG-55**: comments special chars preserved correctly (PROTOCOL)
+48. **BUG-56**: reopen on already-open issue succeeds silently
+49. **BUG-57**: undefer on non-deferred issue succeeds silently
+50. **BUG-58**: ready --priority 5 (out of range) accepted silently
+51. **BUG-59**: children of nonexistent parent returns empty (no error)
+52. **BUG-60**: duplicate cycle (A dup B, B dup A) undetected
 
 ### Investigate further
 
@@ -990,6 +1001,74 @@ resolution command. Classified as PROTOCOL.
 
 Comments with quotes, brackets, and special characters are stored and
 retrieved correctly via JSON output.
+
+---
+
+### BUG-56: `bd reopen` on already-open issue succeeds silently (NEW — session 8)
+
+**Severity: MEDIUM** — Missing lifecycle validation
+**Discovered:** Session 8 discovery, test
+**File:** `cmd/bd/reopen.go` (no status validation) + `internal/validation/issue.go:150-156` (forReopen validator exists but unused)
+**Test:** `TestDiscovery_ReopenAlreadyOpenSucceeds`
+
+`bd reopen <open-issue>` succeeds with "Reopened" message even though the issue
+is already open. The `forReopen()` validator in `validation/issue.go` checks for
+`HasStatus(types.StatusClosed)` but is never called from `reopen.go`. This masks
+accidental double-reopens and confuses users about the actual state.
+
+---
+
+### BUG-57: `bd undefer` on non-deferred issue succeeds silently (NEW — session 8)
+
+**Severity: MEDIUM** — Missing lifecycle validation
+**Discovered:** Session 8 discovery, test
+**File:** `cmd/bd/undefer.go:25-75` (no status validation)
+**Test:** `TestDiscovery_UndeferNonDeferredSucceeds`
+
+`bd undefer <open-issue>` succeeds with "Undeferred" message even though the
+issue was never deferred. Sets status to "open" (no-op since already open) and
+clears defer_until (which was already empty). Misleading confirmation message.
+
+---
+
+### BUG-58: `bd ready --priority 5` accepts out-of-range priority silently (NEW — session 8)
+
+**Severity: LOW** — Silent validation gap
+**Discovered:** Session 8 discovery, test
+**File:** `cmd/bd/ready.go:96-98` (no validation on priority value)
+**Test:** `TestDiscovery_ReadyPriorityOutOfRange`
+
+`bd ready --priority 5` is accepted without error. Valid priorities are 0-4.
+The filter is applied but matches nothing, returning empty results. The user
+has no way to know their filter value was invalid vs. truly no matching work.
+
+---
+
+### BUG-59: `bd children <nonexistent>` returns empty instead of error (NEW — session 8)
+
+**Severity: MEDIUM** — Silent validation gap
+**Discovered:** Session 8 discovery, test
+**File:** `cmd/bd/children.go` (no parent existence validation)
+**Test:** `TestDiscovery_ChildrenNonexistentParentSilentEmpty`
+
+`bd children nonexistent-xyz` returns success with empty results. Compare with
+`bd show nonexistent-xyz` which returns an error. The user cannot distinguish
+between "parent has no children" and "parent doesn't exist."
+
+---
+
+### BUG-60: Duplicate cycle undetected — A dup of B, B dup of A (NEW — session 8)
+
+**Severity: MEDIUM** — Semantic corruption (extends BUG-25)
+**Discovered:** Session 8 discovery, test
+**File:** `cmd/bd/duplicate.go` (no cycle check) + `internal/storage/dolt/dependencies.go:54` (cycle detection only for 'blocks')
+**Test:** `TestDiscovery_DuplicateCycleUndetected`
+
+`bd duplicate A --of B` then `bd duplicate B --of A` creates a mutual
+duplicate cycle with no error. Both issues claim the other as their canonical.
+Cycle detection at `dependencies.go:54` only runs for `type == "blocks"`.
+Same class of bug as BUG-25 (conditional-blocks cycle) but through the
+duplicate/supersede command path.
 
 ---
 
