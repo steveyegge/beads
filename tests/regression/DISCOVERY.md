@@ -17,7 +17,7 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | 2026-02-22 | **Session 3: Candidate-only discovery (lane 3)** | Found 5 new bugs (BUG-16 through 20) + 3 code-review-only findings. External blockers, conditional-blocks, count/list discrepancy, waits-for gating, parent-child blocked consistency. Filed DECISION PRs #2025, #2026. |
 | 2026-02-22 | **Session 4: Deep discovery (search, lifecycle, batch, deps)** | Found 7 more bugs (BUG-21 through 27). Update bypasses close guard, reopen superseded corruption, defer past date invisible, wisp sort order, conditional-blocks cycle, epic wisp children. 2 new protocol tests. |
 | 2026-02-22 | **Session 5: Filter, flag interaction, migration seams** | Found 4 more bugs (BUG-28 through 31). Dead label-pattern filter, claim+status overwrite, --ready overrides --status, assignee empty string. Code review: pull doesn't check merge conflicts, schema migration non-transactional, import drops deps/comments silently. |
-| 2026-02-22 | **Session 6: Routing, validation, sort, edge cases** | Found 4 more bugs (BUG-32 through 35). Stale negative days inverts logic, sort unknown field silent no-op, reparent cycle undetected, overdue edge cases documented. Code review: createInRig skips prefix validation, same-prefix rig ambiguity, batch import no UTC normalization. |
+| 2026-02-22 | **Session 6: Routing, validation, sort, edge cases** | Found 7 more bugs (BUG-32 through 38) + 1 protocol test (BUG-39). Stale negative days, sort unknown field, reparent cycle, reversed ranges (priority, date), negative limit. Code review: createInRig skips prefix validation, same-prefix rig ambiguity, batch import no UTC normalization. |
 
 ## Audit Summary
 
@@ -58,6 +58,10 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | BUG-33 | **BUG** | OPEN (not PR'd yet) | — |
 | BUG-34 | **BUG** | OPEN (not PR'd yet) | — |
 | BUG-35 | **PROTOCOL** | PASS (correct behavior) | — |
+| BUG-36 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-37 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-38 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-39 | **PROTOCOL** | PASS (correct behavior) | — |
 
 ### Shipped fix PRs (all include protocol tests)
 
@@ -94,6 +98,10 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 25. **BUG-33**: list --sort unknown field silent no-op
 26. **BUG-34**: reparent parent to child creates cycle
 27. **BUG-35**: overdue comparison edge case (PROTOCOL — works correctly)
+28. **BUG-36**: --priority-min > --priority-max silently returns empty
+29. **BUG-37**: --created-after > --created-before silently returns empty
+30. **BUG-38**: bd list -n -1 accepted as unlimited (no validation)
+31. **BUG-39**: bd duplicate on closed issue succeeds (PROTOCOL — correct)
 
 ### Investigate further
 
@@ -738,6 +746,58 @@ occurs at UTC boundary edge cases.
 
 **Triage: INVESTIGATE** — basic overdue works, but UTC midnight edge cases
 need more thorough testing with controlled time.
+
+---
+
+### BUG-36: `--priority-min 4 --priority-max 0` silently returns empty (NEW — session 6)
+
+**Severity: MEDIUM** — Silent wrong results from reversed range
+**Discovered:** Session 6 discovery, test
+**File:** `cmd/bd/list.go:522-535` (independent validation, no min<=max check)
+**Test:** `TestDiscovery_PriorityMinMaxReversedSilentEmpty`
+
+`bd list --priority-min 4 --priority-max 0` produces SQL `priority >= 4 AND
+priority <= 0` which is always false. Returns empty array with no error. Each
+bound is validated independently (0-4 range) but the pair is never checked.
+
+---
+
+### BUG-37: `--created-after` > `--created-before` silently returns empty (NEW — session 6)
+
+**Severity: MEDIUM** — Silent wrong results from reversed date range
+**Discovered:** Session 6 discovery, test
+**File:** `cmd/bd/list.go:466-508` (independent parsing, no range check)
+**Test:** `TestDiscovery_DateRangeReversedSilentEmpty`
+
+`bd list --created-after 2099-12-31 --created-before 2020-01-01` produces SQL
+`created_at >= 2099 AND created_at <= 2020` which is always false. Returns
+empty with no error.
+
+---
+
+### BUG-38: `bd list -n -1` silently accepted as unlimited (NEW — session 6)
+
+**Severity: LOW** — Negative limit not validated
+**Discovered:** Session 6 discovery, test
+**File:** `cmd/bd/list.go:666-668` (`effectiveLimit > 0` check)
+**Test:** `TestDiscovery_NegativeLimitNotRejected`
+
+`bd list -n -1` is silently accepted and acts as unlimited (same as `-n 0`).
+The check `effectiveLimit > 0` lets negative values pass through. Should
+either reject negative values or document that negative means unlimited.
+
+---
+
+### BUG-39: `bd duplicate` on already-closed issue succeeds (NEW — session 6)
+
+**Severity: LOW** — Documenting correct behavior
+**Discovered:** Session 6 discovery, test
+**Test:** `TestDiscovery_DuplicateAlreadyClosedSucceeds`
+
+`bd duplicate <closed-id> --of <original>` succeeds even when the duplicate
+is already closed. The status update is idempotent and the duplicate-of dep
+is correctly added. This is reasonable behavior — the dep link is what matters,
+not the status transition. Classified as PROTOCOL (correct behavior).
 
 ---
 

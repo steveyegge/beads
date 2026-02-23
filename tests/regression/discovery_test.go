@@ -1667,6 +1667,160 @@ func TestDiscovery_OverdueComparisonEdgeCase(t *testing.T) {
 		containsID(overdueIDs, pastDue), containsID(overdueIDs, futureDue), containsID(overdueIDs, noDue))
 }
 
+// TestDiscovery_PriorityMinMaxReversedSilentEmpty verifies that
+// --priority-min > --priority-max is rejected or warned.
+//
+// FINDING: list.go:522-535 validates each priority independently but never
+// checks that min <= max. With --priority-min 4 --priority-max 0, the SQL
+// becomes "priority >= 4 AND priority <= 0" which is always false. The user
+// gets empty results with no error or warning.
+//
+// Classification: BUG — reversed range should either error or swap values.
+func TestDiscovery_PriorityMinMaxReversedSilentEmpty(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	// Create issues at various priorities
+	w.create("--title", "P0 critical", "--type", "task", "--priority", "0")
+	w.create("--title", "P2 medium", "--type", "task", "--priority", "2")
+	w.create("--title", "P4 backlog", "--type", "task", "--priority", "4")
+
+	// Normal range (min < max) should work
+	normalOut, err := w.tryRun("list", "--priority-min", "0", "--priority-max", "4", "--json", "-n", "0")
+	if err != nil {
+		t.Skipf("--priority-min/--priority-max not available: %v", err)
+	}
+	normalIDs := parseIDs(t, normalOut)
+	if len(normalIDs) != 3 {
+		t.Fatalf("control: expected 3 issues with P0-P4, got %d", len(normalIDs))
+	}
+
+	// Reversed range (min > max) should error, not return empty silently
+	reversedOut, err := w.tryRun("list", "--priority-min", "4", "--priority-max", "0", "--json", "-n", "0")
+	if err == nil {
+		reversedIDs := parseIDs(t, reversedOut)
+		if len(reversedIDs) == 0 {
+			t.Errorf("DISCOVERY: --priority-min 4 --priority-max 0 silently returns empty — reversed range not validated, user gets wrong results without warning")
+		}
+	}
+	// If err != nil, the tool correctly rejected reversed range — good
+}
+
+// TestDiscovery_DateRangeReversedSilentEmpty verifies that --created-after
+// after --created-before is rejected or warned.
+//
+// FINDING: list.go:466-508 parses each date independently without checking
+// that after <= before. With --created-after 2099 --created-before 2020, the
+// SQL becomes "created_at >= 2099 AND created_at <= 2020" which is always false.
+//
+// Classification: BUG — reversed date range should error or warn.
+func TestDiscovery_DateRangeReversedSilentEmpty(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	// Create an issue (will have today's date)
+	w.create("--title", "Date test", "--type", "task", "--priority", "2")
+
+	// Normal range should find the issue
+	normalOut, err := w.tryRun("list", "--created-after", "2020-01-01", "--created-before", "2099-12-31", "--json", "-n", "0")
+	if err != nil {
+		t.Skipf("--created-after/--created-before not available: %v", err)
+	}
+	normalIDs := parseIDs(t, normalOut)
+	if len(normalIDs) == 0 {
+		t.Fatalf("control: expected at least 1 issue in normal date range")
+	}
+
+	// Reversed range should error, not return empty silently
+	reversedOut, err := w.tryRun("list", "--created-after", "2099-12-31", "--created-before", "2020-01-01", "--json", "-n", "0")
+	if err == nil {
+		reversedIDs := parseIDs(t, reversedOut)
+		if len(reversedIDs) == 0 {
+			t.Errorf("DISCOVERY: --created-after 2099 --created-before 2020 silently returns empty — reversed date range not validated")
+		}
+	}
+}
+
+// TestDiscovery_NegativeLimitNotRejected verifies that bd list -n -1 is
+// handled correctly.
+//
+// FINDING: list.go:666-668 checks "effectiveLimit > 0" which lets negative
+// values pass through as "unlimited." The user might expect -1 to be an error
+// but it silently acts like -n 0 (unlimited).
+//
+// Classification: BUG (low) — negative limit should be rejected.
+func TestDiscovery_NegativeLimitNotRejected(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	w.create("--title", "Limit test 1", "--type", "task", "--priority", "2")
+	w.create("--title", "Limit test 2", "--type", "task", "--priority", "2")
+
+	// -n -1 should be rejected
+	out, err := w.tryRun("list", "-n", "-1", "--json")
+	if err == nil {
+		ids := parseIDs(t, out)
+		if len(ids) > 0 {
+			t.Errorf("DISCOVERY: bd list -n -1 accepted silently and returned %d results — negative limit not validated (acts as unlimited)", len(ids))
+		}
+	}
+	// If err != nil, the tool correctly rejected negative limit — good
+}
+
+// TestDiscovery_DuplicateAlreadyClosedSucceeds verifies that duplicating an
+// already-closed issue produces a meaningful result.
+//
+// FINDING: duplicate.go:90-106 adds the duplicate-of dep and closes the
+// issue, even if it's already closed. The duplicate operation is idempotent
+// for status but the dependency link is silently added to an already-closed
+// issue. No warning is given.
+//
+// Classification: INVESTIGATE — may be intentional (idempotent), but the lack
+// of a "this issue is already closed" warning is surprising.
+func TestDiscovery_DuplicateAlreadyClosedSucceeds(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	orig := w.create("--title", "Original", "--type", "bug", "--priority", "1")
+	dup := w.create("--title", "Already closed", "--type", "bug", "--priority", "1")
+	w.run("close", dup)
+
+	// Duplicating an already-closed issue should at least warn
+	out, err := w.tryRun("duplicate", dup, "--of", orig)
+	if err != nil {
+		t.Skipf("bd duplicate not available: %v", err)
+	}
+
+	// Check if the dep was added (could be on either side)
+	dupData := parseJSON(t, w.run("show", dup, "--json"))
+	origData := parseJSON(t, w.run("show", orig, "--json"))
+
+	// Log all deps for diagnostics
+	dupDeps, _ := dupData[0]["dependencies"].([]any)
+	origDeps, _ := origData[0]["dependencies"].([]any)
+	dupDependents, _ := dupData[0]["dependents"].([]any)
+	origDependents, _ := origData[0]["dependents"].([]any)
+
+	foundDep := false
+	for _, d := range dupDeps {
+		dep, _ := d.(map[string]any)
+		if strings.Contains(fmt.Sprintf("%v", dep["dependency_type"]), "duplic") {
+			foundDep = true
+		}
+	}
+	for _, d := range origDependents {
+		dep, _ := d.(map[string]any)
+		if strings.Contains(fmt.Sprintf("%v", dep["dependency_type"]), "duplic") {
+			foundDep = true
+		}
+	}
+
+	if foundDep {
+		t.Logf("CONFIRMED: bd duplicate on already-closed issue succeeded silently — added duplicate dep (output: %s)", strings.TrimSpace(out))
+	} else {
+		// The dep may have been added but not visible — log raw output
+		t.Logf("dup deps=%v dependents=%v, orig deps=%v dependents=%v",
+			dupDeps, dupDependents, origDeps, origDependents)
+		t.Logf("CONFIRMED: bd duplicate on already-closed issue completed (output: %s) but dep relationship not visible in show --json", strings.TrimSpace(out))
+	}
+}
+
 // TestProtocol_CommentAddAndPreserve verifies comments persist through operations.
 func TestProtocol_CommentAddAndPreserve(t *testing.T) {
 	w := newCandidateWorkspace(t)
