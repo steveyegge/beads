@@ -1,9 +1,26 @@
-# SQLite databases
-*.db
-*.db?*
-*.db-journal
-*.db-wal
-*.db-shm
+# Dolt database (managed by Dolt, not git)
+dolt/
+dolt-access.lock
+
+# Runtime files
+bd.sock
+bd.sock.startlock
+sync-state.json
+last-touched
+
+# Local version tracking (prevents upgrade notification spam after git ops)
+.local_version
+
+# Worktree redirect file (contains relative path to main repo's .beads/)
+# Must not be committed as paths would be wrong in other clones
+redirect
+
+# Sync state (local-only, per-machine)
+# These files are machine-specific and should not be shared across clones
+.sync.lock
+.jsonl.lock
+sync_base.jsonl
+export-state/
 
 # Ephemeral store (SQLite - wisps/molecules, intentionally not versioned)
 ephemeral.sqlite3
@@ -11,41 +28,24 @@ ephemeral.sqlite3-journal
 ephemeral.sqlite3-wal
 ephemeral.sqlite3-shm
 
-# Daemon runtime files
-daemon.lock
-daemon.log
-daemon.pid
-bd.sock
-sync-state.json
-last-touched
-
-# Local version tracking (prevents upgrade notification spam after git ops)
-.local_version
-
-# Legacy database files
+# Legacy files (from pre-Dolt versions)
+*.db
+*.db?*
+*.db-journal
+*.db-wal
+*.db-shm
 db.sqlite
 bd.db
-
-# Worktree redirect file (contains relative path to main repo's .beads/)
-# Must not be committed as paths would be wrong in other clones
-redirect
-
-# Merge artifacts (temporary files from 3-way merge)
+daemon.lock
+daemon.log
+daemon-*.log.gz
+daemon.pid
 beads.base.jsonl
 beads.base.meta.json
 beads.left.jsonl
 beads.left.meta.json
 beads.right.jsonl
 beads.right.meta.json
-
-# Sync state (local-only, per-machine)
-# These files are machine-specific and should not be shared across clones
-.sync.lock
-sync_base.jsonl
-export-state/
-
-# Process semaphore slot files (runtime concurrency limiting)
-sem/
 
 # NOTE: Do NOT add negation patterns (e.g., !issues.jsonl) here.
 # They would override fork protection in .git/info/exclude, allowing
