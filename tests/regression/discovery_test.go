@@ -947,3 +947,46 @@ func TestProtocol_CommentAddAndPreserve(t *testing.T) {
 		t.Errorf("comments should be preserved after close/reopen, got %d", len(comments))
 	}
 }
+
+// =============================================================================
+// CANDIDATE-ONLY DISCOVERY: SILENT LOSS SEAMS
+// =============================================================================
+
+// TestDiscovery_ConditionalBlocksNotEvaluated verifies that conditional-blocks
+// dependencies are evaluated in readiness computation.
+//
+// FINDING: types.AffectsReadyWork() returns true for conditional-blocks, but
+// computeBlockedIDs() SQL only queries WHERE type IN ('blocks', 'waits-for').
+// conditional-blocks is never evaluated, so issues that should be conditionally
+// blocked appear as ready.
+//
+// Classification: DECISION — conditional-blocks semantics are complex (B runs
+// only if A fails). The maintainer must decide if they should gate readiness
+// while A is still open.
+func TestDiscovery_ConditionalBlocksNotEvaluated(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	precondition := w.create("--title", "Precondition (might fail)", "--type", "task", "--priority", "1")
+	fallback := w.create("--title", "Fallback (runs if precondition fails)", "--type", "task", "--priority", "2")
+
+	// fallback is conditionally-blocked by precondition
+	w.run("dep", "add", fallback, precondition, "--type", "conditional-blocks")
+
+	// While precondition is still open, fallback should NOT be ready
+	// (it can't run yet — we don't know if precondition will fail)
+	readyIDs := parseIDs(t, w.run("ready", "-n", "0", "--json"))
+	if containsID(readyIDs, fallback) {
+		t.Errorf("DISCOVERY: conditionally-blocked issue %s appears in bd ready while precondition %s is still open — conditional-blocks not evaluated by computeBlockedIDs()", fallback, precondition)
+	}
+
+	// precondition should be ready (it has no blockers)
+	if !containsID(readyIDs, precondition) {
+		t.Errorf("precondition %s should be in ready list", precondition)
+	}
+
+	// Also verify: bd blocked should include fallback
+	blockedIDs := parseIDs(t, w.run("blocked", "--json"))
+	if !containsID(blockedIDs, fallback) {
+		t.Errorf("DISCOVERY: conditionally-blocked issue %s not in bd blocked output", fallback)
+	}
+}
