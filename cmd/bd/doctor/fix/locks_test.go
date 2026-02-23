@@ -73,7 +73,7 @@ func TestStaleLockFiles(t *testing.T) {
 		}
 	})
 
-	t.Run("fresh noms LOCK preserved", func(t *testing.T) {
+	t.Run("noms LOCK always removed by doctor fix", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		nomsDir := filepath.Join(tmpDir, ".beads", "dolt", "beads", ".dolt", "noms")
 		if err := os.MkdirAll(nomsDir, 0755); err != nil {
@@ -85,13 +85,16 @@ func TestStaleLockFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// noms LOCK cleanup is gated by probeStale on dolt-access.lock.
-		// Without a dolt-access.lock file, probeStale returns true (stale),
-		// so a fresh noms LOCK would still be removed. This test verifies
-		// the dolt-access.lock path doesn't exist scenario (no active holder).
-		// In practice, a running process would hold the flock.
+		// In server mode (the only mode now), noms LOCK files are always
+		// removed by doctor --fix. The Dolt server manages its own locks;
+		// if the user is running doctor --fix, stale locks are the likely
+		// cause of the problem they're trying to fix.
 		if err := StaleLockFiles(tmpDir); err != nil {
 			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+			t.Error("noms LOCK should be removed by doctor --fix")
 		}
 	})
 

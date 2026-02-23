@@ -67,11 +67,15 @@ func StaleLockFiles(path string) error {
 
 	// Remove stale Dolt internal LOCK files (noms layer filesystem lock).
 	// These live at .beads/dolt/<database>/.dolt/noms/LOCK and are created
-	// by the embedded Dolt engine. If a process crashes without closing the
-	// embedded connector, the LOCK file persists and blocks all future opens
-	// with "the database is locked by another dolt process".
-	// Uses flock probe to verify no active process holds the advisory lock
-	// before removing — more correct than age-only cleanup.
+	// by the Dolt engine. If a process (embedded driver or sql-server) crashes
+	// without closing cleanly, the LOCK file persists and blocks all future
+	// opens with "the database is locked by another dolt process" or a SIGSEGV
+	// nil-pointer dereference.
+	//
+	// In server mode (the only mode now), the Dolt server is the one that opens
+	// these files. If we're running bd doctor --fix, the server is presumably
+	// having trouble, so removing stale locks is safe. We use the shared
+	// CleanStaleNomsLocks helper from the dolt storage package.
 	doltDir := filepath.Join(beadsDir, "dolt")
 	if dbEntries, err := os.ReadDir(doltDir); err == nil {
 		for _, dbEntry := range dbEntries {
@@ -79,15 +83,12 @@ func StaleLockFiles(path string) error {
 				continue
 			}
 			nomsLock := filepath.Join(doltDir, dbEntry.Name(), ".dolt", "noms", "LOCK")
-			if _, err := os.Stat(nomsLock); err == nil {
+			if _, statErr := os.Stat(nomsLock); statErr == nil {
 				lockName := fmt.Sprintf("dolt/%s/.dolt/noms/LOCK", dbEntry.Name())
-				// Probe the advisory access lock to ensure no process is active
-				if probeStale(accessLockPath) {
-					if err := os.Remove(nomsLock); err != nil {
-						errors = append(errors, fmt.Sprintf("%s: %v", lockName, err))
-					} else {
-						removed = append(removed, lockName)
-					}
+				if err := os.Remove(nomsLock); err != nil {
+					errors = append(errors, fmt.Sprintf("%s: %v", lockName, err))
+				} else {
+					removed = append(removed, lockName)
 				}
 			}
 		}
