@@ -392,4 +392,3 @@ func CheckChildParentDependencies(path string) DoctorCheck {
 		Category: CategoryMetadata,
 	}
 }
-
