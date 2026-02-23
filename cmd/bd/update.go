@@ -42,23 +42,19 @@ create, update, show, or close operation).`,
 
 		if cmd.Flags().Changed("status") {
 			status, _ := cmd.Flags().GetString("status")
-			// Validate against built-in + custom statuses
-			if !types.Status(status).IsValid() {
-				// Check custom statuses from config
-				customStatuses, err := store.GetCustomStatuses(rootCtx)
+			var customStatuses []string
+			if store != nil {
+				cs, err := store.GetCustomStatuses(rootCtx)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: could not read custom statuses: %v\n", err)
-				}
-				isCustom := false
-				for _, cs := range customStatuses {
-					if cs == status {
-						isCustom = true
-						break
+					if !jsonOutput {
+						fmt.Fprintf(os.Stderr, "%s Failed to get custom statuses: %v\n", ui.RenderWarn("!"), err)
 					}
+				} else {
+					customStatuses = cs
 				}
-				if !isCustom {
-					FatalErrorRespectJSON("invalid status %q (built-in: open, in_progress, blocked, deferred, closed, pinned, hooked; or configure custom statuses via 'bd config set status.custom')", status)
-				}
+			}
+			if !types.Status(status).IsValidWithCustom(customStatuses) {
+				FatalErrorRespectJSON("invalid status %q (built-in: open, in_progress, blocked, deferred, closed, pinned, hooked; or configure custom statuses via 'bd config set status.custom')", status)
 			}
 			updates["status"] = status
 
