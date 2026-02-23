@@ -21,6 +21,7 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | 2026-02-22 | **Session 7: State corruption, filter conflicts, hierarchy** | Found 4 more bugs (BUG-43 through 46) + 5 protocol tests (BUG-47 through 51). Deferred without date, comma status, assignee conflict, child of closed parent. Documented: custom dep types, in_progress vs claim, --all filter, empty type rejection, show JSON array. |
 | 2026-02-22 | **Session 8: Lifecycle validation, ready filters, duplicate cycles** | Found 5 more bugs (BUG-56 through 60). Reopen already-open, undefer non-deferred, ready out-of-range priority, children nonexistent parent, duplicate cycle undetected. |
 | 2026-02-22 | **Session 8b: Stale, search, type filter, query validation** | Found 3 more bugs (BUG-61 through 63) + 5 protocol tests. Stale --days 0 returns everything, search comma-status same as BUG-44, list --type nonexistent silent empty. Query priority range validation and unknown fields work correctly. |
+| 2026-02-22 | **Session 8c: Blocked parent, label idempotency, dep tree** | Found 3 more bugs (BUG-69 through 71) + 1 protocol test. Blocked --parent nonexistent, label remove nonexistent, label add duplicate. Dep tree --max-depth -1 properly rejected. |
 
 ## Audit Summary
 
@@ -94,6 +95,10 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | BUG-66 | **PROTOCOL** | PASS (correct) | — |
 | BUG-67 | **PROTOCOL** | PASS (correct) | — |
 | BUG-68 | **PROTOCOL** | PASS (correct) | — |
+| BUG-69 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-70 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-71 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-72 | **PROTOCOL** | PASS (correct) | — |
 
 ### Shipped fix PRs (all include protocol tests)
 
@@ -163,6 +168,10 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 58. **BUG-66**: stale --days 0 edge case (PROTOCOL — see BUG-61 timing dependency)
 59. **BUG-67**: delete nonexistent --force errors correctly (PROTOCOL)
 60. **BUG-68**: pin closed issue handled gracefully (PROTOCOL)
+61. **BUG-69**: blocked --parent nonexistent returns empty (no validation)
+62. **BUG-70**: label remove nonexistent says "Removed" (false positive)
+63. **BUG-71**: label add duplicate says "Added" when already exists
+64. **BUG-72**: dep tree --max-depth -1 properly rejected (PROTOCOL)
 
 ### Investigate further
 
@@ -1128,6 +1137,45 @@ status value, matching no issues. Returns empty with no error.
 empty results. Compare: `bd create --type nonexistent` correctly validates
 and rejects unknown types. The asymmetry between create (validates) and
 list (doesn't validate) means users silently get wrong results.
+
+---
+
+### BUG-69: `bd blocked --parent <nonexistent>` returns empty instead of error (NEW — session 8c)
+
+**Severity: MEDIUM** — Silent validation gap (same class as BUG-59)
+**Discovered:** Session 8c discovery, test
+**File:** `cmd/bd/ready.go:218-245` (no parent validation)
+**Test:** `TestDiscovery_BlockedNonexistentParentSilentEmpty`
+
+`bd blocked --parent nonexistent-xyz` returns "No blocked issues" with exit 0.
+The user can't distinguish "parent has no blocked children" from "parent doesn't
+exist." Same class of bug as BUG-59 (children nonexistent parent).
+
+---
+
+### BUG-70: `bd label remove` on nonexistent label reports success (NEW — session 8c)
+
+**Severity: LOW** — False positive confirmation (same class as BUG-42)
+**Discovered:** Session 8c discovery, test
+**File:** `cmd/bd/label.go` (no existence check before remove)
+**Test:** `TestDiscovery_LabelRemoveNonexistentSilentSuccess`
+
+`bd label remove X 'never-existed-label'` reports success even though the label
+was never on the issue. Same pattern as BUG-42 (dep rm nonexistent says "Removed").
+
+---
+
+### BUG-71: `bd label add` duplicate reports "Added" when already exists (NEW — session 8c)
+
+**Severity: LOW** — Misleading success message
+**Discovered:** Session 8c discovery, test
+**File:** `cmd/bd/label.go:99-102` (no existence check before add)
+**Test:** `TestDiscovery_LabelAddDuplicateReportsAdded`
+
+`bd label add X 'existing-label'` reports "Added label" even when the label is
+already on the issue. The storage layer is correctly idempotent (no duplicate
+created), but the command's success message is misleading. Should warn "label
+already exists on issue."
 
 ---
 

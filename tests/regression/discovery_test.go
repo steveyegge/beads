@@ -2707,3 +2707,114 @@ func TestProtocol_PinClosedIssueHandled(t *testing.T) {
 		t.Logf("Pin on closed issue %s: command succeeded but pinned=false", a)
 	}
 }
+
+// === Session 8c: Blocked parent, label idempotency, dep tree depth ===
+
+// TestDiscovery_BlockedNonexistentParentSilentEmpty verifies that
+// bd blocked --parent <nonexistent-id> should error, not return empty.
+// BUG-64: blocked command doesn't validate parent existence.
+func TestDiscovery_BlockedNonexistentParentSilentEmpty(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	// Create some blocked issues to ensure the command works
+	a := w.create("--title", "Blocker", "--type", "task", "--priority", "2")
+	b := w.create("--title", "Blocked by A", "--type", "task", "--priority", "2")
+	w.run("dep", "add", b, a, "--type", "blocks")
+
+	// Control: blocked with no filter returns results
+	controlOut, err := w.tryRun("blocked", "--json")
+	if err != nil {
+		t.Skipf("bd blocked not available: %v", err)
+	}
+	controlIDs := parseIDs(t, controlOut)
+	if !containsID(controlIDs, b) {
+		t.Skipf("control: blocked issue not found in bd blocked")
+	}
+
+	// Bug: blocked --parent nonexistent returns empty with no error
+	_, err = w.tryRun("blocked", "--parent", "nonexistent-parent-xyz", "--json")
+	if err == nil {
+		t.Errorf("DISCOVERY: bd blocked --parent nonexistent-parent-xyz returned success — "+
+			"should error 'parent not found'. User can't tell if parent has no blocked children "+
+			"or if parent doesn't exist. File: cmd/bd/ready.go:218-245 (no parent validation).")
+	}
+}
+
+// TestDiscovery_LabelRemoveNonexistentSilentSuccess verifies that
+// bd label remove <id> <nonexistent-label> reports success.
+// BUG-65: Same pattern as BUG-42 (dep rm nonexistent says "Removed").
+func TestDiscovery_LabelRemoveNonexistentSilentSuccess(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Label test", "--type", "task", "--priority", "2")
+	w.run("label", "add", a, "real-label")
+
+	// Verify label exists
+	data := parseJSON(t, w.run("show", a, "--json"))
+	labels, _ := data[0]["labels"].([]any)
+	if len(labels) != 1 {
+		t.Fatalf("expected 1 label, got %d", len(labels))
+	}
+
+	// Bug: removing a nonexistent label should error, not report success
+	_, err := w.tryRun("label", "remove", a, "never-existed-label")
+	if err == nil {
+		// Command succeeded — verify the real label is still there
+		data = parseJSON(t, w.run("show", a, "--json"))
+		labels, _ = data[0]["labels"].([]any)
+		if len(labels) == 1 {
+			t.Errorf("DISCOVERY: bd label remove %s 'never-existed-label' reported success — "+
+				"label didn't exist. Same pattern as BUG-42 (dep rm false positive). "+
+				"File: cmd/bd/label.go (no existence check before remove).", a)
+		}
+	}
+}
+
+// TestDiscovery_LabelAddDuplicateReportsAdded verifies that adding an
+// already-existing label reports "Added" even though it's a no-op.
+// BUG-66: label.go doesn't check if label already exists before adding.
+func TestDiscovery_LabelAddDuplicateReportsAdded(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Dup label test", "--type", "task", "--priority", "2")
+	w.run("label", "add", a, "my-label")
+
+	// Verify label exists
+	data := parseJSON(t, w.run("show", a, "--json"))
+	labels, _ := data[0]["labels"].([]any)
+	if len(labels) != 1 {
+		t.Fatalf("expected 1 label, got %d", len(labels))
+	}
+
+	// Bug: adding the same label again should either warn or be rejected
+	_, err := w.tryRun("label", "add", a, "my-label")
+	if err == nil {
+		// Succeeded — check if the label count changed (duplicate created?)
+		data = parseJSON(t, w.run("show", a, "--json"))
+		labels, _ = data[0]["labels"].([]any)
+		if len(labels) == 1 {
+			// Idempotent (correct at storage level) but misleading "Added" message
+			t.Errorf("DISCOVERY: bd label add %s 'my-label' reported 'Added' when label already existed — "+
+				"idempotent no-op but misleading success message. Should warn 'label already exists'. "+
+				"File: cmd/bd/label.go:99-102.", a)
+		} else if len(labels) > 1 {
+			t.Errorf("DISCOVERY: bd label add %s 'my-label' created DUPLICATE label — "+
+				"now has %d copies. File: cmd/bd/label.go.", a, len(labels))
+		}
+	}
+}
+
+// TestProtocol_DepTreeNegativeDepthRejected verifies that bd dep tree with
+// --max-depth -1 is properly validated and rejected.
+func TestProtocol_DepTreeNegativeDepthRejected(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Tree root", "--type", "task", "--priority", "2")
+	b := w.create("--title", "Tree child", "--type", "task", "--priority", "2")
+	w.run("dep", "add", b, a, "--type", "blocks")
+
+	_, err := w.tryRun("dep", "tree", a, "--max-depth", "-1")
+	if err == nil {
+		t.Errorf("bd dep tree --max-depth -1 should be rejected")
+	}
+}
