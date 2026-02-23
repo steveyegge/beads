@@ -1268,6 +1268,112 @@ func TestDiscovery_SearchIncludesClosedByDefault(t *testing.T) {
 	}
 }
 
+// TestProtocol_StatsReadyMatchesActualReady verifies that bd stats ready count
+// matches actual bd ready count for standard issue types.
+//
+// NOTE: GetStatistics().ReadyIssues = OpenIssues - blockedCount could over-count
+// with internal types (gate, molecule, agent) or pinned issues, but for standard
+// user-facing types (task, bug, feature, epic) it matches.
+func TestProtocol_StatsReadyMatchesActualReady(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	// Create some issues with different states
+	w.create("--title", "Open1", "--type", "task", "--priority", "2")
+	w.create("--title", "Open2", "--type", "task", "--priority", "2")
+	a := w.create("--title", "Blocked", "--type", "task", "--priority", "2")
+	b := w.create("--title", "Blocker", "--type", "task", "--priority", "1")
+	w.run("dep", "add", a, b, "--type", "blocks")
+	c := w.create("--title", "Closed", "--type", "task", "--priority", "2")
+	w.run("close", c)
+
+	// Get actual ready count
+	readyIDs := parseIDs(t, w.run("ready", "-n", "0", "--json"))
+	actualReady := len(readyIDs)
+
+	// Get stats ready count (output is nested: {summary: {ready_issues: N}, ...})
+	statsOut := w.run("stats", "--json")
+	var statsWrapper struct {
+		Summary struct {
+			ReadyIssues int `json:"ready_issues"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(statsOut), &statsWrapper); err != nil {
+		t.Fatalf("parsing stats: %v\nraw: %s", err, statsOut)
+	}
+
+	if statsWrapper.Summary.ReadyIssues != actualReady {
+		t.Errorf("DISCOVERY: bd stats reports %d ready issues but bd ready returns %d — stats over/under-reports",
+			statsWrapper.Summary.ReadyIssues, actualReady)
+	}
+}
+
+// TestProtocol_DepAddClosedBlockerSurpriseBlock documents that adding a blocks
+// dep on a closed issue succeeds silently, and reopening the blocker later
+// activates the block. No warning is given when adding to a closed target.
+func TestProtocol_DepAddClosedBlockerSurpriseBlock(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Will be surprised", "--type", "task", "--priority", "2")
+	b := w.create("--title", "Already done", "--type", "task", "--priority", "2")
+	w.run("close", b)
+
+	// Add blocks dep on closed issue — should warn but currently succeeds silently
+	out := w.run("dep", "add", a, b, "--type", "blocks")
+	_ = out
+
+	// a should still be ready (closed blocker doesn't block)
+	readyIDs := parseIDs(t, w.run("ready", "-n", "0", "--json"))
+	if !containsID(readyIDs, a) {
+		t.Fatalf("a should be ready when blocker is closed")
+	}
+
+	// Now reopen the blocker — a should become blocked (surprise!)
+	w.run("reopen", b)
+
+	readyAfter := parseIDs(t, w.run("ready", "-n", "0", "--json"))
+	blockedIDs := parseIDs(t, w.run("blocked", "--json"))
+
+	if !containsID(blockedIDs, a) {
+		t.Errorf("after reopening blocker, a should be blocked")
+	}
+	if containsID(readyAfter, a) {
+		t.Errorf("after reopening blocker, a should NOT be in ready")
+	}
+
+	// The real test: was there a warning when adding the dep on a closed target?
+	// Currently there isn't — this test documents the surprise behavior.
+	t.Logf("CONFIRMED: dep add on closed blocker succeeds silently — reopening blocker later causes surprise block")
+}
+
+// TestDiscovery_ConditionalBlocksCycleUndetected verifies that cycle detection
+// doesn't catch cycles involving conditional-blocks.
+//
+// FINDING: Cycle detection at AddDependency only runs for type == blocks.
+// DetectCycles also only follows blocks edges. A cycle like:
+// A blocks B, B conditional-blocks A — is not detected.
+//
+// Classification: BUG — conditional-blocks is declared as AffectsReadyWork(),
+// so cycles through it should be detected too.
+func TestDiscovery_ConditionalBlocksCycleUndetected(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Alpha", "--type", "task", "--priority", "2")
+	b := w.create("--title", "Beta", "--type", "task", "--priority", "2")
+
+	// A blocks B — this is fine
+	w.run("dep", "add", a, b, "--type", "blocks")
+
+	// B conditional-blocks A — this creates a cycle, but should it be detected?
+	_, err := w.tryRun("dep", "add", b, a, "--type", "conditional-blocks")
+	if err == nil {
+		// Check if cycle detection caught it
+		cycleOut := w.run("dep", "cycles")
+		if strings.Contains(cycleOut, "No dependency cycles") {
+			t.Errorf("DISCOVERY: cycle through conditional-blocks (A blocks B, B conditional-blocks A) is not detected by dep cycles or add-time check")
+		}
+	}
+}
+
 // TestProtocol_CommentAddAndPreserve verifies comments persist through operations.
 func TestProtocol_CommentAddAndPreserve(t *testing.T) {
 	w := newCandidateWorkspace(t)

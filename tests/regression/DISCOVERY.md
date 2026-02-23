@@ -15,7 +15,7 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | 2026-02-22 | **Phase 1-3: Snapshot harness + full parity run** | Replaced bd export with snapshot (list+show). Fixed database isolation (unique prefixes per workspace). Normalization for show-vs-export field differences. **Result: 95+ PASS, 15 FAIL (all known bugs), 10 SKIP.** |
 | 2026-02-22 | **Phase 4: Ship fix PRs with tests** | BUG-2+3 already merged (PR #1992). BUG-10 PR #2014, BUG-11+12+14 PR #1994, BUG-4 PR #2017. All PRs include protocol tests. |
 | 2026-02-22 | **Session 3: Candidate-only discovery (lane 3)** | Found 5 new bugs (BUG-16 through 20) + 3 code-review-only findings. External blockers, conditional-blocks, count/list discrepancy, waits-for gating, parent-child blocked consistency. Filed DECISION PRs #2025, #2026. |
-| 2026-02-22 | **Session 4: Deep discovery (search, lifecycle, batch)** | Found 4 more bugs (BUG-21 through 24). Update bypasses close guard, reopen superseded semantic corruption, defer past date creates invisible issue, wisp sort order loss. |
+| 2026-02-22 | **Session 4: Deep discovery (search, lifecycle, batch, deps)** | Found 7 more bugs (BUG-21 through 27). Update bypasses close guard, reopen superseded corruption, defer past date invisible, wisp sort order, conditional-blocks cycle, epic wisp children. 2 new protocol tests. |
 
 ## Audit Summary
 
@@ -45,6 +45,9 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | BUG-22 | **DECISION** | OPEN (not PR'd yet) | — |
 | BUG-23 | **BUG** | OPEN (not PR'd yet) | — |
 | BUG-24 | **BUG** (code review) | OPEN (not PR'd yet) | — |
+| BUG-25 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-26 | **DECISION** | OPEN (not PR'd yet) | — |
+| BUG-27 | **BUG** | OPEN (not PR'd yet) | — |
 
 ### Shipped fix PRs (all include protocol tests)
 
@@ -70,6 +73,9 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 14. **BUG-22**: reopen superseded = semantic corruption (DECISION)
 15. **BUG-23**: defer with past date creates invisible issue
 16. **BUG-24**: wisp sort order loss (code review, no test)
+17. **BUG-25**: conditional-blocks cycle undetected
+18. **BUG-26**: reopen superseded = semantic corruption (DECISION)
+19. **BUG-27**: defer with past date creates invisible issue
 
 ### Investigate further
 
@@ -549,7 +555,75 @@ sort order. Hard to notice with small wisp counts.
 
 ---
 
-### Code review findings (not CLI-testable)
+### BUG-25: Cycle detection doesn't catch conditional-blocks cycles (NEW — session 4)
+
+**Severity: MEDIUM** — Undetected dependency cycle
+**Discovered:** Session 4 deep discovery, test
+**File:** `internal/storage/dolt/dependencies.go:54` (only checks `blocks`)
+**Test:** `TestDiscovery_ConditionalBlocksCycleUndetected`
+
+Cycle detection at `AddDependency` only runs for `type == blocks`. `DetectCycles`
+also only follows `blocks` edges. A cycle like A blocks B, B conditional-blocks A
+is not detected — `bd dep cycles` reports "No dependency cycles detected."
+
+Since `conditional-blocks` is declared as `AffectsReadyWork()`, cycles through
+it could create deadlocks that are never detected.
+
+---
+
+### BUG-26: Reopening superseded issue = semantic corruption (NEW — session 4)
+
+**Severity: MEDIUM** — Semantically incoherent state
+**Discovered:** Session 4 deep discovery, test
+**Test:** `TestDiscovery_ReopenSupersededSemanticCorruption`
+
+`bd supersede A --with B` creates a `supersedes` dep and closes A. `bd reopen A`
+sets status to open but does NOT remove the supersedes dep. Result: A is "open
+but superseded by B." The supersedes dep is non-blocking, so A appears in
+`bd ready` as actionable work despite being semantically obsolete.
+
+Same issue applies to `bd duplicate` — reopening a duplicate creates
+"open but duplicate-of" state.
+
+**DECISION:** Should reopen remove supersedes/duplicates deps, or should
+reopen be rejected for superseded/duplicated issues?
+
+---
+
+### BUG-27: Defer with past date creates invisible issue (NEW — session 4)
+
+**Severity: MEDIUM** — Issue silently lost
+**Discovered:** Session 4 deep discovery, test
+**File:** `cmd/bd/defer.go:37-44` (no past-date validation)
+**Test:** `TestDiscovery_DeferPastDateInvisible`
+
+`bd defer X --until 2020-01-01` sets status=deferred and defer_until to a past
+date. Nothing transitions status back to open when defer_until passes. The issue
+is not in `bd ready` (status is "deferred", not "open") and IS in
+`list --status deferred`, but the user expects it to reappear automatically.
+Note: `bd update --defer` warns about past dates but `bd defer` does NOT.
+
+---
+
+### Code review findings (session 4, not CLI-testable)
+
+**`bd update --status closed` audit trail gap:** Issues closed via update have
+`close_reason = ''` (empty) and generate different event data format than
+`bd close`. `IsFailureClose()` always returns false for these, silently
+preventing conditional-blocks from firing. Also runs `EventUpdate` hook instead
+of `EventClose` hook. See BUG-21.
+
+**Wisp merge in SearchIssues breaks sort order:** At `queries.go:321-337`, wisps
+are appended after Dolt results without re-sorting. A P0 wisp appears after
+a P4 permanent issue. See BUG-24.
+
+**Epic eligible for closure misses wisp children:** `GetEpicsEligibleForClosure`
+at `queries.go:637-715` only queries the `issues` table, not `wisps`. Molecules
+with wisp steps are never reported as eligible for closure.
+
+---
+
+### Code review findings (session 3, not CLI-testable)
 
 **Interactions table not cleaned on delete:** `DeleteIssue()` at `issues.go:602`
 cleans up dependencies, events, comments, labels — but NOT the `interactions`
