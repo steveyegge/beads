@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -456,11 +457,106 @@ func findBeadsRepoRoot(startPath string) string {
 	}
 }
 
+var configSchemaCmd = &cobra.Command{
+	Use:   "schema",
+	Short: "Show all known configuration keys",
+	Long: `Show all known configuration keys with their type, default value, and description.
+
+Use --json to get machine-readable output suitable for agents and scripts.
+
+Examples:
+  bd config schema
+  bd config schema --json
+  bd config schema --json | jq '.[] | select(.namespace == "jira")'
+  bd config schema --json | jq '.[] | select(.key == "issue_id_mode")'`,
+	Run: func(cmd *cobra.Command, args []string) {
+		schema := config.Schema
+
+		if jsonOutput {
+			outputJSON(schema)
+			return
+		}
+
+		// Human-readable table output
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "KEY	TYPE	DEFAULT	STORED IN	DESCRIPTION")
+		fmt.Fprintln(w, "---	----	-------	---------	-----------")
+
+		// Sort by namespace then key for readable grouping
+		sorted := make([]config.ConfigKeyDef, len(schema))
+		copy(sorted, schema)
+		sort.Slice(sorted, func(i, j int) bool {
+			if sorted[i].Namespace != sorted[j].Namespace {
+				return sorted[i].Namespace < sorted[j].Namespace
+			}
+			return sorted[i].Key < sorted[j].Key
+		})
+
+		for _, def := range sorted {
+			defaultStr := def.Default
+			if defaultStr == "" {
+				defaultStr = "(none)"
+			}
+			// Truncate long descriptions for table display
+			desc := def.Description
+			if len(desc) > 60 {
+				desc = desc[:57] + "..."
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+				def.Key, def.Type, defaultStr, def.StoredIn, desc)
+		}
+		w.Flush()
+	},
+}
+
+var configDescribeCmd = &cobra.Command{
+	Use:   "describe <key>",
+	Short: "Show detailed information about a configuration key",
+	Args:  cobra.ExactArgs(1),
+	Long: `Show detailed information about a single configuration key.
+
+Examples:
+  bd config describe issue_id_mode
+  bd config describe jira.url
+  bd config describe conflict.strategy`,
+	Run: func(cmd *cobra.Command, args []string) {
+		key := args[0]
+		schemaMap := config.SchemaByKey()
+		def, ok := schemaMap[key]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Unknown config key: %q\n", key)
+			fmt.Fprintf(os.Stderr, "Run 'bd config schema' to list all known keys.\n")
+			os.Exit(1)
+		}
+
+		if jsonOutput {
+			outputJSON(def)
+			return
+		}
+
+		fmt.Printf("Key:       %s\n", def.Key)
+		fmt.Printf("Type:      %s\n", def.Type)
+		fmt.Printf("Namespace: %s\n", def.Namespace)
+		fmt.Printf("Stored in: %s\n", def.StoredIn)
+		if def.Default != "" {
+			fmt.Printf("Default:   %s\n", def.Default)
+		} else {
+			fmt.Printf("Default:   (none)\n")
+		}
+		if len(def.Values) > 0 {
+			fmt.Printf("Values:    %s\n", strings.Join(def.Values, ", "))
+		}
+		fmt.Printf("\nDescription:\n  %s\n", def.Description)
+	},
+}
+
 func init() {
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configListCmd)
 	configCmd.AddCommand(configUnsetCmd)
 	configCmd.AddCommand(configValidateCmd)
+	configCmd.AddCommand(configSchemaCmd)
+	configCmd.AddCommand(configDescribeCmd)
 	rootCmd.AddCommand(configCmd)
 }
