@@ -42,6 +42,9 @@ create, update, show, or close operation).`,
 
 		if cmd.Flags().Changed("status") {
 			status, _ := cmd.Flags().GetString("status")
+			if !types.Status(status).IsValid() {
+				FatalErrorRespectJSON("invalid status %q: valid values are open, in_progress, deferred, closed", status)
+			}
 			updates["status"] = status
 
 			// If status is being set to closed, include session if provided
@@ -65,6 +68,9 @@ create, update, show, or close operation).`,
 		}
 		if cmd.Flags().Changed("title") {
 			title, _ := cmd.Flags().GetString("title")
+			if strings.TrimSpace(title) == "" {
+				FatalErrorRespectJSON("title cannot be empty")
+			}
 			updates["title"] = title
 		}
 		if cmd.Flags().Changed("assignee") {
