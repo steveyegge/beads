@@ -26,6 +26,8 @@ var doltCmd = &cobra.Command{
 Beads connects to a running dolt sql-server for all database operations.
 
 Commands:
+  bd dolt start        Start a local Dolt SQL server
+  bd dolt stop         Stop the local Dolt SQL server
   bd dolt show         Show current Dolt configuration with connection test
   bd dolt set <k> <v>  Set a configuration value
   bd dolt test         Test server connection

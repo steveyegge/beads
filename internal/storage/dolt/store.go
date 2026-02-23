@@ -439,7 +439,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	addr := net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort))
 	conn, dialErr := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 	if dialErr != nil {
-		return nil, fmt.Errorf("Dolt server unreachable at %s: %w\n\nThe Dolt server may not be running. Try:\n  gt dolt start    # If using Gas Town\n  bd dolt start    # If using Beads directly",
+		return nil, fmt.Errorf("Dolt server unreachable at %s: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start the local Dolt server",
 			addr, dialErr)
 	}
 	_ = conn.Close()
@@ -561,7 +561,7 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 			_ = db.Close()
 			// Check for connection refused - server likely not running
 			if strings.Contains(errLower, "connection refused") || strings.Contains(errLower, "connect: connection refused") {
-				return nil, "", fmt.Errorf("failed to connect to Dolt server at %s:%d: %w\n\nThe Dolt server may not be running. Try:\n  gt dolt start    # If using Gas Town\n  bd dolt start # If using Beads directly",
+				return nil, "", fmt.Errorf("failed to connect to Dolt server at %s:%d: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start the local Dolt server",
 					cfg.ServerHost, cfg.ServerPort, err)
 			}
 			return nil, "", fmt.Errorf("failed to create database: %w", err)

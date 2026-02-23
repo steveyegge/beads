@@ -39,6 +39,23 @@ func gitHasUpstream() bool {
 	return gitBranchHasUpstream(branch)
 }
 
+// gitHasAnyRemotes returns true if the git repository has any remotes configured.
+// Used to distinguish between "new repo with no remotes" and "repo with origin but no upstream".
+func gitHasAnyRemotes() bool {
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return false
+	}
+
+	ctx := context.Background()
+	remoteCmd := rc.GitCmd(ctx, "remote")
+	output, err := remoteCmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(output)) != ""
+}
+
 // gitBranchHasUpstream checks if a specific branch has an upstream configured.
 // Unlike gitHasUpstream(), this works even when HEAD is detached (e.g., jj/jujutsu).
 // Uses RepoContext to ensure git commands run in the correct repository.

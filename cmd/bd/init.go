@@ -264,13 +264,26 @@ environment variable.`,
 			doltCfg.ServerUser = serverUser
 		}
 
+		// Ensure Dolt server is running before connecting.
+		// Auto-starts a local server if none is reachable (zero-friction init).
+		initHost := serverHost
+		if initHost == "" {
+			initHost = configfile.DefaultDoltServerHost
+		}
+		initPort := serverPort
+		if initPort == 0 {
+			initPort = configfile.DefaultDoltServerPort
+		}
+		if err := ensureDoltServer(storagePath, initHost, initPort, quiet); err != nil {
+			FatalError("%v", err)
+		}
+
 		var store *dolt.DoltStore
 		store, err = dolt.New(ctx, doltCfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to connect to dolt server: %v\n", err)
-			fmt.Fprintf(os.Stderr, "\nBeads requires a running dolt sql-server. Start one with:\n")
-			fmt.Fprintf(os.Stderr, "  gt dolt start    (if using Gas Town)\n")
-			fmt.Fprintf(os.Stderr, "  dolt sql-server  (standalone)\n")
+			fmt.Fprintf(os.Stderr, "\nTry restarting the server with:\n")
+			fmt.Fprintf(os.Stderr, "  bd dolt start\n")
 			os.Exit(1)
 		}
 
@@ -548,9 +561,11 @@ environment variable.`,
 			addAgentsInstructions(!quiet, agentsTemplate)
 		}
 
-		// Check for missing git upstream and warn if not configured
+		// Check for missing git upstream and warn if not configured.
+		// Only warn when remotes exist (has origin but no upstream).
+		// Skip for brand-new repos with no remotes — the warning is noise there.
 		if isGitRepo() && !quiet {
-			if !gitHasUpstream() {
+			if gitHasAnyRemotes() && !gitHasUpstream() {
 				fmt.Fprintf(os.Stderr, "\n%s Git upstream not configured\n", ui.RenderWarn("⚠"))
 				fmt.Fprintf(os.Stderr, "  For sync workflows, set your upstream with:\n")
 				fmt.Fprintf(os.Stderr, "  %s\n\n", ui.RenderAccent("git remote add upstream <repo-url>"))
