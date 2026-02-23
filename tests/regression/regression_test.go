@@ -2,8 +2,9 @@
 
 // Package regression implements differential testing between a pinned baseline
 // bd binary (v0.49.6) and the current worktree build. Each test scenario runs
-// the same CLI commands against both binaries in isolated workspaces, exports
-// JSONL, normalizes volatile fields and IDs, and diffs the results.
+// the same CLI commands against both binaries in isolated workspaces, snapshots
+// state via bd list + bd show, normalizes volatile fields and IDs, and diffs
+// the results.
 //
 // Run: go test -tags=regression -timeout=10m ./tests/regression/...
 // Or:  make test-regression
@@ -265,6 +266,7 @@ func (w *workspace) runEnv() []string {
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + w.dir,
 		"BEADS_NO_DAEMON=1",
+		"BEADS_TEST_MODE=1",
 		"GIT_CONFIG_NOSYSTEM=1",
 	}
 	if testDoltServerPort != 0 {
@@ -326,11 +328,93 @@ func (w *workspace) create(args ...string) string {
 	return id
 }
 
-// export runs bd export and returns the JSONL output.
+// snapshot collects workspace state via bd list + bd show, returning JSONL
+// (one JSON object per line). This replaces the old bd export command which
+// was removed from main. The listArgs are passed to the bd list invocation
+// (e.g., "--status", "open").
+func (w *workspace) snapshot(listArgs ...string) string {
+	w.t.Helper()
+
+	// Step 1: get all issue IDs via bd list
+	args := []string{"list", "--json", "-n", "0"}
+	args = append(args, listArgs...)
+	listOut := w.run(args...)
+
+	// Parse JSON array to extract IDs
+	var issues []map[string]any
+	if err := json.Unmarshal([]byte(listOut), &issues); err != nil {
+		// Try JSONL fallback
+		for _, line := range strings.Split(strings.TrimSpace(listOut), "\n") {
+			if line == "" {
+				continue
+			}
+			var m map[string]any
+			if err2 := json.Unmarshal([]byte(line), &m); err2 == nil {
+				issues = append(issues, m)
+			}
+		}
+	}
+
+	if len(issues) == 0 {
+		return ""
+	}
+
+	// Step 2: for each ID, run bd show --json and emit one JSONL line
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	for _, issue := range issues {
+		id, ok := issue["id"].(string)
+		if !ok || id == "" {
+			continue
+		}
+		showOut := w.run("show", id, "--json")
+
+		// bd show --json may return a JSON array or single object
+		var showArr []map[string]any
+		if err := json.Unmarshal([]byte(showOut), &showArr); err == nil && len(showArr) > 0 {
+			_ = enc.Encode(showArr[0])
+			continue
+		}
+		var showObj map[string]any
+		if err := json.Unmarshal([]byte(showOut), &showObj); err == nil {
+			_ = enc.Encode(showObj)
+		}
+	}
+	return buf.String()
+}
+
+// export returns a JSONL snapshot of the workspace. This replaces the removed
+// bd export command with list+show based snapshots. Filter args (e.g.,
+// "--status", "open") are translated to bd list flags.
 func (w *workspace) export(extraArgs ...string) string {
 	w.t.Helper()
-	args := append([]string{"export"}, extraArgs...)
-	return w.run(args...)
+	// Translate old export flags to list flags.
+	// export supported: --status, --assignee, -o (output file, not needed)
+	var listArgs []string
+	for i := 0; i < len(extraArgs); i++ {
+		switch extraArgs[i] {
+		case "--status":
+			if i+1 < len(extraArgs) {
+				listArgs = append(listArgs, "--status", extraArgs[i+1])
+				i++
+			}
+		case "--assignee":
+			if i+1 < len(extraArgs) {
+				listArgs = append(listArgs, "--assignee", extraArgs[i+1])
+				i++
+			}
+		case "-o", "--output":
+			// Skip output file flag and its argument
+			if i+1 < len(extraArgs) {
+				i++
+			}
+		default:
+			// Pass through unknown flags
+			listArgs = append(listArgs, extraArgs[i])
+		}
+	}
+	return w.snapshot(listArgs...)
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +426,13 @@ var volatileFields = []string{
 	"compacted_at", "compacted_at_commit",
 	"last_activity", "closed_by_session",
 	"compaction_level", "original_size",
+	"content_hash",
+}
+
+// showOnlyFields are present in bd show --json but were not in bd export.
+// Strip them so snapshot output is comparable with baseline.
+var showOnlyFields = []string{
+	"events",
 }
 
 var versionSpecificFields = []string{
@@ -402,6 +493,9 @@ func normalizeIssue(m map[string]any) {
 	for _, f := range versionSpecificFields {
 		delete(m, f)
 	}
+	for _, f := range showOnlyFields {
+		delete(m, f)
+	}
 
 	// Normalize date-only fields (due_at, defer_until) to date-only format.
 	// SQLite stores local-timezone midnight, Dolt stores UTC midnight for
@@ -447,17 +541,28 @@ func normalizeIssue(m map[string]any) {
 	}
 
 	// Normalize dependencies: strip volatile fields and empty metadata,
+	// normalize field names (show --json uses "dependency_type", export used "type"),
 	// sort by (depends_on_id, type)
 	if deps, ok := m["dependencies"].([]any); ok {
 		for _, d := range deps {
 			if dm, ok := d.(map[string]any); ok {
 				delete(dm, "created_at")
+				delete(dm, "thread_id")
+				// Normalize dependency_type → type
+				if dt, ok := dm["dependency_type"]; ok {
+					if _, hasType := dm["type"]; !hasType {
+						dm["type"] = dt
+					}
+					delete(dm, "dependency_type")
+				}
 				// Dolt stores metadata="{}" where SQLite omits it entirely
 				if md, ok := dm["metadata"]; ok {
 					if mdStr, _ := md.(string); mdStr == "" || mdStr == "{}" {
 						delete(dm, "metadata")
 					}
 				}
+				// Remove dep-internal fields not in export schema
+				delete(dm, "created_by")
 			}
 		}
 		sort.Slice(deps, func(i, j int) bool {
@@ -586,18 +691,18 @@ func canonicalIDMap(ids []string) map[string]string {
 // Comparison helpers
 // ---------------------------------------------------------------------------
 
-// compareExports runs a scenario against both binaries, exports JSONL,
-// canonicalizes IDs based on creation order, and diffs.
+// compareExports runs a scenario against both binaries, snapshots state via
+// list+show, canonicalizes IDs based on creation order, and diffs.
 func compareExports(t *testing.T, scenario func(w *workspace)) {
 	t.Helper()
 
 	baselineWS := newWorkspace(t, baselineBin)
 	scenario(baselineWS)
-	baselineRaw := baselineWS.export()
+	baselineRaw := baselineWS.snapshot()
 
 	candidateWS := newWorkspace(t, candidateBin)
 	scenario(candidateWS)
-	candidateRaw := candidateWS.export()
+	candidateRaw := candidateWS.snapshot()
 
 	diffNormalized(t,
 		baselineRaw, candidateRaw,
