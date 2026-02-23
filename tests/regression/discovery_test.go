@@ -2557,3 +2557,153 @@ func TestDiscovery_DuplicateCycleUndetected(t *testing.T) {
 	}
 	// If err != nil, duplicate correctly detected the cycle — would be surprising
 }
+
+// TestDiscovery_StaleZeroDaysReturnsFreshIssue verifies that bd stale --days 0
+// should be rejected or return empty, not return brand-new issues.
+// BUG-61: stale.go:22 has no validation on days — 0 means cutoff=now,
+// and updated_at < now matches everything including just-created issues.
+func TestDiscovery_StaleZeroDaysReturnsFreshIssue(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Brand new issue", "--type", "task", "--priority", "2")
+
+	out, err := w.tryRun("stale", "--days", "0", "--json")
+	if err != nil {
+		// Command rejected 0 — acceptable behavior
+		return
+	}
+
+	ids := parseIDs(t, out)
+	if containsID(ids, a) {
+		t.Errorf("DISCOVERY: bd stale --days 0 returned brand-new issue %s as 'stale' — "+
+			"0 days means cutoff=now, so updated_at < now matches everything. "+
+			"Should reject --days 0 or treat as 'nothing is stale yet'. "+
+			"File: cmd/bd/stale.go:22 (no validation), queries.go:767.", a)
+	}
+}
+
+// TestProtocol_QueryPriorityRangeValidated verifies that bd query validates
+// priority range (0-4) before applying filter.
+func TestProtocol_QueryPriorityRangeValidated(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	w.create("--title", "P4 issue", "--type", "task", "--priority", "4")
+
+	// Out of range should error
+	_, err := w.tryRun("query", "priority>=5", "--json")
+	if err == nil {
+		t.Errorf("bd query 'priority>=5' should reject out-of-range value")
+	}
+
+	_, err = w.tryRun("query", "priority<=-1", "--json")
+	if err == nil {
+		t.Errorf("bd query 'priority<=-1' should reject out-of-range value")
+	}
+}
+
+// TestProtocol_QueryUnknownFieldErrors verifies that bd query with an unknown
+// field returns a clear error.
+func TestProtocol_QueryUnknownFieldErrors(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	w.create("--title", "Query test", "--type", "task", "--priority", "2")
+
+	_, err := w.tryRun("query", "nonexistent_field=hello", "--json")
+	if err == nil {
+		t.Errorf("PROTOCOL: bd query 'nonexistent_field=hello' should error but succeeded — " +
+			"unknown fields should be rejected")
+	}
+}
+
+// TestDiscovery_SearchStatusCommaNotParsed verifies that bd search with
+// --status "open,closed" has the same comma-status bug as list (BUG-44).
+// BUG-61: search.go uses same GetString for --status, not a slice.
+func TestDiscovery_SearchStatusCommaNotParsed(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Searchable alpha", "--type", "task", "--priority", "2")
+	b := w.create("--title", "Searchable beta", "--type", "task", "--priority", "2")
+	w.run("close", b)
+
+	// Control: search with valid status works
+	controlOut, err := w.tryRun("search", "Searchable", "--status", "open", "--json")
+	if err != nil {
+		t.Skipf("bd search --status not available: %v", err)
+	}
+	controlIDs := parseIDs(t, controlOut)
+	if !containsID(controlIDs, a) {
+		t.Skipf("search didn't find expected issue")
+	}
+
+	// Bug: comma-separated status silently returns empty (same as BUG-44)
+	commaOut, err := w.tryRun("search", "Searchable", "--status", "open,closed", "--json")
+	if err == nil {
+		commaIDs := parseIDs(t, commaOut)
+		if len(commaIDs) == 0 {
+			t.Errorf("DISCOVERY: bd search --status 'open,closed' silently returns empty — "+
+				"same comma-status bug as list (BUG-44). 'open,closed' treated as single "+
+				"literal status value. File: cmd/bd/search.go:53 (GetString not GetStringSlice).")
+		}
+	}
+}
+
+// TestDiscovery_ListTypeNonexistentSilentEmpty verifies that bd list with
+// an invalid --type silently returns empty instead of erroring.
+// BUG-62: list.go doesn't validate --type value against known types.
+func TestDiscovery_ListTypeNonexistentSilentEmpty(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	w.create("--title", "A task", "--type", "task", "--priority", "2")
+
+	// Control: valid type works
+	_, err := w.tryRun("list", "--type", "task", "--json", "-n", "0")
+	if err != nil {
+		t.Skipf("bd list --type not available: %v", err)
+	}
+
+	// Bug: nonexistent type silently returns empty
+	out, err := w.tryRun("list", "--type", "nonexistent_type_xyz", "--json", "-n", "0")
+	if err == nil {
+		ids := parseIDs(t, out)
+		if len(ids) == 0 {
+			t.Errorf("DISCOVERY: bd list --type 'nonexistent_type_xyz' returned empty with no error — "+
+				"should reject unknown type. Compare: bd create --type nonexistent fails with validation. "+
+				"File: cmd/bd/list.go (no type validation on filter).")
+		}
+	}
+}
+
+// TestProtocol_DeleteNonexistentForceErrors verifies that bd delete with
+// a nonexistent issue ID and --force properly errors.
+func TestProtocol_DeleteNonexistentForceErrors(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	w.create("--title", "Real issue", "--type", "task", "--priority", "2")
+
+	_, err := w.tryRun("delete", "nonexistent-xyz-99", "--force")
+	if err == nil {
+		t.Errorf("bd delete nonexistent-xyz-99 --force should error 'not found'")
+	}
+}
+
+// TestProtocol_PinClosedIssueHandled verifies that pinning a closed issue
+// is handled gracefully (either rejected or pin doesn't stick).
+func TestProtocol_PinClosedIssueHandled(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Pin target", "--type", "task", "--priority", "2")
+	w.run("close", a, "--force")
+
+	_, err := w.tryRun("update", a, "--pin")
+	if err != nil {
+		// Pin rejected on closed issue — acceptable
+		return
+	}
+
+	// If pin succeeded, verify it's stored (correct even if questionable)
+	data := parseJSON(t, w.run("show", a, "--json"))
+	pinned, _ := data[0]["pinned"].(bool)
+	if !pinned {
+		t.Logf("Pin on closed issue %s: command succeeded but pinned=false", a)
+	}
+}

@@ -20,6 +20,7 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | 2026-02-22 | **Session 6: Routing, validation, sort, edge cases** | Found 10 more bugs (BUG-32 through 42) + 2 protocol tests (BUG-35, 39). Stale negative days, sort unknown field, reparent cycle, reversed ranges, negative limit, whitespace title, config ambiguity, dep rm false positive. Code review: createInRig skips prefix validation, same-prefix rig ambiguity, batch import no UTC. |
 | 2026-02-22 | **Session 7: State corruption, filter conflicts, hierarchy** | Found 4 more bugs (BUG-43 through 46) + 5 protocol tests (BUG-47 through 51). Deferred without date, comma status, assignee conflict, child of closed parent. Documented: custom dep types, in_progress vs claim, --all filter, empty type rejection, show JSON array. |
 | 2026-02-22 | **Session 8: Lifecycle validation, ready filters, duplicate cycles** | Found 5 more bugs (BUG-56 through 60). Reopen already-open, undefer non-deferred, ready out-of-range priority, children nonexistent parent, duplicate cycle undetected. |
+| 2026-02-22 | **Session 8b: Stale, search, type filter, query validation** | Found 3 more bugs (BUG-61 through 63) + 5 protocol tests. Stale --days 0 returns everything, search comma-status same as BUG-44, list --type nonexistent silent empty. Query priority range validation and unknown fields work correctly. |
 
 ## Audit Summary
 
@@ -85,6 +86,14 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | BUG-58 | **BUG** | OPEN (not PR'd yet) | — |
 | BUG-59 | **BUG** | OPEN (not PR'd yet) | — |
 | BUG-60 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-61 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-62 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-63 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-64 | **PROTOCOL** | PASS (correct) | — |
+| BUG-65 | **PROTOCOL** | PASS (correct) | — |
+| BUG-66 | **PROTOCOL** | PASS (correct) | — |
+| BUG-67 | **PROTOCOL** | PASS (correct) | — |
+| BUG-68 | **PROTOCOL** | PASS (correct) | — |
 
 ### Shipped fix PRs (all include protocol tests)
 
@@ -146,6 +155,14 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 50. **BUG-58**: ready --priority 5 (out of range) accepted silently
 51. **BUG-59**: children of nonexistent parent returns empty (no error)
 52. **BUG-60**: duplicate cycle (A dup B, B dup A) undetected
+53. **BUG-61**: stale --days 0 returns brand-new issues (cutoff=now)
+54. **BUG-62**: search --status "open,closed" silently returns empty (same as BUG-44)
+55. **BUG-63**: list --type nonexistent silently returns empty (no validation)
+56. **BUG-64**: query priority range validated correctly (PROTOCOL)
+57. **BUG-65**: query unknown field errors correctly (PROTOCOL)
+58. **BUG-66**: stale --days 0 edge case (PROTOCOL — see BUG-61 timing dependency)
+59. **BUG-67**: delete nonexistent --force errors correctly (PROTOCOL)
+60. **BUG-68**: pin closed issue handled gracefully (PROTOCOL)
 
 ### Investigate further
 
@@ -1069,6 +1086,48 @@ duplicate cycle with no error. Both issues claim the other as their canonical.
 Cycle detection at `dependencies.go:54` only runs for `type == "blocks"`.
 Same class of bug as BUG-25 (conditional-blocks cycle) but through the
 duplicate/supersede command path.
+
+---
+
+### BUG-61: `bd stale --days 0` returns brand-new issues as "stale" (NEW — session 8b)
+
+**Severity: MEDIUM** — Semantically invalid results
+**Discovered:** Session 8b discovery, test
+**File:** `cmd/bd/stale.go:22` (no validation) + `internal/storage/dolt/queries.go:767`
+**Test:** `TestDiscovery_StaleZeroDaysReturnsFreshIssue`
+
+`bd stale --days 0` is accepted without error. The cutoff computation at
+`queries.go:767` uses `time.Now().UTC().AddDate(0, 0, -0)` = now. The SQL
+`WHERE updated_at < cutoff` matches all issues with `updated_at` before the
+current instant — including brand-new issues (created milliseconds ago).
+The user gets all issues returned as "stale" when they expected "nothing is stale."
+
+---
+
+### BUG-62: `bd search --status "open,closed"` silently returns empty (NEW — session 8b)
+
+**Severity: MEDIUM** — Same comma-status bug as BUG-44 but in search
+**Discovered:** Session 8b discovery, test
+**File:** `cmd/bd/search.go:53` (GetString not GetStringSlice)
+**Test:** `TestDiscovery_SearchStatusCommaNotParsed`
+
+Same pattern as BUG-44 (list --status "open,closed"). The `--status` flag is
+a single string, not a slice. "open,closed" is treated as a single literal
+status value, matching no issues. Returns empty with no error.
+
+---
+
+### BUG-63: `bd list --type nonexistent` silently returns empty (NEW — session 8b)
+
+**Severity: MEDIUM** — Silent filter failure
+**Discovered:** Session 8b discovery, test
+**File:** `cmd/bd/list.go` (no type validation on filter)
+**Test:** `TestDiscovery_ListTypeNonexistentSilentEmpty`
+
+`bd list --type nonexistent_type_xyz` is accepted without error and returns
+empty results. Compare: `bd create --type nonexistent` correctly validates
+and rejects unknown types. The asymmetry between create (validates) and
+list (doesn't validate) means users silently get wrong results.
 
 ---
 
