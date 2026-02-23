@@ -210,6 +210,16 @@ func wispPrefix(configPrefix string, issue *types.Issue) string {
 func (s *DoltStore) createWisp(ctx context.Context, issue *types.Issue, actor string) error {
 	issue.Ephemeral = true
 
+	// Fetch custom statuses and types for validation (parity with CreateIssue)
+	customStatuses, err := s.GetCustomStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+	customTypes, err := s.GetCustomTypes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom types: %w", err)
+	}
+
 	now := time.Now().UTC()
 	if issue.CreatedAt.IsZero() {
 		issue.CreatedAt = now
@@ -229,6 +239,11 @@ func (s *DoltStore) createWisp(ctx context.Context, issue *types.Issue, actor st
 		}
 		closedAt := maxTime.Add(time.Second)
 		issue.ClosedAt = &closedAt
+	}
+
+	// Validate issue fields (parity with CreateIssue)
+	if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
 	}
 
 	if issue.ContentHash == "" {
