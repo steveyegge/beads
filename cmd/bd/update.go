@@ -402,7 +402,7 @@ create, update, show, or close operation).`,
 			outputJSON(updatedIssues)
 		}
 
-		// Exit non-zero if no issues were actually updated (BUG-10: claim failures
+		// Exit non-zero if no issues were actually updated (claim failures
 		// and other soft errors should surface as non-zero exit codes for scripting)
 		if len(args) > 0 && firstUpdatedID == "" {
 			os.Exit(1)

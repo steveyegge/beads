@@ -251,7 +251,7 @@ create, update, show, or close operation).`,
 			outputJSON(closedIssues)
 		}
 
-		// Exit non-zero if no issues were actually closed (BUG-10: close guard
+		// Exit non-zero if no issues were actually closed (close guard
 		// and other soft failures should surface as non-zero exit codes for scripting)
 		totalAttempted := len(resolvedIDs) + len(routedArgs)
 		if totalAttempted > 0 && closedCount == 0 {
