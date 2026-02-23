@@ -12,42 +12,43 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | 2026-02-22 | Manual testing of dep tree, blocking, close guard, labels, status filtering, reparenting, concurrency, validation | Found 14 bugs, confirmed 23 protocol invariants. Wrote `discovery_test.go` (34 tests). |
 | 2026-02-22 | Audit of all bugs for fix vs wontfix | 5-6 clear fix PRs, 2 need design discussion, 5-6 wontfix/by-design |
 | 2026-02-22 | Code review of labels.go, schema.go, dependencies.go for BUG-5 and BUG-7 root cause | BUG-5 upgraded to INVESTIGATE (not clearly wontfix). BUG-7 downgraded to FILE ISSUE (intentionally coded upsert, needs product decision). BUG-4 upgraded to DOCS FIX (help text promises "blocked" as a status). |
+| 2026-02-22 | Submitted 8 PRs: 2 clear fixes, 3 DECISION PRs, 3 metadata features | PR #1992 (BUG-2+3) merged same day. All PRs rebased onto latest main. |
+| 2026-02-22 | BUG-5 explicitly deferred | No deterministic repro; needs deeper investigation of Dolt working-set commit race. Deferred pending repro. |
 
 ## Audit Summary
 
-| Bug | Verdict | Reasoning |
-|-----|---------|-----------|
-| BUG-1 | WONTFIX | `bd export` removal was intentional (Dolt migration). Test harness needs adaptation, not a product bug. |
-| BUG-2 | **FIX PR** | Real user complaint (GH#1954). Clear root cause, small fix. |
-| BUG-3 | **FIX PR** | Follows from BUG-2 fix. Bundle together. |
-| BUG-4 | **DOCS FIX** | "blocked" is computed by design, but help text for `list --status` and `count --status` explicitly lists it as a valid value. At minimum the help text should be corrected. |
-| BUG-5 | **INVESTIGATE** | Labels use `INSERT IGNORE` into junction table (no read-modify-write), but each INSERT is its own `BeginTx/Commit` via `execContext`. Concurrent Dolt working-set commits may lose writes. Not proven to be purely Dolt — beads could mitigate by batching INSERT+event in single tx, or serializing. |
-| BUG-6 | WONTFIX | By-design for collaboration. Only affects test infrastructure. |
-| BUG-7 | **FILE ISSUE** | `ON DUPLICATE KEY UPDATE type = VALUES(type)` at `dependencies.go:78` is intentionally coded. `PRIMARY KEY (issue_id, depends_on_id)` excludes `type`. This is a deliberate upsert, not a bug per se — but the silent data loss of blocking relationships needs a product decision: allow multiple types per pair, reject, or warn. |
-| BUG-8 | FILE ISSUE | Real but needs design discussion — LIKE clause may be intentional for performance. |
-| BUG-9 | WONTFIX | Documented in help text already. |
-| BUG-10 | **FIX PR** | Commands should exit non-zero when all operations fail. |
-| BUG-11 | **FIX PR** | Missing status validation on update. Bundle with BUG-12+14. |
-| BUG-12 | **FIX PR** | Missing empty-title validation on update. Bundle with BUG-11+14. |
-| BUG-13 | FILE ISSUE | Edge case. `bd list --deferred` (filters on `defer_until IS NOT NULL`) may still surface these issues, so "invisible" is overstated. Needs Steve's opinion on desired reopen-of-deferred behavior. |
-| BUG-14 | **FIX PR** | Missing empty-label validation. Bundle with BUG-11+12. |
+| Bug | Verdict | PR | Status |
+|-----|---------|-----|--------|
+| BUG-1 | INFRASTRUCTURE | — | `bd export` removed; test harness needs adaptation. Decision pending on `bd dump` or alternative. |
+| BUG-2 | **FIX** | [#1992](https://github.com/steveyegge/beads/pull/1992) | **MERGED** |
+| BUG-3 | **FIX** | [#1992](https://github.com/steveyegge/beads/pull/1992) | **MERGED** (bundled with BUG-2) |
+| BUG-4 | NOT A BUG | — | `blocked` is a valid stored status. Help text is correct. Dropped. |
+| BUG-5 | **DEFERRED** | — | No deterministic repro. Concurrent Dolt working-set commit race suspected. Deferred pending repro. |
+| BUG-6 | WONTFIX | — | By-design for collaboration. Only affects test infrastructure. |
+| BUG-7 | **DECISION** | [#1999](https://github.com/steveyegge/beads/pull/1999) | Open — `dep add` silently overwrites type. Fix: check-then-error. Test: `dep_type_overwrite_test.go`. |
+| BUG-8 | **DECISION** | [#2001](https://github.com/steveyegge/beads/pull/2001) | Open — reparented child under both parents. Fix: exclude explicitly reparented from LIKE. Test: `reparent_test.go`. |
+| BUG-9 | WONTFIX | — | Documented in help text already. |
+| BUG-10 | **FIX** | [#1993](https://github.com/steveyegge/beads/pull/1993) | Open — exit non-zero on soft failures. Test: `exit_code_test.go`. |
+| BUG-11 | **FIX** | [#1994](https://github.com/steveyegge/beads/pull/1994) | Open — status validation. Test: `input_validation_test.go`. |
+| BUG-12 | **FIX** | [#1994](https://github.com/steveyegge/beads/pull/1994) | Open — empty title rejection (bundled with BUG-11+14). |
+| BUG-13 | **DECISION** | [#2000](https://github.com/steveyegge/beads/pull/2000) | Open — reopen clears defer_until. Test: `reopen_defer_test.go`. |
+| BUG-14 | **FIX** | [#1994](https://github.com/steveyegge/beads/pull/1994) | Open — empty label rejection (bundled with BUG-11+12). |
 
-### Planned mini fix PRs
+### PR Scoreboard
 
-1. **BUG-2+3**: dep tree ParentID + ready annotation (highest value — addresses GH#1954)
-2. **BUG-10**: exit codes for close guard / claim failures
-3. **BUG-11+12+14**: input validation gaps (status, title, label)
-4. **BUG-4**: docs fix — remove "blocked" from `--status` help text, point to `bd blocked`
+| PR | Bugs | Branch | Status |
+|----|------|--------|--------|
+| [#1992](https://github.com/steveyegge/beads/pull/1992) | BUG-2+3 | `fix/dep-tree-parent-id` | **MERGED** |
+| [#1993](https://github.com/steveyegge/beads/pull/1993) | BUG-10 | `fix/exit-codes-close-claim` | Open (rebased) |
+| [#1994](https://github.com/steveyegge/beads/pull/1994) | BUG-11+12+14 | `fix/input-validation-gaps` | Open (rebased) |
+| [#1999](https://github.com/steveyegge/beads/pull/1999) | BUG-7 | `fix/dep-add-type-overwrite` | Open DECISION (rebased) |
+| [#2000](https://github.com/steveyegge/beads/pull/2000) | BUG-13 | `fix/reopen-clears-defer` | Open DECISION (rebased) |
+| [#2001](https://github.com/steveyegge/beads/pull/2001) | BUG-8 | `fix/reparent-dual-parent` | Open DECISION (rebased) |
 
-### File issues first (need product decisions)
+### Remaining work
 
-5. **BUG-7**: dep add type overwrite — intentionally coded upsert, needs decision on semantics
-6. **BUG-8**: reparent dual parent — LIKE clause vs dependency-only parent lookup
-7. **BUG-13**: reopen-of-deferred — what status should it get?
-
-### Investigate further
-
-8. **BUG-5**: concurrent label race — need to determine if Dolt working-set merge is the root cause or if beads-level batching/serialization would fix it
+- **BUG-1** (infrastructure): Decide whether to restore `bd export`/`bd dump` or adapt harness to `bd list --json` + `bd show --json`. Needs maintainer input.
+- **BUG-5** (deferred): Concurrent label race. No deterministic repro yet. Suspected Dolt working-set commit race in `execContext` BeginTx/Commit pattern. Deferred pending repro.
 
 ---
 
@@ -446,7 +447,7 @@ THEN A still has dep on B
 
 Works correctly.
 
-### PT-5: `dep tree` shows full tree (BLOCKED by BUG-2) — DATA INTEGRITY
+### PT-5: `dep tree` shows full tree — DATA INTEGRITY
 
 ```
 GIVEN diamond dependency: A→B, A→C, B→D, C→D
@@ -455,7 +456,7 @@ THEN output shows all 4 nodes at correct depths
 AND D appears twice (or once with "shown above" marker)
 ```
 
-Currently broken — only root shows. Needs BUG-2 fix first.
+Fixed by PR #1992 (BUG-2 fix merged).
 
 ### PT-6: Ready semantics exclude blocked issues — DATA INTEGRITY
 
