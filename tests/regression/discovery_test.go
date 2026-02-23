@@ -2274,6 +2274,129 @@ func TestDiscovery_ShowJSONAlwaysArray(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// SESSION 7c DISCOVERY: Comments, due dates, ID filtering
+// =============================================================================
+
+// TestDiscovery_EmptyCommentAccepted verifies that bd comments add rejects
+// empty comment text.
+//
+// FINDING: comments.go:110-114 accepts comment text without validation.
+// bd comments add X "" stores a comment with empty text.
+//
+// Classification: BUG — same pattern as BUG-14 (empty label) and BUG-12
+// (empty title). Empty comments should be rejected.
+func TestDiscovery_EmptyCommentAccepted(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Comment test", "--type", "task", "--priority", "2")
+
+	// Adding an empty comment should fail
+	_, err := w.tryRun("comments", "add", a, "")
+	if err == nil {
+		data := parseJSON(t, w.run("show", a, "--json"))
+		comments, _ := data[0]["comments"].([]any)
+		if len(comments) > 0 {
+			t.Errorf("DISCOVERY: bd comments add accepted empty comment text — stored %d empty comment(s)", len(comments))
+		}
+	}
+	// If err != nil, the tool correctly rejected empty comment — good
+}
+
+// TestDiscovery_DueDatePastNoWarning verifies that setting a past due date
+// gives some feedback to the user.
+//
+// FINDING: update.go:169-180 parses --due without checking if the date is
+// in the past. Unlike --defer (which warns at lines 192-197), --due has NO
+// past-date validation. The issue immediately appears in --overdue list.
+//
+// Classification: BUG — should at least warn (--defer does).
+func TestDiscovery_DueDatePastNoWarning(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Past due test", "--type", "task", "--priority", "2")
+
+	// Set due date to far past — should at least warn
+	out := w.run("update", a, "--due", "2020-01-01")
+
+	// Check if it's in overdue list
+	overdueOut, err := w.tryRun("list", "--overdue", "--json", "-n", "0")
+	if err != nil {
+		t.Skipf("--overdue not available: %v", err)
+	}
+	overdueIDs := parseIDs(t, overdueOut)
+
+	if containsID(overdueIDs, a) {
+		// Past due date accepted and immediately overdue — was there a warning?
+		if !strings.Contains(strings.ToLower(out), "past") &&
+			!strings.Contains(strings.ToLower(out), "warn") &&
+			!strings.Contains(strings.ToLower(out), "already") {
+			t.Errorf("DISCOVERY: --due 2020-01-01 accepted without warning (unlike --defer which warns) — issue immediately appears in --overdue")
+		}
+	}
+}
+
+// TestDiscovery_ListIDFilterExactMatchOnly verifies that bd list --id
+// requires exact IDs, not partial matches.
+//
+// FINDING: list.go:445-450 splits --id by comma and uses them as exact
+// matches (not resolved through ResolvePartialID). If you pass a partial
+// ID, it silently returns empty.
+//
+// Classification: INVESTIGATE — may be by design (list is a filter command,
+// not a resolution command), but the silent empty result is surprising.
+func TestDiscovery_ListIDFilterExactMatchOnly(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "ID filter test", "--type", "task", "--priority", "2")
+
+	// Full ID should work
+	fullOut, err := w.tryRun("list", "--id", a, "--json", "-n", "0")
+	if err != nil {
+		t.Skipf("--id flag not available: %v", err)
+	}
+	fullIDs := parseIDs(t, fullOut)
+	if !containsID(fullIDs, a) {
+		t.Fatalf("control: --id with full ID should return the issue")
+	}
+
+	// Partial ID (first 8 chars) — does it resolve?
+	if len(a) > 8 {
+		partial := a[:8]
+		partialOut, err := w.tryRun("list", "--id", partial, "--json", "-n", "0")
+		if err == nil {
+			partialIDs := parseIDs(t, partialOut)
+			if len(partialIDs) == 0 {
+				t.Logf("CONFIRMED: bd list --id with partial ID '%s' returns empty — exact match only (bd show resolves partial IDs, bd list does not)", partial)
+			}
+		}
+	}
+}
+
+// TestProtocol_CommentSpecialChars verifies that comments with special
+// characters are stored and retrieved correctly.
+func TestProtocol_CommentSpecialChars(t *testing.T) {
+	w := newCandidateWorkspace(t)
+
+	a := w.create("--title", "Special comment", "--type", "task", "--priority", "2")
+
+	// Add comment with quotes and special chars
+	specialText := `This has "quotes" and 'single' and <brackets>`
+	w.run("comments", "add", a, specialText)
+
+	data := parseJSON(t, w.run("show", a, "--json"))
+	comments, _ := data[0]["comments"].([]any)
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(comments))
+	}
+
+	comment, _ := comments[0].(map[string]any)
+	text, _ := comment["text"].(string)
+	if text != specialText {
+		t.Errorf("comment text not preserved: got %q, want %q", text, specialText)
+	}
+}
+
 // TestProtocol_CommentAddAndPreserve verifies comments persist through operations.
 func TestProtocol_CommentAddAndPreserve(t *testing.T) {
 	w := newCandidateWorkspace(t)

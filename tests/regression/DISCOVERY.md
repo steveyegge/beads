@@ -75,6 +75,10 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 | BUG-49 | **PROTOCOL** | PASS (correct) | — |
 | BUG-50 | **PROTOCOL** | PASS (correct) | — |
 | BUG-51 | **PROTOCOL** | PASS (correct) | — |
+| BUG-52 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-53 | **BUG** | OPEN (not PR'd yet) | — |
+| BUG-54 | **PROTOCOL** | PASS (docs behavior) | — |
+| BUG-55 | **PROTOCOL** | PASS (correct) | — |
 
 ### Shipped fix PRs (all include protocol tests)
 
@@ -127,6 +131,10 @@ actionable — some are by-design tradeoffs. The audit column tracks triage.
 41. **BUG-49**: list --all includes closed (PROTOCOL — correct)
 42. **BUG-50**: create --type "" rejected (PROTOCOL — correct)
 43. **BUG-51**: show --json always returns array (PROTOCOL — correct)
+44. **BUG-52**: comments add accepts empty comment text
+45. **BUG-53**: update --due past date no warning (unlike --defer)
+46. **BUG-54**: list --id requires exact match, no partial resolution (PROTOCOL)
+47. **BUG-55**: comments special chars preserved correctly (PROTOCOL)
 
 ### Investigate further
 
@@ -933,6 +941,55 @@ should decide if children of closed parents are valid.
 `bd dep add A B --type "not-a-real-type"` succeeds and stores the custom dep
 type. This is by design — custom dep types are supported. The only validation
 is non-empty and ≤50 chars. Classified as PROTOCOL (correct behavior).
+
+---
+
+### BUG-52: `bd comments add` accepts empty comment text (NEW — session 7c)
+
+**Severity: LOW** — Data quality issue (same pattern as BUG-14)
+**Discovered:** Session 7c discovery, test
+**File:** `cmd/bd/comments.go:110-114` (no validation)
+**Test:** `TestDiscovery_EmptyCommentAccepted`
+
+`bd comments add X ""` accepts and stores a comment with empty text. Same
+category as BUG-14 (empty label) and BUG-12 (empty title). Empty comments
+create noise in the comment list.
+
+---
+
+### BUG-53: `bd update --due` past date accepted without warning (NEW — session 7c)
+
+**Severity: LOW-MEDIUM** — Inconsistency with --defer warning
+**Discovered:** Session 7c discovery, test
+**File:** `cmd/bd/update.go:169-180` (no past-date check) vs lines 192-197 (--defer warns)
+**Test:** `TestDiscovery_DueDatePastNoWarning`
+
+`bd update X --due 2020-01-01` sets due_at to a past date without any warning.
+The issue immediately appears in `bd list --overdue`. Unlike `--defer` which
+warns about past dates, `--due` has no validation. Users who accidentally set
+a past due date won't know until they check `--overdue`.
+
+---
+
+### BUG-54: `bd list --id` requires exact match (NEW — session 7c)
+
+**Severity: N/A** — Documenting correct behavior
+**Discovered:** Session 7c discovery, test
+**Test:** `TestDiscovery_ListIDFilterExactMatchOnly`
+
+`bd list --id <partial>` uses exact string matching, not partial ID resolution
+like `bd show`. This is by design — `list` is a filter command, not a
+resolution command. Classified as PROTOCOL.
+
+---
+
+### BUG-55: Comments preserve special characters (NEW — session 7c)
+
+**Severity: N/A** — Protocol test
+**Test:** `TestProtocol_CommentSpecialChars`
+
+Comments with quotes, brackets, and special characters are stored and
+retrieved correctly via JSON output.
 
 ---
 
