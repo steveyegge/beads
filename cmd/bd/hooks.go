@@ -540,8 +540,7 @@ func runPreCommitHook() int {
 
 	// Flush pending changes to JSONL
 	// Use --flush-only to skip git operations (we're already in a git hook)
-	cmd := exec.Command("bd", "sync", "--flush-only")
-	if err := cmd.Run(); err != nil {
+	if err := runBdCmdWithTimeoutSilent(hookCmdTimeout, "sync", "--flush-only"); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: Failed to flush bd changes to JSONL")
 		fmt.Fprintln(os.Stderr, "Run 'bd sync --flush-only' manually to diagnose")
 		// Don't block the commit - user may have removed beads or have other issues
@@ -624,8 +623,7 @@ func runPostMergeHook() int {
 	}
 
 	// Run bd sync --import-only --no-git-history
-	cmd := exec.Command("bd", "sync", "--import-only", "--no-git-history")
-	output, err := cmd.CombinedOutput()
+	output, err := runBdCmdWithTimeout(hookCmdTimeout, "sync", "--import-only", "--no-git-history")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: Failed to sync bd changes after merge")
 		fmt.Fprintln(os.Stderr, string(output))
@@ -635,8 +633,7 @@ func runPostMergeHook() int {
 	}
 
 	// Run quick health check
-	healthCmd := exec.Command("bd", "doctor", "--check-health")
-	_ = healthCmd.Run() // Ignore errors
+	_ = runBdCmdWithTimeoutSilent(hookCmdTimeout, "doctor", "--check-health") // Ignore errors
 
 	return 0
 }
@@ -669,8 +666,7 @@ func runPrePushHook(args []string) int {
 	ctx := context.Background()
 
 	// Flush pending bd changes
-	flushCmd := exec.Command("bd", "sync", "--flush-only")
-	_ = flushCmd.Run() // Ignore errors
+	_ = runBdCmdWithTimeoutSilent(hookCmdTimeout, "sync", "--flush-only") // Ignore errors
 
 	// Auto-stage JSONL files after flush to prevent race condition.
 	// Without this, flush creates uncommitted changes that the check below
@@ -797,8 +793,7 @@ func runPostCheckoutHook(args []string) int {
 	}
 
 	// Run bd sync --import-only --no-git-history
-	cmd := exec.Command("bd", "sync", "--import-only", "--no-git-history")
-	output, err := cmd.CombinedOutput()
+	output, err := runBdCmdWithTimeout(hookCmdTimeout, "sync", "--import-only", "--no-git-history")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: Failed to sync bd changes after checkout")
 		fmt.Fprintln(os.Stderr, string(output))
@@ -808,8 +803,7 @@ func runPostCheckoutHook(args []string) int {
 	}
 
 	// Run quick health check
-	healthCmd := exec.Command("bd", "doctor", "--check-health")
-	_ = healthCmd.Run() // Ignore errors
+	_ = runBdCmdWithTimeoutSilent(hookCmdTimeout, "doctor", "--check-health") // Ignore errors
 
 	return 0
 }
@@ -956,8 +950,10 @@ func detectAgentFromPath(cwd string) *agentIdentity {
 
 // getPinnedMolecule checks if there's a molecule attached via gt mol status.
 func getPinnedMolecule() string {
-	// Try gt mol status --json
-	cmd := exec.Command("gt", "mol", "status", "--json")
+	// Try gt mol status --json (with timeout to avoid hanging in hooks)
+	ctx, cancel := context.WithTimeout(context.Background(), hookCmdTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gt", "mol", "status", "--json")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -1048,6 +1044,63 @@ func hasUnstagedChanges(path string) bool {
 	return false
 }
 
+// hookCmdTimeout is the maximum time a subprocess (bd sync, bd doctor) may run
+// during hook execution before being killed. Hooks must never block git operations.
+const hookCmdTimeout = 10 * time.Second
+
+// hookHealthCheckTimeout is the TCP dial timeout for the Dolt health check.
+const hookHealthCheckTimeout = 1 * time.Second
+
+// doltHealthCheck does a quick TCP connect to the Dolt server.
+// Returns true if Dolt is reachable (or if we're not using Dolt server mode).
+// Returns false only when Dolt server mode is configured but unreachable.
+func doltHealthCheck() bool {
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return true // Not in a workspace, skip check
+	}
+
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return true // Can't load config, skip check
+	}
+
+	if !cfg.IsDoltServerMode() {
+		return true // Not using Dolt server, skip check
+	}
+
+	host := cfg.GetDoltServerHost()
+	port := cfg.GetDoltServerPort()
+	addr := fmt.Sprintf("%s:%d", host, port)
+
+	conn, err := net.DialTimeout("tcp", addr, hookHealthCheckTimeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// runBdCmdWithTimeout runs a bd subprocess with a timeout. Returns the combined
+// output and any error. On timeout, the process is killed and an error is returned.
+func runBdCmdWithTimeout(timeout time.Duration, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	// #nosec G204 — args are controlled (hardcoded bd subcommands)
+	cmd := exec.CommandContext(ctx, "bd", args...)
+	return cmd.CombinedOutput()
+}
+
+// runBdCmdWithTimeoutSilent runs a bd subprocess with a timeout, discarding output.
+// Returns any error. On timeout, the process is killed.
+func runBdCmdWithTimeoutSilent(timeout time.Duration, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	// #nosec G204 — args are controlled (hardcoded bd subcommands)
+	cmd := exec.CommandContext(ctx, "bd", args...)
+	return cmd.Run()
+}
+
 var hooksRunCmd = &cobra.Command{
 	Use:   "run <hook-name> [args...]",
 	Short: "Execute a git hook (called by thin shims)",
@@ -1067,6 +1120,13 @@ installed bd version - upgrading bd automatically updates hook behavior.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		hookName := args[0]
 		hookArgs := args[1:]
+
+		// Quick Dolt health check — if Dolt server is unreachable, skip hook
+		// to avoid blocking git operations indefinitely.
+		if !doltHealthCheck() {
+			fmt.Fprintf(os.Stderr, "bd hook %s: Dolt server unreachable, skipping (git operation allowed)\n", hookName)
+			os.Exit(0)
+		}
 
 		var exitCode int
 		switch hookName {

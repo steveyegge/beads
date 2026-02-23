@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,37 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// hookDoltTimeout is the maximum time any hook Dolt operation may take.
+// If exceeded, the hook warns and exits 0 (never blocks git operations).
+const hookDoltTimeout = 10 * time.Second
+
+// hookDoltHealthCheckTimeout is the TCP probe timeout for Dolt reachability.
+const hookDoltHealthCheckTimeout = 1 * time.Second
+
+// checkDoltHealth performs a quick TCP probe to verify the Dolt server is
+// reachable before attempting any queries. Returns true if healthy or if
+// the backend is not in server mode (embedded mode doesn't need a probe).
+func checkDoltHealth(beadsDir string) bool {
+	fileCfg, err := configfile.Load(beadsDir)
+	if err != nil || fileCfg == nil {
+		return true // Can't load config — let the caller handle the error
+	}
+	if !fileCfg.IsDoltServerMode() {
+		return true // Embedded mode — no TCP check needed
+	}
+
+	host := fileCfg.GetDoltServerHost()
+	port := fileCfg.GetDoltServerPort()
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	conn, dialErr := net.DialTimeout("tcp", addr, hookDoltHealthCheckTimeout)
+	if dialErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Dolt server unreachable at %s — hook skipped\n", addr)
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
 
 // jsonlFilePaths lists all JSONL files that should be staged/tracked.
 // Includes beads.jsonl for backwards compatibility with older installations.
@@ -384,7 +416,13 @@ func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
 		return 0
 	}
 
-	ctx := context.Background()
+	// Quick health check — don't block commits if Dolt is unreachable
+	if !checkDoltHealth(beadsDir) {
+		return 0
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), hookDoltTimeout)
+	defer cancel()
 
 	// Load previous export state for this worktree
 	prevState, _ := loadExportState(beadsDir, worktreeRoot)
@@ -552,7 +590,13 @@ func hookPostMerge(args []string) int {
 // 3. Merge branch to main (cell-level conflict resolution)
 // 4. Delete branch on success
 func hookPostMergeDolt(beadsDir string) int {
-	ctx := context.Background()
+	// Quick health check — don't block merges if Dolt is unreachable
+	if !checkDoltHealth(beadsDir) {
+		return 0
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), hookDoltTimeout)
+	defer cancel()
 
 	// Open storage using config to get the correct database name (e.g. "beads_bd")
 	store, err := dolt.NewFromConfig(ctx, beadsDir)
