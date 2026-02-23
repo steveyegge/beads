@@ -174,6 +174,12 @@ func Initialize() error {
 	v.SetDefault("validation.on-create", "none")
 	v.SetDefault("validation.on-sync", "none")
 
+	// Metadata schema validation (GH#1416 Phase 2)
+	// - "none": no metadata schema validation (default)
+	// - "warn": validate and print warnings but proceed
+	// - "error": validate and reject invalid metadata
+	v.SetDefault("validation.metadata.mode", "none")
+
 	// Hierarchy configuration defaults (GH#995)
 	// Maximum nesting depth for hierarchical IDs (e.g., bd-abc.1.2.3)
 	// Default matches types.MaxHierarchyDepth constant
@@ -783,6 +789,39 @@ func GetRigLevelRoles() []string {
 // These roles include a name suffix: <prefix>-<rig>-<role>-<name>
 func GetNamedRoles() []string {
 	return getConfigList("agent_roles.named")
+}
+
+// MetadataValidationMode returns the metadata schema validation mode.
+// Returns "none" if config is not initialized or mode is empty/unknown.
+func MetadataValidationMode() string {
+	if v == nil {
+		return "none"
+	}
+	mode := v.GetString("validation.metadata.mode")
+	switch mode {
+	case "warn", "error":
+		return mode
+	default:
+		return "none"
+	}
+}
+
+// MetadataSchemaFields returns the raw field definitions from config.
+// Returns nil if config is not initialized or no fields are defined.
+// Each entry maps field name → map of properties (type, values, required, min, max).
+func MetadataSchemaFields() map[string]interface{} {
+	if v == nil {
+		return nil
+	}
+	raw := v.Get("validation.metadata.fields")
+	if raw == nil {
+		return nil
+	}
+	// Viper returns map[string]interface{} for nested YAML maps
+	if m, ok := raw.(map[string]interface{}); ok {
+		return m
+	}
+	return nil
 }
 
 // getConfigList is a helper that retrieves a comma-separated list from config.yaml.

@@ -140,6 +140,11 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ID = generatedID
 	}
 
+	// Validate metadata against schema if configured (GH#1416 Phase 2)
+	if err := validateMetadataIfConfigured(issue.Metadata); err != nil {
+		return err
+	}
+
 	return insertIssueTxIntoTable(ctx, t.tx, table, issue)
 }
 
@@ -270,6 +275,10 @@ func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates ma
 			metadataStr, err := storage.NormalizeMetadataValue(value)
 			if err != nil {
 				return fmt.Errorf("invalid metadata: %w", err)
+			}
+			// Validate against schema if configured (GH#1416 Phase 2)
+			if err := validateMetadataIfConfigured(json.RawMessage(metadataStr)); err != nil {
+				return err
 			}
 			args = append(args, metadataStr)
 		} else {

@@ -17,6 +17,12 @@ import (
 
 // CreateIssue creates a new issue
 func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
+	// Validate metadata against schema if configured (GH#1416 Phase 2)
+	// Runs before ephemeral routing so wisps are also validated.
+	if err := validateMetadataIfConfigured(issue.Metadata); err != nil {
+		return err
+	}
+
 	// Route ephemeral issues to wisps table
 	if issue.Ephemeral {
 		return s.createWisp(ctx, issue, actor)
@@ -147,6 +153,9 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 	}
 	if allEph {
 		for _, issue := range issues {
+			if err := validateMetadataIfConfigured(issue.Metadata); err != nil {
+				return fmt.Errorf("metadata validation failed for issue %s: %w", issue.ID, err)
+			}
 			if err := s.createWisp(ctx, issue, actor); err != nil {
 				return err
 			}
@@ -201,6 +210,11 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 		// Validate issue
 		if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
 			return fmt.Errorf("validation failed for issue %s: %w", issue.ID, err)
+		}
+
+		// Validate metadata against schema if configured (GH#1416 Phase 2)
+		if err := validateMetadataIfConfigured(issue.Metadata); err != nil {
+			return fmt.Errorf("metadata validation failed for issue %s: %w", issue.ID, err)
 		}
 
 		if issue.ContentHash == "" {
@@ -395,6 +409,17 @@ func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef strin
 
 // UpdateIssue updates fields on an issue
 func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
+	// Validate metadata against schema before wisp routing (GH#1416 Phase 2)
+	if rawMeta, ok := updates["metadata"]; ok {
+		metadataStr, err := storage.NormalizeMetadataValue(rawMeta)
+		if err != nil {
+			return fmt.Errorf("invalid metadata: %w", err)
+		}
+		if err := validateMetadataIfConfigured(json.RawMessage(metadataStr)); err != nil {
+			return err
+		}
+	}
+
 	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
 	if s.isActiveWisp(ctx, id) {
 		return s.updateWisp(ctx, id, updates, actor)
@@ -433,6 +458,7 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 			args = append(args, string(waitersJSON))
 		} else if key == "metadata" {
 			// GH#1417: Normalize metadata to string, accepting string/[]byte/json.RawMessage
+			// Schema validation already ran in the pre-routing block above.
 			metadataStr, err := storage.NormalizeMetadataValue(value)
 			if err != nil {
 				return fmt.Errorf("invalid metadata: %w", err)
