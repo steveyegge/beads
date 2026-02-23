@@ -1128,3 +1128,280 @@ func parseJSONOutput(t *testing.T, output string) []map[string]any {
 	}
 	return arr
 }
+
+// ---------------------------------------------------------------------------
+// Protocol tests: Cycle prevention (PT-19, PT-27)
+// ---------------------------------------------------------------------------
+
+// TestProtocol_CyclePreventionBlocks asserts that adding a dependency that
+// would create a cycle is rejected with an error.
+//
+// Invariant: bd dep add C A --type blocks MUST fail when A→B→C chain exists.
+func TestProtocol_CyclePreventionBlocks(t *testing.T) {
+	w := newWorkspace(t)
+	a := w.create("--title", "Chain-A", "--type", "task")
+	b := w.create("--title", "Chain-B", "--type", "task")
+	c := w.create("--title", "Chain-C", "--type", "task")
+
+	w.run("dep", "add", b, a)            // B depends on A
+	w.run("dep", "add", c, b)            // C depends on B
+
+	// Adding C→A would create A→B→C→A cycle — must be rejected
+	_, err := w.tryRun("dep", "add", a, c, "--type", "blocks")
+	if err == nil {
+		t.Errorf("dep add A→C should fail: would create cycle A→B→C→A")
+	}
+}
+
+// TestProtocol_SelfDependencyPrevention asserts that an issue cannot depend
+// on itself.
+//
+// Invariant: bd dep add A A MUST fail.
+func TestProtocol_SelfDependencyPrevention(t *testing.T) {
+	w := newWorkspace(t)
+	a := w.create("--title", "Self-dep test", "--type", "task")
+
+	_, err := w.tryRun("dep", "add", a, a, "--type", "blocks")
+	if err == nil {
+		t.Errorf("dep add %s %s should fail: self-dependency not allowed", a, a)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Protocol tests: Close guard (PT-1, PT-20)
+// ---------------------------------------------------------------------------
+
+// TestProtocol_CloseGuardRespectsDepType asserts that close guard only blocks
+// for blocking dep types (blocks), not non-blocking types (caused-by).
+//
+// Invariant: bd close A succeeds when A has only caused-by deps on open issues.
+func TestProtocol_CloseGuardRespectsDepType(t *testing.T) {
+	w := newWorkspace(t)
+	a := w.create("--title", "Issue A", "--type", "task")
+	b := w.create("--title", "Issue B (open)", "--type", "task")
+
+	// caused-by is non-blocking
+	w.run("dep", "add", a, b, "--type", "caused-by")
+
+	// Close should succeed despite open caused-by dep
+	_, err := w.tryRun("close", a)
+	if err != nil {
+		t.Errorf("close A should succeed: caused-by is non-blocking, but got: %v", err)
+	}
+}
+
+// TestProtocol_CloseGuardBlocksForBlocksDep asserts that close guard prevents
+// actually closing an issue that has open blocking deps.
+//
+// Note: BUG-10 means the command may exit 0 even when close guard fires,
+// so we check actual status instead of exit code.
+func TestProtocol_CloseGuardBlocksForBlocksDep(t *testing.T) {
+	w := newWorkspace(t)
+	a := w.create("--title", "Blocked issue", "--type", "task")
+	b := w.create("--title", "Blocker (open)", "--type", "task")
+
+	w.run("dep", "add", a, b) // A depends on B (B blocks A)
+
+	// Try to close A (which is blocked by open B)
+	w.tryRun("close", a) //nolint:errcheck // exit code may be 0 per BUG-10
+
+	// Regardless of exit code, A should NOT actually be closed
+	shown := w.showJSON(a)
+	status, _ := shown["status"].(string)
+	if status == "closed" {
+		t.Errorf("close guard should prevent closing blocked issue %s, but status = closed", a)
+	}
+}
+
+// TestProtocol_CloseForceOverridesGuard asserts that --force bypasses close guard.
+//
+// Invariant: bd close A --force MUST succeed even with open blockers.
+func TestProtocol_CloseForceOverridesGuard(t *testing.T) {
+	w := newWorkspace(t)
+	a := w.create("--title", "Blocked issue", "--type", "task")
+	b := w.create("--title", "Blocker", "--type", "task")
+
+	w.run("dep", "add", a, b)
+
+	// Close with --force should succeed
+	_, err := w.tryRun("close", a, "--force")
+	if err != nil {
+		t.Errorf("close A --force should succeed despite open blocker, got: %v", err)
+	}
+
+	// Verify closed
+	shown := w.showJSON(a)
+	status, _ := shown["status"].(string)
+	if status != "closed" {
+		t.Errorf("status = %q after close --force, want closed", status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Protocol tests: Deferred excluded from ready (PT-7)
+// ---------------------------------------------------------------------------
+
+// TestProtocol_DeferredExcludedFromReady asserts that deferred issues are
+// NOT in bd ready, and undefer brings them back.
+//
+// Invariant: deferred issues must not appear in bd ready output.
+func TestProtocol_DeferredExcludedFromReady(t *testing.T) {
+	w := newWorkspace(t)
+	a := w.create("--title", "Defer target", "--type", "task", "--priority", "2")
+
+	// Should be ready initially
+	readyIDs := parseReadyIDs(t, w)
+	if !readyIDs[a] {
+		t.Fatalf("issue %s should be ready initially", a)
+	}
+
+	// Defer until far future
+	w.run("defer", a, "--until", "2099-12-31")
+
+	// Should NOT be ready while deferred
+	readyIDs = parseReadyIDs(t, w)
+	if readyIDs[a] {
+		t.Errorf("deferred issue %s should NOT appear in bd ready", a)
+	}
+
+	// Undefer
+	w.run("undefer", a)
+
+	// Should be ready again
+	readyIDs = parseReadyIDs(t, w)
+	if !readyIDs[a] {
+		t.Errorf("issue %s should be ready after undefer", a)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Protocol tests: Dep rm unblocks issue (PT-26)
+// ---------------------------------------------------------------------------
+
+// TestProtocol_DepRmUnblocksIssue asserts that removing a blocking dependency
+// makes the previously-blocked issue appear in bd ready.
+//
+// Invariant: after dep rm, issue with no remaining blockers is ready.
+func TestProtocol_DepRmUnblocksIssue(t *testing.T) {
+	w := newWorkspace(t)
+	a := w.create("--title", "Blocked", "--type", "task", "--priority", "2")
+	b := w.create("--title", "Blocker", "--type", "task", "--priority", "2")
+
+	w.run("dep", "add", a, b)
+
+	// A should not be ready (blocked)
+	readyIDs := parseReadyIDs(t, w)
+	if readyIDs[a] {
+		t.Fatalf("issue %s should NOT be ready while blocked", a)
+	}
+
+	// Remove the dep
+	w.run("dep", "rm", a, b)
+
+	// A should now be ready
+	readyIDs = parseReadyIDs(t, w)
+	if !readyIDs[a] {
+		t.Errorf("issue %s should be ready after dep rm", a)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Protocol tests: Supersede creates dep and closes (PT-15)
+// ---------------------------------------------------------------------------
+
+// TestProtocol_SupersedeClosesAndCreatesDep asserts that bd supersede A --with B
+// closes A and creates a supersedes dependency.
+//
+// Invariant: superseded issue is closed and has dependency on replacement.
+func TestProtocol_SupersedeClosesAndCreatesDep(t *testing.T) {
+	w := newWorkspace(t)
+	a := w.create("--title", "Old approach", "--type", "task", "--priority", "2")
+	b := w.create("--title", "New approach", "--type", "task", "--priority", "2")
+
+	w.run("supersede", a, "--with", b)
+
+	// A should be closed
+	shown := w.showJSON(a)
+	status, _ := shown["status"].(string)
+	if status != "closed" {
+		t.Errorf("superseded issue status = %q, want closed", status)
+	}
+
+	// A should have a supersedes dependency on B
+	deps := getObjectSlice(shown, "dependencies")
+	found := false
+	for _, dep := range deps {
+		depID, _ := dep["id"].(string)
+		depType, _ := dep["dependency_type"].(string)
+		if depID == b && depType == "supersedes" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("superseded issue %s should have supersedes dep on %s, got deps: %v", a, b, deps)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Protocol tests: Status transitions preserve data (PT-11)
+// ---------------------------------------------------------------------------
+
+// TestProtocol_StatusTransitionsPreserveLabels asserts that cycling through
+// status transitions does not lose labels.
+//
+// Invariant: labels, deps, comments survive all status transitions.
+func TestProtocol_StatusTransitionsPreserveLabels(t *testing.T) {
+	w := newWorkspace(t)
+	a := w.create("--title", "Status cycle", "--type", "task", "--priority", "2")
+	w.run("label", "add", a, "test-label")
+	w.run("comment", a, "Important note")
+
+	// open → in_progress → open → closed → reopen
+	w.run("update", a, "--status", "in_progress")
+	w.run("update", a, "--status", "open")
+	w.run("close", a)
+	w.run("reopen", a)
+
+	shown := w.showJSON(a)
+
+	// Labels preserved
+	labels := getStringSlice(shown, "labels")
+	if len(labels) != 1 || labels[0] != "test-label" {
+		t.Errorf("labels after status cycle: got %v, want [test-label]", labels)
+	}
+
+	// Comments preserved
+	comments := getObjectSlice(shown, "comments")
+	if len(comments) != 1 {
+		t.Errorf("comments after status cycle: got %d, want 1", len(comments))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Protocol tests: Label add/remove round-trip (PT-29)
+// ---------------------------------------------------------------------------
+
+// TestProtocol_LabelAddRemoveRoundTrip asserts that labels can be added
+// and removed correctly.
+//
+// Invariant: label add + label remove is a no-op on the label set.
+func TestProtocol_LabelAddRemoveRoundTrip(t *testing.T) {
+	w := newWorkspace(t)
+	a := w.create("--title", "Label round-trip", "--type", "task")
+
+	w.run("label", "add", a, "bug-fix")
+	w.run("label", "add", a, "urgent")
+	w.run("label", "add", a, "frontend")
+
+	// Remove one
+	w.run("label", "remove", a, "urgent")
+
+	shown := w.showJSON(a)
+	labels := getStringSlice(shown, "labels")
+	sort.Strings(labels)
+
+	want := []string{"bug-fix", "frontend"}
+	if !slices.Equal(labels, want) {
+		t.Errorf("labels after add 3, remove 1: got %v, want %v", labels, want)
+	}
+}
