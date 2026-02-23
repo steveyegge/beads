@@ -321,9 +321,9 @@ Also triggers Dolt push/pull if a remote is configured.`,
 
 		if jsonOutput {
 			result := map[string]interface{}{
-				"synced":         true,
-				"repos_synced":   len(repos.Additional) - totalSkipped,
-				"repos_skipped":  totalSkipped,
+				"synced":          true,
+				"repos_synced":    len(repos.Additional) - totalSkipped,
+				"repos_skipped":   totalSkipped,
 				"issues_imported": totalImported,
 			}
 			return json.NewEncoder(os.Stdout).Encode(result)
