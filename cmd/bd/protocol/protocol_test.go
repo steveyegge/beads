@@ -180,6 +180,25 @@ func (w *workspace) run(args ...string) string {
 	return string(out)
 }
 
+// runExpectError runs bd and expects a non-zero exit code.
+// Returns the combined output and exit code.
+func (w *workspace) runExpectError(args ...string) (string, int) {
+	w.t.Helper()
+	cmd := exec.Command(w.bd, args...)
+	cmd.Dir = w.dir
+	cmd.Env = w.env()
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		w.t.Fatalf("bd %s: expected non-zero exit, got success\nOutput: %s",
+			strings.Join(args, " "), out)
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		w.t.Fatalf("bd %s: unexpected error type: %v", strings.Join(args, " "), err)
+	}
+	return string(out), exitErr.ExitCode()
+}
+
 // create runs bd create --silent and returns the issue ID.
 func (w *workspace) create(args ...string) string {
 	w.t.Helper()
@@ -1231,6 +1250,42 @@ func assertFieldPrefix(t *testing.T, issue map[string]any, key, prefix string) {
 	if !strings.HasPrefix(got, prefix) {
 		t.Errorf("field %q = %q, want prefix %q", key, got, prefix)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// BUG-11: bd update should reject truly invalid statuses but allow custom ones
+// ---------------------------------------------------------------------------
+
+func TestBUG11_UpdateRejectsGarbageStatus(t *testing.T) {
+	w := newWorkspace(t)
+	id := w.create("Test issue")
+
+	out, code := w.runExpectError("update", id, "--status", "bogus")
+	if code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(out, "invalid status") {
+		t.Errorf("expected 'invalid status' in output, got: %s", out)
+	}
+}
+
+func TestBUG11_UpdateAcceptsBuiltinStatuses(t *testing.T) {
+	w := newWorkspace(t)
+	id := w.create("Test issue")
+
+	w.run("update", id, "--status", "in_progress")
+	w.run("update", id, "--status", "open")
+}
+
+func TestBUG11_UpdateAcceptsCustomStatus(t *testing.T) {
+	w := newWorkspace(t)
+	id := w.create("Test issue")
+
+	// Configure a custom status
+	w.run("config", "set", "status.custom", "awaiting_review,testing")
+
+	// Custom status should be accepted
+	w.run("update", id, "--status", "awaiting_review")
 }
 
 // parseJSONOutput handles both JSON array and JSONL formats.
