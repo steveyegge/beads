@@ -177,6 +177,25 @@ func (w *workspace) run(args ...string) string {
 	return string(out)
 }
 
+// runExpectError runs bd and expects a non-zero exit code.
+// Returns the combined output and exit code.
+func (w *workspace) runExpectError(args ...string) (string, int) {
+	w.t.Helper()
+	cmd := exec.Command(w.bd, args...)
+	cmd.Dir = w.dir
+	cmd.Env = w.env()
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		w.t.Fatalf("bd %s: expected non-zero exit, got success\nOutput: %s",
+			strings.Join(args, " "), out)
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		w.t.Fatalf("bd %s: unexpected error type: %v", strings.Join(args, " "), err)
+	}
+	return string(out), exitErr.ExitCode()
+}
+
 // create runs bd create --silent and returns the issue ID.
 func (w *workspace) create(args ...string) string {
 	w.t.Helper()
@@ -1227,6 +1246,49 @@ func assertFieldPrefix(t *testing.T, issue map[string]any, key, prefix string) {
 	}
 	if !strings.HasPrefix(got, prefix) {
 		t.Errorf("field %q = %q, want prefix %q", key, got, prefix)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BUG-10: Exit codes for close guard and update failures
+// ---------------------------------------------------------------------------
+
+// TestBUG10_CloseBlockedExitsNonZero verifies that closing an issue blocked by
+// open dependencies returns exit code 1.
+func TestBUG10_CloseBlockedExitsNonZero(t *testing.T) {
+	w := newWorkspace(t)
+
+	blocker := w.create("Blocker issue")
+	blocked := w.create("Blocked issue")
+
+	// blocked depends on blocker (blocker blocks blocked)
+	w.run("dep", "add", blocked, blocker, "--type=blocks")
+
+	// Try to close blocked while blocker is still open
+	out, code := w.runExpectError("close", blocked)
+	if code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(out, "blocked by open issues") {
+		t.Errorf("expected 'blocked by open issues' in output, got: %s", out)
+	}
+}
+
+// TestBUG10_CloseSuccessExitsZero verifies no regression: closing an unblocked
+// issue still returns exit code 0.
+func TestBUG10_CloseSuccessExitsZero(t *testing.T) {
+	w := newWorkspace(t)
+	id := w.create("Simple issue")
+	w.run("close", id) // should succeed (exit 0)
+}
+
+// TestBUG10_UpdateNonexistentExitsNonZero verifies that updating a nonexistent
+// issue returns a non-zero exit code.
+func TestBUG10_UpdateNonexistentExitsNonZero(t *testing.T) {
+	w := newWorkspace(t)
+	_, code := w.runExpectError("update", "nonexistent-xyz", "--status", "in_progress")
+	if code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
 	}
 }
 
