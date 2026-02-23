@@ -1049,9 +1049,36 @@ func recordEvent(ctx context.Context, tx *sql.Tx, issueID string, eventType type
 	return err
 }
 
-// generateIssueID generates a unique hash-based ID for an issue
-// Uses adaptive length based on database size and tries multiple nonces on collision
+// generateIssueID generates a unique ID for an issue.
+// If issue_id_mode=counter is configured, generates sequential IDs (bd-1, bd-2, ...).
+// Otherwise uses the default hash-based ID generation.
 func generateIssueID(ctx context.Context, tx *sql.Tx, prefix string, issue *types.Issue, actor string) (string, error) {
+	// Check issue_id_mode config (within the current transaction)
+	var idMode string
+	err := tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_id_mode").Scan(&idMode)
+	if err != nil && err != sql.ErrNoRows {
+		return "", fmt.Errorf("failed to read issue_id_mode config: %w", err)
+	}
+
+	if idMode == "counter" {
+		// Sequential counter mode: increment atomically within this transaction
+		var lastID int
+		err2 := tx.QueryRowContext(ctx, "SELECT last_id FROM issue_counter WHERE prefix = ?", prefix).Scan(&lastID)
+		if err2 != nil && err2 != sql.ErrNoRows {
+			return "", fmt.Errorf("failed to read issue counter for prefix %q: %w", prefix, err2)
+		}
+		nextID := lastID + 1
+		_, err3 := tx.ExecContext(ctx, `
+			INSERT INTO issue_counter (prefix, last_id) VALUES (?, ?)
+			ON DUPLICATE KEY UPDATE last_id = ?
+		`, prefix, nextID, nextID)
+		if err3 != nil {
+			return "", fmt.Errorf("failed to update issue counter for prefix %q: %w", prefix, err3)
+		}
+		return fmt.Sprintf("%s-%d", prefix, nextID), nil
+	}
+
+	// Default hash-based ID generation
 	// Get adaptive base length based on current database size
 	baseLength, err := GetAdaptiveIDLengthTx(ctx, tx, prefix)
 	if err != nil {
