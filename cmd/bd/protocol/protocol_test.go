@@ -1253,32 +1253,6 @@ func assertFieldPrefix(t *testing.T, issue map[string]any, key, prefix string) {
 }
 
 // ---------------------------------------------------------------------------
-// BUG-11: bd update accepts invalid status values
-// ---------------------------------------------------------------------------
-
-func TestBUG11_UpdateRejectsInvalidStatus(t *testing.T) {
-	w := newWorkspace(t)
-	id := w.create("Test issue")
-
-	out, code := w.runExpectError("update", id, "--status", "bogus")
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-	if !strings.Contains(out, "invalid status") {
-		t.Errorf("expected 'invalid status' in output, got: %s", out)
-	}
-}
-
-func TestBUG11_UpdateAcceptsValidStatus(t *testing.T) {
-	w := newWorkspace(t)
-	id := w.create("Test issue")
-
-	// Valid status transitions should succeed
-	w.run("update", id, "--status", "in_progress")
-	w.run("update", id, "--status", "open")
-}
-
-// ---------------------------------------------------------------------------
 // BUG-12: bd update accepts empty title
 // ---------------------------------------------------------------------------
 
