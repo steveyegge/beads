@@ -156,7 +156,7 @@ func reclaimPort(host string, port int, beadsDir string) (adoptPID int, err erro
 	// Under Gas Town, check the daemon PID file first
 	if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
 		daemonPidFile := filepath.Join(gtRoot, "daemon", "dolt.pid")
-		if data, readErr := os.ReadFile(daemonPidFile); readErr == nil {
+		if data, readErr := os.ReadFile(daemonPidFile); readErr == nil { //nolint:gosec // G304: path from GT_ROOT env var
 			if daemonPID, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && daemonPID == pid {
 				return pid, nil // daemon-managed server — adopt it
 			}
@@ -299,7 +299,7 @@ func IsRunning(beadsDir string) (*State, error) {
 	// the server and writes its PID to a different location.
 	if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
 		daemonPidFile := filepath.Join(gtRoot, "daemon", "dolt.pid")
-		if data, readErr := os.ReadFile(daemonPidFile); readErr == nil {
+		if data, readErr := os.ReadFile(daemonPidFile); readErr == nil { //nolint:gosec // G304: path from GT_ROOT env var
 			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && pid > 0 {
 				if process, findErr := os.FindProcess(pid); findErr == nil {
 					if process.Signal(syscall.Signal(0)) == nil && isDoltProcess(pid) {
@@ -464,7 +464,7 @@ func Start(beadsDir string) (*State, error) {
 	}
 
 	// Open log file
-	logFile, err := os.OpenFile(logPath(beadsDir), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	logFile, err := os.OpenFile(logPath(beadsDir), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) //nolint:gosec // G304: logPath derives from user-configured beadsDir
 	if err != nil {
 		return nil, fmt.Errorf("opening log file: %w", err)
 	}
@@ -474,12 +474,12 @@ func Start(beadsDir string) (*State, error) {
 	actualPort := cfg.Port
 	adoptPID, reclaimErr := reclaimPort(cfg.Host, actualPort, beadsDir)
 	if reclaimErr != nil {
-		logFile.Close()
+		_ = logFile.Close()
 		return nil, fmt.Errorf("cannot start dolt server on port %d: %w", actualPort, reclaimErr)
 	}
 	if adoptPID > 0 {
 		// Existing server is ours (same data dir or daemon-managed) — adopt it
-		logFile.Close()
+		_ = logFile.Close()
 		_ = os.WriteFile(pidPath(beadsDir), []byte(strconv.Itoa(adoptPID)), 0600)
 		_ = writePortFile(beadsDir, actualPort)
 		touchActivity(beadsDir)
@@ -499,13 +499,13 @@ func Start(beadsDir string) (*State, error) {
 	cmd.Stderr = logFile
 	cmd.Stdin = nil
 	// New process group so server survives bd exit
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setDetachedProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
-		logFile.Close()
+		_ = logFile.Close()
 		return nil, fmt.Errorf("starting dolt sql-server: %w", err)
 	}
-	logFile.Close()
+	_ = logFile.Close()
 
 	pid := cmd.Process.Pid
 
@@ -594,7 +594,7 @@ func FlushWorkingSet(host string, port int) error {
 		}
 		databases = append(databases, name)
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	if len(databases) == 0 {
 		return nil
@@ -738,7 +738,7 @@ func KillStaleServers(beadsDir string) ([]int, error) {
 	// Under Gas Town, also check the daemon-managed PID file
 	if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
 		daemonPidFile := filepath.Join(gtRoot, "daemon", "dolt.pid")
-		if data, readErr := os.ReadFile(daemonPidFile); readErr == nil {
+		if data, readErr := os.ReadFile(daemonPidFile); readErr == nil { //nolint:gosec // G304: path from GT_ROOT env var
 			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && pid > 0 {
 				canonicalPIDs[pid] = true
 			}
@@ -797,7 +797,7 @@ func isDoltProcess(pid int) bool {
 	// "ps -o state=" returns a single character: R(running), S(sleeping),
 	// Z(zombie), T(stopped), etc. Zombies linger in the process table but
 	// are not functional.
-	stateCmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "state=")
+	stateCmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "state=") //nolint:gosec // G702: pid is integer from process table
 	stateOut, err := stateCmd.Output()
 	if err != nil {
 		return false
@@ -807,7 +807,7 @@ func isDoltProcess(pid int) bool {
 		return false
 	}
 
-	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=") //nolint:gosec // G702: pid is integer from process table
 	output, err := cmd.Output()
 	if err != nil {
 		return false
@@ -902,7 +902,7 @@ func forkIdleMonitor(beadsDir string) {
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setDetachedProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return // best effort
