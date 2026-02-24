@@ -41,7 +41,8 @@ func wispCommentTable(issueID string) string {
 	return "comments"
 }
 
-// insertIssueIntoTable inserts an issue into the specified table.
+// insertIssueIntoTable inserts an issue into the specified table,
+// using ON DUPLICATE KEY UPDATE to handle pre-existing records gracefully (GH#2061).
 // The table must be either "issues" or "wisps" (same schema).
 //
 //nolint:gosec // G201: table is a hardcoded constant from wispIssueTable
@@ -70,6 +71,24 @@ func insertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?
 		)
+		ON DUPLICATE KEY UPDATE
+			content_hash = VALUES(content_hash),
+			title = VALUES(title),
+			description = VALUES(description),
+			design = VALUES(design),
+			acceptance_criteria = VALUES(acceptance_criteria),
+			notes = VALUES(notes),
+			status = VALUES(status),
+			priority = VALUES(priority),
+			issue_type = VALUES(issue_type),
+			assignee = VALUES(assignee),
+			estimated_minutes = VALUES(estimated_minutes),
+			updated_at = VALUES(updated_at),
+			closed_at = VALUES(closed_at),
+			external_ref = VALUES(external_ref),
+			source_repo = VALUES(source_repo),
+			close_reason = VALUES(close_reason),
+			metadata = VALUES(metadata)
 	`, table),
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
 		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
@@ -221,6 +240,16 @@ func wispPrefix(configPrefix string, issue *types.Issue) string {
 func (s *DoltStore) createWisp(ctx context.Context, issue *types.Issue, actor string) error {
 	issue.Ephemeral = true
 
+	// Fetch custom statuses and types for validation (parity with CreateIssue)
+	customStatuses, err := s.GetCustomStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+	customTypes, err := s.GetCustomTypes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom types: %w", err)
+	}
+
 	now := time.Now().UTC()
 	if issue.CreatedAt.IsZero() {
 		issue.CreatedAt = now
@@ -240,6 +269,11 @@ func (s *DoltStore) createWisp(ctx context.Context, issue *types.Issue, actor st
 		}
 		closedAt := maxTime.Add(time.Second)
 		issue.ClosedAt = &closedAt
+	}
+
+	// Validate issue fields (parity with CreateIssue)
+	if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
 	}
 
 	if issue.ContentHash == "" {

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // YamlOnlyKeys are configuration keys that must be stored in config.yaml
@@ -53,6 +54,9 @@ var YamlOnlyKeys = map[string]bool{
 
 	// Hierarchy settings (GH#995)
 	"hierarchy.max-depth": true,
+
+	// Dolt server settings
+	"dolt.idle-timeout": true, // Idle auto-stop timeout (default "30m", "0" disables)
 }
 
 // IsYamlOnlyKey returns true if the given key should be stored in config.yaml
@@ -64,7 +68,7 @@ func IsYamlOnlyKey(key string) bool {
 	}
 
 	// Check prefix matches for nested keys
-	prefixes := []string{"routing.", "sync.", "git.", "directory.", "repos.", "external_projects.", "validation.", "hierarchy.", "ai."}
+	prefixes := []string{"routing.", "sync.", "git.", "directory.", "repos.", "external_projects.", "validation.", "hierarchy.", "ai.", "dolt."}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(key, prefix) {
 			return true
@@ -279,6 +283,13 @@ func validateYamlConfigValue(key, value string) error {
 		}
 		if depth < 1 {
 			return fmt.Errorf("hierarchy.max-depth must be at least 1, got %d", depth)
+		}
+	case "dolt.idle-timeout":
+		// "0" disables, otherwise must be a valid Go duration
+		if value != "0" {
+			if _, err := time.ParseDuration(value); err != nil {
+				return fmt.Errorf("dolt.idle-timeout must be a duration (e.g. \"30m\", \"1h\") or \"0\" to disable, got %q", value)
+			}
 		}
 	}
 	return nil

@@ -134,7 +134,107 @@ func RunServerHealthChecks(path string) ServerHealthResult {
 		result.OverallOK = false
 	}
 
+	// Check 6: Stale databases (test/polecat leftovers)
+	staleCheck := checkStaleDatabases(db)
+	result.Checks = append(result.Checks, staleCheck)
+	if staleCheck.Status == StatusError {
+		result.OverallOK = false
+	}
+
 	return result
+}
+
+// staleDatabasePrefixes are prefixes that indicate test/polecat databases that
+// should not exist on the production Dolt server. These accumulate from interrupted
+// test runs and terminated polecats, wasting server memory and potentially
+// contributing to performance degradation under concurrent load.
+// - testdb_*: BEADS_TEST_MODE=1 FNV hash of temp paths
+// - doctest_*: doctor test helpers
+// - doctortest_*: doctor test helpers
+// - beads_pt*: gastown patrol_helpers_test.go random prefixes
+// - beads_vr*: gastown mail/router_test.go random prefixes
+var staleDatabasePrefixes = []string{
+	"testdb_",
+	"doctest_",
+	"doctortest_",
+	"beads_pt",
+	"beads_vr",
+}
+
+// knownProductionDatabases are the databases that should exist on a production server.
+// Everything else matching a stale prefix is a candidate for cleanup.
+var knownProductionDatabases = map[string]bool{
+	"information_schema": true,
+	"mysql":              true,
+}
+
+// checkStaleDatabases identifies leftover test/polecat databases on the shared server.
+// These waste memory and can degrade performance under concurrent load.
+func checkStaleDatabases(db *sql.DB) DoctorCheck {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
+	if err != nil {
+		return DoctorCheck{
+			Name:     "Stale Databases",
+			Status:   StatusError,
+			Message:  "Failed to list databases",
+			Detail:   err.Error(),
+			Category: CategoryMaintenance,
+		}
+	}
+	defer rows.Close()
+
+	var stale []string
+	var total int
+	for rows.Next() {
+		var dbName string
+		if err := rows.Scan(&dbName); err != nil {
+			continue
+		}
+		total++
+		if knownProductionDatabases[dbName] {
+			continue
+		}
+		for _, prefix := range staleDatabasePrefixes {
+			if strings.HasPrefix(dbName, prefix) {
+				stale = append(stale, dbName)
+				break
+			}
+		}
+	}
+
+	if len(stale) == 0 {
+		return DoctorCheck{
+			Name:     "Stale Databases",
+			Status:   StatusOK,
+			Message:  fmt.Sprintf("%d databases, no stale test/polecat databases found", total),
+			Category: CategoryMaintenance,
+		}
+	}
+
+	// Build detail string showing first few stale databases
+	detail := fmt.Sprintf("Found %d stale databases (of %d total):\n", len(stale), total)
+	shown := len(stale)
+	if shown > 10 {
+		shown = 10
+	}
+	for _, name := range stale[:shown] {
+		detail += fmt.Sprintf("  %s\n", name)
+	}
+	if len(stale) > 10 {
+		detail += fmt.Sprintf("  ... and %d more\n", len(stale)-10)
+	}
+
+	return DoctorCheck{
+		Name:     "Stale Databases",
+		Status:   StatusWarning,
+		Message:  fmt.Sprintf("%d stale test/polecat databases found", len(stale)),
+		Detail:   strings.TrimSpace(detail),
+		Fix:      "Run 'bd dolt clean-databases' to drop stale databases",
+		Category: CategoryMaintenance,
+	}
 }
 
 // checkServerReachable checks if the server is reachable via TCP

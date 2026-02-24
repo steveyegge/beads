@@ -42,6 +42,20 @@ create, update, show, or close operation).`,
 
 		if cmd.Flags().Changed("status") {
 			status, _ := cmd.Flags().GetString("status")
+			var customStatuses []string
+			if store != nil {
+				cs, err := store.GetCustomStatuses(rootCtx)
+				if err != nil {
+					if !jsonOutput {
+						fmt.Fprintf(os.Stderr, "%s Failed to get custom statuses: %v\n", ui.RenderWarn("!"), err)
+					}
+				} else {
+					customStatuses = cs
+				}
+			}
+			if !types.Status(status).IsValidWithCustom(customStatuses) {
+				FatalErrorRespectJSON("invalid status %q (built-in: open, in_progress, blocked, deferred, closed, pinned, hooked; or configure custom statuses via 'bd config set status.custom')", status)
+			}
 			updates["status"] = status
 
 			// If status is being set to closed, include session if provided
@@ -65,6 +79,10 @@ create, update, show, or close operation).`,
 		}
 		if cmd.Flags().Changed("title") {
 			title, _ := cmd.Flags().GetString("title")
+			title = strings.TrimSpace(title)
+			if title == "" {
+				FatalErrorRespectJSON("title cannot be empty")
+			}
 			updates["title"] = title
 		}
 		if cmd.Flags().Changed("assignee") {
@@ -400,6 +418,12 @@ create, update, show, or close operation).`,
 
 		if jsonOutput && len(updatedIssues) > 0 {
 			outputJSON(updatedIssues)
+		}
+
+		// Exit non-zero if no issues were actually updated (claim failures
+		// and other soft errors should surface as non-zero exit codes for scripting)
+		if len(args) > 0 && firstUpdatedID == "" {
+			os.Exit(1)
 		}
 	},
 }

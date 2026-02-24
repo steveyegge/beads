@@ -5,53 +5,9 @@ package doctor
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/steveyegge/beads/internal/storage/dolt"
-	"github.com/steveyegge/beads/internal/types"
 )
-
-// newTestDoltStore creates a DoltStore in a temp directory with the given issue prefix.
-func newTestDoltStore(t *testing.T, prefix string) *dolt.DoltStore {
-	t.Helper()
-	if _, err := exec.LookPath("dolt"); err != nil {
-		t.Skip("Dolt not installed, skipping test")
-	}
-	ctx := context.Background()
-	store, err := dolt.New(ctx, &dolt.Config{Path: filepath.Join(t.TempDir(), "test.db")})
-	if err != nil {
-		t.Skipf("skipping: Dolt server not available: %v", err)
-	}
-	if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
-		store.Close()
-		t.Fatalf("Failed to set issue_prefix: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-	return store
-}
-
-func newTestIssue(id string) *types.Issue {
-	return &types.Issue{
-		ID:        id,
-		Title:     "Test issue " + id,
-		Status:    types.StatusOpen,
-		Priority:  2,
-		IssueType: types.TypeTask,
-	}
-}
-
-// insertIssueDirectly inserts an issue with a pre-set ID into the dolt store.
-// This simulates cross-rig contamination where foreign-prefix issues end up in the store.
-func insertIssueDirectly(t *testing.T, store *dolt.DoltStore, id string) {
-	t.Helper()
-	ctx := context.Background()
-	issue := newTestIssue(id)
-	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
-		t.Fatalf("failed to insert issue %s: %v", id, err)
-	}
-}
 
 func TestValidateJSONLForMigration(t *testing.T) {
 	tests := []struct {
@@ -143,26 +99,6 @@ func TestValidateJSONLForMigration_FileNotFound(t *testing.T) {
 	_, _, _, err := validateJSONLForMigration("/nonexistent/path/issues.jsonl")
 	if err == nil {
 		t.Error("expected error for non-existent file")
-	}
-}
-
-func TestGetSQLiteDBPath(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bd-migration-validation-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("failed to create .beads: %v", err)
-	}
-
-	// Test default path
-	path := getSQLiteDBPath(beadsDir)
-	expected := filepath.Join(beadsDir, "beads.db")
-	if path != expected {
-		t.Errorf("path = %q, want %q", path, expected)
 	}
 }
 
@@ -271,7 +207,7 @@ func TestCheckMigrationCompletionResult_NotDoltBackend(t *testing.T) {
 		t.Fatalf("failed to create .beads: %v", err)
 	}
 
-	// Create JSONL (SQLite backend by default)
+	// Create JSONL (no Dolt backend present)
 	jsonl := `{"id":"bd-001","title":"Test 1"}`
 	if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), []byte(jsonl), 0644); err != nil {
 		t.Fatalf("failed to create JSONL: %v", err)

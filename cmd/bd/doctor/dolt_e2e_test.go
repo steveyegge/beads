@@ -4,12 +4,15 @@ package doctor
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 // e2eDoctorResult mirrors the JSON output struct from cmd/bd/doctor.go.
@@ -38,9 +41,20 @@ var (
 	testBDErr  error
 )
 
-// TestMain cleans up the temp directory holding the built bd binary.
+// TestMain starts an isolated Dolt server and cleans up the temp directory
+// holding the built bd binary.
 func TestMain(m *testing.M) {
+	srv, cleanupServer := testutil.StartTestDoltServer("doctor-test-dolt-*")
+	if srv != nil {
+		os.Setenv("BEADS_DOLT_PORT", fmt.Sprintf("%d", srv.Port))
+		os.Setenv("BEADS_TEST_MODE", "1")
+	}
+
 	code := m.Run()
+
+	os.Unsetenv("BEADS_DOLT_PORT")
+	os.Unsetenv("BEADS_TEST_MODE")
+	cleanupServer()
 	if testBDDir != "" {
 		os.RemoveAll(testBDDir)
 	}

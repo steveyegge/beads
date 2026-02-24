@@ -1,0 +1,309 @@
+package testutil
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+const testPidDir = "/tmp"
+const testPidPrefix = "beads-test-dolt-"
+
+// TestDoltServer represents a running test dolt server instance.
+type TestDoltServer struct {
+	Port    int
+	cmd     *exec.Cmd
+	tmpDir  string
+	pidFile string
+}
+
+// serverStartTimeout is the max time to wait for the test dolt server to accept connections.
+const serverStartTimeout = 30 * time.Second
+
+// maxPortRetries is how many times to retry port allocation + server start on port conflict.
+const maxPortRetries = 3
+
+// StartTestDoltServer starts a dedicated Dolt SQL server in a temp directory
+// on a dynamic port. Cleans up stale test servers first. Installs a signal
+// handler so cleanup runs even when tests are interrupted with Ctrl+C.
+//
+// tmpDirPrefix is the os.MkdirTemp prefix (e.g. "beads-test-dolt-*").
+// Returns the server (nil if dolt not installed) and a cleanup function.
+func StartTestDoltServer(tmpDirPrefix string) (*TestDoltServer, func()) {
+	CleanStaleTestServers()
+
+	if _, err := exec.LookPath("dolt"); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: dolt not found in PATH, skipping test server\n")
+		return nil, func() {}
+	}
+
+	tmpDir, err := os.MkdirTemp("", tmpDirPrefix)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: failed to create test dolt dir: %v\n", err)
+		return nil, func() {}
+	}
+
+	dbDir := filepath.Join(tmpDir, "data")
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: failed to create test dolt data dir: %v\n", err)
+		_ = os.RemoveAll(tmpDir)
+		return nil, func() {}
+	}
+
+	// Configure dolt user identity (required by dolt init).
+	doltEnv := append(os.Environ(), "DOLT_ROOT_PATH="+tmpDir)
+	for _, args := range [][]string{
+		{"dolt", "config", "--global", "--add", "user.name", "beads-test"},
+		{"dolt", "config", "--global", "--add", "user.email", "test@beads.local"},
+	} {
+		cfgCmd := exec.Command(args[0], args[1:]...)
+		cfgCmd.Env = doltEnv
+		if out, err := cfgCmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: %s failed: %v\n%s\n", args[1], err, out)
+			_ = os.RemoveAll(tmpDir)
+			return nil, func() {}
+		}
+	}
+
+	initCmd := exec.Command("dolt", "init")
+	initCmd.Dir = dbDir
+	initCmd.Env = doltEnv
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: dolt init failed for test server: %v\n%s\n", err, out)
+		_ = os.RemoveAll(tmpDir)
+		return nil, func() {}
+	}
+
+	// Retry loop: FindFreePort releases the socket before dolt binds it,
+	// creating a race window where another process can grab the port.
+	var serverCmd *exec.Cmd
+	var port int
+	var pidFile string
+	verbose := os.Getenv("BEADS_TEST_DOLT_VERBOSE") == "1"
+
+	for attempt := 0; attempt < maxPortRetries; attempt++ {
+		port, err = FindFreePort()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: failed to find free port (attempt %d/%d): %v\n", attempt+1, maxPortRetries, err)
+			continue
+		}
+
+		serverCmd = exec.Command("dolt", "sql-server",
+			"-H", "127.0.0.1",
+			"-P", fmt.Sprintf("%d", port),
+			"--no-auto-commit",
+		)
+		serverCmd.Dir = dbDir
+		serverCmd.Env = doltEnv
+		if !verbose {
+			serverCmd.Stderr = nil
+			serverCmd.Stdout = nil
+		}
+		if err = serverCmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: failed to start test dolt server on port %d (attempt %d/%d): %v\n", port, attempt+1, maxPortRetries, err)
+			continue
+		}
+
+		// Write PID file so stale cleanup can find orphans from interrupted runs
+		pidFile = filepath.Join(testPidDir, fmt.Sprintf("%s%d.pid", testPidPrefix, port))
+		_ = os.WriteFile(pidFile, []byte(strconv.Itoa(serverCmd.Process.Pid)), 0600)
+
+		if WaitForServer(port, serverStartTimeout) {
+			break // Server is ready
+		}
+
+		// Server failed to become ready — clean up this attempt and retry
+		fmt.Fprintf(os.Stderr, "WARN: test dolt server did not become ready on port %d (attempt %d/%d)\n", port, attempt+1, maxPortRetries)
+		_ = serverCmd.Process.Kill()
+		_ = serverCmd.Wait()
+		_ = os.Remove(pidFile)
+		serverCmd = nil
+	}
+
+	if serverCmd == nil {
+		fmt.Fprintf(os.Stderr, "WARN: test dolt server failed to start after %d attempts, tests requiring dolt will be skipped\n", maxPortRetries)
+		_ = os.RemoveAll(tmpDir)
+		return nil, func() {}
+	}
+
+	srv := &TestDoltServer{
+		Port:    port,
+		cmd:     serverCmd,
+		tmpDir:  tmpDir,
+		pidFile: pidFile,
+	}
+
+	// Install signal handler so cleanup runs even when defer doesn't
+	// (e.g. Ctrl+C during test run)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		srv.cleanup()
+		os.Exit(1)
+	}()
+
+	cleanup := func() {
+		signal.Stop(sigCh)
+		srv.cleanup()
+	}
+
+	return srv, cleanup
+}
+
+// cleanup stops the server, removes temp dir and PID file.
+func (s *TestDoltServer) cleanup() {
+	if s == nil {
+		return
+	}
+	if s.cmd != nil && s.cmd.Process != nil {
+		_ = s.cmd.Process.Kill()
+		_ = s.cmd.Wait()
+	}
+	if s.tmpDir != "" {
+		_ = os.RemoveAll(s.tmpDir)
+	}
+	if s.pidFile != "" {
+		_ = os.Remove(s.pidFile)
+	}
+}
+
+// CleanStaleTestServers kills orphaned test dolt servers from previous
+// interrupted test runs by scanning PID files in /tmp, and removes
+// orphaned temp directories left behind by crashed tests.
+func CleanStaleTestServers() {
+	cleanStalePIDFiles()
+	cleanOrphanedTempDirs()
+}
+
+// cleanStalePIDFiles scans PID files in /tmp for dead or orphaned test servers.
+// Handles both the current prefix (beads-test-dolt-) and the legacy prefix
+// (dolt-test-server-) from before the rename.
+func cleanStalePIDFiles() {
+	prefixes := []string{testPidPrefix, "dolt-test-server-"}
+	for _, prefix := range prefixes {
+		pattern := filepath.Join(testPidDir, prefix+"*.pid")
+		entries, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, pidFile := range entries {
+			cleanPIDFile(pidFile)
+		}
+		// Also clean matching .lock files
+		lockPattern := filepath.Join(testPidDir, prefix+"*.lock")
+		lockEntries, _ := filepath.Glob(lockPattern)
+		for _, lockFile := range lockEntries {
+			_ = os.Remove(lockFile)
+		}
+	}
+}
+
+// cleanPIDFile handles a single PID file: removes if dead, kills if alive and is dolt.
+func cleanPIDFile(pidFile string) {
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		_ = os.Remove(pidFile)
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		_ = os.Remove(pidFile)
+		return
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		_ = os.Remove(pidFile)
+		return
+	}
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		// Process is dead — clean up stale PID file
+		_ = os.Remove(pidFile)
+		return
+	}
+	// Process is alive — verify it's a dolt server before killing
+	if isDoltTestProcess(pid) {
+		_ = process.Signal(syscall.SIGKILL)
+		time.Sleep(100 * time.Millisecond)
+	}
+	_ = os.Remove(pidFile)
+}
+
+// cleanOrphanedTempDirs removes test temp directories whose owning server
+// process is no longer running. Handles both data dirs (beads-test-dolt-*)
+// and test working dirs (beads-bd-tests-*) in the system temp directory.
+func cleanOrphanedTempDirs() {
+	tmpDir := os.TempDir()
+	for _, prefix := range []string{"beads-test-dolt-", "beads-bd-tests-", "fix-test-dolt-", "doctor-test-dolt-"} {
+		pattern := filepath.Join(tmpDir, prefix+"*")
+		entries, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			info, err := os.Stat(entry)
+			if err != nil || !info.IsDir() {
+				continue
+			}
+			// Skip dirs modified in the last 5 minutes (may be in active use)
+			if time.Since(info.ModTime()) < 5*time.Minute {
+				continue
+			}
+			// Go module caches have read-only perms; fix before removal
+			_ = filepath.Walk(entry, func(path string, fi os.FileInfo, err error) error {
+				if err != nil {
+					return nil
+				}
+				if fi.IsDir() && fi.Mode()&0200 == 0 {
+					_ = os.Chmod(path, fi.Mode()|0200)
+				}
+				return nil
+			})
+			_ = os.RemoveAll(entry)
+		}
+	}
+}
+
+// FindFreePort finds an available TCP port by binding to :0.
+func FindFreePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return port, nil
+}
+
+// WaitForServer polls until the server accepts TCP connections on the given port.
+func WaitForServer(port int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false
+}
+
+// isDoltTestProcess verifies that a PID belongs to a dolt sql-server process.
+func isDoltTestProcess(pid int) bool {
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	cmdline := strings.TrimSpace(string(output))
+	return strings.Contains(cmdline, "dolt") && strings.Contains(cmdline, "sql-server")
+}

@@ -348,7 +348,7 @@ var rootCmd = &cobra.Command{
 			"bash",
 			"completion",
 			"doctor",
-			"dolt",
+			"dolt", // bare "bd dolt" shows help only; subcommands handled below
 			"fish",
 			"help",
 			"hook", // manages its own store lifecycle (#1719)
@@ -367,11 +367,19 @@ var rootCmd = &cobra.Command{
 			"version",
 			"zsh",
 		}
+
+		// GH#2042: Dolt subcommands that need the store for version-control operations.
+		// All other dolt subcommands (show, set, test, start, stop, status) are
+		// config/diagnostic commands that skip DB init via the "dolt" parent entry above.
+		needsStoreDoltSubcommands := []string{"push", "pull", "commit"}
+
 		// Check both the command name and parent command name for subcommands
 		cmdName := cmd.Name()
 		if cmd.Parent() != nil {
 			parentName := cmd.Parent().Name()
-			if slices.Contains(noDbCommands, parentName) {
+			if parentName == "dolt" && slices.Contains(needsStoreDoltSubcommands, cmdName) {
+				// GH#2042: dolt push/pull/commit need the store — fall through to init
+			} else if slices.Contains(noDbCommands, parentName) {
 				return
 			}
 		}
@@ -499,6 +507,19 @@ var rootCmd = &cobra.Command{
 			doltCfg.ServerUser = cfg.GetDoltServerUser()
 			doltCfg.ServerPassword = cfg.GetDoltServerPassword()
 			doltCfg.ServerTLS = cfg.GetDoltServerTLS()
+		}
+
+		// Auto-start: enabled by default for standalone users.
+		// Disabled under Gas Town (which manages its own server) or by explicit config.
+		doltCfg.AutoStart = true
+		if os.Getenv("GT_ROOT") != "" {
+			doltCfg.AutoStart = false
+		}
+		if os.Getenv("BEADS_DOLT_AUTO_START") == "0" {
+			doltCfg.AutoStart = false
+		}
+		if v := config.GetString("dolt.auto-start"); v == "false" || v == "0" || v == "off" {
+			doltCfg.AutoStart = false
 		}
 
 		// Server mode defaults auto-commit to OFF because the server handles

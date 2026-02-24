@@ -12,11 +12,9 @@ package regression
 import (
 	"archive/tar"
 	"compress/gzip"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 // baselineBin is the path to the pinned baseline bd binary.
@@ -52,7 +50,11 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "SKIP: dolt not found in PATH; regression tests require dolt")
 		os.Exit(0)
 	}
-	cleanupServer := startTestDoltServer()
+	srv, cleanupServer := testutil.StartTestDoltServer("bd-regression-dolt-*")
+	if srv != nil {
+		testDoltServerPort = srv.Port
+		fmt.Fprintf(os.Stderr, "Test Dolt server running on port %d\n", srv.Port)
+	}
 
 	tmpDir, err := os.MkdirTemp("", "bd-regression-bin-*")
 	if err != nil {
@@ -267,6 +269,7 @@ func (w *workspace) runEnv() []string {
 	}
 	if testDoltServerPort != 0 {
 		env = append(env, "BEADS_DOLT_PORT="+strconv.Itoa(testDoltServerPort))
+		env = append(env, "BEADS_TEST_MODE=1")
 	}
 	if v := os.Getenv("TMPDIR"); v != "" {
 		env = append(env, "TMPDIR="+v)
@@ -722,125 +725,4 @@ func (w *workspace) tryCreate(args ...string) (string, error) {
 	return id, nil
 }
 
-// ---------------------------------------------------------------------------
-// Test Dolt server (isolation from production)
-// ---------------------------------------------------------------------------
-
-// startTestDoltServer starts a dedicated Dolt SQL server in a temp directory
-// on a dynamic port. This prevents regression tests from creating databases on
-// the production Dolt server (port 3307).
-// Returns a cleanup function that stops the server and removes the temp dir.
-func startTestDoltServer() func() {
-	if _, err := exec.LookPath("dolt"); err != nil {
-		fmt.Fprintln(os.Stderr, "WARN: dolt not found in PATH; regression tests will be skipped")
-		return func() {}
-	}
-
-	tmpDir, err := os.MkdirTemp("", "bd-regression-dolt-*")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: failed to create test dolt dir: %v\n", err)
-		return func() {}
-	}
-
-	dbDir := filepath.Join(tmpDir, "data")
-	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: failed to create test dolt data dir: %v\n", err)
-		_ = os.RemoveAll(tmpDir)
-		return func() {}
-	}
-
-	// Configure dolt user identity (required by dolt init).
-	doltEnv := append(os.Environ(), "DOLT_ROOT_PATH="+tmpDir)
-	for _, args := range [][]string{
-		{"dolt", "config", "--global", "--add", "user.name", "regression-test"},
-		{"dolt", "config", "--global", "--add", "user.email", "test@regression.test"},
-	} {
-		cfgCmd := exec.Command(args[0], args[1:]...)
-		cfgCmd.Env = doltEnv
-		if out, err := cfgCmd.CombinedOutput(); err != nil {
-			fmt.Fprintf(os.Stderr, "WARN: %s failed: %v\n%s\n", args[1], err, out)
-			_ = os.RemoveAll(tmpDir)
-			return func() {}
-		}
-	}
-
-	initCmd := exec.Command("dolt", "init")
-	initCmd.Dir = dbDir
-	initCmd.Env = doltEnv
-	if out, err := initCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: dolt init failed for test server: %v\n%s\n", err, out)
-		_ = os.RemoveAll(tmpDir)
-		return func() {}
-	}
-
-	port, err := findFreePort()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: failed to find free port for test dolt server: %v\n", err)
-		_ = os.RemoveAll(tmpDir)
-		return func() {}
-	}
-
-	serverCmd := exec.Command("dolt", "sql-server",
-		"-H", "127.0.0.1",
-		"-P", fmt.Sprintf("%d", port),
-		"--no-auto-commit",
-	)
-	serverCmd.Dir = dbDir
-	serverCmd.Env = doltEnv
-	if os.Getenv("BEADS_TEST_DOLT_VERBOSE") != "1" {
-		serverCmd.Stderr = nil
-		serverCmd.Stdout = nil
-	}
-	if err := serverCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: failed to start test dolt server: %v\n", err)
-		_ = os.RemoveAll(tmpDir)
-		return func() {}
-	}
-
-	if !waitForServer(port, 10*time.Second) {
-		fmt.Fprintf(os.Stderr, "WARN: test dolt server did not become ready on port %d\n", port)
-		_ = serverCmd.Process.Kill()
-		_ = serverCmd.Wait()
-		_ = os.RemoveAll(tmpDir)
-		return func() {}
-	}
-
-	testDoltServerPort = port
-	fmt.Fprintf(os.Stderr, "Test Dolt server running on port %d\n", port)
-
-	return func() {
-		testDoltServerPort = 0
-		_ = serverCmd.Process.Kill()
-		_ = serverCmd.Wait()
-		_ = os.RemoveAll(tmpDir)
-	}
-}
-
-// findFreePort finds an available TCP port by binding to :0.
-func findFreePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port, nil
-}
-
-// waitForServer polls until the Dolt server accepts a MySQL connection.
-func waitForServer(port int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	dsn := fmt.Sprintf("root@tcp(127.0.0.1:%d)/?timeout=1s", port)
-	for time.Now().Before(deadline) {
-		db, err := sql.Open("mysql", dsn)
-		if err == nil {
-			if err := db.Ping(); err == nil {
-				_ = db.Close()
-				return true
-			}
-			_ = db.Close()
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return false
-}
+// Test Dolt server cleanup is handled by testutil.StartTestDoltServer.

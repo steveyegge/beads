@@ -75,6 +75,10 @@ var labelAddCmd = &cobra.Command{
 		CheckReadonly("label add")
 		// Use global jsonOutput set by PersistentPreRun
 		issueIDs, label := parseLabelArgs(args)
+		label = strings.TrimSpace(label)
+		if label == "" {
+			FatalErrorRespectJSON("label cannot be empty")
+		}
 		// Resolve partial IDs
 		ctx := rootCtx
 		resolvedIDs := make([]string, 0, len(issueIDs))

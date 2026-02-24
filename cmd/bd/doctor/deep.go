@@ -9,9 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -40,16 +37,27 @@ func RunDeepValidation(path string) DeepValidationResult {
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Get database path
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	// Check backend
+	backend := configfile.BackendDolt
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
+		backend = cfg.GetBackend()
 	}
 
-	// Skip if database doesn't exist
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	if backend != configfile.BackendDolt {
+		check := DoctorCheck{
+			Name:     "Deep Validation",
+			Status:   StatusWarning,
+			Message:  "SQLite backend detected",
+			Category: CategoryMaintenance,
+			Fix:      "Run 'bd migrate --to-dolt' to upgrade to Dolt backend",
+		}
+		result.AllChecks = append(result.AllChecks, check)
+		return result
+	}
+
+	// Check if Dolt directory exists
+	doltPath := filepath.Join(beadsDir, "dolt")
+	if _, err := os.Stat(doltPath); os.IsNotExist(err) {
 		check := DoctorCheck{
 			Name:     "Deep Validation",
 			Status:   StatusOK,
@@ -60,8 +68,8 @@ func RunDeepValidation(path string) DeepValidationResult {
 		return result
 	}
 
-	// Open database (backend-aware)
-	db, closeFn, err := openDeepValidationDB(beadsDir, dbPath)
+	// Open Dolt connection
+	conn, err := openDoltConn(beadsDir)
 	if err != nil {
 		check := DoctorCheck{
 			Name:     "Deep Validation",
@@ -74,7 +82,8 @@ func RunDeepValidation(path string) DeepValidationResult {
 		result.OverallOK = false
 		return result
 	}
-	defer closeFn()
+	db := conn.db
+	defer conn.Close()
 
 	// Get counts for progress reporting
 	_ = db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&result.TotalIssues)             // Best effort: zero counts are safe defaults for diagnostic display
@@ -283,25 +292,24 @@ func checkAgentBeadIntegrity(db *sql.DB) DoctorCheck {
 		Category: CategoryMetadata,
 	}
 
-	// Check if agent bead columns exist (may not in older schemas)
-	var hasColumns bool
+	// Check if the notes column exists (agent metadata stored as JSON in notes)
+	var hasNotes bool
 	err := db.QueryRow(`
-		SELECT COUNT(*) > 0 FROM pragma_table_info('issues')
-		WHERE name IN ('role_bead', 'agent_state', 'role_type')
-	`).Scan(&hasColumns)
-	if err != nil || !hasColumns {
+		SELECT COUNT(*) > 0 FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'issues' AND COLUMN_NAME = 'notes'
+	`).Scan(&hasNotes)
+	if err != nil || !hasNotes {
 		check.Status = StatusOK
 		check.Message = "N/A (schema doesn't support agent beads)"
 		return check
 	}
 
-	// Find agent beads missing required role_bead
-	// Note: We query JSON metadata from notes field or check for role_bead column
+	// Find agent beads and validate their metadata from the notes JSON field
 	query := `
 		SELECT id, title,
-		       COALESCE(json_extract(notes, '$.role_bead'), '') as role_bead,
-		       COALESCE(json_extract(notes, '$.agent_state'), '') as agent_state,
-		       COALESCE(json_extract(notes, '$.role_type'), '') as role_type
+		       COALESCE(JSON_UNQUOTE(JSON_EXTRACT(notes, '$.role_bead')), '') as role_bead,
+		       COALESCE(JSON_UNQUOTE(JSON_EXTRACT(notes, '$.agent_state')), '') as agent_state,
+		       COALESCE(JSON_UNQUOTE(JSON_EXTRACT(notes, '$.role_type')), '') as role_type
 		FROM issues
 		WHERE issue_type = 'agent'
 		LIMIT 100`
@@ -370,8 +378,8 @@ func checkMailThreadIntegrity(db *sql.DB) DoctorCheck {
 	// Check if thread_id column exists
 	var hasThreadID bool
 	err := db.QueryRow(`
-		SELECT COUNT(*) > 0 FROM pragma_table_info('dependencies')
-		WHERE name = 'thread_id'
+		SELECT COUNT(*) > 0 FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dependencies' AND COLUMN_NAME = 'thread_id'
 	`).Scan(&hasThreadID)
 	if err != nil || !hasThreadID {
 		check.Status = StatusOK

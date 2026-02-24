@@ -4,31 +4,51 @@ package doctor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// setupDoltTestDir creates a beads dir with metadata.json pointing to dolt backend
-// and returns the dolt store path. Tests that use dolt.New() directly need this
-// so that the factory (used by doctor checks) can find the database.
-func setupDoltTestDir(t *testing.T, beadsDir string) string {
+// setupDoltTestDir creates a beads dir with metadata.json pointing to a unique
+// dolt database and returns (dolt store path, database name). Each test gets an
+// isolated database to prevent cross-test pollution. The caller should pass the
+// returned dbName to dolt.Config and call dropDoctorTestDatabase in cleanup.
+func setupDoltTestDir(t *testing.T, beadsDir string) (string, string) {
 	t.Helper()
 	if _, err := exec.LookPath("dolt"); err != nil {
 		t.Skip("Dolt not installed, skipping test")
 	}
+
+	// Generate unique database name for test isolation
+	h := sha256.Sum256([]byte(t.Name() + fmt.Sprintf("%d", time.Now().UnixNano())))
+	dbName := "doctest_" + hex.EncodeToString(h[:6])
+
+	port := doctorTestServerPort()
+
 	cfg := configfile.DefaultConfig()
 	cfg.Backend = configfile.BackendDolt
+	cfg.DoltMode = configfile.DoltModeServer
+	cfg.DoltServerHost = "127.0.0.1"
+	cfg.DoltServerPort = port
+	cfg.DoltDatabase = dbName
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("Failed to save config: %v", err)
 	}
-	return filepath.Join(beadsDir, "dolt")
+
+	t.Cleanup(func() {
+		dropDoctorTestDatabase(dbName, port)
+	})
+
+	return filepath.Join(beadsDir, "dolt"), dbName
 }
 
 // TestCheckDuplicateIssues_ClosedIssuesExcluded verifies that closed issues
@@ -42,10 +62,10 @@ func TestCheckDuplicateIssues_ClosedIssuesExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
@@ -91,10 +111,10 @@ func TestCheckDuplicateIssues_OpenDuplicatesDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
@@ -139,10 +159,10 @@ func TestCheckDuplicateIssues_DifferentDesignNotDuplicate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
@@ -186,10 +206,10 @@ func TestCheckDuplicateIssues_MixedOpenClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
@@ -240,10 +260,10 @@ func TestCheckDuplicateIssues_DeletedExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
@@ -283,7 +303,16 @@ func TestCheckDuplicateIssues_NoDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No database file created
+	// Write metadata.json pointing to a unique nonexistent database so that
+	// openStoreDB doesn't fall back to the shared default "beads" database.
+	h := sha256.Sum256([]byte(t.Name() + fmt.Sprintf("%d", time.Now().UnixNano())))
+	noDbName := "doctest_nodb_" + hex.EncodeToString(h[:6])
+	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendDolt
+	cfg.DoltDatabase = noDbName
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Failed to save config: %v", err)
+	}
 
 	check := CheckDuplicateIssues(tmpDir, false, 1000)
 
@@ -314,10 +343,10 @@ func TestCheckDuplicateIssues_GastownUnderThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
@@ -365,10 +394,10 @@ func TestCheckDuplicateIssues_GastownOverThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
@@ -412,10 +441,10 @@ func TestCheckDuplicateIssues_GastownCustomThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
@@ -460,10 +489,10 @@ func TestCheckDuplicateIssues_NonGastownMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
@@ -511,10 +540,10 @@ func TestCheckDuplicateIssues_MultipleDuplicateGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
@@ -575,10 +604,10 @@ func TestCheckDuplicateIssues_ZeroDuplicatesNullHandling(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbPath := setupDoltTestDir(t, beadsDir)
+	dbPath, dbName := setupDoltTestDir(t, beadsDir)
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath, Database: dbName})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}

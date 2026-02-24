@@ -88,10 +88,15 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 	// Create Dolt database
 	printProgress("Creating Dolt database...")
 
-	// Use prefix-based database name to avoid cross-rig contamination.
-	dbName := "beads"
-	if data.prefix != "" {
+	// Respect existing config's database name to avoid creating phantom catalog
+	// entries when a user has renamed their database (GH#2051).
+	dbName := ""
+	if existingCfg, _ := configfile.Load(beadsDir); existingCfg != nil && existingCfg.DoltDatabase != "" {
+		dbName = existingCfg.DoltDatabase
+	} else if data.prefix != "" {
 		dbName = "beads_" + data.prefix
+	} else {
+		dbName = "beads"
 	}
 	doltStore, err := dolt.New(ctx, &dolt.Config{Path: doltPath, Database: dbName})
 	if err != nil {
@@ -188,13 +193,6 @@ func hooksNeedDoltUpdate(beadsDir string) bool {
 		return false
 	}
 	return true
-}
-
-// handleToSQLiteMigration is no longer supported — SQLite backend was removed.
-func handleToSQLiteMigration(_ bool, _ bool) {
-	exitWithError("sqlite_removed",
-		"SQLite backend has been removed; migration to SQLite is no longer supported",
-		"Dolt is now the only storage backend")
 }
 
 // extractFromSQLite extracts all data from a SQLite database using raw SQL.

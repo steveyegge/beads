@@ -1736,3 +1736,261 @@ func TestRequiredPatterns_ContainsDoltAccessLock(t *testing.T) {
 		t.Error("requiredPatterns should include 'dolt-access.lock'")
 	}
 }
+
+func TestCheckProjectGitignore_NoFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	check := CheckProjectGitignore()
+	if check.Status != StatusWarning {
+		t.Errorf("Expected warning when no .gitignore exists, got %s", check.Status)
+	}
+}
+
+func TestCheckProjectGitignore_MissingPatterns(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Create .gitignore without Dolt patterns
+	if err := os.WriteFile(".gitignore", []byte("node_modules/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	check := CheckProjectGitignore()
+	if check.Status != StatusWarning {
+		t.Errorf("Expected warning for missing patterns, got %s", check.Status)
+	}
+	if !strings.Contains(check.Detail, ".dolt/") {
+		t.Errorf("Expected detail to mention .dolt/, got: %s", check.Detail)
+	}
+}
+
+func TestCheckProjectGitignore_AllPresent(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	content := "node_modules/\n.dolt/\n*.db\n"
+	if err := os.WriteFile(".gitignore", []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	check := CheckProjectGitignore()
+	if check.Status != StatusOK {
+		t.Errorf("Expected ok when all patterns present, got %s: %s", check.Status, check.Message)
+	}
+}
+
+func TestEnsureProjectGitignore_CreatesFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	if err := EnsureProjectGitignore(); err != nil {
+		t.Fatalf("EnsureProjectGitignore failed: %v", err)
+	}
+
+	content, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatalf("Failed to read .gitignore: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, ".dolt/") {
+		t.Error("Expected .dolt/ pattern in .gitignore")
+	}
+	if !strings.Contains(contentStr, "*.db") {
+		t.Error("Expected *.db pattern in .gitignore")
+	}
+	if !strings.Contains(contentStr, projectGitignoreComment) {
+		t.Error("Expected section comment in .gitignore")
+	}
+}
+
+func TestEnsureProjectGitignore_AppendsToExisting(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	existingContent := "node_modules/\n.env\n"
+	if err := os.WriteFile(".gitignore", []byte(existingContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureProjectGitignore(); err != nil {
+		t.Fatalf("EnsureProjectGitignore failed: %v", err)
+	}
+
+	content, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatalf("Failed to read .gitignore: %v", err)
+	}
+
+	contentStr := string(content)
+	// Original content preserved
+	if !strings.HasPrefix(contentStr, existingContent) {
+		t.Error("Expected existing content to be preserved")
+	}
+	// New patterns added
+	if !strings.Contains(contentStr, ".dolt/") {
+		t.Error("Expected .dolt/ pattern in .gitignore")
+	}
+	if !strings.Contains(contentStr, "*.db") {
+		t.Error("Expected *.db pattern in .gitignore")
+	}
+}
+
+func TestEnsureProjectGitignore_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Run twice
+	if err := EnsureProjectGitignore(); err != nil {
+		t.Fatalf("First EnsureProjectGitignore failed: %v", err)
+	}
+	firstContent, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureProjectGitignore(); err != nil {
+		t.Fatalf("Second EnsureProjectGitignore failed: %v", err)
+	}
+	secondContent, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(firstContent) != string(secondContent) {
+		t.Error("EnsureProjectGitignore should be idempotent")
+	}
+}
+
+func TestEnsureProjectGitignore_PartialPatterns(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Start with one pattern already present
+	existingContent := ".dolt/\n"
+	if err := os.WriteFile(".gitignore", []byte(existingContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureProjectGitignore(); err != nil {
+		t.Fatalf("EnsureProjectGitignore failed: %v", err)
+	}
+
+	content, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	contentStr := string(content)
+	// Should add only the missing pattern
+	if !strings.Contains(contentStr, "*.db") {
+		t.Error("Expected *.db pattern to be added")
+	}
+	// Should only contain .dolt/ once (the original)
+	count := strings.Count(contentStr, ".dolt/")
+	if count != 1 {
+		t.Errorf("Expected .dolt/ to appear once, found %d times", count)
+	}
+}
+
+func TestContainsGitignorePattern(t *testing.T) {
+	tests := []struct {
+		content  string
+		pattern  string
+		expected bool
+	}{
+		{"*.db\n.dolt/\n", "*.db", true},
+		{"*.db\n.dolt/\n", ".dolt/", true},
+		{"node_modules/\n", ".dolt/", false},
+		{"# .dolt/ is ignored\n", ".dolt/", false}, // comment, not pattern
+		{"  .dolt/  \n", ".dolt/", true},            // whitespace trimmed
+		{"", ".dolt/", false},
+		{".dolt/foo\n", ".dolt/", false}, // not exact match
+	}
+
+	for _, tt := range tests {
+		result := containsGitignorePattern(tt.content, tt.pattern)
+		if result != tt.expected {
+			t.Errorf("containsGitignorePattern(%q, %q) = %v, want %v",
+				tt.content, tt.pattern, result, tt.expected)
+		}
+	}
+}

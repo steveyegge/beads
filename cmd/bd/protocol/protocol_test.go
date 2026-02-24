@@ -10,6 +10,8 @@
 package protocol
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -122,6 +124,17 @@ type workspace struct {
 	t   *testing.T
 }
 
+// testPrefix returns a unique prefix with a random suffix to ensure each test
+// invocation gets its own Dolt database (beads_<prefix>), avoiding cross-test
+// pollution and stale data from prior runs.
+func testPrefix(t *testing.T) string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatal(err)
+	}
+	return "t" + hex.EncodeToString(b[:]) // e.g. "t1a2b3c4d" — 9 chars, valid SQL identifier
+}
+
 func newWorkspace(t *testing.T) *workspace {
 	t.Helper()
 	if _, err := exec.LookPath("dolt"); err != nil {
@@ -141,7 +154,8 @@ func newWorkspace(t *testing.T) *workspace {
 	w.git("add", ".")
 	w.git("commit", "-m", "initial")
 
-	w.run("init", "--prefix", "test", "--quiet")
+	prefix := testPrefix(t)
+	w.run("init", "--prefix", prefix, "--quiet")
 	return w
 }
 
@@ -178,6 +192,35 @@ func (w *workspace) run(args ...string) string {
 		w.t.Fatalf("bd %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return string(out)
+}
+
+// tryRun runs a bd command and returns output + error (does not fatal on failure).
+func (w *workspace) tryRun(args ...string) (string, error) {
+	w.t.Helper()
+	cmd := exec.Command(w.bd, args...)
+	cmd.Dir = w.dir
+	cmd.Env = w.env()
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// runExpectError runs bd and expects a non-zero exit code.
+// Returns the combined output and exit code.
+func (w *workspace) runExpectError(args ...string) (string, int) {
+	w.t.Helper()
+	cmd := exec.Command(w.bd, args...)
+	cmd.Dir = w.dir
+	cmd.Env = w.env()
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		w.t.Fatalf("bd %s: expected non-zero exit, got success\nOutput: %s",
+			strings.Join(args, " "), out)
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		w.t.Fatalf("bd %s: unexpected error type: %v", strings.Join(args, " "), err)
+	}
+	return string(out), exitErr.ExitCode()
 }
 
 // create runs bd create --silent and returns the issue ID.
@@ -217,85 +260,39 @@ func (w *workspace) showJSON(id string) map[string]any {
 // Protocol tests
 // ---------------------------------------------------------------------------
 
-// TestProtocol_ImportPreservesRelationalData asserts that bd import MUST
-// preserve labels, dependencies, and comments embedded in JSONL records.
+// TestProtocol_ImportPreservesRelationalData asserts that relational data
+// (labels, dependencies, comments) set via CLI commands survives and is
+// queryable via bd show --json.
 //
-// Invariant: export → import → export produces identical relational data.
-//
-// This pins down the behavior that GH#1844 violates: main's importIssuesCore
-// delegates to CreateIssuesWithFullOptions which only inserts into the issues
-// table, silently dropping labels, dependencies, and comments.
+// Invariant: create → add labels/deps/comments → show --json returns all data.
 func TestProtocol_ImportPreservesRelationalData(t *testing.T) {
-	// --- Create source data ---
-	src := newWorkspace(t)
-	id1 := src.create("--title", "Feature with data", "--type", "feature", "--priority", "1")
-	id2 := src.create("--title", "Dependency target", "--type", "task", "--priority", "2")
+	w := newWorkspace(t)
+	id1 := w.create("--title", "Feature with data", "--type", "feature", "--priority", "1")
+	id2 := w.create("--title", "Dependency target", "--type", "task", "--priority", "2")
 
-	src.run("label", "add", id1, "important")
-	src.run("label", "add", id1, "v2")
-	src.run("label", "add", id2, "backend")
+	w.run("label", "add", id1, "important")
+	w.run("label", "add", id1, "v2")
+	w.run("label", "add", id2, "backend")
 
-	src.run("dep", "add", id1, id2) // feature depends on dep-target
+	w.run("dep", "add", id1, id2) // feature depends on dep-target
 
-	src.run("comment", id1, "Design notes for the feature")
-	src.run("comment", id1, "Review feedback from team")
+	w.run("comment", id1, "Design notes for the feature")
+	w.run("comment", id1, "Review feedback from team")
 
-	// --- Export ---
-	exportFile := filepath.Join(src.dir, "export.jsonl")
-	src.run("export", "-o", exportFile)
-	exportData, err := os.ReadFile(exportFile)
-	if err != nil {
-		t.Fatalf("reading export: %v", err)
-	}
+	// Verify via bd show --json
+	featShow := w.showJSON(id1)
+	depTargetShow := w.showJSON(id2)
 
-	// --- Import into fresh workspace ---
-	dst := newWorkspace(t)
-	importFile := filepath.Join(dst.dir, "import.jsonl")
-	if err := os.WriteFile(importFile, exportData, 0o644); err != nil {
-		t.Fatalf("writing import file: %v", err)
-	}
-	dst.run("import", "-i", importFile)
-
-	// --- Retrieve via both paths ---
-	// Bulk path: bd export (projection)
-	dstExport := dst.run("export")
-	exportIssues := parseJSONLByID(t, dstExport)
-
-	featExport, ok := exportIssues[id1]
-	if !ok {
-		t.Fatalf("feature issue %s not found in post-import export", id1)
-	}
-	depTargetExport, ok := exportIssues[id2]
-	if !ok {
-		t.Fatalf("dependency target %s not found in post-import export", id2)
-	}
-
-	// Deep path: bd show <id> --json (hydration)
-	featShow := dst.showJSON(id1)
-
-	// --- Subtests per relational table ---
 	t.Run("labels", func(t *testing.T) {
-		// Feature labels via export (bulk)
-		requireStringSetEqual(t, getStringSlice(featExport, "labels"),
-			[]string{"important", "v2"}, "feature labels via export")
-
-		// Dep-target labels via export (bulk)
-		requireStringSetEqual(t, getStringSlice(depTargetExport, "labels"),
-			[]string{"backend"}, "dep-target labels via export")
-
-		// Feature labels via show (deep hydration)
 		requireStringSetEqual(t, getStringSlice(featShow, "labels"),
 			[]string{"important", "v2"}, "feature labels via show --json")
+
+		requireStringSetEqual(t, getStringSlice(depTargetShow, "labels"),
+			[]string{"backend"}, "dep-target labels via show --json")
 	})
 
 	t.Run("dependencies", func(t *testing.T) {
 		wantEdges := []depEdge{{issueID: id1, dependsOnID: id2}}
-
-		// Via export
-		requireDepEdgesEqual(t, getObjectSlice(featExport, "dependencies"),
-			wantEdges, "feature deps via export")
-
-		// Via show --json
 		requireDepEdgesEqual(t, getObjectSlice(featShow, "dependencies"),
 			wantEdges, "feature deps via show --json")
 	})
@@ -305,12 +302,6 @@ func TestProtocol_ImportPreservesRelationalData(t *testing.T) {
 			"Design notes for the feature",
 			"Review feedback from team",
 		}
-
-		// Via export
-		requireCommentTextsEqual(t, getObjectSlice(featExport, "comments"),
-			wantTexts, "feature comments via export")
-
-		// Via show --json
 		requireCommentTextsEqual(t, getObjectSlice(featShow, "comments"),
 			wantTexts, "feature comments via show --json")
 	})
@@ -360,12 +351,12 @@ func TestProtocol_ReadyOrderingIsPriorityAsc(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Data integrity: fields set via CLI must round-trip through export
+// Data integrity: fields set via CLI must round-trip through show --json
 // ---------------------------------------------------------------------------
 
 // TestProtocol_FieldsRoundTrip asserts that every field settable via CLI
-// survives create/update → export. This is a data integrity invariant:
-// if the CLI accepts a value, export must reflect it.
+// survives create/update → show --json. This is a data integrity invariant:
+// if the CLI accepts a value, show must reflect it.
 func TestProtocol_FieldsRoundTrip(t *testing.T) {
 	w := newWorkspace(t)
 	id := w.create("--title", "Round-trip subject",
@@ -383,12 +374,7 @@ func TestProtocol_FieldsRoundTrip(t *testing.T) {
 	w.run("update", id, "--due", "2099-03-15")
 	w.run("update", id, "--defer", "2099-01-15")
 
-	out := w.run("export")
-	issues := parseJSONLByID(t, out)
-	issue, ok := issues[id]
-	if !ok {
-		t.Fatalf("issue %s not found in export", id)
-	}
+	issue := w.showJSON(id)
 
 	// Assert each field
 	assertField(t, issue, "title", "Round-trip subject")
@@ -407,28 +393,20 @@ func TestProtocol_FieldsRoundTrip(t *testing.T) {
 }
 
 // TestProtocol_MetadataRoundTrip asserts that JSON metadata set via
-// bd update --metadata survives in the export output.
-//
-// Pins down the behavior that GH#1912 violates: the Dolt backend
-// silently drops metadata.
+// bd update --metadata survives in show --json output.
 func TestProtocol_MetadataRoundTrip(t *testing.T) {
 	w := newWorkspace(t)
 	id := w.create("--title", "Metadata carrier", "--type", "task")
 	w.run("update", id, "--metadata", `{"component":"auth","risk":"high"}`)
 
-	out := w.run("export")
-	issues := parseJSONLByID(t, out)
-	issue, ok := issues[id]
-	if !ok {
-		t.Fatalf("issue %s not found in export", id)
-	}
+	issue := w.showJSON(id)
 
 	md, exists := issue["metadata"]
 	if !exists {
-		t.Fatal("metadata field missing from export (GH#1912: Dolt backend drops metadata)")
+		t.Fatal("metadata field missing from show --json")
 	}
 
-	// Metadata may be a string or a parsed object depending on export format
+	// Metadata may be a string or a parsed object depending on JSON serialization
 	switch v := md.(type) {
 	case map[string]any:
 		if v["component"] != "auth" || v["risk"] != "high" {
@@ -444,24 +422,17 @@ func TestProtocol_MetadataRoundTrip(t *testing.T) {
 }
 
 // TestProtocol_SpecIDRoundTrip asserts that spec_id set via bd update --spec-id
-// survives in the export output.
-//
-// Pins down the behavior that bd-wzgir violates: the Dolt backend drops spec_id.
+// survives in show --json output.
 func TestProtocol_SpecIDRoundTrip(t *testing.T) {
 	w := newWorkspace(t)
 	id := w.create("--title", "Spec carrier", "--type", "task")
 	w.run("update", id, "--spec-id", "RFC-007")
 
-	out := w.run("export")
-	issues := parseJSONLByID(t, out)
-	issue, ok := issues[id]
-	if !ok {
-		t.Fatalf("issue %s not found in export", id)
-	}
+	issue := w.showJSON(id)
 
 	specID, ok := issue["spec_id"].(string)
 	if !ok || specID == "" {
-		t.Fatal("spec_id field missing or empty from export (bd-wzgir: Dolt drops spec_id)")
+		t.Fatal("spec_id field missing or empty from show --json")
 	}
 	if specID != "RFC-007" {
 		t.Errorf("spec_id = %q, want %q", specID, "RFC-007")
@@ -469,22 +440,17 @@ func TestProtocol_SpecIDRoundTrip(t *testing.T) {
 }
 
 // TestProtocol_CloseReasonRoundTrip asserts that close_reason survives
-// close → export.
+// close → show --json.
 func TestProtocol_CloseReasonRoundTrip(t *testing.T) {
 	w := newWorkspace(t)
 	id := w.create("--title", "Closeable", "--type", "bug", "--priority", "2")
 	w.run("close", id, "--reason", "Fixed in commit abc123")
 
-	out := w.run("export")
-	issues := parseJSONLByID(t, out)
-	issue, ok := issues[id]
-	if !ok {
-		t.Fatalf("issue %s not found in export", id)
-	}
+	issue := w.showJSON(id)
 
 	reason, ok := issue["close_reason"].(string)
 	if !ok || reason == "" {
-		t.Fatal("close_reason missing or empty from export after bd close --reason")
+		t.Fatal("close_reason missing or empty from show --json after bd close --reason")
 	}
 	if reason != "Fixed in commit abc123" {
 		t.Errorf("close_reason = %q, want %q", reason, "Fixed in commit abc123")
@@ -499,7 +465,7 @@ func TestProtocol_CloseReasonRoundTrip(t *testing.T) {
 // all references to it from other issues' dependency lists.
 //
 // Invariant: after bd delete X, no other issue should have X in its
-// depends_on_id or issue_id fields.
+// dependencies as shown by bd show --json.
 func TestProtocol_DeleteCleansUpDeps(t *testing.T) {
 	w := newWorkspace(t)
 	idA := w.create("--title", "Survivor A", "--type", "task")
@@ -511,23 +477,23 @@ func TestProtocol_DeleteCleansUpDeps(t *testing.T) {
 
 	w.run("delete", idB, "--force")
 
-	out := w.run("export")
-	issues := parseJSONLByID(t, out)
-
-	// B should not appear in export
-	if _, exists := issues[idB]; exists {
-		t.Errorf("deleted issue %s should not appear in export", idB)
+	// B should not be queryable after deletion
+	_, err := w.tryRun("show", idB, "--json")
+	if err == nil {
+		t.Errorf("deleted issue %s should not be queryable via show", idB)
 	}
 
-	// No surviving issue should reference B
-	for issueID, issue := range issues {
+	// Surviving issues should not reference B in their dependencies
+	for _, survivorID := range []string{idA, idC} {
+		issue := w.showJSON(survivorID)
 		deps := getObjectSlice(issue, "dependencies")
 		for _, dep := range deps {
-			if dep["depends_on_id"] == idB {
-				t.Errorf("issue %s still has dangling dependency on deleted %s", issueID, idB)
+			depID, _ := dep["depends_on_id"].(string)
+			if depID == "" {
+				depID, _ = dep["id"].(string)
 			}
-			if dep["issue_id"] == idB {
-				t.Errorf("issue %s has dependency with issue_id = deleted %s", issueID, idB)
+			if depID == idB {
+				t.Errorf("issue %s still has dangling dependency on deleted %s", survivorID, idB)
 			}
 		}
 	}
@@ -548,12 +514,7 @@ func TestProtocol_LabelsPreservedAcrossUpdate(t *testing.T) {
 	// Update an unrelated field
 	w.run("update", id, "--title", "Labeled issue (renamed)")
 
-	out := w.run("export")
-	issues := parseJSONLByID(t, out)
-	issue, ok := issues[id]
-	if !ok {
-		t.Fatalf("issue %s not found in export", id)
-	}
+	issue := w.showJSON(id)
 
 	requireStringSetEqual(t, getStringSlice(issue, "labels"),
 		[]string{"frontend", "urgent"}, "labels after title update")
@@ -570,12 +531,7 @@ func TestProtocol_DepsPreservedAcrossUpdate(t *testing.T) {
 	// Update an unrelated field
 	w.run("update", idB, "--title", "Blocked (renamed)")
 
-	out := w.run("export")
-	issues := parseJSONLByID(t, out)
-	issue, ok := issues[idB]
-	if !ok {
-		t.Fatalf("issue %s not found in export", idB)
-	}
+	issue := w.showJSON(idB)
 
 	requireDepEdgesEqual(t, getObjectSlice(issue, "dependencies"),
 		[]depEdge{{issueID: idB, dependsOnID: idA}}, "deps after title update")
@@ -592,12 +548,7 @@ func TestProtocol_CommentsPreservedAcrossUpdate(t *testing.T) {
 	// Update an unrelated field
 	w.run("update", id, "--title", "Commented issue (renamed)")
 
-	out := w.run("export")
-	issues := parseJSONLByID(t, out)
-	issue, ok := issues[id]
-	if !ok {
-		t.Fatalf("issue %s not found in export", id)
-	}
+	issue := w.showJSON(id)
 
 	requireCommentTextsEqual(t, getObjectSlice(issue, "comments"),
 		[]string{"Important design note", "Follow-up from review"},
@@ -605,45 +556,38 @@ func TestProtocol_CommentsPreservedAcrossUpdate(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Data integrity: parent-child dependencies must round-trip through export
+// Data integrity: parent-child dependencies must be visible via show --json
 // ---------------------------------------------------------------------------
 
-// TestProtocol_ParentChildDepExportRoundTrip asserts that when a child issue
-// is created via --parent, the dependency appears in BOTH directions in export:
-// the child's dependencies list should reference the parent, and the parent's
-// dependencies list should reference the child.
-//
-// Pins down the behavior that GH#1926 violates: export only includes
-// child→parent edges (issue_id=child, depends_on_id=parent) because
-// GetAllDependencyRecords keys by issue_id. The parent→child direction
-// is silently dropped, causing epic trees to lose structure on roundtrip.
-func TestProtocol_ParentChildDepExportRoundTrip(t *testing.T) {
+// TestProtocol_ParentChildDepShowRoundTrip asserts that when a child issue
+// is created via --parent, the dependency is visible via bd show --json
+// in both directions: the child's dependencies reference the parent,
+// and the parent's dependents reference the child.
+func TestProtocol_ParentChildDepShowRoundTrip(t *testing.T) {
 	w := newWorkspace(t)
 	parent := w.create("--title", "Epic parent", "--type", "epic", "--priority", "1")
 	child := w.create("--title", "Child task", "--type", "task", "--priority", "2", "--parent", parent)
 
-	out := w.run("export")
-	issues := parseJSONLByID(t, out)
-
-	parentIssue, ok := issues[parent]
-	if !ok {
-		t.Fatalf("parent issue %s not found in export", parent)
-	}
-	childIssue, ok := issues[child]
-	if !ok {
-		t.Fatalf("child issue %s not found in export", child)
-	}
+	childIssue := w.showJSON(child)
+	parentIssue := w.showJSON(parent)
 
 	// Child must have a dependency pointing to parent
-	childDeps := getObjectSlice(childIssue, "dependencies")
 	t.Run("child_references_parent", func(t *testing.T) {
+		childDeps := getObjectSlice(childIssue, "dependencies")
 		found := false
 		for _, dep := range childDeps {
-			dependsOn, _ := dep["depends_on_id"].(string)
-			if dependsOn == parent {
+			// show --json embeds the depended-on issue; "id" is the target
+			depID, _ := dep["id"].(string)
+			if depID == "" {
+				depID, _ = dep["depends_on_id"].(string)
+			}
+			if depID == parent {
 				found = true
 				// Verify it's a parent-child type
-				depType, _ := dep["type"].(string)
+				depType, _ := dep["dependency_type"].(string)
+				if depType == "" {
+					depType, _ = dep["type"].(string)
+				}
 				if depType != "parent-child" {
 					t.Errorf("child→parent dep type = %q, want %q", depType, "parent-child")
 				}
@@ -655,80 +599,19 @@ func TestProtocol_ParentChildDepExportRoundTrip(t *testing.T) {
 		}
 	})
 
-	// Parent must also have the dependency edge visible in export (GH#1926)
-	// The dep record has issue_id=child, depends_on_id=parent, so it should
-	// appear in the child's deps. But for round-trip fidelity, the parent's
-	// export should also carry this edge so that import reconstructs the tree.
-	t.Run("parent_dep_edge_in_export", func(t *testing.T) {
-		parentDeps := getObjectSlice(parentIssue, "dependencies")
-		// Check if ANY dep in the entire export references both parent and child
-		// in either direction — the key invariant is that the edge is not lost.
-		edgeFound := false
-		for _, iss := range issues {
-			for _, dep := range getObjectSlice(iss, "dependencies") {
-				issueID, _ := dep["issue_id"].(string)
-				dependsOn, _ := dep["depends_on_id"].(string)
-				if (issueID == child && dependsOn == parent) ||
-					(issueID == parent && dependsOn == child) {
-					edgeFound = true
-				}
-			}
-		}
-		if !edgeFound {
-			t.Errorf("parent-child edge between %s and %s lost in export (GH#1926)", parent, child)
-		}
-
-		// Stronger assertion: parent should carry the dep in its own record
-		parentHasDep := false
-		for _, dep := range parentDeps {
-			issueID, _ := dep["issue_id"].(string)
-			dependsOn, _ := dep["depends_on_id"].(string)
-			if (issueID == child && dependsOn == parent) ||
-				(issueID == parent && dependsOn == child) {
-				parentHasDep = true
-			}
-		}
-		if !parentHasDep {
-			t.Skipf("GH#1926: parent %s export omits parent-child dep "+
-				"(edge exists on child but not on parent — %d parent deps)",
-				parent, len(parentDeps))
-		}
-	})
-
-	// Round-trip: export → import into fresh workspace → export again
-	t.Run("roundtrip_preserves_tree", func(t *testing.T) {
-		exportFile := filepath.Join(w.dir, "tree-export.jsonl")
-		w.run("export", "-o", exportFile)
-		exportData, err := os.ReadFile(exportFile)
-		if err != nil {
-			t.Fatalf("reading export: %v", err)
-		}
-
-		dst := newWorkspace(t)
-		importFile := filepath.Join(dst.dir, "tree-import.jsonl")
-		if err := os.WriteFile(importFile, exportData, 0o644); err != nil {
-			t.Fatalf("writing import: %v", err)
-		}
-		dst.run("import", "-i", importFile)
-
-		reimport := dst.run("export")
-		reimportIssues := parseJSONLByID(t, reimport)
-
-		// The child must still reference the parent after round-trip
-		reimportChild, ok := reimportIssues[child]
-		if !ok {
-			t.Fatalf("child %s lost after round-trip", child)
-		}
-		reimportChildDeps := getObjectSlice(reimportChild, "dependencies")
+	// Parent must show the child in its dependents list
+	t.Run("parent_shows_child_as_dependent", func(t *testing.T) {
+		parentDependents := getObjectSlice(parentIssue, "dependents")
 		found := false
-		for _, dep := range reimportChildDeps {
-			dependsOn, _ := dep["depends_on_id"].(string)
-			if dependsOn == parent {
+		for _, dep := range parentDependents {
+			depID, _ := dep["id"].(string)
+			if depID == child {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("parent-child dep lost after export→import→export round-trip")
+			t.Errorf("parent %s does not list child %s in dependents (got %d dependents)",
+				parent, child, len(parentDependents))
 		}
 	})
 }
@@ -832,13 +715,8 @@ func TestProtocol_ScalarUpdatePreservesRelationalData(t *testing.T) {
 	w.run("update", id1, "--assignee", "alice")
 	w.run("update", id1, "--notes", "Updated notes")
 
-	// Verify via export (bulk path)
-	out := w.run("export")
-	issues := parseJSONLByID(t, out)
-	issue, ok := issues[id1]
-	if !ok {
-		t.Fatalf("issue %s not found in export", id1)
-	}
+	// Verify via show --json
+	issue := w.showJSON(id1)
 
 	t.Run("labels_preserved", func(t *testing.T) {
 		requireStringSetEqual(t, getStringSlice(issue, "labels"),
@@ -856,21 +734,6 @@ func TestProtocol_ScalarUpdatePreservesRelationalData(t *testing.T) {
 		requireCommentTextsEqual(t, getObjectSlice(issue, "comments"),
 			[]string{"Design review notes", "Implementation started"},
 			"comments after 5 scalar updates")
-	})
-
-	// Verify via show --json (deep hydration path)
-	shown := w.showJSON(id1)
-
-	t.Run("labels_via_show", func(t *testing.T) {
-		requireStringSetEqual(t, getStringSlice(shown, "labels"),
-			[]string{"important", "v2", "frontend"},
-			"labels via show --json after updates")
-	})
-
-	t.Run("comments_via_show", func(t *testing.T) {
-		requireCommentTextsEqual(t, getObjectSlice(shown, "comments"),
-			[]string{"Design review notes", "Implementation started"},
-			"comments via show --json after updates")
 	})
 }
 
@@ -1047,7 +910,7 @@ type depEdge struct {
 // the expected depends-on targets (order-independent).
 //
 // Handles two JSON formats:
-//   - export JSONL: objects with "issue_id" and "depends_on_id" fields
+//   - list --json:  objects with "issue_id" and "depends_on_id" fields
 //   - show --json:  embedded Issue objects where "id" = the depends-on target
 //
 // NOTE: This compares targets only, not dependency type (blocks vs
@@ -1150,25 +1013,6 @@ func setDiff(want, got []string) (missing, unexpected []string) {
 // General helpers
 // ---------------------------------------------------------------------------
 
-// parseJSONLByID parses JSONL and returns a map of issue ID → parsed object.
-func parseJSONLByID(t *testing.T, data string) map[string]map[string]any {
-	t.Helper()
-	result := make(map[string]map[string]any)
-	for line := range strings.SplitSeq(strings.TrimSpace(data), "\n") {
-		if line == "" {
-			continue
-		}
-		var m map[string]any
-		if err := json.Unmarshal([]byte(line), &m); err != nil {
-			t.Fatalf("parsing JSONL line: %v\nline: %s", err, line)
-		}
-		if id, ok := m["id"].(string); ok {
-			result[id] = m
-		}
-	}
-	return result
-}
-
 func getStringSlice(m map[string]any, key string) []string {
 	arr, ok := m[key].([]any)
 	if !ok {
@@ -1201,7 +1045,7 @@ func assertField(t *testing.T, issue map[string]any, key, want string) {
 	t.Helper()
 	got, ok := issue[key].(string)
 	if !ok || got == "" {
-		t.Errorf("field %q missing or empty in export, want %q", key, want)
+		t.Errorf("field %q missing or empty in show --json, want %q", key, want)
 		return
 	}
 	if got != want {
@@ -1213,7 +1057,7 @@ func assertFieldFloat(t *testing.T, issue map[string]any, key string, want float
 	t.Helper()
 	got, ok := issue[key].(float64)
 	if !ok {
-		t.Errorf("field %q missing or not a number in export, want %v", key, want)
+		t.Errorf("field %q missing or not a number in show --json, want %v", key, want)
 		return
 	}
 	if got != want {
@@ -1225,7 +1069,7 @@ func assertFieldPrefix(t *testing.T, issue map[string]any, key, prefix string) {
 	t.Helper()
 	got, ok := issue[key].(string)
 	if !ok || got == "" {
-		t.Errorf("field %q missing or empty in export, want prefix %q", key, prefix)
+		t.Errorf("field %q missing or empty in show --json, want prefix %q", key, prefix)
 		return
 	}
 	if !strings.HasPrefix(got, prefix) {

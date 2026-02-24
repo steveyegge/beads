@@ -23,20 +23,6 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 	os.Exit(1)
 }
 
-// handleToSQLiteMigration is a stub for non-cgo builds.
-func handleToSQLiteMigration(dryRun bool, autoYes bool) {
-	if jsonOutput {
-		outputJSON(map[string]interface{}{
-			"error":   "sqlite_removed",
-			"message": "SQLite backend has been removed; migration to SQLite is no longer supported.",
-		})
-	} else {
-		fmt.Fprintf(os.Stderr, "Error: SQLite backend has been removed\n")
-		fmt.Fprintf(os.Stderr, "Dolt is now the only storage backend.\n")
-	}
-	os.Exit(1)
-}
-
 // listMigrations returns an empty list (no Dolt without CGO).
 func listMigrations() []string {
 	return nil

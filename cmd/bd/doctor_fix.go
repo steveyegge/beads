@@ -244,6 +244,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 		switch check.Name {
 		case "Gitignore":
 			err = doctor.FixGitignore()
+		case "Project Gitignore":
+			err = doctor.FixProjectGitignore()
 		case "Redirect Tracking":
 			err = doctor.FixRedirectTracking()
 		case "Last-Touched Tracking":

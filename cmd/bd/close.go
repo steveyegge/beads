@@ -250,6 +250,13 @@ create, update, show, or close operation).`,
 		if jsonOutput && len(closedIssues) > 0 {
 			outputJSON(closedIssues)
 		}
+
+		// Exit non-zero if no issues were actually closed (close guard
+		// and other soft failures should surface as non-zero exit codes for scripting)
+		totalAttempted := len(resolvedIDs) + len(routedArgs)
+		if totalAttempted > 0 && closedCount == 0 {
+			os.Exit(1)
+		}
 	},
 }
 

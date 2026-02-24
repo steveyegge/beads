@@ -30,11 +30,17 @@ func testContext(t *testing.T) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), testTimeout)
 }
 
-// skipIfNoDolt skips the test if Dolt is not installed
+// skipIfNoDolt skips the test if Dolt is not installed or the test server
+// is not running. This prevents tests from accidentally hitting a production
+// Dolt server — tests MUST run against the isolated test server started by
+// TestMain in testmain_test.go.
 func skipIfNoDolt(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("dolt"); err != nil {
 		t.Skip("Dolt not installed, skipping test")
+	}
+	if testServerPort == 0 {
+		t.Skip("Test Dolt server not running, skipping test")
 	}
 }
 
@@ -1726,5 +1732,115 @@ func assertOrder(t *testing.T, ids []string, expected ...string) {
 	}
 	if pos != len(expected) {
 		t.Errorf("expected order %v but got %v (matched %d of %d)", expected, ids, pos, len(expected))
+	}
+}
+
+// TestEphemeralExplicitID_GetIssue verifies that GetIssue finds ephemeral beads
+// created with explicit (non-wisp) IDs. Regression test for GH#2053.
+func TestEphemeralExplicitID_GetIssue(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create an ephemeral bead with an explicit ID (no -wisp- in name)
+	issue := &types.Issue{
+		ID:        "test-agent-emma",
+		Title:     "Agent: test-agent-emma",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	if err := store.CreateIssue(ctx, issue, "test-user"); err != nil {
+		t.Fatalf("CreateIssue (ephemeral with explicit ID) failed: %v", err)
+	}
+
+	// GetIssue should find it (this was the GH#2053 bug)
+	got, err := store.GetIssue(ctx, "test-agent-emma")
+	if err != nil {
+		t.Fatalf("GetIssue failed for ephemeral bead with explicit ID: %v", err)
+	}
+	if got.ID != "test-agent-emma" {
+		t.Errorf("Expected ID %q, got %q", "test-agent-emma", got.ID)
+	}
+	if !got.Ephemeral {
+		t.Error("Expected Ephemeral=true")
+	}
+}
+
+// TestEphemeralExplicitID_UpdateIssue verifies that UpdateIssue works on
+// ephemeral beads created with explicit IDs. Regression test for GH#2053.
+func TestEphemeralExplicitID_UpdateIssue(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	issue := &types.Issue{
+		ID:        "test-agent-max",
+		Title:     "Agent: test-agent-max",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	if err := store.CreateIssue(ctx, issue, "test-user"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// UpdateIssue should work (this was broken per GH#2053)
+	updates := map[string]interface{}{
+		"agent_state": "running",
+	}
+	if err := store.UpdateIssue(ctx, "test-agent-max", updates, "test-user"); err != nil {
+		t.Fatalf("UpdateIssue failed for ephemeral bead with explicit ID: %v", err)
+	}
+
+	// Verify the update persisted
+	got, err := store.GetIssue(ctx, "test-agent-max")
+	if err != nil {
+		t.Fatalf("GetIssue after update failed: %v", err)
+	}
+	if got.AgentState != "running" {
+		t.Errorf("Expected agent_state %q, got %q", "running", got.AgentState)
+	}
+}
+
+// TestEphemeralExplicitID_SearchIssues verifies that SearchIssues finds
+// ephemeral beads with explicit IDs (this already worked pre-fix via wisp merge).
+func TestEphemeralExplicitID_SearchIssues(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	issue := &types.Issue{
+		ID:        "test-agent-furiosa",
+		Title:     "Agent: test-agent-furiosa",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	if err := store.CreateIssue(ctx, issue, "test-user"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// SearchIssues with nil Ephemeral filter should find it (merges wisps)
+	results, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		IDs: []string{"test-agent-furiosa"},
+	})
+	if err != nil {
+		t.Fatalf("SearchIssues failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+	if results[0].ID != "test-agent-furiosa" {
+		t.Errorf("Expected ID %q, got %q", "test-agent-furiosa", results[0].ID)
 	}
 }

@@ -113,6 +113,10 @@ Examples:
 			commentText = args[1]
 		}
 
+		if strings.TrimSpace(commentText) == "" {
+			FatalErrorRespectJSON("comment text cannot be empty")
+		}
+
 		// Get author from author flag, or use git-aware default
 		author, _ := cmd.Flags().GetString("author")
 		if author == "" {

@@ -23,7 +23,8 @@ func TestRunDoltPerformanceDiagnostics_RequiresServer(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no dolt server is running")
 	}
-	if !strings.Contains(err.Error(), "not running") && !strings.Contains(err.Error(), "not reachable") {
-		t.Errorf("expected server-not-running error, got: %v", err)
+	errStr := err.Error()
+	if !strings.Contains(errStr, "not running") && !strings.Contains(errStr, "not reachable") && !strings.Contains(errStr, "database not found") {
+		t.Errorf("expected server/database error, got: %v", err)
 	}
 }

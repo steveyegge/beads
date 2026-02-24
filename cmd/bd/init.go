@@ -46,6 +46,7 @@ environment variable.`,
 		stealth, _ := cmd.Flags().GetBool("stealth")
 		skipHooks, _ := cmd.Flags().GetBool("skip-hooks")
 		force, _ := cmd.Flags().GetBool("force")
+		fromJSONL, _ := cmd.Flags().GetBool("from-jsonl")
 		// Dolt server connection flags
 		_, _ = cmd.Flags().GetBool("server") // no-op, kept for backward compatibility
 		serverHost, _ := cmd.Flags().GetString("server-host")
@@ -209,6 +210,13 @@ environment variable.`,
 				}
 			}
 
+			// Add .dolt/ and *.db to project-root .gitignore (GH#2034)
+			// Prevents users from accidentally committing Dolt database files
+			if err := doctor.EnsureProjectGitignore(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update project .gitignore: %v\n", err)
+				// Non-fatal - continue anyway
+			}
+
 			// Ensure interactions.jsonl exists (append-only agent audit log)
 			interactionsPath := filepath.Join(beadsDir, "interactions.jsonl")
 			if _, err := os.Stat(interactionsPath); os.IsNotExist(err) {
@@ -244,15 +252,22 @@ environment variable.`,
 
 		// Create Dolt storage backend
 		storagePath := filepath.Join(beadsDir, "dolt")
-		// Use prefix-based database name to avoid cross-rig contamination (bd-u8rda)
-		dbName := "beads"
-		if prefix != "" {
+		// Respect existing config's database name to avoid creating phantom catalog
+		// entries when a user has renamed their database (GH#2051).
+		dbName := ""
+		if existingCfg, _ := configfile.Load(beadsDir); existingCfg != nil && existingCfg.DoltDatabase != "" {
+			dbName = existingCfg.DoltDatabase
+		} else if prefix != "" {
 			dbName = "beads_" + prefix
+		} else {
+			dbName = "beads"
 		}
 		// Build config. Beads always uses dolt sql-server.
+		// AutoStart is always enabled during init — we need a server to initialize the database.
 		doltCfg := &dolt.Config{
-			Path:     storagePath,
-			Database: dbName,
+			Path:      storagePath,
+			Database:  dbName,
+			AutoStart: os.Getenv("GT_ROOT") == "" && os.Getenv("BEADS_DOLT_AUTO_START") != "0",
 		}
 		if serverHost != "" {
 			doltCfg.ServerHost = serverHost
@@ -268,9 +283,6 @@ environment variable.`,
 		store, err = dolt.New(ctx, doltCfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to connect to dolt server: %v\n", err)
-			fmt.Fprintf(os.Stderr, "\nBeads requires a running dolt sql-server. Start one with:\n")
-			fmt.Fprintf(os.Stderr, "  gt dolt start    (if using Gas Town)\n")
-			fmt.Fprintf(os.Stderr, "  dolt sql-server  (standalone)\n")
 			os.Exit(1)
 		}
 
@@ -347,8 +359,9 @@ environment variable.`,
 				}
 
 				// Set prefix-based SQL database name to avoid cross-rig contamination (bd-u8rda).
-				// E.g., prefix "gt" → database "beads_gt", prefix "bd" → database "beads_bd".
-				if prefix != "" {
+				// Only set if not already configured — overwriting a user-renamed database
+				// creates phantom catalog entries that crash information_schema (GH#2051).
+				if cfg.DoltDatabase == "" && prefix != "" {
 					cfg.DoltDatabase = "beads_" + prefix
 				}
 
@@ -392,7 +405,23 @@ environment variable.`,
 			// Non-fatal - continue anyway
 		}
 
-		// Dolt backend bootstraps itself on first open — no explicit import needed.
+		// Import from local JSONL if requested (GH#2023).
+		// This must run after the store is created and prefix is set.
+		if fromJSONL {
+			localJSONLPath := filepath.Join(beadsDir, "issues.jsonl")
+			if _, statErr := os.Stat(localJSONLPath); os.IsNotExist(statErr) {
+				_ = store.Close()
+				FatalError("--from-jsonl specified but %s does not exist", localJSONLPath)
+			}
+			issueCount, importErr := importFromLocalJSONL(ctx, store, localJSONLPath)
+			if importErr != nil {
+				_ = store.Close()
+				FatalError("failed to import from JSONL: %v", importErr)
+			}
+			if !quiet {
+				fmt.Printf("  Imported %d issues from %s\n", issueCount, localJSONLPath)
+			}
+		}
 
 		// Prompt for contributor mode if:
 		// - In a git repo (needed to set beads.role config)
@@ -618,6 +647,7 @@ func init() {
 	initCmd.Flags().Bool("setup-exclude", false, "Configure .git/info/exclude to keep beads files local (for forks)")
 	initCmd.Flags().Bool("skip-hooks", false, "Skip git hooks installation")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if database already has issues (may cause data loss)")
+	initCmd.Flags().Bool("from-jsonl", false, "Import issues from .beads/issues.jsonl instead of git history")
 	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides embedded default)")
 
 	// Dolt server connection flags

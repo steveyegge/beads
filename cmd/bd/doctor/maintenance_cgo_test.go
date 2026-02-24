@@ -4,6 +4,8 @@ package doctor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,9 +32,18 @@ func setupStaleClosedTestDB(t *testing.T, numClosed int, closedAt time.Time, pin
 		t.Fatal(err)
 	}
 
+	// Generate unique database name for test isolation
+	h := sha256.Sum256([]byte(t.Name() + fmt.Sprintf("%d", time.Now().UnixNano())))
+	dbName := "doctest_" + hex.EncodeToString(h[:6])
+	port := doctorTestServerPort()
+
 	cfg := configfile.DefaultConfig()
 	cfg.Backend = configfile.BackendDolt
 	cfg.StaleClosedIssuesDays = thresholdDays
+	cfg.DoltMode = configfile.DoltModeServer
+	cfg.DoltServerHost = "127.0.0.1"
+	cfg.DoltServerPort = port
+	cfg.DoltDatabase = dbName
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("Failed to save config: %v", err)
 	}
@@ -40,11 +51,17 @@ func setupStaleClosedTestDB(t *testing.T, numClosed int, closedAt time.Time, pin
 	dbPath := filepath.Join(beadsDir, "dolt")
 	ctx := context.Background()
 
-	store, err := dolt.New(ctx, &dolt.Config{Path: dbPath})
+	store, err := dolt.New(ctx, &dolt.Config{
+		Path:       dbPath,
+		ServerHost: "127.0.0.1",
+		ServerPort: port,
+		Database:   dbName,
+	})
 	if err != nil {
 		t.Skipf("skipping: Dolt server not available: %v", err)
 	}
 	defer store.Close()
+	t.Cleanup(func() { dropDoctorTestDatabase(dbName, port) })
 
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set issue_prefix: %v", err)
@@ -72,26 +89,43 @@ func setupStaleClosedTestDB(t *testing.T, numClosed int, closedAt time.Time, pin
 			}
 		}
 	} else {
-		// Large count: raw SQL bulk insert for speed
+		// Large count: raw SQL bulk insert for speed.
+		// Uses explicit transaction so writes persist when @@autocommit is OFF.
 		now := time.Now().UTC()
+		tx, txErr := db.Begin()
+		if txErr != nil {
+			t.Fatalf("Failed to begin transaction: %v", txErr)
+		}
 		for i := 0; i < numClosed; i++ {
 			id := fmt.Sprintf("test-%06d", i)
-			_, err := db.Exec(
+			_, err := tx.Exec(
 				`INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, created_at, updated_at, closed_at, pinned)
 				 VALUES (?, 'Closed issue', '', '', '', '', 'closed', 2, 'task', ?, ?, ?, 0)`,
 				id, now, now, closedAt,
 			)
 			if err != nil {
+				_ = tx.Rollback()
 				t.Fatalf("Failed to insert issue %d: %v", i, err)
 			}
 		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Failed to commit bulk insert: %v", err)
+		}
 	}
 
-	// Set closed_at for store-API-created issues
+	// Set closed_at for store-API-created issues (explicit tx for autocommit-OFF safety)
 	if numClosed <= 100 {
-		_, err = db.Exec("UPDATE issues SET closed_at = ? WHERE status = 'closed'", closedAt)
+		tx, txErr := db.Begin()
+		if txErr != nil {
+			t.Fatalf("Failed to begin transaction: %v", txErr)
+		}
+		_, err = tx.Exec("UPDATE issues SET closed_at = ? WHERE status = 'closed'", closedAt)
 		if err != nil {
+			_ = tx.Rollback()
 			t.Fatalf("Failed to update closed_at: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Failed to commit closed_at update: %v", err)
 		}
 	}
 
@@ -111,12 +145,20 @@ func setupStaleClosedTestDB(t *testing.T, numClosed int, closedAt time.Time, pin
 		}
 		rows.Close()
 
+		tx, txErr := db.Begin()
+		if txErr != nil {
+			t.Fatalf("Failed to begin transaction: %v", txErr)
+		}
 		for idx := range pinnedIndices {
 			if idx < len(ids) {
-				if _, err := db.Exec("UPDATE issues SET pinned = 1 WHERE id = ?", ids[idx]); err != nil {
+				if _, err := tx.Exec("UPDATE issues SET pinned = 1 WHERE id = ?", ids[idx]); err != nil {
+					_ = tx.Rollback()
 					t.Fatalf("Failed to set pinned for %s: %v", ids[idx], err)
 				}
 			}
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Failed to commit pinned updates: %v", err)
 		}
 	}
 
