@@ -110,7 +110,6 @@ The plugin includes a full-featured MCP server with these tools:
 - **`list`** - List issues with filters (status, priority, type, assignee)
 - **`ready`** - Find tasks with no blockers ready to work on
 - **`show`** - Show detailed issue info including dependencies
-- **`claim`** - Atomically claim an issue for work (assignee + in_progress)
 - **`update`** - Update issue (status, priority, design, notes, etc)
 - **`close`** - Close completed issue
 - **`dep`** - Add dependency (blocks, related, parent-child, discovered-from)
@@ -126,7 +125,7 @@ The plugin includes a full-featured MCP server with these tools:
 The beads workflow is designed for AI agents but works great for humans too:
 
 1. **Find ready work**: `/beads:ready`
-2. **Claim your task**: use MCP `claim` tool with `issue_id`
+2. **Claim your task**: `/beads:update <id> in_progress`
 3. **Work on it**: Implement, test, document
 4. **Discover new work**: Create issues for bugs/TODOs found during work
 5. **Complete**: `/beads:close <id> "Done: <summary>"`
@@ -236,8 +235,8 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 # See ready work
 /beads:ready
 
-# Start working on bd-10 (atomic claim)
-# MCP: claim(issue_id="bd-10")
+# Start working on bd-10
+/beads:update bd-10 in_progress
 
 # Complete the task
 /beads:close bd-10 "Fixed auth token validation"
@@ -264,7 +263,7 @@ To customize, edit your Claude Code MCP settings or the plugin configuration.
 
 # The agent will:
 # 1. Find ready work with `ready` tool
-# 2. Claim a task atomically
+# 2. Claim a task by updating status
 # 3. Execute the work
 # 4. Create issues for discoveries
 # 5. Close when complete
