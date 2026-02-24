@@ -139,9 +139,22 @@ func CheckGitignore() DoctorCheck {
 	}
 }
 
-// FixGitignore updates .beads/.gitignore to the current template
+// FixGitignore updates .beads/.gitignore to the current template.
+// If a redirect exists, it writes to the redirect target's .gitignore instead.
 func FixGitignore() error {
 	gitignorePath := filepath.Join(".beads", ".gitignore")
+
+	// If a redirect exists, fix the gitignore at the redirect target instead
+	redirectPath := filepath.Join(".beads", "redirect")
+	// #nosec G304 -- redirect path is fixed to .beads/redirect
+	if data, err := os.ReadFile(redirectPath); err == nil {
+		target := parseRedirectTarget(data)
+		if target != "" {
+			beadsDir := filepath.Dir(redirectPath)
+			resolvedTarget := resolveRedirectTarget(beadsDir, target)
+			gitignorePath = filepath.Join(resolvedTarget, ".gitignore")
+		}
+	}
 
 	// If file exists and is read-only, fix permissions first
 	if info, err := os.Stat(gitignorePath); err == nil {

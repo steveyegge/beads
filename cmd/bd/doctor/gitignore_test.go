@@ -1971,6 +1971,168 @@ func TestEnsureProjectGitignore_PartialPatterns(t *testing.T) {
 	}
 }
 
+func TestFixGitignore_FollowsRedirect(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Simulate a rig layout:
+	//   tmpDir/
+	//     mayor/rig/.beads/          ← canonical beads dir (redirect target)
+	//     crew/worker/.beads/redirect ← redirect-only dir (cwd context)
+	rigBeads := filepath.Join(tmpDir, "mayor", "rig", ".beads")
+	if err := os.MkdirAll(rigBeads, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the local redirect-only .beads dir
+	localBeads := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(localBeads, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write redirect file pointing to the rig's .beads
+	// Redirect is resolved relative to the project root (parent of .beads)
+	redirectContent := "mayor/rig/.beads"
+	if err := os.WriteFile(filepath.Join(localBeads, "redirect"), []byte(redirectContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run FixGitignore - should write to the rig's .beads, NOT the local one
+	if err := FixGitignore(); err != nil {
+		t.Fatalf("FixGitignore failed: %v", err)
+	}
+
+	// Verify: .gitignore was written at the redirect target
+	targetGitignore := filepath.Join(rigBeads, ".gitignore")
+	content, err := os.ReadFile(targetGitignore)
+	if err != nil {
+		t.Fatalf("Expected .gitignore at redirect target %s, got error: %v", targetGitignore, err)
+	}
+	if string(content) != GitignoreTemplate {
+		t.Errorf("Expected canonical template at redirect target, got:\n%s", string(content))
+	}
+
+	// Verify: NO .gitignore was created in the local redirect-only dir
+	localGitignore := filepath.Join(localBeads, ".gitignore")
+	if _, err := os.Stat(localGitignore); !os.IsNotExist(err) {
+		t.Errorf("FixGitignore should NOT have created .gitignore in the redirect-only .beads dir at %s", localGitignore)
+	}
+}
+
+func TestCheckGitignore_FollowsRedirect(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Set up rig with canonical .beads containing an up-to-date .gitignore
+	rigBeads := filepath.Join(tmpDir, "mayor", "rig", ".beads")
+	if err := os.MkdirAll(rigBeads, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rigBeads, ".gitignore"), []byte(GitignoreTemplate), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up local redirect-only .beads
+	localBeads := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(localBeads, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localBeads, "redirect"), []byte("mayor/rig/.beads"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// CheckGitignore should report OK by reading the redirect target
+	check := CheckGitignore()
+	if check.Status != "ok" {
+		t.Errorf("Expected status ok when redirect target has valid .gitignore, got %s: %s", check.Status, check.Message)
+	}
+}
+
+func TestFixGitignore_RedirectRoundTrip(t *testing.T) {
+	// Verifies the full bug scenario: CheckGitignore detects outdated at redirect target,
+	// FixGitignore fixes it AT the redirect target, and re-check passes.
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Set up rig with outdated .gitignore (missing required patterns)
+	rigBeads := filepath.Join(tmpDir, "mayor", "rig", ".beads")
+	if err := os.MkdirAll(rigBeads, 0750); err != nil {
+		t.Fatal(err)
+	}
+	oldContent := "*.db\ndaemon.log\n"
+	if err := os.WriteFile(filepath.Join(rigBeads, ".gitignore"), []byte(oldContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up local redirect-only .beads
+	localBeads := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(localBeads, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localBeads, "redirect"), []byte("mayor/rig/.beads"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 1: Check should detect outdated
+	check := CheckGitignore()
+	if check.Status != "warning" {
+		t.Fatalf("Expected warning for outdated .gitignore at redirect target, got %s", check.Status)
+	}
+
+	// Step 2: Fix should update the redirect target
+	if err := FixGitignore(); err != nil {
+		t.Fatalf("FixGitignore failed: %v", err)
+	}
+
+	// Step 3: Re-check should pass
+	check = CheckGitignore()
+	if check.Status != "ok" {
+		t.Errorf("Expected ok after fix, got %s: %s", check.Status, check.Message)
+	}
+
+	// Step 4: No .gitignore in redirect-only dir (the original bug)
+	localGitignore := filepath.Join(localBeads, ".gitignore")
+	if _, err := os.Stat(localGitignore); !os.IsNotExist(err) {
+		t.Errorf("FixGitignore must NOT create .gitignore in redirect-only .beads dir (the original bug)")
+	}
+}
+
 func TestContainsGitignorePattern(t *testing.T) {
 	tests := []struct {
 		content  string
@@ -1981,7 +2143,7 @@ func TestContainsGitignorePattern(t *testing.T) {
 		{"*.db\n.dolt/\n", ".dolt/", true},
 		{"node_modules/\n", ".dolt/", false},
 		{"# .dolt/ is ignored\n", ".dolt/", false}, // comment, not pattern
-		{"  .dolt/  \n", ".dolt/", true},            // whitespace trimmed
+		{"  .dolt/  \n", ".dolt/", true},           // whitespace trimmed
 		{"", ".dolt/", false},
 		{".dolt/foo\n", ".dolt/", false}, // not exact match
 	}
