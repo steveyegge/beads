@@ -226,12 +226,14 @@ func scanIssueTxFromTable(ctx context.Context, tx *sql.Tx, table, id string) (*t
 
 // wispPrefix returns the ID prefix for wisp ID generation.
 // Appends "-wisp" to the config prefix (e.g., "bd" -> "bd-wisp").
+// When IDPrefix is set (e.g., "wisp"), it replaces the default "-wisp" suffix
+// to avoid double-prefixing (e.g., "es-wisp" not "es-wisp-wisp").
 func wispPrefix(configPrefix string, issue *types.Issue) string {
 	prefix := configPrefix
 	if issue.PrefixOverride != "" {
 		prefix = issue.PrefixOverride
 	} else if issue.IDPrefix != "" {
-		prefix = configPrefix + "-" + issue.IDPrefix
+		return configPrefix + "-" + issue.IDPrefix
 	}
 	return prefix + "-wisp"
 }
