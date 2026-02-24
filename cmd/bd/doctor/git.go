@@ -311,8 +311,34 @@ func CheckGitWorkingTree(path string) DoctorCheck {
 		}
 	}
 
+	// Parse raw porcelain lines preserving leading spaces for correct XY parsing.
+	// strings.TrimSpace above strips the leading space from the first " D ..."
+	// line, corrupting porcelain format. Use the raw output for line parsing.
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+
+	// In redirect worktrees (.beads/redirect exists), deleted .beads/ files
+	// are expected — the actual data lives at the redirect target (the rig).
+	// Filter these out so they don't trigger a false warning.
+	redirectPath := filepath.Join(path, ".beads", "redirect")
+	if _, err := os.Stat(redirectPath); err == nil {
+		var filtered []string
+		for _, line := range lines {
+			if isExpectedRedirectChange(line) {
+				continue
+			}
+			filtered = append(filtered, line)
+		}
+		if len(filtered) == 0 {
+			return DoctorCheck{
+				Name:    "Git Working Tree",
+				Status:  StatusOK,
+				Message: "Clean (redirect worktree, .beads/ deletions expected)",
+			}
+		}
+		lines = filtered
+	}
+
 	// Show a small sample of paths for quick debugging.
-	lines := strings.Split(status, "\n")
 	maxLines := 8
 	if len(lines) > maxLines {
 		lines = append(lines[:maxLines], "…")
@@ -325,6 +351,31 @@ func CheckGitWorkingTree(path string) DoctorCheck {
 		Detail:  strings.Join(lines, "\n"),
 		Fix:     "Commit or stash changes, then follow AGENTS.md: git pull --rebase && git push",
 	}
+}
+
+// isExpectedRedirectChange returns true if a git status --porcelain line
+// represents an expected change in a redirect worktree: deleted .beads/ files
+// or the untracked .beads/redirect file itself.
+// Porcelain format: XY PATH where X=index status, Y=worktree status.
+// Deletions show as " D .beads/..." (unstaged) or "D  .beads/..." (staged).
+func isExpectedRedirectChange(line string) bool {
+	if len(line) < 4 {
+		return false
+	}
+	xy := line[:2]
+	filePath := line[3:]
+	if !strings.HasPrefix(filePath, ".beads/") {
+		return false
+	}
+	// Deleted .beads/ files (expected: data lives at redirect target)
+	if xy == " D" || xy == "D " || xy == "DD" {
+		return true
+	}
+	// Untracked .beads/redirect file (expected: the redirect marker itself)
+	if xy == "??" && filePath == ".beads/redirect" {
+		return true
+	}
+	return false
 }
 
 // CheckGitUpstream checks whether the current branch is up to date with its upstream.

@@ -97,6 +97,96 @@ func TestCheckGitWorkingTree(t *testing.T) {
 	})
 }
 
+func TestCheckGitWorkingTree_RedirectWorktree(t *testing.T) {
+	t.Run("redirect deletions suppressed", func(t *testing.T) {
+		dir := mkTmpDirInTmp(t, "bd-git-redir-*")
+		initRepo(t, dir, "main")
+
+		// Commit some .beads/ files that would exist in the upstream repo
+		commitFile(t, dir, ".beads/README.md", "# beads\n", "add beads readme")
+		commitFile(t, dir, ".beads/config.yaml", "backend: dolt\n", "add config")
+		commitFile(t, dir, ".beads/BD_GUIDE.md", "# guide\n", "add guide")
+
+		// Create a redirect file (simulating crew worktree setup)
+		redirectPath := filepath.Join(dir, ".beads", "redirect")
+		if err := os.WriteFile(redirectPath, []byte("../../mayor/rig/.beads\n"), 0644); err != nil {
+			t.Fatalf("write redirect: %v", err)
+		}
+
+		// Delete the .beads/ files that would be replaced by redirect target
+		os.Remove(filepath.Join(dir, ".beads", "README.md"))
+		os.Remove(filepath.Join(dir, ".beads", "config.yaml"))
+		os.Remove(filepath.Join(dir, ".beads", "BD_GUIDE.md"))
+
+		check := CheckGitWorkingTree(dir)
+		if check.Status != StatusOK {
+			t.Fatalf("status=%q want %q (msg=%q detail=%q)", check.Status, StatusOK, check.Message, check.Detail)
+		}
+		if !strings.Contains(check.Message, "redirect") {
+			t.Fatalf("message=%q want to mention redirect", check.Message)
+		}
+	})
+
+	t.Run("redirect with real dirty files still warns", func(t *testing.T) {
+		dir := mkTmpDirInTmp(t, "bd-git-redir-dirty-*")
+		initRepo(t, dir, "main")
+
+		commitFile(t, dir, ".beads/README.md", "# beads\n", "add beads readme")
+		commitFile(t, dir, "src/main.go", "package main\n", "add source")
+
+		// Create redirect file
+		redirectPath := filepath.Join(dir, ".beads", "redirect")
+		if err := os.WriteFile(redirectPath, []byte("../../mayor/rig/.beads\n"), 0644); err != nil {
+			t.Fatalf("write redirect: %v", err)
+		}
+
+		// Delete .beads file (expected in redirect) and modify source (real dirty)
+		os.Remove(filepath.Join(dir, ".beads", "README.md"))
+		if err := os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main\n// changed\n"), 0644); err != nil {
+			t.Fatalf("write dirty: %v", err)
+		}
+
+		check := CheckGitWorkingTree(dir)
+		if check.Status != StatusWarning {
+			t.Fatalf("status=%q want %q (msg=%q)", check.Status, StatusWarning, check.Message)
+		}
+		// Detail should not include the .beads/ deletion but should include the real change
+		if strings.Contains(check.Detail, ".beads/README.md") {
+			t.Fatalf("detail should not include .beads/ deletions: %q", check.Detail)
+		}
+		if !strings.Contains(check.Detail, "src/main.go") {
+			t.Fatalf("detail should include real dirty file: %q", check.Detail)
+		}
+	})
+}
+
+func TestIsExpectedRedirectChange(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"unstaged delete beads file", " D .beads/README.md", true},
+		{"staged delete beads file", "D  .beads/config.yaml", true},
+		{"staged+unstaged delete", "DD .beads/BD_GUIDE.md", true},
+		{"untracked redirect file", "?? .beads/redirect", true},
+		{"untracked other beads file", "?? .beads/something", false},
+		{"modified non-beads file", " M src/main.go", false},
+		{"deleted non-beads file", " D src/main.go", false},
+		{"modified beads file", " M .beads/config.yaml", false},
+		{"short line", " D", false},
+		{"empty line", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isExpectedRedirectChange(tt.line)
+			if got != tt.want {
+				t.Errorf("isExpectedRedirectChange(%q) = %v, want %v", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCheckGitUpstream(t *testing.T) {
 	t.Run("no upstream", func(t *testing.T) {
 		dir := mkTmpDirInTmp(t, "bd-git-up-*")
