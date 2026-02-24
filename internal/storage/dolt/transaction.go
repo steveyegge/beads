@@ -73,11 +73,17 @@ func (s *DoltStore) runDoltTransaction(ctx context.Context, commitMsg string, fn
 			_ = sqlTx.Rollback()
 			return fmt.Errorf("dolt commit: %w", err)
 		}
-		// DOLT_COMMIT already ended the transaction; do not call tx.Commit().
-		return nil
+		if err == nil {
+			// DOLT_COMMIT succeeded and already ended the transaction; do not call tx.Commit().
+			return nil
+		}
+		// DOLT_COMMIT returned "nothing to commit" — this happens when only
+		// dolt_ignore tables (e.g. wisps) were modified. The SQL transaction
+		// is still open, so we must commit it explicitly to persist the data.
 	}
 
-	// No dolt commit requested — commit the SQL transaction normally.
+	// No dolt commit requested (or only ignored tables changed) —
+	// commit the SQL transaction normally.
 	return sqlTx.Commit()
 }
 
