@@ -1080,27 +1080,6 @@ async def update_issue(
             return OperationResult(id=issues[0].id, action="closed", message="Closed via update")
         return issues[0]
 
-    # Preserve backward compatibility while ensuring atomic claim semantics:
-    # update(status="in_progress") with no other changes is treated as claim.
-    only_start_work = (
-        status == "in_progress"
-        and priority is None
-        and assignee is None
-        and title is None
-        and description is None
-        and design is None
-        and acceptance_criteria is None
-        and notes is None
-        and external_ref is None
-    )
-    if only_start_work:
-        issue = await beads_claim_issue(issue_id=issue_id)
-        if issue is None:
-            return None
-        if brief:
-            return OperationResult(id=issue.id, action="claimed")
-        return issue
-
     issue = await beads_update_issue(
         issue_id=issue_id,
         status=status,
