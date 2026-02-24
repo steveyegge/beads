@@ -21,10 +21,10 @@ func testMainInner(m *testing.M) int {
 	srv, cleanup := testutil.StartTestDoltServer("dolt-pkg-test-*")
 	defer cleanup()
 
+	os.Setenv("BEADS_TEST_MODE", "1")
 	if srv != nil {
 		testServerPort = srv.Port
 		os.Setenv("BEADS_DOLT_PORT", fmt.Sprintf("%d", srv.Port))
-		os.Setenv("BEADS_TEST_MODE", "1")
 	}
 
 	code := m.Run()
