@@ -74,6 +74,9 @@ var (
 	// Dolt auto-commit policy (flag/config). Values: off | on
 	doltAutoCommit string
 
+	// Dolt auto-push policy (flag/config). Values: off | on
+	doltAutoPush string
+
 	// commandDidWrite is set when a command performs a write that should trigger
 	// auto-flush. Used to decide whether to auto-commit Dolt after the command completes.
 	// Thread-safe via atomic.Bool to avoid data races in concurrent flush operations.
@@ -198,6 +201,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
 	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt auto-commit policy (off|on|batch). 'on': commit after each write. 'batch': defer commits to bd sync / bd dolt commit; uncommitted changes persist in the working set until then. SIGTERM/SIGHUP flush pending batch commits. Default: off. Override via config key dolt.auto-commit")
+	rootCmd.PersistentFlags().StringVar(&doltAutoPush, "dolt-auto-push", "", "Dolt auto-push policy (off|on). 'on': push to origin after each auto-commit. Requires a configured remote. Push failures are warnings only. Default: off. Override via config key dolt.auto-push")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
@@ -326,6 +330,14 @@ var rootCmd = &cobra.Command{
 				WasSet bool
 			}{doltAutoCommit, true}
 		}
+		if !cmd.Flags().Changed("dolt-auto-push") && strings.TrimSpace(doltAutoPush) == "" {
+			doltAutoPush = config.GetString("dolt.auto-push")
+		} else if cmd.Flags().Changed("dolt-auto-push") {
+			flagOverrides["dolt-auto-push"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{doltAutoPush, true}
+		}
 
 		// Check for and log configuration overrides (only in verbose mode)
 		if verboseFlag {
@@ -335,8 +347,11 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Validate Dolt auto-commit mode early so all commands fail fast on invalid config.
+		// Validate Dolt auto-commit/auto-push modes early so all commands fail fast on invalid config.
 		if _, err := getDoltAutoCommitMode(); err != nil {
+			FatalError("%v", err)
+		}
+		if _, err := getDoltAutoPushMode(); err != nil {
 			FatalError("%v", err)
 		}
 
@@ -530,6 +545,9 @@ var rootCmd = &cobra.Command{
 		if strings.TrimSpace(doltAutoCommit) == "" {
 			doltAutoCommit = string(doltAutoCommitOff)
 		}
+		if strings.TrimSpace(doltAutoPush) == "" {
+			doltAutoPush = string(doltAutoPushOff)
+		}
 
 		doltCfg.Path = doltPath
 
@@ -594,6 +612,9 @@ var rootCmd = &cobra.Command{
 			if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
 				FatalError("dolt auto-commit failed: %v", err)
 			}
+			if cmd.Name() != "push" {
+				maybeAutoPush(rootCtx)
+			}
 		}
 
 		// Tip metadata auto-commit: if a tip was shown, create a separate Dolt commit for the
@@ -619,6 +640,9 @@ var rootCmd = &cobra.Command{
 				msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
 				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
 					FatalError("dolt tip auto-commit failed: %v", err)
+				}
+				if cmd.Name() != "push" {
+					maybeAutoPush(rootCtx)
 				}
 			}
 		}

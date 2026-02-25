@@ -137,6 +137,7 @@ func Initialize() error {
 	// Controls whether beads should automatically create Dolt commits after write commands.
 	// Values: off | on
 	v.SetDefault("dolt.auto-commit", "on")
+	v.SetDefault("dolt.auto-push", "off")
 
 	// Routing configuration defaults
 	v.SetDefault("routing.mode", "")
