@@ -235,26 +235,37 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 		}
 	}
 
+	issueCols, _ := sqliteTableColumns(ctx, db, "issues")
+	depCols, _ := sqliteTableColumns(ctx, db, "dependencies")
+
+	specIDExpr := sqliteOptionalTextExpr(issueCols, "spec_id", "''")
+	closedBySessionExpr := sqliteOptionalTextExpr(issueCols, "closed_by_session", "''")
+	wispTypeExpr := sqliteOptionalTextExpr(issueCols, "wisp_type", "''")
+	metadataExpr := sqliteOptionalTextExpr(issueCols, "metadata", "'{}'")
+
 	// Get all issues
-	issueRows, err := db.QueryContext(ctx, `
+	issueQuery := fmt.Sprintf(`
 		SELECT id, COALESCE(content_hash,''), COALESCE(title,''), COALESCE(description,''),
 			COALESCE(design,''), COALESCE(acceptance_criteria,''), COALESCE(notes,''),
 			COALESCE(status,''), COALESCE(priority,0), COALESCE(issue_type,''),
 			COALESCE(assignee,''), estimated_minutes,
 			COALESCE(created_at,''), COALESCE(created_by,''), COALESCE(owner,''),
-			COALESCE(updated_at,''), COALESCE(closed_at,''), external_ref,
+			COALESCE(updated_at,''), COALESCE(closed_at,''), external_ref, %s,
 			COALESCE(compaction_level,0), COALESCE(compacted_at,''), compacted_at_commit,
 			COALESCE(original_size,0),
-			COALESCE(sender,''), COALESCE(ephemeral,0), COALESCE(pinned,0),
+			COALESCE(sender,''), COALESCE(ephemeral,0), %s, COALESCE(pinned,0),
 			COALESCE(is_template,0), COALESCE(crystallizes,0),
 			COALESCE(mol_type,''), COALESCE(work_type,''), quality_score,
-			COALESCE(source_system,''), COALESCE(source_repo,''), COALESCE(close_reason,''),
+			COALESCE(source_system,''), COALESCE(source_repo,''), COALESCE(close_reason,''), %s,
 			COALESCE(event_kind,''), COALESCE(actor,''), COALESCE(target,''), COALESCE(payload,''),
 			COALESCE(await_type,''), COALESCE(await_id,''), COALESCE(timeout_ns,0), COALESCE(waiters,''),
 			COALESCE(hook_bead,''), COALESCE(role_bead,''), COALESCE(agent_state,''),
 			COALESCE(last_activity,''), COALESCE(role_type,''), COALESCE(rig,''),
-			COALESCE(due_at,''), COALESCE(defer_until,'')
-		FROM issues`)
+			COALESCE(due_at,''), COALESCE(defer_until,''), %s
+		FROM issues
+		ORDER BY created_at, id
+	`, specIDExpr, wispTypeExpr, closedBySessionExpr, metadataExpr)
+	issueRows, err := db.QueryContext(ctx, issueQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query issues: %w", err)
 	}
@@ -269,24 +280,25 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 		var timeoutNs int64
 		var waitersJSON string
 		var closedAt, compactedAt, lastActivity, dueAt, deferUntil sql.NullString
+		var specID, wispType, closedBySession, metadataRaw sql.NullString
 		if err := issueRows.Scan(
 			&issue.ID, &issue.ContentHash, &issue.Title, &issue.Description,
 			&issue.Design, &issue.AcceptanceCriteria, &issue.Notes,
 			&issue.Status, &issue.Priority, &issue.IssueType,
 			&issue.Assignee, &estMin,
 			&issue.CreatedAt, &issue.CreatedBy, &issue.Owner,
-			&issue.UpdatedAt, &closedAt, &extRef,
+			&issue.UpdatedAt, &closedAt, &extRef, &specID,
 			&issue.CompactionLevel, &compactedAt, &compactCommit,
 			&issue.OriginalSize,
-			&issue.Sender, &issue.Ephemeral, &issue.Pinned,
+			&issue.Sender, &issue.Ephemeral, &wispType, &issue.Pinned,
 			&issue.IsTemplate, &issue.Crystallizes,
 			&issue.MolType, &issue.WorkType, &qualScore,
-			&issue.SourceSystem, &issue.SourceRepo, &issue.CloseReason,
+			&issue.SourceSystem, &issue.SourceRepo, &issue.CloseReason, &closedBySession,
 			&issue.EventKind, &issue.Actor, &issue.Target, &issue.Payload,
 			&issue.AwaitType, &issue.AwaitID, &timeoutNs, &waitersJSON,
 			&issue.HookBead, &issue.RoleBead, &issue.AgentState,
 			&lastActivity, &issue.RoleType, &issue.Rig,
-			&dueAt, &deferUntil,
+			&dueAt, &deferUntil, &metadataRaw,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
 		}
@@ -297,12 +309,24 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 		if extRef.Valid {
 			issue.ExternalRef = &extRef.String
 		}
+		if specID.Valid {
+			issue.SpecID = specID.String
+		}
 		if compactCommit.Valid {
 			issue.CompactedAtCommit = &compactCommit.String
+		}
+		if wispType.Valid {
+			issue.WispType = types.WispType(wispType.String)
+		}
+		if closedBySession.Valid {
+			issue.ClosedBySession = closedBySession.String
 		}
 		if qualScore.Valid {
 			v := float32(qualScore.Float64)
 			issue.QualityScore = &v
+		}
+		if metadataRaw.Valid && strings.TrimSpace(metadataRaw.String) != "" {
+			issue.Metadata = normalizedJSONBytes(metadataRaw.String)
 		}
 		issue.ClosedAt = parseNullTime(closedAt.String)
 		issue.CompactedAt = parseNullTime(compactedAt.String)
@@ -318,7 +342,7 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 
 	// Get labels
 	labelsMap := make(map[string][]string)
-	labelRows, err := db.QueryContext(ctx, "SELECT issue_id, label FROM labels")
+	labelRows, err := db.QueryContext(ctx, "SELECT issue_id, label FROM labels ORDER BY issue_id, label")
 	if err == nil {
 		defer labelRows.Close()
 		for labelRows.Next() {
@@ -331,12 +355,29 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 
 	// Get dependencies
 	depsMap := make(map[string][]*types.Dependency)
-	depRows, err := db.QueryContext(ctx, "SELECT issue_id, depends_on_id, COALESCE(type,''), COALESCE(created_by,''), COALESCE(created_at,'') FROM dependencies")
+	depMetadataExpr := sqliteOptionalTextExpr(depCols, "metadata", "'{}'")
+	depThreadExpr := sqliteOptionalTextExpr(depCols, "thread_id", "''")
+	depQuery := fmt.Sprintf(`
+		SELECT issue_id, depends_on_id, COALESCE(type,''), COALESCE(created_by,''), COALESCE(created_at,''), %s, %s
+		FROM dependencies
+		ORDER BY created_at, issue_id, depends_on_id
+	`, depMetadataExpr, depThreadExpr)
+	depRows, err := db.QueryContext(ctx, depQuery)
 	if err == nil {
 		defer depRows.Close()
 		for depRows.Next() {
 			var dep types.Dependency
-			if err := depRows.Scan(&dep.IssueID, &dep.DependsOnID, &dep.Type, &dep.CreatedBy, &dep.CreatedAt); err == nil {
+			var metadata, threadID sql.NullString
+			if err := depRows.Scan(&dep.IssueID, &dep.DependsOnID, &dep.Type, &dep.CreatedBy, &dep.CreatedAt, &metadata, &threadID); err == nil {
+				if metadata.Valid {
+					dep.Metadata = strings.TrimSpace(metadata.String)
+				}
+				if dep.Metadata == "" {
+					dep.Metadata = "{}"
+				}
+				if threadID.Valid {
+					dep.ThreadID = threadID.String
+				}
 				depsMap[dep.IssueID] = append(depsMap[dep.IssueID], &dep)
 			}
 		}
@@ -344,7 +385,11 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 
 	// Get events
 	eventsMap := make(map[string][]*types.Event)
-	eventRows, err := db.QueryContext(ctx, "SELECT issue_id, COALESCE(event_type,''), COALESCE(actor,''), old_value, new_value, comment, COALESCE(created_at,'') FROM events")
+	eventRows, err := db.QueryContext(ctx, `
+		SELECT issue_id, COALESCE(event_type,''), COALESCE(actor,''), old_value, new_value, comment, COALESCE(created_at,'')
+		FROM events
+		ORDER BY created_at, rowid
+	`)
 	if err == nil {
 		defer eventRows.Close()
 		for eventRows.Next() {
@@ -366,6 +411,28 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 		}
 	}
 
+	// Get comments (legacy table may be absent; ignore errors).
+	commentsMap := make(map[string][]*types.Comment)
+	commentRows, err := db.QueryContext(ctx, `
+		SELECT issue_id, COALESCE(author,''), COALESCE(text,''), COALESCE(created_at,'')
+		FROM comments
+		ORDER BY created_at, rowid
+	`)
+	if err == nil {
+		defer commentRows.Close()
+		for commentRows.Next() {
+			var issueID, author, text, createdAt string
+			if err := commentRows.Scan(&issueID, &author, &text, &createdAt); err == nil {
+				commentsMap[issueID] = append(commentsMap[issueID], &types.Comment{
+					IssueID:   issueID,
+					Author:    author,
+					Text:      text,
+					CreatedAt: parseNullableSQLiteTime(createdAt),
+				})
+			}
+		}
+	}
+
 	// Assign labels and dependencies to issues
 	for _, issue := range issues {
 		if labels, ok := labelsMap[issue.ID]; ok {
@@ -377,14 +444,43 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 	}
 
 	return &migrationData{
-		issues:     issues,
-		labelsMap:  labelsMap,
-		depsMap:    depsMap,
-		eventsMap:  eventsMap,
-		config:     config,
-		prefix:     prefix,
-		issueCount: len(issues),
+		issues:      issues,
+		labelsMap:   labelsMap,
+		depsMap:     depsMap,
+		eventsMap:   eventsMap,
+		commentsMap: commentsMap,
+		config:      config,
+		prefix:      prefix,
+		issueCount:  len(issues),
 	}, nil
+}
+
+func sqliteTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		cols[name] = true
+	}
+	return cols, nil
+}
+
+func parseNullableSQLiteTime(raw string) time.Time {
+	if t := parseNullTime(raw); t != nil {
+		return *t
+	}
+	return time.Time{}
 }
 
 // Helper functions for output (CGO build only — used by handleToDoltMigration)
