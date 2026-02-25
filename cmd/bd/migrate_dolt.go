@@ -244,6 +244,7 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 	metadataExpr := sqliteOptionalTextExpr(issueCols, "metadata", "'{}'")
 
 	// Get all issues
+	//nolint:gosec // SQL fragments come from fixed column names discovered via PRAGMA table_info.
 	issueQuery := fmt.Sprintf(`
 		SELECT id, COALESCE(content_hash,''), COALESCE(title,''), COALESCE(description,''),
 			COALESCE(design,''), COALESCE(acceptance_criteria,''), COALESCE(notes,''),
@@ -357,6 +358,7 @@ func extractFromSQLite(ctx context.Context, dbPath string) (*migrationData, erro
 	depsMap := make(map[string][]*types.Dependency)
 	depMetadataExpr := sqliteOptionalTextExpr(depCols, "metadata", "'{}'")
 	depThreadExpr := sqliteOptionalTextExpr(depCols, "thread_id", "''")
+	//nolint:gosec // SQL fragments come from fixed column names discovered via PRAGMA table_info.
 	depQuery := fmt.Sprintf(`
 		SELECT issue_id, depends_on_id, COALESCE(type,''), COALESCE(created_by,''), COALESCE(created_at,''), %s, %s
 		FROM dependencies
