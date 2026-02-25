@@ -34,6 +34,10 @@ Use --database to specify an existing server database name, overriding the
 default prefix-based naming. This is useful when an external tool (e.g. gastown)
 has already created the database.
 
+After initialization, beads files (.beads/, AGENTS.md, .gitignore) are automatically
+committed to git so that 'bd doctor' reports a clean state. Use --no-commit to skip
+the automatic commit.
+
 With --stealth: configures per-repository git settings for invisible beads usage:
   • .git/info/exclude to prevent beads files from being committed
   • Claude Code settings with bd onboard instruction
@@ -610,6 +614,19 @@ environment variable.`,
 			addAgentsInstructions(!quiet, agentsTemplate)
 		}
 
+		// Auto-commit beads files so bd doctor doesn't warn about dirty working tree.
+		// This stages .beads/ tracked files, AGENTS.md, and .gitignore, then commits.
+		// Skipped in stealth mode (user wants invisible setup) or with --no-commit.
+		noCommit, _ := cmd.Flags().GetBool("no-commit")
+		if !stealth && !noCommit && isGitRepo() && useLocalBeads {
+			if err := autoCommitInitFiles(quiet); err != nil {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "Warning: auto-commit failed: %v\n", err)
+					fmt.Fprintf(os.Stderr, "  You can commit manually: git add .beads/ AGENTS.md .gitignore && git commit -m \"bd init\"\n")
+				}
+			}
+		}
+
 		// Check for missing git upstream and warn if not configured
 		if isGitRepo() && !quiet {
 			if !gitHasUpstream() {
@@ -680,6 +697,7 @@ func init() {
 	initCmd.Flags().Bool("setup-exclude", false, "Configure .git/info/exclude to keep beads files local (for forks)")
 	initCmd.Flags().Bool("skip-hooks", false, "Skip git hooks installation")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if database already has issues (may cause data loss)")
+	initCmd.Flags().Bool("no-commit", false, "Skip automatic git commit of beads files after init")
 	initCmd.Flags().Bool("from-jsonl", false, "Import issues from .beads/issues.jsonl instead of git history")
 	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides embedded default)")
 
@@ -962,6 +980,45 @@ func promptContributorMode() (isContributor bool, err error) {
 	}
 
 	return isContributor, nil
+}
+
+// autoCommitInitFiles stages and commits beads files created by bd init.
+// This ensures bd doctor doesn't warn about a dirty working tree immediately
+// after initialization. Only commits files that init creates; does not touch
+// pre-existing uncommitted changes.
+func autoCommitInitFiles(quiet bool) error {
+	// Stage files that bd init creates.
+	// .beads/ is partially gitignored (dolt/, runtime files) so only
+	// tracked files (config.yaml, metadata.json, README.md, etc.) get staged.
+	filesToStage := []string{".beads/", ".gitignore"}
+
+	// Only stage AGENTS.md if it exists (skipped in stealth mode)
+	if _, err := os.Stat("AGENTS.md"); err == nil {
+		filesToStage = append(filesToStage, "AGENTS.md")
+	}
+
+	addCmd := exec.Command("git", append([]string{"add", "--"}, filesToStage...)...) // #nosec G204 -- args are hardcoded paths
+	if output, err := addCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git add failed: %v\n%s", err, output)
+	}
+
+	// Check if there's actually anything staged to commit.
+	// On re-init with --force, files may already be committed.
+	diffCmd := exec.Command("git", "diff", "--cached", "--quiet")
+	if err := diffCmd.Run(); err == nil {
+		// Exit 0 means no staged changes — nothing to commit
+		return nil
+	}
+
+	commitCmd := exec.Command("git", "commit", "-m", "bd init: initialize beads issue tracking")
+	if output, err := commitCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git commit failed: %v\n%s", err, output)
+	}
+
+	if !quiet {
+		fmt.Printf("  %s Committed beads files to git\n", ui.RenderPass("✓"))
+	}
+	return nil
 }
 
 // verifyMetadata writes a metadata field and verifies the write succeeded.
