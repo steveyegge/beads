@@ -98,6 +98,14 @@ func handleToDoltMigration(dryRun bool, autoYes bool) {
 	} else {
 		dbName = "beads"
 	}
+	// Config wins over convention: if metadata.json already has a
+	// dolt_database value, use it instead of deriving from prefix.
+	// This prevents phantom catalog entries (GH#2051).
+	if existingCfg, loadErr := configfile.Load(beadsDir); loadErr == nil && existingCfg != nil {
+		if existingCfg.DoltDatabase != "" {
+			dbName = existingCfg.DoltDatabase
+		}
+	}
 	doltStore, err := dolt.New(ctx, &dolt.Config{Path: doltPath, Database: dbName})
 	if err != nil {
 		exitWithError("dolt_create_failed", err.Error(), "")
