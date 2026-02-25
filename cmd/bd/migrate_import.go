@@ -171,7 +171,7 @@ func importToDolt(ctx context.Context, store *dolt.DoltStore, data *migrationDat
 			metadataStr := normalizeDependencyMetadata(dep.Metadata)
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, created_at, metadata, thread_id)
-				VALUES (?, ?, ?, ?, ?)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
 				ON DUPLICATE KEY UPDATE
 					type = VALUES(type),
 					created_by = VALUES(created_by),
@@ -293,7 +293,14 @@ func normalizeDependencyMetadata(raw string) string {
 	if trimmed == "" {
 		return "{}"
 	}
-	return trimmed
+	if json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+	encoded, err := json.Marshal(trimmed)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
 }
 
 func sqliteOptionalTextExpr(columns map[string]bool, column string, fallback string) string {

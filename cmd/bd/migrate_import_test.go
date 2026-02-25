@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,6 +50,65 @@ func TestMigrateImport_ColumnParityWithInsertIssue(t *testing.T) {
 	}
 }
 
+// TestMigrateImport_DependencyInsertPlaceholderParity verifies that the
+// dependency migration INSERT keeps SQL arity correct when columns change.
+func TestMigrateImport_DependencyInsertPlaceholderParity(t *testing.T) {
+	root := moduleRoot(t)
+	path := filepath.Join(root, "cmd/bd/migrate_import.go")
+	data, err := os.ReadFile(path) // #nosec G304 - test reads known source files
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+
+	// Capture INSERT INTO dependencies (...) VALUES (...) in importToDolt.
+	re := regexp.MustCompile(`(?s)INSERT INTO dependencies\s*\(\s*(.*?)\)\s*VALUES\s*\(\s*(.*?)\s*\)\s*ON DUPLICATE KEY UPDATE`)
+	matches := re.FindSubmatch(data)
+	if len(matches) < 3 {
+		t.Fatal("failed to locate dependencies INSERT statement in migrate_import.go")
+	}
+
+	columnList := strings.TrimSpace(string(matches[1]))
+	valuesList := strings.TrimSpace(string(matches[2]))
+
+	columns := splitColumns(columnList)
+	placeholders := regexp.MustCompile(`\?`).FindAllString(valuesList, -1)
+
+	if len(columns) != len(placeholders) {
+		t.Fatalf("dependencies INSERT arity mismatch: %d columns, %d placeholders\ncolumns=%q\nvalues=%q",
+			len(columns), len(placeholders), columnList, valuesList)
+	}
+}
+
+func TestNormalizeDependencyMetadata_JSONSafety(t *testing.T) {
+	tests := []struct {
+		name       string
+		in         string
+		want       string
+		wantQuoted bool
+	}{
+		{name: "empty", in: "", want: "{}", wantQuoted: false},
+		{name: "whitespace", in: "   ", want: "{}", wantQuoted: false},
+		{name: "valid object", in: `{"k":"v"}`, want: `{"k":"v"}`, wantQuoted: false},
+		{name: "valid array", in: `[1,2,3]`, want: `[1,2,3]`, wantQuoted: false},
+		{name: "plain text", in: "legacy-metadata", want: `"legacy-metadata"`, wantQuoted: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeDependencyMetadata(tc.in)
+			if got != tc.want {
+				t.Fatalf("normalizeDependencyMetadata(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if !json.Valid([]byte(got)) {
+				t.Fatalf("normalizeDependencyMetadata(%q) produced invalid JSON: %q", tc.in, got)
+			}
+			if tc.wantQuoted && !(strings.HasPrefix(got, `"`) && strings.HasSuffix(got, `"`)) {
+				t.Fatalf("expected quoted JSON string for %q, got %q", tc.in, got)
+			}
+		})
+	}
+}
+
 // moduleRoot finds the Go module root by walking up from the test file.
 func moduleRoot(t *testing.T) string {
 	t.Helper()
@@ -92,6 +152,18 @@ func extractInsertColumns(t *testing.T, path string) []string {
 	for _, p := range parts {
 		col := strings.TrimSpace(p)
 		col = strings.Trim(col, "`")
+		if col != "" {
+			columns = append(columns, col)
+		}
+	}
+	return columns
+}
+
+func splitColumns(raw string) []string {
+	parts := strings.Split(raw, ",")
+	columns := make([]string, 0, len(parts))
+	for _, p := range parts {
+		col := strings.TrimSpace(strings.Trim(p, "`"))
 		if col != "" {
 			columns = append(columns, col)
 		}
