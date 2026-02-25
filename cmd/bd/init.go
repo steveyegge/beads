@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/ui"
@@ -108,6 +109,13 @@ environment variable.`,
 		// Normalize prefix: strip trailing hyphens
 		// The hyphen is added automatically during ID generation
 		prefix = strings.TrimRight(prefix, "-")
+
+		// Sanitize prefix for use as a MySQL database name.
+		// Directory names like "001" (common in temp dirs) are invalid because
+		// MySQL identifiers must start with a letter or underscore.
+		if len(prefix) > 0 && !((prefix[0] >= 'a' && prefix[0] <= 'z') || (prefix[0] >= 'A' && prefix[0] <= 'Z') || prefix[0] == '_') {
+			prefix = "bd_" + prefix
+		}
 
 		// Determine beadsDir first (used for all storage path calculations).
 		// BEADS_DIR takes precedence, otherwise use CWD/.beads (with redirect support).
@@ -258,7 +266,7 @@ environment variable.`,
 		if existingCfg, _ := configfile.Load(beadsDir); existingCfg != nil && existingCfg.DoltDatabase != "" {
 			dbName = existingCfg.DoltDatabase
 		} else if prefix != "" {
-			dbName = "beads_" + prefix
+			dbName = prefix
 		} else {
 			dbName = "beads"
 		}
@@ -267,7 +275,7 @@ environment variable.`,
 		doltCfg := &dolt.Config{
 			Path:      storagePath,
 			Database:  dbName,
-			AutoStart: os.Getenv("GT_ROOT") == "" && os.Getenv("BEADS_DOLT_AUTO_START") != "0",
+			AutoStart: !doltserver.IsDaemonManaged() && os.Getenv("BEADS_DOLT_AUTO_START") != "0",
 		}
 		if serverHost != "" {
 			doltCfg.ServerHost = serverHost
@@ -362,7 +370,7 @@ environment variable.`,
 				// Only set if not already configured — overwriting a user-renamed database
 				// creates phantom catalog entries that crash information_schema (GH#2051).
 				if cfg.DoltDatabase == "" && prefix != "" {
-					cfg.DoltDatabase = "beads_" + prefix
+					cfg.DoltDatabase = prefix
 				}
 
 				// Always server mode
@@ -526,7 +534,11 @@ environment variable.`,
 		// Install by default unless --skip-hooks is passed
 		// Hooks are installed to .beads/hooks/ (uses git config core.hooksPath)
 		// For jujutsu colocated repos, use simplified hooks (no staging needed)
-		if !skipHooks && !hooksInstalled() {
+		hooksExist := hooksInstalled()
+		if !skipHooks && (!hooksExist || hooksNeedUpdate()) {
+			if hooksExist && !quiet {
+				fmt.Printf("  Updating hooks to version %s...\n", Version)
+			}
 			isJJ := git.IsJujutsuRepo()
 			isColocated := git.IsColocatedJJGit()
 
@@ -753,10 +765,10 @@ This workspace is already initialized.
 To use the existing database:
   Just run bd commands normally (e.g., %s)
 
-To completely reinitialize (data loss warning):
-  rm -rf %s && bd init --backend dolt --prefix %s
+To force reinitialize (data loss warning):
+  bd init --force --prefix %s
 
-Aborting.`, ui.RenderWarn("⚠"), location, ui.RenderAccent("bd list"), beadsDir, prefix)
+Aborting.`, ui.RenderWarn("⚠"), location, ui.RenderAccent("bd list"), prefix)
 		}
 	}
 
@@ -777,10 +789,10 @@ To use the existing database:
   Just run bd commands normally (e.g., %s)
   The redirect will route to the canonical database.
 
-To reinitialize the canonical location (data loss warning):
-  rm %s && bd init --prefix %s
+To force reinitialize (data loss warning):
+  bd init --force --prefix %s
 
-Aborting.`, ui.RenderWarn("⚠"), redirectTarget, targetDBPath, ui.RenderAccent("bd list"), targetDBPath, prefix)
+Aborting.`, ui.RenderWarn("⚠"), redirectTarget, targetDBPath, ui.RenderAccent("bd list"), prefix)
 		}
 		return nil // Redirect target has no database - safe to init
 	}
@@ -796,10 +808,10 @@ This workspace is already initialized.
 To use the existing database:
   Just run bd commands normally (e.g., %s)
 
-To completely reinitialize (data loss warning):
-  rm -rf %s && bd init --prefix %s
+To force reinitialize (data loss warning):
+  bd init --force --prefix %s
 
-Aborting.`, ui.RenderWarn("⚠"), dbPath, ui.RenderAccent("bd list"), beadsDir, prefix)
+Aborting.`, ui.RenderWarn("⚠"), dbPath, ui.RenderAccent("bd list"), prefix)
 	}
 
 	return nil // No database found, safe to init

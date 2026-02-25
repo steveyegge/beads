@@ -136,6 +136,37 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 		return exactMatch, nil
 	}
 
+	// Fallback: explicitly search wisps table for partial ID resolution.
+	// DoltStore.SearchIssues merges wisps when Ephemeral is nil, but
+	// transaction-level SearchIssues does not. This ensures wisps are
+	// always resolvable by partial ID.
+	if len(matches) == 0 {
+		ephTrue := true
+		wispFilter := types.IssueFilter{Ephemeral: &ephTrue}
+		if wisps, wispErr := store.SearchIssues(ctx, hashPart, wispFilter); wispErr == nil {
+			for _, w := range wisps {
+				if w.ID == input {
+					return w.ID, nil
+				}
+				var wHash string
+				if idx := strings.Index(w.ID, "-"); idx >= 0 {
+					wHash = w.ID[idx+1:]
+				} else {
+					wHash = w.ID
+				}
+				if wHash == hashPart {
+					exactMatch = w.ID
+				}
+				if strings.Contains(wHash, hashPart) {
+					matches = append(matches, w.ID)
+				}
+			}
+			if exactMatch != "" {
+				return exactMatch, nil
+			}
+		}
+	}
+
 	if len(matches) == 0 {
 		return "", fmt.Errorf("no issue found matching %q", input)
 	}

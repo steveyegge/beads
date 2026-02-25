@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
@@ -370,6 +371,12 @@ func TestDoltSetConfigWithUpdateConfig(t *testing.T) {
 func TestTestServerConnection(t *testing.T) {
 	// Test the testServerConnection function with various configs
 	t.Run("unreachable host", func(t *testing.T) {
+		// Use a short dial timeout to avoid slow hangs in CI where
+		// 192.0.2.1 (RFC 5737 TEST-NET) may not get a fast rejection.
+		old := serverDialTimeout
+		serverDialTimeout = 500 * time.Millisecond
+		t.Cleanup(func() { serverDialTimeout = old })
+
 		cfg := configfile.DefaultConfig()
 		cfg.DoltServerHost = "192.0.2.1" // RFC 5737 TEST-NET, guaranteed unreachable
 		cfg.DoltServerPort = 3307

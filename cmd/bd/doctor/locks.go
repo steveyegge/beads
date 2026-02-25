@@ -67,10 +67,10 @@ func CheckStaleLockFiles(path string) DoctorCheck {
 	}
 
 	// Note: Dolt internal noms LOCK files (.beads/dolt/<db>/.dolt/noms/LOCK)
-	// are NOT checked here. These files are created by the embedded Dolt engine
-	// and are never deleted, even after a clean close. Age-based detection
-	// produces false positives because the file persists indefinitely.
-	// Use CheckLockHealth() (which probes flock state) instead. (GH#1981)
+	// are NOT checked here as diagnostics. These are auto-cleaned on bd startup
+	// (pre-flight in PersistentPreRun) and by 'bd doctor --fix'. Stale noms LOCK
+	// files from crashed processes would prevent the Dolt server from opening
+	// databases. The auto-cleanup makes this a non-issue for most users.
 
 	// Check startup lock (bd.sock.startlock)
 	// Look for any .startlock files in beadsDir

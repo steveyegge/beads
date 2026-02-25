@@ -2,8 +2,9 @@
 
 // Package regression implements differential testing between a pinned baseline
 // bd binary (v0.49.6) and the current worktree build. Each test scenario runs
-// the same CLI commands against both binaries in isolated workspaces, exports
-// JSONL, normalizes volatile fields and IDs, and diffs the results.
+// the same CLI commands against both binaries in isolated workspaces, snapshots
+// state via bd list + bd show, normalizes volatile fields and IDs, and diffs
+// the results.
 //
 // Run: go test -tags=regression -timeout=10m ./tests/regression/...
 // Or:  make test-regression
@@ -14,6 +15,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -256,7 +258,13 @@ func newWorkspace(t *testing.T, bdPath string) *workspace {
 	w.git("add", ".")
 	w.git("commit", "-m", "initial")
 
-	w.run("init", "--prefix", "test", "--quiet")
+	// Use a unique prefix per workspace so each gets its own Dolt database
+	// (t<hash>). The init command creates database "<prefix>",
+	// and subsequent commands read the database name from metadata.json.
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(dir))
+	prefix := fmt.Sprintf("t%x", h.Sum64())
+	w.run("init", "--prefix", prefix, "--quiet")
 
 	return w
 }
@@ -266,11 +274,15 @@ func (w *workspace) runEnv() []string {
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + w.dir,
 		"BEADS_NO_DAEMON=1",
+		"BEADS_TEST_MODE=1",
 		"GIT_CONFIG_NOSYSTEM=1",
 	}
 	if testDoltServerPort != 0 {
-		env = append(env, "BEADS_DOLT_PORT="+strconv.Itoa(testDoltServerPort))
-		env = append(env, "BEADS_TEST_MODE=1")
+		portStr := strconv.Itoa(testDoltServerPort)
+		env = append(env,
+			"BEADS_DOLT_PORT="+portStr,
+			"BEADS_DOLT_SERVER_PORT="+portStr,
+		)
 	}
 	if v := os.Getenv("TMPDIR"); v != "" {
 		env = append(env, "TMPDIR="+v)
@@ -327,11 +339,96 @@ func (w *workspace) create(args ...string) string {
 	return id
 }
 
-// export runs bd export and returns the JSONL output.
+// snapshot collects workspace state via bd list + bd show, returning JSONL
+// (one JSON object per line). This replaces the old bd export command which
+// was removed from main. The listArgs are passed to the bd list invocation
+// (e.g., "--status", "open").
+func (w *workspace) snapshot(listArgs ...string) string {
+	w.t.Helper()
+
+	// Step 1: get all issue IDs via bd list (--all includes closed issues,
+	// matching the old bd export behavior)
+	args := []string{"list", "--json", "-n", "0", "--all"}
+	args = append(args, listArgs...)
+	listOut := w.run(args...)
+
+	// Parse JSON array to extract IDs
+	var issues []map[string]any
+	if err := json.Unmarshal([]byte(listOut), &issues); err != nil {
+		// Try JSONL fallback
+		for _, line := range strings.Split(strings.TrimSpace(listOut), "\n") {
+			if line == "" {
+				continue
+			}
+			var m map[string]any
+			if err2 := json.Unmarshal([]byte(line), &m); err2 == nil {
+				issues = append(issues, m)
+			}
+		}
+	}
+
+	if len(issues) == 0 {
+		return ""
+	}
+
+	// Step 2: for each ID, run bd show --json and emit one JSONL line
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	for _, issue := range issues {
+		id, ok := issue["id"].(string)
+		if !ok || id == "" {
+			continue
+		}
+		showOut := w.run("show", id, "--json")
+
+		// bd show --json may return a JSON array or single object
+		var showArr []map[string]any
+		if err := json.Unmarshal([]byte(showOut), &showArr); err == nil && len(showArr) > 0 {
+			_ = enc.Encode(showArr[0])
+			continue
+		}
+		var showObj map[string]any
+		if err := json.Unmarshal([]byte(showOut), &showObj); err == nil {
+			_ = enc.Encode(showObj)
+			continue
+		}
+		w.t.Logf("WARNING: snapshot: bd show %s returned unparseable JSON: %s", id, showOut)
+	}
+	return buf.String()
+}
+
+// export returns a JSONL snapshot of the workspace. This replaces the removed
+// bd export command with list+show based snapshots. Filter args (e.g.,
+// "--status", "open") are translated to bd list flags.
 func (w *workspace) export(extraArgs ...string) string {
 	w.t.Helper()
-	args := append([]string{"export"}, extraArgs...)
-	return w.run(args...)
+	// Translate old export flags to list flags.
+	// export supported: --status, --assignee, -o (output file, not needed)
+	var listArgs []string
+	for i := 0; i < len(extraArgs); i++ {
+		switch extraArgs[i] {
+		case "--status":
+			if i+1 < len(extraArgs) {
+				listArgs = append(listArgs, "--status", extraArgs[i+1])
+				i++
+			}
+		case "--assignee":
+			if i+1 < len(extraArgs) {
+				listArgs = append(listArgs, "--assignee", extraArgs[i+1])
+				i++
+			}
+		case "-o", "--output":
+			// Skip output file flag and its argument
+			if i+1 < len(extraArgs) {
+				i++
+			}
+		default:
+			// Pass through unknown flags
+			listArgs = append(listArgs, extraArgs[i])
+		}
+	}
+	return w.snapshot(listArgs...)
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +440,13 @@ var volatileFields = []string{
 	"compacted_at", "compacted_at_commit",
 	"last_activity", "closed_by_session",
 	"compaction_level", "original_size",
+	"content_hash",
+}
+
+// showOnlyFields are present in bd show --json but were not in bd export.
+// Strip them so snapshot output is comparable with baseline.
+var showOnlyFields = []string{
+	"events",
 }
 
 var versionSpecificFields = []string{
@@ -403,6 +507,9 @@ func normalizeIssue(m map[string]any) {
 	for _, f := range versionSpecificFields {
 		delete(m, f)
 	}
+	for _, f := range showOnlyFields {
+		delete(m, f)
+	}
 
 	// Normalize date-only fields (due_at, defer_until) to date-only format.
 	// SQLite stores local-timezone midnight, Dolt stores UTC midnight for
@@ -447,32 +554,39 @@ func normalizeIssue(m map[string]any) {
 		})
 	}
 
-	// Normalize dependencies: strip volatile fields and empty metadata,
-	// sort by (depends_on_id, type)
-	if deps, ok := m["dependencies"].([]any); ok {
-		for _, d := range deps {
-			if dm, ok := d.(map[string]any); ok {
-				delete(dm, "created_at")
-				// Dolt stores metadata="{}" where SQLite omits it entirely
-				if md, ok := dm["metadata"]; ok {
-					if mdStr, _ := md.(string); mdStr == "" || mdStr == "{}" {
-						delete(dm, "metadata")
-					}
+	// normalizeDepSubobject strips volatile/internal fields from a dependency
+	// or dependent sub-object as returned by bd show --json.
+	normalizeDepSubobject := func(dm map[string]any) {
+		delete(dm, "created_at")
+		delete(dm, "updated_at")
+		delete(dm, "closed_at")
+		delete(dm, "close_reason")
+		delete(dm, "thread_id")
+		delete(dm, "created_by")
+		// Normalize dependency_type → type
+		if dt, ok := dm["dependency_type"]; ok {
+			if _, hasType := dm["type"]; !hasType {
+				dm["type"] = dt
+			}
+			delete(dm, "dependency_type")
+		}
+		// Dolt stores metadata="{}" where SQLite omits it entirely
+		if md, ok := dm["metadata"]; ok {
+			if mdStr, _ := md.(string); mdStr == "" || mdStr == "{}" {
+				delete(dm, "metadata")
+			}
+		}
+	}
+
+	// Normalize dependencies and dependents arrays
+	for _, field := range []string{"dependencies", "dependents"} {
+		if deps, ok := m[field].([]any); ok {
+			for _, d := range deps {
+				if dm, ok := d.(map[string]any); ok {
+					normalizeDepSubobject(dm)
 				}
 			}
 		}
-		sort.Slice(deps, func(i, j int) bool {
-			di, _ := deps[i].(map[string]any)
-			dj, _ := deps[j].(map[string]any)
-			a, _ := di["depends_on_id"].(string)
-			b, _ := dj["depends_on_id"].(string)
-			if a != b {
-				return a < b
-			}
-			ta, _ := di["type"].(string)
-			tb, _ := dj["type"].(string)
-			return ta < tb
-		})
 	}
 
 	// Remove nil, empty strings, empty collections to handle omitempty differences.
@@ -521,12 +635,19 @@ func canonicalizeIDs(m map[string]any, idMap map[string]string) {
 	}
 
 	replaceID("id", m)
+	replaceID("parent", m)
 
-	if deps, ok := m["dependencies"].([]any); ok {
-		for _, d := range deps {
-			if dm, ok := d.(map[string]any); ok {
-				replaceID("issue_id", dm)
-				replaceID("depends_on_id", dm)
+	// Canonicalize IDs in dependencies and dependents sub-objects.
+	// bd show --json embeds full issue-like objects with "id" field,
+	// while the old export format used "issue_id" and "depends_on_id".
+	for _, field := range []string{"dependencies", "dependents"} {
+		if deps, ok := m[field].([]any); ok {
+			for _, d := range deps {
+				if dm, ok := d.(map[string]any); ok {
+					replaceID("id", dm)
+					replaceID("issue_id", dm)
+					replaceID("depends_on_id", dm)
+				}
 			}
 		}
 	}
@@ -544,19 +665,29 @@ func canonicalizeIDs(m map[string]any, idMap map[string]string) {
 // Must be called after canonicalizeIDs, since real IDs are random and
 // pre-canonicalization sort order is non-deterministic across runs.
 func sortSubobjects(m map[string]any) {
-	if deps, ok := m["dependencies"].([]any); ok && len(deps) > 1 {
-		sort.Slice(deps, func(i, j int) bool {
-			di, _ := deps[i].(map[string]any)
-			dj, _ := deps[j].(map[string]any)
-			a, _ := di["depends_on_id"].(string)
-			b, _ := dj["depends_on_id"].(string)
-			if a != b {
-				return a < b
-			}
-			ta, _ := di["type"].(string)
-			tb, _ := dj["type"].(string)
-			return ta < tb
-		})
+	// Sort both dependencies and dependents by (id, type)
+	for _, field := range []string{"dependencies", "dependents"} {
+		if deps, ok := m[field].([]any); ok && len(deps) > 1 {
+			sort.Slice(deps, func(i, j int) bool {
+				di, _ := deps[i].(map[string]any)
+				dj, _ := deps[j].(map[string]any)
+				// Try canonical id first, then depends_on_id
+				a, _ := di["id"].(string)
+				b, _ := dj["id"].(string)
+				if a == "" {
+					a, _ = di["depends_on_id"].(string)
+				}
+				if b == "" {
+					b, _ = dj["depends_on_id"].(string)
+				}
+				if a != b {
+					return a < b
+				}
+				ta, _ := di["type"].(string)
+				tb, _ := dj["type"].(string)
+				return ta < tb
+			})
+		}
 	}
 	if comments, ok := m["comments"].([]any); ok && len(comments) > 1 {
 		sort.Slice(comments, func(i, j int) bool {
@@ -587,18 +718,18 @@ func canonicalIDMap(ids []string) map[string]string {
 // Comparison helpers
 // ---------------------------------------------------------------------------
 
-// compareExports runs a scenario against both binaries, exports JSONL,
-// canonicalizes IDs based on creation order, and diffs.
+// compareExports runs a scenario against both binaries, snapshots state via
+// list+show, canonicalizes IDs based on creation order, and diffs.
 func compareExports(t *testing.T, scenario func(w *workspace)) {
 	t.Helper()
 
 	baselineWS := newWorkspace(t, baselineBin)
 	scenario(baselineWS)
-	baselineRaw := baselineWS.export()
+	baselineRaw := baselineWS.snapshot()
 
 	candidateWS := newWorkspace(t, candidateBin)
 	scenario(candidateWS)
-	candidateRaw := candidateWS.export()
+	candidateRaw := candidateWS.snapshot()
 
 	diffNormalized(t,
 		baselineRaw, candidateRaw,

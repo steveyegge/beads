@@ -63,22 +63,29 @@ func (s *DoltStore) runDoltTransaction(ctx context.Context, commitMsg string, fn
 		return err
 	}
 
-	// DOLT_COMMIT ends the SQL transaction implicitly — no tx.Commit() needed after.
-	// Calling tx.Commit() after DOLT_COMMIT can cause connection state issues under
-	// concurrent load (the transaction is already closed by Dolt).
-	if commitMsg != "" {
-		_, err := sqlTx.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
-			commitMsg, s.commitAuthorString())
-		if err != nil && !isDoltNothingToCommit(err) {
-			_ = sqlTx.Rollback()
-			return fmt.Errorf("dolt commit: %w", err)
-		}
-		// DOLT_COMMIT already ended the transaction; do not call tx.Commit().
-		return nil
+	// Commit the SQL transaction first to persist all working set changes,
+	// including writes to dolt-ignored tables (e.g., wisps). (hq-3paz0m)
+	//
+	// Previously, DOLT_COMMIT was called inside the transaction. When it
+	// returned "nothing to commit" (all writes to dolt-ignored tables), the
+	// Go sql.Tx was left in a broken state and Commit() failed silently,
+	// losing wisp data.
+	if err := sqlTx.Commit(); err != nil {
+		return fmt.Errorf("sql commit: %w", err)
 	}
 
-	// No dolt commit requested — commit the SQL transaction normally.
-	return sqlTx.Commit()
+	// Create a Dolt version commit from the working set.
+	// Runs outside the transaction on a pool connection.
+	// "Nothing to commit" is benign (all writes to dolt-ignored tables).
+	if commitMsg != "" {
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
+			commitMsg, s.commitAuthorString())
+		if err != nil && !isDoltNothingToCommit(err) {
+			return fmt.Errorf("dolt commit: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // isDoltNothingToCommit returns true if the error indicates there were no
@@ -120,6 +127,9 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		} else if err != nil {
 			return fmt.Errorf("failed to get config: %w", err)
 		}
+
+		// Normalize prefix: strip trailing hyphen to prevent double-hyphen IDs (bd-6uly)
+		configPrefix = strings.TrimSuffix(configPrefix, "-")
 
 		var prefix string
 		if issue.Ephemeral {

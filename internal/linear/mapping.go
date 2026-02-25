@@ -544,3 +544,70 @@ func BuildLinearToLocalUpdates(li *Issue, config *MappingConfig) map[string]inte
 
 	return updates
 }
+
+// ProjectToEpic converts a Linear Project to a Beads Epic issue.
+func ProjectToEpic(lp *Project) *types.Issue {
+	createdAt, err := time.Parse(time.RFC3339, lp.CreatedAt)
+	if err != nil {
+		createdAt = time.Now()
+	}
+
+	updatedAt, err := time.Parse(time.RFC3339, lp.UpdatedAt)
+	if err != nil {
+		updatedAt = time.Now()
+	}
+
+	// Map Linear project state to Beads status
+	var status types.Status
+	switch lp.State {
+	case "completed":
+		status = types.StatusClosed
+	case "canceled":
+		status = types.StatusClosed
+	case "started", "paused":
+		status = types.StatusInProgress
+	default:
+		status = types.StatusOpen // planned, or unknown
+	}
+
+	externalRef := lp.URL
+	if canonical, ok := CanonicalizeLinearExternalRef(externalRef); ok {
+		externalRef = canonical
+	}
+
+	issue := &types.Issue{
+		Title:       lp.Name,
+		Description: lp.Description,
+		Status:      status,
+		IssueType:   types.TypeEpic,
+		Priority:    2, // Default medium priority
+		CreatedAt:   createdAt,
+		UpdatedAt:   updatedAt,
+		ExternalRef: &externalRef,
+	}
+
+	if lp.CompletedAt != "" {
+		completedAt, err := time.Parse(time.RFC3339, lp.CompletedAt)
+		if err == nil {
+			issue.ClosedAt = &completedAt
+		}
+	}
+
+	if lp.State == "canceled" {
+		issue.CloseReason = "canceled"
+	}
+
+	return issue
+}
+
+// MapEpicToProjectState maps a Beads status to Linear project state.
+func MapEpicToProjectState(status types.Status) string {
+	switch status {
+	case types.StatusClosed:
+		return "completed"
+	case types.StatusInProgress:
+		return "started"
+	default:
+		return "planned"
+	}
+}

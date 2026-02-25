@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/steveyegge/beads/internal/lockfile"
 )
 
 func TestStaleLockFiles(t *testing.T) {
@@ -73,7 +71,7 @@ func TestStaleLockFiles(t *testing.T) {
 		}
 	})
 
-	t.Run("fresh noms LOCK preserved", func(t *testing.T) {
+	t.Run("noms LOCK always removed by doctor fix", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		nomsDir := filepath.Join(tmpDir, ".beads", "dolt", "beads", ".dolt", "noms")
 		if err := os.MkdirAll(nomsDir, 0755); err != nil {
@@ -85,13 +83,16 @@ func TestStaleLockFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// noms LOCK cleanup is gated by probeStale on dolt-access.lock.
-		// Without a dolt-access.lock file, probeStale returns true (stale),
-		// so a fresh noms LOCK would still be removed. This test verifies
-		// the dolt-access.lock path doesn't exist scenario (no active holder).
-		// In practice, a running process would hold the flock.
+		// In server mode (the only mode now), noms LOCK files are always
+		// removed by doctor --fix. The Dolt server manages its own locks;
+		// if the user is running doctor --fix, stale locks are the likely
+		// cause of the problem they're trying to fix.
 		if err := StaleLockFiles(tmpDir); err != nil {
 			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+			t.Error("noms LOCK should be removed by doctor --fix")
 		}
 	})
 
@@ -175,45 +176,6 @@ func TestStaleLockFiles(t *testing.T) {
 
 		if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 			t.Error("stale bootstrap lock should be removed")
-		}
-	})
-}
-
-func TestProbeStale(t *testing.T) {
-	t.Run("nonexistent file is stale", func(t *testing.T) {
-		if !probeStale("/tmp/nonexistent-lock-test-file") {
-			t.Error("nonexistent lock file should be treated as stale")
-		}
-	})
-
-	t.Run("unheld lock file is stale", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		lockPath := filepath.Join(tmpDir, "test.lock")
-		if err := os.WriteFile(lockPath, []byte(""), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if !probeStale(lockPath) {
-			t.Error("unheld lock file should be stale")
-		}
-	})
-
-	t.Run("held lock is not stale", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		lockPath := filepath.Join(tmpDir, "test.lock")
-
-		// Create and hold an exclusive flock
-		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer f.Close()
-		if err := lockfile.FlockExclusiveNonBlock(f); err != nil {
-			t.Fatalf("failed to acquire test lock: %v", err)
-		}
-		defer func() { _ = lockfile.FlockUnlock(f) }()
-
-		if probeStale(lockPath) {
-			t.Error("held lock should NOT be treated as stale")
 		}
 	})
 }

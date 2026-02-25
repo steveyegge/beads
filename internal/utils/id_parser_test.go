@@ -674,6 +674,63 @@ func TestResolvePartialID_CrossPrefix(t *testing.T) {
 	}
 }
 
+// TestResolvePartialID_Wisp verifies that wisps (ephemeral issues) are resolvable
+// by partial ID. This exercises the explicit wisp fallback in ResolvePartialID.
+func TestResolvePartialID_Wisp(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	// Create a wisp (ephemeral issue) with a wisp-prefixed ID
+	wisp := &types.Issue{
+		ID:        "bd-wisp-t3st",
+		Title:     "Test wisp",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	if err := store.CreateIssue(ctx, wisp, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "full wisp ID",
+			input:    "bd-wisp-t3st",
+			expected: "bd-wisp-t3st",
+		},
+		{
+			name:     "partial hash",
+			input:    "t3st",
+			expected: "bd-wisp-t3st",
+		},
+		{
+			name:     "wisp prefix with hash",
+			input:    "wisp-t3st",
+			expected: "bd-wisp-t3st",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ResolvePartialID(ctx, store, tt.input)
+			if err != nil {
+				t.Errorf("ResolvePartialID(%q) unexpected error: %v", tt.input, err)
+			}
+			if result != tt.expected {
+				t.Errorf("ResolvePartialID(%q) = %q; want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestResolvePartialID_TitleFalsePositive verifies that when the search query
 // matches an issue's title but NOT its ID, the in-memory filter correctly
 // rejects it. This is important because the optimization passes hashPart as

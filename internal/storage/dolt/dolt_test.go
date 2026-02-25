@@ -15,6 +15,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
+	"github.com/steveyegge/beads/internal/testutil"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -56,17 +57,72 @@ func uniqueTestDBName(t *testing.T) string {
 	return "testdb_" + hex.EncodeToString(buf)
 }
 
-// setupTestStore creates a test store with its own isolated database.
-// Each test gets a unique database name to prevent cross-test data leakage
-// and avoid any risk of touching production data.
+// setupTestStore creates a test store on the shared database with branch isolation.
+// Each test gets its own branch (COW snapshot), preventing cross-test data leakage
+// without the overhead of CREATE/DROP DATABASE per test.
 func setupTestStore(t *testing.T) (*DoltStore, func()) {
+	t.Helper()
+	skipIfNoDolt(t)
+
+	if testSharedDB == "" {
+		t.Fatal("testSharedDB not set — TestMain did not initialize shared database")
+	}
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	tmpDir, err := os.MkdirTemp("", "dolt-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+
+	cfg := &Config{
+		Path:           tmpDir,
+		CommitterName:  "test",
+		CommitterEmail: "test@example.com",
+		Database:       testSharedDB,
+		MaxOpenConns:   1, // Required: DOLT_CHECKOUT is session-level
+	}
+
+	store, err := New(ctx, cfg)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("failed to create Dolt store: %v", err)
+	}
+
+	// Create an isolated branch for this test
+	_, branchCleanup := testutil.StartTestBranch(t, store.db, testSharedDB)
+
+	// Re-create dolt_ignore'd tables (wisps, etc.) on the branch.
+	// These tables are in dolt_ignore so they only exist in the working set,
+	// not in commits. Branching from main doesn't inherit them.
+	if err := createIgnoredTables(store.db); err != nil {
+		branchCleanup()
+		store.Close()
+		os.RemoveAll(tmpDir)
+		t.Fatalf("createIgnoredTables on branch failed: %v", err)
+	}
+
+	cleanup := func() {
+		branchCleanup()
+		store.Close()
+		os.RemoveAll(tmpDir)
+	}
+
+	return store, cleanup
+}
+
+// setupConcurrentTestStore creates a test store with its own database for
+// concurrent tests that need multiple connections. Branch-per-test isolation
+// requires MaxOpenConns=1, which prevents concurrent transactions.
+func setupConcurrentTestStore(t *testing.T) (*DoltStore, func()) {
 	t.Helper()
 	skipIfNoDolt(t)
 
 	ctx, cancel := testContext(t)
 	defer cancel()
 
-	tmpDir, err := os.MkdirTemp("", "dolt-test-*")
+	tmpDir, err := os.MkdirTemp("", "dolt-concurrent-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -86,7 +142,6 @@ func setupTestStore(t *testing.T) (*DoltStore, func()) {
 		t.Fatalf("failed to create Dolt store: %v", err)
 	}
 
-	// Set up issue prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		store.Close()
 		os.RemoveAll(tmpDir)
@@ -94,7 +149,6 @@ func setupTestStore(t *testing.T) (*DoltStore, func()) {
 	}
 
 	cleanup := func() {
-		// Drop the test database to avoid accumulating garbage
 		dropCtx, dropCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer dropCancel()
 		_, _ = store.db.ExecContext(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
@@ -305,6 +359,78 @@ func TestCreateWispNoDoubleHyphen(t *testing.T) {
 	}
 	if !strings.HasPrefix(wisp.ID, "gt-wisp-") {
 		t.Errorf("wisp ID should start with 'gt-wisp-', got %q", wisp.ID)
+	}
+}
+
+// TestCreateWispNoDoublePrefix verifies that wisps with IDPrefix="wisp" don't
+// get double-prefixed as "bd-wisp-wisp-xxx" (beads-yzh).
+func TestCreateWispNoDoublePrefix(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	wisp := &types.Issue{
+		Title:     "test wisp double prefix",
+		Status:    types.StatusOpen,
+		Priority:  3,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+		IDPrefix:  "wisp", // Set by cloneSubgraph for wisp molecules
+	}
+	if err := store.createWisp(ctx, wisp, "test-user"); err != nil {
+		t.Fatalf("createWisp failed: %v", err)
+	}
+
+	// ID should be "<prefix>-wisp-<hash>", NOT "<prefix>-wisp-wisp-<hash>"
+	if strings.Contains(wisp.ID, "wisp-wisp") {
+		t.Errorf("wisp ID has double 'wisp' prefix: %q", wisp.ID)
+	}
+	if !strings.Contains(wisp.ID, "-wisp-") {
+		t.Errorf("wisp ID should contain '-wisp-', got %q", wisp.ID)
+	}
+}
+
+// TestTransactionCreateIssueNoDoubleHyphen verifies that issue IDs created
+// within a transaction don't get double hyphens if the DB has a trailing-hyphen
+// prefix (bd-6uly). This tests the transaction.go code path.
+func TestTransactionCreateIssueNoDoubleHyphen(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Bypass SetConfig normalization: write trailing-hyphen prefix directly to DB
+	_, err := store.db.ExecContext(ctx, "UPDATE config SET value = ? WHERE `key` = ?", "gt-", "issue_prefix")
+	if err != nil {
+		t.Fatalf("failed to set raw prefix: %v", err)
+	}
+
+	var createdID string
+	err = store.RunInTransaction(ctx, "test-tx", func(tx storage.Transaction) error {
+		issue := &types.Issue{
+			Title:     "test tx double hyphen",
+			Status:    types.StatusOpen,
+			Priority:  3,
+			IssueType: types.TypeBug,
+		}
+		if err := tx.CreateIssue(ctx, issue, "test-user"); err != nil {
+			return err
+		}
+		createdID = issue.ID
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+
+	if strings.Contains(createdID, "--") {
+		t.Errorf("transaction-created issue ID contains double hyphen: %q", createdID)
+	}
+	if !strings.HasPrefix(createdID, "gt-") {
+		t.Errorf("issue ID should start with 'gt-', got %q", createdID)
 	}
 }
 
