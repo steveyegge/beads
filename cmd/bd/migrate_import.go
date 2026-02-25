@@ -202,7 +202,9 @@ func importToDolt(ctx context.Context, store *dolt.DoltStore, data *migrationDat
 			return imported, skipped, fmt.Errorf("failed to reset labels for issue %s: %w", issue.ID, err)
 		}
 
-		// Insert labels
+		// Insert labels.
+		// Keep ON DUPLICATE as a defensive guard: if source labels contain duplicates
+		// or this flow is later changed to skip the pre-delete step, import remains idempotent.
 		for _, label := range issue.Labels {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO labels (issue_id, label)
@@ -223,6 +225,8 @@ func importToDolt(ctx context.Context, store *dolt.DoltStore, data *migrationDat
 	issueIDs := orderedIssueIDs(data)
 
 	// Reconcile relations for deterministic and idempotent re-imports.
+	// This is source-authoritative for migrated issue IDs: the target relation set
+	// is replaced with what is present in the source snapshot.
 	for _, issueID := range issueIDs {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM dependencies WHERE issue_id = ?`, issueID); err != nil {
 			return imported, skipped, fmt.Errorf("failed to reset dependencies for issue %s: %w", issueID, err)

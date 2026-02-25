@@ -542,11 +542,9 @@ func printMigrationPlan(title, source, target string, data *migrationData) {
 	fmt.Printf("Target: %s\n", target)
 	fmt.Printf("Issues to migrate: %d\n", data.issueCount)
 
-	eventCount := 0
-	for _, events := range data.eventsMap {
-		eventCount += len(events)
-	}
+	eventCount, commentCount := migrationRecordCounts(data)
 	fmt.Printf("Events to migrate: %d\n", eventCount)
+	fmt.Printf("Comments to migrate: %d\n", commentCount)
 	fmt.Printf("Config keys: %d\n", len(data.config))
 
 	if data.prefix != "" {
@@ -556,21 +554,19 @@ func printMigrationPlan(title, source, target string, data *migrationData) {
 }
 
 func printDryRun(source, target string, data *migrationData, withBackup bool) {
-	eventCount := 0
-	for _, events := range data.eventsMap {
-		eventCount += len(events)
-	}
+	eventCount, commentCount := migrationRecordCounts(data)
 
 	if jsonOutput {
 		result := map[string]interface{}{
-			"dry_run":      true,
-			"source":       source,
-			"target":       target,
-			"issue_count":  data.issueCount,
-			"event_count":  eventCount,
-			"config_keys":  len(data.config),
-			"prefix":       data.prefix,
-			"would_backup": withBackup,
+			"dry_run":       true,
+			"source":        source,
+			"target":        target,
+			"issue_count":   data.issueCount,
+			"event_count":   eventCount,
+			"comment_count": commentCount,
+			"config_keys":   len(data.config),
+			"prefix":        data.prefix,
+			"would_backup":  withBackup,
 		}
 		outputJSON(result)
 	} else {
@@ -585,12 +581,24 @@ func printDryRun(source, target string, data *migrationData, withBackup bool) {
 		step++
 		fmt.Printf("  %d. Import %d issues with labels and dependencies\n", step, data.issueCount)
 		step++
-		fmt.Printf("  %d. Import %d events (history/comments)\n", step, eventCount)
+		fmt.Printf("  %d. Import %d events (issue history)\n", step, eventCount)
+		step++
+		fmt.Printf("  %d. Import %d comments (legacy comments table)\n", step, commentCount)
 		step++
 		fmt.Printf("  %d. Copy %d config values\n", step, len(data.config))
 		step++
 		fmt.Printf("  %d. Update metadata.json\n", step)
 	}
+}
+
+func migrationRecordCounts(data *migrationData) (eventCount int, commentCount int) {
+	for _, events := range data.eventsMap {
+		eventCount += len(events)
+	}
+	for _, comments := range data.commentsMap {
+		commentCount += len(comments)
+	}
+	return eventCount, commentCount
 }
 
 func confirmBackendMigration(from, to string, withBackup bool) bool {
