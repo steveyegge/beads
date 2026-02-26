@@ -138,6 +138,7 @@ func Initialize() error {
 	// Values: off | on
 	v.SetDefault("dolt.auto-commit", "on")
 	v.SetDefault("dolt.auto-push", "off")
+	v.SetDefault("dolt.backup.interval", "off")
 
 	// Routing configuration defaults
 	v.SetDefault("routing.mode", "")

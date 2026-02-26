@@ -250,6 +250,13 @@ dolt:
   # Auto-commit Dolt history after writes (default: on for embedded, off for server)
   auto-commit: on        # on | off
 
+  # Auto-push to remote after each auto-commit (default: off)
+  auto-push: off         # off | on
+
+  # Periodic JSONL backup interval (default: off)
+  backup:
+    interval: off        # off | 15m | 1h | etc.
+
   # Server mode settings (when mode: server)
   mode: embedded         # embedded | server
   host: 127.0.0.1
@@ -271,6 +278,8 @@ dolt:
 | `DOLT_REMOTE_USER` | Push/pull auth user |
 | `DOLT_REMOTE_PASSWORD` | Push/pull auth password |
 | `BD_DOLT_AUTO_COMMIT` | Override auto-commit setting |
+| `BD_DOLT_AUTO_PUSH` | Override auto-push setting |
+| `BD_DOLT_BACKUP_INTERVAL` | Override backup interval setting |
 
 ## Dolt Version Control
 
@@ -306,6 +315,33 @@ bd --dolt-auto-commit off create "Issue 1"
 bd --dolt-auto-commit off create "Issue 2"
 bd vc commit -m "Batch: created issues"
 ```
+
+### Auto-Push Behavior
+
+When `dolt.auto-push: on`, each auto-commit is followed by a push to the "origin" remote. This provides continuous replication without manual intervention.
+
+```bash
+bd create "New issue"    # Creates issue + Dolt commit + push to origin
+```
+
+Requirements:
+- A Dolt remote named "origin" must exist (`dolt remote add origin <url>`)
+- Dolt 1.82.4+ is strongly recommended — it reduces git remote push time from ~70s to ~8s
+- Push failures are warnings only; local work is never blocked
+
+### Periodic Backup
+
+When `dolt.backup.interval` is set to a duration, `bd` periodically exports all issues to `.beads/backup/issues.jsonl` after write commands. This provides a human-readable backup alongside Dolt's binary storage.
+
+```yaml
+dolt:
+  backup:
+    interval: 15m    # Export every 15 minutes (on next write after interval elapses)
+```
+
+The backup includes labels, dependencies, and comments for each issue. The JSONL format is compatible with `bd import`, so data can be restored from the backup file.
+
+The timestamp of the last backup is stored in Dolt metadata (`last_backup_at`). The check runs after each successful auto-commit — no background daemon is needed.
 
 ## Server Management (Gas Town)
 

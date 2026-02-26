@@ -77,6 +77,9 @@ var (
 	// Dolt auto-push policy (flag/config). Values: off | on
 	doltAutoPush string
 
+	// Dolt backup interval (flag/config). Values: off | duration (e.g., "15m", "1h")
+	doltBackupInterval string
+
 	// commandDidWrite is set when a command performs a write that should trigger
 	// auto-flush. Used to decide whether to auto-commit Dolt after the command completes.
 	// Thread-safe via atomic.Bool to avoid data races in concurrent flush operations.
@@ -202,6 +205,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
 	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt auto-commit policy (off|on|batch). 'on': commit after each write. 'batch': defer commits to bd sync / bd dolt commit; uncommitted changes persist in the working set until then. SIGTERM/SIGHUP flush pending batch commits. Default: off. Override via config key dolt.auto-commit")
 	rootCmd.PersistentFlags().StringVar(&doltAutoPush, "dolt-auto-push", "", "Dolt auto-push policy (off|on). 'on': push to origin after each auto-commit. Requires a configured remote. Push failures are warnings only. Default: off. Override via config key dolt.auto-push")
+	rootCmd.PersistentFlags().StringVar(&doltBackupInterval, "dolt-backup-interval", "", "Periodic JSONL backup interval (off|duration). Export all issues to .beads/backup/issues.jsonl. Default: off. Override via config key dolt.backup.interval")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
@@ -338,6 +342,14 @@ var rootCmd = &cobra.Command{
 				WasSet bool
 			}{doltAutoPush, true}
 		}
+		if !cmd.Flags().Changed("dolt-backup-interval") && strings.TrimSpace(doltBackupInterval) == "" {
+			doltBackupInterval = config.GetString("dolt.backup.interval")
+		} else if cmd.Flags().Changed("dolt-backup-interval") {
+			flagOverrides["dolt-backup-interval"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{doltBackupInterval, true}
+		}
 
 		// Check for and log configuration overrides (only in verbose mode)
 		if verboseFlag {
@@ -347,11 +359,14 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Validate Dolt auto-commit/auto-push modes early so all commands fail fast on invalid config.
+		// Validate Dolt auto-commit/auto-push/backup modes early so all commands fail fast on invalid config.
 		if _, err := getDoltAutoCommitMode(); err != nil {
 			FatalError("%v", err)
 		}
 		if _, err := getDoltAutoPushMode(); err != nil {
+			FatalError("%v", err)
+		}
+		if _, err := getDoltBackupInterval(); err != nil {
 			FatalError("%v", err)
 		}
 
@@ -615,6 +630,7 @@ var rootCmd = &cobra.Command{
 			if cmd.Name() != "push" {
 				maybeAutoPush(rootCtx)
 			}
+			maybeBackup(rootCtx)
 		}
 
 		// Tip metadata auto-commit: if a tip was shown, create a separate Dolt commit for the
@@ -644,6 +660,7 @@ var rootCmd = &cobra.Command{
 				if cmd.Name() != "push" {
 					maybeAutoPush(rootCtx)
 				}
+				maybeBackup(rootCtx)
 			}
 		}
 

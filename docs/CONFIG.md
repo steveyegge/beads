@@ -39,6 +39,8 @@ Tool-level settings you can configure:
 | `federation.remote` | - | `BD_FEDERATION_REMOTE` | (none) | Dolt remote URL for federation |
 | `federation.sovereignty` | - | `BD_FEDERATION_SOVEREIGNTY` | (none) | Data sovereignty tier: `T1`, `T2`, `T3`, `T4` |
 | `dolt.auto-commit` | `--dolt-auto-commit` | `BD_DOLT_AUTO_COMMIT` | `on` | (Dolt backend) Automatically create a Dolt commit after successful write commands |
+| `dolt.auto-push` | `--dolt-auto-push` | `BD_DOLT_AUTO_PUSH` | `off` | (Dolt backend) Automatically push to origin after each auto-commit |
+| `dolt.backup.interval` | `--dolt-backup-interval` | `BD_DOLT_BACKUP_INTERVAL` | `off` | Periodic JSONL backup interval (e.g., `15m`, `1h`). Exports all issues to `.beads/backup/issues.jsonl` |
 | `create.require-description` | - | `BD_CREATE_REQUIRE_DESCRIPTION` | `false` | Require description when creating issues |
 | `validation.on-create` | - | `BD_VALIDATION_ON_CREATE` | `none` | Template validation on create: `none`, `warn`, `error` |
 | `validation.on-sync` | - | `BD_VALIDATION_ON_SYNC` | `none` | Template validation before sync: `none`, `warn`, `error` |
@@ -75,6 +77,41 @@ dolt:
 ```
 
 **Caveat:** enabling this creates **more Dolt commits** over time (one per write command). This is intentional so changes are not left only in the working set.
+
+### Dolt Auto-Push
+
+When auto-push is enabled, `bd` automatically pushes to the configured Dolt remote ("origin") after each auto-commit. This provides continuous replication to a remote backup (e.g., a private GitHub repo via Dolt's git remote support).
+
+- **Default**: `dolt.auto-push: off`
+- **Enable in config** (`.beads/config.yaml`):
+
+```yaml
+dolt:
+  auto-push: on
+```
+
+- **Enable for a single command**:
+
+```bash
+bd --dolt-auto-push on create "Push this immediately"
+```
+
+**Requirements:**
+- A Dolt remote named "origin" must be configured (`dolt remote add origin <url>`)
+- Auto-commit must be enabled (auto-push triggers after auto-commit)
+- Dolt 1.82.4+ is recommended for fast git remote push (~8s vs ~70s on older versions)
+
+**Push failures are warnings only** — they never block local work.
+
+**Recommended solo user config** (automatic versioning + backup):
+
+```yaml
+dolt:
+  auto-commit: on
+  auto-push: on
+  backup:
+    interval: 15m
+```
 
 ### Actor Identity Resolution
 
@@ -167,8 +204,13 @@ federation:
 json: true
 
 # Dolt auto-commit (creates Dolt history commit after each write)
+# Auto-push (replicate to remote after each commit)
+# Backup interval (periodic JSONL export for human-readable backup)
 dolt:
   auto-commit: on
+  auto-push: off
+  backup:
+    interval: off    # off | 15m | 1h | etc.
 ```
 
 `.beads/config.yaml` (project-specific):

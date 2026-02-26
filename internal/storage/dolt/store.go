@@ -1236,6 +1236,15 @@ func (s *DoltStore) HasRemote(ctx context.Context, name string) (bool, error) {
 	return count > 0, nil
 }
 
+// Version returns the Dolt server version string (e.g., "1.82.4").
+func (s *DoltStore) Version(ctx context.Context) (string, error) {
+	var version string
+	err := s.queryRowContext(ctx, func(row *sql.Row) error {
+		return row.Scan(&version)
+	}, "SELECT dolt_version()")
+	return version, err
+}
+
 // AddRemote adds a Dolt remote
 func (s *DoltStore) AddRemote(ctx context.Context, name, url string) error {
 	_, err := s.db.ExecContext(ctx, "CALL DOLT_REMOTE('add', ?, ?)", name, url)

@@ -48,10 +48,14 @@ Version control:
   bd dolt pull         Pull commits from Dolt remote
 
 Configuration keys for 'bd dolt set':
-  database  Database name (default: issue prefix or "beads")
-  host      Server host (default: 127.0.0.1)
-  port      Server port (auto-detected; override with bd dolt set port <N>)
-  user      MySQL user (default: root)
+  database         Database name (default: issue prefix or "beads")
+  host             Server host (default: 127.0.0.1)
+  port             Server port (auto-detected; override with bd dolt set port <N>)
+  user             MySQL user (default: root)
+
+Related config.yaml keys (set via 'bd config set' or config.yaml):
+  dolt.auto-push        Auto-push to origin after each auto-commit (off|on)
+  dolt.backup.interval  Periodic JSONL backup interval (off|15m|1h|etc.)
 
 Flags for 'bd dolt set':
   --update-config  Also write to config.yaml for team-wide defaults
