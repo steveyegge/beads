@@ -55,6 +55,10 @@ type CloneOptions struct {
 	// AttachToID within the same transaction as the clone, preventing orphans.
 	AttachToID    string               // Molecule ID to attach spawned root to
 	AttachDepType types.DependencyType // Dependency type for the attachment
+
+	// RootOnly: if true, only create the root issue (skip all children and dependencies).
+	// Used by patrol agents to avoid materializing every formula step as a wisp row.
+	RootOnly bool
 }
 
 // bondedIDPattern validates bonded IDs (alphanumeric, dash, underscore, dot)
@@ -721,8 +725,15 @@ func cloneSubgraph(ctx context.Context, s *dolt.DoltStore, subgraph *TemplateSub
 
 	// Use transaction for atomicity
 	err := transact(ctx, s, "bd: clone template subgraph", func(tx storage.Transaction) error {
+		// Determine which issues to create
+		issuesToCreate := subgraph.Issues
+		if opts.RootOnly {
+			// Only create the root issue — skip all children
+			issuesToCreate = []*types.Issue{subgraph.Root}
+		}
+
 		// First pass: create all issues with new IDs
-		for _, oldIssue := range subgraph.Issues {
+		for _, oldIssue := range issuesToCreate {
 			// Determine assignee: use override for root epic, otherwise keep template's
 			issueAssignee := oldIssue.Assignee
 			if oldIssue.ID == subgraph.Root.ID && opts.Assignee != "" {
@@ -767,8 +778,11 @@ func cloneSubgraph(ctx context.Context, s *dolt.DoltStore, subgraph *TemplateSub
 			idMapping[oldIssue.ID] = newIssue.ID
 		}
 
-		// Second pass: recreate dependencies with new IDs
+		// Second pass: recreate dependencies with new IDs (skip if root-only)
 		for _, dep := range subgraph.Dependencies {
+			if opts.RootOnly {
+				break
+			}
 			newFromID, ok1 := idMapping[dep.IssueID]
 			newToID, ok2 := idMapping[dep.DependsOnID]
 			if !ok1 || !ok2 {
@@ -808,7 +822,7 @@ func cloneSubgraph(ctx context.Context, s *dolt.DoltStore, subgraph *TemplateSub
 	return &InstantiateResult{
 		NewEpicID: idMapping[subgraph.Root.ID],
 		IDMapping: idMapping,
-		Created:   len(subgraph.Issues),
+		Created:   len(idMapping),
 	}, nil
 }
 

@@ -144,6 +144,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	rootOnly, _ := cmd.Flags().GetBool("root-only")
 	varFlags, _ := cmd.Flags().GetStringArray("var")
 
 	// Parse variables
@@ -242,18 +243,31 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 	}
 
 	if dryRun {
-		fmt.Printf("\nDry run: would create wisp with %d issues from proto %s\n\n", len(subgraph.Issues), protoID)
-		fmt.Printf("Storage: main database (ephemeral=true, not synced via git)\n\n")
-		for _, issue := range subgraph.Issues {
-			newTitle := substituteVariables(issue.Title, vars)
-			fmt.Printf("  - %s (from %s)\n", newTitle, issue.ID)
+		if rootOnly {
+			fmt.Printf("\nDry run: would create root-only wisp from proto %s\n\n", protoID)
+			fmt.Printf("Storage: main database (ephemeral=true, not synced via git)\n\n")
+			fmt.Printf("  - %s (root only, %d steps inlined at prime time)\n",
+				substituteVariables(subgraph.Root.Title, vars), len(subgraph.Issues)-1)
+		} else {
+			fmt.Printf("\nDry run: would create wisp with %d issues from proto %s\n\n", len(subgraph.Issues), protoID)
+			fmt.Printf("Storage: main database (ephemeral=true, not synced via git)\n\n")
+			for _, issue := range subgraph.Issues {
+				newTitle := substituteVariables(issue.Title, vars)
+				fmt.Printf("  - %s (from %s)\n", newTitle, issue.ID)
+			}
 		}
 		return
 	}
 
 	// Spawn as ephemeral in main database (Ephemeral=true, not synced via git)
 	// Use wisp prefix for distinct visual recognition (see types.IDPrefixWisp)
-	result, err := spawnMolecule(ctx, store, subgraph, vars, "", actor, true, types.IDPrefixWisp)
+	result, err := spawnMoleculeWithOptions(ctx, store, subgraph, CloneOptions{
+		Vars:      vars,
+		Actor:     actor,
+		Ephemeral: true,
+		Prefix:    types.IDPrefixWisp,
+		RootOnly:  rootOnly,
+	})
 	if err != nil {
 		FatalError("creating wisp: %v", err)
 	}
@@ -724,10 +738,12 @@ func init() {
 	// Wisp command flags (for direct create: bd mol wisp <proto>)
 	wispCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value)")
 	wispCmd.Flags().Bool("dry-run", false, "Preview what would be created")
+	wispCmd.Flags().Bool("root-only", false, "Only create root wisp (skip child step wisps)")
 
 	// Wisp create command flags (kept for backwards compat: bd mol wisp create <proto>)
 	wispCreateCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value)")
 	wispCreateCmd.Flags().Bool("dry-run", false, "Preview what would be created")
+	wispCreateCmd.Flags().Bool("root-only", false, "Only create root wisp (skip child step wisps)")
 
 	wispListCmd.Flags().Bool("all", false, "Include closed wisps")
 
