@@ -52,13 +52,20 @@ func MigrateInfraToWisps(db *sql.DB) error {
 	log.Printf("migration 007: moving %d infra beads to wisps table", count)
 
 	// Copy infra issues to wisps table.
-	// The wisps table has identical schema to issues (both have ephemeral column).
+	// Query wisps column names at runtime to handle schema drift between
+	// issues and wisps tables (issues may have columns wisps doesn't).
+	wispCols, err := getColumnNames(db, "wisps")
+	if err != nil {
+		return fmt.Errorf("getting wisps columns: %w", err)
+	}
+	colList := strings.Join(wispCols, ", ")
+
 	// Use INSERT IGNORE to skip any that already exist in wisps (idempotent).
-	//nolint:gosec // G201: inClause built from ? placeholders
+	//nolint:gosec // G201: inClause built from ? placeholders, colList from DB metadata
 	_, err = db.Exec(fmt.Sprintf(`
-		INSERT IGNORE INTO wisps
-		SELECT * FROM issues WHERE issue_type IN (%s)
-	`, inClause), args...)
+		INSERT IGNORE INTO wisps (%s)
+		SELECT %s FROM issues WHERE issue_type IN (%s)
+	`, colList, colList, inClause), args...)
 	if err != nil {
 		return fmt.Errorf("copying infra issues to wisps: %w", err)
 	}

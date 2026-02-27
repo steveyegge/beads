@@ -61,3 +61,32 @@ func tableExists(db *sql.DB, table string) (bool, error) {
 	defer rows.Close()
 	return rows.Next(), nil
 }
+
+// getColumnNames returns the ordered list of column names for a table.
+// Uses SHOW COLUMNS to stay scoped to the current database and avoid
+// information_schema issues with stale worktree catalogs (GH#2051).
+func getColumnNames(db *sql.DB, table string) ([]string, error) {
+	// #nosec G202 -- table name comes from internal constants, not user input.
+	rows, err := db.Query("SHOW COLUMNS FROM `" + table + "`") //nolint:gosec // G202: table name is an internal constant
+	if err != nil {
+		return nil, fmt.Errorf("failed to get columns for %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	var cols []string
+	for rows.Next() {
+		var field, colType, null, key string
+		var dflt, extra sql.NullString
+		if err := rows.Scan(&field, &colType, &null, &key, &dflt, &extra); err != nil {
+			return nil, fmt.Errorf("scanning column info for %s: %w", table, err)
+		}
+		cols = append(cols, field)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating columns for %s: %w", table, err)
+	}
+	if len(cols) == 0 {
+		return nil, fmt.Errorf("table %s has no columns", table)
+	}
+	return cols, nil
+}
