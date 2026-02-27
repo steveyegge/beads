@@ -359,6 +359,78 @@ func TestCheckMergeDriver_PartiallyConfigured(t *testing.T) {
 	}
 }
 
+// Tests for FixMergeDriver
+
+func TestFixMergeDriver(t *testing.T) {
+	tests := []struct {
+		name          string
+		setup         func(t *testing.T, dir string)
+		expectFixed   bool
+		verifyConfig  string
+	}{
+		{
+			name: "fixes invalid %L/%R placeholders",
+			setup: func(t *testing.T, dir string) {
+				setupGitRepoInDir(t, dir)
+				cmd := exec.Command("git", "config", "merge.beads.driver", "bd merge %L %O %A %R")
+				cmd.Dir = dir
+				if err := cmd.Run(); err != nil {
+					t.Fatalf("failed to set git config: %v", err)
+				}
+			},
+			expectFixed:  true,
+			verifyConfig: "bd merge %A %O %A %B",
+		},
+		{
+			name: "fixes missing merge driver config",
+			setup: func(t *testing.T, dir string) {
+				setupGitRepoInDir(t, dir)
+				// No merge driver configured
+			},
+			expectFixed:  true,
+			verifyConfig: "bd merge %A %O %A %B",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			tt.setup(t, tmpDir)
+
+			runInDir(t, tmpDir, func() {
+				err := FixMergeDriver()
+				if tt.expectFixed {
+					if err != nil {
+						t.Fatalf("FixMergeDriver() unexpected error: %v", err)
+					}
+					// Verify the config was set correctly
+					cmd := exec.Command("git", "config", "merge.beads.driver")
+					cmd.Dir = tmpDir
+					output, err := cmd.Output()
+					if err != nil {
+						t.Fatalf("failed to read merge.beads.driver: %v", err)
+					}
+					got := strings.TrimSpace(string(output))
+					if got != tt.verifyConfig {
+						t.Errorf("merge.beads.driver = %q, want %q", got, tt.verifyConfig)
+					}
+					// Verify name was also set
+					nameCmd := exec.Command("git", "config", "merge.beads.name")
+					nameCmd.Dir = tmpDir
+					nameOutput, err := nameCmd.Output()
+					if err != nil {
+						t.Fatalf("failed to read merge.beads.name: %v", err)
+					}
+					nameGot := strings.TrimSpace(string(nameOutput))
+					if nameGot != "Beads JSONL merge driver" {
+						t.Errorf("merge.beads.name = %q, want %q", nameGot, "Beads JSONL merge driver")
+					}
+				}
+			})
+		})
+	}
+}
+
 // Tests for CheckOrphanedIssues
 
 // TestCheckOrphanedIssues_DoltBackend verifies that CheckOrphanedIssues returns
