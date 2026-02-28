@@ -2,13 +2,13 @@ package doctor
 
 import (
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // CheckRemoteConsistency compares remotes registered in the SQL server
@@ -42,7 +42,7 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 	doltDir := doltserver.ResolveDoltDir(beadsDir)
 	dbName := cfg.GetDoltDatabase()
 	dbDir := filepath.Join(doltDir, dbName)
-	cliRemotes, cliErr := queryCLIRemotes(dbDir)
+	cliRemotes, cliErr := doltutil.ListCLIRemotes(dbDir)
 	if cliErr != nil {
 		return DoctorCheck{
 			Name:     "Remote Consistency",
@@ -74,7 +74,6 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 	}
 
 	var issues []string
-	var fixable []string
 	hasConflict := false
 
 	// Check all SQL remotes
@@ -82,7 +81,6 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 		cliURL, inCLI := cliMap[name]
 		if !inCLI {
 			issues = append(issues, fmt.Sprintf("%s: SQL only (%s)", name, sqlURL))
-			fixable = append(fixable, name)
 		} else if sqlURL != cliURL {
 			issues = append(issues, fmt.Sprintf("%s: CONFLICT — SQL=%s, CLI=%s", name, sqlURL, cliURL))
 			hasConflict = true
@@ -93,7 +91,6 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 	for name, cliURL := range cliMap {
 		if _, inSQL := sqlMap[name]; !inSQL {
 			issues = append(issues, fmt.Sprintf("%s: CLI only (%s)", name, cliURL))
-			fixable = append(fixable, name)
 		}
 	}
 
@@ -101,7 +98,7 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 		msg := fmt.Sprintf("%d remote(s) in sync", len(sqlRemotes))
 		// Add refs/dolt/data note for git+ssh remotes
 		for _, r := range sqlRemotes {
-			if isSSHRemoteURL(r.URL) {
+			if doltutil.IsSSHURL(r.URL) {
 				msg += " — git+ssh remotes also support refs/dolt/data (see https://docs.dolthub.com/concepts/dolt/git/remotes)"
 				break
 			}
@@ -130,7 +127,7 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 }
 
 // querySQLRemotes gets remotes from the SQL server.
-func querySQLRemotes(beadsDir string, cfg *configfile.Config) ([]storage.RemoteInfo, error) {
+func querySQLRemotes(beadsDir string, _ *configfile.Config) ([]storage.RemoteInfo, error) {
 	db, _, err := openDoltDB(beadsDir)
 	if err != nil {
 		return nil, err
@@ -152,32 +149,4 @@ func querySQLRemotes(beadsDir string, cfg *configfile.Config) ([]storage.RemoteI
 		remotes = append(remotes, r)
 	}
 	return remotes, rows.Err()
-}
-
-// queryCLIRemotes runs `dolt remote -v` in the database directory.
-func queryCLIRemotes(dbDir string) ([]storage.RemoteInfo, error) {
-	cmd := exec.Command("dolt", "remote", "-v") // #nosec G204 -- fixed command
-	cmd.Dir = dbDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("dolt remote -v: %s: %w", strings.TrimSpace(string(out)), err)
-	}
-	var remotes []storage.RemoteInfo
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) >= 2 {
-			remotes = append(remotes, storage.RemoteInfo{Name: parts[0], URL: parts[1]})
-		}
-	}
-	return remotes, nil
-}
-
-func isSSHRemoteURL(url string) bool {
-	return strings.HasPrefix(url, "git+ssh://") ||
-		strings.HasPrefix(url, "ssh://") ||
-		strings.Contains(url, "git@")
 }

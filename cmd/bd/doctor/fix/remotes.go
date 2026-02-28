@@ -3,12 +3,11 @@ package fix
 import (
 	"database/sql"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // RemoteConsistency fixes remote discrepancies between SQL server and CLI.
@@ -32,24 +31,24 @@ func RemoteConsistency(repoPath string) error {
 	}
 	defer db.Close()
 
-	sqlRemotes, err := queryRemotes(db)
+	sqlRemotes, err := queryFixRemotes(db)
 	if err != nil {
 		return fmt.Errorf("failed to query SQL remotes: %w", err)
 	}
 
 	// Get CLI remotes
-	cliRemotes, err := queryCLIRemotesForFix(dbDir)
+	cliRemotes, err := doltutil.ListCLIRemotes(dbDir)
 	if err != nil {
 		return fmt.Errorf("failed to query CLI remotes: %w", err)
 	}
 
 	sqlMap := map[string]string{}
 	for _, r := range sqlRemotes {
-		sqlMap[r.name] = r.url
+		sqlMap[r.Name] = r.URL
 	}
 	cliMap := map[string]string{}
 	for _, r := range cliRemotes {
-		cliMap[r.name] = r.url
+		cliMap[r.Name] = r.URL
 	}
 
 	fixed := 0
@@ -57,10 +56,8 @@ func RemoteConsistency(repoPath string) error {
 	// SQL-only: add to CLI
 	for name, url := range sqlMap {
 		if _, inCLI := cliMap[name]; !inCLI {
-			cmd := exec.Command("dolt", "remote", "add", name, url) // #nosec G204
-			cmd.Dir = dbDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				fmt.Printf("  Warning: could not add CLI remote %s: %s\n", name, strings.TrimSpace(string(out)))
+			if err := doltutil.AddCLIRemote(dbDir, name, url); err != nil {
+				fmt.Printf("  Warning: could not add CLI remote %s: %v\n", name, err)
 			} else {
 				fmt.Printf("  Added CLI remote: %s → %s\n", name, url)
 				fixed++
@@ -93,9 +90,9 @@ func RemoteConsistency(repoPath string) error {
 	return nil
 }
 
-type remoteInfo struct {
-	name string
-	url  string
+type fixRemoteInfo struct {
+	Name string
+	URL  string
 }
 
 func openFixDB(beadsDir string, cfg *configfile.Config) (*sql.DB, error) {
@@ -116,41 +113,20 @@ func openFixDB(beadsDir string, cfg *configfile.Config) (*sql.DB, error) {
 	return sql.Open("mysql", connStr)
 }
 
-func queryRemotes(db *sql.DB) ([]remoteInfo, error) {
+func queryFixRemotes(db *sql.DB) ([]fixRemoteInfo, error) {
 	rows, err := db.Query("SELECT name, url FROM dolt_remotes")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var remotes []remoteInfo
+	var remotes []fixRemoteInfo
 	for rows.Next() {
-		var r remoteInfo
-		if err := rows.Scan(&r.name, &r.url); err != nil {
+		var r fixRemoteInfo
+		if err := rows.Scan(&r.Name, &r.URL); err != nil {
 			return nil, err
 		}
 		remotes = append(remotes, r)
 	}
 	return remotes, rows.Err()
-}
-
-func queryCLIRemotesForFix(dbDir string) ([]remoteInfo, error) {
-	cmd := exec.Command("dolt", "remote", "-v") // #nosec G204
-	cmd.Dir = dbDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
-	}
-	var remotes []remoteInfo
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) >= 2 {
-			remotes = append(remotes, remoteInfo{name: parts[0], url: parts[1]})
-		}
-	}
-	return remotes, nil
 }

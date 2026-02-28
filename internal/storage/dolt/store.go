@@ -1168,16 +1168,19 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 // because CALL DOLT_PUSH through the SQL server times out — the MySQL connection
 // drops before the SSH transfer completes.
 func (s *DoltStore) isSSHRemote(ctx context.Context) bool {
+	// Check SQL remotes first
 	remotes, err := s.ListRemotes(ctx)
-	if err != nil {
-		return false
+	if err == nil {
+		for _, r := range remotes {
+			if r.Name == s.remote {
+				return doltutil.IsSSHURL(r.URL)
+			}
+		}
 	}
-	for _, r := range remotes {
-		if r.Name == s.remote {
-			url := r.URL
-			return strings.HasPrefix(url, "git+ssh://") ||
-				strings.HasPrefix(url, "ssh://") ||
-				strings.Contains(url, "git@")
+	// Fall back to CLI remotes (covers drift where remote exists only in filesystem)
+	if s.dbPath != "" {
+		if url := doltutil.FindCLIRemote(s.dbPath, s.remote); url != "" {
+			return doltutil.IsSSHURL(url)
 		}
 	}
 	return false

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -21,7 +20,9 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/ui"
+	"golang.org/x/term"
 )
 
 var doltCmd = &cobra.Command{
@@ -546,85 +547,13 @@ Use --dry-run to see what would be dropped without actually dropping.`,
 	},
 }
 
-// --- Dolt remote CLI helpers ---
-// These operate on the filesystem-level dolt remote config (used by dolt CLI),
-// complementing the SQL-level remotes (used by dolt sql-server).
-
-// listCLIRemotes parses `dolt remote -v` output from the database directory.
-func listCLIRemotes(dbPath string) ([]remoteEntry, error) {
-	cmd := exec.Command("dolt", "remote", "-v") // #nosec G204 -- fixed command
-	cmd.Dir = dbPath
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("dolt remote -v failed: %s: %w", strings.TrimSpace(string(out)), err)
-	}
-	var remotes []remoteEntry
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		// dolt remote -v outputs: name <tab-or-spaces> url
-		parts := strings.Fields(line)
-		if len(parts) >= 2 {
-			remotes = append(remotes, remoteEntry{Name: parts[0], URL: parts[1]})
-		}
-	}
-	return remotes, nil
-}
-
-// remoteEntry is a name+URL pair for CLI remote output.
-type remoteEntry struct {
-	Name string
-	URL  string
-}
-
-// addCLIRemote adds a remote at the filesystem level via dolt CLI.
-func addCLIRemote(dbPath, name, url string) error {
-	cmd := exec.Command("dolt", "remote", "add", name, url) // #nosec G204 -- fixed command with user args
-	cmd.Dir = dbPath
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("dolt remote add failed: %s: %w", strings.TrimSpace(string(out)), err)
-	}
-	return nil
-}
-
-// removeCLIRemote removes a remote at the filesystem level via dolt CLI.
-func removeCLIRemote(dbPath, name string) error {
-	cmd := exec.Command("dolt", "remote", "remove", name) // #nosec G204 -- fixed command with user args
-	cmd.Dir = dbPath
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("dolt remote remove failed: %s: %w", strings.TrimSpace(string(out)), err)
-	}
-	return nil
-}
-
-// findCLIRemote returns the URL for a named CLI remote, or "" if not found.
-func findCLIRemote(dbPath, name string) string {
-	remotes, err := listCLIRemotes(dbPath)
-	if err != nil {
-		return ""
-	}
-	for _, r := range remotes {
-		if r.Name == name {
-			return r.URL
-		}
-	}
-	return ""
-}
-
-// isSSHURL returns true if the URL uses SSH transport.
-func isSSHURL(url string) bool {
-	return strings.HasPrefix(url, "git+ssh://") ||
-		strings.HasPrefix(url, "ssh://") ||
-		strings.Contains(url, "git@")
-}
-
 // confirmOverwrite prompts the user to confirm overwriting an existing remote.
-// Returns true if the user confirms. Always returns true if stdin is not a terminal.
+// Returns true if the user confirms. Returns true without prompting if stdin is
+// not a terminal (non-interactive/CI contexts).
 func confirmOverwrite(surface, name, existingURL, newURL string) bool {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return true
+	}
 	fmt.Printf("  Remote %q already exists on %s: %s\n", name, surface, existingURL)
 	fmt.Printf("  Overwrite with: %s\n", newURL)
 	fmt.Print("  Overwrite? (y/N): ")
@@ -673,7 +602,7 @@ var doltRemoteAddCmd = &cobra.Command{
 				break
 			}
 		}
-		cliURL := findCLIRemote(dbPath, name)
+		cliURL := doltutil.FindCLIRemote(dbPath, name)
 
 		// Prompt for overwrite if either surface already has this remote
 		if sqlURL != "" && sqlURL != url {
@@ -692,7 +621,7 @@ var doltRemoteAddCmd = &cobra.Command{
 				fmt.Println("Canceled.")
 				return
 			}
-			if err := removeCLIRemote(dbPath, name); err != nil {
+			if err := doltutil.RemoveCLIRemote(dbPath, name); err != nil {
 				fmt.Fprintf(os.Stderr, "Error removing existing CLI remote: %v\n", err)
 				os.Exit(1)
 			}
@@ -712,7 +641,7 @@ var doltRemoteAddCmd = &cobra.Command{
 
 		// Add to CLI filesystem (skip if already correct)
 		if cliURL != url {
-			if err := addCLIRemote(dbPath, name, url); err != nil {
+			if err := doltutil.AddCLIRemote(dbPath, name, url); err != nil {
 				// Non-fatal: SQL remote was added successfully
 				fmt.Fprintf(os.Stderr, "Warning: SQL remote added but CLI remote failed: %v\n", err)
 				fmt.Fprintf(os.Stderr, "Run: cd %s && dolt remote add %s %s\n", dbPath, name, url)
@@ -752,7 +681,7 @@ var doltRemoteListCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		cliRemotes, cliErr := listCLIRemotes(dbPath)
+		cliRemotes, cliErr := doltutil.ListCLIRemotes(dbPath)
 
 		// Build unified view
 		type unifiedRemote struct {
@@ -862,7 +791,7 @@ var doltRemoteRemoveCmd = &cobra.Command{
 				break
 			}
 		}
-		cliURL := findCLIRemote(dbPath, name)
+		cliURL := doltutil.FindCLIRemote(dbPath, name)
 
 		// Refuse removal if URLs conflict — user must resolve first
 		forceRemove, _ := cmd.Flags().GetBool("force")
@@ -888,7 +817,7 @@ var doltRemoteRemoveCmd = &cobra.Command{
 
 		// Remove from CLI filesystem
 		if cliURL != "" {
-			if err := removeCLIRemote(dbPath, name); err != nil {
+			if err := doltutil.RemoveCLIRemote(dbPath, name); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: SQL remote removed but CLI remote failed: %v\n", err)
 				fmt.Fprintf(os.Stderr, "Run: cd %s && dolt remote remove %s\n", dbPath, name)
 			}
@@ -1030,7 +959,7 @@ func showDoltConfig(testConnection bool) {
 			}
 		}
 	}
-	cliRemotes, cliErr := listCLIRemotes(dbDir)
+	cliRemotes, cliErr := doltutil.ListCLIRemotes(dbDir)
 	if len(sqlRemotes) == 0 && (cliErr != nil || len(cliRemotes) == 0) {
 		fmt.Println("  (none)")
 	} else {
@@ -1239,7 +1168,7 @@ func testDoltConnection() {
 	}
 	fmt.Println("\nRemote connectivity:")
 	for _, r := range remotes {
-		if isSSHURL(r.URL) {
+		if doltutil.IsSSHURL(r.URL) {
 			// Test SSH connectivity by parsing host from URL
 			sshHost := extractSSHHost(r.URL)
 			if sshHost != "" {
