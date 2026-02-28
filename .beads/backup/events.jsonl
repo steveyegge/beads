@@ -784,3 +784,116 @@
 {"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:37:24Z","event_type":"closed","id":4597,"issue_id":"bd-wisp-2z439","new_value":"patrol cycle complete: Cycle 11: Rig idle. No polecats, no new mail, deacon alive.","old_value":""}
 {"actor":"gastown/alpha","comment":"","created_at":"2026-02-27T17:38:16Z","event_type":"created","id":4598,"issue_id":"bd-wisp-2y171","new_value":"","old_value":""}
 {"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:39:09Z","event_type":"closed","id":4599,"issue_id":"bd-wisp-v979b","new_value":"patrol cycle complete: Cycle 12: Rig idle. No activity.","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:41:38Z","event_type":"closed","id":4600,"issue_id":"bd-wisp-6j3zb","new_value":"Cycle 13: Rig idle","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:47:28Z","event_type":"closed","id":4601,"issue_id":"bd-wisp-1hc1f","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:47:32Z","event_type":"claimed","id":4602,"issue_id":"bd-wisp-orq3n","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:47:43Z","event_type":"closed","id":4603,"issue_id":"bd-wisp-orq3n","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:47:51Z","event_type":"claimed","id":4604,"issue_id":"bd-wisp-t77h5","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:47:53Z","event_type":"closed","id":4605,"issue_id":"bd-wisp-rf81c","new_value":"Cycle 15: Handoff threshold reached, rig idle","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:47:57Z","event_type":"closed","id":4606,"issue_id":"bd-wisp-t77h5","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:10Z","event_type":"claimed","id":4607,"issue_id":"bd-wisp-7bj62","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:10Z","event_type":"closed","id":4608,"issue_id":"bd-wisp-7bj62","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:16Z","event_type":"claimed","id":4609,"issue_id":"bd-wisp-42bij","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:16Z","event_type":"closed","id":4610,"issue_id":"bd-wisp-42bij","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:23Z","event_type":"claimed","id":4611,"issue_id":"bd-wisp-etz16","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:23Z","event_type":"closed","id":4612,"issue_id":"bd-wisp-etz16","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:30Z","event_type":"claimed","id":4613,"issue_id":"bd-wisp-ftyf9","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:30Z","event_type":"closed","id":4614,"issue_id":"bd-wisp-ftyf9","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:38Z","event_type":"claimed","id":4615,"issue_id":"bd-wisp-t7l78","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:41Z","event_type":"closed","id":4616,"issue_id":"bd-wisp-t7l78","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:48:43Z","event_type":"closed","id":4617,"issue_id":"bd-wisp-g2qh0","new_value":"Stale wisp from previous session, replaced by bd-wisp-azbte","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:50Z","event_type":"claimed","id":4618,"issue_id":"bd-wisp-n8jn7","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:50Z","event_type":"closed","id":4619,"issue_id":"bd-wisp-n8jn7","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:48:51Z","event_type":"claimed","id":4620,"issue_id":"bd-wisp-08988","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:48:59Z","event_type":"claimed","id":4621,"issue_id":"bd-wisp-f1szd","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:49:03Z","event_type":"closed","id":4622,"issue_id":"bd-wisp-f1szd","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:49:10Z","event_type":"claimed","id":4623,"issue_id":"bd-wisp-2wwt5","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:49:14Z","event_type":"closed","id":4624,"issue_id":"bd-wisp-2wwt5","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:49:17Z","event_type":"closed","id":4625,"issue_id":"bd-wisp-08988","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:49:21Z","event_type":"claimed","id":4626,"issue_id":"bd-wisp-92bqm","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:49:26Z","event_type":"closed","id":4627,"issue_id":"bd-wisp-92bqm","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:49:27Z","event_type":"claimed","id":4628,"issue_id":"bd-wisp-ar089","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:49:33Z","event_type":"closed","id":4629,"issue_id":"bd-wisp-ar089","new_value":"No cleanup wisps found","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:49:35Z","event_type":"closed","id":4630,"issue_id":"bd-wisp-5167w","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:49:40Z","event_type":"claimed","id":4631,"issue_id":"bd-wisp-4erf3","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:49:46Z","event_type":"closed","id":4632,"issue_id":"bd-wisp-4erf3","new_value":"Refinery running, no pending MRs","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:49:47Z","event_type":"claimed","id":4633,"issue_id":"bd-wisp-cgwxj","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:49:51Z","event_type":"claimed","id":4634,"issue_id":"bd-wisp-0354b","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:49:51Z","event_type":"closed","id":4635,"issue_id":"bd-wisp-cgwxj","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:49:55Z","event_type":"closed","id":4636,"issue_id":"bd-wisp-0354b","new_value":"No active polecats","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:49:55Z","event_type":"claimed","id":4637,"issue_id":"bd-wisp-b0pgy","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:01Z","event_type":"closed","id":4638,"issue_id":"bd-wisp-b0pgy","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:01Z","event_type":"claimed","id":4639,"issue_id":"bd-wisp-7eadz","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:05Z","event_type":"closed","id":4640,"issue_id":"bd-wisp-7eadz","new_value":"No timer gates found","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:05Z","event_type":"claimed","id":4641,"issue_id":"bd-wisp-7m3d2","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:05Z","event_type":"closed","id":4642,"issue_id":"bd-wisp-7m3d2","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:11Z","event_type":"claimed","id":4643,"issue_id":"bd-wisp-4y7xj","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:12Z","event_type":"claimed","id":4644,"issue_id":"bd-wisp-telnm","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:12Z","event_type":"closed","id":4645,"issue_id":"bd-wisp-telnm","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:15Z","event_type":"closed","id":4646,"issue_id":"bd-wisp-4y7xj","new_value":"No active swarms","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:20Z","event_type":"claimed","id":4647,"issue_id":"bd-wisp-kvdgv","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:20Z","event_type":"closed","id":4648,"issue_id":"bd-wisp-kvdgv","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:23Z","event_type":"claimed","id":4649,"issue_id":"bd-wisp-wimlq","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:27Z","event_type":"claimed","id":4650,"issue_id":"bd-wisp-kvwuy","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:27Z","event_type":"closed","id":4651,"issue_id":"bd-wisp-kvwuy","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:32Z","event_type":"closed","id":4652,"issue_id":"bd-wisp-wimlq","new_value":"Deacon alive, nudged","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:34Z","event_type":"claimed","id":4653,"issue_id":"bd-wisp-df19i","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:34Z","event_type":"closed","id":4654,"issue_id":"bd-wisp-df19i","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:35Z","event_type":"claimed","id":4655,"issue_id":"bd-wisp-71vcf","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:39Z","event_type":"closed","id":4656,"issue_id":"bd-wisp-71vcf","new_value":"Inbox already clean (0 messages)","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:41Z","event_type":"claimed","id":4657,"issue_id":"bd-wisp-46umv","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:41Z","event_type":"closed","id":4658,"issue_id":"bd-wisp-46umv","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:42Z","event_type":"claimed","id":4659,"issue_id":"bd-wisp-ofntd","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:46Z","event_type":"closed","id":4660,"issue_id":"bd-wisp-ofntd","new_value":"Fresh session, context low","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:48Z","event_type":"claimed","id":4661,"issue_id":"bd-wisp-s3dce","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:48Z","event_type":"closed","id":4662,"issue_id":"bd-wisp-s3dce","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:50:54Z","event_type":"claimed","id":4663,"issue_id":"bd-wisp-n7f8c","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:55Z","event_type":"claimed","id":4664,"issue_id":"bd-wisp-mz4lk","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:50:55Z","event_type":"closed","id":4665,"issue_id":"bd-wisp-mz4lk","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:51:02Z","event_type":"claimed","id":4666,"issue_id":"bd-wisp-rsi16","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:51:02Z","event_type":"closed","id":4667,"issue_id":"bd-wisp-rsi16","new_value":"Closed","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:51:07Z","event_type":"closed","id":4668,"issue_id":"bd-wisp-psxiw","new_value":"Closed","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:51:13Z","event_type":"closed","id":4669,"issue_id":"bd-wisp-n7f8c","new_value":"Context low, looping","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:51:14Z","event_type":"closed","id":4670,"issue_id":"bd-wisp-azbte","new_value":"Patrol 1 complete, rig idle","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:05Z","event_type":"claimed","id":4671,"issue_id":"bd-wisp-whkx2","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:09Z","event_type":"closed","id":4672,"issue_id":"bd-wisp-whkx2","new_value":"No mail","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:14Z","event_type":"claimed","id":4673,"issue_id":"bd-wisp-4bsdt","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:18Z","event_type":"closed","id":4674,"issue_id":"bd-wisp-4bsdt","new_value":"No cleanup wisps","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:22Z","event_type":"claimed","id":4675,"issue_id":"bd-wisp-b0z0j","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:25Z","event_type":"closed","id":4676,"issue_id":"bd-wisp-b0z0j","new_value":"Refinery running, no MRs","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:29Z","event_type":"claimed","id":4677,"issue_id":"bd-wisp-h6w3r","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:33Z","event_type":"closed","id":4678,"issue_id":"bd-wisp-h6w3r","new_value":"No polecats","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:38Z","event_type":"claimed","id":4679,"issue_id":"bd-wisp-bk75t","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:41Z","event_type":"closed","id":4680,"issue_id":"bd-wisp-bk75t","new_value":"No timer gates","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:44Z","event_type":"claimed","id":4681,"issue_id":"bd-wisp-g1nhj","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:47Z","event_type":"closed","id":4682,"issue_id":"bd-wisp-g1nhj","new_value":"No active swarms","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:51Z","event_type":"claimed","id":4683,"issue_id":"bd-wisp-lwmre","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:52:59Z","event_type":"closed","id":4684,"issue_id":"bd-wisp-lwmre","new_value":"Deacon alive","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:53:02Z","event_type":"claimed","id":4685,"issue_id":"bd-wisp-xoqcz","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:53:05Z","event_type":"closed","id":4686,"issue_id":"bd-wisp-xoqcz","new_value":"Inbox clean","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:53:08Z","event_type":"claimed","id":4687,"issue_id":"bd-wisp-9uqhn","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:53:12Z","event_type":"closed","id":4688,"issue_id":"bd-wisp-9uqhn","new_value":"Context manageable, patrol 2","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:53:16Z","event_type":"claimed","id":4689,"issue_id":"bd-wisp-a4hs8","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:53:25Z","event_type":"closed","id":4690,"issue_id":"bd-wisp-a4hs8","new_value":"Context low, looping","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:53:25Z","event_type":"closed","id":4691,"issue_id":"bd-wisp-3dxkq","new_value":"Patrol 2 complete, rig idle","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:54:37Z","event_type":"claimed","id":4692,"issue_id":"bd-wisp-sti0i","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:54:41Z","event_type":"closed","id":4693,"issue_id":"bd-wisp-sti0i","new_value":"No mail","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:54:44Z","event_type":"claimed","id":4694,"issue_id":"bd-wisp-y9vyo","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:54:47Z","event_type":"closed","id":4695,"issue_id":"bd-wisp-y9vyo","new_value":"No cleanup wisps","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:54:52Z","event_type":"claimed","id":4696,"issue_id":"bd-wisp-tqgim","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:54:56Z","event_type":"closed","id":4697,"issue_id":"bd-wisp-tqgim","new_value":"Refinery running, no MRs","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:00Z","event_type":"claimed","id":4698,"issue_id":"bd-wisp-2hmvg","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:00Z","event_type":"closed","id":4699,"issue_id":"bd-wisp-2hmvg","new_value":"No polecats","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:07Z","event_type":"claimed","id":4700,"issue_id":"bd-wisp-lzr0e","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:13Z","event_type":"closed","id":4701,"issue_id":"bd-wisp-lzr0e","new_value":"No timer gates","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:17Z","event_type":"claimed","id":4702,"issue_id":"bd-wisp-vi3gh","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:19Z","event_type":"closed","id":4703,"issue_id":"bd-wisp-vi3gh","new_value":"No swarms","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:23Z","event_type":"claimed","id":4704,"issue_id":"bd-wisp-7bt8t","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:27Z","event_type":"closed","id":4705,"issue_id":"bd-wisp-7bt8t","new_value":"Deacon alive","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:30Z","event_type":"claimed","id":4706,"issue_id":"bd-wisp-vzuka","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:33Z","event_type":"closed","id":4707,"issue_id":"bd-wisp-vzuka","new_value":"Inbox clean","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:37Z","event_type":"claimed","id":4708,"issue_id":"bd-wisp-h04t1","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:37Z","event_type":"closed","id":4709,"issue_id":"bd-wisp-h04t1","new_value":"Context manageable, patrol 3","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:47Z","event_type":"claimed","id":4710,"issue_id":"bd-wisp-i8vgy","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:47Z","event_type":"closed","id":4711,"issue_id":"bd-wisp-i8vgy","new_value":"Context low, looping with 90s backoff","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:55:47Z","event_type":"closed","id":4712,"issue_id":"bd-wisp-xy7wf","new_value":"Patrol 3 complete, rig idle","old_value":""}
