@@ -28,11 +28,11 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 	}
 
 	// Get SQL remotes via direct connection
-	sqlRemotes, sqlErr := querySQLRemotes(beadsDir, cfg)
+	sqlRemotes, sqlErr := querySQLRemotes(beadsDir)
 	if sqlErr != nil {
 		return DoctorCheck{
 			Name:     "Remote Consistency",
-			Status:   StatusOK,
+			Status:   StatusWarning,
 			Message:  "Could not query SQL remotes (server may not be running)",
 			Category: CategoryData,
 		}
@@ -121,7 +121,7 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 }
 
 // querySQLRemotes gets remotes from the SQL server.
-func querySQLRemotes(beadsDir string, _ *configfile.Config) ([]storage.RemoteInfo, error) {
+func querySQLRemotes(beadsDir string) ([]storage.RemoteInfo, error) {
 	db, _, err := openDoltDB(beadsDir)
 	if err != nil {
 		return nil, err
