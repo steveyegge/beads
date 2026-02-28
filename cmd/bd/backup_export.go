@@ -151,15 +151,20 @@ func runBackupExport(ctx context.Context, force bool) (*backupState, error) {
 
 	hasWisps := tableExistsCheck(ctx, store, "wisps")
 
-	// Export each table. Use SELECT * so we capture all columns (schema has 50+
-	// fields and grows over time). The dynamic column scanner handles this automatically.
-	issuesQuery := "SELECT * FROM issues ORDER BY id"
-	if hasWisps {
-		issuesQuery = "SELECT * FROM issues UNION ALL SELECT * FROM wisps ORDER BY id"
-	}
-	n, err := exportTable(ctx, store, dir, "issues.jsonl", issuesQuery)
+	// Export issues + wisps. We avoid UNION ALL with SELECT * because issues and
+	// wisps may have different column counts (schema evolution), and Dolt's
+	// go-mysql-server panics on UNION with mismatched columns (set_op.go index
+	// out of range). Instead, export each table separately into the same file.
+	n, err := exportTable(ctx, store, dir, "issues.jsonl", "SELECT * FROM issues ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("backup issues: %w", err)
+	}
+	if hasWisps {
+		nw, err := exportTableAppend(ctx, store, dir, "issues.jsonl", "SELECT * FROM wisps ORDER BY id")
+		if err != nil {
+			return nil, fmt.Errorf("backup wisps: %w", err)
+		}
+		n += nw
 	}
 	state.Counts.Issues = n
 
@@ -296,6 +301,58 @@ func exportTable(ctx context.Context, q dbQuerier, dir, filename, query string) 
 	}
 
 	return count, atomicWriteFile(filepath.Join(dir, filename), lines)
+}
+
+// exportTableAppend runs a query and appends each row as a JSON object to an existing JSONL file.
+// Returns the number of rows exported. The file must already exist (created by exportTable).
+func exportTableAppend(ctx context.Context, q dbQuerier, dir, filename, query string) (int, error) {
+	rows, err := q.QueryContext(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("query failed: %w", err)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get columns: %w", err)
+	}
+
+	f, err := os.OpenFile(filepath.Join(dir, filename), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600) //nolint:gosec // path is constructed internally
+	if err != nil {
+		return 0, fmt.Errorf("failed to open file for append: %w", err)
+	}
+	defer f.Close()
+
+	count := 0
+	for rows.Next() {
+		values := make([]interface{}, len(cols))
+		ptrs := make([]interface{}, len(cols))
+		for i := range values {
+			ptrs[i] = &values[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return 0, fmt.Errorf("scan failed: %w", err)
+		}
+
+		row := make(map[string]interface{}, len(cols))
+		for i, col := range cols {
+			row[col] = normalizeValue(values[i])
+		}
+
+		data, err := json.Marshal(row)
+		if err != nil {
+			return 0, fmt.Errorf("marshal failed: %w", err)
+		}
+		data = append(data, '\n')
+		if _, err := f.Write(data); err != nil {
+			return 0, fmt.Errorf("write failed: %w", err)
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("row iteration failed: %w", err)
+	}
+	return count, nil
 }
 
 // exportEventsIncremental appends new events since the last high-water mark.
