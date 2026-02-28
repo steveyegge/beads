@@ -22,6 +22,8 @@
 {"issue_id":"bd-r8c","label":"from:gastown/polecats/rictus"}
 {"issue_id":"bd-r8c","label":"gt:message"}
 {"issue_id":"bd-r8c","label":"read"}
+{"issue_id":"bd-wisp-04r7","label":"gt:merge-request"}
+{"issue_id":"bd-wisp-0t4s","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-1bq0u0","label":"from:gastown/witness"}
 {"issue_id":"bd-wisp-1bq0u0","label":"gt:message"}
 {"issue_id":"bd-wisp-1bq0u0","label":"read"}
@@ -70,12 +72,15 @@
 {"issue_id":"bd-wisp-nv73fx","label":"result:success"}
 {"issue_id":"bd-wisp-nv73fx","label":"type:plugin-run"}
 {"issue_id":"bd-wisp-ofkv","label":"gt:merge-request"}
+{"issue_id":"bd-wisp-opuy","label":"gt:merge-request"}
+{"issue_id":"bd-wisp-qmyb","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-sn6r","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-tyzd","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-vlc54v","label":"delivery:pending"}
 {"issue_id":"bd-wisp-vlc54v","label":"from:overseer"}
 {"issue_id":"bd-wisp-vlc54v","label":"gt:message"}
 {"issue_id":"bd-wisp-vlc54v","label":"thread:thread-dbf0b977a00e"}
+{"issue_id":"bd-wisp-wi9a","label":"gt:merge-request"}
 {"issue_id":"bd-xq2","label":"plugin:rebuild-gt"}
 {"issue_id":"bd-xq2","label":"result:success"}
 {"issue_id":"bd-xq2","label":"rig:gastown"}

@@ -737,3 +737,25 @@
 {"actor":"mayor","comment":"","created_at":"2026-02-27T16:48:51Z","event_type":"closed","id":4550,"issue_id":"bd-wisp-t3st","new_value":"Test pollution","old_value":""}
 {"actor":"beads/polecats/obsidian","comment":"","created_at":"2026-02-27T16:50:52Z","event_type":"created","id":4551,"issue_id":"bd-wisp-k4r9","new_value":"","old_value":""}
 {"actor":"beads/witness","comment":"","created_at":"2026-02-27T16:52:08Z","event_type":"closed","id":4552,"issue_id":"bd-wisp-5omg","new_value":"burned: polecat nuked","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-02-27T16:52:41Z","event_type":"created","id":4553,"issue_id":"bd-beads-polecat-obsidian","new_value":"","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-02-27T16:52:46Z","event_type":"closed","id":4554,"issue_id":"bd-wisp-5omg","new_value":"burned: force re-sling","old_value":""}
+{"actor":"beads/polecats/jasper","comment":"","created_at":"2026-02-27T16:52:57Z","event_type":"created","id":4555,"issue_id":"bd-wisp-qmyb","new_value":"","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T16:53:01Z","event_type":"closed","id":4556,"issue_id":"bd-wisp-ofkv","new_value":"merged","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T16:53:38Z","event_type":"closed","id":4557,"issue_id":"bd-wisp-ic7j","new_value":"burned: polecat nuked","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-02-27T16:54:10Z","event_type":"created","id":4558,"issue_id":"bd-beads-polecat-jasper","new_value":"","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-02-27T16:54:17Z","event_type":"closed","id":4559,"issue_id":"bd-wisp-ic7j","new_value":"burned: force re-sling","old_value":""}
+{"actor":"beads/polecats/quartz","comment":"","created_at":"2026-02-27T16:59:26Z","event_type":"created","id":4560,"issue_id":"bd-wisp-0t4s","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:00:35Z","event_type":"closed","id":4561,"issue_id":"bd-wisp-56lz","new_value":"burned: polecat nuked","old_value":""}
+{"actor":"beads/polecats/amber","comment":"","created_at":"2026-02-27T17:01:51Z","event_type":"created","id":4562,"issue_id":"bd-wisp-04r7","new_value":"","old_value":""}
+{"actor":"beads/polecats/obsidian","comment":"","created_at":"2026-02-27T17:02:08Z","event_type":"created","id":4563,"issue_id":"bd-wisp-wi9a","new_value":"","old_value":""}
+{"actor":"beads/polecats/obsidian","comment":"","created_at":"2026-02-27T17:02:12Z","event_type":"closed","id":4564,"issue_id":"bd-wisp-esp6","new_value":"done","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:02:12Z","event_type":"closed","id":4565,"issue_id":"bd-wisp-al09","new_value":"merged","old_value":""}
+{"actor":"beads/polecats/jasper","comment":"","created_at":"2026-02-27T17:02:43Z","event_type":"created","id":4566,"issue_id":"bd-wisp-opuy","new_value":"","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:04:09Z","event_type":"closed","id":4567,"issue_id":"bd-wisp-jjg6","new_value":"burned: polecat nuked","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:04:18Z","event_type":"closed","id":4568,"issue_id":"bd-wisp-h2wl","new_value":"burned: polecat nuked","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-02-27T17:04:24Z","event_type":"created","id":4569,"issue_id":"bd-beads-polecat-quartz","new_value":"","old_value":""}
+{"actor":"mayor","comment":"","created_at":"2026-02-27T17:04:25Z","event_type":"closed","id":4570,"issue_id":"bd-wisp-jjg6","new_value":"burned: force re-sling","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:04:27Z","event_type":"closed","id":4571,"issue_id":"bd-wisp-esp6","new_value":"burned: polecat nuked","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:05:14Z","event_type":"closed","id":4572,"issue_id":"bd-wisp-k4r9","new_value":"merged","old_value":""}
+{"actor":"beads/refinery","comment":"","created_at":"2026-02-27T17:06:27Z","event_type":"closed","id":4573,"issue_id":"bd-wisp-qmyb","new_value":"rejected: Duplicate: bd-2c0 fix already merged via onyx (bd-wisp-al09). Jasper branch conflicts with already-merged code.","old_value":""}
+{"actor":"beads/witness","comment":"","created_at":"2026-02-27T17:07:23Z","event_type":"closed","id":4574,"issue_id":"bd-wisp-jbjv","new_value":"patrol cycle complete: Cycle 13: Nuked 3 done polecats (amber/jasper/obsidian). Recovered obsidian branch after nuke deleted it prematurely. Refinery merged obsidian/bd-kyu, rejected duplicate jasper/bd-2c0. 1 active polecat (quartz/bd-7vk). Nudged refinery about 4 pending MRs.","old_value":""}
