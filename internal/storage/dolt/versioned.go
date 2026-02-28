@@ -2,6 +2,7 @@ package dolt
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/steveyegge/beads/internal/storage"
@@ -160,7 +161,9 @@ func (s *DoltStore) ListBranches(ctx context.Context) ([]string, error) {
 // Implements storage.VersionedStorage.
 func (s *DoltStore) GetCurrentCommit(ctx context.Context) (string, error) {
 	var hash string
-	err := s.db.QueryRowContext(ctx, "SELECT DOLT_HASHOF('HEAD')").Scan(&hash)
+	err := s.queryRowContext(ctx, func(row *sql.Row) error {
+		return row.Scan(&hash)
+	}, "SELECT DOLT_HASHOF('HEAD')")
 	if err != nil {
 		return "", fmt.Errorf("failed to get current commit: %w", err)
 	}
