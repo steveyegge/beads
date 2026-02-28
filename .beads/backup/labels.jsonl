@@ -47,6 +47,7 @@
 {"issue_id":"bd-wisp-4tsii5","label":"type:plugin-run"}
 {"issue_id":"bd-wisp-5eap","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-5ebk","label":"gt:merge-request"}
+{"issue_id":"bd-wisp-5xt5x","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-6lv5by","label":"delivery-acked-at:2026-02-27T23:06:40Z"}
 {"issue_id":"bd-wisp-6lv5by","label":"delivery-acked-by:gastown/witness"}
 {"issue_id":"bd-wisp-6lv5by","label":"delivery:acked"}
@@ -55,6 +56,7 @@
 {"issue_id":"bd-wisp-6lv5by","label":"gt:message"}
 {"issue_id":"bd-wisp-6lv5by","label":"read"}
 {"issue_id":"bd-wisp-6obg","label":"gt:merge-request"}
+{"issue_id":"bd-wisp-7ap84","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-8b0r","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-8hnyi","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-al09","label":"gt:merge-request"}
@@ -67,6 +69,7 @@
 {"issue_id":"bd-wisp-byijtt","label":"rig:gastown"}
 {"issue_id":"bd-wisp-byijtt","label":"type:plugin-run"}
 {"issue_id":"bd-wisp-edg2","label":"gt:merge-request"}
+{"issue_id":"bd-wisp-g7y3h","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-hjp6w3","label":"delivery:pending"}
 {"issue_id":"bd-wisp-hjp6w3","label":"from:overseer"}
 {"issue_id":"bd-wisp-hjp6w3","label":"gt:message"}
