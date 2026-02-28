@@ -51,7 +51,7 @@ func maybeAutoCommit(ctx context.Context, p doltAutoCommitParams) error {
 	}
 
 	st := getStore()
-	if st == nil {
+	if st == nil || st.IsClosed() {
 		return nil
 	}
 

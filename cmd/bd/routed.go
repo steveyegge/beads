@@ -56,11 +56,11 @@ func (r *RoutedResult) Close() {
 // using routes.jsonl for prefix-based routing if needed.
 // This enables cross-repo issue lookups (e.g., `bd show gt-xyz` from ~/gt).
 //
-// The local store (typically the town database, hq) is checked first. This
-// ensures that beads created in hq — such as agent beads from gt doctor —
-// are resolved and modified in the canonical location, even when their prefix
-// would route to a rig-specific database. If not found locally, prefix-based
-// routing is tried as a fallback.
+// When the ID's prefix routes to a different beads directory, the routed store
+// is used directly — the local store is NOT checked first. This prevents
+// mutations (close, update) from hitting phantom copies in the wrong database
+// (bd-7vk). When routing does not apply (same directory or no route match),
+// the local store is used as before.
 //
 // Returns a RoutedResult containing the issue, resolved ID, and the store to use.
 // The caller MUST call result.Close() when done to release any routed storage.
@@ -75,37 +75,30 @@ func resolveAndGetIssueWithRouting(ctx context.Context, localStore *dolt.DoltSto
 		return resolveAndGetFromStore(ctx, localStore, id, false)
 	}
 
-	// Step 1: Try local store first.
-	// Agent beads may exist in the town database (hq) even when their prefix
-	// routes to a rig-specific database. Checking locally first ensures we
-	// operate on the canonical copy rather than a stale routed copy.
-	result, err := resolveAndGetFromStore(ctx, localStore, id, false)
-	if err == nil {
-		return result, nil
-	}
-	if !isNotFoundErr(err) {
-		return nil, err
-	}
-
-	// Step 2: Not found locally — try prefix-based routing.
+	// Check if this ID routes to a different beads directory.
 	beadsDir := filepath.Dir(dbPath)
-	routedStorage, err := routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, dolt.NewFromConfig)
-	if err != nil {
-		return nil, err
-	}
+	targetDir, routed, routeErr := routing.ResolveBeadsDirForID(ctx, id, beadsDir)
+	routesDifferently := routeErr == nil && routed && targetDir != beadsDir
 
-	if routedStorage != nil {
-		result, err := resolveAndGetFromStore(ctx, routedStorage.Storage, id, true)
+	// When routing says this ID belongs to a different database, go directly
+	// to the routed store. Checking the local store first would risk finding
+	// phantom/duplicate copies in the wrong database (bd-7vk).
+	if routesDifferently {
+		routedStore, err := dolt.NewFromConfig(ctx, targetDir)
 		if err != nil {
-			_ = routedStorage.Close()
+			return nil, fmt.Errorf("opening routed store at %s: %w", targetDir, err)
+		}
+		result, err := resolveAndGetFromStore(ctx, routedStore, id, true)
+		if err != nil {
+			_ = routedStore.Close()
 			return nil, err
 		}
-		result.closeFn = func() { _ = routedStorage.Close() }
+		result.closeFn = func() { _ = routedStore.Close() }
 		return result, nil
 	}
 
-	// No routing matched — return not-found
-	return nil, storage.ErrNotFound
+	// No cross-database routing — use local store.
+	return resolveAndGetFromStore(ctx, localStore, id, false)
 }
 
 // resolveAndGetFromStore resolves a partial ID and gets the issue from a specific store.
@@ -152,16 +145,21 @@ func openStoreForRig(ctx context.Context, rigOrPrefix string) (*dolt.DoltStore, 
 	return targetStore, nil
 }
 
-// getIssueWithRouting tries to get an issue from the local store first,
-// then falls back to checking routes.jsonl for prefix-based routing.
-// This enables cross-repo issue lookups (e.g., `bd show gt-xyz` from ~/gt).
+// getIssueWithRouting gets an issue, using prefix-based routing when the ID
+// belongs to a different beads directory. When routing applies, the routed
+// store is used directly (the local store is not checked first, preventing
+// phantom-copy issues — bd-7vk). When routing does not apply, the local
+// store is used.
 //
 // Returns a RoutedResult containing the issue and the store to use for related queries.
 // The caller MUST call result.Close() when done to release any routed storage.
 func getIssueWithRouting(ctx context.Context, localStore *dolt.DoltStore, id string) (*RoutedResult, error) {
-	// Step 1: Try local store first (current behavior)
-	issue, err := localStore.GetIssue(ctx, id)
-	if err == nil && issue != nil {
+	if dbPath == "" || beadsDirOverride() {
+		// No routing without a database path, or BEADS_DIR explicitly set (GH#663)
+		issue, err := localStore.GetIssue(ctx, id)
+		if err != nil {
+			return nil, err
+		}
 		return &RoutedResult{
 			Issue:      issue,
 			Store:      localStore,
@@ -170,50 +168,43 @@ func getIssueWithRouting(ctx context.Context, localStore *dolt.DoltStore, id str
 		}, nil
 	}
 
-	// Step 2: Check routes.jsonl for prefix-based routing
-	if dbPath == "" || beadsDirOverride() {
-		// No routing without a database path, or BEADS_DIR explicitly set (GH#663)
-		return &RoutedResult{
-			Issue:      issue,
-			Store:      localStore,
-			Routed:     false,
-			ResolvedID: id,
-		}, err
-	}
-
+	// Check if this ID routes to a different beads directory.
 	beadsDir := filepath.Dir(dbPath)
-	// Use GetRoutedStorageWithOpener with dolt to respect backend configuration (bd-m2jr)
-	routedStorage, routeErr := routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, dolt.NewFromConfig)
-	if routeErr != nil || routedStorage == nil {
-		// No routing found or error - return original result
-		return &RoutedResult{
-			Issue:      issue,
-			Store:      localStore,
-			Routed:     false,
-			ResolvedID: id,
-		}, err
-	}
+	targetDir, routed, routeErr := routing.ResolveBeadsDirForID(ctx, id, beadsDir)
+	routesDifferently := routeErr == nil && routed && targetDir != beadsDir
 
-	// Step 3: Try the routed storage
-	routedIssue, routedErr := routedStorage.Storage.GetIssue(ctx, id)
-	if routedErr != nil || routedIssue == nil {
-		_ = routedStorage.Close()
-		// Return the original error if routing also failed
+	if routesDifferently {
+		routedStore, err := dolt.NewFromConfig(ctx, targetDir)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("opening routed store at %s: %w", targetDir, err)
 		}
-		return nil, routedErr
+		routedIssue, routedErr := routedStore.GetIssue(ctx, id)
+		if routedErr != nil || routedIssue == nil {
+			_ = routedStore.Close()
+			if routedErr != nil {
+				return nil, routedErr
+			}
+			return nil, storage.ErrNotFound
+		}
+		return &RoutedResult{
+			Issue:      routedIssue,
+			Store:      routedStore,
+			Routed:     true,
+			ResolvedID: id,
+			closeFn:    func() { _ = routedStore.Close() },
+		}, nil
 	}
 
-	// Return the issue with the routed store
+	// No cross-database routing — use local store.
+	issue, err := localStore.GetIssue(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	return &RoutedResult{
-		Issue:      routedIssue,
-		Store:      routedStorage.Storage,
-		Routed:     true,
+		Issue:      issue,
+		Store:      localStore,
+		Routed:     false,
 		ResolvedID: id,
-		closeFn: func() {
-			_ = routedStorage.Close()
-		},
 	}, nil
 }
 

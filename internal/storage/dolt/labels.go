@@ -118,7 +118,7 @@ func (s *DoltStore) GetLabelsForIssues(ctx context.Context, issueIDs []string) (
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
-			return nil, err
+			return nil, wrapQueryError("iterate wisp labels for issues", err)
 		}
 		_ = rows.Close()
 	}
@@ -154,7 +154,7 @@ func (s *DoltStore) GetLabelsForIssues(ctx context.Context, issueIDs []string) (
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
-			return nil, err
+			return nil, wrapQueryError("iterate labels for issues", err)
 		}
 		_ = rows.Close()
 	}
@@ -187,7 +187,7 @@ func (s *DoltStore) GetIssuesByLabel(ctx context.Context, label string) ([]*type
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close() // Best effort cleanup on error path
-		return nil, err
+		return nil, wrapQueryError("iterate issues by label", err)
 	}
 	_ = rows.Close() // Redundant close for safety (rows already iterated)
 
@@ -210,7 +210,7 @@ func (s *DoltStore) GetIssuesByLabel(ctx context.Context, label string) ([]*type
 	for _, id := range ids {
 		issue, err := s.GetIssue(ctx, id)
 		if err != nil {
-			return nil, err
+			return nil, wrapDBError("get issue by label", err)
 		}
 		if issue != nil {
 			issues = append(issues, issue)

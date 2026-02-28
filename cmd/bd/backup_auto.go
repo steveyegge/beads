@@ -36,7 +36,7 @@ func maybeAutoBackup(ctx context.Context) {
 	if !isBackupAutoEnabled() {
 		return
 	}
-	if store == nil {
+	if store == nil || store.IsClosed() {
 		return
 	}
 

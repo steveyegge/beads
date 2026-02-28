@@ -353,6 +353,63 @@ func TestGetReadyWork_TypeFilter(t *testing.T) {
 	}
 }
 
+// TestGetReadyWork_CustomStatusBlockerStillBlocks verifies that a blocker with
+// a custom status still prevents blocked issues from appearing in ready work.
+// Regression test for bd-1x0.
+func TestGetReadyWork_CustomStatusBlockerStillBlocks(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Configure custom status
+	if err := store.SetConfig(ctx, "status.custom", "review"); err != nil {
+		t.Fatalf("failed to set custom status config: %v", err)
+	}
+
+	blocker := &types.Issue{
+		ID:        "rw-cs-blocker",
+		Title:     "Custom Status Blocker",
+		Status:    types.Status("review"),
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	blocked := &types.Issue{
+		ID:        "rw-cs-blocked",
+		Title:     "Blocked by Custom Status",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+
+	for _, iss := range []*types.Issue{blocker, blocked} {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+	}
+
+	dep := &types.Dependency{
+		IssueID:     blocked.ID,
+		DependsOnID: blocker.ID,
+		Type:        types.DepBlocks,
+	}
+	if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+		t.Fatalf("failed to add dependency: %v", err)
+	}
+
+	work, err := store.GetReadyWork(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, w := range work {
+		if w.ID == blocked.ID {
+			t.Error("issue blocked by custom-status blocker should NOT appear in ready work")
+		}
+	}
+}
+
 // =============================================================================
 // GetBlockedIssues tests
 // =============================================================================

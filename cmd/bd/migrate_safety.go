@@ -97,7 +97,7 @@ func verifyServerTarget(expectedDBName string, port int) error {
 	}
 
 	host := "127.0.0.1"
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 
 	// Check if anything is listening on the port
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -106,7 +106,8 @@ func verifyServerTarget(expectedDBName string, port int) error {
 		// But timeouts or other errors = unknown state = warn and abort.
 		if opErr, ok := err.(*net.OpError); ok {
 			if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
-				if sysErr.Syscall == "connect" {
+				// On POSIX the syscall is "connect"; on Windows it's "connectex".
+				if sysErr.Syscall == "connect" || sysErr.Syscall == "connectex" {
 					// ECONNREFUSED — no server, safe
 					return nil
 				}
@@ -114,7 +115,7 @@ func verifyServerTarget(expectedDBName string, port int) error {
 		}
 		return fmt.Errorf("cannot verify server on port %d (unknown error, not safe to proceed): %w", port, err)
 	}
-	conn.Close()
+	_ = conn.Close()
 
 	// Server is listening. Query SHOW DATABASES to verify target.
 	dsn := fmt.Sprintf("root@tcp(%s)/", addr)
@@ -207,7 +208,7 @@ func verifyMigrationData(sourceData *migrationData, dbName string, host string, 
 		return nil
 	}
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", user, password, host, port, dbName)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s", user, password, net.JoinHostPort(host, fmt.Sprintf("%d", port)), dbName)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return fmt.Errorf("connecting to Dolt for verification: %w", err)

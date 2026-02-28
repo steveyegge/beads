@@ -255,17 +255,19 @@ INSERT IGNORE INTO config (` + "`key`" + `, value) VALUES
     ('compact_tier2_days', '90'),
     ('compact_tier2_dep_levels', '5'),
     ('compact_tier2_commits', '100'),
-    ('compact_model', 'claude-haiku-4-5-20251001'),
     ('compact_batch_size', '50'),
     ('compact_parallel_workers', '5'),
-    ('auto_compact_enabled', 'false'),
-    ('types.custom', 'molecule,gate,convoy,merge-request,slot,agent,role,rig,message');
+    ('auto_compact_enabled', 'false');
 `
 
 // readyIssuesView is a MySQL-compatible view for ready work
 // Note: Dolt supports recursive CTEs.
 // Uses LEFT JOIN instead of NOT EXISTS to avoid Dolt mergeJoinIter panic.
 // See: https://github.com/dolthub/go-mysql-server/issues/3413
+//
+// Active status checks use NOT IN ('closed', 'pinned') rather than listing
+// active statuses explicitly — this ensures custom statuses (configured via
+// status.custom) are automatically included. (bd-1x0)
 const readyIssuesView = `
 CREATE OR REPLACE VIEW ready_issues AS
 WITH RECURSIVE
@@ -276,7 +278,7 @@ WITH RECURSIVE
       AND EXISTS (
         SELECT 1 FROM issues blocker
         WHERE blocker.id = d.depends_on_id
-          AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+          AND blocker.status NOT IN ('closed', 'pinned')
       )
   ),
   blocked_transitively AS (
@@ -319,11 +321,11 @@ SELECT
        AND EXISTS (
          SELECT 1 FROM issues blocker
          WHERE blocker.id = d.depends_on_id
-           AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+           AND blocker.status NOT IN ('closed', 'pinned')
        )
     ) as blocked_by_count
 FROM issues i
-WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+WHERE i.status NOT IN ('closed', 'pinned')
   AND EXISTS (
     SELECT 1 FROM dependencies d
     WHERE d.issue_id = i.id
@@ -331,7 +333,7 @@ WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
       AND EXISTS (
         SELECT 1 FROM issues blocker
         WHERE blocker.id = d.depends_on_id
-          AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+          AND blocker.status NOT IN ('closed', 'pinned')
       )
   );
 `

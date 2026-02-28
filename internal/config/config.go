@@ -813,6 +813,13 @@ func GetCustomTypesFromYAML() []string {
 	return getConfigList("types.custom")
 }
 
+// GetInfraTypesFromYAML retrieves infrastructure type names from config.yaml.
+// Infrastructure types are routed to the wisps table instead of the versioned issues table.
+// Returns nil if no infra types are configured in config.yaml (caller should use defaults).
+func GetInfraTypesFromYAML() []string {
+	return getConfigList("types.infra")
+}
+
 // GetCustomStatusesFromYAML retrieves custom statuses from config.yaml.
 // This is used as a fallback when the database doesn't have status.custom set yet
 // or when the database connection is temporarily unavailable.

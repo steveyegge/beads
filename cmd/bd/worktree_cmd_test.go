@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -288,4 +290,70 @@ func TestWorktreeRedirectWithoutFix(t *testing.T) {
 	} else {
 		t.Logf("Note: filepath.Rel handled relative base correctly in this case")
 	}
+}
+
+func TestAddToGitignore(t *testing.T) {
+	t.Run("skips append when path already ignored by broader pattern", func(t *testing.T) {
+		repoRoot := initGitRepoForGitignoreTest(t)
+		gitignorePath := filepath.Join(repoRoot, ".gitignore")
+		initial := ".worktrees/\n"
+		if err := os.WriteFile(gitignorePath, []byte(initial), 0644); err != nil {
+			t.Fatalf("failed to write .gitignore: %v", err)
+		}
+
+		if err := addToGitignore(context.Background(), repoRoot, ".worktrees/worktree-one"); err != nil {
+			t.Fatalf("addToGitignore failed: %v", err)
+		}
+
+		updated, err := os.ReadFile(gitignorePath)
+		if err != nil {
+			t.Fatalf("failed to read .gitignore: %v", err)
+		}
+
+		if string(updated) != initial {
+			t.Fatalf(".gitignore should be unchanged when entry is already ignored:\nwant:\n%s\ngot:\n%s", initial, string(updated))
+		}
+	})
+
+	t.Run("appends exactly once when path is not ignored", func(t *testing.T) {
+		repoRoot := initGitRepoForGitignoreTest(t)
+		gitignorePath := filepath.Join(repoRoot, ".gitignore")
+		if err := os.WriteFile(gitignorePath, []byte("node_modules/\n"), 0644); err != nil {
+			t.Fatalf("failed to write .gitignore: %v", err)
+		}
+
+		entry := "worktree-feature"
+		if err := addToGitignore(context.Background(), repoRoot, entry); err != nil {
+			t.Fatalf("first addToGitignore failed: %v", err)
+		}
+		if err := addToGitignore(context.Background(), repoRoot, entry); err != nil {
+			t.Fatalf("second addToGitignore failed: %v", err)
+		}
+
+		updated, err := os.ReadFile(gitignorePath)
+		if err != nil {
+			t.Fatalf("failed to read .gitignore: %v", err)
+		}
+		content := string(updated)
+
+		if count := strings.Count(content, "# bd worktree"); count != 1 {
+			t.Fatalf("expected one worktree marker, got %d:\n%s", count, content)
+		}
+		if count := strings.Count(content, entry+"/"); count != 1 {
+			t.Fatalf("expected one worktree entry, got %d:\n%s", count, content)
+		}
+	})
+}
+
+func initGitRepoForGitignoreTest(t *testing.T) string {
+	t.Helper()
+	repoRoot := t.TempDir()
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoRoot
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to init git repo: %v\n%s", err, string(output))
+	}
+
+	return repoRoot
 }

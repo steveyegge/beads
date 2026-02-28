@@ -15,6 +15,7 @@ import (
 // This pins down the behavior that GH#1880 violates: the Dolt backend returns
 // ready issues in a different order than the SQLite backend.
 func TestProtocol_ReadyOrderingIsPriorityAsc(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	w.create("--title", "P4 backlog", "--type", "task", "--priority", "4")
 	w.create("--title", "P0 critical", "--type", "task", "--priority", "0")
@@ -56,6 +57,7 @@ func TestProtocol_ReadyOrderingIsPriorityAsc(t *testing.T) {
 // as still blocking even though bd ready and bd show correctly identify them
 // as resolved.
 func TestProtocol_ClosedBlockerNotShownAsBlocking(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	blocker := w.create("--title", "Blocker task", "--type", "task", "--priority", "1")
 	blocked := w.create("--title", "Blocked task", "--type", "task", "--priority", "2")
@@ -106,6 +108,7 @@ func TestProtocol_ClosedBlockerNotShownAsBlocking(t *testing.T) {
 // Invariant: if B depends-on A (blocks type), and A is closed,
 // then B must appear in bd ready (assuming B has no other open blockers).
 func TestProtocol_ClosingBlockerMakesDepReady(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	blocker := w.create("--title", "Blocker", "--type", "task", "--priority", "1")
 	blocked := w.create("--title", "Blocked work", "--type", "task", "--priority", "2")
@@ -141,6 +144,7 @@ func TestProtocol_ClosingBlockerMakesDepReady(t *testing.T) {
 // Invariant: an issue with multiple blockers stays blocked until ALL
 // blockers are resolved.
 func TestProtocol_DiamondDepBlockingSemantics(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Root (A)", "--type", "task", "--priority", "1")
 	b := w.create("--title", "Left (B)", "--type", "task", "--priority", "2")
@@ -193,6 +197,7 @@ func TestProtocol_DiamondDepBlockingSemantics(t *testing.T) {
 // Invariant: transitive dependencies are respected — closing a root
 // blocker does not unblock the entire chain.
 func TestProtocol_TransitiveBlockingChain(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Chain-A", "--type", "task", "--priority", "1")
 	b := w.create("--title", "Chain-B", "--type", "task", "--priority", "2")
@@ -223,6 +228,7 @@ func TestProtocol_TransitiveBlockingChain(t *testing.T) {
 //
 // Invariant: deferred issues must not appear in bd ready output.
 func TestProtocol_DeferredExcludedFromReady(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Defer target", "--type", "task", "--priority", "2")
 
@@ -256,6 +262,7 @@ func TestProtocol_DeferredExcludedFromReady(t *testing.T) {
 //
 // Invariant: after dep rm, issue with no remaining blockers is ready.
 func TestProtocol_DepRmUnblocksIssue(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Blocked", "--type", "task", "--priority", "2")
 	b := w.create("--title", "Blocker", "--type", "task", "--priority", "2")

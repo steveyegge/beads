@@ -15,15 +15,30 @@ func IsEphemeralID(id string) bool {
 	return strings.Contains(id, "-wisp-")
 }
 
-// IsInfraType returns true if the issue type is infrastructure (agent, rig, role, message).
-// Infra types are routed to the wisps table automatically to keep the versioned
-// issues table clean for real work items.
-func IsInfraType(t types.IssueType) bool {
-	switch t {
-	case "agent", "rig", "role", "message":
-		return true
+// DefaultInfraTypes are the built-in infrastructure types routed to the wisps table.
+// Override via DB config "types.infra" or config.yaml types.infra.
+var DefaultInfraTypes = []string{"agent", "rig", "role", "message"}
+
+// defaultInfraSet is the set form of DefaultInfraTypes for IsInfraType lookups.
+var defaultInfraSet = func() map[string]bool {
+	m := make(map[string]bool, len(DefaultInfraTypes))
+	for _, t := range DefaultInfraTypes {
+		m[t] = true
 	}
-	return false
+	return m
+}()
+
+// IsInfraType returns true if the issue type is infrastructure.
+// Uses the hardcoded defaults (agent, rig, role, message).
+// Prefer IsInfraTypeCtx when a DoltStore is available for config-driven behavior.
+func IsInfraType(t types.IssueType) bool {
+	return defaultInfraSet[string(t)]
+}
+
+// IsInfraTypeCtx returns true if the issue type is infrastructure, using the
+// configured infra types from DB config / config.yaml / defaults.
+func (s *DoltStore) IsInfraTypeCtx(ctx context.Context, t types.IssueType) bool {
+	return s.GetInfraTypes(ctx)[string(t)]
 }
 
 // isActiveWisp checks if an issue ID exists in the wisps table.
@@ -89,7 +104,22 @@ func (s *DoltStore) partitionByWispStatus(ctx context.Context, ids []string) (wi
 	}
 
 	// Fast partition by ID pattern — handles -wisp- IDs correctly
-	wispIDs, permIDs = partitionIDs(ids)
+	var patternWispIDs []string
+	patternWispIDs, permIDs = partitionIDs(ids)
+
+	// Verify wisp-pattern IDs actually exist in the wisps table (bd-ftc).
+	// Promoted wisps have -wisp- in their ID but live in the issues table,
+	// so pattern-based routing alone misroutes them.
+	if len(patternWispIDs) > 0 {
+		activeSet := s.batchWispExists(ctx, patternWispIDs)
+		for _, id := range patternWispIDs {
+			if activeSet[id] {
+				wispIDs = append(wispIDs, id)
+			} else {
+				permIDs = append(permIDs, id)
+			}
+		}
+	}
 
 	// Check if any permanent IDs are actually explicit-ID wisps (GH#2053)
 	if len(permIDs) == 0 {
@@ -160,7 +190,7 @@ func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor s
 		return fmt.Errorf("wisp %s not found", id)
 	}
 	if err != nil {
-		return err
+		return wrapDBError("get wisp for promote", err)
 	}
 	if issue == nil {
 		return fmt.Errorf("wisp %s not found", id)
@@ -177,7 +207,7 @@ func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor s
 	// Copy labels directly to permanent labels table (bypass IsEphemeralID routing)
 	labels, err := s.getWispLabels(ctx, id)
 	if err != nil {
-		return err
+		return wrapQueryError("get wisp labels for promote", err)
 	}
 	for _, label := range labels {
 		if _, err := s.execContext(ctx,
@@ -190,7 +220,7 @@ func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor s
 	// Copy dependencies directly to permanent dependencies table
 	deps, err := s.getWispDependencyRecords(ctx, id)
 	if err != nil {
-		return err
+		return wrapQueryError("get wisp dependencies for promote", err)
 	}
 	for _, dep := range deps {
 		metadata := dep.Metadata

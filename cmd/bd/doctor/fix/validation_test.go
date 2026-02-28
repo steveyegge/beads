@@ -249,23 +249,21 @@ func TestChildParentDependencies_PreservesParentChildType(t *testing.T) {
 		}
 	}
 
-	// Add legitimate parent-child deps
-	for _, child := range []string{"bd-abc.1", "bd-abc.2"} {
-		dep := &types.Dependency{
-			IssueID:     child,
-			DependsOnID: "bd-abc",
-			Type:        types.DepParentChild,
-			CreatedAt:   time.Now(),
-			CreatedBy:   "test",
-		}
-		if err := store.AddDependency(ctx, dep, "test"); err != nil {
-			t.Fatal(err)
-		}
+	// Add a legitimate parent-child dep (should be preserved by the fix)
+	pcDep := &types.Dependency{
+		IssueID:     "bd-abc.2",
+		DependsOnID: "bd-abc",
+		Type:        types.DepParentChild,
+		CreatedAt:   time.Now(),
+		CreatedBy:   "test",
+	}
+	if err := store.AddDependency(ctx, pcDep, "test"); err != nil {
+		t.Fatal(err)
 	}
 
-	// Add one child→parent blocking dep (anti-pattern to be removed).
-	// Note: AddDependency uses ON DUPLICATE KEY UPDATE, so this REPLACES the
-	// parent-child dep for bd-abc.1→bd-abc with a blocks dep (same key pair).
+	// Add a child→parent blocking dep (anti-pattern to be removed by the fix).
+	// AddDependency rejects type changes on the same key pair, so we use a
+	// different child (bd-abc.1) that has no prior parent-child dep.
 	blockDep := &types.Dependency{
 		IssueID:     "bd-abc.1",
 		DependsOnID: "bd-abc",
@@ -284,8 +282,7 @@ func TestChildParentDependencies_PreservesParentChildType(t *testing.T) {
 	}
 
 	// Verify only 'blocks' type was removed, 'parent-child' preserved.
-	// Only bd-abc.2→bd-abc parent-child survives because bd-abc.1→bd-abc
-	// was overwritten by the blocks dep (ON DUPLICATE KEY UPDATE), then removed by fix.
+	// bd-abc.2→bd-abc (parent-child) survives; bd-abc.1→bd-abc (blocks) is removed.
 	db := store.UnderlyingDB()
 
 	var blocksCount int

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -228,7 +229,7 @@ func runWorktreeCreate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			relWorktreePath = filepath.Base(worktreePath)
 		}
-		if err := addToGitignore(repoRoot, relWorktreePath); err != nil {
+		if err := addToGitignore(ctx, repoRoot, relWorktreePath); err != nil {
 			// Non-fatal, just warn
 			fmt.Fprintf(os.Stderr, "Warning: failed to update .gitignore: %v\n", err)
 		}
@@ -674,8 +675,15 @@ func getWorktreeCurrentBranch(ctx context.Context, dir string) string {
 	return strings.TrimSpace(string(output))
 }
 
-func addToGitignore(repoRoot, entry string) error {
+func addToGitignore(ctx context.Context, repoRoot, entry string) error {
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
+
+	// If git already ignores this path (e.g., via a parent pattern like
+	// ".worktrees/"), avoid appending one line per worktree.
+	ignored, err := isIgnoredByGit(ctx, repoRoot, entry)
+	if err == nil && ignored {
+		return nil
+	}
 
 	// Read existing content
 	content, err := os.ReadFile(gitignorePath) //nolint:gosec // G304: gitignorePath from known repoRoot
@@ -711,6 +719,26 @@ func addToGitignore(repoRoot, entry string) error {
 	}
 
 	return nil
+}
+
+func isIgnoredByGit(ctx context.Context, repoRoot, entry string) (bool, error) {
+	normalized := strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(entry)), "/")
+	if normalized == "" {
+		return false, nil
+	}
+
+	gitCmd := gitCmdInDir(ctx, repoRoot, "check-ignore", "-q", "--no-index", "--", normalized)
+	err := gitCmd.Run()
+	if err == nil {
+		return true, nil
+	}
+
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+
+	return false, err
 }
 
 func removeFromGitignore(repoRoot, entry string) error {

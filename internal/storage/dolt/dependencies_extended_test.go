@@ -581,6 +581,117 @@ func TestGetNewlyUnblockedByClose_ClosedDependent(t *testing.T) {
 }
 
 // =============================================================================
+// Custom Status Visibility Tests (bd-1x0)
+// =============================================================================
+
+// TestIsBlocked_CustomStatusBlocker verifies that a blocker with a custom status
+// still counts as blocking (not invisible like it was before bd-1x0).
+func TestIsBlocked_CustomStatusBlocker(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Configure a custom status
+	if err := store.SetConfig(ctx, "status.custom", "review"); err != nil {
+		t.Fatalf("failed to set custom status config: %v", err)
+	}
+
+	// Create a blocker with custom status 'review'
+	blocker := &types.Issue{
+		ID:        "custom-blocker",
+		Title:     "Blocker in Review",
+		Status:    types.Status("review"),
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	blocked := &types.Issue{
+		ID:        "custom-blocked",
+		Title:     "Blocked by Custom Status",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	for _, issue := range []*types.Issue{blocker, blocked} {
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+	}
+
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: blocked.ID, DependsOnID: blocker.ID, Type: types.DepBlocks,
+	}, "tester"); err != nil {
+		t.Fatalf("failed to add dependency: %v", err)
+	}
+
+	// The blocker has custom status 'review' — it should still count as active
+	isBlocked, blockers, err := store.IsBlocked(ctx, blocked.ID)
+	if err != nil {
+		t.Fatalf("IsBlocked failed: %v", err)
+	}
+	if !isBlocked {
+		t.Error("issue should be blocked by custom-status blocker, but IsBlocked returned false")
+	}
+	if len(blockers) == 0 {
+		t.Error("expected blocker IDs, got empty list")
+	}
+}
+
+// TestGetNewlyUnblockedByClose_CustomStatusCandidate verifies that an issue
+// with a custom status can appear as a newly-unblocked candidate.
+func TestGetNewlyUnblockedByClose_CustomStatusCandidate(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Configure a custom status
+	if err := store.SetConfig(ctx, "status.custom", "awaiting_review"); err != nil {
+		t.Fatalf("failed to set custom status config: %v", err)
+	}
+
+	blocker := &types.Issue{
+		ID:        "cs-unblock-blocker",
+		Title:     "Blocker",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	candidate := &types.Issue{
+		ID:        "cs-unblock-candidate",
+		Title:     "Custom Status Candidate",
+		Status:    types.Status("awaiting_review"),
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	for _, issue := range []*types.Issue{blocker, candidate} {
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+	}
+
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: candidate.ID, DependsOnID: blocker.ID, Type: types.DepBlocks,
+	}, "tester"); err != nil {
+		t.Fatalf("failed to add dependency: %v", err)
+	}
+
+	// Close the blocker — candidate with custom status should appear as unblocked
+	unblocked, err := store.GetNewlyUnblockedByClose(ctx, blocker.ID)
+	if err != nil {
+		t.Fatalf("GetNewlyUnblockedByClose failed: %v", err)
+	}
+	if len(unblocked) != 1 {
+		t.Fatalf("expected 1 newly unblocked issue, got %d", len(unblocked))
+	}
+	if unblocked[0].ID != candidate.ID {
+		t.Errorf("expected %q to be unblocked, got %q", candidate.ID, unblocked[0].ID)
+	}
+}
+
+// =============================================================================
 // External Dependency Tests (cross-rig references)
 // =============================================================================
 

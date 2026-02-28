@@ -1,0 +1,256 @@
+package dolt
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestCircuitBreaker_InitiallyAllows(t *testing.T) {
+	cb := newTestCircuitBreaker(t)
+	if !cb.Allow() {
+		t.Fatal("new circuit breaker should allow requests")
+	}
+}
+
+func TestCircuitBreaker_TripsAfterThreshold(t *testing.T) {
+	cb := newTestCircuitBreaker(t)
+
+	// Record failures up to threshold
+	for i := 0; i < circuitFailureThreshold; i++ {
+		if !cb.Allow() {
+			t.Fatalf("breaker should allow on failure %d (threshold=%d)", i+1, circuitFailureThreshold)
+		}
+		cb.RecordFailure()
+	}
+
+	// Should now be open
+	if cb.State() != circuitOpen {
+		t.Fatalf("expected state %q after %d failures, got %q", circuitOpen, circuitFailureThreshold, cb.State())
+	}
+	if cb.Allow() {
+		t.Fatal("open breaker should reject requests")
+	}
+}
+
+func TestCircuitBreaker_DoesNotTripBelowThreshold(t *testing.T) {
+	cb := newTestCircuitBreaker(t)
+
+	for i := 0; i < circuitFailureThreshold-1; i++ {
+		cb.RecordFailure()
+	}
+
+	if cb.State() != circuitClosed {
+		t.Fatalf("expected closed with %d failures (threshold=%d), got %q",
+			circuitFailureThreshold-1, circuitFailureThreshold, cb.State())
+	}
+	if !cb.Allow() {
+		t.Fatal("breaker below threshold should allow requests")
+	}
+}
+
+func TestCircuitBreaker_SuccessResets(t *testing.T) {
+	cb := newTestCircuitBreaker(t)
+
+	// Accumulate some failures
+	for i := 0; i < circuitFailureThreshold-1; i++ {
+		cb.RecordFailure()
+	}
+
+	// Success resets
+	cb.RecordSuccess()
+
+	// Now failures should count from zero
+	for i := 0; i < circuitFailureThreshold-1; i++ {
+		cb.RecordFailure()
+	}
+
+	if cb.State() != circuitClosed {
+		t.Fatal("breaker should still be closed after reset + sub-threshold failures")
+	}
+}
+
+func TestCircuitBreaker_HalfOpenAfterCooldown(t *testing.T) {
+	cb := newTestCircuitBreaker(t)
+
+	// Trip the breaker
+	for i := 0; i < circuitFailureThreshold; i++ {
+		cb.RecordFailure()
+	}
+	if cb.State() != circuitOpen {
+		t.Fatal("expected open state")
+	}
+
+	// Simulate cooldown by manipulating the state file directly
+	cb.mu.Lock()
+	state := cb.readState()
+	state.TrippedAt = time.Now().Add(-circuitCooldown - time.Second)
+	cb.writeState(state)
+	cb.mu.Unlock()
+
+	// Should transition to half-open and allow one probe
+	if !cb.Allow() {
+		t.Fatal("breaker should allow probe after cooldown")
+	}
+	if cb.State() != circuitHalfOpen {
+		t.Fatalf("expected half-open, got %q", cb.State())
+	}
+
+	// Second request in half-open should be rejected
+	if cb.Allow() {
+		t.Fatal("half-open breaker should reject non-probe requests")
+	}
+}
+
+func TestCircuitBreaker_HalfOpenProbeSuccess(t *testing.T) {
+	cb := newTestCircuitBreaker(t)
+
+	// Trip and simulate cooldown
+	for i := 0; i < circuitFailureThreshold; i++ {
+		cb.RecordFailure()
+	}
+	cb.mu.Lock()
+	state := cb.readState()
+	state.TrippedAt = time.Now().Add(-circuitCooldown - time.Second)
+	cb.writeState(state)
+	cb.mu.Unlock()
+
+	// Allow probe
+	cb.Allow()
+	// Probe succeeds
+	cb.RecordSuccess()
+
+	if cb.State() != circuitClosed {
+		t.Fatalf("expected closed after successful probe, got %q", cb.State())
+	}
+	if !cb.Allow() {
+		t.Fatal("should allow requests after probe success")
+	}
+}
+
+func TestCircuitBreaker_HalfOpenProbeFailure(t *testing.T) {
+	cb := newTestCircuitBreaker(t)
+
+	// Trip and simulate cooldown
+	for i := 0; i < circuitFailureThreshold; i++ {
+		cb.RecordFailure()
+	}
+	cb.mu.Lock()
+	state := cb.readState()
+	state.TrippedAt = time.Now().Add(-circuitCooldown - time.Second)
+	cb.writeState(state)
+	cb.mu.Unlock()
+
+	// Allow probe
+	cb.Allow()
+	// Probe fails — should re-trip
+	cb.RecordFailure()
+
+	if cb.State() != circuitOpen {
+		t.Fatalf("expected open after failed probe, got %q", cb.State())
+	}
+}
+
+func TestCircuitBreaker_Reset(t *testing.T) {
+	cb := newTestCircuitBreaker(t)
+
+	// Trip the breaker
+	for i := 0; i < circuitFailureThreshold; i++ {
+		cb.RecordFailure()
+	}
+	if cb.State() != circuitOpen {
+		t.Fatal("expected open")
+	}
+
+	cb.Reset()
+	if cb.State() != circuitClosed {
+		t.Fatalf("expected closed after reset, got %q", cb.State())
+	}
+	if !cb.Allow() {
+		t.Fatal("should allow after reset")
+	}
+}
+
+func TestCircuitBreaker_SharedState(t *testing.T) {
+	// Two breakers for the same port should share state via the file
+	dir := t.TempDir()
+	path := filepath.Join(dir, "circuit.json")
+
+	cb1 := &circuitBreaker{port: 99999, filePath: path}
+	cb2 := &circuitBreaker{port: 99999, filePath: path}
+
+	// Trip via cb1
+	for i := 0; i < circuitFailureThreshold; i++ {
+		cb1.RecordFailure()
+	}
+
+	// cb2 should see the tripped state
+	if cb2.State() != circuitOpen {
+		t.Fatalf("cb2 expected open (shared state), got %q", cb2.State())
+	}
+	if cb2.Allow() {
+		t.Fatal("cb2 should reject when breaker is open")
+	}
+}
+
+func TestCircuitBreaker_FileDeleted(t *testing.T) {
+	cb := newTestCircuitBreaker(t)
+
+	// Trip it
+	for i := 0; i < circuitFailureThreshold; i++ {
+		cb.RecordFailure()
+	}
+
+	// Delete the state file — should gracefully degrade to closed
+	os.Remove(cb.filePath)
+
+	if cb.State() != circuitClosed {
+		t.Fatal("missing file should default to closed")
+	}
+	if !cb.Allow() {
+		t.Fatal("should allow when state file is missing")
+	}
+}
+
+func TestIsConnectionError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"nil", nil, false},
+		{"connection refused", errors.New("dial tcp: connection refused"), true},
+		{"connection reset", errors.New("read: connection reset by peer"), true},
+		{"broken pipe", errors.New("write: broken pipe"), true},
+		{"i/o timeout", errors.New("read tcp 127.0.0.1:3307: i/o timeout"), true},
+		{"bad connection", errors.New("driver: bad connection"), true},
+		{"invalid connection", errors.New("invalid connection"), true},
+		{"lost connection", errors.New("Error 2013: Lost connection to MySQL server"), true},
+		{"gone away", errors.New("Error 2006: MySQL server has gone away"), true},
+		{"syntax error (not connection)", errors.New("Error 1064: SQL syntax error"), false},
+		{"table not found (not connection)", errors.New("Error 1146: Table doesn't exist"), false},
+		{"unknown database (not connection)", errors.New("Unknown database 'test'"), false},
+		{"read only (not connection)", errors.New("database is read only"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isConnectionError(tt.err)
+			if got != tt.expected {
+				t.Errorf("isConnectionError(%v) = %v, want %v", tt.err, got, tt.expected)
+			}
+		})
+	}
+}
+
+// newTestCircuitBreaker creates a circuit breaker with a temp file for testing.
+func newTestCircuitBreaker(t *testing.T) *circuitBreaker {
+	t.Helper()
+	dir := t.TempDir()
+	return &circuitBreaker{
+		port:     99999,
+		filePath: filepath.Join(dir, "circuit.json"),
+	}
+}

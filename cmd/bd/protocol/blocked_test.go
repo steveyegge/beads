@@ -10,6 +10,7 @@ import (
 // GetBlockedIssues only checked 'blocks' deps, making waits-for blocked
 // issues invisible to both bd ready and bd blocked.
 func TestProtocol_WaitsForAppearsInBlocked(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 
 	// Create a spawner (parent) and a gate issue

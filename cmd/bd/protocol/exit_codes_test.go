@@ -8,6 +8,7 @@ import (
 // TestProtocol_CloseBlockedExitsNonZero verifies that closing an issue blocked
 // by open dependencies returns exit code 1.
 func TestProtocol_CloseBlockedExitsNonZero(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 
 	blocker := w.create("Blocker issue")
@@ -23,6 +24,7 @@ func TestProtocol_CloseBlockedExitsNonZero(t *testing.T) {
 // TestProtocol_CloseUnblockedExitsZero verifies that closing an unblocked
 // issue returns exit code 0 (no regression).
 func TestProtocol_CloseUnblockedExitsZero(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("Simple issue")
 	w.run("close", id)
@@ -31,6 +33,7 @@ func TestProtocol_CloseUnblockedExitsZero(t *testing.T) {
 // TestProtocol_UpdateNonexistentExitsNonZero verifies that updating a
 // nonexistent issue returns exit code 1.
 func TestProtocol_UpdateNonexistentExitsNonZero(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	_, code := w.runExpectError("update", "nonexistent-xyz", "--status", "in_progress")
 	if code != 1 {
@@ -43,6 +46,7 @@ func TestProtocol_UpdateNonexistentExitsNonZero(t *testing.T) {
 // command exits zero (partial success counts as success) and still closes
 // the closeable ones.
 func TestProtocol_ClosePartialFailureExitsZero(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 
 	closeable := w.create("Closeable issue")
@@ -79,6 +83,7 @@ func TestProtocol_ClosePartialFailureExitsZero(t *testing.T) {
 // TestProtocol_CloseNonexistentExitsNonZero verifies that closing a
 // nonexistent issue returns a non-zero exit code.
 func TestProtocol_CloseNonexistentExitsNonZero(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	out, _ := w.runExpectError("close", "nonexistent-xyz")
 	if !strings.Contains(strings.ToLower(out), "not found") {

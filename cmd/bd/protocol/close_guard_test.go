@@ -7,6 +7,7 @@ import "testing"
 //
 // Invariant: bd dep add C A --type blocks MUST fail when A→B→C chain exists.
 func TestProtocol_CyclePreventionBlocks(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Chain-A", "--type", "task")
 	b := w.create("--title", "Chain-B", "--type", "task")
@@ -27,6 +28,7 @@ func TestProtocol_CyclePreventionBlocks(t *testing.T) {
 //
 // Invariant: bd dep add A A MUST fail.
 func TestProtocol_SelfDependencyPrevention(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Self-dep test", "--type", "task")
 
@@ -41,6 +43,7 @@ func TestProtocol_SelfDependencyPrevention(t *testing.T) {
 //
 // Invariant: bd close A succeeds when A has only caused-by deps on open issues.
 func TestProtocol_CloseGuardRespectsDepType(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Issue A", "--type", "task")
 	b := w.create("--title", "Issue B (open)", "--type", "task")
@@ -61,6 +64,7 @@ func TestProtocol_CloseGuardRespectsDepType(t *testing.T) {
 // Note: BUG-10 means the command may exit 0 even when close guard fires,
 // so we check actual status instead of exit code.
 func TestProtocol_CloseGuardBlocksForBlocksDep(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Blocked issue", "--type", "task")
 	b := w.create("--title", "Blocker (open)", "--type", "task")
@@ -82,6 +86,7 @@ func TestProtocol_CloseGuardBlocksForBlocksDep(t *testing.T) {
 //
 // Invariant: bd close A --force MUST succeed even with open blockers.
 func TestProtocol_CloseForceOverridesGuard(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Blocked issue", "--type", "task")
 	b := w.create("--title", "Blocker", "--type", "task")
@@ -107,6 +112,7 @@ func TestProtocol_CloseForceOverridesGuard(t *testing.T) {
 //
 // Invariant: superseded issue is closed and has dependency on replacement.
 func TestProtocol_SupersedeClosesAndCreatesDep(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Old approach", "--type", "task", "--priority", "2")
 	b := w.create("--title", "New approach", "--type", "task", "--priority", "2")

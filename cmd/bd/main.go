@@ -113,7 +113,7 @@ var readOnlyCommands = map[string]bool{
 	"comments":   true, // list comments (not add)
 	"current":    true, // bd sync mode current
 	"backup":     true, // reads from Dolt, writes only to .beads/backup/
-	// NOTE: "export" is NOT read-only - it writes to clear dirty issues
+	"export":     true, // reads from Dolt, writes JSONL to file/stdout
 }
 
 // isReadOnlyCommand returns true if the command only reads from the database.
@@ -605,11 +605,21 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
+		// Sync all state to CommandContext for unified access.
+		// Must happen before staleness check so isAllowStale() reads the flag value.
+		syncCommandContext()
+
+		// Staleness check: verify Dolt database is in sync with JSONL (bd-2q6d).
+		// Only check for read-only commands (write commands will update the DB).
+		// Skip if --allow-stale is set or if the command is exempt from checks.
+		if store != nil && !isAllowStale() && isReadOnlyCommand(cmd.Name()) {
+			if freshErr := checkDatabaseFreshness(rootCtx, store, filepath.Dir(dbPath)); freshErr != nil {
+				FatalError("%v", freshErr)
+			}
+		}
+
 		// Tips (including sync conflict proactive checks) are shown via maybeShowTip()
 		// after successful command execution, not in PreRun
-
-		// Sync all state to CommandContext for unified access
-		syncCommandContext()
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
 		// Dolt auto-commit: after a successful write command (and after final flush),
@@ -649,6 +659,9 @@ var rootCmd = &cobra.Command{
 
 		// Auto-backup: export JSONL to .beads/backup/ if enabled and due
 		maybeAutoBackup(rootCtx)
+
+		// Auto-push: push to Dolt remote if enabled and due
+		maybeAutoPush(rootCtx)
 
 		// Signal that store is closing (prevents background flush from accessing closed store)
 		storeMutex.Lock()

@@ -8,6 +8,7 @@ import (
 // TestProtocol_UpdateRejectsEmptyTitle verifies that bd update --title ""
 // exits non-zero rather than silently blanking the title.
 func TestProtocol_UpdateRejectsEmptyTitle(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("Test issue")
 
@@ -23,6 +24,7 @@ func TestProtocol_UpdateRejectsEmptyTitle(t *testing.T) {
 // TestProtocol_UpdateRejectsWhitespaceTitle verifies that whitespace-only
 // titles are rejected the same as empty titles.
 func TestProtocol_UpdateRejectsWhitespaceTitle(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("Test issue")
 
@@ -38,6 +40,7 @@ func TestProtocol_UpdateRejectsWhitespaceTitle(t *testing.T) {
 // TestProtocol_LabelAddRejectsEmptyLabel verifies that bd label add with
 // an empty label exits non-zero.
 func TestProtocol_LabelAddRejectsEmptyLabel(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("Test issue")
 
@@ -53,6 +56,7 @@ func TestProtocol_LabelAddRejectsEmptyLabel(t *testing.T) {
 // TestProtocol_LabelAddAcceptsValidLabel verifies no regression: adding
 // a normal label still works.
 func TestProtocol_LabelAddAcceptsValidLabel(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("Test issue")
 	w.run("label", "add", id, "urgent")

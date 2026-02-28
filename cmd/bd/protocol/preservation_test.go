@@ -5,6 +5,7 @@ import "testing"
 // TestProtocol_LabelsPreservedAcrossUpdate asserts that labels added to an
 // issue are not lost when the issue is updated.
 func TestProtocol_LabelsPreservedAcrossUpdate(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("--title", "Labeled issue", "--type", "task")
 	w.run("label", "add", id, "frontend")
@@ -22,6 +23,7 @@ func TestProtocol_LabelsPreservedAcrossUpdate(t *testing.T) {
 // TestProtocol_DepsPreservedAcrossUpdate asserts that dependencies are not
 // lost when an issue is updated.
 func TestProtocol_DepsPreservedAcrossUpdate(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	idA := w.create("--title", "Blocker", "--type", "task")
 	idB := w.create("--title", "Blocked", "--type", "task")
@@ -39,6 +41,7 @@ func TestProtocol_DepsPreservedAcrossUpdate(t *testing.T) {
 // TestProtocol_CommentsPreservedAcrossUpdate asserts that comments are not
 // lost when an issue is updated.
 func TestProtocol_CommentsPreservedAcrossUpdate(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("--title", "Commented issue", "--type", "task")
 	w.run("comment", id, "Important design note")
@@ -64,6 +67,7 @@ func TestProtocol_CommentsPreservedAcrossUpdate(t *testing.T) {
 // This is the single most important data-integrity invariant. A violation
 // means any routine update can cause silent data loss.
 func TestProtocol_ScalarUpdatePreservesRelationalData(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id1 := w.create("--title", "Data-rich issue", "--type", "feature", "--priority", "1")
 	id2 := w.create("--title", "Dep target", "--type", "task")
@@ -110,6 +114,7 @@ func TestProtocol_ScalarUpdatePreservesRelationalData(t *testing.T) {
 //
 // Invariant: labels, deps, comments survive all status transitions.
 func TestProtocol_StatusTransitionsPreserveLabels(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Status cycle", "--type", "task", "--priority", "2")
 	w.run("label", "add", a, "test-label")
@@ -142,6 +147,7 @@ func TestProtocol_StatusTransitionsPreserveLabels(t *testing.T) {
 // Invariant: after bd delete X, no other issue should have X in its
 // dependencies as shown by bd show --json.
 func TestProtocol_DeleteCleansUpDeps(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	idA := w.create("--title", "Survivor A", "--type", "task")
 	idB := w.create("--title", "Will be deleted", "--type", "task")

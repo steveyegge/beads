@@ -19,16 +19,9 @@ var cleanupAliasCmd = &cobra.Command{
 	},
 }
 
-var compactAliasCmd = &cobra.Command{
-	Use:        "compact",
-	Hidden:     true,
-	Deprecated: "use 'bd admin compact' instead (will be removed in v1.0.0)",
-	Short:      "Alias for 'bd admin compact' (deprecated)",
-	Long:       compactCmd.Long,
-	Run: func(cmd *cobra.Command, args []string) {
-		compactCmd.Run(cmd, args)
-	},
-}
+// NOTE: The top-level "compact" command slot is now used by the Dolt commit
+// compaction command (compact_dolt.go). The old issue-level compaction lives
+// at "bd admin compact".
 
 var resetAliasCmd = &cobra.Command{
 	Use:        "reset",
@@ -52,29 +45,13 @@ func init() {
 	cleanupAliasCmd.Flags().Int("older-than", 0, "Only delete issues closed more than N days ago (0 = all closed issues)")
 	cleanupAliasCmd.Flags().Bool("ephemeral", false, "Only delete closed wisps (transient molecules)")
 
-	// Compact alias flags - must bind to same global variables as compactCmd
-	compactAliasCmd.Flags().BoolVar(&compactDryRun, "dry-run", false, "Preview without compacting")
-	compactAliasCmd.Flags().IntVar(&compactTier, "tier", 1, "Compaction tier (1 or 2)")
-	compactAliasCmd.Flags().BoolVar(&compactAll, "all", false, "Process all candidates")
-	compactAliasCmd.Flags().StringVar(&compactID, "id", "", "Compact specific issue")
-	compactAliasCmd.Flags().BoolVar(&compactForce, "force", false, "Force compact (bypass checks, requires --id)")
-	compactAliasCmd.Flags().IntVar(&compactBatch, "batch-size", 10, "Issues per batch")
-	compactAliasCmd.Flags().IntVar(&compactWorkers, "workers", 5, "Parallel workers")
-	compactAliasCmd.Flags().BoolVar(&compactStats, "stats", false, "Show compaction statistics")
-	compactAliasCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
-	compactAliasCmd.Flags().BoolVar(&compactAnalyze, "analyze", false, "Analyze mode: export candidates for agent review")
-	compactAliasCmd.Flags().BoolVar(&compactApply, "apply", false, "Apply mode: accept agent-provided summary")
-	compactAliasCmd.Flags().BoolVar(&compactAuto, "auto", false, "Auto mode: AI-powered compaction (legacy)")
-	compactAliasCmd.Flags().StringVar(&compactSummary, "summary", "", "Path to summary file (use '-' for stdin)")
-	compactAliasCmd.Flags().StringVar(&compactActor, "actor", "agent", "Actor name for audit trail")
-	compactAliasCmd.Flags().IntVar(&compactLimit, "limit", 0, "Limit number of candidates (0 = no limit)")
-	compactAliasCmd.Flags().BoolVar(&compactDolt, "dolt", false, "Dolt mode: run Dolt garbage collection on .beads/dolt")
+	// NOTE: compactAliasCmd removed — "compact" slot now used by compact_dolt.go
 
 	// Reset alias flags - these read from cmd.Flags() in the Run function
 	resetAliasCmd.Flags().Bool("force", false, "Actually perform the reset (required)")
 
 	// Register hidden aliases on root command
 	rootCmd.AddCommand(cleanupAliasCmd)
-	rootCmd.AddCommand(compactAliasCmd)
+	// NOTE: compactAliasCmd removed — "compact" slot now used by compact_dolt.go
 	rootCmd.AddCommand(resetAliasCmd)
 }

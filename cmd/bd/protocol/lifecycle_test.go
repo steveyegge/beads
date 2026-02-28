@@ -9,6 +9,7 @@ import (
 // already-open issue does NOT print a false "Reopened" message. The stderr
 // output should indicate the issue is already open.
 func TestProtocol_ReopenAlreadyOpenReportsStatus(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("--title", "Already open", "--type", "task")
 
@@ -28,6 +29,7 @@ func TestProtocol_ReopenAlreadyOpenReportsStatus(t *testing.T) {
 // non-deferred issue does NOT print a false "Undeferred" message. The stderr
 // output should indicate the issue is not deferred.
 func TestProtocol_UndeferNonDeferredReportsStatus(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("--title", "Not deferred", "--type", "task")
 

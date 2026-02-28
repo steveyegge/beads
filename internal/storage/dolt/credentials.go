@@ -255,7 +255,7 @@ func (s *DoltStore) RemoveFederationPeer(ctx context.Context, name string) error
 // updatePeerLastSync updates the last sync time for a peer.
 func (s *DoltStore) updatePeerLastSync(ctx context.Context, name string) error {
 	_, err := s.execContext(ctx, "UPDATE federation_peers SET last_sync = CURRENT_TIMESTAMP WHERE name = ?", name)
-	return err
+	return wrapExecError("update peer last sync", err)
 }
 
 // setFederationCredentials sets DOLT_REMOTE_USER and DOLT_REMOTE_PASSWORD env vars.

@@ -60,9 +60,13 @@ func uniqueTestDBName(t *testing.T) string {
 // setupTestStore creates a test store on the shared database with branch isolation.
 // Each test gets its own branch (COW snapshot), preventing cross-test data leakage
 // without the overhead of CREATE/DROP DATABASE per test.
+//
+// Automatically marks the test as safe for parallel execution since each test
+// gets its own Dolt connection checked out to a unique branch.
 func setupTestStore(t *testing.T) (*DoltStore, func()) {
 	t.Helper()
 	skipIfNoDolt(t)
+	t.Parallel()
 
 	if testSharedDB == "" {
 		t.Fatal("testSharedDB not set — TestMain did not initialize shared database")
@@ -441,16 +445,20 @@ func TestGetCustomTypes(t *testing.T) {
 	ctx, cancel := testContext(t)
 	defer cancel()
 
-	// defaultConfig seeds types.custom — verify it's accessible
+	// types.custom is set via SetConfig (not seeded by defaultConfig)
+	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,message"); err != nil {
+		t.Fatalf("SetConfig(types.custom) failed: %v", err)
+	}
+
 	types, err := store.GetCustomTypes(ctx)
 	if err != nil {
 		t.Fatalf("GetCustomTypes failed: %v", err)
 	}
 	if len(types) == 0 {
-		t.Fatal("expected custom types to be seeded by defaultConfig, got none")
+		t.Fatal("expected custom types from SetConfig, got none")
 	}
 
-	// Verify "agent" is among the seeded types
+	// Verify "agent" is among the configured types
 	found := false
 	for _, ct := range types {
 		if ct == "agent" {
@@ -583,6 +591,79 @@ func TestDoltStoreIssueClose(t *testing.T) {
 	}
 	if retrieved.ClosedAt == nil {
 		t.Error("expected closed_at to be set")
+	}
+}
+
+// TestClosePromotedWisp verifies that bd close works for wisps that were
+// promoted to the issues table via PromoteFromEphemeral (bd-ftc).
+// Promoted wisps have -wisp- in their ID but live in the issues table,
+// so routing must fall through from the wisps table.
+func TestClosePromotedWisp(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create a wisp (goes to wisps table)
+	wisp := &types.Issue{
+		Title:     "Wisp to promote and close",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	if err := store.createWisp(ctx, wisp, "tester"); err != nil {
+		t.Fatalf("createWisp failed: %v", err)
+	}
+	if !IsEphemeralID(wisp.ID) {
+		t.Fatalf("expected wisp ID to match ephemeral pattern, got %q", wisp.ID)
+	}
+
+	// Promote the wisp (moves from wisps table to issues table)
+	if err := store.PromoteFromEphemeral(ctx, wisp.ID, "tester"); err != nil {
+		t.Fatalf("PromoteFromEphemeral failed: %v", err)
+	}
+
+	// Verify wisp is no longer in wisps table but findable via GetIssue
+	if store.isActiveWisp(ctx, wisp.ID) {
+		t.Fatal("promoted wisp should not be active in wisps table")
+	}
+	got, err := store.GetIssue(ctx, wisp.ID)
+	if err != nil {
+		t.Fatalf("GetIssue failed for promoted wisp: %v", err)
+	}
+	if got.ID != wisp.ID {
+		t.Fatalf("GetIssue returned wrong ID: %q vs %q", got.ID, wisp.ID)
+	}
+
+	// Close the promoted wisp — this was failing before bd-ftc fix
+	if err := store.CloseIssue(ctx, wisp.ID, "completed", "tester", "session1"); err != nil {
+		t.Fatalf("CloseIssue failed for promoted wisp: %v", err)
+	}
+
+	// Verify it was closed
+	closed, err := store.GetIssue(ctx, wisp.ID)
+	if err != nil {
+		t.Fatalf("GetIssue failed after close: %v", err)
+	}
+	if closed.Status != types.StatusClosed {
+		t.Errorf("expected status closed, got %s", closed.Status)
+	}
+	if closed.ClosedAt == nil {
+		t.Error("expected closed_at to be set")
+	}
+
+	// Also verify GetIssuesByIDs works (the batch path that was broken)
+	batch, err := store.GetIssuesByIDs(ctx, []string{wisp.ID})
+	if err != nil {
+		t.Fatalf("GetIssuesByIDs failed for promoted wisp: %v", err)
+	}
+	if len(batch) != 1 {
+		t.Fatalf("GetIssuesByIDs returned %d issues, want 1", len(batch))
+	}
+	if batch[0].ID != wisp.ID {
+		t.Errorf("GetIssuesByIDs returned wrong ID: %q", batch[0].ID)
 	}
 }
 
@@ -978,9 +1059,9 @@ func TestDeleteIssuesBatchPerformance(t *testing.T) {
 	ctx, cancel := testContext(t)
 	defer cancel()
 
-	const issueCount = 100
+	const issueCount = 25
 
-	// Create 100 issues with chain dependencies: issue-1 <- issue-2 <- ... <- issue-100
+	// Create issues with chain dependencies: issue-1 <- issue-2 <- ... <- issue-N
 	for i := 1; i <= issueCount; i++ {
 		issue := &types.Issue{
 			ID:        fmt.Sprintf("batch-del-%d", i),

@@ -101,7 +101,7 @@ func insertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
 		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
 	)
-	return err
+	return wrapExecError("insert issue into table", err)
 }
 
 // scanIssueFromTable scans a single issue from the specified table.
@@ -132,7 +132,7 @@ func recordEventInTable(ctx context.Context, tx *sql.Tx, table, issueID string, 
 		INSERT INTO %s (issue_id, event_type, actor, old_value, new_value)
 		VALUES (?, ?, ?, ?, ?)
 	`, table), issueID, eventType, actor, oldValue, newValue)
-	return err
+	return wrapExecError("record event in table", err)
 }
 
 // generateIssueIDInTable generates a unique ID, checking for collisions
@@ -219,7 +219,7 @@ func scanIssueTxFromTable(ctx context.Context, tx *sql.Tx, table, id string) (*t
 		return nil, fmt.Errorf("%w: issue %s", storage.ErrNotFound, id)
 	}
 	if err != nil {
-		return nil, err
+		return nil, wrapScanError("scan issue from "+table, err)
 	}
 	return issue, nil
 }
@@ -317,7 +317,7 @@ func (s *DoltStore) createWisp(ctx context.Context, issue *types.Issue, actor st
 		return fmt.Errorf("failed to record creation event: %w", err)
 	}
 
-	return tx.Commit()
+	return wrapTransactionError("commit create wisp", tx.Commit())
 }
 
 // getWisp retrieves an issue from the wisps table.
@@ -345,7 +345,7 @@ func (s *DoltStore) getWisp(ctx context.Context, id string) (*types.Issue, error
 func (s *DoltStore) getWispLabels(ctx context.Context, issueID string) ([]string, error) {
 	rows, err := s.queryContext(ctx, `SELECT label FROM wisp_labels WHERE issue_id = ? ORDER BY label`, issueID)
 	if err != nil {
-		return nil, err
+		return nil, wrapQueryError("get wisp labels", err)
 	}
 	defer rows.Close()
 
@@ -353,7 +353,7 @@ func (s *DoltStore) getWispLabels(ctx context.Context, issueID string) ([]string
 	for rows.Next() {
 		var label string
 		if err := rows.Scan(&label); err != nil {
-			return nil, err
+			return nil, wrapScanError("scan wisp label", err)
 		}
 		labels = append(labels, label)
 	}
@@ -438,7 +438,7 @@ func (s *DoltStore) closeWisp(ctx context.Context, id string, reason string, act
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
-	return tx.Commit()
+	return wrapTransactionError("commit close wisp", tx.Commit())
 }
 
 // deleteWisp permanently removes a wisp and its related data.
@@ -474,7 +474,7 @@ func (s *DoltStore) deleteWisp(ctx context.Context, id string) error {
 		return fmt.Errorf("wisp not found: %s", id)
 	}
 
-	return tx.Commit()
+	return wrapTransactionError("commit delete wisp", tx.Commit())
 }
 
 // claimWisp atomically claims a wisp.
@@ -514,7 +514,7 @@ func (s *DoltStore) claimWisp(ctx context.Context, id string, actor string) erro
 		return fmt.Errorf("failed to record claim event: %w", err)
 	}
 
-	return tx.Commit()
+	return wrapTransactionError("commit claim wisp", tx.Commit())
 }
 
 // searchWisps searches for issues in the wisps table.
@@ -776,7 +776,7 @@ func (s *DoltStore) scanWispIDs(ctx context.Context, rows *sql.Rows) ([]*types.I
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, wrapQueryError("iterate wisp IDs", err)
 	}
 	_ = rows.Close()
 
@@ -822,14 +822,14 @@ func (s *DoltStore) getWispsByIDs(ctx context.Context, ids []string) ([]*types.I
 			issue, err := scanIssueFrom(queryRows)
 			if err != nil {
 				_ = queryRows.Close()
-				return nil, err
+				return nil, wrapScanError("scan wisp", err)
 			}
 			issues = append(issues, issue)
 			issueMap[issue.ID] = issue
 		}
 		if err := queryRows.Err(); err != nil {
 			_ = queryRows.Close()
-			return nil, err
+			return nil, wrapQueryError("iterate wisps", err)
 		}
 		_ = queryRows.Close()
 	}
@@ -865,7 +865,7 @@ func (s *DoltStore) getWispsByIDs(ctx context.Context, ids []string) ([]*types.I
 				var issueID, label string
 				if err := labelRows.Scan(&issueID, &label); err != nil {
 					_ = labelRows.Close()
-					return nil, err
+					return nil, wrapScanError("scan wisp label", err)
 				}
 				if issue, ok := issueMap[issueID]; ok {
 					issue.Labels = append(issue.Labels, label)
@@ -873,7 +873,7 @@ func (s *DoltStore) getWispsByIDs(ctx context.Context, ids []string) ([]*types.I
 			}
 			if err := labelRows.Err(); err != nil {
 				_ = labelRows.Close()
-				return nil, err
+				return nil, wrapQueryError("iterate wisp labels", err)
 			}
 			_ = labelRows.Close()
 		}
@@ -902,7 +902,7 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	`, dep.IssueID, dep.DependsOnID).Scan(&existingType)
 	if err == nil {
 		if existingType == string(dep.Type) {
-			return tx.Commit()
+			return wrapTransactionError("commit add wisp dependency", tx.Commit())
 		}
 		return fmt.Errorf("dependency %s -> %s already exists with type %q (requested %q); remove it first with 'bd dep remove' then re-add",
 			dep.IssueID, dep.DependsOnID, existingType, dep.Type)
@@ -918,7 +918,7 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("failed to add wisp dependency: %w", err)
 	}
 
-	return tx.Commit()
+	return wrapTransactionError("commit add wisp dependency", tx.Commit())
 }
 
 // removeWispDependency removes a dependency from wisp_dependencies.
@@ -935,7 +935,7 @@ func (s *DoltStore) removeWispDependency(ctx context.Context, issueID, dependsOn
 		return fmt.Errorf("failed to remove wisp dependency: %w", err)
 	}
 
-	return tx.Commit()
+	return wrapTransactionError("commit remove wisp dependency", tx.Commit())
 }
 
 // getWispDependencies retrieves issues that a wisp depends on.
@@ -952,13 +952,13 @@ func (s *DoltStore) getWispDependencies(ctx context.Context, issueID string) ([]
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			_ = rows.Close()
-			return nil, err
+			return nil, wrapScanError("scan wisp dependency", err)
 		}
 		ids = append(ids, id)
 	}
 	_ = rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, wrapQueryError("iterate wisp dependencies", err)
 	}
 
 	if len(ids) == 0 {
@@ -982,13 +982,13 @@ func (s *DoltStore) getWispDependents(ctx context.Context, issueID string) ([]*t
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			_ = rows.Close()
-			return nil, err
+			return nil, wrapScanError("scan wisp dependent", err)
 		}
 		ids = append(ids, id)
 	}
 	_ = rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, wrapQueryError("iterate wisp dependents", err)
 	}
 
 	if len(ids) == 0 {
@@ -1015,13 +1015,13 @@ func (s *DoltStore) getWispDependenciesWithMetadata(ctx context.Context, issueID
 		var depID, depType string
 		if err := rows.Scan(&depID, &depType); err != nil {
 			_ = rows.Close()
-			return nil, err
+			return nil, wrapScanError("scan wisp dependency metadata", err)
 		}
 		deps = append(deps, depMeta{depID: depID, depType: depType})
 	}
 	_ = rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, wrapQueryError("iterate wisp dependencies", err)
 	}
 
 	if len(deps) == 0 {
@@ -1072,13 +1072,13 @@ func (s *DoltStore) getWispDependentsWithMetadata(ctx context.Context, issueID s
 		var depID, depType string
 		if err := rows.Scan(&depID, &depType); err != nil {
 			_ = rows.Close()
-			return nil, err
+			return nil, wrapScanError("scan wisp dependent metadata", err)
 		}
 		deps = append(deps, depMeta{depID: depID, depType: depType})
 	}
 	_ = rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, wrapQueryError("iterate wisp dependents", err)
 	}
 
 	if len(deps) == 0 {

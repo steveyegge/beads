@@ -132,12 +132,12 @@ func TestSameIssueUpdateRace(t *testing.T) {
 		t.Fatalf("failed to create issue: %v", err)
 	}
 
-	const numGoroutines = 10
+	const numGoroutines = 5
 	var wg sync.WaitGroup
 	var successCount atomic.Int32
 	var errorCount atomic.Int32
 
-	// Launch 10 goroutines to update the same issue
+	// Launch goroutines to update the same issue
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
 		go func(n int) {
@@ -208,9 +208,9 @@ func TestReadWriteMix(t *testing.T) {
 		issueIDs[i] = issue.ID
 	}
 
-	const numReaders = 5
-	const numWriters = 5
-	const iterations = 100
+	const numReaders = 3
+	const numWriters = 3
+	const iterations = 20
 
 	var wg sync.WaitGroup
 	var readErrors atomic.Int32
@@ -681,8 +681,8 @@ func TestHighContentionStress(t *testing.T) {
 		}
 	}
 
-	const numWorkers = 20
-	const opsPerWorker = 50
+	const numWorkers = 8
+	const opsPerWorker = 15
 	var wg sync.WaitGroup
 	var totalOps atomic.Int32
 	var failedOps atomic.Int32

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 )
@@ -56,7 +57,10 @@ func backupDir() (string, error) {
 			return dir, nil
 		}
 	}
-	beadsDir := findBeadsDir()
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		beadsDir = ".beads"
+	}
 	dir := filepath.Join(beadsDir, "backup")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("failed to create backup directory: %w", err)

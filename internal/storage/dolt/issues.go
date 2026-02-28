@@ -24,7 +24,7 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 	}
 
 	// Route ephemeral issues and infra types to wisps table
-	if issue.Ephemeral || IsInfraType(issue.IssueType) {
+	if issue.Ephemeral || s.IsInfraTypeCtx(ctx, issue.IssueType) {
 		issue.Ephemeral = true
 		return s.createWisp(ctx, issue, actor)
 	}
@@ -501,7 +501,7 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 	}
 
 	if err := tx.Commit(); err != nil {
-		return err
+		return wrapTransactionError("commit update issue", err)
 	}
 	// Status changes affect the active set used by blocked ID computation
 	if _, hasStatus := updates["status"]; hasStatus {
@@ -579,7 +579,7 @@ func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) err
 	}
 
 	if err := tx.Commit(); err != nil {
-		return err
+		return wrapTransactionError("commit claim issue", err)
 	}
 	// Claiming changes status to in_progress, affecting blocked ID computation
 	s.invalidateBlockedIDsCache()
@@ -629,7 +629,7 @@ func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, ac
 	}
 
 	if err := tx.Commit(); err != nil {
-		return err
+		return wrapTransactionError("commit close issue", err)
 	}
 	// Closing changes the active set, which affects blocked ID computation (GH#1495)
 	s.invalidateBlockedIDsCache()
@@ -1112,7 +1112,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
 		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
 	)
-	return err
+	return wrapExecError("insert issue", err)
 }
 
 func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error) {
@@ -1137,7 +1137,7 @@ func recordEvent(ctx context.Context, tx *sql.Tx, issueID string, eventType type
 		INSERT INTO events (issue_id, event_type, actor, old_value, new_value)
 		VALUES (?, ?, ?, ?, ?)
 	`, issueID, eventType, actor, oldValue, newValue)
-	return err
+	return wrapExecError("record event", err)
 }
 
 // seedCounterFromExistingIssuesTx scans existing issues to find the highest numeric suffix
@@ -1568,7 +1568,7 @@ func (s *DoltStore) SetRepoMtime(ctx context.Context, repoPath, jsonlPath string
 			mtime_ns = VALUES(mtime_ns),
 			last_checked = NOW()
 	`, repoPath, jsonlPath, mtimeNs)
-	return err
+	return wrapExecError("set repo mtime", err)
 }
 
 func formatJSONStringArray(arr []string) string {

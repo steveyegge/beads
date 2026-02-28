@@ -562,18 +562,32 @@ var listCmd = &cobra.Command{
 			filter.ExcludeTypes = append(filter.ExcludeTypes, "gate")
 		}
 
-		// Infra type filtering: exclude agent/rig/role/message by default.
+		// Infra type filtering: exclude configured infra types by default.
 		// These types live in the wisps table after migration 007.
 		// Use --include-infra or --type=agent to show infra beads.
-		if !includeInfra && !dolt.IsInfraType(types.IssueType(issueType)) {
-			for _, t := range []string{"agent", "rig", "role", "message"} {
+		infraTypes := dolt.DefaultInfraTypes
+		if store != nil {
+			infraSet := store.GetInfraTypes(rootCtx)
+			infraTypes = make([]string, 0, len(infraSet))
+			for t := range infraSet {
+				infraTypes = append(infraTypes, t)
+			}
+		}
+		isInfra := func(t string) bool {
+			if store != nil {
+				return store.IsInfraTypeCtx(rootCtx, types.IssueType(t))
+			}
+			return dolt.IsInfraType(types.IssueType(t))
+		}
+		if !includeInfra && !isInfra(issueType) {
+			for _, t := range infraTypes {
 				filter.ExcludeTypes = append(filter.ExcludeTypes, types.IssueType(t))
 			}
 		}
 
 		// When explicitly requesting an infra type, search the wisps table
 		// (where infra beads live after migration 007).
-		if dolt.IsInfraType(types.IssueType(issueType)) {
+		if isInfra(issueType) {
 			ephemeral := true
 			filter.Ephemeral = &ephemeral
 		}

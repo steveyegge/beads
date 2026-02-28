@@ -3,6 +3,7 @@ package doctor
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -44,4 +45,49 @@ func TestCheckPermissions(t *testing.T) {
 			t.Errorf("expected StatusOK for writable dir, got %s", check.Status)
 		}
 	})
+}
+
+func TestCheckPermissions_TempFileUsesSecurePerms(t *testing.T) {
+	// Verify that the temporary write-test file created by CheckPermissions
+	// uses 0600 (not 0644) so it doesn't expose data to other users.
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping file permissions test on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run the check — it creates and deletes a temp file
+	check := CheckPermissions(tmpDir)
+	if check.Status != StatusOK {
+		t.Fatalf("expected StatusOK, got %s: %s", check.Status, check.Message)
+	}
+
+	// The temp file should be cleaned up
+	testFile := filepath.Join(beadsDir, ".doctor-test-write")
+	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
+		t.Error("CheckPermissions should clean up its temp file after use")
+	}
+}
+
+func TestCheckPermissions_CleansUpOnSuccess(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	check := CheckPermissions(tmpDir)
+	if check.Status != StatusOK {
+		t.Fatalf("expected StatusOK, got %s", check.Status)
+	}
+
+	// Verify the temp file does not remain on disk
+	testFile := filepath.Join(beadsDir, ".doctor-test-write")
+	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
+		t.Errorf("temp file %s should be removed after CheckPermissions", testFile)
+	}
 }

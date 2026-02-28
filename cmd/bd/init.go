@@ -290,7 +290,11 @@ environment variable.`,
 		if existingCfg, _ := configfile.Load(beadsDir); existingCfg != nil && existingCfg.DoltDatabase != "" {
 			dbName = existingCfg.DoltDatabase
 		} else if prefix != "" {
-			dbName = prefix
+			// Sanitize hyphens to underscores for SQL-idiomatic database names.
+			// Must match the sanitization applied to metadata.json DoltDatabase
+			// field (line below), otherwise init creates a database with one name
+			// but metadata.json records a different name, causing reopens to fail.
+			dbName = strings.ReplaceAll(prefix, "-", "_")
 		} else {
 			dbName = "beads"
 		}
@@ -300,6 +304,26 @@ environment variable.`,
 		if database != "" {
 			dbName = database
 		}
+		// Auto-bootstrap from git remote if sync.git-remote is configured.
+		// This enables the new-machine story: set sync.git-remote in config.yaml,
+		// run bd init, and the Dolt database is cloned from the git remote
+		// automatically — no manual dolt clone needed.
+		gitRemoteURL := config.GetString("sync.git-remote")
+		bootstrappedFromRemote := false
+		if gitRemoteURL != "" {
+			cloned, bootstrapErr := dolt.BootstrapFromGitRemoteWithDB(ctx, storagePath, gitRemoteURL, dbName)
+			if bootstrapErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to bootstrap from git remote %s: %v\n", gitRemoteURL, bootstrapErr)
+				fmt.Fprintf(os.Stderr, "  Continuing with fresh database initialization.\n")
+				// Non-fatal: fall through to normal init
+			} else if cloned {
+				bootstrappedFromRemote = true
+				if !quiet {
+					fmt.Printf("  %s Bootstrapped from git remote: %s\n", ui.RenderPass("✓"), gitRemoteURL)
+				}
+			}
+		}
+
 		// Build config. Beads always uses dolt sql-server.
 		// AutoStart is always enabled during init — we need a server to initialize the database.
 		doltCfg := &dolt.Config{
@@ -323,6 +347,22 @@ environment variable.`,
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to connect to dolt server: %v\n", err)
 			os.Exit(1)
+		}
+
+		// Configure the git remote in the Dolt store so bd dolt push/pull
+		// work immediately after bootstrap. Also add the remote when
+		// sync.git-remote is configured but bootstrap was skipped (DB already
+		// existed) — ensures the remote is always wired up.
+		if gitRemoteURL != "" {
+			hasRemote, _ := store.HasRemote(ctx, "origin")
+			if !hasRemote {
+				if err := store.AddRemote(ctx, "origin", gitRemoteURL); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to add git remote 'origin': %v\n", err)
+					// Non-fatal — user can add manually with: bd dolt remote add origin <url>
+				} else if !quiet {
+					fmt.Printf("  %s Configured Dolt remote: origin → %s\n", ui.RenderPass("✓"), gitRemoteURL)
+				}
+			}
 		}
 
 		// === CONFIGURATION METADATA (Pattern A: Fatal) ===
@@ -673,7 +713,11 @@ environment variable.`,
 			return
 		}
 
-		fmt.Printf("\n%s bd initialized successfully!\n\n", ui.RenderPass("✓"))
+		if bootstrappedFromRemote {
+			fmt.Printf("\n%s bd initialized from git remote!\n\n", ui.RenderPass("✓"))
+		} else {
+			fmt.Printf("\n%s bd initialized successfully!\n\n", ui.RenderPass("✓"))
+		}
 		fmt.Printf("  Backend: %s\n", ui.RenderAccent(backend))
 		host := serverHost
 		if host == "" {

@@ -13,7 +13,7 @@ import (
 func (s *DoltStore) History(ctx context.Context, issueID string) ([]*storage.HistoryEntry, error) {
 	internal, err := s.getIssueHistory(ctx, issueID)
 	if err != nil {
-		return nil, err
+		return nil, wrapQueryError("get issue history", err)
 	}
 
 	// Convert internal representation to interface type
@@ -175,7 +175,7 @@ func (s *DoltStore) GetCurrentCommit(ctx context.Context) (string, error) {
 func (s *DoltStore) GetConflicts(ctx context.Context) ([]storage.Conflict, error) {
 	internal, err := s.getInternalConflicts(ctx)
 	if err != nil {
-		return nil, err
+		return nil, wrapQueryError("get conflicts", err)
 	}
 
 	conflicts := make([]storage.Conflict, 0, len(internal))

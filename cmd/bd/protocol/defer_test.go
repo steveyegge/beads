@@ -9,6 +9,7 @@ import (
 // date warns the user. The bd update --defer path already warns; bd defer
 // should be consistent.
 func TestProtocol_DeferPastDateWarns(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("--title", "Defer target", "--type", "task")
 

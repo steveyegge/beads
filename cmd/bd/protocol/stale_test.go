@@ -6,6 +6,7 @@ import "testing"
 // --days values less than 1. Zero and negative days are nonsensical for
 // a staleness check and should fail with a non-zero exit code.
 func TestProtocol_StaleRejectsNonPositiveDays(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 
 	t.Run("zero", func(t *testing.T) {

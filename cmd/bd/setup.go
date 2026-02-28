@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/setup"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/recipes"
 )
 
@@ -93,7 +94,10 @@ func runSetup(cmd *cobra.Command, args []string) {
 }
 
 func listRecipes() {
-	beadsDir := findBeadsDir()
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		beadsDir = ".beads"
+	}
 	allRecipes, err := recipes.GetAllRecipes(beadsDir)
 	if err != nil {
 		FatalError("loading recipes: %v", err)
@@ -137,7 +141,7 @@ func writeToPath(path string) error {
 }
 
 func addRecipe(name, path string) error {
-	beadsDir := findBeadsDir()
+	beadsDir := beads.FindBeadsDir()
 	if beadsDir == "" {
 		beadsDir = ".beads"
 	}
@@ -183,7 +187,10 @@ func runRecipe(name string) {
 	}
 
 	// For all other recipes (built-in or user), use generic file-based install
-	beadsDir := findBeadsDir()
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		beadsDir = ".beads"
+	}
 	recipe, err := recipes.GetRecipe(name, beadsDir)
 	if err != nil {
 		FatalErrorWithHint(fmt.Sprintf("%v", err), "Use 'bd setup --list' to see available recipes.")
@@ -332,19 +339,6 @@ func runJunieRecipe() {
 		return
 	}
 	setup.InstallJunie()
-}
-
-func findBeadsDir() string {
-	// Check for .beads in current directory
-	if info, err := os.Stat(".beads"); err == nil && info.IsDir() {
-		return ".beads"
-	}
-	// Check for redirected beads directory
-	redirectPath := ".beads/.redirect"
-	if data, err := os.ReadFile(redirectPath); err == nil {
-		return strings.TrimSpace(string(data))
-	}
-	return ".beads"
 }
 
 func init() {

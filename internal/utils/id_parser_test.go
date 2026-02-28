@@ -4,8 +4,10 @@ package utils
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"os/exec"
-	"path/filepath"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -17,8 +19,16 @@ func newTestStore(t *testing.T) *dolt.DoltStore {
 	if _, err := exec.LookPath("dolt"); err != nil {
 		t.Skip("Dolt not installed, skipping test")
 	}
+	if testServerPort == 0 {
+		t.Skip("Test Dolt server not running, skipping test")
+	}
 	ctx := context.Background()
-	store, err := dolt.New(ctx, &dolt.Config{Path: filepath.Join(t.TempDir(), "test.db")})
+	dbName := uniqueTestDBName(t)
+	store, err := dolt.New(ctx, &dolt.Config{
+		Path:       t.TempDir(),
+		Database:   dbName,
+		ServerPort: testServerPort,
+	})
 	if err != nil {
 		t.Fatalf("Failed to create dolt store: %v", err)
 	}
@@ -28,6 +38,15 @@ func newTestStore(t *testing.T) *dolt.DoltStore {
 	}
 	t.Cleanup(func() { store.Close() })
 	return store
+}
+
+func uniqueTestDBName(t *testing.T) string {
+	t.Helper()
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		t.Fatalf("failed to generate random bytes: %v", err)
+	}
+	return fmt.Sprintf("testdb_%s", hex.EncodeToString(buf))
 }
 
 func TestParseIssueID(t *testing.T) {

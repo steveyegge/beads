@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -571,8 +570,8 @@ func runWispGC(cmd *cobra.Command, args []string) {
 	now := time.Now()
 	var abandoned []*types.Issue
 	for _, issue := range issues {
-		// Never GC infrastructure beads (agent, rig, role, message)
-		if dolt.IsInfraType(issue.IssueType) {
+		// Never GC infrastructure beads (configured via types.infra)
+		if store.IsInfraTypeCtx(ctx, issue.IssueType) {
 			continue
 		}
 
@@ -657,7 +656,7 @@ func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool) {
 			pinnedCount++
 			continue
 		}
-		if dolt.IsInfraType(issue.IssueType) {
+		if store.IsInfraTypeCtx(ctx, issue.IssueType) {
 			infraCount++
 			continue
 		}

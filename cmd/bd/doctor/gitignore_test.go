@@ -2133,6 +2133,142 @@ func TestFixGitignore_RedirectRoundTrip(t *testing.T) {
 	}
 }
 
+func TestEnsureProjectGitignore_FilePermissions(t *testing.T) {
+	// Verify that project .gitignore is created with 0644 permissions.
+	// Unlike .beads/.gitignore (0600), the project .gitignore must be
+	// readable by git and collaborators — this justifies the #nosec G306.
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping file permissions test on Windows")
+	}
+
+	tests := []struct {
+		name          string
+		setupFunc     func(t *testing.T, tmpDir string)
+		expectedPerms os.FileMode
+	}{
+		{
+			name: "creates new file with 0644 permissions",
+			setupFunc: func(t *testing.T, tmpDir string) {
+				// No .gitignore exists yet
+			},
+			expectedPerms: 0644,
+		},
+		{
+			name: "preserves restrictive permissions on existing file",
+			setupFunc: func(t *testing.T, tmpDir string) {
+				// Create .gitignore with restrictive permissions
+				if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte("node_modules/\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			expectedPerms: 0600, // os.WriteFile preserves existing perms
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			oldDir, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chdir(tmpDir); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := os.Chdir(oldDir); err != nil {
+					t.Error(err)
+				}
+			}()
+
+			tt.setupFunc(t, tmpDir)
+
+			if err := EnsureProjectGitignore(); err != nil {
+				t.Fatalf("EnsureProjectGitignore failed: %v", err)
+			}
+
+			info, err := os.Stat(".gitignore")
+			if err != nil {
+				t.Fatalf("Failed to stat .gitignore: %v", err)
+			}
+
+			actualPerms := info.Mode().Perm()
+			if actualPerms != tt.expectedPerms {
+				t.Errorf("Expected permissions %o, got %o", tt.expectedPerms, actualPerms)
+			}
+		})
+	}
+}
+
+func TestEnsureProjectGitignore_DoesNotLoosenPermissions(t *testing.T) {
+	// Verify that appending to an existing project .gitignore does not
+	// widen its permissions (e.g., 0600 should not become 0644).
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping file permissions test on Windows")
+	}
+
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Create file with restrictive permissions
+	if err := os.WriteFile(".gitignore", []byte("node_modules/\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeInfo, err := os.Stat(".gitignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforePerms := beforeInfo.Mode().Perm()
+
+	if err := EnsureProjectGitignore(); err != nil {
+		t.Fatalf("EnsureProjectGitignore failed: %v", err)
+	}
+
+	afterInfo, err := os.Stat(".gitignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterPerms := afterInfo.Mode().Perm()
+
+	if afterPerms > beforePerms {
+		t.Errorf("Permissions were loosened: before=%o, after=%o", beforePerms, afterPerms)
+	}
+}
+
+func TestGitignoreTemplate_NoSensitivePatterns(t *testing.T) {
+	// Verify the gitignore template itself doesn't contain patterns
+	// that could leak information about secrets or sensitive paths.
+	// The template should only contain infrastructure/runtime patterns.
+	sensitiveKeywords := []string{
+		"password",
+		"secret",
+		"token",
+		"credential",
+		"private_key",
+		"api_key",
+	}
+
+	for _, keyword := range sensitiveKeywords {
+		if strings.Contains(strings.ToLower(GitignoreTemplate), keyword) {
+			t.Errorf("GitignoreTemplate contains sensitive keyword %q — review for information leakage", keyword)
+		}
+	}
+}
+
 func TestContainsGitignorePattern(t *testing.T) {
 	tests := []struct {
 		content  string

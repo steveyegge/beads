@@ -9,290 +9,208 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-func TestSearchIssues_MetadataFieldMatch(t *testing.T) {
+func TestMetadataFilterSuite(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	store := newTestStore(t, tmpDir)
 	ctx := context.Background()
 
-	issue1 := &types.Issue{
-		Title:     "Platform issue",
-		Priority:  2,
-		IssueType: types.TypeTask,
-		Status:    types.StatusOpen,
-		Metadata:  json.RawMessage(`{"team":"platform","sprint":"Q1"}`),
+	// Create all test data up front — one DB for all subtests.
+	// Use unique metadata keys per subtest group to avoid interference.
+
+	// --- MetadataFieldMatch data ---
+	mfm1 := &types.Issue{
+		ID: "mfm-1", Title: "Platform issue (mfm)", Priority: 2,
+		IssueType: types.TypeTask, Status: types.StatusOpen,
+		Metadata: json.RawMessage(`{"mfm_team":"platform","mfm_sprint":"Q1"}`),
 	}
-	issue2 := &types.Issue{
-		Title:     "Frontend issue",
-		Priority:  2,
-		IssueType: types.TypeTask,
-		Status:    types.StatusOpen,
-		Metadata:  json.RawMessage(`{"team":"frontend","sprint":"Q1"}`),
-	}
-	if err := store.CreateIssue(ctx, issue1, "test"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
-	}
-	if err := store.CreateIssue(ctx, issue2, "test"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
+	mfm2 := &types.Issue{
+		ID: "mfm-2", Title: "Frontend issue (mfm)", Priority: 2,
+		IssueType: types.TypeTask, Status: types.StatusOpen,
+		Metadata: json.RawMessage(`{"mfm_team":"frontend","mfm_sprint":"Q1"}`),
 	}
 
-	// Search for team=platform → should find only issue1
-	results, err := store.SearchIssues(ctx, "", types.IssueFilter{
-		MetadataFields: map[string]string{"team": "platform"},
+	// --- HasMetadataKey data ---
+	hmk1 := &types.Issue{
+		ID: "hmk-1", Title: "Has team key (hmk)", Priority: 2,
+		IssueType: types.TypeTask, Status: types.StatusOpen,
+		Metadata: json.RawMessage(`{"hmk_team":"platform"}`),
+	}
+	hmk2 := &types.Issue{
+		ID: "hmk-2", Title: "No metadata (hmk)", Priority: 2,
+		IssueType: types.TypeTask, Status: types.StatusOpen,
+	}
+
+	// --- MultipleMetadataFieldsANDed data ---
+	and1 := &types.Issue{
+		ID: "and-1", Title: "Both match (and)", Priority: 2,
+		IssueType: types.TypeTask, Status: types.StatusOpen,
+		Metadata: json.RawMessage(`{"and_team":"platform","and_sprint":"Q1"}`),
+	}
+	and2 := &types.Issue{
+		ID: "and-2", Title: "Partial match (and)", Priority: 2,
+		IssueType: types.TypeTask, Status: types.StatusOpen,
+		Metadata: json.RawMessage(`{"and_team":"platform","and_sprint":"Q2"}`),
+	}
+
+	// --- NoMetadataDoesNotMatch data ---
+	nometa := &types.Issue{
+		ID: "nometa-1", Title: "No metadata (nometa)", Priority: 2,
+		IssueType: types.TypeTask, Status: types.StatusOpen,
+	}
+
+	// --- CreateIssue_WithMetadata data ---
+	withmeta := &types.Issue{
+		ID: "withmeta-1", Title: "Issue with metadata (withmeta)", Priority: 2,
+		IssueType: types.TypeTask, Status: types.StatusOpen,
+		Metadata: json.RawMessage(`{"wm_team":"platform","wm_sprint":"Q1","wm_points":5}`),
+	}
+
+	// --- CreateIssue_WithMetadata_Queryable data ---
+	queryable := &types.Issue{
+		ID: "queryable-1", Title: "Queryable metadata (queryable)", Priority: 2,
+		IssueType: types.TypeTask, Status: types.StatusOpen,
+		Metadata: json.RawMessage(`{"qm_team":"backend"}`),
+	}
+
+	// Bulk create all issues
+	allIssues := []*types.Issue{mfm1, mfm2, hmk1, hmk2, and1, and2, nometa, withmeta, queryable}
+	for _, issue := range allIssues {
+		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("CreateIssue(%s): %v", issue.ID, err)
+		}
+	}
+
+	t.Run("MetadataFieldMatch", func(t *testing.T) {
+		results, err := store.SearchIssues(ctx, "", types.IssueFilter{
+			MetadataFields: map[string]string{"mfm_team": "platform"},
+		})
+		if err != nil {
+			t.Fatalf("SearchIssues: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		if results[0].ID != mfm1.ID {
+			t.Errorf("expected issue %s, got %s", mfm1.ID, results[0].ID)
+		}
 	})
-	if err != nil {
-		t.Fatalf("SearchIssues: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].ID != issue1.ID {
-		t.Errorf("expected issue %s, got %s", issue1.ID, results[0].ID)
-	}
-}
 
-func TestSearchIssues_MetadataFieldNoMatch(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-	store := newTestStore(t, tmpDir)
-	ctx := context.Background()
-
-	issue := &types.Issue{
-		Title:     "Platform issue",
-		Priority:  2,
-		IssueType: types.TypeTask,
-		Status:    types.StatusOpen,
-		Metadata:  json.RawMessage(`{"team":"platform"}`),
-	}
-	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
-	}
-
-	results, err := store.SearchIssues(ctx, "", types.IssueFilter{
-		MetadataFields: map[string]string{"team": "backend"},
+	t.Run("MetadataFieldNoMatch", func(t *testing.T) {
+		results, err := store.SearchIssues(ctx, "", types.IssueFilter{
+			MetadataFields: map[string]string{"mfm_team": "backend"},
+		})
+		if err != nil {
+			t.Fatalf("SearchIssues: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 results, got %d", len(results))
+		}
 	})
-	if err != nil {
-		t.Fatalf("SearchIssues: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("expected 0 results, got %d", len(results))
-	}
-}
 
-func TestSearchIssues_HasMetadataKey(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-	store := newTestStore(t, tmpDir)
-	ctx := context.Background()
-
-	issue1 := &types.Issue{
-		Title:     "Has team key",
-		Priority:  2,
-		IssueType: types.TypeTask,
-		Status:    types.StatusOpen,
-		Metadata:  json.RawMessage(`{"team":"platform"}`),
-	}
-	issue2 := &types.Issue{
-		Title:     "No metadata",
-		Priority:  2,
-		IssueType: types.TypeTask,
-		Status:    types.StatusOpen,
-	}
-	if err := store.CreateIssue(ctx, issue1, "test"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
-	}
-	if err := store.CreateIssue(ctx, issue2, "test"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
-	}
-
-	results, err := store.SearchIssues(ctx, "", types.IssueFilter{
-		HasMetadataKey: "team",
+	t.Run("HasMetadataKey", func(t *testing.T) {
+		results, err := store.SearchIssues(ctx, "", types.IssueFilter{
+			HasMetadataKey: "hmk_team",
+		})
+		if err != nil {
+			t.Fatalf("SearchIssues: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		if results[0].ID != hmk1.ID {
+			t.Errorf("expected issue %s, got %s", hmk1.ID, results[0].ID)
+		}
 	})
-	if err != nil {
-		t.Fatalf("SearchIssues: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].ID != issue1.ID {
-		t.Errorf("expected issue %s, got %s", issue1.ID, results[0].ID)
-	}
-}
 
-func TestSearchIssues_MultipleMetadataFieldsANDed(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-	store := newTestStore(t, tmpDir)
-	ctx := context.Background()
-
-	issue1 := &types.Issue{
-		Title:     "Both match",
-		Priority:  2,
-		IssueType: types.TypeTask,
-		Status:    types.StatusOpen,
-		Metadata:  json.RawMessage(`{"team":"platform","sprint":"Q1"}`),
-	}
-	issue2 := &types.Issue{
-		Title:     "Partial match",
-		Priority:  2,
-		IssueType: types.TypeTask,
-		Status:    types.StatusOpen,
-		Metadata:  json.RawMessage(`{"team":"platform","sprint":"Q2"}`),
-	}
-	if err := store.CreateIssue(ctx, issue1, "test"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
-	}
-	if err := store.CreateIssue(ctx, issue2, "test"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
-	}
-
-	results, err := store.SearchIssues(ctx, "", types.IssueFilter{
-		MetadataFields: map[string]string{
-			"team":   "platform",
-			"sprint": "Q1",
-		},
+	t.Run("MultipleMetadataFieldsANDed", func(t *testing.T) {
+		results, err := store.SearchIssues(ctx, "", types.IssueFilter{
+			MetadataFields: map[string]string{
+				"and_team":   "platform",
+				"and_sprint": "Q1",
+			},
+		})
+		if err != nil {
+			t.Fatalf("SearchIssues: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		if results[0].ID != and1.ID {
+			t.Errorf("expected issue %s, got %s", and1.ID, results[0].ID)
+		}
 	})
-	if err != nil {
-		t.Fatalf("SearchIssues: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].ID != issue1.ID {
-		t.Errorf("expected issue %s, got %s", issue1.ID, results[0].ID)
-	}
-}
 
-func TestSearchIssues_MetadataFieldInvalidKey(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-	store := newTestStore(t, tmpDir)
-	ctx := context.Background()
-
-	_, err := store.SearchIssues(ctx, "", types.IssueFilter{
-		MetadataFields: map[string]string{"'; DROP TABLE issues; --": "val"},
+	t.Run("MetadataFieldInvalidKey", func(t *testing.T) {
+		_, err := store.SearchIssues(ctx, "", types.IssueFilter{
+			MetadataFields: map[string]string{"'; DROP TABLE issues; --": "val"},
+		})
+		if err == nil {
+			t.Fatal("expected error for invalid metadata key, got nil")
+		}
 	})
-	if err == nil {
-		t.Fatal("expected error for invalid metadata key, got nil")
-	}
-}
 
-func TestSearchIssues_HasMetadataKeyInvalidKey(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-	store := newTestStore(t, tmpDir)
-	ctx := context.Background()
-
-	_, err := store.SearchIssues(ctx, "", types.IssueFilter{
-		HasMetadataKey: "bad key!",
+	t.Run("HasMetadataKeyInvalidKey", func(t *testing.T) {
+		_, err := store.SearchIssues(ctx, "", types.IssueFilter{
+			HasMetadataKey: "bad key!",
+		})
+		if err == nil {
+			t.Fatal("expected error for invalid metadata key, got nil")
+		}
 	})
-	if err == nil {
-		t.Fatal("expected error for invalid metadata key, got nil")
-	}
-}
 
-func TestSearchIssues_NoMetadataDoesNotMatch(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-	store := newTestStore(t, tmpDir)
-	ctx := context.Background()
-
-	issue := &types.Issue{
-		Title:     "No metadata",
-		Priority:  2,
-		IssueType: types.TypeTask,
-		Status:    types.StatusOpen,
-	}
-	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
-	}
-
-	results, err := store.SearchIssues(ctx, "", types.IssueFilter{
-		MetadataFields: map[string]string{"team": "platform"},
+	t.Run("NoMetadataDoesNotMatch", func(t *testing.T) {
+		// Search for a key that no issue has (unique to this test)
+		results, err := store.SearchIssues(ctx, "", types.IssueFilter{
+			MetadataFields: map[string]string{"nometa_team": "platform"},
+		})
+		if err != nil {
+			t.Fatalf("SearchIssues: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 results for nonexistent metadata key, got %d", len(results))
+		}
 	})
-	if err != nil {
-		t.Fatalf("SearchIssues: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("expected 0 results for issue without metadata, got %d", len(results))
-	}
-}
 
-// TestCreateIssue_WithMetadata verifies metadata is persisted when set at creation time.
-func TestCreateIssue_WithMetadata(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-	store := newTestStore(t, tmpDir)
-	ctx := context.Background()
+	t.Run("CreateIssue_WithMetadata_Roundtrip", func(t *testing.T) {
+		got, err := store.GetIssue(ctx, withmeta.ID)
+		if err != nil {
+			t.Fatalf("GetIssue: %v", err)
+		}
+		if got.Metadata == nil {
+			t.Fatal("expected metadata to be set, got nil")
+		}
 
-	meta := json.RawMessage(`{"team":"platform","sprint":"Q1","points":5}`)
-	issue := &types.Issue{
-		Title:     "Issue with metadata",
-		Priority:  2,
-		IssueType: types.TypeTask,
-		Status:    types.StatusOpen,
-		Metadata:  meta,
-	}
-	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
-	}
-
-	// Fetch and verify metadata round-trips
-	got, err := store.GetIssue(ctx, issue.ID)
-	if err != nil {
-		t.Fatalf("GetIssue: %v", err)
-	}
-	if got.Metadata == nil {
-		t.Fatal("expected metadata to be set, got nil")
-	}
-
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(got.Metadata, &parsed); err != nil {
-		t.Fatalf("failed to parse metadata: %v", err)
-	}
-	if parsed["team"] != "platform" {
-		t.Errorf("expected team=platform, got %v", parsed["team"])
-	}
-	if parsed["sprint"] != "Q1" {
-		t.Errorf("expected sprint=Q1, got %v", parsed["sprint"])
-	}
-	// JSON numbers unmarshal as float64
-	if parsed["points"] != float64(5) {
-		t.Errorf("expected points=5, got %v", parsed["points"])
-	}
-}
-
-// TestCreateIssue_WithMetadata_Queryable verifies metadata set at creation time is queryable.
-func TestCreateIssue_WithMetadata_Queryable(t *testing.T) {
-	t.Parallel()
-	tmpDir := t.TempDir()
-	store := newTestStore(t, tmpDir)
-	ctx := context.Background()
-
-	issue := &types.Issue{
-		Title:     "Queryable metadata",
-		Priority:  2,
-		IssueType: types.TypeTask,
-		Status:    types.StatusOpen,
-		Metadata:  json.RawMessage(`{"team":"backend"}`),
-	}
-	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
-	}
-
-	// Search by metadata field
-	results, err := store.SearchIssues(ctx, "", types.IssueFilter{
-		MetadataFields: map[string]string{"team": "backend"},
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(got.Metadata, &parsed); err != nil {
+			t.Fatalf("failed to parse metadata: %v", err)
+		}
+		if parsed["wm_team"] != "platform" {
+			t.Errorf("expected wm_team=platform, got %v", parsed["wm_team"])
+		}
+		if parsed["wm_sprint"] != "Q1" {
+			t.Errorf("expected wm_sprint=Q1, got %v", parsed["wm_sprint"])
+		}
+		// JSON numbers unmarshal as float64
+		if parsed["wm_points"] != float64(5) {
+			t.Errorf("expected wm_points=5, got %v", parsed["wm_points"])
+		}
 	})
-	if err != nil {
-		t.Fatalf("SearchIssues: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].ID != issue.ID {
-		t.Errorf("expected issue %s, got %s", issue.ID, results[0].ID)
-	}
+
+	t.Run("CreateIssue_WithMetadata_Queryable", func(t *testing.T) {
+		results, err := store.SearchIssues(ctx, "", types.IssueFilter{
+			MetadataFields: map[string]string{"qm_team": "backend"},
+		})
+		if err != nil {
+			t.Fatalf("SearchIssues: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		if results[0].ID != queryable.ID {
+			t.Errorf("expected issue %s, got %s", queryable.ID, results[0].ID)
+		}
+	})
 }
 
 // Key validation unit tests (don't need a store)

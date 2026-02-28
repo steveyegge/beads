@@ -764,3 +764,105 @@ func TestSlotAgentLabelCheck(t *testing.T) {
 		t.Fatalf("runSlotShow should accept task-type agent with gt:agent label, got: %v", err)
 	}
 }
+
+// TestRoutingSkipsLocalPhantomCopy verifies that when a phantom copy of an issue
+// exists in the local (town/hq) database, resolveAndGetIssueWithRouting returns
+// the issue from the routed (rig) database — not the local phantom.
+//
+// This is a regression test for bd-7vk: bd close from town root closed the wrong
+// copy of an issue because the local-first check found a phantom in hq before
+// routing to the rig database.
+//
+// NOTE: This test uses os.Chdir and cannot run in parallel with other tests.
+func TestRoutingSkipsLocalPhantomCopy(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+
+	// Create town .beads directory
+	townBeadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create town beads dir: %v", err)
+	}
+
+	// Create rig .beads directory
+	rigBeadsDir := filepath.Join(tmpDir, "rig", ".beads")
+	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create rig beads dir: %v", err)
+	}
+
+	// Initialize town database (prefix "hq")
+	townDBPath := filepath.Join(townBeadsDir, "dolt")
+	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+
+	// Initialize rig database (prefix "gt")
+	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
+	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+
+	// Create the SAME issue ID in BOTH databases (phantom copy scenario).
+	// The town copy is the phantom — it should NOT be returned.
+	phantomIssue := &types.Issue{
+		ID:        "gt-phantom-test",
+		Title:     "PHANTOM in town (wrong)",
+		IssueType: types.TypeTask,
+		Status:    types.StatusOpen,
+	}
+	if err := townStore.CreateIssue(ctx, phantomIssue, "test"); err != nil {
+		t.Fatalf("Failed to create phantom issue in town: %v", err)
+	}
+
+	canonicalIssue := &types.Issue{
+		ID:        "gt-phantom-test",
+		Title:     "CANONICAL in rig (correct)",
+		IssueType: types.TypeTask,
+		Status:    types.StatusOpen,
+	}
+	if err := rigStore.CreateIssue(ctx, canonicalIssue, "test"); err != nil {
+		t.Fatalf("Failed to create canonical issue in rig: %v", err)
+	}
+
+	// Close rig store to release Dolt lock before routing opens it
+	rigStore.Close()
+
+	// Create routes.jsonl in town .beads directory
+	routesContent := `{"prefix":"gt-","path":"rig"}`
+	routesPath := filepath.Join(townBeadsDir, "routes.jsonl")
+	if err := os.WriteFile(routesPath, []byte(routesContent), 0644); err != nil {
+		t.Fatalf("Failed to write routes.jsonl: %v", err)
+	}
+
+	// Set up global state for routing
+	oldDbPath := dbPath
+	dbPath = townDBPath
+	t.Cleanup(func() { dbPath = oldDbPath })
+
+	// Change to tmpDir so routing can find town root via CWD
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	// Test: resolveAndGetIssueWithRouting should return the rig copy, NOT the town phantom
+	result, err := resolveAndGetIssueWithRouting(ctx, townStore, "gt-phantom-test")
+	if err != nil {
+		t.Fatalf("resolveAndGetIssueWithRouting failed: %v", err)
+	}
+	if result == nil || result.Issue == nil {
+		t.Fatal("resolveAndGetIssueWithRouting returned nil")
+	}
+	defer result.Close()
+
+	if !result.Routed {
+		t.Error("Expected result.Routed to be true — should use rig store, not town store")
+	}
+
+	if result.Issue.Title != "CANONICAL in rig (correct)" {
+		t.Errorf("Got wrong issue: title=%q (expected rig canonical copy)", result.Issue.Title)
+	}
+
+	t.Logf("Correctly skipped phantom copy in town, returned rig issue: %s", result.Issue.Title)
+}

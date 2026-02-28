@@ -13,6 +13,7 @@ import (
 //
 // Invariant: create → add labels/deps/comments → show --json returns all data.
 func TestProtocol_ImportPreservesRelationalData(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id1 := w.create("--title", "Feature with data", "--type", "feature", "--priority", "1")
 	id2 := w.create("--title", "Dependency target", "--type", "task", "--priority", "2")
@@ -58,6 +59,7 @@ func TestProtocol_ImportPreservesRelationalData(t *testing.T) {
 // survives create/update → show --json. This is a data integrity invariant:
 // if the CLI accepts a value, show must reflect it.
 func TestProtocol_FieldsRoundTrip(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("--title", "Round-trip subject",
 		"--type", "feature",
@@ -95,6 +97,7 @@ func TestProtocol_FieldsRoundTrip(t *testing.T) {
 // TestProtocol_MetadataRoundTrip asserts that JSON metadata set via
 // bd update --metadata survives in show --json output.
 func TestProtocol_MetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("--title", "Metadata carrier", "--type", "task")
 	w.run("update", id, "--metadata", `{"component":"auth","risk":"high"}`)
@@ -124,6 +127,7 @@ func TestProtocol_MetadataRoundTrip(t *testing.T) {
 // TestProtocol_SpecIDRoundTrip asserts that spec_id set via bd update --spec-id
 // survives in show --json output.
 func TestProtocol_SpecIDRoundTrip(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("--title", "Spec carrier", "--type", "task")
 	w.run("update", id, "--spec-id", "RFC-007")
@@ -142,6 +146,7 @@ func TestProtocol_SpecIDRoundTrip(t *testing.T) {
 // TestProtocol_CloseReasonRoundTrip asserts that close_reason survives
 // close → show --json.
 func TestProtocol_CloseReasonRoundTrip(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("--title", "Closeable", "--type", "bug", "--priority", "2")
 	w.run("close", id, "--reason", "Fixed in commit abc123")
@@ -162,6 +167,7 @@ func TestProtocol_CloseReasonRoundTrip(t *testing.T) {
 // in both directions: the child's dependencies reference the parent,
 // and the parent's dependents reference the child.
 func TestProtocol_ParentChildDepShowRoundTrip(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	parent := w.create("--title", "Epic parent", "--type", "epic", "--priority", "1")
 	child := w.create("--title", "Child task", "--type", "task", "--priority", "2", "--parent", parent)
@@ -219,6 +225,7 @@ func TestProtocol_ParentChildDepShowRoundTrip(t *testing.T) {
 //
 // Invariant: label add + label remove is a no-op on the label set.
 func TestProtocol_LabelAddRemoveRoundTrip(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	a := w.create("--title", "Label round-trip", "--type", "task")
 

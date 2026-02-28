@@ -5,6 +5,7 @@ import "testing"
 // TestProtocol_CommentRejectsEmptyText asserts that bd comments add rejects
 // empty and whitespace-only comment text with a non-zero exit code.
 func TestProtocol_CommentRejectsEmptyText(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 	id := w.create("--title", "Comment target", "--type", "task")
 

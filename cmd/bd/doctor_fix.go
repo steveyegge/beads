@@ -334,6 +334,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.BrokenMigrationState(path)
 		case "SQLite Residue":
 			err = fix.SQLiteResidue(path)
+		case "Git Merge Driver":
+			err = doctor.FixMergeDriver()
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)

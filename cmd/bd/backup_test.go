@@ -112,7 +112,7 @@ func TestBackupExport(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Set up working directory so findBeadsDir() works
+	// Set up working directory so beads.FindBeadsDir() works
 	origWd, _ := os.Getwd()
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatal(err)

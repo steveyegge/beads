@@ -33,6 +33,9 @@ func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
 	case "types.custom":
 		s.customTypeCached = false
 		s.customTypeCache = nil
+	case "types.infra":
+		s.infraTypeCached = false
+		s.infraTypeCache = nil
 	}
 	s.cacheMu.Unlock()
 
@@ -187,6 +190,52 @@ func (s *DoltStore) GetCustomTypes(ctx context.Context) ([]string, error) {
 	s.cacheMu.Unlock()
 
 	return result, nil
+}
+
+// GetInfraTypes returns infrastructure type names from config.
+// Infrastructure types are routed to the wisps table to keep the versioned
+// issues table clean. Defaults to ["agent", "rig", "role", "message"] if
+// no custom configuration exists.
+// Falls back: DB config "types.infra" → config.yaml types.infra → defaults.
+// Results are cached per DoltStore lifetime and invalidated when SetConfig
+// updates the "types.infra" key.
+func (s *DoltStore) GetInfraTypes(ctx context.Context) map[string]bool {
+	s.cacheMu.Lock()
+	if s.infraTypeCached {
+		result := s.infraTypeCache
+		s.cacheMu.Unlock()
+		return result
+	}
+	s.cacheMu.Unlock()
+
+	var types []string
+
+	value, err := s.GetConfig(ctx, "types.infra")
+	if err == nil && value != "" {
+		types = parseCommaSeparatedList(value)
+	}
+
+	if len(types) == 0 {
+		if yamlTypes := config.GetInfraTypesFromYAML(); len(yamlTypes) > 0 {
+			types = yamlTypes
+		}
+	}
+
+	if len(types) == 0 {
+		types = DefaultInfraTypes
+	}
+
+	result := make(map[string]bool, len(types))
+	for _, t := range types {
+		result[t] = true
+	}
+
+	s.cacheMu.Lock()
+	s.infraTypeCache = result
+	s.infraTypeCached = true
+	s.cacheMu.Unlock()
+
+	return result
 }
 
 // parseCommaSeparatedList splits a comma-separated string into a slice of trimmed entries.

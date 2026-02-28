@@ -145,7 +145,7 @@ func (s *DoltStore) setLastSyncTime(ctx context.Context, peer string) error {
 	value := time.Now().Format(time.RFC3339)
 	_, err := s.execContext(ctx,
 		"REPLACE INTO metadata (`key`, value) VALUES (?, ?)", key, value)
-	return err
+	return wrapExecError("set last sync time", err)
 }
 
 // Sync performs a full bidirectional sync with a peer:

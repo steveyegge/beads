@@ -7,6 +7,7 @@ import "testing"
 // 'bd blocked' but NOT in 'bd list --status blocked'. The --status flag
 // filters by stored status, not computed dependency state.
 func TestProtocol_BlockedStatusIsStoredNotComputed(t *testing.T) {
+	t.Parallel()
 	w := newWorkspace(t)
 
 	blocker := w.create("Blocker")

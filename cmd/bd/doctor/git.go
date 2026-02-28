@@ -565,6 +565,21 @@ func CheckMergeDriver(path string) DoctorCheck {
 	}
 }
 
+// FixMergeDriver sets the git merge driver configuration to the correct value.
+func FixMergeDriver() error {
+	correctConfig := "bd merge %A %O %A %B"
+	cmd := exec.Command("git", "config", "merge.beads.driver", correctConfig) // #nosec G204
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to set merge.beads.driver: %w", err)
+	}
+	// Also ensure merge.beads.name is set
+	nameCmd := exec.Command("git", "config", "merge.beads.name", "Beads JSONL merge driver") // #nosec G204
+	if err := nameCmd.Run(); err != nil {
+		return fmt.Errorf("failed to set merge.beads.name: %w", err)
+	}
+	return nil
+}
+
 // CheckGitHooksDoltCompatibility checks if installed git hooks are compatible with Dolt backend.
 // Hooks installed before Dolt support was added don't have the backend check and will
 // fail with confusing errors on git pull/commit.
