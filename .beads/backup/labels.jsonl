@@ -28,6 +28,7 @@
 {"issue_id":"bd-wisp-1bq0u0","label":"gt:message"}
 {"issue_id":"bd-wisp-1bq0u0","label":"read"}
 {"issue_id":"bd-wisp-1fqq","label":"gt:merge-request"}
+{"issue_id":"bd-wisp-1hc1f","label":"idle:1"}
 {"issue_id":"bd-wisp-3j6k","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-3orq","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-3ust","label":"gt:merge-request"}
@@ -37,6 +38,7 @@
 {"issue_id":"bd-wisp-4tsii5","label":"plugin:dolt-backup"}
 {"issue_id":"bd-wisp-4tsii5","label":"result:success"}
 {"issue_id":"bd-wisp-4tsii5","label":"type:plugin-run"}
+{"issue_id":"bd-wisp-5eap","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-5ebk","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-6lv5by","label":"delivery-acked-at:2026-02-27T23:06:40Z"}
 {"issue_id":"bd-wisp-6lv5by","label":"delivery-acked-by:gastown/witness"}
