@@ -29,6 +29,13 @@
 {"issue_id":"bd-wisp-1bq0u0","label":"read"}
 {"issue_id":"bd-wisp-1fqq","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-1hc1f","label":"idle:1"}
+{"issue_id":"bd-wisp-2y171","label":"delivery-acked-at:2026-02-28T01:39:40Z"}
+{"issue_id":"bd-wisp-2y171","label":"delivery-acked-by:gastown/witness"}
+{"issue_id":"bd-wisp-2y171","label":"delivery:acked"}
+{"issue_id":"bd-wisp-2y171","label":"delivery:pending"}
+{"issue_id":"bd-wisp-2y171","label":"from:gastown/alpha"}
+{"issue_id":"bd-wisp-2y171","label":"gt:message"}
+{"issue_id":"bd-wisp-2y171","label":"read"}
 {"issue_id":"bd-wisp-3j6k","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-3orq","label":"gt:merge-request"}
 {"issue_id":"bd-wisp-3ust","label":"gt:merge-request"}
