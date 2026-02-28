@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -544,6 +546,97 @@ Use --dry-run to see what would be dropped without actually dropping.`,
 	},
 }
 
+// --- Dolt remote CLI helpers ---
+// These operate on the filesystem-level dolt remote config (used by dolt CLI),
+// complementing the SQL-level remotes (used by dolt sql-server).
+
+// listCLIRemotes parses `dolt remote -v` output from the database directory.
+func listCLIRemotes(dbPath string) ([]remoteEntry, error) {
+	cmd := exec.Command("dolt", "remote", "-v") // #nosec G204 -- fixed command
+	cmd.Dir = dbPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("dolt remote -v failed: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	var remotes []remoteEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// dolt remote -v outputs: name <tab-or-spaces> url
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			remotes = append(remotes, remoteEntry{Name: parts[0], URL: parts[1]})
+		}
+	}
+	return remotes, nil
+}
+
+// remoteEntry is a name+URL pair for CLI remote output.
+type remoteEntry struct {
+	Name string
+	URL  string
+}
+
+// addCLIRemote adds a remote at the filesystem level via dolt CLI.
+func addCLIRemote(dbPath, name, url string) error {
+	cmd := exec.Command("dolt", "remote", "add", name, url) // #nosec G204 -- fixed command with user args
+	cmd.Dir = dbPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("dolt remote add failed: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// removeCLIRemote removes a remote at the filesystem level via dolt CLI.
+func removeCLIRemote(dbPath, name string) error {
+	cmd := exec.Command("dolt", "remote", "remove", name) // #nosec G204 -- fixed command with user args
+	cmd.Dir = dbPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("dolt remote remove failed: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// findCLIRemote returns the URL for a named CLI remote, or "" if not found.
+func findCLIRemote(dbPath, name string) string {
+	remotes, err := listCLIRemotes(dbPath)
+	if err != nil {
+		return ""
+	}
+	for _, r := range remotes {
+		if r.Name == name {
+			return r.URL
+		}
+	}
+	return ""
+}
+
+// isSSHURL returns true if the URL uses SSH transport.
+func isSSHURL(url string) bool {
+	return strings.HasPrefix(url, "git+ssh://") ||
+		strings.HasPrefix(url, "ssh://") ||
+		strings.Contains(url, "git@")
+}
+
+// confirmOverwrite prompts the user to confirm overwriting an existing remote.
+// Returns true if the user confirms. Always returns true if stdin is not a terminal.
+func confirmOverwrite(surface, name, existingURL, newURL string) bool {
+	fmt.Printf("  Remote %q already exists on %s: %s\n", name, surface, existingURL)
+	fmt.Printf("  Overwrite with: %s\n", newURL)
+	fmt.Print("  Overwrite? (y/N): ")
+	reader := bufio.NewReader(os.Stdin)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false
+	}
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "y" || response == "yes"
+}
+
 // --- Dolt remote management commands ---
 
 var doltRemoteCmd = &cobra.Command{
@@ -559,7 +652,7 @@ Subcommands:
 
 var doltRemoteAddCmd = &cobra.Command{
 	Use:   "add <name> <url>",
-	Short: "Add a Dolt remote",
+	Short: "Add a Dolt remote (both SQL server and CLI)",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
@@ -569,28 +662,77 @@ var doltRemoteAddCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		name, url := args[0], args[1]
-		if err := st.AddRemote(ctx, name, url); err != nil {
-			if jsonOutput {
-				outputJSONError(err, "remote_add_failed")
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		dbPath := st.Path()
+
+		// Check existing remotes on both surfaces
+		sqlRemotes, _ := st.ListRemotes(ctx)
+		var sqlURL string
+		for _, r := range sqlRemotes {
+			if r.Name == name {
+				sqlURL = r.URL
+				break
 			}
-			os.Exit(1)
 		}
+		cliURL := findCLIRemote(dbPath, name)
+
+		// Prompt for overwrite if either surface already has this remote
+		if sqlURL != "" && sqlURL != url {
+			if !confirmOverwrite("SQL server", name, sqlURL, url) {
+				fmt.Println("Canceled.")
+				return
+			}
+			// Remove existing SQL remote before re-adding
+			if err := st.RemoveRemote(ctx, name); err != nil {
+				fmt.Fprintf(os.Stderr, "Error removing existing SQL remote: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		if cliURL != "" && cliURL != url {
+			if !confirmOverwrite("CLI (filesystem)", name, cliURL, url) {
+				fmt.Println("Canceled.")
+				return
+			}
+			if err := removeCLIRemote(dbPath, name); err != nil {
+				fmt.Fprintf(os.Stderr, "Error removing existing CLI remote: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// Add to SQL server (skip if already correct)
+		if sqlURL != url {
+			if err := st.AddRemote(ctx, name, url); err != nil {
+				if jsonOutput {
+					outputJSONError(err, "remote_add_failed")
+				} else {
+					fmt.Fprintf(os.Stderr, "Error adding SQL remote: %v\n", err)
+				}
+				os.Exit(1)
+			}
+		}
+
+		// Add to CLI filesystem (skip if already correct)
+		if cliURL != url {
+			if err := addCLIRemote(dbPath, name, url); err != nil {
+				// Non-fatal: SQL remote was added successfully
+				fmt.Fprintf(os.Stderr, "Warning: SQL remote added but CLI remote failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Run: cd %s && dolt remote add %s %s\n", dbPath, name, url)
+			}
+		}
+
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"name": name,
 				"url":  url,
 			})
 		} else {
-			fmt.Printf("Added remote %q → %s\n", name, url)
+			fmt.Printf("Added remote %q → %s (SQL + CLI)\n", name, url)
 		}
 	},
 }
 
 var doltRemoteListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List configured Dolt remotes",
+	Short: "List configured Dolt remotes (SQL server + CLI)",
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 		st := getStore()
@@ -598,32 +740,108 @@ var doltRemoteListCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Error: no store available\n")
 			os.Exit(1)
 		}
-		remotes, err := st.ListRemotes(ctx)
-		if err != nil {
+		dbPath := st.Path()
+
+		sqlRemotes, sqlErr := st.ListRemotes(ctx)
+		if sqlErr != nil {
 			if jsonOutput {
-				outputJSONError(err, "remote_list_failed")
+				outputJSONError(sqlErr, "remote_list_failed")
 			} else {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error listing SQL remotes: %v\n", sqlErr)
 			}
 			os.Exit(1)
 		}
+
+		cliRemotes, cliErr := listCLIRemotes(dbPath)
+
+		// Build unified view
+		type unifiedRemote struct {
+			Name   string `json:"name"`
+			SQLURL string `json:"sql_url,omitempty"`
+			CLIURL string `json:"cli_url,omitempty"`
+			Status string `json:"status"` // "ok", "sql_only", "cli_only", "conflict"
+		}
+
+		seen := map[string]*unifiedRemote{}
+		var names []string
+		for _, r := range sqlRemotes {
+			u := &unifiedRemote{Name: r.Name, SQLURL: r.URL}
+			seen[r.Name] = u
+			names = append(names, r.Name)
+		}
+		if cliErr == nil {
+			for _, r := range cliRemotes {
+				if u, ok := seen[r.Name]; ok {
+					u.CLIURL = r.URL
+				} else {
+					seen[r.Name] = &unifiedRemote{Name: r.Name, CLIURL: r.URL}
+					names = append(names, r.Name)
+				}
+			}
+		}
+
+		// Classify each remote
+		hasDiscrepancy := false
+		var unified []unifiedRemote
+		for _, name := range names {
+			u := seen[name]
+			switch {
+			case u.SQLURL != "" && u.CLIURL != "" && u.SQLURL == u.CLIURL:
+				u.Status = "ok"
+			case u.SQLURL != "" && u.CLIURL != "" && u.SQLURL != u.CLIURL:
+				u.Status = "conflict"
+				hasDiscrepancy = true
+			case u.SQLURL != "" && u.CLIURL == "":
+				u.Status = "sql_only"
+				hasDiscrepancy = true
+			case u.SQLURL == "" && u.CLIURL != "":
+				u.Status = "cli_only"
+				hasDiscrepancy = true
+			}
+			unified = append(unified, *u)
+		}
+
 		if jsonOutput {
-			outputJSON(remotes)
+			outputJSON(unified)
 			return
 		}
-		if len(remotes) == 0 {
+
+		if len(unified) == 0 {
 			fmt.Println("No remotes configured.")
 			return
 		}
-		for _, r := range remotes {
-			fmt.Printf("%-20s %s\n", r.Name, r.URL)
+
+		for _, u := range unified {
+			url := u.SQLURL
+			if url == "" {
+				url = u.CLIURL
+			}
+			switch u.Status {
+			case "ok":
+				fmt.Printf("%-20s %s\n", u.Name, url)
+			case "sql_only":
+				fmt.Printf("%-20s %s  %s\n", u.Name, url, ui.RenderWarn("[SQL only]"))
+			case "cli_only":
+				fmt.Printf("%-20s %s  %s\n", u.Name, url, ui.RenderWarn("[CLI only]"))
+			case "conflict":
+				fmt.Printf("%-20s %s\n", u.Name, ui.RenderFail("[CONFLICT]"))
+				fmt.Printf("%-20s   SQL: %s\n", "", u.SQLURL)
+				fmt.Printf("%-20s   CLI: %s\n", "", u.CLIURL)
+			}
+		}
+
+		if cliErr != nil {
+			fmt.Printf("\n%s Could not read CLI remotes: %v\n", ui.RenderWarn("⚠"), cliErr)
+		}
+		if hasDiscrepancy {
+			fmt.Printf("\n%s Remote discrepancies detected. Run 'bd doctor --fix' to resolve.\n", ui.RenderWarn("⚠"))
 		}
 	},
 }
 
 var doltRemoteRemoveCmd = &cobra.Command{
 	Use:   "remove <name>",
-	Short: "Remove a Dolt remote",
+	Short: "Remove a Dolt remote (both SQL server and CLI)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
@@ -633,21 +851,61 @@ var doltRemoteRemoveCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		name := args[0]
-		if err := st.RemoveRemote(ctx, name); err != nil {
-			if jsonOutput {
-				outputJSONError(err, "remote_remove_failed")
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		dbPath := st.Path()
+
+		// Check both surfaces for conflicts
+		sqlRemotes, _ := st.ListRemotes(ctx)
+		var sqlURL string
+		for _, r := range sqlRemotes {
+			if r.Name == name {
+				sqlURL = r.URL
+				break
 			}
+		}
+		cliURL := findCLIRemote(dbPath, name)
+
+		// Refuse removal if URLs conflict — user must resolve first
+		forceRemove, _ := cmd.Flags().GetBool("force")
+		if sqlURL != "" && cliURL != "" && sqlURL != cliURL && !forceRemove {
+			fmt.Fprintf(os.Stderr, "Error: remote %q has conflicting URLs:\n", name)
+			fmt.Fprintf(os.Stderr, "  SQL: %s\n  CLI: %s\n", sqlURL, cliURL)
+			fmt.Fprintf(os.Stderr, "\nResolve the conflict first. To force remove from both:\n")
+			fmt.Fprintf(os.Stderr, "  bd dolt remote remove %s --force\n", name)
 			os.Exit(1)
 		}
+
+		// Remove from SQL server
+		if sqlURL != "" {
+			if err := st.RemoveRemote(ctx, name); err != nil {
+				if jsonOutput {
+					outputJSONError(err, "remote_remove_failed")
+				} else {
+					fmt.Fprintf(os.Stderr, "Error removing SQL remote: %v\n", err)
+				}
+				os.Exit(1)
+			}
+		}
+
+		// Remove from CLI filesystem
+		if cliURL != "" {
+			if err := removeCLIRemote(dbPath, name); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: SQL remote removed but CLI remote failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Run: cd %s && dolt remote remove %s\n", dbPath, name)
+			}
+		}
+
+		if sqlURL == "" && cliURL == "" {
+			fmt.Fprintf(os.Stderr, "Error: remote %q not found on either surface\n", name)
+			os.Exit(1)
+		}
+
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"name":    name,
 				"removed": true,
 			})
 		} else {
-			fmt.Printf("Removed remote %q\n", name)
+			fmt.Printf("Removed remote %q (SQL + CLI)\n", name)
 		}
 	},
 }
@@ -676,6 +934,7 @@ func init() {
 	doltCommitCmd.Flags().StringP("message", "m", "", "Commit message (default: auto-generated)")
 	doltIdleMonitorCmd.Flags().String("beads-dir", "", "Path to .beads directory")
 	doltCleanDatabasesCmd.Flags().Bool("dry-run", false, "Show what would be dropped without dropping")
+	doltRemoteRemoveCmd.Flags().Bool("force", false, "Force remove even when SQL and CLI URLs conflict")
 	doltRemoteCmd.AddCommand(doltRemoteAddCmd)
 	doltRemoteCmd.AddCommand(doltRemoteListCmd)
 	doltRemoteCmd.AddCommand(doltRemoteRemoveCmd)
@@ -753,6 +1012,49 @@ func showDoltConfig(testConnection bool) {
 			fmt.Printf("  %s\n", ui.RenderPass("✓ Server connection OK"))
 		} else {
 			fmt.Printf("  %s\n", ui.RenderWarn("✗ Server not reachable"))
+		}
+	}
+
+	// Show remotes from both surfaces
+	doltDir := doltserver.ResolveDoltDir(beadsDir)
+	dbName := cfg.GetDoltDatabase()
+	dbDir := filepath.Join(doltDir, dbName)
+	fmt.Println("\nRemotes:")
+	ctx := context.Background()
+	st := getStore()
+	var sqlRemotes []string
+	if st != nil {
+		if remotes, err := st.ListRemotes(ctx); err == nil {
+			for _, r := range remotes {
+				sqlRemotes = append(sqlRemotes, fmt.Sprintf("  %-16s %s", r.Name, r.URL))
+			}
+		}
+	}
+	cliRemotes, cliErr := listCLIRemotes(dbDir)
+	if len(sqlRemotes) == 0 && (cliErr != nil || len(cliRemotes) == 0) {
+		fmt.Println("  (none)")
+	} else {
+		// Show SQL remotes
+		if len(sqlRemotes) > 0 {
+			for _, line := range sqlRemotes {
+				fmt.Println(line)
+			}
+		}
+		// Flag CLI-only remotes
+		if cliErr == nil {
+			sqlNames := map[string]bool{}
+			if st != nil {
+				if remotes, err := st.ListRemotes(ctx); err == nil {
+					for _, r := range remotes {
+						sqlNames[r.Name] = true
+					}
+				}
+			}
+			for _, r := range cliRemotes {
+				if !sqlNames[r.Name] {
+					fmt.Printf("  %-16s %s  %s\n", r.Name, r.URL, ui.RenderWarn("[CLI only]"))
+				}
+			}
 		}
 	}
 
@@ -924,6 +1226,41 @@ func testDoltConnection() {
 		fmt.Println("\nStart the server with: bd dolt start")
 		os.Exit(1)
 	}
+
+	// Test remote connectivity
+	st := getStore()
+	if st == nil {
+		return
+	}
+	ctx := context.Background()
+	remotes, err := st.ListRemotes(ctx)
+	if err != nil || len(remotes) == 0 {
+		return
+	}
+	fmt.Println("\nRemote connectivity:")
+	for _, r := range remotes {
+		if isSSHURL(r.URL) {
+			// Test SSH connectivity by parsing host from URL
+			sshHost := extractSSHHost(r.URL)
+			if sshHost != "" {
+				fmt.Printf("  %s (%s)... ", r.Name, r.URL)
+				if testSSHConnectivity(sshHost) {
+					fmt.Printf("%s\n", ui.RenderPass("✓ reachable"))
+				} else {
+					fmt.Printf("%s\n", ui.RenderWarn("✗ unreachable"))
+				}
+			}
+		} else if strings.HasPrefix(r.URL, "https://") || strings.HasPrefix(r.URL, "http://") {
+			fmt.Printf("  %s (%s)... ", r.Name, r.URL)
+			if testHTTPConnectivity(r.URL) {
+				fmt.Printf("%s\n", ui.RenderPass("✓ reachable"))
+			} else {
+				fmt.Printf("%s\n", ui.RenderWarn("✗ unreachable"))
+			}
+		} else {
+			fmt.Printf("  %s (%s)... skipped (no connectivity test for this scheme)\n", r.Name, r.URL)
+		}
+	}
 }
 
 // serverDialTimeout controls the TCP dial timeout for server connection tests.
@@ -938,6 +1275,65 @@ func testServerConnection(host string, port int) bool {
 		return false
 	}
 	_ = conn.Close() // Best effort cleanup
+	return true
+}
+
+// extractSSHHost extracts the hostname from an SSH URL for connectivity testing.
+func extractSSHHost(url string) string {
+	// git+ssh://git@github.com/org/repo.git → github.com
+	// ssh://git@github.com/org/repo.git → github.com
+	// git@github.com:org/repo.git → github.com
+	url = strings.TrimPrefix(url, "git+ssh://")
+	url = strings.TrimPrefix(url, "ssh://")
+	if idx := strings.Index(url, "@"); idx >= 0 {
+		url = url[idx+1:]
+	}
+	// Handle colon-separated (git@host:path) or slash-separated (ssh://host/path)
+	if idx := strings.Index(url, ":"); idx >= 0 && !strings.Contains(url[:idx], "/") {
+		return url[:idx]
+	}
+	if idx := strings.Index(url, "/"); idx >= 0 {
+		return url[:idx]
+	}
+	return url
+}
+
+// testSSHConnectivity tests if an SSH host is reachable on port 22.
+func testSSHConnectivity(host string) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, "22"), 5*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// testHTTPConnectivity tests if an HTTP(S) URL is reachable via TCP.
+func testHTTPConnectivity(url string) bool {
+	// Extract host from URL
+	host := url
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	if idx := strings.Index(host, "/"); idx >= 0 {
+		host = host[:idx]
+	}
+	port := "443"
+	if strings.HasPrefix(url, "http://") {
+		port = "80"
+	}
+	if strings.Contains(host, ":") {
+		// Host already has port
+		port = ""
+	}
+	addr := host
+	if port != "" {
+		addr = net.JoinHostPort(host, port)
+	}
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
 	return true
 }
 

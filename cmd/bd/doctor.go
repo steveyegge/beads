@@ -463,6 +463,11 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
+	// Check 7f: Remote consistency (SQL vs CLI)
+	remoteCheck := convertWithCategory(doctor.CheckRemoteConsistency(path), doctor.CategoryData)
+	result.Checks = append(result.Checks, remoteCheck)
+	// Don't fail overall for remote discrepancies, just warn
+
 	// Dolt health checks (connection, schema, issue count, status).
 	// GH#1981: Pass the pre-computed lock check (run before any embedded Dolt
 	// opens) to avoid false positives from doctor's own noms LOCK files.

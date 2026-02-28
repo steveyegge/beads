@@ -161,12 +161,24 @@ bd dolt pull
 For SSH remotes, `bd dolt push` and `bd dolt pull` automatically use the `dolt`
 CLI instead of the SQL server to avoid MySQL connection timeouts during transfer.
 
+`bd dolt remote add` registers the remote on both the SQL server and the
+filesystem (CLI) config. This ensures `dolt push`/`dolt pull` via CLI can find
+the remote. If either surface already has a remote with that name, you'll be
+prompted before overwriting.
+
+> **Also supports sharing a Git repo**: Dolt stores data under `refs/dolt/data`,
+> separate from standard Git refs (`refs/heads/`, `refs/tags/`). You can safely
+> point a `git+ssh://` remote at the same repository as your project source code.
+> See [Dolt Git Remotes](https://docs.dolthub.com/concepts/dolt/git/remotes) for details.
+
 ### List/Remove Remotes
 
 ```bash
-bd dolt remote list
-bd dolt remote remove origin
+bd dolt remote list    # Shows remotes from both SQL server and CLI, flags discrepancies
+bd dolt remote remove origin   # Removes from both surfaces
 ```
+
+Use `bd doctor --fix` to resolve any discrepancies between SQL and CLI remote configs.
 
 ## Migration from SQLite (Legacy)
 
