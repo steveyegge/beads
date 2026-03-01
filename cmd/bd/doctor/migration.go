@@ -38,15 +38,15 @@ func DetectPendingMigrations(path string) []PendingMigration {
 				description,
 				hookPlan.BrokenMarkerCount,
 			)
-			// Phase 1 is planning-only. Keep this at warning level for now.
-			// TODO(gh-1380): raise to critical when apply mode is implemented.
+			// Keep warning level until doctor auto-fix wiring is implemented.
+			// TODO(gh-2220): reevaluate severity once doctor --fix can invoke hook migration.
 			priority = 2
 		}
 
 		pending = append(pending, PendingMigration{
 			Name:        "hooks",
 			Description: description,
-			Command:     "bd migrate hooks --dry-run",
+			Command:     "bd migrate hooks --apply",
 			Priority:    priority,
 		})
 	}

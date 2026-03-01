@@ -27,15 +27,15 @@ func TestDetectPendingMigrations_Hooks(t *testing.T) {
 	if m.Name != "hooks" {
 		t.Fatalf("expected migration name 'hooks', got %q", m.Name)
 	}
-	if m.Command != "bd migrate hooks --dry-run" {
-		t.Fatalf("expected command 'bd migrate hooks --dry-run', got %q", m.Command)
+	if m.Command != "bd migrate hooks --apply" {
+		t.Fatalf("expected command 'bd migrate hooks --apply', got %q", m.Command)
 	}
 	if m.Priority != 2 {
 		t.Fatalf("expected recommended priority 2, got %d", m.Priority)
 	}
 }
 
-func TestDetectPendingMigrations_HooksBrokenMarkerIsWarningInPhase1(t *testing.T) {
+func TestDetectPendingMigrations_HooksBrokenMarkerIsWarningUntilDoctorFixIntegration(t *testing.T) {
 	tmpDir := t.TempDir()
 	setupGitRepoInDir(t, tmpDir)
 	forceRepoHooksPath(t, tmpDir)
@@ -52,11 +52,11 @@ func TestDetectPendingMigrations_HooksBrokenMarkerIsWarningInPhase1(t *testing.T
 		t.Fatalf("expected 1 pending migration, got %d", len(pending))
 	}
 	if pending[0].Priority != 2 {
-		t.Fatalf("expected warning priority 2 in phase 1, got %d", pending[0].Priority)
+		t.Fatalf("expected warning priority 2 until doctor fix integration, got %d", pending[0].Priority)
 	}
 
 	check := CheckPendingMigrations(tmpDir)
 	if check.Status != StatusWarning {
-		t.Fatalf("expected warning status for phase 1 planning-only migration, got %q", check.Status)
+		t.Fatalf("expected warning status for migration until doctor fix integration, got %q", check.Status)
 	}
 }
