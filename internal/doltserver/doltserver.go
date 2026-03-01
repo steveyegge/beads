@@ -4,9 +4,9 @@
 //
 // Under Gas Town (GT_ROOT set, or detected via filesystem heuristic),
 // all worktrees share a single server on port 3307.
-// In standalone mode, each project gets a deterministic port derived from the
-// project path (hash → range 13307–14307). Users with explicit port config in
-// metadata.json always use that port instead.
+// In standalone mode, the default port is 3307 (configfile.DefaultDoltServerPort),
+// matching shared Homebrew Dolt servers. Users with explicit port config in
+// metadata.json or BEADS_DOLT_SERVER_PORT env var always use that port instead.
 //
 // Anti-proliferation: the server enforces one-server-one-port. If the canonical
 // port is busy, the server identifies and handles the occupant rather than
@@ -265,7 +265,12 @@ func DefaultConfig(beadsDir string) *Config {
 		if os.Getenv("GT_ROOT") != "" {
 			cfg.Port = GasTownPort
 		} else {
-			cfg.Port = DerivePort(beadsDir)
+			// Use the canonical default port (3307) rather than a hash-derived
+			// port. This matches shared Homebrew Dolt servers and aligns with
+			// configfile.DefaultDoltServerPort. DerivePort was intended for
+			// per-project isolated servers, but in practice most users run a
+			// single shared server.
+			cfg.Port = configfile.DefaultDoltServerPort
 		}
 	}
 

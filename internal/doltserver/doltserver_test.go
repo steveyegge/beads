@@ -193,9 +193,10 @@ func TestDefaultConfig(t *testing.T) {
 		if cfg.Host != "127.0.0.1" {
 			t.Errorf("expected host 127.0.0.1, got %s", cfg.Host)
 		}
-		if cfg.Port < portRangeBase || cfg.Port >= portRangeBase+portRangeSize {
-			t.Errorf("expected port in range [%d, %d), got %d",
-				portRangeBase, portRangeBase+portRangeSize, cfg.Port)
+		// Standalone mode now defaults to configfile.DefaultDoltServerPort (3307)
+		// instead of a hash-derived port.
+		if cfg.Port != 3307 {
+			t.Errorf("expected default port 3307, got %d", cfg.Port)
 		}
 		if cfg.BeadsDir != dir {
 			t.Errorf("expected BeadsDir=%s, got %s", dir, cfg.BeadsDir)
