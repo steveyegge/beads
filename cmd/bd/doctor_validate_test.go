@@ -145,6 +145,14 @@ func TestValidateCheck_DetectsGitConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Write a metadata.json declaring sqlite backend so that CheckGitConflicts
+	// actually scans JSONL files instead of short-circuiting for Dolt backend.
+	// Without this, getBackendAndBeadsDir defaults to "dolt" when no config exists.
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if err := os.WriteFile(metadataPath, []byte(`{"backend":"sqlite"}`), 0644); err != nil {
+		t.Fatalf("Failed to write metadata.json: %v", err)
+	}
+
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 	conflictContent := `{"id":"test-1","title":"Issue 1","status":"open"}
 <<<<<<< HEAD
