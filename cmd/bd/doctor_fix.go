@@ -326,6 +326,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.StaleLockFiles(path)
 		case "Fresh Clone":
 			err = fix.FreshCloneImport(path, Version)
+		case "Pending Migrations":
+			err = fixPendingMigrations(path)
 		case "Config Values":
 			err = fix.ConfigValues(path)
 		case "Classic Artifacts":
@@ -363,4 +365,42 @@ func applyFixList(path string, fixes []doctorCheck) {
 	if errorCount > 0 {
 		fmt.Println("\nSome fixes failed. Please review the errors above and apply manual fixes as needed.")
 	}
+}
+
+func fixPendingMigrations(path string) error {
+	pending := doctor.DetectPendingMigrations(path)
+	if len(pending) == 0 {
+		return nil
+	}
+
+	for _, migration := range pending {
+		switch migration.Name {
+		case "hooks":
+			plan, err := doctor.PlanHookMigration(path)
+			if err != nil {
+				return fmt.Errorf("building hook migration plan: %w", err)
+			}
+
+			execPlan := buildHookMigrationExecutionPlan(plan)
+			if len(execPlan.BlockingErrors) > 0 {
+				return fmt.Errorf("hook migration is blocked:\n- %s", strings.Join(execPlan.BlockingErrors, "\n- "))
+			}
+
+			summary, err := applyHookMigrationExecution(execPlan)
+			if err != nil {
+				return fmt.Errorf("applying hook migration: %w", err)
+			}
+
+			fmt.Printf(
+				"  Hook migration applied: %d hook(s) written, %d artifact(s) retired, %d artifact(s) skipped\n",
+				summary.WrittenHookCount,
+				summary.RetiredCount,
+				summary.SkippedCount,
+			)
+		default:
+			return fmt.Errorf("no automatic fix available for pending migration %q", migration.Name)
+		}
+	}
+
+	return nil
 }
