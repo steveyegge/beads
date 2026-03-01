@@ -281,18 +281,10 @@ class BdCliClient(BdClientBase):
         return flags
 
     async def _run_command(self, *args: str, cwd: str | None = None) -> Any:
-        """Run bd command and parse JSON output.
-
-        Args:
-            *args: Command arguments to pass to bd
-            cwd: Optional working directory override for this command
-
-        Returns:
-            Parsed JSON output (dict or list)
-
-        Raises:
-            BdNotFoundError: If bd command not found
-            BdCommandError: If bd command fails
+        """Run bd command and parse JSON output with a 30s Circuit Breaker.
+        
+        This centralized helper satisfies the DRY requirement by applying the 
+        timeout logic to all command executions in one place.
         """
         cmd = [self.bd_path, *args, *self._global_flags(), "--json"]
         working_dir = cwd if cwd is not None else self._get_working_dir()
@@ -306,29 +298,38 @@ class BdCliClient(BdClientBase):
 
         # Log database routing for debugging
         import sys
-        if self.beads_dir:
-            db_info = f"BEADS_DIR={self.beads_dir}"
-        elif self.beads_db:
-            db_info = f"BEADS_DB={self.beads_db} (deprecated)"
-        else:
-            db_info = "auto-discover"
         print(f"[beads-mcp] Running bd command: {' '.join(args)}", file=sys.stderr)
-        print(f"[beads-mcp]   Database: {db_info}", file=sys.stderr)
-        print(f"[beads-mcp]   Working dir: {working_dir}", file=sys.stderr)
 
         try:
+            # Step 1: Initialize the subprocess
             process = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdin=asyncio.subprocess.DEVNULL,  # Prevent inheriting MCP's stdin
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=working_dir,
                 env=env,
             )
-            stdout, stderr = await process.communicate()
+            
+            # Step 2: Enforce the 30s Circuit Breaker
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
+            except asyncio.TimeoutError:
+                try:
+                    process.kill() # Prevent zombie processes
+                except ProcessLookupError:
+                    pass
+                # Standardized error that our plan-to-beads.md logic catches
+                raise BdCommandError(
+                    "Error: Subprocess Timeout (30s circuit breaker triggered)",
+                    stderr="The command took too long to respond.",
+                    returncode=124
+                )
+                
         except FileNotFoundError as e:
             raise BdNotFoundError(BdNotFoundError.installation_message(self.bd_path)) from e
 
+        # Handle non-zero exit codes
         if process.returncode != 0:
             raise BdCommandError(
                 f"bd command failed: {stderr.decode()}",
@@ -341,13 +342,9 @@ class BdCliClient(BdClientBase):
             return {}
 
         try:
-            result: object = json.loads(stdout_str)
-            return result
+            return json.loads(stdout_str)
         except json.JSONDecodeError as e:
-            raise BdCommandError(
-                f"Failed to parse bd JSON output: {e}",
-                stderr=stdout_str,
-            ) from e
+            raise BdCommandError(f"Failed to parse bd JSON output: {e}", stderr=stdout_str)
 
     async def _check_version(self) -> None:
         """Check that bd CLI version meets minimum requirements.
