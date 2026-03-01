@@ -272,6 +272,108 @@ func TestCheckGitHooks_CorruptedHookFiles(t *testing.T) {
 	}
 }
 
+func TestParseBDHookVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		wantVersion string
+		wantOK      bool
+	}{
+		{
+			name:        "legacy format",
+			content:     "#!/bin/sh\n# bd-hooks-version: 0.55.0\nbd hooks run pre-commit\n",
+			wantVersion: "0.55.0",
+			wantOK:      true,
+		},
+		{
+			name:        "section marker format",
+			content:     "#!/usr/bin/env sh\n# --- BEGIN BEADS INTEGRATION v0.57.0 ---\nif command -v bd >/dev/null 2>&1; then\n  bd hooks run pre-commit \"$@\"\nfi\n# --- END BEADS INTEGRATION ---\n",
+			wantVersion: "0.57.0",
+			wantOK:      true,
+		},
+		{
+			name:        "section marker with user content around it",
+			content:     "#!/bin/sh\n# my custom pre-commit stuff\necho hello\n# --- BEGIN BEADS INTEGRATION v0.56.1 ---\nbd hooks run pre-commit\n# --- END BEADS INTEGRATION ---\necho done\n",
+			wantVersion: "0.56.1",
+			wantOK:      true,
+		},
+		{
+			name:    "no version marker at all",
+			content: "#!/bin/sh\necho hello\n",
+			wantOK:  false,
+		},
+		{
+			name:    "empty content",
+			content: "",
+			wantOK:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			version, ok := parseBDHookVersion(tt.content)
+			if ok != tt.wantOK {
+				t.Errorf("parseBDHookVersion() ok = %v, want %v", ok, tt.wantOK)
+			}
+			if version != tt.wantVersion {
+				t.Errorf("parseBDHookVersion() version = %q, want %q", version, tt.wantVersion)
+			}
+		})
+	}
+}
+
+func TestCheckGitHooks_SectionMarkerFormat(t *testing.T) {
+	t.Run("current section-marker hooks are accepted", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setupGitRepoInDir(t, tmpDir)
+		gitDir := filepath.Join(tmpDir, ".git")
+		hooksDir := filepath.Join(gitDir, "hooks")
+		os.MkdirAll(hooksDir, 0755)
+
+		hook := "#!/usr/bin/env sh\n# --- BEGIN BEADS INTEGRATION v0.49.6 ---\n" +
+			"if command -v bd >/dev/null 2>&1; then\n  bd hooks run pre-commit \"$@\"\nfi\n" +
+			"# --- END BEADS INTEGRATION ---\n"
+		os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte(hook), 0755)
+		os.WriteFile(filepath.Join(hooksDir, "post-merge"), []byte(hook), 0755)
+		os.WriteFile(filepath.Join(hooksDir, "pre-push"), []byte(hook), 0755)
+
+		runInDir(t, tmpDir, func() {
+			check := CheckGitHooks("0.49.6")
+			if check.Status != "ok" {
+				t.Errorf("expected status %q, got %q (message: %s)", "ok", check.Status, check.Message)
+			}
+			if !strings.Contains(check.Message, "All recommended hooks installed") {
+				t.Errorf("expected 'All recommended hooks installed', got %q", check.Message)
+			}
+		})
+	})
+
+	t.Run("outdated section-marker hooks are flagged", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setupGitRepoInDir(t, tmpDir)
+		gitDir := filepath.Join(tmpDir, ".git")
+		hooksDir := filepath.Join(gitDir, "hooks")
+		os.MkdirAll(hooksDir, 0755)
+
+		hook := "#!/usr/bin/env sh\n# --- BEGIN BEADS INTEGRATION v0.40.0 ---\n" +
+			"if command -v bd >/dev/null 2>&1; then\n  bd hooks run pre-commit \"$@\"\nfi\n" +
+			"# --- END BEADS INTEGRATION ---\n"
+		os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte(hook), 0755)
+		os.WriteFile(filepath.Join(hooksDir, "post-merge"), []byte(hook), 0755)
+		os.WriteFile(filepath.Join(hooksDir, "pre-push"), []byte(hook), 0755)
+
+		runInDir(t, tmpDir, func() {
+			check := CheckGitHooks("0.49.6")
+			if check.Status != "warning" {
+				t.Errorf("expected status %q, got %q (message: %s)", "warning", check.Status, check.Message)
+			}
+			if !strings.Contains(check.Message, "outdated") {
+				t.Errorf("expected 'outdated' in message, got %q", check.Message)
+			}
+		})
+	})
+}
+
 // Edge case tests for CheckMergeDriver
 
 func TestCheckMergeDriver_PartiallyConfigured(t *testing.T) {

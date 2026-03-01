@@ -30,6 +30,12 @@ const bdInlineHookMarker = "# bd (beads)"
 // bdHooksRunPattern matches hooks that call bd hooks run
 var bdHooksRunPattern = regexp.MustCompile(`\bbd\s+hooks\s+run\b`)
 
+// bdSectionMarkerPrefix identifies section-marker hooks (GH#1380)
+const bdSectionMarkerPrefix = "# --- BEGIN BEADS INTEGRATION"
+
+// bdSectionMarkerVersionRe extracts the version from a section marker line.
+var bdSectionMarkerVersionRe = regexp.MustCompile(`^# --- BEGIN BEADS INTEGRATION v(\S+)\s+---`)
+
 // CheckGitHooks verifies that recommended git hooks are installed.
 func CheckGitHooks(cliVersion string) DoctorCheck {
 	// Check if we're in a git repository using worktree-aware detection
@@ -221,14 +227,23 @@ func findOutdatedBDHookVersions(
 	return outdated, oldest
 }
 
-// isBdHookContent checks if hook content is a bd hook (shim, inline, or calls bd hooks run).
+// isBdHookContent checks if hook content is a bd hook (shim, inline, section-marker, or calls bd hooks run).
 func isBdHookContent(content string) bool {
 	return strings.Contains(content, bdShimMarker) ||
 		strings.Contains(content, bdInlineHookMarker) ||
+		strings.Contains(content, bdSectionMarkerPrefix) ||
 		bdHooksRunPattern.MatchString(content)
 }
 
 func parseBDHookVersion(content string) (string, bool) {
+	// Try section-marker format first: # --- BEGIN BEADS INTEGRATION v0.57.0 --- (GH#1380)
+	for _, line := range strings.Split(content, "\n") {
+		if m := bdSectionMarkerVersionRe.FindStringSubmatch(line); m != nil {
+			return m[1], true
+		}
+	}
+
+	// Legacy format: # bd-hooks-version: 0.57.0
 	if !strings.Contains(content, "bd-hooks-version:") {
 		return "", false
 	}
@@ -625,6 +640,15 @@ func CheckGitHooksDoltCompatibility(path string) DoctorCheck {
 			Name:    "Git Hooks Dolt Compatibility",
 			Status:  StatusOK,
 			Message: "Shim hooks (Dolt handled by bd hook command)",
+		}
+	}
+
+	// Section-marker hooks (GH#1380) delegate to 'bd hooks run' which handles Dolt correctly
+	if strings.Contains(contentStr, bdSectionMarkerPrefix) {
+		return DoctorCheck{
+			Name:    "Git Hooks Dolt Compatibility",
+			Status:  StatusOK,
+			Message: "Section-marker hooks (Dolt handled by bd hooks run)",
 		}
 	}
 
