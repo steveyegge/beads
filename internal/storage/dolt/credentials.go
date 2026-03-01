@@ -375,13 +375,13 @@ func (s *DoltStore) updatePeerLastSync(ctx context.Context, name string) error {
 // Used to pass credentials to CLI subprocesses via cmd.Env (isolated) or to
 // the SQL path via process env vars under mutex protection.
 type remoteCredentials struct {
-	Username string
-	Password string //nolint:gosec // G117: struct field for Dolt remote auth, not a hardcoded secret
+	username string
+	password string
 }
 
 // empty returns true if no credentials are set.
 func (c *remoteCredentials) empty() bool {
-	return c == nil || (c.Username == "" && c.Password == "")
+	return c == nil || (c.username == "" && c.password == "")
 }
 
 // applyToCmd sets DOLT_REMOTE_USER/PASSWORD on the subprocess environment,
@@ -399,11 +399,11 @@ func (c *remoteCredentials) applyToCmd(cmd *exec.Cmd) {
 			env = append(env, e)
 		}
 	}
-	if c.Username != "" {
-		env = append(env, "DOLT_REMOTE_USER="+c.Username)
+	if c.username != "" {
+		env = append(env, "DOLT_REMOTE_USER="+c.username)
 	}
-	if c.Password != "" {
-		env = append(env, "DOLT_REMOTE_PASSWORD="+c.Password)
+	if c.password != "" {
+		env = append(env, "DOLT_REMOTE_PASSWORD="+c.password)
 	}
 	cmd.Env = env
 }
@@ -437,7 +437,7 @@ func withEnvCredentials(creds *remoteCredentials, fn func() error) error {
 	}
 	federationEnvMutex.Lock()
 	defer federationEnvMutex.Unlock()
-	cleanup := setFederationCredentials(creds.Username, creds.Password)
+	cleanup := setFederationCredentials(creds.username, creds.password)
 	defer cleanup()
 	return fn()
 }
@@ -455,7 +455,7 @@ func (s *DoltStore) withPeerCredentials(ctx context.Context, peerName string, fn
 
 	var creds *remoteCredentials
 	if peer != nil && (peer.Username != "" || peer.Password != "") {
-		creds = &remoteCredentials{Username: peer.Username, Password: peer.Password}
+		creds = &remoteCredentials{username: peer.Username, password: peer.Password}
 	}
 
 	err = fn(creds)

@@ -1273,7 +1273,7 @@ func (s *DoltStore) mainRemoteCredentials() *remoteCredentials {
 	if s.remoteUser == "" && s.remotePassword == "" {
 		return nil
 	}
-	return &remoteCredentials{Username: s.remoteUser, Password: s.remotePassword}
+	return &remoteCredentials{username: s.remoteUser, password: s.remotePassword}
 }
 
 // doltCLIPush shells out to `dolt push` from the database directory.
