@@ -104,47 +104,46 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 			continue
 		}
 
-return respBody, resp.Header, nil
+		// If the status code is a success (2xx), return immediately.
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return respBody, resp.Header, nil
 		}
 
+		// Determine if we should retry based on the status code.
 		isRetriable := resp.StatusCode == http.StatusTooManyRequests ||
 			resp.StatusCode == http.StatusInternalServerError ||
 			resp.StatusCode == http.StatusBadGateway ||
 			resp.StatusCode == http.StatusServiceUnavailable ||
 			resp.StatusCode == http.StatusGatewayTimeout
 
-		if
+		// Wrap the retry logic in braces.
+		if isRetriable {
 			delay := RetryDelay * time.Duration(1<<attempt)
 			lastErr = fmt.Errorf("transient error %d (attempt %d/%d)", resp.StatusCode, attempt+1, MaxRetries+1)
+
 			select {
 			case <-ctx.Done():
 				return nil, nil, ctx.Err()
 			case <-time.After(delay):
-				// Reset body reader for retry
+				// Reset body reader for retry attempt
 				if body != nil {
 					jsonBody, err := json.Marshal(body)
 					if err != nil {
-						// This shouldn't happen since we marshaled successfully before,
-						// but log it and continue to next retry attempt
 						lastErr = fmt.Errorf("retry marshal failed: %w", err)
 						continue
 					}
 					reqBody = bytes.NewReader(jsonBody)
 				}
-				continue
+				continue // Proceed to the next iteration of the for loop
 			}
 		}
 
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return nil, nil, fmt.Errorf("API error: %s (status %d)", string(respBody), resp.StatusCode)
-		}
-
-		return respBody, resp.Header, nil
+		// If not successful and not retriable, return the error immediately.
+		return nil, nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil, nil, fmt.Errorf("max retries (%d) exceeded: %w", MaxRetries+1, lastErr)
 }
-
 // FetchIssues retrieves issues from GitLab with optional filtering by state.
 // state can be: "opened", "closed", or "all".
 func (c *Client) FetchIssues(ctx context.Context, state string) ([]Issue, error) {
