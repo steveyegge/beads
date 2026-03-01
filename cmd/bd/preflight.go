@@ -28,8 +28,6 @@ type PreflightResult struct {
 	Summary string        `json:"summary"`
 }
 
-const preflightSkipLintEnv = "BD_PREFLIGHT_SKIP_LINT"
-
 var preflightCmd = &cobra.Command{
 	Use:     "preflight",
 	GroupID: "maint",
@@ -46,9 +44,7 @@ Examples:
   bd preflight              # Show checklist
   bd preflight --check      # Run checks automatically
   bd preflight --check --json  # JSON output for programmatic use
-
-Skip lint (explicit, temporary):
-  BD_PREFLIGHT_SKIP_LINT=1 bd preflight --check
+  bd preflight --check --skip-lint  # Explicitly skip lint check
 `,
 	Run: runPreflight,
 }
@@ -57,6 +53,7 @@ func init() {
 	preflightCmd.Flags().Bool("check", false, "Run checks automatically")
 	preflightCmd.Flags().Bool("fix", false, "Auto-fix issues where possible (not yet implemented)")
 	preflightCmd.Flags().Bool("json", false, "Output results as JSON")
+	preflightCmd.Flags().Bool("skip-lint", false, "Skip lint check explicitly")
 
 	rootCmd.AddCommand(preflightCmd)
 }
@@ -65,6 +62,7 @@ func runPreflight(cmd *cobra.Command, args []string) {
 	check, _ := cmd.Flags().GetBool("check")
 	fix, _ := cmd.Flags().GetBool("fix")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
+	skipLint, _ := cmd.Flags().GetBool("skip-lint")
 
 	if fix {
 		fmt.Println("Note: --fix is not yet implemented.")
@@ -73,7 +71,7 @@ func runPreflight(cmd *cobra.Command, args []string) {
 	}
 
 	if check {
-		runChecks(jsonOutput)
+		runChecks(jsonOutput, skipLint)
 		return
 	}
 
@@ -90,7 +88,7 @@ func runPreflight(cmd *cobra.Command, args []string) {
 }
 
 // runChecks executes all preflight checks and reports results.
-func runChecks(jsonOutput bool) {
+func runChecks(jsonOutput, skipLint bool) {
 	var results []CheckResult
 
 	// Run test check
@@ -98,7 +96,7 @@ func runChecks(jsonOutput bool) {
 	results = append(results, testResult)
 
 	// Run lint check
-	lintResult := runLintCheck()
+	lintResult := runLintCheck(skipLint)
 	results = append(results, lintResult)
 
 	// Run nix hash check
@@ -199,32 +197,25 @@ func runTestCheck() CheckResult {
 }
 
 // runLintCheck runs golangci-lint and returns the result.
-func runLintCheck() CheckResult {
+func runLintCheck(skipLint bool) CheckResult {
 	command := "golangci-lint run ./..."
+	if skipLint {
+		return CheckResult{
+			Name:    "Lint passes",
+			Passed:  false,
+			Skipped: true,
+			Warning: true,
+			Output:  "lint check explicitly skipped by --skip-lint",
+			Command: command,
+		}
+	}
 
 	// Check if golangci-lint is available
 	if _, err := exec.LookPath("golangci-lint"); err != nil {
-		if envFlagEnabled(preflightSkipLintEnv) {
-			return CheckResult{
-				Name:    "Lint passes",
-				Passed:  false,
-				Skipped: true,
-				Warning: true,
-				Output: fmt.Sprintf(
-					"lint check explicitly skipped by %s=1",
-					preflightSkipLintEnv,
-				),
-				Command: command,
-			}
-		}
-
 		return CheckResult{
-			Name:   "Lint passes",
-			Passed: false,
-			Output: fmt.Sprintf(
-				"golangci-lint not found in PATH (install it or explicitly skip lint with %s=1)",
-				preflightSkipLintEnv,
-			),
+			Name:    "Lint passes",
+			Passed:  false,
+			Output:  "golangci-lint not found in PATH (install it or rerun with --skip-lint)",
 			Command: command,
 		}
 	}
@@ -354,9 +345,4 @@ func truncateOutput(s string, maxLen int) string {
 		return strings.TrimSpace(s)
 	}
 	return strings.TrimSpace(s[:maxLen]) + "\n... (truncated)"
-}
-
-func envFlagEnabled(name string) bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
 }

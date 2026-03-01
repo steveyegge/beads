@@ -186,9 +186,8 @@ func TestTruncateOutput(t *testing.T) {
 
 func TestRunLintCheck_MissingCommandFailsByDefault(t *testing.T) {
 	t.Setenv("PATH", "")
-	t.Setenv(preflightSkipLintEnv, "")
 
-	result := runLintCheck()
+	result := runLintCheck(false)
 	if result.Passed {
 		t.Fatalf("expected lint check to fail when golangci-lint is missing")
 	}
@@ -198,23 +197,23 @@ func TestRunLintCheck_MissingCommandFailsByDefault(t *testing.T) {
 	if !strings.Contains(result.Output, "not found in PATH") {
 		t.Fatalf("expected missing command message, got: %q", result.Output)
 	}
+	if !strings.Contains(result.Output, "--skip-lint") {
+		t.Fatalf("expected explicit skip guidance in message, got: %q", result.Output)
+	}
 }
 
-func TestRunLintCheck_MissingCommandBypass(t *testing.T) {
-	t.Setenv("PATH", "")
-	t.Setenv(preflightSkipLintEnv, "1")
-
-	result := runLintCheck()
+func TestRunLintCheck_SkipLintFlag(t *testing.T) {
+	result := runLintCheck(true)
 	if result.Passed {
-		t.Fatalf("expected bypassed check to remain non-passing")
+		t.Fatalf("expected skipped lint check to remain non-passing")
 	}
 	if !result.Skipped {
-		t.Fatalf("expected bypassed lint check to be marked skipped")
+		t.Fatalf("expected skipped lint check to be marked skipped")
 	}
 	if !result.Warning {
-		t.Fatalf("expected bypassed lint check to be warning")
+		t.Fatalf("expected skipped lint check to be warning")
 	}
-	if !strings.Contains(result.Output, preflightSkipLintEnv) {
-		t.Fatalf("expected output to mention bypass env var, got: %q", result.Output)
+	if !strings.Contains(result.Output, "--skip-lint") {
+		t.Fatalf("expected output to mention --skip-lint, got: %q", result.Output)
 	}
 }
