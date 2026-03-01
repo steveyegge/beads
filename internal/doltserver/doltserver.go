@@ -93,7 +93,7 @@ func ResolveDoltDir(beadsDir string) string {
 // Config holds the server configuration.
 type Config struct {
 	BeadsDir string // Path to .beads/ directory
-	Port     int    // MySQL protocol port (0 = auto-derive from path)
+	Port     int    // MySQL protocol port (0 = use DefaultDoltServerPort 3307)
 	Host     string // Bind address (default: 127.0.0.1)
 }
 
@@ -247,7 +247,8 @@ func writePortFile(beadsDir string, port int) error {
 }
 
 // DefaultConfig returns config with sensible defaults.
-// Priority: env var > metadata.json > Gas Town fixed port > hash-derived port.
+// Priority: env var > metadata.json > Gas Town fixed port > DefaultDoltServerPort (3307).
+// Start() may further fall back to DerivePort if 3307 is occupied by another project.
 func DefaultConfig(beadsDir string) *Config {
 	cfg := &Config{
 		BeadsDir: beadsDir,

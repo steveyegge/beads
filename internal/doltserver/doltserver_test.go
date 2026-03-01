@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 func TestDerivePort(t *testing.T) {
@@ -180,23 +182,17 @@ func TestDefaultConfig(t *testing.T) {
 	dir := t.TempDir()
 
 	t.Run("standalone", func(t *testing.T) {
-		// Clear GT_ROOT to test standalone behavior
-		orig := os.Getenv("GT_ROOT")
-		os.Unsetenv("GT_ROOT")
-		defer func() {
-			if orig != "" {
-				os.Setenv("GT_ROOT", orig)
-			}
-		}()
+		// Clear both env vars to test pure standalone behavior
+		t.Setenv("GT_ROOT", "")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
 		cfg := DefaultConfig(dir)
 		if cfg.Host != "127.0.0.1" {
 			t.Errorf("expected host 127.0.0.1, got %s", cfg.Host)
 		}
-		// Standalone mode now defaults to configfile.DefaultDoltServerPort (3307)
-		// instead of a hash-derived port.
-		if cfg.Port != 3307 {
-			t.Errorf("expected default port 3307, got %d", cfg.Port)
+		// Standalone mode defaults to configfile.DefaultDoltServerPort
+		if cfg.Port != configfile.DefaultDoltServerPort {
+			t.Errorf("expected default port %d, got %d", configfile.DefaultDoltServerPort, cfg.Port)
 		}
 		if cfg.BeadsDir != dir {
 			t.Errorf("expected BeadsDir=%s, got %s", dir, cfg.BeadsDir)
@@ -221,35 +217,18 @@ func TestDefaultConfig(t *testing.T) {
 	})
 
 	t.Run("no_config_uses_default_port_not_hash", func(t *testing.T) {
-		// BUG: configfile.DefaultDoltServerPort is 3307, but DefaultConfig
-		// falls through to DerivePort() (range 13307-14306) when no explicit
-		// port is configured. This means users with a shared Homebrew Dolt
-		// server on 3307 get a wrong hash-derived port.
-		//
-		// Expected: when no env var, no metadata port, and no GT_ROOT,
-		// DefaultConfig should use configfile.DefaultDoltServerPort (3307)
-		// as the fallback, NOT DerivePort().
-
-		orig := os.Getenv("GT_ROOT")
-		os.Unsetenv("GT_ROOT")
-		origPort := os.Getenv("BEADS_DOLT_SERVER_PORT")
-		os.Unsetenv("BEADS_DOLT_SERVER_PORT")
-		defer func() {
-			if orig != "" {
-				os.Setenv("GT_ROOT", orig)
-			}
-			if origPort != "" {
-				os.Setenv("BEADS_DOLT_SERVER_PORT", origPort)
-			}
-		}()
+		// When no env var, no metadata port, and no GT_ROOT, DefaultConfig
+		// should use configfile.DefaultDoltServerPort as the fallback,
+		// NOT DerivePort().
+		t.Setenv("GT_ROOT", "")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
 		freshDir := t.TempDir()
 		cfg := DefaultConfig(freshDir)
 
-		// The default port should match configfile.DefaultDoltServerPort (3307),
-		// not a hash-derived port in the 13307-14306 range.
-		if cfg.Port != 3307 {
-			t.Errorf("expected DefaultConfig to use configfile.DefaultDoltServerPort (3307), got %d", cfg.Port)
+		if cfg.Port != configfile.DefaultDoltServerPort {
+			t.Errorf("expected DefaultConfig to use configfile.DefaultDoltServerPort (%d), got %d",
+				configfile.DefaultDoltServerPort, cfg.Port)
 		}
 	})
 }
@@ -776,32 +755,17 @@ func TestReclaimPortOccupiedByOtherProject(t *testing.T) {
 }
 
 func TestStartFallsBackToDerivePortOnCollision(t *testing.T) {
-	// When DefaultConfig returns 3307 (shared server default) but another project's
-	// Dolt server already occupies 3307, Start should fall back to DerivePort
+	// When DefaultConfig returns DefaultDoltServerPort but another project's
+	// Dolt server already occupies it, Start should fall back to DerivePort
 	// rather than killing the other server or failing.
-	//
-	// Verify the fallback path exists by checking that startWithFallback
-	// accepts an ErrPortOccupiedByOtherProject and computes a DerivePort.
 	dir := t.TempDir()
 
-	// Clear env to get pure standalone behavior
-	orig := os.Getenv("GT_ROOT")
-	os.Unsetenv("GT_ROOT")
-	origPort := os.Getenv("BEADS_DOLT_SERVER_PORT")
-	os.Unsetenv("BEADS_DOLT_SERVER_PORT")
-	defer func() {
-		if orig != "" {
-			os.Setenv("GT_ROOT", orig)
-		}
-		if origPort != "" {
-			os.Setenv("BEADS_DOLT_SERVER_PORT", origPort)
-		}
-	}()
+	t.Setenv("GT_ROOT", "")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
 	cfg := DefaultConfig(dir)
-	// Default should be 3307
-	if cfg.Port != 3307 {
-		t.Fatalf("expected default port 3307, got %d", cfg.Port)
+	if cfg.Port != configfile.DefaultDoltServerPort {
+		t.Fatalf("expected default port %d, got %d", configfile.DefaultDoltServerPort, cfg.Port)
 	}
 
 	// The fallback port should be a DerivePort value (13307-14306 range)
@@ -811,31 +775,22 @@ func TestStartFallsBackToDerivePortOnCollision(t *testing.T) {
 			dir, fallback, portRangeBase, portRangeBase+portRangeSize)
 	}
 
-	// Fallback must differ from default (unless hash happens to land on 3307, extremely unlikely)
-	if fallback == 3307 {
-		t.Errorf("fallbackPort should not equal the default port 3307")
+	// Fallback must differ from default
+	if fallback == configfile.DefaultDoltServerPort {
+		t.Errorf("fallbackPort should not equal DefaultDoltServerPort (%d)", configfile.DefaultDoltServerPort)
 	}
 }
 
-func TestDefaultConfigStillReturns3307(t *testing.T) {
-	// Regression: DefaultConfig must return 3307 for standalone mode.
+func TestDefaultConfigStillReturnsDefaultPort(t *testing.T) {
+	// Regression: DefaultConfig must return DefaultDoltServerPort for standalone mode.
 	// The DerivePort fallback is only used inside Start when port collision detected.
-	orig := os.Getenv("GT_ROOT")
-	os.Unsetenv("GT_ROOT")
-	origPort := os.Getenv("BEADS_DOLT_SERVER_PORT")
-	os.Unsetenv("BEADS_DOLT_SERVER_PORT")
-	defer func() {
-		if orig != "" {
-			os.Setenv("GT_ROOT", orig)
-		}
-		if origPort != "" {
-			os.Setenv("BEADS_DOLT_SERVER_PORT", origPort)
-		}
-	}()
+	t.Setenv("GT_ROOT", "")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
 	cfg := DefaultConfig(t.TempDir())
-	if cfg.Port != 3307 {
-		t.Errorf("DefaultConfig should return 3307 for standalone, got %d", cfg.Port)
+	if cfg.Port != configfile.DefaultDoltServerPort {
+		t.Errorf("DefaultConfig should return %d for standalone, got %d",
+			configfile.DefaultDoltServerPort, cfg.Port)
 	}
 }
 
