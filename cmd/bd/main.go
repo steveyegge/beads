@@ -723,15 +723,23 @@ func setupGracefulShutdown() (context.Context, context.CancelFunc) {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 
 	go func() {
+		defer signal.Stop(sigCh)
+		defer close(sigCh)
+
 		select {
 		case <-sigCh:
 			flushBatchCommitOnShutdown()
 			cancel()
-			// On second signal, force exit
-			<-sigCh
-			os.Exit(1)
+			// On second signal, force exit.
+			// Wrap in a select so it doesn't block forever if main loop exits cleanly.
+			select {
+			case <-sigCh:
+				os.Exit(1)
+			case <-ctx.Done():
+				return
+			}
 		case <-ctx.Done():
-			signal.Stop(sigCh)
+			return
 		}
 	}()
 

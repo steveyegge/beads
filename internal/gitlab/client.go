@@ -104,9 +104,18 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 			continue
 		}
 
-		if resp.StatusCode == http.StatusTooManyRequests {
+return respBody, resp.Header, nil
+		}
+
+		isRetriable := resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusInternalServerError ||
+			resp.StatusCode == http.StatusBadGateway ||
+			resp.StatusCode == http.StatusServiceUnavailable ||
+			resp.StatusCode == http.StatusGatewayTimeout
+
+		if
 			delay := RetryDelay * time.Duration(1<<attempt)
-			lastErr = fmt.Errorf("rate limited (attempt %d/%d)", attempt+1, MaxRetries+1)
+			lastErr = fmt.Errorf("transient error %d (attempt %d/%d)", resp.StatusCode, attempt+1, MaxRetries+1)
 			select {
 			case <-ctx.Done():
 				return nil, nil, ctx.Err()

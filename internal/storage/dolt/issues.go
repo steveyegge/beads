@@ -503,10 +503,8 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 	if err := tx.Commit(); err != nil {
 		return wrapTransactionError("commit update issue", err)
 	}
-	// Status changes affect the active set used by blocked ID computation
-	if _, hasStatus := updates["status"]; hasStatus {
-		s.invalidateBlockedIDsCache()
-	}
+	// Any change (especially status or dependencies) can affect the active set computation
+	s.invalidateBlockedIDsCache()
 	return nil
 }
 
@@ -687,7 +685,11 @@ func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
 		return fmt.Errorf("dolt commit: %w", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateBlockedIDsCache()
+	return nil
 }
 
 // DeleteIssues deletes multiple issues in a single transaction.
@@ -940,6 +942,7 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	s.invalidateBlockedIDsCache()
 	return result, nil
 }
 
@@ -1511,6 +1514,7 @@ func (s *DoltStore) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo str
 		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	s.invalidateBlockedIDsCache()
 	return int(rowsAffected), nil
 }
 
