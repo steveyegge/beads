@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# --- BEGIN BEADS INTEGRATION v0.56.1 ---
+# --- BEGIN BEADS INTEGRATION v0.57.0 ---
 # This section is managed by beads. Do not remove these markers.
 if command -v bd >/dev/null 2>&1; then
   export BD_GIT_HOOK=1
