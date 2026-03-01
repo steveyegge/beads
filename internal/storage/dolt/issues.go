@@ -358,6 +358,25 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 		}
 	}
 
+	// Reconcile child_counters for imported hierarchical IDs
+	childMaxMap := make(map[string]int)
+	for _, issue := range issues {
+		if parentID, childNum, ok := parseHierarchicalID(issue.ID); ok {
+			if childNum > childMaxMap[parentID] {
+				childMaxMap[parentID] = childNum
+			}
+		}
+	}
+	for parentID, maxChild := range childMaxMap {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO child_counters (parent_id, last_child) VALUES (?, ?)
+			ON DUPLICATE KEY UPDATE last_child = GREATEST(last_child, ?)
+		`, parentID, maxChild, maxChild)
+		if err != nil {
+			return fmt.Errorf("failed to reconcile child counter for %s: %w", parentID, err)
+		}
+	}
+
 	// DOLT_COMMIT inside transaction — atomic with the writes
 	commitMsg := fmt.Sprintf("bd: create %d issue(s)", len(issues))
 	if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
