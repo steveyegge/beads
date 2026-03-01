@@ -753,6 +753,65 @@ func TestDoltConfigSubcommandsSkipStore(t *testing.T) {
 	}
 }
 
+// TestDoltRemoteSubcommandsNeedStore verifies that bd dolt remote add/list/remove
+// reach store initialization despite "dolt" being in noDbCommands.
+//
+// These commands call getStore() but their Cobra parent is "remote" (not "dolt"),
+// so the needsStoreDoltSubcommands guard in PersistentPreRun doesn't apply to them.
+// They currently work because "remote" is not in noDbCommands, allowing them to
+// fall through to normal store initialization. This test encodes that implicit
+// dependency so regressions are caught if the guard logic changes.
+//
+// See: GH#2224
+func TestDoltRemoteSubcommandsNeedStore(t *testing.T) {
+	// Verify add, list, remove are registered under doltRemoteCmd
+	storeSubcommands := []string{"add", "list", "remove"}
+	for _, name := range storeSubcommands {
+		found := false
+		for _, cmd := range doltRemoteCmd.Commands() {
+			if cmd.Name() == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected dolt remote subcommand %q to be registered", name)
+		}
+	}
+
+	// Verify that "remote" is NOT in noDbCommands.
+	// This is the fragile assumption: remote subcommands reach store init
+	// only because their parent name ("remote") isn't in the skip list.
+	// If someone adds "remote" to noDbCommands, these commands will break
+	// with "no store available" errors.
+	//
+	// Note: We can't directly access noDbCommands (it's a local variable
+	// inside PersistentPreRun), so we verify the structural property:
+	// doltRemoteCmd's parent is doltCmd, and remote subcommands' parent
+	// is doltRemoteCmd (not doltCmd). This means the parentName == "dolt"
+	// check in PersistentPreRun won't match for remote subcommands.
+	if doltRemoteCmd.Parent() == nil {
+		t.Fatal("doltRemoteCmd should have a parent (doltCmd)")
+	}
+	if doltRemoteCmd.Parent().Name() != "dolt" {
+		t.Errorf("doltRemoteCmd parent should be 'dolt', got %q", doltRemoteCmd.Parent().Name())
+	}
+
+	// Verify that remote subcommands' parent is "remote", not "dolt".
+	// This confirms they bypass the dolt-specific guard in PersistentPreRun.
+	for _, name := range storeSubcommands {
+		for _, cmd := range doltRemoteCmd.Commands() {
+			if cmd.Name() == name {
+				if cmd.Parent().Name() != "remote" {
+					t.Errorf("dolt remote %s: parent should be 'remote', got %q",
+						name, cmd.Parent().Name())
+				}
+				break
+			}
+		}
+	}
+}
+
 func containsAny(s string, substrs ...string) bool {
 	for _, sub := range substrs {
 		if strings.Contains(s, sub) {
