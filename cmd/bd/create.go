@@ -1072,19 +1072,3 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore *
 
 	return nil
 }
-
-// getRoutingConfigValue resolves routing config from YAML first, then DB config.
-// This keeps command behavior consistent when init stores routing values in the DB.
-func getRoutingConfigValue(ctx context.Context, store *dolt.DoltStore, key string) string {
-	value := strings.TrimSpace(config.GetString(key))
-	if value != "" || store == nil {
-		return value
-	}
-
-	dbValue, err := store.GetConfig(ctx, key)
-	if err != nil {
-		debug.Logf("DEBUG: failed to read config %q from store: %v\n", key, err)
-		return ""
-	}
-	return strings.TrimSpace(dbValue)
-}
