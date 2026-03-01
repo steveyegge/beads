@@ -194,6 +194,20 @@ archives:
       - README.md
       - CHANGELOG.md
 
+brews:
+  - name: bd
+    repository:
+      owner: steveyegge
+      name: homebrew-beads
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    skip_upload: auto
+    homepage: "https://github.com/steveyegge/beads"
+    description: "AI-supervised issue tracker for coding workflows"
+    license: "MIT"
+    install: |
+      bin.install "bd"
+
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256

@@ -2,9 +2,17 @@
 
 A curated list of community-built UIs, extensions, and integrations for Beads. Ranked by activity and maturity.
 
+> **⚠️ Dolt migration compatibility notice (v0.50+)**
+>
+> Beads migrated from JSONL file storage to a Dolt SQL database in v0.50.
+> Tools that read `.beads/issues.jsonl` directly may no longer work with
+> current versions. Tools that use the `bd` CLI (`bd list --json`, etc.)
+> or connect via the daemon socket are unaffected. Check each tool's
+> documentation for Dolt compatibility.
+
 ## Terminal UIs
 
-- **[beads_viewer](https://github.com/Dicklesworthstone/beads_viewer)** - Elegant, keyboard-driven terminal interface with tree navigation and vim-style commands. Built by [@Dicklesworthstone](https://github.com/Dicklesworthstone). (Go)
+- **[Mardi Gras](https://github.com/quietpublish/mardi-gras)** - Parade-themed terminal UI with real-time updates, Gas Town agent orchestration, tmux integration, and Claude Code dispatch. Uses `bd list --json` for Dolt compatibility with JSONL fallback for legacy. Built by [@matt-wright86](https://github.com/matt-wright86). (Go)
 
 - **[bdui](https://github.com/assimelha/bdui)** - Real-time terminal UI with tree view, dependency graph, and vim-style navigation. Built by [@assimelha](https://github.com/assimelha). (Node.js)
 
@@ -20,13 +28,15 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 ## Web UIs
 
-- **[beads-ui](https://github.com/mantoni/beads-ui)** - Local web interface with live updates and kanban board. Run with `npx beads-ui start`. Built by [@mantoni](https://github.com/mantoni). (Node.js)
+- **[beads-ui](https://github.com/mantoni/beads-ui)** - Local web interface with live updates and kanban board. Uses the `bd` CLI for Dolt compatibility. Run with `npx beads-ui start`. Built by [@mantoni](https://github.com/mantoni). (Node.js)
+
+- **[BeadBoard](https://github.com/zenchantlive/beadboard)** - Windows-native control center with multi-project registry, dependency graph explorer, agent sessions hub, and timeline. Reads `.beads/issues.jsonl` directly (JSONL-era; Dolt compatibility TBD). Built by [@zenchantlive](https://github.com/zenchantlive). (Next.js/TypeScript)
 
 - **[Monitor WebUI](https://github.com/steveyegge/beads/tree/main/examples/monitor-webui)** - Real-time Issue Tracking Dashboard. Standalone web-based monitoring interface with clean, responsive design. Built by Beads core team. (Go)
 
 - **[beads-viz-prototype](https://github.com/mattbeane/beads-viz-prototype)** - Web-based visualization generating interactive HTML from `bd export`. Built by [@mattbeane](https://github.com/mattbeane). (Python)
 
-- **[beads-dashboard](https://github.com/rhydlewis/beads-dashboard)** - A local, lean metrics dashboard for your beads data. Provides insights insights into lead time, throughput and other continuous improvement metrics. Includes a filterable table view of "all issues". Built by [@rhydlewis](https://github.com/rhydlewis). (Node.js/React)
+- **[beads-dashboard](https://github.com/rhydlewis/beads-dashboard)** - A local, lean metrics dashboard for your beads data. Provides insights into lead time, throughput and other continuous improvement metrics. Includes a filterable table view of "all issues". Built by [@rhydlewis](https://github.com/rhydlewis). (Node.js/React)
 
 
 - **[beads-kanban-ui](https://github.com/AvivK5498/Beads-Kanban-UI)** - Visual Kanban board with git branch status tracking, epic/subtask management, design doc viewer, and activity timeline. Install via npm: `npm install -g beads-kanban-ui`. Built by [@AvivK5498](https://github.com/AvivK5498). (TypeScript/Rust)
@@ -69,7 +79,7 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 ## SDKs & Libraries
 
-- **[beads-sdk](https://github.com/HerbCaudill/beads-sdk)** - Typed TypeScript SDK with zero runtime dependencies. High-level `BeadsClient` for CRUD, filtering, search, labels, dependencies, comments, epics, and sync. Includes `DaemonSocket` for real-time mutation watching via the Dolt server. Install with `pnpm add @herbcaudill/beads-sdk`. Built by [@HerbCaudill](https://github.com/HerbCaudill). (TypeScript)
+- **[beads-sdk](https://github.com/HerbCaudill/beads-sdk)** - Typed TypeScript SDK with zero runtime dependencies. High-level `BeadsClient` for CRUD, filtering, search, labels, dependencies, comments, epics, and sync. Install with `pnpm add @herbcaudill/beads-sdk`. Built by [@HerbCaudill](https://github.com/HerbCaudill). (TypeScript)
 
 ## Claude Code Orchestration
 
@@ -84,6 +94,8 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 - **[BeadHub](https://github.com/beadhub/beadhub)** - Open-source coordination server for AI agent teams running beads. The `bdh` CLI is a transparent wrapper over `bd` that adds work claiming, file reservation, presence awareness, and inter-agent messaging (async mail and sync chat). Includes a web dashboard. Free hosted at beadhub.ai for open-source projects. Built by [@juanre](https://github.com/juanre). (Python/TypeScript)
 
 ## Historical / Stale
+
+- **[beads_viewer](https://github.com/Dicklesworthstone/beads_viewer)** - Terminal interface with tree navigation and vim-style commands. Not compatible with Dolt-based beads (v0.50+); see [issue #121](https://github.com/Dicklesworthstone/beads_viewer/issues/121). Built by [@Dicklesworthstone](https://github.com/Dicklesworthstone). (Go)
 
 - **[beady](https://github.com/maphew/beady)** - Early prototype effort, now stale. Built by [@maphew](https://github.com/maphew). (Go)
 

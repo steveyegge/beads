@@ -130,32 +130,55 @@ sync:
 
 ### Configure a Remote
 
+Use `bd dolt remote add` to configure remotes. This ensures the running Dolt SQL
+server sees the remote immediately. Remotes added via the `dolt` CLI directly
+are written to the filesystem but are not visible to the server until restart.
+
 ```bash
 # DoltHub (public or private)
-cd .beads/dolt
-dolt remote add origin https://doltremoteapi.dolthub.com/org/beads
+bd dolt remote add origin https://doltremoteapi.dolthub.com/org/beads
 
 # S3
-dolt remote add origin aws://[bucket]/path/to/repo
+bd dolt remote add origin aws://[bucket]/path/to/repo
 
 # GCS
-dolt remote add origin gs://[bucket]/path/to/repo
+bd dolt remote add origin gs://[bucket]/path/to/repo
+
+# Git SSH (GitHub, GitLab, etc.)
+bd dolt remote add origin git+ssh://git@github.com/org/repo.git
 
 # Local file system
-dolt remote add origin file:///path/to/remote
+bd dolt remote add origin file:///path/to/remote
 ```
 
 ### Push/Pull
 
 ```bash
-# Via bd sync
-bd sync
-
-# Direct dolt commands (if needed)
-cd .beads/dolt
-dolt push origin main
-dolt pull origin main
+bd dolt push
+bd dolt pull
 ```
+
+For SSH remotes, `bd dolt push` and `bd dolt pull` automatically use the `dolt`
+CLI instead of the SQL server to avoid MySQL connection timeouts during transfer.
+
+`bd dolt remote add` registers the remote on both the SQL server and the
+filesystem (CLI) config. This ensures `dolt push`/`dolt pull` via CLI can find
+the remote. If either surface already has a remote with that name, you'll be
+prompted before overwriting.
+
+> **Also supports sharing a Git repo**: Dolt stores data under `refs/dolt/data`,
+> separate from standard Git refs (`refs/heads/`, `refs/tags/`). You can safely
+> point a `git+ssh://` remote at the same repository as your project source code.
+> See [Dolt Git Remotes](https://docs.dolthub.com/concepts/dolt/git/remotes) for details.
+
+### List/Remove Remotes
+
+```bash
+bd dolt remote list    # Shows remotes from both SQL server and CLI, flags discrepancies
+bd dolt remote remove origin   # Removes from both surfaces
+```
+
+Use `bd doctor --fix` to resolve any discrepancies between SQL and CLI remote configs.
 
 ## Migration from SQLite (Legacy)
 

@@ -44,11 +44,11 @@ func TestAgentStateWithRouting(t *testing.T) {
 
 	// Initialize town database using helper (prefix without trailing hyphen)
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	// Initialize rig database using helper (prefix without trailing hyphen)
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 
 	// Create an agent bead in the rig database (using task type with gt:agent label)
 	agentBead := &types.Issue{
@@ -139,10 +139,10 @@ func TestUpdateClaimUsesCASOnRoutedIssue(t *testing.T) {
 	}
 
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 	issue := &types.Issue{
 		ID:        "gt-claim-cas-1",
 		Title:     "Claim CAS routed issue",
@@ -257,10 +257,10 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 
 	// Initialize databases (prefix without trailing hyphen)
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 
 	// Create an agent bead in the rig database (using task type with gt:agent label)
 	agentBead := &types.Issue{
@@ -346,10 +346,10 @@ func TestAgentShowWithRouting(t *testing.T) {
 
 	// Initialize databases (prefix without trailing hyphen)
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 
 	// Create an agent bead in the rig database (using task type with gt:agent label)
 	agentBead := &types.Issue{
@@ -447,10 +447,10 @@ func TestBeadsDirOverrideSkipsRouting(t *testing.T) {
 
 	// Both stores use prefix "gt" — town holds the bead, rig is empty
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "gt")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "gt")
 
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	_ = newTestStoreWithPrefix(t, rigDBPath, "gt")
+	_ = newTestStoreIsolatedDB(t, rigDBPath, "gt")
 
 	// Create a bead in the town database
 	townBead := &types.Issue{
@@ -550,10 +550,10 @@ func TestSlotClearWithRouting(t *testing.T) {
 
 	// Initialize databases
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 
 	// Create an agent bead in the rig database with a hook set
 	agentBead := &types.Issue{
@@ -613,7 +613,7 @@ func TestSlotClearWithRouting(t *testing.T) {
 	}
 
 	// Verify the hook was cleared by reading the agent bead from the rig database
-	rigStore2 := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore2 := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 	defer rigStore2.Close()
 
 	updated, err := rigStore2.GetIssue(ctx, "gt-testrig-polecat-slottest")
@@ -642,10 +642,10 @@ func TestSlotShowWithRouting(t *testing.T) {
 	}
 
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 
 	agentBead := &types.Issue{
 		ID:        "gt-testrig-crew-showtest",
@@ -709,7 +709,7 @@ func TestSlotAgentLabelCheck(t *testing.T) {
 	}
 
 	testDBPath := filepath.Join(beadsDir, "dolt")
-	testStore := newTestStoreWithPrefix(t, testDBPath, "bd")
+	testStore := newTestStoreIsolatedDB(t, testDBPath, "bd")
 
 	// Create an agent bead with type=task (NOT type=agent) but with gt:agent label
 	agentBead := &types.Issue{
@@ -793,11 +793,11 @@ func TestRoutingSkipsLocalPhantomCopy(t *testing.T) {
 
 	// Initialize town database (prefix "hq")
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	// Initialize rig database (prefix "gt")
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 
 	// Create the SAME issue ID in BOTH databases (phantom copy scenario).
 	// The town copy is the phantom — it should NOT be returned.

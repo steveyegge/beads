@@ -22,6 +22,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 // testDoltServerPort is the port of the shared test Dolt server (0 = not running).
@@ -162,9 +163,19 @@ func writeTestMetadata(t *testing.T, dbPath string, database string) {
 }
 
 // newTestStore creates a dolt store with issue_prefix configured (bd-166).
-// Each test gets its own unique database for isolation.
-// Connects to the shared test Dolt server.
+// Uses shared database with branch-per-test isolation (bd-xmf) to avoid
+// the overhead of CREATE/DROP DATABASE per test.
+// Falls back to per-test databases if the shared DB is not available.
 func newTestStore(t *testing.T, dbPath string) *dolt.DoltStore {
+	t.Helper()
+	return newTestStoreWithPrefix(t, dbPath, "test")
+}
+
+// newTestStoreIsolatedDB creates a dolt store with its own dedicated database.
+// Use this instead of newTestStoreWithPrefix when the test needs a truly separate
+// database (e.g., routing tests that create multiple stores with different paths
+// and expect routing to reopen them by path via metadata.json).
+func newTestStoreIsolatedDB(t *testing.T, dbPath string, prefix string) *dolt.DoltStore {
 	t.Helper()
 
 	ensureTestMode(t)
@@ -176,32 +187,28 @@ func newTestStore(t *testing.T, dbPath string) *dolt.DoltStore {
 		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
 	}
 
+	ctx := context.Background()
+
 	cfg := &dolt.Config{
 		Path:            dbPath,
 		ServerHost:      "127.0.0.1",
 		ServerPort:      testDoltServerPort,
 		Database:        uniqueTestDBName(t),
-		CreateIfMissing: true, // tests create fresh databases
+		CreateIfMissing: true,
 	}
-	// Write metadata.json so NewFromConfig (used by routing) finds the correct DB
 	writeTestMetadata(t, dbPath, cfg.Database)
 
-	// Serialize dolt.New() to avoid race in Dolt's InitStatusVariables (bd-cqjoi)
 	doltNewMutex.Lock()
-	ctx := context.Background()
 	s, err := dolt.New(ctx, cfg)
 	doltNewMutex.Unlock()
 	if err != nil {
 		t.Fatalf("Failed to create dolt store: %v", err)
 	}
 
-	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
-	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+	if err := s.SetConfig(ctx, "issue_prefix", prefix); err != nil {
 		s.Close()
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
-
-	// Configure Gas Town custom types for test compatibility (bd-find4)
 	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message"); err != nil {
 		s.Close()
 		t.Fatalf("Failed to set types.custom: %v", err)
@@ -217,7 +224,8 @@ func newTestStore(t *testing.T, dbPath string) *dolt.DoltStore {
 }
 
 // newTestStoreWithPrefix creates a dolt store with custom issue_prefix configured.
-// Each test gets its own unique database for isolation.
+// Uses shared database with branch-per-test isolation (bd-xmf) when available,
+// falling back to per-test databases otherwise.
 func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *dolt.DoltStore {
 	t.Helper()
 
@@ -230,17 +238,24 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *dolt.Do
 		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
 	}
 
+	ctx := context.Background()
+
+	// Fast path: use shared DB with branch-per-test isolation (bd-xmf)
+	if testSharedDB != "" {
+		return newTestStoreSharedBranch(t, dbPath, prefix)
+	}
+
+	// Fallback: per-test database (original slow path)
 	cfg := &dolt.Config{
 		Path:            dbPath,
 		ServerHost:      "127.0.0.1",
 		ServerPort:      testDoltServerPort,
 		Database:        uniqueTestDBName(t),
-		CreateIfMissing: true, // tests create fresh databases
+		CreateIfMissing: true,
 	}
 	writeTestMetadata(t, dbPath, cfg.Database)
 
 	doltNewMutex.Lock()
-	ctx := context.Background()
 	s, err := dolt.New(ctx, cfg)
 	doltNewMutex.Unlock()
 	if err != nil {
@@ -251,7 +266,6 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *dolt.Do
 		s.Close()
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
-
 	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message"); err != nil {
 		s.Close()
 		t.Fatalf("Failed to set types.custom: %v", err)
@@ -262,6 +276,55 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *dolt.Do
 		if cfg.Database != "" {
 			dropTestDatabase(cfg.Database, testDoltServerPort)
 		}
+	})
+	return s
+}
+
+// newTestStoreSharedBranch creates a store using the shared database with
+// branch-per-test isolation. Each test gets its own Dolt branch, avoiding
+// the expensive CREATE DATABASE + schema init + DROP DATABASE + PURGE cycle.
+func newTestStoreSharedBranch(t *testing.T, dbPath string, prefix string) *dolt.DoltStore {
+	t.Helper()
+	ctx := context.Background()
+
+	// Write metadata.json pointing to the shared database
+	writeTestMetadata(t, dbPath, testSharedDB)
+
+	// Open store against the shared database with MaxOpenConns=1
+	// (required for DOLT_CHECKOUT session affinity)
+	doltNewMutex.Lock()
+	s, err := dolt.New(ctx, &dolt.Config{
+		Path:         dbPath,
+		ServerHost:   "127.0.0.1",
+		ServerPort:   testDoltServerPort,
+		Database:     testSharedDB,
+		MaxOpenConns: 1,
+	})
+	doltNewMutex.Unlock()
+	if err != nil {
+		t.Fatalf("Failed to create dolt store (shared): %v", err)
+	}
+
+	// Create isolated branch for this test
+	_, branchCleanup := testutil.StartTestBranch(t, s.DB(), testSharedDB)
+
+	// Create ignored tables on this branch
+	if err := dolt.CreateIgnoredTables(s.DB()); err != nil {
+		branchCleanup()
+		s.Close()
+		t.Fatalf("CreateIgnoredTables: %v", err)
+	}
+
+	// Set prefix for this test (overrides the shared schema's default)
+	if err := s.SetConfig(ctx, "issue_prefix", prefix); err != nil {
+		branchCleanup()
+		s.Close()
+		t.Fatalf("Failed to set issue_prefix: %v", err)
+	}
+
+	t.Cleanup(func() {
+		branchCleanup()
+		s.Close()
 	})
 	return s
 }

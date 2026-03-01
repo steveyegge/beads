@@ -24,7 +24,7 @@ func setupValidateTestDB(t *testing.T, prefix string) (tmpDir string, store *dol
 	}
 
 	dbPath := filepath.Join(beadsDir, "dolt")
-	store = newTestStoreWithPrefix(t, dbPath, prefix)
+	store = newTestStoreIsolatedDB(t, dbPath, prefix)
 
 	return tmpDir, store
 }

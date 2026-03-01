@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/hooks"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -41,6 +43,10 @@ create, update, show, or close operation).`,
 		if reason == "" {
 			// Check -m alias (git commit convention)
 			reason, _ = cmd.Flags().GetString("message")
+		}
+		if reason == "" {
+			// Check --comment alias (desire-path from hq-ftpg)
+			reason, _ = cmd.Flags().GetString("comment")
 		}
 		if reason == "" {
 			reason = "Closed"
@@ -126,6 +132,9 @@ create, update, show, or close operation).`,
 
 			closedCount++
 
+			// Auto-close parent molecule if all steps are now complete
+			autoCloseCompletedMolecule(ctx, store, id, actor, session)
+
 			// Run close hook (best effort: hook runs only if re-fetch succeeds)
 			closedIssue, _ := store.GetIssue(ctx, id)
 			if closedIssue != nil && hookRunner != nil {
@@ -193,6 +202,9 @@ create, update, show, or close operation).`,
 			}
 
 			closedCount++
+
+			// Auto-close parent molecule if all steps are now complete
+			autoCloseCompletedMolecule(ctx, result.Store, result.ResolvedID, actor, session)
 
 			// Get updated issue for hook (best effort: hook runs only if re-fetch succeeds)
 			closedIssue, _ := result.Store.GetIssue(ctx, result.ResolvedID)
@@ -266,6 +278,8 @@ func init() {
 	_ = closeCmd.Flags().MarkHidden("resolution") // Hidden alias for agent/CLI ergonomics
 	closeCmd.Flags().StringP("message", "m", "", "Alias for --reason (git commit convention)")
 	_ = closeCmd.Flags().MarkHidden("message") // Hidden alias for agent/CLI ergonomics
+	closeCmd.Flags().String("comment", "", "Alias for --reason")
+	_ = closeCmd.Flags().MarkHidden("comment") // Hidden alias for agent/CLI ergonomics
 	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues or unsatisfied gates")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
@@ -336,4 +350,40 @@ func checkGateSatisfaction(issue *types.Issue) error {
 	}
 
 	return fmt.Errorf("gate condition not satisfied: %s (use --force to override)", reason)
+}
+
+// autoCloseCompletedMolecule checks if closing a step completed a parent molecule,
+// and if so, auto-closes the molecule root. This prevents stale wisps that are
+// complete but never explicitly closed (e.g., deacon patrol wisps).
+func autoCloseCompletedMolecule(ctx context.Context, s *dolt.DoltStore, closedStepID, actorName, session string) {
+	moleculeID := findParentMolecule(ctx, s, closedStepID)
+	if moleculeID == "" {
+		return // Not part of a molecule
+	}
+
+	// Check if molecule root is already closed
+	root, err := s.GetIssue(ctx, moleculeID)
+	if err != nil || root == nil || root.Status == types.StatusClosed {
+		return
+	}
+
+	// Load progress to check completion
+	progress, err := getMoleculeProgress(ctx, s, moleculeID)
+	if err != nil {
+		return // Best effort — don't fail the close
+	}
+
+	if progress.Completed < progress.Total {
+		return // Not all steps complete yet
+	}
+
+	// All steps complete — auto-close the molecule root
+	if err := s.CloseIssue(ctx, moleculeID, "all steps complete", actorName, session); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not auto-close completed molecule %s: %v\n", moleculeID, err)
+		return
+	}
+
+	if !jsonOutput {
+		fmt.Printf("%s Auto-closed completed molecule %s\n", ui.RenderPass("✓"), formatFeedbackID(moleculeID, root.Title))
+	}
 }

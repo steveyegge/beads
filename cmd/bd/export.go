@@ -78,7 +78,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if len(infraTypes) == 0 {
-			infraTypes = dolt.DefaultInfraTypes
+			infraTypes = dolt.DefaultInfraTypes()
 		}
 		for _, t := range infraTypes {
 			filter.ExcludeTypes = append(filter.ExcludeTypes, types.IssueType(t))

@@ -127,11 +127,11 @@ func scanIssueFromTable(ctx context.Context, db *sql.DB, table, id string) (*typ
 // recordEventInTable records an event in the specified events table.
 //
 //nolint:gosec // G201: table is a hardcoded constant from wispEventTable
-func recordEventInTable(ctx context.Context, tx *sql.Tx, table, issueID string, eventType types.EventType, actor, oldValue, newValue string) error {
+func recordEventInTable(ctx context.Context, tx *sql.Tx, table, issueID string, eventType types.EventType, actor, newValue string) error {
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (issue_id, event_type, actor, old_value, new_value)
 		VALUES (?, ?, ?, ?, ?)
-	`, table), issueID, eventType, actor, oldValue, newValue)
+	`, table), issueID, eventType, actor, "", newValue)
 	return wrapExecError("record event in table", err)
 }
 
@@ -313,7 +313,7 @@ func (s *DoltStore) createWisp(ctx context.Context, issue *types.Issue, actor st
 		return fmt.Errorf("failed to insert wisp: %w", err)
 	}
 
-	if err := recordEventInTable(ctx, tx, "wisp_events", issue.ID, types.EventCreated, actor, "", ""); err != nil {
+	if err := recordEventInTable(ctx, tx, "wisp_events", issue.ID, types.EventCreated, actor, ""); err != nil {
 		return fmt.Errorf("failed to record creation event: %w", err)
 	}
 
@@ -434,7 +434,7 @@ func (s *DoltStore) closeWisp(ctx context.Context, id string, reason string, act
 		return fmt.Errorf("wisp not found: %s", id)
 	}
 
-	if err := recordEventInTable(ctx, tx, "wisp_events", id, types.EventClosed, actor, "", reason); err != nil {
+	if err := recordEventInTable(ctx, tx, "wisp_events", id, types.EventClosed, actor, reason); err != nil {
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
@@ -510,7 +510,7 @@ func (s *DoltStore) claimWisp(ctx context.Context, id string, actor string) erro
 		return fmt.Errorf("%w by %s", storage.ErrAlreadyClaimed, currentAssignee)
 	}
 
-	if err := recordEventInTable(ctx, tx, "wisp_events", id, "claimed", actor, "", ""); err != nil {
+	if err := recordEventInTable(ctx, tx, "wisp_events", id, "claimed", actor, ""); err != nil {
 		return fmt.Errorf("failed to record claim event: %w", err)
 	}
 

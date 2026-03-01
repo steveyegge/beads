@@ -1355,11 +1355,11 @@ func TestDepListCrossRigRouting(t *testing.T) {
 
 	// Initialize town database
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	// Initialize rig database
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 
 	// Create test issues in rig database with a dependency
 	parent := &types.Issue{

@@ -146,7 +146,7 @@ func scanBeadsDir(beadsDir string, report *ArtifactReport) {
 
 	// 2. Check for cruft .beads directories (should be redirect-only)
 	if isRedirectExpected {
-		scanCruftBeadsDir(beadsDir, hasRedirect, report)
+		scanCruftBeadsDir(beadsDir, report)
 	}
 
 	// 3. Validate redirect files
@@ -157,7 +157,7 @@ func scanBeadsDir(beadsDir string, report *ArtifactReport) {
 
 // isDoltNative returns true if the .beads directory contains a dolt/ subdirectory.
 func isDoltNative(beadsDir string) bool {
-	info, err := os.Stat(filepath.Join(beadsDir, "dolt"))
+	info, err := os.Stat(getDatabasePath(beadsDir))
 	return err == nil && info.IsDir()
 }
 
@@ -264,7 +264,7 @@ func scanSQLiteArtifacts(beadsDir string, report *ArtifactReport) {
 
 // scanCruftBeadsDir checks if a .beads directory that should be redirect-only
 // contains extra files beyond the redirect file.
-func scanCruftBeadsDir(beadsDir string, hasRedirect bool, report *ArtifactReport) {
+func scanCruftBeadsDir(beadsDir string, report *ArtifactReport) {
 	entries, err := os.ReadDir(beadsDir)
 	if err != nil {
 		return

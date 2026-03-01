@@ -42,11 +42,11 @@ func TestResolveExternalDepsViaRouting(t *testing.T) {
 
 	// Initialize town database (local store)
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	// Initialize rig database (remote store)
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 
 	// Create an issue in the remote rig database
 	remoteIssue := &types.Issue{
@@ -158,7 +158,7 @@ func TestResolveExternalDepsUnresolvable(t *testing.T) {
 	}
 
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	// Create a local issue with an external dep to a non-existent target
 	localIssue := &types.Issue{
@@ -235,10 +235,10 @@ func TestResolveBlockedByRefs(t *testing.T) {
 	}
 
 	townDBPath := filepath.Join(townBeadsDir, "dolt")
-	townStore := newTestStoreWithPrefix(t, townDBPath, "hq")
+	townStore := newTestStoreIsolatedDB(t, townDBPath, "hq")
 
 	rigDBPath := filepath.Join(rigBeadsDir, "dolt")
-	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
+	rigStore := newTestStoreIsolatedDB(t, rigDBPath, "gt")
 
 	remoteIssue := &types.Issue{
 		ID:        "gt-blocker1",
@@ -309,7 +309,7 @@ func TestNoExternalDeps(t *testing.T) {
 	}
 
 	dbFile := filepath.Join(beadsDir, "dolt")
-	testStore := newTestStoreWithPrefix(t, dbFile, "test")
+	testStore := newTestStoreIsolatedDB(t, dbFile, "test")
 
 	// Create two local issues with a local dependency
 	issue1 := &types.Issue{

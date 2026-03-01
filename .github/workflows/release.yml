@@ -80,6 +80,9 @@ jobs:
             ${{ github.repository != 'steveyegge/beads' && '--skip=publish --skip=announce' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Homebrew tap publishing (requires PAT with contents:write on homebrew-beads)
+          # If not set, goreleaser skips tap upload (skip_upload: auto in .goreleaser.yml)
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           # Windows code signing (optional - signing is skipped if not set)
           WINDOWS_SIGNING_CERT_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_PFX_BASE64 }}
           WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}

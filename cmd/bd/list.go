@@ -565,7 +565,7 @@ var listCmd = &cobra.Command{
 		// Infra type filtering: exclude configured infra types by default.
 		// These types live in the wisps table after migration 007.
 		// Use --include-infra or --type=agent to show infra beads.
-		infraTypes := dolt.DefaultInfraTypes
+		infraTypes := dolt.DefaultInfraTypes()
 		if store != nil {
 			infraSet := store.GetInfraTypes(rootCtx)
 			infraTypes = make([]string, 0, len(infraSet))

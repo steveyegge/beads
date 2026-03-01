@@ -222,7 +222,7 @@ func (s *DoltStore) GetInfraTypes(ctx context.Context) map[string]bool {
 	}
 
 	if len(types) == 0 {
-		types = DefaultInfraTypes
+		types = defaultInfraTypes
 	}
 
 	result := make(map[string]bool, len(types))

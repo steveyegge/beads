@@ -330,6 +330,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.ConfigValues(path)
 		case "Classic Artifacts":
 			err = fix.ClassicArtifacts(path)
+		case "Remote Consistency":
+			err = fix.RemoteConsistency(path)
 		case "Broken Migration State":
 			err = fix.BrokenMigrationState(path)
 		case "SQLite Residue":

@@ -15,14 +15,22 @@ func IsEphemeralID(id string) bool {
 	return strings.Contains(id, "-wisp-")
 }
 
-// DefaultInfraTypes are the built-in infrastructure types routed to the wisps table.
+// defaultInfraTypes are the built-in infrastructure types routed to the wisps table.
 // Override via DB config "types.infra" or config.yaml types.infra.
-var DefaultInfraTypes = []string{"agent", "rig", "role", "message"}
+// Unexported to prevent external mutation; use DefaultInfraTypes() for a safe copy.
+var defaultInfraTypes = []string{"agent", "rig", "role", "message"}
 
-// defaultInfraSet is the set form of DefaultInfraTypes for IsInfraType lookups.
+// DefaultInfraTypes returns a copy of the built-in infrastructure types.
+func DefaultInfraTypes() []string {
+	out := make([]string, len(defaultInfraTypes))
+	copy(out, defaultInfraTypes)
+	return out
+}
+
+// defaultInfraSet is the set form of defaultInfraTypes for IsInfraType lookups.
 var defaultInfraSet = func() map[string]bool {
-	m := make(map[string]bool, len(DefaultInfraTypes))
-	for _, t := range DefaultInfraTypes {
+	m := make(map[string]bool, len(defaultInfraTypes))
+	for _, t := range defaultInfraTypes {
 		m[t] = true
 	}
 	return m
