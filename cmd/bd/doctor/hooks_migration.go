@@ -14,8 +14,8 @@ const (
 	hookMarkerStateValid  = "valid"
 	hookMarkerStateBroken = "broken"
 
-	hookMarkerBeginToken = "BEGIN BEADS INTEGRATION"
-	hookMarkerEndToken   = "END BEADS INTEGRATION"
+	hookMarkerBeginText = "BEGIN BEADS INTEGRATION"
+	hookMarkerEndText   = "END BEADS INTEGRATION"
 )
 
 var managedHookNames = []string{
@@ -187,8 +187,8 @@ func classifyHookMigration(hook *HookMigrationHookPlan) {
 }
 
 func detectHookMarkerState(content string) string {
-	hasBegin := strings.Contains(content, hookMarkerBeginToken)
-	hasEnd := strings.Contains(content, hookMarkerEndToken)
+	hasBegin := strings.Contains(content, hookMarkerBeginText)
+	hasEnd := strings.Contains(content, hookMarkerEndText)
 
 	switch {
 	case hasBegin && hasEnd:
