@@ -87,6 +87,7 @@ func setupGitRepoInDir(t *testing.T, dir string) {
 		{"git", "init"},
 		{"git", "config", "user.email", "test@test.com"},
 		{"git", "config", "user.name", "Test User"},
+		{"git", "config", "core.hooksPath", ".git/hooks"},
 		{"git", "config", "remote.origin.url", "https://github.com/test/metadata-test.git"},
 	}
 	for _, args := range cmds {

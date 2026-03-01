@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 // Template git repository optimization (bd-ktng):
@@ -65,7 +68,10 @@ func newGitRepo(t *testing.T) string {
 }
 
 func copyGitDir(src, dst string) error {
-	return copyDirRecursive(filepath.Join(src, ".git"), filepath.Join(dst, ".git"))
+	if err := copyDirRecursive(filepath.Join(src, ".git"), filepath.Join(dst, ".git")); err != nil {
+		return err
+	}
+	return testutil.ForceRepoLocalHooksPath(dst)
 }
 
 func copyDirRecursive(src, dst string) error {
@@ -94,4 +100,33 @@ func copyDirRecursive(src, dst string) error {
 		}
 	}
 	return nil
+}
+
+func TestNewGitRepo_UsesRepoLocalHooksPathDespiteGlobalConfig(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(fakeHome, ".config"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(fakeHome, ".gitconfig"))
+
+	globalHooks := filepath.Join(fakeHome, "global-hooks")
+	if err := os.MkdirAll(globalHooks, 0755); err != nil {
+		t.Fatalf("failed to create fake global hooks dir: %v", err)
+	}
+
+	setGlobal := exec.Command("git", "config", "--global", "core.hooksPath", globalHooks)
+	if out, err := setGlobal.CombinedOutput(); err != nil {
+		t.Fatalf("failed to set global core.hooksPath: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	repoDir := newGitRepo(t)
+	getLocal := exec.Command("git", "config", "--get", "core.hooksPath")
+	getLocal.Dir = repoDir
+	out, err := getLocal.CombinedOutput()
+	if err != nil {
+		t.Fatalf("failed to read repo core.hooksPath: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	if got := strings.TrimSpace(string(out)); got != ".git/hooks" {
+		t.Fatalf("core.hooksPath=%q, want %q", got, ".git/hooks")
+	}
 }

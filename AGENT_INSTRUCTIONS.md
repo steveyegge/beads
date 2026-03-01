@@ -52,6 +52,15 @@ func TestMyFeature(t *testing.T) {
 }
 ```
 
+**Git test isolation:** For tests that create temporary git repos, force repo-local hooks:
+
+```bash
+git config core.hooksPath .git/hooks
+```
+
+Do not rely on the developer's global git config. Global `core.hooksPath` can leak
+into temp repos and produce flaky test behavior.
+
 **Warning:** bd will warn you when creating issues with "Test" prefix in the production database. Always use `BEADS_DB` for manual testing.
 
 ### Before Committing
