@@ -28,6 +28,8 @@ type PreflightResult struct {
 	Summary string        `json:"summary"`
 }
 
+const preflightSkipLintEnv = "BD_PREFLIGHT_SKIP_LINT"
+
 var preflightCmd = &cobra.Command{
 	Use:     "preflight",
 	GroupID: "maint",
@@ -44,6 +46,9 @@ Examples:
   bd preflight              # Show checklist
   bd preflight --check      # Run checks automatically
   bd preflight --check --json  # JSON output for programmatic use
+
+Skip lint (explicit, temporary):
+  BD_PREFLIGHT_SKIP_LINT=1 bd preflight --check
 `,
 	Run: runPreflight,
 }
@@ -199,11 +204,27 @@ func runLintCheck() CheckResult {
 
 	// Check if golangci-lint is available
 	if _, err := exec.LookPath("golangci-lint"); err != nil {
+		if envFlagEnabled(preflightSkipLintEnv) {
+			return CheckResult{
+				Name:    "Lint passes",
+				Passed:  false,
+				Skipped: true,
+				Warning: true,
+				Output: fmt.Sprintf(
+					"lint check explicitly skipped by %s=1",
+					preflightSkipLintEnv,
+				),
+				Command: command,
+			}
+		}
+
 		return CheckResult{
-			Name:    "Lint passes",
-			Passed:  false,
-			Skipped: true,
-			Output:  "golangci-lint not found in PATH",
+			Name:   "Lint passes",
+			Passed: false,
+			Output: fmt.Sprintf(
+				"golangci-lint not found in PATH (install it or explicitly skip lint with %s=1)",
+				preflightSkipLintEnv,
+			),
 			Command: command,
 		}
 	}
@@ -333,4 +354,9 @@ func truncateOutput(s string, maxLen int) string {
 		return strings.TrimSpace(s)
 	}
 	return strings.TrimSpace(s[:maxLen]) + "\n... (truncated)"
+}
+
+func envFlagEnabled(name string) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
 }

@@ -183,3 +183,38 @@ func TestTruncateOutput(t *testing.T) {
 		})
 	}
 }
+
+func TestRunLintCheck_MissingCommandFailsByDefault(t *testing.T) {
+	t.Setenv("PATH", "")
+	t.Setenv(preflightSkipLintEnv, "")
+
+	result := runLintCheck()
+	if result.Passed {
+		t.Fatalf("expected lint check to fail when golangci-lint is missing")
+	}
+	if result.Skipped {
+		t.Fatalf("expected missing lint to be a hard failure, not skipped")
+	}
+	if !strings.Contains(result.Output, "not found in PATH") {
+		t.Fatalf("expected missing command message, got: %q", result.Output)
+	}
+}
+
+func TestRunLintCheck_MissingCommandBypass(t *testing.T) {
+	t.Setenv("PATH", "")
+	t.Setenv(preflightSkipLintEnv, "1")
+
+	result := runLintCheck()
+	if result.Passed {
+		t.Fatalf("expected bypassed check to remain non-passing")
+	}
+	if !result.Skipped {
+		t.Fatalf("expected bypassed lint check to be marked skipped")
+	}
+	if !result.Warning {
+		t.Fatalf("expected bypassed lint check to be warning")
+	}
+	if !strings.Contains(result.Output, preflightSkipLintEnv) {
+		t.Fatalf("expected output to mention bypass env var, got: %q", result.Output)
+	}
+}
