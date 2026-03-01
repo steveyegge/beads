@@ -337,6 +337,79 @@ func TestInstallHooksWithSectionMarkers(t *testing.T) {
 	})
 }
 
+func TestInstallJJHooks_PreservesContentWithoutOldSidecars(t *testing.T) {
+	tmpDir := newGitRepo(t)
+	runInDir(t, tmpDir, func() {
+		gitDirPath, err := git.GetGitDir()
+		if err != nil {
+			t.Fatalf("git.GetGitDir() failed: %v", err)
+		}
+		hooksDir := filepath.Join(gitDirPath, "hooks")
+		if err := os.MkdirAll(hooksDir, 0750); err != nil {
+			t.Fatalf("Failed to create hooks directory: %v", err)
+		}
+
+		preCommitPath := filepath.Join(hooksDir, "pre-commit")
+		postMergePath := filepath.Join(hooksDir, "post-merge")
+		if err := os.WriteFile(preCommitPath, []byte("#!/bin/sh\necho jj-pre\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(postMergePath, []byte("#!/bin/sh\necho jj-post\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := installJJHooks(); err != nil {
+			t.Fatalf("installJJHooks() failed: %v", err)
+		}
+
+		preCommitContent, err := os.ReadFile(preCommitPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		postMergeContent, err := os.ReadFile(postMergePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		preCommitStr := string(preCommitContent)
+		postMergeStr := string(postMergeContent)
+		if !strings.Contains(preCommitStr, "echo jj-pre") {
+			t.Error("pre-commit user content should be preserved")
+		}
+		if !strings.Contains(postMergeStr, "echo jj-post") {
+			t.Error("post-merge user content should be preserved")
+		}
+		if !strings.Contains(preCommitStr, hookSectionBeginPrefix) {
+			t.Error("pre-commit section marker should be present")
+		}
+		if !strings.Contains(postMergeStr, hookSectionBeginPrefix) {
+			t.Error("post-merge section marker should be present")
+		}
+
+		if _, err := os.Stat(preCommitPath + ".old"); !os.IsNotExist(err) {
+			t.Error("pre-commit .old sidecar should not be created in jj install path")
+		}
+		if _, err := os.Stat(postMergePath + ".old"); !os.IsNotExist(err) {
+			t.Error("post-merge .old sidecar should not be created in jj install path")
+		}
+
+		preCommitOnce := preCommitStr
+		postMergeOnce := postMergeStr
+		if err := installJJHooks(); err != nil {
+			t.Fatalf("second installJJHooks() failed: %v", err)
+		}
+
+		preCommitTwice, _ := os.ReadFile(preCommitPath)
+		postMergeTwice, _ := os.ReadFile(postMergePath)
+		if string(preCommitTwice) != preCommitOnce {
+			t.Errorf("pre-commit changed on second jj install:\nbefore:\n%s\nafter:\n%s", preCommitOnce, string(preCommitTwice))
+		}
+		if string(postMergeTwice) != postMergeOnce {
+			t.Errorf("post-merge changed on second jj install:\nbefore:\n%s\nafter:\n%s", postMergeOnce, string(postMergeTwice))
+		}
+	})
+}
+
 func TestUninstallHooksWithSectionMarkers(t *testing.T) {
 	tmpDir := newGitRepo(t)
 	runInDir(t, tmpDir, func() {

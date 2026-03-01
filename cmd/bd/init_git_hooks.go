@@ -259,74 +259,27 @@ func buildPostMergeHook(chainHooks bool, existingHooks []hookInfo) string {
 	return "#!/bin/sh\n" + section
 }
 
-// installJJHooks installs simplified git hooks for colocated jujutsu+git repos.
-// jj's model is simpler: the working copy IS always a commit, so no staging needed.
-// Changes flow into the current change automatically.
+// installJJHooks installs marker-managed hooks for colocated jujutsu+git repos.
+// This path intentionally avoids .old sidecar chaining and uses the same section
+// injection behavior as regular hook installs.
 func installJJHooks() error {
-	hooksDir, err := git.GetGitHooksDir()
+	embeddedHooks, err := getEmbeddedHooks()
 	if err != nil {
 		return err
 	}
-
-	// Ensure hooks directory exists
-	if err := os.MkdirAll(hooksDir, 0750); err != nil {
-		return fmt.Errorf("failed to create hooks directory: %w", err)
+	jjHooks := map[string]string{}
+	if preCommitHook, ok := embeddedHooks["pre-commit"]; ok {
+		jjHooks["pre-commit"] = preCommitHook
+	} else {
+		return fmt.Errorf("missing embedded pre-commit hook template")
+	}
+	if postMergeHook, ok := embeddedHooks["post-merge"]; ok {
+		jjHooks["post-merge"] = postMergeHook
+	} else {
+		return fmt.Errorf("missing embedded post-merge hook template")
 	}
 
-	// Detect existing hooks
-	existingHooks := detectExistingHooks()
-
-	// Check if any non-bd hooks exist
-	hasExistingHooks := false
-	for _, hook := range existingHooks {
-		if hook.exists && !hook.isBdHook {
-			hasExistingHooks = true
-			break
-		}
-	}
-
-	// Default to chaining with existing hooks (no prompting)
-	chainHooks := hasExistingHooks
-	if chainHooks {
-		// Chain mode - rename existing hooks to .old so they can be called
-		for _, hook := range existingHooks {
-			if hook.exists && !hook.isBdHook {
-				oldPath := hook.path + ".old"
-				if err := os.Rename(hook.path, oldPath); err != nil {
-					fmt.Fprintf(os.Stderr, "%s Failed to chain with existing %s hook: %v\n", ui.RenderWarn("⚠"), hook.name, err)
-					fmt.Fprintf(os.Stderr, "You can resolve this with: %s\n", ui.RenderAccent("bd doctor --fix"))
-					continue
-				}
-				fmt.Printf("  Chained with existing %s hook\n", hook.name)
-			}
-		}
-	}
-
-	// pre-commit hook (simplified for jj - no staging)
-	preCommitPath := filepath.Join(hooksDir, "pre-commit")
-	preCommitContent := buildJJPreCommitHook(chainHooks, existingHooks)
-
-	// post-merge hook (same as git)
-	postMergePath := filepath.Join(hooksDir, "post-merge")
-	postMergeContent := buildPostMergeHook(chainHooks, existingHooks)
-
-	// Write pre-commit hook
-	// #nosec G306 - git hooks must be executable
-	if err := os.WriteFile(preCommitPath, []byte(preCommitContent), 0700); err != nil {
-		return fmt.Errorf("failed to write pre-commit hook: %w", err)
-	}
-
-	// Write post-merge hook
-	// #nosec G306 - git hooks must be executable
-	if err := os.WriteFile(postMergePath, []byte(postMergeContent), 0700); err != nil {
-		return fmt.Errorf("failed to write post-merge hook: %w", err)
-	}
-
-	if chainHooks {
-		fmt.Printf("%s Chained bd hooks with existing hooks (jj mode)\n", ui.RenderPass("✓"))
-	}
-
-	return nil
+	return installHooksWithOptions(jjHooks, false, false, false, false)
 }
 
 // buildJJPreCommitHook generates the pre-commit hook for jujutsu repos using section markers (GH#1380).
