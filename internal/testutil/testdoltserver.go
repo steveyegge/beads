@@ -220,7 +220,9 @@ func ensureSharedContainer() {
 	doltServerOnce.Do(func() {
 		doltServerErr = startDoltContainer()
 		if doltServerErr == nil && doltTestPort != "" {
-			_ = os.Setenv("BEADS_DOLT_PORT", doltTestPort) //nolint:tenv // intentional process-wide env
+			if err := os.Setenv("BEADS_DOLT_PORT", doltTestPort); err != nil {
+				doltServerErr = fmt.Errorf("set BEADS_DOLT_PORT: %w", err)
+			}
 		}
 	})
 }
