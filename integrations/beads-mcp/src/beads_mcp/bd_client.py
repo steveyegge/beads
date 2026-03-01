@@ -325,7 +325,20 @@ class BdCliClient(BdClientBase):
                 cwd=working_dir,
                 env=env,
             )
-            stdout, stderr = await process.communicate()
+            # ENTERPRISE FIX: 30-Second Circuit Breaker
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
+            except asyncio.TimeoutError as e:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.communicate()  # Flush the pipes to prevent memory leaks
+                raise BdCommandError(
+                    "bd command timed out after 30 seconds",
+                    stderr="Subprocess deadlock detected and killed by MCP circuit breaker.",
+                    returncode=-1,
+                ) from e
         except FileNotFoundError as e:
             raise BdNotFoundError(BdNotFoundError.installation_message(self.bd_path)) from e
 
@@ -368,7 +381,20 @@ class BdCliClient(BdClientBase):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self._get_working_dir(),
             )
-            stdout, stderr = await process.communicate()
+            # ENTERPRISE FIX: 30-Second Circuit Breaker
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
+            except asyncio.TimeoutError as e:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.communicate()  # Flush the pipes to prevent memory leaks
+                raise BdCommandError(
+                    "bd command timed out after 30 seconds",
+                    stderr="Subprocess deadlock detected and killed by MCP circuit breaker.",
+                    returncode=-1,
+                ) from e
         except FileNotFoundError as e:
             raise BdNotFoundError(BdNotFoundError.installation_message(self.bd_path)) from e
 
@@ -663,7 +689,20 @@ class BdCliClient(BdClientBase):
                 cwd=self._get_working_dir(),
                 env=env,
             )
-            _stdout, stderr = await process.communicate()
+# ENTERPRISE FIX: 30-Second Circuit Breaker
+            try:
+                _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
+            except asyncio.TimeoutError as e:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.communicate()  # Flush the pipes to prevent memory leaks
+                raise BdCommandError(
+                    "bd command timed out after 30 seconds",
+                    stderr="Subprocess deadlock detected and killed by MCP circuit breaker.",
+                    returncode=-1,
+                ) from e
         except FileNotFoundError as e:
             raise BdNotFoundError(BdNotFoundError.installation_message(self.bd_path)) from e
 
@@ -690,7 +729,20 @@ class BdCliClient(BdClientBase):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self._get_working_dir(),
             )
-            stdout, stderr = await process.communicate()
+            # ENTERPRISE FIX: 30-Second Circuit Breaker
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
+            except asyncio.TimeoutError as e:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.communicate()  # Flush the pipes to prevent memory leaks
+                raise BdCommandError(
+                    "bd command timed out after 30 seconds",
+                    stderr="Subprocess deadlock detected and killed by MCP circuit breaker.",
+                    returncode=-1,
+                ) from e
         except FileNotFoundError as e:
             raise BdNotFoundError(BdNotFoundError.installation_message(self.bd_path)) from e
 
@@ -843,7 +895,20 @@ class BdCliClient(BdClientBase):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self._get_working_dir(),
             )
-            stdout, stderr = await process.communicate()
+            # ENTERPRISE FIX: 30-Second Circuit Breaker
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
+            except asyncio.TimeoutError as e:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.communicate()  # Flush the pipes to prevent memory leaks
+                raise BdCommandError(
+                    "bd command timed out after 30 seconds",
+                    stderr="Subprocess deadlock detected and killed by MCP circuit breaker.",
+                    returncode=-1,
+                ) from e
         except FileNotFoundError as e:
             raise BdNotFoundError(BdNotFoundError.installation_message(self.bd_path)) from e
 
