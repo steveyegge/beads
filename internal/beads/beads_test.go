@@ -891,21 +891,15 @@ func TestFindBeadsDir_Worktree(t *testing.T) {
 	t.Chdir(worktreeDir)
 	git.ResetCaches() // Reset after chdir for caching tests
 
-	// FindBeadsDir should prioritize the main repo's .beads for worktrees (bd-de6)
+	// FindBeadsDir should find the worktree's own .beads when it has project files (GH#2190)
 	result := FindBeadsDir()
 
 	// Resolve symlinks for comparison
 	resultResolved, _ := filepath.EvalSymlinks(result)
 	worktreeBeadsDirResolved, _ := filepath.EvalSymlinks(worktreeBeadsDir)
-	mainBeadsDirResolved, _ := filepath.EvalSymlinks(mainBeadsDir)
 
-	if resultResolved != mainBeadsDirResolved {
-		t.Errorf("FindBeadsDir() = %q, want main repo .beads %q (prioritized for worktrees)", result, mainBeadsDir)
-	}
-
-	// Verify we're NOT finding the worktree's .beads (should fall back only if main repo has no .beads)
-	if resultResolved == worktreeBeadsDirResolved {
-		t.Errorf("FindBeadsDir() returned worktree .beads %q instead of main repo .beads %q - prioritization not working!", worktreeBeadsDir, mainBeadsDir)
+	if resultResolved != worktreeBeadsDirResolved {
+		t.Errorf("FindBeadsDir() = %q, want worktree .beads %q (separate-DB mode)", result, worktreeBeadsDir)
 	}
 }
 
@@ -1217,6 +1211,10 @@ func TestFindBeadsDir_SiblingWorktree(t *testing.T) {
 		_ = cmd.Run()
 	}()
 
+	// Remove worktree's .beads/ (came from checkout) so it must fall back to main repo
+	// This simulates the real-world case where .beads is in .gitignore
+	_ = os.RemoveAll(filepath.Join(siblingDir, ".beads"))
+
 	// Create an UNRELATED .beads/ in the parent directory (tmpDir)
 	// Before the fix, the walk would escape past worktreeRoot and find this
 	unrelatedBeadsDir := filepath.Join(tmpDir, ".beads")
@@ -1249,8 +1247,9 @@ func TestFindBeadsDir_SiblingWorktree(t *testing.T) {
 }
 
 // TestFindDatabasePath_Worktree tests that FindDatabasePath correctly finds the
-// shared database in the main repository when accessed from a git worktree. This is the
-// key test for bd-745 - worktrees should share the same .beads database.
+// shared database in the main repository when a worktree does NOT have its own
+// .beads directory. This is the key test for bd-745 - worktrees should share
+// the same .beads database when the worktree has no separate-DB init.
 func TestFindDatabasePath_Worktree(t *testing.T) {
 	// Save original state
 	originalEnvDir := os.Getenv("BEADS_DIR")
@@ -1333,6 +1332,10 @@ func TestFindDatabasePath_Worktree(t *testing.T) {
 		_ = cmd.Run()
 	}()
 
+	// Remove worktree's .beads/ (came from checkout) so it falls back to main repo
+	// This simulates the real-world case where .beads is in .gitignore
+	_ = os.RemoveAll(filepath.Join(worktreeDir, ".beads"))
+
 	// Change to worktree subdirectory
 	worktreeSubDir := filepath.Join(worktreeDir, "sub", "nested")
 	if err := os.MkdirAll(worktreeSubDir, 0755); err != nil {
@@ -1350,6 +1353,118 @@ func TestFindDatabasePath_Worktree(t *testing.T) {
 
 	if resultResolved != mainDoltResolved {
 		t.Errorf("FindDatabasePath() = %q, want main repo shared db %q", result, mainDoltDir)
+	}
+}
+
+// TestFindDatabasePath_WorktreeSeparateDB tests that FindDatabasePath correctly
+// finds the worktree's own .beads database when the worktree has been bd-init'd
+// with its own separate database (no redirect file). This is the fix for GH#2190.
+func TestFindDatabasePath_WorktreeSeparateDB(t *testing.T) {
+	originalEnvDir := os.Getenv("BEADS_DIR")
+	originalEnvDB := os.Getenv("BEADS_DB")
+	defer func() {
+		if originalEnvDir != "" {
+			os.Setenv("BEADS_DIR", originalEnvDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		if originalEnvDB != "" {
+			os.Setenv("BEADS_DB", originalEnvDB)
+		} else {
+			os.Unsetenv("BEADS_DB")
+		}
+	}()
+	os.Unsetenv("BEADS_DIR")
+	os.Unsetenv("BEADS_DB")
+
+	tmpDir, err := os.MkdirTemp("", "beads-worktree-separatedb-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize main git repository with its own .beads
+	mainRepoDir := filepath.Join(tmpDir, "main-repo")
+	if err := os.MkdirAll(mainRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+
+	// Main repo .beads with dolt database
+	mainBeadsDir := filepath.Join(mainRepoDir, ".beads")
+	if err := os.MkdirAll(filepath.Join(mainBeadsDir, "dolt"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create initial commit (don't commit .beads - it's normally in .gitignore)
+	if err := os.WriteFile(filepath.Join(mainRepoDir, ".gitignore"), []byte(".beads/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mainRepoDir, "README.md"), []byte("# Test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "-A")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git commit failed: %v", err)
+	}
+
+	// Create a worktree
+	worktreeDir := filepath.Join(tmpDir, "worktree")
+	cmd = exec.Command("git", "worktree", "add", worktreeDir, "HEAD")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git worktree add failed: %v", err)
+	}
+	defer func() {
+		cmd := exec.Command("git", "worktree", "remove", worktreeDir)
+		cmd.Dir = mainRepoDir
+		_ = cmd.Run()
+	}()
+
+	// Simulate "bd init" in the worktree: create .beads with its own dolt database
+	worktreeBeadsDir := filepath.Join(worktreeDir, ".beads")
+	worktreeDoltDir := filepath.Join(worktreeBeadsDir, "dolt")
+	if err := os.MkdirAll(worktreeDoltDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreeBeadsDir, "metadata.json"),
+		[]byte(`{"backend":"dolt","dolt_database":"beads_worktree"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to worktree
+	t.Chdir(worktreeDir)
+	git.ResetCaches()
+
+	// FindDatabasePath should find the worktree's own database, NOT the main repo's
+	result := FindDatabasePath()
+
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	worktreeDoltResolved, _ := filepath.EvalSymlinks(worktreeDoltDir)
+	mainDoltResolved, _ := filepath.EvalSymlinks(filepath.Join(mainBeadsDir, "dolt"))
+
+	if resultResolved == mainDoltResolved {
+		t.Errorf("FindDatabasePath() = main repo db %q, want worktree db %q (separate-DB mode)", result, worktreeDoltDir)
+	}
+
+	if resultResolved != worktreeDoltResolved {
+		t.Errorf("FindDatabasePath() = %q, want worktree db %q (separate-DB mode)", result, worktreeDoltDir)
 	}
 }
 
