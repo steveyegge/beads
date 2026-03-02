@@ -478,6 +478,9 @@ func checkDoltLocks(beadsDir string) (bool, string) {
 		}
 		changes = append(changes, fmt.Sprintf("%s: %s%s", tableName, status, mark))
 	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Sprintf("Row iteration error: %v", err)
+	}
 
 	if len(changes) > 0 {
 		return true, strings.Join(changes, ", ")
@@ -525,6 +528,9 @@ func categorizeDoltExtras(ctx context.Context, store *dolt.DoltStore, jsonlIDs m
 			ephemeralCount++
 		}
 	}
+	// Best effort: rows.Err() ignored here since this is a diagnostic categorization
+	// and partial results are acceptable.
+	_ = rows.Err()
 
 	var foreignCount int
 	for _, count := range foreignPrefixes {

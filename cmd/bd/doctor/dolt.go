@@ -388,6 +388,15 @@ func checkStatusWithDB(conn *doltConn) DoctorCheck {
 		}
 		changes = append(changes, fmt.Sprintf("%s: %s %s", tableName, status, stageMark))
 	}
+	if err := rows.Err(); err != nil {
+		return DoctorCheck{
+			Name:     "Dolt Status",
+			Status:   StatusWarning,
+			Message:  "Row iteration error",
+			Detail:   err.Error(),
+			Category: CategoryData,
+		}
+	}
 
 	if len(changes) > 0 {
 		return DoctorCheck{
@@ -554,6 +563,15 @@ func checkPhantomDatabases(conn *doltConn) DoctorCheck {
 		// Flag entries matching beads naming convention patterns
 		if strings.HasPrefix(dbName, "beads_") || strings.HasSuffix(dbName, "_beads") {
 			phantoms = append(phantoms, dbName)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return DoctorCheck{
+			Name:     "Phantom Databases",
+			Status:   StatusWarning,
+			Message:  "Row iteration error",
+			Detail:   err.Error(),
+			Category: CategoryData,
 		}
 	}
 

@@ -163,6 +163,12 @@ func checkParentConsistency(db *sql.DB) DoctorCheck {
 			orphanedDeps = append(orphanedDeps, fmt.Sprintf("%s→%s", issueID, parentID))
 		}
 	}
+	if err := rows.Err(); err != nil {
+		check.Status = StatusWarning
+		check.Message = "Row iteration error checking parent consistency"
+		check.Detail = err.Error()
+		return check
+	}
 
 	if len(orphanedDeps) == 0 {
 		check.Status = StatusOK
@@ -209,6 +215,12 @@ func checkDependencyIntegrity(db *sql.DB) DoctorCheck {
 		if err := rows.Scan(&issueID, &dependsOnID, &depType); err == nil {
 			brokenDeps = append(brokenDeps, fmt.Sprintf("%s→%s (%s)", issueID, dependsOnID, depType))
 		}
+	}
+	if err := rows.Err(); err != nil {
+		check.Status = StatusWarning
+		check.Message = "Row iteration error checking dependency integrity"
+		check.Detail = err.Error()
+		return check
 	}
 
 	if len(brokenDeps) == 0 {
@@ -261,6 +273,12 @@ func checkEpicCompleteness(db *sql.DB) DoctorCheck {
 		if err := rows.Scan(&id, &title, &total, &closed); err == nil {
 			completedEpics = append(completedEpics, fmt.Sprintf("%s (%d/%d)", id, closed, total))
 		}
+	}
+	if err := rows.Err(); err != nil {
+		check.Status = StatusWarning
+		check.Message = "Row iteration error checking epic completeness"
+		check.Detail = err.Error()
+		return check
 	}
 
 	if len(completedEpics) == 0 {
@@ -348,6 +366,12 @@ func checkAgentBeadIntegrity(db *sql.DB) DoctorCheck {
 			}
 		}
 	}
+	if err := rows.Err(); err != nil {
+		check.Status = StatusWarning
+		check.Message = "Row iteration error checking agent bead integrity"
+		check.Detail = err.Error()
+		return check
+	}
 
 	if len(agents) == 0 {
 		check.Status = StatusOK
@@ -416,6 +440,12 @@ func checkMailThreadIntegrity(db *sql.DB) DoctorCheck {
 			totalOrphaned += refs
 		}
 	}
+	if err := rows.Err(); err != nil {
+		check.Status = StatusWarning
+		check.Message = "Row iteration error checking mail thread integrity"
+		check.Detail = err.Error()
+		return check
+	}
 
 	if len(orphanedThreads) == 0 {
 		check.Status = StatusOK
@@ -470,6 +500,12 @@ func checkMoleculeIntegrity(db *sql.DB) DoctorCheck {
 		if err := rows.Scan(&mol.ID, &mol.Title); err == nil {
 			molecules = append(molecules, mol)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		check.Status = StatusWarning
+		check.Message = "Row iteration error checking molecule integrity"
+		check.Detail = err.Error()
+		return check
 	}
 
 	if len(molecules) == 0 {

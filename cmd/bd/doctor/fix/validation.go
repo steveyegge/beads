@@ -152,6 +152,9 @@ func OrphanedDependencies(path string, verbose bool) error {
 			orphans = append(orphans, o)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("row iteration error: %w", err)
+	}
 
 	if len(orphans) == 0 {
 		fmt.Println("  No orphaned dependencies to fix")
@@ -235,6 +238,9 @@ func ChildParentDependencies(path string, verbose bool) error {
 		if err := rows.Scan(&d.issueID, &d.dependsOnID, &d.depType); err == nil {
 			badDeps = append(badDeps, d)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("row iteration error: %w", err)
 	}
 
 	if len(badDeps) == 0 {

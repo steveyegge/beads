@@ -209,6 +209,15 @@ func checkStaleDatabases(db *sql.DB) DoctorCheck {
 			}
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return DoctorCheck{
+			Name:     "Stale Databases",
+			Status:   StatusWarning,
+			Message:  "Row iteration error",
+			Detail:   err.Error(),
+			Category: CategoryMaintenance,
+		}
+	}
 
 	if len(stale) == 0 {
 		return DoctorCheck{
@@ -398,6 +407,15 @@ func checkDatabaseExists(db *sql.DB, database string) DoctorCheck {
 		if dbName == database {
 			found = true
 			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return DoctorCheck{
+			Name:     "Database Exists",
+			Status:   StatusWarning,
+			Message:  "Row iteration error",
+			Detail:   err.Error(),
+			Category: CategoryFederation,
 		}
 	}
 

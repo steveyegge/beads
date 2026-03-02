@@ -156,6 +156,15 @@ func CheckMetadataVersionTracking(path string, currentVersion string) DoctorChec
 		currentParts := ParseVersionParts(currentVersion)
 		lastParts := ParseVersionParts(lastVersion)
 
+		if len(currentParts) < 2 || len(lastParts) < 2 {
+			// Single-component version — can't compute minor diff, just report it
+			return DoctorCheck{
+				Name:    "Version Tracking",
+				Status:  StatusOK,
+				Message: fmt.Sprintf("Version tracking active (last: %s, current: %s)", lastVersion, currentVersion),
+			}
+		}
+
 		// Simple heuristic: warn if minor version is 10+ behind or major version differs by 1+
 		majorDiff := currentParts[0] - lastParts[0]
 		minorDiff := currentParts[1] - lastParts[1]
