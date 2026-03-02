@@ -408,3 +408,40 @@ func TestUpdateBeadsSectionPreservesWhitespace(t *testing.T) {
 		t.Error("update should preserve surrounding content")
 	}
 }
+
+func TestRoundTripAddRemoveLeavesNoBeadsContent(t *testing.T) {
+	userContent := "# My Project\n\nSome user content here.\n"
+
+	// Simulate bd init adding the beads section to an existing file
+	withBeads := userContent + "\n" + agents.EmbeddedBeadsSection()
+
+	// Verify beads content (including landing) is present
+	if !strings.Contains(withBeads, "BEGIN BEADS INTEGRATION") {
+		t.Fatal("beads markers should be present after adding section")
+	}
+	if !strings.Contains(withBeads, "Landing the Plane") {
+		t.Fatal("landing-the-plane should be present inside beads section")
+	}
+
+	// Remove the beads section
+	cleaned := removeBeadsSection(withBeads)
+
+	// Verify no beads-added content remains
+	if strings.Contains(cleaned, "BEGIN BEADS INTEGRATION") {
+		t.Error("begin marker should not remain after removal")
+	}
+	if strings.Contains(cleaned, "END BEADS INTEGRATION") {
+		t.Error("end marker should not remain after removal")
+	}
+	if strings.Contains(cleaned, "Landing the Plane") {
+		t.Error("landing-the-plane should not remain after removal (must be inside markers)")
+	}
+	if strings.Contains(cleaned, "bd ready") {
+		t.Error("beads commands should not remain after removal")
+	}
+
+	// User content should be preserved
+	if !strings.Contains(cleaned, "# My Project") {
+		t.Error("user content should be preserved after removal")
+	}
+}

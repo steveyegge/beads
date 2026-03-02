@@ -57,33 +57,22 @@ func updateAgentFile(filename string, verbose bool, templatePath string) error {
 
 	// File exists - check if it already has our sections
 	contentStr := string(content)
-	hasLanding := strings.Contains(contentStr, "Landing the Plane")
 	hasBeads := strings.Contains(contentStr, "BEGIN BEADS INTEGRATION")
 
-	if hasLanding && hasBeads {
+	if hasBeads {
 		if verbose {
 			fmt.Printf("  %s already has agent instructions\n", filename)
 		}
 		return nil
 	}
 
-	// Append missing sections
+	// Append beads section (includes landing-the-plane)
 	newContent := contentStr
 	if !strings.HasSuffix(newContent, "\n") {
 		newContent += "\n"
 	}
 
-	if !hasBeads {
-		newContent += "\n" + agents.EmbeddedBeadsSection()
-	}
-
-	if !hasLanding {
-		// Extract landing-the-plane section from the full template
-		tmpl := agents.EmbeddedDefault()
-		if idx := strings.Index(tmpl, "## Landing the Plane"); idx != -1 {
-			newContent += "\n" + tmpl[idx:]
-		}
-	}
+	newContent += "\n" + agents.EmbeddedBeadsSection()
 
 	// #nosec G306 - markdown needs to be readable
 	if err := os.WriteFile(filename, []byte(newContent), 0644); err != nil {
