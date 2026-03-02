@@ -40,11 +40,28 @@ var (
 	dockerAvail       bool
 )
 
-// isDockerAvailable returns true if the Docker daemon is reachable.
+// isDockerAvailable returns true if the Docker daemon is reachable and
+// the Dolt image is cached locally. If the daemon is up but the image
+// is not cached, it returns false so tests skip gracefully instead of
+// pulling from Docker Hub (which triggers network alarms, fails offline,
+// and adds latency). See GH#2277.
+//
+// Set BEADS_SKIP_DOCKER=1 to force-skip all Docker-based tests.
 // The result is cached after the first call.
 func isDockerAvailable() bool {
 	dockerOnce.Do(func() {
-		dockerAvail = exec.Command("docker", "info").Run() == nil
+		if os.Getenv("BEADS_SKIP_DOCKER") == "1" {
+			fmt.Fprintf(os.Stderr, "WARN: BEADS_SKIP_DOCKER=1 set, skipping Docker-based tests\n")
+			return
+		}
+		if exec.Command("docker", "info").Run() != nil {
+			return
+		}
+		if exec.Command("docker", "image", "inspect", DoltDockerImage).Run() != nil {
+			fmt.Fprintf(os.Stderr, "WARN: Docker image %s not cached locally, skipping Docker-based tests. Run 'docker pull %s' to enable them.\n", DoltDockerImage, DoltDockerImage)
+			return
+		}
+		dockerAvail = true
 	})
 	return dockerAvail
 }
