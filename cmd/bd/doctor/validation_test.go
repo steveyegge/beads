@@ -559,9 +559,9 @@ func TestCheckTestPollution_NoTestIssues_EmptyDB(t *testing.T) {
 	}
 }
 
-// TestCheckGitConflicts_DoltBackend verifies CheckGitConflicts returns N/A
-// for Dolt backend (Dolt handles conflicts natively).
-func TestCheckGitConflicts_DoltBackend(t *testing.T) {
+// TestCheckGitConflicts_DoltBackend_NoDB verifies CheckGitConflicts returns N/A
+// when the Dolt database directory doesn't exist.
+func TestCheckGitConflicts_DoltBackend_NoDB(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
@@ -574,7 +574,47 @@ func TestCheckGitConflicts_DoltBackend(t *testing.T) {
 	if check.Status != StatusOK {
 		t.Errorf("Status = %q, want %q", check.Status, StatusOK)
 	}
-	if check.Message != "N/A (Dolt backend handles conflicts natively)" {
-		t.Errorf("Message = %q, want %q", check.Message, "N/A (Dolt backend handles conflicts natively)")
+	// Without a Dolt database, should report N/A
+	wantMessages := []string{"N/A (no Dolt database)", "N/A (unable to open database)"}
+	found := false
+	for _, msg := range wantMessages {
+		if check.Message == msg {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Message = %q, want one of %v", check.Message, wantMessages)
+	}
+}
+
+// TestCheckGitConflicts_DoltBackend_Clean verifies CheckGitConflicts reports
+// OK when a Dolt database exists with no merge conflicts (GH-2249).
+func TestCheckGitConflicts_DoltBackend_Clean(t *testing.T) {
+	store := newTestDoltStore(t, "test")
+	ctx := context.Background()
+
+	// Create an issue so the DB isn't empty
+	issue := &types.Issue{
+		Title:     "Test issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+
+	// Query dolt_conflicts directly — should be empty
+	db := store.DB()
+	rows, err := db.Query("SELECT `table`, num_conflicts FROM dolt_conflicts")
+	if err != nil {
+		t.Fatalf("Failed to query dolt_conflicts: %v", err)
+	}
+	hasConflicts := rows.Next()
+	rows.Close()
+
+	if hasConflicts {
+		t.Fatal("Expected no conflicts in clean database")
 	}
 }
