@@ -7,10 +7,19 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
+
+// multiRepoYAMLConfig represents the types section of config.yaml for YAML unmarshaling.
+type multiRepoYAMLConfig struct {
+	Types struct {
+		Custom []string `yaml:"custom"`
+	} `yaml:"types"`
+}
 
 // CheckMultiRepoTypes discovers and reports custom types used by child repos in multi-repo setups.
 // This is informational - the federation trust model means we don't require parent config to
@@ -139,53 +148,21 @@ func readTypesFromDB(beadsDir string) ([]string, error) {
 // readTypesFromYAML reads types.custom from config.yaml
 func readTypesFromYAML(beadsDir string) ([]string, error) {
 	configPath := filepath.Join(beadsDir, "config.yaml")
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return nil, err
-	}
-
-	// Use viper to read the config
-	// For simplicity, we'll parse it manually to avoid viper state issues
 	content, err := os.ReadFile(configPath) // #nosec G304 - path is controlled
 	if err != nil {
 		return nil, err
 	}
 
-	// Simple YAML parsing for types.custom
-	// Looking for "types:" section with "custom:" key
-	lines := strings.Split(string(content), "\n")
-	inTypes := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "types:") {
-			inTypes = true
-			continue
-		}
-		if inTypes && strings.HasPrefix(trimmed, "custom:") {
-			// Parse the value
-			value := strings.TrimPrefix(trimmed, "custom:")
-			value = strings.TrimSpace(value)
-			// Handle array format [a, b, c] or string format "a,b,c"
-			value = strings.Trim(value, "[]\"'")
-			if value == "" {
-				return nil, nil
-			}
-			var types []string
-			for _, t := range strings.Split(value, ",") {
-				t = strings.TrimSpace(t)
-				t = strings.Trim(t, "\"'")
-				if t != "" {
-					types = append(types, t)
-				}
-			}
-			return types, nil
-		}
-		// Exit types section if we hit another top-level key
-		if inTypes && len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
-			break
-		}
+	var cfg multiRepoYAMLConfig
+	if err := yaml.Unmarshal(content, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing config.yaml: %w", err)
 	}
 
-	return nil, nil
+	if len(cfg.Types.Custom) == 0 {
+		return nil, nil
+	}
+
+	return cfg.Types.Custom, nil
 }
 
 // findUnknownTypesInHydratedIssues checks if any hydrated issues use types not found in any config
