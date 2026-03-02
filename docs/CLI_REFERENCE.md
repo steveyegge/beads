@@ -137,6 +137,9 @@ bd dep tree <id>
 
 # Get issue details (supports multiple IDs)
 bd show <id> [<id>...] --json
+
+# Show the currently active issue (in-progress, hooked, or last touched)
+bd show --current
 ```
 
 ## Dependencies & Labels
