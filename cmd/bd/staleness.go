@@ -73,3 +73,28 @@ func checkDatabaseFreshness(ctx context.Context, store *dolt.DoltStore, beadsDir
 		jsonlMtime.Format(time.RFC3339), lastImportTime.Format(time.RFC3339))
 	return nil
 }
+
+// refreshLastImportTime updates the last_import_time metadata to time.Now().
+// Call this after write commands (create, update, close, etc.) so that
+// subsequent read commands don't get false staleness errors when git
+// operations (merge, checkout, rebase) touch the issues.jsonl mtime.
+//
+// Without this, last_import_time is only set during bd init, so any git
+// operation that modifies issues.jsonl triggers a false "database out of sync"
+// error on the next bd list/show/ready.
+func refreshLastImportTime(ctx context.Context, store *dolt.DoltStore, beadsDir string) {
+	// Only refresh if issues.jsonl exists — Dolt-native setups without JSONL
+	// don't need this (the staleness check already skips when JSONL is missing).
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	if _, err := os.Stat(jsonlPath); err != nil {
+		debug.Logf("staleness: no issues.jsonl, skipping refresh")
+		return
+	}
+
+	now := time.Now().Format(time.RFC3339Nano)
+	if err := store.SetMetadata(ctx, "last_import_time", now); err != nil {
+		debug.Logf("staleness: failed to refresh last_import_time: %v", err)
+	} else {
+		debug.Logf("staleness: refreshed last_import_time to %s", now)
+	}
+}

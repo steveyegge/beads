@@ -141,15 +141,15 @@ func TestCheckDatabaseExists_InvalidIdentifier(t *testing.T) {
 		valid bool
 	}{
 		{"beads", true},
-		{"beads-db", false},     // hyphen
-		{"beads_db", true},      // underscore
-		{"123beads", false},     // starts with number
-		{"", false},             // empty
-		{"beads;drop", false},   // injection
-		{"`beads`", false},      // backticks
-		{"beads db", false},     // space
-		{"a", true},             // single char
-		{"_", true},             // underscore only
+		{"beads-db", false},   // hyphen
+		{"beads_db", true},    // underscore
+		{"123beads", false},   // starts with number
+		{"", false},           // empty
+		{"beads;drop", false}, // injection
+		{"`beads`", false},    // backticks
+		{"beads db", false},   // space
+		{"a", true},           // single char
+		{"_", true},           // underscore only
 	}
 
 	for _, tt := range tests {

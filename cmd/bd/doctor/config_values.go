@@ -392,4 +392,3 @@ func checkDatabaseConfigValues(repoPath string) []string {
 
 	return issues
 }
-

@@ -240,6 +240,13 @@ func TestCheckDoltLocks_NotDoltBackend(t *testing.T) {
 		t.Fatalf("failed to create .beads: %v", err)
 	}
 
+	// Write a non-Dolt metadata.json so IsDoltBackend returns false.
+	// Without this, GetBackendFromConfig defaults to "dolt" when no config exists,
+	// causing checkDoltLocks to run and fail with StatusWarning (no server).
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"backend":"sqlite"}`), 0644); err != nil {
+		t.Fatalf("failed to write metadata.json: %v", err)
+	}
+
 	check := CheckDoltLocks(tmpDir)
 
 	if check.Status != StatusOK {

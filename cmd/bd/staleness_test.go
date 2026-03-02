@@ -118,6 +118,80 @@ func TestCheckDatabaseFreshness(t *testing.T) {
 	})
 }
 
+func TestRefreshLastImportTime(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
+	}
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	s := newTestStore(t, dbPath)
+	ctx := context.Background()
+
+	t.Run("updates_last_import_time_to_now", func(t *testing.T) {
+		// Create JSONL file so there's something to compare against
+		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1","title":"Test"}`+"\n"), 0644); err != nil {
+			t.Fatalf("failed to create JSONL: %v", err)
+		}
+		defer os.Remove(jsonlPath)
+
+		// Set last_import_time to past — DB appears stale
+		pastTime := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+		if err := s.SetMetadata(ctx, "last_import_time", pastTime); err != nil {
+			t.Fatalf("failed to set metadata: %v", err)
+		}
+
+		// Verify it IS stale before refresh
+		if err := checkDatabaseFreshness(ctx, s, beadsDir); err == nil {
+			t.Fatal("expected staleness error before refresh, got nil")
+		}
+
+		// Call refreshLastImportTime — should update metadata
+		refreshLastImportTime(ctx, s, beadsDir)
+
+		// Now freshness check should pass
+		if err := checkDatabaseFreshness(ctx, s, beadsDir); err != nil {
+			t.Errorf("expected no error after refresh, got: %v", err)
+		}
+	})
+
+	t.Run("survives_git_merge_touching_jsonl", func(t *testing.T) {
+		// Simulate: write command runs (refresh), then git merge touches JSONL mtime
+		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1","title":"Test"}`+"\n"), 0644); err != nil {
+			t.Fatalf("failed to create JSONL: %v", err)
+		}
+		defer os.Remove(jsonlPath)
+
+		// Refresh sets last_import_time to now
+		refreshLastImportTime(ctx, s, beadsDir)
+
+		// Simulate git merge by touching JSONL with a future mtime
+		futureTime := time.Now().Add(5 * time.Second)
+		if err := os.Chtimes(jsonlPath, futureTime, futureTime); err != nil {
+			t.Fatalf("failed to set future mtime: %v", err)
+		}
+
+		// This SHOULD still fail — the JSONL was genuinely modified after our refresh
+		if err := checkDatabaseFreshness(ctx, s, beadsDir); err == nil {
+			t.Error("expected staleness error when JSONL was touched after refresh")
+		}
+	})
+
+	t.Run("no_jsonl_file_is_noop", func(t *testing.T) {
+		// If there's no JSONL file, refresh should not panic or error
+		noJsonlDir := filepath.Join(t.TempDir(), ".beads")
+		if err := os.MkdirAll(noJsonlDir, 0755); err != nil {
+			t.Fatalf("failed to create dir: %v", err)
+		}
+		// Should not panic
+		refreshLastImportTime(ctx, s, noJsonlDir)
+	})
+}
+
 func TestStalenessOnlyAppliesToReadOnlyCommands(t *testing.T) {
 	t.Parallel()
 

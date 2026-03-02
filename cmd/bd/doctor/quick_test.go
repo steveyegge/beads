@@ -15,8 +15,8 @@ import (
 // CheckHooksQuick to detect outdated hooks.
 func TestCheckHooksQuick_CompareVersions(t *testing.T) {
 	tests := []struct {
-		hookVersion string
-		cliVersion  string
+		hookVersion  string
+		cliVersion   string
 		wantOutdated bool
 	}{
 		{"0.49.0", "1.0.0", true},

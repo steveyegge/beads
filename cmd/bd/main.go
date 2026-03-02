@@ -646,6 +646,13 @@ var rootCmd = &cobra.Command{
 		// Auto-backup: export JSONL to .beads/backup/ if enabled and due
 		maybeAutoBackup(rootCtx)
 
+		// Refresh last_import_time after write commands so that git operations
+		// (merge, checkout, rebase) touching issues.jsonl don't cause false
+		// staleness errors on subsequent read commands (GH#staleness-false-alarm).
+		if !isReadOnlyCommand(cmd.Name()) && store != nil && dbPath != "" {
+			refreshLastImportTime(rootCtx, store, filepath.Dir(dbPath))
+		}
+
 		// Auto-push: push to Dolt remote if enabled and due.
 		// Skip for read-only commands to avoid unnecessary network operations
 		// and metadata writes on commands like bd list/show/ready (GH#2191).
