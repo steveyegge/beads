@@ -69,6 +69,15 @@ func TestExportToFile(t *testing.T) {
 		"exp-1", "important"); err != nil {
 		t.Fatalf("insert label: %v", err)
 	}
+	// Add a dependency and a comment
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, created_at, metadata, thread_id) VALUES (?, ?, ?, ?, NOW(), '{}', '')`,
+		"exp-1", "exp-2", "blocks", "test"); err != nil {
+		t.Fatalf("insert dependency: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO comments (issue_id, author, text, created_at) VALUES (?, ?, ?, NOW())`,
+		"exp-1", "alice", "exported comment"); err != nil {
+		t.Fatalf("insert comment: %v", err)
+	}
 
 	// Export to file
 	exportFile := filepath.Join(tmpDir, "export.jsonl")
@@ -106,6 +115,8 @@ func TestExportToFile(t *testing.T) {
 
 	// One of the two issues should have the label
 	foundLabel := false
+	foundDependency := false
+	foundComment := false
 	for _, line := range lines {
 		var iss map[string]interface{}
 		json.Unmarshal(line, &iss)
@@ -114,9 +125,27 @@ func TestExportToFile(t *testing.T) {
 				foundLabel = true
 			}
 		}
+		if deps, ok := iss["dependencies"].([]interface{}); ok && len(deps) > 0 {
+			dep, _ := deps[0].(map[string]interface{})
+			if dep["depends_on_id"] == "exp-2" && dep["type"] == "blocks" {
+				foundDependency = true
+			}
+		}
+		if comments, ok := iss["comments"].([]interface{}); ok && len(comments) > 0 {
+			comment, _ := comments[0].(map[string]interface{})
+			if comment["text"] == "exported comment" {
+				foundComment = true
+			}
+		}
 	}
 	if !foundLabel {
 		t.Error("expected to find 'important' label in exported issues")
+	}
+	if !foundDependency {
+		t.Error("expected to find dependency exp-1 -> exp-2 in exported issues")
+	}
+	if !foundComment {
+		t.Error("expected to find comment text in exported issues")
 	}
 }
 

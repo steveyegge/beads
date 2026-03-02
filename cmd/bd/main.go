@@ -531,6 +531,10 @@ var rootCmd = &cobra.Command{
 		}
 
 		doltCfg.Path = doltPath
+		// Import is allowed to bootstrap a new database when none exists yet.
+		if cmd.Name() == "import" {
+			doltCfg.CreateIfMissing = true
+		}
 
 		// Pre-flight: clean stale noms LOCK files left by crashed Dolt processes.
 		// These prevent the Dolt server from opening databases (SIGSEGV or

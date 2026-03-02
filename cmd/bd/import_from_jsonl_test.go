@@ -4,9 +4,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/storage"
 )
 
 func TestImportFromLocalJSONL(t *testing.T) {
@@ -243,6 +247,230 @@ func TestImportFromLocalJSONL(t *testing.T) {
 		}
 		if prefix != "myprefix" {
 			t.Errorf("Expected auto-detected prefix 'myprefix', got %q", prefix)
+		}
+	})
+
+	t.Run("imports export JSONL with labels dependencies comments and metadata", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		jsonlContent := `{"id":"test-rel-1","title":"Issue with relations","type":"feature","status":"open","priority":1,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","metadata":{"source":"import-test"},"labels":["zeta","alpha"],"dependencies":[{"issue_id":"test-rel-1","depends_on_id":"test-rel-2","type":"blocks","created_at":"2025-01-01T00:00:00Z","created_by":"tester"}],"comments":[{"issue_id":"test-rel-1","author":"alice","text":"first comment","created_at":"2025-01-01T01:00:00Z"}],"dependency_count":1,"dependent_count":0,"comment_count":1}
+{"id":"test-rel-2","title":"Dependency target","type":"task","status":"open","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","labels":["backend"]}
+`
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatalf("Failed to write JSONL file: %v", err)
+		}
+
+		ctx := context.Background()
+		result, err := importFromLocalJSONLWithOptions(ctx, store, jsonlPath, ImportOptions{
+			Mode:                 importModeUpsert,
+			OrphanHandling:       string(storage.OrphanAllow),
+			IncludeWisps:         true,
+			SkipPrefixValidation: true,
+		})
+		if err != nil {
+			t.Fatalf("importFromLocalJSONLWithOptions failed: %v", err)
+		}
+		if result.Created != 2 {
+			t.Fatalf("expected 2 created issues, got %+v", result)
+		}
+
+		labels, err := store.GetLabels(ctx, "test-rel-1")
+		if err != nil {
+			t.Fatalf("GetLabels failed: %v", err)
+		}
+		if len(labels) != 2 {
+			t.Fatalf("expected 2 labels, got %d (%v)", len(labels), labels)
+		}
+
+		deps, err := store.GetDependencyRecords(ctx, "test-rel-1")
+		if err != nil {
+			t.Fatalf("GetDependencyRecords failed: %v", err)
+		}
+		if len(deps) != 1 || deps[0].DependsOnID != "test-rel-2" || deps[0].Type != "blocks" {
+			t.Fatalf("unexpected dependency records: %+v", deps)
+		}
+
+		comments, err := store.GetIssueComments(ctx, "test-rel-1")
+		if err != nil {
+			t.Fatalf("GetIssueComments failed: %v", err)
+		}
+		if len(comments) != 1 || comments[0].Text != "first comment" {
+			t.Fatalf("unexpected comments: %+v", comments)
+		}
+
+		issue, err := store.GetIssue(ctx, "test-rel-1")
+		if err != nil {
+			t.Fatalf("GetIssue failed: %v", err)
+		}
+		if !json.Valid(issue.Metadata) {
+			t.Fatalf("expected valid metadata JSON, got: %s", string(issue.Metadata))
+		}
+		if !strings.Contains(string(issue.Metadata), `"source":"import-test"`) {
+			t.Fatalf("unexpected metadata payload: %s", string(issue.Metadata))
+		}
+	})
+
+	t.Run("strict mode fails when issue already exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		jsonlContent := `{"id":"test-strict-1","title":"Strict import issue","type":"task","status":"open","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}
+`
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatalf("Failed to write JSONL file: %v", err)
+		}
+
+		ctx := context.Background()
+		if _, err := importFromLocalJSONLWithOptions(ctx, store, jsonlPath, ImportOptions{
+			Mode:                 importModeUpsert,
+			OrphanHandling:       string(storage.OrphanAllow),
+			IncludeWisps:         true,
+			SkipPrefixValidation: true,
+		}); err != nil {
+			t.Fatalf("initial upsert import failed: %v", err)
+		}
+
+		_, err := importFromLocalJSONLWithOptions(ctx, store, jsonlPath, ImportOptions{
+			Mode:                 importModeStrict,
+			OrphanHandling:       string(storage.OrphanAllow),
+			IncludeWisps:         true,
+			SkipPrefixValidation: true,
+		})
+		if err == nil {
+			t.Fatal("expected strict mode to fail on existing issue id")
+		}
+		if !strings.Contains(err.Error(), "strict mode") {
+			t.Fatalf("expected strict mode error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid JSON reports line number", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		jsonlContent := `{"id":"test-line-1","title":"First","type":"task","status":"open","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}
+not valid json
+`
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatalf("Failed to write JSONL file: %v", err)
+		}
+
+		ctx := context.Background()
+		_, err := importFromLocalJSONLWithOptions(ctx, store, jsonlPath, ImportOptions{
+			Mode:                 importModeUpsert,
+			OrphanHandling:       string(storage.OrphanAllow),
+			IncludeWisps:         true,
+			SkipPrefixValidation: true,
+		})
+		if err == nil {
+			t.Fatal("expected parse error for invalid json line")
+		}
+		if !strings.Contains(err.Error(), "line 2") {
+			t.Fatalf("expected error to include line number, got: %v", err)
+		}
+	})
+
+	t.Run("upsert import is idempotent for comments", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		jsonlContent := `{"id":"test-idem-1","title":"Idempotent issue","type":"task","status":"open","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","comments":[{"issue_id":"test-idem-1","author":"alice","text":"hello","created_at":"2025-01-01T01:00:00Z"}]}
+`
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatalf("Failed to write JSONL file: %v", err)
+		}
+
+		ctx := context.Background()
+		opts := ImportOptions{
+			Mode:                 importModeUpsert,
+			OrphanHandling:       string(storage.OrphanAllow),
+			IncludeWisps:         true,
+			SkipPrefixValidation: true,
+		}
+		if _, err := importFromLocalJSONLWithOptions(ctx, store, jsonlPath, opts); err != nil {
+			t.Fatalf("first import failed: %v", err)
+		}
+		if _, err := importFromLocalJSONLWithOptions(ctx, store, jsonlPath, opts); err != nil {
+			t.Fatalf("second import failed: %v", err)
+		}
+
+		comments, err := store.GetIssueComments(ctx, "test-idem-1")
+		if err != nil {
+			t.Fatalf("GetIssueComments failed: %v", err)
+		}
+		if len(comments) != 1 {
+			t.Fatalf("expected exactly 1 comment after idempotent upsert, got %d", len(comments))
+		}
+	})
+
+	t.Run("orphan strict fails missing dependency target", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		jsonlContent := `{"id":"test-orphan-1","title":"Orphan dependency","type":"task","status":"open","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","dependencies":[{"issue_id":"test-orphan-1","depends_on_id":"missing-target","type":"blocks","created_at":"2025-01-01T00:00:00Z"}]}
+`
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatalf("Failed to write JSONL file: %v", err)
+		}
+
+		ctx := context.Background()
+		_, err := importFromLocalJSONLWithOptions(ctx, store, jsonlPath, ImportOptions{
+			Mode:                 importModeUpsert,
+			OrphanHandling:       string(storage.OrphanStrict),
+			IncludeWisps:         true,
+			SkipPrefixValidation: true,
+		})
+		if err == nil {
+			t.Fatal("expected orphan strict mode to fail on missing dependency target")
+		}
+		if !strings.Contains(err.Error(), "does not exist") {
+			t.Fatalf("expected missing target error, got: %v", err)
+		}
+	})
+
+	t.Run("include-wisps=false skips ephemeral records", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		jsonlContent := `{"id":"test-wisp-1","title":"Ephemeral issue","type":"task","status":"open","priority":2,"ephemeral":true,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}
+{"id":"test-main-1","title":"Persistent issue","type":"task","status":"open","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}
+`
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatalf("Failed to write JSONL file: %v", err)
+		}
+
+		ctx := context.Background()
+		result, err := importFromLocalJSONLWithOptions(ctx, store, jsonlPath, ImportOptions{
+			Mode:                 importModeUpsert,
+			OrphanHandling:       string(storage.OrphanAllow),
+			IncludeWisps:         false,
+			SkipPrefixValidation: true,
+		})
+		if err != nil {
+			t.Fatalf("import failed: %v", err)
+		}
+		if result.Created != 1 || result.Skipped != 1 {
+			t.Fatalf("expected 1 created and 1 skipped, got %+v", result)
+		}
+
+		if _, err := store.GetIssue(ctx, "test-main-1"); err != nil {
+			t.Fatalf("expected persistent issue to be imported: %v", err)
+		}
+		if _, err := store.GetIssue(ctx, "test-wisp-1"); err == nil {
+			t.Fatalf("expected ephemeral issue to be skipped")
 		}
 	})
 }

@@ -152,7 +152,6 @@ func TestParentChildDependency(t *testing.T) {
 // TestExportImportRoundTrip exports from baseline and imports into candidate,
 // detecting silent data loss (#1844: importer dropping labels/deps/comments).
 func TestExportImportRoundTrip(t *testing.T) {
-	t.Skip("known regression: GH#1844 — import drops labels/deps/comments")
 	// Step 1: Create rich data in baseline
 	baselineWS := newWorkspace(t, baselineBin)
 	id1 := baselineWS.create("--title", "Feature with everything", "--type", "feature", "--priority", "1")
@@ -188,6 +187,101 @@ func TestExportImportRoundTrip(t *testing.T) {
 	candidateRaw := candidateWS.export()
 
 	diffNormalized(t, string(baselineRaw), candidateRaw, nil, nil)
+}
+
+// TestRollback_CandidateToBaseline verifies rollback flow:
+// candidate export JSONL -> baseline import.
+func TestRollback_CandidateToBaseline(t *testing.T) {
+	// Step 1: Create rich data in candidate
+	candidateWS := newWorkspace(t, candidateBin)
+	id1 := candidateWS.create("--title", "Candidate feature", "--type", "feature", "--priority", "1")
+	id2 := candidateWS.create("--title", "Candidate dependency target", "--type", "task", "--priority", "2")
+
+	candidateWS.run("label", "add", id1, "important")
+	candidateWS.run("label", "add", id1, "rollback")
+	candidateWS.run("dep", "add", id1, id2)
+	candidateWS.run("comment", id1, "candidate comment one")
+	candidateWS.run("comment", id1, "candidate comment two")
+
+	// Step 2: Export from candidate
+	exportFile := filepath.Join(candidateWS.dir, "candidate-export.jsonl")
+	candidateWS.run("export", "-o", exportFile)
+	candidateRaw, err := os.ReadFile(exportFile)
+	if err != nil {
+		t.Fatalf("reading candidate export: %v", err)
+	}
+
+	// Step 3: Import into baseline
+	baselineWS := newWorkspace(t, baselineBin)
+	importFile := filepath.Join(baselineWS.dir, "import.jsonl")
+	if err := os.WriteFile(importFile, candidateRaw, 0o644); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+	baselineWS.run("import", "-i", importFile)
+
+	// Step 4: Compare normalized snapshots
+	diffNormalized(t, candidateWS.snapshot(), baselineWS.snapshot(), nil, nil)
+}
+
+// TestCandidateOnlyExportImportRoundTrip validates modern round-trip:
+// candidate export JSONL -> candidate import JSONL.
+func TestCandidateOnlyExportImportRoundTrip(t *testing.T) {
+	sourceWS := newWorkspace(t, candidateBin)
+	id1 := sourceWS.create("--title", "Round trip source", "--type", "feature", "--priority", "1")
+	id2 := sourceWS.create("--title", "Round trip target", "--type", "task", "--priority", "2")
+
+	sourceWS.run("label", "add", id1, "alpha")
+	sourceWS.run("label", "add", id1, "beta")
+	sourceWS.run("dep", "add", id1, id2)
+	sourceWS.run("comment", id1, "source comment")
+
+	exportFile := filepath.Join(sourceWS.dir, "out.jsonl")
+	sourceWS.run("export", "-o", exportFile)
+	exportRaw, err := os.ReadFile(exportFile)
+	if err != nil {
+		t.Fatalf("reading export file: %v", err)
+	}
+
+	targetWS := newWorkspace(t, candidateBin)
+	importFile := filepath.Join(targetWS.dir, "import.jsonl")
+	if err := os.WriteFile(importFile, exportRaw, 0o644); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+	targetWS.run("import", "-i", importFile)
+
+	diffNormalized(t, sourceWS.snapshot(), targetWS.snapshot(), nil, nil)
+}
+
+// TestImportIdempotency_CandidateOnly imports the same JSONL twice and verifies
+// that no duplicate relational rows appear.
+func TestImportIdempotency_CandidateOnly(t *testing.T) {
+	sourceWS := newWorkspace(t, candidateBin)
+	id1 := sourceWS.create("--title", "Idempotent source", "--type", "task", "--priority", "2")
+	id2 := sourceWS.create("--title", "Idempotent target", "--type", "task", "--priority", "2")
+	sourceWS.run("label", "add", id1, "idempotent")
+	sourceWS.run("dep", "add", id1, id2)
+	sourceWS.run("comment", id1, "idempotent comment")
+
+	exportFile := filepath.Join(sourceWS.dir, "idem.jsonl")
+	sourceWS.run("export", "-o", exportFile)
+	exportRaw, err := os.ReadFile(exportFile)
+	if err != nil {
+		t.Fatalf("reading export file: %v", err)
+	}
+
+	targetWS := newWorkspace(t, candidateBin)
+	importFile := filepath.Join(targetWS.dir, "idem-import.jsonl")
+	if err := os.WriteFile(importFile, exportRaw, 0o644); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+
+	targetWS.run("import", "-i", importFile)
+	firstSnapshot := targetWS.snapshot()
+
+	targetWS.run("import", "-i", importFile)
+	secondSnapshot := targetWS.snapshot()
+
+	diffNormalized(t, firstSnapshot, secondSnapshot, nil, nil)
 }
 
 // TestReadySemantics builds a dependency graph and compares which issues

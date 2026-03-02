@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -127,6 +128,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
 	allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
+	commentsMap, _ := store.GetCommentsForIssues(ctx, issueIDs)
 	commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
 	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
 
@@ -134,7 +136,30 @@ func runExport(cmd *cobra.Command, args []string) error {
 	for _, issue := range issues {
 		issue.Labels = labelsMap[issue.ID]
 		issue.Dependencies = allDeps[issue.ID]
+		issue.Comments = commentsMap[issue.ID]
+
+		sort.Strings(issue.Labels)
+		sort.Slice(issue.Dependencies, func(i, j int) bool {
+			a := issue.Dependencies[i]
+			b := issue.Dependencies[j]
+			if a.DependsOnID != b.DependsOnID {
+				return a.DependsOnID < b.DependsOnID
+			}
+			return a.Type < b.Type
+		})
+		sort.Slice(issue.Comments, func(i, j int) bool {
+			a := issue.Comments[i]
+			b := issue.Comments[j]
+			if !a.CreatedAt.Equal(b.CreatedAt) {
+				return a.CreatedAt.Before(b.CreatedAt)
+			}
+			if a.Author != b.Author {
+				return a.Author < b.Author
+			}
+			return a.Text < b.Text
+		})
 	}
+	sort.Slice(issues, func(i, j int) bool { return issues[i].ID < issues[j].ID })
 
 	// Write JSONL: one JSON object per line
 	count := 0
