@@ -603,6 +603,57 @@ func TestCreateIssueFromFormValues_WithParent(t *testing.T) {
 		}
 	})
 
+	t.Run("ParentLabelInheritance", func(t *testing.T) {
+		// Create parent with labels
+		parentFv := &createFormValues{
+			Title:     "Labeled parent",
+			Priority:  1,
+			IssueType: "epic",
+			Labels:    []string{"team-a", "urgent"},
+		}
+		parent, err := CreateIssueFromFormValues(ctx, s, parentFv, "test")
+		if err != nil {
+			t.Fatalf("failed to create parent: %v", err)
+		}
+
+		// Create child with --parent and its own label
+		childFv := &createFormValues{
+			Title:     "Child inherits labels",
+			Priority:  2,
+			IssueType: "task",
+			ParentID:  parent.ID,
+			Labels:    []string{"child-only"},
+		}
+		child, err := CreateIssueFromFormValues(ctx, s, childFv, "test")
+		if err != nil {
+			t.Fatalf("failed to create child: %v", err)
+		}
+
+		// Child should have its own label plus inherited parent labels
+		labels, err := s.GetLabels(ctx, child.ID)
+		if err != nil {
+			t.Fatalf("failed to get child labels: %v", err)
+		}
+
+		labelMap := make(map[string]bool)
+		for _, l := range labels {
+			labelMap[l] = true
+		}
+
+		if !labelMap["child-only"] {
+			t.Error("expected child's own label 'child-only'")
+		}
+		if !labelMap["team-a"] {
+			t.Error("expected inherited label 'team-a'")
+		}
+		if !labelMap["urgent"] {
+			t.Error("expected inherited label 'urgent'")
+		}
+		if len(labels) != 3 {
+			t.Errorf("expected 3 labels (1 own + 2 inherited), got %d: %v", len(labels), labels)
+		}
+	})
+
 	t.Run("MultipleChildrenUnderSameParent", func(t *testing.T) {
 		// Create parent
 		parentFv := &createFormValues{
