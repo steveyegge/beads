@@ -263,7 +263,7 @@ func parseIssueJSONLLine(line []byte) (*types.Issue, error) {
 		} else {
 			dep.CreatedAt = dep.CreatedAt.UTC()
 		}
-		dep.Metadata = normalizeDependencyMetadata(dep.Metadata)
+		dep.Metadata = normalizeImportDependencyMetadata(dep.Metadata)
 	}
 
 	for _, comment := range issue.Comments {
@@ -537,7 +537,7 @@ func reconcileIssueRelations(ctx context.Context, store *dolt.DoltStore, issues 
 			`, tables.dependencies)
 
 			if _, err := tx.ExecContext(ctx, query,
-				issue.ID, depID, depType, createdBy, createdAt, normalizeDependencyMetadata(dep.Metadata), dep.ThreadID,
+				issue.ID, depID, depType, createdBy, createdAt, normalizeImportDependencyMetadata(dep.Metadata), dep.ThreadID,
 			); err != nil {
 				return nil, fmt.Errorf("failed inserting dependency %s -> %s: %w", issue.ID, depID, err)
 			}
@@ -569,4 +569,19 @@ func dependencyTargetExists(ctx context.Context, tx *sql.Tx, targetID string) (b
 		return false, nil
 	}
 	return false, err
+}
+
+func normalizeImportDependencyMetadata(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "{}"
+	}
+	if json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+	encoded, err := json.Marshal(trimmed)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
 }

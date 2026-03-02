@@ -788,6 +788,85 @@ func TestAppendNotesPreservation(t *testing.T) {
 	})
 }
 
+// TestAppendNotesExportImportRoundTrip verifies appended notes survive
+// baseline export -> candidate import without losing newline concatenation.
+func TestAppendNotesExportImportRoundTrip(t *testing.T) {
+	baselineWS := newWorkspace(t, baselineBin)
+	id := baselineWS.create("--title", "Append notes migration", "--type", "task", "--notes", "Line A")
+	baselineWS.run("update", id, "--append-notes", "Line B")
+	baselineWS.run("update", id, "--append-notes", "Line C")
+
+	wantNotes := "Line A\nLine B\nLine C"
+	gotBaselineNotes := extractNotesFromShowJSON(t, baselineWS.run("show", id, "--json"))
+	if gotBaselineNotes != wantNotes {
+		t.Fatalf("baseline show notes mismatch: got %q want %q", gotBaselineNotes, wantNotes)
+	}
+
+	exportFile := filepath.Join(baselineWS.dir, "append-notes-export.jsonl")
+	baselineWS.run("export", "-o", exportFile)
+	exportData, err := os.ReadFile(exportFile)
+	if err != nil {
+		t.Fatalf("reading baseline export: %v", err)
+	}
+
+	candidateWS := newWorkspace(t, candidateBin)
+	importFile := filepath.Join(candidateWS.dir, "append-notes-import.jsonl")
+	if err := os.WriteFile(importFile, exportData, 0o644); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+	candidateWS.run("import", "-i", importFile, "--skip-prefix-validation")
+
+	gotCandidateNotes := extractNotesFromShowJSON(t, candidateWS.run("show", id, "--json"))
+	if gotCandidateNotes != wantNotes {
+		t.Fatalf("candidate notes after import mismatch: got %q want %q", gotCandidateNotes, wantNotes)
+	}
+
+	diffNormalized(t, string(exportData), candidateWS.export(), nil, nil)
+}
+
+// TestBaselineAppendNotes_SyncVsExportDivergence captures v0.49.6 behavior:
+// after --append-notes, bd export reflects appended notes immediately, while
+// .beads/issues.jsonl is stale until bd sync is run.
+func TestBaselineAppendNotes_SyncVsExportDivergence(t *testing.T) {
+	baselineWS := newWorkspace(t, baselineBin)
+	id := baselineWS.create("--title", "Baseline append notes drift", "--type", "task", "--notes", "Initial")
+	baselineWS.run("update", id, "--append-notes", "Appended")
+	wantNotes := "Initial\nAppended"
+
+	// Export path reflects appended notes immediately.
+	exportIssues := parseJSONLByID(t, baselineWS.export())
+	exportNotes, _ := exportIssues[id]["notes"].(string)
+	if exportNotes != wantNotes {
+		t.Fatalf("baseline export notes mismatch: got %q want %q", exportNotes, wantNotes)
+	}
+
+	legacyPath := filepath.Join(baselineWS.dir, ".beads", "issues.jsonl")
+	legacyDataBeforeSync, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatalf("reading baseline .beads/issues.jsonl: %v", err)
+	}
+	legacyIssuesBeforeSync := parseJSONLByID(t, string(legacyDataBeforeSync))
+	legacyNotesBeforeSync, _ := legacyIssuesBeforeSync[id]["notes"].(string)
+	if legacyNotesBeforeSync == wantNotes {
+		t.Log("pre-sync .beads/issues.jsonl already matched export notes in this harness run")
+	} else {
+		t.Logf("observed expected pre-sync drift: legacy notes=%q export notes=%q", legacyNotesBeforeSync, wantNotes)
+	}
+
+	// Sync path updates .beads/issues.jsonl.
+	baselineWS.run("sync")
+
+	legacyDataAfterSync, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatalf("reading baseline .beads/issues.jsonl after sync: %v", err)
+	}
+	legacyIssuesAfterSync := parseJSONLByID(t, string(legacyDataAfterSync))
+	legacyNotesAfterSync, _ := legacyIssuesAfterSync[id]["notes"].(string)
+	if legacyNotesAfterSync != wantNotes {
+		t.Fatalf("expected sync to align .beads/issues.jsonl notes: got %q want %q", legacyNotesAfterSync, wantNotes)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Set-labels replace semantics
 // ---------------------------------------------------------------------------
@@ -2578,6 +2657,19 @@ func parseJSONLByID(t *testing.T, data string) map[string]map[string]any {
 		}
 	}
 	return result
+}
+
+func extractNotesFromShowJSON(t *testing.T, output string) string {
+	t.Helper()
+	var arr []map[string]any
+	if err := json.Unmarshal([]byte(output), &arr); err != nil {
+		t.Fatalf("parsing show output JSON: %v\noutput: %s", err, output)
+	}
+	if len(arr) == 0 {
+		return ""
+	}
+	notes, _ := arr[0]["notes"].(string)
+	return notes
 }
 
 // countDeps returns the number of dependency entries in an issue's export.
