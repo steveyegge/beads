@@ -251,6 +251,47 @@ func TestCheckGitHooks_CorruptedHookFiles(t *testing.T) {
 			expectedStatus: "ok",
 			expectInMsg:    "All recommended hooks installed",
 		},
+		{
+			name: "marker-managed hooks at current version are accepted (GH#2244)",
+			setup: func(t *testing.T, dir string) {
+				setupGitRepoInDir(t, dir)
+				gitDir := filepath.Join(dir, ".git")
+				hooksDir := filepath.Join(gitDir, "hooks")
+				os.MkdirAll(hooksDir, 0755)
+				markerHook := "#!/bin/sh\n# --- BEGIN BEADS INTEGRATION v0.57.0 ---\n" +
+					"# This section is managed by beads. Do not remove these markers.\n" +
+					"if command -v bd >/dev/null 2>&1; then\n" +
+					"  export BD_GIT_HOOK=1\n" +
+					"  bd hooks run pre-commit \"$@\"\n" +
+					"  _bd_exit=$?; if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi\n" +
+					"fi\n" +
+					"# --- END BEADS INTEGRATION ---\n"
+				os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte(markerHook), 0755)
+				os.WriteFile(filepath.Join(hooksDir, "post-merge"), []byte(markerHook), 0755)
+				os.WriteFile(filepath.Join(hooksDir, "pre-push"), []byte(markerHook), 0755)
+			},
+			expectedStatus: "ok",
+			expectInMsg:    "All recommended hooks installed",
+		},
+		{
+			name: "marker-managed hooks at older version are flagged outdated",
+			setup: func(t *testing.T, dir string) {
+				setupGitRepoInDir(t, dir)
+				gitDir := filepath.Join(dir, ".git")
+				hooksDir := filepath.Join(gitDir, "hooks")
+				os.MkdirAll(hooksDir, 0755)
+				markerHook := "#!/bin/sh\n# --- BEGIN BEADS INTEGRATION v0.49.1 ---\n" +
+					"if command -v bd >/dev/null 2>&1; then\n" +
+					"  bd hooks run pre-commit \"$@\"\n" +
+					"fi\n" +
+					"# --- END BEADS INTEGRATION ---\n"
+				os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte(markerHook), 0755)
+				os.WriteFile(filepath.Join(hooksDir, "post-merge"), []byte(markerHook), 0755)
+				os.WriteFile(filepath.Join(hooksDir, "pre-push"), []byte(markerHook), 0755)
+			},
+			expectedStatus: "warning",
+			expectInMsg:    "outdated",
+		},
 	}
 
 	for _, tt := range tests {
@@ -440,6 +481,82 @@ func TestFixMergeDriver(t *testing.T) {
 }
 
 // Tests for CheckOrphanedIssues
+
+// TestParseBDHookVersion verifies version extraction from all hook formats (GH#2244).
+func TestParseBDHookVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		wantVersion string
+		wantOK      bool
+	}{
+		{
+			name:        "legacy bd-hooks-version comment",
+			content:     "#!/bin/sh\n# bd-hooks-version: 0.55.0\nbd hooks run pre-commit\n",
+			wantVersion: "0.55.0",
+			wantOK:      true,
+		},
+		{
+			name:        "section marker format",
+			content:     "#!/bin/sh\n# --- BEGIN BEADS INTEGRATION v0.57.0 ---\nbd hooks run pre-commit\n# --- END BEADS INTEGRATION ---\n",
+			wantVersion: "0.57.0",
+			wantOK:      true,
+		},
+		{
+			name:        "section marker with user content before",
+			content:     "#!/bin/sh\n# my custom stuff\necho hello\n# --- BEGIN BEADS INTEGRATION v0.56.1 ---\nbd hooks run pre-commit\n# --- END BEADS INTEGRATION ---\n",
+			wantVersion: "0.56.1",
+			wantOK:      true,
+		},
+		{
+			name:    "no version markers at all",
+			content: "#!/bin/sh\necho hello\n",
+			wantOK:  false,
+		},
+		{
+			name:    "empty content",
+			content: "",
+			wantOK:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			version, ok := parseBDHookVersion(tt.content)
+			if ok != tt.wantOK {
+				t.Errorf("parseBDHookVersion() ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && version != tt.wantVersion {
+				t.Errorf("parseBDHookVersion() version = %q, want %q", version, tt.wantVersion)
+			}
+		})
+	}
+}
+
+// TestIsBdHookContent verifies detection of all bd hook formats (GH#2244).
+func TestIsBdHookContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"shim marker", "#!/bin/sh\n# bd-shim 0.55.0\nbd hooks run pre-commit\n", true},
+		{"inline marker", "#!/bin/sh\n# bd (beads)\nbd sync\n", true},
+		{"section marker", "#!/bin/sh\n# --- BEGIN BEADS INTEGRATION v0.57.0 ---\nbd hooks run pre-commit\n# --- END BEADS INTEGRATION ---\n", true},
+		{"bd hooks run call", "#!/bin/sh\nbd hooks run pre-commit\n", true},
+		{"not a bd hook", "#!/bin/sh\necho hello\n", false},
+		{"empty", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isBdHookContent(tt.content)
+			if got != tt.want {
+				t.Errorf("isBdHookContent() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 // TestCheckOrphanedIssues_DoltBackend verifies that CheckOrphanedIssues returns
 // N/A for the Dolt backend (orphan detection not yet reimplemented for Dolt).

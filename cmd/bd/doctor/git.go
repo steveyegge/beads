@@ -32,6 +32,10 @@ const bdShimMarker = "# bd-shim"
 // These hooks have the logic embedded directly rather than calling bd hooks run
 const bdInlineHookMarker = "# bd (beads)"
 
+// bdSectionMarkerPrefix identifies marker-managed hooks (GH#1380)
+// These use "# --- BEGIN BEADS INTEGRATION vX.Y.Z ---" section markers.
+const bdSectionMarkerPrefix = "# --- BEGIN BEADS INTEGRATION"
+
 // bdHooksRunPattern matches hooks that call bd hooks run
 var bdHooksRunPattern = regexp.MustCompile(`\bbd\s+hooks\s+run\b`)
 
@@ -226,30 +230,39 @@ func findOutdatedBDHookVersions(
 	return outdated, oldest
 }
 
-// isBdHookContent checks if hook content is a bd hook (shim, inline, or calls bd hooks run).
+// isBdHookContent checks if hook content is a bd hook (shim, inline, section-marker, or calls bd hooks run).
 func isBdHookContent(content string) bool {
 	return strings.Contains(content, bdShimMarker) ||
 		strings.Contains(content, bdInlineHookMarker) ||
+		strings.Contains(content, bdSectionMarkerPrefix) ||
 		bdHooksRunPattern.MatchString(content)
 }
 
 func parseBDHookVersion(content string) (string, bool) {
-	if !strings.Contains(content, "bd-hooks-version:") {
-		return "", false
-	}
 	for _, line := range strings.Split(content, "\n") {
-		if !strings.Contains(line, "bd-hooks-version:") {
-			continue
+		// Check for section marker: "# --- BEGIN BEADS INTEGRATION v0.57.0 ---"
+		// This is the current hook format used by marker-managed installs (GH#1380).
+		if strings.HasPrefix(line, bdSectionMarkerPrefix) {
+			after := strings.TrimPrefix(line, bdSectionMarkerPrefix)
+			after = strings.TrimSpace(after)
+			after = strings.TrimPrefix(after, "v")
+			after = strings.TrimSuffix(after, "---")
+			version := strings.TrimSpace(after)
+			if version != "" {
+				return version, true
+			}
 		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			return "", false
+		// Check for legacy version comment: "# bd-hooks-version: 0.55.0"
+		if strings.Contains(line, "bd-hooks-version:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			version := strings.TrimSpace(parts[1])
+			if version != "" {
+				return version, true
+			}
 		}
-		version := strings.TrimSpace(parts[1])
-		if version == "" {
-			return "", false
-		}
-		return version, true
 	}
 	return "", false
 }
@@ -629,6 +642,15 @@ func CheckGitHooksDoltCompatibility(path string) DoctorCheck {
 	}
 
 	contentStr := string(content)
+
+	// Section-marker hooks (GH#1380) delegate to 'bd hooks run' which handles Dolt correctly
+	if strings.Contains(contentStr, bdSectionMarkerPrefix) {
+		return DoctorCheck{
+			Name:    "Git Hooks Dolt Compatibility",
+			Status:  StatusOK,
+			Message: "Marker-managed hooks (Dolt handled by bd hooks run)",
+		}
+	}
 
 	// Shim hooks (bd-shim) delegate to 'bd hook' which handles Dolt correctly
 	if strings.Contains(contentStr, bdShimMarker) {

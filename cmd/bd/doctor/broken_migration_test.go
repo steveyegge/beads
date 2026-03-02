@@ -265,8 +265,8 @@ func TestCheckEmbeddedModeConcurrency_EmbeddedWithAccessLock(t *testing.T) {
 	if check.Status != StatusWarning {
 		t.Errorf("expected WARNING for embedded mode with access lock, got %s: %s", check.Status, check.Message)
 	}
-	if !strings.Contains(check.Fix, "server mode") {
-		t.Errorf("fix should recommend server mode, got: %s", check.Fix)
+	if !strings.Contains(check.Fix, "bd dolt start") {
+		t.Errorf("fix should recommend starting Dolt server, got: %s", check.Fix)
 	}
 }
 

@@ -194,7 +194,7 @@ func CheckEmbeddedModeConcurrency(path string) DoctorCheck {
 		Detail: fmt.Sprintf("Detected: %s. Embedded mode is single-writer only. "+
 			"If you run multiple bd processes (e.g., multiple Claude Code windows), "+
 			"switch to server mode for reliable concurrent access.", joinIssues(issues)),
-		Fix:      "Switch to server mode: bd dolt set mode server && bd dolt start",
+		Fix:      "Start the Dolt server: bd dolt start",
 		Category: CategoryRuntime,
 	}
 }
