@@ -1646,18 +1646,18 @@ func TestFixLastTouchedTracking(t *testing.T) {
 	}
 
 	// Verify it's tracked before fix
-	checkBefore := CheckLastTouchedNotTracked()
+	checkBefore := CheckLastTouchedNotTracked(".")
 	if checkBefore.Status != StatusWarning {
 		t.Fatalf("Expected file to be tracked before fix, status: %s", checkBefore.Status)
 	}
 
 	// Apply the fix
-	if err := FixLastTouchedTracking(); err != nil {
+	if err := FixLastTouchedTracking("."); err != nil {
 		t.Fatalf("FixLastTouchedTracking failed: %v", err)
 	}
 
 	// Verify it's no longer tracked after fix
-	checkAfter := CheckLastTouchedNotTracked()
+	checkAfter := CheckLastTouchedNotTracked(".")
 	if checkAfter.Status != StatusOK {
 		t.Errorf("Expected status %s after fix, got %s", StatusOK, checkAfter.Status)
 	}
@@ -1752,7 +1752,7 @@ func TestCheckProjectGitignore_NoFile(t *testing.T) {
 		}
 	}()
 
-	check := CheckProjectGitignore()
+	check := CheckProjectGitignore(".")
 	if check.Status != StatusWarning {
 		t.Errorf("Expected warning when no .gitignore exists, got %s", check.Status)
 	}
@@ -1778,7 +1778,7 @@ func TestCheckProjectGitignore_MissingPatterns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := CheckProjectGitignore()
+	check := CheckProjectGitignore(".")
 	if check.Status != StatusWarning {
 		t.Errorf("Expected warning for missing patterns, got %s", check.Status)
 	}
@@ -1807,7 +1807,7 @@ func TestCheckProjectGitignore_AllPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := CheckProjectGitignore()
+	check := CheckProjectGitignore(".")
 	if check.Status != StatusOK {
 		t.Errorf("Expected ok when all patterns present, got %s: %s", check.Status, check.Message)
 	}
@@ -1828,7 +1828,7 @@ func TestEnsureProjectGitignore_CreatesFile(t *testing.T) {
 		}
 	}()
 
-	if err := EnsureProjectGitignore(); err != nil {
+	if err := EnsureProjectGitignore("."); err != nil {
 		t.Fatalf("EnsureProjectGitignore failed: %v", err)
 	}
 
@@ -1869,7 +1869,7 @@ func TestEnsureProjectGitignore_AppendsToExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := EnsureProjectGitignore(); err != nil {
+	if err := EnsureProjectGitignore("."); err != nil {
 		t.Fatalf("EnsureProjectGitignore failed: %v", err)
 	}
 
@@ -1908,7 +1908,7 @@ func TestEnsureProjectGitignore_Idempotent(t *testing.T) {
 	}()
 
 	// Run twice
-	if err := EnsureProjectGitignore(); err != nil {
+	if err := EnsureProjectGitignore("."); err != nil {
 		t.Fatalf("First EnsureProjectGitignore failed: %v", err)
 	}
 	firstContent, err := os.ReadFile(".gitignore")
@@ -1916,7 +1916,7 @@ func TestEnsureProjectGitignore_Idempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := EnsureProjectGitignore(); err != nil {
+	if err := EnsureProjectGitignore("."); err != nil {
 		t.Fatalf("Second EnsureProjectGitignore failed: %v", err)
 	}
 	secondContent, err := os.ReadFile(".gitignore")
@@ -1950,7 +1950,7 @@ func TestEnsureProjectGitignore_PartialPatterns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := EnsureProjectGitignore(); err != nil {
+	if err := EnsureProjectGitignore("."); err != nil {
 		t.Fatalf("EnsureProjectGitignore failed: %v", err)
 	}
 
@@ -2010,7 +2010,7 @@ func TestFixGitignore_FollowsRedirect(t *testing.T) {
 	}
 
 	// Run FixGitignore - should write to the rig's .beads, NOT the local one
-	if err := FixGitignore(); err != nil {
+	if err := FixGitignore("."); err != nil {
 		t.Fatalf("FixGitignore failed: %v", err)
 	}
 
@@ -2066,7 +2066,7 @@ func TestCheckGitignore_FollowsRedirect(t *testing.T) {
 	}
 
 	// CheckGitignore should report OK by reading the redirect target
-	check := CheckGitignore()
+	check := CheckGitignore(".")
 	if check.Status != "ok" {
 		t.Errorf("Expected status ok when redirect target has valid .gitignore, got %s: %s", check.Status, check.Message)
 	}
@@ -2110,18 +2110,18 @@ func TestFixGitignore_RedirectRoundTrip(t *testing.T) {
 	}
 
 	// Step 1: Check should detect outdated
-	check := CheckGitignore()
+	check := CheckGitignore(".")
 	if check.Status != "warning" {
 		t.Fatalf("Expected warning for outdated .gitignore at redirect target, got %s", check.Status)
 	}
 
 	// Step 2: Fix should update the redirect target
-	if err := FixGitignore(); err != nil {
+	if err := FixGitignore("."); err != nil {
 		t.Fatalf("FixGitignore failed: %v", err)
 	}
 
 	// Step 3: Re-check should pass
-	check = CheckGitignore()
+	check = CheckGitignore(".")
 	if check.Status != "ok" {
 		t.Errorf("Expected ok after fix, got %s: %s", check.Status, check.Message)
 	}
@@ -2184,7 +2184,7 @@ func TestEnsureProjectGitignore_FilePermissions(t *testing.T) {
 
 			tt.setupFunc(t, tmpDir)
 
-			if err := EnsureProjectGitignore(); err != nil {
+			if err := EnsureProjectGitignore("."); err != nil {
 				t.Fatalf("EnsureProjectGitignore failed: %v", err)
 			}
 
@@ -2234,7 +2234,7 @@ func TestEnsureProjectGitignore_DoesNotLoosenPermissions(t *testing.T) {
 	}
 	beforePerms := beforeInfo.Mode().Perm()
 
-	if err := EnsureProjectGitignore(); err != nil {
+	if err := EnsureProjectGitignore("."); err != nil {
 		t.Fatalf("EnsureProjectGitignore failed: %v", err)
 	}
 
@@ -2370,7 +2370,7 @@ func TestCheckRedirectTargetValid_NoRedirect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := CheckRedirectTargetValid()
+	check := CheckRedirectTargetValid(".")
 	if check.Status != StatusOK {
 		t.Errorf("Status = %q, want %q", check.Status, StatusOK)
 	}
@@ -2401,7 +2401,7 @@ func TestCheckRedirectTargetValid_EmptyRedirect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := CheckRedirectTargetValid()
+	check := CheckRedirectTargetValid(".")
 	if check.Status != StatusWarning {
 		t.Errorf("Status = %q, want %q", check.Status, StatusWarning)
 	}
@@ -2433,7 +2433,7 @@ func TestCheckRedirectTargetValid_NonExistentTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := CheckRedirectTargetValid()
+	check := CheckRedirectTargetValid(".")
 	if check.Status != StatusError {
 		t.Errorf("Status = %q, want %q", check.Status, StatusError)
 	}
@@ -2470,7 +2470,7 @@ func TestCheckRedirectTargetValid_TargetIsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := CheckRedirectTargetValid()
+	check := CheckRedirectTargetValid(".")
 	if check.Status != StatusError {
 		t.Errorf("Status = %q, want %q", check.Status, StatusError)
 	}
@@ -2497,7 +2497,7 @@ func TestCheckRedirectTargetSyncWorktree_NoRedirect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := CheckRedirectTargetSyncWorktree()
+	check := CheckRedirectTargetSyncWorktree(".")
 	if check.Status != StatusOK {
 		t.Errorf("Status = %q, want %q", check.Status, StatusOK)
 	}
@@ -2525,7 +2525,7 @@ func TestCheckNoVestigialSyncWorktrees_NoRedirect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := CheckNoVestigialSyncWorktrees()
+	check := CheckNoVestigialSyncWorktrees(".")
 	if check.Status != StatusOK {
 		t.Errorf("Status = %q, want %q", check.Status, StatusOK)
 	}
@@ -2564,7 +2564,7 @@ func TestCheckNoVestigialSyncWorktrees_WithRedirectNoWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := CheckNoVestigialSyncWorktrees()
+	check := CheckNoVestigialSyncWorktrees(".")
 	if check.Status != StatusOK {
 		t.Errorf("Status = %q, want %q", check.Status, StatusOK)
 	}
@@ -2607,7 +2607,7 @@ func TestCheckNoVestigialSyncWorktrees_VestigialDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := CheckNoVestigialSyncWorktrees()
+	check := CheckNoVestigialSyncWorktrees(".")
 	if check.Status != StatusWarning {
 		t.Errorf("Status = %q, want %q", check.Status, StatusWarning)
 	}

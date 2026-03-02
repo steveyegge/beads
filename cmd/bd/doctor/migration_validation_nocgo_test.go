@@ -9,12 +9,12 @@ import (
 func TestCheckMigrationReadiness_NoCGO(t *testing.T) {
 	check, result := CheckMigrationReadiness("/tmp/nonexistent")
 
-	if check.Status != StatusOK {
-		t.Errorf("status = %q, want %q", check.Status, StatusOK)
+	if check.Status != StatusWarning {
+		t.Errorf("status = %q, want %q", check.Status, StatusWarning)
 	}
 
-	if check.Message != "N/A (requires CGO for Dolt)" {
-		t.Errorf("message = %q, want %q", check.Message, "N/A (requires CGO for Dolt)")
+	if check.Message != "Skipped: requires CGO" {
+		t.Errorf("message = %q, want %q", check.Message, "Skipped: requires CGO")
 	}
 
 	if result.Ready {
@@ -29,8 +29,8 @@ func TestCheckMigrationReadiness_NoCGO(t *testing.T) {
 func TestCheckMigrationCompletion_NoCGO(t *testing.T) {
 	check, result := CheckMigrationCompletion("/tmp/nonexistent")
 
-	if check.Status != StatusOK {
-		t.Errorf("status = %q, want %q", check.Status, StatusOK)
+	if check.Status != StatusWarning {
+		t.Errorf("status = %q, want %q", check.Status, StatusWarning)
 	}
 
 	if result.Ready {
@@ -41,12 +41,12 @@ func TestCheckMigrationCompletion_NoCGO(t *testing.T) {
 func TestCheckDoltLocks_NoCGO(t *testing.T) {
 	check := CheckDoltLocks("/tmp/nonexistent")
 
-	if check.Status != StatusOK {
-		t.Errorf("status = %q, want %q", check.Status, StatusOK)
+	if check.Status != StatusWarning {
+		t.Errorf("status = %q, want %q", check.Status, StatusWarning)
 	}
 
-	if check.Message != "N/A (requires CGO for Dolt)" {
-		t.Errorf("message = %q, want %q", check.Message, "N/A (requires CGO for Dolt)")
+	if check.Message != "Skipped: requires CGO" {
+		t.Errorf("message = %q, want %q", check.Message, "Skipped: requires CGO")
 	}
 }
 
