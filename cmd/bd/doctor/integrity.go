@@ -65,6 +65,14 @@ func CheckIDFormat(path string) DoctorCheck {
 			issueIDs = append(issueIDs, id)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return DoctorCheck{
+			Name:    "Issue IDs",
+			Status:  StatusWarning,
+			Message: "Row iteration error",
+			Detail:  err.Error(),
+		}
+	}
 
 	if len(issueIDs) == 0 {
 		return DoctorCheck{
@@ -85,8 +93,8 @@ func CheckIDFormat(path string) DoctorCheck {
 
 	return DoctorCheck{
 		Name:    "Issue IDs",
-		Status:  StatusOK,
-		Message: "sequential (legacy)",
+		Status:  StatusWarning,
+		Message: "sequential IDs detected — consider migrating to hash-based IDs",
 	}
 }
 
@@ -169,6 +177,14 @@ func CheckDependencyCycles(path string) DoctorCheck {
 		cycleCount++
 		if cycleCount == 1 {
 			firstCycle = startID
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return DoctorCheck{
+			Name:    "Dependency Cycles",
+			Status:  StatusWarning,
+			Message: "Row iteration error",
+			Detail:  err.Error(),
 		}
 	}
 

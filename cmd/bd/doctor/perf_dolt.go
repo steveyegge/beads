@@ -196,8 +196,12 @@ func runDoltDiagnosticQueries(ctx context.Context, db *sql.DB, metrics *DoltPerf
 		} else {
 			for rows.Next() {
 			}
+			if rows.Err() != nil {
+				metrics.ShowIssueTime = -1
+			} else {
+				metrics.ShowIssueTime = time.Since(start).Milliseconds()
+			}
 			_ = rows.Close()
-			metrics.ShowIssueTime = time.Since(start).Milliseconds()
 		}
 	}
 
@@ -234,6 +238,9 @@ func measureQueryTime(ctx context.Context, db *sql.DB, query string) int64 {
 	// Drain rows to ensure we measure full execution
 	for rows.Next() {
 		// Just iterate through
+	}
+	if err := rows.Err(); err != nil {
+		return -1
 	}
 	return time.Since(start).Milliseconds()
 }

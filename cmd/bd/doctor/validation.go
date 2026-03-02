@@ -162,7 +162,7 @@ func checkOrphanedDependenciesDB(db *sql.DB) DoctorCheck {
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Orphaned Dependencies",
-			Status:  "ok",
+			Status:  StatusWarning,
 			Message: "N/A (query failed)",
 		}
 	}
@@ -173,6 +173,14 @@ func checkOrphanedDependenciesDB(db *sql.DB) DoctorCheck {
 		var issueID, dependsOnID, depType string
 		if err := rows.Scan(&issueID, &dependsOnID, &depType); err == nil {
 			orphans = append(orphans, fmt.Sprintf("%s→%s", issueID, dependsOnID))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return DoctorCheck{
+			Name:    "Orphaned Dependencies",
+			Status:  StatusWarning,
+			Message: "Row iteration error",
+			Detail:  err.Error(),
 		}
 	}
 
@@ -240,7 +248,7 @@ func checkDuplicateIssuesDB(db *sql.DB, gastownMode bool, gastownThreshold int) 
 	if err := db.QueryRow(query).Scan(&groupCount, &dupCount); err != nil {
 		return DoctorCheck{
 			Name:    "Duplicate Issues",
-			Status:  "ok",
+			Status:  StatusWarning,
 			Message: "N/A (unable to query issues)",
 		}
 	}
@@ -314,7 +322,7 @@ func CheckTestPollution(path string) DoctorCheck {
 	if err := db.QueryRow(query).Scan(&count); err != nil {
 		return DoctorCheck{
 			Name:    "Test Pollution",
-			Status:  "ok",
+			Status:  StatusWarning,
 			Message: "N/A (query failed)",
 		}
 	}
@@ -445,7 +453,7 @@ func checkChildParentDependenciesDB(db *sql.DB) DoctorCheck {
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Child-Parent Dependencies",
-			Status:  "ok",
+			Status:  StatusWarning,
 			Message: "N/A (query failed)",
 		}
 	}
@@ -456,6 +464,14 @@ func checkChildParentDependenciesDB(db *sql.DB) DoctorCheck {
 		var issueID, dependsOnID string
 		if err := rows.Scan(&issueID, &dependsOnID); err == nil {
 			badDeps = append(badDeps, fmt.Sprintf("%s→%s", issueID, dependsOnID))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return DoctorCheck{
+			Name:    "Child-Parent Dependencies",
+			Status:  StatusWarning,
+			Message: "Row iteration error",
+			Detail:  err.Error(),
 		}
 	}
 

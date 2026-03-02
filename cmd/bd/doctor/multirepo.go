@@ -237,6 +237,8 @@ func findUnknownTypesInHydratedIssues(repoPath string, multiRepo *config.MultiRe
 			seen[issueType] = true
 		}
 	}
+	// Best effort: rows.Err() ignored since partial results are acceptable for type discovery
+	_ = rows.Err()
 
 	return unknownTypes
 }

@@ -158,7 +158,6 @@ func CheckMetadataVersionTracking(path string, currentVersion string) DoctorChec
 
 		// Guard against short version strings (e.g., "5" → [5] has no [1])
 		if len(currentParts) < 2 || len(lastParts) < 2 {
-			// Can't compare minor versions — treat as normal upgrade
 			return DoctorCheck{
 				Name:    "Version Tracking",
 				Status:  StatusOK,
