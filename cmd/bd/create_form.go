@@ -100,6 +100,7 @@ func parseCreateFormInput(raw *createFormRawInput) *createFormValues {
 func CreateIssueFromFormValues(ctx context.Context, s *dolt.DoltStore, fv *createFormValues, actor string) (*types.Issue, error) {
 	// If parent is specified, validate it exists and generate child ID
 	var explicitID string
+	var inheritedLabels []string
 	if fv.ParentID != "" {
 		_, err := s.GetIssue(ctx, fv.ParentID)
 		if err != nil {
@@ -113,6 +114,9 @@ func CreateIssueFromFormValues(ctx context.Context, s *dolt.DoltStore, fv *creat
 			return nil, fmt.Errorf("failed to generate child ID: %w", err)
 		}
 		explicitID = childID
+
+		// Inherit parent labels (GH#2100), matching bd create --parent behavior
+		inheritedLabels, _ = s.GetLabels(ctx, fv.ParentID)
 	}
 
 	var externalRefPtr *string
@@ -172,6 +176,12 @@ func CreateIssueFromFormValues(ctx context.Context, s *dolt.DoltStore, fv *creat
 		return nil, fmt.Errorf("failed to create issue: %w", err)
 	}
 
+	// Track whether any post-create writes occurred. CreateIssue commits
+	// the issue to Dolt internally, but subsequent AddDependency/AddLabel
+	// calls only write to the working set. A follow-up Dolt commit is
+	// needed to persist them (GH#2009).
+	postCreateWrites := false
+
 	// If parent was specified, add parent-child dependency (GH#1983)
 	if fv.ParentID != "" {
 		dep := &types.Dependency{
@@ -181,6 +191,21 @@ func CreateIssueFromFormValues(ctx context.Context, s *dolt.DoltStore, fv *creat
 		}
 		if err := s.AddDependency(ctx, dep, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to add parent-child dependency %s -> %s: %v\n", issue.ID, fv.ParentID, err)
+		} else {
+			postCreateWrites = true
+		}
+	}
+
+	// Merge inherited parent labels with user-specified labels (GH#2100)
+	if len(inheritedLabels) > 0 {
+		seen := make(map[string]bool)
+		for _, l := range fv.Labels {
+			seen[l] = true
+		}
+		for _, l := range inheritedLabels {
+			if !seen[l] {
+				fv.Labels = append(fv.Labels, l)
+			}
 		}
 	}
 
@@ -189,6 +214,8 @@ func CreateIssueFromFormValues(ctx context.Context, s *dolt.DoltStore, fv *creat
 		if err := s.AddLabel(ctx, issue.ID, label, actor); err != nil {
 			// Log warning but don't fail the entire operation
 			fmt.Fprintf(os.Stderr, "Warning: failed to add label %s: %v\n", label, err)
+		} else {
+			postCreateWrites = true
 		}
 	}
 
@@ -227,6 +254,20 @@ func CreateIssueFromFormValues(ctx context.Context, s *dolt.DoltStore, fv *creat
 		}
 		if err := s.AddDependency(ctx, dep, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
+		} else {
+			postCreateWrites = true
+		}
+	}
+
+	// Commit post-create metadata (deps, labels) to Dolt. CreateIssue's
+	// internal DOLT_COMMIT only covers the issue row; AddDependency and
+	// AddLabel write to the SQL working set without a Dolt commit. Without
+	// this, the metadata is visible but not durable — it can be lost on
+	// push, sync, or server restart (GH#2009).
+	if postCreateWrites {
+		commitMsg := fmt.Sprintf("bd: create %s (metadata)", issue.ID)
+		if err := s.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
+			WarnError("failed to commit post-create metadata: %v", err)
 		}
 	}
 
