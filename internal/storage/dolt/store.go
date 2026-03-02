@@ -1245,24 +1245,25 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 	return msg
 }
 
-// isSSHRemote checks whether the configured remote URL uses SSH transport.
-// SSH remotes (git+ssh://, ssh://, git@host:path) require CLI-based push/pull
-// because CALL DOLT_PUSH through the SQL server times out — the MySQL connection
-// drops before the SSH transfer completes.
-func (s *DoltStore) isSSHRemote(ctx context.Context) bool {
+// isGitProtocolRemote checks whether the configured remote uses the git wire protocol.
+// Git-protocol remotes (git+ssh://, ssh://, git@host:path, git+https://, git://)
+// require CLI-based push/pull because CALL DOLT_PUSH through the SQL server times
+// out — the MySQL connection's readTimeout (10s) is too short for network I/O to
+// external git hosts (HTTPS handshake + credential helper + git ls-remote).
+func (s *DoltStore) isGitProtocolRemote(ctx context.Context) bool {
 	// Check SQL remotes first
 	remotes, err := s.ListRemotes(ctx)
 	if err == nil {
 		for _, r := range remotes {
 			if r.Name == s.remote {
-				return doltutil.IsSSHURL(r.URL)
+				return doltutil.IsGitProtocolURL(r.URL)
 			}
 		}
 	}
 	// Fall back to CLI remotes (covers drift where remote exists only in filesystem)
 	if s.dbPath != "" {
 		if url := doltutil.FindCLIRemote(s.dbPath, s.remote); url != "" {
-			return doltutil.IsSSHURL(url)
+			return doltutil.IsGitProtocolURL(url)
 		}
 	}
 	return false
@@ -1277,7 +1278,7 @@ func (s *DoltStore) mainRemoteCredentials() *remoteCredentials {
 }
 
 // doltCLIPush shells out to `dolt push` from the database directory.
-// Used for SSH remotes where CALL DOLT_PUSH times out through the SQL connection.
+// Used for git-protocol remotes where CALL DOLT_PUSH times out through the SQL connection.
 // If creds is non-nil, credentials are set on the subprocess environment only,
 // avoiding process-wide env var races with concurrent goroutines.
 func (s *DoltStore) doltCLIPush(ctx context.Context, force bool, creds *remoteCredentials) error {
@@ -1299,7 +1300,7 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, force bool, creds *remoteCr
 }
 
 // doltCLIPull shells out to `dolt pull` from the database directory.
-// Used for SSH remotes where CALL DOLT_PULL times out through the SQL connection.
+// Used for git-protocol remotes where CALL DOLT_PULL times out through the SQL connection.
 // If creds is non-nil, credentials are set on the subprocess environment only.
 func (s *DoltStore) doltCLIPull(ctx context.Context, creds *remoteCredentials) error {
 	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
@@ -1315,7 +1316,7 @@ func (s *DoltStore) doltCLIPull(ctx context.Context, creds *remoteCredentials) e
 }
 
 // Push pushes commits to the remote.
-// For SSH remotes (including Hosted Dolt SSH), uses CLI `dolt push` to avoid MySQL connection timeouts.
+// For git-protocol remotes (SSH, git+https://, git://), uses CLI `dolt push` to avoid MySQL connection timeouts.
 // For non-SSH Hosted Dolt (remoteUser set), uses CALL DOLT_PUSH with --user authentication.
 // For other remotes (DoltHub, S3, GCS, file), uses CALL DOLT_PUSH via SQL.
 func (s *DoltStore) Push(ctx context.Context) (retErr error) {
@@ -1328,12 +1329,12 @@ func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 	)
 	defer func() { endSpan(span, retErr) }()
 	creds := s.mainRemoteCredentials()
-	// SSH remotes: use CLI to avoid MySQL connection timeout during transfer.
+	// Git-protocol remotes: use CLI to avoid MySQL connection timeout during transfer.
 	// Must check before remoteUser — Hosted Dolt SSH remotes have remoteUser set
 	// but still need CLI to avoid SQL connection timeout.
 	// Credentials are passed directly to the subprocess via cmd.Env, avoiding
 	// process-wide env var races with concurrent goroutines.
-	if s.isSSHRemote(ctx) {
+	if s.isGitProtocolRemote(ctx) {
 		return s.doltCLIPush(ctx, false, creds)
 	}
 	if s.remoteUser != "" {
@@ -1354,7 +1355,7 @@ func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 
 // ForcePush force-pushes commits to the remote, overwriting remote changes.
 // Use when the remote has uncommitted changes in its working set.
-// For SSH remotes (including Hosted Dolt SSH), uses CLI `dolt push --force` to avoid MySQL connection timeouts.
+// For git-protocol remotes (SSH, git+https://, git://), uses CLI `dolt push --force` to avoid MySQL connection timeouts.
 func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.force_push",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -1365,11 +1366,11 @@ func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 	)
 	defer func() { endSpan(span, retErr) }()
 	creds := s.mainRemoteCredentials()
-	// SSH remotes: use CLI to avoid MySQL connection timeout during transfer.
+	// Git-protocol remotes: use CLI to avoid MySQL connection timeout during transfer.
 	// Must check before remoteUser — Hosted Dolt SSH remotes have remoteUser set
 	// but still need CLI to avoid SQL connection timeout.
 	// Credentials are passed directly to the subprocess via cmd.Env.
-	if s.isSSHRemote(ctx) {
+	if s.isGitProtocolRemote(ctx) {
 		return s.doltCLIPush(ctx, true, creds)
 	}
 	if s.remoteUser != "" {
@@ -1390,7 +1391,7 @@ func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 
 // Pull pulls changes from the remote.
 // Passes branch explicitly to avoid "did not specify a branch" errors.
-// For SSH remotes (including Hosted Dolt SSH), uses CLI `dolt pull` to avoid MySQL connection timeouts.
+// For git-protocol remotes (SSH, git+https://, git://), uses CLI `dolt pull` to avoid MySQL connection timeouts.
 // For non-SSH Hosted Dolt (remoteUser set), uses CALL DOLT_PULL with --user authentication.
 func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.pull",
@@ -1402,11 +1403,11 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 	)
 	defer func() { endSpan(span, retErr) }()
 	creds := s.mainRemoteCredentials()
-	// SSH remotes: use CLI to avoid MySQL connection timeout during transfer.
+	// Git-protocol remotes: use CLI to avoid MySQL connection timeout during transfer.
 	// Must check before remoteUser — Hosted Dolt SSH remotes have remoteUser set
 	// but still need CLI to avoid SQL connection timeout.
 	// Credentials are passed directly to the subprocess via cmd.Env.
-	if s.isSSHRemote(ctx) {
+	if s.isGitProtocolRemote(ctx) {
 		if err := s.doltCLIPull(ctx, creds); err != nil {
 			return err
 		}

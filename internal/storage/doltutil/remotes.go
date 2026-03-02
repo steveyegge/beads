@@ -22,6 +22,18 @@ func IsSSHURL(url string) bool {
 		strings.HasPrefix(url, "git@")
 }
 
+// IsGitProtocolURL returns true if the URL uses the git wire protocol.
+// This includes SSH transports (git+ssh://, ssh://, git@host:) and
+// git-over-HTTPS (git+https://) and plain git:// protocol.
+// These remotes involve network I/O that can exceed MySQL connection
+// timeouts and should use CLI-based push/pull instead of SQL.
+func IsGitProtocolURL(url string) bool {
+	return IsSSHURL(url) ||
+		strings.HasPrefix(url, "git+https://") ||
+		strings.HasPrefix(url, "git+http://") ||
+		strings.HasPrefix(url, "git://")
+}
+
 // ListCLIRemotes parses `dolt remote -v` output from the given database directory.
 func ListCLIRemotes(dbPath string) ([]storage.RemoteInfo, error) {
 	cmd := exec.Command("dolt", "remote", "-v") // #nosec G204 -- fixed command

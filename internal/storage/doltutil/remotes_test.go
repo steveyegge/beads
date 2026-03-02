@@ -55,3 +55,42 @@ func TestIsSSHURL(t *testing.T) {
 		})
 	}
 }
+
+func TestIsGitProtocolURL(t *testing.T) {
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		// SSH URLs (subset of git protocol)
+		{"git+ssh://git@github.com/org/repo.git", true},
+		{"ssh://git@github.com/org/repo.git", true},
+		{"git@github.com:org/repo.git", true},
+
+		// Git-over-HTTPS (the bug: these were not detected before)
+		{"git+https://github.com/user/repo.git", true},
+		{"git+https://github.com/org/private-repo.git", true},
+
+		// Git-over-HTTP
+		{"git+http://localhost:3000/user/repo.git", true},
+
+		// Plain git protocol
+		{"git://github.com/org/repo.git", true},
+
+		// Non-git-protocol URLs (native Dolt remotes — fast, no CLI needed)
+		{"https://dolthub.com/org/repo", false},
+		{"https://doltremoteapi.dolthub.com/org/repo", false},
+		{"http://localhost:50051/repo", false},
+		{"aws://[table:bucket]/db", false},
+		{"gs://bucket/db", false},
+		{"file:///local/path", false},
+		{"/absolute/local/path", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			if got := IsGitProtocolURL(tt.url); got != tt.want {
+				t.Errorf("IsGitProtocolURL(%q) = %v, want %v", tt.url, got, tt.want)
+			}
+		})
+	}
+}
