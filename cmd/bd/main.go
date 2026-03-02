@@ -363,12 +363,19 @@ var rootCmd = &cobra.Command{
 		// config/diagnostic commands that skip DB init via the "dolt" parent entry above.
 		needsStoreDoltSubcommands := []string{"push", "pull", "commit"}
 
+		// GH#2224: Dolt grandchild subcommands (e.g. "bd dolt remote add") whose
+		// Cobra parent is "remote", not "dolt". These need the store but would be
+		// silently skipped if "remote" were ever added to noDbCommands.
+		needsStoreDoltGrandchildren := []string{"remote"}
+
 		// Check both the command name and parent command name for subcommands
 		cmdName := cmd.Name()
 		if cmd.Parent() != nil {
 			parentName := cmd.Parent().Name()
 			if parentName == "dolt" && slices.Contains(needsStoreDoltSubcommands, cmdName) {
 				// GH#2042: dolt push/pull/commit need the store — fall through to init
+			} else if slices.Contains(needsStoreDoltGrandchildren, parentName) {
+				// GH#2224: dolt remote add/list/remove need the store — fall through to init
 			} else if slices.Contains(noDbCommands, parentName) {
 				return
 			}
