@@ -107,7 +107,35 @@ func CheckFederationRemotesAPI(path string) DoctorCheck {
 		}
 	}
 
-	// Server is running - check if remotesapi port is accessible.
+	// Server is running - check if any federation peers are configured before
+	// probing the remotesapi port. Without peers, remotesapi is irrelevant.
+	{
+		ctx := context.Background()
+		store, err := dolt.New(ctx, doltServerConfig(beadsDir, doltPath))
+		if err == nil {
+			remotes, err := store.ListRemotes(ctx)
+			_ = store.Close()
+			if err == nil {
+				hasPeers := false
+				for _, r := range remotes {
+					if r.Name != "origin" {
+						hasPeers = true
+						break
+					}
+				}
+				if !hasPeers {
+					return DoctorCheck{
+						Name:     "Federation remotesapi",
+						Status:   StatusOK,
+						Message:  "N/A (no federation peers configured)",
+						Category: CategoryFederation,
+					}
+				}
+			}
+		}
+	}
+
+	// Server is running and peers are configured - check if remotesapi port is accessible.
 	// Read port from config instead of hardcoding 8080.
 	remotesAPIPort := configfile.DefaultDoltRemotesAPIPort
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
