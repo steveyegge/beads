@@ -199,7 +199,7 @@ bd update <id> --acceptance "acceptance criteria"
 **Use stdin for descriptions with special characters** (backticks, `!`, nested quotes):
 ```bash
 # Pipe via stdin to avoid shell escaping issues
-echo 'Description with `backticks` and "quotes"' | bd create "Title" --description=-
+echo 'Description with `backticks` and "quotes"' | bd create "Title" --stdin
 echo 'Updated description with $variables' | bd update <id> --description=-
 
 # Or use --body-file for longer content

@@ -114,7 +114,7 @@ bd stale --limit 20 --json                   # Limit results
 bd create "Issue title" -t bug|feature|task -p 0-4 -d "Description" --json
 
 # Use stdin for descriptions with special characters (backticks, !, nested quotes)
-echo 'Description with `backticks` and "quotes"' | bd create "Title" -t task -p 1 --description=- --json
+echo 'Description with `backticks` and "quotes"' | bd create "Title" -t task -p 1 --stdin --json
 echo 'Updated text with $variables' | bd update <id> --description=-
 
 # Or use --body-file for longer content from a file
