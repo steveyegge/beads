@@ -8,24 +8,20 @@ import (
 	"runtime/pprof"
 )
 
-var cpuProfileFile *os.File
-
 // RunPerformanceDiagnostics runs performance diagnostics.
 // Delegates to Dolt backend diagnostics.
-func RunPerformanceDiagnostics(path string) {
+func RunPerformanceDiagnostics(path string) error {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: No .beads/ directory found at %s\n", path)
-		fmt.Fprintf(os.Stderr, "Run 'bd init' to initialize beads\n")
-		os.Exit(1)
+		return fmt.Errorf("no .beads/ directory found at %s; run 'bd init' to initialize beads", path)
 	}
 
 	metrics, err := RunDoltPerformanceDiagnostics(path, true)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error running performance diagnostics: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("running performance diagnostics: %w", err)
 	}
 	PrintDoltPerfReport(metrics)
+	return nil
 }
 
 // CollectPlatformInfo gathers platform information for diagnostics.
@@ -44,21 +40,24 @@ func CollectPlatformInfo(path string) map[string]string {
 	return info
 }
 
-func startCPUProfile(path string) error {
+func startCPUProfile(path string) (*os.File, error) {
 	// #nosec G304 -- profile path supplied by CLI flag in trusted environment
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	cpuProfileFile = f
-	return pprof.StartCPUProfile(f)
+	if err := pprof.StartCPUProfile(f); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 // stopCPUProfile stops CPU profiling and closes the profile file.
 // Must be called after pprof.StartCPUProfile() to flush profile data to disk.
-func stopCPUProfile() {
+func stopCPUProfile(f *os.File) {
 	pprof.StopCPUProfile()
-	if cpuProfileFile != nil {
-		_ = cpuProfileFile.Close() // best effort cleanup
+	if f != nil {
+		_ = f.Close() // best effort cleanup
 	}
 }

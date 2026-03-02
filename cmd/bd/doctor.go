@@ -195,7 +195,9 @@ Examples:
 
 		// Run performance diagnostics if --perf flag is set
 		if perfMode {
-			doctor.RunPerformanceDiagnostics(absPath)
+			if err := doctor.RunPerformanceDiagnostics(absPath); err != nil {
+				FatalError("performance diagnostics: %v", err)
+			}
 			return
 		}
 

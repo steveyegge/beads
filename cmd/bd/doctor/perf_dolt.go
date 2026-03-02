@@ -77,11 +77,11 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 	// Start profiling if requested
 	if enableProfiling {
 		profilePath := fmt.Sprintf("beads-dolt-perf-%s.prof", time.Now().Format("2006-01-02-150405"))
-		if err := startCPUProfile(profilePath); err != nil {
+		if profileFile, err := startCPUProfile(profilePath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to start CPU profiling: %v\n", err)
 		} else {
 			metrics.ProfilePath = profilePath
-			defer stopCPUProfile()
+			defer stopCPUProfile(profileFile)
 		}
 	}
 
