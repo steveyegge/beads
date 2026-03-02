@@ -6,31 +6,55 @@ import (
 	"fmt"
 	"os"
 	"testing"
-
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
-// newTestSQLiteDB opens an in-memory SQLite3 database for unit tests.
-// It does not require a running Dolt server.
-func newTestSQLiteDB(t *testing.T) (*sql.DB, func()) {
+// newTestDoltDB creates a temporary database on the test Dolt server.
+// Returns a *sql.DB connection to the database and a cleanup function.
+// Skips the test if the test server isn't running.
+func newTestDoltDB(t *testing.T) (*sql.DB, func()) {
 	t.Helper()
-	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("failed to open SQLite test DB: %v", err)
+	if testServerPort == 0 {
+		t.Skip("Test Dolt server not running, skipping test")
 	}
-	return db, func() { _ = db.Close() }
+
+	dbName := uniqueTestDBName(t)
+
+	adminDSN := fmt.Sprintf("root@tcp(127.0.0.1:%d)/", testServerPort)
+	admin, err := sql.Open("mysql", adminDSN)
+	if err != nil {
+		t.Fatalf("failed to connect to test Dolt server: %v", err)
+	}
+	if _, err := admin.Exec("CREATE DATABASE `" + dbName + "`"); err != nil {
+		admin.Close()
+		t.Fatalf("failed to create test database %s: %v", dbName, err)
+	}
+	admin.Close()
+
+	dsn := fmt.Sprintf("root@tcp(127.0.0.1:%d)/%s", testServerPort, dbName)
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatalf("failed to connect to test database %s: %v", dbName, err)
+	}
+
+	return db, func() {
+		db.Close()
+		cleanup, cErr := sql.Open("mysql", adminDSN)
+		if cErr == nil {
+			cleanup.Exec("DROP DATABASE IF EXISTS `" + dbName + "`")
+			cleanup.Close()
+		}
+	}
 }
 
 // TestExecContext_Commit verifies that execContext wraps writes in an explicit
 // BEGIN/COMMIT, making them durable even when the session's autocommit is off.
 func TestExecContext_Commit(t *testing.T) {
-	db, cleanup := newTestSQLiteDB(t)
+	db, cleanup := newTestDoltDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 
-	if _, err := db.ExecContext(ctx, "CREATE TABLE items (id TEXT PRIMARY KEY, val TEXT)"); err != nil {
+	if _, err := db.ExecContext(ctx, "CREATE TABLE items (id VARCHAR(255) PRIMARY KEY, val TEXT)"); err != nil {
 		t.Fatalf("CREATE TABLE: %v", err)
 	}
 
@@ -61,12 +85,12 @@ func TestExecContext_Commit(t *testing.T) {
 // TestExecContext_RollbackOnError verifies that when the statement fails,
 // execContext rolls back the transaction and returns the error.
 func TestExecContext_RollbackOnError(t *testing.T) {
-	db, cleanup := newTestSQLiteDB(t)
+	db, cleanup := newTestDoltDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 
-	if _, err := db.ExecContext(ctx, "CREATE TABLE items (id TEXT PRIMARY KEY, val TEXT)"); err != nil {
+	if _, err := db.ExecContext(ctx, "CREATE TABLE items (id VARCHAR(255) PRIMARY KEY, val TEXT)"); err != nil {
 		t.Fatalf("CREATE TABLE: %v", err)
 	}
 
@@ -94,12 +118,12 @@ func TestExecContext_RollbackOnError(t *testing.T) {
 
 // TestGetAdaptiveIDLength exercises every branch in getAdaptiveIDLengthFromTable.
 func TestGetAdaptiveIDLength(t *testing.T) {
-	db, cleanup := newTestSQLiteDB(t)
+	db, cleanup := newTestDoltDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 
-	if _, err := db.ExecContext(ctx, "CREATE TABLE test_ids (id TEXT NOT NULL)"); err != nil {
+	if _, err := db.ExecContext(ctx, "CREATE TABLE test_ids (id VARCHAR(255) NOT NULL)"); err != nil {
 		t.Fatalf("CREATE TABLE: %v", err)
 	}
 
@@ -157,7 +181,7 @@ func TestGetAdaptiveIDLength(t *testing.T) {
 // TestGetAdaptiveIDLength_QueryError verifies the fallback when the query fails
 // (e.g. the table does not exist).
 func TestGetAdaptiveIDLength_QueryError(t *testing.T) {
-	db, cleanup := newTestSQLiteDB(t)
+	db, cleanup := newTestDoltDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
