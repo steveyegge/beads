@@ -720,6 +720,9 @@ func runDiagnostics(path string) doctorResult {
 	migrationsCheck := convertDoctorCheck(doctor.CheckPendingMigrations(path))
 	result.Checks = append(result.Checks, migrationsCheck)
 	// Status is determined by the check itself based on migration priorities
+	if migrationsCheck.Status == statusError {
+		result.OverallOK = false
+	}
 
 	// Check 31: KV store sync status
 	kvSyncCheck := convertDoctorCheck(doctor.CheckKVSyncStatus(path))

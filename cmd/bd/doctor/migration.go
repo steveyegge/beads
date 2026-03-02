@@ -31,6 +31,7 @@ func DetectPendingMigrations(path string) []PendingMigration {
 	hookPlan, err := PlanHookMigration(path)
 	if err == nil && hookPlan.IsGitRepo && hookPlan.NeedsMigrationCount > 0 {
 		description := fmt.Sprintf("Git hook migration needed for %d hook(s)", hookPlan.NeedsMigrationCount)
+		command := "bd doctor --fix"
 		priority := 2
 		if hookPlan.BrokenMarkerCount > 0 {
 			description = fmt.Sprintf(
@@ -38,15 +39,13 @@ func DetectPendingMigrations(path string) []PendingMigration {
 				description,
 				hookPlan.BrokenMarkerCount,
 			)
-			// Keep warning level until doctor auto-fix wiring is implemented.
-			// TODO(gh-2220): reevaluate severity once doctor --fix can invoke hook migration.
-			priority = 2
+			priority = 1
 		}
 
 		pending = append(pending, PendingMigration{
 			Name:        "hooks",
 			Description: description,
-			Command:     "bd migrate hooks --apply",
+			Command:     command,
 			Priority:    priority,
 		})
 	}
