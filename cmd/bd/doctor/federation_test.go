@@ -3,6 +3,7 @@ package doctor
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ import (
 func TestCheckFederationRemotesAPI_NonDoltBackend(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -22,7 +23,7 @@ func TestCheckFederationRemotesAPI_NonDoltBackend(t *testing.T) {
 		Backend: "sqlite",
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -42,7 +43,7 @@ func TestCheckFederationRemotesAPI_NonDoltBackend(t *testing.T) {
 func TestCheckFederationRemotesAPI_NoDoltDatabase(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,7 +52,7 @@ func TestCheckFederationRemotesAPI_NoDoltDatabase(t *testing.T) {
 		Backend: configfile.BackendDolt,
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,7 +73,7 @@ func TestCheckFederationRemotesAPI_ServerNotRunning(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	doltDir := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0755); err != nil {
+	if err := os.MkdirAll(doltDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,7 +82,7 @@ func TestCheckFederationRemotesAPI_ServerNotRunning(t *testing.T) {
 		Backend: configfile.BackendDolt,
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,7 +106,7 @@ func TestCheckFederationRemotesAPI_PidFileInBeadsDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	doltDir := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0755); err != nil {
+	if err := os.MkdirAll(doltDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -114,14 +115,14 @@ func TestCheckFederationRemotesAPI_PidFileInBeadsDir(t *testing.T) {
 		Backend: configfile.BackendDolt,
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create a PID file in the WRONG location (doltPath) - this is where the
 	// old buggy code looked. The new code should NOT detect this as server running.
 	wrongPidFile := filepath.Join(doltDir, "dolt-server.pid")
-	if err := os.WriteFile(wrongPidFile, []byte("99999"), 0600); err != nil {
+	if err := os.WriteFile(wrongPidFile, []byte("99999"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,7 +137,7 @@ func TestCheckFederationRemotesAPI_PidFileInBeadsDir(t *testing.T) {
 func TestCheckFederationPeerConnectivity_NonDoltBackend(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,7 +145,7 @@ func TestCheckFederationPeerConnectivity_NonDoltBackend(t *testing.T) {
 		Backend: "sqlite",
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,7 +162,7 @@ func TestCheckFederationPeerConnectivity_NonDoltBackend(t *testing.T) {
 func TestCheckFederationPeerConnectivity_NoDoltDatabase(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -169,7 +170,7 @@ func TestCheckFederationPeerConnectivity_NoDoltDatabase(t *testing.T) {
 		Backend: configfile.BackendDolt,
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -186,7 +187,7 @@ func TestCheckFederationPeerConnectivity_NoDoltDatabase(t *testing.T) {
 func TestCheckFederationSyncStaleness_NonDoltBackend(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -194,7 +195,7 @@ func TestCheckFederationSyncStaleness_NonDoltBackend(t *testing.T) {
 		Backend: "sqlite",
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -208,7 +209,7 @@ func TestCheckFederationSyncStaleness_NonDoltBackend(t *testing.T) {
 func TestCheckFederationConflicts_NonDoltBackend(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -216,7 +217,7 @@ func TestCheckFederationConflicts_NonDoltBackend(t *testing.T) {
 		Backend: "sqlite",
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -230,7 +231,7 @@ func TestCheckFederationConflicts_NonDoltBackend(t *testing.T) {
 func TestCheckFederationConflicts_NoDoltDatabase(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -238,7 +239,7 @@ func TestCheckFederationConflicts_NoDoltDatabase(t *testing.T) {
 		Backend: configfile.BackendDolt,
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -252,7 +253,7 @@ func TestCheckFederationConflicts_NoDoltDatabase(t *testing.T) {
 func TestCheckDoltServerModeMismatch_NonDoltBackend(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -260,7 +261,7 @@ func TestCheckDoltServerModeMismatch_NonDoltBackend(t *testing.T) {
 		Backend: "sqlite",
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -274,7 +275,7 @@ func TestCheckDoltServerModeMismatch_NonDoltBackend(t *testing.T) {
 func TestCheckDoltServerModeMismatch_NoDoltDatabase(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -282,7 +283,7 @@ func TestCheckDoltServerModeMismatch_NoDoltDatabase(t *testing.T) {
 		Backend: configfile.BackendDolt,
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -332,7 +333,7 @@ func TestCheckFederationRemotesAPI_EnvOverridesConfig(t *testing.T) {
 func TestCheckFederationChecks_CategoryIsFederation(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -341,7 +342,7 @@ func TestCheckFederationChecks_CategoryIsFederation(t *testing.T) {
 		Backend: "sqlite",
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -370,7 +371,7 @@ func TestDoltServerConfig_PopulatesFromConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	doltDir := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0755); err != nil {
+	if err := os.MkdirAll(doltDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -381,7 +382,7 @@ func TestDoltServerConfig_PopulatesFromConfig(t *testing.T) {
 		DoltDatabase:   "mydb",
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -407,7 +408,7 @@ func TestDoltServerConfig_PopulatesFromConfig(t *testing.T) {
 func TestDoltDatabaseName_Default(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -421,7 +422,7 @@ func TestDoltDatabaseName_Default(t *testing.T) {
 func TestDoltDatabaseName_FromConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -429,7 +430,7 @@ func TestDoltDatabaseName_FromConfig(t *testing.T) {
 		DoltDatabase: "custom_db",
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -439,12 +440,86 @@ func TestDoltDatabaseName_FromConfig(t *testing.T) {
 	}
 }
 
+// TestCheckFederationRemotesAPI_ServerRunningNoPeers verifies that when the
+// Dolt server is running but no federation peers are configured, the check
+// returns StatusOK instead of erroring about the remotesapi port.
+// This is the bug described in GH#2273.
+func TestCheckFederationRemotesAPI_ServerRunningNoPeers(t *testing.T) {
+	// Isolate from Gas Town daemon — we'll simulate "server running" via
+	// a standalone PID file pointing at a real dolt process on the host.
+	t.Setenv("GT_ROOT", "")
+
+	// Find a running dolt process on the host to use for the PID file.
+	// This makes doltserver.IsRunning() return true via the standalone path.
+	doltPIDs := findDoltPIDs(t)
+	if len(doltPIDs) == 0 {
+		t.Skip("no host dolt process running (needed to simulate server-running state)")
+	}
+
+	port := doctorTestServerPort()
+	if port == 0 {
+		t.Skip("Dolt test server not available")
+	}
+
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(doltDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write PID file so doltserver.IsRunning detects "server running"
+	pidFile := filepath.Join(beadsDir, "dolt-server.pid")
+	if err := os.WriteFile(pidFile, []byte(doltPIDs[0]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write config pointing at the testcontainers server with the shared DB.
+	// BEADS_DOLT_PORT (set by TestMain) routes dolt.New() to testcontainers.
+	cfg := &configfile.Config{
+		Backend:      configfile.BackendDolt,
+		DoltDatabase: testSharedDB,
+	}
+	data, _ := json.Marshal(cfg)
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	check := CheckFederationRemotesAPI(tmpDir)
+
+	// With a running server and no federation peers, the fix returns OK
+	// instead of the old false error about remotesapi port 8080.
+	if check.Status == StatusError {
+		t.Errorf("GH#2273: server running with no peers should not report error, got: %s: %s\n  Detail: %s",
+			check.Status, check.Message, check.Detail)
+	}
+	if check.Status == StatusOK && !strings.Contains(check.Message, "no federation peers") {
+		t.Logf("got StatusOK with message: %s (expected 'no federation peers configured')", check.Message)
+	}
+}
+
+// findDoltPIDs returns PIDs of running dolt sql-server processes on the host.
+func findDoltPIDs(t *testing.T) []string {
+	t.Helper()
+	out, err := exec.Command("pgrep", "-f", "dolt sql-server").Output()
+	if err != nil {
+		return nil
+	}
+	var pids []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			pids = append(pids, line)
+		}
+	}
+	return pids
+}
+
 // TestCheckFederationRemotesAPI_AllCheckNames verifies all federation checks
 // return meaningful check names (not empty strings).
 func TestCheckFederationRemotesAPI_AllCheckNames(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -452,7 +527,7 @@ func TestCheckFederationRemotesAPI_AllCheckNames(t *testing.T) {
 		Backend: "sqlite",
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
