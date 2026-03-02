@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
@@ -167,6 +168,18 @@ func autoMigrateOnVersionBump(beadsDir string) {
 		// No database - nothing to migrate
 		debug.Logf("auto-migrate: skipping migration, database does not exist: %s", dbPath)
 		return
+	}
+
+	// GH#2137: If upgrading from pre-0.56, the dolt database may have been
+	// created by the old embedded Dolt mode. Recover by reinitializing.
+	if previousVersion != "" && doctor.CompareVersions(previousVersion, "0.56.0") < 0 {
+		recovered, recErr := doltserver.RecoverPreV56DoltDir(dbPath)
+		if recErr != nil {
+			debug.Logf("auto-migrate: pre-v56 recovery failed: %v", recErr)
+		}
+		if recovered {
+			debug.Logf("auto-migrate: rebuilt pre-v56 dolt database at %s", dbPath)
+		}
 	}
 
 	// Open database using factory (respects backend config from metadata.json)

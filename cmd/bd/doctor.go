@@ -415,6 +415,14 @@ func runDiagnostics(path string) doctorResult {
 
 	autoMigrateOnVersionBump(beadsDir)
 
+	// Check 1b: Dolt format compatibility (GH#2137)
+	// Must run before opening the database — old noms formats cause server panics.
+	doltFormatCheck := convertWithCategory(doctor.CheckDoltFormat(path), doctor.CategoryCore)
+	result.Checks = append(result.Checks, doltFormatCheck)
+	if doltFormatCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
 	// Check 2: Database version
 	dbCheck := convertWithCategory(doctor.CheckDatabaseVersion(path, Version), doctor.CategoryCore)
 	result.Checks = append(result.Checks, dbCheck)
@@ -768,6 +776,13 @@ func runInitDiagnostics(path string) doctorResult {
 	if installCheck.Status != statusOK {
 		result.OverallOK = false
 		return result
+	}
+
+	// Check 1b: Dolt format compatibility (GH#2137)
+	doltFormatCheck := convertWithCategory(doctor.CheckDoltFormat(path), doctor.CategoryCore)
+	result.Checks = append(result.Checks, doltFormatCheck)
+	if doltFormatCheck.Status == statusError {
+		result.OverallOK = false
 	}
 
 	// Check 2: Database version

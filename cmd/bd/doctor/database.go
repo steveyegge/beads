@@ -8,6 +8,7 @@ import (
 
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +18,42 @@ type localConfig struct {
 	SyncBranch string `yaml:"sync-branch"`
 	NoDb       bool   `yaml:"no-db"`
 	PreferDolt bool   `yaml:"prefer-dolt"`
+}
+
+// CheckDoltFormat detects old dolt databases created by pre-0.56 bd versions
+// (GH#2137). Those databases used embedded Dolt mode and may be incompatible
+// with the current server-only architecture. The ensureDoltInit function
+// auto-recovers these at server start; this check provides early detection.
+func CheckDoltFormat(path string) DoctorCheck {
+	_, beadsDir := getBackendAndBeadsDir(path)
+	doltDir := filepath.Join(beadsDir, "dolt")
+
+	if _, err := os.Stat(filepath.Join(doltDir, ".dolt")); os.IsNotExist(err) {
+		return DoctorCheck{
+			Name:     "Dolt Format",
+			Status:   StatusOK,
+			Message:  "N/A (no dolt database)",
+			Category: CategoryCore,
+		}
+	}
+
+	if doltserver.IsPreV56DoltDir(doltDir) {
+		return DoctorCheck{
+			Name:     "Dolt Format",
+			Status:   StatusWarning,
+			Message:  "Dolt database from pre-0.56 bd version (missing .bd-dolt-ok marker)",
+			Detail:   fmt.Sprintf("Path: %s", doltDir),
+			Fix:      "Delete .beads/dolt/.dolt/ and re-run, or restart the Dolt server (auto-recovery will rebuild it)",
+			Category: CategoryCore,
+		}
+	}
+
+	return DoctorCheck{
+		Name:     "Dolt Format",
+		Status:   StatusOK,
+		Message:  "Compatible dolt database",
+		Category: CategoryCore,
+	}
 }
 
 // CheckDatabaseVersion checks the database version and migration status

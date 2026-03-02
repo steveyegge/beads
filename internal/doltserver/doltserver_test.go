@@ -794,6 +794,147 @@ func TestDefaultConfigStillReturnsDefaultPort(t *testing.T) {
 	}
 }
 
+// --- Pre-v56 dolt database detection tests (GH#2137) ---
+
+func TestIsPreV56DoltDir_NoMarker(t *testing.T) {
+	doltDir := t.TempDir()
+	dotDolt := filepath.Join(doltDir, ".dolt")
+	if err := os.MkdirAll(dotDolt, 0750); err != nil {
+		t.Fatal(err)
+	}
+	// .dolt/ exists but no .bd-dolt-ok marker → pre-v56
+	if !IsPreV56DoltDir(doltDir) {
+		t.Error("expected pre-v56 detection when .dolt/ exists without marker")
+	}
+}
+
+func TestIsPreV56DoltDir_WithMarker(t *testing.T) {
+	doltDir := t.TempDir()
+	dotDolt := filepath.Join(doltDir, ".dolt")
+	if err := os.MkdirAll(dotDolt, 0750); err != nil {
+		t.Fatal(err)
+	}
+	// Write the marker
+	if err := os.WriteFile(filepath.Join(doltDir, bdDoltMarker), []byte("ok\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if IsPreV56DoltDir(doltDir) {
+		t.Error("expected NOT pre-v56 when marker exists")
+	}
+}
+
+func TestIsPreV56DoltDir_NoDotDolt(t *testing.T) {
+	doltDir := t.TempDir()
+	// No .dolt/ at all → not pre-v56 (nothing to recover)
+	if IsPreV56DoltDir(doltDir) {
+		t.Error("expected NOT pre-v56 when .dolt/ doesn't exist")
+	}
+}
+
+func TestEnsureDoltInit_SeedsMarker(t *testing.T) {
+	doltDir := t.TempDir()
+	dotDolt := filepath.Join(doltDir, ".dolt", "noms")
+	if err := os.MkdirAll(dotDolt, 0750); err != nil {
+		t.Fatal(err)
+	}
+	// No marker → simulates existing database
+
+	// ensureDoltInit should seed the marker (non-destructive)
+	if err := ensureDoltInit(doltDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// After seeding, should no longer be detected as pre-v56
+	if IsPreV56DoltDir(doltDir) {
+		t.Error("expected marker to be seeded for existing database")
+	}
+
+	// .dolt/ should still exist (not deleted)
+	if _, err := os.Stat(filepath.Join(doltDir, ".dolt")); os.IsNotExist(err) {
+		t.Error("expected .dolt/ to still exist after seeding")
+	}
+}
+
+func TestRecoverPreV56DoltDir(t *testing.T) {
+	doltDir := t.TempDir()
+	dotDolt := filepath.Join(doltDir, ".dolt", "noms")
+	if err := os.MkdirAll(dotDolt, 0750); err != nil {
+		t.Fatal(err)
+	}
+	// Write a sentinel file to verify deletion
+	sentinel := filepath.Join(doltDir, ".dolt", "sentinel.txt")
+	if err := os.WriteFile(sentinel, []byte("old data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// RecoverPreV56DoltDir should remove the old .dolt/ and reinitialize
+	recovered, err := RecoverPreV56DoltDir(doltDir)
+	if err != nil {
+		// dolt might not be installed; check if .dolt/ was at least removed
+		if _, statErr := os.Stat(sentinel); !os.IsNotExist(statErr) {
+			t.Error("expected old .dolt/ contents to be removed during recovery")
+		}
+		t.Skipf("recovery partially completed (dolt init may have failed): %v", err)
+	}
+	if !recovered {
+		t.Error("expected recovery to be performed")
+	}
+
+	// Old sentinel should be gone
+	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+		t.Error("expected old .dolt/ contents to be removed during recovery")
+	}
+}
+
+func TestRecoverPreV56DoltDir_WithMarker(t *testing.T) {
+	doltDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(doltDir, ".dolt"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	// Write marker → should NOT recover
+	if err := os.WriteFile(filepath.Join(doltDir, bdDoltMarker), []byte("ok\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := RecoverPreV56DoltDir(doltDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recovered {
+		t.Error("expected no recovery when marker exists")
+	}
+}
+
+func TestRecoverPreV56DoltDir_NoDotDolt(t *testing.T) {
+	doltDir := t.TempDir()
+	// No .dolt/ at all → should NOT recover
+
+	recovered, err := RecoverPreV56DoltDir(doltDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recovered {
+		t.Error("expected no recovery when .dolt/ doesn't exist")
+	}
+}
+
+func TestEnsureDoltInit_WritesMarker(t *testing.T) {
+	doltDir := t.TempDir()
+	// Fresh init — no .dolt/ yet
+
+	// ensureDoltInit should create .dolt/ and write the marker
+	err := ensureDoltInit(doltDir)
+	if err != nil {
+		// dolt might not be installed in test env; skip marker check
+		t.Skipf("dolt init failed (dolt may not be installed): %v", err)
+	}
+
+	markerPath := filepath.Join(doltDir, bdDoltMarker)
+	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
+		t.Error("expected .bd-dolt-ok marker to be written after successful dolt init")
+	}
+}
+
 func TestIsDaemonManagedForBeadsDir(t *testing.T) {
 	// When GT_ROOT is unset and CWD is unrelated, but beadsDir
 	// is under a Gas Town root, IsDaemonManagedFor should detect it.
