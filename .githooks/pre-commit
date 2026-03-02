@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Pre-commit hook: auto-format with gofmt and lint with golangci-lint.
+# Installed via: git config core.hooksPath .githooks
+# See also: make install (sets hooksPath automatically)
+
+set -euo pipefail
+
+# Only check staged Go files (Added, Copied, Modified)
+staged_go_files=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
+[ -z "$staged_go_files" ] && exit 0
+
+# Require golangci-lint
+if ! command -v golangci-lint &>/dev/null; then
+    echo "pre-commit: golangci-lint not found."
+    echo "  Install: brew install golangci-lint"
+    echo "  Or: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+    exit 1
+fi
+
+# Auto-format and re-stage
+echo "$staged_go_files" | xargs gofmt -w
+echo "$staged_go_files" | xargs git add
+
+# Lint changed code with auto-fix; block on remaining issues
+golangci-lint run --new-from-rev=HEAD --fix || exit 1
+
+# Re-stage any auto-fixes from the linter
+echo "$staged_go_files" | xargs git add
