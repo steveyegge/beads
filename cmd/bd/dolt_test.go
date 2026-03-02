@@ -753,6 +753,49 @@ func TestDoltConfigSubcommandsSkipStore(t *testing.T) {
 	}
 }
 
+// TestDoltRemoteSubcommandsNeedStore verifies GH#2224: bd dolt remote add/list/remove
+// must reach store initialization despite their Cobra parent being "remote" (not "dolt").
+// These commands call getStore() and would break if "remote" were ever added to noDbCommands
+// without the grandchild guard in PersistentPreRun.
+func TestDoltRemoteSubcommandsNeedStore(t *testing.T) {
+	// Verify remote subcommands are registered under doltRemoteCmd (not directly under doltCmd)
+	remoteSubcommands := []string{"add", "list", "remove"}
+	for _, name := range remoteSubcommands {
+		found := false
+		for _, cmd := range doltRemoteCmd.Commands() {
+			if cmd.Name() == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected remote subcommand %q to be registered under doltRemoteCmd", name)
+		}
+	}
+
+	// Verify doltRemoteCmd itself is registered under doltCmd
+	found := false
+	for _, cmd := range doltCmd.Commands() {
+		if cmd.Name() == "remote" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected doltRemoteCmd to be registered under doltCmd")
+	}
+
+	// Verify parent-name resolution: for "bd dolt remote add", the Cobra parent
+	// is "remote" (not "dolt"), which means the needsStoreDoltSubcommands check
+	// won't match. The needsStoreDoltGrandchildren guard must handle this.
+	for _, sub := range doltRemoteCmd.Commands() {
+		parentName := sub.Parent().Name()
+		if parentName != "remote" {
+			t.Errorf("expected parent of %q to be \"remote\", got %q", sub.Name(), parentName)
+		}
+	}
+}
+
 // TestHooksSubcommandsSkipStore verifies that all hooks subcommands (run,
 // install, uninstall, list) skip DB initialization in PersistentPreRun.
 // Regression test for: pre-commit hook SIGSEGV when Dolt SQL Server is
