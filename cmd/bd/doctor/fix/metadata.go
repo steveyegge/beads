@@ -2,6 +2,7 @@ package fix
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -88,4 +89,100 @@ func FixMissingMetadata(path string, bdVersion string) error {
 	}
 
 	return nil
+}
+
+// FixMissingDoltDatabase detects and repairs missing dolt_database in metadata.json.
+// Pre-#2142 migrations created databases without writing dolt_database to config,
+// so after upgrading, bd falls back to default "beads" (empty) instead of the real
+// database. This fix probes the server for a database with beads tables and backfills
+// the config. (GH#2160)
+func FixMissingDoltDatabase(path string) error {
+	if err := validateBeadsWorkspace(path); err != nil {
+		return err
+	}
+
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return nil // No config, nothing to fix
+	}
+	if cfg.GetBackend() != configfile.BackendDolt {
+		return nil // Not Dolt backend
+	}
+
+	// Only fix if dolt_database is missing (using default)
+	if cfg.DoltDatabase != "" {
+		return nil // Already configured explicitly
+	}
+
+	// Connect to the server and probe for the correct database
+	db, err := openDoltDB(beadsDir)
+	if err != nil {
+		fmt.Printf("  dolt_database fix skipped (server not reachable: %v)\n", err)
+		return nil
+	}
+	defer db.Close()
+
+	correctDB := probeForCorrectDoltDatabase(db, configfile.DefaultDoltDatabase)
+	if correctDB == "" {
+		return nil // No alternate database found
+	}
+
+	// Backfill dolt_database in metadata.json
+	cfg.DoltDatabase = correctDB
+	if err := cfg.Save(beadsDir); err != nil {
+		return fmt.Errorf("failed to save metadata.json: %w", err)
+	}
+
+	fmt.Printf("  Fixed dolt_database: set to %q in metadata.json (was using default %q)\n",
+		correctDB, configfile.DefaultDoltDatabase)
+	return nil
+}
+
+// probeForCorrectDoltDatabase checks if another database on the server has the
+// expected beads tables (issues, dependencies, config). Returns the database name
+// if found, empty string otherwise.
+func probeForCorrectDoltDatabase(db *sql.DB, skipDB string) string {
+	ctx := context.Background()
+	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+
+	skip := map[string]bool{
+		"information_schema": true,
+		"mysql":              true,
+		skipDB:               true,
+	}
+
+	var candidates []string
+	for rows.Next() {
+		var dbName string
+		if err := rows.Scan(&dbName); err != nil {
+			continue
+		}
+		if skip[dbName] {
+			continue
+		}
+		// Skip known test databases
+		if strings.HasPrefix(dbName, "testdb_") || strings.HasPrefix(dbName, "doctest_") ||
+			strings.HasPrefix(dbName, "doctortest_") {
+			continue
+		}
+		candidates = append(candidates, dbName)
+	}
+
+	for _, dbName := range candidates {
+		var count int
+		//nolint:gosec // G201: dbName from SHOW DATABASES, not user input
+		err := db.QueryRowContext(ctx,
+			fmt.Sprintf("SELECT COUNT(*) FROM `%s`.issues LIMIT 1", dbName)).Scan(&count)
+		if err == nil {
+			return dbName
+		}
+	}
+
+	return ""
 }
