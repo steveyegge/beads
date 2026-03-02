@@ -104,6 +104,13 @@ type Formula struct {
 	// Patrol and release workflows should typically use "vapor" since they're operational.
 	Phase string `json:"phase,omitempty"`
 
+	// Pour controls whether steps are materialized as individual child issues.
+	// If true, each step becomes a DB row with dependency tracking (checkpoint recovery).
+	// If false (default), only the root issue is created; steps are read inline at prime time.
+	// Reserve pour=true for critical, infrequent work (e.g. releases) where step-level
+	// tracking is worth the DB overhead. Patrol formulas should NOT set this.
+	Pour bool `json:"pour,omitempty"`
+
 	// Source tracks where this formula was loaded from (set by parser).
 	Source string `json:"source,omitempty"`
 }

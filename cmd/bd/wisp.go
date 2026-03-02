@@ -251,6 +251,13 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	// Wisps are vapor (ephemeral) by default — only create the root issue.
+	// Materializing child step issues is the "pour" path (bd pour), not wisps.
+	// Formulas that explicitly set pour=true get children even as wisps.
+	if !rootOnly && subgraph != nil && !subgraph.Pour {
+		rootOnly = true
+	}
+
 	// Spawn as ephemeral in main database (Ephemeral=true, not synced via git)
 	// Use wisp prefix for distinct visual recognition (see types.IDPrefixWisp)
 	result, err := spawnMoleculeWithOptions(ctx, store, subgraph, CloneOptions{

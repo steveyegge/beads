@@ -28,6 +28,7 @@ type TemplateSubgraph struct {
 	IssueMap     map[string]*types.Issue   // ID -> Issue for quick lookup
 	VarDefs      map[string]formula.VarDef // Variable definitions from formula (for defaults)
 	Phase        string                    // Recommended phase: "liquid" (pour) or "vapor" (wisp)
+	Pour         bool                      // If true, steps should be materialized as sub-issues (from formula pour=true)
 }
 
 // InstantiateResult holds the result of template instantiation
