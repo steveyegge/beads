@@ -334,6 +334,10 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.RemoteConsistency(path)
 		case "Broken Migration State":
 			err = fix.BrokenMigrationState(path)
+		case "Dolt Schema":
+			// GH#2160: Pre-#2142 migrations may have wrong database configured.
+			// Probe the server and backfill dolt_database in metadata.json.
+			err = fix.FixMissingDoltDatabase(path)
 		case "SQLite Residue":
 			err = fix.SQLiteResidue(path)
 		case "Git Merge Driver":

@@ -240,6 +240,20 @@ func checkSchemaWithDB(conn *doltConn) DoctorCheck {
 	}
 
 	if len(missingTables) > 0 {
+		// GH#2160: Check if another database on this server has the expected
+		// tables. Pre-#2142 migrations created databases without writing
+		// dolt_database to metadata.json, so we may be connected to the
+		// wrong (default "beads") database.
+		if correctDB := probeForCorrectDatabase(conn); correctDB != "" {
+			return DoctorCheck{
+				Name:     "Dolt Schema",
+				Status:   StatusError,
+				Message:  fmt.Sprintf("Wrong database — tables found in %q, not in configured database", correctDB),
+				Detail:   "Pre-v0.56 migration created database without saving its name to metadata.json",
+				Fix:      fmt.Sprintf("Run 'bd doctor --fix' to set dolt_database=%s in metadata.json", correctDB),
+				Category: CategoryCore,
+			}
+		}
 		return DoctorCheck{
 			Name:     "Dolt Schema",
 			Status:   StatusError,
@@ -592,4 +606,60 @@ func checkPhantomDatabases(conn *doltConn) DoctorCheck {
 		Message:  "No phantom databases detected",
 		Category: CategoryData,
 	}
+}
+
+// probeForCorrectDatabase checks if another database on the same server has the
+// expected beads tables. Returns the database name if found, empty string otherwise.
+// Used by checkSchemaWithDB to detect pre-#2142 migrations where dolt_database
+// was not written to metadata.json (GH#2160).
+func probeForCorrectDatabase(conn *doltConn) string {
+	ctx := context.Background()
+	rows, err := conn.db.QueryContext(ctx, "SHOW DATABASES")
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+
+	configuredDB := configfile.DefaultDoltDatabase
+	if conn.cfg != nil {
+		configuredDB = conn.cfg.GetDoltDatabase()
+	}
+
+	// System databases to skip
+	skip := map[string]bool{
+		"information_schema": true,
+		"mysql":              true,
+		configuredDB:         true, // Already checked this one
+	}
+
+	var candidates []string
+	for rows.Next() {
+		var dbName string
+		if err := rows.Scan(&dbName); err != nil {
+			continue
+		}
+		if skip[dbName] {
+			continue
+		}
+		// Skip test/polecat databases
+		if strings.HasPrefix(dbName, "testdb_") || strings.HasPrefix(dbName, "doctest_") ||
+			strings.HasPrefix(dbName, "doctortest_") {
+			continue
+		}
+		candidates = append(candidates, dbName)
+	}
+
+	// Probe each candidate for an issues table
+	for _, dbName := range candidates {
+		var count int
+		// USE + query to check if the database has the issues table
+		//nolint:gosec // G201: dbName is from SHOW DATABASES, not user input
+		err := conn.db.QueryRowContext(ctx,
+			fmt.Sprintf("SELECT COUNT(*) FROM `%s`.issues LIMIT 1", dbName)).Scan(&count)
+		if err == nil {
+			return dbName
+		}
+	}
+
+	return ""
 }
