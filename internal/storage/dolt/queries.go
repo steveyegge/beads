@@ -319,6 +319,9 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 			WHERE status NOT IN ('closed', 'pinned')
 		`, table))
 		if err != nil {
+			if isTableNotExistError(err) {
+				continue // wisps table may not exist on pre-migration databases (GH#2271)
+			}
 			return nil, fmt.Errorf("failed to get active issues from %s: %w", table, err)
 		}
 		for activeRows.Next() {
@@ -539,6 +542,9 @@ func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.Ep
 			statusQuery := fmt.Sprintf("SELECT id, status FROM %s WHERE id IN (%s)", table, strings.Join(placeholders, ","))
 			statusRows, err := s.queryContext(ctx, statusQuery, args...)
 			if err != nil {
+				if isTableNotExistError(err) {
+					continue // wisps table may not exist on pre-migration databases (GH#2271)
+				}
 				return nil, fmt.Errorf("failed to batch-fetch child statuses from %s: %w", table, err)
 			}
 			for statusRows.Next() {
@@ -723,6 +729,9 @@ func (s *DoltStore) computeBlockedIDs(ctx context.Context, includeWisps bool) ([
 			WHERE status NOT IN ('closed', 'pinned')
 		`, table))
 		if err != nil {
+			if isTableNotExistError(err) {
+				continue // wisps table may not exist on pre-migration databases (GH#2271)
+			}
 			return nil, wrapQueryError("compute blocked IDs: get active issues from "+table, err)
 		}
 		for activeRows.Next() {
@@ -752,6 +761,9 @@ func (s *DoltStore) computeBlockedIDs(ctx context.Context, includeWisps bool) ([
 			WHERE type IN ('blocks', 'waits-for', 'conditional-blocks')
 		`, depTable))
 		if err != nil {
+			if isTableNotExistError(err) {
+				continue // wisp_dependencies table may not exist on pre-migration databases (GH#2271)
+			}
 			return nil, wrapQueryError("compute blocked IDs: get dependencies from "+depTable, err)
 		}
 		for depRows.Next() {
@@ -830,6 +842,9 @@ func (s *DoltStore) computeBlockedIDs(ctx context.Context, includeWisps bool) ([
 			`, depTbl, strings.Join(placeholders, ","))
 			childRows, err := s.queryContext(ctx, childQuery, args...)
 			if err != nil {
+				if isTableNotExistError(err) {
+					continue // wisp_dependencies table may not exist on pre-migration databases (GH#2271)
+				}
 				return nil, wrapQueryError("compute blocked IDs: get spawner children from "+depTbl, err)
 			}
 
@@ -866,6 +881,9 @@ func (s *DoltStore) computeBlockedIDs(ctx context.Context, includeWisps bool) ([
 				`, issueTbl, strings.Join(childPlaceholders, ","))
 				closedRows, err := s.queryContext(ctx, closedQuery, childArgs...)
 				if err != nil {
+					if isTableNotExistError(err) {
+						continue // wisps table may not exist on pre-migration databases (GH#2271)
+					}
 					return nil, wrapQueryError("compute blocked IDs: get closed children from "+issueTbl, err)
 				}
 				for closedRows.Next() {
