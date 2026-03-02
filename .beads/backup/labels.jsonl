@@ -44,6 +44,7 @@
 {"issue_id":"bd-beads-polecat-garnet","label":"gt:agent"}
 {"issue_id":"bd-beads-polecat-jasper","label":"gt:agent"}
 {"issue_id":"bd-beads-polecat-obsidian","label":"gt:agent"}
+{"issue_id":"bd-beads-polecat-obsidian","label":"gt:agent"}
 {"issue_id":"bd-beads-polecat-onyx","label":"gt:agent"}
 {"issue_id":"bd-beads-polecat-opal","label":"gt:agent"}
 {"issue_id":"bd-beads-polecat-quartz","label":"gt:agent"}
@@ -128,6 +129,7 @@
 {"issue_id":"bd-v6v8","label":"dolt-migration-review"}
 {"issue_id":"bd-w59l","label":"dolt-migration-review"}
 {"issue_id":"bd-wif2","label":"dolt-migration-review"}
+{"issue_id":"bd-wisp-ybn9xj","label":"gt:merge-request"}
 {"issue_id":"bd-wn3n","label":"dolt-migration-review"}
 {"issue_id":"bd-wvxf","label":"dolt-migration-review"}
 {"issue_id":"bd-x1e","label":"plugin:rebuild-gt"}
