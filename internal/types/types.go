@@ -888,6 +888,14 @@ type MoleculeProgressStats struct {
 	LastClosed    *time.Time `json:"last_closed,omitempty"`
 }
 
+// MoleculeLastActivity holds the most recent activity timestamp for a molecule.
+type MoleculeLastActivity struct {
+	MoleculeID   string    `json:"molecule_id"`
+	LastActivity time.Time `json:"last_activity"`
+	Source       string    `json:"source"` // "step_closed", "step_updated", "molecule_updated"
+	SourceStepID string    `json:"source_step_id,omitempty"`
+}
+
 // Statistics provides aggregate metrics
 type Statistics struct {
 	TotalIssues             int     `json:"total_issues"`
