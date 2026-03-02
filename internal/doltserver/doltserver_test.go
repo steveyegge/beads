@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 )
 
@@ -213,6 +214,33 @@ func TestDefaultConfig(t *testing.T) {
 		cfg := DefaultConfig(dir)
 		if cfg.Port != GasTownPort {
 			t.Errorf("expected GasTownPort %d under GT_ROOT, got %d", GasTownPort, cfg.Port)
+		}
+	})
+
+	t.Run("config_yaml_port", func(t *testing.T) {
+		// When config.yaml sets dolt.port, DefaultConfig should use it
+		// (provided no env var or metadata.json port is set).
+		t.Setenv("GT_ROOT", "")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+
+		// Create a temp dir with config.yaml containing dolt.port
+		configDir := t.TempDir()
+		configYaml := filepath.Join(configDir, "config.yaml")
+		if err := os.WriteFile(configYaml, []byte("dolt.port: 3308\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		// Point BEADS_DIR at the config dir so config.Initialize() picks it up
+		t.Setenv("BEADS_DIR", configDir)
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("config.Initialize: %v", err)
+		}
+		t.Cleanup(config.ResetForTesting)
+
+		freshDir := t.TempDir()
+		cfg := DefaultConfig(freshDir)
+		if cfg.Port != 3308 {
+			t.Errorf("expected port 3308 from config.yaml, got %d", cfg.Port)
 		}
 	})
 

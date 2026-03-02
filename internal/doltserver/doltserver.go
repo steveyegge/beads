@@ -33,6 +33,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/lockfile"
 )
@@ -247,7 +248,7 @@ func writePortFile(beadsDir string, port int) error {
 }
 
 // DefaultConfig returns config with sensible defaults.
-// Priority: env var > metadata.json > Gas Town fixed port > DefaultDoltServerPort (3307).
+// Priority: env var > metadata.json > config.yaml / global config > Gas Town fixed port > DefaultDoltServerPort (3307).
 // Start() may further fall back to DerivePort if 3307 is occupied by another project.
 func DefaultConfig(beadsDir string) *Config {
 	cfg := &Config{
@@ -263,10 +264,19 @@ func DefaultConfig(beadsDir string) *Config {
 		}
 	}
 
-	// Check if user configured an explicit port
+	// Check if user configured an explicit port in metadata.json
 	if metaCfg, err := configfile.Load(beadsDir); err == nil && metaCfg != nil {
 		if metaCfg.DoltServerPort > 0 {
 			cfg.Port = metaCfg.DoltServerPort
+		}
+	}
+
+	// Check config.yaml / global config (~/.config/bd/config.yaml) (GH#2073)
+	if cfg.Port == 0 {
+		if p := config.GetYamlConfig("dolt.port"); p != "" {
+			if port, err := strconv.Atoi(p); err == nil && port > 0 {
+				cfg.Port = port
+			}
 		}
 	}
 
