@@ -773,14 +773,22 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	// Route wisp IDs to wisp deletion; process regular IDs in batch below.
 	ephIDs, regularIDs := s.partitionByWispStatus(ctx, ids)
 	wispDeleteCount := 0
-	for _, eid := range ephIDs {
-		if s.isActiveWisp(ctx, eid) {
-			if !dryRun {
-				if err := s.deleteWisp(ctx, eid); err != nil {
-					return nil, fmt.Errorf("failed to delete wisp %s: %w", eid, err)
-				}
+	if len(ephIDs) > 0 {
+		// Filter to only active wisps
+		var activeWispIDs []string
+		for _, eid := range ephIDs {
+			if s.isActiveWisp(ctx, eid) {
+				activeWispIDs = append(activeWispIDs, eid)
 			}
-			wispDeleteCount++
+		}
+		wispDeleteCount = len(activeWispIDs)
+		if !dryRun && len(activeWispIDs) > 0 {
+			// Use batch deletion to avoid per-delete transaction overhead (bd-2ehd).
+			deleted, err := s.deleteWispBatch(ctx, activeWispIDs)
+			if err != nil {
+				return nil, fmt.Errorf("failed to batch delete wisps: %w", err)
+			}
+			wispDeleteCount = deleted
 		}
 	}
 	ids = regularIDs
