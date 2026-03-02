@@ -100,7 +100,12 @@ Examples:
 			FatalErrorRespectJSON("creating temp file: %v", err)
 		}
 		tmpPath := tmpFile.Name()
-		defer func() { _ = os.Remove(tmpPath) }()
+		editSaved := false
+		defer func() {
+			if editSaved {
+				_ = os.Remove(tmpPath)
+			}
+		}()
 
 		// Write current value to temp file
 		if _, err := tmpFile.WriteString(currentValue); err != nil {
@@ -132,6 +137,7 @@ Examples:
 
 		// Check if the value changed
 		if newValue == currentValue {
+			editSaved = true // no changes — safe to remove temp file
 			fmt.Println("No changes made")
 			return
 		}
@@ -141,14 +147,28 @@ Examples:
 			FatalErrorRespectJSON("title cannot be empty")
 		}
 
-		// Update the issue
+		// Update the issue — retry once if the DB connection went stale
+		// during a long editor session (GH-2267).
 		updates := map[string]interface{}{
 			fieldToEdit: newValue,
 		}
 
-		if err := store.UpdateIssue(ctx, id, updates, actor); err != nil {
+		err = store.UpdateIssue(ctx, id, updates, actor)
+		if err != nil {
+			// Connection may have gone stale while the editor was open.
+			// Ping to force the pool to discard dead connections, then retry.
+			if pingErr := store.DB().PingContext(ctx); pingErr != nil {
+				// Ping failed — try to force a fresh connection via sql.DB pool reset.
+				store.DB().SetConnMaxIdleTime(0)
+				_ = store.DB().PingContext(ctx)
+			}
+			err = store.UpdateIssue(ctx, id, updates, actor)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Your edits are preserved in: %s\n", tmpPath)
 			FatalErrorRespectJSON("updating issue: %v", err)
 		}
+		editSaved = true
 
 		displayTitle := issue.Title
 		if fieldToEdit == "title" {
