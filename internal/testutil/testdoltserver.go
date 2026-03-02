@@ -49,6 +49,12 @@ func isDockerAvailable() bool {
 	return dockerAvail
 }
 
+// isDoltImageCached returns true if the Dolt Docker image is already
+// available locally, avoiding unnecessary network calls to Docker Hub.
+func isDoltImageCached() bool {
+	return exec.Command("docker", "image", "inspect", DoltDockerImage).Run() == nil
+}
+
 // StartTestDoltServer starts a Dolt SQL server in a Docker container on a
 // dynamic port. Uses testcontainers-go for clean lifecycle management.
 //
@@ -80,6 +86,11 @@ func StartTestDoltServer(tmpDirPrefix string) (*TestDoltServer, func()) {
 	doltServerOnce.Do(func() {
 		if !isDockerAvailable() {
 			fmt.Fprintf(os.Stderr, "WARN: Docker not available, skipping test server\n")
+			return
+		}
+		if !isDoltImageCached() {
+			fmt.Fprintf(os.Stderr, "WARN: Docker image %s not cached locally, skipping test server\n", DoltDockerImage)
+			fmt.Fprintf(os.Stderr, "  Run 'docker pull %s' to enable Dolt integration tests\n", DoltDockerImage)
 			return
 		}
 
@@ -180,6 +191,9 @@ func StartIsolatedDoltContainer(t *testing.T) string {
 	if !isDockerAvailable() {
 		t.Skip("Docker not available, skipping test")
 	}
+	if !isDoltImageCached() {
+		t.Skipf("Docker image %s not cached locally, skipping test (run 'docker pull %s')", DoltDockerImage, DoltDockerImage)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), serverStartTimeout)
 	defer cancel()
@@ -224,6 +238,9 @@ func EnsureDoltContainerForTestMain() error {
 	if !isDockerAvailable() {
 		return fmt.Errorf("Docker not available")
 	}
+	if !isDoltImageCached() {
+		return fmt.Errorf("Docker image %s not cached locally (run 'docker pull %s')", DoltDockerImage, DoltDockerImage)
+	}
 
 	ensureSharedContainer()
 	return doltServerErr
@@ -235,6 +252,9 @@ func RequireDoltContainer(t *testing.T) {
 	t.Helper()
 	if !isDockerAvailable() {
 		t.Skip("Docker not available, skipping test")
+	}
+	if !isDoltImageCached() {
+		t.Skipf("Docker image %s not cached locally, skipping test (run 'docker pull %s')", DoltDockerImage, DoltDockerImage)
 	}
 
 	ensureSharedContainer()
