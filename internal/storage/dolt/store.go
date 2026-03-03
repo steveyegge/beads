@@ -603,7 +603,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		} else if doltserver.IsDaemonManaged() && os.Getenv("BEADS_TEST_MODE") != "1" {
 			// Gas Town detected (GT_ROOT or filesystem heuristic) — delegate
 			// server start to gt, which manages the lifecycle properly.
-			// Skip in test mode: tests manage their own server via testutil.StartTestDoltServer.
+			// Skip in test mode: tests manage their own server via testutil.EnsureDoltContainerForTestMain.
 			gtBin, lookErr := exec.LookPath("gt")
 			if lookErr != nil {
 				return nil, fmt.Errorf("Dolt server unreachable at %s (Gas Town detected but 'gt' not found in PATH): %w\n\n"+
