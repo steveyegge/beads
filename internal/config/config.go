@@ -559,6 +559,15 @@ func ConfigFileUsed() string {
 	return v.ConfigFileUsed()
 }
 
+// InConfigFile returns true if the key was found in the loaded config file.
+// Returns false if the value only came from a viper default.
+func InConfigFile(key string) bool {
+	if v == nil {
+		return false
+	}
+	return v.InConfig(key)
+}
+
 // GetStringSlice retrieves a string slice configuration value
 func GetStringSlice(key string) []string {
 	if v == nil {

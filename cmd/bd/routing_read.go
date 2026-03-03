@@ -14,18 +14,26 @@ import (
 
 // getRoutingConfigValue resolves routing config from YAML first, then DB config.
 // This keeps command behavior consistent when init stores routing values in the DB.
+// Only YAML values explicitly set in config.yaml override DB values — viper defaults
+// do not, so that DB config (set by bd init) takes effect.
 func getRoutingConfigValue(ctx context.Context, store *dolt.DoltStore, key string) string {
-	value := strings.TrimSpace(config.GetString(key))
-	if value != "" || store == nil {
-		return value
+	// Explicit YAML config takes highest priority
+	if config.InConfigFile(key) {
+		return strings.TrimSpace(config.GetString(key))
 	}
 
-	dbValue, err := store.GetConfig(ctx, key)
-	if err != nil {
-		debug.Logf("DEBUG: failed to read config %q from store: %v\n", key, err)
-		return ""
+	// DB config (set by bd init) takes next priority
+	if store != nil {
+		dbValue, err := store.GetConfig(ctx, key)
+		if err != nil {
+			debug.Logf("DEBUG: failed to read config %q from store: %v\n", key, err)
+		} else if strings.TrimSpace(dbValue) != "" {
+			return strings.TrimSpace(dbValue)
+		}
 	}
-	return strings.TrimSpace(dbValue)
+
+	// Fall back to viper default
+	return strings.TrimSpace(config.GetString(key))
 }
 
 // determineAutoRoutedRepoPath returns the repository path that should be used for
