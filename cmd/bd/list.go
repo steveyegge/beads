@@ -326,6 +326,10 @@ var listCmd = &cobra.Command{
 		// Pretty and watch flags (GH#654)
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
 		treeFormat, _ := cmd.Flags().GetBool("tree")
+		flatFormat, _ := cmd.Flags().GetBool("flat")
+		if flatFormat {
+			treeFormat = false
+		}
 		prettyFormat = prettyFormat || treeFormat // --tree is alias for --pretty
 		watchMode, _ := cmd.Flags().GetBool("watch")
 
@@ -957,7 +961,8 @@ func init() {
 
 	// Pretty and watch flags (GH#654)
 	listCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
-	listCmd.Flags().Bool("tree", false, "Alias for --pretty: hierarchical tree format")
+	listCmd.Flags().Bool("tree", true, "Hierarchical tree format (default: true; use --flat to disable)")
+	listCmd.Flags().Bool("flat", false, "Disable tree format and use legacy flat list output")
 	listCmd.Flags().BoolP("watch", "w", false, "Watch for changes and auto-update display (implies --pretty)")
 
 	// Metadata filtering (GH#1406)
