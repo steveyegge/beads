@@ -546,8 +546,7 @@ Examples:
 		ctx := rootCtx
 
 		// Resolve partial ID with routing support
-		var fullID string
-		fullID, _, treeCleanup, err := resolveIDWithRouting(ctx, store, args[0])
+		fullID, treeStore, treeCleanup, err := resolveIDWithRouting(ctx, store, args[0])
 		if err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
@@ -581,13 +580,13 @@ Examples:
 
 		if direction == "both" {
 			// Get dependencies (down) - what blocks this issue
-			downTree, err := store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, false)
+			downTree, err := treeStore.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, false)
 			if err != nil {
 				FatalErrorRespectJSON("%v", err)
 			}
 
 			// Get dependents (up) - what this issue blocks
-			upTree, err := store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, true)
+			upTree, err := treeStore.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, true)
 			if err != nil {
 				FatalErrorRespectJSON("%v", err)
 			}
@@ -597,7 +596,7 @@ Examples:
 			// then root, then dependencies
 			tree = mergeBidirectionalTrees(downTree, upTree, fullID)
 		} else {
-			tree, err = store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, direction == "up")
+			tree, err = treeStore.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, direction == "up")
 			if err != nil {
 				FatalErrorRespectJSON("%v", err)
 			}

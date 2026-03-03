@@ -10,15 +10,22 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// extractIDPrefix returns the prefix portion of a bead ID (everything before
-// the last hyphen-separated segment). For example, "hq-cv-vll" returns "hq",
-// "sh-jz0bqq" returns "sh". Returns empty string for IDs without a hyphen.
-func extractIDPrefix(id string) string {
+// extractPrefix returns the prefix portion of a bead ID (everything before
+// the first hyphen, including the hyphen). For example, "sh-abc" returns "sh-".
+// Returns empty string for IDs without a hyphen.
+// Note: mirrors routing.ExtractPrefix but avoids an import cycle (dolt ↔ routing).
+func extractPrefix(id string) string {
 	idx := strings.Index(id, "-")
-	if idx <= 0 {
+	if idx < 0 {
 		return ""
 	}
-	return id[:idx]
+	return id[:idx+1]
+}
+
+// isCrossPrefixDep returns true if the two bead IDs have different prefixes,
+// meaning the target lives in a different rig's database.
+func isCrossPrefixDep(sourceID, targetID string) bool {
+	return extractPrefix(sourceID) != extractPrefix(targetID)
 }
 
 // AddDependency adds a dependency between two issues.
@@ -34,8 +41,8 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 	// to avoid connection pool deadlock with embedded dolt — bd-w2w)
 	// Skip wisp check for cross-prefix references (target lives in another rig's database)
 	targetIsWisp := false
-	isCrossPrefixRef := extractIDPrefix(dep.IssueID) != extractIDPrefix(dep.DependsOnID)
-	if !strings.HasPrefix(dep.DependsOnID, "external:") && !isCrossPrefixRef {
+	isCrossPrefix := isCrossPrefixDep(dep.IssueID, dep.DependsOnID)
+	if !strings.HasPrefix(dep.DependsOnID, "external:") && !isCrossPrefix {
 		targetIsWisp = s.isActiveWisp(ctx, dep.DependsOnID)
 	}
 
@@ -62,7 +69,6 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 	// Validate that the target issue exists (skip for external cross-rig references
 	// and cross-prefix references where the target lives in a different rig's database)
 	// Check wisps table if target is an active wisp (bd-w2w)
-	isCrossPrefix := extractIDPrefix(dep.IssueID) != extractIDPrefix(dep.DependsOnID)
 	if !strings.HasPrefix(dep.DependsOnID, "external:") && !isCrossPrefix {
 		var targetExists int
 		targetTable := "issues"

@@ -1,6 +1,7 @@
 package dolt
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -786,6 +787,117 @@ func TestAddDependency_MultipleExternalReferences(t *testing.T) {
 
 	if len(records) != len(externalRefs) {
 		t.Errorf("expected %d dependencies, got %d", len(externalRefs), len(records))
+	}
+}
+
+// =============================================================================
+// Cross-Prefix Dependency Tests
+// =============================================================================
+
+func TestIsCrossPrefixDep(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		target   string
+		expected bool
+	}{
+		{"same prefix", "sh-abc", "sh-def", false},
+		{"different prefix", "sh-abc", "hq-def", true},
+		{"hq to bd", "hq-abc", "bd-def", true},
+		{"same prefix with subtype", "hq-cv-abc", "hq-xyz", false},
+		{"no prefix source", "abc", "sh-def", true},
+		{"no prefix either", "abc", "def", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isCrossPrefixDep(tt.source, tt.target)
+			if got != tt.expected {
+				t.Errorf("isCrossPrefixDep(%q, %q) = %v, want %v", tt.source, tt.target, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAddDependency_CrossPrefix_SkipsTargetExistence(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create a source issue with prefix "test-"
+	source := &types.Issue{
+		ID:        "test-source",
+		Title:     "Source Issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, source, "tester"); err != nil {
+		t.Fatalf("failed to create source issue: %v", err)
+	}
+
+	// Add a cross-prefix dependency — target "other-xyz" doesn't exist in this DB,
+	// but should succeed because cross-prefix deps skip target existence check.
+	dep := &types.Dependency{
+		IssueID:     "test-source",
+		DependsOnID: "other-xyz",
+		Type:        types.DepBlocks,
+	}
+	err := store.AddDependency(ctx, dep, "tester")
+	if err != nil {
+		t.Fatalf("AddDependency should succeed for cross-prefix dep, got: %v", err)
+	}
+
+	// Verify the dependency was stored
+	records, err := store.GetDependencyRecords(ctx, "test-source")
+	if err != nil {
+		t.Fatalf("GetDependencyRecords failed: %v", err)
+	}
+	found := false
+	for _, r := range records {
+		if r.DependsOnID == "other-xyz" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("cross-prefix dependency was not stored")
+	}
+}
+
+func TestAddDependency_SamePrefix_RequiresTargetExistence(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create a source issue
+	source := &types.Issue{
+		ID:        "test-source2",
+		Title:     "Source Issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, source, "tester"); err != nil {
+		t.Fatalf("failed to create source issue: %v", err)
+	}
+
+	// Same-prefix dep with non-existent target should fail
+	dep := &types.Dependency{
+		IssueID:     "test-source2",
+		DependsOnID: "test-nonexistent",
+		Type:        types.DepBlocks,
+	}
+	err := store.AddDependency(ctx, dep, "tester")
+	if err == nil {
+		t.Fatal("AddDependency should fail for same-prefix dep with non-existent target")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' error, got: %v", err)
 	}
 }
 
