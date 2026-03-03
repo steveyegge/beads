@@ -23,7 +23,11 @@ func isBackupAutoEnabled() bool {
 // isBackupGitPushEnabled returns whether git push should run after backup.
 // If user explicitly configured backup.git-push, use that.
 // Otherwise, enable when backup is auto-enabled.
+// Stealth mode (no-git-ops) always disables git push regardless of config.
 func isBackupGitPushEnabled() bool {
+	if config.GetBool("no-git-ops") {
+		return false
+	}
 	if config.GetValueSource("backup.git-push") != config.SourceDefault {
 		return config.GetBool("backup.git-push")
 	}
