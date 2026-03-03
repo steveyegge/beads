@@ -734,11 +734,15 @@ func buildServerDSN(cfg *Config, database string) string {
 }
 
 // execWithLongTimeout opens a one-shot database connection with readTimeout=5m
-// and executes the given query. Push/pull operations can exceed the default 10s
+// and executes the given query. Push/pull operations can exceed the default
 // readTimeout when the server performs network I/O to git remotes.
 func (s *DoltStore) execWithLongTimeout(ctx context.Context, query string, args ...any) error {
-	dsn := strings.Replace(s.connStr, "readTimeout=10s", "readTimeout=5m", 1)
-	db, err := sql.Open("mysql", dsn)
+	cfg, err := mysql.ParseDSN(s.connStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse DSN for long-timeout connection: %w", err)
+	}
+	cfg.ReadTimeout = 5 * time.Minute
+	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
 		return fmt.Errorf("failed to open long-timeout connection: %w", err)
 	}
@@ -1263,11 +1267,12 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 	return msg
 }
 
-// isGitProtocolRemote checks whether the configured remote uses the git wire protocol.
-// Git-protocol remotes (git+ssh://, ssh://, git@host:path, git+https://, git://)
-// require CLI-based push/pull because CALL DOLT_PUSH through the SQL server times
-// out — the MySQL connection's readTimeout (10s) is too short for network I/O to
-// external git hosts (HTTPS handshake + credential helper + git ls-remote).
+// isGitProtocolRemote checks whether the configured remote uses the git wire protocol
+// and is available for CLI-based push/pull. Git-protocol remotes (git+ssh://, ssh://,
+// git@host:path, git+https://, git://) are routed to CLI operations because the SQL
+// server may lack the git credentials, SSH keys, or credential helpers needed for
+// network I/O to external git hosts. Returns false when the remote exists only on
+// an externally-managed server's filesystem and not in the local dbPath.
 func (s *DoltStore) isGitProtocolRemote(ctx context.Context) bool {
 	// Check SQL remotes first
 	remotes, err := s.ListRemotes(ctx)
