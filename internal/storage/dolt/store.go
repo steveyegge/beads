@@ -79,17 +79,17 @@ type DoltStore struct {
 	credentialKey []byte       // Random encryption key for federation credentials
 
 	// Per-invocation caches (lifetime = DoltStore lifetime)
-	customStatusCache  []string        // cached result of GetCustomStatuses
-	customStatusCached bool            // true once customStatusCache has been populated
-	customTypeCache    []string        // cached result of GetCustomTypes
-	customTypeCached   bool            // true once customTypeCache has been populated
-	infraTypeCache     map[string]bool // cached result of GetInfraTypes
-	infraTypeCached    bool            // true once infraTypeCache has been populated
-	blockedIDsCache    []string        // cached result of computeBlockedIDs
-	blockedIDsCacheMap map[string]bool
-	blockedIDsCached   bool // true once blockedIDsCache has been populated
+	customStatusCache            []string        // cached result of GetCustomStatuses
+	customStatusCached           bool            // true once customStatusCache has been populated
+	customTypeCache              []string        // cached result of GetCustomTypes
+	customTypeCached             bool            // true once customTypeCache has been populated
+	infraTypeCache               map[string]bool // cached result of GetInfraTypes
+	infraTypeCached              bool            // true once infraTypeCache has been populated
+	blockedIDsCache              []string        // cached result of computeBlockedIDs
+	blockedIDsCacheMap           map[string]bool
+	blockedIDsCached             bool // true once blockedIDsCache has been populated
 	blockedIDsCacheIncludesWisps bool // true if cache was computed with wisps
-	cacheMu            sync.Mutex
+	cacheMu                      sync.Mutex
 
 	// OTel span attribute cache (avoids per-call allocation)
 	spanAttrsOnce  sync.Once
@@ -877,7 +877,9 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 	var version int
 	err := db.QueryRowContext(ctx, "SELECT `value` FROM config WHERE `key` = 'schema_version'").Scan(&version)
 	if err == nil && version >= currentSchemaVersion {
-		return nil
+		// Wisps tables are dolt_ignore'd (not persisted in commit history),
+		// so they must be recreated on every server session. (GH#2271)
+		return createIgnoredTables(db)
 	}
 
 	// Execute schema creation - split into individual statements

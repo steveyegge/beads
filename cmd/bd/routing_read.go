@@ -12,12 +12,20 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
-// getRoutingConfigValue resolves routing config from YAML first, then DB config.
-// This keeps command behavior consistent when init stores routing values in the DB.
+// getRoutingConfigValue resolves routing config from YAML/env first, then DB config.
+// Only uses the YAML value if it was explicitly set (not a Viper default), so that
+// DB-stored values aren't shadowed by defaults like "~/.beads-planning".
 func getRoutingConfigValue(ctx context.Context, store *dolt.DoltStore, key string) string {
-	value := strings.TrimSpace(config.GetString(key))
-	if value != "" || store == nil {
-		return value
+	// Only trust YAML/env values that were explicitly set, not Viper defaults.
+	if src := config.GetValueSource(key); src != config.SourceDefault {
+		value := strings.TrimSpace(config.GetString(key))
+		if value != "" {
+			return value
+		}
+	}
+
+	if store == nil {
+		return ""
 	}
 
 	dbValue, err := store.GetConfig(ctx, key)
