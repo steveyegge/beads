@@ -41,6 +41,25 @@ func isChildOf(childID, parentID string) bool {
 	return strings.HasPrefix(childID, parentID+".")
 }
 
+// checkCrossTypeBlocking validates that blocking deps don't cross the epic/task
+// boundary. Tasks can only block tasks; epics can only block epics.
+func checkCrossTypeBlocking(ctx context.Context, s *dolt.DoltStore, fromID, toID string) {
+	sourceIssue, err := s.GetIssue(ctx, fromID)
+	if err != nil {
+		return // Let AddDependency handle existence errors
+	}
+	targetIssue, err := s.GetIssue(ctx, toID)
+	if err != nil {
+		return // Let AddDependency handle existence errors
+	}
+
+	sourceIsTask := sourceIssue.IssueType != types.TypeEpic
+	targetIsTask := targetIssue.IssueType != types.TypeEpic
+	if sourceIsTask != targetIsTask {
+		FatalErrorRespectJSON("tasks can only block other tasks. epics can only block other epics")
+	}
+}
+
 // warnIfCyclesExist checks for dependency cycles and prints a warning if found.
 func warnIfCyclesExist(s *dolt.DoltStore) {
 	if s == nil {
@@ -127,6 +146,9 @@ Examples:
 			if isChildOf(fromID, toID) {
 				FatalErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
 			}
+
+			// Cross-type blocking validation: tasks can only block tasks, epics only epics
+			checkCrossTypeBlocking(ctx, store, fromID, toID)
 
 			// Direct mode
 			dep := &types.Dependency{
@@ -265,6 +287,11 @@ Examples:
 		// This creates a deadlock: child can't start (parent open), parent can't close (children not done)
 		if isChildOf(fromID, toID) {
 			FatalErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
+		}
+
+		// Cross-type blocking validation: tasks can only block tasks, epics only epics
+		if depType == "blocks" && !isExternalRef {
+			checkCrossTypeBlocking(ctx, store, fromID, toID)
 		}
 
 		// Validate dependency type

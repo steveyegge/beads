@@ -63,6 +63,37 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 		}
 	}
 
+	// Cross-type blocking validation: tasks can only block tasks, epics can only
+	// block epics. Prevents nonsensical task↔epic blocking that causes deadlocks
+	// in ready work computation (GH#1495).
+	if dep.Type == types.DepBlocks && !strings.HasPrefix(dep.DependsOnID, "external:") {
+		var sourceType, targetType string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT issue_type FROM issues WHERE id = ?`, dep.IssueID,
+		).Scan(&sourceType); err != nil {
+			return fmt.Errorf("failed to fetch issue type for %s: %w", dep.IssueID, err)
+		}
+		targetTable := "issues"
+		if targetIsWisp {
+			targetTable = "wisps"
+		}
+		//nolint:gosec // G201: targetTable is hardcoded to "issues" or "wisps"
+		if err := tx.QueryRowContext(ctx,
+			fmt.Sprintf(`SELECT issue_type FROM %s WHERE id = ?`, targetTable), dep.DependsOnID,
+		).Scan(&targetType); err != nil {
+			return fmt.Errorf("failed to fetch issue type for %s: %w", dep.DependsOnID, err)
+		}
+
+		sourceIsTask := sourceType != string(types.TypeEpic)
+		targetIsTask := targetType != string(types.TypeEpic)
+		if sourceIsTask != targetIsTask {
+			if sourceIsTask {
+				return fmt.Errorf("tasks can only block other tasks. epics can only block other epics")
+			}
+			return fmt.Errorf("epics can only block other epics. tasks can only block other tasks")
+		}
+	}
+
 	// Cycle detection for blocking dependency types: check if adding this edge
 	// would create a cycle by seeing if depends_on_id can already reach issue_id.
 	// UNIONs both dependencies and wisp_dependencies to detect cross-table cycles
