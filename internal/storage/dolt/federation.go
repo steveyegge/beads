@@ -267,7 +267,10 @@ func (s *DoltStore) isPeerGitProtocolRemote(ctx context.Context, peer string) bo
 	if err == nil {
 		for _, r := range remotes {
 			if r.Name == peer {
-				return doltutil.IsGitProtocolURL(r.URL)
+				if !doltutil.IsGitProtocolURL(r.URL) {
+					return false
+				}
+				return s.dbPath != "" && doltutil.FindCLIRemote(s.dbPath, peer) != ""
 			}
 		}
 	}

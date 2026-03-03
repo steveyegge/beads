@@ -1259,7 +1259,13 @@ func (s *DoltStore) isGitProtocolRemote(ctx context.Context) bool {
 	if err == nil {
 		for _, r := range remotes {
 			if r.Name == s.remote {
-				return doltutil.IsGitProtocolURL(r.URL)
+				if !doltutil.IsGitProtocolURL(r.URL) {
+					return false
+				}
+				// Verify remote exists in CLI directory before routing to CLI push/pull.
+				// When the dolt sql-server is externally managed, remotes may exist only
+				// on the server's filesystem, not in the local dbPath.
+				return s.dbPath != "" && doltutil.FindCLIRemote(s.dbPath, s.remote) != ""
 			}
 		}
 	}
