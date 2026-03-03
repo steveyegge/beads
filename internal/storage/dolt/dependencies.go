@@ -10,22 +10,10 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// extractPrefix returns the prefix portion of a bead ID (everything before
-// the first hyphen, including the hyphen). For example, "sh-abc" returns "sh-".
-// Returns empty string for IDs without a hyphen.
-// Note: mirrors routing.ExtractPrefix but avoids an import cycle (dolt ↔ routing).
-func extractPrefix(id string) string {
-	idx := strings.Index(id, "-")
-	if idx < 0 {
-		return ""
-	}
-	return id[:idx+1]
-}
-
 // isCrossPrefixDep returns true if the two bead IDs have different prefixes,
 // meaning the target lives in a different rig's database.
 func isCrossPrefixDep(sourceID, targetID string) bool {
-	return extractPrefix(sourceID) != extractPrefix(targetID)
+	return types.ExtractPrefix(sourceID) != types.ExtractPrefix(targetID)
 }
 
 // AddDependency adds a dependency between two issues.
