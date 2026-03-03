@@ -96,6 +96,12 @@ var BuiltinRecipes = map[string]Recipe{
 		Type:        TypeSection,
 		Description: "Mux AGENTS.md section",
 	},
+	"opencode": {
+		Name:        "OpenCode",
+		Path:        "AGENTS.md",
+		Type:        TypeSection,
+		Description: "OpenCode AGENTS.md section",
+	},
 	"aider": {
 		Name:        "Aider",
 		Type:        TypeMultiFile,
