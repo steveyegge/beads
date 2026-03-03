@@ -10,14 +10,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 func TestExportToFile(t *testing.T) {
 	if testDoltServerPort == 0 {
 		t.Skip("Dolt test server not available")
 	}
-	if testServer != nil && testServer.IsCrashed() {
-		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
 	}
 
 	ensureTestMode(t)
@@ -124,8 +126,8 @@ func TestExportToStdout(t *testing.T) {
 	if testDoltServerPort == 0 {
 		t.Skip("Dolt test server not available")
 	}
-	if testServer != nil && testServer.IsCrashed() {
-		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
 	}
 
 	ensureTestMode(t)
@@ -211,8 +213,8 @@ func TestExportScrub(t *testing.T) {
 	if testDoltServerPort == 0 {
 		t.Skip("Dolt test server not available")
 	}
-	if testServer != nil && testServer.IsCrashed() {
-		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
 	}
 
 	ensureTestMode(t)
@@ -295,8 +297,8 @@ func TestExportImportRoundTrip(t *testing.T) {
 	if testDoltServerPort == 0 {
 		t.Skip("Dolt test server not available")
 	}
-	if testServer != nil && testServer.IsCrashed() {
-		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
 	}
 
 	ensureTestMode(t)

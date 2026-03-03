@@ -13,16 +13,16 @@ import (
 // TestMain starts an isolated Dolt server so fix tests don't hit the
 // production server on port 3307.
 func TestMain(m *testing.M) {
-	srv, cleanup := testutil.StartTestDoltServer("fix-test-dolt-*")
 	os.Setenv("BEADS_TEST_MODE", "1")
-	if srv != nil {
-		os.Setenv("BEADS_DOLT_PORT", fmt.Sprintf("%d", srv.Port))
+	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v, skipping Dolt tests\n", err)
+	} else {
+		defer testutil.TerminateDoltContainer()
 	}
 
 	code := m.Run()
 
 	os.Unsetenv("BEADS_DOLT_PORT")
 	os.Unsetenv("BEADS_TEST_MODE")
-	cleanup()
 	os.Exit(code)
 }

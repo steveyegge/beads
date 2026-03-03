@@ -16,56 +16,51 @@ func init() {
 	beforeTestsHook = startTestDoltServer
 }
 
-// testServer holds the shared test Dolt server instance for crash detection.
-var testServer *testutil.TestDoltServer
-
 // testSharedDB is the name of the shared database for branch-per-test isolation.
 var testSharedDB string
 
 // testSharedConn is a raw *sql.DB for branch operations in the shared database.
 var testSharedConn *sql.DB
 
-// startTestDoltServer starts a dedicated Dolt SQL server in a temp directory
+// startTestDoltServer starts a dedicated Dolt SQL server in a container
 // on a dynamic port using the shared testutil helper. This prevents tests
 // from creating testdb_* databases on the production Dolt server.
-// Returns a cleanup function that stops the server and removes the temp dir.
+// Returns a cleanup function that stops the server and removes the container.
 func startTestDoltServer() func() {
-	srv, cleanup := testutil.StartTestDoltServer("beads-test-dolt-*")
-	if srv != nil {
-		testServer = srv
-		testDoltServerPort = srv.Port
-		// Set BEADS_DOLT_PORT so that code paths using applyConfigDefaults
-		// (e.g., bd init) connect to the test server instead of port 1.
-		os.Setenv("BEADS_DOLT_PORT", fmt.Sprintf("%d", srv.Port))
+	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v, skipping Dolt tests\n", err)
+		return func() {}
+	}
 
-		// Set up shared database for branch-per-test isolation (bd-xmf).
-		// Instead of CREATE/DROP DATABASE per test, tests branch from this
-		// shared DB, eliminating ~1-2s of overhead per test.
-		testSharedDB = "cmdbd_pkg_shared"
-		db, err := testutil.SetupSharedTestDB(srv.Port, testSharedDB)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: shared DB setup failed: %v (falling back to per-test DBs)\n", err)
+	testDoltServerPort = testutil.DoltContainerPortInt()
+
+	// Set up shared database for branch-per-test isolation (bd-xmf).
+	// Instead of CREATE/DROP DATABASE per test, tests branch from this
+	// shared DB, eliminating ~1-2s of overhead per test.
+	testSharedDB = "cmdbd_pkg_shared"
+	db, err := testutil.SetupSharedTestDB(testDoltServerPort, testSharedDB)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: shared DB setup failed: %v (falling back to per-test DBs)\n", err)
+		testSharedDB = ""
+	} else {
+		testSharedConn = db
+		if err := initCmdBDSharedSchema(testDoltServerPort); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: shared schema init failed: %v (falling back to per-test DBs)\n", err)
 			testSharedDB = ""
-		} else {
-			testSharedConn = db
-			if err := initCmdBDSharedSchema(srv.Port); err != nil {
-				fmt.Fprintf(os.Stderr, "WARNING: shared schema init failed: %v (falling back to per-test DBs)\n", err)
-				testSharedDB = ""
-				db.Close()
-				testSharedConn = nil
-			}
+			db.Close()
+			testSharedConn = nil
 		}
 	}
+
 	return func() {
 		if testSharedConn != nil {
 			testSharedConn.Close()
 			testSharedConn = nil
 		}
 		testSharedDB = ""
-		testServer = nil
 		testDoltServerPort = 0
 		os.Unsetenv("BEADS_DOLT_PORT")
-		cleanup()
+		testutil.TerminateDoltContainer()
 	}
 }
 

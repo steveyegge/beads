@@ -24,19 +24,18 @@ func TestMain(m *testing.M) {
 }
 
 func testMainInner(m *testing.M) int {
-	srv, cleanup := testutil.StartTestDoltServer("migrations-pkg-test-*")
-	defer cleanup()
-
 	os.Setenv("BEADS_TEST_MODE", "1")
-	if srv != nil {
-		testServerPort = srv.Port
-		os.Setenv("BEADS_DOLT_PORT", fmt.Sprintf("%d", srv.Port))
+	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v, skipping Dolt tests\n", err)
+	} else {
+		defer testutil.TerminateDoltContainer()
+		testServerPort = testutil.DoltContainerPortInt()
 
 		// Set up shared database for branch-per-test isolation.
 		// The base schema (issues table) is committed to main so that
 		// branches inherit it via COW snapshots.
 		testSharedDB = "migrations_pkg_shared"
-		db, err := testutil.SetupSharedTestDB(srv.Port, testSharedDB)
+		db, err := testutil.SetupSharedTestDB(testServerPort, testSharedDB)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FATAL: shared DB setup failed: %v\n", err)
 			return 1
@@ -46,7 +45,7 @@ func testMainInner(m *testing.M) int {
 
 		// Create minimal issues table and commit to main.
 		// Migration tests start from this base schema.
-		if err := initMigrationSharedSchema(srv.Port); err != nil {
+		if err := initMigrationSharedSchema(testServerPort); err != nil {
 			fmt.Fprintf(os.Stderr, "FATAL: shared schema init failed: %v\n", err)
 			return 1
 		}

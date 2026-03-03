@@ -44,9 +44,6 @@ var (
 	testBDErr  error
 )
 
-// testServer holds the shared test Dolt server instance for crash detection.
-var testServer *testutil.TestDoltServer
-
 // testSharedDB is the name of the shared database for branch-per-test isolation.
 var testSharedDB string
 
@@ -58,17 +55,16 @@ func TestMain(m *testing.M) {
 }
 
 func testMainInner(m *testing.M) int {
-	srv, cleanup := testutil.StartTestDoltServer("doctor-test-dolt-*")
-	defer cleanup()
-
 	os.Setenv("BEADS_TEST_MODE", "1")
-	if srv != nil {
-		testServer = srv
-		os.Setenv("BEADS_DOLT_PORT", fmt.Sprintf("%d", srv.Port))
+	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v, skipping Dolt tests\n", err)
+	} else {
+		defer testutil.TerminateDoltContainer()
+		port := testutil.DoltContainerPortInt()
 
 		// Set up shared database for branch-per-test isolation
 		testSharedDB = "doctor_pkg_shared"
-		db, err := testutil.SetupSharedTestDB(srv.Port, testSharedDB)
+		db, err := testutil.SetupSharedTestDB(port, testSharedDB)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FATAL: shared DB setup failed: %v\n", err)
 			return 1
@@ -77,7 +73,7 @@ func testMainInner(m *testing.M) int {
 		defer db.Close()
 
 		// Create schema + config on the shared DB and commit to main
-		if err := initDoctorSharedSchema(srv.Port); err != nil {
+		if err := initDoctorSharedSchema(port); err != nil {
 			fmt.Fprintf(os.Stderr, "FATAL: shared schema init failed: %v\n", err)
 			return 1
 		}
