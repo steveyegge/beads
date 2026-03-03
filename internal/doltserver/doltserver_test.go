@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/configfile"
 )
 
 func TestDerivePort(t *testing.T) {
@@ -191,9 +190,10 @@ func TestDefaultConfig(t *testing.T) {
 		if cfg.Host != "127.0.0.1" {
 			t.Errorf("expected host 127.0.0.1, got %s", cfg.Host)
 		}
-		// Standalone mode defaults to configfile.DefaultDoltServerPort
-		if cfg.Port != configfile.DefaultDoltServerPort {
-			t.Errorf("expected default port %d, got %d", configfile.DefaultDoltServerPort, cfg.Port)
+		// Standalone mode defaults to DerivePort (hash-based, per-project)
+		expected := DerivePort(dir)
+		if cfg.Port != expected {
+			t.Errorf("expected DerivePort %d, got %d", expected, cfg.Port)
 		}
 		if cfg.BeadsDir != dir {
 			t.Errorf("expected BeadsDir=%s, got %s", dir, cfg.BeadsDir)
@@ -244,19 +244,37 @@ func TestDefaultConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("no_config_uses_default_port_not_hash", func(t *testing.T) {
-		// When no env var, no metadata port, and no GT_ROOT, DefaultConfig
-		// should use configfile.DefaultDoltServerPort as the fallback,
-		// NOT DerivePort().
+	t.Run("no_config_uses_derive_port", func(t *testing.T) {
+		// When no env var, no metadata port, no port file, and no GT_ROOT,
+		// DefaultConfig should use DerivePort for per-project isolation.
 		t.Setenv("GT_ROOT", "")
 		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
 		freshDir := t.TempDir()
 		cfg := DefaultConfig(freshDir)
 
-		if cfg.Port != configfile.DefaultDoltServerPort {
-			t.Errorf("expected DefaultConfig to use configfile.DefaultDoltServerPort (%d), got %d",
-				configfile.DefaultDoltServerPort, cfg.Port)
+		expected := DerivePort(freshDir)
+		if cfg.Port != expected {
+			t.Errorf("expected DefaultConfig to use DerivePort (%d), got %d",
+				expected, cfg.Port)
+		}
+	})
+
+	t.Run("port_file_takes_precedence_over_derive", func(t *testing.T) {
+		// When a port file exists (written by Start()), DefaultConfig should
+		// use it — this is how commands find a server that Start() placed on
+		// a fallback port.
+		t.Setenv("GT_ROOT", "")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+
+		freshDir := t.TempDir()
+		if err := writePortFile(freshDir, 14000); err != nil {
+			t.Fatal(err)
+		}
+		cfg := DefaultConfig(freshDir)
+
+		if cfg.Port != 14000 {
+			t.Errorf("expected port file port 14000, got %d", cfg.Port)
 		}
 	})
 }
@@ -783,17 +801,17 @@ func TestReclaimPortOccupiedByOtherProject(t *testing.T) {
 }
 
 func TestStartFallsBackToDerivePortOnCollision(t *testing.T) {
-	// When DefaultConfig returns DefaultDoltServerPort but another project's
-	// Dolt server already occupies it, Start should fall back to DerivePort
-	// rather than killing the other server or failing.
+	// When Start() finds another project's Dolt server on the DerivePort,
+	// it should fall back gracefully rather than killing the other server.
 	dir := t.TempDir()
 
 	t.Setenv("GT_ROOT", "")
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
 	cfg := DefaultConfig(dir)
-	if cfg.Port != configfile.DefaultDoltServerPort {
-		t.Fatalf("expected default port %d, got %d", configfile.DefaultDoltServerPort, cfg.Port)
+	expected := DerivePort(dir)
+	if cfg.Port != expected {
+		t.Fatalf("expected DerivePort %d, got %d", expected, cfg.Port)
 	}
 
 	// The fallback port should be a DerivePort value (13307-14306 range)
@@ -802,23 +820,21 @@ func TestStartFallsBackToDerivePortOnCollision(t *testing.T) {
 		t.Errorf("fallbackPort(%q) = %d, expected in DerivePort range [%d, %d)",
 			dir, fallback, portRangeBase, portRangeBase+portRangeSize)
 	}
-
-	// Fallback must differ from default
-	if fallback == configfile.DefaultDoltServerPort {
-		t.Errorf("fallbackPort should not equal DefaultDoltServerPort (%d)", configfile.DefaultDoltServerPort)
-	}
 }
 
-func TestDefaultConfigStillReturnsDefaultPort(t *testing.T) {
-	// Regression: DefaultConfig must return DefaultDoltServerPort for standalone mode.
-	// The DerivePort fallback is only used inside Start when port collision detected.
+func TestDefaultConfigReturnsDerivePortForStandalone(t *testing.T) {
+	// DefaultConfig must return DerivePort for standalone mode so that each
+	// project gets an isolated port. This prevents multi-project setups from
+	// all trying to connect to the same port (3307).
 	t.Setenv("GT_ROOT", "")
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
-	cfg := DefaultConfig(t.TempDir())
-	if cfg.Port != configfile.DefaultDoltServerPort {
-		t.Errorf("DefaultConfig should return %d for standalone, got %d",
-			configfile.DefaultDoltServerPort, cfg.Port)
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	expected := DerivePort(dir)
+	if cfg.Port != expected {
+		t.Errorf("DefaultConfig should return DerivePort (%d) for standalone, got %d",
+			expected, cfg.Port)
 	}
 }
 
