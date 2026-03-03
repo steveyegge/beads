@@ -255,10 +255,11 @@ func (s *DoltStore) Sync(ctx context.Context, peer string, strategy string) (*Sy
 	return result, nil
 }
 
-// isPeerGitProtocolRemote checks whether a specific peer remote URL uses the git wire protocol.
-// Git-protocol remotes (SSH, git+https://, git://) require CLI-based push/pull/fetch
-// because CALL DOLT_PUSH/PULL/FETCH through the SQL server times out — the MySQL
-// connection's readTimeout is too short for network I/O to external git hosts.
+// isPeerGitProtocolRemote checks whether a specific peer remote URL uses the git wire
+// protocol and is available for CLI-based push/pull/fetch. Git-protocol remotes (SSH,
+// git+https://, git://) are routed to CLI operations because the SQL server may lack
+// the git credentials or SSH keys needed for network I/O to external git hosts.
+// Returns false when the remote exists only on an externally-managed server's filesystem.
 func (s *DoltStore) isPeerGitProtocolRemote(ctx context.Context, peer string) bool {
 	remotes, err := s.ListRemotes(ctx)
 	if err == nil {
