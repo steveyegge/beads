@@ -10,6 +10,17 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// extractIDPrefix returns the prefix portion of a bead ID (everything before
+// the last hyphen-separated segment). For example, "hq-cv-vll" returns "hq",
+// "sh-jz0bqq" returns "sh". Returns empty string for IDs without a hyphen.
+func extractIDPrefix(id string) string {
+	idx := strings.Index(id, "-")
+	if idx <= 0 {
+		return ""
+	}
+	return id[:idx]
+}
+
 // AddDependency adds a dependency between two issues.
 // Uses an explicit transaction so writes persist when @@autocommit is OFF
 // (e.g. Dolt server started with --no-auto-commit).
@@ -21,8 +32,10 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 
 	// Pre-transaction: check if target is a wisp (must be done before opening tx
 	// to avoid connection pool deadlock with embedded dolt — bd-w2w)
+	// Skip wisp check for cross-prefix references (target lives in another rig's database)
 	targetIsWisp := false
-	if !strings.HasPrefix(dep.DependsOnID, "external:") {
+	isCrossPrefixRef := extractIDPrefix(dep.IssueID) != extractIDPrefix(dep.DependsOnID)
+	if !strings.HasPrefix(dep.DependsOnID, "external:") && !isCrossPrefixRef {
 		targetIsWisp = s.isActiveWisp(ctx, dep.DependsOnID)
 	}
 
@@ -46,9 +59,11 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 		return fmt.Errorf("issue %s not found", dep.IssueID)
 	}
 
-	// Validate that the target issue exists (skip for external cross-rig references)
+	// Validate that the target issue exists (skip for external cross-rig references
+	// and cross-prefix references where the target lives in a different rig's database)
 	// Check wisps table if target is an active wisp (bd-w2w)
-	if !strings.HasPrefix(dep.DependsOnID, "external:") {
+	isCrossPrefix := extractIDPrefix(dep.IssueID) != extractIDPrefix(dep.DependsOnID)
+	if !strings.HasPrefix(dep.DependsOnID, "external:") && !isCrossPrefix {
 		var targetExists int
 		targetTable := "issues"
 		if targetIsWisp {
