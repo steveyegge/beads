@@ -48,6 +48,30 @@ TEST_VERBOSE=1 ./scripts/test.sh
 TEST_RUN=TestCreate ./scripts/test.sh
 ```
 
+### Docker Environment Variables
+
+Tests that use Dolt containers require Docker Desktop and a locally cached
+image. These variables control Docker-related test behavior:
+
+```bash
+# Force-skip all Docker-based tests (useful offline or without Docker Desktop)
+BEADS_SKIP_DOCKER=1 go test ./cmd/bd/...
+
+# Reuse an existing Dolt test server instead of starting a new container
+BEADS_DOLT_PORT=3308 go test ./cmd/bd/...
+```
+
+Without `BEADS_SKIP_DOCKER`, Docker tests are skipped automatically when:
+
+- Docker daemon is not running
+- The required image (`dolthub/dolt-sql-server:1.43.0`) is not cached locally
+
+To cache the image for the first time:
+
+```bash
+docker pull dolthub/dolt-sql-server:1.43.0
+```
+
 ### Advanced Usage
 
 ```bash
