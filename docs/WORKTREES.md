@@ -126,12 +126,12 @@ Main Repository
 bd automatically detects when you're in a git worktree:
 
 **Default behavior (no sync-branch configured):**
-- Uses embedded mode for safety (no configuration needed)
+- Uses embedded mode for safety (single-writer, no daemon needed)
 - All commands work correctly without additional setup
 
 **With sync-branch configured:**
 - Commits go to dedicated sync branch (e.g., `beads-sync`)
-- Full server mode functionality available across all worktrees
+- Server mode available across all worktrees for concurrent access
 
 ## Usage Patterns
 

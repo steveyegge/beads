@@ -19,8 +19,8 @@ type Config struct {
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
 
 	// Dolt connection mode configuration (bd-dolt.2.2)
-	// Default is "embedded" (in-process). Server mode ("server") connects to an
-	// external dolt sql-server and should only be used for high-concurrency scenarios.
+	// "embedded" (default for standalone) runs Dolt in-process — no daemon needed.
+	// "server" connects to an external dolt sql-server (required for Gas Town / multi-writer).
 	DoltMode           string `json:"dolt_mode,omitempty"`            // "embedded" (default) or "server"
 	DoltServerHost     string `json:"dolt_server_host,omitempty"`     // Server host (default: 127.0.0.1)
 	DoltServerPort     int    `json:"dolt_server_port,omitempty"`     // Server port (default: 3307)

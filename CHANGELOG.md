@@ -7,9 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-03-02
+
 ### Added
 
-- **Persistent memory** — `bd remember`, `bd memories`, `bd recall`, `bd forget` for agent knowledge that survives sessions and account rotations. Backed by the k/v store. Memories auto-inject at `bd prime` time.
+- **Persistent agent memory** — `bd remember`, `bd memories`, `bd recall`, `bd forget` for knowledge that survives sessions and account rotations. Backed by the k/v store, auto-injected at `bd prime` time.
+- **`bd purge`** — delete closed ephemeral beads (wisps) to reclaim storage ([GH#1692](https://github.com/steveyegge/beads/issues/1692))
+- **`bd mol last-activity`** — show the most recent activity timestamp for any molecule ([GH#1456](https://github.com/steveyegge/beads/issues/1456))
+- **`bd show --current`** — show the active issue without specifying an ID ([GH#2184](https://github.com/steveyegge/beads/issues/2184))
+- **`bd doctor validate`** — Dolt-native conflict detection for data integrity checks ([GH#2249](https://github.com/steveyegge/beads/issues/2249))
+- **`bd init --backend`** — explicit backend selection with SQLite deprecation notice
+- **`--stdin` flag** — alias for `--body-file -` on `bd create` and `bd update`
+- **`bd preflight --check`** — aligned with CI checks for pre-push validation ([GH#2230](https://github.com/steveyegge/beads/issues/2230))
+- **gofmt + golangci-lint pre-commit hook** — automatic code quality enforcement ([GH#2179](https://github.com/steveyegge/beads/issues/2179))
+- **JSONL-to-Dolt migration script** — standalone bash script for pre-0.50 users ([GH#2276](https://github.com/steveyegge/beads/issues/2276))
+- **`bd doctor --fix`** — bridge pending hook migrations into automated repair
+- **`bd create-form --parent`** — create sub-issues with label inheritance
+
+### Fixed
+
+- **Dolt CPU spikes** — batch IN-clause queries in `dependencies.go` and `computeBlockedIDs` to prevent runaway CPU usage on large databases ([GH#2294](https://github.com/steveyegge/beads/issues/2294))
+- **Dolt joinIter hangs** — avoid hanging queries in `GetReadyWork` blocker computation
+- **Stealth mode backup push** — `no-git-ops` config now correctly prevents backup git push ([GH#2290](https://github.com/steveyegge/beads/issues/2290))
+- **Stale DB connection crash** — retry stale connection and preserve temp file in `bd edit` ([GH#2267](https://github.com/steveyegge/beads/issues/2267))
+- **OSC escape leaks** — prevent escape sequence pollution when third-party hook runners (lefthook, husky) call `bd hooks run` directly ([GH#1303](https://github.com/steveyegge/beads/issues/1303))
+- **`validateIssueIDPrefix`** — now checks `allowed_prefixes` config, unblocking convoy creation with multi-prefix databases ([GH#1179](https://github.com/steveyegge/beads/issues/1179))
+- **Molecule steps in `bd ready`** — remove stale SQLite-era filtering that hid mol steps ([GH#1359](https://github.com/steveyegge/beads/issues/1359))
+- **`bd blocked` children** — include children of blocked parents in output ([GH#1495](https://github.com/steveyegge/beads/issues/1495))
+- **Same-type blocking validation** — enforce that dependencies match allowed type pairs
+- **Cross-prefix dependency routing** — `bd dep add/rm/blocks/tree` now routes by prefix ([GH#2285](https://github.com/steveyegge/beads/pull/2285))
+- **Cross-prefix dep existence check** — skip target existence check for cross-prefix dependencies
+- **Wisps table recreation** — recreate `dolt_ignore`'d wisps tables on schema fast-path ([GH#2271](https://github.com/steveyegge/beads/issues/2271))
+- **Missing wisps table** — gracefully handle in epic/blocked queries ([GH#2271](https://github.com/steveyegge/beads/issues/2271))
+- **Wisp dependency scanning** — scan `wisp_dependencies` in `getChildrenOfIssues` and `getChildrenWithParents`
+- **Cascade-delete wisp children** — delete blocked step children during wisp GC
+- **Batch wisp deletes** — reduce Dolt commit pressure in `DeleteIssues`
+- **Dolt push/pull hint** — show helpful message when remote not found ([GH#2118](https://github.com/steveyegge/beads/issues/2118))
+- **Git-protocol remote fallback** — use CLI fallback for all git-protocol remotes, not just SSH ([GH#2268](https://github.com/steveyegge/beads/issues/2268))
+- **`dolt_data_dir` persistence** — strip absolute paths from `metadata.json` on save ([GH#2251](https://github.com/steveyegge/beads/issues/2251))
+- **Dolt config port** — consult `config.yaml` for `dolt.port` in `DefaultConfig` ([GH#2073](https://github.com/steveyegge/beads/issues/2073))
+- **Missing `dolt_database`** — detect and repair in `metadata.json` ([GH#2160](https://github.com/steveyegge/beads/issues/2160))
+- **Dolt remote guards** — guard remote subcommands against store init bypass ([GH#2224](https://github.com/steveyegge/beads/issues/2224))
+- **`bd search` performance** — avoid `LIKE %%` full-table scans
+- **Worktree DB discovery** — skip own `.beads/` in separate-DB discovery ([GH#2190](https://github.com/steveyegge/beads/issues/2190))
+- **Contributor routing** — detect fork workflow, apply routing to list and ready
+- **Pre-commit Go version mismatch** — detect before golangci-lint panics
+- **Viper defaults** — skip in `getRoutingConfigValue` to unblock DB fallback
+- **`bd mol wisp create`** — default to root-only unless formula sets `pour=true`
+- **Bare repo init** — skip `AGENTS.md` generation in bare repositories
+- **`last_import_time` refresh** — prevent false staleness after write commands ([GH#2255](https://github.com/steveyegge/beads/issues/2255))
+- **Hook marker detection** — validate marker count and order; recognize marker-managed hooks ([GH#2244](https://github.com/steveyegge/beads/issues/2244), [GH#2242](https://github.com/steveyegge/beads/issues/2242))
+- **Gitignore template** — add missing dolt runtime files ([GH#2256](https://github.com/steveyegge/beads/issues/2256))
+- **Pre-0.56 Dolt database upgrade** — graceful recovery path ([GH#2137](https://github.com/steveyegge/beads/issues/2137))
+- **Remotesapi port check** — skip when no federation peers configured ([GH#2273](https://github.com/steveyegge/beads/issues/2273))
+- **Doctor subsystem** — fix panics, masked errors, missing `rows.Err()`, federation port, hardcoded paths; add 3 new tests
+- **N+1 query patterns** — replace with batch queries in `deep.go` and `migration_validation.go`
+- **`IsBlocked` reporting** — align blocker reporting with blocked-cache semantics ([GH#1524](https://github.com/steveyegge/beads/issues/1524))
+
+### Removed
+
+- **Beads Classic SQLite backend** — the SQLite storage layer and all migration infrastructure have been removed. Dolt is the only backend. ([GH#87493ce](https://github.com/steveyegge/beads/commit/87493ce9))
+- **`go-sqlite3` dependency** — no more CGO requirement; tests use Dolt testcontainers
+- **Deprecated commands** — removed dead SQLite-era code and legacy scripts
+
+### Documentation
+
+- Updated stale references to JSONL and SQLite architecture
+- Hook migration preview/apply workflow documentation
 
 ## [0.57.0] - 2026-03-01
 

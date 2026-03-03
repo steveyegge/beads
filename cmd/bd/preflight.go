@@ -37,6 +37,8 @@ var preflightCmd = &cobra.Command{
 This command helps catch common issues before pushing to CI:
 - Tests not run locally
 - Lint errors
+- Unformatted Go files
+- .beads/issues.jsonl pollution
 - Stale nix vendorHash
 - Version mismatches
 
@@ -80,6 +82,7 @@ func runPreflight(cmd *cobra.Command, args []string) {
 	fmt.Println()
 	fmt.Println("[ ] Tests pass: go test -short ./...")
 	fmt.Println("[ ] Lint passes: golangci-lint run ./...")
+	fmt.Println("[ ] Formatting: gofmt -l .")
 	fmt.Println("[ ] No beads pollution: check .beads/issues.jsonl diff")
 	fmt.Println("[ ] Nix hash current: go.sum unchanged or vendorHash updated")
 	fmt.Println("[ ] Version sync: version.go matches default.nix")
@@ -98,6 +101,14 @@ func runChecks(jsonOutput, skipLint bool) {
 	// Run lint check
 	lintResult := runLintCheck(skipLint)
 	results = append(results, lintResult)
+
+	// Run formatting check
+	fmtResult := runFmtCheck()
+	results = append(results, fmtResult)
+
+	// Run beads pollution check
+	beadsResult := runBeadsPollutionCheck()
+	results = append(results, beadsResult)
 
 	// Run nix hash check
 	nixResult := runNixHashCheck()
@@ -231,6 +242,97 @@ func runLintCheck(skipLint bool) CheckResult {
 	}
 }
 
+// runFmtCheck runs gofmt -l and fails if any files need formatting.
+func runFmtCheck() CheckResult {
+	command := "gofmt -l ."
+
+	// Check if gofmt is available
+	if _, err := exec.LookPath("gofmt"); err != nil {
+		return CheckResult{
+			Name:    "Formatting",
+			Passed:  false,
+			Output:  "gofmt not found in PATH (install Go toolchain)",
+			Command: command,
+		}
+	}
+
+	cmd := exec.Command("gofmt", "-l", ".")
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return CheckResult{
+			Name:    "Formatting",
+			Passed:  false,
+			Output:  string(output),
+			Command: command,
+		}
+	}
+
+	unformatted := strings.TrimSpace(string(output))
+	if unformatted != "" {
+		return CheckResult{
+			Name:    "Formatting",
+			Passed:  false,
+			Output:  fmt.Sprintf("Unformatted files:\n%s\nRun: gofmt -w .", unformatted),
+			Command: command,
+		}
+	}
+
+	return CheckResult{
+		Name:    "Formatting",
+		Passed:  true,
+		Command: command,
+	}
+}
+
+// runBeadsPollutionCheck detects .beads/issues.jsonl modifications vs merge base.
+func runBeadsPollutionCheck() CheckResult {
+	command := "git diff -- .beads/issues.jsonl"
+
+	// Determine current branch
+	branchCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	branchOut, err := branchCmd.Output()
+	if err != nil {
+		return CheckResult{
+			Name:    "No beads pollution",
+			Passed:  false,
+			Skipped: true,
+			Output:  fmt.Sprintf("Cannot determine branch: %v", err),
+			Command: command,
+		}
+	}
+	branch := strings.TrimSpace(string(branchOut))
+
+	var diffOutput []byte
+	if branch != "main" && branch != "HEAD" {
+		// Feature branch: diff against merge base with origin/main
+		cmd := exec.Command("git", "diff", "origin/main...HEAD", "--", ".beads/issues.jsonl")
+		diffOutput, _ = cmd.Output()
+	} else {
+		// On main or detached HEAD: check staged + unstaged changes
+		cmd := exec.Command("git", "diff", "HEAD", "--", ".beads/issues.jsonl")
+		out1, _ := cmd.Output()
+		cmd2 := exec.Command("git", "diff", "--cached", "--", ".beads/issues.jsonl")
+		out2, _ := cmd2.Output()
+		diffOutput = append(out1, out2...)
+	}
+
+	if len(strings.TrimSpace(string(diffOutput))) > 0 {
+		return CheckResult{
+			Name:    "No beads pollution",
+			Passed:  false,
+			Output:  ".beads/issues.jsonl has been modified — revert changes before pushing",
+			Command: command,
+		}
+	}
+
+	return CheckResult{
+		Name:    "No beads pollution",
+		Passed:  true,
+		Command: command,
+	}
+}
+
 // runNixHashCheck checks if go.sum has uncommitted changes that may require vendorHash update.
 func runNixHashCheck() CheckResult {
 	command := "git diff HEAD -- go.sum"
@@ -263,9 +365,33 @@ func runNixHashCheck() CheckResult {
 	}
 }
 
-// runVersionSyncCheck checks that version.go matches default.nix.
+// runVersionSyncCheck checks that all version files are in sync.
+// Prefers scripts/check-versions.sh (matches CI) with fallback to inline logic.
 func runVersionSyncCheck() CheckResult {
-	command := "Compare cmd/bd/version.go and default.nix"
+	command := "scripts/check-versions.sh"
+
+	// Try using the script (matches CI's check-version-consistency job)
+	if _, err := os.Stat("scripts/check-versions.sh"); err == nil {
+		cmd := exec.Command("bash", "scripts/check-versions.sh")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return CheckResult{
+				Name:    "Version sync",
+				Passed:  false,
+				Output:  string(output),
+				Command: command,
+			}
+		}
+		return CheckResult{
+			Name:    "Version sync",
+			Passed:  true,
+			Output:  string(output),
+			Command: command,
+		}
+	}
+
+	// Fallback: inline comparison of version.go and default.nix
+	command = "Compare cmd/bd/version.go and default.nix"
 
 	// Read version.go
 	versionGoContent, err := os.ReadFile("cmd/bd/version.go")
@@ -280,7 +406,6 @@ func runVersionSyncCheck() CheckResult {
 	}
 
 	// Extract version from version.go
-	// Pattern: Version = "X.Y.Z"
 	versionGoRe := regexp.MustCompile(`Version\s*=\s*"([^"]+)"`)
 	versionGoMatch := versionGoRe.FindSubmatch(versionGoContent)
 	if versionGoMatch == nil {
@@ -297,7 +422,6 @@ func runVersionSyncCheck() CheckResult {
 	// Read default.nix
 	nixContent, err := os.ReadFile("default.nix")
 	if err != nil {
-		// No nix file = skip version check (not an error)
 		return CheckResult{
 			Name:    "Version sync",
 			Passed:  true,
@@ -308,7 +432,6 @@ func runVersionSyncCheck() CheckResult {
 	}
 
 	// Extract version from default.nix
-	// Pattern: version = "X.Y.Z";
 	nixRe := regexp.MustCompile(`version\s*=\s*"([^"]+)"`)
 	nixMatch := nixRe.FindSubmatch(nixContent)
 	if nixMatch == nil {
