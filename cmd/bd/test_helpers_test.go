@@ -183,8 +183,8 @@ func newTestStoreIsolatedDB(t *testing.T, dbPath string, prefix string) *dolt.Do
 	if testDoltServerPort == 0 {
 		t.Skip("Dolt test server not available, skipping")
 	}
-	if testServer.IsCrashed() {
-		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
 	}
 
 	ctx := context.Background()
@@ -234,8 +234,8 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *dolt.Do
 	if testDoltServerPort == 0 {
 		t.Skip("Dolt test server not available, skipping")
 	}
-	if testServer.IsCrashed() {
-		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
 	}
 
 	ctx := context.Background()

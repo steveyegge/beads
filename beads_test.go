@@ -19,18 +19,18 @@ import (
 var testServerPort int
 
 func TestMain(m *testing.M) {
-	srv, cleanup := testutil.StartTestDoltServer("beads-root-test-*")
 	os.Setenv("BEADS_TEST_MODE", "1")
-	if srv != nil {
-		testServerPort = srv.Port
-		os.Setenv("BEADS_DOLT_PORT", fmt.Sprintf("%d", srv.Port))
+	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v, skipping Dolt tests\n", err)
+	} else {
+		defer testutil.TerminateDoltContainer()
+		testServerPort = testutil.DoltContainerPortInt()
 	}
 
 	code := m.Run()
 
 	os.Unsetenv("BEADS_DOLT_PORT")
 	os.Unsetenv("BEADS_TEST_MODE")
-	cleanup()
 	os.Exit(code)
 }
 

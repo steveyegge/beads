@@ -10,6 +10,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 // openSharedDoltForPhantom returns a *sql.DB connected to a "beads" database on
@@ -23,8 +24,8 @@ func openSharedDoltForPhantom(t *testing.T) *sql.DB {
 	if port == 0 {
 		t.Skip("Dolt test server not available, skipping phantom test")
 	}
-	if testServer.IsCrashed() {
-		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
 	}
 
 	// Ensure a "beads" database exists on the shared server for phantom tests.
