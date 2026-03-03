@@ -1,6 +1,9 @@
-# Dolt Backend Guide
+# Dolt Storage Backend
 
-Beads uses [Dolt](https://www.dolthub.com/) as its storage backend. Dolt provides Git-like version control for your database, enabling advanced workflows like branch-based development, time travel queries, and distributed sync.
+Beads uses [Dolt](https://www.dolthub.com/) as its default storage backend. Dolt provides Git-like version control for your database, enabling advanced workflows like branch-based development, time travel queries, and distributed sync.
+
+> **Note:** Dolt is the only supported backend. The legacy SQLite backend has been removed.
+> To migrate from SQLite, see [Migration from SQLite](#migration-from-sqlite-legacy) below.
 
 ## Overview
 
@@ -32,10 +35,10 @@ dolt version
 ### 2. Initialize
 
 ```bash
-# New project
+# New project (Dolt is the default backend)
 bd init
 
-# Or convert existing SQLite database (legacy)
+# Or convert existing SQLite database (legacy installations)
 bd migrate --to-dolt
 ```
 
@@ -346,7 +349,6 @@ federation:
 
 | Variable | Description |
 |----------|-------------|
-| `BEADS_BACKEND` | Force backend: `sqlite` or `dolt` |
 | `BEADS_DOLT_SERVER_MODE` | Server mode: `1` or `0` |
 | `BEADS_DOLT_SERVER_HOST` | Server host |
 | `BEADS_DOLT_SERVER_PORT` | Server port |

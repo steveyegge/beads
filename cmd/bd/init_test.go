@@ -1861,3 +1861,92 @@ func TestInitDatabaseFlag(t *testing.T) {
 		}
 	})
 }
+
+func TestInitBackendFlag(t *testing.T) {
+	bd := buildBDForInitTests(t)
+
+	t.Run("sqlite_shows_deprecation", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		cmd := exec.Command(bd, "init", "--backend", "sqlite", "--quiet")
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatal("Expected non-zero exit for --backend=sqlite, but command succeeded")
+		}
+
+		outStr := string(out)
+		if !strings.Contains(outStr, "DEPRECATED") {
+			t.Errorf("Expected deprecation notice, got: %s", outStr)
+		}
+		if !strings.Contains(outStr, "SQLite backend has been removed") {
+			t.Errorf("Expected 'SQLite backend has been removed' message, got: %s", outStr)
+		}
+		if !strings.Contains(outStr, "bd migrate --to-dolt") {
+			t.Errorf("Expected migration instructions, got: %s", outStr)
+		}
+
+		// Verify no .beads directory was created
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if _, err := os.Stat(beadsDir); err == nil {
+			t.Error(".beads directory should not be created when --backend=sqlite is used")
+		}
+	})
+
+	t.Run("unknown_backend_errors", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		cmd := exec.Command(bd, "init", "--backend", "postgres", "--quiet")
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatal("Expected non-zero exit for --backend=postgres, but command succeeded")
+		}
+
+		outStr := string(out)
+		if !strings.Contains(outStr, "unknown backend") {
+			t.Errorf("Expected 'unknown backend' error, got: %s", outStr)
+		}
+	})
+
+	t.Run("dolt_backend_succeeds", func(t *testing.T) {
+		skipIfNoDolt(t)
+		tmpDir := t.TempDir()
+
+		cmd := exec.Command(bd, "init", "--backend", "dolt", "--quiet")
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bd init --backend=dolt should succeed: %v\n%s", err, out)
+		}
+	})
+
+	t.Run("default_backend_is_dolt", func(t *testing.T) {
+		skipIfNoDolt(t)
+		tmpDir := t.TempDir()
+
+		cmd := exec.Command(bd, "init", "--quiet")
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bd init should default to dolt: %v\n%s", err, out)
+		}
+
+		// Verify metadata.json has backend: dolt
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		cfg, err := configfile.Load(beadsDir)
+		if err != nil {
+			t.Fatalf("Failed to load metadata.json: %v", err)
+		}
+		if cfg == nil {
+			t.Fatal("metadata.json not found")
+		}
+		if cfg.Backend != configfile.BackendDolt {
+			t.Errorf("Expected backend %q, got %q", configfile.BackendDolt, cfg.Backend)
+		}
+	})
+}
