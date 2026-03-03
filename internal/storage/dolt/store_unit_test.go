@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -349,10 +348,9 @@ func TestApplyConfigDefaults_ProductionFallback(t *testing.T) {
 	}
 }
 
-// TestExecWithLongTimeoutDSNRewrite verifies that the strings.Replace in
-// execWithLongTimeout produces a DSN with readTimeout=5m given a DSN from
-// buildServerDSN. If buildServerDSN changes the default readTimeout value,
-// this test fails to alert the developer.
+// TestExecWithLongTimeoutDSNRewrite verifies that execWithLongTimeout's
+// ParseDSN/FormatDSN rewrite produces a valid DSN with readTimeout=5m
+// given a DSN from buildServerDSN.
 func TestExecWithLongTimeoutDSNRewrite(t *testing.T) {
 	cfg := &Config{
 		ServerUser: "root",
@@ -364,18 +362,13 @@ func TestExecWithLongTimeoutDSNRewrite(t *testing.T) {
 
 	original := buildServerDSN(cfg, cfg.Database)
 
+	// Simulate the same rewrite that execWithLongTimeout performs.
 	parsed, err := mysql.ParseDSN(original)
 	if err != nil {
 		t.Fatalf("failed to parse original DSN: %v", err)
 	}
-	if parsed.ReadTimeout != 10*time.Second {
-		t.Fatalf("buildServerDSN readTimeout changed from 10s to %v; update execWithLongTimeout", parsed.ReadTimeout)
-	}
-
-	rewritten := strings.Replace(original, "readTimeout=10s", "readTimeout=5m", 1)
-	if rewritten == original {
-		t.Fatal("strings.Replace did not modify the DSN; readTimeout=10s not found")
-	}
+	parsed.ReadTimeout = 5 * time.Minute
+	rewritten := parsed.FormatDSN()
 
 	reParsed, err := mysql.ParseDSN(rewritten)
 	if err != nil {
