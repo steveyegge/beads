@@ -210,6 +210,34 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.58.0",
+		Date:    "2026-03-02",
+		Changes: []string{
+			"NEW: bd purge — delete closed ephemeral beads to reclaim storage",
+			"NEW: bd mol last-activity — show most recent molecule activity timestamp",
+			"NEW: bd show --current — show active issue without specifying ID",
+			"NEW: bd doctor validate — Dolt-native conflict detection",
+			"NEW: bd init --backend — explicit backend selection with SQLite deprecation",
+			"NEW: --stdin flag for bd create/update (alias for --body-file -)",
+			"NEW: bd preflight --check aligned with CI checks",
+			"NEW: JSONL-to-Dolt migration script for pre-0.50 users",
+			"NEW: bd create-form --parent for sub-issue creation with label inheritance",
+			"NEW: Persistent agent memory (bd remember/memories/recall/forget)",
+			"FIX: Dolt CPU spikes — batch IN-clause queries in dependencies",
+			"FIX: Dolt joinIter hangs in GetReadyWork blocker computation",
+			"FIX: Stealth mode (no-git-ops) now correctly prevents backup git push",
+			"FIX: Stale DB connection crash in bd edit",
+			"FIX: OSC escape leaks from third-party hook runners (lefthook, husky)",
+			"FIX: validateIssueIDPrefix now checks allowed_prefixes (unblocks convoys)",
+			"FIX: Molecule steps now appear in bd ready",
+			"FIX: Cross-prefix dependency routing and validation",
+			"FIX: Wisps table recreation on schema fast-path",
+			"FIX: bd search avoids LIKE %% full-table scans",
+			"REMOVED: SQLite backend and go-sqlite3 dependency (Dolt only)",
+			"REMOVED: Deprecated commands and legacy SQLite-era scripts",
+		},
+	},
+	{
 		Version: "0.57.0",
 		Date:    "2026-03-01",
 		Changes: []string{
