@@ -18,9 +18,6 @@ First time in a repository:
 # Basic setup (prompts for contributor mode)
 bd init
 
-# Dolt backend (version-controlled SQL database)
-bd init --backend dolt
-
 # OSS contributor (fork workflow with separate planning repo)
 bd init --contributor
 
@@ -32,7 +29,7 @@ bd init --branch beads-sync
 ```
 
 The wizard will:
-- Create `.beads/` directory and database
+- Create `.beads/` directory and Dolt database
 - **Prompt for your role** (maintainer or contributor) unless a flag is provided
 - Import existing issues from git (if any)
 - Prompt to install git hooks (recommended)
@@ -40,10 +37,9 @@ The wizard will:
 - Auto-start Dolt server for database operations
 
 Notes:
-- SQLite backend stores data in `.beads/beads.db`.
-- Dolt backend stores data in `.beads/dolt/` and records `"database": "dolt"` in `.beads/metadata.json`.
-- Dolt backend uses a `dolt sql-server` for database operations.
-- Dolt backend auto-commit defaults to OFF. Override with `bd --dolt-auto-commit off|on ...` or config.
+- Dolt is the default (and only) storage backend. Data is stored in `.beads/dolt/`.
+- Dolt uses a `dolt sql-server` for database operations.
+- To migrate from an older SQLite installation, run `bd migrate --to-dolt`.
 
 ### Role Configuration
 
