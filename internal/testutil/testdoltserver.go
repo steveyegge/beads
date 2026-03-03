@@ -20,7 +20,6 @@ import (
 
 // doltServer represents a running test Dolt container instance.
 type doltServer struct {
-	port      int
 	container *dolt.DoltContainer
 }
 
@@ -152,15 +151,13 @@ func startDoltContainer() error {
 		return fmt.Errorf("getting mapped port: %w", err)
 	}
 
-	port, err := strconv.Atoi(p.Port())
-	if err != nil {
+	if _, err := strconv.Atoi(p.Port()); err != nil {
 		_ = testcontainers.TerminateContainer(ctr)
 		return fmt.Errorf("parsing port %q: %w", p.Port(), err)
 	}
 
 	doltTestPort = p.Port()
 	doltSingletonSrv = &doltServer{
-		port:      port,
 		container: ctr,
 	}
 
