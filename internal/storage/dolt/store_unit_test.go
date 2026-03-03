@@ -5,7 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"time"
+
+	mysql "github.com/go-sql-driver/mysql"
 )
 
 // newTestDoltDB creates a temporary database on the test Dolt server.
@@ -342,5 +346,42 @@ func TestApplyConfigDefaults_ProductionFallback(t *testing.T) {
 
 	if cfg.ServerPort != DefaultSQLPort {
 		t.Errorf("expected ServerPort=%d (DefaultSQLPort), got %d", DefaultSQLPort, cfg.ServerPort)
+	}
+}
+
+// TestExecWithLongTimeoutDSNRewrite verifies that the strings.Replace in
+// execWithLongTimeout produces a DSN with readTimeout=5m given a DSN from
+// buildServerDSN. If buildServerDSN changes the default readTimeout value,
+// this test fails to alert the developer.
+func TestExecWithLongTimeoutDSNRewrite(t *testing.T) {
+	cfg := &Config{
+		ServerUser: "root",
+		ServerHost: "127.0.0.1",
+		ServerPort: 3307,
+		Database:   "testdb",
+	}
+	applyConfigDefaults(cfg)
+
+	original := buildServerDSN(cfg, cfg.Database)
+
+	parsed, err := mysql.ParseDSN(original)
+	if err != nil {
+		t.Fatalf("failed to parse original DSN: %v", err)
+	}
+	if parsed.ReadTimeout != 10*time.Second {
+		t.Fatalf("buildServerDSN readTimeout changed from 10s to %v; update execWithLongTimeout", parsed.ReadTimeout)
+	}
+
+	rewritten := strings.Replace(original, "readTimeout=10s", "readTimeout=5m", 1)
+	if rewritten == original {
+		t.Fatal("strings.Replace did not modify the DSN; readTimeout=10s not found")
+	}
+
+	reParsed, err := mysql.ParseDSN(rewritten)
+	if err != nil {
+		t.Fatalf("failed to parse rewritten DSN: %v", err)
+	}
+	if reParsed.ReadTimeout != 5*time.Minute {
+		t.Errorf("expected readTimeout=5m, got %v", reParsed.ReadTimeout)
 	}
 }
