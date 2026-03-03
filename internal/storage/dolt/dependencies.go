@@ -50,31 +50,46 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Validate that the source issue exists
-	var issueExists int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, dep.IssueID).Scan(&issueExists); err != nil {
+	// Validate that the source issue exists (fetch issue_type for cross-type check)
+	var sourceType string
+	if err := tx.QueryRowContext(ctx, `SELECT issue_type FROM issues WHERE id = ?`, dep.IssueID).Scan(&sourceType); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("issue %s not found", dep.IssueID)
+		}
 		return fmt.Errorf("failed to check issue existence: %w", err)
-	}
-	if issueExists == 0 {
-		return fmt.Errorf("issue %s not found", dep.IssueID)
 	}
 
 	// Validate that the target issue exists (skip for external cross-rig references
 	// and cross-prefix references where the target lives in a different rig's database)
 	// Check wisps table if target is an active wisp (bd-w2w)
+	// Fetch issue_type for cross-type blocking check below.
+	var targetType string
 	isCrossPrefix := extractIDPrefix(dep.IssueID) != extractIDPrefix(dep.DependsOnID)
 	if !strings.HasPrefix(dep.DependsOnID, "external:") && !isCrossPrefix {
-		var targetExists int
 		targetTable := "issues"
 		if targetIsWisp {
 			targetTable = "wisps"
 		}
 		//nolint:gosec // G201: targetTable is hardcoded to "issues" or "wisps"
-		if err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE id = ?`, targetTable), dep.DependsOnID).Scan(&targetExists); err != nil {
+		if err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT issue_type FROM %s WHERE id = ?`, targetTable), dep.DependsOnID).Scan(&targetType); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("issue %s not found", dep.DependsOnID)
+			}
 			return fmt.Errorf("failed to check target issue existence: %w", err)
 		}
-		if targetExists == 0 {
-			return fmt.Errorf("issue %s not found", dep.DependsOnID)
+	}
+
+	// Cross-type blocking validation: tasks can only block tasks, epics can only
+	// block epics. Prevents nonsensical task<->epic blocking that causes deadlocks
+	// in ready work computation (GH#1495).
+	if dep.Type == types.DepBlocks && targetType != "" {
+		sourceIsEpic := sourceType == string(types.TypeEpic)
+		targetIsEpic := targetType == string(types.TypeEpic)
+		if sourceIsEpic != targetIsEpic {
+			if sourceIsEpic {
+				return fmt.Errorf("epics can only block other epics, not tasks")
+			}
+			return fmt.Errorf("tasks can only block other tasks, not epics")
 		}
 	}
 
