@@ -480,6 +480,7 @@ func Start(beadsDir string) (*State, error) {
 		if errors.Is(reclaimErr, ErrPortOccupiedByOtherProject) {
 			// Another project's Dolt server is on the default port —
 			// use a hash-derived port for this project instead.
+			fmt.Fprintf(os.Stderr, "Port %d occupied by another project's Dolt server; falling back to port %d\n", actualPort, fallbackPort(beadsDir))
 			actualPort = fallbackPort(beadsDir)
 			adoptPID, reclaimErr = reclaimPort(cfg.Host, actualPort, beadsDir)
 			if reclaimErr != nil {
