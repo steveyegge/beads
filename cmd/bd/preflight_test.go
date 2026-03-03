@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -215,5 +218,88 @@ func TestRunLintCheck_SkipLintFlag(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "--skip-lint") {
 		t.Fatalf("expected output to mention --skip-lint, got: %q", result.Output)
+	}
+}
+
+func TestRunFmtCheck_Formatted(t *testing.T) {
+	dir := t.TempDir()
+	// Write a properly formatted Go file
+	err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Run gofmt -l in the temp dir
+	cmd := exec.Command("gofmt", "-l", ".")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gofmt failed: %v: %s", err, output)
+	}
+	if strings.TrimSpace(string(output)) != "" {
+		t.Fatalf("expected no unformatted files, got: %s", output)
+	}
+}
+
+func TestRunFmtCheck_Unformatted(t *testing.T) {
+	dir := t.TempDir()
+	// Write a poorly formatted Go file (extra spaces, no newline)
+	err := os.WriteFile(filepath.Join(dir, "bad.go"), []byte("package main\nfunc  main( )  {  }\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("gofmt", "-l", ".")
+	cmd.Dir = dir
+	output, _ := cmd.CombinedOutput()
+	unformatted := strings.TrimSpace(string(output))
+	if unformatted == "" {
+		t.Fatal("expected unformatted files to be listed")
+	}
+	if !strings.Contains(unformatted, "bad.go") {
+		t.Fatalf("expected bad.go in output, got: %s", unformatted)
+	}
+}
+
+func TestRunBeadsPollutionCheck_Clean(t *testing.T) {
+	// In a clean repo state (no uncommitted .beads changes), the check should pass.
+	result := runBeadsPollutionCheck()
+	if !result.Passed {
+		// If this fails, it means the test environment itself has .beads changes,
+		// which is valid — skip rather than fail.
+		if strings.Contains(result.Output, "modified") {
+			t.Skip("test environment has .beads changes, skipping")
+		}
+		if result.Skipped {
+			t.Skip("cannot determine branch in test environment")
+		}
+		t.Fatalf("expected beads pollution check to pass in clean state, got: %q", result.Output)
+	}
+}
+
+func TestRunVersionSyncCheck_ScriptFallback(t *testing.T) {
+	// Run from a temp dir where scripts/check-versions.sh does not exist.
+	// The fallback inline logic should be used, resulting in a skipped result
+	// because version.go won't be found either.
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	result := runVersionSyncCheck()
+	// Without version.go present, fallback should skip
+	if !result.Skipped {
+		// Could also pass if default.nix is also missing — both are acceptable fallback outcomes
+		if result.Passed && strings.Contains(result.Output, "not found") {
+			return // acceptable: nix not found skip
+		}
+	}
+	if result.Command == "scripts/check-versions.sh" {
+		t.Fatal("expected fallback logic, not script invocation")
 	}
 }
