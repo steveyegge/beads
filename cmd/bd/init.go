@@ -469,7 +469,7 @@ environment variable.`,
 					cfg.DoltDatabase = strings.ReplaceAll(prefix, "-", "_")
 				}
 
-				// Always server mode
+				// Server mode for now; embedded mode returning soon
 				cfg.DoltMode = configfile.DoltModeServer
 				if serverHost != "" {
 					cfg.DoltServerHost = serverHost
@@ -818,7 +818,7 @@ func init() {
 	initCmd.Flags().String("backend", "", "Storage backend (default: dolt). --backend=sqlite prints deprecation notice.")
 
 	// Dolt server connection flags
-	initCmd.Flags().Bool("server", false, "No-op (server mode is always enabled); kept for backward compatibility")
+	initCmd.Flags().Bool("server", false, "Use server mode (currently the default; embedded mode returning soon)")
 	initCmd.Flags().String("server-host", "", "Dolt server host (default: 127.0.0.1)")
 	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3307)")
 	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")

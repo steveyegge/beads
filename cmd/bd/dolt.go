@@ -1037,7 +1037,9 @@ func setDoltConfig(key, value string, updateConfig bool) {
 
 	switch key {
 	case "mode":
-		fmt.Fprintf(os.Stderr, "Error: mode is no longer configurable; beads always uses server mode\n")
+		// Mode will be configurable again when embedded Dolt support returns.
+		// For now, server mode is required (embedded driver not yet re-integrated).
+		fmt.Fprintf(os.Stderr, "Error: mode is not yet configurable; embedded mode is coming soon\n")
 		os.Exit(1)
 
 	case "database":

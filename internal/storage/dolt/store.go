@@ -332,7 +332,7 @@ func (s *DoltStore) doltSpanAttrs() []attribute.KeyValue {
 		s.spanAttrsCache = []attribute.KeyValue{
 			attribute.String("db.system", "dolt"),
 			attribute.Bool("db.readonly", s.readOnly),
-			attribute.Bool("db.server_mode", true), // always server mode after embedded removal
+			attribute.Bool("db.server_mode", true), // TODO: update when embedded mode returns
 		}
 	})
 	return s.spanAttrsCache
@@ -485,7 +485,7 @@ func applyConfigDefaults(cfg *Config) {
 		cfg.Remote = "origin"
 	}
 
-	// Server connection defaults (always applied — server mode is the only mode)
+	// Server connection defaults (applied in server mode; embedded mode bypasses TCP)
 	if cfg.ServerHost == "" {
 		// Host resolution: BEADS_DOLT_SERVER_HOST env > default 127.0.0.1.
 		if h := os.Getenv("BEADS_DOLT_SERVER_HOST"); h != "" {
