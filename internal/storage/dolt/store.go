@@ -733,6 +733,21 @@ func buildServerDSN(cfg *Config, database string) string {
 		userPart, cfg.ServerHost, cfg.ServerPort, dbPart, params)
 }
 
+// execWithLongTimeout opens a one-shot database connection with readTimeout=5m
+// and executes the given query. Push/pull operations can exceed the default 10s
+// readTimeout when the server performs network I/O to git remotes.
+func (s *DoltStore) execWithLongTimeout(ctx context.Context, query string, args ...any) error {
+	dsn := strings.Replace(s.connStr, "readTimeout=10s", "readTimeout=5m", 1)
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open long-timeout connection: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	_, err = db.ExecContext(ctx, query, args...)
+	return err
+}
+
 // openServerConnection opens a connection to a dolt sql-server via MySQL protocol
 func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, error) {
 	connStr := buildServerDSN(cfg, cfg.Database)
@@ -1348,15 +1363,13 @@ func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 	}
 	if s.remoteUser != "" {
 		return withEnvCredentials(creds, func() error {
-			_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
-			if err != nil {
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch); err != nil {
 				return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
 			}
 			return nil
 		})
 	}
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch)
-	if err != nil {
+	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch); err != nil {
 		return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
 	}
 	return nil
@@ -1384,15 +1397,13 @@ func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 	}
 	if s.remoteUser != "" {
 		return withEnvCredentials(creds, func() error {
-			_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--force', '--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
-			if err != nil {
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--force', '--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch); err != nil {
 				return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
 			}
 			return nil
 		})
 	}
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch)
-	if err != nil {
+	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch); err != nil {
 		return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
 	}
 	return nil
@@ -1427,8 +1438,7 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 	}
 	if s.remoteUser != "" {
 		return withEnvCredentials(creds, func() error {
-			_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
-			if err != nil {
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch); err != nil {
 				return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
 			}
 			if err := s.resetAutoIncrements(ctx); err != nil {
@@ -1437,8 +1447,7 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 			return nil
 		})
 	}
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch)
-	if err != nil {
+	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch); err != nil {
 		return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
 	}
 	if err := s.resetAutoIncrements(ctx); err != nil {

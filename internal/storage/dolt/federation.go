@@ -25,8 +25,7 @@ func (s *DoltStore) PushTo(ctx context.Context, peer string) error {
 	}
 	return s.withPeerCredentials(ctx, peer, func(creds *remoteCredentials) error {
 		return withEnvCredentials(creds, func() error {
-			_, err := s.execContext(ctx, "CALL DOLT_PUSH(?, ?)", peer, s.branch)
-			if err != nil {
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH(?, ?)", peer, s.branch); err != nil {
 				return fmt.Errorf("failed to push to peer %s: %w", peer, err)
 			}
 			return nil
@@ -56,8 +55,7 @@ func (s *DoltStore) PullFrom(ctx context.Context, peer string) ([]storage.Confli
 	}
 	err := s.withPeerCredentials(ctx, peer, func(creds *remoteCredentials) error {
 		return withEnvCredentials(creds, func() error {
-			_, pullErr := s.execContext(ctx, "CALL DOLT_PULL(?)", peer)
-			if pullErr != nil {
+			if pullErr := s.execWithLongTimeout(ctx, "CALL DOLT_PULL(?)", peer); pullErr != nil {
 				c, conflictErr := s.GetConflicts(ctx)
 				if conflictErr == nil && len(c) > 0 {
 					conflicts = c
@@ -82,8 +80,7 @@ func (s *DoltStore) Fetch(ctx context.Context, peer string) error {
 	}
 	return s.withPeerCredentials(ctx, peer, func(creds *remoteCredentials) error {
 		return withEnvCredentials(creds, func() error {
-			_, err := s.execContext(ctx, "CALL DOLT_FETCH(?)", peer)
-			if err != nil {
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_FETCH(?)", peer); err != nil {
 				return fmt.Errorf("failed to fetch from peer %s: %w", peer, err)
 			}
 			return nil
