@@ -7,13 +7,8 @@ import (
 )
 
 // getBackendAndBeadsDir resolves the effective .beads directory (following redirects)
-// and returns the configured storage backend ("dolt" by default).
+// and returns the configured storage backend (always "dolt").
 func getBackendAndBeadsDir(repoPath string) (backend string, beadsDir string) {
 	beadsDir = resolveBeadsDir(filepath.Join(repoPath, ".beads"))
-
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
-		return configfile.BackendDolt, beadsDir
-	}
-	return cfg.GetBackend(), beadsDir
+	return configfile.BackendDolt, beadsDir
 }

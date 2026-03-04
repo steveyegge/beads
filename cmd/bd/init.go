@@ -30,8 +30,7 @@ var initCmd = &cobra.Command{
 	Long: `Initialize bd in the current directory by creating a .beads/ directory
 and Dolt database. Optionally specify a custom issue prefix.
 
-Dolt is the default (and only supported) storage backend. The legacy SQLite
-backend has been removed. Use --backend=sqlite to see migration instructions.
+Initializes a .beads directory with Dolt storage.
 
 Use --database to specify an existing server database name, overriding the
 default prefix-based naming. This is useful when an external tool (e.g. gastown)
@@ -56,28 +55,10 @@ environment variable.`,
 		force, _ := cmd.Flags().GetBool("force")
 		fromJSONL, _ := cmd.Flags().GetBool("from-jsonl")
 		// Dolt server connection flags
-		backendFlag, _ := cmd.Flags().GetString("backend")
-		_, _ = cmd.Flags().GetBool("server") // no-op, kept for backward compatibility
 		serverHost, _ := cmd.Flags().GetString("server-host")
 		serverPort, _ := cmd.Flags().GetInt("server-port")
 		serverUser, _ := cmd.Flags().GetString("server-user")
 		database, _ := cmd.Flags().GetString("database")
-
-		// Handle --backend flag: "dolt" is the only supported backend.
-		// "sqlite" is accepted for backward compatibility but prints a
-		// deprecation notice and exits with an error.
-		if backendFlag == "sqlite" {
-			fmt.Fprintf(os.Stderr, "%s The SQLite backend has been removed.\n\n", ui.RenderWarn("⚠ DEPRECATED:"))
-			fmt.Fprintf(os.Stderr, "Dolt is now the default (and only) storage backend for beads.\n")
-			fmt.Fprintf(os.Stderr, "To initialize with Dolt:\n")
-			fmt.Fprintf(os.Stderr, "  bd init\n\n")
-			fmt.Fprintf(os.Stderr, "To migrate an existing SQLite database to Dolt:\n")
-			fmt.Fprintf(os.Stderr, "  bd migrate --to-dolt\n\n")
-			fmt.Fprintf(os.Stderr, "See: https://github.com/steveyegge/beads/blob/main/docs/DOLT-BACKEND.md\n")
-			os.Exit(1)
-		} else if backendFlag != "" && backendFlag != "dolt" {
-			FatalError("unknown backend %q: only \"dolt\" is supported", backendFlag)
-		}
 
 		// Validate --database early, before any side effects
 		if database != "" {
@@ -449,37 +430,32 @@ environment variable.`,
 				cfg = configfile.DefaultConfig()
 			}
 
-			// Always store backend explicitly in metadata.json
-			cfg.Backend = backend
 			// Metadata.json.database should point to the Dolt directory (not beads.db).
 			// Backward-compat: older dolt setups left this as "beads.db", which is misleading.
-			if backend == configfile.BackendDolt {
-				if cfg.Database == "" || cfg.Database == beads.CanonicalDatabaseName {
-					cfg.Database = "dolt"
-				}
+			// Backend is always Dolt.
+			if cfg.Database == "" || cfg.Database == beads.CanonicalDatabaseName {
+				cfg.Database = "dolt"
+			}
 
-				// Set SQL database name. --database flag takes precedence over prefix-based
-				// naming to avoid cross-rig contamination (bd-u8rda). Only set prefix-based
-				// name if not already configured — overwriting a user-renamed database
-				// creates phantom catalog entries that crash information_schema (GH#2051).
-				if database != "" {
-					cfg.DoltDatabase = database
-				} else if cfg.DoltDatabase == "" && prefix != "" {
-					// Sanitize hyphens to underscores for SQL-idiomatic names (GH#2142).
-					cfg.DoltDatabase = strings.ReplaceAll(prefix, "-", "_")
-				}
+			// Set SQL database name. --database flag takes precedence over prefix-based
+			// naming to avoid cross-rig contamination (bd-u8rda). Only set prefix-based
+			// name if not already configured — overwriting a user-renamed database
+			// creates phantom catalog entries that crash information_schema (GH#2051).
+			if database != "" {
+				cfg.DoltDatabase = database
+			} else if cfg.DoltDatabase == "" && prefix != "" {
+				// Sanitize hyphens to underscores for SQL-idiomatic names (GH#2142).
+				cfg.DoltDatabase = strings.ReplaceAll(prefix, "-", "_")
+			}
 
-				// Server mode for now; embedded mode returning soon
-				cfg.DoltMode = configfile.DoltModeServer
-				if serverHost != "" {
-					cfg.DoltServerHost = serverHost
-				}
-				if serverPort != 0 {
-					cfg.DoltServerPort = serverPort
-				}
-				if serverUser != "" {
-					cfg.DoltServerUser = serverUser
-				}
+			if serverHost != "" {
+				cfg.DoltServerHost = serverHost
+			}
+			if serverPort != 0 {
+				cfg.DoltServerPort = serverPort
+			}
+			if serverUser != "" {
+				cfg.DoltServerUser = serverUser
 			}
 
 			if err := cfg.Save(beadsDir); err != nil {
@@ -814,11 +790,7 @@ func init() {
 	initCmd.Flags().Bool("from-jsonl", false, "Import issues from .beads/issues.jsonl instead of git history")
 	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides embedded default)")
 
-	// Backend selection (dolt is the only supported backend; sqlite accepted for deprecation notice)
-	initCmd.Flags().String("backend", "", "Storage backend (default: dolt). --backend=sqlite prints deprecation notice.")
-
 	// Dolt server connection flags
-	initCmd.Flags().Bool("server", false, "Use server mode (currently the default; embedded mode returning soon)")
 	initCmd.Flags().String("server-host", "", "Dolt server host (default: 127.0.0.1)")
 	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3307)")
 	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")
@@ -895,25 +867,20 @@ func checkExistingBeadsDataAt(beadsDir string, prefix string) error {
 		return nil // No .beads directory, safe to init
 	}
 
-	// Check for existing Dolt database
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
-		// Check both the local directory AND server mode config.
-		// In server mode the local dolt/ directory may be empty — the database
-		// lives on the Dolt sql-server. Checking only the directory would miss
-		// server-mode installations.
+	// Check for existing Dolt database (backend is always Dolt, server mode is always on)
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
 		doltPath := doltserver.ResolveDoltDir(beadsDir)
 		doltDirExists := false
 		if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
 			doltDirExists = true
 		}
-		if doltDirExists || cfg.IsDoltServerMode() {
-			location := doltPath
-			if cfg.IsDoltServerMode() {
-				host := cfg.GetDoltServerHost()
-				port := doltserver.DefaultConfig(beadsDir).Port
-				location = fmt.Sprintf("dolt server at %s:%d", host, port)
-			}
-			return fmt.Errorf(`
+		host := cfg.GetDoltServerHost()
+		port := doltserver.DefaultConfig(beadsDir).Port
+		location := fmt.Sprintf("dolt server at %s:%d", host, port)
+		if doltDirExists {
+			location = doltPath
+		}
+		return fmt.Errorf(`
 %s Found existing Dolt database: %s
 
 This workspace is already initialized.
@@ -925,11 +892,6 @@ To force reinitialize (data loss warning):
   bd init --force --prefix %s
 
 Aborting.`, ui.RenderWarn("⚠"), location, ui.RenderAccent("bd list"), prefix)
-		}
-		// Backend is Dolt but no dolt directory exists yet — this is a fresh
-		// clone. Any beads.db file is a legacy SQLite artifact, not the active
-		// database. Skip the SQLite checks below and allow init to proceed.
-		return nil
 	}
 
 	// Check for redirect file - if present, check the redirect target

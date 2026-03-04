@@ -1716,9 +1716,7 @@ func TestInitDatabaseFlag(t *testing.T) {
 		if cfg.DoltDatabase != "myapp_production" {
 			t.Errorf("Expected DoltDatabase %q, got %q", "myapp_production", cfg.DoltDatabase)
 		}
-		if cfg.DoltMode != configfile.DoltModeServer {
-			t.Errorf("Expected DoltMode %q, got %q", configfile.DoltModeServer, cfg.DoltMode)
-		}
+		// DoltMode field removed; server mode is always active
 	})
 
 	t.Run("with_prefix", func(t *testing.T) {
@@ -1793,12 +1791,7 @@ func TestInitDatabaseFlag(t *testing.T) {
 		if cfg.DoltDatabase != "test_server_cfg" {
 			t.Errorf("Expected DoltDatabase %q, got %q", "test_server_cfg", cfg.DoltDatabase)
 		}
-		if cfg.DoltMode != configfile.DoltModeServer {
-			t.Errorf("Expected DoltMode %q, got %q", configfile.DoltModeServer, cfg.DoltMode)
-		}
-		if cfg.Backend != configfile.BackendDolt {
-			t.Errorf("Expected Backend %q, got %q", configfile.BackendDolt, cfg.Backend)
-		}
+		// DoltMode and Backend fields removed; server mode and Dolt are always active
 	})
 
 	t.Run("validation_invalid_name", func(t *testing.T) {
@@ -1945,8 +1938,7 @@ func TestInitBackendFlag(t *testing.T) {
 		if cfg == nil {
 			t.Fatal("metadata.json not found")
 		}
-		if cfg.Backend != configfile.BackendDolt {
-			t.Errorf("Expected backend %q, got %q", configfile.BackendDolt, cfg.Backend)
-		}
+		// Backend field removed; Dolt is always the backend
+		_ = cfg
 	})
 }

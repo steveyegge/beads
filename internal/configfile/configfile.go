@@ -13,15 +13,10 @@ const ConfigFileName = "metadata.json"
 
 type Config struct {
 	Database string `json:"database"`
-	Backend  string `json:"backend,omitempty"` // Deprecated: always "dolt". Kept for JSON compat.
 
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
 
-	// Dolt connection mode configuration (bd-dolt.2.2)
-	// "embedded" (default for standalone) runs Dolt in-process — no daemon needed.
-	// "server" connects to an external dolt sql-server (required for Gas Town / multi-writer).
-	DoltMode           string `json:"dolt_mode,omitempty"`            // "embedded" (default) or "server"
 	DoltServerHost     string `json:"dolt_server_host,omitempty"`     // Server host (default: 127.0.0.1)
 	DoltServerPort     int    `json:"dolt_server_port,omitempty"`     // Server port (default: 3307)
 	DoltServerUser     string `json:"dolt_server_user,omitempty"`     // MySQL user (default: root)
@@ -177,35 +172,11 @@ type BackendCapabilities struct {
 	SingleProcessOnly bool
 }
 
-// CapabilitiesForBackend returns capabilities for a backend string.
-// Dolt is the only supported backend. Returns SingleProcessOnly=true by default;
-// use Config.GetCapabilities() to properly handle server mode.
-func CapabilitiesForBackend(_ string) BackendCapabilities {
-	return BackendCapabilities{SingleProcessOnly: true}
-}
-
 // GetCapabilities returns the backend capabilities for this config.
-// Unlike CapabilitiesForBackend(string), this considers Dolt server mode
-// which supports multi-process access.
+// Always returns multi-writer capable (SingleProcessOnly: false).
 func (c *Config) GetCapabilities() BackendCapabilities {
-	backend := c.GetBackend()
-	if backend == BackendDolt && c.IsDoltServerMode() {
-		// Server mode supports multi-writer, so NOT single-process-only
-		return BackendCapabilities{SingleProcessOnly: false}
-	}
-	return CapabilitiesForBackend(backend)
+	return BackendCapabilities{SingleProcessOnly: false}
 }
-
-// GetBackend returns the backend type. Always returns "dolt".
-func (c *Config) GetBackend() string {
-	return BackendDolt
-}
-
-// Dolt mode constants
-const (
-	DoltModeEmbedded = "embedded"
-	DoltModeServer   = "server"
-)
 
 // Default Dolt server settings
 const (
@@ -215,25 +186,6 @@ const (
 	DefaultDoltDatabase       = "beads"
 	DefaultDoltRemotesAPIPort = 8080 // Default dolt remotesapi port for federation
 )
-
-// IsDoltServerMode returns true if Dolt should connect via sql-server.
-// Server mode is the standard connection method.
-// Checks the BEADS_DOLT_SERVER_MODE env var first, then falls back to the
-// dolt_mode field in metadata.json. Only applies when backend is "dolt".
-func (c *Config) IsDoltServerMode() bool {
-	if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" && c.GetBackend() == BackendDolt {
-		return true
-	}
-	return c.GetBackend() == BackendDolt && strings.ToLower(c.DoltMode) == DoltModeServer
-}
-
-// GetDoltMode returns the Dolt connection mode, defaulting to server.
-func (c *Config) GetDoltMode() string {
-	if c.DoltMode == "" {
-		return DoltModeServer
-	}
-	return c.DoltMode
-}
 
 // GetDoltServerHost returns the Dolt server host.
 // Checks BEADS_DOLT_SERVER_HOST env var first, then config, then default.

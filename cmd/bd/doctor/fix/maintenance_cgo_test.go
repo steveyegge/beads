@@ -30,8 +30,6 @@ func TestPatrolPollution_DeletesFromDoltWithoutJSONL(t *testing.T) {
 	}
 
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
-	cfg.DoltMode = configfile.DoltModeServer
 	cfg.DoltServerHost = "127.0.0.1"
 	cfg.DoltServerPort = port
 	h := sha256.Sum256([]byte(t.Name() + fmt.Sprintf("%d", time.Now().UnixNano())))

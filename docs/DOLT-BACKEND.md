@@ -2,8 +2,7 @@
 
 Beads uses [Dolt](https://www.dolthub.com/) as its default storage backend. Dolt provides Git-like version control for your database, enabling advanced workflows like branch-based development, time travel queries, and distributed sync.
 
-> **Note:** Dolt is the only supported backend. The legacy SQLite backend has been removed.
-> To migrate from SQLite, see [Migration from SQLite](#migration-from-sqlite-legacy) below.
+> **Note:** Dolt is the only supported backend.
 
 ## Overview
 
@@ -37,9 +36,6 @@ dolt version
 ```bash
 # New project (Dolt is the default backend)
 bd init
-
-# Or convert existing SQLite database (legacy installations)
-bd migrate --to-dolt
 ```
 
 ### 3. Configure Sync Mode
@@ -61,10 +57,7 @@ When Dolt backend is detected, server mode is automatically enabled. The server 
 ### Disable Server Mode (Not Recommended)
 
 ```bash
-# Via environment variable
-export BEADS_DOLT_SERVER_MODE=0
-
-# Or in config.yaml
+# In config.yaml
 dolt:
   server_mode: false
 ```
@@ -73,7 +66,6 @@ dolt:
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `BEADS_DOLT_SERVER_MODE` | `1` | Enable/disable server mode (`1`/`0`) |
 | `BEADS_DOLT_SERVER_HOST` | `127.0.0.1` | Server bind address |
 | `BEADS_DOLT_SERVER_PORT` | `3306` | Server port (MySQL protocol) |
 | `BEADS_DOLT_SERVER_USER` | `root` | MySQL username |
@@ -182,39 +174,6 @@ bd dolt remote remove origin   # Removes from both surfaces
 ```
 
 Use `bd doctor --fix` to resolve any discrepancies between SQL and CLI remote configs.
-
-## Migration from SQLite (Legacy)
-
-If upgrading from an older version that used SQLite:
-
-### Option 1: In-Place Migration (Recommended)
-
-```bash
-# Preview the migration
-bd migrate --to-dolt --dry-run
-
-# Run the migration
-bd migrate --to-dolt
-
-# Optionally clean up SQLite files
-bd migrate --to-dolt --cleanup
-```
-
-### Option 2: Fresh Start
-
-```bash
-# Export current state
-bd export -o backup.jsonl
-
-# Archive existing beads
-mv .beads .beads-sqlite-backup
-
-# Initialize fresh
-bd init
-
-# Import from backup
-bd import -i backup.jsonl
-```
 
 ## Troubleshooting
 
@@ -349,7 +308,6 @@ federation:
 
 | Variable | Description |
 |----------|-------------|
-| `BEADS_DOLT_SERVER_MODE` | Server mode: `1` or `0` |
 | `BEADS_DOLT_SERVER_HOST` | Server host |
 | `BEADS_DOLT_SERVER_PORT` | Server port |
 | `BEADS_DOLT_SERVER_USER` | Server user |

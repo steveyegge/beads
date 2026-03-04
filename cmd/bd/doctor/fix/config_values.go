@@ -27,13 +27,11 @@ func ConfigValues(path string) error {
 
 	fixed := false
 
-	// Fix database field: when backend is Dolt, database should be "dolt" not "beads.db"
-	if cfg.GetBackend() == configfile.BackendDolt {
-		if strings.HasSuffix(cfg.Database, ".db") || strings.HasSuffix(cfg.Database, ".sqlite") || strings.HasSuffix(cfg.Database, ".sqlite3") {
-			fmt.Printf("  Updating database: %q → %q (Dolt backend uses directory)\n", cfg.Database, "dolt")
-			cfg.Database = "dolt"
-			fixed = true
-		}
+	// Fix database field: backend is always Dolt, database should be "dolt" not "beads.db"
+	if strings.HasSuffix(cfg.Database, ".db") || strings.HasSuffix(cfg.Database, ".sqlite") || strings.HasSuffix(cfg.Database, ".sqlite3") {
+		fmt.Printf("  Updating database: %q → %q (Dolt backend uses directory)\n", cfg.Database, "dolt")
+		cfg.Database = "dolt"
+		fixed = true
 	}
 
 	if !fixed {

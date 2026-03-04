@@ -53,7 +53,6 @@ func newFixTestStore(t *testing.T, dir string, prefix string) *dolt.DoltStore {
 	// Write metadata.json so openAnyDB can connect to the same database
 	cfg := &configfile.Config{
 		Database:       "dolt",
-		DoltMode:       configfile.DoltModeServer,
 		DoltServerHost: "127.0.0.1",
 		DoltServerPort: port,
 		DoltDatabase:   dbName,

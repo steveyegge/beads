@@ -163,7 +163,6 @@ func TestCheckDuplicateIssues_NoDatabase(t *testing.T) {
 	h := sha256.Sum256([]byte(t.Name() + fmt.Sprintf("%d", time.Now().UnixNano())))
 	noDbName := "doctest_nodb_" + hex.EncodeToString(h[:6])
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
 	cfg.DoltDatabase = noDbName
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("Failed to save config: %v", err)

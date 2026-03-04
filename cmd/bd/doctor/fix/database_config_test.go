@@ -16,9 +16,8 @@ func TestDatabaseConfigFix_DoltBackend(t *testing.T) {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	// Create config with Dolt backend (the default and most common case)
+	// Create config with Dolt backend (the default and only supported backend)
 	cfg := &configfile.Config{
-		Backend:  configfile.BackendDolt,
 		Database: "dolt",
 	}
 	if err := cfg.Save(beadsDir); err != nil {

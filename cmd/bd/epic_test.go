@@ -15,7 +15,7 @@ import (
 func TestEpicCommand(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
-	sqliteStore := newTestStore(t, testDB)
+	testStore := newTestStore(t, testDB)
 	ctx := context.Background()
 
 	// Create an epic with children
@@ -29,7 +29,7 @@ func TestEpicCommand(t *testing.T) {
 		CreatedAt:   time.Now(),
 	}
 
-	if err := sqliteStore.CreateIssue(ctx, epic, "test"); err != nil {
+	if err := testStore.CreateIssue(ctx, epic, "test"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,10 +51,10 @@ func TestEpicCommand(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
-	if err := sqliteStore.CreateIssue(ctx, child1, "test"); err != nil {
+	if err := testStore.CreateIssue(ctx, child1, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.CreateIssue(ctx, child2, "test"); err != nil {
+	if err := testStore.CreateIssue(ctx, child2, "test"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,17 +70,17 @@ func TestEpicCommand(t *testing.T) {
 		Type:        types.DepParentChild,
 	}
 
-	if err := sqliteStore.AddDependency(ctx, dep1, "test"); err != nil {
+	if err := testStore.AddDependency(ctx, dep1, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.AddDependency(ctx, dep2, "test"); err != nil {
+	if err := testStore.AddDependency(ctx, dep2, "test"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Test GetEpicsEligibleForClosure
-	store = sqliteStore
+	store = testStore
 
-	epics, err := sqliteStore.GetEpicsEligibleForClosure(ctx)
+	epics, err := testStore.GetEpicsEligibleForClosure(ctx)
 	if err != nil {
 		t.Fatalf("GetEpicsEligibleForClosure failed: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestEpicCommandInit(t *testing.T) {
 func TestEpicEligibleForClose(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
-	sqliteStore := newTestStore(t, testDB)
+	testStore := newTestStore(t, testDB)
 	ctx := context.Background()
 
 	// Create an epic where all children are closed
@@ -145,7 +145,7 @@ func TestEpicEligibleForClose(t *testing.T) {
 		CreatedAt:   time.Now(),
 	}
 
-	if err := sqliteStore.CreateIssue(ctx, epic, "test"); err != nil {
+	if err := testStore.CreateIssue(ctx, epic, "test"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,7 +159,7 @@ func TestEpicEligibleForClose(t *testing.T) {
 			CreatedAt: time.Now(),
 			ClosedAt:  ptrTime(time.Now()),
 		}
-		if err := sqliteStore.CreateIssue(ctx, child, "test"); err != nil {
+		if err := testStore.CreateIssue(ctx, child, "test"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -169,13 +169,13 @@ func TestEpicEligibleForClose(t *testing.T) {
 			DependsOnID: epic.ID,
 			Type:        types.DepParentChild,
 		}
-		if err := sqliteStore.AddDependency(ctx, dep, "test"); err != nil {
+		if err := testStore.AddDependency(ctx, dep, "test"); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	// Test GetEpicsEligibleForClosure
-	epics, err := sqliteStore.GetEpicsEligibleForClosure(ctx)
+	epics, err := testStore.GetEpicsEligibleForClosure(ctx)
 	if err != nil {
 		t.Fatalf("GetEpicsEligibleForClosure failed: %v", err)
 	}

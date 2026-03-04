@@ -31,9 +31,7 @@ func FixMissingMetadata(path string, bdVersion string) error {
 	if cfg == nil {
 		return nil // No config file, nothing to fix
 	}
-	if cfg.GetBackend() != configfile.BackendDolt {
-		return nil // Not a Dolt backend, nothing to fix
-	}
+	// Backend is always Dolt, continue
 
 	ctx := context.Background()
 
@@ -107,9 +105,7 @@ func FixMissingDoltDatabase(path string) error {
 	if err != nil || cfg == nil {
 		return nil // No config, nothing to fix
 	}
-	if cfg.GetBackend() != configfile.BackendDolt {
-		return nil // Not Dolt backend
-	}
+	// Backend is always Dolt, continue
 
 	// Only fix if dolt_database is missing (using default)
 	if cfg.DoltDatabase != "" {

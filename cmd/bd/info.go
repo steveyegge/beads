@@ -210,6 +210,24 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "1.0.0",
+		Date:    "2026-03-04",
+		Changes: []string{
+			"BREAKING: Removed embedded Dolt mode — server mode is the only mode",
+			"BREAKING: Removed Backend and DoltMode fields from Config struct",
+			"BREAKING: Removed GetBackend(), IsDoltServerMode(), GetDoltMode() methods",
+			"BREAKING: Removed BEADS_DOLT_SERVER_MODE env var handling",
+			"BREAKING: Removed --backend and --server flags from bd init",
+			"BREAKING: Removed --migration flag from bd doctor",
+			"REMOVED: SQLite migration validation (doctor/migration_validation.go)",
+			"REMOVED: Embedded mode concurrency check (doctor/embedded_concurrency.go)",
+			"REMOVED: scripts/migrate-jsonl-to-dolt.sh",
+			"REMOVED: examples/bd-example-extension-go/",
+			"REMOVED: Deprecation warning system (internal/deprecation/)",
+			"CLEANUP: Updated docs, help text, and comments to remove SQLite/JSONL references",
+		},
+	},
+	{
 		Version: "0.59.0",
 		Date:    "2026-03-04",
 		Changes: []string{

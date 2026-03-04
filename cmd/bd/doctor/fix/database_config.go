@@ -30,31 +30,8 @@ func DatabaseConfig(path string) error {
 		return fmt.Errorf("no metadata.json found")
 	}
 
-	// Dolt backend stores data on the server — no local .db files to reconcile
-	if cfg.GetBackend() == configfile.BackendDolt {
-		return fmt.Errorf("database config fix not applicable for Dolt backend (data is on the server)")
-	}
-
-	fixed := false
-
-	// Check if configured database name matches the actual .db file on disk
-	actualDB := findActualDBFile(beadsDir)
-	if actualDB != "" && cfg.Database != actualDB {
-		fmt.Printf("  Updating database: %s → %s\n", cfg.Database, actualDB)
-		cfg.Database = actualDB
-		fixed = true
-	}
-
-	if !fixed {
-		return fmt.Errorf("no configuration mismatches detected")
-	}
-
-	// Save updated config
-	if err := cfg.Save(beadsDir); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-
-	return nil
+	// Backend is always Dolt — data is on the server, no local .db files to reconcile
+	return fmt.Errorf("database config fix not applicable for Dolt backend (data is on the server)")
 }
 
 // findActualDBFile scans .beads/ for the actual SQLite database file in use.

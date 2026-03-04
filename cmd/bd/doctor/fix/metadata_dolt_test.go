@@ -43,7 +43,6 @@ func setupDoltWorkspace(t *testing.T) string {
 	// Create Dolt config
 	cfg := &configfile.Config{
 		Database: "dolt",
-		Backend:  configfile.BackendDolt,
 	}
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)

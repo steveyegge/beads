@@ -50,7 +50,6 @@
               gopls
               gotools
               golangci-lint
-              sqlite
             ];
             shellHook = ''
               echo "beads development shell"

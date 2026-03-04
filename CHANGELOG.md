@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-03-04
+
+### Breaking Changes
+
+- **Removed embedded Dolt mode** — Server mode is the only supported mode. The `dolt_mode` and `backend` fields in metadata.json are now ignored (Go JSON silently drops unknown fields).
+- **Removed config methods** — `GetBackend()`, `IsDoltServerMode()`, `GetDoltMode()` removed from `configfile.Config`. Use `configfile.BackendDolt` constant directly.
+- **Removed `BEADS_DOLT_SERVER_MODE` env var** — Server mode is always active.
+- **Removed `--backend` and `--server` flags** from `bd init`.
+- **Removed `--migration` flag** from `bd doctor`.
+
+### Removed
+
+- `internal/deprecation/` package (served its purpose in v0.59.0)
+- `cmd/bd/doctor/embedded_concurrency.go` — dead code (embedded mode removed)
+- `cmd/bd/doctor/migration_validation.go` — SQLite migration validation (no longer needed)
+- `scripts/migrate-jsonl-to-dolt.sh` — JSONL migration script (426 lines)
+- `examples/bd-example-extension-go/` — SQLite-based example extension
+- `configfile.DoltModeEmbedded`, `DoltModeServer` constants
+- `configfile.CapabilitiesForBackend()` function
+
+### Changed
+
+- `GetCapabilities()` always returns multi-writer capable (`SingleProcessOnly: false`)
+- All `IsDoltBackend()` guards in doctor checks removed (always true)
+- Updated help text in `bd sql`, `bd history`, `bd quickstart` to reference Dolt instead of SQLite
+- Updated `docs/DOLT.md` and `docs/DOLT-BACKEND.md` to remove embedded mode and SQLite migration sections
+- Removed `sqlite` from `flake.nix` dev shell dependencies
+
 ## [0.59.0] - 2026-03-04
 
 ### Deprecated

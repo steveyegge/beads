@@ -237,15 +237,8 @@ func findLocalBeadsDir() string {
 func findDatabaseInBeadsDir(beadsDir string, _ bool) string {
 	// Check for metadata.json first (single source of truth)
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		// For Dolt server mode, database is on the server - no local directory required
-		if cfg.IsDoltServerMode() {
-			return cfg.DatabasePath(beadsDir)
-		}
-		// For embedded Dolt, check if the configured database directory exists
-		doltPath := cfg.DatabasePath(beadsDir)
-		if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
-			return doltPath
-		}
+		// Server mode is always active - database is on the server, no local directory required
+		return cfg.DatabasePath(beadsDir)
 	}
 
 	// Fall back: check if dolt directory exists without metadata.json

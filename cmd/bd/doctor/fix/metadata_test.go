@@ -62,7 +62,6 @@ func TestFixMissingMetadata_DoltConfigExists(t *testing.T) {
 	// Create Dolt config but no actual Dolt database
 	cfg := &configfile.Config{
 		Database: "dolt",
-		Backend:  configfile.BackendDolt,
 	}
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)

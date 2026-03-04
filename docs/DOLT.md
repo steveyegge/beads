@@ -8,14 +8,13 @@ Beads uses Dolt as its storage backend. Dolt provides a version-controlled SQL d
 - **Multi-writer support** — server mode enables concurrent agents
 - **Built-in history** — every write creates a Dolt commit
 - **Native branching** — Dolt branches independent of git branches
-- **Single-binary option** — embedded mode for solo users (no daemon needed)
 
 ## Getting Started
 
 ### New Project
 
 ```bash
-# Embedded mode (single writer, no daemon — default for standalone)
+# Initialize (Dolt backend)
 bd init
 
 # Server mode (multi-writer, e.g. Gas Town)
@@ -41,16 +40,6 @@ bd migrate --to-dolt --cleanup
 Migration creates backups automatically. Your original SQLite database is preserved as `beads.backup-pre-dolt-*.db`.
 
 ## Modes of Operation
-
-### Embedded Mode (Solo / Standalone)
-
-In-process Dolt engine — no separate server needed. This is the default for
-standalone Beads users. The `bd` binary includes everything; just `bd init` and go.
-
-- Single-writer (one process at a time)
-- Data lives in `.beads/dolt/` alongside your code
-- Push to GitHub with `bd dolt push` — code and issues in one repo
-- Zero ops: no daemon, no ports, no PID files
 
 ### Server Mode (Multi-Writer / Gas Town)
 
@@ -224,18 +213,6 @@ bd doctor --server         # Server mode checks (if applicable)
    bd list                  # Re-triggers bootstrap
    ```
 
-### Lock Contention (Embedded Mode)
-
-**Symptom:** "database is locked" errors.
-
-Embedded mode is single-writer. If you need concurrent access:
-
-```bash
-# Switch to server mode
-gt dolt start
-bd config set dolt.mode server
-```
-
 ## Configuration Reference
 
 ```yaml
@@ -243,11 +220,10 @@ bd config set dolt.mode server
 
 # Dolt settings
 dolt:
-  # Auto-commit Dolt history after writes (default: on for embedded, off for server)
+  # Auto-commit Dolt history after writes (default: on, off for Gas Town server)
   auto-commit: on        # on | off
 
-  # Server mode settings (when mode: server)
-  mode: embedded         # embedded | server
+  # Server mode settings
   host: 127.0.0.1
   port: 3307
   user: root
@@ -259,7 +235,6 @@ dolt:
 | Variable | Purpose |
 |----------|---------|
 | `BEADS_DOLT_PASSWORD` | Server mode password |
-| `BEADS_DOLT_SERVER_MODE` | Enable server mode (set to "1") |
 | `BEADS_DOLT_SERVER_HOST` | Server host (default: 127.0.0.1) |
 | `BEADS_DOLT_SERVER_PORT` | Server port (default: 3307) |
 | `BEADS_DOLT_SERVER_TLS` | Enable TLS (set to "1" or "true") |
@@ -285,7 +260,7 @@ bd vc commit -m "Checkpoint before refactor"
 
 ### Auto-Commit Behavior
 
-In **embedded mode** (standalone default), each `bd` write command creates a Dolt commit:
+By default, each `bd` write command creates a Dolt commit:
 
 ```bash
 bd create "New issue"    # Creates issue + Dolt commit
@@ -295,7 +270,7 @@ In **server mode** (Gas Town), auto-commit defaults to OFF because the server
 manages its own transaction lifecycle. Firing `DOLT_COMMIT` after every write
 under concurrent load causes 'database is read only' errors.
 
-Override for batch operations (embedded) or explicit commits (server):
+Override for batch operations or explicit commits (server):
 
 ```bash
 bd --dolt-auto-commit off create "Issue 1"

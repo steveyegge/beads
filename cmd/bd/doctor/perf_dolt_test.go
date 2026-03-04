@@ -22,8 +22,6 @@ func TestRunDoltPerformanceDiagnostics_RequiresServer(t *testing.T) {
 
 	// Write config pointing to a nonexistent database
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
-	cfg.DoltMode = configfile.DoltModeServer
 	cfg.DoltServerHost = "127.0.0.1"
 	cfg.DoltServerPort = doctorTestServerPort()
 	cfg.DoltDatabase = "doctest_perf_nonexistent"

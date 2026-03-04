@@ -17,15 +17,8 @@ import (
 func CheckRemoteConsistency(repoPath string) DoctorCheck {
 	beadsDir := resolveBeadsDir(repoPath)
 
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil || cfg.GetBackend() != configfile.BackendDolt {
-		return DoctorCheck{
-			Name:     "Remote Consistency",
-			Status:   StatusOK,
-			Message:  "N/A (not using Dolt backend)",
-			Category: CategoryData,
-		}
-	}
+	// Backend is always Dolt; continue with remote consistency check
+	cfg, _ := configfile.Load(beadsDir)
 
 	// Get SQL remotes via direct connection
 	sqlRemotes, sqlErr := querySQLRemotes(beadsDir)
@@ -40,7 +33,10 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 
 	// Get CLI remotes
 	doltDir := doltserver.ResolveDoltDir(beadsDir)
-	dbName := cfg.GetDoltDatabase()
+	dbName := configfile.DefaultDoltDatabase
+	if cfg != nil {
+		dbName = cfg.GetDoltDatabase()
+	}
 	dbDir := filepath.Join(doltDir, dbName)
 	cliRemotes, cliErr := doltutil.ListCLIRemotes(dbDir)
 	if cliErr != nil {

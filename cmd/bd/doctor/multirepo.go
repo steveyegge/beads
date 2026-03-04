@@ -104,13 +104,11 @@ func discoverChildTypes(repoPath string) []string {
 
 // readTypesFromDB reads types.custom from the database config table
 func readTypesFromDB(beadsDir string) ([]string, error) {
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
+	_, err := configfile.Load(beadsDir)
+	if err != nil {
 		return nil, fmt.Errorf("no config")
 	}
-	if cfg.GetBackend() != configfile.BackendDolt {
-		return nil, fmt.Errorf("not dolt backend")
-	}
+	// Backend is always Dolt, continue
 
 	doltPath := getDatabasePath(beadsDir)
 	if _, err := os.Stat(doltPath); os.IsNotExist(err) {
@@ -169,13 +167,10 @@ func readTypesFromYAML(beadsDir string) ([]string, error) {
 func findUnknownTypesInHydratedIssues(repoPath string, multiRepo *config.MultiRepoConfig) []string {
 	beadsDir := filepath.Join(repoPath, ".beads")
 
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
+	if _, err := configfile.Load(beadsDir); err != nil {
 		return nil
 	}
-	if cfg.GetBackend() != configfile.BackendDolt {
-		return nil
-	}
+	// Backend is always Dolt, continue
 
 	doltPath := getDatabasePath(beadsDir)
 	if _, err := os.Stat(doltPath); os.IsNotExist(err) {

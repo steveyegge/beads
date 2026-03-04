@@ -938,7 +938,8 @@ func showDoltConfig(testConnection bool) {
 		cfg = configfile.DefaultConfig()
 	}
 
-	backend := cfg.GetBackend()
+	// Backend is always Dolt
+	backend := configfile.BackendDolt
 
 	// Resolve actual server port for connection testing
 	showHost := cfg.GetDoltServerHost()
@@ -947,23 +948,16 @@ func showDoltConfig(testConnection bool) {
 
 	if jsonOutput {
 		result := map[string]interface{}{
-			"backend": backend,
+			"backend":  backend,
+			"database": cfg.GetDoltDatabase(),
+			"host":     showHost,
+			"port":     showPort,
+			"user":     cfg.GetDoltServerUser(),
 		}
-		if backend == configfile.BackendDolt {
-			result["database"] = cfg.GetDoltDatabase()
-			result["host"] = showHost
-			result["port"] = showPort
-			result["user"] = cfg.GetDoltServerUser()
-			if testConnection {
-				result["connection_ok"] = testServerConnection(showHost, showPort)
-			}
+		if testConnection {
+			result["connection_ok"] = testServerConnection(showHost, showPort)
 		}
 		outputJSON(result)
-		return
-	}
-
-	if backend != configfile.BackendDolt {
-		fmt.Printf("Backend: %s\n", backend)
 		return
 	}
 
@@ -1049,19 +1043,13 @@ func setDoltConfig(key, value string, updateConfig bool) {
 		cfg = configfile.DefaultConfig()
 	}
 
-	if cfg.GetBackend() != configfile.BackendDolt {
-		fmt.Fprintf(os.Stderr, "Error: not using Dolt backend\n")
-		os.Exit(1)
-	}
+	// Backend is always Dolt, continue
 
 	var yamlKey string
 
 	switch key {
 	case "mode":
-		// Mode will be configurable again when embedded Dolt support returns.
-		// For now, server mode is required (embedded driver not yet re-integrated).
-		fmt.Fprintf(os.Stderr, "Error: mode is not yet configurable; embedded mode is coming soon\n")
-		os.Exit(1)
+		fmt.Println("server")
 
 	case "database":
 		if value == "" {
@@ -1171,10 +1159,7 @@ func testDoltConnection() {
 		cfg = configfile.DefaultConfig()
 	}
 
-	if cfg.GetBackend() != configfile.BackendDolt {
-		fmt.Fprintf(os.Stderr, "Error: not using Dolt backend\n")
-		os.Exit(1)
-	}
+	// Backend is always Dolt, continue
 
 	host := cfg.GetDoltServerHost()
 	port := doltserver.DefaultConfig(beadsDir).Port

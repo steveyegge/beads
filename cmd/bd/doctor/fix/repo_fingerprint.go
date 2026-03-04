@@ -142,7 +142,7 @@ func RepoFingerprint(path string, autoYes bool) error {
 			cfg = configfile.DefaultConfig()
 		}
 		dbPath := cfg.DatabasePath(beadsDir)
-		isDolt := cfg.GetBackend() == configfile.BackendDolt
+		isDolt := true // backend is always Dolt
 
 		// Confirm before destructive action
 		fmt.Printf("  ⚠️  This will DELETE %s. Continue? [y/N]: ", dbPath)

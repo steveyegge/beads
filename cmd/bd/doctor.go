@@ -13,7 +13,6 @@ import (
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/deprecation"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -59,7 +58,6 @@ var (
 	doctorGastown              bool   // running in gastown multi-workspace mode
 	gastownDuplicatesThreshold int    // duplicate tolerance threshold for gastown mode
 	doctorServer               bool   // run server mode health checks
-	doctorMigration            string // migration validation mode: "pre" or "post"
 	doctorAgent                bool   // agent-facing diagnostic mode (ZFC-compliant)
 )
 
@@ -246,12 +244,6 @@ Examples:
 			return
 		}
 
-		// Run migration validation if --migration flag is set
-		if doctorMigration != "" {
-			runMigrationValidation(absPath, doctorMigration)
-			return
-		}
-
 		// Run diagnostics
 		result := runDiagnostics(absPath)
 
@@ -315,7 +307,6 @@ func init() {
 	doctorCmd.Flags().BoolVar(&doctorGastown, "gastown", false, "Running in gastown multi-workspace mode (routes.jsonl is expected, higher duplicate tolerance)")
 	doctorCmd.Flags().IntVar(&gastownDuplicatesThreshold, "gastown-duplicates-threshold", 1000, "Duplicate tolerance threshold for gastown mode (wisps are ephemeral)")
 	doctorCmd.Flags().BoolVar(&doctorServer, "server", false, "Run Dolt server mode health checks (connectivity, version, schema)")
-	doctorCmd.Flags().StringVar(&doctorMigration, "migration", "", "Run Dolt migration validation: 'pre' (before migration) or 'post' (after migration)")
 	doctorCmd.Flags().BoolVar(&doctorAgent, "agent", false, "Agent-facing diagnostic mode: rich context for AI agents (ZFC-compliant)")
 }
 
@@ -329,11 +320,6 @@ func releaseDiagnosticLocks(path string) {
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil || cfg == nil {
 		return // Can't determine config, skip cleanup
-	}
-
-	// Only clean up for Dolt backend.
-	if cfg.GetBackend() != configfile.BackendDolt {
-		return
 	}
 
 	doltPath := cfg.DatabasePath(beadsDir)
@@ -544,12 +530,6 @@ func runDiagnostics(path string) doctorResult {
 	doltModeCheck := convertWithCategory(doctor.CheckDoltServerModeMismatch(path), doctor.CategoryFederation)
 	result.Checks = append(result.Checks, doltModeCheck)
 
-	// Check 8i: Deprecated configuration (v0.59.0 → removed in v1.0.0)
-	for _, dc := range checkDeprecatedConfig(beadsDir) {
-		result.Checks = append(result.Checks, dc)
-		// Don't fail overall for deprecation warnings, just warn
-	}
-
 	// Check 9: Permissions
 	permCheck := convertWithCategory(doctor.CheckPermissions(path), doctor.CategoryCore)
 	result.Checks = append(result.Checks, permCheck)
@@ -745,20 +725,10 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, kvSyncCheck)
 	// Don't fail overall check for KV sync warning, just inform
 
-	// Check 32: Dolt locks (uncommitted changes)
-	doltLocksCheck := convertDoctorCheck(doctor.CheckDoltLocks(path))
-	result.Checks = append(result.Checks, doltLocksCheck)
-	// Don't fail overall check for Dolt locks, just warn
-
 	// Check 33: Classic artifacts (post-Dolt-migration cleanup)
 	classicArtifactsCheck := convertDoctorCheck(doctor.CheckClassicArtifacts(path))
 	result.Checks = append(result.Checks, classicArtifactsCheck)
 	// Don't fail overall check for classic artifacts, just warn
-
-	// Check 36: Embedded mode concurrency issues (GH#2086)
-	concurrencyCheck := convertWithCategory(doctor.CheckEmbeddedModeConcurrency(path), doctor.CategoryRuntime)
-	result.Checks = append(result.Checks, concurrencyCheck)
-	// Don't fail overall — this is a recommendation, not a broken state
 
 	// GH#1095: Filter out suppressed checks (doctor.suppress.<slug> = true)
 	suppressed := doctor.GetSuppressedChecks(path)
@@ -794,26 +764,6 @@ func runDiagnostics(path string) doctorResult {
 	}
 
 	return result
-}
-
-// checkDeprecatedConfig converts deprecation.Check() warnings into doctorCheck entries.
-func checkDeprecatedConfig(beadsDir string) []doctorCheck {
-	warnings := deprecation.Check(beadsDir)
-	if len(warnings) == 0 {
-		return nil
-	}
-	var checks []doctorCheck
-	for _, w := range warnings {
-		checks = append(checks, doctorCheck{
-			Name:     "Deprecated: " + w.Summary,
-			Status:   statusWarning,
-			Message:  w.Detail,
-			Detail:   w.ID,
-			Fix:      w.Action,
-			Category: doctor.CategoryMaintenance,
-		})
-	}
-	return checks
 }
 
 // runInitDiagnostics runs a limited subset of diagnostics appropriate for a
@@ -1125,115 +1075,5 @@ func printAllChecks(checksByCategory map[string][]doctorCheck) {
 			}
 		}
 		fmt.Println()
-	}
-}
-
-// runMigrationValidation runs Dolt migration validation checks.
-// Phase can be "pre" (before migration) or "post" (after migration).
-// Outputs machine-parseable JSON when --json flag is set.
-func runMigrationValidation(path string, phase string) {
-	var check doctorCheck
-	var result doctor.MigrationValidationResult
-
-	switch phase {
-	case "pre":
-		dc, mr := doctor.CheckMigrationReadiness(path)
-		check = convertDoctorCheck(dc)
-		result = mr
-	case "post":
-		dc, mr := doctor.CheckMigrationCompletion(path)
-		check = convertDoctorCheck(dc)
-		result = mr
-	default:
-		FatalError("invalid migration phase %q (use 'pre' or 'post')", phase)
-	}
-
-	// JSON output for machine consumption
-	if jsonOutput {
-		output := struct {
-			Check      doctorCheck                      `json:"check"`
-			Validation doctor.MigrationValidationResult `json:"validation"`
-			CLIVersion string                           `json:"cli_version"`
-			Timestamp  string                           `json:"timestamp"`
-		}{
-			Check:      check,
-			Validation: result,
-			CLIVersion: Version,
-			Timestamp:  time.Now().UTC().Format(time.RFC3339),
-		}
-		outputJSON(output)
-		if !result.Ready {
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Human-readable output
-	fmt.Printf("\nbd doctor --migration=%s v%s\n\n", phase, Version)
-
-	// Print main status
-	var statusIcon string
-	switch check.Status {
-	case statusOK:
-		statusIcon = ui.RenderPassIcon()
-	case statusWarning:
-		statusIcon = ui.RenderWarnIcon()
-	case statusError:
-		statusIcon = ui.RenderFailIcon()
-	}
-
-	fmt.Printf("%s  %s: %s\n", statusIcon, check.Name, check.Message)
-	if check.Detail != "" {
-		for _, line := range strings.Split(check.Detail, "\n") {
-			fmt.Printf("     %s\n", ui.RenderMuted(line))
-		}
-	}
-
-	// Print validation details
-	fmt.Println()
-	fmt.Println(ui.RenderCategory("Validation Details"))
-	fmt.Printf("  Backend:     %s\n", result.Backend)
-	fmt.Printf("  JSONL Count: %d\n", result.JSONLCount)
-	if result.SQLiteCount > 0 {
-		fmt.Printf("  SQLite Count: %d\n", result.SQLiteCount)
-	}
-	if result.DoltCount > 0 {
-		fmt.Printf("  Dolt Count:  %d\n", result.DoltCount)
-	}
-	fmt.Printf("  JSONL Valid: %v\n", result.JSONLValid)
-	if result.JSONLMalformed > 0 {
-		fmt.Printf("  Malformed Lines: %d\n", result.JSONLMalformed)
-	}
-
-	// Print warnings
-	if len(result.Warnings) > 0 {
-		fmt.Println()
-		fmt.Println(ui.RenderCategory("Warnings"))
-		for _, warn := range result.Warnings {
-			fmt.Printf("  %s  %s\n", ui.RenderWarnIcon(), warn)
-		}
-	}
-
-	// Print errors
-	if len(result.Errors) > 0 {
-		fmt.Println()
-		fmt.Println(ui.RenderCategory("Errors"))
-		for _, err := range result.Errors {
-			fmt.Printf("  %s  %s\n", ui.RenderFailIcon(), err)
-		}
-	}
-
-	// Print fix suggestion
-	if check.Fix != "" {
-		fmt.Println()
-		fmt.Printf("%s  %s\n", ui.RenderMuted("Fix:"), check.Fix)
-	}
-
-	fmt.Println()
-	if result.Ready {
-		fmt.Printf("%s\n", ui.RenderPass("✓ Migration validation passed"))
-	} else {
-		fmt.Printf("%s\n", ui.RenderFail("✗ Migration validation failed"))
-		os.Exit(1)
 	}
 }

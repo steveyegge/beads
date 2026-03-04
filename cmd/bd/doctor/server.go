@@ -56,33 +56,7 @@ func RunServerHealthChecks(path string) ServerHealthResult {
 		return result
 	}
 
-	// Check if Dolt backend is configured
-	if cfg.GetBackend() != configfile.BackendDolt {
-		result.Checks = append(result.Checks, DoctorCheck{
-			Name:     "Server Config",
-			Status:   StatusWarning,
-			Message:  fmt.Sprintf("Backend is '%s', not Dolt", cfg.GetBackend()),
-			Detail:   "Server mode health checks are only relevant for Dolt backend",
-			Fix:      "Set backend: dolt in metadata.json to use Dolt server mode",
-			Category: CategoryFederation,
-		})
-		result.OverallOK = false
-		return result
-	}
-
-	// Check if server mode is configured
-	if !cfg.IsDoltServerMode() {
-		result.Checks = append(result.Checks, DoctorCheck{
-			Name:     "Server Config",
-			Status:   StatusOK,
-			Message:  fmt.Sprintf("Dolt mode is '%s' (embedded is the default)", cfg.GetDoltMode()),
-			Detail:   "Server health checks only apply when dolt_mode is explicitly set to 'server'",
-			Category: CategoryFederation,
-		})
-		return result
-	}
-
-	// Server mode is configured - run health checks
+	// Backend is always Dolt and server mode is always on - run health checks
 	host := cfg.GetDoltServerHost()
 	// Use doltserver.DefaultConfig for port resolution (env > config > DerivePort).
 	// cfg.GetDoltServerPort() falls back to 3307 which is wrong for standalone mode.

@@ -45,7 +45,7 @@ dolt-server.port
 dolt-server.activity
 dolt-monitor.pid
 
-# Legacy files (from pre-Dolt versions)
+# Legacy files (may exist in older installations)
 *.db
 *.db?*
 *.db-journal

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 )
 
@@ -206,53 +205,11 @@ func CheckDatabaseConfig(repoPath string) DoctorCheck {
 		}
 	}
 
-	// Dolt backend stores data on the server — no local .db or .jsonl files expected
-	if cfg.GetBackend() == configfile.BackendDolt {
-		return DoctorCheck{
-			Name:    "Database Config",
-			Status:  StatusOK,
-			Message: "Dolt backend (data on server)",
-		}
-	}
-
-	var issues []string
-
-	// Check if configured database exists
-	if cfg.Database != "" {
-		dbPath := cfg.DatabasePath(beadsDir)
-		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-			// Check if other .db files exist
-			entries, _ := os.ReadDir(beadsDir) // Best effort: nil entries means no legacy files to check
-			var otherDBs []string
-			for _, entry := range entries {
-				if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".db") {
-					otherDBs = append(otherDBs, entry.Name())
-				}
-			}
-			if len(otherDBs) > 0 {
-				issues = append(issues, fmt.Sprintf("Configured database '%s' not found, but found: %s",
-					cfg.Database, strings.Join(otherDBs, ", ")))
-			}
-		}
-	}
-
-	if len(issues) == 0 {
-		return DoctorCheck{
-			Name:    "Database Config",
-			Status:  StatusOK,
-			Message: "Configuration matches existing files",
-		}
-	}
-
+	// Backend is always Dolt — data is on the server, no local .db or .jsonl files expected
 	return DoctorCheck{
 		Name:    "Database Config",
-		Status:  StatusWarning,
-		Message: "Configuration mismatch detected",
-		Detail:  strings.Join(issues, "\n  "),
-		Fix: "Run 'bd doctor --fix' to auto-detect and fix mismatches, or manually:\n" +
-			"  1. Check which files are actually being used\n" +
-			"  2. Update metadata.json to match the actual filenames\n" +
-			"  3. Or rename the files to match the configuration",
+		Status:  StatusOK,
+		Message: "Dolt backend (data on server)",
 	}
 }
 
@@ -291,32 +248,13 @@ func CheckFreshClone(repoPath string) DoctorCheck {
 		}
 	}
 
-	// Check if database exists (backend-aware)
-	switch backend {
-	case configfile.BackendDolt:
-		// Dolt is directory-backed: treat .beads/dolt as the DB existence signal.
-		if info, err := os.Stat(getDatabasePath(beadsDir)); err == nil && info.IsDir() {
-			return DoctorCheck{
-				Name:    "Fresh Clone",
-				Status:  StatusOK,
-				Message: "Database exists",
-			}
-		}
-	default:
-		// SQLite (default): check configured .db file path.
-		var dbPath string
-		if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-			dbPath = cfg.DatabasePath(beadsDir)
-		} else {
-			// Fall back to canonical database name
-			dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-		}
-		if _, err := os.Stat(dbPath); err == nil {
-			return DoctorCheck{
-				Name:    "Fresh Clone",
-				Status:  StatusOK,
-				Message: "Database exists",
-			}
+	// Check if database exists (backend is always Dolt, directory-backed)
+	_ = backend // always configfile.BackendDolt
+	if info, err := os.Stat(getDatabasePath(beadsDir)); err == nil && info.IsDir() {
+		return DoctorCheck{
+			Name:    "Fresh Clone",
+			Status:  StatusOK,
+			Message: "Database exists",
 		}
 	}
 

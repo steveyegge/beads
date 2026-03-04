@@ -48,7 +48,6 @@ func TestDoltShowConfigDefaultMode(t *testing.T) {
 
 	// Create metadata.json with Dolt backend
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
 	cfg.DoltDatabase = "testdb"
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
@@ -121,8 +120,6 @@ func TestDoltShowConfigServerMode(t *testing.T) {
 
 	// Create metadata.json with Dolt backend in server mode
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
-	cfg.DoltMode = configfile.DoltModeServer
 	cfg.DoltDatabase = "myproject"
 	cfg.DoltServerHost = "192.168.1.100"
 	cfg.DoltServerPort = 3308
@@ -203,7 +200,6 @@ func TestDoltSetConfigValidation(t *testing.T) {
 
 	// Create metadata.json with Dolt backend
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
 	}
@@ -277,7 +273,6 @@ func TestDoltSetConfigJSONOutput(t *testing.T) {
 	}
 
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
 	}
@@ -326,7 +321,6 @@ func TestDoltSetConfigWithUpdateConfig(t *testing.T) {
 	}
 
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
 	if err := cfg.Save(beadsDir); err != nil {
 		t.Fatalf("failed to save config: %v", err)
 	}
@@ -413,13 +407,6 @@ func TestTestServerConnection(t *testing.T) {
 }
 
 func TestDoltConfigGetters(t *testing.T) {
-	t.Run("GetDoltMode defaults", func(t *testing.T) {
-		cfg := configfile.DefaultConfig()
-		if cfg.GetDoltMode() != configfile.DoltModeEmbedded {
-			t.Errorf("expected default mode 'embedded', got %s", cfg.GetDoltMode())
-		}
-	})
-
 	t.Run("GetDoltDatabase defaults", func(t *testing.T) {
 		cfg := configfile.DefaultConfig()
 		if cfg.GetDoltDatabase() != configfile.DefaultDoltDatabase {
@@ -451,20 +438,6 @@ func TestDoltConfigGetters(t *testing.T) {
 		if cfg.GetDoltServerUser() != configfile.DefaultDoltServerUser {
 			t.Errorf("expected default user '%s', got %s",
 				configfile.DefaultDoltServerUser, cfg.GetDoltServerUser())
-		}
-	})
-
-	t.Run("IsDoltServerMode", func(t *testing.T) {
-		cfg := configfile.DefaultConfig()
-		if cfg.IsDoltServerMode() {
-			t.Error("expected IsDoltServerMode to be false for default config")
-		}
-
-		// IsDoltServerMode requires BOTH backend=dolt AND mode=server
-		cfg.Backend = configfile.BackendDolt
-		cfg.DoltMode = configfile.DoltModeServer
-		if !cfg.IsDoltServerMode() {
-			t.Error("expected IsDoltServerMode to be true when backend is dolt and mode is server")
 		}
 	})
 }
@@ -628,8 +601,6 @@ func TestSetDoltConfigWorktreeIsolation(t *testing.T) {
 
 	// Create metadata.json with Dolt backend
 	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
-	cfg.DoltMode = configfile.DoltModeServer
 	cfg.DoltServerHost = "127.0.0.1"
 	cfg.DoltServerPort = 3307
 	cfg.DoltDatabase = "beads"

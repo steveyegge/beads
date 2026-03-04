@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -37,23 +36,7 @@ func RunDeepValidation(path string) DeepValidationResult {
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Check backend
-	backend := configfile.BackendDolt
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		backend = cfg.GetBackend()
-	}
-
-	if backend != configfile.BackendDolt {
-		check := DoctorCheck{
-			Name:     "Deep Validation",
-			Status:   StatusWarning,
-			Message:  "SQLite backend detected",
-			Category: CategoryMaintenance,
-			Fix:      "Run 'bd init' to set up Dolt backend",
-		}
-		result.AllChecks = append(result.AllChecks, check)
-		return result
-	}
+	// Backend is always Dolt, continue with deep validation
 
 	// Check if Dolt directory exists
 	doltPath := getDatabasePath(beadsDir)

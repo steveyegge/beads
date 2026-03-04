@@ -35,9 +35,7 @@ func setupTestBeadsDir(t *testing.T, tmpDir string) string {
 	dbName := uniqueDBName(t)
 
 	cfg := &configfile.Config{
-		Backend:        configfile.BackendDolt,
 		Database:       "dolt",
-		DoltMode:       configfile.DoltModeServer,
 		DoltServerHost: "127.0.0.1",
 		DoltServerPort: port,
 		DoltDatabase:   dbName,
@@ -163,9 +161,7 @@ func TestDatabaseVersionWithBdVersion_ImportsJSONL(t *testing.T) {
 	dbName := uniqueDBName(t)
 
 	cfg := &configfile.Config{
-		Backend:        configfile.BackendDolt,
 		Database:       "dolt",
-		DoltMode:       configfile.DoltModeServer,
 		DoltServerHost: "127.0.0.1",
 		DoltServerPort: port,
 		DoltDatabase:   dbName,

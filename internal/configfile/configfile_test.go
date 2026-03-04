@@ -71,7 +71,7 @@ func TestDatabasePath_Dolt(t *testing.T) {
 	beadsDir := "/home/user/project/.beads"
 
 	t.Run("explicit dolt dir", func(t *testing.T) {
-		cfg := &Config{Database: "dolt", Backend: BackendDolt}
+		cfg := &Config{Database: "dolt"}
 		got := cfg.DatabasePath(beadsDir)
 		want := filepath.Join(beadsDir, "dolt")
 		if got != want {
@@ -79,8 +79,8 @@ func TestDatabasePath_Dolt(t *testing.T) {
 		}
 	})
 
-	t.Run("backward compat: dolt backend with beads.db field", func(t *testing.T) {
-		cfg := &Config{Database: "beads.db", Backend: BackendDolt}
+	t.Run("backward compat: beads.db field", func(t *testing.T) {
+		cfg := &Config{Database: "beads.db"}
 		got := cfg.DatabasePath(beadsDir)
 		want := filepath.Join(beadsDir, "dolt")
 		if got != want {
@@ -91,7 +91,7 @@ func TestDatabasePath_Dolt(t *testing.T) {
 	t.Run("stale database name is ignored (split-brain fix)", func(t *testing.T) {
 		// Stale values like "town", "wyvern", "beads_rig" must resolve to "dolt"
 		for _, staleName := range []string{"town", "wyvern", "beads_rig", "random"} {
-			cfg := &Config{Database: staleName, Backend: BackendDolt}
+			cfg := &Config{Database: staleName}
 			got := cfg.DatabasePath(beadsDir)
 			want := filepath.Join(beadsDir, "dolt")
 			if got != want {
@@ -101,7 +101,7 @@ func TestDatabasePath_Dolt(t *testing.T) {
 	})
 
 	t.Run("empty database field resolves to dolt", func(t *testing.T) {
-		cfg := &Config{Database: "", Backend: BackendDolt}
+		cfg := &Config{Database: ""}
 		got := cfg.DatabasePath(beadsDir)
 		want := filepath.Join(beadsDir, "dolt")
 		if got != want {
@@ -110,7 +110,7 @@ func TestDatabasePath_Dolt(t *testing.T) {
 	})
 
 	t.Run("absolute path is honored", func(t *testing.T) {
-		cfg := &Config{Database: "/custom/path/dolt", Backend: BackendDolt}
+		cfg := &Config{Database: "/custom/path/dolt"}
 		got := cfg.DatabasePath(beadsDir)
 		want := "/custom/path/dolt"
 		if got != want {
@@ -169,77 +169,6 @@ func TestGetDeletionsRetentionDays(t *testing.T) {
 
 // TestDoltServerMode tests the Dolt server mode configuration (bd-dolt.2.2)
 func TestDoltServerMode(t *testing.T) {
-	t.Run("IsDoltServerMode", func(t *testing.T) {
-		tests := []struct {
-			name string
-			cfg  *Config
-			want bool
-		}{
-			{
-				name: "empty backend",
-				cfg:  &Config{Backend: ""},
-				want: false,
-			},
-			{
-				name: "dolt embedded mode",
-				cfg:  &Config{Backend: BackendDolt, DoltMode: DoltModeEmbedded},
-				want: false,
-			},
-			{
-				name: "dolt server mode",
-				cfg:  &Config{Backend: BackendDolt, DoltMode: DoltModeServer},
-				want: true,
-			},
-			{
-				name: "dolt default mode",
-				cfg:  &Config{Backend: BackendDolt},
-				want: false, // DoltMode field is empty; IsDoltServerMode checks raw field
-			},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				got := tt.cfg.IsDoltServerMode()
-				if got != tt.want {
-					t.Errorf("IsDoltServerMode() = %v, want %v", got, tt.want)
-				}
-			})
-		}
-	})
-
-	t.Run("GetDoltMode", func(t *testing.T) {
-		tests := []struct {
-			name string
-			cfg  *Config
-			want string
-		}{
-			{
-				name: "empty defaults to server",
-				cfg:  &Config{},
-				want: DoltModeServer,
-			},
-			{
-				name: "explicit embedded",
-				cfg:  &Config{DoltMode: DoltModeEmbedded},
-				want: DoltModeEmbedded,
-			},
-			{
-				name: "explicit server",
-				cfg:  &Config{DoltMode: DoltModeServer},
-				want: DoltModeServer,
-			},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				got := tt.cfg.GetDoltMode()
-				if got != tt.want {
-					t.Errorf("GetDoltMode() = %q, want %q", got, tt.want)
-				}
-			})
-		}
-	})
-
 	t.Run("GetDoltServerHost", func(t *testing.T) {
 		tests := []struct {
 			name string
@@ -325,59 +254,11 @@ func TestDoltServerMode(t *testing.T) {
 	})
 }
 
-// TestIsDoltServerModeEnvVar tests env var overrides for IsDoltServerMode
-func TestIsDoltServerModeEnvVar(t *testing.T) {
-	t.Run("env var override with dolt backend", func(t *testing.T) {
-		t.Setenv("BEADS_DOLT_SERVER_MODE", "1")
-		cfg := &Config{Backend: BackendDolt}
-		if !cfg.IsDoltServerMode() {
-			t.Error("IsDoltServerMode() = false, want true when env var set with dolt backend")
-		}
-	})
-
-	t.Run("env var with dolt backend enables server mode", func(t *testing.T) {
-		t.Setenv("BEADS_DOLT_SERVER_MODE", "1")
-		cfg := &Config{Backend: ""}
-		if !cfg.IsDoltServerMode() {
-			t.Error("IsDoltServerMode() = false, want true when env var set with default backend")
-		}
-	})
-
-	t.Run("env var not set", func(t *testing.T) {
-		cfg := &Config{Backend: BackendDolt}
-		if cfg.IsDoltServerMode() {
-			t.Error("IsDoltServerMode() = true, want false when no config or env var")
-		}
-	})
-}
-
-// TestGetBackendAlwaysDolt tests that GetBackend always returns "dolt".
-func TestGetBackendAlwaysDolt(t *testing.T) {
-	tests := []struct {
-		name string
-		cfg  *Config
-	}{
-		{name: "explicit dolt", cfg: &Config{Backend: BackendDolt}},
-		{name: "empty backend", cfg: &Config{Backend: ""}},
-		{name: "legacy config", cfg: &Config{}},
-		{name: "stale sqlite value", cfg: &Config{Backend: "sqlite"}},
-		{name: "unknown backend", cfg: &Config{Backend: "postgres"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.cfg.GetBackend(); got != BackendDolt {
-				t.Errorf("GetBackend() = %q, want %q", got, BackendDolt)
-			}
-		})
-	}
-}
-
 // TestDatabasePathAlwaysDolt tests that DatabasePath always returns the dolt path.
 func TestDatabasePathAlwaysDolt(t *testing.T) {
 	beadsDir := "/home/user/project/.beads"
 
-	cfg := &Config{Database: "beads.db", Backend: BackendDolt}
+	cfg := &Config{Database: "beads.db"}
 	got := cfg.DatabasePath(beadsDir)
 	want := filepath.Join(beadsDir, "dolt")
 	if got != want {
@@ -385,50 +266,16 @@ func TestDatabasePathAlwaysDolt(t *testing.T) {
 	}
 }
 
-// TestCapabilitiesForBackend tests that CapabilitiesForBackend returns
-// single-process-only by default.
-func TestCapabilitiesForBackend(t *testing.T) {
-	caps := CapabilitiesForBackend("anything")
-	if !caps.SingleProcessOnly {
-		t.Error("CapabilitiesForBackend().SingleProcessOnly = false, want true")
-	}
-}
-
-// TestGetCapabilities tests that GetCapabilities properly handles server mode
+// TestGetCapabilities tests that GetCapabilities always returns multi-writer capable.
 func TestGetCapabilities(t *testing.T) {
-	tests := []struct {
-		name           string
-		cfg            *Config
-		wantSingleProc bool
-	}{
-		{
-			name:           "dolt embedded is single-process",
-			cfg:            &Config{Backend: BackendDolt, DoltMode: DoltModeEmbedded},
-			wantSingleProc: true,
-		},
-		{
-			name:           "dolt default (empty) is single-process",
-			cfg:            &Config{Backend: BackendDolt},
-			wantSingleProc: true,
-		},
-		{
-			name:           "dolt server mode is multi-process",
-			cfg:            &Config{Backend: BackendDolt, DoltMode: DoltModeServer},
-			wantSingleProc: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.cfg.GetCapabilities().SingleProcessOnly
-			if got != tt.wantSingleProc {
-				t.Errorf("GetCapabilities().SingleProcessOnly = %v, want %v", got, tt.wantSingleProc)
-			}
-		})
+	cfg := &Config{}
+	got := cfg.GetCapabilities()
+	if got.SingleProcessOnly {
+		t.Error("GetCapabilities().SingleProcessOnly = true, want false (always multi-writer)")
 	}
 }
 
-// TestDoltServerModeRoundtrip tests that server mode config survives save/load
+// TestDoltServerModeRoundtrip tests that server connection config survives save/load
 func TestDoltServerModeRoundtrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -438,8 +285,6 @@ func TestDoltServerModeRoundtrip(t *testing.T) {
 
 	cfg := &Config{
 		Database:       "dolt",
-		Backend:        BackendDolt,
-		DoltMode:       DoltModeServer,
 		DoltServerHost: "192.168.1.50",
 		DoltServerPort: 13306,
 		DoltServerUser: "beads_admin",
@@ -454,12 +299,6 @@ func TestDoltServerModeRoundtrip(t *testing.T) {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if !loaded.IsDoltServerMode() {
-		t.Error("IsDoltServerMode() = false after load, want true")
-	}
-	if loaded.GetDoltMode() != DoltModeServer {
-		t.Errorf("GetDoltMode() = %q, want %q", loaded.GetDoltMode(), DoltModeServer)
-	}
 	if loaded.GetDoltServerHost() != "192.168.1.50" {
 		t.Errorf("GetDoltServerHost() = %q, want %q", loaded.GetDoltServerHost(), "192.168.1.50")
 	}

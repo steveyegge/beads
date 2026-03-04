@@ -41,19 +41,18 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, cfg *Config)
 		cfg.Database = fileCfg.GetDoltDatabase()
 	}
 
-	// Merge server connection config (config provides defaults, caller can override)
-	if fileCfg.IsDoltServerMode() {
-		if cfg.ServerHost == "" {
-			cfg.ServerHost = fileCfg.GetDoltServerHost()
-		}
-		if cfg.ServerPort == 0 {
-			// Use doltserver.DefaultConfig for port resolution (env > config > DerivePort).
-			// fileCfg.GetDoltServerPort() falls back to 3307 which is wrong for standalone mode.
-			cfg.ServerPort = doltserver.DefaultConfig(beadsDir).Port
-		}
-		if cfg.ServerUser == "" {
-			cfg.ServerUser = fileCfg.GetDoltServerUser()
-		}
+	// Merge server connection config (config provides defaults, caller can override).
+	// Server mode is always active.
+	if cfg.ServerHost == "" {
+		cfg.ServerHost = fileCfg.GetDoltServerHost()
+	}
+	if cfg.ServerPort == 0 {
+		// Use doltserver.DefaultConfig for port resolution (env > config > DerivePort).
+		// fileCfg.GetDoltServerPort() falls back to 3307 which is wrong for standalone mode.
+		cfg.ServerPort = doltserver.DefaultConfig(beadsDir).Port
+	}
+	if cfg.ServerUser == "" {
+		cfg.ServerUser = fileCfg.GetDoltServerUser()
 	}
 
 	// Enable auto-start for standalone users (similar to main.go's auto-start
@@ -129,12 +128,8 @@ func resolveAutoStart(current bool, doltAutoStartCfg string, explicitPort bool) 
 	return true
 }
 
-// GetBackendFromConfig returns the backend type from metadata.json.
-// Returns "dolt" if no config exists or backend is not specified.
-func GetBackendFromConfig(beadsDir string) string {
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
-		return configfile.BackendDolt
-	}
-	return cfg.GetBackend()
+// GetBackendFromConfig returns the backend type.
+// Always returns "dolt" as it is the only supported backend.
+func GetBackendFromConfig(_ string) string {
+	return configfile.BackendDolt
 }

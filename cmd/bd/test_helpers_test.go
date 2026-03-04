@@ -151,8 +151,6 @@ func writeTestMetadata(t *testing.T, dbPath string, database string) {
 	}
 	cfg := &configfile.Config{
 		Database:       "dolt",
-		Backend:        configfile.BackendDolt,
-		DoltMode:       configfile.DoltModeServer,
 		DoltDatabase:   database,
 		DoltServerHost: "127.0.0.1",
 		DoltServerPort: testDoltServerPort,

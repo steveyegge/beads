@@ -18,8 +18,7 @@ var historyCmd = &cobra.Command{
 	Long: `Show the complete version history of an issue, including all commits
 where the issue was modified.
 
-This command requires the Dolt storage backend. If you're using SQLite,
-you'll see an error message suggesting to use Dolt for versioning features.
+This command queries the Dolt version history for an issue.
 
 Examples:
   bd history bd-123           # Show all history for issue bd-123
