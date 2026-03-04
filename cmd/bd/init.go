@@ -799,6 +799,33 @@ environment variable.`,
 			}
 			fmt.Printf("\nRun %s to see details and fix these issues.\n\n", ui.RenderAccent("bd doctor --fix"))
 		}
+
+		// Check for existing backup files after init (GH#2327)
+		// This handles the case where user switched branches and the dolt DB
+		// is missing but backup files exist from another branch.
+		if !quiet {
+			if backupDir, issueCount := detectBackupFiles(beadsDir); issueCount > 0 {
+				fmt.Printf("%s Found backup files with %d issues\n", ui.RenderInfoIcon(), issueCount)
+				fmt.Printf("  Location: %s\n\n", backupDir)
+				fmt.Printf("Would you like to restore from backup? [Y/n]: ")
+
+				reader := bufio.NewReader(os.Stdin)
+				response, _ := reader.ReadString('\n')
+				response = strings.TrimSpace(strings.ToLower(response))
+
+				if response == "" || response == "y" || response == "yes" {
+					fmt.Printf("\nRestoring from backup...\n")
+					if err := restoreFromBackupAfterInit(beadsDir, backupDir); err != nil {
+						fmt.Fprintf(os.Stderr, "%s Restore failed: %v\n", ui.RenderWarn("!"), err)
+						fmt.Fprintf(os.Stderr, "You can manually run: bd backup restore %s\n", backupDir)
+					} else {
+						fmt.Printf("%s Restored %d issues from backup\n\n", ui.RenderPass("✓"), issueCount)
+					}
+				} else {
+					fmt.Printf("\nTo restore later: bd backup restore %s\n\n", backupDir)
+				}
+			}
+		}
 	},
 }
 
@@ -1118,4 +1145,72 @@ func verifyMetadata(ctx context.Context, store *dolt.DoltStore, key, value strin
 		return false
 	}
 	return true
+}
+
+// detectBackupFiles checks for backup JSONL files in .beads/backup/.
+// Returns the backup directory path and issue count if backups exist.
+// This is used after init to offer restore when backup files exist (GH#2327).
+func detectBackupFiles(beadsDir string) (backupPath string, issueCount int) {
+	backupDir := filepath.Join(beadsDir, "backup")
+
+	// Check for issues.jsonl - the minimum required backup file
+	issuesPath := filepath.Join(backupDir, "issues.jsonl")
+	_, err := os.Stat(issuesPath)
+	if os.IsNotExist(err) {
+		return "", 0
+	}
+	if err != nil {
+		return "", 0
+	}
+
+	// Count issues in the backup file (quick line count)
+	file, err := os.Open(issuesPath)
+	if err != nil {
+		return backupDir, 0
+	}
+	defer file.Close()
+
+	count := 0
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			count++
+		}
+	}
+
+	return backupDir, count
+}
+
+// restoreFromBackupAfterInit restores issues from backup after init completes.
+// This handles the branch-switch scenario where the dolt DB doesn't exist yet.
+func restoreFromBackupAfterInit(beadsDir, backupDir string) error {
+	ctx := getRootContext()
+
+	// Open a store connection for restore
+	doltPath := doltserver.ResolveDoltDir(beadsDir)
+	cfg, cfgErr := configfile.Load(beadsDir)
+
+	doltCfg := &dolt.Config{
+		BeadsDir: beadsDir,
+		Path:     doltPath,
+	}
+
+	if cfgErr == nil && cfg != nil {
+		doltCfg.Database = cfg.GetDoltDatabase()
+		doltCfg.ServerHost = cfg.GetDoltServerHost()
+		doltCfg.ServerPort = doltserver.DefaultConfig(beadsDir).Port
+		doltCfg.ServerUser = cfg.GetDoltServerUser()
+		doltCfg.ServerPassword = cfg.GetDoltServerPassword()
+	}
+
+	s, err := dolt.New(ctx, doltCfg)
+	if err != nil {
+		return fmt.Errorf("failed to open database for restore: %w", err)
+	}
+	defer s.Close()
+
+	// Run the restore
+	_, err = runBackupRestore(ctx, s, backupDir, false)
+	return err
 }

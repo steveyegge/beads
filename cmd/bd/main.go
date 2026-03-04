@@ -549,6 +549,10 @@ var rootCmd = &cobra.Command{
 			if handleFreshCloneError(err) {
 				os.Exit(1)
 			}
+			// Check for database not found with backup files (branch switch scenario)
+			if handleDatabaseNotFoundError(err) {
+				os.Exit(1)
+			}
 			FatalError("failed to open database: %v", err)
 		}
 
