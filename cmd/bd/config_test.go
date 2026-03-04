@@ -154,7 +154,7 @@ func TestConfigNamespaces(t *testing.T) {
 }
 
 // TestYamlOnlyConfigWithoutDatabase verifies that yaml-only config keys
-// (like no-db) can be set/get without requiring a SQLite database.
+// (like no-db) can be set/get without requiring a database.
 // This is the fix for GH#536 - the chicken-and-egg problem where you couldn't
 // run `bd config set no-db true` without first having a database.
 func TestYamlOnlyConfigWithoutDatabase(t *testing.T) {
@@ -230,7 +230,7 @@ func setupTestDB(t *testing.T) (*dolt.DoltStore, func()) {
 }
 
 // TestBeadsRoleGitConfig verifies that beads.role is stored in git config,
-// not SQLite, so that bd doctor can find it (GH#1531).
+// not the database, so that bd doctor can find it (GH#1531).
 func TestBeadsRoleGitConfig(t *testing.T) {
 	tmpDir := newGitRepo(t)
 

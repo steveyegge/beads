@@ -286,7 +286,6 @@ var blockedCmd = &cobra.Command{
 	Short: "Show blocked issues",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
-		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 		ctx := rootCtx
 		parentID, _ := cmd.Flags().GetString("parent")
 		var blockedFilter types.WorkFilter

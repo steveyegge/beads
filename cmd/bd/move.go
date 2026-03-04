@@ -96,7 +96,7 @@ Examples:
 		}
 
 		// Step 4: Open storage for the target rig
-		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
+		// Open target rig storage
 		targetStore, err := dolt.NewFromConfig(ctx, targetBeadsDir)
 		if err != nil {
 			FatalError("failed to open target rig database: %v", err)

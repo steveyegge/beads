@@ -210,8 +210,6 @@ func TestValidateCheck_NoBeadsDir(t *testing.T) {
 }
 
 func TestValidateCheck_FixOrphanedDeps(t *testing.T) {
-	// The orphaned deps fix uses raw SQLite queries and skips Dolt backends.
-	// Since the default backend is now Dolt, the fix is a no-op.
 	// This test verifies that detection works and the fix gracefully skips.
 	tmpDir, store := setupValidateTestDB(t, "test")
 	ctx := context.Background()

@@ -31,7 +31,7 @@ var (
 
 // templateDB holds a pre-initialized bd database directory.
 // Created once via sync.Once, then copied for each test to avoid
-// running bd init (which creates SQLite DB, config files, etc.) per test.
+// running bd init (which creates the Dolt DB, config files, etc.) per test.
 // This optimization eliminates ~2s per test from repeated initialization.
 var (
 	templateDBDir  string
@@ -110,7 +110,7 @@ func setupCLITestDB(t *testing.T) string {
 }
 
 // createTempDirWithCleanup creates a temp directory with non-fatal cleanup
-// This prevents test failures from SQLite file lock cleanup issues
+// This prevents test failures from database file lock cleanup issues
 func createTempDirWithCleanup(t *testing.T) string {
 	t.Helper()
 
@@ -120,7 +120,7 @@ func createTempDirWithCleanup(t *testing.T) string {
 	}
 
 	t.Cleanup(func() {
-		// Retry cleanup with delays to handle SQLite file locks
+		// Retry cleanup with delays to handle database file locks
 		// Don't fail the test if cleanup fails - just log it
 		for i := 0; i < 5; i++ {
 			err := os.RemoveAll(tmpDir)
@@ -132,7 +132,7 @@ func createTempDirWithCleanup(t *testing.T) string {
 			}
 		}
 		// Final attempt failed - log but don't fail test
-		t.Logf("Warning: Failed to clean up temp dir %s (SQLite file locks)", tmpDir)
+		t.Logf("Warning: Failed to clean up temp dir %s (database file locks)", tmpDir)
 	})
 
 	return tmpDir
@@ -186,7 +186,7 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	rootCtx = nil
 	rootCancel = nil
 
-	// Give SQLite time to release file locks before cleanup
+	// Give database time to release file locks before cleanup
 	time.Sleep(10 * time.Millisecond)
 
 	// Close writers and restore
@@ -930,7 +930,7 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 	rootCtx = nil
 	rootCancel = nil
 
-	// Give SQLite time to release file locks before cleanup
+	// Give database time to release file locks before cleanup
 	time.Sleep(10 * time.Millisecond)
 
 	wOut.Close()

@@ -132,7 +132,7 @@ func runBDForCoverage(t *testing.T, dir string, args ...string) (stdout string, 
 	rootCtx = nil
 	rootCancel = nil
 
-	// Give SQLite time to release file locks.
+	// Give database time to release file locks.
 	time.Sleep(10 * time.Millisecond)
 
 	_ = wOut.Close()

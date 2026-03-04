@@ -345,7 +345,7 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 	}
 }
 
-// deleteBatchFallback handles batch deletion for non-SQLite storage (e.g., MemoryStorage in --no-db mode)
+// deleteBatchFallback handles batch deletion for non-Dolt storage (e.g., MemoryStorage in --no-db mode)
 // It iterates through issues one by one, deleting each.
 func deleteBatchFallback(issueIDs []string, force bool, dryRun bool, cascade bool, jsonOutput bool) {
 	ctx := rootCtx

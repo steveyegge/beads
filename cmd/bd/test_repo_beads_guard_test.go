@@ -178,7 +178,7 @@ func diffSnapshots(before, after map[string]fileSnap) string {
 			continue
 		}
 		// Only report size changes (actual content modification).
-		// Ignore mtime-only changes - SQLite shm/wal files can have mtime updated
+		// Ignore mtime-only changes - database files can have mtime updated
 		// from read-only operations (config loading, etc.) which is not pollution.
 		if b.size != a.size {
 			out += fmt.Sprintf("- %s: size %d → %d\n", name, b.size, a.size)
