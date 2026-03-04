@@ -32,7 +32,7 @@ var setupCmd = &cobra.Command{
 	Long: `Setup integration files for AI editors and coding assistants.
 
 Recipes define where beads workflow instructions are written. Built-in recipes
-include cursor, claude, gemini, aider, factory, codex, mux, junie, windsurf, cody, and kilocode.
+include cursor, claude, gemini, aider, factory, codex, mux, opencode, junie, windsurf, cody, and kilocode.
 
 Examples:
   bd setup cursor          # Install Cursor IDE integration
@@ -175,6 +175,9 @@ func runRecipe(name string) {
 	case "mux":
 		runMuxRecipe()
 		return
+	case "opencode":
+		runOpenCodeRecipe()
+		return
 	case "aider":
 		runAiderRecipe()
 		return
@@ -303,6 +306,18 @@ func runCodexRecipe() {
 		return
 	}
 	setup.InstallCodex()
+}
+
+func runOpenCodeRecipe() {
+	if setupCheck {
+		setup.CheckOpenCode()
+		return
+	}
+	if setupRemove {
+		setup.RemoveOpenCode()
+		return
+	}
+	setup.InstallOpenCode()
 }
 
 func runMuxRecipe() {
