@@ -230,7 +230,7 @@ func (c *Config) IsDoltServerMode() bool {
 // GetDoltMode returns the Dolt connection mode, defaulting to server.
 func (c *Config) GetDoltMode() string {
 	if c.DoltMode == "" {
-		return DoltModeEmbedded
+		return DoltModeServer
 	}
 	return c.DoltMode
 }

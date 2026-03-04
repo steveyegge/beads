@@ -21,6 +21,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/deprecation"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/molecules"
@@ -466,6 +467,9 @@ var rootCmd = &cobra.Command{
 		// Best-effort tracking - failures are silent
 		trackBdVersion()
 
+		// Show deprecation warnings for legacy config (v0.59.0 → removed in v1.0.0)
+		maybeShowDeprecationWarnings()
+
 		// Check if this is a read-only command (GH#804)
 		// Read-only commands open the store in read-only mode to avoid modifying
 		// the database (which breaks file watchers).
@@ -681,6 +685,24 @@ var rootCmd = &cobra.Command{
 			rootCancel()
 		}
 	},
+}
+
+// deprecationChecked prevents duplicate deprecation warnings within a session.
+var deprecationChecked = false
+
+// maybeShowDeprecationWarnings checks for deprecated configs and warns the user.
+// Runs once per session, before store init (no DB access needed).
+func maybeShowDeprecationWarnings() {
+	if deprecationChecked {
+		return
+	}
+	deprecationChecked = true
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return
+	}
+	warnings := deprecation.Check(beadsDir)
+	deprecation.PrintWarnings(warnings, jsonOutput)
 }
 
 // blockedEnvVars lists environment variables that must not be set because they

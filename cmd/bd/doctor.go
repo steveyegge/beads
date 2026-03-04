@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/deprecation"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -543,6 +544,12 @@ func runDiagnostics(path string) doctorResult {
 	doltModeCheck := convertWithCategory(doctor.CheckDoltServerModeMismatch(path), doctor.CategoryFederation)
 	result.Checks = append(result.Checks, doltModeCheck)
 
+	// Check 8i: Deprecated configuration (v0.59.0 → removed in v1.0.0)
+	for _, dc := range checkDeprecatedConfig(beadsDir) {
+		result.Checks = append(result.Checks, dc)
+		// Don't fail overall for deprecation warnings, just warn
+	}
+
 	// Check 9: Permissions
 	permCheck := convertWithCategory(doctor.CheckPermissions(path), doctor.CategoryCore)
 	result.Checks = append(result.Checks, permCheck)
@@ -787,6 +794,26 @@ func runDiagnostics(path string) doctorResult {
 	}
 
 	return result
+}
+
+// checkDeprecatedConfig converts deprecation.Check() warnings into doctorCheck entries.
+func checkDeprecatedConfig(beadsDir string) []doctorCheck {
+	warnings := deprecation.Check(beadsDir)
+	if len(warnings) == 0 {
+		return nil
+	}
+	var checks []doctorCheck
+	for _, w := range warnings {
+		checks = append(checks, doctorCheck{
+			Name:     "Deprecated: " + w.Summary,
+			Status:   statusWarning,
+			Message:  w.Detail,
+			Detail:   w.ID,
+			Fix:      w.Action,
+			Category: doctor.CategoryMaintenance,
+		})
+	}
+	return checks
 }
 
 // runInitDiagnostics runs a limited subset of diagnostics appropriate for a

@@ -193,7 +193,7 @@ func TestDoltServerMode(t *testing.T) {
 			{
 				name: "dolt default mode",
 				cfg:  &Config{Backend: BackendDolt},
-				want: false, // Default is embedded
+				want: false, // DoltMode field is empty; IsDoltServerMode checks raw field
 			},
 		}
 
@@ -214,9 +214,9 @@ func TestDoltServerMode(t *testing.T) {
 			want string
 		}{
 			{
-				name: "empty defaults to embedded",
+				name: "empty defaults to server",
 				cfg:  &Config{},
-				want: DoltModeEmbedded,
+				want: DoltModeServer,
 			},
 			{
 				name: "explicit embedded",

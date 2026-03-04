@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-03-04
+
+### Deprecated
+
+- **Embedded Dolt mode** — `dolt_mode: "embedded"` in metadata.json is deprecated. Server mode is the only supported mode. Remove the field or set to `"server"`.
+- **SQLite backend config** — `backend: "sqlite"` in metadata.json. Dolt is the only backend.
+- **`BEADS_DOLT_SERVER_MODE` env var** — Server mode is always on. Remove from environment.
+- **Legacy JSONL/SQLite artifacts** — `issues.jsonl`, `beads.jsonl`, `beads.db` files in `.beads/` are unused. Run `bd doctor --check=artifacts --clean` to remove.
+
+All deprecated items will be **removed in v1.0.0**. Run `bd doctor` for personalized migration guidance.
+
+### Fixed
+
+- `GetDoltMode()` now defaults to `"server"` instead of `"embedded"`, matching the actual runtime behavior since v0.56.0.
+
 ## [0.58.0] - 2026-03-02
 
 ### Added

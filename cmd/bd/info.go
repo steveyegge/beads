@@ -210,6 +210,14 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.59.0",
+		Date:    "2026-03-04",
+		Changes: []string{
+			"DEPRECATION: Embedded Dolt mode, SQLite config fields, BEADS_DOLT_SERVER_MODE env var, and legacy JSONL/SQLite artifacts will be removed in v1.0.0. Run 'bd doctor' for migration guidance.",
+			"FIX: GetDoltMode() default changed from embedded to server to match reality",
+		},
+	},
+	{
 		Version: "0.58.0",
 		Date:    "2026-03-02",
 		Changes: []string{
