@@ -109,7 +109,7 @@ func TestApplyHookMigrationExecution_CustomWithSidecarsPreservesHookBody(t *test
 	assertExistsHookMigrationFile(t, preCommitPath+".backup.migrated")
 }
 
-func TestApplyHookMigrationExecution_MarkerBrokenBlocksApply(t *testing.T) {
+func TestApplyHookMigrationExecution_MarkerBrokenIsRepaired(t *testing.T) {
 	repoDir, hooksDir := setupHookMigrationRepo(t)
 	preCommitPath := filepath.Join(hooksDir, "pre-commit")
 
@@ -121,17 +121,27 @@ func TestApplyHookMigrationExecution_MarkerBrokenBlocksApply(t *testing.T) {
 		t.Fatalf("PlanHookMigration failed: %v", err)
 	}
 	execPlan := buildHookMigrationExecutionPlan(plan)
-	if len(execPlan.BlockingErrors) == 0 {
-		t.Fatal("expected blocking errors for broken marker")
+	if len(execPlan.BlockingErrors) > 0 {
+		t.Fatalf("broken markers should not be blocking errors, got: %v", execPlan.BlockingErrors)
+	}
+	if len(execPlan.WriteOps) == 0 {
+		t.Fatal("expected a write op to repair the broken marker")
 	}
 
-	if _, err := applyHookMigrationExecution(execPlan); err == nil {
-		t.Fatal("expected apply to fail for broken marker state")
+	summary, err := applyHookMigrationExecution(execPlan)
+	if err != nil {
+		t.Fatalf("expected apply to succeed for broken marker state, got: %v", err)
+	}
+	if summary.WrittenHookCount == 0 {
+		t.Fatal("expected at least one hook to be written during repair")
 	}
 
 	rendered := mustReadHookMigrationFile(t, preCommitPath)
-	if rendered != brokenContent {
-		t.Fatalf("expected broken hook to remain unchanged after blocked apply")
+	if !strings.Contains(rendered, hookSectionBeginPrefix) || !strings.Contains(rendered, hookSectionEndPrefix) {
+		t.Fatalf("expected repaired hook to contain valid marker section, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "bd hooks run pre-commit") {
+		t.Fatalf("expected repaired hook to contain hook invocation, got:\n%s", rendered)
 	}
 }
 
