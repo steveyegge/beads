@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	mysql "github.com/go-sql-driver/mysql"
 
@@ -87,4 +88,24 @@ func wrapExecError(op string, err error) error {
 		return nil
 	}
 	return fmt.Errorf("%s: %w: %w", op, ErrExec, err)
+}
+
+// databaseNotFoundError builds the "database not found" error with a config-aware
+// hint about sync.git-remote. Extracted from openServerConnection for testability.
+func databaseNotFoundError(cfg *Config) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "database %q not found on Dolt server at %s:%d\n\n", cfg.Database, cfg.ServerHost, cfg.ServerPort)
+	b.WriteString("This can happen when:\n")
+	b.WriteString("  - The server is serving a different data directory than expected\n")
+	b.WriteString("  - The database has not been initialized yet\n\n")
+	b.WriteString("To initialize a new board:  bd init\n")
+	b.WriteString("To check server status:     bd doctor")
+
+	if cfg.SyncGitRemote != "" {
+		fmt.Fprintf(&b, "\n\nTip: sync.git-remote is configured (%s).\nRun bd init to bootstrap from the remote.", cfg.SyncGitRemote)
+	} else {
+		b.WriteString("\n\nTip: To bootstrap from an existing Dolt remote, set sync.git-remote\nin .beads/config.yaml and re-run bd init.")
+	}
+
+	return errors.New(b.String())
 }

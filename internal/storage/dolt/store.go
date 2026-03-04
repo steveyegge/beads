@@ -129,6 +129,10 @@ type Config struct {
 	RemoteUser     string // Hosted Dolt remote user (set via DOLT_REMOTE_USER env var)
 	RemotePassword string // Hosted Dolt remote password (set via DOLT_REMOTE_PASSWORD env var)
 
+	// SyncGitRemote holds the sync.git-remote config value (if any).
+	// Used to provide context-aware hints in "database not found" errors.
+	SyncGitRemote string
+
 	// CreateIfMissing allows CREATE DATABASE when the target database does not
 	// exist on the server. Only explicit initialization, migration, or new-board
 	// creation paths should set this to true. Normal open paths leave it false,
@@ -815,14 +819,7 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	if !dbExists {
 		if !cfg.CreateIfMissing {
 			_ = db.Close()
-			return nil, "", fmt.Errorf(
-				"database %q not found on Dolt server at %s:%d\n\n"+
-					"This can happen when:\n"+
-					"  - The server is serving a different data directory than expected\n"+
-					"  - The database has not been initialized yet\n\n"+
-					"To initialize a new board:  bd init\n"+
-					"To check server status:     bd doctor",
-				cfg.Database, cfg.ServerHost, cfg.ServerPort)
+			return nil, "", databaseNotFoundError(cfg)
 		}
 
 		_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", cfg.Database)) //nolint:gosec // G201: cfg.Database validated by ValidateDatabaseName above

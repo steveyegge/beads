@@ -508,6 +508,7 @@ var rootCmd = &cobra.Command{
 			doltCfg.ServerPassword = cfg.GetDoltServerPassword()
 			doltCfg.ServerTLS = cfg.GetDoltServerTLS()
 		}
+		doltCfg.SyncGitRemote = config.GetString("sync.git-remote")
 
 		// Auto-start: enabled by default for standalone users.
 		// Disabled under Gas Town (which manages its own server) or by explicit config.
