@@ -271,7 +271,7 @@ func TestInjectHookSection(t *testing.T) {
 			}
 			// Verify broken marker scenarios leave exactly one clean section
 			brokenCases := map[string]bool{
-				"orphaned BEGIN without END":        true,
+				"orphaned BEGIN without END":             true,
 				"orphaned BEGIN followed by valid block": true,
 				"reversed markers (END before BEGIN)":    true,
 			}
