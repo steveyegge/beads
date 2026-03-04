@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Manual integration tests for v0.59.0 deprecation warnings and v1.0.0 clean break.
+# Manual integration tests for v0.59.0 deprecation warnings and v0.60.0 clean break.
 #
 # Run from outside the Gas Town tree (auto-start is disabled under crew/):
 #   bash /path/to/beads/scripts/test-deprecation-manual.sh [bd-binary]
@@ -71,12 +71,12 @@ if [[ "$VERSION" == 0.59.* ]]; then
   else
     fail "v0.59.0 should show deprecation warning for embedded mode"
   fi
-elif [[ "$VERSION" == 1.* ]]; then
-  # v1.0.0 removed the deprecation system — field is silently ignored
+elif [[ "$VERSION" == 0.60.* ]]; then
+  # v0.60.0 removed the deprecation system — field is silently ignored
   if echo "$STDERR" | grep -qi "deprecated"; then
-    fail "v1.0.0 should NOT show deprecation warnings (system removed)"
+    fail "v0.60.0 should NOT show deprecation warnings (system removed)"
   else
-    pass "v1.0.0 silently ignores dolt_mode:embedded"
+    pass "v0.60.0 silently ignores dolt_mode:embedded"
   fi
 fi
 

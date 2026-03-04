@@ -7,18 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-03-04
-
-### Breaking Changes
-
-- **Removed embedded Dolt mode** — Server mode is the only supported mode. The `dolt_mode` and `backend` fields in metadata.json are now ignored (Go JSON silently drops unknown fields).
-- **Removed config methods** — `GetBackend()`, `IsDoltServerMode()`, `GetDoltMode()` removed from `configfile.Config`. Use `configfile.BackendDolt` constant directly.
-- **Removed `BEADS_DOLT_SERVER_MODE` env var** — Server mode is always active.
-- **Removed `--backend` and `--server` flags** from `bd init`.
-- **Removed `--migration` flag** from `bd doctor`.
+## [0.60.0] - 2026-03-04
 
 ### Removed
 
+- **Embedded Dolt mode code** — Server mode is the only supported mode. The `dolt_mode` and `backend` fields in metadata.json are now ignored (Go JSON silently drops unknown fields).
+- **Config methods** — `GetBackend()`, `IsDoltServerMode()`, `GetDoltMode()` removed from `configfile.Config`. Use `configfile.BackendDolt` constant directly.
+- **`BEADS_DOLT_SERVER_MODE` env var** handling — Server mode is always active.
+- **`--backend` and `--server` flags** from `bd init`.
+- **`--migration` flag** from `bd doctor`.
 - `internal/deprecation/` package (served its purpose in v0.59.0)
 - `cmd/bd/doctor/embedded_concurrency.go` — dead code (embedded mode removed)
 - `cmd/bd/doctor/migration_validation.go` — SQLite migration validation (no longer needed)
@@ -44,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`BEADS_DOLT_SERVER_MODE` env var** — Server mode is always on. Remove from environment.
 - **Legacy JSONL/SQLite artifacts** — `issues.jsonl`, `beads.jsonl`, `beads.db` files in `.beads/` are unused. Run `bd doctor --check=artifacts --clean` to remove.
 
-All deprecated items will be **removed in v1.0.0**. Run `bd doctor` for personalized migration guidance.
+All deprecated items will be **removed in v0.60.0**. Run `bd doctor` for personalized migration guidance.
 
 ### Fixed
 
@@ -1807,7 +1804,7 @@ All deprecated items will be **removed in v1.0.0**. Run `bd doctor` for personal
 
 ### Deprecated
 
-The following commands are deprecated and will be removed in v1.0.0:
+The following commands are deprecated and will be removed in v0.60.0:
 
 - **`bd relate`** → use `bd dep relate` instead
 - **`bd unrelate`** → use `bd dep unrelate` instead
@@ -1827,7 +1824,7 @@ The following commands are deprecated and will be removed in v1.0.0:
 - **`bd migrate-issues`** → use `bd migrate issues` instead
 
 All deprecated commands continue to work but print a warning. Update your scripts
-and muscle memory before v1.0.0 to avoid breakage.
+and muscle memory before v0.60.0 to avoid breakage.
 
 ### Changed
 

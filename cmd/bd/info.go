@@ -210,15 +210,15 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
-		Version: "1.0.0",
+		Version: "0.60.0",
 		Date:    "2026-03-04",
 		Changes: []string{
-			"BREAKING: Removed embedded Dolt mode — server mode is the only mode",
-			"BREAKING: Removed Backend and DoltMode fields from Config struct",
-			"BREAKING: Removed GetBackend(), IsDoltServerMode(), GetDoltMode() methods",
-			"BREAKING: Removed BEADS_DOLT_SERVER_MODE env var handling",
-			"BREAKING: Removed --backend and --server flags from bd init",
-			"BREAKING: Removed --migration flag from bd doctor",
+			"REMOVED: Embedded Dolt mode code — server mode is the only mode",
+			"REMOVED: Backend and DoltMode fields from Config struct",
+			"REMOVED: GetBackend(), IsDoltServerMode(), GetDoltMode() methods",
+			"REMOVED: BEADS_DOLT_SERVER_MODE env var handling",
+			"REMOVED: --backend and --server flags from bd init",
+			"REMOVED: --migration flag from bd doctor",
 			"REMOVED: SQLite migration validation (doctor/migration_validation.go)",
 			"REMOVED: Embedded mode concurrency check (doctor/embedded_concurrency.go)",
 			"REMOVED: scripts/migrate-jsonl-to-dolt.sh",
@@ -231,7 +231,7 @@ var versionChanges = []VersionChange{
 		Version: "0.59.0",
 		Date:    "2026-03-04",
 		Changes: []string{
-			"DEPRECATION: Embedded Dolt mode, SQLite config fields, BEADS_DOLT_SERVER_MODE env var, and legacy JSONL/SQLite artifacts will be removed in v1.0.0. Run 'bd doctor' for migration guidance.",
+			"DEPRECATION: Embedded Dolt mode, SQLite config fields, BEADS_DOLT_SERVER_MODE env var, and legacy JSONL/SQLite artifacts will be removed in v0.60.0. Run 'bd doctor' for migration guidance.",
 			"FIX: GetDoltMode() default changed from embedded to server to match reality",
 		},
 	},

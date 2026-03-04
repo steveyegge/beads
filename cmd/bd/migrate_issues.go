@@ -670,6 +670,6 @@ func init() {
 	migrateIssuesAliasCmd := *migrateIssuesCmd
 	migrateIssuesAliasCmd.Use = "migrate-issues"
 	migrateIssuesAliasCmd.Hidden = true
-	migrateIssuesAliasCmd.Deprecated = "use 'bd migrate issues' instead (will be removed in v1.0.0)"
+	migrateIssuesAliasCmd.Deprecated = "use 'bd migrate issues' instead (will be removed in v0.60.0)"
 	rootCmd.AddCommand(&migrateIssuesAliasCmd)
 }
