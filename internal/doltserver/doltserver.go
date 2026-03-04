@@ -137,8 +137,15 @@ func fallbackPort(beadsDir string) int {
 }
 
 // DerivePort computes a stable port from the beadsDir path.
-// Maps to range 13307–14306 to avoid common service ports.
+// Maps to range 13307–14306 (1000 ports) to avoid common service ports.
 // The port is deterministic: same path always yields the same port.
+//
+// The 1000-port hash space means collisions become likely around 9+
+// concurrent projects (~3.9% probability via the birthday paradox with
+// fnv32a % 1000). This is acceptable because reclaimPort() in Start()
+// detects when another project's server already occupies the derived
+// port and falls back gracefully — hash collisions cause a retry, not
+// a failure.
 func DerivePort(beadsDir string) int {
 	abs, err := filepath.Abs(beadsDir)
 	if err != nil {
@@ -248,8 +255,13 @@ func writePortFile(beadsDir string, port int) error {
 }
 
 // DefaultConfig returns config with sensible defaults.
-// Priority: env var > metadata.json > config.yaml / global config > Gas Town fixed port > DefaultDoltServerPort (3307).
-// Start() may further fall back to DerivePort if 3307 is occupied by another project.
+// Priority: env var > metadata.json > config.yaml / global config > port file > Gas Town fixed port > DerivePort.
+//
+// The port file (dolt-server.port) is written by Start() with the actual port
+// the server is listening on. Consulting it here ensures that commands
+// connecting to an already-running server use the correct port — even when
+// Start() fell back to DerivePort because another project occupied the default
+// port.
 func DefaultConfig(beadsDir string) *Config {
 	cfg := &Config{
 		BeadsDir: beadsDir,
@@ -280,17 +292,21 @@ func DefaultConfig(beadsDir string) *Config {
 		}
 	}
 
+	// Check the port file — Start() writes the actual listening port here,
+	// which may differ from the configured default when Start() falls back
+	// to DerivePort (e.g. another project's server occupied the default port).
+	if cfg.Port == 0 {
+		if p := readPortFile(beadsDir); 0 < p {
+			cfg.Port = p
+		}
+	}
+
 	if cfg.Port == 0 {
 		// Under Gas Town, use fixed port so all worktrees share one server.
 		if os.Getenv("GT_ROOT") != "" {
 			cfg.Port = GasTownPort
 		} else {
-			// Use the canonical default port (3307) rather than a hash-derived
-			// port. This matches shared Homebrew Dolt servers and aligns with
-			// configfile.DefaultDoltServerPort. DerivePort was intended for
-			// per-project isolated servers, but in practice most users run a
-			// single shared server.
-			cfg.Port = configfile.DefaultDoltServerPort
+			cfg.Port = DerivePort(beadsDir)
 		}
 	}
 
@@ -471,6 +487,7 @@ func Start(beadsDir string) (*State, error) {
 		if errors.Is(reclaimErr, ErrPortOccupiedByOtherProject) {
 			// Another project's Dolt server is on the default port —
 			// use a hash-derived port for this project instead.
+			fmt.Fprintf(os.Stderr, "Port %d occupied by another project's Dolt server; falling back to port %d\n", actualPort, fallbackPort(beadsDir))
 			actualPort = fallbackPort(beadsDir)
 			adoptPID, reclaimErr = reclaimPort(cfg.Host, actualPort, beadsDir)
 			if reclaimErr != nil {
