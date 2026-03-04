@@ -204,7 +204,7 @@ func isReadonlyMode() bool {
 	return cmdCtx.ReadonlyMode
 }
 
-// getLockTimeout returns the SQLite lock timeout.
+// getLockTimeout returns the database lock timeout.
 func getLockTimeout() time.Duration {
 	if shouldUseGlobals() {
 		return lockTimeout

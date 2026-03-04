@@ -96,15 +96,14 @@ func openDoltConn(beadsDir string) (*doltConn, error) {
 	return &doltConn{db: db, cfg: cfg, port: port}, nil
 }
 
-// GetBackend returns the configured backend type from configuration.
-// It checks config.yaml first (storage-backend key), then falls back to metadata.json.
-// Returns "dolt" (default) or "sqlite" (legacy).
-// hq-3446fc.17: Use dolt.GetBackendFromConfig for consistent backend detection.
+// GetBackend returns the configured backend type.
+// Always returns "dolt" — the only supported backend.
 func GetBackend(beadsDir string) string {
 	return dolt.GetBackendFromConfig(beadsDir)
 }
 
 // IsDoltBackend returns true if the configured backend is Dolt.
+// Always returns true — Dolt is the only supported backend.
 func IsDoltBackend(beadsDir string) bool {
 	return GetBackend(beadsDir) == configfile.BackendDolt
 }
@@ -125,17 +124,6 @@ func RunDoltHealthChecks(path string) []DoctorCheck {
 // avoiding false positives from doctor's own noms LOCK files (GH#1981).
 func RunDoltHealthChecksWithLock(path string, lockCheck DoctorCheck) []DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-
-	if !IsDoltBackend(beadsDir) {
-		return []DoctorCheck{
-			{Name: "Dolt Connection", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryCore},
-			{Name: "Dolt Schema", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryCore},
-			{Name: "Dolt Issue Count", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryData},
-			{Name: "Dolt Status", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryData},
-			{Name: "Dolt Lock Health", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryRuntime},
-			{Name: "Phantom Databases", Status: StatusOK, Message: "N/A (SQLite backend)", Category: CategoryData},
-		}
-	}
 
 	conn, err := openDoltConn(beadsDir)
 	if err != nil {
@@ -195,16 +183,6 @@ func checkConnectionWithDB(conn *doltConn) DoctorCheck {
 // for coordinated access.
 func CheckDoltConnection(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-
-	// Only run this check for Dolt backend
-	if !IsDoltBackend(beadsDir) {
-		return DoctorCheck{
-			Name:     "Dolt Connection",
-			Status:   StatusOK,
-			Message:  "N/A (not using Dolt backend)",
-			Category: CategoryCore,
-		}
-	}
 
 	conn, err := openDoltConn(beadsDir)
 	if err != nil {
@@ -300,16 +278,6 @@ func checkSchemaWithDB(conn *doltConn) DoctorCheck {
 func CheckDoltSchema(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Only run for Dolt backend
-	if !IsDoltBackend(beadsDir) {
-		return DoctorCheck{
-			Name:     "Dolt Schema",
-			Status:   StatusOK,
-			Message:  "N/A (not using Dolt backend)",
-			Category: CategoryCore,
-		}
-	}
-
 	conn, err := openDoltConn(beadsDir)
 	if err != nil {
 		return DoctorCheck{
@@ -354,16 +322,6 @@ func checkIssueCountWithDB(conn *doltConn) DoctorCheck {
 // for coordinated access.
 func CheckDoltIssueCount(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-
-	// Only run for Dolt backend
-	if !IsDoltBackend(beadsDir) {
-		return DoctorCheck{
-			Name:     "Dolt Issue Count",
-			Status:   StatusOK,
-			Message:  "N/A (not using Dolt backend)",
-			Category: CategoryData,
-		}
-	}
 
 	conn, err := openDoltConn(beadsDir)
 	if err != nil {
@@ -460,16 +418,6 @@ func checkStatusWithDB(conn *doltConn) DoctorCheck {
 func CheckDoltStatus(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Only run for Dolt backend
-	if !IsDoltBackend(beadsDir) {
-		return DoctorCheck{
-			Name:     "Dolt Status",
-			Status:   StatusOK,
-			Message:  "N/A (not using Dolt backend)",
-			Category: CategoryData,
-		}
-	}
-
 	conn, err := openDoltConn(beadsDir)
 	if err != nil {
 		return DoctorCheck{
@@ -490,15 +438,6 @@ func CheckDoltStatus(path string) DoctorCheck {
 // is currently held, providing actionable guidance when issues are found.
 func CheckLockHealth(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-
-	if !IsDoltBackend(beadsDir) {
-		return DoctorCheck{
-			Name:     "Dolt Lock Health",
-			Status:   StatusOK,
-			Message:  "N/A (not using Dolt backend)",
-			Category: CategoryRuntime,
-		}
-	}
 
 	var warnings []string
 

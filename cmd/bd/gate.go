@@ -739,8 +739,7 @@ func checkBeadGate(ctx context.Context, awaitID string) (bool, string) {
 		return false, fmt.Sprintf("rig %q not found: %v", rigName, err)
 	}
 
-	// Open the target database (read-only) using storage factory
-	// This supports both Dolt and legacy SQLite backends in the target rig.
+	// Open the target database (read-only).
 	targetStore, err := dolt.NewFromConfigWithOptions(ctx, targetBeadsDir, &dolt.Config{ReadOnly: true})
 	if err != nil {
 		return false, fmt.Sprintf("failed to open database for rig %q: %v", rigName, err)

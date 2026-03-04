@@ -23,7 +23,6 @@ type MigrationValidationResult struct {
 	Ready              bool           `json:"ready"`                // true if migration can proceed/succeeded
 	Backend            string         `json:"backend"`              // current backend: "sqlite", "dolt", or "jsonl-only"
 	JSONLCount         int            `json:"jsonl_count"`          // issue count in JSONL
-	SQLiteCount        int            `json:"sqlite_count"`         // issue count in SQLite (pre-migration)
 	DoltCount          int            `json:"dolt_count"`           // issue count in Dolt (post-migration)
 	MissingInDB        []string       `json:"missing_in_db"`        // issue IDs in JSONL but not in DB (sample)
 	MissingInJSONL     []string       `json:"missing_in_jsonl"`     // issue IDs in DB but not in JSONL (sample)
@@ -325,16 +324,6 @@ func CheckMigrationCompletion(path string) (DoctorCheck, MigrationValidationResu
 // CheckDoltLocks checks if the Dolt database has any locks or uncommitted changes.
 func CheckDoltLocks(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-
-	// Only run for Dolt backend
-	if !IsDoltBackend(beadsDir) {
-		return DoctorCheck{
-			Name:     "Dolt Locks",
-			Status:   StatusOK,
-			Message:  "N/A (not Dolt backend)",
-			Category: CategoryMaintenance,
-		}
-	}
 
 	locked, detail, err := checkDoltLocks(beadsDir)
 	if err != nil {

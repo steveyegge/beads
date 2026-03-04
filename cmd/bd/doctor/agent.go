@@ -692,10 +692,10 @@ func enrichRedirectTargetSync(dc DoctorCheck) agentEnrichment {
 func enrichUntrackedFiles(dc DoctorCheck) agentEnrichment {
 	return agentEnrichment{
 		severity:    "advisory",
-		explanation: fmt.Sprintf("Untracked beads files: %s. Legacy data files in .beads/ are not tracked by git. In direct-commit mode, these should be committed to propagate changes. (Dolt backends store data on the server and do not need tracked files.)", dc.Message),
+		explanation: fmt.Sprintf("Untracked beads files: %s. Dolt stores data on the server and does not need tracked files.", dc.Message),
 		observed:    dc.Message,
-		expected:    "All legacy .beads/ data files are tracked by git (or using Dolt/sync-branch mode)",
-		commands:    []string{"git add .beads/*.jsonl && git commit -m 'sync beads data'"},
+		expected:    "No unexpected untracked files in .beads/",
+		commands:    []string{"bd doctor --check=artifacts"},
 		sourceFiles: []string{"cmd/bd/doctor/installation.go:CheckUntrackedBeadsFiles"},
 	}
 }

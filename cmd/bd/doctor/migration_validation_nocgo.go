@@ -9,7 +9,6 @@ type MigrationValidationResult struct {
 	Ready              bool           `json:"ready"`
 	Backend            string         `json:"backend"`
 	JSONLCount         int            `json:"jsonl_count"`
-	SQLiteCount        int            `json:"sqlite_count"`
 	DoltCount          int            `json:"dolt_count"`
 	MissingInDB        []string       `json:"missing_in_db"`
 	MissingInJSONL     []string       `json:"missing_in_jsonl"`

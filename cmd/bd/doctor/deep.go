@@ -47,7 +47,7 @@ func RunDeepValidation(path string) DeepValidationResult {
 		check := DoctorCheck{
 			Name:     "Deep Validation",
 			Status:   StatusWarning,
-			Message:  "SQLite backend detected",
+			Message:  "Unsupported backend detected",
 			Category: CategoryMaintenance,
 			Fix:      "Run 'bd init' to set up Dolt backend",
 		}

@@ -71,8 +71,8 @@ var configSetCmd = &cobra.Command{
 		value := args[1]
 
 		// Check if this is a yaml-only key (startup settings like no-db, etc.)
-		// These must be written to config.yaml, not SQLite, because they're read
-		// before the database is opened. (GH#536)
+		// These must be written to config.yaml, not the database, because they're
+		// read before the database is opened. (GH#536)
 		if config.IsYamlOnlyKey(key) {
 			if err := config.SetYamlConfig(key, value); err != nil {
 				fmt.Fprintf(os.Stderr, "Error setting config: %v\n", err)
@@ -91,7 +91,7 @@ var configSetCmd = &cobra.Command{
 			return
 		}
 
-		// beads.role is stored in git config, not SQLite (GH#1531).
+		// beads.role is stored in git config, not the database (GH#1531).
 		// bd doctor reads it from git config, so we write there for consistency.
 		if key == "beads.role" {
 			validRoles := map[string]bool{"maintainer": true, "contributor": true}
@@ -148,7 +148,7 @@ var configGetCmd = &cobra.Command{
 		key := args[0]
 
 		// Check if this is a yaml-only key (startup settings)
-		// These are read from config.yaml via viper, not SQLite. (GH#536)
+		// These are read from config.yaml via viper, not the database. (GH#536)
 		if config.IsYamlOnlyKey(key) {
 			value := config.GetYamlConfig(key)
 
@@ -168,7 +168,7 @@ var configGetCmd = &cobra.Command{
 			return
 		}
 
-		// beads.role is stored in git config, not SQLite (GH#1531).
+		// beads.role is stored in git config, not the database (GH#1531).
 		if key == "beads.role" {
 			cmd := exec.Command("git", "config", "--get", "beads.role")
 			output, err := cmd.Output()

@@ -232,9 +232,8 @@ func TestMigrationValidationResult_JSONSerialization(t *testing.T) {
 	result := MigrationValidationResult{
 		Phase:          "pre-migration",
 		Ready:          true,
-		Backend:        "sqlite",
+		Backend:        "dolt",
 		JSONLCount:     100,
-		SQLiteCount:    100,
 		MissingInDB:    []string{},
 		MissingInJSONL: []string{},
 		Errors:         []string{},

@@ -87,7 +87,7 @@ This command checks:
 Performance Mode (--perf):
   Run performance diagnostics on your database:
   - Times key operations (bd ready, bd list, bd show, etc.)
-  - Collects system info (OS, arch, SQLite version, database stats)
+  - Collects system info (OS, arch, database stats)
   - Generates CPU profile for analysis
   - Outputs shareable report for bug reports
 
@@ -98,7 +98,7 @@ Export Mode (--output):
 Specific Check Mode (--check):
   Run a specific check in detail. Available checks:
   - artifacts: Detect and optionally clean beads classic artifacts
-    (stale JSONL, SQLite files, cruft .beads dirs). Use with --clean.
+    (stale files, cruft .beads dirs). Use with --clean.
   - pollution: Detect and optionally clean test issues from database
   - validate: Run focused data-integrity checks (duplicates, orphaned
     deps, test pollution, git conflicts). Use with --fix to auto-repair.
@@ -125,12 +125,10 @@ Migration Validation Mode (--migration):
   Run Dolt migration validation checks with machine-parseable output.
   Use --migration=pre before migration to verify readiness:
   - JSONL file exists and is valid (parseable, no corruption)
-  - All JSONL issues are present in SQLite (or explains discrepancies)
   - No blocking issues prevent migration
   Use --migration=post after migration to verify completion:
   - Dolt database exists and is healthy
   - All issues from JSONL are present in Dolt
-  - No data was lost during migration
   - Dolt database has no locks or uncommitted changes
   Combine with --json for machine-parseable output for automation.
 
@@ -170,7 +168,7 @@ Examples:
   bd doctor --dry-run    # Preview what --fix would do without making changes
   bd doctor --perf       # Performance diagnostics
   bd doctor --output diagnostics.json  # Export diagnostics to file
-  bd doctor --check=artifacts           # Show classic artifacts (JSONL, SQLite, cruft dirs)
+  bd doctor --check=artifacts           # Show classic artifacts (stale files, cruft dirs)
   bd doctor --check=artifacts --clean  # Delete safe-to-delete artifacts (with confirmation)
   bd doctor --check=pollution          # Show potential test issues
   bd doctor --check=pollution --clean  # Delete test issues (with confirmation)
@@ -1167,9 +1165,6 @@ func runMigrationValidation(path string, phase string) {
 	fmt.Println(ui.RenderCategory("Validation Details"))
 	fmt.Printf("  Backend:     %s\n", result.Backend)
 	fmt.Printf("  JSONL Count: %d\n", result.JSONLCount)
-	if result.SQLiteCount > 0 {
-		fmt.Printf("  SQLite Count: %d\n", result.SQLiteCount)
-	}
 	if result.DoltCount > 0 {
 		fmt.Printf("  Dolt Count:  %d\n", result.DoltCount)
 	}

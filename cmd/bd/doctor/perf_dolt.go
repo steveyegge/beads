@@ -46,11 +46,6 @@ type DoltPerfMetrics struct {
 func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerfMetrics, error) {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Verify this is a Dolt backend
-	if !IsDoltBackend(beadsDir) {
-		return nil, fmt.Errorf("SQLite backend is no longer supported. Migrate to Dolt with 'bd migrate'")
-	}
-
 	metrics := &DoltPerfMetrics{
 		Platform:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 		GoVersion: runtime.Version(),
