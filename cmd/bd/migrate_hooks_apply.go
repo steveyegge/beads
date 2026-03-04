@@ -135,8 +135,17 @@ func buildHookMigrationExecutionPlan(plan doctor.HookMigrationPlan) hookMigratio
 		case "marker_managed", "unmanaged_custom", "missing_no_artifacts":
 			execPlan.NoopHooks = append(execPlan.NoopHooks, hook.Name)
 			continue
-		case "marker_broken", "read_error":
+		case "read_error":
 			execPlan.BlockingErrors = append(execPlan.BlockingErrors, formatHookMigrationBlockingError(hook))
+			continue
+		case "marker_broken":
+			// Broken markers are fixable: replace entire file with clean section
+			execPlan.WriteOps = append(execPlan.WriteOps, hookMigrationWriteOp{
+				HookName:   hook.Name,
+				HookPath:   hook.HookPath,
+				State:      hook.State,
+				SourceKind: hookMigrationWriteFromTemplate,
+			})
 			continue
 		}
 

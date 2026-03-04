@@ -40,7 +40,7 @@ func TestFixPendingMigrations_AppliesHookMigration(t *testing.T) {
 	assertExistsHookMigrationFile(t, preCommitPath+".old.migrated")
 }
 
-func TestFixPendingMigrations_BrokenMarkerBlocks(t *testing.T) {
+func TestFixPendingMigrations_BrokenMarkerIsRepaired(t *testing.T) {
 	repoDir, hooksDir := setupHookMigrationRepo(t)
 	preCommitPath := filepath.Join(hooksDir, "pre-commit")
 
@@ -50,16 +50,12 @@ func TestFixPendingMigrations_BrokenMarkerBlocks(t *testing.T) {
 		t.Fatalf("failed to create .beads: %v", err)
 	}
 
-	err := fixPendingMigrations(repoDir)
-	if err == nil {
-		t.Fatal("expected fixPendingMigrations to fail for broken marker state")
-	}
-	if !strings.Contains(err.Error(), "hook migration is blocked") {
-		t.Fatalf("expected blocked migration error, got: %v", err)
+	if err := fixPendingMigrations(repoDir); err != nil {
+		t.Fatalf("expected fixPendingMigrations to succeed for broken marker state, got: %v", err)
 	}
 
 	rendered := mustReadHookMigrationFile(t, preCommitPath)
-	if rendered != brokenContent {
-		t.Fatalf("expected broken hook content to remain unchanged, got:\n%s", rendered)
+	if !strings.Contains(rendered, hookSectionBeginPrefix) || !strings.Contains(rendered, hookSectionEndPrefix) {
+		t.Fatalf("expected repaired hook to contain valid marker section, got:\n%s", rendered)
 	}
 }
