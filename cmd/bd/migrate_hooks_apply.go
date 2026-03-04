@@ -152,6 +152,18 @@ func buildHookMigrationExecutionPlan(plan doctor.HookMigrationPlan) hookMigratio
 			continue
 		}
 
+		// For legacy hooks with sidecars, the migration discards the current hook
+		// file in favor of sidecar content. Check that the user hasn't added custom
+		// logic to the shim — if they have, block migration to avoid silent data loss.
+		if hook.LegacyBDHook && (hook.HasOldSidecar || hook.HasBackupSidecar) {
+			content, readErr := os.ReadFile(hook.HookPath) // #nosec G304 -- path from migration planner
+			if readErr == nil && !doctor.IsUnmodifiedLegacyHook(string(content)) {
+				execPlan.BlockingErrors = append(execPlan.BlockingErrors,
+					fmt.Sprintf("%s: legacy hook appears user-modified; review manually before migration (state: %s)", hook.Name, hook.State))
+				continue
+			}
+		}
+
 		sourceKind, sourcePath, err := chooseHookMigrationWriteSource(hook)
 		if err != nil {
 			execPlan.BlockingErrors = append(execPlan.BlockingErrors, err.Error())
