@@ -455,6 +455,69 @@ func (s *DoltStore) deleteWisp(ctx context.Context, id string) error {
 	return wrapTransactionError("commit delete wisp", tx.Commit())
 }
 
+// deleteWispBatch permanently removes multiple wisps in a single transaction.
+// This avoids the per-delete transaction overhead that causes Dolt commit pressure
+// during bulk GC operations (bd-2ehd).
+func (s *DoltStore) deleteWispBatch(ctx context.Context, ids []string) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Delete in batches to avoid oversized IN-clauses
+	const batchSize = 200
+	totalDeleted := 0
+
+	for i := 0; i < len(ids); i += batchSize {
+		end := i + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[i:end]
+		inClause, args := doltBuildSQLInClause(batch)
+
+		// Delete from auxiliary tables using IN-clause batches.
+		// wisp_dependencies needs both issue_id and depends_on_id checked.
+		//nolint:gosec // G201: inClause contains only ? markers
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf("DELETE FROM wisp_dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)", inClause, inClause),
+			append(args, args...)...); err != nil {
+			return 0, fmt.Errorf("failed to batch delete from wisp_dependencies: %w", err)
+		}
+
+		for _, table := range []string{"wisp_events", "wisp_comments", "wisp_labels"} {
+			//nolint:gosec // G201: table is a hardcoded constant, inClause contains only ? markers
+			if _, err := tx.ExecContext(ctx,
+				fmt.Sprintf("DELETE FROM %s WHERE issue_id IN (%s)", table, inClause),
+				args...); err != nil {
+				return 0, fmt.Errorf("failed to batch delete from %s: %w", table, err)
+			}
+		}
+
+		// Delete the wisps themselves
+		//nolint:gosec // G201: inClause contains only ? markers
+		result, err := tx.ExecContext(ctx,
+			fmt.Sprintf("DELETE FROM wisps WHERE id IN (%s)", inClause),
+			args...)
+		if err != nil {
+			return 0, fmt.Errorf("failed to batch delete wisps: %w", err)
+		}
+		rowsAffected, _ := result.RowsAffected()
+		totalDeleted += int(rowsAffected)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit batch wisp delete: %w", err)
+	}
+
+	return totalDeleted, nil
+}
+
 // claimWisp atomically claims a wisp.
 func (s *DoltStore) claimWisp(ctx context.Context, id string, actor string) error {
 	now := time.Now().UTC()
@@ -953,4 +1016,64 @@ func (s *DoltStore) removeWispLabel(ctx context.Context, issueID, label, actor s
 	}
 
 	return tx.Commit()
+}
+
+// FindWispDependentsRecursive finds all wisp dependents of the given IDs,
+// recursively. Uses batched IN-clause queries against wisp_dependencies for
+// efficiency. Returns the set of all discovered dependent IDs (excluding the
+// input IDs). Capped at maxRecursiveResults to prevent runaway traversal.
+func (s *DoltStore) FindWispDependentsRecursive(ctx context.Context, ids []string) (map[string]bool, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		seen[id] = true
+	}
+
+	toProcess := make([]string, len(ids))
+	copy(toProcess, ids)
+
+	discovered := make(map[string]bool)
+
+	for len(toProcess) > 0 {
+		if len(seen) > maxRecursiveResults {
+			return discovered, fmt.Errorf("wisp cascade traversal discovered over %d issues; aborting", maxRecursiveResults)
+		}
+
+		batchEnd := deleteBatchSize
+		if batchEnd > len(toProcess) {
+			batchEnd = len(toProcess)
+		}
+		batch := toProcess[:batchEnd]
+		toProcess = toProcess[batchEnd:]
+
+		inClause, args := doltBuildSQLInClause(batch)
+		rows, err := s.queryContext(ctx,
+			fmt.Sprintf(`SELECT issue_id FROM wisp_dependencies WHERE depends_on_id IN (%s)`, inClause),
+			args...)
+		if err != nil {
+			return discovered, fmt.Errorf("failed to query wisp dependents for batch: %w", err)
+		}
+
+		for rows.Next() {
+			var depID string
+			if err := rows.Scan(&depID); err != nil {
+				_ = rows.Close()
+				return discovered, fmt.Errorf("failed to scan wisp dependent: %w", err)
+			}
+			if !seen[depID] {
+				seen[depID] = true
+				discovered[depID] = true
+				toProcess = append(toProcess, depID)
+			}
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return discovered, fmt.Errorf("failed to iterate wisp dependents: %w", err)
+		}
+	}
+
+	return discovered, nil
 }

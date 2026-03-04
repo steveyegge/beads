@@ -192,6 +192,10 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 	// Normalize prefix: strip trailing hyphen to prevent double-hyphen IDs (bd-6uly)
 	configPrefix = strings.TrimSuffix(configPrefix, "-")
 
+	// Get allowed_prefixes for multi-prefix validation (GH#1179)
+	var allowedPrefixes string
+	_ = tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "allowed_prefixes").Scan(&allowedPrefixes)
+
 	for _, issue := range issues {
 		now := time.Now().UTC()
 		if issue.CreatedAt.IsZero() {
@@ -227,7 +231,7 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 
 		// Validate prefix if not skipped (for imports with different prefixes)
 		if !opts.SkipPrefixValidation && issue.ID != "" {
-			if err := validateIssueIDPrefix(issue.ID, configPrefix); err != nil {
+			if err := validateIssueIDPrefix(issue.ID, configPrefix, allowedPrefixes); err != nil {
 				return fmt.Errorf("prefix validation failed for %s: %w", issue.ID, err)
 			}
 		}
@@ -396,12 +400,22 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 	return tx.Commit()
 }
 
-// validateIssueIDPrefix validates that the issue ID has the correct prefix
-func validateIssueIDPrefix(id, prefix string) error {
-	if !strings.HasPrefix(id, prefix+"-") {
-		return fmt.Errorf("%w: issue ID %s does not match configured prefix %s", storage.ErrPrefixMismatch, id, prefix)
+// validateIssueIDPrefix validates that the issue ID matches the configured prefix
+// or any of the allowed_prefixes (GH#1179).
+func validateIssueIDPrefix(id, prefix, allowedPrefixes string) error {
+	if strings.HasPrefix(id, prefix+"-") {
+		return nil
 	}
-	return nil
+	// Check allowed_prefixes (comma-separated)
+	if allowedPrefixes != "" {
+		for _, allowed := range strings.Split(allowedPrefixes, ",") {
+			allowed = strings.TrimSpace(allowed)
+			if allowed != "" && strings.HasPrefix(id, allowed+"-") {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("%w: issue ID %s does not match configured prefix %s", storage.ErrPrefixMismatch, id, prefix)
 }
 
 // parseHierarchicalID checks if an ID is hierarchical (e.g., "bd-abc.1") and returns the parent ID and child number
@@ -773,14 +787,22 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	// Route wisp IDs to wisp deletion; process regular IDs in batch below.
 	ephIDs, regularIDs := s.partitionByWispStatus(ctx, ids)
 	wispDeleteCount := 0
-	for _, eid := range ephIDs {
-		if s.isActiveWisp(ctx, eid) {
-			if !dryRun {
-				if err := s.deleteWisp(ctx, eid); err != nil {
-					return nil, fmt.Errorf("failed to delete wisp %s: %w", eid, err)
-				}
+	if len(ephIDs) > 0 {
+		// Filter to only active wisps
+		var activeWispIDs []string
+		for _, eid := range ephIDs {
+			if s.isActiveWisp(ctx, eid) {
+				activeWispIDs = append(activeWispIDs, eid)
 			}
-			wispDeleteCount++
+		}
+		wispDeleteCount = len(activeWispIDs)
+		if !dryRun && len(activeWispIDs) > 0 {
+			// Use batch deletion to avoid per-delete transaction overhead (bd-2ehd).
+			deleted, err := s.deleteWispBatch(ctx, activeWispIDs)
+			if err != nil {
+				return nil, fmt.Errorf("failed to batch delete wisps: %w", err)
+			}
+			wispDeleteCount = deleted
 		}
 	}
 	ids = regularIDs

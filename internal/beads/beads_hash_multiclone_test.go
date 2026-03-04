@@ -25,10 +25,11 @@ func TestMain(m *testing.M) {
 	os.Setenv("BEADS_TEST_MODE", "1")
 
 	// Start an isolated Dolt server so integration tests don't hit production.
-	srv, cleanupServer := testutil.StartTestDoltServer("beads-integration-test-*")
-	if srv != nil {
-		testDoltPort = srv.Port
-		os.Setenv("BEADS_DOLT_PORT", fmt.Sprintf("%d", srv.Port))
+	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v, skipping Dolt tests\n", err)
+	} else {
+		defer testutil.TerminateDoltContainer()
+		testDoltPort = testutil.DoltContainerPortInt()
 	}
 
 	// Build bd binary once for all tests
@@ -40,7 +41,6 @@ func TestMain(m *testing.M) {
 	tmpDir, err := os.MkdirTemp("", "bd-test-bin-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create temp dir for bd binary: %v\n", err)
-		cleanupServer()
 		os.Exit(1)
 	}
 
@@ -50,7 +50,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to find module root: %v\n", err)
 		os.RemoveAll(tmpDir)
-		cleanupServer()
 		os.Exit(1)
 	}
 	modRoot := strings.TrimSpace(string(modRootOut))
@@ -61,7 +60,6 @@ func TestMain(m *testing.M) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to build bd binary: %v\n%s\n", err, out)
 		os.RemoveAll(tmpDir)
-		cleanupServer()
 		os.Exit(1)
 	}
 
@@ -73,7 +71,6 @@ func TestMain(m *testing.M) {
 	os.RemoveAll(tmpDir)
 	os.Unsetenv("BEADS_DOLT_PORT")
 	os.Unsetenv("BEADS_TEST_MODE")
-	cleanupServer()
 	os.Exit(code)
 }
 

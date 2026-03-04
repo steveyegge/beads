@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 func TestBackupStateRoundTrip(t *testing.T) {
@@ -98,8 +100,8 @@ func TestBackupExport(t *testing.T) {
 	if testDoltServerPort == 0 {
 		t.Skip("Dolt test server not available")
 	}
-	if testServer != nil && testServer.IsCrashed() {
-		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
 	}
 
 	ensureTestMode(t)
@@ -216,8 +218,8 @@ func TestBackupIncremental(t *testing.T) {
 	if testDoltServerPort == 0 {
 		t.Skip("Dolt test server not available")
 	}
-	if testServer != nil && testServer.IsCrashed() {
-		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
 	}
 
 	ensureTestMode(t)

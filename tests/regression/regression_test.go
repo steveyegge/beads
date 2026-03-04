@@ -52,17 +52,18 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "SKIP: dolt not found in PATH; regression tests require dolt")
 		os.Exit(0)
 	}
-	srv, cleanupServer := testutil.StartTestDoltServer("bd-regression-dolt-*")
 	os.Setenv("BEADS_TEST_MODE", "1")
-	if srv != nil {
-		testDoltServerPort = srv.Port
-		fmt.Fprintf(os.Stderr, "Test Dolt server running on port %d\n", srv.Port)
+	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v, skipping Dolt tests\n", err)
+	} else {
+		defer testutil.TerminateDoltContainer()
+		testDoltServerPort = testutil.DoltContainerPortInt()
+		fmt.Fprintf(os.Stderr, "Test Dolt server running on port %d\n", testDoltServerPort)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "bd-regression-bin-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "creating temp dir: %v\n", err)
-		cleanupServer()
 		os.Exit(1)
 	}
 
@@ -72,7 +73,6 @@ func TestMain(m *testing.M) {
 	if err := buildCandidate(candidateBin); err != nil {
 		fmt.Fprintf(os.Stderr, "building candidate: %v\n", err)
 		os.RemoveAll(tmpDir)
-		cleanupServer()
 		os.Exit(1)
 	}
 
@@ -82,14 +82,12 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "getting baseline: %v\n", err)
 		os.RemoveAll(tmpDir)
-		cleanupServer()
 		os.Exit(1)
 	}
 
 	fmt.Fprintf(os.Stderr, "Baseline:  %s\nCandidate: %s\n\n", baselineBin, candidateBin)
 	code := m.Run()
 	os.RemoveAll(tmpDir)
-	cleanupServer()
 	os.Exit(code)
 }
 
@@ -857,4 +855,4 @@ func (w *workspace) tryCreate(args ...string) (string, error) {
 	return id, nil
 }
 
-// Test Dolt server cleanup is handled by testutil.StartTestDoltServer.
+// Test Dolt server cleanup is handled by testutil.TerminateDoltContainer.

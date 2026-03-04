@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -86,6 +87,17 @@ func ParseHierarchicalID(id string) (rootID, parentID string, depth int) {
 	parentID = id[:lastDot]
 
 	return rootID, parentID, depth
+}
+
+// ExtractPrefix returns the prefix portion of a bead ID (everything before
+// the first hyphen, including the hyphen). For example, "sh-abc" returns "sh-".
+// Returns empty string for IDs without a hyphen.
+func ExtractPrefix(id string) string {
+	idx := strings.Index(id, "-")
+	if idx < 0 {
+		return ""
+	}
+	return id[:idx+1]
 }
 
 // MaxHierarchyDepth is the maximum nesting level for hierarchical IDs.

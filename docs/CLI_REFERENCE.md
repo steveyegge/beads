@@ -74,8 +74,10 @@ bd create "Issue title" --body-file=description.md --json
 bd create "Issue title" --body-file description.md -p 1 --json
 
 # Read description from stdin
+echo "Description text" | bd create "Issue title" --stdin --json
+cat description.md | bd create "Issue title" --stdin -p 1 --json
+# --body-file=- also works:
 echo "Description text" | bd create "Issue title" --body-file=- --json
-cat description.md | bd create "Issue title" --body-file - -p 1 --json
 
 # Create epic with hierarchical child tasks
 bd create "Auth System" -t epic -p 1 --json                     # Returns: bd-a3f8e9

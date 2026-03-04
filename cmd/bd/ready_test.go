@@ -430,6 +430,85 @@ func TestReadySuite(t *testing.T) {
 	})
 }
 
+// TestReadyWorkIncludesMoleculeSteps verifies that molecule steps (issues with
+// -mol- in their IDs) appear in GetReadyWork results when they have no active
+// blockers. Regression test for GH#1359: the old SQLite backend filtered out
+// issues whose IDs contained "-mol-" or "-wisp-", hiding poured molecule steps
+// from `bd ready`. The Dolt backend should not have this filtering.
+func TestReadyWorkIncludesMoleculeSteps(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+	ctx := context.Background()
+
+	// Simulate a poured molecule: root epic + 3 child tasks
+	// brainstorm has no blockers (should be ready)
+	// specify is blocked by brainstorm
+	// hydrate is blocked by specify
+	molIssues := []*types.Issue{
+		{ID: "test-mol-root", Title: "feature-workflow", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic, CreatedAt: time.Now()},
+		{ID: "test-mol-brainstorm", Title: "Brainstorm feature", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, CreatedAt: time.Now()},
+		{ID: "test-mol-specify", Title: "Update specifications", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, CreatedAt: time.Now()},
+		{ID: "test-mol-hydrate", Title: "Hydrate planning", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, CreatedAt: time.Now()},
+	}
+	for _, issue := range molIssues {
+		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Parent-child: all children belong to root epic
+	parentChildDeps := []*types.Dependency{
+		{IssueID: "test-mol-brainstorm", DependsOnID: "test-mol-root", Type: types.DepParentChild, CreatedAt: time.Now()},
+		{IssueID: "test-mol-specify", DependsOnID: "test-mol-root", Type: types.DepParentChild, CreatedAt: time.Now()},
+		{IssueID: "test-mol-hydrate", DependsOnID: "test-mol-root", Type: types.DepParentChild, CreatedAt: time.Now()},
+	}
+	for _, dep := range parentChildDeps {
+		if err := s.AddDependency(ctx, dep, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Blocking: brainstorm blocks specify, specify blocks hydrate
+	blockDeps := []*types.Dependency{
+		{IssueID: "test-mol-specify", DependsOnID: "test-mol-brainstorm", Type: types.DepBlocks, CreatedAt: time.Now()},
+		{IssueID: "test-mol-hydrate", DependsOnID: "test-mol-specify", Type: types.DepBlocks, CreatedAt: time.Now()},
+	}
+	for _, dep := range blockDeps {
+		if err := s.AddDependency(ctx, dep, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// GetReadyWork with Status="open" (same as bd ready CLI)
+	ready, err := s.GetReadyWork(ctx, types.WorkFilter{Status: "open"})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+
+	readyIDs := make(map[string]bool)
+	for _, issue := range ready {
+		readyIDs[issue.ID] = true
+	}
+
+	// Root epic and brainstorm should be ready (no active blockers)
+	if !readyIDs["test-mol-root"] {
+		t.Error("Molecule root epic (test-mol-root) should appear in ready work")
+	}
+	if !readyIDs["test-mol-brainstorm"] {
+		t.Error("Unblocked molecule step (test-mol-brainstorm) should appear in ready work")
+	}
+
+	// specify and hydrate should be blocked
+	if readyIDs["test-mol-specify"] {
+		t.Error("test-mol-specify should NOT be in ready work (blocked by brainstorm)")
+	}
+	if readyIDs["test-mol-hydrate"] {
+		t.Error("test-mol-hydrate should NOT be in ready work (blocked by specify)")
+	}
+}
+
 func TestReadyCommandInit(t *testing.T) {
 	t.Parallel()
 	if readyCmd == nil {

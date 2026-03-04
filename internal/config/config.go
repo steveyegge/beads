@@ -27,6 +27,10 @@ const (
 
 var v *viper.Viper
 
+// overriddenKeys tracks keys explicitly set via Set() at runtime, so
+// GetValueSource can distinguish them from Viper defaults.
+var overriddenKeys = map[string]bool{}
+
 // Initialize sets up the viper configuration singleton
 // Should be called once at application startup
 func Initialize() error {
@@ -242,6 +246,7 @@ func Initialize() error {
 // WARNING: Not thread-safe. Only call from single-threaded test contexts.
 func ResetForTesting() {
 	v = nil
+	overriddenKeys = map[string]bool{}
 }
 
 // ConfigSource represents where a configuration value came from
@@ -287,6 +292,11 @@ func GetValueSource(key string) ConfigSource {
 
 	// Check if value is set in config file (as opposed to being a default)
 	if v.InConfig(key) {
+		return SourceConfigFile
+	}
+
+	// Check if value was explicitly set via Set() at runtime
+	if overriddenKeys[key] {
 		return SourceConfigFile
 	}
 
@@ -521,6 +531,7 @@ func GetDuration(key string) time.Duration {
 func Set(key string, value interface{}) {
 	if v != nil {
 		v.Set(key, value)
+		overriddenKeys[key] = true
 	}
 }
 
@@ -559,14 +570,6 @@ func ConfigFileUsed() string {
 	return v.ConfigFileUsed()
 }
 
-// InConfigFile returns true if the key was found in the loaded config file.
-// Returns false if the value only came from a viper default.
-func InConfigFile(key string) bool {
-	if v == nil {
-		return false
-	}
-	return v.InConfig(key)
-}
 
 // GetStringSlice retrieves a string slice configuration value
 func GetStringSlice(key string) []string {

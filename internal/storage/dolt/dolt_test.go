@@ -822,16 +822,16 @@ func TestDoltStoreSearch(t *testing.T) {
 	issues := []*types.Issue{
 		{
 			ID:          "test-search-1",
-			Title:       "First Issue",
-			Description: "Search test one",
+			Title:       "Search test one",
+			Description: "First issue description",
 			Status:      types.StatusOpen,
 			Priority:    1,
 			IssueType:   types.TypeTask,
 		},
 		{
 			ID:          "test-search-2",
-			Title:       "Second Issue",
-			Description: "Search test two",
+			Title:       "Search test two",
+			Description: "Second issue description",
 			Status:      types.StatusOpen,
 			Priority:    2,
 			IssueType:   types.TypeBug,
@@ -1636,6 +1636,38 @@ func TestValidateDatabaseName(t *testing.T) {
 			err := ValidateDatabaseName(tt.dbName)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateDatabaseName(%q) error = %v, wantErr %v", tt.dbName, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestIsTestDatabaseName(t *testing.T) {
+	tests := []struct {
+		name   string
+		dbName string
+		want   bool
+	}{
+		{"exact test db", "beads_test", true},
+		{"test db with suffix", "beads_test_123", true},
+		{"testdb prefix", "testdb_foo", true},
+		{"doctest prefix", "doctest_bar", true},
+		{"doctortest prefix", "doctortest_baz", true},
+		{"beads_pt prefix", "beads_pt_xyz", true},
+		{"beads_vr prefix", "beads_vr_abc", true},
+		{"production db", "beads", false},
+		{"project prefix ta", "beads_ta", false},
+		{"project prefix tabula", "beads_tabula", false},
+		{"project prefix tr", "beads_tr", false},
+		{"project prefix tools", "beads_tools", false},
+		{"project prefix vulcan", "beads_vulcan", false},
+		{"unrelated name", "mydb", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isTestDatabaseName(tt.dbName)
+			if got != tt.want {
+				t.Errorf("isTestDatabaseName(%q) = %v, want %v", tt.dbName, got, tt.want)
 			}
 		})
 	}

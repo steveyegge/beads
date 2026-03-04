@@ -131,8 +131,8 @@ func CleanTestBranches(db *sql.DB, database string) {
 
 // SetupSharedTestDB creates a shared database on the test Dolt server with
 // committed schema for branch-per-test isolation. Call from TestMain after
-// StartTestDoltServer. Returns the database name and a raw *sql.DB handle
-// for branch cleanup.
+// EnsureDoltContainerForTestMain. Returns the database name and a raw *sql.DB
+// handle for branch cleanup.
 //
 // The schema is committed to main so that DOLT_BRANCH creates COW snapshots
 // of the full schema. Each test then branches from main with StartTestBranch.

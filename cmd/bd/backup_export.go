@@ -150,75 +150,38 @@ func runBackupExport(ctx context.Context, force bool) (*backupState, error) {
 		}
 	}
 
-	hasWisps := tableExistsCheck(ctx, store, "wisps")
-
-	// Export issues + wisps. We avoid UNION ALL with SELECT * because issues and
-	// wisps may have different column counts (schema evolution), and Dolt's
-	// go-mysql-server panics on UNION with mismatched columns (set_op.go index
-	// out of range). Instead, export each table separately into the same file.
+	// Export issues only — wisps are ephemeral and excluded from backup.
+	// They can be regenerated from the database if needed for disaster recovery.
+	// (The daemon's JSONL git backup in jsonl_git_backup.go follows the same pattern.)
 	n, err := exportTable(ctx, store, dir, "issues.jsonl", "SELECT * FROM issues ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("backup issues: %w", err)
 	}
-	if hasWisps {
-		nw, err := exportTableAppend(ctx, store, dir, "issues.jsonl", "SELECT * FROM wisps ORDER BY id")
-		if err != nil {
-			return nil, fmt.Errorf("backup wisps: %w", err)
-		}
-		n += nw
-	}
 	state.Counts.Issues = n
 
-	// Events: full export (same pattern as other tables)
-	eventsQuery := "SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at FROM events ORDER BY created_at ASC, id ASC"
-	if hasWisps {
-		eventsQuery = "SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at FROM events " +
-			"UNION ALL " +
-			"SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at FROM wisp_events " +
-			"ORDER BY created_at ASC, id ASC"
-	}
-	n, err = exportTable(ctx, store, dir, "events.jsonl", eventsQuery)
+	n, err = exportTable(ctx, store, dir, "events.jsonl",
+		"SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at FROM events ORDER BY created_at ASC, id ASC")
 	if err != nil {
 		return nil, fmt.Errorf("backup events: %w", err)
 	}
 	state.Counts.Events = n
 
-	// The remaining UNION queries use explicit column lists that match across
-	// both tables, so they are safe from the Dolt column-count mismatch panic.
-	commentsQuery := "SELECT id, issue_id, author, text, created_at FROM comments ORDER BY id"
-	if hasWisps {
-		commentsQuery = "SELECT id, issue_id, author, text, created_at FROM comments " +
-			"UNION ALL " +
-			"SELECT id, issue_id, author, text, created_at FROM wisp_comments " +
-			"ORDER BY id"
-	}
-	n, err = exportTable(ctx, store, dir, "comments.jsonl", commentsQuery)
+	n, err = exportTable(ctx, store, dir, "comments.jsonl",
+		"SELECT id, issue_id, author, text, created_at FROM comments ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("backup comments: %w", err)
 	}
 	state.Counts.Comments = n
 
-	depsQuery := "SELECT issue_id, depends_on_id, type, created_at, created_by FROM dependencies ORDER BY issue_id, depends_on_id"
-	if hasWisps {
-		depsQuery = "SELECT issue_id, depends_on_id, type, created_at, created_by FROM dependencies " +
-			"UNION ALL " +
-			"SELECT issue_id, depends_on_id, type, created_at, created_by FROM wisp_dependencies " +
-			"ORDER BY issue_id, depends_on_id"
-	}
-	n, err = exportTable(ctx, store, dir, "dependencies.jsonl", depsQuery)
+	n, err = exportTable(ctx, store, dir, "dependencies.jsonl",
+		"SELECT issue_id, depends_on_id, type, created_at, created_by FROM dependencies ORDER BY issue_id, depends_on_id")
 	if err != nil {
 		return nil, fmt.Errorf("backup dependencies: %w", err)
 	}
 	state.Counts.Dependencies = n
 
-	labelsQuery := "SELECT issue_id, label FROM labels ORDER BY issue_id, label"
-	if hasWisps {
-		labelsQuery = "SELECT issue_id, label FROM labels " +
-			"UNION ALL " +
-			"SELECT issue_id, label FROM wisp_labels " +
-			"ORDER BY issue_id, label"
-	}
-	n, err = exportTable(ctx, store, dir, "labels.jsonl", labelsQuery)
+	n, err = exportTable(ctx, store, dir, "labels.jsonl",
+		"SELECT issue_id, label FROM labels ORDER BY issue_id, label")
 	if err != nil {
 		return nil, fmt.Errorf("backup labels: %w", err)
 	}
@@ -244,16 +207,6 @@ func runBackupExport(ctx context.Context, force bool) (*backupState, error) {
 	}
 
 	return state, nil
-}
-
-// tableExistsCheck returns true if the named table exists in the database.
-func tableExistsCheck(ctx context.Context, q dbQuerier, table string) bool {
-	rows, err := q.QueryContext(ctx, "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_NAME = ?", table)
-	if err != nil {
-		return false
-	}
-	defer rows.Close()
-	return rows.Next()
 }
 
 // truncateHash returns the first 8 characters of a hash, or the full string if shorter.
@@ -308,36 +261,6 @@ func exportTable(ctx context.Context, q dbQuerier, dir, filename, query string) 
 	dest := filepath.Join(dir, filename)
 	if err := os.Rename(tmpPath, dest); err != nil {
 		return 0, fmt.Errorf("rename failed: %w", err)
-	}
-	return count, nil
-}
-
-// exportTableAppend streams query results and appends to an existing JSONL file.
-func exportTableAppend(ctx context.Context, q dbQuerier, dir, filename, query string) (int, error) {
-	rows, err := q.QueryContext(ctx, query)
-	if err != nil {
-		return 0, fmt.Errorf("query failed: %w", err)
-	}
-	defer rows.Close()
-
-	cols, err := rows.Columns()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get columns: %w", err)
-	}
-
-	f, err := os.OpenFile(filepath.Join(dir, filename), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600) //nolint:gosec // path is constructed internally
-	if err != nil {
-		return 0, fmt.Errorf("failed to open file for append: %w", err)
-	}
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
-	count, err := writeRows(rows, cols, w)
-	if err != nil {
-		return 0, err
-	}
-	if err := w.Flush(); err != nil {
-		return 0, fmt.Errorf("flush failed: %w", err)
 	}
 	return count, nil
 }

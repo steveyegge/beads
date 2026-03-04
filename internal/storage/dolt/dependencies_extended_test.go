@@ -1,6 +1,7 @@
 package dolt
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -786,6 +787,324 @@ func TestAddDependency_MultipleExternalReferences(t *testing.T) {
 
 	if len(records) != len(externalRefs) {
 		t.Errorf("expected %d dependencies, got %d", len(externalRefs), len(records))
+	}
+}
+
+// =============================================================================
+// Cross-Prefix Dependency Tests
+// =============================================================================
+
+func TestIsCrossPrefixDep(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		target   string
+		expected bool
+	}{
+		{"same prefix", "sh-abc", "sh-def", false},
+		{"different prefix", "sh-abc", "hq-def", true},
+		{"hq to bd", "hq-abc", "bd-def", true},
+		{"same prefix with subtype", "hq-cv-abc", "hq-xyz", false},
+		{"no prefix source", "abc", "sh-def", true},
+		{"no prefix either", "abc", "def", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isCrossPrefixDep(tt.source, tt.target)
+			if got != tt.expected {
+				t.Errorf("isCrossPrefixDep(%q, %q) = %v, want %v", tt.source, tt.target, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAddDependency_CrossPrefix_SkipsTargetExistence(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create a source issue with prefix "test-"
+	source := &types.Issue{
+		ID:        "test-source",
+		Title:     "Source Issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, source, "tester"); err != nil {
+		t.Fatalf("failed to create source issue: %v", err)
+	}
+
+	// Add a cross-prefix dependency — target "other-xyz" doesn't exist in this DB,
+	// but should succeed because cross-prefix deps skip target existence check.
+	dep := &types.Dependency{
+		IssueID:     "test-source",
+		DependsOnID: "other-xyz",
+		Type:        types.DepBlocks,
+	}
+	err := store.AddDependency(ctx, dep, "tester")
+	if err != nil {
+		t.Fatalf("AddDependency should succeed for cross-prefix dep, got: %v", err)
+	}
+
+	// Verify the dependency was stored
+	records, err := store.GetDependencyRecords(ctx, "test-source")
+	if err != nil {
+		t.Fatalf("GetDependencyRecords failed: %v", err)
+	}
+	found := false
+	for _, r := range records {
+		if r.DependsOnID == "other-xyz" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("cross-prefix dependency was not stored")
+	}
+}
+
+func TestAddDependency_SamePrefix_RequiresTargetExistence(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create a source issue
+	source := &types.Issue{
+		ID:        "test-source2",
+		Title:     "Source Issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, source, "tester"); err != nil {
+		t.Fatalf("failed to create source issue: %v", err)
+	}
+
+	// Same-prefix dep with non-existent target should fail
+	dep := &types.Dependency{
+		IssueID:     "test-source2",
+		DependsOnID: "test-nonexistent",
+		Type:        types.DepBlocks,
+	}
+	err := store.AddDependency(ctx, dep, "tester")
+	if err == nil {
+		t.Fatal("AddDependency should fail for same-prefix dep with non-existent target")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' error, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Cross-Type Blocking Validation Tests (GH#1495)
+// =============================================================================
+
+func TestAddDependency_BlocksCrossType_TaskBlocksEpic(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	task := &types.Issue{
+		ID:        "ct-task-1",
+		Title:     "A task",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	epic := &types.Issue{
+		ID:        "ct-epic-1",
+		Title:     "An epic",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+	}
+	if err := store.CreateIssue(ctx, task, "tester"); err != nil {
+		t.Fatalf("failed to create task: %v", err)
+	}
+	if err := store.CreateIssue(ctx, epic, "tester"); err != nil {
+		t.Fatalf("failed to create epic: %v", err)
+	}
+
+	// Task blocks epic -> should fail
+	dep := &types.Dependency{
+		IssueID:     "ct-epic-1",
+		DependsOnID: "ct-task-1",
+		Type:        types.DepBlocks,
+	}
+	err := store.AddDependency(ctx, dep, "tester")
+	if err == nil {
+		t.Fatal("expected error when task blocks epic, got nil")
+	}
+	if !strings.Contains(err.Error(), "can only block") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAddDependency_BlocksCrossType_EpicBlocksTask(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	task := &types.Issue{
+		ID:        "ct-task-2",
+		Title:     "A task",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	epic := &types.Issue{
+		ID:        "ct-epic-2",
+		Title:     "An epic",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+	}
+	if err := store.CreateIssue(ctx, task, "tester"); err != nil {
+		t.Fatalf("failed to create task: %v", err)
+	}
+	if err := store.CreateIssue(ctx, epic, "tester"); err != nil {
+		t.Fatalf("failed to create epic: %v", err)
+	}
+
+	// Epic blocks task -> should fail
+	dep := &types.Dependency{
+		IssueID:     "ct-task-2",
+		DependsOnID: "ct-epic-2",
+		Type:        types.DepBlocks,
+	}
+	err := store.AddDependency(ctx, dep, "tester")
+	if err == nil {
+		t.Fatal("expected error when epic blocks task, got nil")
+	}
+	if !strings.Contains(err.Error(), "can only block") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAddDependency_BlocksSameType_TaskBlocksTask(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	task1 := &types.Issue{
+		ID:        "ct-task-3a",
+		Title:     "Task A",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	task2 := &types.Issue{
+		ID:        "ct-task-3b",
+		Title:     "Task B",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, task1, "tester"); err != nil {
+		t.Fatalf("failed to create task1: %v", err)
+	}
+	if err := store.CreateIssue(ctx, task2, "tester"); err != nil {
+		t.Fatalf("failed to create task2: %v", err)
+	}
+
+	// Task blocks task -> should succeed
+	dep := &types.Dependency{
+		IssueID:     "ct-task-3b",
+		DependsOnID: "ct-task-3a",
+		Type:        types.DepBlocks,
+	}
+	if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+		t.Fatalf("task blocking task should succeed: %v", err)
+	}
+}
+
+func TestAddDependency_BlocksSameType_EpicBlocksEpic(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	epic1 := &types.Issue{
+		ID:        "ct-epic-4a",
+		Title:     "Epic A",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+	}
+	epic2 := &types.Issue{
+		ID:        "ct-epic-4b",
+		Title:     "Epic B",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+	}
+	if err := store.CreateIssue(ctx, epic1, "tester"); err != nil {
+		t.Fatalf("failed to create epic1: %v", err)
+	}
+	if err := store.CreateIssue(ctx, epic2, "tester"); err != nil {
+		t.Fatalf("failed to create epic2: %v", err)
+	}
+
+	// Epic blocks epic -> should succeed
+	dep := &types.Dependency{
+		IssueID:     "ct-epic-4b",
+		DependsOnID: "ct-epic-4a",
+		Type:        types.DepBlocks,
+	}
+	if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+		t.Fatalf("epic blocking epic should succeed: %v", err)
+	}
+}
+
+func TestAddDependency_ParentChild_CrossType_Allowed(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	task := &types.Issue{
+		ID:        "ct-task-5",
+		Title:     "A task",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	epic := &types.Issue{
+		ID:        "ct-epic-5",
+		Title:     "An epic",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+	}
+	if err := store.CreateIssue(ctx, task, "tester"); err != nil {
+		t.Fatalf("failed to create task: %v", err)
+	}
+	if err := store.CreateIssue(ctx, epic, "tester"); err != nil {
+		t.Fatalf("failed to create epic: %v", err)
+	}
+
+	// Parent-child between epic and task -> should succeed (only blocks is restricted)
+	dep := &types.Dependency{
+		IssueID:     "ct-task-5",
+		DependsOnID: "ct-epic-5",
+		Type:        types.DepParentChild,
+	}
+	if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+		t.Fatalf("parent-child cross-type should succeed: %v", err)
 	}
 }
 

@@ -281,6 +281,50 @@ func TestGetDescriptionFlag(t *testing.T) {
 		}
 	})
 
+	t.Run("StdinFlag", func(t *testing.T) {
+		// Create a pipe to simulate stdin
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+
+		oldStdin := os.Stdin
+		os.Stdin = r
+		t.Cleanup(func() { os.Stdin = oldStdin })
+
+		content := "Description from --stdin flag\nMulti-line content\n"
+		go func() {
+			w.WriteString(content)
+			w.Close()
+		}()
+
+		cmd := newCmd()
+		if err := cmd.ParseFlags([]string{"--stdin"}); err != nil {
+			t.Fatalf("failed to parse flags: %v", err)
+		}
+
+		got, changed := getDescriptionFlag(cmd)
+		if !changed {
+			t.Error("expected changed=true")
+		}
+		if got != content {
+			t.Errorf("expected %q, got %q", content, got)
+		}
+	})
+
+	t.Run("StdinMutuallyExclusiveWithDescription", func(t *testing.T) {
+		cmd := newCmd()
+		// cobra's MarkFlagsMutuallyExclusive validates at execution time,
+		// but we can verify the flag is registered
+		flag := cmd.Flags().Lookup("stdin")
+		if flag == nil {
+			t.Fatal("expected --stdin flag to be registered")
+		}
+		if flag.DefValue != "false" {
+			t.Errorf("expected default value 'false', got %q", flag.DefValue)
+		}
+	})
+
 	t.Run("DescriptionAndBodySameValue", func(t *testing.T) {
 		cmd := newCmd()
 		if err := cmd.ParseFlags([]string{"--description", "same", "--body", "same"}); err != nil {

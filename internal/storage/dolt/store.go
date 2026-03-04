@@ -50,7 +50,7 @@ const DefaultSQLPort = 3307
 // on the production Dolt server (Clown Shows #12-#18).
 var testDatabasePrefixes = []string{
 	"testdb_",
-	"beads_t",
+	"beads_test",
 	"beads_pt",
 	"beads_vr",
 	"doctest_",
@@ -79,16 +79,17 @@ type DoltStore struct {
 	credentialKey []byte       // Random encryption key for federation credentials
 
 	// Per-invocation caches (lifetime = DoltStore lifetime)
-	customStatusCache  []string        // cached result of GetCustomStatuses
-	customStatusCached bool            // true once customStatusCache has been populated
-	customTypeCache    []string        // cached result of GetCustomTypes
-	customTypeCached   bool            // true once customTypeCache has been populated
-	infraTypeCache     map[string]bool // cached result of GetInfraTypes
-	infraTypeCached    bool            // true once infraTypeCache has been populated
-	blockedIDsCache    []string        // cached result of computeBlockedIDs
-	blockedIDsCacheMap map[string]bool
-	blockedIDsCached   bool // true once blockedIDsCache has been populated
-	cacheMu            sync.Mutex
+	customStatusCache            []string        // cached result of GetCustomStatuses
+	customStatusCached           bool            // true once customStatusCache has been populated
+	customTypeCache              []string        // cached result of GetCustomTypes
+	customTypeCached             bool            // true once customTypeCache has been populated
+	infraTypeCache               map[string]bool // cached result of GetInfraTypes
+	infraTypeCached              bool            // true once infraTypeCache has been populated
+	blockedIDsCache              []string        // cached result of computeBlockedIDs
+	blockedIDsCacheMap           map[string]bool
+	blockedIDsCached             bool // true once blockedIDsCache has been populated
+	blockedIDsCacheIncludesWisps bool // true if cache was computed with wisps
+	cacheMu                      sync.Mutex
 
 	// OTel span attribute cache (avoids per-call allocation)
 	spanAttrsOnce  sync.Once
@@ -331,7 +332,7 @@ func (s *DoltStore) doltSpanAttrs() []attribute.KeyValue {
 		s.spanAttrsCache = []attribute.KeyValue{
 			attribute.String("db.system", "dolt"),
 			attribute.Bool("db.readonly", s.readOnly),
-			attribute.Bool("db.server_mode", true), // always server mode after embedded removal
+			attribute.Bool("db.server_mode", true), // TODO: update when embedded mode returns
 		}
 	})
 	return s.spanAttrsCache
@@ -484,7 +485,7 @@ func applyConfigDefaults(cfg *Config) {
 		cfg.Remote = "origin"
 	}
 
-	// Server connection defaults (always applied — server mode is the only mode)
+	// Server connection defaults (applied in server mode; embedded mode bypasses TCP)
 	if cfg.ServerHost == "" {
 		// Host resolution: BEADS_DOLT_SERVER_HOST env > default 127.0.0.1.
 		if h := os.Getenv("BEADS_DOLT_SERVER_HOST"); h != "" {
@@ -602,7 +603,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		} else if doltserver.IsDaemonManaged() && os.Getenv("BEADS_TEST_MODE") != "1" {
 			// Gas Town detected (GT_ROOT or filesystem heuristic) — delegate
 			// server start to gt, which manages the lifecycle properly.
-			// Skip in test mode: tests manage their own server via testutil.StartTestDoltServer.
+			// Skip in test mode: tests manage their own server via testutil.EnsureDoltContainerForTestMain.
 			gtBin, lookErr := exec.LookPath("gt")
 			if lookErr != nil {
 				return nil, fmt.Errorf("Dolt server unreachable at %s (Gas Town detected but 'gt' not found in PATH): %w\n\n"+
@@ -730,6 +731,25 @@ func buildServerDSN(cfg *Config, database string) string {
 
 	return fmt.Sprintf("%s@tcp(%s:%d)%s?%s",
 		userPart, cfg.ServerHost, cfg.ServerPort, dbPart, params)
+}
+
+// execWithLongTimeout opens a one-shot database connection with readTimeout=5m
+// and executes the given query. Push/pull operations can exceed the default
+// readTimeout when the server performs network I/O to git remotes.
+func (s *DoltStore) execWithLongTimeout(ctx context.Context, query string, args ...any) error {
+	cfg, err := mysql.ParseDSN(s.connStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse DSN for long-timeout connection: %w", err)
+	}
+	cfg.ReadTimeout = 5 * time.Minute
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		return fmt.Errorf("failed to open long-timeout connection: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	_, err = db.ExecContext(ctx, query, args...)
+	return err
 }
 
 // openServerConnection opens a connection to a dolt sql-server via MySQL protocol
@@ -876,7 +896,9 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 	var version int
 	err := db.QueryRowContext(ctx, "SELECT `value` FROM config WHERE `key` = 'schema_version'").Scan(&version)
 	if err == nil && version >= currentSchemaVersion {
-		return nil
+		// Wisps tables are dolt_ignore'd (not persisted in commit history),
+		// so they must be recreated on every server session. (GH#2271)
+		return createIgnoredTables(db)
 	}
 
 	// Execute schema creation - split into individual statements
@@ -1245,24 +1267,32 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 	return msg
 }
 
-// isSSHRemote checks whether the configured remote URL uses SSH transport.
-// SSH remotes (git+ssh://, ssh://, git@host:path) require CLI-based push/pull
-// because CALL DOLT_PUSH through the SQL server times out — the MySQL connection
-// drops before the SSH transfer completes.
-func (s *DoltStore) isSSHRemote(ctx context.Context) bool {
+// isGitProtocolRemote checks whether the configured remote uses the git wire protocol
+// and is available for CLI-based push/pull. Git-protocol remotes (git+ssh://, ssh://,
+// git@host:path, git+https://, git://) are routed to CLI operations because the SQL
+// server may lack the git credentials, SSH keys, or credential helpers needed for
+// network I/O to external git hosts. Returns false when the remote exists only on
+// an externally-managed server's filesystem and not in the local dbPath.
+func (s *DoltStore) isGitProtocolRemote(ctx context.Context) bool {
 	// Check SQL remotes first
 	remotes, err := s.ListRemotes(ctx)
 	if err == nil {
 		for _, r := range remotes {
 			if r.Name == s.remote {
-				return doltutil.IsSSHURL(r.URL)
+				if !doltutil.IsGitProtocolURL(r.URL) {
+					return false
+				}
+				// Verify remote exists in CLI directory before routing to CLI push/pull.
+				// When the dolt sql-server is externally managed, remotes may exist only
+				// on the server's filesystem, not in the local dbPath.
+				return s.dbPath != "" && doltutil.FindCLIRemote(s.dbPath, s.remote) != ""
 			}
 		}
 	}
 	// Fall back to CLI remotes (covers drift where remote exists only in filesystem)
 	if s.dbPath != "" {
 		if url := doltutil.FindCLIRemote(s.dbPath, s.remote); url != "" {
-			return doltutil.IsSSHURL(url)
+			return doltutil.IsGitProtocolURL(url)
 		}
 	}
 	return false
@@ -1277,7 +1307,7 @@ func (s *DoltStore) mainRemoteCredentials() *remoteCredentials {
 }
 
 // doltCLIPush shells out to `dolt push` from the database directory.
-// Used for SSH remotes where CALL DOLT_PUSH times out through the SQL connection.
+// Used for git-protocol remotes where CALL DOLT_PUSH times out through the SQL connection.
 // If creds is non-nil, credentials are set on the subprocess environment only,
 // avoiding process-wide env var races with concurrent goroutines.
 func (s *DoltStore) doltCLIPush(ctx context.Context, force bool, creds *remoteCredentials) error {
@@ -1299,7 +1329,7 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, force bool, creds *remoteCr
 }
 
 // doltCLIPull shells out to `dolt pull` from the database directory.
-// Used for SSH remotes where CALL DOLT_PULL times out through the SQL connection.
+// Used for git-protocol remotes where CALL DOLT_PULL times out through the SQL connection.
 // If creds is non-nil, credentials are set on the subprocess environment only.
 func (s *DoltStore) doltCLIPull(ctx context.Context, creds *remoteCredentials) error {
 	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
@@ -1315,7 +1345,7 @@ func (s *DoltStore) doltCLIPull(ctx context.Context, creds *remoteCredentials) e
 }
 
 // Push pushes commits to the remote.
-// For SSH remotes (including Hosted Dolt SSH), uses CLI `dolt push` to avoid MySQL connection timeouts.
+// For git-protocol remotes (SSH, git+https://, git://), uses CLI `dolt push` to avoid MySQL connection timeouts.
 // For non-SSH Hosted Dolt (remoteUser set), uses CALL DOLT_PUSH with --user authentication.
 // For other remotes (DoltHub, S3, GCS, file), uses CALL DOLT_PUSH via SQL.
 func (s *DoltStore) Push(ctx context.Context) (retErr error) {
@@ -1328,25 +1358,23 @@ func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 	)
 	defer func() { endSpan(span, retErr) }()
 	creds := s.mainRemoteCredentials()
-	// SSH remotes: use CLI to avoid MySQL connection timeout during transfer.
+	// Git-protocol remotes: use CLI to avoid MySQL connection timeout during transfer.
 	// Must check before remoteUser — Hosted Dolt SSH remotes have remoteUser set
 	// but still need CLI to avoid SQL connection timeout.
 	// Credentials are passed directly to the subprocess via cmd.Env, avoiding
 	// process-wide env var races with concurrent goroutines.
-	if s.isSSHRemote(ctx) {
+	if s.isGitProtocolRemote(ctx) {
 		return s.doltCLIPush(ctx, false, creds)
 	}
 	if s.remoteUser != "" {
 		return withEnvCredentials(creds, func() error {
-			_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
-			if err != nil {
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch); err != nil {
 				return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
 			}
 			return nil
 		})
 	}
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch)
-	if err != nil {
+	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch); err != nil {
 		return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
 	}
 	return nil
@@ -1354,7 +1382,7 @@ func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 
 // ForcePush force-pushes commits to the remote, overwriting remote changes.
 // Use when the remote has uncommitted changes in its working set.
-// For SSH remotes (including Hosted Dolt SSH), uses CLI `dolt push --force` to avoid MySQL connection timeouts.
+// For git-protocol remotes (SSH, git+https://, git://), uses CLI `dolt push --force` to avoid MySQL connection timeouts.
 func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.force_push",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -1365,24 +1393,22 @@ func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 	)
 	defer func() { endSpan(span, retErr) }()
 	creds := s.mainRemoteCredentials()
-	// SSH remotes: use CLI to avoid MySQL connection timeout during transfer.
+	// Git-protocol remotes: use CLI to avoid MySQL connection timeout during transfer.
 	// Must check before remoteUser — Hosted Dolt SSH remotes have remoteUser set
 	// but still need CLI to avoid SQL connection timeout.
 	// Credentials are passed directly to the subprocess via cmd.Env.
-	if s.isSSHRemote(ctx) {
+	if s.isGitProtocolRemote(ctx) {
 		return s.doltCLIPush(ctx, true, creds)
 	}
 	if s.remoteUser != "" {
 		return withEnvCredentials(creds, func() error {
-			_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--force', '--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
-			if err != nil {
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--force', '--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch); err != nil {
 				return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
 			}
 			return nil
 		})
 	}
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch)
-	if err != nil {
+	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch); err != nil {
 		return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
 	}
 	return nil
@@ -1390,7 +1416,7 @@ func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 
 // Pull pulls changes from the remote.
 // Passes branch explicitly to avoid "did not specify a branch" errors.
-// For SSH remotes (including Hosted Dolt SSH), uses CLI `dolt pull` to avoid MySQL connection timeouts.
+// For git-protocol remotes (SSH, git+https://, git://), uses CLI `dolt pull` to avoid MySQL connection timeouts.
 // For non-SSH Hosted Dolt (remoteUser set), uses CALL DOLT_PULL with --user authentication.
 func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.pull",
@@ -1402,11 +1428,11 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 	)
 	defer func() { endSpan(span, retErr) }()
 	creds := s.mainRemoteCredentials()
-	// SSH remotes: use CLI to avoid MySQL connection timeout during transfer.
+	// Git-protocol remotes: use CLI to avoid MySQL connection timeout during transfer.
 	// Must check before remoteUser — Hosted Dolt SSH remotes have remoteUser set
 	// but still need CLI to avoid SQL connection timeout.
 	// Credentials are passed directly to the subprocess via cmd.Env.
-	if s.isSSHRemote(ctx) {
+	if s.isGitProtocolRemote(ctx) {
 		if err := s.doltCLIPull(ctx, creds); err != nil {
 			return err
 		}
@@ -1417,8 +1443,7 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 	}
 	if s.remoteUser != "" {
 		return withEnvCredentials(creds, func() error {
-			_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch)
-			if err != nil {
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch); err != nil {
 				return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
 			}
 			if err := s.resetAutoIncrements(ctx); err != nil {
@@ -1427,8 +1452,7 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 			return nil
 		})
 	}
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch)
-	if err != nil {
+	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch); err != nil {
 		return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
 	}
 	if err := s.resetAutoIncrements(ctx); err != nil {

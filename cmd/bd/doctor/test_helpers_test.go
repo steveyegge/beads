@@ -36,8 +36,8 @@ func newTestDoltStore(t *testing.T, prefix string) *dolt.DoltStore {
 	t.Helper()
 	ctx := context.Background()
 
-	if testServer.IsCrashed() {
-		t.Skipf("Dolt test server crashed: %v", testServer.CrashError())
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
 	}
 
 	port := doctorTestServerPort()

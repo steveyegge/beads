@@ -138,38 +138,30 @@ func TestValidateCheck_DetectsOrphanedDeps(t *testing.T) {
 	t.Error("Orphaned Dependencies check not found")
 }
 
-func TestValidateCheck_DetectsGitConflicts(t *testing.T) {
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+func TestValidateCheck_GitConflicts_DoltClean(t *testing.T) {
+	// Since GetBackend() always returns "dolt" (SQLite removed in 87493ce9),
+	// the Git Conflicts check now queries dolt_conflicts (GH-2249).
+	// Verify it reports OK for a clean Dolt database.
+	tmpDir, store := setupValidateTestDB(t, "val")
+	ctx := context.Background()
 
-	// Write a non-Dolt backend config so the JSONL conflict scanner runs.
-	// Without this, getBackendAndBeadsDir defaults to "dolt" (which skips the check).
-	configPath := filepath.Join(beadsDir, "metadata.json")
-	if err := os.WriteFile(configPath, []byte(`{"backend":"sqlite"}`), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
+	issue := &types.Issue{
+		Title:     "Clean issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
 	}
-
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	conflictContent := `{"id":"test-1","title":"Issue 1","status":"open"}
-<<<<<<< HEAD
-{"id":"test-2","title":"Issue 2 local","status":"open"}
-=======
-{"id":"test-2","title":"Issue 2 remote","status":"open"}
->>>>>>> origin/main
-`
-	if err := os.WriteFile(jsonlPath, []byte(conflictContent), 0644); err != nil {
-		t.Fatalf("Failed to write JSONL: %v", err)
+	if err := store.CreateIssue(ctx, issue, "val"); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
 	}
+	store.Close()
 
 	checks := collectValidateChecks(tmpDir)
 
 	for _, cr := range checks {
 		if cr.check.Name == "Git Conflicts" {
-			if cr.check.Status != statusError {
-				t.Errorf("Git Conflicts status = %q, want %q", cr.check.Status, statusError)
+			if cr.check.Status != statusOK {
+				t.Errorf("Git Conflicts status = %q, want %q (clean DB)", cr.check.Status, statusOK)
 			}
 			return
 		}

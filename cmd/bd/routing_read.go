@@ -12,28 +12,28 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
-// getRoutingConfigValue resolves routing config from YAML first, then DB config.
-// This keeps command behavior consistent when init stores routing values in the DB.
-// Only YAML values explicitly set in config.yaml override DB values — viper defaults
-// do not, so that DB config (set by bd init) takes effect.
+// getRoutingConfigValue resolves routing config from YAML/env first, then DB config.
+// Only uses the YAML value if it was explicitly set (not a Viper default), so that
+// DB-stored values aren't shadowed by defaults like "~/.beads-planning".
 func getRoutingConfigValue(ctx context.Context, store *dolt.DoltStore, key string) string {
-	// Explicit YAML config takes highest priority
-	if config.InConfigFile(key) {
-		return strings.TrimSpace(config.GetString(key))
-	}
-
-	// DB config (set by bd init) takes next priority
-	if store != nil {
-		dbValue, err := store.GetConfig(ctx, key)
-		if err != nil {
-			debug.Logf("DEBUG: failed to read config %q from store: %v\n", key, err)
-		} else if strings.TrimSpace(dbValue) != "" {
-			return strings.TrimSpace(dbValue)
+	// Only trust YAML/env values that were explicitly set, not Viper defaults.
+	if src := config.GetValueSource(key); src != config.SourceDefault {
+		value := strings.TrimSpace(config.GetString(key))
+		if value != "" {
+			return value
 		}
 	}
 
-	// Fall back to viper default
-	return strings.TrimSpace(config.GetString(key))
+	if store == nil {
+		return ""
+	}
+
+	dbValue, err := store.GetConfig(ctx, key)
+	if err != nil {
+		debug.Logf("DEBUG: failed to read config %q from store: %v\n", key, err)
+		return ""
+	}
+	return strings.TrimSpace(dbValue)
 }
 
 // determineAutoRoutedRepoPath returns the repository path that should be used for

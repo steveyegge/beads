@@ -251,6 +251,13 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	// Wisps are vapor (ephemeral) by default — only create the root issue.
+	// Materializing child step issues is the "pour" path (bd pour), not wisps.
+	// Formulas that explicitly set pour=true get children even as wisps.
+	if !rootOnly && subgraph != nil && !subgraph.Pour {
+		rootOnly = true
+	}
+
 	// Spawn as ephemeral in main database (Ephemeral=true, not synced via git)
 	// Use wisp prefix for distinct visual recognition (see types.IDPrefixWisp)
 	result, err := spawnMoleculeWithOptions(ctx, store, subgraph, CloneOptions{
@@ -590,6 +597,45 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		// Check if old (not updated within age threshold)
 		if now.Sub(issue.UpdatedAt) > ageThreshold {
 			abandoned = append(abandoned, issue)
+		}
+	}
+
+	// Cascade: expand to include blocked step children of abandoned wisps.
+	// Without this, deleting a parent formula wisp leaves its dependent step
+	// wisps as permanent orphans (they have no other references keeping them alive).
+	if len(abandoned) > 0 {
+		parentIDs := make([]string, len(abandoned))
+		for i, issue := range abandoned {
+			parentIDs[i] = issue.ID
+		}
+		childIDs, err := store.FindWispDependentsRecursive(ctx, parentIDs)
+		if err != nil {
+			// Log but don't fail the GC — partial cascade is better than none
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: cascade expansion incomplete: %v\n", err)
+		}
+		if len(childIDs) > 0 {
+			// Fetch the child wisps and add them to the abandoned set
+			childIDSlice := make([]string, 0, len(childIDs))
+			for id := range childIDs {
+				childIDSlice = append(childIDSlice, id)
+			}
+			childIssues, fetchErr := store.GetIssuesByIDs(ctx, childIDSlice)
+			if fetchErr == nil {
+				abandonedSet := make(map[string]bool, len(abandoned))
+				for _, issue := range abandoned {
+					abandonedSet[issue.ID] = true
+				}
+				for _, child := range childIssues {
+					if abandonedSet[child.ID] {
+						continue
+					}
+					// Never cascade to infra types
+					if store.IsInfraTypeCtx(ctx, child.IssueType) {
+						continue
+					}
+					abandoned = append(abandoned, child)
+				}
+			}
 		}
 	}
 

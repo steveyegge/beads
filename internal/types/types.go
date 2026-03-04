@@ -888,6 +888,14 @@ type MoleculeProgressStats struct {
 	LastClosed    *time.Time `json:"last_closed,omitempty"`
 }
 
+// MoleculeLastActivity holds the most recent activity timestamp for a molecule.
+type MoleculeLastActivity struct {
+	MoleculeID   string    `json:"molecule_id"`
+	LastActivity time.Time `json:"last_activity"`
+	Source       string    `json:"source"` // "step_closed", "step_updated", "molecule_updated"
+	SourceStepID string    `json:"source_step_id,omitempty"`
+}
+
 // Statistics provides aggregate metrics
 type Statistics struct {
 	TotalIssues             int     `json:"total_issues"`
@@ -1040,11 +1048,6 @@ type WorkFilter struct {
 	// Set to true to include them (e.g., for merge-request processing).
 	IncludeEphemeral bool
 
-	// Molecule step filtering
-	// By default, GetReadyWork excludes mol/wisp steps (IDs containing -mol- or -wisp-)
-	// Set to true for internal callers that need to see mol steps (e.g., findGateReadyMolecules)
-	IncludeMolSteps bool
-
 	// Metadata field filtering (GH#1406)
 	MetadataFields map[string]string // Top-level key=value equality; AND semantics (all must match)
 	HasMetadataKey string            // Existence check: issue has this top-level key set (non-null)
@@ -1085,7 +1088,6 @@ const (
 // ID prefix constants for molecule/wisp instantiation.
 // These prefixes are inserted into issue IDs: <project>-<prefix>-<id>
 // Used by: cmd/bd/pour.go, cmd/bd/wisp.go (ID generation)
-// Exclusion from bd ready is config-driven via ready.exclude_id_patterns (default: -mol-,-wisp-)
 const (
 	IDPrefixMol  = "mol"  // Persistent molecules (bd-mol-xxx)
 	IDPrefixWisp = "wisp" // Ephemeral wisps (bd-wisp-xxx)

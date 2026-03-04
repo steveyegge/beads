@@ -137,6 +137,7 @@ else
 	@ln -s bd $(INSTALL_DIR)/beads
 	@echo "Created 'beads' alias -> bd"
 endif
+	@git config core.hooksPath .githooks 2>/dev/null && echo "Configured git hooks (.githooks/)" || true
 
 install: check-up-to-date
 

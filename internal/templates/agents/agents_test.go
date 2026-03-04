@@ -58,10 +58,10 @@ func TestEmbeddedBeadsSection(t *testing.T) {
 	}
 }
 
-func TestBeadsSectionDoesNotContainLanding(t *testing.T) {
+func TestBeadsSectionContainsLanding(t *testing.T) {
 	section := EmbeddedBeadsSection()
-	if strings.Contains(section, "Landing the Plane") {
-		t.Error("beads section should NOT contain landing-the-plane content")
+	if !strings.Contains(section, "Landing the Plane") {
+		t.Error("beads section should contain landing-the-plane content within markers")
 	}
 }
 

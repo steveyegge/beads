@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -43,6 +45,7 @@ type createFormValues struct {
 	AcceptanceCriteria string
 	ExternalRef        string
 	Dependencies       []string
+	ParentID           string // Parent issue ID for hierarchical child creation
 }
 
 // parseCreateFormInput parses raw form input into a createFormValues struct.
@@ -92,8 +95,30 @@ func parseCreateFormInput(raw *createFormRawInput) *createFormValues {
 
 // CreateIssueFromFormValues creates an issue from the given form values.
 // It returns the created issue and any error that occurred.
-// This function handles labels, dependencies, and source_repo inheritance.
+// This function handles parent-child relationships, labels, dependencies,
+// and source_repo inheritance.
 func CreateIssueFromFormValues(ctx context.Context, s *dolt.DoltStore, fv *createFormValues, actor string) (*types.Issue, error) {
+	// If parent is specified, validate it exists and generate child ID
+	var explicitID string
+	var inheritedLabels []string
+	if fv.ParentID != "" {
+		_, err := s.GetIssue(ctx, fv.ParentID)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				return nil, fmt.Errorf("parent issue %s not found", fv.ParentID)
+			}
+			return nil, fmt.Errorf("failed to check parent issue: %w", err)
+		}
+		childID, err := s.GetNextChildID(ctx, fv.ParentID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate child ID: %w", err)
+		}
+		explicitID = childID
+
+		// Inherit parent labels (GH#2100), matching bd create --parent behavior
+		inheritedLabels, _ = s.GetLabels(ctx, fv.ParentID)
+	}
+
 	var externalRefPtr *string
 	if fv.ExternalRef != "" {
 		externalRefPtr = &fv.ExternalRef
@@ -110,6 +135,10 @@ func CreateIssueFromFormValues(ctx context.Context, s *dolt.DoltStore, fv *creat
 		Assignee:           fv.Assignee,
 		ExternalRef:        externalRefPtr,
 		CreatedBy:          getActorWithGit(), // GH#748: track who created the issue
+	}
+
+	if explicitID != "" {
+		issue.ID = explicitID
 	}
 
 	// Check if any dependencies are discovered-from type
@@ -147,11 +176,46 @@ func CreateIssueFromFormValues(ctx context.Context, s *dolt.DoltStore, fv *creat
 		return nil, fmt.Errorf("failed to create issue: %w", err)
 	}
 
+	// Track whether any post-create writes occurred. CreateIssue commits
+	// the issue to Dolt internally, but subsequent AddDependency/AddLabel
+	// calls only write to the working set. A follow-up Dolt commit is
+	// needed to persist them (GH#2009).
+	postCreateWrites := false
+
+	// If parent was specified, add parent-child dependency (GH#1983)
+	if fv.ParentID != "" {
+		dep := &types.Dependency{
+			IssueID:     issue.ID,
+			DependsOnID: fv.ParentID,
+			Type:        types.DepParentChild,
+		}
+		if err := s.AddDependency(ctx, dep, actor); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to add parent-child dependency %s -> %s: %v\n", issue.ID, fv.ParentID, err)
+		} else {
+			postCreateWrites = true
+		}
+	}
+
+	// Merge inherited parent labels with user-specified labels (GH#2100)
+	if len(inheritedLabels) > 0 {
+		seen := make(map[string]bool)
+		for _, l := range fv.Labels {
+			seen[l] = true
+		}
+		for _, l := range inheritedLabels {
+			if !seen[l] {
+				fv.Labels = append(fv.Labels, l)
+			}
+		}
+	}
+
 	// Add labels if specified
 	for _, label := range fv.Labels {
 		if err := s.AddLabel(ctx, issue.ID, label, actor); err != nil {
 			// Log warning but don't fail the entire operation
 			fmt.Fprintf(os.Stderr, "Warning: failed to add label %s: %v\n", label, err)
+		} else {
+			postCreateWrites = true
 		}
 	}
 
@@ -190,6 +254,20 @@ func CreateIssueFromFormValues(ctx context.Context, s *dolt.DoltStore, fv *creat
 		}
 		if err := s.AddDependency(ctx, dep, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
+		} else {
+			postCreateWrites = true
+		}
+	}
+
+	// Commit post-create metadata (deps, labels) to Dolt. CreateIssue's
+	// internal DOLT_COMMIT only covers the issue row; AddDependency and
+	// AddLabel write to the SQL working set without a Dolt commit. Without
+	// this, the metadata is visible but not durable — it can be lost on
+	// push, sync, or server restart (GH#2009).
+	if postCreateWrites {
+		commitMsg := fmt.Sprintf("bd: create %s (metadata)", issue.ID)
+		if err := s.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
+			WarnError("failed to commit post-create metadata: %v", err)
 		}
 	}
 
@@ -205,6 +283,9 @@ var createFormCmd = &cobra.Command{
 This command provides a user-friendly form interface for creating issues,
 with fields for title, description, type, priority, labels, and more.
 
+Use --parent to create a sub-issue under an existing parent issue.
+The child will get an auto-generated hierarchical ID (e.g., parent-id.1).
+
 The form uses keyboard navigation:
   - Tab/Shift+Tab: Move between fields
   - Enter: Submit the form (on the last field or submit button)
@@ -217,7 +298,8 @@ The form uses keyboard navigation:
 }
 
 func runCreateForm(cmd *cobra.Command) {
-	_ = cmd // cmd parameter required by cobra.Command.Run signature
+	parentID, _ := cmd.Flags().GetString("parent")
+
 	// Raw form input - will be populated by the form
 	raw := &createFormRawInput{}
 
@@ -338,6 +420,7 @@ func runCreateForm(cmd *cobra.Command) {
 
 	// Parse the form input
 	fv := parseCreateFormInput(raw)
+	fv.ParentID = parentID
 
 	// Direct mode - use the extracted creation function
 	issue, err := CreateIssueFromFormValues(rootCtx, store, fv, actor)
@@ -371,5 +454,6 @@ func printCreatedIssue(issue *types.Issue) {
 
 func init() {
 	// Note: --json flag is defined as a persistent flag in main.go
+	createFormCmd.Flags().String("parent", "", "Parent issue ID for creating a hierarchical child (e.g., 'bd-a3f8e9')")
 	rootCmd.AddCommand(createFormCmd)
 }

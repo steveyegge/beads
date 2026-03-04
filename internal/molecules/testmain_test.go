@@ -25,17 +25,16 @@ func TestMain(m *testing.M) {
 }
 
 func testMainInner(m *testing.M) int {
-	srv, cleanup := testutil.StartTestDoltServer("molecules-pkg-test-*")
-	defer cleanup()
-
 	os.Setenv("BEADS_TEST_MODE", "1")
-	if srv != nil {
-		testServerPort = srv.Port
-		os.Setenv("BEADS_DOLT_PORT", fmt.Sprintf("%d", srv.Port))
+	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v, skipping Dolt tests\n", err)
+	} else {
+		defer testutil.TerminateDoltContainer()
+		testServerPort = testutil.DoltContainerPortInt()
 
 		// Set up shared database for branch-per-test isolation
 		testSharedDB = "molecules_pkg_shared"
-		db, err := testutil.SetupSharedTestDB(srv.Port, testSharedDB)
+		db, err := testutil.SetupSharedTestDB(testServerPort, testSharedDB)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FATAL: shared DB setup failed: %v\n", err)
 			return 1
@@ -43,7 +42,7 @@ func testMainInner(m *testing.M) int {
 		testSharedConn = db
 		defer db.Close()
 
-		if err := initMoleculesSharedSchema(srv.Port); err != nil {
+		if err := initMoleculesSharedSchema(testServerPort); err != nil {
 			fmt.Fprintf(os.Stderr, "FATAL: shared schema init failed: %v\n", err)
 			return 1
 		}

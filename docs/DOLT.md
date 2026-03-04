@@ -1,6 +1,6 @@
 # Dolt Backend for Beads
 
-Beads uses Dolt as its storage backend. Dolt provides a version-controlled SQL database with cell-level merge, native branching, and multi-writer support via server mode.
+Beads uses Dolt as its storage backend. Dolt provides a version-controlled SQL database with cell-level merge, native branching, and two deployment modes.
 
 ## Why Dolt?
 
@@ -8,16 +8,17 @@ Beads uses Dolt as its storage backend. Dolt provides a version-controlled SQL d
 - **Multi-writer support** — server mode enables concurrent agents
 - **Built-in history** — every write creates a Dolt commit
 - **Native branching** — Dolt branches independent of git branches
+- **Single-binary option** — embedded mode for solo users (no daemon needed)
 
 ## Getting Started
 
 ### New Project
 
 ```bash
-# Embedded mode (single writer)
+# Embedded mode (single writer, no daemon — default for standalone)
 bd init
 
-# Server mode (multi-writer)
+# Server mode (multi-writer, e.g. Gas Town)
 gt dolt start           # Start the Dolt server
 bd init --server        # Initialize with server mode
 ```
@@ -41,7 +42,17 @@ Migration creates backups automatically. Your original SQLite database is preser
 
 ## Modes of Operation
 
-### Server Mode (Multi-Writer)
+### Embedded Mode (Solo / Standalone)
+
+In-process Dolt engine — no separate server needed. This is the default for
+standalone Beads users. The `bd` binary includes everything; just `bd init` and go.
+
+- Single-writer (one process at a time)
+- Data lives in `.beads/dolt/` alongside your code
+- Push to GitHub with `bd dolt push` — code and issues in one repo
+- Zero ops: no daemon, no ports, no PID files
+
+### Server Mode (Multi-Writer / Gas Town)
 
 Connects to a running `dolt sql-server` for multi-client access.
 
@@ -274,15 +285,15 @@ bd vc commit -m "Checkpoint before refactor"
 
 ### Auto-Commit Behavior
 
-In **embedded mode** (default), each `bd` write command creates a Dolt commit:
+In **embedded mode** (standalone default), each `bd` write command creates a Dolt commit:
 
 ```bash
 bd create "New issue"    # Creates issue + Dolt commit
 ```
 
-In **server mode**, auto-commit defaults to OFF because the server manages its
-own transaction lifecycle. Firing `DOLT_COMMIT` after every write under
-concurrent load causes 'database is read only' errors.
+In **server mode** (Gas Town), auto-commit defaults to OFF because the server
+manages its own transaction lifecycle. Firing `DOLT_COMMIT` after every write
+under concurrent load causes 'database is read only' errors.
 
 Override for batch operations (embedded) or explicit commits (server):
 

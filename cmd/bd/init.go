@@ -28,7 +28,10 @@ var initCmd = &cobra.Command{
 	GroupID: "setup",
 	Short:   "Initialize bd in the current directory",
 	Long: `Initialize bd in the current directory by creating a .beads/ directory
-and database file. Optionally specify a custom issue prefix.
+and Dolt database. Optionally specify a custom issue prefix.
+
+Dolt is the default (and only supported) storage backend. The legacy SQLite
+backend has been removed. Use --backend=sqlite to see migration instructions.
 
 Use --database to specify an existing server database name, overriding the
 default prefix-based naming. This is useful when an external tool (e.g. gastown)
@@ -53,11 +56,28 @@ environment variable.`,
 		force, _ := cmd.Flags().GetBool("force")
 		fromJSONL, _ := cmd.Flags().GetBool("from-jsonl")
 		// Dolt server connection flags
+		backendFlag, _ := cmd.Flags().GetString("backend")
 		_, _ = cmd.Flags().GetBool("server") // no-op, kept for backward compatibility
 		serverHost, _ := cmd.Flags().GetString("server-host")
 		serverPort, _ := cmd.Flags().GetInt("server-port")
 		serverUser, _ := cmd.Flags().GetString("server-user")
 		database, _ := cmd.Flags().GetString("database")
+
+		// Handle --backend flag: "dolt" is the only supported backend.
+		// "sqlite" is accepted for backward compatibility but prints a
+		// deprecation notice and exits with an error.
+		if backendFlag == "sqlite" {
+			fmt.Fprintf(os.Stderr, "%s The SQLite backend has been removed.\n\n", ui.RenderWarn("⚠ DEPRECATED:"))
+			fmt.Fprintf(os.Stderr, "Dolt is now the default (and only) storage backend for beads.\n")
+			fmt.Fprintf(os.Stderr, "To initialize with Dolt:\n")
+			fmt.Fprintf(os.Stderr, "  bd init\n\n")
+			fmt.Fprintf(os.Stderr, "To migrate an existing SQLite database to Dolt:\n")
+			fmt.Fprintf(os.Stderr, "  bd migrate --to-dolt\n\n")
+			fmt.Fprintf(os.Stderr, "See: https://github.com/steveyegge/beads/blob/main/docs/DOLT-BACKEND.md\n")
+			os.Exit(1)
+		} else if backendFlag != "" && backendFlag != "dolt" {
+			FatalError("unknown backend %q: only \"dolt\" is supported", backendFlag)
+		}
 
 		// Validate --database early, before any side effects
 		if database != "" {
@@ -449,7 +469,7 @@ environment variable.`,
 					cfg.DoltDatabase = strings.ReplaceAll(prefix, "-", "_")
 				}
 
-				// Always server mode
+				// Server mode for now; embedded mode returning soon
 				cfg.DoltMode = configfile.DoltModeServer
 				if serverHost != "" {
 					cfg.DoltServerHost = serverHost
@@ -794,8 +814,11 @@ func init() {
 	initCmd.Flags().Bool("from-jsonl", false, "Import issues from .beads/issues.jsonl instead of git history")
 	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides embedded default)")
 
+	// Backend selection (dolt is the only supported backend; sqlite accepted for deprecation notice)
+	initCmd.Flags().String("backend", "", "Storage backend (default: dolt). --backend=sqlite prints deprecation notice.")
+
 	// Dolt server connection flags
-	initCmd.Flags().Bool("server", false, "No-op (server mode is always enabled); kept for backward compatibility")
+	initCmd.Flags().Bool("server", false, "Use server mode (currently the default; embedded mode returning soon)")
 	initCmd.Flags().String("server-host", "", "Dolt server host (default: 127.0.0.1)")
 	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3307)")
 	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")

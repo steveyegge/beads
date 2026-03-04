@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/configfile"
 )
 
 func TestDerivePort(t *testing.T) {
@@ -191,9 +190,10 @@ func TestDefaultConfig(t *testing.T) {
 		if cfg.Host != "127.0.0.1" {
 			t.Errorf("expected host 127.0.0.1, got %s", cfg.Host)
 		}
-		// Standalone mode defaults to configfile.DefaultDoltServerPort
-		if cfg.Port != configfile.DefaultDoltServerPort {
-			t.Errorf("expected default port %d, got %d", configfile.DefaultDoltServerPort, cfg.Port)
+		// Standalone mode defaults to DerivePort (hash-based, per-project)
+		expected := DerivePort(dir)
+		if cfg.Port != expected {
+			t.Errorf("expected DerivePort %d, got %d", expected, cfg.Port)
 		}
 		if cfg.BeadsDir != dir {
 			t.Errorf("expected BeadsDir=%s, got %s", dir, cfg.BeadsDir)
@@ -244,19 +244,37 @@ func TestDefaultConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("no_config_uses_default_port_not_hash", func(t *testing.T) {
-		// When no env var, no metadata port, and no GT_ROOT, DefaultConfig
-		// should use configfile.DefaultDoltServerPort as the fallback,
-		// NOT DerivePort().
+	t.Run("no_config_uses_derive_port", func(t *testing.T) {
+		// When no env var, no metadata port, no port file, and no GT_ROOT,
+		// DefaultConfig should use DerivePort for per-project isolation.
 		t.Setenv("GT_ROOT", "")
 		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
 		freshDir := t.TempDir()
 		cfg := DefaultConfig(freshDir)
 
-		if cfg.Port != configfile.DefaultDoltServerPort {
-			t.Errorf("expected DefaultConfig to use configfile.DefaultDoltServerPort (%d), got %d",
-				configfile.DefaultDoltServerPort, cfg.Port)
+		expected := DerivePort(freshDir)
+		if cfg.Port != expected {
+			t.Errorf("expected DefaultConfig to use DerivePort (%d), got %d",
+				expected, cfg.Port)
+		}
+	})
+
+	t.Run("port_file_takes_precedence_over_derive", func(t *testing.T) {
+		// When a port file exists (written by Start()), DefaultConfig should
+		// use it — this is how commands find a server that Start() placed on
+		// a fallback port.
+		t.Setenv("GT_ROOT", "")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+
+		freshDir := t.TempDir()
+		if err := writePortFile(freshDir, 14000); err != nil {
+			t.Fatal(err)
+		}
+		cfg := DefaultConfig(freshDir)
+
+		if cfg.Port != 14000 {
+			t.Errorf("expected port file port 14000, got %d", cfg.Port)
 		}
 	})
 }
@@ -783,17 +801,17 @@ func TestReclaimPortOccupiedByOtherProject(t *testing.T) {
 }
 
 func TestStartFallsBackToDerivePortOnCollision(t *testing.T) {
-	// When DefaultConfig returns DefaultDoltServerPort but another project's
-	// Dolt server already occupies it, Start should fall back to DerivePort
-	// rather than killing the other server or failing.
+	// When Start() finds another project's Dolt server on the DerivePort,
+	// it should fall back gracefully rather than killing the other server.
 	dir := t.TempDir()
 
 	t.Setenv("GT_ROOT", "")
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
 	cfg := DefaultConfig(dir)
-	if cfg.Port != configfile.DefaultDoltServerPort {
-		t.Fatalf("expected default port %d, got %d", configfile.DefaultDoltServerPort, cfg.Port)
+	expected := DerivePort(dir)
+	if cfg.Port != expected {
+		t.Fatalf("expected DerivePort %d, got %d", expected, cfg.Port)
 	}
 
 	// The fallback port should be a DerivePort value (13307-14306 range)
@@ -802,23 +820,21 @@ func TestStartFallsBackToDerivePortOnCollision(t *testing.T) {
 		t.Errorf("fallbackPort(%q) = %d, expected in DerivePort range [%d, %d)",
 			dir, fallback, portRangeBase, portRangeBase+portRangeSize)
 	}
-
-	// Fallback must differ from default
-	if fallback == configfile.DefaultDoltServerPort {
-		t.Errorf("fallbackPort should not equal DefaultDoltServerPort (%d)", configfile.DefaultDoltServerPort)
-	}
 }
 
-func TestDefaultConfigStillReturnsDefaultPort(t *testing.T) {
-	// Regression: DefaultConfig must return DefaultDoltServerPort for standalone mode.
-	// The DerivePort fallback is only used inside Start when port collision detected.
+func TestDefaultConfigReturnsDerivePortForStandalone(t *testing.T) {
+	// DefaultConfig must return DerivePort for standalone mode so that each
+	// project gets an isolated port. This prevents multi-project setups from
+	// all trying to connect to the same port (3307).
 	t.Setenv("GT_ROOT", "")
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 
-	cfg := DefaultConfig(t.TempDir())
-	if cfg.Port != configfile.DefaultDoltServerPort {
-		t.Errorf("DefaultConfig should return %d for standalone, got %d",
-			configfile.DefaultDoltServerPort, cfg.Port)
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	expected := DerivePort(dir)
+	if cfg.Port != expected {
+		t.Errorf("DefaultConfig should return DerivePort (%d) for standalone, got %d",
+			expected, cfg.Port)
 	}
 }
 
@@ -960,6 +976,136 @@ func TestEnsureDoltInit_WritesMarker(t *testing.T) {
 	markerPath := filepath.Join(doltDir, bdDoltMarker)
 	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
 		t.Error("expected .bd-dolt-ok marker to be written after successful dolt init")
+	}
+}
+
+// --- stopServerProcess tests ---
+
+func TestStopServerProcessPreservesMonitorAndActivity(t *testing.T) {
+	// stopServerProcess must leave the monitor PID file and activity file
+	// intact. This is the core fix for GH#2324: the idle monitor calls
+	// stopServerProcess (not Stop) to avoid killing itself via
+	// cleanupStateFiles → stopIdleMonitor.
+	dir := t.TempDir()
+	t.Setenv("GT_ROOT", "")
+
+	// Write activity and monitor PID files
+	touchActivity(dir)
+	monitorPID := os.Getpid()
+	_ = os.WriteFile(monitorPidPath(dir), []byte(strconv.Itoa(monitorPID)), 0600)
+
+	// No server PID file → stopServerProcess returns immediately (already stopped)
+	if err := stopServerProcess(dir); err != nil {
+		t.Fatalf("stopServerProcess: %v", err)
+	}
+
+	// Activity file must be preserved
+	if _, err := os.Stat(activityPath(dir)); os.IsNotExist(err) {
+		t.Error("stopServerProcess must preserve activity file")
+	}
+	// Monitor PID file must be preserved
+	if _, err := os.Stat(monitorPidPath(dir)); os.IsNotExist(err) {
+		t.Error("stopServerProcess must preserve monitor PID file")
+	}
+	// Monitor PID should still contain our PID (not corrupted)
+	data, err := os.ReadFile(monitorPidPath(dir))
+	if err != nil {
+		t.Fatalf("reading monitor PID file: %v", err)
+	}
+	if pid, _ := strconv.Atoi(strings.TrimSpace(string(data))); pid != monitorPID {
+		t.Errorf("monitor PID file changed: want %d, got %d", monitorPID, pid)
+	}
+}
+
+func TestStopServerProcessRemovesPidAndPort(t *testing.T) {
+	// When the server is running (simulated with a stale PID that IsRunning
+	// will clean up), stopServerProcess should remove PID and port files
+	// but leave activity and monitor files intact.
+	dir := t.TempDir()
+	t.Setenv("GT_ROOT", "")
+
+	// Write all state files
+	_ = os.WriteFile(pidPath(dir), []byte("99999999"), 0600) // dead PID
+	_ = writePortFile(dir, 13500)
+	touchActivity(dir)
+	_ = os.WriteFile(monitorPidPath(dir), []byte(strconv.Itoa(os.Getpid())), 0600)
+
+	// stopServerProcess: IsRunning sees dead PID → returns Running=false →
+	// stopServerProcess returns nil (already stopped).
+	_ = stopServerProcess(dir)
+
+	// PID file was cleaned up by IsRunning (stale PID detection)
+	if _, err := os.Stat(pidPath(dir)); !os.IsNotExist(err) {
+		t.Error("expected server PID file to be removed")
+	}
+
+	// Activity and monitor PID files must survive
+	if _, err := os.Stat(activityPath(dir)); os.IsNotExist(err) {
+		t.Error("stopServerProcess must preserve activity file")
+	}
+	if _, err := os.Stat(monitorPidPath(dir)); os.IsNotExist(err) {
+		t.Error("stopServerProcess must preserve monitor PID file")
+	}
+}
+
+func TestRunIdleMonitorExitsOnStaleActivityNoServer(t *testing.T) {
+	// When there's no server running and activity is stale beyond the
+	// idle timeout, the monitor should exit (existing behavior preserved).
+	dir := t.TempDir()
+	t.Setenv("GT_ROOT", "")
+
+	// Write a stale activity timestamp (2x the timeout ago)
+	staleTime := time.Now().Add(-2 * time.Hour)
+	_ = os.WriteFile(activityPath(dir),
+		[]byte(strconv.FormatInt(staleTime.Unix(), 10)), 0600)
+	// Write a monitor PID file
+	_ = os.WriteFile(monitorPidPath(dir),
+		[]byte(strconv.Itoa(os.Getpid())), 0600)
+
+	done := make(chan struct{})
+	go func() {
+		RunIdleMonitor(dir, 1*time.Hour) // timeout=1h, activity=2h ago
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// good — exited because stale activity + no server
+	case <-time.After(MonitorCheckInterval + 5*time.Second):
+		t.Fatal("monitor should exit when no server and stale activity")
+	}
+
+	// Monitor should have cleaned up its PID file
+	if _, err := os.Stat(monitorPidPath(dir)); !os.IsNotExist(err) {
+		t.Error("monitor should clean up its PID file on exit")
+	}
+}
+
+func TestRunIdleMonitorGasTownExitsImmediately(t *testing.T) {
+	// Under Gas Town, the monitor should exit immediately regardless
+	// of activity state.
+	dir := t.TempDir()
+
+	// Create a fake GT root with required markers
+	gtRoot := t.TempDir()
+	for _, marker := range []string{"daemon", "deacon", "warrants", "mayor"} {
+		if err := os.MkdirAll(filepath.Join(gtRoot, marker), 0750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GT_ROOT", gtRoot)
+
+	done := make(chan struct{})
+	go func() {
+		RunIdleMonitor(dir, 30*time.Minute)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// good — exited immediately under Gas Town
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunIdleMonitor should exit immediately under Gas Town")
 	}
 }
 

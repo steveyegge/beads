@@ -11,6 +11,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // RoutesFileName is the name of the routes configuration file
@@ -69,12 +70,9 @@ func LoadTownRoutes(beadsDir string) ([]Route, error) {
 // For "gt-abc123", returns "gt-".
 // For "bd-abc123", returns "bd-".
 // Returns empty string if no prefix found.
+// Delegates to types.ExtractPrefix — kept here for caller convenience.
 func ExtractPrefix(id string) string {
-	idx := strings.Index(id, "-")
-	if idx < 0 {
-		return ""
-	}
-	return id[:idx+1] // Include the hyphen
+	return types.ExtractPrefix(id)
 }
 
 // ExtractProjectFromPath extracts the project name from a route path.

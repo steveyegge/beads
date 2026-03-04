@@ -344,18 +344,15 @@ func CheckTestPollution(path string) DoctorCheck {
 	}
 }
 
-// CheckGitConflicts detects unresolved git merge conflict markers in legacy JSONL files.
-// This check only applies to non-Dolt backends; Dolt handles conflicts via its own merge system.
+// CheckGitConflicts detects unresolved merge conflicts.
+// For Dolt backends, queries the dolt_conflicts system table (GH-2249).
+// For legacy backends, scans JSONL files for git conflict markers.
 func CheckGitConflicts(path string) DoctorCheck {
 	backend, beadsDir := getBackendAndBeadsDir(path)
 
-	// Dolt backends handle conflicts via Dolt's merge system, not JSONL files
+	// Dolt backend: check for unresolved Dolt merge conflicts
 	if backend == configfile.BackendDolt {
-		return DoctorCheck{
-			Name:    "Git Conflicts",
-			Status:  StatusOK,
-			Message: "N/A (Dolt backend handles conflicts natively)",
-		}
+		return checkDoltConflicts(beadsDir)
 	}
 
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
@@ -436,6 +433,82 @@ func CheckChildParentDependencies(path string) DoctorCheck {
 	defer func() { _ = store.Close() }()
 
 	return checkChildParentDependenciesDB(db)
+}
+
+// checkDoltConflicts queries the Dolt server for unresolved merge conflicts (GH-2249).
+func checkDoltConflicts(beadsDir string) DoctorCheck {
+	doltPath := getDatabasePath(beadsDir)
+	if _, err := os.Stat(doltPath); os.IsNotExist(err) {
+		return DoctorCheck{
+			Name:    "Git Conflicts",
+			Status:  StatusOK,
+			Message: "N/A (no Dolt database)",
+		}
+	}
+
+	db, store, err := openStoreDB(beadsDir)
+	if err != nil {
+		return DoctorCheck{
+			Name:    "Git Conflicts",
+			Status:  StatusOK,
+			Message: "N/A (unable to open database)",
+		}
+	}
+	defer func() { _ = store.Close() }()
+
+	rows, err := db.Query("SELECT `table`, num_conflicts FROM dolt_conflicts")
+	if err != nil {
+		// Table may not exist in older Dolt versions — not an error
+		if strings.Contains(err.Error(), "no such table") || strings.Contains(err.Error(), "doesn't exist") {
+			return DoctorCheck{
+				Name:    "Git Conflicts",
+				Status:  StatusOK,
+				Message: "No conflicts",
+			}
+		}
+		return DoctorCheck{
+			Name:    "Git Conflicts",
+			Status:  StatusWarning,
+			Message: "Unable to check Dolt conflicts",
+			Detail:  err.Error(),
+		}
+	}
+	defer rows.Close()
+
+	var tables []string
+	totalConflicts := 0
+	for rows.Next() {
+		var tableName string
+		var numConflicts int
+		if err := rows.Scan(&tableName, &numConflicts); err == nil && numConflicts > 0 {
+			tables = append(tables, fmt.Sprintf("%s (%d)", tableName, numConflicts))
+			totalConflicts += numConflicts
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return DoctorCheck{
+			Name:    "Git Conflicts",
+			Status:  StatusWarning,
+			Message: "Error reading Dolt conflicts",
+			Detail:  err.Error(),
+		}
+	}
+
+	if totalConflicts == 0 {
+		return DoctorCheck{
+			Name:    "Git Conflicts",
+			Status:  StatusOK,
+			Message: "No Dolt merge conflicts",
+		}
+	}
+
+	return DoctorCheck{
+		Name:    "Git Conflicts",
+		Status:  StatusError,
+		Message: fmt.Sprintf("Unresolved Dolt merge conflicts in %d table(s)", len(tables)),
+		Detail:  strings.Join(tables, ", "),
+		Fix:     "Resolve conflicts with 'bd dolt conflicts resolve' or 'dolt conflicts resolve --ours/--theirs'",
+	}
 }
 
 // checkChildParentDependenciesDB is the core logic for CheckChildParentDependencies.
