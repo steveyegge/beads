@@ -1410,7 +1410,6 @@ func TestRequiredPatterns_ContainsRedirect(t *testing.T) {
 	}
 }
 
-
 // TestGitignoreTemplate_ContainsSyncStateFiles verifies that sync state files
 // introduced in PR #918 (pull-first sync with 3-way merge) are gitignored.
 // These files are machine-specific and should not be shared across clones.

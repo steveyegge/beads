@@ -893,4 +893,3 @@ func TestRunIdleMonitorGasTownExitsImmediately(t *testing.T) {
 		t.Fatal("RunIdleMonitor should exit immediately under Gas Town")
 	}
 }
-
