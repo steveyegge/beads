@@ -151,13 +151,9 @@ export BD_ACTOR="my-github-handle"
 
 The sync mode controls how beads synchronizes data with git and/or Dolt remotes.
 
-#### Sync Modes
+#### Sync Mode
 
-| Mode | Description |
-|------|-------------|
-| `dolt-native` | (default) Use Dolt remotes directly for sync. Manual `bd import` / `bd export` still work for portability. |
-| `git-portable` | Legacy mode: Export JSONL on push, import on pull. For backward compatibility with older setups. |
-| `belt-and-suspenders` | Both Dolt remote AND JSONL backup. Maximum redundancy. |
+Beads uses `dolt-native` sync mode exclusively. Dolt remotes handle sync directly with cell-level merge. Manual `bd import` / `bd export` are available for migration and portability.
 
 #### Sync Triggers
 
@@ -179,8 +175,6 @@ When merging conflicting changes:
 
 #### Federation Configuration
 
-For Dolt-native or belt-and-suspenders modes:
-
 - `federation.remote`: Dolt remote URL (e.g., `dolthub://org/beads`, `gs://bucket/beads`, `s3://bucket/beads`)
 - `federation.sovereignty`: Data sovereignty tier:
   - `T1`: Full sovereignty - data never leaves controlled infrastructure
@@ -193,24 +187,17 @@ For Dolt-native or belt-and-suspenders modes:
 ```yaml
 # .beads/config.yaml
 sync:
-  mode: dolt-native     # dolt-native | git-portable | belt-and-suspenders
   export_on: push       # push | change
   import_on: pull       # pull | change
 
 conflict:
   strategy: newest      # newest | ours | theirs | manual
 
-# Optional: Dolt federation for dolt-native or belt-and-suspenders modes
+# Optional: Dolt federation
 federation:
   remote: dolthub://myorg/beads
   sovereignty: T2
 ```
-
-#### When to Use Each Mode
-
-- **dolt-native** (default): Best for most teams. Dolt handles sync natively with cell-level merge. `bd import`/`bd export` remain available for portability and migration.
-- **git-portable**: Legacy mode for backward compatibility. JSONL is committed to git, works with any git hosting.
-- **belt-and-suspenders**: Use for critical data where you want both Dolt sync AND JSONL backup.
 
 ### Example Config File
 

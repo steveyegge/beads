@@ -16,8 +16,7 @@ data between independent teams or locations. Key benefits:
 
 ## Prerequisites
 
-1. **Dolt backend**: Federation requires the Dolt storage backend
-2. **Sync mode**: Must use `dolt-native` or `belt-and-suspenders` sync mode
+1. **Dolt backend**: Federation requires the Dolt storage backend (the only supported backend)
 
 ## Configuration
 
@@ -26,9 +25,6 @@ data between independent teams or locations. Key benefits:
 Edit `.beads/config.yaml` or `~/.config/bd/config.yaml`:
 
 ```yaml
-sync:
-  mode: dolt-native                      # Required for federation
-
 federation:
   remote: dolthub://myorg/beads          # Primary remote (optional)
   sovereignty: T2                        # Data sovereignty tier
@@ -37,18 +33,9 @@ federation:
 Or via environment variables:
 
 ```bash
-export BD_SYNC_MODE="dolt-native"
 export BD_FEDERATION_REMOTE="dolthub://myorg/beads"
 export BD_FEDERATION_SOVEREIGNTY="T2"
 ```
-
-### Sync Modes
-
-| Mode | Description | Federation Support |
-|------|-------------|-------------------|
-| `dolt-native` | Dolt remotes (default) | Yes |
-| `git-portable` | Legacy JSONL export to git | No |
-| `belt-and-suspenders` | Dolt + JSONL backup | Yes |
 
 ### Data Sovereignty Tiers
 

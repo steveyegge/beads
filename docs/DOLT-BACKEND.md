@@ -97,37 +97,14 @@ kill $(cat .beads/dolt/sql-server.pid)
 
 Dolt supports multiple sync strategies:
 
-### `dolt-native` (Default)
+### Sync Mode
 
-```yaml
-sync:
-  mode: dolt-native
-```
+Beads uses `dolt-native` sync mode exclusively:
 
 - Uses Dolt remotes (DoltHub, S3, GCS, etc.)
-- Native database-level sync
+- Native database-level sync with cell-level merge
 - Supports branching and merging
-
-### `belt-and-suspenders`
-
-```yaml
-sync:
-  mode: belt-and-suspenders
-```
-
-- Uses BOTH Dolt remotes AND JSONL export
-- Maximum redundancy
-- Useful for migration periods
-
-### `git-portable` (Legacy)
-
-```yaml
-sync:
-  mode: git-portable
-```
-
-- Legacy JSONL-based sync for backward compatibility
-- Dolt provides local version history only
+- `bd import`/`bd export` available for migration and portability
 
 ## Dolt Remotes
 
