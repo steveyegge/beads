@@ -761,14 +761,18 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 		return nil, "", fmt.Errorf("failed to open Dolt server connection: %w", err)
 	}
 
-	// Server mode supports multi-writer, configure reasonable pool size
-	maxOpen := 10
+	// Server mode: tune pool for multi-agent environments where many bd
+	// processes share a single Dolt server (150 max_connections).
+	// Default 3 open conns per process — CLI rarely needs more than 1-2
+	// concurrent queries. With 7+ agents, 3*7=21 open is sustainable.
+	maxOpen := 3
 	if cfg.MaxOpenConns > 0 {
 		maxOpen = cfg.MaxOpenConns
 	}
 	db.SetMaxOpenConns(maxOpen)
-	db.SetMaxIdleConns(min(5, maxOpen))
+	db.SetMaxIdleConns(min(2, maxOpen))
 	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(30 * time.Second)
 
 	// Ensure database exists (may need to create it)
 	// First connect without database to create it
