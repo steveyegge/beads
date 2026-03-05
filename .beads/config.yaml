@@ -44,7 +44,7 @@ sync-branch: "beads-metadata"
 # - github.org
 # - github.repo
 # Custom issue types and statuses for Gas Town (fallback when database is unavailable)
-types.custom: "agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merge-request"
-status.custom: "resolved"
+# types.custom: "agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merge-request"  # Gas Town types — disabled for SQLite v0.50.3
+# status.custom: "resolved"  # Gas Town status — disabled for SQLite v0.50.3
 
-sync.mode: "dolt-native"
+# sync.mode: "dolt-native"  # disabled — using SQLite on v0.50.3
