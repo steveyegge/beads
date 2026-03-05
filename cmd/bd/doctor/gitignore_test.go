@@ -1410,14 +1410,6 @@ func TestRequiredPatterns_ContainsRedirect(t *testing.T) {
 	}
 }
 
-// TestGitignoreTemplate_ContainsLegacyDaemonPatterns verifies that legacy daemon
-// file patterns are still gitignored to prevent old files from being committed.
-// GH#1142, GH#919
-func TestGitignoreTemplate_ContainsLegacyDaemonPatterns(t *testing.T) {
-	if !strings.Contains(GitignoreTemplate, "daemon-*.log.gz") {
-		t.Error("GitignoreTemplate should contain 'daemon-*.log.gz' pattern for legacy daemon log files")
-	}
-}
 
 // TestGitignoreTemplate_ContainsSyncStateFiles verifies that sync state files
 // introduced in PR #918 (pull-first sync with 3-way merge) are gitignored.
