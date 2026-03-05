@@ -93,15 +93,14 @@ class TestConfig:
         config = Config()
         assert config.beads_actor == "test-user"
 
-    def test_auto_flags_default_false(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that auto-flush and auto-import default to False."""
+    def test_working_dir_default_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that BEADS_WORKING_DIR is optional and defaults to None."""
         bd_path = tmp_path / "bd"
         bd_path.touch(mode=0o755)
         monkeypatch.setenv("BEADS_PATH", str(bd_path))
 
         config = Config()
-        assert config.beads_no_auto_flush is False
-        assert config.beads_no_auto_import is False
+        assert config.beads_working_dir is None
 
 
 class TestLoadConfig:

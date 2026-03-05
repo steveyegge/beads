@@ -218,8 +218,6 @@ class BdCliClient(BdClientBase):
     beads_dir: str | None
     beads_db: str | None
     actor: str | None
-    no_auto_flush: bool
-    no_auto_import: bool
     working_dir: str | None
 
     def __init__(
@@ -228,8 +226,6 @@ class BdCliClient(BdClientBase):
         beads_dir: str | None = None,
         beads_db: str | None = None,
         actor: str | None = None,
-        no_auto_flush: bool | None = None,
-        no_auto_import: bool | None = None,
         working_dir: str | None = None,
     ):
         """Initialize bd client.
@@ -239,8 +235,6 @@ class BdCliClient(BdClientBase):
             beads_dir: Path to .beads directory (optional, loads from config if not provided)
             beads_db: Path to beads database file (deprecated, optional, loads from config if not provided)
             actor: Actor name for audit trail (optional, loads from config if not provided)
-            no_auto_flush: Disable automatic JSONL sync (optional, loads from config if not provided)
-            no_auto_import: Disable automatic JSONL import (optional, loads from config if not provided)
             working_dir: Working directory for bd commands (optional, loads from config/env if not provided)
         """
         config = load_config()
@@ -248,8 +242,6 @@ class BdCliClient(BdClientBase):
         self.beads_dir = beads_dir if beads_dir is not None else config.beads_dir
         self.beads_db = beads_db if beads_db is not None else config.beads_db
         self.actor = actor if actor is not None else config.beads_actor
-        self.no_auto_flush = no_auto_flush if no_auto_flush is not None else config.beads_no_auto_flush
-        self.no_auto_import = no_auto_import if no_auto_import is not None else config.beads_no_auto_import
         self.working_dir = working_dir if working_dir is not None else config.beads_working_dir
 
     def _get_working_dir(self) -> str:
@@ -274,10 +266,6 @@ class BdCliClient(BdClientBase):
         # We pass cwd via _run_command instead
         if self.actor:
             flags.extend(["--actor", self.actor])
-        if self.no_auto_flush:
-            flags.append("--no-auto-flush")
-        if self.no_auto_import:
-            flags.append("--no-auto-import")
         return flags
 
     async def _run_command(self, *args: str, cwd: str | None = None) -> Any:
@@ -867,8 +855,6 @@ def create_bd_client(
     beads_dir: Optional[str] = None,
     beads_db: Optional[str] = None,
     actor: Optional[str] = None,
-    no_auto_flush: Optional[bool] = None,
-    no_auto_import: Optional[bool] = None,
     working_dir: Optional[str] = None,
 ) -> BdClientBase:
     """Create a bd CLI client.
@@ -879,8 +865,6 @@ def create_bd_client(
         beads_dir: Path to .beads directory
         beads_db: Path to beads database (deprecated)
         actor: Actor name for audit trail
-        no_auto_flush: Disable auto-flush
-        no_auto_import: Disable auto-import
         working_dir: Working directory for database discovery
 
     Returns:
@@ -891,7 +875,5 @@ def create_bd_client(
         beads_dir=beads_dir,
         beads_db=beads_db,
         actor=actor,
-        no_auto_flush=no_auto_flush,
-        no_auto_import=no_auto_import,
         working_dir=working_dir,
     )
