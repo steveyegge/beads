@@ -50,6 +50,7 @@ func TestConcurrencyMultiProcess(t *testing.T) {
 		}
 		t.Fatalf("CREATE DATABASE: %v", err)
 	}
+
 	if err := initCleanup(); err != nil {
 		t.Fatalf("init cleanup: %v", err)
 	}

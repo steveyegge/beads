@@ -48,7 +48,15 @@ func OpenSQL(ctx context.Context, dir, database, branch string) (*sql.DB, func()
 	db.SetConnMaxLifetime(0)
 
 	cleanup := func() error {
-		return errors.Join(db.Close(), connector.Close())
+		// connector.Close → engine.Close → BackgroundThreads.Shutdown
+		// always returns context.Canceled because Shutdown cancels its
+		// own parent context then returns parentCtx.Err().  Filter it
+		// out so callers don't see a spurious error on clean shutdown.
+		err := errors.Join(db.Close(), connector.Close())
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
 	}
 
 	if err := db.PingContext(ctx); err != nil {
