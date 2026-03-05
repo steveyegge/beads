@@ -198,7 +198,7 @@ func TestCoverage_ShowUpdateClose(t *testing.T) {
 	runBDForCoverage(t, dir, "update", id, "--remove-label", "old", "--json")
 
 	// Show JSON output and verify labels were applied.
-	showOut, _ := runBDForCoverage(t, dir, "show", "--allow-stale", id, "--json")
+	showOut, _ := runBDForCoverage(t, dir, "show", id, "--json")
 	showPayload := extractJSONPayload(showOut)
 
 	var details []map[string]interface{}
@@ -227,7 +227,7 @@ func TestCoverage_ShowUpdateClose(t *testing.T) {
 	}
 
 	// Show text output.
-	showText, _ := runBDForCoverage(t, dir, "show", "--allow-stale", id)
+	showText, _ := runBDForCoverage(t, dir, "show", id)
 	if !strings.Contains(showText, "Show coverage issue") {
 		t.Fatalf("expected show output to contain title, got: %s", showText)
 	}
@@ -235,7 +235,7 @@ func TestCoverage_ShowUpdateClose(t *testing.T) {
 	// Multi-ID show should print both issues.
 	out2, _ := runBDForCoverage(t, dir, "create", "Second issue", "-p", "2", "--json")
 	id2 := parseCreatedIssueID(t, out2)
-	multi, _ := runBDForCoverage(t, dir, "show", "--allow-stale", id, id2)
+	multi, _ := runBDForCoverage(t, dir, "show", id, id2)
 	if !strings.Contains(multi, "Show coverage issue") || !strings.Contains(multi, "Second issue") {
 		t.Fatalf("expected multi-show output to include both titles, got: %s", multi)
 	}
@@ -314,7 +314,7 @@ func TestCoverage_TemplateAndPinnedProtections(t *testing.T) {
 	}
 	_ = s.Close()
 
-	showOut, _ := runBDForCoverage(t, dir, "show", "--allow-stale", template.ID, "--json")
+	showOut, _ := runBDForCoverage(t, dir, "show", template.ID, "--json")
 	showPayload := extractJSONPayload(showOut)
 	var showDetails []map[string]interface{}
 	if err := json.Unmarshal([]byte(showPayload), &showDetails); err != nil {
@@ -394,7 +394,7 @@ func TestCoverage_ShowThread(t *testing.T) {
 	}
 	_ = s.Close()
 
-	out, _ := runBDForCoverage(t, dir, "show", "--allow-stale", reply2.ID, "--thread")
+	out, _ := runBDForCoverage(t, dir, "show", reply2.ID, "--thread")
 	if !strings.Contains(out, "Thread") || !strings.Contains(out, "Total: 3 messages") {
 		t.Fatalf("expected thread output, got: %s", out)
 	}
