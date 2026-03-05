@@ -34,6 +34,9 @@ dolt-server.port
 dolt-server.activity
 dolt-monitor.pid
 
+# Backup data (auto-exported JSONL, local-only)
+backup/
+
 # Legacy artifacts (safety net — prevents accidental commits of old files)
 *.db
 *.db?*

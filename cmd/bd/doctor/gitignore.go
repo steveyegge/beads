@@ -45,6 +45,9 @@ dolt-server.port
 dolt-server.activity
 dolt-monitor.pid
 
+# Backup data (auto-exported JSONL, local-only)
+backup/
+
 # Legacy files (from pre-Dolt versions)
 *.db
 *.db?*
