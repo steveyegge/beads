@@ -86,7 +86,7 @@ Run `bd prime` for workflow context.
 - `bd ready` - Find unblocked work
 - `bd create "Title" --type task --priority 2` - Create issue
 - `bd close <id>` - Complete work
-- `bd sync` - Sync with git (run at session end)
+- `bd dolt push` - Sync with git (run at session end)
 ```
 
 ### Step 5: Restart VS Code
@@ -209,7 +209,7 @@ bd init --quiet
 Run sync at end of session:
 
 ```bash
-bd sync
+bd dolt push
 ```
 
 Or ask Copilot: "Sync my beads changes to git"

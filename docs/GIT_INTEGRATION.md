@@ -245,38 +245,20 @@ See [MULTI_REPO_MIGRATION.md](MULTI_REPO_MIGRATION.md) for complete guide.
 
 The Dolt database directory (`.beads/dolt/`) should be gitignored, not tracked via LFS or regular git.
 
-## Custom Merge Driver
+## Conflict Resolution
 
-bd includes a built-in merge driver for resolving conflicts in `.beads/issues.jsonl` files. This replaces the standalone `beads-merge` binary that was previously maintained in a separate repository.
-
-### Alternative: Standalone beads-merge Binary (Deprecated)
-
-> **⚠️ Deprecated:** The standalone `beads-merge` binary (previously hosted at `github.com/neongreen/mono`) is no longer maintained and may be incompatible with current versions of bd. Use `bd merge` instead.
-
-The built-in `bd merge` command provides the same functionality:
+Use Dolt-native conflict resolution for Beads data conflicts.
 
 ```bash
-bd merge <output> <base> <left> <right>
+# Pull and surface any Dolt conflicts
+bd dolt pull
+
+# Inspect and resolve conflicts
+bd vc conflicts
+bd vc resolve
 ```
 
-### Jujutsu Integration
-
-**For [Jujutsu](https://martinvonz.github.io/jj/) users**, add to `~/.config/jj/config.toml`:
-
-```toml
-[merge-tools.beads-merge]
-program = "bd"
-merge-args = ["merge", "$output", "$base", "$left", "$right"]
-merge-conflict-exit-codes = [1]
-```
-
-Then resolve conflicts with:
-
-```bash
-jj resolve --tool=beads-merge .beads/issues.jsonl
-```
-
-This configures Jujutsu to invoke `bd merge` as its merge tool, restricted to `.beads/issues.jsonl` (since it only handles beads data conflicts, not general file conflicts).
+The old standalone `beads-merge` binary (`github.com/neongreen/mono`) is deprecated.
 
 ## See Also
 

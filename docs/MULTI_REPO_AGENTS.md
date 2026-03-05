@@ -231,7 +231,7 @@ bd config get repos.additional
 bd config set repos.additional "~/repo1,~/repo2"
 
 # Force sync
-bd sync
+bd dolt push
 bd list --json
 ```
 
@@ -303,7 +303,7 @@ bd doctor quick # Validate local installation health
 
 ### Teams
 - ✅ Use `bd dolt push` to sync the shared Dolt database
-- ✅ Use `bd sync` to ensure changes are committed/pushed
+- ✅ Use `bd dolt push` to ensure changes are committed/pushed
 - ✅ Link related issues across repos with dependencies
 - ❌ Don't delete `.beads/` - you lose all issue data
 
@@ -317,7 +317,7 @@ bd doctor quick # Validate local installation health
 - ✅ Always use single MCP server (per-project Dolt servers)
 - ✅ Check routing config before filing issues
 - ✅ Use `bd info --json` to verify workspace state
-- ✅ Run `bd sync` at end of session
+- ✅ Run `bd dolt push` at end of session
 - ❌ Don't assume routing behavior - check config
 
 ## Backward Compatibility

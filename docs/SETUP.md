@@ -119,7 +119,7 @@ Factory Droid and other AGENTS.md-compatible tools automatically read `AGENTS.md
 The beads section teaches AI agents:
 - To use `bd ready` for finding work
 - To use `bd create` for tracking new issues
-- To use `bd sync` at session end
+- To use `bd dolt push` at session end
 - The complete workflow pattern and best practices
 
 ### Updating Existing AGENTS.md
@@ -348,7 +348,7 @@ bd setup cursor --remove
 Cursor reads `.cursor/rules/*.mdc` files and includes them in the AI's context. The beads rules file teaches the AI:
 - To use `bd ready` for finding work
 - To use `bd create` for tracking new issues
-- To use `bd sync` at session end
+- To use `bd dolt push` at session end
 - The basic workflow pattern
 
 ## Aider

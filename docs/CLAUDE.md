@@ -41,14 +41,14 @@ Remote (Dolt remotes: DoltHub, S3, GCS, etc.)
 
 - **Write path**: CLI → Dolt → auto-commit to Dolt history
 - **Read path**: Direct SQL queries against Dolt
-- **Sync**: Dolt handles versioning and sync natively; `bd import`/`bd export` available for migration
+- **Sync**: Dolt handles versioning and sync natively via `bd dolt pull`/`bd dolt push`; JSONL export/bootstrap remains available for migration workflows
 - **Hash-based IDs**: Automatic collision prevention (v0.20+)
 
 Core implementation:
 - Dolt storage: `internal/storage/dolt/`
 - Export: `cmd/bd/export.go`
-- Import: `cmd/bd/import.go`
-- Sync: `cmd/bd/sync_helpers.go`, `cmd/bd/sync_git.go`
+- JSONL bootstrap: `cmd/bd/init.go` (`--from-jsonl`), `cmd/bd/import_shared.go`
+- Sync: `cmd/bd/dolt.go`, `internal/storage/dolt/federation.go`
 
 ### Key Data Types
 

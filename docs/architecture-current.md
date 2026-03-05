@@ -35,8 +35,8 @@ Beads is organized around a CLI surface that wires commands to a storage interfa
 
 The docs surface and the inspected Cobra wiring disagree in a few places. Per the repo's source-precedence contract, this is recorded as `unknown/conflict` and left unresolved here (see `.sisyphus/evidence/task-2-classification-model.md`).
 
-- `unknown/conflict`: `beads/docs/CLI_REFERENCE.md` advertises a root-level `bd merge ... --into ...`, while inspected Cobra definitions show merge under `vc` (`bd vc merge <branch>`) and also a separate `merge-slot` command (see `beads/docs/CLI_REFERENCE.md`, `beads/cmd/bd/vc.go`, `beads/cmd/bd/merge_slot.go`).
-- `unknown/conflict`: `beads/docs/CLI_REFERENCE.md` advertises root-level `bd import` and `bd sync`; in the reviewed command files there are import helpers plus many nested sync-related commands, but no clear root Cobra `Use:` surface declaration in-scope (see `beads/docs/CLI_REFERENCE.md`, `beads/cmd/bd/import_shared.go`, `beads/cmd/bd/backup_dolt.go`, `beads/cmd/bd/federation.go`, `beads/cmd/bd/migrate.go`, `beads/cmd/bd/repo.go`).
+- `unknown/conflict`: secondary docs (website reference pages) still advertise root-level `bd merge ... --into ...`, while inspected Cobra definitions show merge under `vc` (`bd vc merge <branch>`) plus `merge-slot` and duplicate/supersede flows (see `beads/website/docs/cli-reference/issues.md`, `beads/website/docs/reference/advanced.md`, `beads/cmd/bd/vc.go`, `beads/cmd/bd/merge_slot.go`, `beads/cmd/bd/duplicate.go`).
+- `unknown/conflict`: secondary docs (website reference pages) still advertise root-level `bd import` and `bd sync`; in reviewed command files there are import helpers, `bd init --from-jsonl`, many nested sync-related commands, and Dolt-native push/pull, but no root `import` or `sync` Cobra `Use:` surface in scope (see `beads/website/docs/cli-reference/sync.md`, `beads/website/docs/intro.md`, `beads/cmd/bd/init.go`, `beads/cmd/bd/import_shared.go`, `beads/cmd/bd/backup_dolt.go`, `beads/cmd/bd/federation.go`, `beads/cmd/bd/migrate.go`, `beads/cmd/bd/repo.go`).
 
 ## Storage and Sync
 

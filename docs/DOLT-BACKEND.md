@@ -184,10 +184,8 @@ bd export -o backup.jsonl
 mv .beads .beads-sqlite-backup
 
 # Initialize fresh
-bd init
-
-# Import from backup
-bd import -i backup.jsonl
+cp backup.jsonl .beads/issues.jsonl
+bd init --from-jsonl
 ```
 
 ## Troubleshooting

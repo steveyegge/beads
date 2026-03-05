@@ -55,7 +55,7 @@ bd list
 ```bash
 # Debug timestamp protection during sync
 export BD_DEBUG_SYNC=1
-bd sync
+bd dolt push
 
 # Example output:
 # [debug] Protected bd-123: local=2024-01-20T10:00:00Z >= incoming=2024-01-20T09:55:00Z
@@ -107,7 +107,7 @@ bd dolt start
 
 - **Capture debug output**: Redirect stderr to a file for analysis:
   ```bash
-  BD_DEBUG=1 bd sync 2> debug.log
+  BD_DEBUG=1 bd dolt push 2> debug.log
   ```
 
 - **Server logs**: `BD_DEBUG_FRESHNESS` output goes to server logs, not stderr:
@@ -310,31 +310,33 @@ rm -rf .beads/
 bd init
 ```
 
-### `failed to import: issue already exists`
+### JSONL bootstrap fails because issues already exist
 
-You're trying to import issues that conflict with existing ones. Options:
+You're trying to bootstrap JSONL data into a repository that already has issues. Options:
 
 ```bash
-# Skip existing issues (only import new ones)
-bd import -i issues.jsonl --skip-existing
+# Keep existing DB and inspect current data
+bd list --json
 
-# Or clear database and re-import from an export
+# Or clear database and bootstrap from JSONL backup
 rm -rf .beads/dolt
-bd import -i backup.jsonl
+cp backup.jsonl .beads/issues.jsonl
+bd init --from-jsonl
 ```
 
-### Import fails with missing parent errors
+### JSONL bootstrap fails with missing parent errors
 
-If you see errors like `parent issue bd-abc does not exist` when importing hierarchical issues (e.g., `bd-abc.1`, `bd-abc.2`), this means the parent issue was deleted but children still reference it.
+If you see errors like `parent issue bd-abc does not exist` when bootstrapping hierarchical issues (e.g., `bd-abc.1`, `bd-abc.2`), this means the parent issue was deleted but children still reference it.
 
 **Quick fix using resurrection:**
 
 ```bash
-# Auto-resurrect deleted parents from import data
-bd import -i issues.jsonl --orphan-handling resurrect
-
-# Or set as default behavior
+# Set resurrection behavior before bootstrap
 bd config set import.orphan_handling "resurrect"
+
+# Then bootstrap from local JSONL
+cp issues.jsonl .beads/issues.jsonl
+bd init --from-jsonl
 ```
 
 **What resurrection does:**
@@ -429,8 +431,8 @@ For **physical database corruption** (disk failures, power loss, filesystem erro
 mv .beads/dolt .beads/dolt.backup
 bd init
 bd dolt pull    # Pull from Dolt remote if configured
-# Or import from a backup export:
-# bd import -i backup.jsonl
+# Or bootstrap from a backup export:
+# cp backup.jsonl .beads/issues.jsonl && bd init --from-jsonl
 ```
 
 For **logical consistency issues** (ID collisions from branch merges, parallel workers):
@@ -745,7 +747,7 @@ Agents may not realize an issue already exists. Prevention strategies:
 - Have agents search first: `bd list --json | grep "title"`
 - Use labels to mark auto-created issues: `bd create "..." -l auto-generated`
 - Review and deduplicate periodically: `bd list | sort`
-- Use `bd merge` to consolidate duplicates: `bd merge bd-2 --into bd-1`
+- Use `bd duplicate` to consolidate duplicates: `bd duplicate bd-2 --of bd-1`
 
 ### Agent gets confused by complex dependencies
 
@@ -804,7 +806,7 @@ See [integrations/beads-mcp/README.md](../integrations/beads-mcp/README.md) for 
 **Issue:** Sandboxed environments restrict permissions, preventing server control and causing "out of sync" errors.
 
 **Common symptoms:**
-- "Database out of sync" errors that persist after running `bd import`
+- "Database out of sync" errors that persist after migration/bootstrap flows
 - `bd dolt stop` fails with "operation not permitted"
 - Hash mismatch warnings (bd-160)
 - Commands intermittently fail with staleness errors
@@ -837,7 +839,7 @@ bd --sandbox update bd-42 --claim
 **Note:** You'll need to manually sync when outside the sandbox:
 ```bash
 # After leaving sandbox, sync manually
-bd sync
+bd dolt push
 ```
 
 ---
@@ -846,21 +848,7 @@ bd sync
 
 If you're stuck in a "database out of sync" loop with a running server you can't stop, use these flags:
 
-**1. Force metadata update (`--force` flag on import)**
-
-When `bd import` reports "0 created, 0 updated" but staleness persists:
-
-```bash
-# Force metadata refresh even when DB appears synced
-bd import --force
-
-# This updates internal metadata tracking without changing issues
-# Fixes: stuck state caused by stale server cache
-```
-
-**Shows:** `Metadata updated (database already in sync)`
-
-**2. Skip staleness check (`--allow-stale` global flag)**
+**1. Skip staleness check (`--allow-stale` global flag)**
 
 Emergency escape hatch to bypass staleness validation:
 
@@ -875,12 +863,12 @@ bd --allow-stale list --status open
 
 **⚠️ Caution:** Use sparingly - you may see incomplete or outdated data.
 
-**3. Use sandbox mode (preferred)**
+**2. Use sandbox mode (preferred)**
 
 ```bash
 # Most reliable for sandboxed environments
 bd --sandbox ready
-bd --sandbox import -i backup.jsonl
+bd --sandbox list
 ```
 
 ---
@@ -893,14 +881,11 @@ If stuck in a sandboxed environment:
 # Step 1: Try sandbox mode (cleanest solution)
 bd --sandbox ready
 
-# Step 2: If you get staleness errors, force import
-bd import --force
-
-# Step 3: If still blocked, use allow-stale (emergency only)
+# Step 2: If still blocked, use allow-stale (emergency only)
 bd --allow-stale ready
 
-# Step 4: When back outside sandbox, sync normally
-bd sync
+# Step 3: When back outside sandbox, sync normally
+bd dolt push
 ```
 
 ---
@@ -910,7 +895,6 @@ bd sync
 | Flag | Purpose | When to use | Risk |
 |------|---------|-------------|------|
 | `--sandbox` | Use embedded mode, disable auto-sync | Sandboxed environments (Codex, containers) | Low - safe for sandboxes |
-| `--force` (import) | Force metadata update | Stuck "0 created, 0 updated" loop | Low - updates metadata only |
 | `--allow-stale` | Skip staleness validation | Emergency access to database | **High** - may show stale data |
 
 **Related:**

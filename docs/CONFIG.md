@@ -31,7 +31,7 @@ Tool-level settings you can configure:
 | Setting | Flag | Environment Variable | Default | Description |
 |---------|------|---------------------|---------|-------------|
 | `json` | `--json` | `BD_JSON` | `false` | Output in JSON format |
-| `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in bd sync |
+| `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in sync workflows |
 | `sync.mode` | - | `BD_SYNC_MODE` | `git-portable` | Sync mode (see below) |
 | `sync.export_on` | - | `BD_SYNC_EXPORT_ON` | `push` | When to export: `push`, `change` |
 | `sync.import_on` | - | `BD_SYNC_IMPORT_ON` | `pull` | When to import: `pull`, `change` |
@@ -152,7 +152,13 @@ The sync mode controls how beads synchronizes data with git and/or Dolt remotes.
 
 #### Sync Mode
 
-Beads uses `dolt-native` sync mode exclusively. Dolt remotes handle sync directly with cell-level merge. Manual `bd import` / `bd export` are available for migration and portability.
+Beads defaults to `dolt-native` sync mode. Dolt remotes handle sync directly with cell-level merge. JSONL bootstrap via `bd init --from-jsonl` and `bd export` remain available for portability and migration.
+
+| Mode | Description |
+|------|-------------|
+| `dolt-native` | (default) Use Dolt remotes directly for sync. `bd export` and JSONL bootstrap via `bd init --from-jsonl` remain available for portability. |
+| `git-portable` | Legacy mode: Export JSONL on push, import on pull. For backward compatibility with older setups. |
+| `belt-and-suspenders` | Both Dolt remote AND JSONL backup. Maximum redundancy. |
 
 #### Sync Triggers
 
@@ -183,6 +189,12 @@ federation:
   remote: dolthub://myorg/beads
   sovereignty: T2
 ```
+
+#### When to Use Each Mode
+
+- **dolt-native** (default): Best for most teams. Dolt handles sync natively with cell-level merge. `bd export` and JSONL bootstrap via `bd init --from-jsonl` remain available for portability and migration.
+- **git-portable**: Legacy mode for backward compatibility. JSONL is committed to git, works with any git hosting.
+- **belt-and-suspenders**: Use for critical data where you want both Dolt sync AND JSONL backup.
 
 ### Example Config File
 
@@ -509,7 +521,7 @@ bd config set auto_export.error_policy "best-effort"
 
 **Context-specific behavior:**
 
-User-initiated exports (`bd sync`, manual export commands) use `export.error_policy` (default: `strict`).
+User-initiated exports (`bd dolt push`, manual export commands) use `export.error_policy` (default: `strict`).
 
 Auto-exports (git hook sync) use `auto_export.error_policy` (default: `best-effort`), falling back to `export.error_policy` if not set.
 
@@ -556,11 +568,11 @@ bd config set import.orphan_handling "allow"
 
 **Override per command:**
 ```bash
-# Override config for a single import
-bd import -i issues.jsonl --orphan-handling strict
+# Set strict mode before JSONL bootstrap flows
+bd config set import.orphan_handling "strict"
 
-# Auto-import (sync) uses config value
-bd sync  # Respects import.orphan_handling setting
+# Then bootstrap from local JSONL
+bd init --from-jsonl
 ```
 
 **When to use each mode:**
@@ -580,7 +592,7 @@ bd config set sync.branch beads-sync
 
 # Enable mass deletion protection (optional, default: false)
 # When enabled, if >50% of issues vanish during a merge AND more than 5
-# issues existed before the merge, bd sync will:
+# issues existed before the merge, bd dolt pull will:
 # 1. Show forensic info about vanished issues
 # 2. Prompt for confirmation before pushing
 bd config set sync.require_confirmation_on_mass_delete "true"

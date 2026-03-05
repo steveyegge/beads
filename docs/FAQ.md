@@ -198,7 +198,7 @@ bd dolt push    # Push changes to Dolt remote
 bd dolt pull    # Pull changes from Dolt remote
 ```
 
-The `bd import` and `bd export` commands exist for data migration and portability (e.g., bootstrapping new clones, backing up data), not for day-to-day sync.
+Use `bd export` plus `bd init --from-jsonl` for migration/portability workflows (for example, bootstrapping new clones or restoring from JSONL), not for day-to-day sync.
 
 ### What if my database feels stale after a colleague pushes changes?
 
@@ -293,7 +293,7 @@ We don't have automated migration tools yet, but you can:
 
 1. Export issues from your current tracker (usually CSV or JSON)
 2. Write a simple script to convert to bd's JSONL format
-3. Import with `bd import -i issues.jsonl`
+3. Copy to `.beads/issues.jsonl` and bootstrap with `bd init --from-jsonl`
 
 See [examples/](../examples/) for scripting patterns. Contributions welcome!
 

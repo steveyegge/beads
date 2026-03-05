@@ -49,7 +49,7 @@ bd's core design enables a distributed, git-backed issue tracker that feels like
 
 **Dolt for distribution:** Native push/pull to Dolt remotes (DoltHub, S3, GCS). No special sync server needed. Issues travel with your code. Offline work just works.
 
-**Import/export for portability:** `bd import` and `bd export` support JSONL format for data migration, bootstrapping new clones, and interoperability.
+**Import/export for portability:** `bd export` plus `bd init --from-jsonl` support JSONL format for data migration, bootstrapping new clones, and interoperability.
 
 ## Write Path
 
@@ -85,7 +85,7 @@ All queries run directly against the local Dolt database:
 2. **Sync:** Use `bd dolt pull` to fetch updates from Dolt remotes
 
 Key implementation:
-- Import (for bootstrapping/migration): `cmd/bd/import.go`
+- JSONL bootstrap (for migration): `cmd/bd/init.go` (`--from-jsonl`), `cmd/bd/import_shared.go`
 - Dolt storage: `internal/storage/dolt/`
 
 ## Hash-Based Collision Prevention
@@ -120,7 +120,7 @@ Branch B: bd create "Add Stripe"  → bd-f14c (no collision)
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Import Logic                              │
-│                  (used by bd import for migration)               │
+│        (used by JSONL bootstrap during bd init --from-jsonl)     │
 │                                                                  │
 │  For each issue in import data:                                  │
 │    1. Compute content hash                                       │

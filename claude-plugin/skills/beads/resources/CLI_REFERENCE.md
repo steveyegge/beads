@@ -378,9 +378,6 @@ When detected, you'll see: `Sandbox detected, using embedded mode`
 ```bash
 # Explicitly enable sandbox mode
 bd --sandbox <command>
-
-# Equivalent to combining these flags:
-bd --no-auto-flush --no-auto-import <command>
 ```
 
 **What it does:**
@@ -404,29 +401,14 @@ bd --allow-stale list --status open --json
 
 **⚠️ Caution:** May show stale or incomplete data. Use only when stuck and other options fail.
 
-### Force Import
-
-```bash
-# Force metadata update even when DB appears synced
-bd import --force -i .beads/issues.jsonl
-```
-
-**When to use:** `bd import` reports "0 created, 0 updated" but staleness errors persist.
-
-**Shows:** `Metadata updated (database already in sync)`
-
 ### Other Global Flags
 
 ```bash
 # JSON output for programmatic use
 bd --json <command>
 
-# Force embedded mode (bypass Dolt server)
-bd --embedded <command>
-
-# Disable auto-sync
-bd --no-auto-flush <command>    # Disable auto-flush
-bd --no-auto-import <command>   # Disable auto-import
+# Sandbox mode (safe fallback when server orchestration is constrained)
+bd --sandbox <command>
 
 # Custom database path
 bd --db /path/to/.beads/beads.db <command>
@@ -458,9 +440,9 @@ bd duplicates                                          # Show all duplicates
 bd duplicates --auto-merge                             # Automatically merge all
 bd duplicates --dry-run                                # Preview merge operations
 
-# Merge specific duplicate issues
-bd merge <source-id...> --into <target-id> --json      # Consolidate duplicates
-bd merge bd-42 bd-43 --into bd-41 --dry-run            # Preview merge
+# Mark duplicate/superseded issues directly
+bd duplicate bd-42 --of bd-41 --json                    # Mark duplicate and close source
+bd supersede bd-old --with bd-new --json                # Mark issue superseded by newer one
 ```
 
 ### Compaction (Memory Decay)
@@ -491,39 +473,18 @@ bd rename-prefix kw- --json     # Apply rename
 
 ## Database Management
 
-### Import/Export
+### Export and JSONL Bootstrap
 
 ```bash
-# Import issues from JSONL
-bd import -i .beads/issues.jsonl --dry-run      # Preview changes
-bd import -i .beads/issues.jsonl                # Import and update issues
-bd import -i .beads/issues.jsonl --dedupe-after # Import + detect duplicates
+# Export issues to JSONL
+bd export -o .beads/issues.jsonl             # Standard export
+bd export --all -o backup.jsonl              # Include infra/templates/gates
 
-# Handle missing parents during import
-bd import -i issues.jsonl --orphan-handling allow      # Default: import orphans without validation
-bd import -i issues.jsonl --orphan-handling resurrect  # Auto-resurrect deleted parents as tombstones
-bd import -i issues.jsonl --orphan-handling skip       # Skip orphans with warning
-bd import -i issues.jsonl --orphan-handling strict     # Fail if parent is missing
-
-# Configure default orphan handling behavior
-bd config set import.orphan_handling "resurrect"
-bd sync  # Now uses resurrect mode by default
+# Bootstrap from local JSONL during initialization
+bd init --from-jsonl
 ```
 
-**Orphan handling modes:**
-
-- **`allow` (default)** - Import orphaned children without parent validation. Most permissive, ensures no data loss even if hierarchy is temporarily broken.
-- **`resurrect`** - Search history for deleted parents and recreate them as tombstones (Status=Closed, Priority=4). Preserves hierarchy with minimal data. Dependencies are also resurrected on best-effort basis.
-- **`skip`** - Skip orphaned children with warning. Partial import succeeds but some issues are excluded.
-- **`strict`** - Fail import immediately if a child's parent is missing. Use when database integrity is critical.
-
-**When to use:**
-- Use `allow` (default) for daily imports and auto-sync
-- Use `resurrect` when importing from databases with deleted parents
-- Use `strict` for controlled imports requiring guaranteed parent existence
-- Use `skip` rarely - only for selective imports
-
-See [CONFIG.md](CONFIG.md#example-import-orphan-handling) and [TROUBLESHOOTING.md](TROUBLESHOOTING.md#import-fails-with-missing-parent-errors) for more details.
+`bd import` is no longer a root CLI command. Use `bd export` for portable dumps and `bd init --from-jsonl` when bootstrapping from a local `.beads/issues.jsonl` file.
 
 ### Migration
 
@@ -554,17 +515,17 @@ bd info --schema --json                                # Get schema, tables, con
 
 These invariants prevent data loss and would have caught issues like GH #201 (missing issue_prefix after migration).
 
-### Sync Operations
+### Sync Operations (Dolt-native)
 
 ```bash
-# Manual sync (force immediate export/import/commit/push)
-bd sync
+# Pull latest issue history from remote
+bd dolt pull
 
-# What it does:
-# 1. Commit pending changes to Dolt
-# 2. Pull from remote
-# 3. Merge any updates
-# 4. Push to remote
+# Push local issue history to remote
+bd dolt push
+
+# Inspect pending Dolt changes before push
+bd dolt status
 ```
 
 ## Issue Types
@@ -686,10 +647,10 @@ bd update bd-42 --claim --json
 # ... work ...
 
 # End of session (IMPORTANT!)
-bd sync  # Force immediate sync, bypass debounce
+bd dolt push
 ```
 
-**ALWAYS run `bd sync` at end of agent sessions** to ensure changes are committed/pushed immediately.
+**ALWAYS run `bd dolt push` at end of agent sessions** to ensure changes are pushed promptly.
 
 ## See Also
 

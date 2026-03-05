@@ -73,8 +73,9 @@ bd duplicates --auto-merge
 # Preview what would be merged
 bd duplicates --dry-run
 
-# Detect duplicates during import
-bd import -i issues.jsonl --dedupe-after
+# Detect duplicates after JSONL bootstrap
+cp issues.jsonl .beads/issues.jsonl && bd init --from-jsonl
+bd duplicates
 ```
 
 **How it works:**
@@ -91,7 +92,7 @@ bd import -i issues.jsonl --dedupe-after
 ━━ Group 1: Fix authentication bug
 → bd-10 (open, P1, 5 references)
   bd-42 (open, P1, 0 references)
-  Suggested: bd merge bd-42 --into bd-10
+  Suggested: bd duplicate bd-42 --of bd-10
 
 💡 Run with --auto-merge to execute all suggested merges
 ```
@@ -103,29 +104,26 @@ bd import -i issues.jsonl --dedupe-after
 3. **Auto-merge**: Use `--auto-merge` to automatically consolidate duplicates
 4. **Manual review**: Use `--dry-run` to preview merges before executing
 
-## Merging Duplicate Issues
+## Marking Duplicate Issues
 
-Consolidate duplicate issues into a single issue while preserving dependencies and references:
+Mark duplicate issues against a canonical issue while preserving dependency intent:
 
 ```bash
-# Merge bd-42 and bd-43 into bd-41
-bd merge bd-42 bd-43 --into bd-41
+# Mark bd-42 as duplicate of bd-41
+bd duplicate bd-42 --of bd-41
 
-# Merge multiple duplicates at once
-bd merge bd-10 bd-11 bd-12 --into bd-10
+# Mark bd-43 as duplicate of bd-41
+bd duplicate bd-43 --of bd-41
 
-# Preview merge without making changes
-bd merge bd-42 bd-43 --into bd-41 --dry-run
-
-# JSON output
-bd merge bd-42 bd-43 --into bd-41 --json
+# Mark an obsolete issue as superseded by a replacement
+bd supersede bd-10 --with bd-41
 ```
 
-**What the merge command does:**
-1. **Validates** all issues exist and prevents self-merge
-2. **Closes** source issues with reason `Merged into bd-X`
-3. **Migrates** all dependencies from source issues to target
-4. **Updates** text references across all issue descriptions, notes, design, and acceptance criteria
+**What duplicate/supersede commands do:**
+1. **Validate** issue IDs and prevent invalid self-linking
+2. **Create** an explicit relationship (`duplicates` or `superseded-by`)
+3. **Close** the source issue as part of deduplication/supersession flow
+4. **Preserve** the canonical/replacement issue as the active work target
 
 **Example workflow:**
 
@@ -133,29 +131,26 @@ bd merge bd-42 bd-43 --into bd-41 --json
 # You discover bd-42 and bd-43 are duplicates of bd-41
 bd show bd-41 bd-42 bd-43
 
-# Preview the merge
-bd merge bd-42 bd-43 --into bd-41 --dry-run
-
-# Execute the merge
-bd merge bd-42 bd-43 --into bd-41
-# ✓ Merged 2 issue(s) into bd-41
+# Mark duplicates
+bd duplicate bd-42 --of bd-41
+bd duplicate bd-43 --of bd-41
 
 # Verify the result
-bd show bd-41  # Now has dependencies from bd-42 and bd-43
-bd dep tree bd-41  # Shows unified dependency tree
+bd show bd-41 bd-42 bd-43
+bd dep tree bd-41
 ```
 
 **Important notes:**
-- Source issues are permanently closed (status: `closed`)
-- All dependencies pointing to source issues are redirected to target
-- Text references like "see bd-42" are automatically rewritten to "see bd-41"
-- Operation cannot be undone (but git history preserves the original state)
+- Source issues are closed as duplicates/superseded
+- The explicit relationship is retained for auditability
+- Use `bd show` and `bd dep tree` to verify dependency topology
+- Operation cannot be undone (but history preserves previous state)
 **AI Agent Workflow:**
 
 When agents discover duplicate issues, they should:
 1. Search for similar issues: `bd list --json | grep "similar text"`
 2. Compare issue details: `bd show bd-41 bd-42 --json`
-3. Merge duplicates: `bd merge bd-42 --into bd-41`
+3. Mark duplicate: `bd duplicate bd-42 --of bd-41`
 4. File a discovered-from issue if needed: `bd create "Found duplicates during bd-X" --deps discovered-from:bd-X`
 
 ## Git Worktrees
@@ -261,19 +256,11 @@ When you encounter the same ID during import, it's an **update operation**, not 
 - Same ID + different fields = normal update to existing issue
 - bd automatically applies updates when importing
 
-**Preview changes before importing:**
+**Bootstrap from JSONL migration data:**
 ```bash
-# Preview an import
-bd import -i data.jsonl --dry-run
-
-# Output shows:
-# Exact matches (idempotent): 15
-# New issues: 5
-# Updates: 3
-#
-# Issues to be updated:
-#   bd-a3f2: Fix authentication (changed: priority, status)
-#   bd-b8e1: Add feature (changed: description)
+# Initialize from local JSONL
+cp data.jsonl .beads/issues.jsonl
+bd init --from-jsonl
 ```
 
 ## Custom Git Hooks
