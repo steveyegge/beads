@@ -380,10 +380,8 @@ var doltIdleMonitorCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Write our PID and ensure cleanup on all exit paths
-		pidFile := filepath.Join(beadsDir, "dolt-monitor.pid")
-		_ = os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0600)
-		defer func() { _ = os.Remove(pidFile) }()
+		// PID file and lock management is handled inside RunIdleMonitor
+		// to ensure single-instance enforcement (GH#2367).
 
 		// Parse idle timeout from config
 		idleTimeout := doltserver.DefaultIdleTimeout
@@ -397,7 +395,8 @@ var doltIdleMonitorCmd = &cobra.Command{
 			}
 		}
 
-		// Handle SIGTERM gracefully (os.Exit doesn't run defers)
+		// Handle SIGTERM gracefully — clean up PID file on signal
+		pidFile := filepath.Join(beadsDir, "dolt-monitor.pid")
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		go func() {

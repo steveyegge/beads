@@ -687,11 +687,62 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		}
 	}
 
+	// Project identity verification: detect cross-project data leakage (GH#2372).
+	// If the local metadata.json has a project_id and the database has one too,
+	// they must match. A mismatch means this client is connected to the wrong
+	// project's Dolt server — refuse to proceed.
+	if !cfg.CreateIfMissing {
+		if verifyErr := store.verifyProjectIdentity(ctx, cfg.BeadsDir); verifyErr != nil {
+			_ = db.Close()
+			return nil, verifyErr
+		}
+	}
+
 	// All writers operate on main — transaction isolation via RunInTransaction
 	// replaces the former branch-per-polecat approach (BD_BRANCH).
 	store.branch = "main"
 
 	return store, nil
+}
+
+// verifyProjectIdentity checks that the database belongs to the expected project.
+// If both the local metadata.json and the database have a project_id, they must match.
+// Returns nil if verification passes or is not applicable (missing IDs = old setup).
+func (s *DoltStore) verifyProjectIdentity(ctx context.Context, beadsDir string) error {
+	if beadsDir == "" {
+		return nil // can't verify without knowing beadsDir
+	}
+
+	// Load local project ID from metadata.json
+	metaCfg, err := configfile.Load(beadsDir)
+	if err != nil || metaCfg == nil {
+		return nil // no local config — skip verification
+	}
+	localID := metaCfg.ProjectID
+	if localID == "" {
+		return nil // old-style metadata.json without project_id — skip
+	}
+
+	// Read project ID from database metadata table
+	dbID, err := s.GetMetadata(ctx, "_project_id")
+	if err != nil || dbID == "" {
+		return nil // old database without project_id — skip
+	}
+
+	if localID != dbID {
+		return fmt.Errorf(
+			"PROJECT IDENTITY MISMATCH — refusing to connect\n\n"+
+				"  Local project ID (metadata.json):  %s\n"+
+				"  Database project ID:               %s\n\n"+
+				"This means the Dolt server is serving a DIFFERENT project's database.\n"+
+				"This can happen when:\n"+
+				"  - Another project's server is running on the same port\n"+
+				"  - The server restarted with a different data directory\n\n"+
+				"To diagnose: bd dolt status\n"+
+				"Do NOT run 'bd init' — your data likely exists, just on a different server.",
+			localID, dbID)
+	}
+	return nil
 }
 
 // isLocalHost returns true if the host refers to the local machine.

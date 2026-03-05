@@ -276,14 +276,18 @@ func DefaultConfig(beadsDir string) *Config {
 		}
 	}
 
-	// Check if user configured an explicit port in metadata.json
-	if metaCfg, err := configfile.Load(beadsDir); err == nil && metaCfg != nil {
-		if metaCfg.DoltServerPort > 0 {
-			cfg.Port = metaCfg.DoltServerPort
-		}
+	// Check the port file (gitignored, local-only) — this is the primary
+	// persistent source. Start() writes the actual listening port here.
+	// Elevated to top priority (after env var) to prevent git-tracked values
+	// from causing cross-project data leakage (GH#2372).
+	if p := readPortFile(beadsDir); 0 < p {
+		cfg.Port = p
+		return cfg
 	}
 
 	// Check config.yaml / global config (~/.config/bd/config.yaml) (GH#2073)
+	// Note: project-level config.yaml dolt.port is git-tracked and could
+	// propagate to collaborators. Prefer the gitignored port file above.
 	if cfg.Port == 0 {
 		if p := config.GetYamlConfig("dolt.port"); p != "" {
 			if port, err := strconv.Atoi(p); err == nil && port > 0 {
@@ -292,12 +296,18 @@ func DefaultConfig(beadsDir string) *Config {
 		}
 	}
 
-	// Check the port file — Start() writes the actual listening port here,
-	// which may differ from the configured default when Start() falls back
-	// to DerivePort (e.g. another project's server occupied the default port).
+	// Deprecated: metadata.json DoltServerPort is git-tracked and propagates
+	// to all contributors, causing cross-project data leakage (GH#2372).
+	// Emit a one-time warning but still use the value as a fallback so
+	// existing setups don't break silently.
 	if cfg.Port == 0 {
-		if p := readPortFile(beadsDir); 0 < p {
-			cfg.Port = p
+		if metaCfg, err := configfile.Load(beadsDir); err == nil && metaCfg != nil {
+			if metaCfg.DoltServerPort > 0 {
+				fmt.Fprintf(os.Stderr, "Warning: dolt_server_port in metadata.json is deprecated (can cause cross-project data leakage).\n")
+				fmt.Fprintf(os.Stderr, "  The port file (.beads/dolt-server.port) is now the primary source.\n")
+				fmt.Fprintf(os.Stderr, "  Remove dolt_server_port from .beads/metadata.json to silence this warning.\n")
+				cfg.Port = metaCfg.DoltServerPort
+			}
 		}
 	}
 
@@ -1157,6 +1167,32 @@ func RunIdleMonitor(beadsDir string, idleTimeout time.Duration) {
 	if IsDaemonManagedFor(beadsDir) {
 		return
 	}
+
+	// Single-instance enforcement: acquire an exclusive lock on the monitor
+	// lock file. If another monitor is already running, exit immediately.
+	// This prevents the accumulation bug (GH#2367) where Start() called from
+	// within the monitor's watchdog restart would fork yet another monitor.
+	monitorLockPath := monitorPidPath(beadsDir) + ".lock"
+	var monitorLock *os.File
+	if f, err := os.OpenFile(monitorLockPath, os.O_CREATE|os.O_RDWR, 0600); err == nil { //nolint:gosec // G304: path derived from trusted beadsDir
+		if lockErr := lockfile.FlockExclusiveNonBlocking(f); lockErr != nil {
+			_ = f.Close()
+			return // another monitor holds the lock — exit silently
+		}
+		monitorLock = f
+	}
+	// Keep lock held for lifetime of this process. Clean up on exit.
+	defer func() {
+		_ = os.Remove(monitorPidPath(beadsDir))
+		if monitorLock != nil {
+			_ = lockfile.FlockUnlock(monitorLock)
+			_ = monitorLock.Close()
+			_ = os.Remove(monitorLockPath)
+		}
+	}()
+
+	// Write our PID now that we hold the lock
+	_ = os.WriteFile(monitorPidPath(beadsDir), []byte(strconv.Itoa(os.Getpid())), 0600)
 
 	// Tracks when we stopped the server for idle timeout. Zero means we
 	// haven't performed an idle shutdown (or the server was restarted since).

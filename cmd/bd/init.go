@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
@@ -479,6 +480,13 @@ environment variable.`,
 				cfg = configfile.DefaultConfig()
 			}
 
+			// Generate project identity UUID if not already set (GH#2372).
+			// This UUID is stored in both metadata.json and the database,
+			// and verified on every connection to detect cross-project leakage.
+			if cfg.ProjectID == "" {
+				cfg.ProjectID = generateProjectID()
+			}
+
 			// Always store backend explicitly in metadata.json
 			cfg.Backend = backend
 			// Metadata.json.database should point to the Dolt directory (not beads.db).
@@ -515,6 +523,13 @@ environment variable.`,
 			if err := cfg.Save(beadsDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
 				// Non-fatal - continue anyway
+			}
+
+			// Write project identity to database for cross-project verification (GH#2372)
+			if cfg.ProjectID != "" && store != nil {
+				if err := store.SetMetadata(ctx, "_project_id", cfg.ProjectID); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to write project ID to database: %v\n", err)
+				}
 			}
 
 			// Create config.yaml template (prefix is stored in DB, not config.yaml)
@@ -1167,6 +1182,19 @@ func promptContributorMode() (isContributor bool, err error) {
 
 // verifyMetadata writes a metadata field and verifies the write succeeded.
 // Returns true if write+verify succeeded, false with warning if either failed.
+// generateProjectID creates a UUID v4 for project identity verification.
+func generateProjectID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: use timestamp + PID as a unique-enough identifier
+		return fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())
+	}
+	// Set version (4) and variant (RFC 4122)
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
 func verifyMetadata(ctx context.Context, store *dolt.DoltStore, key, value string) bool {
 	if err := store.SetMetadata(ctx, key, value); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to write %s metadata: %v\n", key, err)

@@ -31,6 +31,11 @@ type Config struct {
 	DoltRemotesAPIPort int    `json:"dolt_remotesapi_port,omitempty"` // Dolt remotesapi port for federation (default: 8080)
 	// Note: Password should be set via BEADS_DOLT_PASSWORD env var for security
 
+	// Project identity — unique ID generated at bd init time.
+	// Used to detect cross-project data leakage when a client connects
+	// to the wrong Dolt server (GH#2372).
+	ProjectID string `json:"project_id,omitempty"`
+
 	// Stale closed issues check configuration
 	// 0 = disabled (default), positive = threshold in days
 	StaleClosedIssuesDays int `json:"stale_closed_issues_days,omitempty"`
