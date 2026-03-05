@@ -84,10 +84,10 @@ func TestIsBackupGitPushEnabled(t *testing.T) {
 		wantResult bool
 	}{
 		{
-			name:       "default + git remote → enabled (follows auto-enable)",
+			name:       "default + git remote → disabled (git-push requires explicit opt-in)",
 			envVal:     "",
 			hasRemote:  true,
-			wantResult: true,
+			wantResult: false,
 		},
 		{
 			name:       "default + no remote → disabled",

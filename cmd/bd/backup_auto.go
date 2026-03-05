@@ -22,9 +22,14 @@ func isBackupAutoEnabled() bool {
 	return primeHasGitRemote()
 }
 
-// isBackupGitPushEnabled returns whether git push should run after backup.
-// If user explicitly configured backup.git-push, use that.
-// Otherwise, enable when backup is auto-enabled.
+// isBackupGitPushEnabled returns whether git commit+push should run after backup.
+// Defaults to OFF — requires explicit opt-in via backup.git-push: true in config.yaml
+// or BD_BACKUP_GIT_PUSH=true environment variable.
+//
+// Git backup accumulates commits without bound and pushes to whatever default
+// remote exists, which may not be the intended target. Users who want this
+// behavior must explicitly enable it.
+//
 // Always disabled in stealth mode (no-git-ops) — stealth means no git operations.
 func isBackupGitPushEnabled() bool {
 	if config.GetBool("no-git-ops") {
@@ -33,7 +38,7 @@ func isBackupGitPushEnabled() bool {
 	if config.GetValueSource("backup.git-push") != config.SourceDefault {
 		return config.GetBool("backup.git-push")
 	}
-	return isBackupAutoEnabled()
+	return false
 }
 
 // maybeAutoBackup runs a JSONL backup if enabled and the throttle interval has passed.

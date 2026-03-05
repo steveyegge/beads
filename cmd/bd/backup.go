@@ -104,9 +104,9 @@ var backupStatusCmd = &cobra.Command{
 		if !hasJSONL && !hasDolt {
 			fmt.Println("No backup has been performed yet.")
 			fmt.Println()
-			fmt.Println("JSONL backup (portable, git-friendly):")
+			fmt.Println("JSONL backup (portable):")
 			fmt.Println("  bd backup                Run JSONL export now")
-			fmt.Println("  Set backup.enabled: true in config.yaml for auto-backup")
+			fmt.Println("  Auto-backup runs every 15m when a git remote is detected")
 			fmt.Println()
 			fmt.Println("Dolt backup (preserves history, faster for large databases):")
 			fmt.Println("  bd backup init <path>    Set up a backup destination")
