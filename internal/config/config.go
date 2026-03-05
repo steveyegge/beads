@@ -570,7 +570,6 @@ func ConfigFileUsed() string {
 	return v.ConfigFileUsed()
 }
 
-
 // GetStringSlice retrieves a string slice configuration value
 func GetStringSlice(key string) []string {
 	if v == nil {
