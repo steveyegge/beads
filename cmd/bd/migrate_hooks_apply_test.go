@@ -256,6 +256,78 @@ func TestApplyHookMigrationExecution_RetireCollisionFailsBeforeWrites(t *testing
 	}
 }
 
+func TestBuildExecutionPlan_ModifiedLegacyHookBlocks(t *testing.T) {
+	repoDir, hooksDir := setupHookMigrationRepo(t)
+	preCommitPath := filepath.Join(hooksDir, "pre-commit")
+
+	// Legacy shim with user-added custom logic
+	modifiedLegacy := "#!/usr/bin/env sh\n# bd-shim v2\n# bd-hooks-version: 0.56.1\nexec bd hooks run pre-commit \"$@\"\n\n# My custom linting\n./run-my-linter.sh\n"
+	writeHookMigrationFile(t, preCommitPath, modifiedLegacy)
+	writeHookMigrationFile(t, preCommitPath+".old", "#!/usr/bin/env sh\necho old-custom\n")
+
+	plan, err := doctor.PlanHookMigration(repoDir)
+	if err != nil {
+		t.Fatalf("PlanHookMigration failed: %v", err)
+	}
+	execPlan := buildHookMigrationExecutionPlan(plan)
+
+	if len(execPlan.BlockingErrors) == 0 {
+		t.Fatal("expected blocking error for user-modified legacy hook with sidecar")
+	}
+
+	found := false
+	for _, msg := range execPlan.BlockingErrors {
+		if strings.Contains(msg, "user-modified") && strings.Contains(msg, "pre-commit") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected blocking error mentioning user-modified pre-commit, got: %v", execPlan.BlockingErrors)
+	}
+
+	// No write ops should be emitted for the blocked hook
+	for _, op := range execPlan.WriteOps {
+		if op.HookName == "pre-commit" {
+			t.Fatal("expected no write op for blocked pre-commit hook")
+		}
+	}
+}
+
+func TestBuildExecutionPlan_UnmodifiedLegacyHookProceeds(t *testing.T) {
+	repoDir, hooksDir := setupHookMigrationRepo(t)
+	preCommitPath := filepath.Join(hooksDir, "pre-commit")
+
+	// Clean legacy shim — no user modifications
+	cleanLegacy := "#!/usr/bin/env sh\n# bd-shim v2\n# bd-hooks-version: 0.56.1\nexec bd hooks run pre-commit \"$@\"\n"
+	writeHookMigrationFile(t, preCommitPath, cleanLegacy)
+	writeHookMigrationFile(t, preCommitPath+".old", "#!/usr/bin/env sh\necho old-custom\n")
+
+	plan, err := doctor.PlanHookMigration(repoDir)
+	if err != nil {
+		t.Fatalf("PlanHookMigration failed: %v", err)
+	}
+	execPlan := buildHookMigrationExecutionPlan(plan)
+
+	if len(execPlan.BlockingErrors) > 0 {
+		t.Fatalf("expected no blocking errors for unmodified legacy hook, got: %v", execPlan.BlockingErrors)
+	}
+
+	foundWrite := false
+	for _, op := range execPlan.WriteOps {
+		if op.HookName == "pre-commit" {
+			foundWrite = true
+			if op.SourceKind != hookMigrationWriteFromOld {
+				t.Fatalf("expected source kind %q, got %q", hookMigrationWriteFromOld, op.SourceKind)
+			}
+			break
+		}
+	}
+	if !foundWrite {
+		t.Fatal("expected write op for unmodified legacy hook with .old sidecar")
+	}
+}
+
 func setupHookMigrationRepo(t *testing.T) (repoDir string, hooksDir string) {
 	t.Helper()
 	repoDir = newGitRepo(t)
