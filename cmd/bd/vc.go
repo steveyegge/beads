@@ -27,21 +27,46 @@ This subcommand provides additional operations like merge and commit.`,
 var vcMergeStrategy string
 
 var vcMergeCmd = &cobra.Command{
-	Use:   "merge <branch>",
+	Use:   "merge [branch]",
 	Short: "Merge a branch into the current branch",
 	Long: `Merge the specified branch into the current branch.
 
 If there are merge conflicts, they will be reported. You can resolve
 conflicts with --strategy.
 
+Use --from and --to for CI workflows where source and target branches are
+explicit. When --to is specified, the store switches to the target branch
+before merging. Use --cleanup to delete the source branch and mark it as
+'merged' in the registry after a successful merge.
+
 Examples:
   bd vc merge feature-xyz                    # Merge feature-xyz into current branch
-  bd vc merge feature-xyz --strategy ours    # Merge, preferring our changes on conflict
-  bd vc merge feature-xyz --strategy theirs  # Merge, preferring their changes on conflict`,
-	Args: cobra.ExactArgs(1),
+  bd vc merge feature-xyz --strategy theirs  # Merge, preferring their changes on conflict
+  bd vc merge --from=feature-xyz --to=main   # CI: merge feature-xyz into main
+  bd vc merge --from=feature-xyz --to=main --cleanup  # CI: merge and clean up`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
-		branchName := args[0]
+
+		fromBranch, _ := cmd.Flags().GetString("from")
+		toBranch, _ := cmd.Flags().GetString("to")
+		cleanup, _ := cmd.Flags().GetBool("cleanup")
+
+		// Determine source branch
+		branchName := fromBranch
+		if branchName == "" && len(args) > 0 {
+			branchName = args[0]
+		}
+		if branchName == "" {
+			FatalErrorRespectJSON("source branch required: provide a positional argument or --from")
+		}
+
+		// If --to is specified, switch to target branch first
+		if toBranch != "" {
+			if err := store.Checkout(ctx, toBranch); err != nil {
+				FatalErrorRespectJSON("failed to checkout target branch %s: %v", toBranch, err)
+			}
+		}
 
 		// Perform merge
 		conflicts, err := store.Merge(ctx, branchName)
@@ -68,39 +93,63 @@ Examples:
 						"conflicts":     len(conflicts),
 						"resolved_with": vcMergeStrategy,
 					})
-					return
+				} else {
+					fmt.Printf("Merged %s with %d conflicts resolved using '%s' strategy\n",
+						ui.RenderAccent(branchName), len(conflicts), vcMergeStrategy)
 				}
-				fmt.Printf("Merged %s with %d conflicts resolved using '%s' strategy\n",
-					ui.RenderAccent(branchName), len(conflicts), vcMergeStrategy)
+			} else {
+				// Report conflicts without auto-resolution
+				if jsonOutput {
+					outputJSON(map[string]interface{}{
+						"merged":    branchName,
+						"conflicts": conflicts,
+					})
+				} else {
+					fmt.Printf("\n%s Merge completed with conflicts:\n\n", ui.RenderAccent("!!"))
+					for _, conflict := range conflicts {
+						fmt.Printf("  - %s\n", conflict.Field)
+					}
+					fmt.Printf("\nResolve conflicts with: bd vc merge %s --strategy [ours|theirs]\n\n", branchName)
+				}
+				os.Exit(1) // Non-zero for CI
 				return
 			}
-
-			// Report conflicts without auto-resolution
+		} else {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
 					"merged":    branchName,
-					"conflicts": conflicts,
+					"conflicts": 0,
 				})
-				return
+			} else {
+				fmt.Printf("Successfully merged %s\n", ui.RenderAccent(branchName))
 			}
-
-			fmt.Printf("\n%s Merge completed with conflicts:\n\n", ui.RenderAccent("!!"))
-			for _, conflict := range conflicts {
-				fmt.Printf("  - %s\n", conflict.Field)
-			}
-			fmt.Printf("\nResolve conflicts with: bd vc merge %s --strategy [ours|theirs]\n\n", branchName)
-			return
 		}
 
-		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"merged":    branchName,
-				"conflicts": 0,
-			})
-			return
+		// Commit the merge
+		currentBranch, _ := store.CurrentBranch(ctx)
+		commitMsg := fmt.Sprintf("merge: %s → %s", branchName, currentBranch)
+		if err := store.Commit(ctx, commitMsg); err != nil {
+			if !isDoltNothingToCommit(err) {
+				FatalErrorRespectJSON("failed to commit merge: %v", err)
+			}
 		}
+		commandDidExplicitDoltCommit = true
 
-		fmt.Printf("Successfully merged %s\n", ui.RenderAccent(branchName))
+		// Update .beads/HEAD and refs after merge
+		writeBeadsRefs(ctx, store)
+
+		// Cleanup: delete source branch and mark as merged
+		if cleanup {
+			// Mark as merged in registry (best effort)
+			_ = store.UnregisterBranch(ctx, branchName, "merged")
+
+			// Delete the Dolt branch
+			if err := store.DeleteBranch(ctx, branchName); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not delete source branch %s: %v\n", branchName, err)
+			} else if !jsonOutput {
+				fmt.Printf("Cleaned up branch %s\n", ui.RenderMuted(branchName))
+			}
+		}
 	},
 }
 
@@ -196,6 +245,9 @@ Examples:
 
 func init() {
 	vcMergeCmd.Flags().StringVar(&vcMergeStrategy, "strategy", "", "Conflict resolution strategy: 'ours' or 'theirs'")
+	vcMergeCmd.Flags().String("from", "", "Source branch to merge (alternative to positional arg)")
+	vcMergeCmd.Flags().String("to", "", "Target branch to merge into (switches to it before merge)")
+	vcMergeCmd.Flags().Bool("cleanup", false, "Delete source branch and mark as merged after successful merge")
 	vcCommitCmd.Flags().StringVarP(&vcCommitMessage, "message", "m", "", "Commit message")
 	vcCommitCmd.Flags().BoolVar(&vcCommitStdin, "stdin", false, "Read commit message from stdin")
 

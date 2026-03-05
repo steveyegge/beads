@@ -1173,6 +1173,17 @@ func (s *DoltStore) commitAuthorString() string {
 	return fmt.Sprintf("%s <%s>", s.committerName, s.committerEmail)
 }
 
+// CommitAuthor returns the formatted author string for Dolt commits.
+func (s *DoltStore) CommitAuthor() string {
+	return s.commitAuthorString()
+}
+
+// ConnectionString returns the MySQL DSN used to connect to the Dolt server.
+// Returns empty string if not in server mode.
+func (s *DoltStore) ConnectionString() string {
+	return s.connStr
+}
+
 // Commit creates a Dolt commit with the given message
 func (s *DoltStore) Commit(ctx context.Context, message string) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.commit",
@@ -1603,6 +1614,16 @@ func (s *DoltStore) CurrentBranch(ctx context.Context) (string, error) {
 	return branch, nil
 }
 
+// ResetToCommit performs a hard reset of the current branch to the given commit hash.
+// Used by the post-checkout hook to sync Dolt state with a previously recorded BEADS_HEAD.
+func (s *DoltStore) ResetToCommit(ctx context.Context, commitHash string) error {
+	_, err := s.db.ExecContext(ctx, "CALL DOLT_RESET('--hard', ?)", commitHash)
+	if err != nil {
+		return fmt.Errorf("failed to reset to commit %s: %w", commitHash, err)
+	}
+	return nil
+}
+
 // DeleteBranch deletes a branch (used to clean up import branches)
 func (s *DoltStore) DeleteBranch(ctx context.Context, branch string) error {
 	_, err := s.db.ExecContext(ctx, "CALL DOLT_BRANCH('-D', ?)", branch)
@@ -1610,6 +1631,125 @@ func (s *DoltStore) DeleteBranch(ctx context.Context, branch string) error {
 		return fmt.Errorf("failed to delete branch %s: %w", branch, err)
 	}
 	return nil
+}
+
+// =============================================================================
+// Branch Registry Operations (beads_branches table)
+// =============================================================================
+
+// BranchInfo represents a registered branch and its merge strategy.
+type BranchInfo struct {
+	Name          string
+	MergeStrategy string // "A", "B", or "C"
+	Status        string // "active", "dormant", "merged", "abandoned"
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// RegisterBranch registers a branch in the beads_branches registry with a merge strategy.
+// Creates a Dolt branch for merge-with-branch and merge-on-close strategies.
+// Strategy stay-on-main does not create a Dolt branch — writes go directly to main.
+func (s *DoltStore) RegisterBranch(ctx context.Context, name string, strategy string) error {
+	if name == "main" {
+		return fmt.Errorf("cannot register main branch — it is always the merge target")
+	}
+	if strategy != "stay-on-main" && strategy != "merge-with-branch" && strategy != "merge-on-close" {
+		return fmt.Errorf("invalid merge strategy %q: must be stay-on-main, merge-with-branch, or merge-on-close", strategy)
+	}
+
+	// stay-on-main writes directly to Dolt main — no isolated branch needed.
+	// merge-with-branch and merge-on-close need their own Dolt branch.
+	if strategy != "stay-on-main" {
+		if err := s.Branch(ctx, name); err != nil {
+			if !strings.Contains(err.Error(), "already exists") {
+				return fmt.Errorf("failed to create dolt branch: %w", err)
+			}
+		}
+	}
+
+	// Register in beads_branches
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO beads_branches (branch_name, merge_strategy, status)
+		VALUES (?, ?, 'active')
+		ON DUPLICATE KEY UPDATE merge_strategy = VALUES(merge_strategy), status = 'active',
+		updated_at = CURRENT_TIMESTAMP
+	`, name, strategy)
+	if err != nil {
+		return fmt.Errorf("failed to register branch %s: %w", name, err)
+	}
+
+	// Commit the registration on main
+	if err := s.Commit(ctx, fmt.Sprintf("branch: register %s (strategy %s)", name, strategy)); err != nil {
+		if !isDoltNothingToCommit(err) {
+			return fmt.Errorf("failed to commit branch registration: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// UnregisterBranch updates a branch's status in the registry.
+// Valid statuses: dormant (paused, skips cherry-picks), merged (terminal), abandoned (terminal).
+func (s *DoltStore) UnregisterBranch(ctx context.Context, name string, status string) error {
+	if status != "merged" && status != "abandoned" && status != "dormant" {
+		return fmt.Errorf("invalid unregister status %q: must be 'merged', 'abandoned', or 'dormant'", status)
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE beads_branches SET status = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE branch_name = ?
+	`, status, name)
+	if err != nil {
+		return fmt.Errorf("failed to unregister branch %s: %w", name, err)
+	}
+	return nil
+}
+
+// GetBranchInfo returns registry info for a specific branch, or nil if not registered.
+func (s *DoltStore) GetBranchInfo(ctx context.Context, name string) (*BranchInfo, error) {
+	var info BranchInfo
+	err := s.db.QueryRowContext(ctx, `
+		SELECT branch_name, merge_strategy, status, created_at, updated_at
+		FROM beads_branches WHERE branch_name = ?
+	`, name).Scan(&info.Name, &info.MergeStrategy, &info.Status, &info.CreatedAt, &info.UpdatedAt)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get branch info for %s: %w", name, err)
+	}
+	return &info, nil
+}
+
+// ListRegisteredBranches returns all branches matching the given status filter.
+// Pass empty string for status to list all branches.
+func (s *DoltStore) ListRegisteredBranches(ctx context.Context, status string) ([]BranchInfo, error) {
+	var rows *sql.Rows
+	var err error
+	if status != "" {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT branch_name, merge_strategy, status, created_at, updated_at
+			FROM beads_branches WHERE status = ? ORDER BY branch_name
+		`, status)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT branch_name, merge_strategy, status, created_at, updated_at
+			FROM beads_branches ORDER BY branch_name
+		`)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to list registered branches: %w", err)
+	}
+	defer rows.Close()
+
+	var branches []BranchInfo
+	for rows.Next() {
+		var b BranchInfo
+		if err := rows.Scan(&b.Name, &b.MergeStrategy, &b.Status, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan branch info: %w", err)
+		}
+		branches = append(branches, b)
+	}
+	return branches, rows.Err()
 }
 
 // Log returns recent commit history

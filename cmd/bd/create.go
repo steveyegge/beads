@@ -763,6 +763,10 @@ var createCmd = &cobra.Command{
 			hookRunner.Run(hooks.EventCreate, issue)
 		}
 
+		// Cross-branch message delivery: if this is a message-type issue
+		// on a registered branch, cherry-pick to all other active branches.
+		maybeSendMessage(ctx, store, string(issue.IssueType))
+
 		if jsonOutput {
 			outputJSON(issue)
 		} else if silent {

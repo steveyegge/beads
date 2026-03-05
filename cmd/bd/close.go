@@ -144,6 +144,9 @@ create, update, show, or close operation).`,
 			// Auto-close parent molecule if all steps are now complete
 			autoCloseCompletedMolecule(ctx, store, id, actor, session)
 
+			// merge-on-close: merge to main when issue is closed on a lifecycle-gated branch
+			maybeMergeOnClose(ctx, store)
+
 			// Run close hook (best effort: hook runs only if re-fetch succeeds)
 			closedIssue, _ := store.GetIssue(ctx, id)
 			if closedIssue != nil && hookRunner != nil {

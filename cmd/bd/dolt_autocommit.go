@@ -18,6 +18,10 @@ func transact(ctx context.Context, s *dolt.DoltStore, commitMsg string, fn func(
 	err := s.RunInTransaction(ctx, commitMsg, fn)
 	if err == nil {
 		commandDidExplicitDoltCommit = true
+		// Write .beads/HEAD and refs after successful transaction commit
+		writeBeadsRefs(ctx, s)
+		// Execute branch merge strategy
+		executePostCommitStrategy(ctx, s)
 	}
 	return err
 }
@@ -66,6 +70,13 @@ func maybeAutoCommit(ctx context.Context, p doltAutoCommitParams) error {
 		}
 		return err
 	}
+
+	// Write .beads/HEAD and refs after successful commit
+	writeBeadsRefs(ctx, st)
+
+	// Execute branch merge strategy (merge-on-close, etc.)
+	executePostCommitStrategy(ctx, st)
+
 	return nil
 }
 

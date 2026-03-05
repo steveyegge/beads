@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // managedHookNames lists the git hooks managed by beads.
@@ -839,7 +841,195 @@ func runPostCheckoutHook(args []string) int {
 	if exitCode := runChainedHook("post-checkout", args); exitCode != 0 {
 		return exitCode
 	}
+
+	// Only run beads ref sync for branch-level checkouts (flag=1).
+	// flag=0 means file-level checkout — skip entirely.
+	if len(args) < 3 || args[2] != "1" {
+		return 0
+	}
+
+	// Skip during rebase — intermediate checkouts shouldn't trigger sync
+	if isRebaseInProgress() {
+		return 0
+	}
+
+	// Attempt beads ref sync and branch strategy detection.
+	// These are best-effort — never block a checkout.
+	postCheckoutBeadsSync()
+
 	return 0
+}
+
+// postCheckoutBeadsSync compares the checked-out .beads/HEAD and refs against
+// the current Dolt database state. On mismatch, prompts the user to reset
+// or keep current state. Also detects new unregistered branches.
+func postCheckoutBeadsSync() {
+	s := getStore()
+	if s == nil || s.IsClosed() {
+		return
+	}
+
+	ctx := getRootContext()
+
+	// Read .beads/HEAD and .beads/refs/heads/<branch> from the checked-out git state
+	beadsDir := filepath.Dir(s.Path())
+	savedHash, savedBranch := readBeadsRefs(beadsDir)
+	if savedHash == "" {
+		// No ref files — this is either a pre-feature commit or first use.
+		// Check if current branch needs strategy registration.
+		maybePromptBranchStrategy(ctx, s)
+		return
+	}
+
+	// Get current Dolt state
+	currentHash, err := s.GetCurrentCommit(ctx)
+	if err != nil {
+		return // can't check — skip silently
+	}
+	currentBranch, err := s.CurrentBranch(ctx)
+	if err != nil {
+		return
+	}
+
+	// Check if Dolt branch matches what .beads/HEAD says
+	if savedBranch != "" && savedBranch != currentBranch {
+		// Branch mismatch — Dolt is on a different branch than .beads/HEAD expects.
+		// Try to switch Dolt to the saved branch.
+		if err := s.Checkout(ctx, savedBranch); err != nil {
+			fmt.Fprintf(os.Stderr, "beads: warning: could not switch Dolt to branch %s: %v\n", savedBranch, err)
+			return
+		}
+		// Re-read current hash after branch switch
+		currentHash, err = s.GetCurrentCommit(ctx)
+		if err != nil {
+			return
+		}
+		currentBranch = savedBranch
+	}
+
+	// Compare commit hashes
+	if currentHash == savedHash {
+		// In sync — nothing to do
+		maybePromptBranchStrategy(ctx, s)
+		return
+	}
+
+	// Mismatch detected — prompt user
+	autoSync := os.Getenv("BD_AUTO_SYNC")
+	if autoSync == "1" {
+		// Non-interactive mode: auto-reset
+		if err := s.ResetToCommit(ctx, savedHash); err != nil {
+			fmt.Fprintf(os.Stderr, "beads: auto-sync reset failed: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "beads: auto-synced Dolt to %s (branch %s)\n", savedHash[:8], currentBranch)
+		}
+		return
+	}
+
+	// Interactive prompt
+	isTTY := isTerminal()
+	if !isTTY {
+		// Non-TTY and no BD_AUTO_SYNC — warn but don't block
+		fmt.Fprintf(os.Stderr, "beads: warning: Dolt state mismatch (have %s, want %s). Set BD_AUTO_SYNC=1 to auto-reset.\n",
+			currentHash[:8], savedHash[:8])
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "\nbeads: Dolt database state mismatch detected.\n")
+	fmt.Fprintf(os.Stderr, "  .beads/refs/heads/%s expects: %s\n", currentBranch, savedHash[:8])
+	fmt.Fprintf(os.Stderr, "  Current Dolt HEAD on %s:      %s\n", currentBranch, currentHash[:8])
+	fmt.Fprintf(os.Stderr, "\n  [R]eset Beads DB to match git checkout\n")
+	fmt.Fprintf(os.Stderr, "  [K]eep current Dolt state\n")
+	fmt.Fprintf(os.Stderr, "\nChoice [R/k]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return // EOF or error — keep current
+	}
+	choice := strings.TrimSpace(strings.ToLower(line))
+
+	if choice == "" || choice == "r" || choice == "reset" {
+		if err := s.ResetToCommit(ctx, savedHash); err != nil {
+			fmt.Fprintf(os.Stderr, "beads: reset failed: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "beads: Dolt reset to %s\n", savedHash[:8])
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "beads: keeping current Dolt state\n")
+	}
+}
+
+// maybePromptBranchStrategy checks if the current Dolt branch is unregistered
+// and prompts the user to select a merge strategy (A/B/C).
+func maybePromptBranchStrategy(ctx context.Context, s *dolt.DoltStore) {
+	branch, err := s.CurrentBranch(ctx)
+	if err != nil || branch == "main" {
+		return
+	}
+
+	// Check if already registered
+	info, err := s.GetBranchInfo(ctx, branch)
+	if err != nil || info != nil {
+		return // already registered or error
+	}
+
+	// Check for BD_MERGE_STRATEGY env var (non-interactive)
+	envStrategy := os.Getenv("BD_MERGE_STRATEGY")
+	if envStrategy != "" {
+		if slug, ok := validStrategies[strings.ToLower(envStrategy)]; ok {
+			if err := s.RegisterBranch(ctx, branch, slug); err != nil {
+				fmt.Fprintf(os.Stderr, "beads: warning: failed to register branch %s: %v\n", branch, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "beads: registered branch %s with strategy %s\n", branch, slug)
+			}
+			return
+		}
+	}
+
+	// Interactive prompt
+	isTTY := isTerminal()
+	if !isTTY {
+		// Non-TTY: default to stay-on-main silently
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "\nbeads: Dolt branch %q is not registered.\n", branch)
+	fmt.Fprintf(os.Stderr, "  Select a merge strategy:\n")
+	fmt.Fprintf(os.Stderr, "    [A] stay-on-main     — DB writes go directly to Dolt main (default)\n")
+	fmt.Fprintf(os.Stderr, "    [B] merge-with-branch — DB stays on Dolt branch, merges when code merges\n")
+	fmt.Fprintf(os.Stderr, "    [C] merge-on-close   — DB stays on Dolt branch, merges on bd close\n")
+	fmt.Fprintf(os.Stderr, "\nStrategy [A/b/c]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return // EOF — skip registration
+	}
+	choice := strings.TrimSpace(strings.ToLower(line))
+
+	strategy := "stay-on-main" // default
+	if slug, ok := validStrategies[choice]; ok {
+		strategy = slug
+	} else if choice != "" {
+		fmt.Fprintf(os.Stderr, "beads: invalid choice %q, using stay-on-main\n", choice)
+	}
+
+	if err := s.RegisterBranch(ctx, branch, strategy); err != nil {
+		fmt.Fprintf(os.Stderr, "beads: warning: failed to register branch %s: %v\n", branch, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "beads: registered branch %s with strategy %s\n", branch, strategy)
+	}
+}
+
+// isTerminal returns true if stderr is connected to a terminal.
+// Used to decide whether interactive prompts are appropriate.
+func isTerminal() bool {
+	fi, err := os.Stderr.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 // runPrepareCommitMsgHook adds agent identity trailers to commit messages.
