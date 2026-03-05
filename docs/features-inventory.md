@@ -1,4 +1,6 @@
-Docs generated against beads@7f41edd9c4350e5c68ebec6f9571e27833f27133.
+Docs generated against (beads HEAD): 7f41edd9c4350e5c68ebec6f9571e27833f27133
+
+# Beads Feature Inventory
 
 ## Cross-Repo Glossary
 
@@ -140,8 +142,6 @@ Strongly recommended additional fields:
 - For tests, include the test name when possible.
 - For captured runtime output, store it under `.sisyphus/evidence/` and cite that path.
 - If a row has multiple evidence items, list them all.
-
-(End of file - total 128 lines)
 
 ## Feature Inventory
 

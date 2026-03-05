@@ -1,5 +1,7 @@
 Docs generated against (beads HEAD): 7f41edd9c4350e5c68ebec6f9571e27833f27133
 
+# Architecture (Current)
+
 This document describes the current Beads architecture as evidenced by repository sources. When sources disagree, this doc records the mismatch as `unknown/conflict` and does not attempt to resolve it.
 
 ## Cross-Repo Glossary
