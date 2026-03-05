@@ -141,8 +141,9 @@ type Config struct {
 	// automatically if one isn't running. Disabled under Gas Town (GT_ROOT set).
 	AutoStart bool
 
-	// MaxOpenConns overrides the connection pool size (0 = default 10).
+	// MaxOpenConns overrides the connection pool size (0 = use default 3).
 	// Set to 1 for branch isolation in tests (DOLT_CHECKOUT is session-level).
+	// Also settable via BD_MAX_OPEN_CONNS env var (Config takes precedence).
 	MaxOpenConns int
 }
 
@@ -765,7 +766,13 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	// processes share a single Dolt server (150 max_connections).
 	// Default 3 open conns per process — CLI rarely needs more than 1-2
 	// concurrent queries. With 7+ agents, 3*7=21 open is sustainable.
+	// Override via BD_MAX_OPEN_CONNS env var or Config.MaxOpenConns.
 	maxOpen := 3
+	if envMax := os.Getenv("BD_MAX_OPEN_CONNS"); envMax != "" {
+		if n, err := strconv.Atoi(envMax); err == nil && n > 0 {
+			maxOpen = n
+		}
+	}
 	if cfg.MaxOpenConns > 0 {
 		maxOpen = cfg.MaxOpenConns
 	}
