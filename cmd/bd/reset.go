@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -21,7 +20,6 @@ var resetCmd = &cobra.Command{
 This command removes:
   - The .beads directory (database, JSONL, config)
   - Git hooks installed by bd
-  - Merge driver configuration
   - Sync branch worktrees
 
 By default, shows what would be deleted (dry-run mode).
@@ -110,24 +108,6 @@ func collectResetItems(gitCommonDir, beadsDir string) []resetItem {
 		}
 	}
 
-	// Check for merge driver config
-	if hasMergeDriverConfig() {
-		items = append(items, resetItem{
-			Type:        "config",
-			Path:        "merge.beads.*",
-			Description: "Remove merge driver configuration",
-		})
-	}
-
-	// Check for .gitattributes entry
-	if hasGitattributesEntry() {
-		items = append(items, resetItem{
-			Type:        "gitattributes",
-			Path:        ".gitattributes",
-			Description: "Remove beads entry from .gitattributes",
-		})
-	}
-
 	// Check for sync branch worktrees (in common git dir, shared across worktrees)
 	worktreesDir := filepath.Join(gitCommonDir, "beads-worktrees")
 	if info, err := os.Stat(worktreesDir); err == nil && info.IsDir() {
@@ -166,23 +146,6 @@ func isBdHook(hookPath string) bool {
 		lineCount++
 	}
 	return false
-}
-
-func hasMergeDriverConfig() bool {
-	cmd := exec.Command("git", "config", "--get", "merge.beads.driver")
-	if err := cmd.Run(); err == nil {
-		return true
-	}
-	return false
-}
-
-func hasGitattributesEntry() bool {
-	// #nosec G304 -- fixed path
-	content, err := os.ReadFile(".gitattributes")
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(content), "merge=beads")
 }
 
 func showResetPreview(items []resetItem) {
@@ -232,21 +195,6 @@ func performReset(items []resetItem, _, _ string) {
 				}
 			}
 
-		case "config":
-			// Remove merge driver config (ignore errors - may not exist)
-			_ = exec.Command("git", "config", "--unset", "merge.beads.driver").Run()
-			_ = exec.Command("git", "config", "--unset", "merge.beads.name").Run()
-			if !jsonOutput {
-				fmt.Printf("%s Removed merge driver config\n", ui.RenderPass("✓"))
-			}
-
-		case "gitattributes":
-			if err := removeGitattributesEntry(); err != nil {
-				errors = append(errors, fmt.Sprintf("failed to update .gitattributes: %v", err))
-			} else if !jsonOutput {
-				fmt.Printf("%s Updated .gitattributes\n", ui.RenderPass("✓"))
-			}
-
 		case "worktrees":
 			if err := os.RemoveAll(item.Path); err != nil {
 				errors = append(errors, fmt.Sprintf("failed to remove worktrees: %v", err))
@@ -286,54 +234,4 @@ func performReset(items []resetItem, _, _ string) {
 		fmt.Println()
 		fmt.Println("To reinitialize beads, run: bd init")
 	}
-}
-
-func removeGitattributesEntry() error {
-	// #nosec G304 -- fixed path
-	content, err := os.ReadFile(".gitattributes")
-	if err != nil {
-		return err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	var newLines []string
-	skipNextEmpty := false
-
-	for _, line := range lines {
-		// Skip lines containing beads merge configuration
-		if strings.Contains(line, "merge=beads") {
-			skipNextEmpty = true
-			continue
-		}
-
-		// Skip beads-related comment lines
-		if strings.Contains(line, "Use bd merge for beads JSONL files") {
-			skipNextEmpty = true
-			continue
-		}
-
-		// Skip empty lines that follow removed beads entries
-		if skipNextEmpty && strings.TrimSpace(line) == "" {
-			continue
-		}
-
-		skipNextEmpty = false
-
-		// Keep the line
-		newLines = append(newLines, line)
-	}
-
-	newContent := strings.Join(newLines, "\n")
-	// Remove trailing empty lines
-	newContent = strings.TrimRight(newContent, "\n")
-
-	// If file is now empty or only whitespace, remove it
-	if strings.TrimSpace(newContent) == "" {
-		return os.Remove(".gitattributes")
-	}
-
-	// Add single trailing newline
-	newContent += "\n"
-	//nolint:gosec // G306: .gitattributes must be world-readable (0644)
-	return os.WriteFile(".gitattributes", []byte(newContent), 0644)
 }
