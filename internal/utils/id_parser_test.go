@@ -694,6 +694,79 @@ func TestResolvePartialID_CrossPrefix(t *testing.T) {
 	}
 }
 
+// TestResolvePartialID_MultiDashPrefix verifies that partial ID resolution
+// correctly extracts the hash from issues with multi-dash prefixes.
+// Previously, strings.Index split on the first hyphen, so "hacker-news-ko4"
+// yielded hash "news-ko4" instead of "ko4".
+func TestResolvePartialID_MultiDashPrefix(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	hackerNews := &types.Issue{
+		ID:        "hacker-news-ko4",
+		Title:     "Hacker News item",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	pyToolkit := &types.Issue{
+		ID:        "me-py-toolkit-abcd",
+		Title:     "Python toolkit issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+
+	if err := store.CreateIssue(ctx, hackerNews, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateIssue(ctx, pyToolkit, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "short hash resolves multi-dash prefix (ko4 -> hacker-news-ko4)",
+			input:    "ko4",
+			expected: "hacker-news-ko4",
+		},
+		{
+			name:     "short hash resolves multi-dash prefix (abcd -> me-py-toolkit-abcd)",
+			input:    "abcd",
+			expected: "me-py-toolkit-abcd",
+		},
+		{
+			name:     "full multi-dash ID resolves exactly",
+			input:    "hacker-news-ko4",
+			expected: "hacker-news-ko4",
+		},
+		{
+			name:     "full multi-dash ID resolves exactly (toolkit)",
+			input:    "me-py-toolkit-abcd",
+			expected: "me-py-toolkit-abcd",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ResolvePartialID(ctx, store, tt.input)
+			if err != nil {
+				t.Errorf("ResolvePartialID(%q) unexpected error: %v", tt.input, err)
+			}
+			if result != tt.expected {
+				t.Errorf("ResolvePartialID(%q) = %q; want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestResolvePartialID_Wisp verifies that wisps (ephemeral issues) are resolvable
 // by partial ID. This exercises the explicit wisp fallback in ResolvePartialID.
 func TestResolvePartialID_Wisp(t *testing.T) {

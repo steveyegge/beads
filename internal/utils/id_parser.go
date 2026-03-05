@@ -112,9 +112,12 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 
 		// Extract hash from each issue, regardless of its prefix
 		// This handles cross-prefix matching (e.g., "3d0" matching "offlinebrew-3d0")
+		// Use ExtractIssuePrefix to correctly handle multi-dash prefixes
+		// (e.g., "hacker-news-ko4" → hash "ko4", not "news-ko4")
 		var issueHash string
-		if idx := strings.Index(issue.ID, "-"); idx >= 0 {
-			issueHash = issue.ID[idx+1:]
+		issuePrefix := ExtractIssuePrefix(issue.ID)
+		if issuePrefix != "" && len(issue.ID) > len(issuePrefix)+1 {
+			issueHash = issue.ID[len(issuePrefix)+1:] // +1 for the hyphen
 		} else {
 			issueHash = issue.ID
 		}
@@ -149,8 +152,9 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 					return w.ID, nil
 				}
 				var wHash string
-				if idx := strings.Index(w.ID, "-"); idx >= 0 {
-					wHash = w.ID[idx+1:]
+				wPrefix := ExtractIssuePrefix(w.ID)
+				if wPrefix != "" && len(w.ID) > len(wPrefix)+1 {
+					wHash = w.ID[len(wPrefix)+1:] // +1 for the hyphen
 				} else {
 					wHash = w.ID
 				}
