@@ -44,10 +44,11 @@ type circuitState struct {
 	TrippedAt    time.Time `json:"tripped_at,omitempty"`
 }
 
-// circuitBreaker manages the circuit breaker for a specific Dolt server port.
+// circuitBreaker manages the circuit breaker for a specific Dolt server.
 // It uses a file in /tmp for cross-process state sharing and an in-process
 // mutex for thread safety within a single process.
 type circuitBreaker struct {
+	host     string
 	port     int
 	filePath string
 	mu       sync.Mutex
@@ -56,11 +57,14 @@ type circuitBreaker struct {
 // ErrCircuitOpen is returned when the circuit breaker is open and rejecting requests.
 var ErrCircuitOpen = fmt.Errorf("dolt circuit breaker is open: server appears down, failing fast (cooldown %s)", circuitCooldown)
 
-// newCircuitBreaker creates a circuit breaker for the given Dolt server port.
-func newCircuitBreaker(port int) *circuitBreaker {
+// newCircuitBreaker creates a circuit breaker for the given Dolt server.
+func newCircuitBreaker(host string, port int) *circuitBreaker {
+	// Sanitize host for use in filename (replace dots/colons with dashes).
+	safeHost := strings.NewReplacer(".", "-", ":", "-").Replace(host)
 	return &circuitBreaker{
+		host:     host,
 		port:     port,
-		filePath: fmt.Sprintf("/tmp/beads-dolt-circuit-%d.json", port),
+		filePath: fmt.Sprintf("/tmp/beads-dolt-circuit-%s-%d.json", safeHost, port),
 	}
 }
 
@@ -119,7 +123,7 @@ func (cb *circuitBreaker) Allow() bool {
 
 // probe performs a quick TCP dial to check if the Dolt server is reachable.
 func (cb *circuitBreaker) probe() bool {
-	addr := fmt.Sprintf("127.0.0.1:%d", cb.port)
+	addr := net.JoinHostPort(cb.host, fmt.Sprintf("%d", cb.port))
 	conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
 	if err != nil {
 		return false

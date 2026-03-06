@@ -161,6 +161,46 @@ func TestCircuitBreaker_LegacyHalfOpenState(t *testing.T) {
 	}
 }
 
+func TestCircuitBreaker_ProbeUsesConfiguredHost(t *testing.T) {
+	// Start a TCP listener on localhost
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start test listener: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	// A breaker pointed at an unreachable host should fail the probe
+	// even though the server is listening on 127.0.0.1
+	dir := t.TempDir()
+	cb := &circuitBreaker{
+		host:     "192.0.2.1", // RFC 5737 TEST-NET, guaranteed unreachable
+		port:     port,
+		filePath: filepath.Join(dir, "circuit.json"),
+	}
+	if cb.probe() {
+		t.Fatal("probe should fail when host is unreachable (was the hardcoded 127.0.0.1 bug)")
+	}
+
+	// A breaker pointed at the correct host should succeed
+	cb2 := &circuitBreaker{
+		host:     "127.0.0.1",
+		port:     port,
+		filePath: filepath.Join(dir, "circuit2.json"),
+	}
+	if !cb2.probe() {
+		t.Fatal("probe should succeed when pointed at correct host")
+	}
+}
+
+func TestNewCircuitBreaker_FilePathIncludesHost(t *testing.T) {
+	cb1 := newCircuitBreaker("127.0.0.1", 3307)
+	cb2 := newCircuitBreaker("dolt.svc", 3307)
+	if cb1.filePath == cb2.filePath {
+		t.Fatalf("different hosts should produce different file paths: %s vs %s", cb1.filePath, cb2.filePath)
+	}
+}
+
 func TestCircuitBreaker_Reset(t *testing.T) {
 	cb := newTestCircuitBreaker(t)
 
@@ -186,8 +226,8 @@ func TestCircuitBreaker_SharedState(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "circuit.json")
 
-	cb1 := &circuitBreaker{port: 99999, filePath: path}
-	cb2 := &circuitBreaker{port: 99999, filePath: path}
+	cb1 := &circuitBreaker{host: "127.0.0.1", port: 99999, filePath: path}
+	cb2 := &circuitBreaker{host: "127.0.0.1", port: 99999, filePath: path}
 
 	// Trip via cb1
 	for i := 0; i < circuitFailureThreshold; i++ {
@@ -259,6 +299,7 @@ func newTestCircuitBreaker(t *testing.T) *circuitBreaker {
 	t.Helper()
 	dir := t.TempDir()
 	return &circuitBreaker{
+		host:     "127.0.0.1",
 		port:     99999,
 		filePath: filepath.Join(dir, "circuit.json"),
 	}
@@ -269,6 +310,7 @@ func newTestCircuitBreakerOnPort(t *testing.T, port int) *circuitBreaker {
 	t.Helper()
 	dir := t.TempDir()
 	return &circuitBreaker{
+		host:     "127.0.0.1",
 		port:     port,
 		filePath: filepath.Join(dir, "circuit.json"),
 	}
