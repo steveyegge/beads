@@ -12,10 +12,45 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 //go:embed schema/*.up.sql
 var upMigrations embed.FS
+
+var (
+	latestOnce sync.Once
+	latestVer  int
+)
+
+// latestVersion returns the highest version number among the embedded .up.sql files.
+// Computed once and cached.
+func latestVersion() int {
+	latestOnce.Do(func() {
+		entries, err := fs.ReadDir(upMigrations, "schema")
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".up.sql") {
+				continue
+			}
+			if v, err := parseVersion(e.Name()); err == nil && v > latestVer {
+				latestVer = v
+			}
+		}
+	})
+	return latestVer
+}
+
+// parseVersion extracts the leading integer from a migration filename like "0001_create_issues.up.sql".
+func parseVersion(name string) (int, error) {
+	parts := strings.SplitN(name, "_", 2)
+	if len(parts) == 0 {
+		return 0, fmt.Errorf("no version prefix")
+	}
+	return strconv.Atoi(parts[0])
+}
 
 // migrateUp applies all embedded .up.sql migrations that haven't been applied yet.
 func migrateUp(ctx context.Context, tx *sql.Tx) error {
@@ -34,6 +69,11 @@ func migrateUp(ctx context.Context, tx *sql.Tx) error {
 		return fmt.Errorf("reading current migration version: %w", err)
 	}
 
+	// Fast path: if current version matches the highest embedded migration, nothing to do.
+	if current >= latestVersion() {
+		return nil
+	}
+
 	// Collect and sort migration files.
 	entries, err := fs.ReadDir(upMigrations, "schema")
 	if err != nil {
@@ -44,6 +84,7 @@ func migrateUp(ctx context.Context, tx *sql.Tx) error {
 		version int
 		name    string
 	}
+
 	var pending []migrationFile
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".up.sql") {
@@ -57,31 +98,32 @@ func migrateUp(ctx context.Context, tx *sql.Tx) error {
 			pending = append(pending, migrationFile{version: v, name: e.Name()})
 		}
 	}
+
 	sort.Slice(pending, func(i, j int) bool { return pending[i].version < pending[j].version })
 
 	if len(pending) == 0 {
 		return nil
 	}
 
-	// Apply each pending migration.
+	// Apply each pending migration. The DSN has multiStatements=true,
+	// so each file is executed as a single ExecContext call.
 	for _, mf := range pending {
 		data, err := upMigrations.ReadFile("schema/" + mf.name)
 		if err != nil {
 			return fmt.Errorf("reading migration %s: %w", mf.name, err)
 		}
 
-		for _, stmt := range splitStatements(string(data)) {
-			stmt = strings.TrimSpace(stmt)
-			if stmt == "" || isOnlyComments(stmt) {
-				continue
-			}
-			if _, err := tx.ExecContext(ctx, stmt); err != nil {
-				// DOLT_COMMIT "nothing to commit" is expected and benign.
-				if strings.Contains(strings.ToLower(stmt), "dolt_commit") &&
-					strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
-					continue
-				}
-				return fmt.Errorf("migration %s failed: %w\nStatement: %s", mf.name, err, truncateForError(stmt))
+		sql := strings.TrimSpace(string(data))
+		if sql == "" {
+			continue
+		}
+
+		if _, err := tx.ExecContext(ctx, sql); err != nil {
+			// DOLT_COMMIT "nothing to commit" is expected and benign.
+			if strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
+				// fall through to record the version
+			} else {
+				return fmt.Errorf("migration %s failed: %w", mf.name, err)
 			}
 		}
 
@@ -93,76 +135,4 @@ func migrateUp(ctx context.Context, tx *sql.Tx) error {
 	log.Printf("embeddeddolt: applied %d migration(s) (version %d → %d)",
 		len(pending), current, pending[len(pending)-1].version)
 	return nil
-}
-
-// parseVersion extracts the leading integer from a migration filename like "0001_create_issues.up.sql".
-func parseVersion(name string) (int, error) {
-	parts := strings.SplitN(name, "_", 2)
-	if len(parts) == 0 {
-		return 0, fmt.Errorf("no version prefix")
-	}
-	return strconv.Atoi(parts[0])
-}
-
-// splitStatements splits a SQL script into individual statements on ";".
-func splitStatements(script string) []string {
-	var statements []string
-	var current strings.Builder
-	inString := false
-	stringChar := byte(0)
-
-	for i := 0; i < len(script); i++ {
-		c := script[i]
-
-		if inString {
-			current.WriteByte(c)
-			if c == stringChar && (i == 0 || script[i-1] != '\\') {
-				inString = false
-			}
-			continue
-		}
-
-		if c == '\'' || c == '"' || c == '`' {
-			inString = true
-			stringChar = c
-			current.WriteByte(c)
-			continue
-		}
-
-		if c == ';' {
-			stmt := strings.TrimSpace(current.String())
-			if stmt != "" {
-				statements = append(statements, stmt)
-			}
-			current.Reset()
-			continue
-		}
-
-		current.WriteByte(c)
-	}
-
-	stmt := strings.TrimSpace(current.String())
-	if stmt != "" {
-		statements = append(statements, stmt)
-	}
-
-	return statements
-}
-
-func truncateForError(s string) string {
-	if len(s) > 200 {
-		return s[:200] + "..."
-	}
-	return s
-}
-
-func isOnlyComments(stmt string) bool {
-	for _, line := range strings.Split(stmt, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "--") {
-			continue
-		}
-		return false
-	}
-	return true
 }
