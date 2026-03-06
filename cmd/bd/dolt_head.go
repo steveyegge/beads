@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
@@ -54,15 +55,9 @@ func writeBeadsRefs(ctx context.Context, s *dolt.DoltStore) {
 		return // best effort
 	}
 
-	// Write .beads/sync_config with branch_strategy settings.
-	// This file is git-tracked so it survives Dolt resets, unlike
-	// the Dolt config table which gets wiped by DOLT_RESET --hard.
-	syncCfgPath := filepath.Join(beadsDir, "sync_config")
-	writeSyncConfig(ctx, s, syncCfgPath)
-
-	// git add all ref and config files (best effort — may not be in a git repo)
+	// git add ref files (best effort — may not be in a git repo)
 	projectRoot := filepath.Dir(beadsDir)
-	cmd := exec.CommandContext(ctx, "git", "add", headPath, refPath, syncCfgPath)
+	cmd := exec.CommandContext(ctx, "git", "add", headPath, refPath)
 	cmd.Dir = projectRoot
 	_ = cmd.Run()
 }
@@ -152,11 +147,10 @@ func checkBeadsRefSync(ctx context.Context, s *dolt.DoltStore) {
 		return // In sync
 	}
 
-	// Mismatch detected — read settings from git-tracked sync_config
-	// (not from Dolt, which may have been wiped by a prior reset)
-	syncCfg := readSyncConfig(beadsDir)
-	promptEnabled := syncConfigBool(syncCfg, "branch_strategy.prompt")
-	resetDefault := syncConfigBool(syncCfg, "branch_strategy.defaults.reset_dolt_with_git")
+	// Mismatch detected — read settings from config.yaml
+	// (git-tracked, survives DOLT_RESET --hard unlike the Dolt config table)
+	promptEnabled := config.GetBool("branch_strategy.prompt")
+	resetDefault := config.GetBool("branch_strategy.defaults.reset_dolt_with_git")
 
 	debug.Logf("beads ref sync: mismatch on %s (have %s, want %s) prompt=%v reset=%v",
 		currentBranch, truncHash(currentHash), truncHash(savedHash), promptEnabled, resetDefault)
@@ -223,68 +217,6 @@ func checkBeadsRefSync(ctx context.Context, s *dolt.DoltStore) {
 	} else {
 		fmt.Fprintf(os.Stderr, "beads: keeping current Dolt state\n")
 	}
-}
-
-// configBool reads a boolean config value from the Dolt store's config table.
-// Returns false if the key is not set, empty, or on any error.
-func configBool(ctx context.Context, s *dolt.DoltStore, key string) bool {
-	val, err := s.GetConfig(ctx, key)
-	if err != nil || val == "" {
-		return false
-	}
-	return val == "true" || val == "1"
-}
-
-// syncConfigKeys are the branch_strategy settings written to .beads/sync_config.
-var syncConfigKeys = []string{
-	"branch_strategy.prompt",
-	"branch_strategy.defaults.reset_dolt_with_git",
-}
-
-// writeSyncConfig writes branch_strategy settings to a git-tracked file.
-// This ensures settings survive Dolt resets (the Dolt config table is wiped
-// by DOLT_RESET --hard, but this file is restored by git reset --hard).
-func writeSyncConfig(ctx context.Context, s *dolt.DoltStore, path string) {
-	var lines []string
-	for _, key := range syncConfigKeys {
-		val, err := s.GetConfig(ctx, key)
-		if err != nil || val == "" {
-			continue
-		}
-		lines = append(lines, key+"="+val)
-	}
-	content := strings.Join(lines, "\n")
-	if len(lines) > 0 {
-		content += "\n"
-	}
-	_ = os.WriteFile(path, []byte(content), 0644)
-}
-
-// readSyncConfig reads branch_strategy settings from .beads/sync_config.
-// Returns a map of key→value. Missing file or keys return empty map.
-func readSyncConfig(beadsDir string) map[string]string {
-	path := filepath.Join(beadsDir, "sync_config")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	result := make(map[string]string)
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if idx := strings.IndexByte(line, '='); idx > 0 {
-			result[line[:idx]] = line[idx+1:]
-		}
-	}
-	return result
-}
-
-// syncConfigBool reads a boolean from the sync_config map.
-func syncConfigBool(cfg map[string]string, key string) bool {
-	val := cfg[key]
-	return val == "true" || val == "1"
 }
 
 // truncHash returns the first 8 characters of a hash, or the full string if shorter.

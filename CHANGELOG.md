@@ -11,8 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Beads refs** — `.beads/HEAD` and `.beads/refs/heads/<branch>` pointer files track Dolt commit hashes alongside git commits, enabling git-Dolt time-travel via `git reset`
 - **Git-Dolt mismatch detection** — `PersistentPreRun` detects when saved beads refs don't match current Dolt state, with configurable response (silent, auto-reset, or interactive prompt)
-- **`branch_strategy.*` config** — three settings control sync behavior: `default_strategy`, `prompt`, `defaults.reset_dolt_with_git` (all default false — zero user-visible changes until configured)
-- **`.beads/sync_config`** — git-tracked file caches `branch_strategy.*` settings so they survive `DOLT_RESET --hard` (which wipes the Dolt config table)
+- **`branch_strategy.*` config** — three settings in `config.yaml` control sync behavior: `default_strategy`, `prompt`, `defaults.reset_dolt_with_git` (all default false — zero user-visible changes until configured)
 - **Rebase safety** — mismatch detection skips during `git rebase` (detects `.git/rebase-merge` and `.git/rebase-apply`)
 
 ## [0.59.0] - 2026-03-05

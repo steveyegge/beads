@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -94,11 +95,12 @@ func TestCheckBeadsRefSyncResetCorrectness(t *testing.T) {
 	now := time.Now()
 	beadsDir := filepath.Dir(s.Path())
 
-	// Enable auto-reset via config and sync_config file
-	if err := s.SetConfig(ctx, "branch_strategy.defaults.reset_dolt_with_git", "true"); err != nil {
-		t.Fatalf("set config: %v", err)
+	// Enable auto-reset via config.yaml (read by config.GetBool)
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
 	}
-	writeTestSyncConfig(t, beadsDir, "branch_strategy.defaults.reset_dolt_with_git=true")
+	config.Set("branch_strategy.defaults.reset_dolt_with_git", true)
+	t.Cleanup(func() { config.Set("branch_strategy.defaults.reset_dolt_with_git", false) })
 
 	// === Phase 1: Create issue A with label, dependency stub, and comment ===
 	issueA := &types.Issue{
@@ -325,11 +327,12 @@ func TestCheckBeadsRefSyncInSync(t *testing.T) {
 
 	beadsDir := filepath.Dir(s.Path())
 
-	// Enable auto-reset via config and sync_config file
-	if err := s.SetConfig(ctx, "branch_strategy.defaults.reset_dolt_with_git", "true"); err != nil {
-		t.Fatalf("set config: %v", err)
+	// Enable auto-reset via config.yaml (read by config.GetBool)
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
 	}
-	writeTestSyncConfig(t, beadsDir, "branch_strategy.defaults.reset_dolt_with_git=true")
+	config.Set("branch_strategy.defaults.reset_dolt_with_git", true)
+	t.Cleanup(func() { config.Set("branch_strategy.defaults.reset_dolt_with_git", false) })
 
 	// Commit something so we have a hash
 	if err := s.Commit(ctx, "initial"); err != nil {
@@ -420,15 +423,6 @@ func writeTestBeadsRefs(t *testing.T, beadsDir, branch, hash string) {
 	refPath := filepath.Join(refsDir, branch)
 	if err := os.WriteFile(refPath, []byte(hash+"\n"), 0644); err != nil {
 		t.Fatalf("write ref: %v", err)
-	}
-}
-
-// writeTestSyncConfig writes a .beads/sync_config file for testing.
-func writeTestSyncConfig(t *testing.T, beadsDir, content string) {
-	t.Helper()
-	path := filepath.Join(beadsDir, "sync_config")
-	if err := os.WriteFile(path, []byte(content+"\n"), 0644); err != nil {
-		t.Fatalf("write sync_config: %v", err)
 	}
 }
 

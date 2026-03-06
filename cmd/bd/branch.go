@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -140,12 +141,10 @@ func resolveStrategy(flagValue string) string {
 		}
 	}
 
-	// Check branch_strategy.default_strategy config
-	if store != nil {
-		if cfgVal, err := store.GetConfig(rootCtx, "branch_strategy.default_strategy"); err == nil && cfgVal != "" {
-			if slug, ok := validStrategies[strings.ToLower(cfgVal)]; ok {
-				return slug
-			}
+	// Check branch_strategy.default_strategy in config.yaml
+	if cfgVal := config.GetString("branch_strategy.default_strategy"); cfgVal != "" {
+		if slug, ok := validStrategies[strings.ToLower(cfgVal)]; ok {
+			return slug
 		}
 	}
 

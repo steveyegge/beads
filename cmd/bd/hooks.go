@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
@@ -872,16 +873,16 @@ func maybePromptBranchStrategy(ctx context.Context, s *dolt.DoltStore) {
 		return // already registered or error
 	}
 
-	// Read default strategy from config (fallback: stay-on-main)
+	// Read default strategy from config.yaml (fallback: stay-on-main)
 	defaultStrategy := "stay-on-main"
-	if cfgVal, err := s.GetConfig(ctx, "branch_strategy.default_strategy"); err == nil && cfgVal != "" {
+	if cfgVal := config.GetString("branch_strategy.default_strategy"); cfgVal != "" {
 		if _, ok := validStrategies[strings.ToLower(cfgVal)]; ok {
 			defaultStrategy = cfgVal
 		}
 	}
 
 	// Check if prompting is enabled
-	promptEnabled := configBool(ctx, s, "branch_strategy.prompt")
+	promptEnabled := config.GetBool("branch_strategy.prompt")
 	if !promptEnabled {
 		// Silent: register with default strategy
 		if err := s.RegisterBranch(ctx, branch, defaultStrategy); err != nil {
