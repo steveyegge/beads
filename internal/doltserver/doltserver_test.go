@@ -272,22 +272,20 @@ func TestDefaultConfig_HostResolution(t *testing.T) {
 		}
 	})
 
-	t.Run("remote_host_skips_port_file", func(t *testing.T) {
-		// When host resolves to a remote server, the local port file
-		// should be ignored to avoid mismatched host:port combos.
+	t.Run("remote_host_uses_port_file", func(t *testing.T) {
+		// Port file is the primary port source for any host (local or remote).
 		t.Setenv("GT_ROOT", "")
 		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 		t.Setenv("BEADS_DOLT_SERVER_HOST", "dolt.lan")
 
 		freshDir := t.TempDir()
-		// Write a port file (as if a local server had been started)
-		if err := writePortFile(freshDir, 14000); err != nil {
+		if err := writePortFile(freshDir, 3306); err != nil {
 			t.Fatal(err)
 		}
 		cfg := DefaultConfig(freshDir)
 
-		if cfg.Port == 14000 {
-			t.Error("remote host should not use local port file")
+		if cfg.Port != 3306 {
+			t.Errorf("remote host should use port file, expected 3306, got %d", cfg.Port)
 		}
 		if cfg.Host != "dolt.lan" {
 			t.Errorf("expected host 'dolt.lan', got %s", cfg.Host)

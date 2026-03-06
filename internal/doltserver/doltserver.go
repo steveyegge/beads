@@ -278,14 +278,12 @@ func DefaultConfig(beadsDir string) *Config {
 	// persistent source. Start() writes the actual listening port here.
 	// Elevated to top priority (after env var) to prevent git-tracked values
 	// from causing cross-project data leakage (GH#2372).
-	// NOTE: port file is only relevant for locally-managed servers. If the
-	// host resolves to a remote server, skip the port file to avoid
-	// mismatched host:port combos.
-	if isLocalHost(cfg.Host) {
-		if p := readPortFile(beadsDir); 0 < p {
-			cfg.Port = p
-			return cfg
-		}
+	// Port file is the primary persistent source for any host (local or remote).
+	// Start() writes it for locally-managed servers, and admins can set it
+	// manually for remote servers (e.g., echo 3306 > .beads/dolt-server.port).
+	if p := readPortFile(beadsDir); 0 < p {
+		cfg.Port = p
+		return cfg
 	}
 
 	// Check config.yaml / global config (~/.config/bd/config.yaml) (GH#2073)
