@@ -88,6 +88,65 @@ func TestGitLabConfigValidation(t *testing.T) {
 	}
 }
 
+func TestGetConflictStrategy(t *testing.T) {
+	tests := []struct {
+		name         string
+		preferLocal  bool
+		preferGitLab bool
+		preferNewer  bool
+		want         ConflictStrategy
+		wantErr      string
+	}{
+		{
+			name: "default prefers newer",
+			want: ConflictStrategyPreferNewer,
+		},
+		{
+			name:        "prefer local",
+			preferLocal: true,
+			want:        ConflictStrategyPreferLocal,
+		},
+		{
+			name:         "prefer gitlab",
+			preferGitLab: true,
+			want:         ConflictStrategyPreferGitLab,
+		},
+		{
+			name:        "explicit prefer newer",
+			preferNewer: true,
+			want:        ConflictStrategyPreferNewer,
+		},
+		{
+			name:         "multiple flags error",
+			preferLocal:  true,
+			preferGitLab: true,
+			wantErr:      "multiple conflict resolution flags",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := getConflictStrategy(tt.preferLocal, tt.preferGitLab, tt.preferNewer)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("getConflictStrategy() error = nil, want %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("getConflictStrategy() error = %v, want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("getConflictStrategy() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("getConflictStrategy() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestMaskGitLabToken verifies token masking for display.
 func TestMaskGitLabToken(t *testing.T) {
 	tests := []struct {

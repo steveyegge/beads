@@ -1,400 +1,565 @@
 //go:build cgo && integration
 // +build cgo,integration
 
-// Package main provides the bd CLI commands.
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
+	"net/url"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/gitlab"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// TestGitLabSyncRoundtrip verifies full bidirectional sync:
-// 1. Pull issues from GitLab into beads
-// 2. Modify issues locally
-// 3. Push changes back to GitLab
-// 4. Verify GitLab received updates
-func TestGitLabSyncRoundtrip(t *testing.T) {
-	// Track API calls
-	var issuesCreated int32
-	var issuesUpdated int32
+type gitLabIssuePayload struct {
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Labels      []string `json:"labels"`
+	StateEvent  string   `json:"state_event,omitempty"`
+}
 
-	// Create mock GitLab server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+type gitLabSyncTestServer struct {
+	t      *testing.T
+	server *httptest.Server
 
-		switch r.Method {
-		case http.MethodGet:
-			// Return list of issues
-			createdAt := time.Now().Add(-24 * time.Hour)
-			updatedAt := time.Now().Add(-1 * time.Hour)
-			issues := []gitlab.Issue{
-				{
-					ID:          100,
-					IID:         1,
-					ProjectID:   123,
-					Title:       "GitLab Issue 1",
-					Description: "From GitLab",
-					State:       "opened",
-					Labels:      []string{"type::task", "priority::high"},
-					CreatedAt:   &createdAt,
-					UpdatedAt:   &updatedAt,
-					WebURL:      "https://gitlab.example.com/project/-/issues/1",
-				},
-				{
-					ID:          101,
-					IID:         2,
-					ProjectID:   123,
-					Title:       "GitLab Issue 2",
-					Description: "Also from GitLab",
-					State:       "opened",
-					Labels:      []string{"type::bug"},
-					CreatedAt:   &createdAt,
-					UpdatedAt:   &updatedAt,
-					WebURL:      "https://gitlab.example.com/project/-/issues/2",
-				},
-			}
-			json.NewEncoder(w).Encode(issues)
+	mu             sync.Mutex
+	issues         map[int]gitlab.Issue
+	nextID         int
+	nextIID        int
+	listQueries    []url.Values
+	createRequests []gitLabIssuePayload
+	updateRequests []gitLabIssuePayload
+}
 
-		case http.MethodPost:
-			// Create new issue
-			atomic.AddInt32(&issuesCreated, 1)
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(gitlab.Issue{
-				ID:        200,
-				IID:       3,
-				ProjectID: 123,
-				Title:     "New issue from beads",
-				WebURL:    "https://gitlab.example.com/project/-/issues/3",
-			})
+func newGitLabSyncTestServer(t *testing.T, issues ...gitlab.Issue) *gitLabSyncTestServer {
+	t.Helper()
 
-		case http.MethodPut:
-			// Update existing issue
-			atomic.AddInt32(&issuesUpdated, 1)
-			json.NewEncoder(w).Encode(gitlab.Issue{
-				ID:        100,
-				IID:       1,
-				ProjectID: 123,
-				Title:     "Updated title",
-			})
+	s := &gitLabSyncTestServer{
+		t:       t,
+		issues:  make(map[int]gitlab.Issue),
+		nextID:  1000,
+		nextIID: 1,
+	}
+	s.server = httptest.NewServer(http.HandlerFunc(s.handle))
+	for _, issue := range issues {
+		s.addIssue(issue)
+	}
+	t.Cleanup(s.server.Close)
+	return s
+}
+
+func (s *gitLabSyncTestServer) URL() string {
+	return s.server.URL
+}
+
+func (s *gitLabSyncTestServer) issueURL(iid int) string {
+	return "https://gitlab.test/project/-/issues/" + strconv.Itoa(iid)
+}
+
+func (s *gitLabSyncTestServer) addIssue(issue gitlab.Issue) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	if issue.IID == 0 {
+		issue.IID = s.nextIID
+	}
+	if issue.ID == 0 {
+		issue.ID = s.nextID
+	}
+	if issue.ProjectID == 0 {
+		issue.ProjectID = 123
+	}
+	if issue.CreatedAt == nil {
+		createdAt := now
+		issue.CreatedAt = &createdAt
+	}
+	if issue.UpdatedAt == nil {
+		updatedAt := issue.CreatedAt.UTC()
+		issue.UpdatedAt = &updatedAt
+	}
+	if issue.State == "" {
+		issue.State = "opened"
+	}
+	if issue.WebURL == "" {
+		issue.WebURL = s.issueURL(issue.IID)
+	}
+	s.issues[issue.IID] = issue
+	if issue.ID >= s.nextID {
+		s.nextID = issue.ID + 1
+	}
+	if issue.IID >= s.nextIID {
+		s.nextIID = issue.IID + 1
+	}
+}
+
+func (s *gitLabSyncTestServer) createRequestsSnapshot() []gitLabIssuePayload {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]gitLabIssuePayload, len(s.createRequests))
+	copy(out, s.createRequests)
+	return out
+}
+
+func (s *gitLabSyncTestServer) updateRequestCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.updateRequests)
+}
+
+func (s *gitLabSyncTestServer) listQueriesSnapshot() []url.Values {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]url.Values, len(s.listQueries))
+	for i, values := range s.listQueries {
+		out[i] = cloneValues(values)
+	}
+	return out
+}
+
+func (s *gitLabSyncTestServer) handle(w http.ResponseWriter, r *http.Request) {
+	s.t.Helper()
+
+	if token := r.Header.Get("PRIVATE-TOKEN"); token != "test-token" {
+		s.t.Fatalf("PRIVATE-TOKEN = %q, want %q", token, "test-token")
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	const issuesPath = "/api/v4/projects/123/issues"
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == issuesPath:
+		s.handleListIssues(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == issuesPath:
+		s.handleCreateIssue(w, r)
+	case strings.HasPrefix(r.URL.Path, issuesPath+"/"):
+		s.handleIssue(w, r, strings.TrimPrefix(r.URL.Path, issuesPath+"/"))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *gitLabSyncTestServer) handleListIssues(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.listQueries = append(s.listQueries, cloneValues(r.URL.Query()))
+
+	var updatedAfter time.Time
+	var filterSince bool
+	if raw := r.URL.Query().Get("updated_after"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			s.t.Fatalf("invalid updated_after %q: %v", raw, err)
 		}
-	}))
-	defer server.Close()
+		updatedAfter = parsed
+		filterSince = true
+	}
 
-	// Create in-memory store
-	ctx := context.Background()
-	testStore, err := dolt.New(ctx, &dolt.Config{Path: ":memory:"})
+	state := r.URL.Query().Get("state")
+	issues := make([]gitlab.Issue, 0, len(s.issues))
+	for _, issue := range s.issues {
+		if filterSince && (issue.UpdatedAt == nil || !issue.UpdatedAt.After(updatedAfter)) {
+			continue
+		}
+		if state != "" && state != "all" && issue.State != state {
+			continue
+		}
+		issues = append(issues, issue)
+	}
+
+	sort.Slice(issues, func(i, j int) bool { return issues[i].IID < issues[j].IID })
+	if err := json.NewEncoder(w).Encode(issues); err != nil {
+		s.t.Fatalf("encode list response: %v", err)
+	}
+}
+
+func (s *gitLabSyncTestServer) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var payload gitLabIssuePayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		s.t.Fatalf("decode create payload: %v", err)
+	}
+	s.createRequests = append(s.createRequests, payload)
+
+	now := time.Now().UTC()
+	createdAt := now
+	updatedAt := now
+	issue := gitlab.Issue{
+		ID:          s.nextID,
+		IID:         s.nextIID,
+		ProjectID:   123,
+		Title:       payload.Title,
+		Description: payload.Description,
+		State:       "opened",
+		Labels:      append([]string(nil), payload.Labels...),
+		CreatedAt:   &createdAt,
+		UpdatedAt:   &updatedAt,
+		WebURL:      s.issueURL(s.nextIID),
+	}
+	s.issues[issue.IID] = issue
+	s.nextID++
+	s.nextIID++
+
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(issue); err != nil {
+		s.t.Fatalf("encode create response: %v", err)
+	}
+}
+
+func (s *gitLabSyncTestServer) handleIssue(w http.ResponseWriter, r *http.Request, iidText string) {
+	iid, err := strconv.Atoi(iidText)
 	if err != nil {
-		t.Skipf("skipping: Dolt server not available: %v", err)
-	}
-	defer testStore.Close()
-
-	if err := testStore.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("Failed to set prefix: %v", err)
+		s.t.Fatalf("parse IID %q: %v", iidText, err)
 	}
 
-	// Set global store for sync functions
-	oldStore := store
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	issue, ok := s.issues[iid]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if err := json.NewEncoder(w).Encode(issue); err != nil {
+			s.t.Fatalf("encode get response: %v", err)
+		}
+	case http.MethodPut:
+		var payload gitLabIssuePayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			s.t.Fatalf("decode update payload: %v", err)
+		}
+		s.updateRequests = append(s.updateRequests, payload)
+
+		if payload.Title != "" {
+			issue.Title = payload.Title
+		}
+		if payload.Description != "" {
+			issue.Description = payload.Description
+		}
+		if payload.Labels != nil {
+			issue.Labels = append([]string(nil), payload.Labels...)
+		}
+		if payload.StateEvent == "close" {
+			issue.State = "closed"
+		}
+		updatedAt := time.Now().UTC()
+		issue.UpdatedAt = &updatedAt
+		s.issues[iid] = issue
+
+		if err := json.NewEncoder(w).Encode(issue); err != nil {
+			s.t.Fatalf("encode update response: %v", err)
+		}
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func cloneValues(values url.Values) url.Values {
+	cloned := make(url.Values, len(values))
+	for key, items := range values {
+		copied := make([]string, len(items))
+		copy(copied, items)
+		cloned[key] = copied
+	}
+	return cloned
+}
+
+func setupGitLabSyncIntegration(t *testing.T, serverURL string) (context.Context, *dolt.DoltStore) {
+	t.Helper()
+
+	ensureCleanGlobalState(t)
+	saveAndRestoreGlobals(t)
+	saveAndRestoreGitLabSyncFlags(t)
+
+	oldActor := actor
+	oldReadonly := readonlyMode
+	actor = "test-actor"
+	readonlyMode = false
+	t.Cleanup(func() {
+		actor = oldActor
+		readonlyMode = oldReadonly
+	})
+
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	testStore := newTestStore(t, testDB)
+
+	ctx := context.Background()
 	store = testStore
-	oldDbPath := dbPath
-	dbPath = ":memory:"
-	defer func() {
-		store = oldStore
-		dbPath = oldDbPath
-	}()
+	storeActive = true
+	dbPath = testDB
 
-	// Create GitLab client pointing to mock server
-	client := gitlab.NewClient("test-token", server.URL, "123")
-	mappingConfig := gitlab.DefaultMappingConfig()
-
-	// Step 1: Pull issues from GitLab
-	t.Run("PullFromGitLab", func(t *testing.T) {
-		stats, err := doPullFromGitLab(ctx, client, mappingConfig, false, "all", nil)
-		if err != nil {
-			t.Fatalf("doPullFromGitLab() error = %v", err)
+	for key, value := range map[string]string{
+		"gitlab.url":        serverURL,
+		"gitlab.token":      "test-token",
+		"gitlab.project_id": "123",
+	} {
+		if err := testStore.SetConfig(ctx, key, value); err != nil {
+			t.Fatalf("SetConfig(%s): %v", key, err)
 		}
-
-		if stats.Created != 2 {
-			t.Errorf("stats.Created = %d, want 2", stats.Created)
-		}
-
-		// Verify issues were imported
-		issues, err := testStore.SearchIssues(ctx, "", types.IssueFilter{})
-		if err != nil {
-			t.Fatalf("SearchIssues() error = %v", err)
-		}
-
-		if len(issues) != 2 {
-			t.Errorf("len(issues) = %d, want 2", len(issues))
-		}
-	})
-
-	// Step 2: Create a new local issue
-	t.Run("CreateLocalIssue", func(t *testing.T) {
-		newIssue := &types.Issue{
-			ID:          "bd-local-1",
-			Title:       "New local issue",
-			Description: "Created in beads",
-			Status:      types.StatusOpen,
-			Priority:    2,
-			IssueType:   types.TypeTask,
-		}
-
-		if err := testStore.CreateIssue(ctx, newIssue, "test"); err != nil {
-			t.Fatalf("CreateIssue() error = %v", err)
-		}
-	})
-
-	// Step 3: Push to GitLab - only push the new local issue (createOnly mode)
-	// Note: The SQLite store doesn't allow updating source_system via UpdateIssue,
-	// so imported GitLab issues can't be updated. We test create-only flow instead.
-	t.Run("PushToGitLab", func(t *testing.T) {
-		// Get only the local issue (filter by title)
-		issues, err := testStore.SearchIssues(ctx, "New local issue", types.IssueFilter{})
-		if err != nil {
-			t.Fatalf("SearchIssues() error = %v", err)
-		}
-
-		if len(issues) != 1 {
-			t.Fatalf("Expected 1 local issue, got %d", len(issues))
-		}
-
-		stats, err := doPushToGitLab(ctx, client, mappingConfig, issues, false, true, nil, nil)
-		if err != nil {
-			t.Fatalf("doPushToGitLab() error = %v", err)
-		}
-
-		// Should have created 1 new issue (the local one without external ref)
-		if stats.Created != 1 {
-			t.Errorf("stats.Created = %d, want 1", stats.Created)
-		}
-	})
-
-	// Verify create API was called
-	if atomic.LoadInt32(&issuesCreated) != 1 {
-		t.Errorf("issuesCreated = %d, want 1", issuesCreated)
 	}
+
+	return ctx, testStore
 }
 
-// TestGitLabConflictStrategiesIntegration tests conflict strategy selection.
-func TestGitLabConflictStrategiesIntegration(t *testing.T) {
-	// Test prefer-newer strategy (default)
-	t.Run("PreferNewer", func(t *testing.T) {
-		strategy, err := getConflictStrategy(false, false, true)
-		if err != nil {
-			t.Fatalf("getConflictStrategy() error = %v", err)
-		}
-		if strategy != ConflictStrategyPreferNewer {
-			t.Errorf("strategy = %q, want %q", strategy, ConflictStrategyPreferNewer)
-		}
-	})
+func saveAndRestoreGitLabSyncFlags(t *testing.T) {
+	t.Helper()
 
-	// Test prefer-local strategy
-	t.Run("PreferLocal", func(t *testing.T) {
-		strategy, err := getConflictStrategy(true, false, false)
-		if err != nil {
-			t.Fatalf("getConflictStrategy() error = %v", err)
-		}
-		if strategy != ConflictStrategyPreferLocal {
-			t.Errorf("strategy = %q, want %q", strategy, ConflictStrategyPreferLocal)
-		}
-	})
+	oldDryRun := gitlabSyncDryRun
+	oldPullOnly := gitlabSyncPullOnly
+	oldPushOnly := gitlabSyncPushOnly
+	oldPreferLocal := gitlabPreferLocal
+	oldPreferGitLab := gitlabPreferGitLab
+	oldPreferNewer := gitlabPreferNewer
 
-	// Test prefer-gitlab strategy
-	t.Run("PreferGitLab", func(t *testing.T) {
-		strategy, err := getConflictStrategy(false, true, false)
-		if err != nil {
-			t.Fatalf("getConflictStrategy() error = %v", err)
-		}
-		if strategy != ConflictStrategyPreferGitLab {
-			t.Errorf("strategy = %q, want %q", strategy, ConflictStrategyPreferGitLab)
-		}
-	})
+	gitlabSyncDryRun = false
+	gitlabSyncPullOnly = false
+	gitlabSyncPushOnly = false
+	gitlabPreferLocal = false
+	gitlabPreferGitLab = false
+	gitlabPreferNewer = false
 
-	// Test default (no flags) returns prefer-newer
-	t.Run("DefaultIsPreferNewer", func(t *testing.T) {
-		strategy, err := getConflictStrategy(false, false, false)
-		if err != nil {
-			t.Fatalf("getConflictStrategy() error = %v", err)
-		}
-		if strategy != ConflictStrategyPreferNewer {
-			t.Errorf("strategy = %q, want %q (default)", strategy, ConflictStrategyPreferNewer)
-		}
-	})
-
-	// Test multiple flags returns error
-	t.Run("MultipleFlags", func(t *testing.T) {
-		_, err := getConflictStrategy(true, true, false)
-		if err == nil {
-			t.Error("Expected error for multiple conflicting flags")
-		}
+	t.Cleanup(func() {
+		gitlabSyncDryRun = oldDryRun
+		gitlabSyncPullOnly = oldPullOnly
+		gitlabSyncPushOnly = oldPushOnly
+		gitlabPreferLocal = oldPreferLocal
+		gitlabPreferGitLab = oldPreferGitLab
+		gitlabPreferNewer = oldPreferNewer
 	})
 }
 
-// TestGitLabConflictDetectionIntegration tests conflict detection with mock issues.
-func TestGitLabConflictDetectionIntegration(t *testing.T) {
-	serverTime := time.Now().Add(1 * time.Hour)
+func runGitLabSyncForTest(t *testing.T) string {
+	t.Helper()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]gitlab.Issue{
-			{
-				ID:        100,
-				IID:       1,
-				ProjectID: 123,
-				Title:     "GitLab version",
-				State:     "opened",
-				UpdatedAt: &serverTime,
-				WebURL:    "https://gitlab.example.com/project/-/issues/1",
-			},
-		})
-	}))
-	defer server.Close()
+	var out bytes.Buffer
+	cmd := &cobra.Command{Use: "sync"}
+	cmd.SetOut(&out)
 
-	ctx := context.Background()
-	client := gitlab.NewClient("test-token", server.URL, "123")
-
-	// Create a mock local issue with SourceSystem set
-	localTime := time.Now().Add(-1 * time.Hour)
-	localIssues := []*types.Issue{
-		{
-			ID:           "bd-local-1",
-			Title:        "Local version",
-			SourceSystem: "gitlab:123:1",
-			UpdatedAt:    localTime,
-		},
+	if err := runGitLabSync(cmd, nil); err != nil {
+		t.Fatalf("runGitLabSync() error = %v", err)
 	}
 
-	// Detect conflicts
-	conflicts, err := detectGitLabConflicts(ctx, client, localIssues)
+	return out.String()
+}
+
+func TestGitLabSyncCommandBidirectional(t *testing.T) {
+	remoteCreatedAt := time.Date(2026, time.January, 2, 10, 0, 0, 0, time.UTC)
+	remoteUpdatedAt := remoteCreatedAt.Add(2 * time.Hour)
+	server := newGitLabSyncTestServer(t, gitlab.Issue{
+		ID:          101,
+		IID:         1,
+		ProjectID:   123,
+		Title:       "Remote GitLab issue",
+		Description: "Imported from GitLab",
+		State:       "opened",
+		Labels:      []string{"type::bug", "priority::high", "backend"},
+		CreatedAt:   &remoteCreatedAt,
+		UpdatedAt:   &remoteUpdatedAt,
+	})
+
+	ctx, testStore := setupGitLabSyncIntegration(t, server.URL())
+
+	local := &types.Issue{
+		Title:       "Local issue to push",
+		Description: "Created locally",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+	if err := testStore.CreateIssue(ctx, local, actor); err != nil {
+		t.Fatalf("CreateIssue(local): %v", err)
+	}
+
+	output := runGitLabSyncForTest(t)
+	if !strings.Contains(output, "Pulled 1 issues") {
+		t.Fatalf("sync output missing pull summary: %q", output)
+	}
+	if !strings.Contains(output, "✓ Pushed ") {
+		t.Fatalf("sync output missing push summary: %q", output)
+	}
+
+	imported, err := testStore.GetIssueByExternalRef(ctx, server.issueURL(1))
 	if err != nil {
-		t.Fatalf("detectGitLabConflicts() error = %v", err)
+		t.Fatalf("GetIssueByExternalRef(remote): %v", err)
+	}
+	if imported == nil {
+		t.Fatal("expected pulled GitLab issue to exist locally")
+	}
+	if imported.SourceSystem != "gitlab:123:1" {
+		t.Errorf("imported.SourceSystem = %q, want %q", imported.SourceSystem, "gitlab:123:1")
+	}
+	if imported.Title != "Remote GitLab issue" {
+		t.Errorf("imported.Title = %q, want %q", imported.Title, "Remote GitLab issue")
+	}
+	if imported.Priority != 1 {
+		t.Errorf("imported.Priority = %d, want 1", imported.Priority)
+	}
+	if imported.IssueType != types.TypeBug {
+		t.Errorf("imported.IssueType = %q, want %q", imported.IssueType, types.TypeBug)
 	}
 
-	if len(conflicts) != 1 {
-		t.Fatalf("len(conflicts) = %d, want 1", len(conflicts))
+	pushed, err := testStore.GetIssue(ctx, local.ID)
+	if err != nil {
+		t.Fatalf("GetIssue(local): %v", err)
+	}
+	if pushed == nil || pushed.ExternalRef == nil {
+		t.Fatal("expected pushed local issue to gain an external_ref")
+	}
+	if got := *pushed.ExternalRef; got != server.issueURL(2) {
+		t.Errorf("pushed.ExternalRef = %q, want %q", got, server.issueURL(2))
 	}
 
-	// Verify conflict details
-	if conflicts[0].IssueID != "bd-local-1" {
-		t.Errorf("conflict.IssueID = %q, want %q", conflicts[0].IssueID, "bd-local-1")
+	createRequests := server.createRequestsSnapshot()
+	if len(createRequests) != 1 {
+		t.Fatalf("create request count = %d, want 1", len(createRequests))
 	}
-	if conflicts[0].GitLabIID != 1 {
-		t.Errorf("conflict.GitLabIID = %d, want 1", conflicts[0].GitLabIID)
+	if createRequests[0].Title != local.Title {
+		t.Errorf("createRequests[0].Title = %q, want %q", createRequests[0].Title, local.Title)
+	}
+	if createRequests[0].Description != local.Description {
+		t.Errorf("createRequests[0].Description = %q, want %q", createRequests[0].Description, local.Description)
+	}
+	if !hasString(createRequests[0].Labels, "type::task") {
+		t.Errorf("createRequests[0].Labels missing %q: %v", "type::task", createRequests[0].Labels)
+	}
+	if !hasString(createRequests[0].Labels, "priority::medium") {
+		t.Errorf("createRequests[0].Labels missing %q: %v", "priority::medium", createRequests[0].Labels)
 	}
 
-	// Verify GitLab is newer
-	if !conflicts[0].GitLabUpdated.After(conflicts[0].LocalUpdated) {
-		t.Error("Expected GitLab timestamp to be after local timestamp")
+	if server.updateRequestCount() != 0 {
+		t.Errorf("unexpected GitLab update calls: got %d, want 0", server.updateRequestCount())
+	}
+
+	issues, err := testStore.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("SearchIssues(): %v", err)
+	}
+	if len(issues) != 2 {
+		t.Errorf("len(issues) = %d, want 2", len(issues))
+	}
+
+	lastSync, err := testStore.GetConfig(ctx, "gitlab.last_sync")
+	if err != nil {
+		t.Fatalf("GetConfig(gitlab.last_sync): %v", err)
+	}
+	if lastSync == "" {
+		t.Fatal("expected gitlab.last_sync to be recorded")
 	}
 }
 
-// TestIncrementalSync verifies that incremental sync respects last_sync timestamp.
-func TestIncrementalSync(t *testing.T) {
-	fetchCount := int32(0)
+func TestGitLabSyncCommandIncrementalPullOnly(t *testing.T) {
+	initialCreatedAt := time.Date(2026, time.February, 1, 9, 0, 0, 0, time.UTC)
+	initialUpdatedAt := initialCreatedAt.Add(30 * time.Minute)
+	server := newGitLabSyncTestServer(t, gitlab.Issue{
+		ID:          201,
+		IID:         1,
+		ProjectID:   123,
+		Title:       "Existing remote issue",
+		Description: "Available before first sync",
+		State:       "opened",
+		CreatedAt:   &initialCreatedAt,
+		UpdatedAt:   &initialUpdatedAt,
+	})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&fetchCount, 1)
+	ctx, testStore := setupGitLabSyncIntegration(t, server.URL())
+	gitlabSyncPullOnly = true
 
-		// Check if updated_after parameter is present
-		updatedAfter := r.URL.Query().Get("updated_after")
+	firstOutput := runGitLabSyncForTest(t)
+	if !strings.Contains(firstOutput, "Pulled 1 issues") {
+		t.Fatalf("first sync output missing pull summary: %q", firstOutput)
+	}
 
-		w.Header().Set("Content-Type", "application/json")
+	firstQueries := server.listQueriesSnapshot()
+	if len(firstQueries) != 1 {
+		t.Fatalf("list query count after first sync = %d, want 1", len(firstQueries))
+	}
+	if got := firstQueries[0].Get("updated_after"); got != "" {
+		t.Errorf("first sync updated_after = %q, want empty", got)
+	}
 
-		if updatedAfter != "" {
-			// Incremental sync - return only new issues
-			createdAt := time.Now()
-			json.NewEncoder(w).Encode([]gitlab.Issue{
-				{
-					ID:        200,
-					IID:       10,
-					ProjectID: 123,
-					Title:     "New issue since last sync",
-					State:     "opened",
-					CreatedAt: &createdAt,
-					UpdatedAt: &createdAt,
-					WebURL:    "https://gitlab.example.com/project/-/issues/10",
-				},
-			})
-		} else {
-			// Full sync - return all issues
-			createdAt := time.Now().Add(-48 * time.Hour)
-			updatedAt := time.Now().Add(-24 * time.Hour)
-			json.NewEncoder(w).Encode([]gitlab.Issue{
-				{
-					ID:        100,
-					IID:       1,
-					ProjectID: 123,
-					Title:     "Old issue",
-					State:     "opened",
-					CreatedAt: &createdAt,
-					UpdatedAt: &updatedAt,
-					WebURL:    "https://gitlab.example.com/project/-/issues/1",
-				},
-			})
-		}
-	}))
-	defer server.Close()
-
-	ctx := context.Background()
-	testStore, err := dolt.New(ctx, &dolt.Config{Path: ":memory:"})
+	lastSync, err := testStore.GetConfig(ctx, "gitlab.last_sync")
 	if err != nil {
-		t.Skipf("skipping: Dolt server not available: %v", err)
+		t.Fatalf("GetConfig(gitlab.last_sync): %v", err)
 	}
-	defer testStore.Close()
-
-	if err := testStore.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		t.Fatalf("Failed to set prefix: %v", err)
+	lastSyncTime, err := time.Parse(time.RFC3339, lastSync)
+	if err != nil {
+		t.Fatalf("Parse(last_sync): %v", err)
 	}
 
-	oldStore := store
-	store = testStore
-	defer func() { store = oldStore }()
-
-	client := gitlab.NewClient("test-token", server.URL, "123")
-	mappingConfig := gitlab.DefaultMappingConfig()
-
-	// First sync - should be full sync
-	t.Run("FullSync", func(t *testing.T) {
-		stats, err := doPullFromGitLab(ctx, client, mappingConfig, false, "all", nil)
-		if err != nil {
-			t.Fatalf("doPullFromGitLab() error = %v", err)
-		}
-
-		if stats.Incremental {
-			t.Error("First sync should not be incremental")
-		}
-		if stats.Created != 1 {
-			t.Errorf("stats.Created = %d, want 1", stats.Created)
-		}
+	secondCreatedAt := lastSyncTime.Add(time.Minute)
+	secondUpdatedAt := secondCreatedAt.Add(time.Minute)
+	server.addIssue(gitlab.Issue{
+		ID:          202,
+		IID:         2,
+		ProjectID:   123,
+		Title:       "New remote issue",
+		Description: "Added after first sync",
+		State:       "opened",
+		CreatedAt:   &secondCreatedAt,
+		UpdatedAt:   &secondUpdatedAt,
 	})
 
-	// Second sync - should be incremental (uses stored gitlab.last_sync)
-	t.Run("IncrementalSync", func(t *testing.T) {
-		stats, err := doPullFromGitLab(ctx, client, mappingConfig, false, "all", nil)
-		if err != nil {
-			t.Fatalf("doPullFromGitLab() error = %v", err)
-		}
-
-		if !stats.Incremental {
-			t.Error("Second sync should be incremental")
-		}
-		if stats.SyncedSince == "" {
-			t.Error("SyncedSince should be set for incremental sync")
-		}
-	})
-
-	// Verify both requests were made
-	if atomic.LoadInt32(&fetchCount) != 2 {
-		t.Errorf("fetchCount = %d, want 2", fetchCount)
+	secondOutput := runGitLabSyncForTest(t)
+	if !strings.Contains(secondOutput, "Pulled 1 issues") {
+		t.Fatalf("second sync output missing pull summary: %q", secondOutput)
 	}
+
+	queries := server.listQueriesSnapshot()
+	if len(queries) != 2 {
+		t.Fatalf("list query count after second sync = %d, want 2", len(queries))
+	}
+	if got := queries[1].Get("updated_after"); got == "" {
+		t.Fatal("expected incremental sync request to include updated_after")
+	}
+
+	imported, err := testStore.GetIssueByExternalRef(ctx, server.issueURL(2))
+	if err != nil {
+		t.Fatalf("GetIssueByExternalRef(new remote): %v", err)
+	}
+	if imported == nil {
+		t.Fatal("expected incremental sync to import the new remote issue")
+	}
+
+	issues, err := testStore.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("SearchIssues(): %v", err)
+	}
+	if len(issues) != 2 {
+		t.Errorf("len(issues) = %d, want 2", len(issues))
+	}
+
+	if createCount := len(server.createRequestsSnapshot()); createCount != 0 {
+		t.Errorf("create request count = %d, want 0", createCount)
+	}
+}
+
+func hasString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

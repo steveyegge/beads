@@ -226,6 +226,9 @@ Force: Delete and orphan dependents
 
 // deleteIssue removes an issue from the database.
 func deleteIssue(ctx context.Context, issueID string) error {
+	if store == nil {
+		return fmt.Errorf("delete operation not supported by this storage backend")
+	}
 	return store.DeleteIssue(ctx, issueID)
 }
 
