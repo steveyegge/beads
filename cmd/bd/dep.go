@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -14,14 +13,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
-
-// getBeadsDir returns the .beads directory path, derived from the global dbPath.
-func getBeadsDir() string {
-	if dbPath != "" {
-		return filepath.Dir(dbPath)
-	}
-	return ""
-}
 
 // resolveIDWithRouting resolves a partial issue ID using prefix-based routing.
 // It returns the resolved full ID and the store that contains the issue.
