@@ -141,6 +141,10 @@ func buildIssueFilterClauses(query string, filter types.IssueFilter, tables filt
 		whereClauses = append(whereClauses, "id LIKE ?")
 		args = append(args, filter.IDPrefix+"%")
 	}
+	for _, substr := range filter.ExcludeIDSubstrings {
+		whereClauses = append(whereClauses, "id NOT LIKE ?")
+		args = append(args, "%"+substr+"%")
+	}
 	if filter.SpecIDPrefix != "" {
 		whereClauses = append(whereClauses, "spec_id LIKE ?")
 		args = append(args, filter.SpecIDPrefix+"%")

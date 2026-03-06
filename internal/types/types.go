@@ -976,6 +976,9 @@ type IssueFilter struct {
 	// Type exclusion (for hiding internal types like gates)
 	ExcludeTypes []IssueType // Exclude issues with these types
 
+	// ID substring exclusion (for hiding wisps from default list)
+	ExcludeIDSubstrings []string // Exclude issues whose ID contains these substrings (e.g. "-wisp-")
+
 	// Time-based scheduling filters (GH#820)
 	Deferred    bool       // Filter issues with defer_until set (any value)
 	DeferAfter  *time.Time // Filter issues with defer_until > this time
