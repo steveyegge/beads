@@ -354,10 +354,9 @@ var configValidateCmd = &cobra.Command{
 	Long: `Validate sync-related configuration settings.
 
 Checks:
-  - sync.mode is a valid value (dolt-native)
   - federation.sovereignty is valid (T1, T2, T3, T4, or empty)
-  - federation.remote is set when sync.mode requires it
-  - Remote URL format is valid (dolthub://, gs://, s3://, file://)
+  - federation.remote is set (required for Dolt sync)
+  - Remote URL format is valid (dolthub://, gs://, s3://, file://, git SSH)
   - routing.mode is valid (auto, maintainer, contributor, explicit)
 
 Examples:

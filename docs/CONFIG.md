@@ -32,9 +32,6 @@ Tool-level settings you can configure:
 |---------|------|---------------------|---------|-------------|
 | `json` | `--json` | `BD_JSON` | `false` | Output in JSON format |
 | `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in bd sync |
-| `sync.mode` | - | `BD_SYNC_MODE` | `git-portable` | Sync mode (see below) |
-| `sync.export_on` | - | `BD_SYNC_EXPORT_ON` | `push` | When to export: `push`, `change` |
-| `sync.import_on` | - | `BD_SYNC_IMPORT_ON` | `pull` | When to import: `pull`, `change` |
 | `federation.remote` | - | `BD_FEDERATION_REMOTE` | (none) | Dolt remote URL for federation |
 | `federation.sovereignty` | - | `BD_FEDERATION_SOVEREIGNTY` | (none) | Data sovereignty tier: `T1`, `T2`, `T3`, `T4` |
 | `dolt.auto-commit` | `--dolt-auto-commit` | `BD_DOLT_AUTO_COMMIT` | `on` | (Dolt backend) Automatically create a Dolt commit after successful write commands |
@@ -146,22 +143,11 @@ To override, set `BD_ACTOR` in your shell profile:
 export BD_ACTOR="my-github-handle"
 ```
 
-### Sync Mode Configuration
+### Federation Configuration
 
-The sync mode controls how beads synchronizes data with git and/or Dolt remotes.
+Beads uses Dolt-native sync exclusively. Dolt remotes handle sync directly with cell-level merge. Manual `bd import` / `bd export` are available for migration and portability.
 
-#### Sync Mode
-
-Beads uses `dolt-native` sync mode exclusively. Dolt remotes handle sync directly with cell-level merge. Manual `bd import` / `bd export` are available for migration and portability.
-
-#### Sync Triggers
-
-Control when sync operations occur:
-
-- `sync.export_on`: `push` (default) or `change`
-- `sync.import_on`: `pull` (default) or `change`
-
-#### Federation Configuration
+#### Federation Settings
 
 - `federation.remote`: Dolt remote URL (e.g., `dolthub://org/beads`, `gs://bucket/beads`, `s3://bucket/beads`)
 - `federation.sovereignty`: Data sovereignty tier:
@@ -170,15 +156,10 @@ Control when sync operations occur:
   - `T3`: Provider sovereignty - data with trusted cloud provider
   - `T4`: No restrictions - data can be anywhere
 
-#### Example Sync Configuration
+#### Example Federation Configuration
 
 ```yaml
 # .beads/config.yaml
-sync:
-  export_on: push       # push | change
-  import_on: pull       # pull | change
-
-# Optional: Dolt federation
 federation:
   remote: dolthub://myorg/beads
   sovereignty: T2
