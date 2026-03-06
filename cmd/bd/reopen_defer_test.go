@@ -6,7 +6,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"os/exec"
 	"testing"
 )
@@ -24,33 +23,33 @@ func TestCLI_ReopenClearsDeferUntil(t *testing.T) {
 	id := createExecTestIssue(t, tmpDir, "Deferred then reopened")
 
 	// Defer the issue to far future
-	cmd := exec.Command(testBD, "update", id, "--defer", "+8760h") // 1 year
+	cmd := exec.Command(ensureTestBD(t), "update", id, "--defer", "+8760h") // 1 year
 	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+	cmd.Env = cliIntegrationEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("defer failed: %v\n%s", err, out)
 	}
 
 	// Close it
-	cmd = exec.Command(testBD, "close", id)
+	cmd = exec.Command(ensureTestBD(t), "close", id)
 	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+	cmd.Env = cliIntegrationEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("close failed: %v\n%s", err, out)
 	}
 
 	// Reopen it
-	cmd = exec.Command(testBD, "reopen", id)
+	cmd = exec.Command(ensureTestBD(t), "reopen", id)
 	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+	cmd.Env = cliIntegrationEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("reopen failed: %v\n%s", err, out)
 	}
 
 	// Verify defer_until is cleared
-	cmd = exec.Command(testBD, "show", id, "--json")
+	cmd = exec.Command(ensureTestBD(t), "show", id, "--json")
 	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+	cmd.Env = cliIntegrationEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("show failed: %v\n%s", err, out)

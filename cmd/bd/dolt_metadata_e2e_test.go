@@ -22,31 +22,19 @@ func TestE2E_InitDoltMetadataRoundtrip(t *testing.T) {
 		t.Skip("dolt metadata e2e test not supported on windows")
 	}
 
-	tmpDir := createTempDirWithCleanup(t)
-
-	// Set up a real git repo so repo_id can be computed
-	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
-		t.Fatalf("git init failed: %v", err)
-	}
-	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@example.com")
-	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test User")
+	tmpDir := newCLIIntegrationRepo(t)
 	_ = runCommandInDir(tmpDir, "git", "config", "remote.origin.url", "https://github.com/test/repo.git")
 
 	socketPath := filepath.Join(tmpDir, ".beads", "bd.sock")
-	env := append(os.Environ(),
-		"BEADS_TEST_MODE=1",
+	env := cliIntegrationEnvWithNoDaemon("0",
 		"BEADS_AUTO_START_DAEMON=true",
-		"BEADS_NO_DAEMON=0",
 		"BD_SOCKET="+socketPath,
 	)
 
 	// Init dolt backend
 	initOut, initErr := runBDExecAllowErrorWithEnv(t, tmpDir, env, "init", "--backend", "dolt", "--prefix", "test", "--quiet")
 	if initErr != nil {
-		lower := strings.ToLower(initOut)
-		if strings.Contains(lower, "dolt") && (strings.Contains(lower, "not supported") || strings.Contains(lower, "not available") || strings.Contains(lower, "unknown")) {
-			t.Skipf("dolt backend not available: %s", initOut)
-		}
+		skipIfDoltBackendUnavailable(t, initOut)
 		t.Fatalf("bd init --backend dolt failed: %v\n%s", initErr, initOut)
 	}
 
@@ -99,31 +87,19 @@ func TestE2E_DoctorFixMetadataRoundtrip(t *testing.T) {
 		t.Skip("dolt metadata e2e test not supported on windows")
 	}
 
-	tmpDir := createTempDirWithCleanup(t)
-
-	// Set up a real git repo so repo_id can be computed
-	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
-		t.Fatalf("git init failed: %v", err)
-	}
-	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@example.com")
-	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test User")
+	tmpDir := newCLIIntegrationRepo(t)
 	_ = runCommandInDir(tmpDir, "git", "config", "remote.origin.url", "https://github.com/test/repo.git")
 
 	socketPath := filepath.Join(tmpDir, ".beads", "bd.sock")
-	env := append(os.Environ(),
-		"BEADS_TEST_MODE=1",
+	env := cliIntegrationEnvWithNoDaemon("0",
 		"BEADS_AUTO_START_DAEMON=true",
-		"BEADS_NO_DAEMON=0",
 		"BD_SOCKET="+socketPath,
 	)
 
 	// Init dolt backend (which now writes metadata via Phase 1)
 	initOut, initErr := runBDExecAllowErrorWithEnv(t, tmpDir, env, "init", "--backend", "dolt", "--prefix", "test", "--quiet")
 	if initErr != nil {
-		lower := strings.ToLower(initOut)
-		if strings.Contains(lower, "dolt") && (strings.Contains(lower, "not supported") || strings.Contains(lower, "not available") || strings.Contains(lower, "unknown")) {
-			t.Skipf("dolt backend not available: %s", initOut)
-		}
+		skipIfDoltBackendUnavailable(t, initOut)
 		t.Fatalf("bd init --backend dolt failed: %v\n%s", initErr, initOut)
 	}
 
@@ -139,7 +115,7 @@ func TestE2E_DoctorFixMetadataRoundtrip(t *testing.T) {
 
 	// Delete metadata to simulate a pre-Phase-1 database
 	sqlOut, sqlErr := runBDExecAllowErrorWithEnv(t, tmpDir, env, "sql",
-		"DELETE FROM metadata WHERE key IN ('bd_version', 'repo_id', 'clone_id')")
+		"DELETE FROM metadata WHERE `key` IN ('bd_version', 'repo_id', 'clone_id')")
 	if sqlErr != nil {
 		t.Fatalf("bd sql DELETE failed: %v\n%s", sqlErr, sqlOut)
 	}
@@ -182,31 +158,19 @@ func TestE2E_MigrateDoltMetadata(t *testing.T) {
 		t.Skip("dolt metadata e2e test not supported on windows")
 	}
 
-	tmpDir := createTempDirWithCleanup(t)
-
-	// Set up a real git repo so repo_id can be computed
-	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
-		t.Fatalf("git init failed: %v", err)
-	}
-	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@example.com")
-	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test User")
+	tmpDir := newCLIIntegrationRepo(t)
 	_ = runCommandInDir(tmpDir, "git", "config", "remote.origin.url", "https://github.com/test/repo.git")
 
 	socketPath := filepath.Join(tmpDir, ".beads", "bd.sock")
-	env := append(os.Environ(),
-		"BEADS_TEST_MODE=1",
+	env := cliIntegrationEnvWithNoDaemon("0",
 		"BEADS_AUTO_START_DAEMON=true",
-		"BEADS_NO_DAEMON=0",
 		"BD_SOCKET="+socketPath,
 	)
 
 	// Init dolt backend (writes all metadata via Phase 1)
 	initOut, initErr := runBDExecAllowErrorWithEnv(t, tmpDir, env, "init", "--backend", "dolt", "--prefix", "test", "--quiet")
 	if initErr != nil {
-		lower := strings.ToLower(initOut)
-		if strings.Contains(lower, "dolt") && (strings.Contains(lower, "not supported") || strings.Contains(lower, "not available") || strings.Contains(lower, "unknown")) {
-			t.Skipf("dolt backend not available: %s", initOut)
-		}
+		skipIfDoltBackendUnavailable(t, initOut)
 		t.Fatalf("bd init --backend dolt failed: %v\n%s", initErr, initOut)
 	}
 
@@ -223,7 +187,7 @@ func TestE2E_MigrateDoltMetadata(t *testing.T) {
 	// Delete repo_id and clone_id to simulate a pre-Phase-3 database
 	// (bd_version is set by init, but identity fields are missing)
 	sqlOut, sqlErr := runBDExecAllowErrorWithEnv(t, tmpDir, env, "sql",
-		"DELETE FROM metadata WHERE key IN ('repo_id', 'clone_id')")
+		"DELETE FROM metadata WHERE `key` IN ('repo_id', 'clone_id')")
 	if sqlErr != nil {
 		t.Fatalf("bd sql DELETE failed: %v\n%s", sqlErr, sqlOut)
 	}

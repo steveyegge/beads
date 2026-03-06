@@ -23,8 +23,7 @@ func TestInitCancel_E2E(t *testing.T) {
 		t.Skip("skipping SIGINT E2E test on Windows")
 	}
 
-	tmpDir := createTempDirWithCleanup(t)
-	runGitCmd(t, tmpDir, "init", "-b", "main")
+	tmpDir := newCLIIntegrationRepo(t)
 
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
@@ -38,7 +37,7 @@ func TestInitCancel_E2E(t *testing.T) {
 	}
 	defer func() { _ = stdoutR.Close() }()
 
-	cmd := exec.Command(testBD, "init", "--prefix", "test", "--contributor")
+	cmd := exec.Command(ensureTestBD(t), "init", "--prefix", "test", "--database", uniqueTestDBName(t), "--contributor")
 	cmd.Dir = tmpDir
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW

@@ -6,7 +6,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -60,9 +59,9 @@ func TestCLI_ReparentDottedIDExcludesOldParent(t *testing.T) {
 // createExecTestIssueWithID creates an issue with an explicit ID.
 func createExecTestIssueWithID(t *testing.T, tmpDir, title, id string) string {
 	t.Helper()
-	cmd := exec.Command(testBD, "create", title, "-p", "1", "--id", id, "--json")
+	cmd := exec.Command(ensureTestBD(t), "create", title, "-p", "1", "--id", id, "--json")
 	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+	cmd.Env = cliIntegrationEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("create with --id %s failed: %v\n%s", id, err, out)
@@ -81,9 +80,9 @@ func createExecTestIssueWithID(t *testing.T, tmpDir, title, id string) string {
 // runBD runs a bd command and fails the test on error.
 func runBD(t *testing.T, tmpDir string, args ...string) []byte {
 	t.Helper()
-	cmd := exec.Command(testBD, args...)
+	cmd := exec.Command(ensureTestBD(t), args...)
 	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+	cmd.Env = cliIntegrationEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("bd %s failed: %v\n%s", strings.Join(args, " "), err, out)
@@ -94,9 +93,9 @@ func runBD(t *testing.T, tmpDir string, args ...string) []byte {
 // assertParentLists checks whether childID appears in `bd list --parent parentID`.
 func assertParentLists(t *testing.T, tmpDir, parentID, childID string, shouldAppear bool, msg string) {
 	t.Helper()
-	cmd := exec.Command(testBD, "list", "--parent", parentID, "--json")
+	cmd := exec.Command(ensureTestBD(t), "list", "--parent", parentID, "--json")
 	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+	cmd.Env = cliIntegrationEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if shouldAppear {

@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 func TestDoctorCheckHealthReportsVersionMismatchOnRepoLocalPort(t *testing.T) {
@@ -18,25 +21,18 @@ func TestDoctorCheckHealthReportsVersionMismatchOnRepoLocalPort(t *testing.T) {
 		t.Skip("doctor health integration test not supported on windows")
 	}
 
-	tmpDir := createTempDirWithCleanup(t)
-
-	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
-		t.Fatalf("git init failed: %v", err)
+	tmpDir := newCLIIntegrationRepo(t)
+	serverPort, err := testutil.FindFreePort()
+	if err != nil {
+		t.Fatalf("FindFreePort: %v", err)
 	}
-	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@example.com")
-	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test User")
-
-	env := []string{
-		"BEADS_TEST_MODE=1",
-		"BEADS_NO_DAEMON=1",
-	}
+	env := cliIntegrationEnv(
+		"BEADS_DOLT_SERVER_PORT=" + strconv.Itoa(serverPort),
+	)
 
 	initOut, initErr := runBDExecAllowErrorWithEnv(t, tmpDir, env, "init", "--backend", "dolt", "--prefix", "test", "--quiet")
 	if initErr != nil {
-		lower := strings.ToLower(initOut)
-		if strings.Contains(lower, "dolt") && (strings.Contains(lower, "not supported") || strings.Contains(lower, "not available") || strings.Contains(lower, "unknown")) {
-			t.Skipf("dolt backend not available: %s", initOut)
-		}
+		skipIfDoltBackendUnavailable(t, initOut)
 		t.Fatalf("bd init --backend dolt failed: %v\n%s", initErr, initOut)
 	}
 

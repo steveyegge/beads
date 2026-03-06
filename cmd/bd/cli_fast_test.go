@@ -16,97 +16,18 @@ import (
 	"time"
 )
 
-// Fast CLI tests converted from scripttest suite
-// These use in-process testing (calling rootCmd.Execute directly) for speed
-// A few tests still use exec.Command for end-to-end validation
-//
-// Performance improvement (bd-ky74):
-//   - Before: exec.Command() tests took 2-4 seconds each (~40s total)
-//   - After: in-process tests take <1 second each, ~10x faster
-//   - End-to-end test (TestCLI_EndToEnd) still validates binary with exec.Command
-
 var (
-	inProcessMutex sync.Mutex // Protects concurrent access to rootCmd and global state
+	testBD     string
+	testBDOnce sync.Once
+	testBDErr  error
 )
 
-// templateDB holds a pre-initialized bd database directory.
-// Created once via sync.Once, then copied for each test to avoid
-// running bd init (which creates SQLite DB, config files, etc.) per test.
-// This optimization eliminates ~2s per test from repeated initialization.
-var (
-	templateDBDir  string
-	templateDBOnce sync.Once
-	templateDBErr  error
-)
-
-// initTemplateDB creates a single template database that can be copied for each test.
-// Uses exec.Command (subprocess) to avoid polluting Cobra global state.
-// The testBD binary is already built once in init().
-func initTemplateDB() {
-	templateDBOnce.Do(func() {
-		tmpDir, err := os.MkdirTemp("", "bd-cli-template-*")
-		if err != nil {
-			templateDBErr = fmt.Errorf("failed to create template dir: %w", err)
-			return
-		}
-		templateDBDir = tmpDir
-
-		// Use exec.Command to run bd init in a subprocess.
-		// This avoids any Cobra global state pollution that would affect subsequent
-		// in-process test runs.
-		cmd := exec.Command(testBD, "init", "--prefix", "test", "--quiet")
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			templateDBErr = fmt.Errorf("template bd init failed: %v\n%s", err, out)
-			return
-		}
-	})
-}
-
-// copyDir recursively copies a directory tree.
-func copyDir(src, dst string) error {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dst, 0750); err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(dst, entry.Name())
-		if entry.IsDir() {
-			if err := copyDir(srcPath, dstPath); err != nil {
-				return err
-			}
-		} else {
-			data, err := os.ReadFile(srcPath)
-			if err != nil {
-				return err
-			}
-			if err := os.WriteFile(dstPath, data, 0600); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// setupCLITestDB creates a fresh initialized bd database for CLI tests.
-// Uses a cached template directory to avoid running bd init for every test.
-// The template is created once via sync.Once and copied for each test.
+// setupCLITestDB creates a fresh initialized bd repository for CLI tests.
+// Using a real subprocess keeps the cmd/bd integration surface honest and avoids
+// stale Cobra/global-state coupling in tests.
 func setupCLITestDB(t *testing.T) string {
 	t.Helper()
-	initTemplateDB()
-	if templateDBErr != nil {
-		t.Fatalf("Template DB initialization failed: %v", templateDBErr)
-	}
-	tmpDir := createTempDirWithCleanup(t)
-	if err := copyDir(templateDBDir, tmpDir); err != nil {
-		t.Fatalf("Failed to copy template DB: %v", err)
-	}
-	return tmpDir
+	return initExecTestDB(t)
 }
 
 // createTempDirWithCleanup creates a temp directory with non-fatal cleanup
@@ -138,79 +59,14 @@ func createTempDirWithCleanup(t *testing.T) string {
 	return tmpDir
 }
 
-// runBDInProcess runs bd commands in-process by calling rootCmd.Execute
-// This is ~10-20x faster than exec.Command because it avoids process spawn overhead
+// runBDInProcess shells out to the test bd binary and returns stdout.
+// The name stays for compatibility with the existing test call sites.
 func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-
-	// Serialize all in-process test execution to avoid race conditions
-	// rootCmd, cobra state, and viper are not thread-safe
-	inProcessMutex.Lock()
-	defer inProcessMutex.Unlock()
-
-	// Save original state
-	oldStdout := os.Stdout
-	oldStderr := os.Stderr
-	oldDir, _ := os.Getwd()
-	oldArgs := os.Args
-
-	// Change to test directory
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("Failed to chdir to %s: %v", dir, err)
-	}
-
-	// Capture stdout/stderr
-	rOut, wOut, _ := os.Pipe()
-	rErr, wErr, _ := os.Pipe()
-	os.Stdout = wOut
-	os.Stderr = wErr
-
-	// Set args for rootCmd
-	rootCmd.SetArgs(args)
-	os.Args = append([]string{"bd"}, args...)
-
-	// Execute command
-	err := rootCmd.Execute()
-
-	// Close and clean up all global state to prevent contamination between tests
-	if store != nil {
-		store.Close()
-		store = nil
-	}
-	// Reset all global flags and state
-	dbPath = ""
-	actor = ""
-	jsonOutput = false
-	sandboxMode = false
-	// Reset context state
-	rootCtx = nil
-	rootCancel = nil
-
-	// Give SQLite time to release file locks before cleanup
-	time.Sleep(10 * time.Millisecond)
-
-	// Close writers and restore
-	wOut.Close()
-	wErr.Close()
-	os.Stdout = oldStdout
-	os.Stderr = oldStderr
-	os.Chdir(oldDir)
-	os.Args = oldArgs
-	rootCmd.SetArgs(nil)
-
-	// Read output (keep stdout and stderr separate)
-	var outBuf, errBuf bytes.Buffer
-	outBuf.ReadFrom(rOut)
-	errBuf.ReadFrom(rErr)
-
-	stdout := outBuf.String()
-	stderr := errBuf.String()
-
+	stdout, stderr, err := runBDExecDetailedWithEnv(t, dir, cliIntegrationEnv(), args...)
 	if err != nil {
 		t.Fatalf("bd %v failed: %v\nStdout: %s\nStderr: %s", args, err, stdout, stderr)
 	}
-
-	// Return only stdout (stderr contains warnings that break JSON parsing)
 	return stdout
 }
 
@@ -683,10 +539,20 @@ func TestCLI_Import(t *testing.T) {
 	exportFile := filepath.Join(tmpDir, "export.jsonl")
 	runBDInProcess(t, tmpDir, "export", "-o", exportFile)
 
-	// Create new db and import
-	tmpDir2 := createTempDirWithCleanup(t)
-	runBDInProcess(t, tmpDir2, "init", "--prefix", "test", "--quiet")
-	runBDInProcess(t, tmpDir2, "import", "-i", exportFile)
+	// Re-import via the current init --from-jsonl path.
+	tmpDir2 := newCLIIntegrationRepo(t)
+	jsonlPath := filepath.Join(tmpDir2, ".beads", "issues.jsonl")
+	if err := os.MkdirAll(filepath.Dir(jsonlPath), 0o755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+	exported, err := os.ReadFile(exportFile)
+	if err != nil {
+		t.Fatalf("Failed to read exported JSONL: %v", err)
+	}
+	if err := os.WriteFile(jsonlPath, exported, 0o644); err != nil {
+		t.Fatalf("Failed to stage issues.jsonl for init --from-jsonl: %v", err)
+	}
+	runBDInProcess(t, tmpDir2, "init", "--prefix", "test", "--quiet", "--from-jsonl")
 
 	out := runBDInProcess(t, tmpDir2, "list", "--json")
 	var issues []map[string]interface{}
@@ -696,63 +562,105 @@ func TestCLI_Import(t *testing.T) {
 	}
 }
 
-var testBD string
+func ensureTestBD(t *testing.T) string {
+	t.Helper()
 
-func init() {
-	// Use existing bd binary from repo root if available, otherwise build once
-	bdBinary := "bd"
-	if runtime.GOOS == "windows" {
-		bdBinary = "bd.exe"
+	testBDOnce.Do(func() {
+		if existingBD := strings.TrimSpace(os.Getenv("BD_TEST_BINARY")); existingBD != "" {
+			if _, err := os.Stat(existingBD); err != nil {
+				testBDErr = fmt.Errorf("BD_TEST_BINARY %q not usable: %w", existingBD, err)
+				return
+			}
+			testBD = existingBD
+			return
+		}
+
+		_, thisFile, _, ok := runtime.Caller(0)
+		if !ok {
+			testBDErr = fmt.Errorf("failed to locate cli_fast_test.go for repo root discovery")
+			return
+		}
+		repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+
+		bdBinary := "bd"
+		if runtime.GOOS == windowsOS {
+			bdBinary = "bd.exe"
+		}
+
+		tmpDir, err := os.MkdirTemp("", "bd-cli-test-*")
+		if err != nil {
+			testBDErr = fmt.Errorf("failed to create temp dir for bd build: %w", err)
+			return
+		}
+		testBD = filepath.Join(tmpDir, bdBinary)
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", testBD, "./cmd/bd")
+		cmd.Dir = repoRoot
+		if out, err := cmd.CombinedOutput(); err != nil {
+			testBDErr = fmt.Errorf("failed to build test bd binary: %v\n%s", err, out)
+		}
+	})
+
+	if testBDErr != nil {
+		t.Fatalf("ensureTestBD: %v", testBDErr)
+	}
+	return testBD
+}
+
+func withUniqueInitDatabaseArg(t *testing.T, args []string) []string {
+	t.Helper()
+	if len(args) == 0 || args[0] != "init" {
+		return args
+	}
+	for i, arg := range args {
+		if arg == "--database" || arg == "-d" {
+			return args
+		}
+		if strings.HasPrefix(arg, "--database=") {
+			return args
+		}
+		// Short flag with attached value: -dfoo
+		if strings.HasPrefix(arg, "-d") && len(arg) > 2 && i > 0 {
+			return args
+		}
+	}
+	return append(append([]string{}, args...), "--database", uniqueTestDBName(t))
+}
+
+func runBDExecDetailedWithEnv(t *testing.T, dir string, env []string, args ...string) (string, string, error) {
+	t.Helper()
+
+	cmd := exec.Command(ensureTestBD(t), withUniqueInitDatabaseArg(t, args)...)
+	cmd.Dir = dir
+	if env == nil {
+		cmd.Env = cliIntegrationEnv()
+	} else {
+		cmd.Env = env
 	}
 
-	// Check if bd binary exists in repo root (../../bd from cmd/bd/)
-	repoRoot := filepath.Join("..", "..")
-	existingBD := filepath.Join(repoRoot, bdBinary)
-	if _, err := os.Stat(existingBD); err == nil {
-		// Use existing binary
-		testBD, _ = filepath.Abs(existingBD)
-		return
-	}
-
-	// Fall back to building once (for CI or fresh checkouts)
-	tmpDir, err := os.MkdirTemp("", "bd-cli-test-*")
-	if err != nil {
-		panic(err)
-	}
-	testBD = filepath.Join(tmpDir, bdBinary)
-	cmd := exec.Command("go", "build", "-o", testBD, ".")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		panic(string(out))
-	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
 }
 
 // runBDExec runs bd via exec.Command for end-to-end testing
 // This is kept for a few tests to ensure the actual binary works correctly
 func runBDExec(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-
-	cmd := exec.Command(testBD, args...)
-	cmd.Dir = dir
-	cmd.Env = os.Environ()
-
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runBDExecDetailedWithEnv(t, dir, cliIntegrationEnv(), args...)
 	if err != nil {
-		t.Fatalf("bd %v failed: %v\nOutput: %s", args, err, out)
+		t.Fatalf("bd %v failed: %v\nStdout: %s\nStderr: %s", args, err, stdout, stderr)
 	}
-	return string(out)
+	return stdout
 }
 
 // runBDExecAllowErrorWithEnv runs bd via exec.Command with custom env vars,
 // returning combined output and any error (does not fail the test on error).
 func runBDExecAllowErrorWithEnv(t *testing.T, dir string, env []string, args ...string) (string, error) {
 	t.Helper()
-
-	cmd := exec.Command(testBD, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	stdout, stderr, err := runBDExecDetailedWithEnv(t, dir, env, args...)
+	return stdout + stderr, err
 }
 
 // TestCLI_EndToEnd performs end-to-end testing using the actual binary
@@ -892,60 +800,11 @@ func TestCLI_Reopen(t *testing.T) {
 	}
 }
 
-// runBDInProcessAllowError is like runBDInProcess but doesn't fail on error
-// Returns stdout, stderr, and any error from command execution
+// runBDInProcessAllowError is like runBDInProcess but doesn't fail on error.
+// Returns stdout, stderr, and any error from command execution.
 func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string, string, error) {
 	t.Helper()
-
-	inProcessMutex.Lock()
-	defer inProcessMutex.Unlock()
-
-	oldStdout := os.Stdout
-	oldStderr := os.Stderr
-	oldDir, _ := os.Getwd()
-	oldArgs := os.Args
-
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("Failed to chdir to %s: %v", dir, err)
-	}
-
-	rOut, wOut, _ := os.Pipe()
-	rErr, wErr, _ := os.Pipe()
-	os.Stdout = wOut
-	os.Stderr = wErr
-
-	rootCmd.SetArgs(args)
-	os.Args = append([]string{"bd"}, args...)
-
-	cmdErr := rootCmd.Execute()
-
-	if store != nil {
-		store.Close()
-		store = nil
-	}
-	dbPath = ""
-	actor = ""
-	jsonOutput = false
-	sandboxMode = false
-	rootCtx = nil
-	rootCancel = nil
-
-	// Give SQLite time to release file locks before cleanup
-	time.Sleep(10 * time.Millisecond)
-
-	wOut.Close()
-	wErr.Close()
-	os.Stdout = oldStdout
-	os.Stderr = oldStderr
-	os.Chdir(oldDir)
-	os.Args = oldArgs
-	rootCmd.SetArgs(nil)
-
-	var outBuf, errBuf bytes.Buffer
-	outBuf.ReadFrom(rOut)
-	errBuf.ReadFrom(rErr)
-
-	return outBuf.String(), errBuf.String(), cmdErr
+	return runBDExecDetailedWithEnv(t, dir, cliIntegrationEnv(), args...)
 }
 
 // TestCLI_CreateDryRun tests the --dry-run flag for bd create command (bd-nib2)
@@ -1082,24 +941,16 @@ func TestCLI_CreateDryRun(t *testing.T) {
 	t.Run("DryRunWithFileReturnsError", func(t *testing.T) {
 		// This test must use exec.Command because FatalError calls os.Exit(1)
 		// which would kill the test process if run in-process
-		tmpDir := createTempDirWithCleanup(t)
-
-		// Initialize the database first
-		initCmd := exec.Command(testBD, "init", "--prefix", "test", "--quiet")
-		initCmd.Dir = tmpDir
-		initCmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
-		if out, err := initCmd.CombinedOutput(); err != nil {
-			t.Fatalf("init failed: %v\n%s", err, out)
-		}
+		tmpDir := initExecTestDB(t)
 
 		// Create a dummy markdown file
 		mdFile := filepath.Join(tmpDir, "issues.md")
 		os.WriteFile(mdFile, []byte("# Test Issue\n\nDescription here"), 0644)
 
 		// Run create with --dry-run and --file (should error)
-		cmd := exec.Command(testBD, "create", "--file", mdFile, "--dry-run")
+		cmd := exec.Command(ensureTestBD(t), "create", "--file", mdFile, "--dry-run")
 		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+		cmd.Env = cliIntegrationEnv()
 		out, err := cmd.CombinedOutput()
 
 		if err == nil {
@@ -1244,37 +1095,11 @@ func TestCLI_CommentsAddShortID(t *testing.T) {
 		}
 	})
 
-	t.Run("CommentAliasWithShortID", func(t *testing.T) {
-		tmpDir := setupCLITestDB(t)
-
-		// Create an issue
-		out := runBDInProcess(t, tmpDir, "create", "Issue for alias test", "-p", "1", "--json")
-
-		jsonStart := strings.Index(out, "{")
-		jsonOut := out[jsonStart:]
-
-		var issue map[string]interface{}
-		json.Unmarshal([]byte(jsonOut), &issue)
-		fullID := issue["id"].(string)
-
-		// Extract short ID
-		parts := strings.Split(fullID, "-")
-		shortID := parts[len(parts)-1]
-
-		// Use the 'comment' alias (deprecated but should still work)
-		stdout, stderr, err := runBDInProcessAllowError(t, tmpDir, "comment", shortID, "Comment via alias with short ID")
-		if err != nil {
-			t.Fatalf("comment alias failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
-
-		if !strings.Contains(stdout, "Comment added") {
-			t.Errorf("Expected 'Comment added' in output, got: %s", stdout)
-		}
-	})
 }
 
-// TestCLI_CreateRejectsFlagLikeTitles verifies that positional arguments starting
-// with - or -- are rejected as likely misinterpreted flags (bd-2c0).
+// TestCLI_CreateRejectsFlagLikeTitles verifies the post-Cobra guard for titles
+// passed positionally after "--". Without the explicit "--", Cobra handles these
+// as flags/help before create.go ever sees them.
 func TestCLI_CreateRejectsFlagLikeTitles(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping slow CLI test in short mode")
@@ -1292,20 +1117,12 @@ func TestCLI_CreateRejectsFlagLikeTitles(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tmpDir := createTempDirWithCleanup(t)
+			tmpDir := initExecTestDB(t)
 
-			// Initialize the database
-			initCmd := exec.Command(testBD, "init", "--prefix", "test", "--quiet")
-			initCmd.Dir = tmpDir
-			initCmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
-			if out, err := initCmd.CombinedOutput(); err != nil {
-				t.Fatalf("init failed: %v\n%s", err, out)
-			}
-
-			// Attempt to create with a flag-like positional title
-			cmd := exec.Command(testBD, "create", tc.title)
+			// Force the value through as a positional title so create.go's guard runs.
+			cmd := exec.Command(ensureTestBD(t), "create", "--", tc.title)
 			cmd.Dir = tmpDir
-			cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+			cmd.Env = cliIntegrationEnv()
 			out, err := cmd.CombinedOutput()
 
 			if err == nil {

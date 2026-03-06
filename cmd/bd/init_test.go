@@ -155,8 +155,8 @@ func TestInitCommand(t *testing.T) {
 					"*.db-journal",
 					"*.db-wal",
 					"*.db-shm",
-					"daemon.log",
-					"daemon.pid",
+					"dolt-server.log",
+					"dolt-server.pid",
 					"bd.sock",
 					"dolt/",
 					"dolt-access.lock",
@@ -1670,7 +1670,7 @@ func buildBDForInitTests(t *testing.T) string {
 			return
 		}
 		initTestBD = filepath.Join(tmpDir, bdBinary)
-		cmd := exec.Command("go", "build", "-o", initTestBD, ".")
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", initTestBD, ".")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			initTestBDErr = fmt.Errorf("go build failed: %v\n%s", err, out)
 		}
