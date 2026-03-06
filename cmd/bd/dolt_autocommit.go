@@ -15,8 +15,12 @@ import (
 // PersistentPostRun. Use this instead of calling store.RunInTransaction
 // directly from command handlers.
 func transact(ctx context.Context, s *dolt.DoltStore, commitMsg string, fn func(tx storage.Transaction) error) error {
-	err := s.RunInTransaction(ctx, commitMsg, fn)
-	if err == nil {
+	mode, err := getDoltAutoCommitMode()
+	if err != nil {
+		return err
+	}
+	err = s.RunInTransaction(ctx, commitMsg, fn)
+	if err == nil && mode == doltAutoCommitOn {
 		commandDidExplicitDoltCommit = true
 	}
 	return err

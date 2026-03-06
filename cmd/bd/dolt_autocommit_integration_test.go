@@ -119,7 +119,6 @@ func TestDoltAutoCommit_Batch_DefersCommit(t *testing.T) {
 	if runtime.GOOS == windowsOS {
 		t.Skip("dolt integration test not supported on windows")
 	}
-	t.Skip("TODO: enable with the Dolt write-commit mode runtime fix")
 
 	tmpDir := newCLIIntegrationRepo(t)
 	env := cliIntegrationEnv()
@@ -173,7 +172,6 @@ func TestDoltAutoCommit_Off_DoesNotAdvanceHead(t *testing.T) {
 	if runtime.GOOS == windowsOS {
 		t.Skip("dolt integration test not supported on windows")
 	}
-	t.Skip("TODO: enable with the Dolt write-commit mode runtime fix")
 
 	tmpDir := newCLIIntegrationRepo(t)
 	env := cliIntegrationEnv()

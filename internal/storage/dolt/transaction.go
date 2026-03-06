@@ -78,7 +78,7 @@ func (s *DoltStore) runDoltTransaction(ctx context.Context, commitMsg string, fn
 	// Create a Dolt version commit from the working set.
 	// Runs outside the transaction on a pool connection.
 	// "Nothing to commit" is benign (all writes to dolt-ignored tables).
-	if commitMsg != "" {
+	if commitMsg != "" && s.shouldInlineWriteCommit() {
 		_, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
 			commitMsg, s.commitAuthorString())
 		if err != nil && !isDoltNothingToCommit(err) {
