@@ -211,6 +211,15 @@ func isDoltProcess(pid int) bool {
 	return false
 }
 
+// isLocalHost returns true if the host refers to the local machine.
+func isLocalHost(host string) bool {
+	switch host {
+	case "", "127.0.0.1", "localhost", "::1", "[::1]":
+		return true
+	}
+	return false
+}
+
 // readPortFile reads the actual port from the port file, if it exists.
 // Returns 0 if the file doesn't exist or is unreadable.
 func readPortFile(beadsDir string) int {
@@ -244,6 +253,19 @@ func DefaultConfig(beadsDir string) *Config {
 		Host:     "127.0.0.1",
 	}
 
+	// Resolve host: env var → config.yaml → metadata.json → default.
+	// This must use the same priority chain as port resolution to avoid
+	// mismatched host:port combos (e.g., remote host + local port file port).
+	if h := os.Getenv("BEADS_DOLT_SERVER_HOST"); h != "" {
+		cfg.Host = h
+	} else if h := config.GetYamlConfig("dolt.host"); h != "" {
+		cfg.Host = h
+	} else if metaCfg, err := configfile.Load(beadsDir); err == nil && metaCfg != nil {
+		if metaCfg.DoltServerHost != "" {
+			cfg.Host = metaCfg.DoltServerHost
+		}
+	}
+
 	// Check env var override first (used by tests and manual overrides)
 	if p := os.Getenv("BEADS_DOLT_SERVER_PORT"); p != "" {
 		if port, err := strconv.Atoi(p); err == nil {
@@ -256,9 +278,14 @@ func DefaultConfig(beadsDir string) *Config {
 	// persistent source. Start() writes the actual listening port here.
 	// Elevated to top priority (after env var) to prevent git-tracked values
 	// from causing cross-project data leakage (GH#2372).
-	if p := readPortFile(beadsDir); 0 < p {
-		cfg.Port = p
-		return cfg
+	// NOTE: port file is only relevant for locally-managed servers. If the
+	// host resolves to a remote server, skip the port file to avoid
+	// mismatched host:port combos.
+	if isLocalHost(cfg.Host) {
+		if p := readPortFile(beadsDir); 0 < p {
+			cfg.Port = p
+			return cfg
+		}
 	}
 
 	// Check config.yaml / global config (~/.config/bd/config.yaml) (GH#2073)

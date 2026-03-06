@@ -262,6 +262,55 @@ func TestDefaultConfig(t *testing.T) {
 	})
 }
 
+func TestDefaultConfig_HostResolution(t *testing.T) {
+	t.Run("env_var_overrides_host", func(t *testing.T) {
+		t.Setenv("BEADS_DOLT_SERVER_HOST", "dolt.svc")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "3306")
+		cfg := DefaultConfig(t.TempDir())
+		if cfg.Host != "dolt.svc" {
+			t.Errorf("expected host 'dolt.svc', got %s", cfg.Host)
+		}
+	})
+
+	t.Run("remote_host_skips_port_file", func(t *testing.T) {
+		// When host resolves to a remote server, the local port file
+		// should be ignored to avoid mismatched host:port combos.
+		t.Setenv("GT_ROOT", "")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+		t.Setenv("BEADS_DOLT_SERVER_HOST", "dolt.lan")
+
+		freshDir := t.TempDir()
+		// Write a port file (as if a local server had been started)
+		if err := writePortFile(freshDir, 14000); err != nil {
+			t.Fatal(err)
+		}
+		cfg := DefaultConfig(freshDir)
+
+		if cfg.Port == 14000 {
+			t.Error("remote host should not use local port file")
+		}
+		if cfg.Host != "dolt.lan" {
+			t.Errorf("expected host 'dolt.lan', got %s", cfg.Host)
+		}
+	})
+
+	t.Run("localhost_uses_port_file", func(t *testing.T) {
+		t.Setenv("GT_ROOT", "")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+		t.Setenv("BEADS_DOLT_SERVER_HOST", "")
+
+		freshDir := t.TempDir()
+		if err := writePortFile(freshDir, 14000); err != nil {
+			t.Fatal(err)
+		}
+		cfg := DefaultConfig(freshDir)
+
+		if cfg.Port != 14000 {
+			t.Errorf("localhost should use port file, expected 14000, got %d", cfg.Port)
+		}
+	})
+}
+
 func TestStopNotRunning(t *testing.T) {
 	dir := t.TempDir()
 

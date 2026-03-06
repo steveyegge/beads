@@ -498,12 +498,12 @@ var rootCmd = &cobra.Command{
 			// prefix-based databases like "beads_hq"; see #1669)
 			doltCfg.Database = cfg.GetDoltDatabase()
 
-			doltCfg.ServerHost = cfg.GetDoltServerHost()
-			// cfg.GetDoltServerPort() falls back to 3307 which is wrong for
-			// standalone mode where the port is hash-derived from the beadsDir
-			// path. Use doltserver.DefaultConfig() which checks metadata.json,
-			// env vars, and falls back to the hash-derived port.
-			doltCfg.ServerPort = doltserver.DefaultConfig(beadsDir).Port
+			// Use doltserver.DefaultConfig() as single source of truth for
+			// host and port to avoid mismatched combos (e.g., remote host
+			// from metadata + local port from port file).
+			resolvedDolt := doltserver.DefaultConfig(beadsDir)
+			doltCfg.ServerHost = resolvedDolt.Host
+			doltCfg.ServerPort = resolvedDolt.Port
 			doltCfg.ServerUser = cfg.GetDoltServerUser()
 			doltCfg.ServerPassword = cfg.GetDoltServerPassword()
 			doltCfg.ServerTLS = cfg.GetDoltServerTLS()
