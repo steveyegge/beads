@@ -1,0 +1,107 @@
+# Architecture (Full)
+
+This document describes the Beads architecture as evidenced by repository sources and the supporting evidence seeds. When sources disagree, this doc records the mismatch as `unknown/conflict` and does not attempt to resolve it.
+
+Primary evidence seeds:
+- `.sisyphus/evidence/task-6-beads-architecture-surfaces.md`
+- `.sisyphus/evidence/task-7-beads-features.md`
+- `.sisyphus/evidence/task-8-beads-workflows.md`
+
+Cross-repo interoperability evidence and unresolved mismatches: `.sisyphus/evidence/task-13-cross-repo-workflow-reconciliation.md`.
+
+## Architecture Boundaries
+
+- CLI boundary, the user facing system boundary is the Cobra root command and its subcommands, with cross command lifecycle centralized in `PersistentPreRun` and `PersistentPostRun`. Evidence: `cmd/bd/main.go:214`, `cmd/bd/main.go:227`, `cmd/bd/main.go:599`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:4`.
+- Storage boundary, command handlers depend on the `storage.Storage` interface, while the concrete runtime implementation is the Dolt backed `dolt.DoltStore`. Evidence: `internal/storage/storage.go:30`, `internal/storage/dolt/store.go:71`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:10`.
+- Workspace and database discovery boundary, path discovery is centralized in `internal/beads` and shared by the CLI and other consumers, including redirect support for shared databases across trees and worktrees. Evidence: `internal/beads/beads.go:267`, `internal/beads/beads.go:342`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:12`.
+- Configuration boundary, Viper based config discovery and env mapping are centralized in `internal/config`, while Dolt server and backend details are stored in `.beads/metadata.json` via `internal/configfile`. Evidence: `internal/config/config.go:34`, `internal/configfile/configfile.go:55`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:30`.
+- Integration boundary, non Go integration deliverables (MCP server, npm wrapper, editor plugins) live outside the Go CLI and delegate into the `bd` CLI by spawning processes or by writing integration files. Evidence: `integrations/beads-mcp/src/beads_mcp/server.py:782`, `integrations/beads-mcp/src/beads_mcp/bd_client.py:271`, `npm-package/bin/bd.js:31`, `cmd/bd/setup.go:28`.
+- Packaging boundary, release and distribution surfaces are defined in GoReleaser, an npm wrapper, and a Python package for the MCP server. Evidence: `.goreleaser.yml:14`, `npm-package/package.json:1`, `integrations/beads-mcp/pyproject.toml:39`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:24`.
+
+## Process and Lifecycle
+
+- Startup initializes config early, then executes Cobra, with a per command `PersistentPreRun` that initializes context and telemetry, applies config over defaults, then either returns early for no DB commands or opens storage. Evidence: `cmd/bd/main.go:176`, `cmd/bd/main.go:227`, `cmd/bd/main.go:262`, `cmd/bd/main.go:332`.
+- Command context and cancellation, each command runs under a signal aware context that flushes pending batch commits on SIGTERM and SIGHUP before canceling, and escalates to forced exit on a second signal. Evidence: `cmd/bd/main.go:237`, `cmd/bd/main.go:702`, `cmd/bd/main.go:711`, `cmd/bd/main.go:727`.
+- Store open path resolves `.beads` and Dolt directories, loads server and database settings from metadata, decides read only behavior for read commands, cleans stale lock files, then opens the Dolt store. Evidence: `cmd/bd/main.go:418`, `cmd/bd/main.go:483`, `cmd/bd/main.go:535`, `cmd/bd/main.go:542`.
+- Post command automation runs from `PersistentPostRun` and uses explicit gates, auto commit for write commands, optional JSONL auto backup, refreshes staleness metadata, optional auto push, then closes the store and shuts down telemetry. Evidence: `cmd/bd/main.go:599`, `cmd/bd/main.go:635`, `cmd/bd/main.go:641`, `cmd/bd/main.go:645`, `cmd/bd/main.go:657`, `cmd/bd/main.go:666`.
+- Read only commands are classified up front and open the store in read only mode, and staleness checks are applied only to read only commands unless explicitly bypassed. Evidence: `cmd/bd/main.go:95`, `cmd/bd/main.go:469`, `cmd/bd/main.go:587`, `cmd/bd/staleness.go:14`.
+
+## CLI
+
+- Root CLI entrypoint is `bd`, implemented as a Cobra root command with `rootCmd.Execute()` in `main()`. Evidence: `cmd/bd/main.go:214`, `cmd/bd/main.go:757`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:4`.
+- Root persistent flags define cross cutting behavior including `--sandbox`, `--readonly`, `--allow-stale`, `--json`, and the Dolt auto commit policy, and these flags are applied over config values when not explicitly set. Evidence: `cmd/bd/main.go:183`, `cmd/bd/main.go:185`, `cmd/bd/main.go:186`, `cmd/bd/main.go:188`, `cmd/bd/main.go:277`.
+- Command registration is distributed across files, each command registers itself into `rootCmd` during init, rather than using a single centralized registry. Evidence: `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:6`, `cmd/bd/export.go:42`, `cmd/bd/dolt.go:922`.
+- DB skipping commands are explicitly listed and short circuit before expensive operations, which is a CLI lifecycle boundary that influences storage and sync behavior. Evidence: `cmd/bd/main.go:332`, `cmd/bd/main.go:335`, `.sisyphus/evidence/task-7-beads-features.md:134`.
+- JSON output is a cross command behavior, fatal errors can respect `--json` by printing structured JSON to stdout when enabled. Evidence: `cmd/bd/main.go:185`, `cmd/bd/errors.go:27`.
+
+## Storage and Sync
+
+- Primary storage is a Dolt backed store that implements `storage.Storage`, with explicit support for version control primitives like commit, push, and pull. Evidence: `internal/storage/storage.go:30`, `internal/storage/dolt/store.go:71`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:10`.
+- Database discovery is local first and redirect aware, with precedence `BEADS_DIR` then `BEADS_DB` then ancestor search for `.beads/*.db`, and redirect files (`.beads/redirect`) can retarget the actual `.beads` directory. Evidence: `internal/beads/beads.go:267`, `internal/beads/beads.go:272`, `internal/beads/beads.go:282`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:12`.
+- Store open is mediated by CLI lifecycle code that resolves beadsDir and doltDir, loads metadata and server settings, and calls `dolt.New(...)` with a `dolt.Config` that includes server options and `ReadOnly`. Evidence: `cmd/bd/main.go:486`, `cmd/bd/main.go:495`, `cmd/bd/main.go:542`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:11`.
+- Push and pull select between Dolt CLI subprocess execution and SQL stored procedures based on remote type, and credentials are scoped to subprocess env or scoped env wrappers rather than being set globally. Evidence: `internal/storage/dolt/store.go:1347`, `internal/storage/dolt/store.go:1364`, `internal/storage/dolt/store.go:1377`, `.sisyphus/evidence/task-8-beads-workflows.md:11`.
+- Git protocol remote safety, CLI push and pull operations use a fixed timeout to avoid hanging indefinitely on network issues or credential prompts. Evidence: `internal/storage/dolt/store.go:149`, `internal/storage/dolt/store.go:1335`, `internal/storage/dolt/store.go:1337`.
+- JSONL export is an explicit data plane boundary, it writes newline delimited JSON records for issues plus relational counts, to stdout or to a file without mixing summary output. Evidence: `cmd/bd/export.go:14`, `cmd/bd/export.go:139`, `cmd/bd/export.go:174`, `.sisyphus/evidence/task-8-beads-workflows.md:10`.
+- JSONL bootstrap import is an explicit init path, `bd init --from-jsonl` reads `.beads/issues.jsonl` and imports into the Dolt store through `importFromLocalJSONL`, then initializes staleness metadata. Evidence: `cmd/bd/init.go:520`, `cmd/bd/init.go:528`, `cmd/bd/import_shared.go:65`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:13`.
+- Staleness checks treat `issues.jsonl` as an external freshness signal, comparing its mtime to `last_import_time` metadata and gating read only commands unless `--allow-stale` is set. Evidence: `cmd/bd/staleness.go:14`, `cmd/bd/staleness.go:37`, `cmd/bd/main.go:587`, `cmd/bd/main.go:590`.
+- Federation sync is implemented as a fetch, merge, conflict detection or resolution, then push workflow in the Dolt federation storage layer. Evidence: `internal/storage/dolt/federation.go:180`, `internal/storage/dolt/federation.go:192`, `internal/storage/dolt/federation.go:203`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:46`.
+
+## Integrations
+
+- MCP server is a separate Python stdio process that registers tool surfaces such as `ready`, `list`, and `show`, and wraps requests with workspace scoping middleware. Evidence: `integrations/beads-mcp/src/beads_mcp/server.py:782`, `integrations/beads-mcp/src/beads_mcp/server.py:853`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:17`.
+- MCP tool routing uses a request scoped workspace context variable and additional filesystem discovery logic, including following `.beads/redirect` and walking up for `.beads/*.db`, to mirror the Go CLI behavior. Evidence: `integrations/beads-mcp/src/beads_mcp/tools.py:38`, `integrations/beads-mcp/src/beads_mcp/tools.py:68`, `integrations/beads-mcp/src/beads_mcp/tools.py:117`.
+- MCP execution boundary calls `bd` as a subprocess and forces JSON output, sets `cwd` for workspace routing, and uses `BEADS_DIR` or `BEADS_DB` env vars for database routing, with stdin disconnected to avoid inheriting MCP stdin. Evidence: `integrations/beads-mcp/src/beads_mcp/bd_client.py:271`, `integrations/beads-mcp/src/beads_mcp/bd_client.py:285`, `integrations/beads-mcp/src/beads_mcp/bd_client.py:288`, `integrations/beads-mcp/src/beads_mcp/bd_client.py:308`.
+- npm wrapper is a thin launcher that locates a platform binary in the package `bin/` directory and spawns it with argv and environment passthrough. Evidence: `npm-package/bin/bd.js:9`, `npm-package/bin/bd.js:31`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:20`.
+- Editor and agent integrations are installed via `bd setup [recipe]`, which writes integration templates to known locations and supports listing and custom recipes. Evidence: `cmd/bd/setup.go:28`, `cmd/bd/setup.go:34`, `.sisyphus/evidence/task-7-beads-features.md:12`.
+- Claude plugin integration defines session lifecycle hooks that run `bd prime` on session start and on a pre compact event. Evidence: `claude-plugin/.claude-plugin/plugin.json:18`, `claude-plugin/.claude-plugin/plugin.json:24`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:21`.
+
+## Packaging
+
+- GoReleaser builds `bd` from `./cmd/bd` across multiple OS and architectures, and uses per target env and tags, including differing `CGO_ENABLED` values across targets. Evidence: `.goreleaser.yml:14`, `.goreleaser.yml:16`, `.goreleaser.yml:19`, `.sisyphus/evidence/task-7-beads-features.md:13`.
+- Federation capability is build variant dependent, the full federation command is only built for `//go:build cgo`, while `//go:build !cgo` provides a stub command that prints guidance. Evidence: `cmd/bd/federation.go:1`, `cmd/bd/federation_nocgo.go:1`, `.sisyphus/evidence/task-7-beads-features.md:17`.
+- npm packaging distributes a wrapper that expects a downloaded native `bd` binary, and errors if the binary is missing, which indicates postinstall fetch failed. Evidence: `npm-package/bin/bd.js:18`, `npm-package/bin/bd.js:21`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:25`.
+- Python packaging exposes the MCP server as a console script entrypoint `beads-mcp = beads_mcp.server:main`. Evidence: `integrations/beads-mcp/pyproject.toml:39`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:26`.
+
+## Trust Boundaries
+
+- Sandbox mode is a deliberate safety boundary, it is a root flag and can also be auto detected on unix by testing whether the process can signal itself, and sandbox mode disables auto sync operations like auto push. Evidence: `cmd/bd/main.go:186`, `cmd/bd/main.go:410`, `cmd/bd/sandbox_unix.go:25`, `cmd/bd/dolt_autopush.go:36`.
+- Read only mode is a deliberate safety boundary for worker sandboxes, it is a root flag and write commands are expected to call `CheckReadonly` to block mutation operations. Evidence: `cmd/bd/main.go:188`, `cmd/bd/errors.go:78`, `cmd/bd/errors.go:90`.
+- MCP server boundary is an explicit process boundary, tool calls are handled by the Python server then delegated to a `bd` subprocess that is forced into JSON mode, runs with a chosen `cwd`, and uses env vars to route to a workspace or database. Evidence: `integrations/beads-mcp/src/beads_mcp/server.py:782`, `integrations/beads-mcp/src/beads_mcp/bd_client.py:285`, `integrations/beads-mcp/src/beads_mcp/bd_client.py:313`.
+- MCP cwd and env routing constraints are explicit, the client picks a working directory, sets `BEADS_DIR` or `BEADS_DB` if configured, and disconnects stdin to reduce interactive prompt risk. Evidence: `integrations/beads-mcp/src/beads_mcp/bd_client.py:285`, `integrations/beads-mcp/src/beads_mcp/bd_client.py:288`, `integrations/beads-mcp/src/beads_mcp/bd_client.py:310`.
+- Dolt push safety gate, force push is only invoked when the user passes `--force` on the CLI, and the underlying storage implementation has separate `Push` and `ForcePush` paths. Evidence: `cmd/bd/dolt.go:147`, `cmd/bd/dolt.go:156`, `internal/storage/dolt/store.go:1347`, `internal/storage/dolt/store.go:1383`.
+- Dolt pull safety and post pull hygiene includes an explicit auto increment reset after pull, and git protocol pull uses CLI with credentials scoped to the subprocess. Evidence: `internal/storage/dolt/store.go:1417`, `internal/storage/dolt/store.go:1435`, `internal/storage/dolt/store.go:1439`.
+- Backend override guardrails block specific env vars that could silently change storage backend through AutomaticEnv, and failure is fatal at command start. Evidence: `cmd/bd/main.go:262`, `cmd/bd/main.go:686`, `cmd/bd/main.go:692`.
+- Test database firewall in the Dolt storage layer treats test database name patterns as a pattern based firewall to avoid creating test databases on a production server, which is an internal trust boundary in server mode. Evidence: `internal/storage/dolt/store.go:48`, `internal/storage/dolt/store.go:60`, `internal/storage/dolt/store.go:61`.
+
+## Config Precedence
+
+- Root precedence is explicit, flags override Viper values from config file and env, and Viper defaults are the final fallback. Evidence: `cmd/bd/main.go:267`, `cmd/bd/main.go:277`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:28`.
+- Config file discovery order is explicit and anchored on `.beads/config.yaml`, first via `BEADS_DIR`, then via walking up from cwd for a project `.beads/config.yaml`, then `~/.config/bd/config.yaml`, then `~/.beads/config.yaml`. Evidence: `internal/config/config.go:43`, `internal/config/config.go:48`, `internal/config/config.go:56`, `internal/config/config.go:98`.
+- Env var mapping uses `BD_` prefix with key replacement for dots and hyphens, while specific non prefixed env vars like `BEADS_IDENTITY` are also bound. Evidence: `internal/config/config.go:120`, `internal/config/config.go:123`, `internal/config/config.go:126`, `internal/config/config.go:136`.
+- Database discovery precedence is separate from Viper, with `BEADS_DIR` then `BEADS_DB` then tree discovery, which is used by CLI startup when `--db` is not provided. Evidence: `internal/beads/beads.go:267`, `cmd/bd/main.go:418`, `cmd/bd/main.go:421`.
+- Dolt server and data directory precedence includes `BEADS_DOLT_DATA_DIR` first, then metadata derived directory, then `.beads/dolt`, and server port selection can use a derived port when the canonical port is busy. Evidence: `internal/doltserver/doltserver.go:69`, `internal/doltserver/doltserver.go:77`, `internal/doltserver/doltserver.go:91`, `internal/doltserver/doltserver.go:139`.
+
+## Persistence and State
+
+- Core project state lives under `.beads/`, including `metadata.json` for backend and server settings, `config.yaml` for Viper config, and the Dolt data directory `dolt/`. Evidence: `internal/configfile/configfile.go:12`, `internal/config/config.go:43`, `internal/doltserver/doltserver.go:91`.
+- Version tracking persists in `.beads/.local_version` as a local, gitignored file, to avoid upgrade notifications being affected by git operations resetting metadata. Evidence: `cmd/bd/init.go:684`, `cmd/bd/init.go:688`, `internal/configfile/configfile.go:38`.
+- Dolt server lifecycle state persists as files in `.beads/`, including pid, log, lock, port, activity, and monitor pid files. Evidence: `internal/doltserver/doltserver.go:109`, `internal/doltserver/doltserver.go:110`, `internal/doltserver/doltserver.go:113`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:36`.
+- Audit and interaction logging persists as append only JSONL at `.beads/interactions.jsonl`, and the writer ensures the file exists and appends single JSON lines. Evidence: `internal/audit/audit.go:16`, `internal/audit/audit.go:59`, `internal/audit/audit.go:82`.
+- Backup persistence includes JSONL exports under `.beads/backup/` and optional Dolt native backups configured and executed via `CALL DOLT_BACKUP`. Evidence: `cmd/bd/backup.go:19`, `cmd/bd/backup_dolt.go:18`, `cmd/bd/backup_dolt.go:60`, `.sisyphus/evidence/task-7-beads-features.md:10`.
+- Batch commit durability is handled via a shutdown flush path, which commits pending batch changes before cancellation when batch mode is active and the store is still active. Evidence: `cmd/bd/main.go:702`, `cmd/bd/main.go:727`, `cmd/bd/main.go:745`, `cmd/bd/main.go:749`.
+
+## Observability
+
+- CLI level telemetry initializes per command in `PersistentPreRun` and shuts down in `PersistentPostRun`, with a root span that includes command, version, and args attributes. Evidence: `cmd/bd/main.go:242`, `cmd/bd/main.go:250`, `cmd/bd/main.go:662`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:41`.
+- Storage observability uses OpenTelemetry trace spans and metrics around Dolt operations and retry behavior, and push and pull operations start spans with remote and branch attributes. Evidence: `internal/storage/dolt/store.go:1352`, `internal/storage/dolt/store.go:1422`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:42`.
+- MCP server prints routing diagnostics for each `bd` subprocess call, including the database routing mode and chosen working directory, which surfaces cross process observability at stderr. Evidence: `integrations/beads-mcp/src/beads_mcp/bd_client.py:295`, `integrations/beads-mcp/src/beads_mcp/bd_client.py:303`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:43`.
+- Verbose mode can surface config override logs by comparing effective values to sources, which is part of operator facing observability for config precedence. Evidence: `cmd/bd/main.go:319`, `cmd/bd/main.go:321`, `internal/config/config.go:30`.
+
+## Known Gaps / Indicated Only
+
+- `unknown/conflict`: build tag variant behavior for federation, the same `bd federation` surface is fully operational in `//go:build cgo` and print only guidance in `//go:build !cgo`, so runtime capability depends on the build artifact. Evidence: `cmd/bd/federation.go:1`, `cmd/bd/federation_nocgo.go:11`, `.sisyphus/evidence/task-8-beads-workflows.md:20`.
+- `unknown/conflict`: `noDbCommands` command name mapping includes entries such as `sync`, `merge`, `hook`, and `resolve-conflicts`, but the extracted Cobra `Use:` inventory indicates no top level `Use: "sync"` or `Use: "resolve-conflicts"`, and most `sync` usage is as a subcommand name. Evidence: `cmd/bd/main.go:335`, `.sisyphus/evidence/task-7-beads-features.md:134`, `.sisyphus/evidence/task-8-beads-workflows.md:20`.
+- `unknown/conflict`: Dolt server mode commentary says server mode is standard, while `GetDoltMode()` returns `embedded` when unset, so the actual default behavior depends on call sites and cannot be resolved here without runtime tracing. Evidence: `internal/configfile/configfile.go:219`, `internal/configfile/configfile.go:230`, `.sisyphus/evidence/task-6-beads-architecture-surfaces.md:46`.
+- `unknown/conflict` (Task 13 cross-repo): Dolt server PID file location mismatch. Gastown stale PID cleanup deletes `<beadsDir>/dolt/dolt-server.pid`, but Beads state files include `<beadsDir>/dolt-server.pid`. Evidence: `.sisyphus/evidence/task-13-cross-repo-workflow-reconciliation.md:34`, `gastown/internal/beads/stale_pid.go:21`, `beads/internal/doltserver/doltserver.go:17`, `beads/internal/doltserver/doltserver.go:110`.
+- `unknown/conflict` (Task 13 cross-repo): Dolt auto-commit knob mismatch. Gastown sets `BD_DOLT_AUTO_COMMIT=on`, but Beads exposes `--dolt-auto-commit` (flag/config) and no `BD_DOLT_AUTO_COMMIT` usage is evidenced in Task 13. Evidence: `.sisyphus/evidence/task-13-cross-repo-workflow-reconciliation.md:35`, `gastown/internal/cmd/bd_helpers.go:103`, `beads/cmd/bd/main.go:189`.
+- `unknown/conflict` (Task 13 cross-repo): Telemetry resource attribution interoperability is unclear. Gastown sets `OTEL_RESOURCE_ATTRIBUTES` for `bd` subprocesses, but Beads telemetry init constructs its resource without an explicit env detector, so GT labels may be ignored. Evidence: `.sisyphus/evidence/task-13-cross-repo-workflow-reconciliation.md:36`, `gastown/internal/telemetry/subprocess.go:64`, `beads/internal/telemetry/telemetry.go:71`.
