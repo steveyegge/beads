@@ -70,14 +70,15 @@ func isTestDatabaseName(name string) bool {
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
-	db            *sql.DB
-	dbPath        string       // Path to Dolt data directory (server root, e.g. .beads/dolt/)
-	database      string       // Database name (subdirectory under dbPath)
-	closed        atomic.Bool  // Tracks whether Close() has been called
-	connStr       string       // Connection string for reconnection
-	mu            sync.RWMutex // Protects concurrent access
-	readOnly      bool         // True if opened in read-only mode
-	credentialKey []byte       // Random encryption key for federation credentials
+	db              *sql.DB
+	dbPath          string       // Path to Dolt data directory (server root, e.g. .beads/dolt/)
+	database        string       // Database name (subdirectory under dbPath)
+	closed          atomic.Bool  // Tracks whether Close() has been called
+	connStr         string       // Connection string for reconnection
+	mu              sync.RWMutex // Protects concurrent access
+	readOnly        bool         // True if opened in read-only mode
+	writeCommitMode string       // on|off|batch for command-layer write commits
+	credentialKey   []byte       // Random encryption key for federation credentials
 
 	// Per-invocation caches (lifetime = DoltStore lifetime)
 	customStatusCache            []string        // cached result of GetCustomStatuses
@@ -110,13 +111,14 @@ type DoltStore struct {
 
 // Config holds Dolt database configuration
 type Config struct {
-	Path           string // Path to Dolt database directory
-	BeadsDir       string // Path to .beads directory (for server auto-start when Path is custom)
-	CommitterName  string // Git-style committer name
-	CommitterEmail string // Git-style committer email
-	Remote         string // Default remote name (e.g., "origin")
-	Database       string // Database name within Dolt (default: "beads")
-	ReadOnly       bool   // Open in read-only mode (skip schema init)
+	Path            string // Path to Dolt database directory
+	BeadsDir        string // Path to .beads directory (for server auto-start when Path is custom)
+	CommitterName   string // Git-style committer name
+	CommitterEmail  string // Git-style committer email
+	Remote          string // Default remote name (e.g., "origin")
+	Database        string // Database name within Dolt (default: "beads")
+	ReadOnly        bool   // Open in read-only mode (skip schema init)
+	WriteCommitMode string // on|off|batch; default on when unset
 
 	// Server connection options
 	ServerHost     string // Server host (default: 127.0.0.1)
@@ -489,6 +491,11 @@ func applyConfigDefaults(cfg *Config) {
 	if cfg.Remote == "" {
 		cfg.Remote = "origin"
 	}
+	if strings.TrimSpace(cfg.WriteCommitMode) == "" {
+		cfg.WriteCommitMode = "on"
+	} else {
+		cfg.WriteCommitMode = strings.ToLower(strings.TrimSpace(cfg.WriteCommitMode))
+	}
 
 	// Server connection defaults (applied in server mode; embedded mode bypasses TCP)
 	if cfg.ServerHost == "" {
@@ -628,18 +635,19 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	}
 
 	store := &DoltStore{
-		db:             db,
-		dbPath:         cfg.Path,
-		database:       cfg.Database,
-		connStr:        connStr,
-		breaker:        breaker,
-		committerName:  cfg.CommitterName,
-		committerEmail: cfg.CommitterEmail,
-		remote:         cfg.Remote,
-		branch:         "main",
-		remoteUser:     cfg.RemoteUser,
-		remotePassword: cfg.RemotePassword,
-		readOnly:       cfg.ReadOnly,
+		db:              db,
+		dbPath:          cfg.Path,
+		database:        cfg.Database,
+		connStr:         connStr,
+		breaker:         breaker,
+		committerName:   cfg.CommitterName,
+		committerEmail:  cfg.CommitterEmail,
+		remote:          cfg.Remote,
+		branch:          "main",
+		remoteUser:      cfg.RemoteUser,
+		remotePassword:  cfg.RemotePassword,
+		readOnly:        cfg.ReadOnly,
+		writeCommitMode: cfg.WriteCommitMode,
 	}
 
 	// Schema initialization for server mode (idempotent).
@@ -1168,6 +1176,10 @@ func (s *DoltStore) UnderlyingDB() *sql.DB {
 
 func (s *DoltStore) commitAuthorString() string {
 	return fmt.Sprintf("%s <%s>", s.committerName, s.committerEmail)
+}
+
+func (s *DoltStore) shouldInlineWriteCommit() bool {
+	return strings.EqualFold(strings.TrimSpace(s.writeCommitMode), "on")
 }
 
 // Commit creates a Dolt commit with the given message
