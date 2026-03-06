@@ -211,15 +211,6 @@ func isDoltProcess(pid int) bool {
 	return false
 }
 
-// isLocalHost returns true if the host refers to the local machine.
-func isLocalHost(host string) bool {
-	switch host {
-	case "", "127.0.0.1", "localhost", "::1", "[::1]":
-		return true
-	}
-	return false
-}
-
 // readPortFile reads the actual port from the port file, if it exists.
 // Returns 0 if the file doesn't exist or is unreadable.
 func readPortFile(beadsDir string) int {
