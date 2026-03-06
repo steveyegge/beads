@@ -19,7 +19,7 @@ import (
 // Compile-time interface check.
 var _ storage.DoltStorage = (*EmbeddedDoltStore)(nil)
 
-// EmbeddedDoltStore implements storage.Storage backed by the embedded Dolt engine.
+// EmbeddedDoltStore implements storage.DoltStorage backed by the embedded Dolt engine.
 // Each method call opens a short-lived connection, executes within an explicit
 // SQL transaction, and closes the connection immediately. This minimizes the
 // time the embedded engine's write lock is held, reducing contention when
