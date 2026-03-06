@@ -283,6 +283,9 @@ required. Use this command for explicit control or diagnostics.`,
 		fmt.Printf("Dolt server started (PID %d, port %d)\n", state.PID, state.Port)
 		fmt.Printf("  Data: %s\n", state.DataDir)
 		fmt.Printf("  Logs: %s\n", doltserver.LogPath(serverDir))
+		if doltserver.IsSharedServerMode() {
+			fmt.Println("  Mode: shared server")
+		}
 	},
 }
 
@@ -347,6 +350,9 @@ Displays whether the server is running, its PID, port, and data directory.`,
 		fmt.Printf("  Port: %d\n", state.Port)
 		fmt.Printf("  Data: %s\n", state.DataDir)
 		fmt.Printf("  Logs: %s\n", doltserver.LogPath(serverDir))
+		if doltserver.IsSharedServerMode() {
+			fmt.Println("  Mode: shared server")
+		}
 	},
 }
 
@@ -933,6 +939,7 @@ func showDoltConfig(testConnection bool) {
 			result["host"] = showHost
 			result["port"] = showPort
 			result["user"] = cfg.GetDoltServerUser()
+			result["shared_server"] = doltserver.IsSharedServerMode()
 			if testConnection {
 				result["connection_ok"] = testServerConnection(showHost, showPort)
 			}
@@ -952,6 +959,14 @@ func showDoltConfig(testConnection bool) {
 	fmt.Printf("  Host:     %s\n", showHost)
 	fmt.Printf("  Port:     %d\n", showPort)
 	fmt.Printf("  User:     %s\n", cfg.GetDoltServerUser())
+	if doltserver.IsSharedServerMode() {
+		fmt.Println("  Mode:     shared server")
+		if sharedDir, err := doltserver.SharedServerDir(); err == nil {
+			fmt.Printf("  Server:   %s\n", sharedDir)
+		}
+	} else {
+		fmt.Println("  Mode:     per-project")
+	}
 
 	if testConnection {
 		fmt.Println()
@@ -1094,9 +1109,37 @@ func setDoltConfig(key, value string, updateConfig bool) {
 		}
 		yamlKey = "dolt.data-dir"
 
+	case "shared-server":
+		lower := strings.ToLower(value)
+		if lower != "true" && lower != "false" {
+			fmt.Fprintf(os.Stderr, "Error: shared-server must be 'true' or 'false'\n")
+			os.Exit(1)
+		}
+		// shared-server is yaml-only (not stored in metadata.json)
+		if err := config.SetYamlConfig("dolt.shared-server", lower); err != nil {
+			fmt.Fprintf(os.Stderr, "Error setting shared-server: %v\n", err)
+			os.Exit(1)
+		}
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"key":      "shared-server",
+				"value":    lower,
+				"location": "config.yaml",
+			})
+			return
+		}
+		if lower == "true" {
+			fmt.Println("Shared server mode enabled.")
+			fmt.Println("All projects will use a single Dolt server at ~/.beads/shared-server/.")
+			fmt.Println("Each project's data remains isolated in its own database.")
+		} else {
+			fmt.Println("Shared server mode disabled. Each project will use its own Dolt server.")
+		}
+		return
+
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown key '%s'\n", key)
-		fmt.Fprintf(os.Stderr, "Valid keys: database, host, port, user, data-dir\n")
+		fmt.Fprintf(os.Stderr, "Valid keys: database, host, port, user, data-dir, shared-server\n")
 		os.Exit(1)
 	}
 

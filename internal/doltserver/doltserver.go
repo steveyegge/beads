@@ -42,9 +42,61 @@ const (
 	portRangeSize = 1000
 )
 
+// IsSharedServerMode returns true if shared server mode is enabled.
+// Checks (in priority order):
+//  1. BEADS_DOLT_SHARED_SERVER env var ("1" or "true")
+//  2. dolt.shared-server in config.yaml
+//
+// Shared server mode means all projects on this machine share a single
+// dolt sql-server process at SharedServerDir(), each using its own
+// database (already unique via prefix-based naming in bd init).
+func IsSharedServerMode() bool {
+	if v := os.Getenv("BEADS_DOLT_SHARED_SERVER"); v == "1" || strings.EqualFold(v, "true") {
+		return true
+	}
+	return config.GetBool("dolt.shared-server")
+}
+
+// SharedServerDir returns the directory for shared server state files.
+// Returns ~/.beads/shared-server/ (created on first use).
+func SharedServerDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	dir := filepath.Join(home, ".beads", "shared-server")
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return "", fmt.Errorf("cannot create shared server directory %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// SharedDoltDir returns the dolt data directory for the shared server.
+// Returns ~/.beads/shared-server/dolt/ (created on first use).
+func SharedDoltDir() (string, error) {
+	serverDir, err := SharedServerDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(serverDir, "dolt")
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return "", fmt.Errorf("cannot create shared dolt directory %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
 // resolveServerDir returns the canonical server directory for dolt state files.
-// Returns beadsDir unchanged.
+// In shared server mode, returns ~/.beads/shared-server/ instead of the
+// project's .beads/ directory.
 func resolveServerDir(beadsDir string) string {
+	if IsSharedServerMode() {
+		dir, err := SharedServerDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: shared server directory unavailable, using per-project mode: %v\n", err)
+			return beadsDir
+		}
+		return dir
+	}
 	return beadsDir
 }
 
@@ -63,6 +115,16 @@ func ResolveServerDir(beadsDir string) string {
 // to avoid triggering the config.json → metadata.json migration side effect,
 // which would create files in the .beads/ directory unexpectedly.
 func ResolveDoltDir(beadsDir string) string {
+	// Shared server mode: use centralized dolt data directory
+	if IsSharedServerMode() {
+		dir, err := SharedDoltDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: shared dolt directory unavailable, using per-project mode: %v\n", err)
+		} else {
+			return dir
+		}
+	}
+
 	// Check env var first (highest priority)
 	if d := os.Getenv("BEADS_DOLT_DATA_DIR"); d != "" {
 		if filepath.IsAbs(d) {
@@ -239,6 +301,13 @@ func writePortFile(beadsDir string, port int) error {
 // Start() fell back to DerivePort because another project occupied the default
 // port.
 func DefaultConfig(beadsDir string) *Config {
+	// In shared mode, use the shared server directory for port resolution
+	if IsSharedServerMode() {
+		if sharedDir, err := SharedServerDir(); err == nil {
+			beadsDir = sharedDir
+		}
+	}
+
 	cfg := &Config{
 		BeadsDir: beadsDir,
 		Host:     "127.0.0.1",
@@ -288,7 +357,11 @@ func DefaultConfig(beadsDir string) *Config {
 	}
 
 	if cfg.Port == 0 {
-		cfg.Port = DerivePort(beadsDir)
+		if IsSharedServerMode() {
+			cfg.Port = configfile.DefaultDoltServerPort // 3307 - single server, fixed port
+		} else {
+			cfg.Port = DerivePort(beadsDir)
+		}
 	}
 
 	return cfg

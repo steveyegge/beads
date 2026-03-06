@@ -63,6 +63,7 @@ environment variable.`,
 		serverPort, _ := cmd.Flags().GetInt("server-port")
 		serverUser, _ := cmd.Flags().GetString("server-user")
 		database, _ := cmd.Flags().GetString("database")
+		sharedServer, _ := cmd.Flags().GetBool("shared-server")
 
 		// Handle --backend flag: "dolt" is the only supported backend.
 		// "sqlite" is accepted for backward compatibility but prints a
@@ -546,6 +547,15 @@ environment variable.`,
 				// Non-fatal - continue anyway
 			}
 
+			// Enable shared server mode if requested (GH#2377)
+			if sharedServer {
+				if err := config.SetYamlConfig("dolt.shared-server", "true"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to enable shared server mode: %v\n", err)
+				} else if !quiet {
+					fmt.Printf("  %s Shared server mode enabled\n", ui.RenderPass("✓"))
+				}
+			}
+
 			// In stealth mode, persist no-git-ops: true so bd prime
 			// automatically uses stealth session-close protocol (GH#2159)
 			if stealth {
@@ -876,6 +886,7 @@ func init() {
 	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3307)")
 	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")
 	initCmd.Flags().String("database", "", "Use existing server database name (overrides prefix-based naming)")
+	initCmd.Flags().Bool("shared-server", false, "Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)")
 
 	rootCmd.AddCommand(initCmd)
 }

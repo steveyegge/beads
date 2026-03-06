@@ -228,6 +228,27 @@ If you installed via Homebrew, this shouldn't be necessary as the formula alread
 
 ## Database Issues
 
+### Port conflicts with multiple projects
+
+**Symptom:** Running `bd init` or `bd` commands in a second project fails or connects to the wrong database. Multiple `dolt sql-server` processes are running.
+
+**Cause:** By default, each beads project starts its own Dolt server. On machines with multiple projects, this can cause port conflicts or resource waste.
+
+**Fix:** Enable shared server mode so all projects use a single Dolt server:
+
+```bash
+# Option 1: Machine-wide (add to ~/.bashrc or ~/.zshrc)
+export BEADS_DOLT_SHARED_SERVER=1
+
+# Option 2: Per-project
+cd ~/project1 && bd dolt set shared-server true
+cd ~/project2 && bd dolt set shared-server true
+```
+
+After enabling, existing projects may need `bd init --force -q` to create their database on the shared server.
+
+**Verify:** `bd dolt status` from any project should show the same PID and `~/.beads/shared-server/` as the data directory.
+
 ### `bd` shows 0 issues but the database has data
 
 **Symptom:** All `bd` commands return empty results. `bd list` shows nothing.
