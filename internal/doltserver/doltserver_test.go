@@ -826,6 +826,39 @@ func TestStopServerProcessRemovesPidAndPort(t *testing.T) {
 	}
 }
 
+func TestRunIdleMonitorEnvDisabled(t *testing.T) {
+	// BEADS_DOLT_IDLE_MONITOR=0 should cause RunIdleMonitor to exit immediately
+	// even with a non-zero timeout.
+	t.Setenv("BEADS_DOLT_IDLE_MONITOR", "0")
+	dir := t.TempDir()
+
+	done := make(chan struct{})
+	go func() {
+		RunIdleMonitor(dir, 5*time.Minute)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// good — exited immediately
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunIdleMonitor should exit immediately when BEADS_DOLT_IDLE_MONITOR=0")
+	}
+}
+
+func TestForkIdleMonitorEnvDisabled(t *testing.T) {
+	// BEADS_DOLT_IDLE_MONITOR=0 should prevent forkIdleMonitor from spawning.
+	t.Setenv("BEADS_DOLT_IDLE_MONITOR", "0")
+	dir := t.TempDir()
+
+	forkIdleMonitor(dir)
+
+	// No monitor PID file should be written
+	if _, err := os.Stat(monitorPidPath(dir)); !os.IsNotExist(err) {
+		t.Error("forkIdleMonitor should not spawn when BEADS_DOLT_IDLE_MONITOR=0")
+	}
+}
+
 func TestRunIdleMonitorZeroTimeoutExitsImmediately(t *testing.T) {
 	// With zero timeout, the monitor should exit immediately.
 	dir := t.TempDir()

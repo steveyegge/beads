@@ -864,7 +864,11 @@ func stopServerProcess(beadsDir string) error {
 
 // forkIdleMonitor starts the idle monitor as a detached process.
 // It runs `bd dolt idle-monitor --beads-dir=<dir>` in the background.
+// Skipped when BEADS_DOLT_IDLE_MONITOR=0 (e.g., external server manager).
 func forkIdleMonitor(beadsDir string) {
+	if os.Getenv("BEADS_DOLT_IDLE_MONITOR") == "0" {
+		return
+	}
 	// Don't fork if there's already a monitor running
 	if isMonitorRunning(beadsDir) {
 		return
@@ -946,8 +950,12 @@ func ReadActivityTime(beadsDir string) time.Time {
 // (watchdog behavior).
 //
 // idleTimeout of 0 means monitoring is disabled (exits immediately).
+// Also disabled when BEADS_DOLT_IDLE_MONITOR=0 (e.g., external server manager).
 func RunIdleMonitor(beadsDir string, idleTimeout time.Duration) {
 	if idleTimeout == 0 {
+		return
+	}
+	if os.Getenv("BEADS_DOLT_IDLE_MONITOR") == "0" {
 		return
 	}
 
