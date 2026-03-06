@@ -351,7 +351,6 @@ var rootCmd = &cobra.Command{
 			"powershell",
 			"prime",
 			"quickstart",
-			"resolve-conflicts",
 			"setup",
 			"sync", // deprecated no-op, prints message only
 			"version",
