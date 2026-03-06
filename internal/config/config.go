@@ -702,7 +702,6 @@ func GetIdentity(flagValue string) string {
 	return "unknown"
 }
 
-
 // FederationConfig holds the federation (Dolt remote) configuration.
 type FederationConfig struct {
 	Remote      string      // dolthub://org/beads, gs://bucket/beads, s3://bucket/beads
