@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -27,13 +26,13 @@ Merge strategies:
   merge-with-branch  — DB stays on Dolt branch, merges when code merges
   merge-on-close     — DB stays on Dolt branch, merges on bd close
 
-The strategy can also be set via the BD_MERGE_STRATEGY environment variable.
+The default strategy can be configured with:
+  bd config set branch_strategy.default_strategy <strategy>
 
 Examples:
   bd branch                                          # List all branches with strategies
   bd branch feature-xyz                              # Create branch with default strategy
-  bd branch feature-xyz --strategy merge-with-branch # Create with isolated strategy
-  BD_MERGE_STRATEGY=merge-on-close bd branch xyz     # Set strategy via env var`,
+  bd branch feature-xyz --strategy merge-with-branch # Create with isolated strategy`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
@@ -133,7 +132,7 @@ var validStrategies = map[string]string{
 	"c": "merge-on-close",
 }
 
-// resolveStrategy determines the merge strategy from flag, env var, or default.
+// resolveStrategy determines the merge strategy from flag, config, or default.
 func resolveStrategy(flagValue string) string {
 	if flagValue != "" {
 		if slug, ok := validStrategies[strings.ToLower(flagValue)]; ok {
@@ -141,9 +140,12 @@ func resolveStrategy(flagValue string) string {
 		}
 	}
 
-	if envVal := os.Getenv("BD_MERGE_STRATEGY"); envVal != "" {
-		if slug, ok := validStrategies[strings.ToLower(envVal)]; ok {
-			return slug
+	// Check branch_strategy.default_strategy config
+	if store != nil {
+		if cfgVal, err := store.GetConfig(rootCtx, "branch_strategy.default_strategy"); err == nil && cfgVal != "" {
+			if slug, ok := validStrategies[strings.ToLower(cfgVal)]; ok {
+				return slug
+			}
 		}
 	}
 

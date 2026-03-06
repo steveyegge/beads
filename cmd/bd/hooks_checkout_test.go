@@ -85,20 +85,20 @@ func TestIsRebaseInProgress(t *testing.T) {
 	})
 }
 
-func TestPostCheckoutResetCorrectness(t *testing.T) {
+func TestCheckBeadsRefSyncResetCorrectness(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store := newTestStoreWithPrefix(t, dbPath, "ttravel")
+	s := newTestStoreWithPrefix(t, dbPath, "ttravel")
 	ctx := context.Background()
 
-	ensureCleanGlobalState(t)
-	enableTestModeGlobals()
-	setStore(store)
-	setStoreActive(true)
-	rootCtx = ctx
-
 	now := time.Now()
-	beadsDir := filepath.Dir(store.Path())
+	beadsDir := filepath.Dir(s.Path())
+
+	// Enable auto-reset via config and sync_config file
+	if err := s.SetConfig(ctx, "branch_strategy.defaults.reset_dolt_with_git", "true"); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	writeTestSyncConfig(t, beadsDir, "branch_strategy.defaults.reset_dolt_with_git=true")
 
 	// === Phase 1: Create issue A with label, dependency stub, and comment ===
 	issueA := &types.Issue{
@@ -111,21 +111,21 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	if err := store.CreateIssue(ctx, issueA, "test"); err != nil {
+	if err := s.CreateIssue(ctx, issueA, "test"); err != nil {
 		t.Fatalf("create issue A: %v", err)
 	}
-	if err := store.AddLabel(ctx, "ttravel-aaa", "phase1", "test"); err != nil {
+	if err := s.AddLabel(ctx, "ttravel-aaa", "phase1", "test"); err != nil {
 		t.Fatalf("add label A: %v", err)
 	}
-	if err := store.AddComment(ctx, "ttravel-aaa", "test", "Comment on A"); err != nil {
+	if err := s.AddComment(ctx, "ttravel-aaa", "test", "Comment on A"); err != nil {
 		t.Fatalf("add comment A: %v", err)
 	}
 
 	// Commit and record checkpoint hash
-	if err := store.Commit(ctx, "checkpoint: issue A created"); err != nil {
+	if err := s.Commit(ctx, "checkpoint: issue A created"); err != nil {
 		t.Fatalf("dolt commit checkpoint: %v", err)
 	}
-	checkpointHash, err := store.GetCurrentCommit(ctx)
+	checkpointHash, err := s.GetCurrentCommit(ctx)
 	if err != nil {
 		t.Fatalf("get checkpoint hash: %v", err)
 	}
@@ -141,13 +141,13 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 		CreatedAt:   now.Add(time.Second),
 		UpdatedAt:   now.Add(time.Second),
 	}
-	if err := store.CreateIssue(ctx, issueB, "test"); err != nil {
+	if err := s.CreateIssue(ctx, issueB, "test"); err != nil {
 		t.Fatalf("create issue B: %v", err)
 	}
-	if err := store.AddLabel(ctx, "ttravel-bbb", "phase2", "test"); err != nil {
+	if err := s.AddLabel(ctx, "ttravel-bbb", "phase2", "test"); err != nil {
 		t.Fatalf("add label B: %v", err)
 	}
-	if err := store.AddComment(ctx, "ttravel-bbb", "test", "Comment on B"); err != nil {
+	if err := s.AddComment(ctx, "ttravel-bbb", "test", "Comment on B"); err != nil {
 		t.Fatalf("add comment B: %v", err)
 	}
 	dep := &types.Dependency{
@@ -157,15 +157,15 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 		CreatedAt:   now.Add(time.Second),
 		CreatedBy:   "test",
 	}
-	if err := store.AddDependency(ctx, dep, "test"); err != nil {
+	if err := s.AddDependency(ctx, dep, "test"); err != nil {
 		t.Fatalf("add dependency B->A: %v", err)
 	}
 
 	// Commit and record latest hash
-	if err := store.Commit(ctx, "latest: issue B created"); err != nil {
+	if err := s.Commit(ctx, "latest: issue B created"); err != nil {
 		t.Fatalf("dolt commit latest: %v", err)
 	}
-	latestHash, err := store.GetCurrentCommit(ctx)
+	latestHash, err := s.GetCurrentCommit(ctx)
 	if err != nil {
 		t.Fatalf("get latest hash: %v", err)
 	}
@@ -175,31 +175,27 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 	}
 
 	// Verify both issues exist before reset
-	if _, err := store.GetIssue(ctx, "ttravel-aaa"); err != nil {
+	if _, err := s.GetIssue(ctx, "ttravel-aaa"); err != nil {
 		t.Fatalf("issue A should exist before reset: %v", err)
 	}
-	if _, err := store.GetIssue(ctx, "ttravel-bbb"); err != nil {
+	if _, err := s.GetIssue(ctx, "ttravel-bbb"); err != nil {
 		t.Fatalf("issue B should exist before reset: %v", err)
 	}
 
 	// === Reset backward: simulate git checkout to checkpoint ===
-	// Write refs pointing to the checkpoint hash
 	writeTestBeadsRefs(t, beadsDir, "main", checkpointHash)
 
-	// Set BD_AUTO_SYNC=1 for non-interactive reset
-	t.Setenv("BD_AUTO_SYNC", "1")
-
-	postCheckoutBeadsSync()
+	checkBeadsRefSync(ctx, s)
 
 	// === Verify backward reset ===
 
 	// Issue B must be GONE
-	if got, err := store.GetIssue(ctx, "ttravel-bbb"); err == nil {
+	if got, err := s.GetIssue(ctx, "ttravel-bbb"); err == nil {
 		t.Errorf("issue B should be gone after reset, but found: %+v", got)
 	}
 
 	// Issue A must be PRESENT with correct fields
-	gotA, err := store.GetIssue(ctx, "ttravel-aaa")
+	gotA, err := s.GetIssue(ctx, "ttravel-aaa")
 	if err != nil {
 		t.Fatalf("issue A should survive reset: %v", err)
 	}
@@ -220,7 +216,7 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 	}
 
 	// Issue A's label must survive
-	labelsA, err := store.GetLabels(ctx, "ttravel-aaa")
+	labelsA, err := s.GetLabels(ctx, "ttravel-aaa")
 	if err != nil {
 		t.Fatalf("get labels A after reset: %v", err)
 	}
@@ -229,7 +225,7 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 	}
 
 	// Issue A's comment must survive
-	commentsA, err := store.GetIssueComments(ctx, "ttravel-aaa")
+	commentsA, err := s.GetIssueComments(ctx, "ttravel-aaa")
 	if err != nil {
 		t.Fatalf("get comments A after reset: %v", err)
 	}
@@ -238,13 +234,13 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 	}
 
 	// Issue B's label must be GONE
-	labelsB, _ := store.GetLabels(ctx, "ttravel-bbb")
+	labelsB, _ := s.GetLabels(ctx, "ttravel-bbb")
 	if len(labelsB) > 0 {
 		t.Errorf("issue B labels should be gone after reset, got %v", labelsB)
 	}
 
 	// Issue B's comment must be GONE
-	commentsB, _ := store.GetIssueComments(ctx, "ttravel-bbb")
+	commentsB, _ := s.GetIssueComments(ctx, "ttravel-bbb")
 	if len(commentsB) > 0 {
 		t.Errorf("issue B comments should be gone after reset, got %d", len(commentsB))
 	}
@@ -260,16 +256,16 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 
 	// === Reset forward: simulate git checkout back to latest ===
 	writeTestBeadsRefs(t, beadsDir, "main", latestHash)
-	postCheckoutBeadsSync()
+	checkBeadsRefSync(ctx, s)
 
 	// === Verify forward reset (round-trip integrity) ===
 
 	// Both issues must be present
-	gotA2, err := store.GetIssue(ctx, "ttravel-aaa")
+	gotA2, err := s.GetIssue(ctx, "ttravel-aaa")
 	if err != nil {
 		t.Fatalf("issue A should exist after forward reset: %v", err)
 	}
-	gotB2, err := store.GetIssue(ctx, "ttravel-bbb")
+	gotB2, err := s.GetIssue(ctx, "ttravel-bbb")
 	if err != nil {
 		t.Fatalf("issue B should exist after forward reset: %v", err)
 	}
@@ -289,8 +285,8 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 	}
 
 	// All labels restored
-	labelsA2, _ := store.GetLabels(ctx, "ttravel-aaa")
-	labelsB2, _ := store.GetLabels(ctx, "ttravel-bbb")
+	labelsA2, _ := s.GetLabels(ctx, "ttravel-aaa")
+	labelsB2, _ := s.GetLabels(ctx, "ttravel-bbb")
 	if !containsString(labelsA2, "phase1") {
 		t.Errorf("round-trip: issue A labels = %v, missing %q", labelsA2, "phase1")
 	}
@@ -299,8 +295,8 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 	}
 
 	// All comments restored (no duplicates)
-	commentsA2, _ := store.GetIssueComments(ctx, "ttravel-aaa")
-	commentsB2, _ := store.GetIssueComments(ctx, "ttravel-bbb")
+	commentsA2, _ := s.GetIssueComments(ctx, "ttravel-aaa")
+	commentsB2, _ := s.GetIssueComments(ctx, "ttravel-bbb")
 	if len(commentsA2) != 1 {
 		t.Errorf("round-trip: issue A has %d comments, want 1 (no duplicates)", len(commentsA2))
 	}
@@ -309,7 +305,7 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 	}
 
 	// Dependency restored
-	depsB2, _ := store.GetDependencies(ctx, "ttravel-bbb")
+	depsB2, _ := s.GetDependencies(ctx, "ttravel-bbb")
 	if len(depsB2) != 1 {
 		t.Errorf("round-trip: issue B has %d dependencies, want 1", len(depsB2))
 	}
@@ -321,25 +317,25 @@ func TestPostCheckoutResetCorrectness(t *testing.T) {
 	}
 }
 
-func TestPostCheckoutBeadsSyncInSync(t *testing.T) {
+func TestCheckBeadsRefSyncInSync(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store := newTestStoreWithPrefix(t, dbPath, "sync")
+	s := newTestStoreWithPrefix(t, dbPath, "sync")
 	ctx := context.Background()
 
-	ensureCleanGlobalState(t)
-	enableTestModeGlobals()
-	setStore(store)
-	setStoreActive(true)
-	rootCtx = ctx
+	beadsDir := filepath.Dir(s.Path())
 
-	beadsDir := filepath.Dir(store.Path())
+	// Enable auto-reset via config and sync_config file
+	if err := s.SetConfig(ctx, "branch_strategy.defaults.reset_dolt_with_git", "true"); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	writeTestSyncConfig(t, beadsDir, "branch_strategy.defaults.reset_dolt_with_git=true")
 
 	// Commit something so we have a hash
-	if err := store.Commit(ctx, "initial"); err != nil {
+	if err := s.Commit(ctx, "initial"); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	currentHash, err := store.GetCurrentCommit(ctx)
+	currentHash, err := s.GetCurrentCommit(ctx)
 	if err != nil {
 		t.Fatalf("get hash: %v", err)
 	}
@@ -347,11 +343,10 @@ func TestPostCheckoutBeadsSyncInSync(t *testing.T) {
 	// Write refs matching current state
 	writeTestBeadsRefs(t, beadsDir, "main", currentHash)
 
-	t.Setenv("BD_AUTO_SYNC", "1")
-	postCheckoutBeadsSync()
+	checkBeadsRefSync(ctx, s)
 
 	// Hash should be unchanged — no reset occurred
-	afterHash, err := store.GetCurrentCommit(ctx)
+	afterHash, err := s.GetCurrentCommit(ctx)
 	if err != nil {
 		t.Fatalf("get hash after sync: %v", err)
 	}
@@ -360,21 +355,55 @@ func TestPostCheckoutBeadsSyncInSync(t *testing.T) {
 	}
 }
 
-func TestPostCheckoutBeadsSyncNoRefs(t *testing.T) {
+func TestCheckBeadsRefSyncNoRefs(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store := newTestStoreWithPrefix(t, dbPath, "norefs")
+	s := newTestStoreWithPrefix(t, dbPath, "norefs")
 	ctx := context.Background()
 
-	ensureCleanGlobalState(t)
-	enableTestModeGlobals()
-	setStore(store)
-	setStoreActive(true)
-	rootCtx = ctx
+	// Don't write any ref files — checkBeadsRefSync should skip gracefully
+	checkBeadsRefSync(ctx, s) // should not panic
+}
 
-	// Don't write any ref files — postCheckoutBeadsSync should skip gracefully
-	t.Setenv("BD_AUTO_SYNC", "1")
-	postCheckoutBeadsSync() // should not panic
+func TestCheckBeadsRefSyncSilentMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	s := newTestStoreWithPrefix(t, dbPath, "silent")
+	ctx := context.Background()
+
+	beadsDir := filepath.Dir(s.Path())
+
+	// Default settings: both prompt and reset_dolt_with_git are false (silent mode)
+
+	// Create an issue and commit
+	issue := &types.Issue{
+		ID:        "silent-aaa",
+		Title:     "Should not be reset",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	if err := s.Commit(ctx, "with issue"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	latestHash, _ := s.GetCurrentCommit(ctx)
+
+	// Write refs pointing to a DIFFERENT (fake) hash to create a mismatch
+	writeTestBeadsRefs(t, beadsDir, "main", "0000000000000000000000000000fake")
+
+	// Run sync — silent mode should NOT reset
+	checkBeadsRefSync(ctx, s)
+
+	// Hash should be unchanged — Dolt was not reset
+	afterHash, _ := s.GetCurrentCommit(ctx)
+	if afterHash != latestHash {
+		t.Errorf("silent mode should not reset, but hash changed from %q to %q", latestHash, afterHash)
+	}
 }
 
 // writeTestBeadsRefs writes .beads/HEAD and .beads/refs/heads/<branch> for testing.
@@ -391,6 +420,15 @@ func writeTestBeadsRefs(t *testing.T, beadsDir, branch, hash string) {
 	refPath := filepath.Join(refsDir, branch)
 	if err := os.WriteFile(refPath, []byte(hash+"\n"), 0644); err != nil {
 		t.Fatalf("write ref: %v", err)
+	}
+}
+
+// writeTestSyncConfig writes a .beads/sync_config file for testing.
+func writeTestSyncConfig(t *testing.T, beadsDir, content string) {
+	t.Helper()
+	path := filepath.Join(beadsDir, "sync_config")
+	if err := os.WriteFile(path, []byte(content+"\n"), 0644); err != nil {
+		t.Fatalf("write sync_config: %v", err)
 	}
 }
 

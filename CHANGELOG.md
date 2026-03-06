@@ -9,13 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Beads refs** — `.beads/HEAD` and `.beads/refs/heads/<branch>` pointer files track Dolt commit hashes alongside git commits, enabling git-Dolt time-travel correspondence
-- **Post-checkout hook sync** — detects mismatch between saved beads refs and current Dolt state on `git checkout`, prompts to reset or keep; `BD_AUTO_SYNC=1` for non-interactive mode
-- **Rebase/stash safety** — post-checkout hook skips sync during `git rebase` (detects `.git/rebase-merge` and `.git/rebase-apply`) and file-level checkouts (flag=0)
+- **Beads refs** — `.beads/HEAD` and `.beads/refs/heads/<branch>` pointer files track Dolt commit hashes alongside git commits, enabling git-Dolt time-travel via `git reset`
+- **Git-Dolt mismatch detection** — `PersistentPreRun` detects when saved beads refs don't match current Dolt state, with configurable response (silent, auto-reset, or interactive prompt)
+- **`branch_strategy.*` config namespace** — four settings control sync behavior: `default_strategy`, `prompt`, `defaults.reset_dolt_with_git`, `defaults.checkout_dolt_with_git` (all default false — zero user-visible changes until configured)
+- **`.beads/sync_config`** — git-tracked file preserves branch_strategy settings across Dolt resets
+- **Rebase safety** — mismatch detection skips during `git rebase` (detects `.git/rebase-merge` and `.git/rebase-apply`)
 
-### Fixed
+### Changed
 
-- **Post-checkout hook store initialization** — `postCheckoutBeadsSync()` now calls `ensureStoreActive()` to initialize the Dolt store connection; previously the `hooks` command was in `noDbCommands` so the store was nil, silently disabling time-travel sync
+- **Mismatch detection moved to PersistentPreRun** — runs on every `bd` command instead of only on `git checkout`, ensuring correct semantic pairing (`git reset` ↔ `DOLT_RESET`)
+- **Config-only settings** — `BD_AUTO_SYNC` and `BD_MERGE_STRATEGY` env vars replaced by `branch_strategy.*` config settings (use `bd config set` instead)
 
 ## [0.59.0] - 2026-03-05
 

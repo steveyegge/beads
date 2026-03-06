@@ -575,6 +575,13 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
+		// Check beads refs for git↔Dolt mismatch (bd-vlu.1.7).
+		// Runs after store init, before any command logic. Behavior depends
+		// on branch_strategy.* config settings (silent by default).
+		if store != nil {
+			checkBeadsRefSync(rootCtx, store)
+		}
+
 		// Sync all state to CommandContext for unified access.
 		syncCommandContext()
 
