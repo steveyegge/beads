@@ -35,7 +35,6 @@ Tool-level settings you can configure:
 | `sync.mode` | - | `BD_SYNC_MODE` | `git-portable` | Sync mode (see below) |
 | `sync.export_on` | - | `BD_SYNC_EXPORT_ON` | `push` | When to export: `push`, `change` |
 | `sync.import_on` | - | `BD_SYNC_IMPORT_ON` | `pull` | When to import: `pull`, `change` |
-| `conflict.strategy` | - | `BD_CONFLICT_STRATEGY` | `newest` | Conflict resolution: `newest`, `ours`, `theirs`, `manual` |
 | `federation.remote` | - | `BD_FEDERATION_REMOTE` | (none) | Dolt remote URL for federation |
 | `federation.sovereignty` | - | `BD_FEDERATION_SOVEREIGNTY` | (none) | Data sovereignty tier: `T1`, `T2`, `T3`, `T4` |
 | `dolt.auto-commit` | `--dolt-auto-commit` | `BD_DOLT_AUTO_COMMIT` | `on` | (Dolt backend) Automatically create a Dolt commit after successful write commands |
@@ -151,13 +150,9 @@ export BD_ACTOR="my-github-handle"
 
 The sync mode controls how beads synchronizes data with git and/or Dolt remotes.
 
-#### Sync Modes
+#### Sync Mode
 
-| Mode | Description |
-|------|-------------|
-| `dolt-native` | (default) Use Dolt remotes directly for sync. Manual `bd import` / `bd export` still work for portability. |
-| `git-portable` | Legacy mode: Export JSONL on push, import on pull. For backward compatibility with older setups. |
-| `belt-and-suspenders` | Both Dolt remote AND JSONL backup. Maximum redundancy. |
+Beads uses `dolt-native` sync mode exclusively. Dolt remotes handle sync directly with cell-level merge. Manual `bd import` / `bd export` are available for migration and portability.
 
 #### Sync Triggers
 
@@ -166,20 +161,7 @@ Control when sync operations occur:
 - `sync.export_on`: `push` (default) or `change`
 - `sync.import_on`: `pull` (default) or `change`
 
-#### Conflict Resolution Strategies
-
-When merging conflicting changes:
-
-| Strategy | Description |
-|----------|-------------|
-| `newest` | (default) Keep the version with the newer `updated_at` timestamp |
-| `ours` | Always keep the local version |
-| `theirs` | Always keep the remote version |
-| `manual` | Require interactive resolution for each conflict |
-
 #### Federation Configuration
-
-For Dolt-native or belt-and-suspenders modes:
 
 - `federation.remote`: Dolt remote URL (e.g., `dolthub://org/beads`, `gs://bucket/beads`, `s3://bucket/beads`)
 - `federation.sovereignty`: Data sovereignty tier:
@@ -193,24 +175,14 @@ For Dolt-native or belt-and-suspenders modes:
 ```yaml
 # .beads/config.yaml
 sync:
-  mode: dolt-native     # dolt-native | git-portable | belt-and-suspenders
   export_on: push       # push | change
   import_on: pull       # pull | change
 
-conflict:
-  strategy: newest      # newest | ours | theirs | manual
-
-# Optional: Dolt federation for dolt-native or belt-and-suspenders modes
+# Optional: Dolt federation
 federation:
   remote: dolthub://myorg/beads
   sovereignty: T2
 ```
-
-#### When to Use Each Mode
-
-- **dolt-native** (default): Best for most teams. Dolt handles sync natively with cell-level merge. `bd import`/`bd export` remain available for portability and migration.
-- **git-portable**: Legacy mode for backward compatibility. JSONL is committed to git, works with any git hosting.
-- **belt-and-suspenders**: Use for critical data where you want both Dolt sync AND JSONL backup.
 
 ### Example Config File
 

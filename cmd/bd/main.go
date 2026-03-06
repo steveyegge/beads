@@ -55,7 +55,6 @@ var (
 )
 var (
 	sandboxMode     bool
-	allowStale      bool               // Use --allow-stale: skip staleness check (emergency escape hatch)
 	readonlyMode    bool               // Read-only mode: block write operations (for worker sandboxes)
 	storeIsReadOnly bool               // Track if store was opened read-only (for staleness checks)
 	lockTimeout     = 30 * time.Second // Dolt open timeout (fixed default)
@@ -184,7 +183,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $BD_ACTOR, git user.name, $USER)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables auto-sync")
-	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
+	rootCmd.PersistentFlags().Bool("allow-stale", false, "No-op (kept for gt compatibility)")
+	rootCmd.PersistentFlags().MarkHidden("allow-stale") //nolint:errcheck // flag just registered above
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
 	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt auto-commit policy (off|on|batch). 'on': commit after each write. 'batch': defer commits to bd sync / bd dolt commit; uncommitted changes persist in the working set until then. SIGTERM/SIGHUP flush pending batch commits. Default: off. Override via config key dolt.auto-commit")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
@@ -508,14 +508,11 @@ var rootCmd = &cobra.Command{
 			doltCfg.ServerPassword = cfg.GetDoltServerPassword()
 			doltCfg.ServerTLS = cfg.GetDoltServerTLS()
 		}
+		doltCfg.SyncGitRemote = config.GetString("sync.git-remote")
 
-		// Auto-start: enabled by default for standalone users.
-		// Disabled under Gas Town (which manages its own server) or by explicit config.
-		// Gas Town detection uses GT_ROOT and a filesystem heuristic fallback.
+		// Auto-start: enabled by default.
+		// Can be disabled by explicit config or env var.
 		doltCfg.AutoStart = true
-		if doltserver.IsDaemonManaged() {
-			doltCfg.AutoStart = false
-		}
 		if os.Getenv("BEADS_DOLT_AUTO_START") == "0" {
 			doltCfg.AutoStart = false
 		}
@@ -581,17 +578,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Sync all state to CommandContext for unified access.
-		// Must happen before staleness check so isAllowStale() reads the flag value.
 		syncCommandContext()
-
-		// Staleness check: verify Dolt database is in sync with JSONL (bd-2q6d).
-		// Only check for read-only commands (write commands will update the DB).
-		// Skip if --allow-stale is set or if the command is exempt from checks.
-		if store != nil && !isAllowStale() && isReadOnlyCommand(cmd.Name()) {
-			if freshErr := checkDatabaseFreshness(rootCtx, store, filepath.Dir(dbPath)); freshErr != nil {
-				FatalError("%v", freshErr)
-			}
-		}
 
 		// Tips (including sync conflict proactive checks) are shown via maybeShowTip()
 		// after successful command execution, not in PreRun
@@ -634,13 +621,6 @@ var rootCmd = &cobra.Command{
 
 		// Auto-backup: export JSONL to .beads/backup/ if enabled and due
 		maybeAutoBackup(rootCtx)
-
-		// Refresh last_import_time after write commands so that git operations
-		// (merge, checkout, rebase) touching issues.jsonl don't cause false
-		// staleness errors on subsequent read commands (GH#staleness-false-alarm).
-		if !isReadOnlyCommand(cmd.Name()) && store != nil && dbPath != "" {
-			refreshLastImportTime(rootCtx, store, filepath.Dir(dbPath))
-		}
 
 		// Auto-push: push to Dolt remote if enabled and due.
 		// Skip for read-only commands to avoid unnecessary network operations

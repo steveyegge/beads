@@ -29,7 +29,7 @@ func withStorage(ctx context.Context, store *dolt.DoltStore, dbPath string, fn s
 	if store != nil {
 		return fn(store)
 	} else if dbPath != "" {
-		// Daemon mode: open read-only connection
+		// Open read-only connection
 		roStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath, ReadOnly: true})
 		if err != nil {
 			return err
@@ -326,6 +326,10 @@ var listCmd = &cobra.Command{
 		// Pretty and watch flags (GH#654)
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
 		treeFormat, _ := cmd.Flags().GetBool("tree")
+		flatFormat, _ := cmd.Flags().GetBool("flat")
+		if flatFormat {
+			treeFormat = false
+		}
 		prettyFormat = prettyFormat || treeFormat // --tree is alias for --pretty
 		watchMode, _ := cmd.Flags().GetBool("watch")
 
@@ -736,7 +740,8 @@ var listCmd = &cobra.Command{
 		}
 
 		// Handle pretty format (GH#654)
-		if prettyFormat {
+		// JSON output takes priority over pretty/tree format (bd-list-json-fix)
+		if prettyFormat && !jsonOutput {
 			// Special handling for --tree --parent combination (hierarchical descendants)
 			if parentID != "" {
 				treeIssues, err := getHierarchicalChildren(ctx, activeStore, "", parentID)
@@ -957,7 +962,8 @@ func init() {
 
 	// Pretty and watch flags (GH#654)
 	listCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
-	listCmd.Flags().Bool("tree", false, "Alias for --pretty: hierarchical tree format")
+	listCmd.Flags().Bool("tree", true, "Hierarchical tree format (default: true; use --flat to disable)")
+	listCmd.Flags().Bool("flat", false, "Disable tree format and use legacy flat list output")
 	listCmd.Flags().BoolP("watch", "w", false, "Watch for changes and auto-update display (implies --pretty)")
 
 	// Metadata filtering (GH#1406)

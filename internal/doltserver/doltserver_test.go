@@ -200,23 +200,6 @@ func TestDefaultConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("gastown", func(t *testing.T) {
-		orig := os.Getenv("GT_ROOT")
-		os.Setenv("GT_ROOT", t.TempDir())
-		defer func() {
-			if orig != "" {
-				os.Setenv("GT_ROOT", orig)
-			} else {
-				os.Unsetenv("GT_ROOT")
-			}
-		}()
-
-		cfg := DefaultConfig(dir)
-		if cfg.Port != GasTownPort {
-			t.Errorf("expected GasTownPort %d under GT_ROOT, got %d", GasTownPort, cfg.Port)
-		}
-	})
-
 	t.Run("config_yaml_port", func(t *testing.T) {
 		// When config.yaml sets dolt.port, DefaultConfig should use it
 		// (provided no env var or metadata.json port is set).
@@ -366,19 +349,12 @@ func TestMaxDoltServers(t *testing.T) {
 		}
 	})
 
-	t.Run("gastown", func(t *testing.T) {
-		orig := os.Getenv("GT_ROOT")
-		os.Setenv("GT_ROOT", t.TempDir())
-		defer func() {
-			if orig != "" {
-				os.Setenv("GT_ROOT", orig)
-			} else {
-				os.Unsetenv("GT_ROOT")
-			}
-		}()
+	t.Run("gastown_same_as_standalone", func(t *testing.T) {
+		// After daemon removal, GT_ROOT no longer affects maxDoltServers
+		t.Setenv("GT_ROOT", t.TempDir())
 
-		if max := maxDoltServers(); max != 1 {
-			t.Errorf("expected 1 under Gas Town, got %d", max)
+		if max := maxDoltServers(); max != 3 {
+			t.Errorf("expected 3 (daemon removed, no special GT_ROOT handling), got %d", max)
 		}
 	})
 }
@@ -585,204 +561,6 @@ func TestIsDoltProcessSelf(t *testing.T) {
 	// Our own process is not a dolt sql-server, so should return false
 	if isDoltProcess(os.Getpid()) {
 		t.Error("expected isDoltProcess to return false for non-dolt process")
-	}
-}
-
-// --- Gas Town detection heuristic tests ---
-
-func TestHasGasTownPathSegment(t *testing.T) {
-	tests := []struct {
-		name string
-		path string
-		want bool
-	}{
-		// Positive cases: Gas Town rig structures
-		{"crew worktree", "/home/user/gt/beads/crew/leeloo/.beads", true},
-		{"polecats worktree", "/home/user/gt/beads/polecats/worker1/.beads", true},
-		{"refinery rig", "/home/user/gt/beads/refinery/rig/.beads", true},
-		{"witness dir", "/home/user/gt/beads/witness/session/.beads", true},
-		{"deacon dir", "/home/user/gt/beads/deacon/data/.beads", true},
-		{"mayor rig", "/home/user/gt/beads/mayor/rig/.beads", true},
-
-		// Negative cases: standalone beads projects
-		{"standalone project", "/home/user/projects/myapp/.beads", false},
-		{"tmp dir", "/tmp/test/.beads", false},
-		{"home beads", "/home/user/.beads", false},
-
-		// Edge cases: substrings should NOT match
-		{"screwdriver not crew", "/home/user/screwdriver/project/.beads", false},
-		{"polecats-data exact not prefix", "/home/user/polecats-data/.beads", false},
-		{"unrefinedery not refinery", "/home/user/unrefinedery/.beads", false},
-
-		// Exact directory component matches only
-		{"crew as exact component", "/crew/something", true},
-		{"witness deep nested", "/a/b/c/witness/d/e", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := HasGasTownPathSegment(tt.path)
-			if got != tt.want {
-				t.Errorf("HasGasTownPathSegment(%q) = %v, want %v", tt.path, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsDaemonManagedGTROOT(t *testing.T) {
-	// When GT_ROOT is set, IsDaemonManaged should return true regardless of path
-	orig := os.Getenv("GT_ROOT")
-	os.Setenv("GT_ROOT", "/some/gt/root")
-	defer func() {
-		if orig != "" {
-			os.Setenv("GT_ROOT", orig)
-		} else {
-			os.Unsetenv("GT_ROOT")
-		}
-	}()
-
-	if !IsDaemonManaged() {
-		t.Error("expected IsDaemonManaged()=true when GT_ROOT is set")
-	}
-}
-
-func TestIsDaemonManagedNoGTROOTStandalone(t *testing.T) {
-	// When GT_ROOT is unset and we're NOT in a Gas Town worktree,
-	// IsDaemonManaged should return false.
-	orig := os.Getenv("GT_ROOT")
-	os.Unsetenv("GT_ROOT")
-	defer func() {
-		if orig != "" {
-			os.Setenv("GT_ROOT", orig)
-		}
-	}()
-
-	// Save and change to a non-Gas-Town directory
-	origWd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
-
-	if IsDaemonManaged() {
-		t.Error("expected IsDaemonManaged()=false in standalone dir without GT_ROOT")
-	}
-}
-
-func TestIsDaemonManagedNoGTROOTCrewPath(t *testing.T) {
-	// When GT_ROOT is unset but we're in a Gas Town crew worktree,
-	// IsDaemonManaged should return true via path segment heuristic.
-	orig := os.Getenv("GT_ROOT")
-	os.Unsetenv("GT_ROOT")
-	defer func() {
-		if orig != "" {
-			os.Setenv("GT_ROOT", orig)
-		}
-	}()
-
-	crewDir := filepath.Join(t.TempDir(), "gt", "beads", "crew", "testworker")
-	if err := os.MkdirAll(crewDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	origWd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(crewDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
-
-	if !IsDaemonManaged() {
-		t.Error("expected IsDaemonManaged()=true in crew dir even without GT_ROOT")
-	}
-}
-
-func TestIsGasTownRoot(t *testing.T) {
-	// Create a fake Gas Town root with marker subdirectories
-	gtRoot := t.TempDir()
-	for _, marker := range []string{"daemon", "deacon", "warrants", "mayor"} {
-		if err := os.MkdirAll(filepath.Join(gtRoot, marker), 0750); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if !isGasTownRoot(gtRoot) {
-		t.Error("expected isGasTownRoot=true for dir with daemon+deacon+warrants+mayor")
-	}
-
-	// A dir with only 1 marker should NOT match
-	singleMarker := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(singleMarker, "daemon"), 0750); err != nil {
-		t.Fatal(err)
-	}
-	if isGasTownRoot(singleMarker) {
-		t.Error("expected isGasTownRoot=false for dir with only one marker")
-	}
-
-	// Empty dir should NOT match
-	if isGasTownRoot(t.TempDir()) {
-		t.Error("expected isGasTownRoot=false for empty dir")
-	}
-}
-
-func TestWalkUpForGasTownRoot(t *testing.T) {
-	// Build: gtRoot/beads/.beads — walk up from .beads should find gtRoot
-	gtRoot := t.TempDir()
-	for _, marker := range []string{"daemon", "deacon"} {
-		if err := os.MkdirAll(filepath.Join(gtRoot, marker), 0750); err != nil {
-			t.Fatal(err)
-		}
-	}
-	beadsDir := filepath.Join(gtRoot, "beads", ".beads")
-	if err := os.MkdirAll(beadsDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-
-	if !walkUpForGasTownRoot(beadsDir) {
-		t.Error("expected walkUpForGasTownRoot=true when ancestor is GT root")
-	}
-
-	// From a completely unrelated directory, should return false
-	if walkUpForGasTownRoot(t.TempDir()) {
-		t.Error("expected walkUpForGasTownRoot=false for standalone dir")
-	}
-}
-
-func TestIsDaemonManagedNoGTROOTGTRootCWD(t *testing.T) {
-	// When GT_ROOT is unset but CWD is the Gas Town root itself
-	// (no crew/mayor/etc in path), walk-up should detect it.
-	orig := os.Getenv("GT_ROOT")
-	os.Unsetenv("GT_ROOT")
-	defer func() {
-		if orig != "" {
-			os.Setenv("GT_ROOT", orig)
-		}
-	}()
-
-	// Create fake GT root with markers
-	gtRoot := t.TempDir()
-	for _, marker := range []string{"daemon", "deacon"} {
-		if err := os.MkdirAll(filepath.Join(gtRoot, marker), 0750); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	origWd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(gtRoot); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
-
-	if !IsDaemonManaged() {
-		t.Error("expected IsDaemonManaged()=true when CWD is GT root (with daemon+deacon)")
 	}
 }
 
@@ -1048,106 +826,20 @@ func TestStopServerProcessRemovesPidAndPort(t *testing.T) {
 	}
 }
 
-func TestRunIdleMonitorExitsOnStaleActivityNoServer(t *testing.T) {
-	// When there's no server running and activity is stale beyond the
-	// idle timeout, the monitor should exit (existing behavior preserved).
+func TestRunIdleMonitorZeroTimeoutExitsImmediately(t *testing.T) {
+	// With zero timeout, the monitor should exit immediately.
 	dir := t.TempDir()
-	t.Setenv("GT_ROOT", "")
-
-	// Write a stale activity timestamp (2x the timeout ago)
-	staleTime := time.Now().Add(-2 * time.Hour)
-	_ = os.WriteFile(activityPath(dir),
-		[]byte(strconv.FormatInt(staleTime.Unix(), 10)), 0600)
-	// Write a monitor PID file
-	_ = os.WriteFile(monitorPidPath(dir),
-		[]byte(strconv.Itoa(os.Getpid())), 0600)
 
 	done := make(chan struct{})
 	go func() {
-		RunIdleMonitor(dir, 1*time.Hour) // timeout=1h, activity=2h ago
+		RunIdleMonitor(dir, 0)
 		close(done)
 	}()
 
 	select {
 	case <-done:
-		// good — exited because stale activity + no server
-	case <-time.After(MonitorCheckInterval + 5*time.Second):
-		t.Fatal("monitor should exit when no server and stale activity")
-	}
-
-	// Monitor should have cleaned up its PID file
-	if _, err := os.Stat(monitorPidPath(dir)); !os.IsNotExist(err) {
-		t.Error("monitor should clean up its PID file on exit")
-	}
-}
-
-func TestRunIdleMonitorGasTownExitsImmediately(t *testing.T) {
-	// Under Gas Town, the monitor should exit immediately regardless
-	// of activity state.
-	dir := t.TempDir()
-
-	// Create a fake GT root with required markers
-	gtRoot := t.TempDir()
-	for _, marker := range []string{"daemon", "deacon", "warrants", "mayor"} {
-		if err := os.MkdirAll(filepath.Join(gtRoot, marker), 0750); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("GT_ROOT", gtRoot)
-
-	done := make(chan struct{})
-	go func() {
-		RunIdleMonitor(dir, 30*time.Minute)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// good — exited immediately under Gas Town
+		// good — exited immediately with zero timeout
 	case <-time.After(2 * time.Second):
-		t.Fatal("RunIdleMonitor should exit immediately under Gas Town")
-	}
-}
-
-func TestIsDaemonManagedForBeadsDir(t *testing.T) {
-	// When GT_ROOT is unset and CWD is unrelated, but beadsDir
-	// is under a Gas Town root, IsDaemonManagedFor should detect it.
-	orig := os.Getenv("GT_ROOT")
-	os.Unsetenv("GT_ROOT")
-	defer func() {
-		if orig != "" {
-			os.Setenv("GT_ROOT", orig)
-		}
-	}()
-
-	// Create fake GT root
-	gtRoot := t.TempDir()
-	for _, marker := range []string{"daemon", "warrants"} {
-		if err := os.MkdirAll(filepath.Join(gtRoot, marker), 0750); err != nil {
-			t.Fatal(err)
-		}
-	}
-	beadsDir := filepath.Join(gtRoot, ".beads")
-	if err := os.MkdirAll(beadsDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-
-	// CWD is a completely unrelated temp dir
-	origWd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
-
-	// Without beadsDir — should be false
-	if IsDaemonManaged() {
-		t.Error("expected IsDaemonManaged()=false when CWD is unrelated")
-	}
-	// With beadsDir — should be true
-	if !IsDaemonManagedFor(beadsDir) {
-		t.Error("expected IsDaemonManagedFor()=true when beadsDir is under GT root")
+		t.Fatal("RunIdleMonitor should exit immediately with zero timeout")
 	}
 }

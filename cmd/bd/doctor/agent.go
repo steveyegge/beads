@@ -1,6 +1,9 @@
 package doctor
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // AgentDiagnostic represents a single check result enriched for agent consumption.
 // ZFC-compliant: Go observes and reports, the agent decides and acts.
@@ -172,7 +175,7 @@ func enrichDatabase(dc DoctorCheck) agentEnrichment {
 		e.severity = "blocking"
 		e.explanation = fmt.Sprintf("The Dolt database is broken or missing: %s. Without a working database, no beads commands will function.", dc.Message)
 		e.expected = "Dolt database opens successfully and contains bd_version metadata matching CLI version"
-		e.commands = []string{"bd doctor --fix", "rm -rf .beads/dolt && bd init"}
+		e.commands = []string{"bd doctor --fix", "bd dolt status"}
 	} else {
 		e.severity = "degraded"
 		e.explanation = fmt.Sprintf("Database version mismatch: %s. The database was last written by a different bd version. Auto-migration should resolve this.", dc.Message)
@@ -191,7 +194,7 @@ func enrichSchemaCompatibility(dc DoctorCheck) agentEnrichment {
 		explanation: fmt.Sprintf("The database schema is incompatible with the current CLI version: %s. Core tables (issues, dependencies, metadata, config, wisps) must be queryable. This usually means a migration hasn't been applied.", dc.Message),
 		observed:    dc.Message + "\n" + dc.Detail,
 		expected:    "All core tables (issues, dependencies, metadata, config, wisps) are queryable with the current schema",
-		commands:    []string{"bd migrate", "rm -rf .beads/dolt && bd init"},
+		commands:    []string{"bd migrate", "bd doctor --fix"},
 		sourceFiles: []string{"cmd/bd/doctor/database.go:CheckSchemaCompatibility", "internal/storage/dolt/migrations.go"},
 	}
 }
@@ -202,7 +205,7 @@ func enrichDatabaseIntegrity(dc DoctorCheck) agentEnrichment {
 		explanation: fmt.Sprintf("Database integrity check failed: %s. Basic queries against metadata and statistics tables failed, suggesting the database may be corrupted.", dc.Message),
 		observed:    dc.Message + "\n" + dc.Detail,
 		expected:    "Metadata table readable, statistics query succeeds",
-		commands:    []string{"bd doctor --fix", "rm -rf .beads/dolt && bd init"},
+		commands:    []string{"bd doctor --fix", "bd dolt status"},
 		sourceFiles: []string{"cmd/bd/doctor/database.go:CheckDatabaseIntegrity"},
 	}
 }
@@ -307,12 +310,21 @@ func enrichGitUpstream(dc DoctorCheck) agentEnrichment {
 }
 
 func enrichFreshClone(dc DoctorCheck) agentEnrichment {
+	commands := []string{"bd init"}
+	explanation := fmt.Sprintf("Fresh clone detected: %s. The .beads/ directory exists (committed to git) but the local database hasn't been initialized. Run bd init to bootstrap from the tracked config.", dc.Message)
+
+	// When the message mentions sync.git-remote, include it in the suggested commands.
+	if strings.Contains(dc.Message, "sync.git-remote") {
+		explanation = fmt.Sprintf("Fresh clone detected: %s. The .beads/ directory exists (committed to git) but the database is not found on the configured server. Consider setting sync.git-remote in .beads/config.yaml to bootstrap from a Dolt remote, then run bd init.", dc.Message)
+		commands = []string{"Set sync.git-remote in .beads/config.yaml", "bd init"}
+	}
+
 	return agentEnrichment{
 		severity:    "blocking",
-		explanation: fmt.Sprintf("Fresh clone detected: %s. The .beads/ directory exists (committed to git) but the local database hasn't been initialized. Run bd init to bootstrap from the tracked config.", dc.Message),
+		explanation: explanation,
 		observed:    dc.Message,
 		expected:    "Local database initialized and ready for use",
-		commands:    []string{"bd init"},
+		commands:    commands,
 		sourceFiles: []string{"cmd/bd/doctor/legacy.go:CheckFreshClone"},
 	}
 }

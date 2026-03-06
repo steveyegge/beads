@@ -45,6 +45,9 @@ dolt-server.port
 dolt-server.activity
 dolt-monitor.pid
 
+# Backup data (auto-exported JSONL, local-only)
+backup/
+
 # Legacy files (from pre-Dolt versions)
 *.db
 *.db?*
@@ -53,10 +56,6 @@ dolt-monitor.pid
 *.db-shm
 db.sqlite
 bd.db
-daemon.lock
-daemon.log
-daemon-*.log.gz
-daemon.pid
 # NOTE: Do NOT add negation patterns here.
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default

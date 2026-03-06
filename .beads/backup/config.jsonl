@@ -15,4 +15,4 @@
 {"key":"kv.memory.user-preferences","value":"User (Steve) dislikes over-engineering and accumulated dead code. Wants clean minimal sync — Dolt push/pull replaces JSONL intermediary. Hates --force workarounds — fix root causes. Gets frustrated when agents dont understand the projects own conventions."}
 {"key":"schema_version","value":"6"}
 {"key":"sync.mode","value":"dolt-native"}
-{"key":"types.custom","value":"agent,role,rig,convoy,slot,queue"}
+{"key":"types.custom","value":"agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merge-request"}

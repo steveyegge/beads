@@ -210,6 +210,29 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.59.0",
+		Date:    "2026-03-05",
+		Changes: []string{
+			"NEW: bd list --tree is now the default display mode",
+			"NEW: bd doctor detects fresh clone state on Dolt server",
+			"NEW: bd init distinguishes server-reachable from DB-exists",
+			"NEW: bd setup includes OpenCode recipe",
+			"NEW: bd doctor warning suppression via config",
+			"CHANGED: Daemon infrastructure fully removed — bd is purely CLI-driven",
+			"CHANGED: Backup git-push defaults to OFF (explicit opt-in required)",
+			"FIX: bd doctor --fix repairs broken/orphaned hook markers (GH#2344)",
+			"FIX: Legacy hook migration warns on user-modified hooks",
+			"FIX: Dolt push/pull uses correct database subdirectory",
+			"FIX: Contributor auto-routing fallback for show/update/close (GH#2345)",
+			"FIX: Init port resolution uses DefaultConfig (GH#2372)",
+			"FIX: Idle monitor single-instance lock and port isolation (GH#2367)",
+			"FIX: Init prevents data destruction from misleading errors (GH#2363)",
+			"FIX: Circuit breaker cooldown reduced to 5s with TCP probe",
+			"FIX: Deterministic ordering with ID tiebreaker in all queries",
+			"FIX: Batch IN-clause queries prevent full table scans",
+		},
+	},
+	{
 		Version: "0.58.0",
 		Date:    "2026-03-02",
 		Changes: []string{

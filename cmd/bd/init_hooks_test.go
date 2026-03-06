@@ -176,14 +176,20 @@ func TestGenerateHookSection(t *testing.T) {
 	if !strings.Contains(section, hookSectionBeginPrefix) {
 		t.Error("section missing begin marker")
 	}
-	if !strings.Contains(section, hookSectionEnd) {
-		t.Error("section missing end marker")
+	if !strings.Contains(section, hookSectionEndPrefix) {
+		t.Error("section missing end marker prefix")
 	}
 	if !strings.Contains(section, "bd hooks run pre-commit") {
 		t.Error("section missing hook invocation")
 	}
 	if !strings.Contains(section, Version) {
 		t.Errorf("section missing version %s", Version)
+	}
+
+	// Verify versioned END marker format
+	expectedEnd := hookSectionEndLine()
+	if !strings.Contains(section, expectedEnd) {
+		t.Errorf("section missing versioned end marker %q\ngot:\n%s", expectedEnd, section)
 	}
 }
 
@@ -198,17 +204,51 @@ func TestInjectHookSection(t *testing.T) {
 		{
 			name:     "inject into empty file",
 			existing: "#!/bin/sh\n",
-			wantHas:  []string{"#!/bin/sh\n", hookSectionBeginPrefix, hookSectionEnd},
+			wantHas:  []string{"#!/bin/sh\n", hookSectionBeginPrefix, hookSectionEndPrefix},
 		},
 		{
 			name:     "inject preserving user content",
 			existing: "#!/bin/sh\necho before\n",
-			wantHas:  []string{"echo before", hookSectionBeginPrefix, hookSectionEnd},
+			wantHas:  []string{"echo before", hookSectionBeginPrefix, hookSectionEndPrefix},
 		},
 		{
 			name:     "update existing section",
 			existing: "#!/bin/sh\necho before\n# --- BEGIN BEADS INTEGRATION v0.40.0 ---\nold content\n# --- END BEADS INTEGRATION ---\necho after\n",
-			wantHas:  []string{"echo before", "echo after", "bd hooks run pre-commit", hookSectionEnd},
+			wantHas:  []string{"echo before", "echo after", "bd hooks run pre-commit", hookSectionEndPrefix},
+		},
+		{
+			name:     "orphaned BEGIN without END",
+			existing: "#!/bin/sh\n# --- BEGIN BEADS INTEGRATION v0.57.0 ---\nbd hook pre-commit \"$@\"\n",
+			wantHas:  []string{"#!/bin/sh\n", hookSectionBeginPrefix, "bd hooks run pre-commit"},
+		},
+		{
+			name: "orphaned BEGIN followed by valid block",
+			existing: "#!/bin/sh\n" +
+				"# --- BEGIN BEADS INTEGRATION v0.57.0 ---\n" +
+				"bd hook pre-commit \"$@\"\n" +
+				"\n" +
+				"# --- BEGIN BEADS INTEGRATION v0.58.0 ---\n" +
+				"# This section is managed by beads. Do not remove these markers.\n" +
+				"if command -v bd >/dev/null 2>&1; then\n" +
+				"  export BD_GIT_HOOK=1\n" +
+				"  bd hooks run pre-commit \"$@\"\n" +
+				"  _bd_exit=$?; if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi\n" +
+				"fi\n" +
+				"# --- END BEADS INTEGRATION ---\n",
+			wantHas: []string{"#!/bin/sh\n", hookSectionBeginPrefix, "bd hooks run pre-commit"},
+		},
+		{
+			name: "reversed markers (END before BEGIN)",
+			existing: "#!/bin/sh\necho user-linter\n" +
+				"# --- END BEADS INTEGRATION ---\n" +
+				"# --- BEGIN BEADS INTEGRATION v0.57.0 ---\n" +
+				"bd hook pre-commit \"$@\"\n",
+			wantHas: []string{"#!/bin/sh\n", "echo user-linter", hookSectionBeginPrefix, "bd hooks run pre-commit"},
+		},
+		{
+			name:     "update existing section with versioned END marker",
+			existing: "#!/bin/sh\necho before\n# --- BEGIN BEADS INTEGRATION v0.57.0 ---\nold content\n# --- END BEADS INTEGRATION v0.57.0 ---\necho after\n",
+			wantHas:  []string{"echo before", "echo after", "bd hooks run pre-commit", hookSectionEndPrefix},
 		},
 	}
 
@@ -229,6 +269,28 @@ func TestInjectHookSection(t *testing.T) {
 					t.Error("old version should have been replaced")
 				}
 			}
+			// Verify broken marker scenarios leave exactly one clean section
+			brokenCases := map[string]bool{
+				"orphaned BEGIN without END":             true,
+				"orphaned BEGIN followed by valid block": true,
+				"reversed markers (END before BEGIN)":    true,
+			}
+			if brokenCases[tt.name] {
+				beginCount := strings.Count(result, hookSectionBeginPrefix)
+				if beginCount != 1 {
+					t.Errorf("expected exactly 1 BEGIN marker, got %d\ngot:\n%s", beginCount, result)
+				}
+				endCount := strings.Count(result, hookSectionEndPrefix)
+				if endCount != 1 {
+					t.Errorf("expected exactly 1 END marker, got %d\ngot:\n%s", endCount, result)
+				}
+				if strings.Contains(result, "bd hook pre-commit") && !strings.Contains(result, "bd hooks run pre-commit") {
+					t.Error("stale 'bd hook' command should have been removed")
+				}
+				if strings.Contains(result, "v0.57.0") {
+					t.Error("stale v0.57.0 marker should have been removed")
+				}
+			}
 		})
 	}
 }
@@ -246,7 +308,7 @@ func TestRemoveHookSection(t *testing.T) {
 			content:   "#!/bin/sh\necho before\n\n" + generateHookSection("pre-commit") + "echo after\n",
 			wantFound: true,
 			wantHas:   []string{"echo before", "echo after"},
-			wantNot:   []string{hookSectionBeginPrefix, hookSectionEnd},
+			wantNot:   []string{hookSectionBeginPrefix, hookSectionEndPrefix},
 		},
 		{
 			name:      "no section to remove",
@@ -259,6 +321,23 @@ func TestRemoveHookSection(t *testing.T) {
 			content:   "#!/bin/sh\n" + generateHookSection("pre-commit"),
 			wantFound: true,
 			wantNot:   []string{hookSectionBeginPrefix},
+		},
+		{
+			name:      "orphaned BEGIN without END",
+			content:   "#!/bin/sh\necho before\n\n# --- BEGIN BEADS INTEGRATION v0.57.0 ---\nbd hook pre-commit \"$@\"\n",
+			wantFound: true,
+			wantHas:   []string{"echo before"},
+			wantNot:   []string{hookSectionBeginPrefix, "bd hook pre-commit"},
+		},
+		{
+			name: "reversed markers (END before BEGIN)",
+			content: "#!/bin/sh\necho user-linter\n" +
+				"# --- END BEADS INTEGRATION ---\n" +
+				"# --- BEGIN BEADS INTEGRATION v0.57.0 ---\n" +
+				"bd hook pre-commit \"$@\"\n",
+			wantFound: true,
+			wantHas:   []string{"echo user-linter"},
+			wantNot:   []string{hookSectionBeginPrefix, hookSectionEndPrefix, "bd hook pre-commit"},
 		},
 	}
 

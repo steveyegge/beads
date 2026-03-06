@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -95,6 +96,41 @@ func isLikelyHash(s string) bool {
 		}
 	}
 	return hasDigit
+}
+
+// ExtractIssuePrefixKnown extracts the prefix from an issue ID using a list of
+// known-valid prefixes before falling back to the heuristic ExtractIssuePrefix.
+//
+// When the valid prefixes are known from config (issue_prefix + allowed_prefixes),
+// this gives deterministic results for multi-hyphen prefixes that the heuristic
+// might misclassify (e.g., "me-py-toolkit-abcd" where "abcd" looks word-like).
+//
+// Prefixes are checked longest-first so overlapping entries (e.g., "hq" and "hq-cv")
+// resolve to the most specific match.
+func ExtractIssuePrefixKnown(issueID string, knownPrefixes []string) string {
+	// Normalize: trim whitespace, strip trailing hyphens, drop empties
+	var cleaned []string
+	for _, p := range knownPrefixes {
+		p = strings.TrimSpace(p)
+		p = strings.TrimSuffix(p, "-")
+		if p != "" {
+			cleaned = append(cleaned, p)
+		}
+	}
+
+	// Sort by length descending so longest match wins
+	sort.Slice(cleaned, func(i, j int) bool {
+		return len(cleaned[i]) > len(cleaned[j])
+	})
+
+	for _, p := range cleaned {
+		if strings.HasPrefix(issueID, p+"-") {
+			return p
+		}
+	}
+
+	// No known prefix matched; fall back to heuristic
+	return ExtractIssuePrefix(issueID)
 }
 
 // ExtractIssueNumber extracts the number from an issue ID like "bd-123" -> 123

@@ -135,9 +135,33 @@ func buildHookMigrationExecutionPlan(plan doctor.HookMigrationPlan) hookMigratio
 		case "marker_managed", "unmanaged_custom", "missing_no_artifacts":
 			execPlan.NoopHooks = append(execPlan.NoopHooks, hook.Name)
 			continue
-		case "marker_broken", "read_error":
+		case "read_error":
 			execPlan.BlockingErrors = append(execPlan.BlockingErrors, formatHookMigrationBlockingError(hook))
 			continue
+		case "marker_broken":
+			// Broken markers are fixable: read existing file and re-inject.
+			// injectHookSection handles orphaned/reversed markers while preserving
+			// user content outside the broken markers.
+			execPlan.WriteOps = append(execPlan.WriteOps, hookMigrationWriteOp{
+				HookName:   hook.Name,
+				HookPath:   hook.HookPath,
+				State:      hook.State,
+				SourceKind: hookMigrationWriteFromHookFile,
+				SourcePath: hook.HookPath,
+			})
+			continue
+		}
+
+		// For legacy hooks with sidecars, the migration discards the current hook
+		// file in favor of sidecar content. Check that the user hasn't added custom
+		// logic to the shim — if they have, block migration to avoid silent data loss.
+		if hook.LegacyBDHook && (hook.HasOldSidecar || hook.HasBackupSidecar) {
+			content, readErr := os.ReadFile(hook.HookPath) // #nosec G304 -- path from migration planner
+			if readErr == nil && !doctor.IsUnmodifiedLegacyHook(string(content)) {
+				execPlan.BlockingErrors = append(execPlan.BlockingErrors,
+					fmt.Sprintf("%s: legacy hook appears user-modified; review manually before migration (state: %s)", hook.Name, hook.State))
+				continue
+			}
 		}
 
 		sourceKind, sourcePath, err := chooseHookMigrationWriteSource(hook)

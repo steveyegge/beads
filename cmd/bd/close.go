@@ -17,6 +17,7 @@ import (
 
 var closeCmd = &cobra.Command{
 	Use:     "close [id...]",
+	Aliases: []string{"done"},
 	GroupID: "issues",
 	Short:   "Close one or more issues",
 	Long: `Close one or more issues.
