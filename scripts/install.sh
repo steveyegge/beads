@@ -99,8 +99,13 @@ detect_platform() {
         echo ""
         echo "    irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex"
         echo ""
-        echo "  Continuing with Linux install for WSL in 5 seconds... (Ctrl+C to cancel)"
-        sleep 5
+        # Only show interactive message and pause if running in a terminal (skip in CI/non-interactive shells)
+        if [ -t 0 ]; then
+            echo "  Continuing with Linux install for WSL in 5 seconds... (Ctrl+C to cancel)"
+            sleep 5
+        else
+            echo "  Continuing with Linux install (non-interactive mode)..."
+        fi
     fi
 
     case "$(uname -s)" in
