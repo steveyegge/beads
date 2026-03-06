@@ -11,14 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Beads refs** — `.beads/HEAD` and `.beads/refs/heads/<branch>` pointer files track Dolt commit hashes alongside git commits, enabling git-Dolt time-travel via `git reset`
 - **Git-Dolt mismatch detection** — `PersistentPreRun` detects when saved beads refs don't match current Dolt state, with configurable response (silent, auto-reset, or interactive prompt)
-- **`branch_strategy.*` config namespace** — four settings control sync behavior: `default_strategy`, `prompt`, `defaults.reset_dolt_with_git`, `defaults.checkout_dolt_with_git` (all default false — zero user-visible changes until configured)
-- **`.beads/sync_config`** — git-tracked file preserves branch_strategy settings across Dolt resets
+- **`branch_strategy.*` config** — three settings control sync behavior: `default_strategy`, `prompt`, `defaults.reset_dolt_with_git` (all default false — zero user-visible changes until configured)
+- **`.beads/sync_config`** — git-tracked file caches `branch_strategy.*` settings so they survive `DOLT_RESET --hard` (which wipes the Dolt config table)
 - **Rebase safety** — mismatch detection skips during `git rebase` (detects `.git/rebase-merge` and `.git/rebase-apply`)
-
-### Changed
-
-- **Mismatch detection moved to PersistentPreRun** — runs on every `bd` command instead of only on `git checkout`, ensuring correct semantic pairing (`git reset` ↔ `DOLT_RESET`)
-- **Config-only settings** — `BD_AUTO_SYNC` and `BD_MERGE_STRATEGY` env vars replaced by `branch_strategy.*` config settings (use `bd config set` instead)
 
 ## [0.59.0] - 2026-03-05
 
