@@ -627,6 +627,10 @@ var rootCmd = &cobra.Command{
 			maybeAutoPush(rootCtx)
 		}
 
+		// Update .beads/HEAD and refs to track current Dolt state.
+		// Runs after all writes/commits so refs reflect the final state.
+		writeBeadsRefs(rootCtx, store)
+
 		// Signal that store is closing (prevents background flush from accessing closed store)
 		storeMutex.Lock()
 		storeActive = false

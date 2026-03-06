@@ -864,6 +864,11 @@ func runPostCheckoutHook(args []string) int {
 // the current Dolt database state. On mismatch, prompts the user to reset
 // or keep current state. Also detects new unregistered branches.
 func postCheckoutBeadsSync() {
+	// The hooks command skips normal DB init (it's in noDbCommands),
+	// so we must initialize the store ourselves.
+	if err := ensureStoreActive(); err != nil {
+		return // No beads DB here — nothing to sync
+	}
 	s := getStore()
 	if s == nil || s.IsClosed() {
 		return
