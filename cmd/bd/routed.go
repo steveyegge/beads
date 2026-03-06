@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/routing"
@@ -76,7 +75,7 @@ func resolveAndGetIssueWithRouting(ctx context.Context, localStore *dolt.DoltSto
 	}
 
 	// Check if this ID routes to a different beads directory.
-	beadsDir := filepath.Dir(dbPath)
+	beadsDir := getBeadsDir()
 	targetDir, routed, routeErr := routing.ResolveBeadsDirForID(ctx, id, beadsDir)
 	routesDifferently := routeErr == nil && routed && targetDir != beadsDir
 
@@ -202,7 +201,7 @@ func getIssueWithRouting(ctx context.Context, localStore *dolt.DoltStore, id str
 	}
 
 	// Check if this ID routes to a different beads directory.
-	beadsDir := filepath.Dir(dbPath)
+	beadsDir := getBeadsDir()
 	targetDir, routed, routeErr := routing.ResolveBeadsDirForID(ctx, id, beadsDir)
 	routesDifferently := routeErr == nil && routed && targetDir != beadsDir
 
@@ -257,7 +256,7 @@ func getRoutedStoreForID(ctx context.Context, id string) (*routing.RoutedStorage
 		return nil, nil
 	}
 
-	beadsDir := filepath.Dir(dbPath)
+	beadsDir := getBeadsDir()
 	// Use GetRoutedStorageWithOpener with dolt to respect backend configuration (bd-m2jr)
 	return routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, dolt.NewFromConfig)
 }
@@ -269,7 +268,7 @@ func needsRouting(id string) bool {
 		return false
 	}
 
-	beadsDir := filepath.Dir(dbPath)
+	beadsDir := getBeadsDir()
 	targetDir, routed, err := routing.ResolveBeadsDirForID(context.Background(), id, beadsDir)
 	if err != nil || !routed {
 		return false
