@@ -322,18 +322,5 @@ func (s *DoltStore) doltCLIFetchFromPeer(ctx context.Context, peer string, creds
 	return nil
 }
 
-// SyncResult contains the outcome of a Sync operation.
-type SyncResult struct {
-	Peer              string
-	StartTime         time.Time
-	EndTime           time.Time
-	Fetched           bool
-	Merged            bool
-	Pushed            bool
-	PulledCommits     int
-	PushedCommits     int
-	Conflicts         []storage.Conflict
-	ConflictsResolved bool
-	Error             error
-	PushError         error // Non-fatal push error
-}
+// SyncResult is an alias for storage.SyncResult.
+type SyncResult = storage.SyncResult
