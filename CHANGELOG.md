@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Beads refs** — `.beads/HEAD` and `.beads/refs/heads/<branch>` pointer files track Dolt commit hashes alongside git commits, enabling git-Dolt time-travel correspondence
+- **Post-checkout hook sync** — detects mismatch between saved beads refs and current Dolt state on `git checkout`, prompts to reset or keep; `BD_AUTO_SYNC=1` for non-interactive mode
+- **Rebase/stash safety** — post-checkout hook skips sync during `git rebase` (detects `.git/rebase-merge` and `.git/rebase-apply`) and file-level checkouts (flag=0)
+
+### Fixed
+
+- **Post-checkout hook store initialization** — `postCheckoutBeadsSync()` now calls `ensureStoreActive()` to initialize the Dolt store connection; previously the `hooks` command was in `noDbCommands` so the store was nil, silently disabling time-travel sync
+
 ## [0.59.0] - 2026-03-05
 
 ### Added
