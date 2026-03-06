@@ -11,6 +11,7 @@
 {"created_at":"2026-03-05T21:18:58Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2.6","issue_id":"bd-vlu.1.3","type":"blocks"}
 {"created_at":"2026-03-06T06:21:07Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.1","issue_id":"bd-vlu.1.4","type":"parent-child"}
 {"created_at":"2026-03-06T08:15:41Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.1","issue_id":"bd-vlu.1.5","type":"parent-child"}
+{"created_at":"2026-03-06T08:52:15Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.1","issue_id":"bd-vlu.1.6","type":"parent-child"}
 {"created_at":"2026-03-05T21:09:06Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu","issue_id":"bd-vlu.2","type":"parent-child"}
 {"created_at":"2026-03-05T21:09:28Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.1","issue_id":"bd-vlu.2","type":"blocks"}
 {"created_at":"2026-03-05T21:16:15Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2","issue_id":"bd-vlu.2.1","type":"parent-child"}
@@ -32,6 +33,7 @@
 {"created_at":"2026-03-05T21:19:06Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2.6","issue_id":"bd-vlu.2.12","type":"blocks"}
 {"created_at":"2026-03-06T06:21:09Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2","issue_id":"bd-vlu.2.13","type":"parent-child"}
 {"created_at":"2026-03-06T08:15:41Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2","issue_id":"bd-vlu.2.14","type":"parent-child"}
+{"created_at":"2026-03-06T08:52:16Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2","issue_id":"bd-vlu.2.15","type":"parent-child"}
 {"created_at":"2026-03-05T21:16:26Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2","issue_id":"bd-vlu.2.2","type":"parent-child"}
 {"created_at":"2026-03-05T21:18:59Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2.1","issue_id":"bd-vlu.2.2","type":"blocks"}
 {"created_at":"2026-03-05T21:16:37Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2","issue_id":"bd-vlu.2.3","type":"parent-child"}
@@ -70,10 +72,12 @@
 {"created_at":"2026-03-05T21:19:10Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.3.2","issue_id":"bd-vlu.3.4","type":"blocks"}
 {"created_at":"2026-03-06T06:21:11Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.3","issue_id":"bd-vlu.3.5","type":"parent-child"}
 {"created_at":"2026-03-06T08:15:41Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.3","issue_id":"bd-vlu.3.6","type":"parent-child"}
+{"created_at":"2026-03-06T08:52:16Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.3","issue_id":"bd-vlu.3.7","type":"parent-child"}
 {"created_at":"2026-03-05T21:09:10Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu","issue_id":"bd-vlu.4","type":"parent-child"}
 {"created_at":"2026-03-05T21:09:28Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.3","issue_id":"bd-vlu.4","type":"blocks"}
 {"created_at":"2026-03-05T21:19:11Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2.1","issue_id":"bd-vlu.4.1","type":"blocks"}
 {"created_at":"2026-03-05T21:17:17Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.4","issue_id":"bd-vlu.4.1","type":"parent-child"}
+{"created_at":"2026-03-06T08:52:17Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.4","issue_id":"bd-vlu.4.10","type":"parent-child"}
 {"created_at":"2026-03-05T21:17:28Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.4","issue_id":"bd-vlu.4.2","type":"parent-child"}
 {"created_at":"2026-03-05T21:19:12Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.4.1","issue_id":"bd-vlu.4.2","type":"blocks"}
 {"created_at":"2026-03-05T21:19:13Z","created_by":"Bryan Hirsch","depends_on_id":"bd-vlu.2.5","issue_id":"bd-vlu.4.3","type":"blocks"}
