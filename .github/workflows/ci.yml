@@ -158,6 +158,122 @@ jobs:
       - name: Smoke test - help
         run: ./bd.exe help
 
+  # Narrow Linux smoke coverage for repo-local Dolt regressions.
+  # Keep the full integration suite in nightly rather than broadening PR CI.
+  integration-smoke:
+    name: Integration Smoke (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOLT_TEST_IMAGE: dolthub/dolt-sql-server:1.83.0
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install ICU4C (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+
+      - name: Pull Dolt test image
+        run: docker pull "$DOLT_TEST_IMAGE"
+
+      - name: Build smoke binary
+        run: |
+          echo "BD_TEST_BINARY=$RUNNER_TEMP/bd-smoke" >> "$GITHUB_ENV"
+          go build -o "$RUNNER_TEMP/bd-smoke" ./cmd/bd
+
+      - name: Run repo-local Dolt smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cid="$(docker run -d --rm -e DOLT_ROOT_HOST=% -p 127.0.0.1::3306 "$DOLT_TEST_IMAGE")"
+          tmpdir="$(mktemp -d)"
+          cleanup() {
+            docker rm -f "$cid" >/dev/null 2>&1 || true
+            rm -rf "$tmpdir"
+          }
+          trap cleanup EXIT
+
+          port="$(docker port "$cid" 3306/tcp | sed 's/.*://')"
+          if [ "$port" = "3307" ]; then
+            echo "expected a repo-local Dolt port, got the default 3307" >&2
+            exit 1
+          fi
+
+          python3 - "$port" <<'PY'
+          import socket
+          import sys
+          import time
+
+          port = int(sys.argv[1])
+          deadline = time.time() + 60
+          while time.time() < deadline:
+              try:
+                  with socket.create_connection(("127.0.0.1", port), 1):
+                      sys.exit(0)
+              except OSError:
+                  time.sleep(1)
+          raise SystemExit(f"timed out waiting for Dolt test server on port {port}")
+          PY
+
+          cd "$tmpdir"
+          git init >/dev/null
+          git config user.email test@example.com
+          git config user.name "Test User"
+
+          export BEADS_TEST_MODE=1
+          export BEADS_NO_DAEMON=1
+          export BEADS_DOLT_PORT="$port"
+
+          "$BD_TEST_BINARY" init --backend dolt --prefix bd --quiet
+          printf '%s\n' "$port" > .beads/dolt-server.port
+
+          "$BD_TEST_BINARY" create "doctor dolt smoke" --description "exercise repo-local Dolt smoke coverage" --json >/dev/null
+          if [ -e .beads/beads.db ]; then
+            echo "unexpected sqlite database created in dolt mode" >&2
+            exit 1
+          fi
+
+          doctor_out="$("$BD_TEST_BINARY" doctor 2>&1 || true)"
+          printf '%s\n' "$doctor_out"
+
+          for forbidden in \
+            "No beads.db found" \
+            "Unable to read database version" \
+            "Legacy database"
+          do
+            if grep -Fq "$forbidden" <<<"$doctor_out"; then
+              echo "bd doctor reported a SQLite-only warning in Dolt mode: $forbidden" >&2
+              exit 1
+            fi
+          done
+
+          "$BD_TEST_BINARY" sql "UPDATE metadata SET value = '0.0.0' WHERE \`key\` = 'bd_version'"
+
+          set +e
+          health_out="$("$BD_TEST_BINARY" doctor --check-health 2>&1)"
+          health_rc=$?
+          set -e
+          printf '%s\n' "$health_out"
+
+          if [ "$health_rc" -eq 0 ]; then
+            echo "expected bd doctor --check-health to fail on version mismatch" >&2
+            exit 1
+          fi
+          grep -F "Version mismatch" <<<"$health_out"
+          grep -F "database: 0.0.0" <<<"$health_out"
+
   fmt-check:
     name: Check formatting
     runs-on: ubuntu-latest
