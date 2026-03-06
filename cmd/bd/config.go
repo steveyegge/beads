@@ -287,7 +287,7 @@ func showConfigYAMLOverrides(dbConfig map[string]string) {
 	yamlKeys := []string{
 		"no-db", "json", "actor", "identity",
 		"routing.mode", "routing.default", "routing.maintainer", "routing.contributor",
-		"sync.mode", "sync.git-remote", "no-push", "no-git-ops",
+		"sync.git-remote", "no-push", "no-git-ops",
 		"git.author", "git.no-gpg-sign",
 		"create.require-description",
 		"validation.on-create", "validation.on-sync",
@@ -354,9 +354,8 @@ var configValidateCmd = &cobra.Command{
 	Long: `Validate sync-related configuration settings.
 
 Checks:
-  - sync.mode is a valid value (dolt-native)
   - federation.sovereignty is valid (T1, T2, T3, T4, or empty)
-  - federation.remote is set when sync.mode requires it
+  - federation.remote is set (required for Dolt sync)
   - Remote URL format is valid (dolthub://, gs://, s3://, file://)
   - routing.mode is valid (auto, maintainer, contributor, explicit)
 
@@ -434,14 +433,8 @@ func validateSyncConfig(repoPath string) []string {
 	}
 
 	// Get config from yaml
-	syncMode := v.GetString("sync.mode")
 	federationSov := v.GetString("federation.sovereignty")
 	federationRemote := v.GetString("federation.remote")
-
-	// Validate sync.mode
-	if syncMode != "" && !config.IsValidSyncMode(syncMode) {
-		issues = append(issues, fmt.Sprintf("sync.mode: %q is invalid (valid values: %s)", syncMode, strings.Join(config.ValidSyncModes(), ", ")))
-	}
 
 	// Validate federation.sovereignty
 	if federationSov != "" && !config.IsValidSovereignty(federationSov) {

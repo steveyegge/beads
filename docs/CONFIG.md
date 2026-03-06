@@ -32,7 +32,6 @@ Tool-level settings you can configure:
 |---------|------|---------------------|---------|-------------|
 | `json` | `--json` | `BD_JSON` | `false` | Output in JSON format |
 | `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in bd sync |
-| `sync.mode` | - | `BD_SYNC_MODE` | `git-portable` | Sync mode (see below) |
 | `sync.export_on` | - | `BD_SYNC_EXPORT_ON` | `push` | When to export: `push`, `change` |
 | `sync.import_on` | - | `BD_SYNC_IMPORT_ON` | `pull` | When to import: `pull`, `change` |
 | `federation.remote` | - | `BD_FEDERATION_REMOTE` | (none) | Dolt remote URL for federation |
@@ -146,13 +145,9 @@ To override, set `BD_ACTOR` in your shell profile:
 export BD_ACTOR="my-github-handle"
 ```
 
-### Sync Mode Configuration
+### Sync Configuration
 
-The sync mode controls how beads synchronizes data with git and/or Dolt remotes.
-
-#### Sync Mode
-
-Beads uses `dolt-native` sync mode exclusively. Dolt remotes handle sync directly with cell-level merge. Manual `bd import` / `bd export` are available for migration and portability.
+Beads uses Dolt-native sync exclusively. Dolt remotes handle sync directly with cell-level merge. Manual `bd import` / `bd export` are available for migration and portability.
 
 #### Sync Triggers
 

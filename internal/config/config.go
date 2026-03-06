@@ -151,9 +151,8 @@ func Initialize() error {
 	// Sync configuration defaults (bd-4u8)
 	v.SetDefault("sync.require_confirmation_on_mass_delete", false)
 
-	// Sync mode configuration (hq-ew1mbr.3)
+	// Sync trigger configuration (hq-ew1mbr.3)
 	// See docs/CONFIG.md for detailed documentation
-	v.SetDefault("sync.mode", SyncModeDoltNative)
 	v.SetDefault("sync.export_on", SyncTriggerPush) // push | change
 	v.SetDefault("sync.import_on", SyncTriggerPull) // pull | change
 
@@ -720,17 +719,16 @@ func GetIdentity(flagValue string) string {
 	return "unknown"
 }
 
-// SyncConfig holds the sync mode configuration.
+// SyncConfig holds the sync trigger configuration.
+// Beads uses dolt-native sync exclusively; there is no mode selection.
 type SyncConfig struct {
-	Mode     SyncMode // dolt-native (only supported mode)
-	ExportOn string   // push, change
-	ImportOn string   // pull, change
+	ExportOn string // push, change
+	ImportOn string // pull, change
 }
 
 // GetSyncConfig returns the current sync configuration.
 func GetSyncConfig() SyncConfig {
 	return SyncConfig{
-		Mode:     GetSyncMode(),
 		ExportOn: GetString("sync.export_on"),
 		ImportOn: GetString("sync.import_on"),
 	}

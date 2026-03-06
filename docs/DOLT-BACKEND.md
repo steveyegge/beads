@@ -41,13 +41,9 @@ bd init
 # For legacy SQLite installations, see Migration from SQLite below
 ```
 
-### 3. Configure Sync Mode
+### 3. Configure Sync
 
-```yaml
-# .beads/config.yaml
-sync:
-  mode: dolt-native  # Default: use Dolt remotes
-```
+Beads uses Dolt-native sync by default — no sync mode configuration needed.
 
 ## Server Mode (Recommended)
 
@@ -92,13 +88,9 @@ bd doctor
 kill $(cat .beads/dolt/sql-server.pid)
 ```
 
-## Sync Modes
+## Sync
 
-Dolt supports multiple sync strategies:
-
-### Sync Mode
-
-Beads uses `dolt-native` sync mode exclusively:
+Beads uses Dolt-native sync exclusively:
 
 - Uses Dolt remotes (DoltHub, S3, GCS, etc.)
 - Native database-level sync with cell-level merge
@@ -298,7 +290,6 @@ dolt blame issues
 backend: dolt
 
 sync:
-  mode: dolt-native
   auto_dolt_commit: true   # Auto-commit after sync (default: true)
   auto_dolt_push: false    # Auto-push after sync (default: false)
 
