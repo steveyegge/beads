@@ -332,29 +332,6 @@ func TestValidateSyncConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid sync.mode", func(t *testing.T) {
-		configContent := `prefix: test
-sync:
-  mode: "invalid-mode"
-`
-		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
-			t.Fatalf("Failed to write config.yaml: %v", err)
-		}
-
-		issues := validateSyncConfig(tmpDir)
-		found := false
-		for _, issue := range issues {
-			if strings.Contains(issue, "sync.mode") {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("Expected issue about sync.mode, got: %v", issues)
-		}
-	})
-
-
 	t.Run("invalid federation.sovereignty", func(t *testing.T) {
 		configContent := `prefix: test
 federation:
@@ -377,10 +354,8 @@ federation:
 		}
 	})
 
-	t.Run("dolt-native mode without remote", func(t *testing.T) {
+	t.Run("missing federation remote", func(t *testing.T) {
 		configContent := `prefix: test
-sync:
-  mode: "dolt-native"
 `
 		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
 			t.Fatalf("Failed to write config.yaml: %v", err)
@@ -421,10 +396,8 @@ federation:
 		}
 	})
 
-	t.Run("valid sync config", func(t *testing.T) {
+	t.Run("valid federation config", func(t *testing.T) {
 		configContent := `prefix: test
-sync:
-  mode: "dolt-native"
 conflict:
   strategy: "newest"
 federation:

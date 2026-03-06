@@ -287,7 +287,7 @@ func showConfigYAMLOverrides(dbConfig map[string]string) {
 	yamlKeys := []string{
 		"no-db", "json", "actor", "identity",
 		"routing.mode", "routing.default", "routing.maintainer", "routing.contributor",
-		"sync.mode", "sync.git-remote", "no-push", "no-git-ops",
+		"sync.git-remote", "no-push", "no-git-ops",
 		"git.author", "git.no-gpg-sign",
 		"create.require-description",
 		"validation.on-create", "validation.on-sync",
@@ -434,14 +434,8 @@ func validateSyncConfig(repoPath string) []string {
 	}
 
 	// Get config from yaml
-	syncMode := v.GetString("sync.mode")
 	federationSov := v.GetString("federation.sovereignty")
 	federationRemote := v.GetString("federation.remote")
-
-	// Validate sync.mode
-	if syncMode != "" && !config.IsValidSyncMode(syncMode) {
-		issues = append(issues, fmt.Sprintf("sync.mode: %q is invalid (valid values: %s)", syncMode, strings.Join(config.ValidSyncModes(), ", ")))
-	}
 
 	// Validate federation.sovereignty
 	if federationSov != "" && !config.IsValidSovereignty(federationSov) {

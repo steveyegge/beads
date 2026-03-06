@@ -1,3 +1,5 @@
+// ABOUTME: Federation sovereignty tier configuration and config warning utilities.
+// ABOUTME: Defines T1-T4 sovereignty tiers for federation access control.
 package config
 
 import (
@@ -6,9 +8,6 @@ import (
 	"os"
 	"strings"
 )
-
-// Sync mode configuration values (from hq-ew1mbr.3)
-// These control how Dolt syncs with remotes.
 
 // ConfigWarnings controls whether warnings are logged for invalid config values.
 // Set to false to suppress warnings (useful for tests or scripts).
@@ -23,31 +22,6 @@ func logConfigWarning(format string, args ...interface{}) {
 	if ConfigWarnings && ConfigWarningWriter != nil {
 		_, _ = fmt.Fprintf(ConfigWarningWriter, format, args...) // Best effort: warning output should not cause failures
 	}
-}
-
-// SyncMode represents the sync mode configuration
-type SyncMode string
-
-const (
-	// SyncModeDoltNative uses Dolt remote directly (the only supported mode)
-	SyncModeDoltNative SyncMode = "dolt-native"
-)
-
-// validSyncModes is the set of allowed sync mode values
-var validSyncModes = map[SyncMode]bool{
-	SyncModeDoltNative: true,
-}
-
-// ValidSyncModes returns the list of valid sync mode values.
-func ValidSyncModes() []string {
-	return []string{
-		string(SyncModeDoltNative),
-	}
-}
-
-// IsValidSyncMode returns true if the given string is a valid sync mode.
-func IsValidSyncMode(mode string) bool {
-	return validSyncModes[SyncMode(strings.ToLower(strings.TrimSpace(mode)))]
 }
 
 // Sovereignty represents the federation sovereignty tier
@@ -93,12 +67,6 @@ func IsValidSovereignty(sovereignty string) bool {
 	return validSovereigntyTiers[Sovereignty(strings.ToUpper(strings.TrimSpace(sovereignty)))]
 }
 
-// GetSyncMode always returns SyncModeDoltNative.
-// The sync mode config key is deprecated; Dolt-native is the only supported mode.
-func GetSyncMode() SyncMode {
-	return SyncModeDoltNative
-}
-
 // GetSovereignty retrieves the federation sovereignty tier configuration.
 // Returns the configured tier, or SovereigntyNone (empty, no restriction) if not set.
 // Returns SovereigntyT1 and logs a warning if an invalid non-empty value is configured.
@@ -122,13 +90,7 @@ func GetSovereignty() Sovereignty {
 	return tier
 }
 
-// String returns the string representation of the SyncMode.
-func (m SyncMode) String() string {
-	return string(m)
-}
-
 // String returns the string representation of the Sovereignty.
 func (s Sovereignty) String() string {
 	return string(s)
 }
-
