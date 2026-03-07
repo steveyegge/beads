@@ -581,10 +581,57 @@ Subcommands:
   remove <name>      Remove a remote`,
 }
 
+// resolvedRemoteArgs holds the resolved URL and credentials for a remote add.
+type resolvedRemoteArgs struct {
+	url                 string
+	user                string
+	password            string
+	needsPasswordPrompt bool // true when user is set but password is empty
+}
+
+// resolveRemoteAddArgs resolves the URL and credentials for bd dolt remote add
+// from positional args, flags, and environment variables. Flags take precedence
+// over env vars; positional URL takes precedence over DOLT_REMOTE_ADDRESS.
+func resolveRemoteAddArgs(args []string, flagUser, flagPassword, envAddr, envUser, envPass string) (*resolvedRemoteArgs, error) {
+	var url string
+	if len(args) >= 2 {
+		url = args[1]
+	} else if envAddr != "" {
+		url = envAddr
+	} else {
+		return nil, fmt.Errorf("URL required (or set DOLT_REMOTE_ADDRESS)")
+	}
+
+	user := flagUser
+	password := flagPassword
+
+	// Env vars fill in credentials when flags are not provided
+	if user == "" && envUser != "" {
+		user = envUser
+	}
+	if password == "" && envPass != "" {
+		password = envPass
+	}
+
+	return &resolvedRemoteArgs{
+		url:                 url,
+		user:                user,
+		password:            password,
+		needsPasswordPrompt: user != "" && password == "",
+	}, nil
+}
+
 var doltRemoteAddCmd = &cobra.Command{
-	Use:   "add <name> <url>",
+	Use:   "add <name> [url]",
 	Short: "Add a Dolt remote (both SQL server and CLI)",
-	Args:  cobra.ExactArgs(2),
+	Long: `Add a Dolt remote (both SQL server and CLI).
+
+If DOLT_REMOTE_ADDRESS, DOLT_REMOTE_USERNAME, and DOLT_REMOTE_PASSWORD are all
+set, only the remote name is required — the URL and credentials are taken from
+the environment.
+
+Flags --user / --password override the environment variables when provided.`,
+	Args: cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 		st := getStore()
@@ -592,22 +639,40 @@ var doltRemoteAddCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Error: no store available\n")
 			os.Exit(1)
 		}
-		name, url := args[0], args[1]
-		dbPath := st.Path()
+
+		name := args[0]
 
 		// Handle --user / --password flags
-		remoteUser, _ := cmd.Flags().GetString("user")
-		remotePassword, _ := cmd.Flags().GetString("password")
-		if remoteUser != "" && remotePassword == "" {
+		flagUser, _ := cmd.Flags().GetString("user")
+		flagPassword, _ := cmd.Flags().GetString("password")
+
+		resolved, err := resolveRemoteAddArgs(args, flagUser, flagPassword,
+			os.Getenv("DOLT_REMOTE_ADDRESS"),
+			os.Getenv("DOLT_REMOTE_USERNAME"),
+			os.Getenv("DOLT_REMOTE_PASSWORD"),
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		url := resolved.url
+		remoteUser := resolved.user
+		remotePassword := resolved.password
+
+		// If user provided without password, prompt interactively
+		if resolved.needsPasswordPrompt {
 			fmt.Fprintf(os.Stderr, "Password for %s@%s: ", remoteUser, name)
-			pwBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+			pwBytes, pErr := term.ReadPassword(int(os.Stdin.Fd()))
 			fmt.Fprintln(os.Stderr) // newline after password
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
+			if pErr != nil {
+				fmt.Fprintf(os.Stderr, "Error reading password: %v\n", pErr)
 				os.Exit(1)
 			}
 			remotePassword = string(pwBytes)
 		}
+
+		dbPath := st.Path()
 
 		// Check existing remotes on both surfaces
 		sqlRemotes, _ := st.ListRemotes(ctx)
