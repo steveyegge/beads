@@ -1422,14 +1422,18 @@ func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 		})
 	}
 	// No config-level credentials — check for stored remote credentials.
+	// Always use CLI path for stored credentials: the dolt sql-server is a
+	// separate process and won't see env vars set on the bd process.
 	if creds.empty() {
 		return s.withRemoteCredentials(ctx, s.remote, func(storedCreds *remoteCredentials) error {
-			return withEnvCredentials(storedCreds, func() error {
-				if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch); err != nil {
-					return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
-				}
-				return nil
-			})
+			if !storedCreds.empty() {
+				return s.doltCLIPush(ctx, false, storedCreds)
+			}
+			// No stored credentials either — use SQL path (no auth needed)
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch); err != nil {
+				return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
+			}
+			return nil
 		})
 	}
 	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch); err != nil {
@@ -1473,14 +1477,17 @@ func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 		})
 	}
 	// No config-level credentials — check for stored remote credentials.
+	// Always use CLI path for stored credentials: the dolt sql-server is a
+	// separate process and won't see env vars set on the bd process.
 	if creds.empty() {
 		return s.withRemoteCredentials(ctx, s.remote, func(storedCreds *remoteCredentials) error {
-			return withEnvCredentials(storedCreds, func() error {
-				if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch); err != nil {
-					return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
-				}
-				return nil
-			})
+			if !storedCreds.empty() {
+				return s.doltCLIPush(ctx, true, storedCreds)
+			}
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch); err != nil {
+				return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
+			}
+			return nil
 		})
 	}
 	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch); err != nil {
@@ -1537,17 +1544,21 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 		})
 	}
 	// No config-level credentials — check for stored remote credentials.
+	// Always use CLI path for stored credentials: the dolt sql-server is a
+	// separate process and won't see env vars set on the bd process.
 	if creds.empty() {
 		return s.withRemoteCredentials(ctx, s.remote, func(storedCreds *remoteCredentials) error {
-			return withEnvCredentials(storedCreds, func() error {
-				if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch); err != nil {
-					return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
+			if !storedCreds.empty() {
+				if err := s.doltCLIPull(ctx, storedCreds); err != nil {
+					return err
 				}
-				if err := s.resetAutoIncrements(ctx); err != nil {
-					return fmt.Errorf("failed to reset auto-increments after pull: %w", err)
-				}
-				return nil
-			})
+				return s.resetAutoIncrements(ctx)
+			}
+			// No stored credentials either — use SQL path (no auth needed)
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch); err != nil {
+				return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
+			}
+			return s.resetAutoIncrements(ctx)
 		})
 	}
 	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch); err != nil {

@@ -593,15 +593,25 @@ type resolvedRemoteArgs struct {
 // resolveRemoteAddArgs resolves the URL and credentials for bd dolt remote add
 // from positional args, flags, and environment variables. Flags take precedence
 // over env vars; positional URL takes precedence over DOLT_REMOTE_ADDRESS.
-func resolveRemoteAddArgs(args []string, flagUser, flagPassword, envAddr, envUser, envPass string) (*resolvedRemoteArgs, error) {
-	var url string
+//
+// The baseURL is a server address without a database path (e.g. http://host:50051).
+// The database name is appended automatically using deriveRemoteDBName.
+func resolveRemoteAddArgs(args []string, flagUser, flagPassword, flagDBName, envAddr, envUser, envPass string) (*resolvedRemoteArgs, error) {
+	var baseURL string
 	if len(args) >= 2 {
-		url = args[1]
+		baseURL = args[1]
 	} else if envAddr != "" {
-		url = envAddr
+		baseURL = envAddr
 	} else {
 		return nil, fmt.Errorf("URL required (or set DOLT_REMOTE_ADDRESS)")
 	}
+
+	// Append the database name to the base URL
+	dbName := flagDBName
+	if dbName == "" {
+		dbName = deriveRemoteDBName()
+	}
+	url := strings.TrimRight(baseURL, "/") + "/" + dbName
 
 	user := flagUser
 	password := flagPassword
@@ -622,10 +632,25 @@ func resolveRemoteAddArgs(args []string, flagUser, flagPassword, envAddr, envUse
 	}, nil
 }
 
+// deriveRemoteDBName derives a database name for the remote from the current
+// directory name. This matches the convention used by dolt remotesapi servers,
+// where the URL path component is the database name.
+func deriveRemoteDBName() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "beads"
+	}
+	return filepath.Base(cwd)
+}
+
 var doltRemoteAddCmd = &cobra.Command{
-	Use:   "add <name> [url]",
+	Use:   "add <name> [base-url]",
 	Short: "Add a Dolt remote (both SQL server and CLI)",
 	Long: `Add a Dolt remote (both SQL server and CLI).
+
+The base-url is the server address without a database path (e.g.
+http://host:50051). The database name is derived from the current directory
+name and appended automatically. Override with --db-name.
 
 If DOLT_REMOTE_ADDRESS, DOLT_REMOTE_USERNAME, and DOLT_REMOTE_PASSWORD are all
 set, only the remote name is required — the URL and credentials are taken from
@@ -646,11 +671,12 @@ Flags --user / --password override the environment variables when provided.`,
 		// Load .env file if present (does not overwrite existing env vars)
 		_ = godotenv.Load()
 
-		// Handle --user / --password flags
+		// Handle flags
 		flagUser, _ := cmd.Flags().GetString("user")
 		flagPassword, _ := cmd.Flags().GetString("password")
+		flagDBName, _ := cmd.Flags().GetString("db-name")
 
-		resolved, err := resolveRemoteAddArgs(args, flagUser, flagPassword,
+		resolved, err := resolveRemoteAddArgs(args, flagUser, flagPassword, flagDBName,
 			os.Getenv("DOLT_REMOTE_ADDRESS"),
 			os.Getenv("DOLT_REMOTE_USERNAME"),
 			os.Getenv("DOLT_REMOTE_PASSWORD"),
@@ -712,27 +738,37 @@ Flags --user / --password override the environment variables when provided.`,
 			}
 		}
 
-		// Add to SQL server (skip if already correct)
-		if sqlURL != url {
-			if err := st.AddRemote(ctx, name, url); err != nil {
-				if jsonOutput {
-					outputJSONError(err, "remote_add_failed")
-				} else {
-					fmt.Fprintf(os.Stderr, "Error adding SQL remote: %v\n", err)
-				}
-				os.Exit(1)
-			}
-		}
-
-		// Add to CLI filesystem (skip if already correct)
+		// Add to CLI filesystem first (never needs auth — just writes config)
 		cliFailed := false
 		if cliURL != url {
 			if err := doltutil.AddCLIRemote(dbPath, name, url); err != nil {
 				cliFailed = true
-				// Non-fatal: SQL remote was added successfully
-				fmt.Fprintf(os.Stderr, "Warning: SQL remote added but CLI remote failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Warning: CLI remote add failed: %v\n", err)
 				fmt.Fprintf(os.Stderr, "Run: cd %s && dolt remote add %s %s\n",
 					doltutil.ShellQuote(dbPath), doltutil.ShellQuote(name), doltutil.ShellQuote(url))
+			}
+		}
+
+		// Add to SQL server (skip if already correct).
+		// When credentials are provided, the SQL server may not have them in
+		// its env yet, so CALL DOLT_REMOTE('add') can fail with an auth error.
+		// The CLI add above is authoritative; SQL add failure is non-fatal.
+		if sqlURL != url {
+			if err := st.AddRemote(ctx, name, url); err != nil {
+				if remoteUser != "" {
+					// Expected: server lacks credentials — it will pick up
+					// the remote from the CLI filesystem on next restart.
+					if !jsonOutput {
+						fmt.Fprintf(os.Stderr, "Note: SQL remote add deferred (server will sync on restart)\n")
+					}
+				} else {
+					if jsonOutput {
+						outputJSONError(err, "remote_add_failed")
+					} else {
+						fmt.Fprintf(os.Stderr, "Error adding SQL remote: %v\n", err)
+					}
+					os.Exit(1)
+				}
 			}
 		}
 
@@ -980,6 +1016,7 @@ func init() {
 	doltRemoteRemoveCmd.Flags().Bool("force", false, "Force remove even when SQL and CLI URLs conflict")
 	doltRemoteAddCmd.Flags().StringP("user", "u", "", "Username for remote authentication")
 	doltRemoteAddCmd.Flags().StringP("password", "p", "", "Password (prompted if --user set without --password)")
+	doltRemoteAddCmd.Flags().String("db-name", "", "Database name for remote URL (default: current directory name)")
 	doltRemoteCmd.AddCommand(doltRemoteAddCmd)
 	doltRemoteCmd.AddCommand(doltRemoteListCmd)
 	doltRemoteCmd.AddCommand(doltRemoteRemoveCmd)
