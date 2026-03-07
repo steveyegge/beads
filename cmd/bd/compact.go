@@ -175,13 +175,13 @@ Examples:
 				os.Exit(1)
 			}
 
-			config := &compact.Config{
+			compactCfg := &compact.Config{
 				APIKey:      apiKey,
 				Concurrency: compactWorkers,
 				DryRun:      compactDryRun,
 			}
 
-			compactor, err := compact.New(store, apiKey, config)
+			compactor, err := compact.New(store, apiKey, compactCfg)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to create compactor: %v\n", err)
 				os.Exit(1)
