@@ -3,7 +3,7 @@ package dolt
 // currentSchemaVersion is bumped whenever the schema or migrations change.
 // initSchemaOnDB checks this against the stored version and skips re-initialization
 // when they match, avoiding ~20 DDL statements per bd invocation.
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 // schema defines the MySQL-compatible database schema for Dolt.
 const schema = `
@@ -243,6 +243,16 @@ CREATE TABLE IF NOT EXISTS federation_peers (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_federation_peers_sovereignty (sovereignty)
+);
+
+-- Remote credentials table (for per-remote Dolt authentication)
+-- Stores encrypted credentials for individual Dolt remotes
+CREATE TABLE IF NOT EXISTS remote_credentials (
+    remote_name VARCHAR(255) PRIMARY KEY,
+    username VARCHAR(255) NOT NULL,
+    password_encrypted BLOB,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 `
 
