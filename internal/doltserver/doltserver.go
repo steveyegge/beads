@@ -190,12 +190,71 @@ func reclaimPort(host string, port int, beadsDir string) (adoptPID int, err erro
 	// dolt sql-server is started with cmd.Dir = doltDir, so CWD is the data dir.
 	doltDir := ResolveDoltDir(beadsDir)
 	if isProcessInDir(pid, doltDir) {
+		// Layer 2: verify the server actually has our database before adopting.
+		// isProcessInDir uses lsof which can be unreliable (macOS SIP, symlinks).
+		// SHOW DATABASES is a definitive check. (GH#2444, GH#2445)
+		dbName := resolveDoltDatabase(beadsDir)
+		if dbName != "" && !serverHasDatabase(host, port, dbName) {
+			return 0, ErrPortOccupiedByOtherProject
+		}
 		return pid, nil // our server — adopt it
 	}
 
 	// Another beads project's Dolt server is on this port.
 	// Don't kill it — return a sentinel so Start can fall back to DerivePort.
 	return 0, ErrPortOccupiedByOtherProject
+}
+
+// serverHasDatabase connects to a Dolt server and checks if a database exists.
+// Used as a defense-in-depth check before adopting an existing server. (GH#2445)
+func serverHasDatabase(host string, port int, dbName string) bool {
+	dsn := fmt.Sprintf("root@tcp(%s:%d)/?parseTime=true&timeout=2s", host, port)
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetConnMaxLifetime(3 * time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		if name == dbName {
+			return true
+		}
+	}
+	return false
+}
+
+// ServerHasDatabase is the exported version of serverHasDatabase.
+// Used by the storage layer to detect wrong-server scenarios. (GH#2445)
+func ServerHasDatabase(host string, port int, dbName string) bool {
+	return serverHasDatabase(host, port, dbName)
+}
+
+// resolveDoltDatabase reads the dolt_database name from metadata.json.
+func resolveDoltDatabase(beadsDir string) string {
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if _, err := os.Stat(metadataPath); err != nil {
+		return ""
+	}
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return cfg.DoltDatabase
 }
 
 // countDoltProcesses returns the number of running dolt sql-server processes.

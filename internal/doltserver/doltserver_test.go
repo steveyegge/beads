@@ -843,3 +843,38 @@ func TestRunIdleMonitorZeroTimeoutExitsImmediately(t *testing.T) {
 		t.Fatal("RunIdleMonitor should exit immediately with zero timeout")
 	}
 }
+
+// --- Wrong-server detection tests (GH#2445) ---
+
+func TestServerHasDatabase_NoServer(t *testing.T) {
+	// serverHasDatabase should return false when no server is listening.
+	// Use a port that's almost certainly free.
+	if serverHasDatabase("127.0.0.1", 19999, "mydb") {
+		t.Error("expected false when no server is listening")
+	}
+}
+
+func TestResolveDoltDatabase_NoMetadata(t *testing.T) {
+	dir := t.TempDir()
+	if db := resolveDoltDatabase(dir); db != "" {
+		t.Errorf("expected empty database name, got %q", db)
+	}
+}
+
+func TestResolveDoltDatabase_WithMetadata(t *testing.T) {
+	dir := t.TempDir()
+	metadata := `{"dolt_database": "myproject", "backend": "dolt"}`
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(metadata), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if db := resolveDoltDatabase(dir); db != "myproject" {
+		t.Errorf("expected %q, got %q", "myproject", db)
+	}
+}
+
+func TestServerHasDatabase_Exported(t *testing.T) {
+	// Verify the exported wrapper delegates correctly.
+	if ServerHasDatabase("127.0.0.1", 19999, "mydb") {
+		t.Error("expected false from exported wrapper when no server is listening")
+	}
+}

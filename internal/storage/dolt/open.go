@@ -75,7 +75,27 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, cfg *Config)
 	// getter which falls back to DefaultDoltServerPort), suppress auto-start.
 	// This prevents bd from launching a different server when the user's configured
 	// server is temporarily unreachable — the root cause of the shadow database bug.
+	//
+	// However, if the server on the explicit port doesn't have our database, this
+	// is a wrong-server scenario (another project's server on the same port).
+	// In that case, allow EnsureRunning to handle port conflict detection and
+	// DerivePort fallback. (GH#2445)
 	explicitPort := fileCfg.DoltServerPort > 0
+	if explicitPort && cfg.Database != "" && cfg.ServerHost != "" && cfg.ServerPort > 0 {
+		if !doltserver.ServerHasDatabase(cfg.ServerHost, cfg.ServerPort, cfg.Database) {
+			// Wrong server on the explicit port. Let EnsureRunning handle it:
+			// it will detect the conflict via reclaimPort and fall back to DerivePort.
+			actualPort, err := doltserver.EnsureRunning(beadsDir)
+			if err != nil {
+				return nil, fmt.Errorf("starting dolt server (port %d occupied by another project): %w", cfg.ServerPort, err)
+			}
+			if actualPort != cfg.ServerPort {
+				fmt.Fprintf(os.Stderr, "Port %d serves a different project; using port %d for this workspace\n", cfg.ServerPort, actualPort)
+				cfg.ServerPort = actualPort
+			}
+			explicitPort = false // server was auto-started, don't suppress AutoStart
+		}
+	}
 	cfg.AutoStart = resolveAutoStart(cfg.AutoStart, autoStartCfg, explicitPort)
 
 	return New(ctx, cfg)
