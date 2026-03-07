@@ -10,7 +10,9 @@ package beads
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/configfile"
@@ -67,8 +69,9 @@ func FollowRedirect(beadsDir string) string {
 		target = filepath.Join(projectRoot, target)
 	}
 
-	// Canonicalize the target path
-	target = utils.CanonicalizePath(target)
+	// Canonicalize the target path and prefer a stable branch worktree when the
+	// redirect points at a detached snapshot checkout.
+	target = canonicalizeBeadsDirPath(target)
 
 	// Verify the target exists and is a directory
 	info, err := os.Stat(target)
@@ -89,6 +92,130 @@ func FollowRedirect(beadsDir string) string {
 	}
 
 	return target
+}
+
+func canonicalizeBeadsDirPath(beadsDir string) string {
+	canonical := utils.CanonicalizePath(beadsDir)
+	if stable := preferStableBranchWorktreeBeadsDir(canonical); stable != "" {
+		return stable
+	}
+	return canonical
+}
+
+type worktreeInfo struct {
+	Path     string
+	Head     string
+	Branch   string
+	Detached bool
+	Bare     bool
+}
+
+func preferStableBranchWorktreeBeadsDir(beadsDir string) string {
+	if filepath.Base(beadsDir) != ".beads" {
+		return ""
+	}
+
+	repoRoot := filepath.Dir(beadsDir)
+	if !isDetachedCommitWorktreePath(repoRoot) {
+		return ""
+	}
+
+	branch, err := gitOutput(repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil || branch != "HEAD" {
+		return ""
+	}
+
+	head, err := gitOutput(repoRoot, "rev-parse", "HEAD")
+	if err != nil || head == "" {
+		return ""
+	}
+
+	worktrees, err := listWorktrees(repoRoot)
+	if err != nil {
+		return ""
+	}
+
+	var candidates []worktreeInfo
+	for _, wt := range worktrees {
+		if wt.Bare || wt.Detached || wt.Branch == "" {
+			continue
+		}
+		if wt.Head != head || utils.PathsEqual(wt.Path, repoRoot) {
+			continue
+		}
+		candidates = append(candidates, wt)
+	}
+
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		iStable := !isDetachedCommitWorktreePath(candidates[i].Path)
+		jStable := !isDetachedCommitWorktreePath(candidates[j].Path)
+		if iStable != jStable {
+			return iStable
+		}
+		return candidates[i].Path < candidates[j].Path
+	})
+
+	stableBeadsDir := filepath.Join(candidates[0].Path, ".beads")
+	if info, err := os.Stat(stableBeadsDir); err == nil && info.IsDir() {
+		return utils.CanonicalizePath(stableBeadsDir)
+	}
+
+	return ""
+}
+
+func isDetachedCommitWorktreePath(path string) bool {
+	return strings.Contains(filepath.ToSlash(path), "/refs/commits/")
+}
+
+func gitOutput(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func listWorktrees(repoRoot string) ([]worktreeInfo, error) {
+	output, err := gitOutput(repoRoot, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+
+	var worktrees []worktreeInfo
+	var current *worktreeInfo
+
+	for _, line := range strings.Split(output, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			if current != nil {
+				worktrees = append(worktrees, *current)
+			}
+			current = &worktreeInfo{
+				Path: strings.TrimPrefix(line, "worktree "),
+			}
+		case current == nil:
+			continue
+		case strings.HasPrefix(line, "HEAD "):
+			current.Head = strings.TrimPrefix(line, "HEAD ")
+		case strings.HasPrefix(line, "branch refs/heads/"):
+			current.Branch = strings.TrimPrefix(line, "branch refs/heads/")
+		case line == "detached":
+			current.Detached = true
+		case line == "bare":
+			current.Bare = true
+		}
+	}
+
+	if current != nil {
+		worktrees = append(worktrees, *current)
+	}
+
+	return worktrees, nil
 }
 
 // RedirectInfo contains information about a beads directory redirect.
@@ -172,7 +299,7 @@ func findLocalBdsDirInRepo() string {
 func findLocalBeadsDir() string {
 	// Check BEADS_DIR environment variable first
 	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
-		return utils.CanonicalizePath(beadsDir)
+		return canonicalizeBeadsDirPath(beadsDir)
 	}
 
 	// For worktrees, check worktree-local redirect first (per-worktree override).
@@ -277,7 +404,7 @@ func FindDatabasePath() string {
 	// 1. Check BEADS_DIR environment variable (preferred)
 	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
 		// Canonicalize the path to prevent nested .beads directories
-		absBeadsDir := utils.CanonicalizePath(beadsDir)
+		absBeadsDir := canonicalizeBeadsDirPath(beadsDir)
 
 		// Follow redirect if present
 		absBeadsDir = FollowRedirect(absBeadsDir)
@@ -351,7 +478,7 @@ func hasBeadsProjectFiles(beadsDir string) bool {
 func FindBeadsDir() string {
 	// 1. Check BEADS_DIR environment variable (preferred)
 	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
-		absBeadsDir := utils.CanonicalizePath(beadsDir)
+		absBeadsDir := canonicalizeBeadsDirPath(beadsDir)
 
 		// Follow redirect if present
 		absBeadsDir = FollowRedirect(absBeadsDir)
