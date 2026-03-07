@@ -595,6 +595,20 @@ var doltRemoteAddCmd = &cobra.Command{
 		name, url := args[0], args[1]
 		dbPath := st.Path()
 
+		// Handle --user / --password flags
+		remoteUser, _ := cmd.Flags().GetString("user")
+		remotePassword, _ := cmd.Flags().GetString("password")
+		if remoteUser != "" && remotePassword == "" {
+			fmt.Fprintf(os.Stderr, "Password for %s@%s: ", remoteUser, name)
+			pwBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Fprintln(os.Stderr) // newline after password
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
+				os.Exit(1)
+			}
+			remotePassword = string(pwBytes)
+		}
+
 		// Check existing remotes on both surfaces
 		sqlRemotes, _ := st.ListRemotes(ctx)
 		var sqlURL string
@@ -653,14 +667,24 @@ var doltRemoteAddCmd = &cobra.Command{
 			}
 		}
 
+		// Store credentials if --user was provided
+		if remoteUser != "" {
+			if err := st.AddRemoteCredentials(ctx, name, remoteUser, remotePassword); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: remote added but failed to store credentials: %v\n", err)
+			} else if !jsonOutput {
+				fmt.Printf("✓ Credentials stored for remote %q\n", name)
+			}
+		}
+
 		suffix := "(SQL + CLI)"
 		if cliFailed {
 			suffix = "(SQL only)"
 		}
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
-				"name": name,
-				"url":  url,
+				"name":     name,
+				"url":      url,
+				"has_auth": remoteUser != "",
 			})
 		} else {
 			fmt.Printf("Added remote %q → %s %s\n", name, url, suffix)
@@ -835,6 +859,9 @@ var doltRemoteRemoveCmd = &cobra.Command{
 			}
 		}
 
+		// Best-effort cleanup of stored credentials
+		_ = st.RemoveRemoteCredentials(ctx, name)
+
 		if sqlURL == "" && cliURL == "" {
 			fmt.Fprintf(os.Stderr, "Error: remote %q not found on either surface\n", name)
 			os.Exit(1)
@@ -882,6 +909,8 @@ func init() {
 	doltIdleMonitorCmd.Flags().String("beads-dir", "", "Path to .beads directory")
 	doltCleanDatabasesCmd.Flags().Bool("dry-run", false, "Show what would be dropped without dropping")
 	doltRemoteRemoveCmd.Flags().Bool("force", false, "Force remove even when SQL and CLI URLs conflict")
+	doltRemoteAddCmd.Flags().StringP("user", "u", "", "Username for remote authentication")
+	doltRemoteAddCmd.Flags().StringP("password", "p", "", "Password (prompted if --user set without --password)")
 	doltRemoteCmd.AddCommand(doltRemoteAddCmd)
 	doltRemoteCmd.AddCommand(doltRemoteListCmd)
 	doltRemoteCmd.AddCommand(doltRemoteRemoveCmd)
