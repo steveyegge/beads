@@ -543,6 +543,19 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 		}
 	}
 
+	// Auto-clear pinned column when status transitions away from "pinned".
+	// The legacy pinned=1 column can cause beads to be invisible to bd list
+	// when combined with non-pinned statuses (e.g., hooked). Clear it on
+	// any status transition away from pinned to prevent stale flag issues.
+	if newStatus, ok := updates["status"]; ok {
+		if oldIssue.Pinned && newStatus != "pinned" {
+			if _, alreadySet := updates["pinned"]; !alreadySet {
+				setClauses = append(setClauses, "`pinned` = ?")
+				args = append(args, false)
+			}
+		}
+	}
+
 	// Auto-manage closed_at
 	setClauses, args = manageClosedAt(oldIssue, updates, setClauses, args)
 
