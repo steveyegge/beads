@@ -13,18 +13,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Sync trigger constants define when sync operations occur.
-const (
-	// SyncTriggerPush triggers sync on git push operations.
-	SyncTriggerPush = "push"
-
-	// SyncTriggerChange triggers sync on every database change.
-	SyncTriggerChange = "change"
-
-	// SyncTriggerPull triggers import on git pull operations.
-	SyncTriggerPull = "pull"
-)
-
 var v *viper.Viper
 
 // overriddenKeys tracks keys explicitly set via Set() at runtime, so
@@ -150,11 +138,6 @@ func Initialize() error {
 
 	// Sync configuration defaults (bd-4u8)
 	v.SetDefault("sync.require_confirmation_on_mass_delete", false)
-
-	// Sync trigger configuration (hq-ew1mbr.3)
-	// See docs/CONFIG.md for detailed documentation
-	v.SetDefault("sync.export_on", SyncTriggerPush) // push | change
-	v.SetDefault("sync.import_on", SyncTriggerPull) // pull | change
 
 	// Federation configuration (optional Dolt remote)
 	v.SetDefault("federation.remote", "")      // e.g., dolthub://org/beads, gs://bucket/beads, s3://bucket/beads
@@ -719,18 +702,12 @@ func GetIdentity(flagValue string) string {
 	return "unknown"
 }
 
-// SyncConfig holds the sync trigger configuration.
-type SyncConfig struct {
-	ExportOn string // push, change
-	ImportOn string // pull, change
-}
+// SyncConfig holds the sync configuration.
+type SyncConfig struct{}
 
 // GetSyncConfig returns the current sync configuration.
 func GetSyncConfig() SyncConfig {
-	return SyncConfig{
-		ExportOn: GetString("sync.export_on"),
-		ImportOn: GetString("sync.import_on"),
-	}
+	return SyncConfig{}
 }
 
 // FederationConfig holds the federation (Dolt remote) configuration.

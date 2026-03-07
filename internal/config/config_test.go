@@ -1116,18 +1116,6 @@ validation:
 
 // Tests for sync configuration (hq-ew1mbr.3)
 
-func TestSyncTriggerConstants(t *testing.T) {
-	if SyncTriggerPush != "push" {
-		t.Errorf("SyncTriggerPush = %q, want \"push\"", SyncTriggerPush)
-	}
-	if SyncTriggerChange != "change" {
-		t.Errorf("SyncTriggerChange = %q, want \"change\"", SyncTriggerChange)
-	}
-	if SyncTriggerPull != "pull" {
-		t.Errorf("SyncTriggerPull = %q, want \"pull\"", SyncTriggerPull)
-	}
-}
-
 func TestSovereigntyConstants(t *testing.T) {
 	if SovereigntyT1 != "T1" {
 		t.Errorf("SovereigntyT1 = %q, want \"T1\"", SovereigntyT1)
@@ -1153,14 +1141,8 @@ func TestSyncConfigDefaults(t *testing.T) {
 		t.Fatalf("Initialize() returned error: %v", err)
 	}
 
-	// Test sync config defaults
-	cfg := GetSyncConfig()
-	if cfg.ExportOn != SyncTriggerPush {
-		t.Errorf("GetSyncConfig().ExportOn = %q, want %q", cfg.ExportOn, SyncTriggerPush)
-	}
-	if cfg.ImportOn != SyncTriggerPull {
-		t.Errorf("GetSyncConfig().ImportOn = %q, want %q", cfg.ImportOn, SyncTriggerPull)
-	}
+	// Test sync config defaults (SyncConfig is now empty after cleanup)
+	_ = GetSyncConfig()
 }
 
 func TestFederationConfigDefaults(t *testing.T) {
@@ -1190,10 +1172,6 @@ func TestSyncConfigFromFile(t *testing.T) {
 
 	// Create a config file with sync settings
 	configContent := `
-sync:
-  export_on: change
-  import_on: change
-
 federation:
   remote: dolthub://myorg/beads
   sovereignty: T2
@@ -1216,14 +1194,8 @@ federation:
 		t.Fatalf("Initialize() returned error: %v", err)
 	}
 
-	// Test sync config
-	syncCfg := GetSyncConfig()
-	if syncCfg.ExportOn != SyncTriggerChange {
-		t.Errorf("GetSyncConfig().ExportOn = %q, want %q", syncCfg.ExportOn, SyncTriggerChange)
-	}
-	if syncCfg.ImportOn != SyncTriggerChange {
-		t.Errorf("GetSyncConfig().ImportOn = %q, want %q", syncCfg.ImportOn, SyncTriggerChange)
-	}
+	// Test sync config (SyncConfig is now empty after cleanup)
+	_ = GetSyncConfig()
 
 	// Test federation config
 	fedCfg := GetFederationConfig()

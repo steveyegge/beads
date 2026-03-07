@@ -41,16 +41,8 @@ var validSyncModes = map[SyncMode]bool{
 
 ### Export/Import Trigger Configuration
 
-**File:** `internal/config/config.go` (lines 157-158)
-
-```go
-v.SetDefault("sync.export_on", SyncTriggerPush)  // push | change
-v.SetDefault("sync.import_on", SyncTriggerPull)   // pull | change
-```
-
-These config keys (`sync.export_on`, `sync.import_on`) still exist with two trigger values each (`push`/`change` for export, `pull`/`change` for import). They are read into `SyncConfig` via `GetSyncConfig()`.
-
-**Assessment:** These triggers remain meaningful for controlling when Dolt sync operations fire. However, since `bd sync` is now a no-op (v0.51 changelog), and Dolt handles persistence directly, it is worth verifying whether these triggers are still consumed by any runtime code path. If they are only used in the hook system (`internal/hooks/`), they may still be relevant. If not, they are dead config.
+**Status: REMOVED.** Audit confirmed zero runtime consumers. The `SyncTrigger*` constants,
+`ExportOn`/`ImportOn` struct fields, config defaults, and related tests were removed as dead code.
 
 **Recommendation: Audit callers.** If `sync.export_on` and `sync.import_on` have no runtime consumers, remove them. If they are consumed, document which code paths use them.
 
@@ -138,7 +130,7 @@ After every pull, `resetAutoIncrements()` iterates over 6 hardcoded tables and r
 |------|---------------|--------|--------|
 | SyncMode type + validation | **Remove entirely** | Small | Removes ~80 lines of dead code + ~100 lines of tests |
 | `sync.mode` config key | **Remove** (keep only as deprecated no-op) | Small | Simplifies config validation |
-| `sync.export_on`/`sync.import_on` | **Audit callers**, remove if dead | Small | Removes dead config or documents live usage |
+| `sync.export_on`/`sync.import_on` | **DONE** — removed (zero runtime consumers) | Small | Removed dead config constants, struct fields, defaults, and tests |
 | Push/Pull/ForcePush 3-way routing | **Extract helper** (optional) | Medium | ~50 lines deduplication |
 | Federation peer system | **No change** | - | Already clean |
 | Conflict/field strategies | **No change** | - | Already clean |
