@@ -100,7 +100,7 @@ func TestDatabaseNotFoundHint(t *testing.T) {
 
 	t.Run("hint suggests setting sync.git-remote when empty", func(t *testing.T) {
 		cfg := baseCfg // SyncGitRemote is empty by default
-		err := databaseNotFoundError(&cfg)
+		err := databaseNotFoundError(&cfg, nil)
 
 		msg := err.Error()
 
@@ -132,7 +132,7 @@ func TestDatabaseNotFoundHint(t *testing.T) {
 	t.Run("hint mentions configured sync.git-remote when set", func(t *testing.T) {
 		cfg := baseCfg
 		cfg.SyncGitRemote = "https://doltremoteapi.dolthub.com/myorg/beads"
-		err := databaseNotFoundError(&cfg)
+		err := databaseNotFoundError(&cfg, nil)
 
 		msg := err.Error()
 

@@ -854,7 +854,10 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	if !dbExists {
 		if !cfg.CreateIfMissing {
 			_ = db.Close()
-			return nil, "", databaseNotFoundError(cfg)
+			// Check what databases the server IS serving to detect wrong-server
+			// scenarios and give an actionable error message. (GH#2445)
+			otherDBs := listUserDatabases(ctx, initDB)
+			return nil, "", databaseNotFoundError(cfg, otherDBs)
 		}
 
 		_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", cfg.Database)) //nolint:gosec // G201: cfg.Database validated by ValidateDatabaseName above
@@ -919,6 +922,28 @@ func databaseExistsOnServer(ctx context.Context, db *sql.DB, name string) (bool,
 		}
 	}
 	return false, rows.Err()
+}
+
+// listUserDatabases returns non-system database names from the server.
+// Used to provide context in wrong-server error messages. (GH#2445)
+func listUserDatabases(ctx context.Context, db *sql.DB) []string {
+	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var dbs []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		if name != "information_schema" && name != "mysql" && name != "performance_schema" {
+			dbs = append(dbs, name)
+		}
+	}
+	return dbs
 }
 
 // initSchema creates all tables if they don't exist
