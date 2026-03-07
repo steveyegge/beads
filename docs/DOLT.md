@@ -352,6 +352,11 @@ bd init --prefix myproject --shared-server
 - The file lock mechanism ensures safe concurrent access from multiple projects
 - Default port is 3308 (not 3307) to avoid conflict with Gas Town. Override with `BEADS_DOLT_SERVER_PORT` or `dolt.port` in config.yaml
 
+**Important:** Each project on a shared server **must have a unique prefix** (database name).
+Two projects with the same prefix share the same database — if this happens accidentally,
+the project identity check will detect the mismatch and refuse to connect, preventing
+silent data corruption. Always use distinct prefixes when running `bd init --shared-server`.
+
 ```bash
 # Check shared server status from any project
 bd dolt status
