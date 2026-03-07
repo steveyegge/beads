@@ -244,6 +244,19 @@ func ServerHasDatabase(host string, port int, dbName string) bool {
 	return serverHasDatabase(host, port, dbName)
 }
 
+// ServerIsReachable checks if a Dolt server is accepting connections on the given
+// host:port. Returns true if a TCP connection succeeds, false otherwise.
+// Used to distinguish "server running but wrong DB" from "no server at all." (GH#2445)
+func ServerIsReachable(host string, port int) bool {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
 // resolveDoltDatabase reads the dolt_database name from metadata.json.
 func resolveDoltDatabase(beadsDir string) string {
 	metadataPath := filepath.Join(beadsDir, "metadata.json")

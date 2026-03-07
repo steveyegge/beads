@@ -82,7 +82,11 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, cfg *Config)
 	// DerivePort fallback. (GH#2445)
 	explicitPort := fileCfg.DoltServerPort > 0
 	if explicitPort && cfg.Database != "" && cfg.ServerHost != "" && cfg.ServerPort > 0 {
-		if !doltserver.ServerHasDatabase(cfg.ServerHost, cfg.ServerPort, cfg.Database) {
+		// Check if a server is running on the explicit port but serving a different
+		// project's database. Only trigger recovery when the server IS reachable
+		// (wrong-server scenario), not when nothing is listening (server down). (GH#2445)
+		if doltserver.ServerIsReachable(cfg.ServerHost, cfg.ServerPort) &&
+			!doltserver.ServerHasDatabase(cfg.ServerHost, cfg.ServerPort, cfg.Database) {
 			// Wrong server on the explicit port. Let EnsureRunning handle it:
 			// it will detect the conflict via reclaimPort and fall back to DerivePort.
 			actualPort, err := doltserver.EnsureRunning(beadsDir)
