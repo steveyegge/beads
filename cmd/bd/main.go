@@ -531,6 +531,23 @@ var rootCmd = &cobra.Command{
 
 		doltCfg.Path = doltPath
 
+		// Wrong-server detection: if a server is reachable on the resolved port
+		// but doesn't have our database, another project's server is on this port.
+		// Let EnsureRunning handle port conflict detection and DerivePort fallback. (GH#2445)
+		if doltCfg.Database != "" && doltCfg.ServerHost != "" && doltCfg.ServerPort > 0 {
+			if doltserver.ServerIsReachable(doltCfg.ServerHost, doltCfg.ServerPort) &&
+				!doltserver.ServerHasDatabase(doltCfg.ServerHost, doltCfg.ServerPort, doltCfg.Database) {
+				actualPort, startErr := doltserver.EnsureRunning(beadsDir)
+				if startErr != nil {
+					FatalError("port %d occupied by another project's Dolt server: %v", doltCfg.ServerPort, startErr)
+				}
+				if actualPort != doltCfg.ServerPort {
+					fmt.Fprintf(os.Stderr, "Port %d serves a different project; using port %d for this workspace\n", doltCfg.ServerPort, actualPort)
+					doltCfg.ServerPort = actualPort
+				}
+			}
+		}
+
 		// Pre-flight: clean stale noms LOCK files left by crashed Dolt processes.
 		// These prevent the Dolt server from opening databases (SIGSEGV or
 		// "database is locked"). Safe because we haven't connected yet.
