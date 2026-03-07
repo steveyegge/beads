@@ -1,7 +1,11 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/joho/godotenv"
 )
 
 func TestResolveRemoteAddArgs_FullArgs(t *testing.T) {
@@ -151,5 +155,98 @@ func TestResolveRemoteAddArgs_EnvUserOnly(t *testing.T) {
 	}
 	if !r.needsPasswordPrompt {
 		t.Error("should need password prompt when env has user but no password")
+	}
+}
+
+func TestResolveRemoteAddArgs_DotEnvLoading(t *testing.T) {
+	// Write a .env file in a temp dir
+	tmpDir := t.TempDir()
+	envFile := filepath.Join(tmpDir, ".env")
+	if err := os.WriteFile(envFile, []byte(
+		"DOLT_REMOTE_ADDRESS=http://dotenv.example.com/org/db\n"+
+			"DOLT_REMOTE_USERNAME=dotenvuser\n"+
+			"DOLT_REMOTE_PASSWORD=dotenvpass\n",
+	), 0600); err != nil {
+		t.Fatalf("failed to write .env: %v", err)
+	}
+
+	// Unset any existing env vars so .env takes effect
+	os.Unsetenv("DOLT_REMOTE_ADDRESS")
+	os.Unsetenv("DOLT_REMOTE_USERNAME")
+	os.Unsetenv("DOLT_REMOTE_PASSWORD")
+
+	// godotenv.Load reads from CWD, so chdir
+	oldCwd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldCwd) }()
+
+	// Load .env (same call used in the command)
+	if err := godotenv.Load(); err != nil {
+		t.Fatalf("godotenv.Load failed: %v", err)
+	}
+
+	// Now os.Getenv should return .env values
+	r, err := resolveRemoteAddArgs(
+		[]string{"origin"},
+		"", "",
+		os.Getenv("DOLT_REMOTE_ADDRESS"),
+		os.Getenv("DOLT_REMOTE_USERNAME"),
+		os.Getenv("DOLT_REMOTE_PASSWORD"),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.url != "http://dotenv.example.com/org/db" {
+		t.Errorf("url = %q, want dotenv URL", r.url)
+	}
+	if r.user != "dotenvuser" || r.password != "dotenvpass" {
+		t.Errorf("creds = %q/%q, want dotenvuser/dotenvpass", r.user, r.password)
+	}
+	if r.needsPasswordPrompt {
+		t.Error("should not need prompt when .env provides all creds")
+	}
+}
+
+func TestResolveRemoteAddArgs_DotEnvDoesNotOverrideExisting(t *testing.T) {
+	tmpDir := t.TempDir()
+	envFile := filepath.Join(tmpDir, ".env")
+	if err := os.WriteFile(envFile, []byte(
+		"DOLT_REMOTE_ADDRESS=http://dotenv.example.com/org/db\n"+
+			"DOLT_REMOTE_USERNAME=dotenvuser\n"+
+			"DOLT_REMOTE_PASSWORD=dotenvpass\n",
+	), 0600); err != nil {
+		t.Fatalf("failed to write .env: %v", err)
+	}
+
+	// Set env vars BEFORE loading .env — godotenv should NOT overwrite
+	t.Setenv("DOLT_REMOTE_ADDRESS", "http://real.example.com/org/db")
+	t.Setenv("DOLT_REMOTE_USERNAME", "realuser")
+	t.Setenv("DOLT_REMOTE_PASSWORD", "realpass")
+
+	oldCwd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldCwd) }()
+
+	_ = godotenv.Load()
+
+	r, err := resolveRemoteAddArgs(
+		[]string{"origin"},
+		"", "",
+		os.Getenv("DOLT_REMOTE_ADDRESS"),
+		os.Getenv("DOLT_REMOTE_USERNAME"),
+		os.Getenv("DOLT_REMOTE_PASSWORD"),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.url != "http://real.example.com/org/db" {
+		t.Errorf("url = %q, want existing env URL (not .env)", r.url)
+	}
+	if r.user != "realuser" || r.password != "realpass" {
+		t.Errorf("creds = %q/%q, want realuser/realpass (not .env)", r.user, r.password)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
@@ -641,6 +642,9 @@ Flags --user / --password override the environment variables when provided.`,
 		}
 
 		name := args[0]
+
+		// Load .env file if present (does not overwrite existing env vars)
+		_ = godotenv.Load()
 
 		// Handle --user / --password flags
 		flagUser, _ := cmd.Flags().GetString("user")
