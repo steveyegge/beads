@@ -48,9 +48,16 @@ Examples:
 
 var checkRefsCmd = &cobra.Command{
 	Use:   "check-refs",
-	Short: "Check beads refs for git-Dolt mismatch",
-	Long: `Runs mismatch detection against beads ref files. Respects branch_strategy.*
-settings — does not force a sync.
+	Short: "Check beads refs for consistency with git-dolt history",
+	Long: `Compares .beads/refs against the current dolt commit hash
+and takes action based on branch_strategy.* settings.
+
+If in sync, does nothing. On mismatch:
+  - prompt=false: follows default strategy silently
+  - prompt=true:  prompt for determination, default strategy as suggested answer
+
+The strategy (reset_dolt_with_git) controls whether dolt is reset to
+match git history or whether histories are intentionally allowed to diverge.
 
 Useful for shell integration:
 
@@ -59,11 +66,7 @@ Useful for shell integration:
     if [[ "$1" == "reset" ]]; then
       bd check-refs
     fi
-  }
-
-Exit codes:
-  0  In sync, or action taken (reset/prompt answered)
-  1  Mismatch detected but no action (silent mode)`,
+  }`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if store != nil && !store.IsClosed() {
 			checkBeadsRefSync(rootCtx, store)
