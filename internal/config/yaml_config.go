@@ -168,9 +168,25 @@ func findProjectConfigYaml() (string, error) {
 // If the key exists (commented or not), it updates it in place.
 // If the key doesn't exist, it appends it at the end.
 //
+// For dotted keys (e.g., "branch_strategy.prompt"), this function produces
+// proper nested YAML structure rather than flat dotted keys:
+//
+//	branch_strategy:
+//	  prompt: true
+//
+// This ensures viper's GetStringMap works correctly for parent sections.
+//
 //nolint:unparam // error return kept for future validation
 func updateYamlKey(content, key, value string) (string, error) {
-	// Format the value appropriately
+	parts := strings.SplitN(key, ".", 2)
+	if len(parts) == 2 {
+		return updateNestedYamlKey(content, parts[0], parts[1], value)
+	}
+	return updateFlatYamlKey(content, key, value)
+}
+
+// updateFlatYamlKey handles simple (non-dotted) keys like "no-db" or "json".
+func updateFlatYamlKey(content, key, value string) (string, error) {
 	formattedValue := formatYamlValue(value)
 	newLine := fmt.Sprintf("%s: %s", key, formattedValue)
 
@@ -209,6 +225,166 @@ func updateYamlKey(content, key, value string) (string, error) {
 	}
 
 	return strings.Join(result, "\n"), nil
+}
+
+// updateNestedYamlKey handles dotted keys (e.g., "branch_strategy.prompt") by
+// producing proper nested YAML. The childKey may itself contain dots for deeper
+// nesting (e.g., "defaults.reset_dolt_with_git").
+func updateNestedYamlKey(content, parentKey, childKey, value string) (string, error) {
+	formattedValue := formatYamlValue(value)
+
+	// Split childKey further for deeper nesting (e.g., "defaults.reset_dolt_with_git")
+	childParts := strings.Split(childKey, ".")
+	leafKey := childParts[len(childParts)-1]
+	intermediateParts := childParts[:len(childParts)-1]
+
+	lines := strings.Split(content, "\n")
+
+	// First, check for and remove any flat dotted key (e.g., "branch_strategy.prompt: value")
+	flatKey := parentKey + "." + childKey
+	flatPattern := regexp.MustCompile(`^(\s*)(#\s*)?` + regexp.QuoteMeta(flatKey) + `\s*:`)
+	var cleaned []string
+	for _, line := range lines {
+		if !flatPattern.MatchString(line) {
+			cleaned = append(cleaned, line)
+		}
+	}
+	lines = cleaned
+
+	// Look for the parent section header (e.g., "branch_strategy:" or "# branch_strategy:")
+	parentPattern := regexp.MustCompile(`^(\s*)(#\s*)?` + regexp.QuoteMeta(parentKey) + `\s*:\s*$`)
+
+	parentIdx := -1
+	parentCommented := false
+	for i, line := range lines {
+		if parentPattern.MatchString(line) {
+			parentIdx = i
+			matches := parentPattern.FindStringSubmatch(line)
+			parentCommented = len(matches) > 2 && matches[2] != ""
+			break
+		}
+	}
+
+	if parentIdx == -1 {
+		// No parent section — append nested structure at end
+		if len(lines) > 0 && lines[len(lines)-1] != "" {
+			lines = append(lines, "")
+		}
+		lines = append(lines, parentKey+":")
+		indent := "  "
+		for _, part := range intermediateParts {
+			lines = append(lines, indent+part+":")
+			indent += "  "
+		}
+		lines = append(lines, indent+leafKey+": "+formattedValue)
+		return strings.Join(lines, "\n"), nil
+	}
+
+	// Parent section found — uncomment it if needed
+	if parentCommented {
+		matches := parentPattern.FindStringSubmatch(lines[parentIdx])
+		indent := ""
+		if len(matches) > 1 {
+			indent = matches[1]
+		}
+		lines[parentIdx] = indent + parentKey + ":"
+	}
+
+	// Determine the indentation level for children under this parent
+	parentIndent := ""
+	if m := parentPattern.FindStringSubmatch(lines[parentIdx]); len(m) > 1 {
+		parentIndent = m[1]
+	}
+	childIndent := parentIndent + "  "
+
+	// Build the target indent for the leaf key (accounting for intermediate parts)
+	targetIndent := childIndent
+	for range intermediateParts {
+		targetIndent += "  "
+	}
+
+	// Scan the children of this parent section to find the target key
+	// Children are lines with indent > parentIndent, or commented lines at child indent
+	childFound := false
+	intermediateHandled := make([]bool, len(intermediateParts))
+
+	for i := parentIdx + 1; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+
+		// Skip empty lines within the section
+		if trimmed == "" {
+			continue
+		}
+
+		// Check if we've left the parent section (line at same or lesser indent, uncommented)
+		lineIndent := len(line) - len(strings.TrimLeft(line, " \t"))
+		commentedLine := strings.HasPrefix(trimmed, "#")
+		if !commentedLine && lineIndent <= len(parentIndent) && trimmed != "" {
+			break
+		}
+
+		// Check for intermediate parts (e.g., "defaults:" under "branch_strategy:")
+		for j, part := range intermediateParts {
+			interIndent := childIndent
+			for k := 0; k < j; k++ {
+				interIndent += "  "
+			}
+			interPattern := regexp.MustCompile(`^(\s*)(#\s*)?` + regexp.QuoteMeta(part) + `\s*:\s*$`)
+			if interPattern.MatchString(line) {
+				intermediateHandled[j] = true
+				// Uncomment if needed
+				if m := interPattern.FindStringSubmatch(line); len(m) > 2 && m[2] != "" {
+					lines[i] = interIndent + part + ":"
+				}
+			}
+		}
+
+		// Check for the leaf key (commented or not, at any indent within this section)
+		leafPattern := regexp.MustCompile(`^(\s*)(#\s*)?` + regexp.QuoteMeta(leafKey) + `\s*:`)
+		if leafPattern.MatchString(line) {
+			lines[i] = targetIndent + leafKey + ": " + formattedValue
+			childFound = true
+		}
+	}
+
+	if !childFound {
+		// Insert the child key after the parent section header
+		// Find the end of the parent section to insert before the next section
+		insertIdx := parentIdx + 1
+		for insertIdx < len(lines) {
+			trimmed := strings.TrimSpace(lines[insertIdx])
+			if trimmed == "" {
+				insertIdx++
+				continue
+			}
+			lineIndent := len(lines[insertIdx]) - len(strings.TrimLeft(lines[insertIdx], " \t"))
+			commentedLine := strings.HasPrefix(trimmed, "#")
+			if !commentedLine && lineIndent <= len(parentIndent) {
+				break
+			}
+			insertIdx++
+		}
+
+		// Build lines to insert
+		var newLines []string
+		indent := childIndent
+		for j, part := range intermediateParts {
+			if !intermediateHandled[j] {
+				newLines = append(newLines, indent+part+":")
+			}
+			indent += "  "
+		}
+		newLines = append(newLines, targetIndent+leafKey+": "+formattedValue)
+
+		// Insert at position
+		tail := make([]string, len(lines[insertIdx:]))
+		copy(tail, lines[insertIdx:])
+		lines = append(lines[:insertIdx], newLines...)
+		lines = append(lines, tail...)
+	}
+
+	return strings.Join(lines, "\n"), nil
 }
 
 // formatYamlValue formats a value appropriately for YAML.

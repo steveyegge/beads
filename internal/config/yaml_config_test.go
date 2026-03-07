@@ -114,6 +114,35 @@ func TestUpdateYamlKey(t *testing.T) {
 			value:    "user: name",
 			expected: "other: value\n\nactor: \"user: name\"",
 		},
+		// Nested keys (dotted)
+		{
+			name:     "nested key appended when parent absent",
+			content:  "other: value",
+			key:      "branch_strategy.prompt",
+			value:    "true",
+			expected: "other: value\n\nbranch_strategy:\n  prompt: true",
+		},
+		{
+			name:     "nested key under existing parent",
+			content:  "branch_strategy:\n  prompt: true",
+			key:      "branch_strategy.defaults.reset_dolt_with_git",
+			value:    "false",
+			expected: "branch_strategy:\n  prompt: true\n  defaults:\n    reset_dolt_with_git: false",
+		},
+		{
+			name:     "nested key uncomments parent and child",
+			content:  "# branch_strategy:\n#   prompt: false",
+			key:      "branch_strategy.prompt",
+			value:    "true",
+			expected: "branch_strategy:\n  prompt: true",
+		},
+		{
+			name:    "nested key replaces flat dotted key",
+			content: "branch_strategy.prompt: false",
+			key:     "branch_strategy.prompt",
+			value:   "true",
+			expected: "branch_strategy:\n  prompt: true",
+		},
 	}
 
 	for _, tt := range tests {
