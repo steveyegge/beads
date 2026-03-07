@@ -84,7 +84,7 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 # https://github.com/steveyegge/beads/discussions/2362
 #
 # branch_strategy:
-#   prompt: false                        # Prompt to select strategy (true = interactive)
+#   prompt: true                         # Prompt to select strategy (true = interactive; false = follow default strategies, silently skipping prompts)
 #   defaults:
 #     reset_dolt_with_git: false         # Reset dolt history with git reset
 
