@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -466,6 +467,28 @@ func (s *DoltStore) withPeerCredentials(ctx context.Context, peerName string, fn
 	}
 
 	return err
+}
+
+// withRemoteCredentials looks up stored credentials for a named remote and
+// passes them to fn. Unlike withPeerCredentials (which queries federation_peers),
+// this queries the remote_credentials table populated by `bd dolt remote credentials add`.
+// If no credentials are stored for the remote, fn receives nil creds.
+func (s *DoltStore) withRemoteCredentials(ctx context.Context, remoteName string, fn func(creds *remoteCredentials) error) error {
+	username, password, err := s.GetRemoteCredentials(ctx, remoteName)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			// No stored credentials — run without auth
+			return fn(nil)
+		}
+		return fmt.Errorf("failed to get remote credentials: %w", err)
+	}
+
+	var creds *remoteCredentials
+	if username != "" || password != "" {
+		creds = &remoteCredentials{username: username, password: password}
+	}
+
+	return fn(creds)
 }
 
 // FederationPeer is an alias for storage.FederationPeer for convenience.

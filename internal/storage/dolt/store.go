@@ -1389,6 +1389,7 @@ func (s *DoltStore) doltCLIPull(ctx context.Context, creds *remoteCredentials) e
 // For git-protocol remotes (SSH, git+https://, git://), uses CLI `dolt push` to avoid MySQL connection timeouts.
 // For non-SSH Hosted Dolt (remoteUser set), uses CALL DOLT_PUSH with --user authentication.
 // For other remotes (DoltHub, S3, GCS, file), uses CALL DOLT_PUSH via SQL.
+// Stored remote credentials (from `bd dolt remote credentials add`) are injected automatically.
 func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.push",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -1405,6 +1406,11 @@ func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 	// Credentials are passed directly to the subprocess via cmd.Env, avoiding
 	// process-wide env var races with concurrent goroutines.
 	if s.isGitProtocolRemote(ctx) {
+		if creds.empty() {
+			return s.withRemoteCredentials(ctx, s.remote, func(storedCreds *remoteCredentials) error {
+				return s.doltCLIPush(ctx, false, storedCreds)
+			})
+		}
 		return s.doltCLIPush(ctx, false, creds)
 	}
 	if s.remoteUser != "" {
@@ -1413,6 +1419,17 @@ func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 				return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
 			}
 			return nil
+		})
+	}
+	// No config-level credentials — check for stored remote credentials.
+	if creds.empty() {
+		return s.withRemoteCredentials(ctx, s.remote, func(storedCreds *remoteCredentials) error {
+			return withEnvCredentials(storedCreds, func() error {
+				if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch); err != nil {
+					return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
+				}
+				return nil
+			})
 		})
 	}
 	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch); err != nil {
@@ -1424,6 +1441,7 @@ func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 // ForcePush force-pushes commits to the remote, overwriting remote changes.
 // Use when the remote has uncommitted changes in its working set.
 // For git-protocol remotes (SSH, git+https://, git://), uses CLI `dolt push --force` to avoid MySQL connection timeouts.
+// Stored remote credentials (from `bd dolt remote credentials add`) are injected automatically.
 func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.force_push",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -1439,6 +1457,11 @@ func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 	// but still need CLI to avoid SQL connection timeout.
 	// Credentials are passed directly to the subprocess via cmd.Env.
 	if s.isGitProtocolRemote(ctx) {
+		if creds.empty() {
+			return s.withRemoteCredentials(ctx, s.remote, func(storedCreds *remoteCredentials) error {
+				return s.doltCLIPush(ctx, true, storedCreds)
+			})
+		}
 		return s.doltCLIPush(ctx, true, creds)
 	}
 	if s.remoteUser != "" {
@@ -1447,6 +1470,17 @@ func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 				return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
 			}
 			return nil
+		})
+	}
+	// No config-level credentials — check for stored remote credentials.
+	if creds.empty() {
+		return s.withRemoteCredentials(ctx, s.remote, func(storedCreds *remoteCredentials) error {
+			return withEnvCredentials(storedCreds, func() error {
+				if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch); err != nil {
+					return fmt.Errorf("failed to force push to %s/%s: %w", s.remote, s.branch, err)
+				}
+				return nil
+			})
 		})
 	}
 	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH('--force', ?, ?)", s.remote, s.branch); err != nil {
@@ -1459,6 +1493,7 @@ func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 // Passes branch explicitly to avoid "did not specify a branch" errors.
 // For git-protocol remotes (SSH, git+https://, git://), uses CLI `dolt pull` to avoid MySQL connection timeouts.
 // For non-SSH Hosted Dolt (remoteUser set), uses CALL DOLT_PULL with --user authentication.
+// Stored remote credentials (from `bd dolt remote credentials add`) are injected automatically.
 func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.pull",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -1474,6 +1509,14 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 	// but still need CLI to avoid SQL connection timeout.
 	// Credentials are passed directly to the subprocess via cmd.Env.
 	if s.isGitProtocolRemote(ctx) {
+		if creds.empty() {
+			return s.withRemoteCredentials(ctx, s.remote, func(storedCreds *remoteCredentials) error {
+				if err := s.doltCLIPull(ctx, storedCreds); err != nil {
+					return err
+				}
+				return s.resetAutoIncrements(ctx)
+			})
+		}
 		if err := s.doltCLIPull(ctx, creds); err != nil {
 			return err
 		}
@@ -1491,6 +1534,20 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 				return fmt.Errorf("failed to reset auto-increments after pull: %w", err)
 			}
 			return nil
+		})
+	}
+	// No config-level credentials — check for stored remote credentials.
+	if creds.empty() {
+		return s.withRemoteCredentials(ctx, s.remote, func(storedCreds *remoteCredentials) error {
+			return withEnvCredentials(storedCreds, func() error {
+				if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch); err != nil {
+					return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
+				}
+				if err := s.resetAutoIncrements(ctx); err != nil {
+					return fmt.Errorf("failed to reset auto-increments after pull: %w", err)
+				}
+				return nil
+			})
 		})
 	}
 	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch); err != nil {

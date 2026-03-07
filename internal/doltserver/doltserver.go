@@ -82,9 +82,10 @@ func ResolveDoltDir(beadsDir string) string {
 
 // Config holds the server configuration.
 type Config struct {
-	BeadsDir string // Path to .beads/ directory
-	Port     int    // MySQL protocol port (0 = use DefaultDoltServerPort 3307)
-	Host     string // Bind address (default: 127.0.0.1)
+	BeadsDir string   // Path to .beads/ directory
+	Port     int      // MySQL protocol port (0 = use DefaultDoltServerPort 3307)
+	Host     string   // Bind address (default: 127.0.0.1)
+	ExtraEnv []string // Additional env vars for the server process (e.g. DOLT_REMOTE_PASSWORD=xxx)
 }
 
 // State holds runtime information about a managed server.
@@ -475,6 +476,10 @@ func Start(beadsDir string) (*State, error) {
 	cmd.Stdin = nil
 	// New process group so server survives bd exit
 	cmd.SysProcAttr = procAttrDetached()
+	// Inject extra env vars (e.g. stored remote credentials) into the server process.
+	if len(cfg.ExtraEnv) > 0 {
+		cmd.Env = append(os.Environ(), cfg.ExtraEnv...)
+	}
 
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
