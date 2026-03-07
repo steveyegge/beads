@@ -940,8 +940,26 @@ func TestDefaultConfig_SharedModeFixedPort(t *testing.T) {
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 	dir := t.TempDir()
 	cfg := DefaultConfig(dir)
-	if cfg.Port != configfile.DefaultDoltServerPort {
-		t.Errorf("expected port %d in shared mode, got %d", configfile.DefaultDoltServerPort, cfg.Port)
+	if cfg.Port != DefaultSharedServerPort {
+		t.Errorf("shared mode: expected port %d (DefaultSharedServerPort), got %d", DefaultSharedServerPort, cfg.Port)
+	}
+}
+
+func TestDefaultConfig_SharedModeGeneralPortOverrides(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "5000")
+	t.Setenv("GT_ROOT", "")
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	if cfg.Port != 5000 {
+		t.Errorf("BEADS_DOLT_SERVER_PORT should override shared mode default, got %d", cfg.Port)
+	}
+}
+
+func TestDefaultSharedServerPort_DiffersFromDefault(t *testing.T) {
+	if DefaultSharedServerPort == configfile.DefaultDoltServerPort {
+		t.Errorf("DefaultSharedServerPort (%d) must differ from DefaultDoltServerPort (%d) to avoid Gas Town conflict",
+			DefaultSharedServerPort, configfile.DefaultDoltServerPort)
 	}
 }
 

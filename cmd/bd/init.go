@@ -91,6 +91,13 @@ environment variable.`,
 		// Dolt is the only supported backend
 		backend := configfile.BackendDolt
 
+		// Propagate --shared-server flag to env so that IsSharedServerMode(),
+		// ResolveDoltDir(), and DefaultConfig() all see shared mode immediately
+		// (before config.yaml exists). Safe: init runs once and exits.
+		if sharedServer {
+			_ = os.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+		}
+
 		// Initialize config (PersistentPreRun doesn't run for init command)
 		if err := config.Initialize(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
@@ -267,6 +274,13 @@ environment variable.`,
 		}
 
 		useLocalBeads := filepath.Clean(initDBDirAbs) == filepath.Clean(beadsDirAbs)
+
+		// Shared server mode: dolt data lives in ~/.beads/shared-server/dolt/
+		// (a different path tree), but the project still needs its local .beads/
+		// for metadata.json, config.yaml, .gitignore, etc.
+		if doltserver.IsSharedServerMode() {
+			useLocalBeads = true
+		}
 
 		if useLocalBeads {
 			// Create .beads directory
@@ -547,8 +561,9 @@ environment variable.`,
 				// Non-fatal - continue anyway
 			}
 
-			// Enable shared server mode if requested (GH#2377)
-			if sharedServer {
+			// Enable shared server mode if requested via flag OR env var (GH#2377).
+			// Persist to config.yaml so the project continues working without the env var.
+			if sharedServer || doltserver.IsSharedServerMode() {
 				if err := config.SetYamlConfig("dolt.shared-server", "true"); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to enable shared server mode: %v\n", err)
 				} else if !quiet {

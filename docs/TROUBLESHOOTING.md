@@ -247,7 +247,7 @@ cd ~/project2 && bd dolt set shared-server true
 
 After enabling, existing projects may need `bd init --force -q` to create their database on the shared server.
 
-**Verify:** `bd dolt status` from any project should show the same PID and `~/.beads/shared-server/` as the data directory.
+**Verify:** `bd dolt status` from any project should show the same PID, port 3308, and `~/.beads/shared-server/` as the data directory.
 
 ### `bd` shows 0 issues but the database has data
 

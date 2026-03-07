@@ -108,8 +108,9 @@ bd dolt set shared-server true
 export BEADS_DOLT_SHARED_SERVER=1
 ```
 
-Shared server state lives in `~/.beads/shared-server/`. Each project's data
-remains isolated in its own database (named by project prefix). See [DOLT.md](DOLT.md) for details.
+Shared server state lives in `~/.beads/shared-server/` and uses port 3308 by default
+(avoiding conflict with Gas Town on 3307). Each project's data remains isolated in its
+own database (named by project prefix). See [DOLT.md](DOLT.md) for details.
 
 ## Sync Modes
 

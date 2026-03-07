@@ -42,6 +42,10 @@ const (
 	portRangeSize = 1000
 )
 
+// DefaultSharedServerPort is the default port for shared server mode.
+// Uses 3308 to avoid conflict with Gas Town which uses 3307.
+const DefaultSharedServerPort = 3308
+
 // IsSharedServerMode returns true if shared server mode is enabled.
 // Checks (in priority order):
 //  1. BEADS_DOLT_SHARED_SERVER env var ("1" or "true")
@@ -358,7 +362,7 @@ func DefaultConfig(beadsDir string) *Config {
 
 	if cfg.Port == 0 {
 		if IsSharedServerMode() {
-			cfg.Port = configfile.DefaultDoltServerPort // 3307 - single server, fixed port
+			cfg.Port = DefaultSharedServerPort // 3308 - avoids Gas Town conflict on 3307
 		} else {
 			cfg.Port = DerivePort(beadsDir)
 		}
@@ -419,6 +423,11 @@ func IsRunning(beadsDir string) (*State, error) {
 // Returns the port the server is listening on.
 func EnsureRunning(beadsDir string) (int, error) {
 	serverDir := resolveServerDir(beadsDir)
+
+	// Inform when Gas Town is also running on this machine
+	if IsSharedServerMode() && os.Getenv("GT_ROOT") != "" {
+		fmt.Fprintf(os.Stderr, "Info: Gas Town detected (GT_ROOT set). Shared server uses port %d to avoid conflict.\n", DefaultSharedServerPort)
+	}
 
 	state, err := IsRunning(serverDir)
 	if err != nil {

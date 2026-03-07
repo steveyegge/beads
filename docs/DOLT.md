@@ -267,7 +267,7 @@ dolt:
 | `BEADS_DOLT_PASSWORD` | Server mode password |
 | `BEADS_DOLT_SERVER_MODE` | Enable server mode (set to "1") |
 | `BEADS_DOLT_SERVER_HOST` | Server host (default: 127.0.0.1) |
-| `BEADS_DOLT_SERVER_PORT` | Server port (default: 3307) |
+| `BEADS_DOLT_SERVER_PORT` | Server port (default: 3307, or 3308 in shared mode) |
 | `BEADS_DOLT_SERVER_TLS` | Enable TLS (set to "1" or "true") |
 | `BEADS_DOLT_SERVER_USER` | MySQL connection user |
 | `BEADS_DOLT_SHARED_SERVER` | Enable shared server mode (set to "1" or "true") |
@@ -341,7 +341,7 @@ bd init --prefix myproject --shared-server
 ```
 
 **Benefits:**
-- No port conflicts between projects (single server on port 3307)
+- No port conflicts between projects (single server on port 3308, avoids Gas Town on 3307)
 - Reduced resource usage (one process instead of many)
 - Automatic database isolation (each project uses its own database name)
 
@@ -350,6 +350,7 @@ bd init --prefix myproject --shared-server
 - Dolt data directory: `~/.beads/shared-server/dolt/`
 - Each project's database is stored as a subdirectory (e.g., `~/.beads/shared-server/dolt/myproject/`)
 - The file lock mechanism ensures safe concurrent access from multiple projects
+- Default port is 3308 (not 3307) to avoid conflict with Gas Town. Override with `BEADS_DOLT_SERVER_PORT` or `dolt.port` in config.yaml
 
 ```bash
 # Check shared server status from any project
