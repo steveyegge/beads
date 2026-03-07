@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`bd reset`** — wraps `git reset` with immediate Dolt mismatch detection; recommended interface for time-travel (`bd reset --hard HEAD~1`)
 - **`bd check-refs`** — standalone ref check for scripts and shell integration; respects `branch_strategy.*` settings
 - **Git-Dolt mismatch detection** — `PersistentPreRun` detects when saved beads refs don't match current Dolt state (lazy fallback for bare `git reset`)
-- **`branch_strategy.*` config** — three settings in `config.yaml` control sync behavior: `default_strategy`, `prompt`, `defaults.reset_dolt_with_git` (all default false — zero user-visible changes until configured)
+- **`branch_strategy.*` config** — off by default; uncomment `branch_strategy` section in `config.yaml` to enable ref generation. Two settings control sync behavior: `prompt` (default true when enabled), `defaults.reset_dolt_with_git` (default false)
 - **Rebase safety** — mismatch detection skips during `git rebase` (detects `.git/rebase-merge` and `.git/rebase-apply`)
 
 ## [0.59.0] - 2026-03-05

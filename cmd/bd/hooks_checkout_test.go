@@ -42,17 +42,15 @@ func TestRunPostCheckoutHookArgFiltering(t *testing.T) {
 	})
 }
 
+// TestIsRebaseInProgress must NOT use t.Parallel() — os.Chdir is process-global.
 func TestIsRebaseInProgress(t *testing.T) {
-	t.Parallel()
+	origDir, _ := os.Getwd()
+	t.Cleanup(func() { os.Chdir(origDir) })
 
 	t.Run("no sentinel dirs", func(t *testing.T) {
-		t.Parallel()
-		// Save and restore working directory
-		origDir, _ := os.Getwd()
 		dir := t.TempDir()
 		os.MkdirAll(filepath.Join(dir, ".git"), 0755)
 		os.Chdir(dir)
-		t.Cleanup(func() { os.Chdir(origDir) })
 
 		if isRebaseInProgress() {
 			t.Error("expected false with no sentinel dirs")
@@ -60,12 +58,9 @@ func TestIsRebaseInProgress(t *testing.T) {
 	})
 
 	t.Run("rebase-merge exists", func(t *testing.T) {
-		t.Parallel()
-		origDir, _ := os.Getwd()
 		dir := t.TempDir()
 		os.MkdirAll(filepath.Join(dir, ".git", "rebase-merge"), 0755)
 		os.Chdir(dir)
-		t.Cleanup(func() { os.Chdir(origDir) })
 
 		if !isRebaseInProgress() {
 			t.Error("expected true with .git/rebase-merge")
@@ -73,12 +68,9 @@ func TestIsRebaseInProgress(t *testing.T) {
 	})
 
 	t.Run("rebase-apply exists", func(t *testing.T) {
-		t.Parallel()
-		origDir, _ := os.Getwd()
 		dir := t.TempDir()
 		os.MkdirAll(filepath.Join(dir, ".git", "rebase-apply"), 0755)
 		os.Chdir(dir)
-		t.Cleanup(func() { os.Chdir(origDir) })
 
 		if !isRebaseInProgress() {
 			t.Error("expected true with .git/rebase-apply")
