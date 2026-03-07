@@ -66,14 +66,24 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 #     - ~/work-planning   # Work planning repo
 
 # Branch strategy (git-dolt history correspondence)
-# Controls what happens when git history diverges from dolt state
-# (e.g. after git reset). All settings default to silent/off.
+#
+# OFF by default. Uncomment the branch_strategy section to enable.
+# When off, no .beads/HEAD or .beads/refs/ files are generated.
+#
+# Off is equivalent to Strategy A (stay-on-main) without history tracking.
+# On with Strategy A adds history tracking — .beads/refs track dolt commit
+# hashes alongside git commits, enabling "bd reset" to reset both git and
+# dolt to the same point in history.
+#
+# Strategy A (stay-on-main) is the only supported strategy today.
+# Strategies B (merge-with-branch) and C (merge-on-close) are forthcoming.
+#
 # branch_strategy:
+#   default_strategy: stay-on-main       # stay-on-main (only supported strategy)
 #   prompt: false                        # Prompt on mismatch (true = interactive)
-#   default_strategy: stay-on-main       # stay-on-main | merge-with-branch | merge-on-close
 #   defaults:
 #     reset_dolt_with_git: false         # Auto-reset dolt on git reset mismatch
-#     checkout_dolt_with_git: false      # Auto-checkout dolt on git checkout (Phase 2)
+#     # checkout_dolt_with_git: false    # Not yet supported (Phase 2)
 
 # JSONL backup (periodic export for off-machine recovery)
 # Auto-enabled when a git remote exists. Override explicitly:

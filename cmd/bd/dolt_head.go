@@ -25,6 +25,9 @@ func writeBeadsRefs(ctx context.Context, s *dolt.DoltStore) {
 	if s == nil || s.IsClosed() {
 		return
 	}
+	if !config.IsBranchStrategyEnabled() {
+		return
+	}
 
 	beadsDir := filepath.Dir(s.Path())
 
@@ -110,6 +113,13 @@ func checkBeadsRefSync(ctx context.Context, s *dolt.DoltStore) {
 	}
 
 	beadsDir := filepath.Dir(s.Path())
+
+	if !config.IsBranchStrategyEnabled() {
+		// Refs disabled — clean up stale ref files if they exist
+		cleanupStaleBeadsRefs(beadsDir)
+		return
+	}
+
 	savedHash, savedBranch := readBeadsRefs(beadsDir)
 	if savedHash == "" {
 		// No ref files — pre-feature commit or first use.
@@ -217,6 +227,35 @@ func checkBeadsRefSync(ctx context.Context, s *dolt.DoltStore) {
 	} else {
 		fmt.Fprintf(os.Stderr, "beads: keeping current Dolt state\n")
 	}
+}
+
+// cleanupStaleBeadsRefs stages deletion of ref files when branch_strategy is
+// disabled but ref files still exist from a previous configuration. Warns the
+// user and suggests a commit message.
+func cleanupStaleBeadsRefs(beadsDir string) {
+	headPath := filepath.Join(beadsDir, "HEAD")
+	if _, err := os.Stat(headPath); os.IsNotExist(err) {
+		return // no ref files — nothing to clean up
+	}
+
+	projectRoot := filepath.Dir(beadsDir)
+	refsDir := filepath.Join(beadsDir, "refs")
+
+	// Stage deletion of ref files
+	cmd := exec.CommandContext(context.Background(), "git", "rm", "--cached", "-r", "--ignore-unmatch", headPath)
+	cmd.Dir = projectRoot
+	_ = cmd.Run()
+
+	cmd = exec.CommandContext(context.Background(), "git", "rm", "--cached", "-r", "--ignore-unmatch", refsDir)
+	cmd.Dir = projectRoot
+	_ = cmd.Run()
+
+	// Remove from disk
+	os.Remove(headPath)
+	os.RemoveAll(refsDir)
+
+	fmt.Fprintf(os.Stderr, "beads: branch_strategy disabled — removed stale ref files (.beads/HEAD, .beads/refs/)\n")
+	fmt.Fprintf(os.Stderr, "beads: suggested commit: git commit -m \"chore: remove beads ref files (branch_strategy disabled)\"\n")
 }
 
 // truncHash returns the first 8 characters of a hash, or the full string if shorter.

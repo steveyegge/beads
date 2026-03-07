@@ -1578,3 +1578,58 @@ func TestGetStringFromDir(t *testing.T) {
 		}
 	})
 }
+
+func TestIsBranchStrategyEnabled(t *testing.T) {
+	t.Run("nil viper returns false", func(t *testing.T) {
+		savedV := v
+		v = nil
+		defer func() { v = savedV }()
+
+		if IsBranchStrategyEnabled() {
+			t.Error("expected false with nil viper")
+		}
+	})
+
+	t.Run("no branch_strategy keys returns false", func(t *testing.T) {
+		restore := envSnapshot(t)
+		defer restore()
+
+		if err := Initialize(); err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+
+		if IsBranchStrategyEnabled() {
+			t.Error("expected false with no branch_strategy keys set")
+		}
+	})
+
+	t.Run("any branch_strategy key returns true", func(t *testing.T) {
+		restore := envSnapshot(t)
+		defer restore()
+
+		if err := Initialize(); err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+		Set("branch_strategy.prompt", true)
+		defer Set("branch_strategy.prompt", nil)
+
+		if !IsBranchStrategyEnabled() {
+			t.Error("expected true with branch_strategy.prompt set")
+		}
+	})
+
+	t.Run("default_strategy alone returns true", func(t *testing.T) {
+		restore := envSnapshot(t)
+		defer restore()
+
+		if err := Initialize(); err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+		Set("branch_strategy.default_strategy", "stay-on-main")
+		defer Set("branch_strategy.default_strategy", nil)
+
+		if !IsBranchStrategyEnabled() {
+			t.Error("expected true with branch_strategy.default_strategy set")
+		}
+	})
+}

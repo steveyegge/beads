@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 )
 
 var gitResetCmd = &cobra.Command{
@@ -68,6 +69,10 @@ Useful for shell integration:
     fi
   }`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if !config.IsBranchStrategyEnabled() {
+			fmt.Fprintf(os.Stderr, "beads: refs disabled (no branch_strategy section in config.yaml)\n")
+			return
+		}
 		if store != nil && !store.IsClosed() {
 			checkBeadsRefSync(rootCtx, store)
 		}

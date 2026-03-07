@@ -742,6 +742,16 @@ type FederationConfig struct {
 	Sovereignty Sovereignty // T1, T2, T3, T4
 }
 
+// IsBranchStrategyEnabled returns true if any branch_strategy.* key is set
+// in config.yaml. When no keys are set (section commented out or absent),
+// beads refs are not generated — equivalent to Strategy A without history tracking.
+func IsBranchStrategyEnabled() bool {
+	if v == nil {
+		return false
+	}
+	return len(v.GetStringMap("branch_strategy")) > 0
+}
+
 // GetFederationConfig returns the current federation configuration.
 func GetFederationConfig() FederationConfig {
 	return FederationConfig{
