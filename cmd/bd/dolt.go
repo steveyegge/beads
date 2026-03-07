@@ -593,25 +593,15 @@ type resolvedRemoteArgs struct {
 // resolveRemoteAddArgs resolves the URL and credentials for bd dolt remote add
 // from positional args, flags, and environment variables. Flags take precedence
 // over env vars; positional URL takes precedence over DOLT_REMOTE_ADDRESS.
-//
-// The baseURL is a server address without a database path (e.g. http://host:50051).
-// The database name is appended automatically using deriveRemoteDBName.
-func resolveRemoteAddArgs(args []string, flagUser, flagPassword, flagDBName, envAddr, envUser, envPass string) (*resolvedRemoteArgs, error) {
-	var baseURL string
+func resolveRemoteAddArgs(args []string, flagUser, flagPassword, envAddr, envUser, envPass string) (*resolvedRemoteArgs, error) {
+	var url string
 	if len(args) >= 2 {
-		baseURL = args[1]
+		url = args[1]
 	} else if envAddr != "" {
-		baseURL = envAddr
+		url = envAddr
 	} else {
 		return nil, fmt.Errorf("URL required (or set DOLT_REMOTE_ADDRESS)")
 	}
-
-	// Append the database name to the base URL
-	dbName := flagDBName
-	if dbName == "" {
-		dbName = deriveRemoteDBName()
-	}
-	url := strings.TrimRight(baseURL, "/") + "/" + dbName
 
 	user := flagUser
 	password := flagPassword
@@ -632,25 +622,10 @@ func resolveRemoteAddArgs(args []string, flagUser, flagPassword, flagDBName, env
 	}, nil
 }
 
-// deriveRemoteDBName derives a database name for the remote from the current
-// directory name. This matches the convention used by dolt remotesapi servers,
-// where the URL path component is the database name.
-func deriveRemoteDBName() string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "beads"
-	}
-	return filepath.Base(cwd)
-}
-
 var doltRemoteAddCmd = &cobra.Command{
-	Use:   "add <name> [base-url]",
+	Use:   "add <name> [url]",
 	Short: "Add a Dolt remote (both SQL server and CLI)",
 	Long: `Add a Dolt remote (both SQL server and CLI).
-
-The base-url is the server address without a database path (e.g.
-http://host:50051). The database name is derived from the current directory
-name and appended automatically. Override with --db-name.
 
 If DOLT_REMOTE_ADDRESS, DOLT_REMOTE_USERNAME, and DOLT_REMOTE_PASSWORD are all
 set, only the remote name is required — the URL and credentials are taken from
@@ -671,12 +646,11 @@ Flags --user / --password override the environment variables when provided.`,
 		// Load .env file if present (does not overwrite existing env vars)
 		_ = godotenv.Load()
 
-		// Handle flags
+		// Handle --user / --password flags
 		flagUser, _ := cmd.Flags().GetString("user")
 		flagPassword, _ := cmd.Flags().GetString("password")
-		flagDBName, _ := cmd.Flags().GetString("db-name")
 
-		resolved, err := resolveRemoteAddArgs(args, flagUser, flagPassword, flagDBName,
+		resolved, err := resolveRemoteAddArgs(args, flagUser, flagPassword,
 			os.Getenv("DOLT_REMOTE_ADDRESS"),
 			os.Getenv("DOLT_REMOTE_USERNAME"),
 			os.Getenv("DOLT_REMOTE_PASSWORD"),
@@ -1016,7 +990,6 @@ func init() {
 	doltRemoteRemoveCmd.Flags().Bool("force", false, "Force remove even when SQL and CLI URLs conflict")
 	doltRemoteAddCmd.Flags().StringP("user", "u", "", "Username for remote authentication")
 	doltRemoteAddCmd.Flags().StringP("password", "p", "", "Password (prompted if --user set without --password)")
-	doltRemoteAddCmd.Flags().String("db-name", "", "Database name for remote URL (default: current directory name)")
 	doltRemoteCmd.AddCommand(doltRemoteAddCmd)
 	doltRemoteCmd.AddCommand(doltRemoteListCmd)
 	doltRemoteCmd.AddCommand(doltRemoteRemoveCmd)

@@ -394,14 +394,13 @@ func (c *remoteCredentials) applyToCmd(cmd *exec.Cmd) {
 	}
 	// Start with current process env, filtering out any existing credential vars
 	// to prevent stale values from leaking into the subprocess.
-	env := make([]string, 0, len(os.Environ())+2)
+	// Note: dolt CLI reads DOLT_REMOTE_PASSWORD from env and takes --user as a flag.
+	// The --user flag is injected by the caller (doltCLIPush/doltCLIPull/etc).
+	env := make([]string, 0, len(os.Environ())+1)
 	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "DOLT_REMOTE_USER=") && !strings.HasPrefix(e, "DOLT_REMOTE_PASSWORD=") {
+		if !strings.HasPrefix(e, "DOLT_REMOTE_PASSWORD=") {
 			env = append(env, e)
 		}
-	}
-	if c.username != "" {
-		env = append(env, "DOLT_REMOTE_USER="+c.username)
 	}
 	if c.password != "" {
 		env = append(env, "DOLT_REMOTE_PASSWORD="+c.password)
