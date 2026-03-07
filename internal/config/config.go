@@ -57,7 +57,7 @@ func Initialize() error {
 	//    This allows commands to work from subdirectories
 	cwd, err := os.Getwd()
 	if err == nil && !configFileSet {
-		// In the beads repo, `.beads/config.yaml` is tracked and may set sync.mode=dolt-native.
+		// In the beads repo, `.beads/config.yaml` is tracked and may override defaults.
 		// In `go test` (especially for `cmd/bd`), we want to avoid unintentionally picking up
 		// the repo-local config, while still allowing tests to load config.yaml from temp repos.
 		//
@@ -151,9 +151,8 @@ func Initialize() error {
 	// Sync configuration defaults (bd-4u8)
 	v.SetDefault("sync.require_confirmation_on_mass_delete", false)
 
-	// Sync mode configuration (hq-ew1mbr.3)
+	// Sync trigger configuration (hq-ew1mbr.3)
 	// See docs/CONFIG.md for detailed documentation
-	v.SetDefault("sync.mode", SyncModeDoltNative)
 	v.SetDefault("sync.export_on", SyncTriggerPush) // push | change
 	v.SetDefault("sync.import_on", SyncTriggerPull) // pull | change
 
@@ -423,7 +422,7 @@ func SaveConfigValue(key string, value interface{}, beadsDir string) error {
 		_ = yaml.Unmarshal(data, &existing)
 	}
 
-	// Set the single key using dot-path splitting for nested keys (e.g. "sync.mode").
+	// Set the single key using dot-path splitting for nested keys (e.g. "sync.export_on").
 	setNestedKey(existing, key, value)
 
 	out, err := yaml.Marshal(existing)
@@ -720,17 +719,15 @@ func GetIdentity(flagValue string) string {
 	return "unknown"
 }
 
-// SyncConfig holds the sync mode configuration.
+// SyncConfig holds the sync trigger configuration.
 type SyncConfig struct {
-	Mode     SyncMode // dolt-native (only supported mode)
-	ExportOn string   // push, change
-	ImportOn string   // pull, change
+	ExportOn string // push, change
+	ImportOn string // pull, change
 }
 
 // GetSyncConfig returns the current sync configuration.
 func GetSyncConfig() SyncConfig {
 	return SyncConfig{
-		Mode:     GetSyncMode(),
 		ExportOn: GetString("sync.export_on"),
 		ImportOn: GetString("sync.import_on"),
 	}

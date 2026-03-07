@@ -1114,13 +1114,7 @@ validation:
 	}
 }
 
-// Tests for sync mode configuration (hq-ew1mbr.3)
-
-func TestSyncModeConstants(t *testing.T) {
-	if SyncModeDoltNative != "dolt-native" {
-		t.Errorf("SyncModeDoltNative = %q, want \"dolt-native\"", SyncModeDoltNative)
-	}
-}
+// Tests for sync configuration (hq-ew1mbr.3)
 
 func TestSyncTriggerConstants(t *testing.T) {
 	if SyncTriggerPush != "push" {
@@ -1159,16 +1153,8 @@ func TestSyncConfigDefaults(t *testing.T) {
 		t.Fatalf("Initialize() returned error: %v", err)
 	}
 
-	// Test sync mode default
-	if got := GetSyncMode(); got != SyncModeDoltNative {
-		t.Errorf("GetSyncMode() = %q, want %q", got, SyncModeDoltNative)
-	}
-
 	// Test sync config defaults
 	cfg := GetSyncConfig()
-	if cfg.Mode != SyncModeDoltNative {
-		t.Errorf("GetSyncConfig().Mode = %q, want %q", cfg.Mode, SyncModeDoltNative)
-	}
 	if cfg.ExportOn != SyncTriggerPush {
 		t.Errorf("GetSyncConfig().ExportOn = %q, want %q", cfg.ExportOn, SyncTriggerPush)
 	}
@@ -1205,7 +1191,6 @@ func TestSyncConfigFromFile(t *testing.T) {
 	// Create a config file with sync settings
 	configContent := `
 sync:
-  mode: dolt-native
   export_on: change
   import_on: change
 
@@ -1233,9 +1218,6 @@ federation:
 
 	// Test sync config
 	syncCfg := GetSyncConfig()
-	if syncCfg.Mode != SyncModeDoltNative {
-		t.Errorf("GetSyncConfig().Mode = %q, want %q", syncCfg.Mode, SyncModeDoltNative)
-	}
 	if syncCfg.ExportOn != SyncTriggerChange {
 		t.Errorf("GetSyncConfig().ExportOn = %q, want %q", syncCfg.ExportOn, SyncTriggerChange)
 	}
@@ -1250,23 +1232,6 @@ federation:
 	}
 	if fedCfg.Sovereignty != SovereigntyT2 {
 		t.Errorf("GetFederationConfig().Sovereignty = %q, want %q", fedCfg.Sovereignty, SovereigntyT2)
-	}
-}
-
-func TestGetSyncModeInvalid(t *testing.T) {
-	// Isolate from environment variables
-	restore := envSnapshot(t)
-	defer restore()
-
-	// Initialize config
-	if err := Initialize(); err != nil {
-		t.Fatalf("Initialize() returned error: %v", err)
-	}
-
-	// Set invalid mode - always returns dolt-native now
-	Set("sync.mode", "invalid-mode")
-	if got := GetSyncMode(); got != SyncModeDoltNative {
-		t.Errorf("GetSyncMode() with invalid mode = %q, want %q", got, SyncModeDoltNative)
 	}
 }
 
