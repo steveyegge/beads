@@ -68,22 +68,25 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 # Branch strategy (git-dolt history correspondence)
 #
 # OFF by default. Uncomment the branch_strategy section to enable.
-# When off, no .beads/HEAD or .beads/refs/ files are generated.
+# When off, no .beads/HEAD or .beads/refs/ files are generated,
+# this means beads' commit history in dolt will remain
+# separate from the code's git history.
 #
-# Off is equivalent to Strategy A (stay-on-main) without history tracking.
-# On with Strategy A adds history tracking — .beads/refs track dolt commit
-# hashes alongside git commits, enabling "bd reset" to reset both git and
+# When on, git commits' corresponding dolt commits are tracked in
+# .beads/HEAD and .beads/refs/ files. This makes it possible to give
+# the user the option of resetting both git and
 # dolt to the same point in history.
 #
-# Strategy A (stay-on-main) is the only supported strategy today.
-# Strategies B (merge-with-branch) and C (merge-on-close) are forthcoming.
+# More settings and capabilities coming soon, per roadmap here:
+# https://gist.github.com/bryanhirsch/5f003918e13a079975a27b5f7346fc37
+#
+# And discussion here:
+# https://github.com/steveyegge/beads/discussions/2362
 #
 # branch_strategy:
-#   default_strategy: stay-on-main       # stay-on-main (only supported strategy)
-#   prompt: false                        # Prompt on mismatch (true = interactive)
+#   prompt: false                        # Prompt to select strategy (true = interactive)
 #   defaults:
-#     reset_dolt_with_git: false         # Auto-reset dolt on git reset mismatch
-#     # checkout_dolt_with_git: false    # Not yet supported (Phase 2)
+#     reset_dolt_with_git: false         # Reset dolt history with git reset
 
 # JSONL backup (periodic export for off-machine recovery)
 # Auto-enabled when a git remote exists. Override explicitly:
