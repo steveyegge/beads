@@ -1358,6 +1358,11 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, force bool, creds *remoteCr
 	if force {
 		args = append(args, "--force")
 	}
+	// dolt CLI reads password from DOLT_REMOTE_PASSWORD env var but needs
+	// --user as a CLI flag (it does NOT read DOLT_REMOTE_USER from env).
+	if !creds.empty() && creds.username != "" {
+		args = append(args, "--user", creds.username)
+	}
 	args = append(args, s.remote, s.branch)
 	cmd := exec.CommandContext(ctx, "dolt", args...) // #nosec G204 -- fixed command with validated remote/branch
 	cmd.Dir = s.cliDir()
@@ -1375,7 +1380,13 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, force bool, creds *remoteCr
 func (s *DoltStore) doltCLIPull(ctx context.Context, creds *remoteCredentials) error {
 	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "dolt", "pull", s.remote, s.branch) // #nosec G204 -- fixed command
+	args := []string{"pull"}
+	// dolt CLI needs --user as a flag (does NOT read DOLT_REMOTE_USER from env).
+	if !creds.empty() && creds.username != "" {
+		args = append(args, "--user", creds.username)
+	}
+	args = append(args, s.remote, s.branch)
+	cmd := exec.CommandContext(ctx, "dolt", args...) // #nosec G204 -- fixed command
 	cmd.Dir = s.cliDir()
 	creds.applyToCmd(cmd)
 	out, err := cmd.CombinedOutput()
