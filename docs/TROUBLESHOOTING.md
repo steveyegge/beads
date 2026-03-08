@@ -807,9 +807,8 @@ See [integrations/beads-mcp/README.md](../integrations/beads-mcp/README.md) for 
 - "Database out of sync" errors that persist after running `bd import`
 - `bd dolt stop` fails with "operation not permitted"
 - Hash mismatch warnings (bd-160)
-- Commands intermittently fail with staleness errors
 
-**Root cause:** The sandbox can't signal/kill the existing Dolt server process, so the DB stays stale.
+**Root cause:** The sandbox can't signal/kill the existing Dolt server process.
 
 ---
 
@@ -860,22 +859,7 @@ bd import --force
 
 **Shows:** `Metadata updated (database already in sync)`
 
-**2. Skip staleness check (`--allow-stale` global flag)**
-
-Emergency escape hatch to bypass staleness validation:
-
-```bash
-# Allow operations on potentially stale data
-bd --allow-stale ready
-bd --allow-stale list --status open
-
-# Shows warning:
-# ⚠️  Staleness check skipped (--allow-stale), data may be out of sync
-```
-
-**⚠️ Caution:** Use sparingly - you may see incomplete or outdated data.
-
-**3. Use sandbox mode (preferred)**
+**2. Use sandbox mode (preferred)**
 
 ```bash
 # Most reliable for sandboxed environments
@@ -896,10 +880,7 @@ bd --sandbox ready
 # Step 2: If you get staleness errors, force import
 bd import --force
 
-# Step 3: If still blocked, use allow-stale (emergency only)
-bd --allow-stale ready
-
-# Step 4: When back outside sandbox, sync normally
+# Step 3: When back outside sandbox, sync normally
 bd dolt push
 ```
 
@@ -911,7 +892,6 @@ bd dolt push
 |------|---------|-------------|------|
 | `--sandbox` | Use embedded mode, disable auto-sync | Sandboxed environments (Codex, containers) | Low - safe for sandboxes |
 | `--force` (import) | Force metadata update | Stuck "0 created, 0 updated" loop | Low - updates metadata only |
-| `--allow-stale` | Skip staleness validation | Emergency access to database | **High** - may show stale data |
 
 **Related:**
 - See [Claude Code sandboxing documentation](https://www.anthropic.com/engineering/claude-code-sandboxing) for more about sandbox restrictions
