@@ -743,7 +743,7 @@ var listCmd = &cobra.Command{
 		}
 
 		// Handle pretty format (GH#654)
-		// JSON output takes priority over pretty/tree format (bd-list-json-fix)
+		// JSON output takes priority over pretty/tree format (bd-list-json-fix, bd-03r)
 		if prettyFormat && !jsonOutput {
 			// Special handling for --tree --parent combination (hierarchical descendants)
 			if parentID != "" {
