@@ -388,7 +388,7 @@ bd config get repos.additional
 bd config set repos.additional "~/repo1,~/repo2"
 
 # Verify hydration
-bd sync
+bd dolt push
 bd list --json
 ```
 

@@ -603,7 +603,7 @@ bd import -i issues.jsonl --orphan-handling strict     # Fail if parent is missi
 
 # Configure default orphan handling behavior
 bd config set import.orphan_handling "resurrect"
-bd sync  # Now uses resurrect mode by default
+bd dolt push  # Now uses resurrect mode by default
 ```
 
 **Orphan handling modes:**
@@ -685,7 +685,7 @@ bd migrate sync beads-sync --orphan                    # Delete and recreate as 
 
 **After setup:**
 
-- `bd sync` commits beads changes to the sync branch via worktree
+- `bd dolt push` commits beads changes to the sync branch via worktree
 - Your working branch stays clean of beads commits
 - Essential for multi-clone setups where clones work independently
 
@@ -698,14 +698,15 @@ bd migrate sync beads-sync --orphan                    # Delete and recreate as 
 ### Sync Operations
 
 ```bash
-# Manual sync (force immediate commit/push)
-bd sync
+# Manual sync (push changes to remote)
+bd dolt push
 
-# What it does:
-# 1. Commit pending changes to Dolt
-# 2. Pull from remote
-# 3. Merge any updates
-# 4. Push to remote
+# Pull changes from remote
+bd dolt pull
+
+# What these do:
+# bd dolt push - Commit pending changes to Dolt and push to remote
+# bd dolt pull - Pull from remote and merge any updates
 ```
 
 ### Key-Value Store
@@ -884,10 +885,10 @@ bd update bd-42 --claim --json
 # ... work ...
 
 # End of session (IMPORTANT!)
-bd sync  # Force immediate sync, bypass debounce
+bd dolt push  # Force immediate sync, bypass debounce
 ```
 
-**ALWAYS run `bd sync` at end of agent sessions** to ensure changes are committed/pushed immediately.
+**ALWAYS run `bd dolt push` at end of agent sessions** to ensure changes are committed/pushed immediately.
 
 ## Editor Integration
 
