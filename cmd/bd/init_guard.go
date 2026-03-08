@@ -78,21 +78,34 @@ func checkDatabaseOnServer(host string, port int, user, password, dbName string)
 // initGuardServerMessage builds the error message for the init guard when the
 // server is reachable but the database does not exist (FR-010, FR-011).
 // Extracted as a pure function for unit testing without a real database.
+//
+// GH#2363: The message deliberately avoids suggesting `bd init --force` because
+// that command destroys all existing issue data.  An AI agent running inside a
+// git hook blindly followed the previous suggestion and wiped a production
+// database.  Instead we guide the user toward safe diagnostic commands.
 func initGuardServerMessage(dbName, host string, port int, prefix, syncGitRemote string) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n%s Database %q not found on server at %s:%d.\n", ui.RenderWarn("⚠"), dbName, host, port)
 	b.WriteString("The server is running but this database hasn't been created yet.\n")
 
-	fmt.Fprintf(&b, "\nTo create a fresh database:\n")
-	fmt.Fprintf(&b, "  bd init --force --prefix %s\n", prefix)
+	b.WriteString("\nDiagnose with:\n")
+	b.WriteString("  bd doctor          # check project health\n")
+	b.WriteString("  bd dolt status     # inspect Dolt server state\n")
 
 	if syncGitRemote != "" {
 		fmt.Fprintf(&b, "\nTip: sync.git-remote is configured (%s).\n", syncGitRemote)
-		b.WriteString("Run bd init --force to bootstrap from the remote.\n")
+		b.WriteString("If this is a fresh clone, run:\n")
+		fmt.Fprintf(&b, "  bd init --prefix %s\n", prefix)
+		b.WriteString("to bootstrap from the remote (existing data is preserved).\n")
 	} else {
-		b.WriteString("\nTip: To bootstrap from an existing Dolt remote, set sync.git-remote\n")
-		b.WriteString("in .beads/config.yaml and re-run bd init --force.\n")
+		b.WriteString("\nIf this is a brand-new project, create the database with:\n")
+		fmt.Fprintf(&b, "  bd init --prefix %s\n", prefix)
+		b.WriteString("\nTo bootstrap from an existing Dolt remote, set sync.git-remote\n")
+		b.WriteString("in .beads/config.yaml first, then run bd init.\n")
 	}
+
+	b.WriteString("\n⚠  Caution: bd init --force destroys ALL existing issues. Do not\n")
+	b.WriteString("use --force unless you are certain the database should be recreated.\n")
 
 	b.WriteString("\nAborting.")
 	return errors.New(b.String())
