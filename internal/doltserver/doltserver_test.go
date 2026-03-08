@@ -5,10 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/steveyegge/beads/internal/config"
 )
@@ -443,27 +441,6 @@ func TestIsRunningReadsPortFile(t *testing.T) {
 	}
 }
 
-// --- Activity tracking tests ---
-
-func TestTouchAndReadActivity(t *testing.T) {
-	dir := t.TempDir()
-
-	// No file yet
-	if ts := ReadActivityTime(dir); !ts.IsZero() {
-		t.Errorf("expected zero time for missing activity file, got %v", ts)
-	}
-
-	// Touch and read
-	touchActivity(dir)
-	ts := ReadActivityTime(dir)
-	if ts.IsZero() {
-		t.Fatal("expected non-zero activity time after touch")
-	}
-	if time.Since(ts) > 5*time.Second {
-		t.Errorf("activity timestamp too old: %v", ts)
-	}
-}
-
 func TestCleanupStateFiles(t *testing.T) {
 	dir := t.TempDir()
 
@@ -471,7 +448,6 @@ func TestCleanupStateFiles(t *testing.T) {
 	for _, path := range []string{
 		pidPath(dir),
 		portPath(dir),
-		activityPath(dir),
 	} {
 		if err := os.WriteFile(path, []byte("test"), 0600); err != nil {
 			t.Fatal(err)
@@ -483,30 +459,10 @@ func TestCleanupStateFiles(t *testing.T) {
 	for _, path := range []string{
 		pidPath(dir),
 		portPath(dir),
-		activityPath(dir),
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("expected %s to be removed", filepath.Base(path))
 		}
-	}
-}
-
-// --- Idle monitor tests ---
-
-func TestRunIdleMonitorDisabled(t *testing.T) {
-	// idleTimeout=0 should return immediately
-	dir := t.TempDir()
-	done := make(chan struct{})
-	go func() {
-		RunIdleMonitor(dir, 0)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// good — returned immediately
-	case <-time.After(2 * time.Second):
-		t.Fatal("RunIdleMonitor(0) should return immediately")
 	}
 }
 
@@ -518,35 +474,6 @@ func TestFlushWorkingSetUnreachable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not reachable") {
 		t.Errorf("expected 'not reachable' in error, got: %v", err)
-	}
-}
-
-func TestMonitorPidLifecycle(t *testing.T) {
-	dir := t.TempDir()
-
-	// No monitor running
-	if isMonitorRunning(dir) {
-		t.Error("expected no monitor running initially")
-	}
-
-	// Write our own PID as monitor (we know we're alive)
-	_ = os.WriteFile(monitorPidPath(dir), []byte(strconv.Itoa(os.Getpid())), 0600)
-	if !isMonitorRunning(dir) {
-		t.Error("expected monitor to be detected as running")
-	}
-
-	// Don't call stopIdleMonitor with our own PID (it sends SIGTERM).
-	// Instead test with a dead PID.
-	_ = os.Remove(monitorPidPath(dir))
-	_ = os.WriteFile(monitorPidPath(dir), []byte("99999999"), 0600)
-	if isMonitorRunning(dir) {
-		t.Error("expected dead PID to not be detected as running")
-	}
-
-	// stopIdleMonitor should clean up the PID file
-	stopIdleMonitor(dir)
-	if _, err := os.Stat(monitorPidPath(dir)); !os.IsNotExist(err) {
-		t.Error("expected monitor PID file to be removed")
 	}
 }
 
@@ -757,89 +684,3 @@ func TestEnsureDoltInit_WritesMarker(t *testing.T) {
 	}
 }
 
-// --- stopServerProcess tests ---
-
-func TestStopServerProcessPreservesMonitorAndActivity(t *testing.T) {
-	// stopServerProcess must leave the monitor PID file and activity file
-	// intact. This is the core fix for GH#2324: the idle monitor calls
-	// stopServerProcess (not Stop) to avoid killing itself via
-	// cleanupStateFiles → stopIdleMonitor.
-	dir := t.TempDir()
-	t.Setenv("GT_ROOT", "")
-
-	// Write activity and monitor PID files
-	touchActivity(dir)
-	monitorPID := os.Getpid()
-	_ = os.WriteFile(monitorPidPath(dir), []byte(strconv.Itoa(monitorPID)), 0600)
-
-	// No server PID file → stopServerProcess returns immediately (already stopped)
-	if err := stopServerProcess(dir); err != nil {
-		t.Fatalf("stopServerProcess: %v", err)
-	}
-
-	// Activity file must be preserved
-	if _, err := os.Stat(activityPath(dir)); os.IsNotExist(err) {
-		t.Error("stopServerProcess must preserve activity file")
-	}
-	// Monitor PID file must be preserved
-	if _, err := os.Stat(monitorPidPath(dir)); os.IsNotExist(err) {
-		t.Error("stopServerProcess must preserve monitor PID file")
-	}
-	// Monitor PID should still contain our PID (not corrupted)
-	data, err := os.ReadFile(monitorPidPath(dir))
-	if err != nil {
-		t.Fatalf("reading monitor PID file: %v", err)
-	}
-	if pid, _ := strconv.Atoi(strings.TrimSpace(string(data))); pid != monitorPID {
-		t.Errorf("monitor PID file changed: want %d, got %d", monitorPID, pid)
-	}
-}
-
-func TestStopServerProcessRemovesPidAndPort(t *testing.T) {
-	// When the server is running (simulated with a stale PID that IsRunning
-	// will clean up), stopServerProcess should remove PID and port files
-	// but leave activity and monitor files intact.
-	dir := t.TempDir()
-	t.Setenv("GT_ROOT", "")
-
-	// Write all state files
-	_ = os.WriteFile(pidPath(dir), []byte("99999999"), 0600) // dead PID
-	_ = writePortFile(dir, 13500)
-	touchActivity(dir)
-	_ = os.WriteFile(monitorPidPath(dir), []byte(strconv.Itoa(os.Getpid())), 0600)
-
-	// stopServerProcess: IsRunning sees dead PID → returns Running=false →
-	// stopServerProcess returns nil (already stopped).
-	_ = stopServerProcess(dir)
-
-	// PID file was cleaned up by IsRunning (stale PID detection)
-	if _, err := os.Stat(pidPath(dir)); !os.IsNotExist(err) {
-		t.Error("expected server PID file to be removed")
-	}
-
-	// Activity and monitor PID files must survive
-	if _, err := os.Stat(activityPath(dir)); os.IsNotExist(err) {
-		t.Error("stopServerProcess must preserve activity file")
-	}
-	if _, err := os.Stat(monitorPidPath(dir)); os.IsNotExist(err) {
-		t.Error("stopServerProcess must preserve monitor PID file")
-	}
-}
-
-func TestRunIdleMonitorZeroTimeoutExitsImmediately(t *testing.T) {
-	// With zero timeout, the monitor should exit immediately.
-	dir := t.TempDir()
-
-	done := make(chan struct{})
-	go func() {
-		RunIdleMonitor(dir, 0)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// good — exited immediately with zero timeout
-	case <-time.After(2 * time.Second):
-		t.Fatal("RunIdleMonitor should exit immediately with zero timeout")
-	}
-}

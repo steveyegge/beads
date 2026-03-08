@@ -8,11 +8,9 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -347,48 +345,6 @@ Displays whether the server is running, its PID, port, and data directory.`,
 		fmt.Printf("  Port: %d\n", state.Port)
 		fmt.Printf("  Data: %s\n", state.DataDir)
 		fmt.Printf("  Logs: %s\n", doltserver.LogPath(serverDir))
-	},
-}
-
-var doltIdleMonitorCmd = &cobra.Command{
-	Use:    "idle-monitor",
-	Short:  "Run idle monitor (internal, not for direct use)",
-	Hidden: true,
-	Run: func(cmd *cobra.Command, args []string) {
-		beadsDir, _ := cmd.Flags().GetString("beads-dir")
-		if beadsDir == "" {
-			beadsDir = beads.FindBeadsDir()
-		}
-		if beadsDir == "" {
-			os.Exit(1)
-		}
-
-		// PID file and lock management is handled inside RunIdleMonitor
-		// to ensure single-instance enforcement (GH#2367).
-
-		// Parse idle timeout from config
-		idleTimeout := doltserver.DefaultIdleTimeout
-		if v := config.GetYamlConfig("dolt.idle-timeout"); v != "" {
-			if v == "0" {
-				// Disabled
-				return
-			}
-			if d, err := time.ParseDuration(v); err == nil {
-				idleTimeout = d
-			}
-		}
-
-		// Handle SIGTERM gracefully — clean up PID file on signal
-		pidFile := filepath.Join(beadsDir, "dolt-monitor.pid")
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-		go func() {
-			<-sigCh
-			_ = os.Remove(pidFile)
-			os.Exit(0)
-		}()
-
-		doltserver.RunIdleMonitor(beadsDir, idleTimeout)
 	},
 }
 
@@ -879,7 +835,6 @@ func init() {
 	doltStopCmd.Flags().Bool("force", false, "Force stop the server")
 	doltPushCmd.Flags().Bool("force", false, "Force push (overwrite remote changes)")
 	doltCommitCmd.Flags().StringP("message", "m", "", "Commit message (default: auto-generated)")
-	doltIdleMonitorCmd.Flags().String("beads-dir", "", "Path to .beads directory")
 	doltCleanDatabasesCmd.Flags().Bool("dry-run", false, "Show what would be dropped without dropping")
 	doltRemoteRemoveCmd.Flags().Bool("force", false, "Force remove even when SQL and CLI URLs conflict")
 	doltRemoteCmd.AddCommand(doltRemoteAddCmd)
@@ -894,7 +849,6 @@ func init() {
 	doltCmd.AddCommand(doltStartCmd)
 	doltCmd.AddCommand(doltStopCmd)
 	doltCmd.AddCommand(doltStatusCmd)
-	doltCmd.AddCommand(doltIdleMonitorCmd)
 	doltCmd.AddCommand(doltKillallCmd)
 	doltCmd.AddCommand(doltCleanDatabasesCmd)
 	doltCmd.AddCommand(doltRemoteCmd)
