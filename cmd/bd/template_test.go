@@ -4,12 +4,17 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/testutil"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -132,6 +137,113 @@ func (h *templateTestHelper) createIssueWithID(id, title, description string, is
 		h.t.Fatalf("Failed to create issue with ID %s: %v", id, err)
 	}
 	return issue
+}
+
+func (h *templateTestHelper) createHierarchy(rootID string, descendantIDs ...string) {
+	h.createIssueWithID(rootID, rootID, "", types.TypeEpic, 1)
+	for _, id := range descendantIDs {
+		h.createIssueWithID(id, id, "", types.TypeTask, 2)
+	}
+}
+
+func issueIDs(issues []*types.Issue) []string {
+	ids := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		ids = append(ids, issue.ID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func requireIssueIDs(t testing.TB, issues []*types.Issue, want ...string) {
+	t.Helper()
+
+	got := issueIDs(issues)
+	want = slices.Clone(want)
+	sort.Strings(want)
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("issue IDs = %v, want %v", got, want)
+	}
+}
+
+func newTemplateBenchmarkStore(b *testing.B) (*dolt.DoltStore, context.Context) {
+	b.Helper()
+
+	if testDoltServerPort == 0 {
+		b.Skip("Dolt test server not available, skipping")
+	}
+	if testutil.DoltContainerCrashed() {
+		b.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
+	}
+
+	ctx := context.Background()
+	testDB := filepath.Join(b.TempDir(), ".beads", "beads.db")
+	database := fmt.Sprintf("benchdb_%d", time.Now().UnixNano())
+
+	s, err := dolt.New(ctx, &dolt.Config{
+		Path:            testDB,
+		ServerHost:      "127.0.0.1",
+		ServerPort:      testDoltServerPort,
+		Database:        database,
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		b.Fatalf("Failed to create benchmark dolt store: %v", err)
+	}
+
+	b.Cleanup(func() {
+		s.Close()
+		dropTestDatabase(database, testDoltServerPort)
+	})
+
+	if err := s.SetConfig(ctx, "issue_prefix", "bench"); err != nil {
+		b.Fatalf("Failed to set issue_prefix: %v", err)
+	}
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message"); err != nil {
+		b.Fatalf("Failed to set types.custom: %v", err)
+	}
+
+	return s, ctx
+}
+
+func createBenchmarkIssue(b *testing.B, ctx context.Context, s *dolt.DoltStore, id string, priority int, issueType types.IssueType) {
+	b.Helper()
+
+	issue := &types.Issue{
+		ID:        id,
+		Title:     id,
+		Priority:  priority,
+		IssueType: issueType,
+		Status:    types.StatusOpen,
+	}
+	if err := s.CreateIssue(ctx, issue, "benchmark"); err != nil {
+		b.Fatalf("CreateIssue(%s): %v", id, err)
+	}
+}
+
+func seedHierarchicalTemplateGraph(b *testing.B, ctx context.Context, s *dolt.DoltStore, rootID string, directChildren, grandchildrenPerNode, unrelatedIssueCount int) int {
+	b.Helper()
+
+	createBenchmarkIssue(b, ctx, s, rootID, 1, types.TypeEpic)
+
+	expectedIssues := 1
+	for childIndex := 1; childIndex <= directChildren; childIndex++ {
+		childID := fmt.Sprintf("%s.%d", rootID, childIndex)
+		createBenchmarkIssue(b, ctx, s, childID, 2, types.TypeTask)
+		expectedIssues++
+
+		for grandchildIndex := 1; grandchildIndex <= grandchildrenPerNode; grandchildIndex++ {
+			createBenchmarkIssue(b, ctx, s, fmt.Sprintf("%s.%d", childID, grandchildIndex), 3, types.TypeTask)
+			expectedIssues++
+		}
+	}
+
+	for noiseIndex := 0; noiseIndex < unrelatedIssueCount; noiseIndex++ {
+		createBenchmarkIssue(b, ctx, s, fmt.Sprintf("bench-noise-%04d", noiseIndex), 4, types.TypeTask)
+	}
+
+	return expectedIssues
 }
 
 // TestTemplateSuite consolidates template loading, cloning, and variable extraction
@@ -650,6 +762,56 @@ func TestResolveProtoIDOrTitle(t *testing.T) {
 			t.Fatal("Expected error for non-proto ID, got nil")
 		}
 	})
+}
+
+func TestFindHierarchicalChildren_DirectChildrenOnly(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+	ctx := context.Background()
+	h := &templateTestHelper{s: s, ctx: ctx, t: t}
+
+	h.createHierarchy(
+		"test-tree",
+		"test-tree.1",
+		"test-tree.2",
+		"test-tree.1.1",
+		"test-tree.2.1",
+		"test-tree.2.1.1",
+	)
+	h.createIssueWithID("test-other.1", "test-other.1", "", types.TypeTask, 2)
+
+	children, err := findHierarchicalChildren(ctx, s, "test-tree")
+	if err != nil {
+		t.Fatalf("findHierarchicalChildren(root) failed: %v", err)
+	}
+	requireIssueIDs(t, children, "test-tree.1", "test-tree.2")
+
+	nestedChildren, err := findHierarchicalChildren(ctx, s, "test-tree.2")
+	if err != nil {
+		t.Fatalf("findHierarchicalChildren(child) failed: %v", err)
+	}
+	requireIssueIDs(t, nestedChildren, "test-tree.2.1")
+}
+
+func BenchmarkLoadTemplateSubgraph_HierarchicalChildren(b *testing.B) {
+	s, ctx := newTemplateBenchmarkStore(b)
+
+	expectedIssues := seedHierarchicalTemplateGraph(b, ctx, s, "bench-root", 150, 4, 3000)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		subgraph, loadErr := loadTemplateSubgraph(ctx, s, "bench-root")
+		if loadErr != nil {
+			b.Fatalf("loadTemplateSubgraph failed: %v", loadErr)
+		}
+		if len(subgraph.Issues) != expectedIssues {
+			b.Fatalf("Issues count = %d, want %d", len(subgraph.Issues), expectedIssues)
+		}
+	}
 }
 
 // TestExtractRequiredVariables_IgnoresUndeclaredVars tests that handlebars in
