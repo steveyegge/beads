@@ -155,7 +155,7 @@ bd ready  # Auto-syncs to beads-sync branch
 cd feature-worktree
 bd create "Implement feature X" -t feature -p 1
 bd ready  # Uses embedded mode automatically
-bd sync   # Manual sync when needed
+bd dolt push   # Manual sync when needed
 ```
 
 ## Worktree-Aware Features
@@ -455,7 +455,7 @@ export BEADS_DIR=~/my-project-beads/.beads
 # All bd commands now use the separate repo
 bd create "My task" -t task
 bd list
-bd sync  # commits to ~/my-project-beads, pushes there
+bd dolt push  # commits to ~/my-project-beads, pushes there
 ```
 
 ### Making It Permanent
@@ -483,7 +483,7 @@ BEADS_DIR=~/my-project-beads/.beads exec bd "$@"
 
 When `BEADS_DIR` points to a different git repository than your current directory:
 
-1. `bd sync` detects "External BEADS_DIR"
+1. `bd dolt push` detects "External BEADS_DIR"
 2. Git operations (add, commit, push, pull) target the beads repo
 3. Your code repository is never touched
 

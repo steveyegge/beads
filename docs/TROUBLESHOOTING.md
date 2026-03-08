@@ -55,7 +55,7 @@ bd list
 ```bash
 # Debug timestamp protection during sync
 export BD_DEBUG_SYNC=1
-bd sync
+bd dolt push
 
 # Example output:
 # [debug] Protected bd-123: local=2024-01-20T10:00:00Z >= incoming=2024-01-20T09:55:00Z
@@ -107,7 +107,7 @@ bd dolt start
 
 - **Capture debug output**: Redirect stderr to a file for analysis:
   ```bash
-  BD_DEBUG=1 bd sync 2> debug.log
+  BD_DEBUG=1 bd dolt push 2> debug.log
   ```
 
 - **Server logs**: `BD_DEBUG_FRESHNESS` output goes to server logs, not stderr:
@@ -837,7 +837,7 @@ bd --sandbox update bd-42 --claim
 **Note:** You'll need to manually sync when outside the sandbox:
 ```bash
 # After leaving sandbox, sync manually
-bd sync
+bd dolt push
 ```
 
 ---
@@ -900,7 +900,7 @@ bd import --force
 bd --allow-stale ready
 
 # Step 4: When back outside sandbox, sync normally
-bd sync
+bd dolt push
 ```
 
 ---

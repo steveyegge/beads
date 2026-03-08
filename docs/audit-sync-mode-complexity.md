@@ -50,7 +50,7 @@ v.SetDefault("sync.import_on", SyncTriggerPull)   // pull | change
 
 These config keys (`sync.export_on`, `sync.import_on`) still exist with two trigger values each (`push`/`change` for export, `pull`/`change` for import). They are read into `SyncConfig` via `GetSyncConfig()`.
 
-**Assessment:** These triggers remain meaningful for controlling when Dolt sync operations fire. However, since `bd sync` is now a no-op (v0.51 changelog), and Dolt handles persistence directly, it is worth verifying whether these triggers are still consumed by any runtime code path. If they are only used in the hook system (`internal/hooks/`), they may still be relevant. If not, they are dead config.
+**Assessment:** These triggers remain meaningful for controlling when Dolt sync operations fire. However, since `bd sync` was removed (v0.51+, replaced by `bd dolt push`/`bd dolt pull`), and Dolt handles persistence directly, it is worth verifying whether these triggers are still consumed by any runtime code path. If they are only used in the hook system (`internal/hooks/`), they may still be relevant. If not, they are dead config.
 
 **Recommendation: Audit callers.** If `sync.export_on` and `sync.import_on` have no runtime consumers, remove them. If they are consumed, document which code paths use them.
 
@@ -168,7 +168,7 @@ After every pull, `resetAutoIncrements()` iterates over 6 hardcoded tables and r
 The sync subsystem has undergone major simplification across v0.50-v0.53:
 
 - **v0.50.3**: Tracker sync code unified via shared SyncEngine (~800 lines removed)
-- **v0.51.0**: SQLite backend, JSONL sync, 3-way merge, tombstones, storage factory, daemon stubs removed. `bd sync` became a no-op.
+- **v0.51.0**: SQLite backend, JSONL sync, 3-way merge, tombstones, storage factory, daemon stubs removed. `bd sync` removed (replaced by `bd dolt push`/`bd dolt pull`).
 - **v0.52.0**: Dead git-portable sync functions removed (#1793)
 - **v0.53.0**: JSONL sync-branch pipeline removed (~11,000 lines). Daemon infrastructure and 3-way merge remnants removed.
 
