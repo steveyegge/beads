@@ -26,13 +26,18 @@ func TestInitGuardServerMessage(t *testing.T) {
 				"127.0.0.1:3309",
 				"not found on server",
 				"server is running but this database hasn't been created yet",
-				"bd init --force --prefix acf",
+				"bd doctor",
+				"bd dolt status",
+				"bd init --prefix acf",
 				"set sync.git-remote",
 				".beads/config.yaml",
 				"Aborting",
+				"--force destroys ALL existing issues",
 			},
 			wantNotContain: []string{
 				"sync.git-remote is configured",
+				// GH#2363: must NOT suggest --force as the primary action
+				"bd init --force --prefix",
 			},
 		},
 		"DB missing, sync.git-remote IS configured (FR-010, FR-011)": {
@@ -46,13 +51,19 @@ func TestInitGuardServerMessage(t *testing.T) {
 				"192.168.1.50:3307",
 				"not found on server",
 				"server is running but this database hasn't been created yet",
-				"bd init --force --prefix kc",
+				"bd doctor",
+				"bd dolt status",
+				"bd init --prefix kc",
 				"sync.git-remote is configured",
 				"https://doltremoteapi.dolthub.com/myorg/beads",
-				"bd init --force to bootstrap from the remote",
+				"existing data is preserved",
+				"--force destroys ALL existing issues",
 			},
 			wantNotContain: []string{
 				"set sync.git-remote",
+				// GH#2363: must NOT suggest --force as the primary action
+				"bd init --force --prefix",
+				"bd init --force to bootstrap",
 			},
 		},
 	}
