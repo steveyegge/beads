@@ -995,6 +995,12 @@ func RunIdleMonitor(beadsDir string, idleTimeout time.Duration) {
 	// haven't performed an idle shutdown (or the server was restarted since).
 	var idleShutdownAt time.Time
 
+	// Remember the port the server was using before we stopped it, so we
+	// can restore the port file before calling Start(). Without this,
+	// stopServerProcess removes the port file, and Start() may fall back
+	// to a hash-derived port that differs from the original (bd-xvg).
+	var lastKnownPort int
+
 	for {
 		time.Sleep(MonitorCheckInterval)
 
@@ -1008,6 +1014,7 @@ func RunIdleMonitor(beadsDir string, idleTimeout time.Duration) {
 
 		if state.Running {
 			idleShutdownAt = time.Time{} // server is up, clear idle-shutdown tracking
+			lastKnownPort = state.Port   // track port while server is up
 
 			// Server is running — check if idle
 			if !lastActivity.IsZero() && idleDuration > idleTimeout {
@@ -1022,7 +1029,11 @@ func RunIdleMonitor(beadsDir string, idleTimeout time.Duration) {
 				// We stopped it for idle timeout. Check for new activity
 				// (e.g. EnsureRunning touched the activity file).
 				if !lastActivity.IsZero() && lastActivity.After(idleShutdownAt) {
-					// New activity since we stopped — restart
+					// New activity since we stopped — restart on the same port.
+					// Restore port file so Start()/DefaultConfig() picks it up.
+					if lastKnownPort > 0 {
+						_ = writePortFile(beadsDir, lastKnownPort)
+					}
 					_, _ = Start(beadsDir)
 					idleShutdownAt = time.Time{}
 					continue
@@ -1037,13 +1048,16 @@ func RunIdleMonitor(beadsDir string, idleTimeout time.Duration) {
 				continue
 			}
 
-			// Server is down but we didn't stop it (crash or external stop)
+			// Server is down but we didn't stop it (crash or external stop).
 			if lastActivity.IsZero() || idleDuration > idleTimeout {
 				// No recent activity — just exit
 				_ = os.Remove(monitorPidPath(beadsDir))
 				return
 			}
-			// Recent activity but server crashed — restart
+			// Recent activity but server crashed — restart on the same port.
+			if lastKnownPort > 0 {
+				_ = writePortFile(beadsDir, lastKnownPort)
+			}
 			_, _ = Start(beadsDir)
 		}
 	}
