@@ -434,14 +434,8 @@ func validateSyncConfig(repoPath string) []string {
 	}
 
 	// Get config from yaml
-	syncMode := v.GetString("sync.mode")
 	federationSov := v.GetString("federation.sovereignty")
 	federationRemote := v.GetString("federation.remote")
-
-	// Validate sync.mode
-	if syncMode != "" && !config.IsValidSyncMode(syncMode) {
-		issues = append(issues, fmt.Sprintf("sync.mode: %q is invalid (valid values: %s)", syncMode, strings.Join(config.ValidSyncModes(), ", ")))
-	}
 
 	// Validate federation.sovereignty
 	if federationSov != "" && !config.IsValidSovereignty(federationSov) {

@@ -25,31 +25,6 @@ func logConfigWarning(format string, args ...interface{}) {
 	}
 }
 
-// SyncMode represents the sync mode configuration
-type SyncMode string
-
-const (
-	// SyncModeDoltNative uses Dolt remote directly (the only supported mode)
-	SyncModeDoltNative SyncMode = "dolt-native"
-)
-
-// validSyncModes is the set of allowed sync mode values
-var validSyncModes = map[SyncMode]bool{
-	SyncModeDoltNative: true,
-}
-
-// ValidSyncModes returns the list of valid sync mode values.
-func ValidSyncModes() []string {
-	return []string{
-		string(SyncModeDoltNative),
-	}
-}
-
-// IsValidSyncMode returns true if the given string is a valid sync mode.
-func IsValidSyncMode(mode string) bool {
-	return validSyncModes[SyncMode(strings.ToLower(strings.TrimSpace(mode)))]
-}
-
 // Sovereignty represents the federation sovereignty tier
 type Sovereignty string
 
@@ -93,12 +68,6 @@ func IsValidSovereignty(sovereignty string) bool {
 	return validSovereigntyTiers[Sovereignty(strings.ToUpper(strings.TrimSpace(sovereignty)))]
 }
 
-// GetSyncMode always returns SyncModeDoltNative.
-// The sync mode config key is deprecated; Dolt-native is the only supported mode.
-func GetSyncMode() SyncMode {
-	return SyncModeDoltNative
-}
-
 // GetSovereignty retrieves the federation sovereignty tier configuration.
 // Returns the configured tier, or SovereigntyNone (empty, no restriction) if not set.
 // Returns SovereigntyT1 and logs a warning if an invalid non-empty value is configured.
@@ -120,11 +89,6 @@ func GetSovereignty() Sovereignty {
 	}
 
 	return tier
-}
-
-// String returns the string representation of the SyncMode.
-func (m SyncMode) String() string {
-	return string(m)
 }
 
 // String returns the string representation of the Sovereignty.
