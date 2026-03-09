@@ -14,6 +14,11 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
+// lastWrittenRefs tracks the last hash+branch written by writeBeadsRefs to
+// avoid redundant file writes and git-add subprocesses within a single
+// command invocation (auto-commit writes refs, then PersistentPostRun does too).
+var lastWrittenRefs string
+
 // writeBeadsRefs writes the current Dolt branch and commit hash to the beads
 // ref files, mirroring git's own .git/HEAD + .git/refs/heads/ structure:
 //
@@ -41,6 +46,12 @@ func writeBeadsRefs(ctx context.Context, s *dolt.DoltStore) {
 		branch = "main" // fallback
 	}
 
+	// Skip if we already wrote these exact refs this invocation.
+	key := branch + ":" + hash
+	if key == lastWrittenRefs {
+		return
+	}
+
 	// Write .beads/HEAD
 	headPath := filepath.Join(beadsDir, "HEAD")
 	headContent := fmt.Sprintf("ref: refs/heads/%s\n", branch)
@@ -63,6 +74,8 @@ func writeBeadsRefs(ctx context.Context, s *dolt.DoltStore) {
 	cmd := exec.CommandContext(ctx, "git", "add", headPath, refPath)
 	cmd.Dir = projectRoot
 	_ = cmd.Run()
+
+	lastWrittenRefs = key
 }
 
 // readBeadsRefs reads .beads/HEAD and the corresponding ref file to determine

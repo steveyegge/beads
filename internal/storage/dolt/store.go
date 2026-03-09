@@ -1712,7 +1712,7 @@ func (s *DoltStore) GetBranchInfo(ctx context.Context, name string) (*BranchInfo
 		FROM beads_branches WHERE branch_name = ?
 	`, name).Scan(&info.Name, &info.MergeStrategy, &info.Status, &info.CreatedAt, &info.UpdatedAt)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get branch info for %s: %w", name, err)

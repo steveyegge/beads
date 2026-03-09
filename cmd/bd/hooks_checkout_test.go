@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -420,10 +421,5 @@ func writeTestBeadsRefs(t *testing.T, beadsDir, branch, hash string) {
 
 // containsString checks if a string slice contains a value.
 func containsString(slice []string, val string) bool {
-	for _, s := range slice {
-		if s == val {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, val)
 }
