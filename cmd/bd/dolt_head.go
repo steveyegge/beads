@@ -193,10 +193,6 @@ func checkBeadsRefSync(ctx context.Context, s *dolt.DoltStore) {
 	fmt.Fprintf(os.Stderr, "\nbeads: Reset Beads to match Git history? (Dolt state at Git commit was previously %s.)\n", truncHash(savedHash))
 	fmt.Fprintf(os.Stderr, "\n  Yes, DOLT_RESET --hard %s\n", truncHash(savedHash))
 	fmt.Fprintf(os.Stderr, "  No, preserve Dolt state at %s\n", truncHash(currentHash))
-	fmt.Fprintf(os.Stderr, "\n  Note: If you preserve Dolt state at %s, you can manually\n", truncHash(currentHash))
-	fmt.Fprintf(os.Stderr, "  `DOLT_RESET --hard %s` later. If you reset now, Dolt state at\n", truncHash(savedHash))
-	fmt.Fprintf(os.Stderr, "  %s is still recoverable by hash (`DOLT_RESET --hard %s`)\n", truncHash(currentHash), truncHash(currentHash))
-	fmt.Fprintf(os.Stderr, "  but no branch will point to it.\n")
 
 	if defaultIsReset {
 		fmt.Fprintf(os.Stderr, "\nChoice [Y/n]: ")
