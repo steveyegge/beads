@@ -293,8 +293,10 @@ func getDoltCommitMessage(ctx context.Context, s *dolt.DoltStore, hash string) s
 	if s == nil || s.IsClosed() {
 		return ""
 	}
+	// Use dolt_commits (not dolt_log) to find commits that may be ahead of
+	// the current HEAD — e.g., when resetting forward after a backward reset.
 	row := s.DB().QueryRowContext(ctx,
-		"SELECT message FROM dolt_log WHERE commit_hash = ? LIMIT 1", hash)
+		"SELECT message FROM dolt_commits WHERE commit_hash = ? LIMIT 1", hash)
 	var msg string
 	if err := row.Scan(&msg); err != nil {
 		return ""
