@@ -7,7 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/charmbracelet/glamour v0.10.0
-	github.com/charmbracelet/huh v0.8.0
+	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/dolthub/driver v0.2.1-0.20260306012832-bbe1450551e0
 	github.com/fsnotify/fsnotify v1.9.0
