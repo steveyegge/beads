@@ -212,9 +212,157 @@ func TestCrossProject_ReadIsolation_DifferentPrefixes(t *testing.T) {
 }
 
 // =============================================================================
-// Test 2: Read Isolation — Same Prefix
-// Two projects with the SAME prefix (worst case for collision detection).
-// Verify: Even with identical prefixes, each project sees only its own data.
+// Test 2: Port Collision — Same Database (the real #2372 scenario)
+// Two projects collide on the same port and connect to the SAME database
+// (e.g., both use the default "beads" database). This simulates what happens
+// when DerivePort() hash collision causes two projects to share a server
+// and neither has a custom dolt_database in metadata.json.
+// Verify: Data leakage occurs — this test documents the current bug.
+// =============================================================================
+
+func TestCrossProject_PortCollision_SameDatabase(t *testing.T) {
+	skipIfNoDolt(t)
+
+	ctx, cancel := concurrentTestContext(t)
+	defer cancel()
+
+	// Both projects share the SAME database — simulating port collision
+	// with default config (both use DefaultDoltDatabase = "beads").
+	sharedDB := uniqueTestDBName(t) + "_shared"
+
+	tmpDirA, err := os.MkdirTemp("", "dolt-collision-a-*")
+	if err != nil {
+		t.Fatalf("temp dir A: %v", err)
+	}
+	tmpDirB, err := os.MkdirTemp("", "dolt-collision-b-*")
+	if err != nil {
+		os.RemoveAll(tmpDirA)
+		t.Fatalf("temp dir B: %v", err)
+	}
+
+	cfgA := &Config{
+		Path:            tmpDirA,
+		CommitterName:   "project-a",
+		CommitterEmail:  "a@test.com",
+		Database:        sharedDB, // SAME database
+		CreateIfMissing: true,
+	}
+	cfgB := &Config{
+		Path:            tmpDirB,
+		CommitterName:   "project-b",
+		CommitterEmail:  "b@test.com",
+		Database:        sharedDB, // SAME database
+		CreateIfMissing: true,
+	}
+
+	storeA, err := New(ctx, cfgA)
+	if err != nil {
+		os.RemoveAll(tmpDirA)
+		os.RemoveAll(tmpDirB)
+		t.Fatalf("store A: %v", err)
+	}
+	if err := storeA.SetConfig(ctx, "issue_prefix", "proj-a"); err != nil {
+		storeA.Close()
+		os.RemoveAll(tmpDirA)
+		os.RemoveAll(tmpDirB)
+		t.Fatalf("set prefix A: %v", err)
+	}
+
+	storeB, err := New(ctx, cfgB)
+	if err != nil {
+		storeA.Close()
+		os.RemoveAll(tmpDirA)
+		os.RemoveAll(tmpDirB)
+		t.Fatalf("store B: %v", err)
+	}
+	if err := storeB.SetConfig(ctx, "issue_prefix", "proj-b"); err != nil {
+		storeA.Close()
+		storeB.Close()
+		os.RemoveAll(tmpDirA)
+		os.RemoveAll(tmpDirB)
+		t.Fatalf("set prefix B: %v", err)
+	}
+
+	defer func() {
+		dropCtx, dropCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer dropCancel()
+		_, _ = storeA.db.ExecContext(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", sharedDB))
+		storeA.Close()
+		storeB.Close()
+		os.RemoveAll(tmpDirA)
+		os.RemoveAll(tmpDirB)
+	}()
+
+	// Project A creates an issue
+	issueA := &types.Issue{
+		Title:       "Project A's secret issue",
+		Description: "This should only be visible to project A",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeBug,
+	}
+	if err := storeA.CreateIssue(ctx, issueA, "project-a"); err != nil {
+		t.Fatalf("project A create: %v", err)
+	}
+
+	// Project B creates an issue
+	issueB := &types.Issue{
+		Title:       "Project B's secret issue",
+		Description: "This should only be visible to project B",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeBug,
+	}
+	if err := storeB.CreateIssue(ctx, issueB, "project-b"); err != nil {
+		t.Fatalf("project B create: %v", err)
+	}
+
+	// Query from each project's perspective
+	allA, err := storeA.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("project A search: %v", err)
+	}
+	allB, err := storeB.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("project B search: %v", err)
+	}
+
+	// In a properly isolated system, each project should see exactly 1 issue.
+	// With shared database (port collision), BOTH projects see ALL issues.
+	if len(allA) > 1 {
+		t.Errorf("DATA LEAKAGE (port collision): project A sees %d issues (expected 1)", len(allA))
+		for _, issue := range allA {
+			t.Logf("  project A sees: %s %q — %s", issue.ID, issue.Title, issue.Description)
+		}
+	}
+	if len(allB) > 1 {
+		t.Errorf("DATA LEAKAGE (port collision): project B sees %d issues (expected 1)", len(allB))
+		for _, issue := range allB {
+			t.Logf("  project B sees: %s %q — %s", issue.ID, issue.Title, issue.Description)
+		}
+	}
+
+	// Cross-check: can project A fetch project B's issue by ID?
+	ghostB, err := storeA.GetIssue(ctx, issueB.ID)
+	if err == nil && ghostB != nil {
+		t.Errorf("DATA LEAKAGE: project A can fetch project B's issue %s by ID", issueB.ID)
+	}
+	ghostA, err := storeB.GetIssue(ctx, issueA.ID)
+	if err == nil && ghostA != nil {
+		t.Errorf("DATA LEAKAGE: project B can fetch project A's issue %s by ID", issueA.ID)
+	}
+
+	if len(allA) == 1 && len(allB) == 1 {
+		t.Log("Port collision isolation verified: no data leakage")
+	} else {
+		t.Logf("Port collision causes data leakage: A sees %d, B sees %d (both should see 1)", len(allA), len(allB))
+	}
+}
+
+// =============================================================================
+// Test 3: Read Isolation — Same Prefix (separate databases)
+// Two projects with the SAME prefix but different databases.
+// Verify: Even with identical prefixes, database-level isolation works.
 // =============================================================================
 
 func TestCrossProject_ReadIsolation_SamePrefix(t *testing.T) {
@@ -290,7 +438,7 @@ func TestCrossProject_ReadIsolation_SamePrefix(t *testing.T) {
 }
 
 // =============================================================================
-// Test 3: Concurrent Cross-Project Writes
+// Test 4: Concurrent Cross-Project Writes (separate databases)
 // Both projects write issues simultaneously via goroutines.
 // Verify: No cross-contamination under concurrent load.
 // =============================================================================
@@ -444,7 +592,7 @@ func TestCrossProject_ConcurrentWrites(t *testing.T) {
 }
 
 // =============================================================================
-// Test 4: Concurrent Read-Write Mix Across Projects
+// Test 5: Concurrent Read-Write Mix Across Projects (separate databases)
 // Project A writes while project B reads (and vice versa).
 // Verify: Reads never return the other project's data.
 // =============================================================================
