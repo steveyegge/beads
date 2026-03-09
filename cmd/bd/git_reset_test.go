@@ -378,6 +378,108 @@ func TestCleanupStaleBeadsRefsNoFiles(t *testing.T) {
 	cleanupStaleBeadsRefs(dir)
 }
 
+// TestAutoResetRoundTrip verifies backward then forward reset preserves data
+// and that getDoltCommitMessage works in both directions (uses dolt_commits,
+// not dolt_log, so forward-unreachable commits are still found).
+func TestAutoResetRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	s := newTestStoreWithPrefix(t, dbPath, "roundtrip")
+	ctx := context.Background()
+
+	beadsDir := filepath.Dir(s.Path())
+
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
+	}
+	config.Set("branch_strategy.defaults.reset_dolt_with_git", true)
+	config.Set("branch_strategy.prompt", false)
+	t.Cleanup(func() {
+		config.Set("branch_strategy.defaults.reset_dolt_with_git", false)
+		config.Set("branch_strategy.prompt", false)
+	})
+
+	now := time.Now()
+
+	// Commit 1: checkpoint
+	issueA := &types.Issue{
+		ID: "roundtrip-aaa", Title: "Checkpoint issue",
+		Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.CreateIssue(ctx, issueA, "test"); err != nil {
+		t.Fatalf("create issue A: %v", err)
+	}
+	if err := s.Commit(ctx, "bd: create roundtrip-aaa"); err != nil {
+		t.Fatalf("commit checkpoint: %v", err)
+	}
+	checkpointHash, _ := s.GetCurrentCommit(ctx)
+
+	// Commit 2: latest
+	issueB := &types.Issue{
+		ID: "roundtrip-bbb", Title: "Latest issue",
+		Status: types.StatusOpen, Priority: 1, IssueType: types.TypeFeature,
+		CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second),
+	}
+	if err := s.CreateIssue(ctx, issueB, "test"); err != nil {
+		t.Fatalf("create issue B: %v", err)
+	}
+	if err := s.Commit(ctx, "bd: create roundtrip-bbb"); err != nil {
+		t.Fatalf("commit latest: %v", err)
+	}
+	latestHash, _ := s.GetCurrentCommit(ctx)
+
+	// --- Backward reset ---
+	writeTestBeadsRefs(t, beadsDir, "main", checkpointHash)
+	checkBeadsRefSync(ctx, s)
+
+	// Verify Dolt is at checkpoint
+	afterHash, _ := s.GetCurrentCommit(ctx)
+	if afterHash != checkpointHash {
+		t.Fatalf("backward reset: expected hash %q, got %q", checkpointHash, afterHash)
+	}
+	// Issue B should be gone
+	if _, err := s.GetIssue(ctx, "roundtrip-bbb"); err == nil {
+		t.Error("backward reset: issue B should be gone")
+	}
+
+	// getDoltCommitMessage should still find the FORWARD commit via dolt_commits
+	forwardMsg := getDoltCommitMessage(ctx, s, latestHash)
+	if forwardMsg == "" {
+		t.Error("getDoltCommitMessage should find forward-unreachable commit via dolt_commits")
+	}
+	if forwardMsg != "bd: create roundtrip-bbb" {
+		t.Errorf("forward commit message = %q, want %q", forwardMsg, "bd: create roundtrip-bbb")
+	}
+
+	// --- Forward reset ---
+	writeTestBeadsRefs(t, beadsDir, "main", latestHash)
+	checkBeadsRefSync(ctx, s)
+
+	// Verify Dolt is at latest
+	afterHash, _ = s.GetCurrentCommit(ctx)
+	if afterHash != latestHash {
+		t.Fatalf("forward reset: expected hash %q, got %q", latestHash, afterHash)
+	}
+	// Both issues should be present
+	if _, err := s.GetIssue(ctx, "roundtrip-aaa"); err != nil {
+		t.Errorf("forward reset: issue A should exist: %v", err)
+	}
+	if _, err := s.GetIssue(ctx, "roundtrip-bbb"); err != nil {
+		t.Errorf("forward reset: issue B should exist: %v", err)
+	}
+
+	// getDoltCommitMessage should work for both hashes
+	backMsg := getDoltCommitMessage(ctx, s, checkpointHash)
+	if backMsg != "bd: create roundtrip-aaa" {
+		t.Errorf("checkpoint message = %q, want %q", backMsg, "bd: create roundtrip-aaa")
+	}
+	fwdMsg := getDoltCommitMessage(ctx, s, latestHash)
+	if fwdMsg != "bd: create roundtrip-bbb" {
+		t.Errorf("latest message = %q, want %q", fwdMsg, "bd: create roundtrip-bbb")
+	}
+}
+
 // TestTruncHash verifies hash truncation behavior.
 func TestTruncHash(t *testing.T) {
 	t.Parallel()
