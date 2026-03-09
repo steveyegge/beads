@@ -108,6 +108,13 @@ func readBeadsRefs(beadsDir string) (commitHash, branch string) {
 //	prompt=true,  reset=false → prompt [y/N], default keeps current state
 //	prompt=true,  reset=true  → prompt [Y/n], default resets
 func checkBeadsRefSync(ctx context.Context, s *dolt.DoltStore) {
+	checkBeadsRefSyncWithGitLine(ctx, s, "")
+}
+
+// checkBeadsRefSyncWithGitLine compares .beads/refs against the current Dolt state and
+// takes action based on branch_strategy.* settings. When gitResetLine is non-empty
+// (from bd reset), it's included in the prompt for context.
+func checkBeadsRefSyncWithGitLine(ctx context.Context, s *dolt.DoltStore, gitResetLine string) {
 	if s == nil || s.IsClosed() {
 		return
 	}
@@ -175,7 +182,12 @@ func checkBeadsRefSync(ctx context.Context, s *dolt.DoltStore) {
 		if err := s.ResetToCommit(ctx, savedHash); err != nil {
 			fmt.Fprintf(os.Stderr, "beads: auto-sync reset failed: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "beads: auto-synced Dolt to %s (branch %s)\n", truncHash(savedHash), currentBranch)
+			msg := getDoltCommitMessage(ctx, s, savedHash)
+			fmt.Fprintf(os.Stderr, "dolt: HEAD is now at %s", truncHash(savedHash))
+			if msg != "" {
+				fmt.Fprintf(os.Stderr, " %s", msg)
+			}
+			fmt.Fprintf(os.Stderr, "\n")
 		}
 		return
 	}
@@ -190,14 +202,23 @@ func checkBeadsRefSync(ctx context.Context, s *dolt.DoltStore) {
 
 	// Build prompt
 	defaultIsReset := resetDefault // true when both prompt and reset are true
-	fmt.Fprintf(os.Stderr, "\nbeads: Reset Beads to match Git history? (Dolt state at Git commit was previously %s.)\n", truncHash(savedHash))
-	fmt.Fprintf(os.Stderr, "\n  Yes, DOLT_RESET --hard %s\n", truncHash(savedHash))
-	fmt.Fprintf(os.Stderr, "  No, preserve Dolt state at %s\n", truncHash(currentHash))
+	currentMsg := getDoltCommitMessage(ctx, s, currentHash)
+	savedMsg := getDoltCommitMessage(ctx, s, savedHash)
 
+	fmt.Fprintf(os.Stderr, "dolt: HEAD currently at %s", truncHash(currentHash))
+	if currentMsg != "" {
+		fmt.Fprintf(os.Stderr, " %s", currentMsg)
+	}
+	fmt.Fprintf(os.Stderr, "\n")
+
+	fmt.Fprintf(os.Stderr, "Reset dolt HEAD to %s", truncHash(savedHash))
+	if savedMsg != "" {
+		fmt.Fprintf(os.Stderr, " %s", savedMsg)
+	}
 	if defaultIsReset {
-		fmt.Fprintf(os.Stderr, "\nChoice [Y/n]: ")
+		fmt.Fprintf(os.Stderr, "? [Y/n]: ")
 	} else {
-		fmt.Fprintf(os.Stderr, "\nChoice [y/N]: ")
+		fmt.Fprintf(os.Stderr, "? [y/N]: ")
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -218,7 +239,11 @@ func checkBeadsRefSync(ctx context.Context, s *dolt.DoltStore) {
 		if err := s.ResetToCommit(ctx, savedHash); err != nil {
 			fmt.Fprintf(os.Stderr, "beads: reset failed: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "beads: Dolt reset to %s\n", truncHash(savedHash))
+			fmt.Fprintf(os.Stderr, "dolt: HEAD is now at %s", truncHash(savedHash))
+			if savedMsg != "" {
+				fmt.Fprintf(os.Stderr, " %s", savedMsg)
+			}
+			fmt.Fprintf(os.Stderr, "\n")
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "beads: keeping current Dolt state\n")
@@ -260,4 +285,19 @@ func truncHash(h string) string {
 		return h[:8]
 	}
 	return h
+}
+
+// getDoltCommitMessage returns the commit message for a given Dolt commit hash.
+// Returns empty string on any error (best effort).
+func getDoltCommitMessage(ctx context.Context, s *dolt.DoltStore, hash string) string {
+	if s == nil || s.IsClosed() {
+		return ""
+	}
+	row := s.DB().QueryRowContext(ctx,
+		"SELECT message FROM dolt_log WHERE commit_hash = ? LIMIT 1", hash)
+	var msg string
+	if err := row.Scan(&msg); err != nil {
+		return ""
+	}
+	return msg
 }

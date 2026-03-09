@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
@@ -28,7 +30,10 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		gitArgs := append([]string{"reset"}, args...)
 		gitCmd := exec.CommandContext(rootCtx, "git", gitArgs...) //nolint:gosec // args are user-provided git reset flags
-		gitCmd.Stdout = os.Stdout
+
+		// Capture git's stdout so we can prefix it with "git: " in the prompt
+		var gitOut bytes.Buffer
+		gitCmd.Stdout = &gitOut
 		gitCmd.Stderr = os.Stderr
 		gitCmd.Stdin = os.Stdin
 
@@ -40,9 +45,25 @@ Examples:
 			os.Exit(1)
 		}
 
+		// Print git output, prefixing "HEAD is now at" with "git: "
+		// and passing it to the sync check for context.
+		var gitResetLine string
+		for _, line := range strings.Split(gitOut.String(), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			if strings.Contains(line, "HEAD is now at") {
+				gitResetLine = trimmed
+				fmt.Fprintf(os.Stderr, "git:  %s\n", gitResetLine)
+			} else {
+				fmt.Println(line)
+			}
+		}
+
 		// Immediately check refs for mismatch
 		if store != nil && !store.IsClosed() {
-			checkBeadsRefSync(rootCtx, store)
+			checkBeadsRefSyncWithGitLine(rootCtx, store, gitResetLine)
 		}
 	},
 }
