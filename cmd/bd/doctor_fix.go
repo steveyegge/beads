@@ -212,6 +212,7 @@ func applyFixList(path string, fixes []doctorCheck) {
 		"Database",
 		"Fresh Clone",
 		"Schema Compatibility",
+		"Project Identity",
 	}
 	priority := make(map[string]int, len(order))
 	for i, name := range order {
@@ -331,6 +332,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.ConfigValues(path)
 		case "Classic Artifacts":
 			err = fix.ClassicArtifacts(path)
+		case "Project Identity":
+			err = fix.FixProjectIdentity(path)
 		case "Remote Consistency":
 			err = fix.RemoteConsistency(path)
 		case "Dolt Schema":
