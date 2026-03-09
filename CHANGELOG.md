@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`bd reset`** — wraps `git reset` with immediate Dolt mismatch detection; recommended interface for time-travel (`bd reset --hard HEAD~1`)
 - **`branch_strategy.*` config** — off by default; uncomment `branch_strategy` section in `config.yaml` to enable ref generation and `bd reset` functionality
+  - `bd config set branch_strategy.prompt true` — prompt user to select reset strategy on mismatch
+  - `bd config set branch_strategy.defaults.reset_dolt_with_git false` — auto-reset Dolt when git resets (default: false)
 
 ## [0.59.0] - 2026-03-05
 
