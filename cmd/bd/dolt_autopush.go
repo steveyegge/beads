@@ -8,6 +8,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/localstate"
 )
 
 // isDoltAutoPushEnabled returns whether auto-push to Dolt remote should run.
@@ -32,6 +33,12 @@ func isDoltAutoPushEnabled(ctx context.Context) bool {
 
 // maybeAutoPush pushes to the Dolt remote if enabled and the debounce interval has passed.
 // Called from PersistentPostRun after auto-commit and auto-backup.
+//
+// Push tracking state (last push time and commit hash) is stored in a local file
+// (.beads/local-state.json) instead of the Dolt metadata table. This prevents
+// merge conflicts when multiple machines push/pull the same remote, because
+// these machine-local values would otherwise diverge and cause cell-level
+// conflicts during Dolt's three-way merge. See GH#2466.
 func maybeAutoPush(ctx context.Context) {
 	if isSandboxMode() {
 		debug.Logf("dolt auto-push: skipped (sandbox mode)\n")
@@ -46,16 +53,23 @@ func maybeAutoPush(ctx context.Context) {
 		return
 	}
 
+	beadsDir := getBeadsDir()
+	if beadsDir == "" {
+		debug.Logf("dolt auto-push: skipped (no beads dir)\n")
+		return
+	}
+	ls := localstate.New(beadsDir)
+
 	// Debounce: skip if we pushed recently
 	interval := config.GetDuration("dolt.auto-push-interval")
 	if interval == 0 {
 		interval = 5 * time.Minute
 	}
 
-	lastPushStr, err := st.GetMetadata(ctx, "dolt_auto_push_last")
+	lastPushStr, err := ls.Get("dolt_auto_push_last")
 	if err != nil {
 		debug.Logf("dolt auto-push: failed to get last push time: %v\n", err)
-		return
+		// Fall through — treat as never pushed
 	}
 	if lastPushStr != "" {
 		lastPush, err := time.Parse(time.RFC3339, lastPushStr)
@@ -72,7 +86,7 @@ func maybeAutoPush(ctx context.Context) {
 		debug.Logf("dolt auto-push: failed to get current commit: %v\n", err)
 		return
 	}
-	lastPushedCommit, _ := st.GetMetadata(ctx, "dolt_auto_push_commit")
+	lastPushedCommit, _ := ls.Get("dolt_auto_push_commit")
 	if currentCommit == lastPushedCommit && lastPushedCommit != "" {
 		debug.Logf("dolt auto-push: no changes since last push\n")
 		return
@@ -85,12 +99,12 @@ func maybeAutoPush(ctx context.Context) {
 		return
 	}
 
-	// Record last push time and commit
+	// Record last push time and commit in local state (not Dolt metadata)
 	now := time.Now().UTC().Format(time.RFC3339)
-	if err := st.SetMetadata(ctx, "dolt_auto_push_last", now); err != nil {
+	if err := ls.Set("dolt_auto_push_last", now); err != nil {
 		debug.Logf("dolt auto-push: failed to record push time: %v\n", err)
 	}
-	if err := st.SetMetadata(ctx, "dolt_auto_push_commit", currentCommit); err != nil {
+	if err := ls.Set("dolt_auto_push_commit", currentCommit); err != nil {
 		debug.Logf("dolt auto-push: failed to record push commit: %v\n", err)
 	}
 

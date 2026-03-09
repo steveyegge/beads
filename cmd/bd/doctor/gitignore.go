@@ -26,6 +26,10 @@ last-touched
 # Must not be committed as paths would be wrong in other clones
 redirect
 
+# Machine-local state (auto-push tracking, tip timestamps)
+# These values are per-clone and must not enter Dolt history (GH#2466)
+local-state.json
+
 # Sync state (local-only, per-machine)
 # These files are machine-specific and should not be shared across clones
 .sync.lock
@@ -77,6 +81,7 @@ var requiredPatterns = []string{
 	"*.db?*",
 	"redirect",
 	"last-touched",
+	"local-state.json",
 	"bd.sock.startlock",
 	".sync.lock",
 	"export-state/",

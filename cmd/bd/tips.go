@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/steveyegge/beads/internal/localstate"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
@@ -132,53 +133,52 @@ func selectNextTip(store *dolt.DoltStore) *Tip {
 	return nil // No tips won probability roll
 }
 
-// getLastShown retrieves the timestamp when a tip was last shown
-// Returns zero time if never shown
+// getLastShown retrieves the timestamp when a tip was last shown.
+// Returns zero time if never shown.
+// Tip timestamps are stored in local state (.beads/local-state.json) to avoid
+// merge conflicts in multi-machine setups (GH#2466).
 func getLastShown(store *dolt.DoltStore, tipID string) time.Time {
 	key := fmt.Sprintf("tip_%s_last_shown", tipID)
+
+	// Try local state first (new location)
+	beadsDir := getBeadsDir()
+	if beadsDir != "" {
+		ls := localstate.New(beadsDir)
+		if value, err := ls.Get(key); err == nil && value != "" {
+			if t, err := time.Parse(time.RFC3339, value); err == nil {
+				return t
+			}
+		}
+	}
+
+	// Fall back to Dolt metadata for existing installations that haven't
+	// migrated yet. Once a tip is shown again, the new value goes to local state.
 	value, err := store.GetMetadata(context.Background(), key)
 	if err != nil || value == "" {
 		return time.Time{}
 	}
-
-	// Parse RFC3339 timestamp
 	t, err := time.Parse(time.RFC3339, value)
 	if err != nil {
 		return time.Time{}
 	}
-
 	return t
 }
 
-// recordTipShown records the timestamp when a tip was shown
+// recordTipShown records the timestamp when a tip was shown.
+// Writes to local state (.beads/local-state.json) to avoid merge conflicts
+// in multi-machine setups (GH#2466).
 func recordTipShown(store *dolt.DoltStore, tipID string) {
 	if store == nil || tipID == "" {
-		return
-	}
-
-	// If dolt auto-commit is enabled, defer the metadata write so it can be
-	// committed as a separate Dolt commit in PostRun.
-	// This avoids tip metadata getting bundled into the main command commit.
-	if mode, err := getDoltAutoCommitMode(); err == nil && mode == doltAutoCommitOn {
-		commandDidWriteTipMetadata = true
-		if commandTipIDsShown == nil {
-			commandTipIDsShown = make(map[string]struct{})
-		}
-		commandTipIDsShown[tipID] = struct{}{}
 		return
 	}
 
 	key := fmt.Sprintf("tip_%s_last_shown", tipID)
 	value := time.Now().Format(time.RFC3339)
 
-	// Non-critical metadata, ok to fail silently.
-	// If it succeeds, track the write for tip auto-commit behavior.
-	if err := store.SetMetadata(context.Background(), key, value); err == nil {
-		commandDidWriteTipMetadata = true
-		if commandTipIDsShown == nil {
-			commandTipIDsShown = make(map[string]struct{})
-		}
-		commandTipIDsShown[tipID] = struct{}{}
+	beadsDir := getBeadsDir()
+	if beadsDir != "" {
+		ls := localstate.New(beadsDir)
+		_ = ls.Set(key, value) // Non-critical metadata, ok to fail silently
 	}
 }
 

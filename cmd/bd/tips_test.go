@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/beads/internal/localstate"
 )
 
 func TestTipSelection(t *testing.T) {
@@ -193,7 +195,13 @@ func TestRecordTipShown(t *testing.T) {
 	doltAutoCommit = ""
 	t.Cleanup(func() { doltAutoCommit = oldDoltAutoCommit })
 
-	store := newTestStoreWithPrefix(t, filepath.Join(t.TempDir(), "test.db"), "test")
+	tmpDir := t.TempDir()
+	store := newTestStoreWithPrefix(t, filepath.Join(tmpDir, "test.db"), "test")
+
+	// Set global dbPath so getBeadsDir() returns the temp dir for local-state.json
+	oldDbPath := dbPath
+	dbPath = filepath.Join(tmpDir, "test.db")
+	t.Cleanup(func() { dbPath = oldDbPath })
 
 	recordTipShown(store, "test_tip")
 
@@ -249,7 +257,13 @@ func TestTipFrequency(t *testing.T) {
 	doltAutoCommit = ""
 	t.Cleanup(func() { doltAutoCommit = oldDoltAutoCommit })
 
-	store := newTestStoreWithPrefix(t, filepath.Join(t.TempDir(), "test.db"), "test")
+	tmpDir := t.TempDir()
+	store := newTestStoreWithPrefix(t, filepath.Join(tmpDir, "test.db"), "test")
+
+	// Set global dbPath so getBeadsDir() returns the temp dir for local-state.json
+	oldDbPath := dbPath
+	dbPath = filepath.Join(tmpDir, "test.db")
+	t.Cleanup(func() { dbPath = oldDbPath })
 
 	tipsMutex.Lock()
 	tips = []Tip{
@@ -279,9 +293,10 @@ func TestTipFrequency(t *testing.T) {
 		t.Errorf("Expected nil due to frequency limit, got %v", tip)
 	}
 
-	// Manually set last shown to past (simulate time passing)
+	// Manually set last shown to past (simulate time passing) via local state
 	past := time.Now().Add(-10 * time.Second)
-	_ = store.SetMetadata(context.Background(), "tip_frequent_tip_last_shown", past.Format(time.RFC3339))
+	ls := localstate.New(tmpDir)
+	_ = ls.Set("tip_frequent_tip_last_shown", past.Format(time.RFC3339))
 
 	// Should show again now
 	tip = selectNextTip(store)

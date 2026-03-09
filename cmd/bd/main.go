@@ -77,15 +77,6 @@ var (
 	// This prevents a redundant auto-commit attempt in PersistentPostRun.
 	commandDidExplicitDoltCommit bool
 
-	// commandDidWriteTipMetadata is set when a command records a tip as "shown" by writing
-	// metadata (tip_*_last_shown). This will be used to create a separate Dolt commit for
-	// tip writes, even when the main command is read-only.
-	commandDidWriteTipMetadata bool
-
-	// commandTipIDsShown tracks which tip IDs were shown in this command (deduped).
-	// This is used for tip-commit message formatting.
-	commandTipIDsShown map[string]struct{}
-
 	// commandSpan is the root OTel span for the current command execution.
 	// All storage and AI spans are nested as children of this span.
 	commandSpan oteltrace.Span
@@ -229,8 +220,6 @@ var rootCmd = &cobra.Command{
 		// Reset per-command write tracking (used by Dolt auto-commit).
 		commandDidWrite.Store(false)
 		commandDidExplicitDoltCommit = false
-		commandDidWriteTipMetadata = false
-		commandTipIDsShown = make(map[string]struct{})
 
 		// Set up signal-aware context with batch commit flush on shutdown.
 		// Unlike signal.NotifyContext, this also handles SIGHUP and flushes
@@ -590,32 +579,8 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Tip metadata auto-commit: if a tip was shown, create a separate Dolt commit for the
-		// tip_*_last_shown metadata updates. This may happen even for otherwise read-only commands.
-		if commandDidWriteTipMetadata && len(commandTipIDsShown) > 0 {
-			// Only applies when dolt auto-commit is enabled and backend is versioned (Dolt).
-			if mode, err := getDoltAutoCommitMode(); err != nil {
-				FatalError("dolt tip auto-commit failed: %v", err)
-			} else if mode == doltAutoCommitOn {
-				// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
-				for tipID := range commandTipIDsShown {
-					key := fmt.Sprintf("tip_%s_last_shown", tipID)
-					value := time.Now().Format(time.RFC3339)
-					if err := store.SetMetadata(rootCtx, key, value); err != nil {
-						FatalError("dolt tip auto-commit failed: %v", err)
-					}
-				}
-
-				ids := make([]string, 0, len(commandTipIDsShown))
-				for tipID := range commandTipIDsShown {
-					ids = append(ids, tipID)
-				}
-				msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
-				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
-					FatalError("dolt tip auto-commit failed: %v", err)
-				}
-			}
-		}
+		// Tip metadata is now stored in local state (.beads/local-state.json) instead of the
+		// Dolt metadata table, so no Dolt auto-commit is needed for tips. See GH#2466.
 
 		// Auto-backup: export JSONL to .beads/backup/ if enabled and due
 		maybeAutoBackup(rootCtx)
