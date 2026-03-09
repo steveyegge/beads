@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-03-05
+
+### Added
+
+- **`bd list --tree` default** — tree view is now the default display mode for `bd list` ([GH#2345](https://github.com/steveyegge/beads/issues/2345))
+- **OpenCode recipe** — `bd setup` now includes an OpenCode integration recipe
+- **Fresh clone detection** — `bd doctor` detects fresh clones on Dolt server and guides through init ([GH#2372](https://github.com/steveyegge/beads/issues/2372))
+- **Config-aware init guard** — `bd init` distinguishes server-reachable from DB-exists, with better error messages ([GH#2372](https://github.com/steveyegge/beads/issues/2372))
+- **Sync remote hint in errors** — database-not-found errors now surface `sync.git-remote` config for easier troubleshooting
+- **Nix flake modernization** — updated flake for nixpkgs-25.11, fix-merge of PR #2314
+- **Doctor warning suppression** — suppress specific `bd doctor` warnings via config ([GH#1095](https://github.com/steveyegge/beads/issues/1095))
+- **Community Tools** — added fancypantalons/nvim-beads to COMMUNITY_TOOLS.md
+
+### Changed
+
+- **3-way merge config removed** — `ConflictStrategy`, `FieldStrategy`, and all associated config/validation removed; Dolt handles merge natively ([GH#2353](https://github.com/steveyegge/beads/pull/2353))
+- **Daemon infrastructure removed** — the bd daemon has been fully removed; bd is now purely CLI-driven ([w-bd-001](https://github.com/steveyegge/beads/issues/w-bd-001))
+- **Legacy daemon lock infrastructure removed** — cleaned up stale lock files and related code
+- **Backup git-push defaults to OFF** — `bd backup` git push now requires explicit opt-in ([GH#2363](https://github.com/steveyegge/beads/issues/2363))
+- **Test infrastructure modernized** — migrated all tests from `StartTestDoltServer` to container-native API; readiness expanded to 5-state enum; crash detection via standalone functions ([GH#2304](https://github.com/steveyegge/beads/pull/2304))
+- **`ExtractPrefix` consolidated** — moved to `types` package for reuse across codebase
+
+### Fixed
+
+- **Hook marker handling** — `bd doctor --fix` repairs broken/orphaned hook markers; version added to END marker for future matching ([GH#2344](https://github.com/steveyegge/beads/issues/2344))
+- **Legacy hook migration** — warn on user-modified legacy hooks; handle backup sidecar files during migration
+- **Dolt push/pull directory** — use correct database subdirectory for CLI push/pull/fetch operations
+- **Contributor auto-routing** — add fallback routing for show/update/close commands ([GH#2345](https://github.com/steveyegge/beads/issues/2345))
+- **Config-aware prefix detection** — `ResolvePartialID` now respects config for prefix routing
+- **Doctor command order** — correct `enrichFreshClone` command sequencing
+- **Batch IN-clause queries** — prevent full table scans in all IN-clause queries ([GH#2294](https://github.com/steveyegge/beads/issues/2294))
+- **Init port resolution** — use `DefaultConfig` for port resolution during init ([GH#2372](https://github.com/steveyegge/beads/issues/2372))
+- **Idle monitor** — single-instance lock, port config isolation, project UUID verification ([GH#2367](https://github.com/steveyegge/beads/issues/2367), [GH#2372](https://github.com/steveyegge/beads/issues/2372))
+- **Init data safety** — prevent data destruction from misleading error messages ([GH#2363](https://github.com/steveyegge/beads/issues/2363), [GH#2372](https://github.com/steveyegge/beads/issues/2372))
+- **Circuit breaker tuning** — reduce cooldown to 5s and add active TCP health probe
+- **Deterministic ordering** — add ID tiebreaker to all ORDER BY clauses
+- **Backup on feature branches** — skip git commits during hook runs and on feature branches
+- **Backup config routing** — route `backup.*` keys to `config.yaml` so overrides are respected
+- **Embedded Dolt** — handle context canceled in cleanup, add SQL concurrency test
+- **Tombstone entries** — skip tombstone entries in `bd init --from-jsonl`
+- **DerivePort** — restore as standalone default in `DefaultConfig`; log fallback on collision
+- **Cross-type blocking** — align validation with cross-type blocking rules
+- **Cross-prefix dep routing** — extend to dep commands ([GH#2296](https://github.com/steveyegge/beads/pull/2296))
+- **Dolt serialization retry** — retry on serialization error in concurrent tests
+- **CLI routing** — gate on local remote availability; extend SQL push timeout ([GH#2295](https://github.com/steveyegge/beads/pull/2295))
+- **Docker Hub network calls** — skip when Dolt image not cached ([GH#2277](https://github.com/steveyegge/beads/issues/2277))
+- **Wisp batch deletes** — commit per batch in `deleteWispBatch` to avoid write timeout
+- **Idle monitor watchdog** — kills itself via `Stop()` to prevent zombie processes
+
+### Documentation
+
+- Audit and clean up stale sync mode documentation ([w-bd-004](https://github.com/steveyegge/beads/issues/w-bd-004))
+- Network/privacy section added to SECURITY.md
+- DerivePort birthday-problem collision recovery documented
+- Misleading examples corrected in QUICKSTART.md
+- GIT_INTEGRATION.md updated re deprecated beads-merge and Jujutsu
+- Circuit breaker and upgrade recovery troubleshooting docs
+- Duplicate nvim-beads entry fixed in COMMUNITY_TOOLS.md
+
 ## [0.58.0] - 2026-03-02
 
 ### Added

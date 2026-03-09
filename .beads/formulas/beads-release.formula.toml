@@ -339,159 +339,33 @@ Focus on workflow-impacting changes agents need to know.
 """
 
 [[steps]]
-id = "bump-version-go"
-title = "Bump version in version.go"
+id = "bump-all-versions"
+title = "Bump version in all files"
 needs = ["update-info-go"]
 description = """
-Update the Go version constant.
+Run the version bump script to update ALL version files at once.
 
 ```bash
-# macOS
-sed -i '' 's/Version = "[^"]*"/Version = "{{version}}"/' cmd/bd/version.go
-
-# Linux
-sed -i 's/Version = "[^"]*"/Version = "{{version}}"/' cmd/bd/version.go
+bash scripts/update-versions.sh {{version}}
 ```
 
-Verify:
+This updates: version.go, plugin.json, marketplace.json, pyproject.toml,
+__init__.py, package.json, README badge, default.nix, and Windows resources
+(winres.json, manifest.xml).
+
+Hook templates no longer exist — hook versions are derived from version.go
+at runtime.
+
+Verify with:
 ```bash
-grep 'Version = ' cmd/bd/version.go
-```
-"""
-
-[[steps]]
-id = "bump-plugin-json"
-title = "Bump version in plugin JSON files"
-needs = ["bump-version-go"]
-description = """
-Update Claude plugin manifest versions.
-
-```bash
-# macOS/Linux with jq
-jq '.version = "{{version}}"' .claude-plugin/plugin.json > tmp && mv tmp .claude-plugin/plugin.json
-jq '.plugins[0].version = "{{version}}"' .claude-plugin/marketplace.json > tmp && mv tmp .claude-plugin/marketplace.json
-```
-
-Verify:
-```bash
-jq -r '.version' .claude-plugin/plugin.json
-jq -r '.plugins[0].version' .claude-plugin/marketplace.json
-```
-"""
-
-[[steps]]
-id = "bump-mcp-python"
-title = "Bump version in MCP Python package"
-needs = ["bump-plugin-json"]
-description = """
-Update the beads-mcp Python package version.
-
-```bash
-# macOS
-sed -i '' 's/version = "[^"]*"/version = "{{version}}"/' integrations/beads-mcp/pyproject.toml
-sed -i '' 's/__version__ = "[^"]*"/__version__ = "{{version}}"/' integrations/beads-mcp/src/beads_mcp/__init__.py
-
-# Linux
-sed -i 's/version = "[^"]*"/version = "{{version}}"/' integrations/beads-mcp/pyproject.toml
-sed -i 's/__version__ = "[^"]*"/__version__ = "{{version}}"/' integrations/beads-mcp/src/beads_mcp/__init__.py
-```
-
-Verify:
-```bash
-grep 'version = ' integrations/beads-mcp/pyproject.toml | head -1
-grep '__version__ = ' integrations/beads-mcp/src/beads_mcp/__init__.py
-```
-"""
-
-[[steps]]
-id = "bump-npm-package"
-title = "Bump version in npm package"
-needs = ["bump-mcp-python"]
-description = """
-Update the npm package version.
-
-```bash
-# macOS/Linux with jq
-jq '.version = "{{version}}"' npm-package/package.json > tmp && mv tmp npm-package/package.json
-```
-
-Verify:
-```bash
-jq -r '.version' npm-package/package.json
-```
-"""
-
-[[steps]]
-id = "bump-hook-templates"
-title = "Bump version in hook templates"
-needs = ["bump-npm-package"]
-description = """
-Update version comment in git hook templates.
-
-```bash
-# macOS
-for f in cmd/bd/templates/hooks/pre-commit cmd/bd/templates/hooks/post-merge cmd/bd/templates/hooks/pre-push cmd/bd/templates/hooks/post-checkout; do
-  sed -i '' 's/# bd-hooks-version: .*/# bd-hooks-version: {{version}}/' "$f"
-done
-
-# Linux
-for f in cmd/bd/templates/hooks/pre-commit cmd/bd/templates/hooks/post-merge cmd/bd/templates/hooks/pre-push cmd/bd/templates/hooks/post-checkout; do
-  sed -i 's/# bd-hooks-version: .*/# bd-hooks-version: {{version}}/' "$f"
-done
-```
-
-Verify:
-```bash
-grep '# bd-hooks-version:' cmd/bd/templates/hooks/pre-commit
-```
-"""
-
-[[steps]]
-id = "bump-readme"
-title = "Bump version in README badge"
-needs = ["bump-hook-templates"]
-description = """
-Update the Alpha version badge in README.md.
-
-```bash
-# macOS
-sed -i '' 's/Alpha (v[^)]*)/Alpha (v{{version}})/' README.md
-
-# Linux
-sed -i 's/Alpha (v[^)]*)/Alpha (v{{version}})/' README.md
-```
-
-Verify:
-```bash
-grep 'Alpha (v' README.md
-```
-"""
-
-[[steps]]
-id = "bump-default-nix"
-title = "Bump version in default.nix"
-needs = ["bump-readme"]
-description = """
-Update the Nix package version.
-
-```bash
-# macOS
-sed -i '' 's/version = "[^"]*";/version = "{{version}}";/' default.nix
-
-# Linux
-sed -i 's/version = "[^"]*";/version = "{{version}}";/' default.nix
-```
-
-Verify:
-```bash
-grep 'version = ' default.nix
+bash scripts/check-versions.sh
 ```
 """
 
 [[steps]]
 id = "update-vendorhash"
 title = "Update Nix vendorHash if needed"
-needs = ["bump-default-nix"]
+needs = ["bump-all-versions"]
 description = """
 Update vendorHash if go.mod/go.sum changed since last release.
 
@@ -550,14 +424,11 @@ description = """
 Confirm all versions match {{version}}.
 
 ```bash
-grep 'Version = ' cmd/bd/version.go
-jq -r '.version' .claude-plugin/plugin.json
-jq -r '.version' npm-package/package.json
-grep 'version = ' integrations/beads-mcp/pyproject.toml
-grep 'version = ' default.nix
+bash scripts/check-versions.sh
 ```
 
-All should show {{version}}.
+This checks version.go, plugin.json, marketplace.json, pyproject.toml,
+__init__.py, and package.json. All should show {{version}}.
 """
 
 [[steps]]
@@ -733,6 +604,32 @@ Should show {{version}}.
 Note: PyPI may have a small propagation delay (1-2 min).
 """
 
+[[steps]]
+id = "verify-homebrew"
+title = "Verify Homebrew tap updated"
+needs = ["await-ci"]
+description = """
+Confirm the Homebrew tap was updated by goreleaser.
+
+```bash
+# Check the tap repo for the updated formula
+gh api repos/steveyegge/homebrew-beads/contents/Formula/bd.rb \
+  --jq '.content' | base64 -d | grep 'version "'
+```
+
+Or check locally if the tap is already installed:
+```bash
+brew update
+brew info bd 2>/dev/null | head -3
+```
+
+Should show {{version}}.
+
+Note: goreleaser pushes to steveyegge/homebrew-beads automatically via the
+`brews` section in .goreleaser.yml. If the formula wasn't updated, check the
+goreleaser logs in the release workflow for errors.
+"""
+
 # =============================================================================
 # Phase 3: Installation (Fan-in)
 # =============================================================================
@@ -740,7 +637,7 @@ Note: PyPI may have a small propagation delay (1-2 min).
 [[steps]]
 id = "local-install"
 title = "Update local installation"
-needs = ["verify-github", "verify-npm", "verify-pypi"]
+needs = ["verify-github", "verify-npm", "verify-pypi", "verify-homebrew"]
 description = """
 Update local bd to the new version.
 
@@ -790,22 +687,18 @@ All should show {{version}}.
 """
 
 [[steps]]
-id = "restart-daemons"
-title = "Restart daemons"
+id = "verify-local-install"
+title = "Verify local installation"
 needs = ["local-install"]
 description = """
-Restart bd daemons to pick up new version.
+Confirm the installed binary is the correct version.
 
 ```bash
-bd daemons killall
+bd --version
 ```
 
-Daemons will auto-restart with new version on next bd command.
-
-Verify:
-```bash
-bd daemons list
-```
+Should show {{version}}. The bd daemon was removed in v0.59.0 — bd is now
+purely CLI-driven, so no daemon restart is needed.
 """
 
 [[steps]]
@@ -836,15 +729,15 @@ needs the tag to exist, not the CI artifacts.
 [[steps]]
 id = "release-complete"
 title = "Release complete"
-needs = ["restart-daemons", "generate-newsletter"]
+needs = ["verify-local-install", "generate-newsletter"]
 description = """
 Release v{{version}} is complete!
 
 Summary:
-- All version files updated
+- All version files updated (via scripts/update-versions.sh)
 - Git tag pushed
 - CI artifacts built (via gate)
-- npm and PyPI packages verified
+- npm, PyPI, and Homebrew packages verified
 - Local installation updated
 - Daemons restarted
 - Newsletter generated

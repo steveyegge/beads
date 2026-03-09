@@ -268,12 +268,12 @@ func (s *DoltStore) isPeerGitProtocolRemote(ctx context.Context, peer string) bo
 				if !doltutil.IsGitProtocolURL(r.URL) {
 					return false
 				}
-				return s.dbPath != "" && doltutil.FindCLIRemote(s.dbPath, peer) != ""
+				return s.cliDir() != "" && doltutil.FindCLIRemote(s.cliDir(), peer) != ""
 			}
 		}
 	}
-	if s.dbPath != "" {
-		if url := doltutil.FindCLIRemote(s.dbPath, peer); url != "" {
+	if s.cliDir() != "" {
+		if url := doltutil.FindCLIRemote(s.cliDir(), peer); url != "" {
 			return doltutil.IsGitProtocolURL(url)
 		}
 	}
@@ -285,7 +285,7 @@ func (s *DoltStore) isPeerGitProtocolRemote(ctx context.Context, peer string) bo
 // Credentials are set on the subprocess environment only via cmd.Env.
 func (s *DoltStore) doltCLIPushToPeer(ctx context.Context, peer string, creds *remoteCredentials) error {
 	cmd := exec.CommandContext(ctx, "dolt", "push", peer, s.branch) // #nosec G204 -- fixed command with validated peer/branch
-	cmd.Dir = s.dbPath
+	cmd.Dir = s.cliDir()
 	creds.applyToCmd(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -299,7 +299,7 @@ func (s *DoltStore) doltCLIPushToPeer(ctx context.Context, peer string, creds *r
 // Credentials are set on the subprocess environment only via cmd.Env.
 func (s *DoltStore) doltCLIPullFromPeer(ctx context.Context, peer string, creds *remoteCredentials) error {
 	cmd := exec.CommandContext(ctx, "dolt", "pull", peer, s.branch) // #nosec G204 -- fixed command with validated peer/branch
-	cmd.Dir = s.dbPath
+	cmd.Dir = s.cliDir()
 	creds.applyToCmd(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -313,7 +313,7 @@ func (s *DoltStore) doltCLIPullFromPeer(ctx context.Context, peer string, creds 
 // Credentials are set on the subprocess environment only via cmd.Env.
 func (s *DoltStore) doltCLIFetchFromPeer(ctx context.Context, peer string, creds *remoteCredentials) error {
 	cmd := exec.CommandContext(ctx, "dolt", "fetch", peer) // #nosec G204 -- fixed command with validated peer
-	cmd.Dir = s.dbPath
+	cmd.Dir = s.cliDir()
 	creds.applyToCmd(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -322,18 +322,5 @@ func (s *DoltStore) doltCLIFetchFromPeer(ctx context.Context, peer string, creds
 	return nil
 }
 
-// SyncResult contains the outcome of a Sync operation.
-type SyncResult struct {
-	Peer              string
-	StartTime         time.Time
-	EndTime           time.Time
-	Fetched           bool
-	Merged            bool
-	Pushed            bool
-	PulledCommits     int
-	PushedCommits     int
-	Conflicts         []storage.Conflict
-	ConflictsResolved bool
-	Error             error
-	PushError         error // Non-fatal push error
-}
+// SyncResult is an alias for storage.SyncResult.
+type SyncResult = storage.SyncResult

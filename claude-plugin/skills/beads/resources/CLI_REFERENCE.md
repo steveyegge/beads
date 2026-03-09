@@ -389,32 +389,6 @@ bd --no-auto-flush --no-auto-import <command>
 
 **When to use:** Sandboxed environments where the Dolt server can't be controlled (permission restrictions), or when auto-detection doesn't trigger.
 
-### Staleness Control
-
-```bash
-# Skip staleness check (emergency escape hatch)
-bd --allow-stale <command>
-
-# Example: access database even if it appears out of sync
-bd --allow-stale ready --json
-bd --allow-stale list --status open --json
-```
-
-**Shows:** `⚠️  Staleness check skipped (--allow-stale), data may be out of sync`
-
-**⚠️ Caution:** May show stale or incomplete data. Use only when stuck and other options fail.
-
-### Force Import
-
-```bash
-# Force metadata update even when DB appears synced
-bd import --force -i .beads/issues.jsonl
-```
-
-**When to use:** `bd import` reports "0 created, 0 updated" but staleness errors persist.
-
-**Shows:** `Metadata updated (database already in sync)`
-
 ### Other Global Flags
 
 ```bash

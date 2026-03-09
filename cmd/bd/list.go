@@ -29,7 +29,7 @@ func withStorage(ctx context.Context, store *dolt.DoltStore, dbPath string, fn s
 	if store != nil {
 		return fn(store)
 	} else if dbPath != "" {
-		// Daemon mode: open read-only connection
+		// Open read-only connection
 		roStore, err := dolt.New(ctx, &dolt.Config{Path: dbPath, ReadOnly: true})
 		if err != nil {
 			return err
@@ -326,7 +326,11 @@ var listCmd = &cobra.Command{
 		// Pretty and watch flags (GH#654)
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
 		treeFormat, _ := cmd.Flags().GetBool("tree")
-		prettyFormat = prettyFormat || treeFormat // --tree is alias for --pretty
+		flatFormat, _ := cmd.Flags().GetBool("flat")
+		if flatFormat {
+			treeFormat = false
+		}
+		prettyFormat = (prettyFormat || treeFormat) && !jsonOutput // --tree is alias for --pretty; JSON wins
 		watchMode, _ := cmd.Flags().GetBool("watch")
 
 		// Pager control (bd-jdz3)
@@ -560,9 +564,12 @@ var listCmd = &cobra.Command{
 		if pinnedFlag {
 			pinned := true
 			filter.Pinned = &pinned
-		} else if noPinnedFlag || (status != "pinned" && !allFlag) {
+		} else if noPinnedFlag || (status != "pinned" && status != "hooked" && !allFlag) {
 			// Exclude pinned beads by default — they are permanent references,
 			// not actionable work items. Use --pinned or --all to see them. (bd-uhcg)
+			// Also skip exclusion for --status=hooked: beads transitioning from
+			// pinned to hooked retain the legacy pinned=1 column, and excluding
+			// them breaks gt hook status detection (bd-pr-sheriff bug).
 			pinned := false
 			filter.Pinned = &pinned
 		}
@@ -736,7 +743,8 @@ var listCmd = &cobra.Command{
 		}
 
 		// Handle pretty format (GH#654)
-		if prettyFormat {
+		// JSON output takes priority over pretty/tree format (bd-list-json-fix, bd-03r)
+		if prettyFormat && !jsonOutput {
 			// Special handling for --tree --parent combination (hierarchical descendants)
 			if parentID != "" {
 				treeIssues, err := getHierarchicalChildren(ctx, activeStore, "", parentID)
@@ -957,7 +965,8 @@ func init() {
 
 	// Pretty and watch flags (GH#654)
 	listCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
-	listCmd.Flags().Bool("tree", false, "Alias for --pretty: hierarchical tree format")
+	listCmd.Flags().Bool("tree", true, "Hierarchical tree format (default: true; use --flat to disable)")
+	listCmd.Flags().Bool("flat", false, "Disable tree format and use legacy flat list output")
 	listCmd.Flags().BoolP("watch", "w", false, "Watch for changes and auto-update display (implies --pretty)")
 
 	// Metadata filtering (GH#1406)

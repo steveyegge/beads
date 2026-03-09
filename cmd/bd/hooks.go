@@ -30,37 +30,86 @@ const inlineHookMarker = "# bd (beads)"
 // Section markers for git hooks (GH#1380) — consistent with AGENTS.md pattern.
 // Only content between markers is managed by beads; user content outside is preserved.
 const hookSectionBeginPrefix = "# --- BEGIN BEADS INTEGRATION"
-const hookSectionEnd = "# --- END BEADS INTEGRATION ---"
+const hookSectionEndPrefix = "# --- END BEADS INTEGRATION"
 
 // hookSectionBeginLine returns the full begin marker line with the current version.
 func hookSectionBeginLine() string {
 	return fmt.Sprintf("%s v%s ---", hookSectionBeginPrefix, Version)
 }
 
+// hookSectionEndLine returns the full end marker line with the current version.
+func hookSectionEndLine() string {
+	return fmt.Sprintf("%s v%s ---", hookSectionEndPrefix, Version)
+}
+
+// hookTimeoutSeconds is the maximum time a beads hook is allowed to run before
+// being killed and allowing the git operation to proceed.  A bounded timeout
+// prevents `bd hooks run` from hanging `git push` indefinitely (GH#2453).
+// The value can be overridden via the BEADS_HOOK_TIMEOUT environment variable.
+const hookTimeoutSeconds = 30
+
 // generateHookSection returns the marked section content for a given hook name.
 // The section is self-contained: it checks for bd availability, runs the hook
 // via 'bd hooks run', and propagates exit codes — without preventing any user
 // content after the section from executing on success.
+//
+// Resilience (GH#2453, GH#2449):
+//   - A configurable timeout prevents hooks from hanging git operations.
+//   - If the beads database is not initialized (exit code 3), the hook exits
+//     successfully with a warning so that git operations are not blocked.
 func generateHookSection(hookName string) string {
 	return hookSectionBeginLine() + "\n" +
 		"# This section is managed by beads. Do not remove these markers.\n" +
 		"if command -v bd >/dev/null 2>&1; then\n" +
 		"  export BD_GIT_HOOK=1\n" +
-		"  bd hooks run " + hookName + " \"$@\"\n" +
-		"  _bd_exit=$?; if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi\n" +
+		"  _bd_timeout=${BEADS_HOOK_TIMEOUT:-" + fmt.Sprintf("%d", hookTimeoutSeconds) + "}\n" +
+		"  if command -v timeout >/dev/null 2>&1; then\n" +
+		"    timeout \"$_bd_timeout\" bd hooks run " + hookName + " \"$@\"\n" +
+		"    _bd_exit=$?\n" +
+		"    if [ $_bd_exit -eq 124 ]; then\n" +
+		"      echo >&2 \"beads: hook '" + hookName + "' timed out after ${_bd_timeout}s — continuing without beads\"\n" +
+		"      _bd_exit=0\n" +
+		"    fi\n" +
+		"  else\n" +
+		"    bd hooks run " + hookName + " \"$@\"\n" +
+		"    _bd_exit=$?\n" +
+		"  fi\n" +
+		"  if [ $_bd_exit -eq 3 ]; then\n" +
+		"    echo >&2 \"beads: database not initialized — skipping hook '" + hookName + "'\"\n" +
+		"    _bd_exit=0\n" +
+		"  fi\n" +
+		"  if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi\n" +
 		"fi\n" +
-		hookSectionEnd + "\n"
+		hookSectionEndLine() + "\n"
 }
 
 // injectHookSection merges the beads section into existing hook file content.
 // If section markers are found, only the content between them is replaced.
+// If broken markers exist (orphaned BEGIN, reversed order), the stale markers
+// are removed before injecting the new section.
 // If no markers are found, the section is appended.
 func injectHookSection(existing, section string) string {
+	return injectHookSectionWithDepth(existing, section, 0)
+}
+
+// maxInjectDepth guards against infinite recursion when cleaning broken markers.
+const maxInjectDepth = 5
+
+func injectHookSectionWithDepth(existing, section string, depth int) string {
+	if depth > maxInjectDepth {
+		// Safety: too many recursive cleanups — append as fallback
+		result := existing
+		if !strings.HasSuffix(result, "\n") {
+			result += "\n"
+		}
+		return result + "\n" + section
+	}
+
 	beginIdx := strings.Index(existing, hookSectionBeginPrefix)
-	endIdx := strings.Index(existing, hookSectionEnd)
+	endIdx := strings.Index(existing, hookSectionEndPrefix)
 
 	if beginIdx != -1 && endIdx != -1 && beginIdx < endIdx {
-		// Find start of the begin-marker line
+		// Case 1: valid BEGIN...END pair — replace between markers
 		lineStart := strings.LastIndex(existing[:beginIdx], "\n")
 		if lineStart == -1 {
 			lineStart = 0
@@ -69,15 +118,28 @@ func injectHookSection(existing, section string) string {
 		}
 
 		// Find end of the end-marker line (including trailing newline)
-		endOfEndMarker := endIdx + len(hookSectionEnd)
-		if endOfEndMarker < len(existing) && existing[endOfEndMarker] == '\n' {
-			endOfEndMarker++
+		endOfEndMarker := endIdx + len(hookSectionEndPrefix)
+		// Consume the rest of the end-marker line (e.g. " v0.58.0 ---\n")
+		restAfterPrefix := existing[endOfEndMarker:]
+		if nlIdx := strings.Index(restAfterPrefix, "\n"); nlIdx != -1 {
+			endOfEndMarker += nlIdx + 1
+		} else {
+			endOfEndMarker = len(existing)
 		}
 
 		return existing[:lineStart] + section + existing[endOfEndMarker:]
+	} else if beginIdx != -1 {
+		// Case 2: broken markers — orphaned BEGIN (no END) or reversed (END before BEGIN).
+		// Remove the orphaned/stale block, then recurse to handle remaining markers.
+		cleaned := removeOrphanedBeginBlock(existing, beginIdx)
+		return injectHookSectionWithDepth(cleaned, section, depth+1)
+	} else if endIdx != -1 {
+		// Case 2b: orphaned END without BEGIN — remove the stale END line
+		cleaned := removeMarkerLine(existing, endIdx, hookSectionEndPrefix)
+		return injectHookSectionWithDepth(cleaned, section, depth+1)
 	}
 
-	// No markers found — append
+	// Case 3: no markers — append
 	result := existing
 	if !strings.HasSuffix(result, "\n") {
 		result += "\n"
@@ -86,17 +148,9 @@ func injectHookSection(existing, section string) string {
 	return result
 }
 
-// removeHookSection removes only the beads section from hook file content.
-// Returns the content with the section removed, and true if a section was found.
-func removeHookSection(content string) (string, bool) {
-	beginIdx := strings.Index(content, hookSectionBeginPrefix)
-	endIdx := strings.Index(content, hookSectionEnd)
-
-	if beginIdx == -1 || endIdx == -1 || beginIdx > endIdx {
-		return content, false
-	}
-
-	// Find start of the begin-marker line
+// removeOrphanedBeginBlock removes an orphaned BEGIN block starting at beginIdx.
+// Scans forward from the BEGIN line to the next blank line, next BEGIN marker, or EOF.
+func removeOrphanedBeginBlock(content string, beginIdx int) string {
 	lineStart := strings.LastIndex(content[:beginIdx], "\n")
 	if lineStart == -1 {
 		lineStart = 0
@@ -104,18 +158,109 @@ func removeHookSection(content string) (string, bool) {
 		lineStart++ // skip the newline itself
 	}
 
-	// Find end of the end-marker line
-	endOfEndMarker := endIdx + len(hookSectionEnd)
-	if endOfEndMarker < len(content) && content[endOfEndMarker] == '\n' {
-		endOfEndMarker++
+	afterBegin := content[beginIdx:]
+	blockEnd := len(content)
+
+	lines := strings.SplitAfter(afterBegin, "\n")
+	scanned := beginIdx
+	for i, line := range lines {
+		if i == 0 {
+			// Skip the BEGIN line itself
+			scanned += len(line)
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			// Blank line — end of orphaned block (include the blank line)
+			blockEnd = scanned + len(line)
+			break
+		}
+		if strings.Contains(line, hookSectionBeginPrefix) {
+			// Next BEGIN marker — end before this line
+			blockEnd = scanned
+			break
+		}
+		scanned += len(line)
 	}
 
-	// Also consume a blank line before the section if present
-	if lineStart >= 2 && content[lineStart-1] == '\n' && content[lineStart-2] == '\n' {
-		lineStart--
+	return content[:lineStart] + content[blockEnd:]
+}
+
+// removeMarkerLine removes a single marker line from content.
+func removeMarkerLine(content string, markerIdx int, markerPrefix string) string {
+	lineStart := strings.LastIndex(content[:markerIdx], "\n")
+	if lineStart == -1 {
+		lineStart = 0
+	} else {
+		lineStart++ // skip the newline itself
 	}
 
-	return content[:lineStart] + content[endOfEndMarker:], true
+	lineEnd := markerIdx + len(markerPrefix)
+	restAfterPrefix := content[lineEnd:]
+	if nlIdx := strings.Index(restAfterPrefix, "\n"); nlIdx != -1 {
+		lineEnd += nlIdx + 1
+	} else {
+		lineEnd = len(content)
+	}
+
+	return content[:lineStart] + content[lineEnd:]
+}
+
+// removeHookSection removes only the beads section from hook file content.
+// Returns the content with the section removed, and true if a section was found.
+// Handles valid BEGIN...END pairs, orphaned BEGIN, orphaned END, and reversed markers.
+func removeHookSection(content string) (string, bool) {
+	beginIdx := strings.Index(content, hookSectionBeginPrefix)
+	endIdx := strings.Index(content, hookSectionEndPrefix)
+
+	if beginIdx == -1 && endIdx == -1 {
+		return content, false
+	}
+
+	if beginIdx != -1 && endIdx != -1 && beginIdx < endIdx {
+		// Valid BEGIN...END pair — remove the whole section
+		lineStart := strings.LastIndex(content[:beginIdx], "\n")
+		if lineStart == -1 {
+			lineStart = 0
+		} else {
+			lineStart++
+		}
+
+		endOfSection := endIdx + len(hookSectionEndPrefix)
+		restAfterPrefix := content[endOfSection:]
+		if nlIdx := strings.Index(restAfterPrefix, "\n"); nlIdx != -1 {
+			endOfSection += nlIdx + 1
+		} else {
+			endOfSection = len(content)
+		}
+
+		// Also consume a blank line before the section if present
+		if lineStart >= 2 && content[lineStart-1] == '\n' && content[lineStart-2] == '\n' {
+			lineStart--
+		}
+
+		return content[:lineStart] + content[endOfSection:], true
+	}
+
+	// Broken markers: orphaned BEGIN, orphaned END, or reversed order.
+	// Remove whichever markers exist.
+	result := content
+	if beginIdx != -1 {
+		result = removeOrphanedBeginBlock(result, strings.Index(result, hookSectionBeginPrefix))
+	}
+	if endIdx != -1 {
+		// Re-find END index in the (possibly modified) result
+		if newEndIdx := strings.Index(result, hookSectionEndPrefix); newEndIdx != -1 {
+			result = removeMarkerLine(result, newEndIdx, hookSectionEndPrefix)
+		}
+	}
+
+	// Trim trailing blank lines that may be left from removal
+	for strings.HasSuffix(result, "\n\n\n") {
+		result = result[:len(result)-1]
+	}
+
+	return result, true
 }
 
 // HookStatus represents the status of a single git hook

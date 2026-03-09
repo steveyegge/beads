@@ -68,10 +68,14 @@ func isTestDatabaseName(name string) bool {
 	return false
 }
 
+// Compile-time interface check.
+var _ storage.DoltStorage = (*DoltStore)(nil)
+
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
 	db            *sql.DB
-	dbPath        string       // Path to Dolt database directory
+	dbPath        string       // Path to Dolt data directory (server root, e.g. .beads/dolt/)
+	database      string       // Database name (subdirectory under dbPath)
 	closed        atomic.Bool  // Tracks whether Close() has been called
 	connStr       string       // Connection string for reconnection
 	mu            sync.RWMutex // Protects concurrent access
@@ -128,6 +132,10 @@ type Config struct {
 	// When set, Push/Pull use the --user flag and set DOLT_REMOTE_PASSWORD env var.
 	RemoteUser     string // Hosted Dolt remote user (set via DOLT_REMOTE_USER env var)
 	RemotePassword string // Hosted Dolt remote password (set via DOLT_REMOTE_PASSWORD env var)
+
+	// SyncGitRemote holds the sync.git-remote config value (if any).
+	// Used to provide context-aware hints in "database not found" errors.
+	SyncGitRemote string
 
 	// CreateIfMissing allows CREATE DATABASE when the target database does not
 	// exist on the server. Only explicit initialization, migration, or new-board
@@ -600,30 +608,9 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 				return nil, fmt.Errorf("Dolt server auto-started but still unreachable at %s: %w\n\n"+
 					"Check logs: %s", addr, dialErr, doltserver.LogPath(beadsDir))
 			}
-		} else if doltserver.IsDaemonManaged() && os.Getenv("BEADS_TEST_MODE") != "1" {
-			// Gas Town detected (GT_ROOT or filesystem heuristic) — delegate
-			// server start to gt, which manages the lifecycle properly.
-			// Skip in test mode: tests manage their own server via testutil.EnsureDoltContainerForTestMain.
-			gtBin, lookErr := exec.LookPath("gt")
-			if lookErr != nil {
-				return nil, fmt.Errorf("Dolt server unreachable at %s (Gas Town detected but 'gt' not found in PATH): %w\n\n"+
-					"Start the server with: gt dolt start", addr, dialErr)
-			}
-			cmd := exec.CommandContext(ctx, gtBin, "dolt", "start")
-			if out, runErr := cmd.CombinedOutput(); runErr != nil {
-				return nil, fmt.Errorf("Dolt server unreachable at %s and 'gt dolt start' failed: %w\n\ngt output: %s",
-					addr, runErr, strings.TrimSpace(string(out)))
-			}
-			// Retry connection after gt started the server
-			conn, dialErr = net.DialTimeout("tcp", addr, 3*time.Second)
-			if dialErr != nil {
-				breaker.RecordFailure()
-				return nil, fmt.Errorf("Dolt server still unreachable at %s after 'gt dolt start': %w",
-					addr, dialErr)
-			}
 		} else {
 			breaker.RecordFailure()
-			return nil, fmt.Errorf("Dolt server unreachable at %s: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start a local server\n  gt dolt start    # If using Gas Town",
+			return nil, fmt.Errorf("Dolt server unreachable at %s: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start",
 				addr, dialErr)
 		}
 	}
@@ -646,6 +633,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	store := &DoltStore{
 		db:             db,
 		dbPath:         cfg.Path,
+		database:       cfg.Database,
 		connStr:        connStr,
 		breaker:        breaker,
 		committerName:  cfg.CommitterName,
@@ -687,11 +675,70 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		}
 	}
 
+	// Project identity verification: detect cross-project data leakage (GH#2372).
+	// If the local metadata.json has a project_id and the database has one too,
+	// they must match. A mismatch means this client is connected to the wrong
+	// project's Dolt server — refuse to proceed.
+	if !cfg.CreateIfMissing {
+		if verifyErr := store.verifyProjectIdentity(ctx, cfg.BeadsDir); verifyErr != nil {
+			_ = db.Close()
+			return nil, verifyErr
+		}
+	}
+
+	if isLocalHost(cfg.ServerHost) {
+		beadsDir := cfg.BeadsDir
+		if beadsDir == "" && cfg.Path != "" {
+			beadsDir = filepath.Dir(cfg.Path)
+		}
+		_ = doltserver.EnsurePortFile(beadsDir, cfg.ServerPort)
+	}
+
 	// All writers operate on main — transaction isolation via RunInTransaction
 	// replaces the former branch-per-polecat approach (BD_BRANCH).
 	store.branch = "main"
 
 	return store, nil
+}
+
+// verifyProjectIdentity checks that the database belongs to the expected project.
+// If both the local metadata.json and the database have a project_id, they must match.
+// Returns nil if verification passes or is not applicable (missing IDs = old setup).
+func (s *DoltStore) verifyProjectIdentity(ctx context.Context, beadsDir string) error {
+	if beadsDir == "" {
+		return nil // can't verify without knowing beadsDir
+	}
+
+	// Load local project ID from metadata.json
+	metaCfg, err := configfile.Load(beadsDir)
+	if err != nil || metaCfg == nil {
+		return nil // no local config — skip verification
+	}
+	localID := metaCfg.ProjectID
+	if localID == "" {
+		return nil // old-style metadata.json without project_id — skip
+	}
+
+	// Read project ID from database metadata table
+	dbID, err := s.GetMetadata(ctx, "_project_id")
+	if err != nil || dbID == "" {
+		return nil // old database without project_id — skip
+	}
+
+	if localID != dbID {
+		return fmt.Errorf(
+			"PROJECT IDENTITY MISMATCH — refusing to connect\n\n"+
+				"  Local project ID (metadata.json):  %s\n"+
+				"  Database project ID:               %s\n\n"+
+				"This means the Dolt server is serving a DIFFERENT project's database.\n"+
+				"This can happen when:\n"+
+				"  - Another project's server is running on the same port\n"+
+				"  - The server restarted with a different data directory\n\n"+
+				"To diagnose: bd dolt status\n"+
+				"Do NOT run 'bd init' — your data likely exists, just on a different server.",
+			localID, dbID)
+	}
+	return nil
 }
 
 // isLocalHost returns true if the host refers to the local machine.
@@ -815,14 +862,7 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	if !dbExists {
 		if !cfg.CreateIfMissing {
 			_ = db.Close()
-			return nil, "", fmt.Errorf(
-				"database %q not found on Dolt server at %s:%d\n\n"+
-					"This can happen when:\n"+
-					"  - The server is serving a different data directory than expected\n"+
-					"  - The database has not been initialized yet\n\n"+
-					"To initialize a new board:  bd init\n"+
-					"To check server status:     bd doctor",
-				cfg.Database, cfg.ServerHost, cfg.ServerPort)
+			return nil, "", databaseNotFoundError(cfg)
 		}
 
 		_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", cfg.Database)) //nolint:gosec // G201: cfg.Database validated by ValidateDatabaseName above
@@ -1111,6 +1151,15 @@ func (s *DoltStore) Path() string {
 	return s.dbPath
 }
 
+// cliDir returns the directory for dolt CLI operations (push/pull/remote/fetch).
+// The actual database lives in a subdirectory of dbPath named after the database.
+func (s *DoltStore) cliDir() string {
+	if s.dbPath == "" {
+		return ""
+	}
+	return filepath.Join(s.dbPath, s.database)
+}
+
 // UnderlyingDB returns the underlying *sql.DB connection
 func (s *DoltStore) UnderlyingDB() *sql.DB {
 	return s.db
@@ -1285,13 +1334,13 @@ func (s *DoltStore) isGitProtocolRemote(ctx context.Context) bool {
 				// Verify remote exists in CLI directory before routing to CLI push/pull.
 				// When the dolt sql-server is externally managed, remotes may exist only
 				// on the server's filesystem, not in the local dbPath.
-				return s.dbPath != "" && doltutil.FindCLIRemote(s.dbPath, s.remote) != ""
+				return s.cliDir() != "" && doltutil.FindCLIRemote(s.cliDir(), s.remote) != ""
 			}
 		}
 	}
 	// Fall back to CLI remotes (covers drift where remote exists only in filesystem)
-	if s.dbPath != "" {
-		if url := doltutil.FindCLIRemote(s.dbPath, s.remote); url != "" {
+	if s.cliDir() != "" {
+		if url := doltutil.FindCLIRemote(s.cliDir(), s.remote); url != "" {
 			return doltutil.IsGitProtocolURL(url)
 		}
 	}
@@ -1319,7 +1368,7 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, force bool, creds *remoteCr
 	}
 	args = append(args, s.remote, s.branch)
 	cmd := exec.CommandContext(ctx, "dolt", args...) // #nosec G204 -- fixed command with validated remote/branch
-	cmd.Dir = s.dbPath
+	cmd.Dir = s.cliDir()
 	creds.applyToCmd(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1335,7 +1384,7 @@ func (s *DoltStore) doltCLIPull(ctx context.Context, creds *remoteCredentials) e
 	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "dolt", "pull", s.remote, s.branch) // #nosec G204 -- fixed command
-	cmd.Dir = s.dbPath
+	cmd.Dir = s.cliDir()
 	creds.applyToCmd(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1586,14 +1635,8 @@ func (s *DoltStore) Log(ctx context.Context, limit int) ([]CommitInfo, error) {
 	return commits, rows.Err()
 }
 
-// CommitInfo represents a Dolt commit
-type CommitInfo struct {
-	Hash    string
-	Author  string
-	Email   string
-	Date    time.Time
-	Message string
-}
+// CommitInfo is an alias for storage.CommitInfo.
+type CommitInfo = storage.CommitInfo
 
 // HistoryEntry represents a row from dolt_history_* table
 type HistoryEntry struct {
@@ -1655,14 +1698,8 @@ func (s *DoltStore) Status(ctx context.Context) (*DoltStatus, error) {
 	return status, rows.Err()
 }
 
-// DoltStatus represents the current repository status
-type DoltStatus struct {
-	Staged   []StatusEntry
-	Unstaged []StatusEntry
-}
+// DoltStatus is an alias for storage.Status.
+type DoltStatus = storage.Status
 
-// StatusEntry represents a changed table
-type StatusEntry struct {
-	Table  string
-	Status string // "new", "modified", "deleted"
-}
+// StatusEntry is an alias for storage.StatusEntry.
+type StatusEntry = storage.StatusEntry

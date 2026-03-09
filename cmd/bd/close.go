@@ -17,6 +17,7 @@ import (
 
 var closeCmd = &cobra.Command{
 	Use:     "close [id...]",
+	Aliases: []string{"done"},
 	GroupID: "issues",
 	Short:   "Close one or more issues",
 	Long: `Close one or more issues.
@@ -48,6 +49,14 @@ create, update, show, or close operation).`,
 			// Check --comment alias (desire-path from hq-ftpg)
 			reason, _ = cmd.Flags().GetString("comment")
 		}
+
+		// Desire-path: "bd done <id> <message>" treats last positional arg as reason
+		// when no reason flag was explicitly provided (hq-pe8ce)
+		if reason == "" && cmd.CalledAs() == "done" && len(args) >= 2 {
+			reason = args[len(args)-1]
+			args = args[:len(args)-1]
+		}
+
 		if reason == "" {
 			reason = "Closed"
 		}

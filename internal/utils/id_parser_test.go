@@ -517,6 +517,80 @@ func TestExtractIssuePrefix(t *testing.T) {
 	}
 }
 
+func TestExtractIssuePrefixKnown(t *testing.T) {
+	tests := []struct {
+		name          string
+		issueID       string
+		knownPrefixes []string
+		expected      string
+	}{
+		{
+			name:          "known prefix matches multi-dash",
+			issueID:       "me-py-toolkit-abcd",
+			knownPrefixes: []string{"me-py-toolkit"},
+			expected:      "me-py-toolkit",
+		},
+		{
+			name:          "overlapping prefixes: longest wins",
+			issueID:       "hq-cv-test",
+			knownPrefixes: []string{"hq", "hq-cv"},
+			expected:      "hq-cv",
+		},
+		{
+			name:          "overlapping prefixes reversed order: longest still wins",
+			issueID:       "hq-cv-test",
+			knownPrefixes: []string{"hq-cv", "hq"},
+			expected:      "hq-cv",
+		},
+		{
+			name:          "no known prefix: falls back to heuristic",
+			issueID:       "vc-baseline-test",
+			knownPrefixes: []string{"bd"},
+			expected:      "vc", // heuristic: word-like suffix falls back to first hyphen
+		},
+		{
+			name:          "known prefix with trailing hyphen is normalized",
+			issueID:       "hacker-news-ko4",
+			knownPrefixes: []string{"hacker-news-"},
+			expected:      "hacker-news",
+		},
+		{
+			name:          "known prefix with whitespace is normalized",
+			issueID:       "hacker-news-ko4",
+			knownPrefixes: []string{" hacker-news "},
+			expected:      "hacker-news",
+		},
+		{
+			name:          "empty known prefixes: falls back to heuristic",
+			issueID:       "bd-a3f8e9",
+			knownPrefixes: nil,
+			expected:      "bd", // heuristic result
+		},
+		{
+			name:          "simple known prefix",
+			issueID:       "bd-a3f8e9",
+			knownPrefixes: []string{"bd"},
+			expected:      "bd",
+		},
+		{
+			name:          "known prefix among several",
+			issueID:       "hacker-news-ko4",
+			knownPrefixes: []string{"bd", "gt", "hacker-news"},
+			expected:      "hacker-news",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ExtractIssuePrefixKnown(tt.issueID, tt.knownPrefixes)
+			if result != tt.expected {
+				t.Errorf("ExtractIssuePrefixKnown(%q, %v) = %q; want %q",
+					tt.issueID, tt.knownPrefixes, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestExtractIssueNumber(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -689,6 +763,105 @@ func TestResolvePartialID_CrossPrefix(t *testing.T) {
 				if result != tt.expected {
 					t.Errorf("ResolvePartialID(%q) = %q; want %q", tt.input, result, tt.expected)
 				}
+			}
+		})
+	}
+}
+
+// TestResolvePartialID_AllowedPrefixes verifies that config-aware prefix detection
+// in ResolvePartialID correctly handles multi-hyphen prefixes when allowed_prefixes
+// is set. This exercises both the normalization path (hasKnownPrefix) and the
+// hash extraction path (ExtractIssuePrefixKnown).
+func TestResolvePartialID_AllowedPrefixes(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	// Create issues with multi-hyphen prefixes
+	hackerNews := &types.Issue{
+		ID:        "hacker-news-ko4",
+		Title:     "Hacker News item",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	pyToolkit := &types.Issue{
+		ID:        "me-py-toolkit-a1b",
+		Title:     "Python toolkit issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	hqCvIssue := &types.Issue{
+		ID:        "hq-cv-7x2",
+		Title:     "HQ CV issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+
+	if err := store.CreateIssue(ctx, hackerNews, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateIssue(ctx, pyToolkit, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateIssue(ctx, hqCvIssue, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure primary prefix and allowed prefixes
+	if err := store.SetConfig(ctx, "issue_prefix", "hq"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetConfig(ctx, "allowed_prefixes", "hacker-news, me-py-toolkit, hq-cv"); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "short hash resolves multi-dash prefix (ko4 -> hacker-news-ko4)",
+			input:    "ko4",
+			expected: "hacker-news-ko4",
+		},
+		{
+			name:     "short hash resolves multi-dash prefix (a1b -> me-py-toolkit-a1b)",
+			input:    "a1b",
+			expected: "me-py-toolkit-a1b",
+		},
+		{
+			name:     "full multi-dash ID is not mangled (hacker-news-ko4)",
+			input:    "hacker-news-ko4",
+			expected: "hacker-news-ko4",
+		},
+		{
+			name:     "full allowed-prefix ID resolves as-is (me-py-toolkit-a1b)",
+			input:    "me-py-toolkit-a1b",
+			expected: "me-py-toolkit-a1b",
+		},
+		{
+			name:     "overlapping prefix: hq-cv-7x2 not mangled to hq-hq-cv-7x2",
+			input:    "hq-cv-7x2",
+			expected: "hq-cv-7x2",
+		},
+		{
+			name:     "short hash with overlapping prefix (7x2 -> hq-cv-7x2)",
+			input:    "7x2",
+			expected: "hq-cv-7x2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ResolvePartialID(ctx, store, tt.input)
+			if err != nil {
+				t.Errorf("ResolvePartialID(%q) unexpected error: %v", tt.input, err)
+			}
+			if result != tt.expected {
+				t.Errorf("ResolvePartialID(%q) = %q; want %q", tt.input, result, tt.expected)
 			}
 		})
 	}

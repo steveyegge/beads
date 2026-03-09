@@ -68,7 +68,7 @@ CWD is inside the repository containing `.beads/`:
 └── README.md
 
 $ cd /project/src
-$ bd sync
+$ bd dolt push
 # GitCmd() runs in /project (correct)
 ```
 
@@ -79,7 +79,7 @@ User is in one repository but managing beads in another:
 ```
 $ cd /repo-a          # Has uncommitted changes
 $ export BEADS_DIR=/repo-b/.beads
-$ bd sync
+$ bd dolt push
 # GitCmd() runs in /repo-b (correct, not /repo-a)
 ```
 
@@ -100,7 +100,7 @@ User is in a worktree but `.beads/` lives in main repository:
 └── src/
 
 $ cd /project/.worktrees/feature-branch
-$ bd sync
+$ bd dolt push
 # GitCmd() runs in /project (main repo, where .beads lives)
 ```
 
@@ -111,7 +111,7 @@ Both worktree and BEADS_DIR can be active simultaneously:
 ```
 $ cd /repo-a/.worktrees/branch-x
 $ export BEADS_DIR=/repo-b/.beads
-$ bd sync
+$ bd dolt push
 # GitCmd() runs in /repo-b (BEADS_DIR takes precedence)
 ```
 

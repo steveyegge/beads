@@ -31,11 +31,10 @@ Tool-level settings you can configure:
 | Setting | Flag | Environment Variable | Default | Description |
 |---------|------|---------------------|---------|-------------|
 | `json` | `--json` | `BD_JSON` | `false` | Output in JSON format |
-| `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in bd sync |
+| `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in `bd dolt push` |
 | `sync.mode` | - | `BD_SYNC_MODE` | `git-portable` | Sync mode (see below) |
 | `sync.export_on` | - | `BD_SYNC_EXPORT_ON` | `push` | When to export: `push`, `change` |
 | `sync.import_on` | - | `BD_SYNC_IMPORT_ON` | `pull` | When to import: `pull`, `change` |
-| `conflict.strategy` | - | `BD_CONFLICT_STRATEGY` | `newest` | Conflict resolution: `newest`, `ours`, `theirs`, `manual` |
 | `federation.remote` | - | `BD_FEDERATION_REMOTE` | (none) | Dolt remote URL for federation |
 | `federation.sovereignty` | - | `BD_FEDERATION_SOVEREIGNTY` | (none) | Data sovereignty tier: `T1`, `T2`, `T3`, `T4` |
 | `dolt.auto-commit` | `--dolt-auto-commit` | `BD_DOLT_AUTO_COMMIT` | `on` | (Dolt backend) Automatically create a Dolt commit after successful write commands |
@@ -151,13 +150,9 @@ export BD_ACTOR="my-github-handle"
 
 The sync mode controls how beads synchronizes data with git and/or Dolt remotes.
 
-#### Sync Modes
+#### Sync Mode
 
-| Mode | Description |
-|------|-------------|
-| `dolt-native` | (default) Use Dolt remotes directly for sync. Manual `bd import` / `bd export` still work for portability. |
-| `git-portable` | Legacy mode: Export JSONL on push, import on pull. For backward compatibility with older setups. |
-| `belt-and-suspenders` | Both Dolt remote AND JSONL backup. Maximum redundancy. |
+Beads uses `dolt-native` sync mode exclusively. Dolt remotes handle sync directly with cell-level merge. Manual `bd import` / `bd export` are available for migration and portability.
 
 #### Sync Triggers
 
@@ -166,20 +161,7 @@ Control when sync operations occur:
 - `sync.export_on`: `push` (default) or `change`
 - `sync.import_on`: `pull` (default) or `change`
 
-#### Conflict Resolution Strategies
-
-When merging conflicting changes:
-
-| Strategy | Description |
-|----------|-------------|
-| `newest` | (default) Keep the version with the newer `updated_at` timestamp |
-| `ours` | Always keep the local version |
-| `theirs` | Always keep the remote version |
-| `manual` | Require interactive resolution for each conflict |
-
 #### Federation Configuration
-
-For Dolt-native or belt-and-suspenders modes:
 
 - `federation.remote`: Dolt remote URL (e.g., `dolthub://org/beads`, `gs://bucket/beads`, `s3://bucket/beads`)
 - `federation.sovereignty`: Data sovereignty tier:
@@ -193,24 +175,14 @@ For Dolt-native or belt-and-suspenders modes:
 ```yaml
 # .beads/config.yaml
 sync:
-  mode: dolt-native     # dolt-native | git-portable | belt-and-suspenders
   export_on: push       # push | change
   import_on: pull       # pull | change
 
-conflict:
-  strategy: newest      # newest | ours | theirs | manual
-
-# Optional: Dolt federation for dolt-native or belt-and-suspenders modes
+# Optional: Dolt federation
 federation:
   remote: dolthub://myorg/beads
   sovereignty: T2
 ```
-
-#### When to Use Each Mode
-
-- **dolt-native** (default): Best for most teams. Dolt handles sync natively with cell-level merge. `bd import`/`bd export` remain available for portability and migration.
-- **git-portable**: Legacy mode for backward compatibility. JSONL is committed to git, works with any git hosting.
-- **belt-and-suspenders**: Use for critical data where you want both Dolt sync AND JSONL backup.
 
 ### Example Config File
 
@@ -537,7 +509,7 @@ bd config set auto_export.error_policy "best-effort"
 
 **Context-specific behavior:**
 
-User-initiated exports (`bd sync`, manual export commands) use `export.error_policy` (default: `strict`).
+User-initiated exports (`bd dolt push`, manual export commands) use `export.error_policy` (default: `strict`).
 
 Auto-exports (git hook sync) use `auto_export.error_policy` (default: `best-effort`), falling back to `export.error_policy` if not set.
 
@@ -588,7 +560,7 @@ bd config set import.orphan_handling "allow"
 bd import -i issues.jsonl --orphan-handling strict
 
 # Auto-import (sync) uses config value
-bd sync  # Respects import.orphan_handling setting
+bd dolt pull  # Respects import.orphan_handling setting
 ```
 
 **When to use each mode:**
@@ -608,7 +580,7 @@ bd config set sync.branch beads-sync
 
 # Enable mass deletion protection (optional, default: false)
 # When enabled, if >50% of issues vanish during a merge AND more than 5
-# issues existed before the merge, bd sync will:
+# issues existed before the merge, bd dolt push will:
 # 1. Show forensic info about vanished issues
 # 2. Prompt for confirmation before pushing
 bd config set sync.require_confirmation_on_mass_delete "true"

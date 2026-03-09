@@ -62,15 +62,33 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 		prefixWithHyphen = prefix + "-"
 	}
 
+	// Build known prefixes from config for deterministic multi-hyphen prefix handling.
+	// This avoids relying solely on looksLikePrefixedID heuristics when the repo
+	// explicitly declares which prefixes are valid.
+	knownPrefixes := []string{strings.TrimSuffix(prefix, "-")}
+	if allowed, aErr := store.GetConfig(ctx, "allowed_prefixes"); aErr == nil && allowed != "" {
+		for _, p := range strings.Split(allowed, ",") {
+			p = strings.TrimSpace(p)
+			p = strings.TrimSuffix(p, "-")
+			if p != "" {
+				knownPrefixes = append(knownPrefixes, p)
+			}
+		}
+	}
+
 	// Normalize input:
 	// 1. If it has the full prefix with hyphen (bd-a3f8e9), use as-is
-	// 2. If it has ANY prefix (different from configured), use as-is for cross-prefix lookup
-	// 3. Otherwise, add prefix with hyphen (handles both bare hashes and prefix-without-hyphen cases)
+	// 2. If it starts with any known/allowed prefix, use as-is (config-aware cross-prefix)
+	// 3. If it has ANY prefix (heuristic fallback), use as-is for cross-prefix lookup
+	// 4. Otherwise, add prefix with hyphen (handles both bare hashes and prefix-without-hyphen cases)
 
 	var normalizedID string
 
 	if strings.HasPrefix(input, prefixWithHyphen) {
 		// Already has configured prefix with hyphen: "bd-a3f8e9"
+		normalizedID = input
+	} else if hasKnownPrefix(input, knownPrefixes) {
+		// Starts with a known/allowed prefix (e.g., "hacker-news-ko4" when allowed_prefixes includes "hacker-news")
 		normalizedID = input
 	} else if looksLikePrefixedID(input) {
 		// Has a different prefix (e.g., "aap-4ar" when configured prefix is "hq-")
@@ -110,11 +128,12 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 			break
 		}
 
-		// Extract hash from each issue, regardless of its prefix
-		// This handles cross-prefix matching (e.g., "3d0" matching "offlinebrew-3d0")
+		// Extract hash from each issue using config-aware prefix extraction.
+		// This correctly handles multi-hyphen prefixes (e.g., "hacker-news-ko4"
+		// yields hash "ko4", not "news-ko4" from naive first-hyphen split).
 		var issueHash string
-		if idx := strings.Index(issue.ID, "-"); idx >= 0 {
-			issueHash = issue.ID[idx+1:]
+		if p := ExtractIssuePrefixKnown(issue.ID, knownPrefixes); p != "" && strings.HasPrefix(issue.ID, p+"-") {
+			issueHash = issue.ID[len(p)+1:]
 		} else {
 			issueHash = issue.ID
 		}
@@ -149,8 +168,8 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 					return w.ID, nil
 				}
 				var wHash string
-				if idx := strings.Index(w.ID, "-"); idx >= 0 {
-					wHash = w.ID[idx+1:]
+				if p := ExtractIssuePrefixKnown(w.ID, knownPrefixes); p != "" && strings.HasPrefix(w.ID, p+"-") {
+					wHash = w.ID[len(p)+1:]
 				} else {
 					wHash = w.ID
 				}
@@ -223,4 +242,16 @@ func looksLikePrefixedID(input string) bool {
 	}
 
 	return true
+}
+
+// hasKnownPrefix checks if input starts with any of the known prefixes followed
+// by a hyphen. Used to detect already-prefixed input before falling back to the
+// looksLikePrefixedID heuristic.
+func hasKnownPrefix(input string, knownPrefixes []string) bool {
+	for _, p := range knownPrefixes {
+		if p != "" && strings.HasPrefix(input, p+"-") {
+			return true
+		}
+	}
+	return false
 }

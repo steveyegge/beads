@@ -366,6 +366,33 @@ func TestTemplateSuite(t *testing.T) {
 		}
 	})
 
+	t.Run("Clone_RootOnly_CreatedCountMatchesActual", func(t *testing.T) {
+		epic := h.createIssue("Root Epic", "", types.TypeEpic, 1)
+		child1 := h.createIssue("Child 1", "", types.TypeTask, 2)
+		child2 := h.createIssue("Child 2", "", types.TypeTask, 2)
+		h.addParentChild(child1.ID, epic.ID)
+		h.addParentChild(child2.ID, epic.ID)
+
+		subgraph, err := loadTemplateSubgraph(ctx, s, epic.ID)
+		if err != nil {
+			t.Fatalf("loadTemplateSubgraph failed: %v", err)
+		}
+
+		// With RootOnly=true, only the root should be created
+		opts := CloneOptions{RootOnly: true, Actor: "test-user"}
+		result, err := cloneSubgraph(ctx, s, subgraph, opts)
+		if err != nil {
+			t.Fatalf("cloneSubgraph failed: %v", err)
+		}
+
+		if result.Created != 1 {
+			t.Errorf("Created = %d, want 1 (only root should be counted when RootOnly=true)", result.Created)
+		}
+		if len(result.IDMapping) != 1 {
+			t.Errorf("IDMapping has %d entries, want 1", len(result.IDMapping))
+		}
+	})
+
 	// --- ExtractAllVariables tests ---
 
 	t.Run("ExtractAllVariables", func(t *testing.T) {

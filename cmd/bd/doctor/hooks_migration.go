@@ -211,6 +211,79 @@ func isLegacyBDHook(content string) bool {
 		strings.Contains(content, "# bd (beads)")
 }
 
+// IsUnmodifiedLegacyHook returns true if content contains only known BD-managed
+// lines (shebang, shim markers, hook delegation, shell boilerplate). If the user
+// added custom logic to a legacy shim, this returns false.
+func IsUnmodifiedLegacyHook(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if isKnownLegacyHookLine(line) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// isKnownLegacyHookLine returns true for lines that appear in BD-generated
+// legacy hook shims (thin shim format and inline hook format).
+func isKnownLegacyHookLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+
+	// Empty lines and shebangs
+	if trimmed == "" || strings.HasPrefix(trimmed, "#!") {
+		return true
+	}
+
+	// Shell control flow and builtins used in hook templates
+	switch trimmed {
+	case "fi", "then", "else", "exit 0", "exit 1":
+		return true
+	}
+
+	// Any comment line containing BD/beads identifiers
+	if strings.HasPrefix(trimmed, "#") {
+		lower := strings.ToLower(trimmed)
+		for _, keyword := range []string{"bd", "beads", "hook", "shim"} {
+			if strings.Contains(lower, keyword) {
+				return true
+			}
+		}
+		// Generic template comments (PATH, Install, Warning)
+		for _, keyword := range []string{"PATH", "Install", "Warning"} {
+			if strings.Contains(trimmed, keyword) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Known executable lines from legacy hook templates
+	knownPrefixes := []string{
+		"exec bd hook",
+		"bd hooks run",
+		"export BD_GIT_HOOK",
+		"if ! command -v bd",
+		"if command -v bd",
+		"_bd_exit=$?",
+	}
+	for _, prefix := range knownPrefixes {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+
+	// echo lines with BD-related content (warnings about bd not being installed)
+	if strings.HasPrefix(trimmed, "echo") {
+		lower := strings.ToLower(trimmed)
+		if strings.Contains(lower, "bd") || strings.Contains(lower, "beads") {
+			return true
+		}
+	}
+
+	return false
+}
+
 func resolveGitHooksDir(path string) (repoRoot string, hooksDir string, err error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel", "--git-common-dir")
 	cmd.Dir = path

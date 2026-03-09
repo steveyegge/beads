@@ -31,30 +31,7 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, cfg *Config)
 	if cfg == nil {
 		cfg = &Config{}
 	}
-	cfg.Path = fileCfg.DatabasePath(beadsDir)
-	if cfg.BeadsDir == "" {
-		cfg.BeadsDir = beadsDir
-	}
-
-	// Always apply database name from metadata.json (prefix-based naming, bd-u8rda).
-	if cfg.Database == "" {
-		cfg.Database = fileCfg.GetDoltDatabase()
-	}
-
-	// Merge server connection config (config provides defaults, caller can override)
-	if fileCfg.IsDoltServerMode() {
-		if cfg.ServerHost == "" {
-			cfg.ServerHost = fileCfg.GetDoltServerHost()
-		}
-		if cfg.ServerPort == 0 {
-			// Use doltserver.DefaultConfig for port resolution (env > config > DerivePort).
-			// fileCfg.GetDoltServerPort() falls back to 3307 which is wrong for standalone mode.
-			cfg.ServerPort = doltserver.DefaultConfig(beadsDir).Port
-		}
-		if cfg.ServerUser == "" {
-			cfg.ServerUser = fileCfg.GetDoltServerUser()
-		}
-	}
+	applyResolvedConfig(beadsDir, fileCfg, cfg)
 
 	// Enable auto-start for standalone users (similar to main.go's auto-start
 	// handling), with additional support for BEADS_TEST_MODE and a config.yaml
@@ -86,14 +63,13 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, cfg *Config)
 //
 // Priority (highest to lowest):
 //  1. BEADS_TEST_MODE=1                    → always false (tests own the server lifecycle)
-//  2. IsDaemonManaged()                    → always false (Gas Town manages the server)
-//  3. BEADS_DOLT_AUTO_START=0              → always false (explicit env opt-out)
-//  4. explicitPort == true                 → always false (metadata.json has explicit port;
+//  2. BEADS_DOLT_AUTO_START=0              → always false (explicit env opt-out)
+//  3. explicitPort == true                 → always false (metadata.json has explicit port;
 //     auto-starting a different server would create shadow databases)
-//  5. current == true                      → true  (caller option wins over config file,
+//  4. current == true                      → true  (caller option wins over config file,
 //     per NewFromConfigWithOptions contract)
-//  6. doltAutoStartCfg == "false"/"0"/"off" → false (config.yaml opt-out)
-//  7. default                              → true  (standalone user; safe default)
+//  5. doltAutoStartCfg == "false"/"0"/"off" → false (config.yaml opt-out)
+//  6. default                              → true  (standalone user; safe default)
 //
 // doltAutoStartCfg is the raw value of the "dolt.auto-start" key from config.yaml
 // (pass config.GetString("dolt.auto-start") at the call site).
@@ -104,9 +80,6 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, cfg *Config)
 // config-file overrides above.
 func resolveAutoStart(current bool, doltAutoStartCfg string, explicitPort bool) bool {
 	if os.Getenv("BEADS_TEST_MODE") == "1" {
-		return false
-	}
-	if doltserver.IsDaemonManaged() {
 		return false
 	}
 	if os.Getenv("BEADS_DOLT_AUTO_START") == "0" {
@@ -137,4 +110,32 @@ func GetBackendFromConfig(beadsDir string) string {
 		return configfile.BackendDolt
 	}
 	return cfg.GetBackend()
+}
+
+// applyResolvedConfig merges metadata.json-derived defaults into a store config.
+// Server connection fields are always populated because the storage layer is
+// server-backed even when older metadata.json files omit dolt_mode.
+func applyResolvedConfig(beadsDir string, fileCfg *configfile.Config, cfg *Config) {
+	cfg.Path = fileCfg.DatabasePath(beadsDir)
+	if cfg.BeadsDir == "" {
+		cfg.BeadsDir = beadsDir
+	}
+
+	// Always apply database name from metadata.json (prefix-based naming, bd-u8rda).
+	if cfg.Database == "" {
+		cfg.Database = fileCfg.GetDoltDatabase()
+	}
+
+	if cfg.ServerHost == "" {
+		cfg.ServerHost = fileCfg.GetDoltServerHost()
+	}
+	if cfg.ServerPort == 0 {
+		// Use doltserver.DefaultConfig for port resolution (env > port file >
+		// config.yaml > metadata > DerivePort). fileCfg.GetDoltServerPort()
+		// falls back to 3307 which is wrong for standalone repos.
+		cfg.ServerPort = doltserver.DefaultConfig(beadsDir).Port
+	}
+	if cfg.ServerUser == "" {
+		cfg.ServerUser = fileCfg.GetDoltServerUser()
+	}
 }

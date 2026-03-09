@@ -24,7 +24,6 @@ type CommandContext struct {
 	Actor        string
 	JSONOutput   bool
 	SandboxMode  bool
-	AllowStale   bool
 	ReadonlyMode bool
 	LockTimeout  time.Duration
 	Verbose      bool
@@ -344,14 +343,6 @@ func setTraceFile(f *os.File) {
 	traceFile = f
 }
 
-// isAllowStale returns true if staleness checks should be skipped.
-func isAllowStale() bool {
-	if shouldUseGlobals() {
-		return allowStale
-	}
-	return cmdCtx.AllowStale
-}
-
 // syncCommandContext copies all legacy global values to the CommandContext.
 // This is called after initialization is complete to ensure cmdCtx has all values.
 func syncCommandContext() {
@@ -364,7 +355,6 @@ func syncCommandContext() {
 	cmdCtx.Actor = actor
 	cmdCtx.JSONOutput = jsonOutput
 	cmdCtx.SandboxMode = sandboxMode
-	cmdCtx.AllowStale = allowStale
 	cmdCtx.ReadonlyMode = readonlyMode
 	cmdCtx.LockTimeout = lockTimeout
 	cmdCtx.Verbose = verboseFlag

@@ -133,7 +133,7 @@ When you update an issue:
 
 1. Issue is updated in the Dolt database (`.beads/dolt/`)
 2. Dolt automatically commits the change to its version history
-3. Changes are synced to remotes via `bd dolt push` or `bd sync`
+3. Changes are synced to remotes via `bd dolt push`
 4. Main branch stays untouched (no commits on `main`)
 
 ## Setup
@@ -172,7 +172,7 @@ For automatic commits to the sync branch, install git hooks:
 bd hooks install
 ```
 
-Git hooks help maintain sync consistency. Use `bd sync` for manual sync when needed.
+Git hooks help maintain sync consistency. Use `bd dolt push` for manual sync when needed.
 
 ### Environment Variables
 
@@ -224,10 +224,10 @@ bd dolt commit  # Commit pending changes
 
 ```bash
 # Pull updates from other collaborators
-bd sync --no-push
+bd dolt pull
 ```
 
-This pulls changes from the remote sync branch and imports them to your local database.
+This pulls changes from the remote and imports them to your local database.
 
 ## Merging Changes
 
@@ -368,7 +368,7 @@ Ensure all clones are configured the same way:
 bd config get sync.branch  # Should be the same (e.g., beads-sync)
 
 # Pull latest changes
-bd sync --no-push
+bd dolt pull
 
 # Check Dolt server is running
 bd dolt status
@@ -466,9 +466,9 @@ git worktree remove .git/beads-worktrees/beads-sync
 bd config set sync.branch ""
 ```
 
-### Does this work with `bd sync`?
+### Does this work with `bd dolt push`?
 
-Yes! `bd sync` works normally and includes special commands for the merge workflow:
+Yes! `bd dolt push` works normally. Related commands for the merge workflow:
 
 - `bd dolt show` - Show current Dolt configuration and connection status
 - `git merge beads-sync` - Merge sync branch to main
@@ -523,7 +523,7 @@ jobs:
       - name: Pull changes
         run: |
           git fetch origin beads-sync
-          bd sync --no-push
+          bd dolt pull
 
       - name: Merge to main (if changes)
         run: |

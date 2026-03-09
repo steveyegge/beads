@@ -8,6 +8,8 @@ Common issues and solutions for bd users.
 - [Installation Issues](#installation-issues)
 - [Antivirus False Positives](#antivirus-false-positives)
 - [Database Issues](#database-issues)
+  - [Circuit breaker: "server appears down, failing fast"](#circuit-breaker-server-appears-down-failing-fast)
+  - [Connection failures after upgrading from pre-Dolt versions](#connection-failures-after-upgrading-from-pre-dolt-versions)
 - [Git and Sync Issues](#git-and-sync-issues)
 - [Ready Work and Dependencies](#ready-work-and-dependencies)
 - [Performance Issues](#performance-issues)
@@ -53,7 +55,7 @@ bd list
 ```bash
 # Debug timestamp protection during sync
 export BD_DEBUG_SYNC=1
-bd sync
+bd dolt push
 
 # Example output:
 # [debug] Protected bd-123: local=2024-01-20T10:00:00Z >= incoming=2024-01-20T09:55:00Z
@@ -105,7 +107,7 @@ bd dolt start
 
 - **Capture debug output**: Redirect stderr to a file for analysis:
   ```bash
-  BD_DEBUG=1 bd sync 2> debug.log
+  BD_DEBUG=1 bd dolt push 2> debug.log
   ```
 
 - **Server logs**: `BD_DEBUG_FRESHNESS` output goes to server logs, not stderr:
@@ -495,6 +497,60 @@ This means bd found multiple `.beads` directories in your directory hierarchy. T
 
 **Note**: The warning only appears when bd detects multiple databases. If you see this consistently and want to suppress it, you're using the correct database (marked with `▶`).
 
+### Circuit breaker: "server appears down, failing fast"
+
+**Symptom:** Every `bd` command fails with `dolt circuit breaker is open: server appears down, failing fast (cooldown 30s)`. This persists across repeated invocations.
+
+**Cause:** The circuit breaker tripped after repeated connection failures. Its state is stored in a file at `/tmp/beads-dolt-circuit-<port>.json` and shared across all `bd` processes. Once tripped, all commands are rejected until a successful probe resets it.
+
+**Note:** `bd dolt status` checks the server's PID file, not whether the server is actually accepting connections. A "running" status does not guarantee the server is reachable on the expected port.
+
+**Diagnosis:**
+
+```bash
+# Check circuit breaker state
+cat /tmp/beads-dolt-circuit-*.json
+
+# Check if the Dolt server is actually listening
+lsof -i :<port>
+
+# Compare configured port with what's actually running
+cat .beads/metadata.json | grep port
+```
+
+**Fix:**
+
+```bash
+rm /tmp/beads-dolt-circuit-*.json
+bd dolt stop
+bd dolt start
+bd list
+```
+
+**Note (macOS):** On macOS, `/tmp` is a symlink to `/private/tmp`. The circuit breaker state file may persist across reboots since `/private/tmp` is not always cleared on restart.
+
+### Connection failures after upgrading from pre-Dolt versions
+
+**Symptom:** After upgrading from v0.49 or earlier to v0.58+, `bd` commands fail with connection errors or the circuit breaker trips on first run.
+
+**Cause:** Pre-Dolt versions used SQLite for storage. The Dolt backend requires a running Dolt server. On first run after upgrading, the server may not be configured or started yet.
+
+**Fix:**
+
+1. If you have existing JSONL data from before v0.50, migrate it using the provided script:
+   ```bash
+   scripts/migrate-jsonl-to-dolt.sh
+   ```
+2. Start the Dolt server:
+   ```bash
+   bd dolt start
+   ```
+3. If the circuit breaker tripped during failed connection attempts, clear the state file (see [Circuit breaker: "server appears down, failing fast"](#circuit-breaker-server-appears-down-failing-fast) above).
+4. Verify everything is working:
+   ```bash
+   bd list
+   ```
+
 ## Git and Sync Issues
 
 ### Merge conflicts
@@ -751,9 +807,8 @@ See [integrations/beads-mcp/README.md](../integrations/beads-mcp/README.md) for 
 - "Database out of sync" errors that persist after running `bd import`
 - `bd dolt stop` fails with "operation not permitted"
 - Hash mismatch warnings (bd-160)
-- Commands intermittently fail with staleness errors
 
-**Root cause:** The sandbox can't signal/kill the existing Dolt server process, so the DB stays stale.
+**Root cause:** The sandbox can't signal/kill the existing Dolt server process.
 
 ---
 
@@ -781,7 +836,7 @@ bd --sandbox update bd-42 --claim
 **Note:** You'll need to manually sync when outside the sandbox:
 ```bash
 # After leaving sandbox, sync manually
-bd sync
+bd dolt push
 ```
 
 ---
@@ -804,22 +859,7 @@ bd import --force
 
 **Shows:** `Metadata updated (database already in sync)`
 
-**2. Skip staleness check (`--allow-stale` global flag)**
-
-Emergency escape hatch to bypass staleness validation:
-
-```bash
-# Allow operations on potentially stale data
-bd --allow-stale ready
-bd --allow-stale list --status open
-
-# Shows warning:
-# ⚠️  Staleness check skipped (--allow-stale), data may be out of sync
-```
-
-**⚠️ Caution:** Use sparingly - you may see incomplete or outdated data.
-
-**3. Use sandbox mode (preferred)**
+**2. Use sandbox mode (preferred)**
 
 ```bash
 # Most reliable for sandboxed environments
@@ -840,11 +880,8 @@ bd --sandbox ready
 # Step 2: If you get staleness errors, force import
 bd import --force
 
-# Step 3: If still blocked, use allow-stale (emergency only)
-bd --allow-stale ready
-
-# Step 4: When back outside sandbox, sync normally
-bd sync
+# Step 3: When back outside sandbox, sync normally
+bd dolt push
 ```
 
 ---
@@ -855,7 +892,6 @@ bd sync
 |------|---------|-------------|------|
 | `--sandbox` | Use embedded mode, disable auto-sync | Sandboxed environments (Codex, containers) | Low - safe for sandboxes |
 | `--force` (import) | Force metadata update | Stuck "0 created, 0 updated" loop | Low - updates metadata only |
-| `--allow-stale` | Skip staleness validation | Emergency access to database | **High** - may show stale data |
 
 **Related:**
 - See [Claude Code sandboxing documentation](https://www.anthropic.com/engineering/claude-code-sandboxing) for more about sandbox restrictions

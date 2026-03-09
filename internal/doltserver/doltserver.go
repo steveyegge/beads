@@ -2,9 +2,7 @@
 // It provides transparent auto-start so that `bd init` and `bd <command>` work
 // without manual server management.
 //
-// Under Gas Town (GT_ROOT set, or detected via filesystem heuristic),
-// all worktrees share a single server on port 3307.
-// In standalone mode, the default port is 3307 (configfile.DefaultDoltServerPort),
+// The default port is 3307 (configfile.DefaultDoltServerPort),
 // matching shared Homebrew Dolt servers. If another project's Dolt server already
 // occupies port 3307, Start falls back to DerivePort for per-project isolation
 // (hash-derived, range 13307–14306). Users with explicit port config in
@@ -44,18 +42,9 @@ const (
 	portRangeSize = 1000
 )
 
-// GasTownPort is the fixed port used when running under Gas Town (GT_ROOT set).
-// All worktrees share this single server instead of each getting a derived port.
-const GasTownPort = 3307
-
 // resolveServerDir returns the canonical server directory for dolt state files.
-// Under Gas Town (GT_ROOT set), all server operations use $GT_ROOT/.beads/
-// so that N worktrees share one server instead of spawning N servers.
-// Outside Gas Town, returns beadsDir unchanged.
+// Returns beadsDir unchanged.
 func resolveServerDir(beadsDir string) string {
-	if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
-		return filepath.Join(gtRoot, ".beads")
-	}
 	return beadsDir
 }
 
@@ -117,11 +106,8 @@ func monitorPidPath(beadsDir string) string {
 }
 
 // MaxDoltServers is the hard ceiling on concurrent dolt sql-server processes.
-// Under Gas Town, only 1 is allowed. Standalone allows up to 3 (e.g., multiple projects).
+// Allows up to 3 (e.g., multiple projects).
 func maxDoltServers() int {
-	if IsDaemonManaged() {
-		return 1
-	}
 	return 3
 }
 
@@ -169,7 +155,7 @@ func isPortAvailable(host string, port int) bool {
 
 // reclaimPort ensures the canonical port is available for use.
 // If the port is busy:
-//   - If our dolt server (same data dir or daemon-managed) → return its PID for adoption
+//   - If our dolt server (same data dir) → return its PID for adoption
 //   - If a stale/orphan dolt sql-server holds it → kill it and reclaim
 //   - If a non-dolt process holds it → return error (don't silently use another port)
 //
@@ -199,16 +185,6 @@ func reclaimPort(host string, port int, beadsDir string) (adoptPID int, err erro
 	}
 
 	// It's a dolt process. Check if it's one we should adopt.
-
-	// Under Gas Town, check the daemon PID file first
-	if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
-		daemonPidFile := filepath.Join(gtRoot, "daemon", "dolt.pid")
-		if data, readErr := os.ReadFile(daemonPidFile); readErr == nil { //nolint:gosec // G304: path constructed from trusted GT_ROOT env
-			if daemonPID, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && daemonPID == pid {
-				return pid, nil // daemon-managed server — adopt it
-			}
-		}
-	}
 
 	// Check if the process is using our data directory (CWD matches our dolt dir).
 	// dolt sql-server is started with cmd.Dir = doltDir, so CWD is the data dir.
@@ -254,8 +230,21 @@ func writePortFile(beadsDir string, port int) error {
 	return os.WriteFile(portPath(beadsDir), []byte(strconv.Itoa(port)), 0600)
 }
 
+// EnsurePortFile makes the repo-local port file match the connected server port.
+// This is a best-effort repair path for upgraded repos that are missing
+// .beads/dolt-server.port even though commands can still connect.
+func EnsurePortFile(beadsDir string, port int) error {
+	if beadsDir == "" || port <= 0 {
+		return nil
+	}
+	if readPortFile(beadsDir) == port {
+		return nil
+	}
+	return writePortFile(beadsDir, port)
+}
+
 // DefaultConfig returns config with sensible defaults.
-// Priority: env var > metadata.json > config.yaml / global config > port file > Gas Town fixed port > DerivePort.
+// Priority: env var > metadata.json > config.yaml / global config > port file > DerivePort.
 //
 // The port file (dolt-server.port) is written by Start() with the actual port
 // the server is listening on. Consulting it here ensures that commands
@@ -276,14 +265,18 @@ func DefaultConfig(beadsDir string) *Config {
 		}
 	}
 
-	// Check if user configured an explicit port in metadata.json
-	if metaCfg, err := configfile.Load(beadsDir); err == nil && metaCfg != nil {
-		if metaCfg.DoltServerPort > 0 {
-			cfg.Port = metaCfg.DoltServerPort
-		}
+	// Check the port file (gitignored, local-only) — this is the primary
+	// persistent source. Start() writes the actual listening port here.
+	// Elevated to top priority (after env var) to prevent git-tracked values
+	// from causing cross-project data leakage (GH#2372).
+	if p := readPortFile(beadsDir); 0 < p {
+		cfg.Port = p
+		return cfg
 	}
 
 	// Check config.yaml / global config (~/.config/bd/config.yaml) (GH#2073)
+	// Note: project-level config.yaml dolt.port is git-tracked and could
+	// propagate to collaborators. Prefer the gitignored port file above.
 	if cfg.Port == 0 {
 		if p := config.GetYamlConfig("dolt.port"); p != "" {
 			if port, err := strconv.Atoi(p); err == nil && port > 0 {
@@ -292,22 +285,23 @@ func DefaultConfig(beadsDir string) *Config {
 		}
 	}
 
-	// Check the port file — Start() writes the actual listening port here,
-	// which may differ from the configured default when Start() falls back
-	// to DerivePort (e.g. another project's server occupied the default port).
+	// Deprecated: metadata.json DoltServerPort is git-tracked and propagates
+	// to all contributors, causing cross-project data leakage (GH#2372).
+	// Emit a one-time warning but still use the value as a fallback so
+	// existing setups don't break silently.
 	if cfg.Port == 0 {
-		if p := readPortFile(beadsDir); 0 < p {
-			cfg.Port = p
+		if metaCfg, err := configfile.Load(beadsDir); err == nil && metaCfg != nil {
+			if metaCfg.DoltServerPort > 0 {
+				fmt.Fprintf(os.Stderr, "Warning: dolt_server_port in metadata.json is deprecated (can cause cross-project data leakage).\n")
+				fmt.Fprintf(os.Stderr, "  The port file (.beads/dolt-server.port) is now the primary source.\n")
+				fmt.Fprintf(os.Stderr, "  Remove dolt_server_port from .beads/metadata.json to silence this warning.\n")
+				cfg.Port = metaCfg.DoltServerPort
+			}
 		}
 	}
 
 	if cfg.Port == 0 {
-		// Under Gas Town, use fixed port so all worktrees share one server.
-		if os.Getenv("GT_ROOT") != "" {
-			cfg.Port = GasTownPort
-		} else {
-			cfg.Port = DerivePort(beadsDir)
-		}
+		cfg.Port = DerivePort(beadsDir)
 	}
 
 	return cfg
@@ -315,31 +309,7 @@ func DefaultConfig(beadsDir string) *Config {
 
 // IsRunning checks if a managed server is running for this beadsDir.
 // Returns a State with Running=true if a valid dolt process is found.
-// Under Gas Town (GT_ROOT set), checks the daemon PID file first since the
-// daemon writes to $GT_ROOT/daemon/dolt.pid, not .beads/dolt-server.pid.
 func IsRunning(beadsDir string) (*State, error) {
-	// Under Gas Town, check daemon PID file first — the daemon manages
-	// the server and writes its PID to a different location.
-	if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
-		daemonPidFile := filepath.Join(gtRoot, "daemon", "dolt.pid")
-		if data, readErr := os.ReadFile(daemonPidFile); readErr == nil { //nolint:gosec // G304: path constructed from trusted GT_ROOT env
-			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && pid > 0 {
-				if isProcessAlive(pid) && isDoltProcess(pid) {
-					port := readPortFile(beadsDir)
-					if port == 0 {
-						port = GasTownPort
-					}
-					return &State{
-						Running: true,
-						PID:     pid,
-						Port:    port,
-						DataDir: ResolveDoltDir(beadsDir),
-					}, nil
-				}
-			}
-		}
-	}
-
 	data, err := os.ReadFile(pidPath(beadsDir))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -386,8 +356,6 @@ func IsRunning(beadsDir string) (*State, error) {
 
 // EnsureRunning starts the server if it is not already running.
 // This is the main auto-start entry point. Thread-safe via file lock.
-// Under Gas Town (GT_ROOT set), resolves to the canonical server directory
-// so all worktrees share one server.
 // Returns the port the server is listening on.
 func EnsureRunning(beadsDir string) (int, error) {
 	serverDir := resolveServerDir(beadsDir)
@@ -397,6 +365,7 @@ func EnsureRunning(beadsDir string) (int, error) {
 		return 0, err
 	}
 	if state.Running {
+		_ = EnsurePortFile(serverDir, state.Port)
 		// Touch activity file so idle monitor knows we're active
 		touchActivity(serverDir)
 		return state.Port, nil
@@ -500,19 +469,17 @@ func Start(beadsDir string) (*State, error) {
 		}
 	}
 	if adoptPID > 0 {
-		// Existing server is ours (same data dir or daemon-managed) — adopt it
+		// Existing server is ours (same data dir) — adopt it
 		_ = logFile.Close()
 		_ = os.WriteFile(pidPath(beadsDir), []byte(strconv.Itoa(adoptPID)), 0600)
 		_ = writePortFile(beadsDir, actualPort)
 		touchActivity(beadsDir)
-		if !IsDaemonManagedFor(beadsDir) {
-			forkIdleMonitor(beadsDir)
-		}
+		forkIdleMonitor(beadsDir)
 		return &State{Running: true, PID: adoptPID, Port: actualPort, DataDir: doltDir}, nil
 	}
 
 	// Start dolt sql-server
-	cmd := exec.Command(doltBin, "sql-server",
+	cmd := exec.Command(doltBin, "sql-server", //nolint:gosec // G702: doltBin is resolved from PATH, not user input
 		"-H", cfg.Host,
 		"-P", strconv.Itoa(actualPort),
 	)
@@ -557,12 +524,9 @@ func Start(beadsDir string) (*State, error) {
 			pid, actualPort, err, logPath(beadsDir))
 	}
 
-	// Touch activity and fork idle monitor (skip under Gas Town where
-	// the daemon manages server lifecycle)
+	// Touch activity and fork idle monitor
 	touchActivity(beadsDir)
-	if !IsDaemonManagedFor(beadsDir) {
-		forkIdleMonitor(beadsDir)
-	}
+	forkIdleMonitor(beadsDir)
 
 	return &State{
 		Running: true,
@@ -570,123 +534,6 @@ func Start(beadsDir string) (*State, error) {
 		Port:    actualPort,
 		DataDir: doltDir,
 	}, nil
-}
-
-// IsDaemonManaged returns true if the dolt server is managed by the Gas Town
-// daemon. Checks GT_ROOT first, then falls back to filesystem heuristics
-// that detect Gas Town structure from the working directory.
-// This handles cases where GT_ROOT is not set but the process is running
-// inside a Gas Town workspace (crew sessions, residual tmux sessions, etc.).
-func IsDaemonManaged() bool {
-	return isDaemonManaged("")
-}
-
-// IsDaemonManagedFor is like IsDaemonManaged but also checks the beadsDir
-// path for Gas Town indicators. Use this when beadsDir is available.
-func IsDaemonManagedFor(beadsDir string) bool {
-	return isDaemonManaged(beadsDir)
-}
-
-func isDaemonManaged(beadsDir string) bool {
-	if os.Getenv("GT_ROOT") != "" {
-		return true
-	}
-	return isGasTownContext(beadsDir)
-}
-
-// gasTownPathSegments are directory names distinctive to Gas Town rig worktrees.
-// A standalone beads project would never have these in its path.
-var gasTownPathSegments = []string{
-	"crew",
-	"polecats",
-	"refinery",
-	"witness",
-	"deacon",
-	"mayor",
-}
-
-// gasTownRootMarkers are subdirectory names that identify a Gas Town root
-// or rig directory. Presence of 2+ of these as siblings is definitive.
-var gasTownRootMarkers = []string{
-	"daemon",
-	"deacon",
-	"warrants",
-	"mayor",
-	"crew",
-	"refinery",
-}
-
-// isGasTownContext detects Gas Town workspace from the working directory
-// and optionally from the beadsDir path.
-func isGasTownContext(beadsDir string) bool {
-	if wd, err := os.Getwd(); err == nil {
-		if HasGasTownPathSegment(wd) {
-			return true
-		}
-		if walkUpForGasTownRoot(wd) {
-			return true
-		}
-	}
-	if beadsDir != "" {
-		if HasGasTownPathSegment(beadsDir) {
-			return true
-		}
-		if walkUpForGasTownRoot(filepath.Dir(beadsDir)) {
-			return true
-		}
-	}
-	return false
-}
-
-// HasGasTownPathSegment reports whether path contains a directory component
-// that is distinctive to Gas Town workspaces.
-func HasGasTownPathSegment(path string) bool {
-	// Split into directory components to avoid substring false positives
-	// (e.g., "screwdriver" should not match "crew").
-	parts := strings.Split(filepath.ToSlash(path), "/")
-	for _, part := range parts {
-		for _, seg := range gasTownPathSegments {
-			if part == seg {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// isGasTownRoot checks if dir is a Gas Town root by looking for 2+
-// distinctive Gas Town subdirectories as siblings.
-func isGasTownRoot(dir string) bool {
-	count := 0
-	for _, marker := range gasTownRootMarkers {
-		info, err := os.Stat(filepath.Join(dir, marker))
-		if err == nil && info.IsDir() {
-			count++
-			if count >= 2 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// walkUpForGasTownRoot walks up from dir checking each ancestor
-// (including dir itself) for Gas Town root markers.
-func walkUpForGasTownRoot(dir string) bool {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return false
-	}
-	for {
-		if isGasTownRoot(abs) {
-			return true
-		}
-		parent := filepath.Dir(abs)
-		if parent == abs {
-			return false
-		}
-		abs = parent
-	}
 }
 
 // FlushWorkingSet connects to the running Dolt server and commits any uncommitted
@@ -771,17 +618,12 @@ func FlushWorkingSet(host string, port int) error {
 }
 
 // Stop gracefully stops the managed server and its idle monitor.
-// Under Gas Town (GT_ROOT set), refuses to stop the daemon-managed server
-// unless force is true.
 func Stop(beadsDir string) error {
 	return StopWithForce(beadsDir, false)
 }
 
-// StopWithForce is like Stop but allows overriding the Gas Town daemon guard.
+// StopWithForce is like Stop but with an optional force flag.
 func StopWithForce(beadsDir string, force bool) error {
-	if !force && IsDaemonManagedFor(beadsDir) {
-		return fmt.Errorf("Dolt server is managed by the Gas Town daemon.\nUse 'gt dolt stop' instead, or pass --force to override.")
-	}
 
 	state, err := IsRunning(beadsDir)
 	if err != nil {
@@ -820,13 +662,7 @@ func LogPath(beadsDir string) string {
 }
 
 // KillStaleServers finds and kills orphan dolt sql-server processes
-// not tracked by the canonical PID file. Under Gas Town, the canonical
-// server is at $GT_ROOT/.beads/ or $GT_ROOT/daemon/dolt.pid (daemon-managed);
-// in standalone mode, beadsDir is used.
-//
-// Under Gas Town, if no canonical PID can be identified from either location,
-// this function refuses to kill anything to avoid accidentally killing the
-// daemon-managed server.
+// not tracked by the canonical PID file.
 // Returns the PIDs of killed processes.
 func KillStaleServers(beadsDir string) ([]int, error) {
 	allPIDs := listDoltProcessPIDs()
@@ -844,22 +680,6 @@ func KillStaleServers(beadsDir string) ([]int, error) {
 			}
 		}
 	}
-	// Under Gas Town, also check the daemon-managed PID file
-	if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
-		daemonPidFile := filepath.Join(gtRoot, "daemon", "dolt.pid")
-		if data, readErr := os.ReadFile(daemonPidFile); readErr == nil { //nolint:gosec // G304: path constructed from trusted GT_ROOT env
-			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && pid > 0 {
-				canonicalPIDs[pid] = true
-			}
-		}
-	}
-
-	// Under Gas Town, if we can't identify any canonical server, refuse to
-	// kill anything. Without knowing which process is canonical, we'd kill
-	// all dolt servers including the daemon-managed one.
-	if IsDaemonManagedFor(beadsDir) && len(canonicalPIDs) == 0 {
-		return nil, fmt.Errorf("under Gas Town but no canonical PID file found\n\nThe Dolt server is likely managed by the gt daemon. Use 'gt dolt' commands instead.\nTo force kill all dolt servers: pkill -f 'dolt sql-server'")
-	}
 
 	var killed []int
 	for _, pid := range allPIDs {
@@ -867,7 +687,7 @@ func KillStaleServers(beadsDir string) ([]int, error) {
 			continue
 		}
 		if canonicalPIDs[pid] {
-			continue // preserve canonical/daemon-managed server
+			continue // preserve canonical server
 		}
 		if proc, findErr := os.FindProcess(pid); findErr == nil {
 			_ = proc.Kill()
@@ -883,7 +703,7 @@ func waitForReady(host string, port int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond) //nolint:gosec // G704: addr is built from internal host+port, not user input
 		if err == nil {
 			_ = conn.Close()
 			return nil
@@ -1058,15 +878,7 @@ func stopServerProcess(beadsDir string) error {
 
 // forkIdleMonitor starts the idle monitor as a detached process.
 // It runs `bd dolt idle-monitor --beads-dir=<dir>` in the background.
-// Under Gas Town, the idle monitor is not forked — the daemon handles lifecycle.
 func forkIdleMonitor(beadsDir string) {
-	// Under Gas Town, the daemon manages server lifecycle (health checks,
-	// restart on crash, etc.). Don't fork a beads idle monitor that could
-	// interfere by stopping the shared server.
-	if IsDaemonManagedFor(beadsDir) {
-		return
-	}
-
 	// Don't fork if there's already a monitor running
 	if isMonitorRunning(beadsDir) {
 		return
@@ -1148,19 +960,46 @@ func ReadActivityTime(beadsDir string) time.Time {
 // (watchdog behavior).
 //
 // idleTimeout of 0 means monitoring is disabled (exits immediately).
-// Under Gas Town, exits immediately — the daemon handles server lifecycle.
 func RunIdleMonitor(beadsDir string, idleTimeout time.Duration) {
 	if idleTimeout == 0 {
 		return
 	}
-	// Belt and suspenders: don't run under Gas Town even if somehow forked.
-	if IsDaemonManagedFor(beadsDir) {
-		return
+
+	// Single-instance enforcement: acquire an exclusive lock on the monitor
+	// lock file. If another monitor is already running, exit immediately.
+	// This prevents the accumulation bug (GH#2367) where Start() called from
+	// within the monitor's watchdog restart would fork yet another monitor.
+	monitorLockPath := monitorPidPath(beadsDir) + ".lock"
+	var monitorLock *os.File
+	if f, err := os.OpenFile(monitorLockPath, os.O_CREATE|os.O_RDWR, 0600); err == nil { //nolint:gosec // G304: path derived from trusted beadsDir
+		if lockErr := lockfile.FlockExclusiveNonBlocking(f); lockErr != nil {
+			_ = f.Close()
+			return // another monitor holds the lock — exit silently
+		}
+		monitorLock = f
 	}
+	// Keep lock held for lifetime of this process. Clean up on exit.
+	defer func() {
+		_ = os.Remove(monitorPidPath(beadsDir))
+		if monitorLock != nil {
+			_ = lockfile.FlockUnlock(monitorLock)
+			_ = monitorLock.Close()
+			_ = os.Remove(monitorLockPath)
+		}
+	}()
+
+	// Write our PID now that we hold the lock
+	_ = os.WriteFile(monitorPidPath(beadsDir), []byte(strconv.Itoa(os.Getpid())), 0600)
 
 	// Tracks when we stopped the server for idle timeout. Zero means we
 	// haven't performed an idle shutdown (or the server was restarted since).
 	var idleShutdownAt time.Time
+
+	// Remember the port the server was using before we stopped it, so we
+	// can restore the port file before calling Start(). Without this,
+	// stopServerProcess removes the port file, and Start() may fall back
+	// to a hash-derived port that differs from the original (bd-xvg).
+	var lastKnownPort int
 
 	for {
 		time.Sleep(MonitorCheckInterval)
@@ -1175,6 +1014,7 @@ func RunIdleMonitor(beadsDir string, idleTimeout time.Duration) {
 
 		if state.Running {
 			idleShutdownAt = time.Time{} // server is up, clear idle-shutdown tracking
+			lastKnownPort = state.Port   // track port while server is up
 
 			// Server is running — check if idle
 			if !lastActivity.IsZero() && idleDuration > idleTimeout {
@@ -1189,7 +1029,11 @@ func RunIdleMonitor(beadsDir string, idleTimeout time.Duration) {
 				// We stopped it for idle timeout. Check for new activity
 				// (e.g. EnsureRunning touched the activity file).
 				if !lastActivity.IsZero() && lastActivity.After(idleShutdownAt) {
-					// New activity since we stopped — restart
+					// New activity since we stopped — restart on the same port.
+					// Restore port file so Start()/DefaultConfig() picks it up.
+					if lastKnownPort > 0 {
+						_ = writePortFile(beadsDir, lastKnownPort)
+					}
 					_, _ = Start(beadsDir)
 					idleShutdownAt = time.Time{}
 					continue
@@ -1204,13 +1048,16 @@ func RunIdleMonitor(beadsDir string, idleTimeout time.Duration) {
 				continue
 			}
 
-			// Server is down but we didn't stop it (crash or external stop)
+			// Server is down but we didn't stop it (crash or external stop).
 			if lastActivity.IsZero() || idleDuration > idleTimeout {
 				// No recent activity — just exit
 				_ = os.Remove(monitorPidPath(beadsDir))
 				return
 			}
-			// Recent activity but server crashed — restart
+			// Recent activity but server crashed — restart on the same port.
+			if lastKnownPort > 0 {
+				_ = writePortFile(beadsDir, lastKnownPort)
+			}
 			_, _ = Start(beadsDir)
 		}
 	}

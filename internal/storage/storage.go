@@ -83,6 +83,24 @@ type Storage interface {
 	Close() error
 }
 
+// DoltStorage is the full interface for Dolt-backed stores, composing the core
+// Storage interface with all capability sub-interfaces. Both DoltStore and
+// EmbeddedDoltStore satisfy this interface.
+type DoltStorage interface {
+	Storage
+	VersionControl
+	HistoryViewer
+	RemoteStore
+	SyncStore
+	FederationStore
+	BulkIssueStore
+	DependencyQueryStore
+	AnnotationStore
+	ConfigMetadataStore
+	CompactionStore
+	AdvancedQueryStore
+}
+
 // Transaction provides atomic multi-operation support within a single database transaction.
 //
 // The Transaction interface exposes a subset of storage methods that execute within
