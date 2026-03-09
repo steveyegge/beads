@@ -5,7 +5,9 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -477,6 +479,85 @@ func TestAutoResetRoundTrip(t *testing.T) {
 	fwdMsg := getDoltCommitMessage(ctx, s, latestHash)
 	if fwdMsg != "bd: create roundtrip-bbb" {
 		t.Errorf("latest message = %q, want %q", fwdMsg, "bd: create roundtrip-bbb")
+	}
+}
+
+// TestCleanupStaleBeadsRefsInGitRepo verifies that cleanupStaleBeadsRefs
+// stages file deletions in the git index when run inside a real git repo.
+// The basic TestCleanupStaleBeadsRefs test runs without a git repo, so the
+// git rm --cached calls silently fail. This test exercises the full path.
+func TestCleanupStaleBeadsRefsInGitRepo(t *testing.T) {
+	t.Parallel()
+
+	// Create a temporary git repo
+	repoDir := t.TempDir()
+	for _, args := range [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	} {
+		cmd := exec.CommandContext(context.Background(), args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %s: %v", args, out, err)
+		}
+	}
+
+	// Create .beads/ dir with ref files
+	beadsDir := filepath.Join(repoDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+	headPath := filepath.Join(beadsDir, "HEAD")
+	os.WriteFile(headPath, []byte("ref: refs/heads/main\n"), 0644)
+	refsHeadsDir := filepath.Join(beadsDir, "refs", "heads")
+	os.MkdirAll(refsHeadsDir, 0755)
+	refPath := filepath.Join(refsHeadsDir, "main")
+	os.WriteFile(refPath, []byte("abc123\n"), 0644)
+
+	// Stage and commit the ref files so git rm --cached has something to remove
+	for _, args := range [][]string{
+		{"git", "add", ".beads/HEAD", ".beads/refs/"},
+		{"git", "commit", "-m", "add ref files"},
+	} {
+		cmd := exec.CommandContext(context.Background(), args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %s: %v", args, out, err)
+		}
+	}
+
+	// Verify files are tracked
+	cmd := exec.CommandContext(context.Background(), "git", "ls-files", ".beads/HEAD")
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil || !strings.Contains(string(out), ".beads/HEAD") {
+		t.Fatal("HEAD should be tracked before cleanup")
+	}
+
+	// Run cleanup
+	cleanupStaleBeadsRefs(beadsDir)
+
+	// Verify files are gone from disk
+	if _, err := os.Stat(headPath); !os.IsNotExist(err) {
+		t.Error("HEAD file should be removed from disk after cleanup")
+	}
+	if _, err := os.Stat(refPath); !os.IsNotExist(err) {
+		t.Error("ref file should be removed from disk after cleanup")
+	}
+
+	// Verify deletions are staged in git index
+	cmd = exec.CommandContext(context.Background(), "git", "status", "--porcelain")
+	cmd.Dir = repoDir
+	out, err = cmd.Output()
+	if err != nil {
+		t.Fatalf("git status: %v", err)
+	}
+	status := string(out)
+	// Expect "D  .beads/HEAD" and "D  .beads/refs/heads/main" (staged deletions)
+	if !strings.Contains(status, "D  .beads/HEAD") {
+		t.Errorf("expected staged deletion of .beads/HEAD in git status, got:\n%s", status)
+	}
+	if !strings.Contains(status, "D  .beads/refs/heads/main") {
+		t.Errorf("expected staged deletion of .beads/refs/heads/main in git status, got:\n%s", status)
 	}
 }
 

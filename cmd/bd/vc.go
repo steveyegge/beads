@@ -112,7 +112,6 @@ Examples:
 					fmt.Printf("\nResolve conflicts with: bd vc merge %s --strategy [ours|theirs]\n\n", branchName)
 				}
 				os.Exit(1) // Non-zero for CI
-				return
 			}
 		} else {
 			if jsonOutput {

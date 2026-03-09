@@ -147,6 +147,8 @@ func GetYamlConfig(key string) string {
 }
 
 // findProjectConfigYaml finds the project's .beads/config.yaml file.
+// If .beads/ exists but config.yaml doesn't, creates a minimal config.yaml
+// so that bd config set works on repos initialized before config.yaml existed.
 func findProjectConfigYaml() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -159,9 +161,17 @@ func findProjectConfigYaml() (string, error) {
 		if _, err := os.Stat(configPath); err == nil {
 			return configPath, nil
 		}
+		// If .beads/ exists but config.yaml doesn't, create a bare one
+		beadsDir := filepath.Join(dir, ".beads")
+		if _, err := os.Stat(beadsDir); err == nil {
+			if err := os.WriteFile(configPath, []byte("# Beads Configuration File\n"), 0600); err != nil {
+				return "", fmt.Errorf("failed to create config.yaml: %w", err)
+			}
+			return configPath, nil
+		}
 	}
 
-	return "", fmt.Errorf("no .beads/config.yaml found (run 'bd init' first)")
+	return "", fmt.Errorf("no .beads/ directory found (run 'bd init' first)")
 }
 
 // updateYamlKey updates a key in yaml content, handling commented-out keys.

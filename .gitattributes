@@ -2,3 +2,7 @@
 # Shell scripts must always use LF line endings (especially git hook templates)
 *.sh text eol=lf
 cmd/bd/templates/hooks/* text eol=lf
+
+# Beads ref files change on every Dolt commit — collapse in GitHub PR diffs
+.beads/HEAD linguist-generated
+.beads/refs/** linguist-generated

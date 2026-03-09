@@ -27,7 +27,11 @@ func executePostCommitStrategy(ctx context.Context, s *dolt.DoltStore) {
 	}
 
 	info, err := s.GetBranchInfo(ctx, branch)
-	if err != nil || info == nil {
+	if err != nil {
+		log.Printf("branch strategy: failed to get branch info for %s: %v", branch, err)
+		return
+	}
+	if info == nil {
 		return // unregistered branch, no strategy
 	}
 
@@ -95,8 +99,12 @@ func maybeMergeOnClose(ctx context.Context, s *dolt.DoltStore) {
 	}
 
 	info, err := s.GetBranchInfo(ctx, branch)
-	if err != nil || info == nil {
+	if err != nil {
+		log.Printf("merge-on-close: failed to get branch info for %s: %v", branch, err)
 		return
+	}
+	if info == nil {
+		return // unregistered branch, no strategy
 	}
 
 	if info.MergeStrategy != "merge-on-close" {

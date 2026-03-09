@@ -109,7 +109,11 @@ func maybeSendMessage(ctx context.Context, s *dolt.DoltStore, issueType string) 
 
 	// Only deliver if on a registered branch
 	info, err := s.GetBranchInfo(ctx, branch)
-	if err != nil || info == nil {
+	if err != nil {
+		log.Printf("message delivery: failed to get branch info for %s: %v", branch, err)
+		return
+	}
+	if info == nil {
 		return
 	}
 

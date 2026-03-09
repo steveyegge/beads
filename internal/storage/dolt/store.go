@@ -1640,7 +1640,7 @@ func (s *DoltStore) DeleteBranch(ctx context.Context, branch string) error {
 // BranchInfo represents a registered branch and its merge strategy.
 type BranchInfo struct {
 	Name          string
-	MergeStrategy string // "A", "B", or "C"
+	MergeStrategy string // "stay-on-main", "merge-with-branch", or "merge-on-close"
 	Status        string // "active", "dormant", "merged", "abandoned"
 	CreatedAt     time.Time
 	UpdatedAt     time.Time

@@ -869,8 +869,12 @@ func maybePromptBranchStrategy(ctx context.Context, s *dolt.DoltStore) {
 
 	// Check if already registered
 	info, err := s.GetBranchInfo(ctx, branch)
-	if err != nil || info != nil {
-		return // already registered or error
+	if err != nil {
+		debug.Logf("beads: failed to check branch registration for %s: %v", branch, err)
+		return
+	}
+	if info != nil {
+		return // already registered
 	}
 
 	// Read default strategy from config.yaml (fallback: stay-on-main)
@@ -928,14 +932,19 @@ func maybePromptBranchStrategy(ctx context.Context, s *dolt.DoltStore) {
 	}
 }
 
-// isTerminal returns true if stderr is connected to a terminal.
-// Used to decide whether interactive prompts are appropriate.
+// isTerminal returns true if both stdin and stderr are connected to a terminal.
+// Prompts write to stderr and read from stdin, so both must be TTYs.
 func isTerminal() bool {
-	fi, err := os.Stderr.Stat()
-	if err != nil {
-		return false
+	for _, f := range []*os.File{os.Stdin, os.Stderr} {
+		fi, err := f.Stat()
+		if err != nil {
+			return false
+		}
+		if fi.Mode()&os.ModeCharDevice == 0 {
+			return false
+		}
 	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return true
 }
 
 // runPrepareCommitMsgHook adds agent identity trailers to commit messages.
@@ -1108,11 +1117,18 @@ func getPinnedMolecule() string {
 // =============================================================================
 
 // isRebaseInProgress checks if a rebase is in progress.
+// Uses git.GetGitDir() to resolve the correct path, which handles
+// both regular repos (.git/ directory) and worktrees (.git file
+// pointing to .git/worktrees/<name>/).
 func isRebaseInProgress() bool {
-	if _, err := os.Stat(".git/rebase-merge"); err == nil {
+	gitDir, err := git.GetGitDir()
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(gitDir, "rebase-merge")); err == nil {
 		return true
 	}
-	if _, err := os.Stat(".git/rebase-apply"); err == nil {
+	if _, err := os.Stat(filepath.Join(gitDir, "rebase-apply")); err == nil {
 		return true
 	}
 	return false
