@@ -497,6 +497,23 @@ func TestEnvVarOverrides(t *testing.T) {
 		}
 	})
 
+	t.Run("BEADS_DOLT_PORT fallback when SERVER_PORT not set", func(t *testing.T) {
+		t.Setenv("BEADS_DOLT_PORT", "3307")
+		cfg := &Config{}
+		if got := cfg.GetDoltServerPort(); got != 3307 {
+			t.Errorf("GetDoltServerPort() = %d, want 3307", got)
+		}
+	})
+
+	t.Run("BEADS_DOLT_SERVER_PORT takes priority over BEADS_DOLT_PORT", func(t *testing.T) {
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "3309")
+		t.Setenv("BEADS_DOLT_PORT", "3307")
+		cfg := &Config{}
+		if got := cfg.GetDoltServerPort(); got != 3309 {
+			t.Errorf("GetDoltServerPort() = %d, want 3309", got)
+		}
+	})
+
 	t.Run("user env var overrides config", func(t *testing.T) {
 		t.Setenv("BEADS_DOLT_SERVER_USER", "envuser")
 		cfg := &Config{DoltServerUser: "admin"}
