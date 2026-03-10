@@ -56,11 +56,11 @@ Subcommands:
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
 					"error":   "no_beads_directory",
-					"message": "No .beads directory found. Run 'bd init' first.",
+					"message": "No .beads directory found. Run 'bd doctor' to diagnose, or 'bd init' to create a new database.",
 				})
 				os.Exit(1)
 			} else {
-				FatalErrorWithHint("no .beads directory found", "run 'bd init' to initialize bd")
+				FatalErrorWithHint("no .beads directory found", "run 'bd doctor' to diagnose, or 'bd init' to create a new database")
 			}
 		}
 
@@ -96,7 +96,7 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, beadsDir string, dryRun bo
 			})
 		} else {
 			fmt.Fprintf(os.Stderr, "No Dolt database found at %s\n", doltPath)
-			fmt.Fprintf(os.Stderr, "Run 'bd init' to create a new database.\n")
+			fmt.Fprintf(os.Stderr, "Run 'bd doctor' to diagnose, or 'bd init' to create a new database.\n")
 		}
 		return
 	}
@@ -301,11 +301,11 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"error":   "no_database",
-				"message": "No beads database found. Run 'bd init' first.",
+				"message": "No beads database found. Run 'bd doctor' to diagnose, or 'bd init' to create a new database.",
 			})
 			os.Exit(1)
 		}
-		FatalErrorWithHint("no beads database found", "run 'bd init' to initialize bd")
+		FatalErrorWithHint("no beads database found", "run 'bd doctor' to diagnose, or 'bd init' to create a new database")
 	}
 
 	// Compute new repo ID
@@ -417,11 +417,11 @@ func handleInspect() {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"error":   "no_beads_directory",
-				"message": "No .beads directory found. Run 'bd init' first.",
+				"message": "No .beads directory found. Run 'bd doctor' to diagnose, or 'bd init' to create a new database.",
 			})
 			os.Exit(1)
 		}
-		FatalErrorWithHint("no .beads directory found", "run 'bd init' to initialize bd")
+		FatalErrorWithHint("no .beads directory found", "run 'bd doctor' to diagnose, or 'bd init' to create a new database")
 	}
 
 	// Load config
@@ -464,7 +464,7 @@ func handleInspect() {
 				"missing_config": []string{},
 				"db_exists":      false,
 			},
-			"warnings":            []string{"Database does not exist - run 'bd init' first"},
+			"warnings":            []string{"Database does not exist - run 'bd doctor' to diagnose, or 'bd init' to create a new database"},
 			"invariants_to_check": []string{},
 		}
 
@@ -474,7 +474,7 @@ func handleInspect() {
 			fmt.Println("\nMigration Inspection")
 			fmt.Println("====================")
 			fmt.Println("Database: missing")
-			fmt.Println("\n⚠ Database does not exist - run 'bd init' first")
+			fmt.Println("\n⚠ Database does not exist - run 'bd doctor' to diagnose, or 'bd init' to create a new database")
 		}
 		return
 	}
@@ -597,11 +597,11 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"error":   "no_beads_directory",
-				"message": "No .beads directory found. Run 'bd init' first.",
+				"message": "No .beads directory found. Run 'bd doctor' to diagnose, or 'bd init' to create a new database.",
 			})
 			os.Exit(1)
 		}
-		FatalErrorWithHint("no .beads directory found", "run 'bd init' to initialize bd")
+		FatalErrorWithHint("no .beads directory found", "run 'bd doctor' to diagnose, or 'bd init' to create a new database")
 	}
 
 	// Load config
@@ -623,11 +623,11 @@ func handleToSeparateBranch(branch string, dryRun bool) {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"error":   "database_missing",
-				"message": "Database not found. Run 'bd init' first.",
+				"message": "Database not found. Run 'bd doctor' to diagnose, or 'bd init' to create a new database.",
 			})
 			os.Exit(1)
 		}
-		FatalErrorWithHint(fmt.Sprintf("database not found: %s", targetPath), "run 'bd init' to initialize bd")
+		FatalErrorWithHint(fmt.Sprintf("database not found: %s", targetPath), "run 'bd doctor' to diagnose, or 'bd init' to create a new database")
 	}
 
 	// Open database

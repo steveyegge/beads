@@ -41,7 +41,7 @@ Examples:
 				outputJSON(map[string]string{"error": "no beads directory found"})
 			} else {
 				fmt.Fprintln(os.Stderr, "Error: no beads directory found")
-				fmt.Fprintln(os.Stderr, "Hint: run 'bd init' to create a database in the current directory")
+				fmt.Fprintln(os.Stderr, "Hint: run 'bd doctor' to diagnose, or 'bd init' to create a new database")
 			}
 			os.Exit(1)
 		}

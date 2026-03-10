@@ -37,7 +37,7 @@ Examples:
 
 		if store == nil {
 			FatalErrorWithHint("database not initialized",
-				"run 'bd init' to create a database")
+				"run 'bd doctor' to diagnose, or 'bd init' to create a new database")
 		}
 
 		// Handle cross-rig routing
