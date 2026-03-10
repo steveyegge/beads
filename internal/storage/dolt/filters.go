@@ -43,10 +43,11 @@ func buildIssueFilterClauses(query string, filter types.IssueFilter, tables filt
 		lowerQuery := strings.ToLower(query)
 		if looksLikeIssueID(query) {
 			// ID-like query: use exact match + prefix match on indexed id column,
-			// plus title LIKE as fallback for cases where the query appears in titles.
+			// plus title LIKE and external_ref LIKE as fallbacks (e.g. Linear IDs
+			// like "BE-1521" stored in external_ref).
 			// IDs are always lowercase, so no LOWER() needed for id columns.
-			whereClauses = append(whereClauses, "(id = ? OR id LIKE ? OR LOWER(title) LIKE ?)")
-			args = append(args, lowerQuery, lowerQuery+"%", "%"+lowerQuery+"%")
+			whereClauses = append(whereClauses, "(id = ? OR id LIKE ? OR LOWER(title) LIKE ? OR LOWER(external_ref) LIKE ?)")
+			args = append(args, lowerQuery, lowerQuery+"%", "%"+lowerQuery+"%", "%"+lowerQuery+"%")
 		} else {
 			// Text query: search title and id (skip description — it's large and
 			// LIKE %% on TEXT columns causes the worst prolly-tree scan behavior).
@@ -73,6 +74,10 @@ func buildIssueFilterClauses(query string, filter types.IssueFilter, tables filt
 	if filter.NotesContains != "" {
 		whereClauses = append(whereClauses, "notes LIKE ?")
 		args = append(args, "%"+filter.NotesContains+"%")
+	}
+	if filter.ExternalRefContains != "" {
+		whereClauses = append(whereClauses, "external_ref LIKE ?")
+		args = append(args, "%"+filter.ExternalRefContains+"%")
 	}
 
 	// Status filters

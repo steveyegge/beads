@@ -930,6 +930,7 @@ type IssueFilter struct {
 	TitleContains       string
 	DescriptionContains string
 	NotesContains       string
+	ExternalRefContains string
 
 	// Date ranges
 	CreatedAfter  *time.Time
