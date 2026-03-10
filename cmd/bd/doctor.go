@@ -202,6 +202,16 @@ Examples:
 			FatalError("failed to resolve path: %v", err)
 		}
 
+		// Guardrail: never run mutating bd doctor fix from Gas Town town root.
+		// Town-level repair must go through `gt doctor --fix` because town roots
+		// have additional invariants beyond beads-only repos.
+		if doctorFix && isGasTownTownRoot(absPath) {
+			FatalErrorWithHint(
+				"refusing to run 'bd doctor --fix' at Gas Town town root",
+				"Use 'gt doctor --fix' from town root, or run 'bd doctor --fix' inside a specific rig clone (e.g. <rig>/mayor/rig)",
+			)
+		}
+
 		// Run performance diagnostics if --perf flag is set
 		if perfMode {
 			if err := doctor.RunPerformanceDiagnostics(absPath); err != nil {
