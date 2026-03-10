@@ -79,6 +79,7 @@ Examples:
 		// Pattern matching flags
 		descContains, _ := cmd.Flags().GetString("desc-contains")
 		notesContains, _ := cmd.Flags().GetString("notes-contains")
+		externalContains, _ := cmd.Flags().GetString("external-contains")
 
 		// Empty/null check flags
 		emptyDesc, _ := cmd.Flags().GetBool("empty-description")
@@ -128,6 +129,9 @@ Examples:
 		}
 		if notesContains != "" {
 			filter.NotesContains = notesContains
+		}
+		if externalContains != "" {
+			filter.ExternalRefContains = externalContains
 		}
 
 		// Empty/null checks
@@ -365,6 +369,7 @@ func init() {
 	// Pattern matching flags
 	searchCmd.Flags().String("desc-contains", "", "Filter by description substring (case-insensitive)")
 	searchCmd.Flags().String("notes-contains", "", "Filter by notes substring (case-insensitive)")
+	searchCmd.Flags().String("external-contains", "", "Filter by external ref substring (case-insensitive)")
 
 	// Empty/null check flags
 	searchCmd.Flags().Bool("empty-description", false, "Filter issues with empty or missing description")

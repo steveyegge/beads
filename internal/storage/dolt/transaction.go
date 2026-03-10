@@ -231,6 +231,10 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		whereClauses = append(whereClauses, "notes LIKE ?")
 		args = append(args, "%"+filter.NotesContains+"%")
 	}
+	if filter.ExternalRefContains != "" {
+		whereClauses = append(whereClauses, "external_ref LIKE ?")
+		args = append(args, "%"+filter.ExternalRefContains+"%")
+	}
 
 	// Status
 	if filter.Status != nil {
