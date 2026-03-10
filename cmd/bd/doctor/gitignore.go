@@ -42,8 +42,6 @@ dolt-server.pid
 dolt-server.log
 dolt-server.lock
 dolt-server.port
-dolt-server.activity
-dolt-monitor.pid
 
 # Backup data (auto-exported JSONL, local-only)
 backup/
@@ -87,8 +85,6 @@ var requiredPatterns = []string{
 	"dolt-server.log",
 	"dolt-server.lock",
 	"dolt-server.port",
-	"dolt-server.activity",
-	"dolt-monitor.pid",
 }
 
 // CheckGitignore checks if .beads/.gitignore is up to date.
