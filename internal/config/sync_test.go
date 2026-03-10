@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-func TestGetSyncMode(t *testing.T) {
-	// GetSyncMode always returns dolt-native regardless of config
-	ResetForTesting()
-	if err := Initialize(); err != nil {
-		t.Fatalf("Initialize failed: %v", err)
-	}
-
-	if got := GetSyncMode(); got != SyncModeDoltNative {
-		t.Errorf("GetSyncMode() = %q, want %q", got, SyncModeDoltNative)
-	}
-}
-
 func TestGetSovereignty(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -155,26 +143,6 @@ func TestConfigWarningsToggle(t *testing.T) {
 	ConfigWarningWriter = oldWriter
 }
 
-func TestIsValidSyncMode(t *testing.T) {
-	tests := []struct {
-		mode  string
-		valid bool
-	}{
-		{"dolt-native", true},
-		{"Dolt-Native", true},          // case insensitive
-		{"git-portable", false},        // removed
-		{"belt-and-suspenders", false}, // removed
-		{"invalid", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		if got := IsValidSyncMode(tt.mode); got != tt.valid {
-			t.Errorf("IsValidSyncMode(%q) = %v, want %v", tt.mode, got, tt.valid)
-		}
-	}
-}
-
 func TestIsValidSovereignty(t *testing.T) {
 	tests := []struct {
 		sovereignty string
@@ -199,16 +167,6 @@ func TestIsValidSovereignty(t *testing.T) {
 	}
 }
 
-func TestValidSyncModes(t *testing.T) {
-	modes := ValidSyncModes()
-	if len(modes) != 1 {
-		t.Errorf("ValidSyncModes() returned %d modes, want 1", len(modes))
-	}
-	if modes[0] != "dolt-native" {
-		t.Errorf("ValidSyncModes()[0] = %q, want %q", modes[0], "dolt-native")
-	}
-}
-
 func TestValidSovereigntyTiers(t *testing.T) {
 	tiers := ValidSovereigntyTiers()
 	if len(tiers) != 4 {
@@ -219,12 +177,6 @@ func TestValidSovereigntyTiers(t *testing.T) {
 		if tier != expected[i] {
 			t.Errorf("ValidSovereigntyTiers()[%d] = %q, want %q", i, tier, expected[i])
 		}
-	}
-}
-
-func TestSyncModeString(t *testing.T) {
-	if got := SyncModeDoltNative.String(); got != "dolt-native" {
-		t.Errorf("SyncModeDoltNative.String() = %q, want %q", got, "dolt-native")
 	}
 }
 
