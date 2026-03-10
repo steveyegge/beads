@@ -38,7 +38,7 @@ from .models import (
 # ContextVar for request-scoped workspace routing
 current_workspace: ContextVar[str | None] = ContextVar('workspace', default=None)
 
-# Connection pool for per-project daemon sockets
+# Connection pool for per-project clients
 _connection_pool: dict[str, BdClientBase] = {}
 _pool_lock = asyncio.Lock()
 
@@ -53,13 +53,13 @@ DEFAULT_DEPENDENCY_TYPE: DependencyType = "blocks"
 def _register_client_for_cleanup(client: BdClientBase) -> None:
     """Register client with server cleanup system.
     
-    This ensures daemon connections are properly closed on server shutdown.
+    This ensures client connections are properly closed on server shutdown.
     Import is deferred to avoid circular dependency.
     """
     try:
         from . import server
-        if hasattr(server, '_daemon_clients'):
-            server._daemon_clients.append(client)
+        if hasattr(server, '_registered_clients'):
+            server._registered_clients.append(client)
     except (ImportError, AttributeError):
         # Server module not available or cleanup not initialized - that's ok
         pass
@@ -200,7 +200,7 @@ def _canonicalize_path(path: str) -> str:
     """Canonicalize workspace path to handle symlinks and git repos.
     
     This ensures that different paths pointing to the same project
-    (e.g., via symlinks) use the same daemon connection.
+    (e.g., via symlinks) use the same client connection.
     
     Args:
         path: Workspace directory path
@@ -217,7 +217,7 @@ def _canonicalize_path(path: str) -> str:
         return real
     
     # 3. Try to find git toplevel
-    # This ensures we connect to the right daemon for the git repo
+    # This ensures we connect to the right client for the git repo
     return _resolve_workspace_root(real)
 
 
@@ -230,7 +230,7 @@ async def _health_check_client(client: BdClientBase) -> bool:
     Returns:
         True if client is healthy, False otherwise
     """
-    # Only health check daemon clients
+    # Only health check clients that support ping
     if not hasattr(client, 'ping'):
         return True
     
@@ -243,24 +243,21 @@ async def _health_check_client(client: BdClientBase) -> bool:
 
 
 async def _reconnect_client(canonical: str, max_retries: int = 3) -> BdClientBase:
-    """Attempt to reconnect to daemon with exponential backoff.
-    
+    """Attempt to reconnect with exponential backoff.
+
     Args:
         canonical: Canonical workspace path
         max_retries: Maximum number of retry attempts (default: 3)
-        
+
     Returns:
         New client instance
-        
+
     Raises:
         BdError: If all reconnection attempts fail
     """
-    use_daemon = os.environ.get("BEADS_USE_DAEMON", "1") == "1"
-    
     for attempt in range(max_retries):
         try:
             client = create_bd_client(
-                prefer_daemon=use_daemon,
                 working_dir=canonical
             )
             
@@ -277,15 +274,15 @@ async def _reconnect_client(canonical: str, max_retries: int = 3) -> BdClientBas
             continue
     
     raise BdError(
-        f"Failed to connect to daemon after {max_retries} attempts. "
-        "The daemon may be stopped or unresponsive."
+        f"Failed to connect after {max_retries} attempts. "
+        "The bd client may be misconfigured or unresponsive."
     )
 
 
 async def _get_client() -> BdClientBase:
     """Get a BdClient instance for the current workspace.
     
-    Uses connection pool to manage per-project daemon sockets.
+    Uses connection pool to manage per-project clients.
     Workspace is auto-detected using the same logic as CLI:
     1. current_workspace ContextVar (from workspace_root parameter)
     2. BEADS_WORKING_DIR environment variable
@@ -295,7 +292,7 @@ async def _get_client() -> BdClientBase:
     On failure, drops from pool and attempts reconnection with exponential backoff.
     
     Performs version check on first connection to each workspace.
-    Uses daemon client if available, falls back to CLI client.
+    Uses CLI client for all operations.
 
     Returns:
         Configured BdClientBase instance for the current workspace
@@ -339,10 +336,7 @@ async def _get_client() -> BdClientBase:
                 _connection_pool[canonical] = client
         else:
             # Create new client for this workspace
-            use_daemon = os.environ.get("BEADS_USE_DAEMON", "1") == "1"
-            
             client = create_bd_client(
-                prefer_daemon=use_daemon,
                 working_dir=canonical
             )
             

@@ -251,7 +251,7 @@ func runBDDoctor(t *testing.T, bdPath, path string) (e2eDoctorResult, string, er
 	t.Helper()
 
 	cmd := exec.Command(bdPath, "doctor", path, "--json")
-	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+	cmd.Env = os.Environ()
 
 	out, execErr := cmd.Output()
 

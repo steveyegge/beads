@@ -28,7 +28,6 @@ func TestDoctorCheckHealthReportsVersionMismatchOnRepoLocalPort(t *testing.T) {
 
 	env := []string{
 		"BEADS_TEST_MODE=1",
-		"BEADS_NO_DAEMON=1",
 	}
 
 	initOut, initErr := runBDExecAllowErrorWithEnv(t, tmpDir, env, "init", "--backend", "dolt", "--prefix", "test", "--quiet")

@@ -40,11 +40,7 @@ Thumbs.db
 *.db-wal
 *.db-shm
 
-# Daemon runtime files
-.beads/daemon.log
-.beads/daemon.pid
-.beads/daemon.lock
-.beads/daemon-error
+# Runtime files
 .beads/bd.sock
 .beads/.exclusive-lock
 

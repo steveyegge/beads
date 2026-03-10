@@ -56,7 +56,7 @@ func initTemplateDB() {
 		// in-process test runs.
 		cmd := exec.Command(testBD, "init", "--prefix", "test", "--quiet")
 		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+		cmd.Env = os.Environ()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			templateDBErr = fmt.Errorf("template bd init failed: %v\n%s", err, out)
 			return
@@ -1087,7 +1087,7 @@ func TestCLI_CreateDryRun(t *testing.T) {
 		// Initialize the database first
 		initCmd := exec.Command(testBD, "init", "--prefix", "test", "--quiet")
 		initCmd.Dir = tmpDir
-		initCmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+		initCmd.Env = os.Environ()
 		if out, err := initCmd.CombinedOutput(); err != nil {
 			t.Fatalf("init failed: %v\n%s", err, out)
 		}
@@ -1099,7 +1099,7 @@ func TestCLI_CreateDryRun(t *testing.T) {
 		// Run create with --dry-run and --file (should error)
 		cmd := exec.Command(testBD, "create", "--file", mdFile, "--dry-run")
 		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+		cmd.Env = os.Environ()
 		out, err := cmd.CombinedOutput()
 
 		if err == nil {
@@ -1152,11 +1152,7 @@ func TestCLI_CreateDryRun(t *testing.T) {
 // Most bd commands accept short IDs (e.g., "5wbm") but comments add previously required
 // full IDs (e.g., "mike.vibe-coding-5wbm"). This test ensures short IDs work.
 //
-// Note: This test runs with --no-daemon (direct mode) where short IDs already work
-// because the code calls utils.ResolvePartialID(). The actual bug (GitHub #1070) is
-// in daemon mode where the ID isn't resolved before being sent to the RPC server.
-// The fix should add daemonClient.ResolveID() before daemonClient.AddComment(),
-// following the pattern in update.go and label.go.
+// Note: Short IDs work because the code calls utils.ResolvePartialID().
 func TestCLI_CommentsAddShortID(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping slow CLI test in short mode")
@@ -1297,7 +1293,7 @@ func TestCLI_CreateRejectsFlagLikeTitles(t *testing.T) {
 			// Initialize the database
 			initCmd := exec.Command(testBD, "init", "--prefix", "test", "--quiet")
 			initCmd.Dir = tmpDir
-			initCmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+			initCmd.Env = os.Environ()
 			if out, err := initCmd.CombinedOutput(); err != nil {
 				t.Fatalf("init failed: %v\n%s", err, out)
 			}
@@ -1305,7 +1301,7 @@ func TestCLI_CreateRejectsFlagLikeTitles(t *testing.T) {
 			// Attempt to create with a flag-like positional title
 			cmd := exec.Command(testBD, "create", tc.title)
 			cmd.Dir = tmpDir
-			cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+			cmd.Env = os.Environ()
 			out, err := cmd.CombinedOutput()
 
 			if err == nil {
