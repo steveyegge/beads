@@ -8,12 +8,14 @@
 package beads
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
@@ -167,12 +169,16 @@ func preferStableBranchWorktreeBeadsDir(beadsDir string) string {
 	return ""
 }
 
+// isDetachedCommitWorktreePath checks if a path follows the megarepo convention
+// of placing detached worktrees under refs/commits/<sha>.
 func isDetachedCommitWorktreePath(path string) bool {
 	return strings.Contains(filepath.ToSlash(path), "/refs/commits/")
 }
 
 func gitOutput(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
