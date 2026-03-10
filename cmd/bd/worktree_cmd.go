@@ -14,7 +14,6 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // WorktreeInfo contains information about a git worktree
@@ -205,17 +204,7 @@ func runWorktreeCreate(cmd *cobra.Command, args []string) error {
 
 	// Create redirect file
 	redirectPath := filepath.Join(worktreeBeadsDir, beads.RedirectFileName)
-	// Ensure mainBeadsDir is absolute for correct filepath.Rel() computation (GH#1098)
-	// beads.FindBeadsDir() may return a relative path in some contexts
-	absMainBeadsDir := utils.CanonicalizeIfRelative(mainBeadsDir)
-	// Compute relative path from worktree root (not .beads dir) because
-	// FollowRedirect resolves paths relative to the parent of .beads
-	worktreeRoot := filepath.Dir(worktreeBeadsDir)
-	relPath, err := filepath.Rel(worktreeRoot, absMainBeadsDir)
-	if err != nil {
-		// Fall back to absolute path
-		relPath = absMainBeadsDir
-	}
+	relPath := redirectTargetForWorktree(worktreeBeadsDir, mainBeadsDir)
 	// #nosec G306 - redirect file needs to be readable
 	if err := os.WriteFile(redirectPath, []byte(relPath+"\n"), 0644); err != nil {
 		cleanupWorktree()

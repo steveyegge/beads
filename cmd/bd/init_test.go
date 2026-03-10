@@ -185,6 +185,166 @@ func TestInitCommand(t *testing.T) {
 	}
 }
 
+func TestInitWorktreeAutoRedirect(t *testing.T) {
+	skipIfNoDolt(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping worktree test on Windows")
+	}
+
+	resetState := func(t *testing.T) {
+		t.Helper()
+		origDBPath := dbPath
+		origStore := store
+		origBeadsDir := os.Getenv("BEADS_DIR")
+		t.Cleanup(func() {
+			dbPath = origDBPath
+			store = origStore
+			if origBeadsDir != "" {
+				os.Setenv("BEADS_DIR", origBeadsDir)
+			} else {
+				os.Unsetenv("BEADS_DIR")
+			}
+			beads.ResetCaches()
+			git.ResetCaches()
+		})
+		dbPath = ""
+		store = nil
+		os.Unsetenv("BEADS_DIR")
+		initCmd.Flags().Set("prefix", "")
+		initCmd.Flags().Set("quiet", "false")
+		initCmd.Flags().Set("force", "false")
+		initCmd.Flags().Set("skip-hooks", "false")
+	}
+
+	runGit := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v in %s failed: %v\n%s", args, dir, err, out)
+		}
+	}
+
+	makeMainRepo := func(t *testing.T, root string) string {
+		t.Helper()
+		repo := filepath.Join(root, "main-repo")
+		if err := os.MkdirAll(repo, 0755); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repo, "init")
+		runGit(t, repo, "config", "user.email", "test@test.com")
+		runGit(t, repo, "config", "user.name", "Test")
+		runGit(t, repo, "commit", "--allow-empty", "-m", "initial")
+		return repo
+	}
+
+	t.Run("NonBareParentInitializesCanonicalBeads", func(t *testing.T) {
+		resetState(t)
+		tmpDir := t.TempDir()
+		mainRepo := makeMainRepo(t, tmpDir)
+		worktreeDir := filepath.Join(tmpDir, "my-worktree")
+		runGit(t, mainRepo, "worktree", "add", worktreeDir, "-b", "test-wt")
+		beads.ResetCaches()
+		git.ResetCaches()
+
+		t.Chdir(worktreeDir)
+		rootCmd.SetArgs([]string{"init", "--prefix", "wt-auto", "--skip-hooks", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("init from worktree failed: %v", err)
+		}
+
+		canonicalDBPath := filepath.Join(mainRepo, ".beads", "dolt")
+		if _, err := os.Stat(canonicalDBPath); os.IsNotExist(err) {
+			t.Fatalf("canonical Dolt dir missing: %s", canonicalDBPath)
+		}
+		redirectPath := filepath.Join(worktreeDir, ".beads", beads.RedirectFileName)
+		if _, err := os.Stat(redirectPath); os.IsNotExist(err) {
+			t.Fatalf("worktree redirect missing: %s", redirectPath)
+		}
+		worktreeDBPath := filepath.Join(worktreeDir, ".beads", "dolt")
+		if _, err := os.Stat(worktreeDBPath); err == nil {
+			t.Fatalf("worktree should not have local dolt dir: %s", worktreeDBPath)
+		}
+		got := beads.FollowRedirect(filepath.Join(worktreeDir, ".beads"))
+		want := filepath.Join(mainRepo, ".beads")
+		if got != want {
+			t.Fatalf("redirect target = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("ExistingCanonicalDBAttachesWorktree", func(t *testing.T) {
+		resetState(t)
+		tmpDir := t.TempDir()
+		mainRepo := makeMainRepo(t, tmpDir)
+
+		t.Chdir(mainRepo)
+		rootCmd.SetArgs([]string{"init", "--prefix", "parent", "--skip-hooks", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("init in main repo failed: %v", err)
+		}
+
+		worktreeDir := filepath.Join(tmpDir, "attach-worktree")
+		runGit(t, mainRepo, "worktree", "add", worktreeDir, "-b", "attach-wt")
+		beads.ResetCaches()
+		git.ResetCaches()
+
+		t.Chdir(worktreeDir)
+		rootCmd.SetArgs([]string{"init", "--prefix", "different", "--skip-hooks", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("attach init from worktree failed: %v", err)
+		}
+
+		got := beads.FollowRedirect(filepath.Join(worktreeDir, ".beads"))
+		want := filepath.Join(mainRepo, ".beads")
+		if got != want {
+			t.Fatalf("redirect target = %s, want %s", got, want)
+		}
+
+		store, err := openExistingTestDB(t, filepath.Join(mainRepo, ".beads", "dolt"))
+		if err != nil {
+			t.Fatalf("open canonical db failed: %v", err)
+		}
+		defer store.Close()
+
+		prefix, err := store.GetConfig(context.Background(), "issue_prefix")
+		if err != nil {
+			t.Fatalf("get prefix failed: %v", err)
+		}
+		if prefix != "parent" {
+			t.Fatalf("issue_prefix = %q, want %q", prefix, "parent")
+		}
+	})
+
+	t.Run("BareParentInitializesCommonDirBeads", func(t *testing.T) {
+		resetState(t)
+		tmpDir := t.TempDir()
+		sourceRepo := makeMainRepo(t, tmpDir)
+		bareRepo := filepath.Join(tmpDir, "origin.git")
+		runGit(t, tmpDir, "clone", "--bare", sourceRepo, bareRepo)
+		worktreeDir := filepath.Join(tmpDir, "bare-worktree")
+		runGit(t, bareRepo, "worktree", "add", worktreeDir, "master")
+		beads.ResetCaches()
+		git.ResetCaches()
+
+		t.Chdir(worktreeDir)
+		rootCmd.SetArgs([]string{"init", "--prefix", "barewt", "--skip-hooks", "--quiet"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("init from bare-backed worktree failed: %v", err)
+		}
+
+		canonicalBeads := filepath.Join(bareRepo, ".beads")
+		canonicalDBPath := filepath.Join(canonicalBeads, "dolt")
+		if _, err := os.Stat(canonicalDBPath); os.IsNotExist(err) {
+			t.Fatalf("bare canonical Dolt dir missing: %s", canonicalDBPath)
+		}
+		got := beads.FollowRedirect(filepath.Join(worktreeDir, ".beads"))
+		if got != canonicalBeads {
+			t.Fatalf("redirect target = %s, want %s", got, canonicalBeads)
+		}
+	})
+}
+
 // Note: Error case testing is omitted because the init command calls os.Exit()
 // on errors, which makes it difficult to test in a unit test context.
 

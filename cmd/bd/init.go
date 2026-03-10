@@ -46,7 +46,10 @@ With --stealth: configures per-repository git settings for invisible beads usage
 Beads requires a running dolt sql-server for database operations. If a server is detected
 on port 3307 or 3306, it is used automatically. Set connection details with --server-host,
 --server-port, and --server-user. Password should be set via BEADS_DOLT_PASSWORD
-environment variable.`,
+environment variable.
+
+When run from a git worktree, bd initializes the shared canonical .beads
+location and writes a local .beads/redirect in the calling worktree.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
@@ -180,31 +183,6 @@ environment variable.`,
 			prefix = "bd_" + prefix
 		}
 
-		// Determine beadsDir first (used for all storage path calculations).
-		// BEADS_DIR takes precedence, otherwise use CWD/.beads (with redirect support).
-		// This must be computed BEFORE initDBPath to ensure consistent path resolution
-		// (avoiding macOS /var -> /private/var symlink issues when directory creation
-		// happens between path computations).
-		var beadsDirForInit string
-		if envBeadsDir := os.Getenv("BEADS_DIR"); envBeadsDir != "" {
-			beadsDirForInit = utils.CanonicalizePath(envBeadsDir)
-		} else {
-			localBeadsDir := filepath.Join(".", ".beads")
-			beadsDirForInit = beads.FollowRedirect(localBeadsDir)
-		}
-
-		// Determine storage path.
-		//
-		// Precedence: --db > BEADS_DIR > default (.beads/dolt)
-		// If there's a redirect file, use the redirect target (GH#bd-0qel)
-		initDBPath := dbPath
-		if initDBPath == "" {
-			// Dolt backend: respect dolt_data_dir config / BEADS_DOLT_DATA_DIR env
-			initDBPath = doltserver.ResolveDoltDir(beadsDirForInit)
-		}
-
-		// Determine if we should create .beads/ directory in CWD or main repo root
-		// For worktrees, .beads should always be in the main repository root
 		cwd, err := os.Getwd()
 		if err != nil {
 			FatalError("failed to get current directory: %v", err)
@@ -218,30 +196,31 @@ environment variable.`,
 		if isGitRepo() {
 			isWorktree = git.IsWorktree()
 		}
-
-		// Prevent initialization from within a worktree (unless BEADS_DIR is
-		// explicitly set, which means the caller already knows where to init)
-		if isWorktree && !hasExplicitBeadsDir {
-			mainRepoRoot, err := git.GetMainRepoRoot()
-			if err != nil {
-				FatalError("failed to get main repository root: %v", err)
-			}
-
-			fmt.Fprintf(os.Stderr, "Error: cannot run 'bd init' from within a git worktree\n\n")
-			fmt.Fprintf(os.Stderr, "Git worktrees share the .beads database from the main repository.\n")
-			fmt.Fprintf(os.Stderr, "To fix this:\n\n")
-			fmt.Fprintf(os.Stderr, "  1. Initialize beads in the main repository:\n")
-			fmt.Fprintf(os.Stderr, "     cd %s\n", mainRepoRoot)
-			fmt.Fprintf(os.Stderr, "     bd init\n\n")
-			fmt.Fprintf(os.Stderr, "  2. Then create worktrees with beads support:\n")
-			fmt.Fprintf(os.Stderr, "     bd worktree create <path> --branch <branch-name>\n\n")
-			fmt.Fprintf(os.Stderr, "For more information, see: https://github.com/steveyegge/beads/blob/main/docs/WORKTREES.md\n")
-			os.Exit(1)
+		initLocation, err := resolveInitLocation(cwd, hasExplicitBeadsDir, isWorktree)
+		if err != nil {
+			FatalError("failed to resolve init location: %v", err)
 		}
 
-		// Use the beadsDir computed earlier (before any directory creation)
-		// to ensure consistent path representation.
-		beadsDir := beadsDirForInit
+		beadsDir := initLocation.CanonicalBeadsDir
+
+		attachOnly := false
+		if !force {
+			if initLocation.NeedsRedirect {
+				canonicalExists, err := beadsDatabaseExists(beadsDir)
+				if err != nil {
+					FatalError("failed to inspect canonical beads database: %v", err)
+				}
+				if canonicalExists {
+					attachOnly = true
+				} else if err := checkExistingBeadsDataAt(beadsDir, prefix); err != nil {
+					FatalError("%v", err)
+				}
+			} else {
+				if err := checkExistingBeadsDataAt(beadsDir, prefix); err != nil {
+					FatalError("%v", err)
+				}
+			}
+		}
 
 		// Prevent nested .beads directories
 		// Check if current working directory is inside a .beads directory
@@ -251,6 +230,52 @@ environment variable.`,
 			fmt.Fprintf(os.Stderr, "Current directory: %s\n", cwd)
 			fmt.Fprintf(os.Stderr, "Please run 'bd init' from outside the .beads directory.\n")
 			os.Exit(1)
+		}
+
+		if initLocation.NeedsRedirect {
+			if err := ensureWorktreeRedirectSafety(initLocation.WorktreeBeadsDir); err != nil {
+				FatalError("%v", err)
+			}
+		}
+
+		if attachOnly {
+			if err := ensureWorktreeRedirect(initLocation.WorktreeBeadsDir, beadsDir); err != nil {
+				FatalError("failed to create worktree redirect: %v", err)
+			}
+			if quiet {
+				return
+			}
+			fmt.Printf("\n%s Attached worktree to shared beads database.\n\n", ui.RenderPass("✓"))
+			fmt.Printf("  Shared .beads: %s\n", ui.RenderAccent(beadsDir))
+			fmt.Printf("  Worktree redirect: %s\n\n", ui.RenderAccent(initLocation.WorktreeBeadsDir))
+			doctorResult := runInitDiagnostics(cwd)
+			hasIssues := false
+			for _, check := range doctorResult.Checks {
+				if check.Status != statusOK {
+					hasIssues = true
+					break
+				}
+			}
+			if hasIssues {
+				fmt.Printf("%s Setup incomplete. Some issues were detected:\n", ui.RenderWarn("⚠"))
+				for _, check := range doctorResult.Checks {
+					if check.Status != statusOK {
+						fmt.Printf("  • %s: %s\n", check.Name, check.Message)
+					}
+				}
+				fmt.Printf("\nRun %s to see details and fix these issues.\n\n", ui.RenderAccent("bd doctor --fix"))
+			}
+			return
+		}
+
+		// Determine storage path.
+		//
+		// Precedence: --db > BEADS_DIR > default (.beads/dolt)
+		// If there's a redirect file, use the redirect target (GH#bd-0qel)
+		initDBPath := dbPath
+		if initDBPath == "" {
+			// Dolt backend: respect dolt_data_dir config / BEADS_DOLT_DATA_DIR env
+			initDBPath = doltserver.ResolveDoltDir(beadsDir)
 		}
 
 		initDBDir := filepath.Dir(initDBPath)
@@ -306,6 +331,12 @@ environment variable.`,
 					fmt.Fprintf(os.Stderr, "Warning: failed to create interactions.jsonl: %v\n", err)
 					// Non-fatal - continue anyway
 				}
+			}
+		}
+
+		if initLocation.NeedsRedirect {
+			if err := ensureWorktreeRedirect(initLocation.WorktreeBeadsDir, beadsDir); err != nil {
+				FatalError("failed to create worktree redirect: %v", err)
 			}
 		}
 
@@ -853,6 +884,147 @@ environment variable.`,
 			fmt.Printf("\nRun %s to see details and fix these issues.\n\n", ui.RenderAccent("bd doctor --fix"))
 		}
 	},
+}
+
+type initLocation struct {
+	CanonicalBeadsDir string
+	WorktreeBeadsDir  string
+	NeedsRedirect     bool
+	SharedRepoBare    bool
+}
+
+func resolveInitLocation(cwd string, hasExplicitBeadsDir bool, isWorktree bool) (initLocation, error) {
+	if hasExplicitBeadsDir {
+		return initLocation{
+			CanonicalBeadsDir: utils.CanonicalizePath(os.Getenv("BEADS_DIR")),
+		}, nil
+	}
+
+	if !isGitRepo() || !isWorktree {
+		return initLocation{
+			CanonicalBeadsDir: beads.FollowRedirect(filepath.Join(cwd, ".beads")),
+		}, nil
+	}
+
+	worktreeRoot := git.GetRepoRoot()
+	if worktreeRoot == "" {
+		return initLocation{}, fmt.Errorf("failed to determine worktree root")
+	}
+
+	commonDir, err := git.GetGitCommonDir()
+	if err != nil {
+		return initLocation{}, err
+	}
+
+	sharedRepoBare := isBareGitDir(commonDir)
+	canonicalBeadsDir := ""
+	if sharedRepoBare {
+		canonicalBeadsDir = filepath.Join(commonDir, ".beads")
+	} else {
+		mainRepoRoot, err := git.GetMainRepoRoot()
+		if err != nil {
+			return initLocation{}, err
+		}
+		canonicalBeadsDir = filepath.Join(mainRepoRoot, ".beads")
+	}
+
+	return initLocation{
+		CanonicalBeadsDir: utils.CanonicalizePath(canonicalBeadsDir),
+		WorktreeBeadsDir:  filepath.Join(worktreeRoot, ".beads"),
+		NeedsRedirect:     true,
+		SharedRepoBare:    sharedRepoBare,
+	}, nil
+}
+
+func isBareGitDir(gitDir string) bool {
+	cmd := exec.Command("git", "--git-dir", gitDir, "rev-parse", "--is-bare-repository")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(output)) == "true"
+}
+
+func ensureWorktreeRedirectSafety(worktreeBeadsDir string) error {
+	info, err := os.Stat(worktreeBeadsDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to inspect worktree .beads directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("worktree .beads path is not a directory: %s", worktreeBeadsDir)
+	}
+
+	entries, err := os.ReadDir(worktreeBeadsDir)
+	if err != nil {
+		return fmt.Errorf("failed to read worktree .beads directory: %w", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		switch name {
+		case ".gitignore", ".gitkeep", beads.RedirectFileName:
+			continue
+		default:
+			return fmt.Errorf("refusing to replace existing worktree .beads contents at %s; found %s", worktreeBeadsDir, name)
+		}
+	}
+	return nil
+}
+
+func ensureWorktreeRedirect(worktreeBeadsDir, targetBeadsDir string) error {
+	if err := os.MkdirAll(worktreeBeadsDir, 0750); err != nil {
+		return err
+	}
+	redirectPath := filepath.Join(worktreeBeadsDir, beads.RedirectFileName)
+	redirectTarget := redirectTargetForWorktree(worktreeBeadsDir, targetBeadsDir)
+	if err := os.WriteFile(redirectPath, []byte(redirectTarget+"\n"), 0644); err != nil {
+		return err
+	}
+	gitignorePath := filepath.Join(worktreeBeadsDir, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte(doctor.GitignoreTemplate), 0600); err != nil {
+		return err
+	}
+	return nil
+}
+
+func beadsDatabaseExists(beadsDir string) (bool, error) {
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return false, nil
+	}
+
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
+		doltPath := doltserver.ResolveDoltDir(beadsDir)
+		if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
+			return true, nil
+		}
+		if cfg.IsDoltServerMode() {
+			result := checkDatabaseOnServer(
+				cfg.GetDoltServerHost(),
+				doltserver.DefaultConfig(beadsDir).Port,
+				cfg.GetDoltServerUser(),
+				cfg.GetDoltServerPassword(),
+				cfg.GetDoltDatabase(),
+			)
+			if result.Reachable && result.Exists && result.Err == nil {
+				return true, nil
+			}
+			return false, nil
+		}
+		return false, nil
+	}
+
+	redirectTarget := beads.FollowRedirect(beadsDir)
+	if redirectTarget != beadsDir {
+		return beadsDatabaseExists(redirectTarget)
+	}
+
+	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	if _, err := os.Stat(dbPath); err == nil {
+		return true, nil
+	}
+	return false, nil
 }
 
 func init() {

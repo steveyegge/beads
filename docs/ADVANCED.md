@@ -162,6 +162,11 @@ When agents discover duplicate issues, they should:
 
 Git worktrees work with bd. Each worktree can have its own `.beads` directory, or worktrees can share a database via redirects (see [Database Redirects](#database-redirects)).
 
+Running `bd init` inside a worktree now bootstraps the shared canonical store automatically:
+- non-bare parent: canonical location is the parent repo's `.beads/`
+- bare parent: canonical location is `$(git rev-parse --git-common-dir)/.beads/`
+- the calling worktree gets a local `.beads/redirect` pointing at that canonical store
+
 **With Dolt backend:** Each worktree operates directly on the database — no special coordination needed. Use `bd dolt push` to sync with Dolt remotes when ready.
 
 **With Dolt server mode:** Multiple worktrees can connect to the same Dolt server for concurrent access without conflicts.
