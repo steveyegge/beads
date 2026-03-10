@@ -220,6 +220,85 @@ func TestApplyMetadataEdits_UnsetNonexistentKey(t *testing.T) {
 	}
 }
 
+func TestMergeMetadata_MergesKeys(t *testing.T) {
+	t.Parallel()
+	existing := json.RawMessage(`{"key1":"value1","key2":"value2"}`)
+	incoming := json.RawMessage(`{"key3":"value3"}`)
+	result, err := mergeMetadata(existing, incoming)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(result, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if string(data["key1"]) != `"value1"` {
+		t.Errorf("expected key1=value1, got %s", data["key1"])
+	}
+	if string(data["key2"]) != `"value2"` {
+		t.Errorf("expected key2=value2, got %s", data["key2"])
+	}
+	if string(data["key3"]) != `"value3"` {
+		t.Errorf("expected key3=value3, got %s", data["key3"])
+	}
+}
+
+func TestMergeMetadata_OverwritesExistingKeys(t *testing.T) {
+	t.Parallel()
+	existing := json.RawMessage(`{"key1":"old","key2":"keep"}`)
+	incoming := json.RawMessage(`{"key1":"new"}`)
+	result, err := mergeMetadata(existing, incoming)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(result, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if string(data["key1"]) != `"new"` {
+		t.Errorf("expected key1=new, got %s", data["key1"])
+	}
+	if string(data["key2"]) != `"keep"` {
+		t.Errorf("expected key2=keep, got %s", data["key2"])
+	}
+}
+
+func TestMergeMetadata_NilExisting(t *testing.T) {
+	t.Parallel()
+	incoming := json.RawMessage(`{"key1":"value1"}`)
+	result, err := mergeMetadata(nil, incoming)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(result, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if string(data["key1"]) != `"value1"` {
+		t.Errorf("expected key1=value1, got %s", data["key1"])
+	}
+}
+
+func TestMergeMetadata_NonObjectExisting(t *testing.T) {
+	t.Parallel()
+	existing := json.RawMessage(`"just a string"`)
+	incoming := json.RawMessage(`{"key1":"value1"}`)
+	_, err := mergeMetadata(existing, incoming)
+	if err == nil {
+		t.Fatal("expected error for non-object existing metadata")
+	}
+}
+
+func TestMergeMetadata_NonObjectIncoming(t *testing.T) {
+	t.Parallel()
+	existing := json.RawMessage(`{"key1":"value1"}`)
+	incoming := json.RawMessage(`"just a string"`)
+	_, err := mergeMetadata(existing, incoming)
+	if err == nil {
+		t.Fatal("expected error for non-object incoming metadata")
+	}
+}
+
 func TestToJSONValue(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
