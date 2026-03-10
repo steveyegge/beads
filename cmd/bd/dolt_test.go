@@ -437,8 +437,9 @@ func TestDoltConfigGetters(t *testing.T) {
 	})
 
 	t.Run("GetDoltServerPort defaults", func(t *testing.T) {
-		// Clear test server port override so GetDoltServerPort() returns the struct default
+		// Clear test server port overrides so GetDoltServerPort() returns the struct default
 		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+		t.Setenv("BEADS_DOLT_PORT", "")
 		cfg := configfile.DefaultConfig()
 		if cfg.GetDoltServerPort() != configfile.DefaultDoltServerPort {
 			t.Errorf("expected default port %d, got %d",

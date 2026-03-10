@@ -258,9 +258,15 @@ func (c *Config) GetDoltServerHost() string {
 // Kept for backward compatibility with external consumers.
 //
 // GetDoltServerPort returns the Dolt server port.
-// Checks BEADS_DOLT_SERVER_PORT env var first, then config, then default.
+// Checks BEADS_DOLT_SERVER_PORT env var first, then BEADS_DOLT_PORT (Gas Town sets this),
+// then config, then default.
 func (c *Config) GetDoltServerPort() int {
 	if p := os.Getenv("BEADS_DOLT_SERVER_PORT"); p != "" {
+		if port, err := strconv.Atoi(p); err == nil {
+			return port
+		}
+	}
+	if p := os.Getenv("BEADS_DOLT_PORT"); p != "" {
 		if port, err := strconv.Atoi(p); err == nil {
 			return port
 		}
