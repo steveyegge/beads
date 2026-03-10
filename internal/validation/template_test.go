@@ -253,6 +253,42 @@ func TestLintIssue(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "task with plain-text acceptance field (no heading) GH#2468",
+			issue: &types.Issue{
+				IssueType:          types.TypeTask,
+				Description:        "Do the thing",
+				AcceptanceCriteria: "- Criterion one\n- Criterion two",
+			},
+			wantErr: false,
+		},
+		{
+			name: "feature with plain-text acceptance field (no heading) GH#2468",
+			issue: &types.Issue{
+				IssueType:          types.TypeFeature,
+				Description:        "Add new widget",
+				AcceptanceCriteria: "Widget displays correctly",
+			},
+			wantErr: false,
+		},
+		{
+			name: "epic with plain-text acceptance field satisfies success criteria GH#2468",
+			issue: &types.Issue{
+				IssueType:          types.TypeEpic,
+				Description:        "Big project",
+				AcceptanceCriteria: "Project ships and users happy",
+			},
+			wantErr: false,
+		},
+		{
+			name: "bug with plain-text acceptance field still needs steps GH#2468",
+			issue: &types.Issue{
+				IssueType:          types.TypeBug,
+				Description:        "Something is broken",
+				AcceptanceCriteria: "It should work",
+			},
+			wantErr: true,
+		},
+		{
 			name: "chore always valid",
 			issue: &types.Issue{
 				IssueType:   types.TypeChore,

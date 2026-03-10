@@ -73,8 +73,9 @@ func ValidateTemplate(issueType types.IssueType, description string) error {
 
 // LintIssue checks an existing issue for missing template sections.
 // Unlike ValidateTemplate, this operates on a full Issue struct.
-// It checks both Description and AcceptanceCriteria fields, since
-// required sections (like "## Acceptance Criteria") may appear in either.
+// It checks both Description and AcceptanceCriteria fields.
+// A non-empty AcceptanceCriteria field satisfies the "Acceptance Criteria"
+// (or "Success Criteria" for epics) requirement without needing a heading. (GH#2468)
 // Returns nil if the issue passes validation or has no requirements.
 func LintIssue(issue *types.Issue) error {
 	if issue == nil {
@@ -84,5 +85,28 @@ func LintIssue(issue *types.Issue) error {
 	if issue.AcceptanceCriteria != "" {
 		text = text + "\n" + issue.AcceptanceCriteria
 	}
-	return ValidateTemplate(issue.IssueType, text)
+	err := ValidateTemplate(issue.IssueType, text)
+	if err == nil || issue.AcceptanceCriteria == "" {
+		return err
+	}
+
+	// A non-empty AcceptanceCriteria field satisfies "Acceptance Criteria"
+	// or "Success Criteria" requirements even without the heading text.
+	templateErr, ok := err.(*TemplateError)
+	if !ok {
+		return err
+	}
+	var remaining []MissingSection
+	for _, m := range templateErr.Missing {
+		heading := strings.ToLower(strings.TrimPrefix(m.Heading, "## "))
+		if heading == "acceptance criteria" || heading == "success criteria" {
+			continue // satisfied by the dedicated field
+		}
+		remaining = append(remaining, m)
+	}
+	if len(remaining) == 0 {
+		return nil
+	}
+	templateErr.Missing = remaining
+	return templateErr
 }
