@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/git"
@@ -308,6 +309,59 @@ func TestFindBeadsDirValidatesBeadsDirEnv(t *testing.T) {
 	}
 }
 
+func TestFindBeadsDirPrefersBranchWorktreeForDetachedCommitBEADS_DIR(t *testing.T) {
+	originalEnv := os.Getenv("BEADS_DIR")
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
+
+	detachedBeadsDir, mainBeadsDir, _ := setupDetachedCommitBeadsWorktree(t)
+	os.Setenv("BEADS_DIR", detachedBeadsDir)
+
+	result := FindBeadsDir()
+
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	mainResolved, _ := filepath.EvalSymlinks(mainBeadsDir)
+
+	if resultResolved != mainResolved {
+		t.Errorf("FindBeadsDir() = %q, want stable branch worktree %q", result, mainBeadsDir)
+	}
+}
+
+func TestFindDatabasePathPrefersBranchWorktreeForDetachedCommitBEADS_DIR(t *testing.T) {
+	originalEnvDir := os.Getenv("BEADS_DIR")
+	originalEnvDB := os.Getenv("BEADS_DB")
+	defer func() {
+		if originalEnvDir != "" {
+			os.Setenv("BEADS_DIR", originalEnvDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		if originalEnvDB != "" {
+			os.Setenv("BEADS_DB", originalEnvDB)
+		} else {
+			os.Unsetenv("BEADS_DB")
+		}
+	}()
+	os.Unsetenv("BEADS_DB")
+
+	detachedBeadsDir, _, mainDoltDir := setupDetachedCommitBeadsWorktree(t)
+	os.Setenv("BEADS_DIR", detachedBeadsDir)
+
+	result := FindDatabasePath()
+
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	mainResolved, _ := filepath.EvalSymlinks(mainDoltDir)
+
+	if resultResolved != mainResolved {
+		t.Errorf("FindDatabasePath() = %q, want stable branch worktree db %q", result, mainDoltDir)
+	}
+}
+
 func TestFindDatabasePathHomeDefault(t *testing.T) {
 	// This test verifies that if no database is found, it falls back to home directory
 	// We can't reliably test this without modifying the home directory, so we'll skip
@@ -340,6 +394,63 @@ func TestFindDatabasePathHomeDefault(t *testing.T) {
 	if result != "" && !filepath.IsAbs(result) {
 		t.Errorf("Expected absolute path or empty string, got '%s'", result)
 	}
+}
+
+func setupDetachedCommitBeadsWorktree(t *testing.T) (string, string, string) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	storeDir := filepath.Join(tmpDir, "store")
+	bareDir := filepath.Join(storeDir, ".bare")
+	mainWorktreeDir := filepath.Join(storeDir, "refs", "heads", "main")
+
+	if err := os.MkdirAll(filepath.Dir(mainWorktreeDir), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("git", "init", "--bare", bareDir)
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	runGitInDir(t, tmpDir, "--git-dir", bareDir, "worktree", "add", "-b", "main", mainWorktreeDir)
+	runGitInDir(t, mainWorktreeDir, "config", "user.email", "test@example.com")
+	runGitInDir(t, mainWorktreeDir, "config", "user.name", "Test User")
+
+	mainBeadsDir := filepath.Join(mainWorktreeDir, ".beads")
+	mainDoltDir := filepath.Join(mainBeadsDir, "dolt")
+	if err := os.MkdirAll(mainDoltDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mainWorktreeDir, "README.md"), []byte("# Test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runGitInDir(t, mainWorktreeDir, "add", "-A")
+	runGitInDir(t, mainWorktreeDir, "commit", "-m", "Initial commit")
+
+	head := runGitInDir(t, mainWorktreeDir, "rev-parse", "HEAD")
+	detachedWorktreeDir := filepath.Join(storeDir, "refs", "commits", head)
+	if err := os.MkdirAll(filepath.Dir(detachedWorktreeDir), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	runGitInDir(t, tmpDir, "--git-dir", bareDir, "worktree", "add", "--detach", detachedWorktreeDir, head)
+
+	return filepath.Join(detachedWorktreeDir, ".beads"), mainBeadsDir, mainDoltDir
+}
+
+func runGitInDir(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed in %s: %v\n%s", args, dir, err, output)
+	}
+
+	return strings.TrimSpace(string(output))
 }
 
 // TestFollowRedirect tests the redirect file functionality
