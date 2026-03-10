@@ -615,7 +615,7 @@ func readJSONLFile(path string) ([]json.RawMessage, error) {
 //
 // Returns nil if the schema looks valid, or an error describing the mismatch.
 func validateIssueJSONLSchema(path string) error {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path is from trusted backup directory, not user-controlled
 	if err != nil {
 		return fmt.Errorf("cannot open %s: %w", path, err)
 	}
