@@ -75,8 +75,9 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	if _, err := s.DB().ExecContext(ctx, `INSERT INTO comments (issue_id, author, text) VALUES (?, ?, ?)`, "rt-1", "tester", "first comment"); err != nil {
 		t.Fatalf("insert comment: %v", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, metadata) VALUES (?, ?, ?, ?, '{}')`,
-		"rt-2", "rt-1", "blocks", "tester"); err != nil {
+	depMetadata := `{"gate":"any-children","spawner_id":"rt-1"}`
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, metadata) VALUES (?, ?, ?, ?, ?)`,
+		"rt-2", "rt-1", "blocks", "tester", depMetadata); err != nil {
 		t.Fatalf("insert dependency: %v", err)
 	}
 	if err := s.SetConfig(ctx, "issue_prefix", "rt"); err != nil {
@@ -159,6 +160,16 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 		t.Errorf("labels count = %d, want 2", len(labels))
 	}
 
+	var restoredMetadata string
+	if err := s2.DB().QueryRowContext(ctx,
+		`SELECT metadata FROM dependencies WHERE issue_id = ? AND depends_on_id = ?`,
+		"rt-2", "rt-1").Scan(&restoredMetadata); err != nil {
+		t.Fatalf("query restored dependency metadata: %v", err)
+	}
+	if restoredMetadata != depMetadata {
+		t.Errorf("restored dependency metadata = %q, want %q", restoredMetadata, depMetadata)
+	}
+
 	// Verify config was restored
 	prefix, err := s2.GetConfig(ctx, "issue_prefix")
 	if err != nil {
@@ -231,6 +242,74 @@ func TestBackupRestoreDryRun(t *testing.T) {
 	_, err = s.GetIssue(ctx, "dry-1")
 	if err == nil {
 		t.Error("dry-run should not have written issue to database")
+	}
+}
+
+func TestBackupRestoreDependenciesWithoutMetadataDefaultsToEmptyObject(t *testing.T) {
+	if testDoltServerPort == 0 {
+		t.Skip("Dolt test server not available")
+	}
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
+	}
+
+	ensureTestMode(t)
+	saved := saveAndRestoreGlobals(t)
+	_ = saved
+
+	tmpDir := t.TempDir()
+	backupPath := filepath.Join(tmpDir, "backup")
+	if err := os.MkdirAll(backupPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	issuesData := "" +
+		`{"id":"compat-1","title":"Compat Parent","status":"open","priority":2,"issue_type":"task"}` + "\n" +
+		`{"id":"compat-2","title":"Compat Child","status":"open","priority":2,"issue_type":"task"}` + "\n"
+	if err := os.WriteFile(filepath.Join(backupPath, "issues.jsonl"), []byte(issuesData), 0600); err != nil {
+		t.Fatal(err)
+	}
+	depsData := `{"issue_id":"compat-2","depends_on_id":"compat-1","type":"blocks","created_by":"tester"}` + "\n"
+	if err := os.WriteFile(filepath.Join(backupPath, "dependencies.jsonl"), []byte(depsData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	dbName := uniqueTestDBName(t)
+	testDBPath := filepath.Join(t.TempDir(), "dolt")
+	writeTestMetadata(t, testDBPath, dbName)
+	s := newTestStore(t, testDBPath)
+	store = s
+	storeMutex.Lock()
+	storeActive = true
+	storeMutex.Unlock()
+	t.Cleanup(func() {
+		store = nil
+		storeMutex.Lock()
+		storeActive = false
+		storeMutex.Unlock()
+	})
+
+	ctx := context.Background()
+
+	result, err := runBackupRestore(ctx, s, backupPath, false)
+	if err != nil {
+		t.Fatalf("restore from old-format dependency backup: %v", err)
+	}
+	if result.Dependencies != 1 {
+		t.Fatalf("restored dependencies = %d, want 1", result.Dependencies)
+	}
+	if result.Warnings != 0 {
+		t.Fatalf("restore warnings = %d, want 0", result.Warnings)
+	}
+
+	var restoredMetadata string
+	if err := s.DB().QueryRowContext(ctx,
+		`SELECT metadata FROM dependencies WHERE issue_id = ? AND depends_on_id = ?`,
+		"compat-2", "compat-1").Scan(&restoredMetadata); err != nil {
+		t.Fatalf("query restored dependency metadata: %v", err)
+	}
+	if restoredMetadata != "{}" {
+		t.Errorf("restored dependency metadata = %q, want %q", restoredMetadata, "{}")
 	}
 }
 
