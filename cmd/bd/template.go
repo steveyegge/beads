@@ -118,43 +118,31 @@ func loadDescendants(ctx context.Context, s *dolt.DoltStore, subgraph *TemplateS
 	// Track children we've already added to avoid duplicates
 	addedChildren := make(map[string]bool)
 
-	// Strategy 1: GetDependents returns issues that depend on parentID
-	dependents, err := s.GetDependents(ctx, parentID)
+	// Strategy 1: Get direct parent-child dependents with relationship metadata.
+	dependents, err := s.GetDependentsWithMetadata(ctx, parentID)
 	if err != nil {
 		return fmt.Errorf("failed to get dependents of %s: %w", parentID, err)
 	}
 
-	// Check each dependent to see if it's a child (has parent-child relationship)
+	// Only keep explicit parent-child relationships.
 	for _, dependent := range dependents {
+		if dependent.DependencyType != types.DepParentChild {
+			continue
+		}
+
 		if _, exists := subgraph.IssueMap[dependent.ID]; exists {
 			continue // Already in subgraph
 		}
 
-		// Check if this dependent has a parent-child relationship with parentID
-		depRecs, err := s.GetDependencyRecords(ctx, dependent.ID)
-		if err != nil {
-			continue
-		}
-
-		isChild := false
-		for _, depRec := range depRecs {
-			if depRec.DependsOnID == parentID && depRec.Type == types.DepParentChild {
-				isChild = true
-				break
-			}
-		}
-
-		if !isChild {
-			continue
-		}
+		child := dependent.Issue
 
 		// Add to subgraph
-		subgraph.Issues = append(subgraph.Issues, dependent)
-		subgraph.IssueMap[dependent.ID] = dependent
-		addedChildren[dependent.ID] = true
+		subgraph.Issues = append(subgraph.Issues, &child)
+		subgraph.IssueMap[child.ID] = &child
+		addedChildren[child.ID] = true
 
 		// Recurse to get children of this child
-		if err := loadDescendants(ctx, s, subgraph, dependent.ID); err != nil {
+		if err := loadDescendants(ctx, s, subgraph, child.ID); err != nil {
 			return err
 		}
 	}
@@ -193,26 +181,17 @@ func loadDescendants(ctx context.Context, s *dolt.DoltStore, subgraph *TemplateS
 // findHierarchicalChildren finds issues with IDs that match the pattern parentID.N
 // This catches hierarchical children that may be missing parent-child dependencies.
 func findHierarchicalChildren(ctx context.Context, s *dolt.DoltStore, parentID string) ([]*types.Issue, error) {
-	// Look for issues with IDs starting with "parentID."
-	// We need to query by ID pattern, which requires listing issues
 	pattern := parentID + "."
-
-	// Use the storage's search capability with a filter
-	allIssues, err := s.SearchIssues(ctx, "", types.IssueFilter{})
+	candidates, err := s.SearchIssues(ctx, "", types.IssueFilter{IDPrefix: pattern})
 	if err != nil {
 		return nil, err
 	}
 
 	var children []*types.Issue
-	for _, issue := range allIssues {
-		// Check if ID starts with pattern and is a direct child (no further dots after the pattern)
-		if len(issue.ID) > len(pattern) && issue.ID[:len(pattern)] == pattern {
-			// Check it's a direct child, not a grandchild
-			// e.g., "parent.1" is a child, "parent.1.2" is a grandchild
-			remaining := issue.ID[len(pattern):]
-			if !strings.Contains(remaining, ".") {
-				children = append(children, issue)
-			}
+	for _, issue := range candidates {
+		_, directParentID, depth := types.ParseHierarchicalID(issue.ID)
+		if depth > 0 && directParentID == parentID {
+			children = append(children, issue)
 		}
 	}
 
