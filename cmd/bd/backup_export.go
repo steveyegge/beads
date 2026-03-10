@@ -174,7 +174,7 @@ func runBackupExport(ctx context.Context, force bool) (*backupState, error) {
 	state.Counts.Comments = n
 
 	n, err = exportTable(ctx, store, dir, "dependencies.jsonl",
-		"SELECT issue_id, depends_on_id, type, created_at, created_by FROM dependencies ORDER BY issue_id, depends_on_id")
+		"SELECT issue_id, depends_on_id, type, created_at, created_by, metadata FROM dependencies ORDER BY issue_id, depends_on_id")
 	if err != nil {
 		return nil, fmt.Errorf("backup dependencies: %w", err)
 	}

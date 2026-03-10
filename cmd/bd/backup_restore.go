@@ -361,11 +361,12 @@ func restoreDependencies(ctx context.Context, db *sql.DB, path string, dryRun bo
 	warnings := 0
 	for _, line := range lines {
 		var dep struct {
-			IssueID     string `json:"issue_id"`
-			DependsOnID string `json:"depends_on_id"`
-			Type        string `json:"type"`
-			CreatedAt   string `json:"created_at"`
-			CreatedBy   string `json:"created_by"`
+			IssueID     string  `json:"issue_id"`
+			DependsOnID string  `json:"depends_on_id"`
+			Type        string  `json:"type"`
+			CreatedAt   string  `json:"created_at"`
+			CreatedBy   string  `json:"created_by"`
+			Metadata    *string `json:"metadata"`
 		}
 		if err := json.Unmarshal(line, &dep); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: skipping invalid dependency line: %v\n", err)
@@ -377,10 +378,22 @@ func restoreDependencies(ctx context.Context, db *sql.DB, path string, dryRun bo
 		}
 		if !dryRun {
 			createdAt := parseTimeOrNow(dep.CreatedAt)
+			meta := "{}"
+			if dep.Metadata != nil {
+				raw := strings.TrimSpace(*dep.Metadata)
+				if raw != "" {
+					if !json.Valid([]byte(raw)) {
+						fmt.Fprintf(os.Stderr, "Warning: invalid dependency metadata for %s -> %s; defaulting to {}\n", dep.IssueID, dep.DependsOnID)
+						warnings++
+					} else {
+						meta = raw
+					}
+				}
+			}
 			_, err := db.ExecContext(ctx, `
 				INSERT IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata)
-				VALUES (?, ?, ?, ?, ?, '{}')
-			`, dep.IssueID, dep.DependsOnID, dep.Type, createdAt, dep.CreatedBy)
+				VALUES (?, ?, ?, ?, ?, ?)
+			`, dep.IssueID, dep.DependsOnID, dep.Type, createdAt, dep.CreatedBy, meta)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to restore dependency %s -> %s: %v\n", dep.IssueID, dep.DependsOnID, err)
 				warnings++

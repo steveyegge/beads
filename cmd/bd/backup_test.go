@@ -161,6 +161,12 @@ func TestBackupExport(t *testing.T) {
 		t.Fatalf("insert event: %v", err)
 	}
 
+	depMetadata := `{"gate":"any-children","spawner_id":"test-1"}`
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, metadata) VALUES (?, ?, ?, ?, ?)`,
+		"test-2", "test-1", "blocks", "tester", depMetadata); err != nil {
+		t.Fatalf("insert dependency: %v", err)
+	}
+
 	// Commit so GetCurrentCommit returns something
 	if _, err := s.DB().ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'test data')"); err != nil {
 		t.Fatalf("dolt commit: %v", err)
@@ -181,13 +187,16 @@ func TestBackupExport(t *testing.T) {
 	if state.Counts.Events != 1 {
 		t.Errorf("events = %d, want 1", state.Counts.Events)
 	}
+	if state.Counts.Dependencies != 1 {
+		t.Errorf("dependencies = %d, want 1", state.Counts.Dependencies)
+	}
 	if state.LastDoltCommit == "" {
 		t.Error("expected non-empty dolt commit")
 	}
 
 	// Verify files exist
 	backupPath := filepath.Join(beadsDir, "backup")
-	for _, file := range []string{"issues.jsonl", "events.jsonl", "labels.jsonl", "config.jsonl", "backup_state.json"} {
+	for _, file := range []string{"issues.jsonl", "events.jsonl", "dependencies.jsonl", "labels.jsonl", "config.jsonl", "backup_state.json"} {
 		path := filepath.Join(backupPath, file)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			t.Errorf("expected file %s to exist", file)
@@ -202,6 +211,29 @@ func TestBackupExport(t *testing.T) {
 	lines := splitJSONL(issuesData)
 	if len(lines) != 2 {
 		t.Errorf("issues.jsonl has %d lines, want 2", len(lines))
+	}
+
+	depsData, err := os.ReadFile(filepath.Join(backupPath, "dependencies.jsonl"))
+	if err != nil {
+		t.Fatalf("read dependencies.jsonl: %v", err)
+	}
+	depLines := splitJSONL(depsData)
+	if len(depLines) != 1 {
+		t.Fatalf("dependencies.jsonl has %d lines, want 1", len(depLines))
+	}
+	var depRow struct {
+		IssueID     string `json:"issue_id"`
+		DependsOnID string `json:"depends_on_id"`
+		Metadata    string `json:"metadata"`
+	}
+	if err := json.Unmarshal(depLines[0], &depRow); err != nil {
+		t.Fatalf("unmarshal dependency row: %v", err)
+	}
+	if depRow.IssueID != "test-2" || depRow.DependsOnID != "test-1" {
+		t.Fatalf("dependency row = %s -> %s, want test-2 -> test-1", depRow.IssueID, depRow.DependsOnID)
+	}
+	if depRow.Metadata != depMetadata {
+		t.Errorf("dependency metadata = %q, want %q", depRow.Metadata, depMetadata)
 	}
 
 	// Second export with no changes should be a no-op
