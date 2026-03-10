@@ -20,7 +20,13 @@ import (
 //	    FatalError("%v", err)
 //	}
 func FatalError(format string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	if jsonOutput {
+		data, _ := json.MarshalIndent(map[string]string{"error": msg}, "", "  ")
+		fmt.Fprintln(os.Stderr, string(data))
+	} else {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
+	}
 	os.Exit(1)
 }
 
@@ -53,8 +59,13 @@ func FatalErrorRespectJSON(format string, args ...interface{}) {
 //
 //	FatalErrorWithHint("database not found", "Run 'bd init' to create a database")
 func FatalErrorWithHint(message, hint string) {
-	fmt.Fprintf(os.Stderr, "Error: %s\n", message)
-	fmt.Fprintf(os.Stderr, "Hint: %s\n", hint)
+	if jsonOutput {
+		data, _ := json.MarshalIndent(map[string]string{"error": message, "hint": hint}, "", "  ")
+		fmt.Fprintln(os.Stderr, string(data))
+	} else {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", message)
+		fmt.Fprintf(os.Stderr, "Hint: %s\n", hint)
+	}
 	os.Exit(1)
 }
 
