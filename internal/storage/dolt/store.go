@@ -783,6 +783,11 @@ func buildServerDSN(cfg *Config, database string) string {
 // execWithLongTimeout opens a one-shot database connection with readTimeout=5m
 // and executes the given query. Push/pull operations can exceed the default
 // readTimeout when the server performs network I/O to git remotes.
+//
+// The query is wrapped in an explicit transaction (BEGIN/COMMIT) so that
+// DOLT_PULL merge operations succeed even when the server runs with
+// autocommit=1. Without this, Dolt rejects merges under autocommit because
+// it cannot expose conflict-resolution tables to the caller.
 func (s *DoltStore) execWithLongTimeout(ctx context.Context, query string, args ...any) error {
 	cfg, err := mysql.ParseDSN(s.connStr)
 	if err != nil {
@@ -795,8 +800,15 @@ func (s *DoltStore) execWithLongTimeout(ctx context.Context, query string, args 
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	_, err = db.ExecContext(ctx, query, args...)
-	return err
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // openServerConnection opens a connection to a dolt sql-server via MySQL protocol
