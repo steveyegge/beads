@@ -223,3 +223,53 @@ func TestInitGuard_FreshCloneWithMetadataJSON(t *testing.T) {
 		}
 	})
 }
+
+// GH#2363: Regression — AI agent followed "bd init --force" suggestion and wiped DB.
+// Ensure the message never suggests --force as an actionable command.
+func TestInitGuardServerMessage_NoForceAsAction(t *testing.T) {
+	err := initGuardServerMessage("test_beads", "127.0.0.1", 3307, "test", "")
+	msg := err.Error()
+
+	// The message should mention --force only in the caution/warning section,
+	// never as a suggested command to run.
+	if strings.Contains(msg, "bd init --force --prefix") {
+		t.Errorf("message must NOT suggest 'bd init --force --prefix' as an action:\n%s", msg)
+	}
+	if strings.Contains(msg, "bd init --force to") {
+		t.Errorf("message must NOT suggest 'bd init --force to ...' as an action:\n%s", msg)
+	}
+}
+
+// GH#2338, GH#2327: Regression — error messages must always include enough
+// context to identify the active target (host, port, DB name).
+func TestInitGuardServerMessage_IncludesTargetIdentity(t *testing.T) {
+	err := initGuardServerMessage("custom_db", "10.0.0.5", 3309, "custom", "")
+	msg := err.Error()
+
+	for _, want := range []string{"custom_db", "10.0.0.5", "3309"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message must include target identity %q, got:\n%s", want, msg)
+		}
+	}
+}
+
+// GH#1111: Regression — safe recovery paths must be suggested before destructive ones.
+// Verify that diagnostic commands appear before any mention of --force.
+func TestInitGuardServerMessage_DiagnosticsBeforeForce(t *testing.T) {
+	err := initGuardServerMessage("test_beads", "127.0.0.1", 3307, "test", "")
+	msg := err.Error()
+
+	doctorIdx := strings.Index(msg, "bd doctor")
+	forceIdx := strings.Index(msg, "--force")
+
+	if doctorIdx == -1 {
+		t.Fatal("message must contain 'bd doctor'")
+	}
+	if forceIdx == -1 {
+		t.Fatal("message must contain '--force' (in caution section)")
+	}
+	if doctorIdx > forceIdx {
+		t.Errorf("'bd doctor' (at %d) must appear before '--force' (at %d) in message:\n%s",
+			doctorIdx, forceIdx, msg)
+	}
+}

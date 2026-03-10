@@ -62,6 +62,7 @@ environment variable.`,
 		serverPort, _ := cmd.Flags().GetInt("server-port")
 		serverUser, _ := cmd.Flags().GetString("server-user")
 		database, _ := cmd.Flags().GetString("database")
+		destroyToken, _ := cmd.Flags().GetString("destroy-token")
 
 		// Handle --backend flag: "dolt" is the only supported backend.
 		// "sqlite" is accepted for backward compatibility but prints a
@@ -103,10 +104,11 @@ environment variable.`,
 			}
 		}
 
-		// Even with --force, warn about existing data and require confirmation
-		// unless --quiet is set (which indicates programmatic/test use).
+		// Even with --force, warn about existing data and require confirmation.
+		// In non-interactive mode, accepts --destroy-token for explicit opt-in,
+		// or --quiet for legacy (deprecated) bypass.
 		// This prevents AI agents and users from accidentally destroying data.
-		if force && !quiet {
+		if force {
 			if count, err := countExistingIssues(prefix); err == nil && count > 0 {
 				fmt.Fprintf(os.Stderr, "\n%s Re-initializing will destroy the existing database.\n\n", ui.RenderWarn("WARNING:"))
 				fmt.Fprintf(os.Stderr, "  Existing issues: %d\n\n", count)
@@ -125,10 +127,19 @@ environment variable.`,
 						os.Exit(1)
 					}
 				} else {
-					// Non-interactive (piped input, AI agent, etc.) — refuse
-					fmt.Fprintf(os.Stderr, "Refusing to destroy %d issues in non-interactive mode.\n", count)
-					fmt.Fprintf(os.Stderr, "Use 'bd export' to back up first, then use --quiet to skip this check.\n")
-					os.Exit(1)
+					// Non-interactive (piped input, AI agent, etc.)
+					expectedToken := fmt.Sprintf("DESTROY-%s", prefix)
+					if destroyToken == expectedToken {
+						fmt.Fprintf(os.Stderr, "Destroy token accepted. Proceeding with re-initialization.\n")
+					} else if quiet {
+						// Legacy --quiet behavior (deprecated path)
+						fmt.Fprintf(os.Stderr, "Warning: --force --quiet bypasses safety checks. Use --destroy-token=%s instead.\n", expectedToken)
+					} else {
+						fmt.Fprintf(os.Stderr, "Refusing to destroy %d issues in non-interactive mode.\n", count)
+						fmt.Fprintf(os.Stderr, "To proceed, use: bd init --force --destroy-token=%s\n", expectedToken)
+						fmt.Fprintf(os.Stderr, "Or export first: bd export > backup.jsonl\n")
+						os.Exit(1)
+					}
 				}
 			}
 		}
@@ -864,6 +875,7 @@ func init() {
 	initCmd.Flags().Bool("skip-hooks", false, "Skip git hooks installation")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if database already has issues (may cause data loss)")
 	initCmd.Flags().Bool("from-jsonl", false, "Import issues from .beads/issues.jsonl instead of git history")
+	initCmd.Flags().String("destroy-token", "", "Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')")
 	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides embedded default)")
 
 	// Backend selection (dolt is the only supported backend; sqlite accepted for deprecation notice)
