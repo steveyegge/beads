@@ -4,7 +4,7 @@ package ui
 import (
 	"os"
 
-	"github.com/charmbracelet/glamour"
+	"charm.land/glamour/v2"
 	"golang.org/x/term"
 )
 
@@ -36,7 +36,6 @@ func RenderMarkdown(markdown string) string {
 
 	// Create renderer with auto-detected style (respects terminal light/dark mode)
 	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(wrapWidth),
 	)
 	if err != nil {
