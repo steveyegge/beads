@@ -3,7 +3,7 @@ package dolt
 // currentSchemaVersion is bumped whenever the schema or migrations change.
 // initSchemaOnDB checks this against the stored version and skips re-initialization
 // when they match, avoiding ~20 DDL statements per bd invocation.
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 // schema defines the MySQL-compatible database schema for Dolt.
 const schema = `
@@ -78,13 +78,27 @@ CREATE TABLE IF NOT EXISTS issues (
     -- Time-based scheduling fields
     due_at DATETIME,
     defer_until DATETIME,
+    -- Milestone field
+    milestone VARCHAR(255) NOT NULL DEFAULT '',
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
     INDEX idx_issues_issue_type (issue_type),
     INDEX idx_issues_assignee (assignee),
     INDEX idx_issues_created_at (created_at),
     INDEX idx_issues_spec_id (spec_id),
-    INDEX idx_issues_external_ref (external_ref)
+    INDEX idx_issues_external_ref (external_ref),
+    INDEX idx_issues_milestone (milestone)
+);
+
+-- Milestones table
+CREATE TABLE IF NOT EXISTS milestones (
+    name VARCHAR(255) NOT NULL,
+    target_date DATETIME,
+    description TEXT DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by VARCHAR(255) NOT NULL DEFAULT '',
+    PRIMARY KEY (name),
+    INDEX idx_milestones_created_at (created_at)
 );
 
 -- Dependencies table (edge schema)

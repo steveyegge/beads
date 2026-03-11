@@ -277,6 +277,12 @@ func buildIssueFilterClauses(query string, filter types.IssueFilter, tables filt
 		args = append(args, time.Now().UTC().Format(time.RFC3339), types.StatusClosed)
 	}
 
+	// Milestone filter
+	if filter.Milestone != nil {
+		whereClauses = append(whereClauses, "milestone = ?")
+		args = append(args, *filter.Milestone)
+	}
+
 	// Metadata filters
 	if filter.HasMetadataKey != "" {
 		if err := storage.ValidateMetadataKey(filter.HasMetadataKey); err != nil {

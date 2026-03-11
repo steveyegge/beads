@@ -35,7 +35,8 @@ func insertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *
 			event_kind, actor, target, payload,
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
-			due_at, defer_until, metadata
+			due_at, defer_until, metadata,
+			milestone
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -46,7 +47,8 @@ func insertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?
+			?, ?, ?,
+			?
 		)
 		ON DUPLICATE KEY UPDATE
 			content_hash = VALUES(content_hash),
@@ -77,6 +79,7 @@ func insertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
 		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
+		issue.Milestone,
 	)
 	return wrapExecError("insert issue into table", err)
 }

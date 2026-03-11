@@ -604,3 +604,19 @@ func (s *EmbeddedDoltStore) GetMoleculeLastActivity(ctx context.Context, molecul
 func (s *EmbeddedDoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
 	panic("embeddeddolt: GetStaleIssues not implemented")
 }
+
+func (s *EmbeddedDoltStore) CreateMilestone(ctx context.Context, ms *types.Milestone, actor string) error {
+	panic("embeddeddolt: CreateMilestone not implemented")
+}
+
+func (s *EmbeddedDoltStore) GetMilestone(ctx context.Context, name string) (*types.Milestone, error) {
+	panic("embeddeddolt: GetMilestone not implemented")
+}
+
+func (s *EmbeddedDoltStore) ListMilestones(ctx context.Context) ([]*types.Milestone, error) {
+	panic("embeddeddolt: ListMilestones not implemented")
+}
+
+func (s *EmbeddedDoltStore) DeleteMilestone(ctx context.Context, name string, actor string) error {
+	panic("embeddeddolt: DeleteMilestone not implemented")
+}

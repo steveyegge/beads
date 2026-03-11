@@ -1165,7 +1165,8 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			event_kind, actor, target, payload,
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
-			due_at, defer_until, metadata
+			due_at, defer_until, metadata,
+			milestone
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -1176,7 +1177,8 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?
+			?, ?, ?,
+			?
 		)
 		ON DUPLICATE KEY UPDATE
 			content_hash = VALUES(content_hash),
@@ -1207,6 +1209,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
 		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
+		issue.Milestone,
 	)
 	return wrapExecError("insert issue", err)
 }
@@ -1427,7 +1430,8 @@ func isAllowedUpdateField(key string) bool {
 		"role_type": true, "rig": true, "mol_type": true, "holder": true,
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
 		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
-		"metadata": true,
+		"metadata":  true,
+		"milestone": true,
 	}
 	return allowed[key]
 }

@@ -76,6 +76,12 @@ type Storage interface {
 	GetConfig(ctx context.Context, key string) (string, error)
 	GetAllConfig(ctx context.Context) (map[string]string, error)
 
+	// Milestones
+	CreateMilestone(ctx context.Context, ms *types.Milestone, actor string) error
+	GetMilestone(ctx context.Context, name string) (*types.Milestone, error)
+	ListMilestones(ctx context.Context) ([]*types.Milestone, error)
+	DeleteMilestone(ctx context.Context, name string, actor string) error
+
 	// Transactions
 	RunInTransaction(ctx context.Context, commitMsg string, fn func(tx Transaction) error) error
 

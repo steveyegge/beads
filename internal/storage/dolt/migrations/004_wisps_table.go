@@ -107,11 +107,13 @@ const wispsTableSchema = `CREATE TABLE IF NOT EXISTS wisps (
     rig VARCHAR(255) DEFAULT '',
     due_at DATETIME,
     defer_until DATETIME,
+    milestone VARCHAR(255) NOT NULL DEFAULT '',
     INDEX idx_wisps_status (status),
     INDEX idx_wisps_priority (priority),
     INDEX idx_wisps_issue_type (issue_type),
     INDEX idx_wisps_assignee (assignee),
     INDEX idx_wisps_created_at (created_at),
     INDEX idx_wisps_spec_id (spec_id),
-    INDEX idx_wisps_external_ref (external_ref)
+    INDEX idx_wisps_external_ref (external_ref),
+    INDEX idx_wisps_milestone (milestone)
 )`

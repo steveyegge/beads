@@ -19,7 +19,8 @@ const issueSelectColumns = `id, content_hash, title, description, design, accept
 	       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 	       event_kind, actor, target, payload,
 	       due_at, defer_until,
-	       quality_score, work_type, source_system, metadata`
+	       quality_score, work_type, source_system, metadata,
+	       milestone`
 
 // issueScanner is the common interface between *sql.Row and *sql.Rows,
 // allowing a single scan function to work with both single-row and
@@ -38,7 +39,7 @@ func scanIssueFrom(s issueScanner) (*types.Issue, error) {
 	var createdBy sql.NullString
 	var assignee, externalRef, specID, compactedAtCommit, owner sql.NullString
 	var contentHash, sourceRepo, closeReason sql.NullString
-	var workType, sourceSystem sql.NullString
+	var workType, sourceSystem, milestone sql.NullString
 	var sender, wispType, molType, eventKind, actor, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
 	var hookBead, roleBead, agentState, roleType, rig sql.NullString
@@ -58,6 +59,7 @@ func scanIssueFrom(s issueScanner) (*types.Issue, error) {
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem, &metadata,
+		&milestone,
 	); err != nil {
 		return nil, err
 	}
@@ -193,6 +195,9 @@ func scanIssueFrom(s issueScanner) (*types.Issue, error) {
 	// Custom metadata field (GH#1406)
 	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
 		issue.Metadata = []byte(metadata.String)
+	}
+	if milestone.Valid {
+		issue.Milestone = milestone.String
 	}
 
 	return &issue, nil

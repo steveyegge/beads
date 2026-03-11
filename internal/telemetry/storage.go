@@ -388,6 +388,45 @@ func (s *InstrumentedStorage) GetAllConfig(ctx context.Context) (map[string]stri
 	return v, err
 }
 
+// ── Milestones ──────────────────────────────────────────────────────────────
+
+func (s *InstrumentedStorage) CreateMilestone(ctx context.Context, ms *types.Milestone, actor string) error {
+	attrs := []attribute.KeyValue{
+		attribute.String("bd.milestone.name", ms.Name),
+		attribute.String("bd.actor", actor),
+	}
+	ctx, span, t := s.op(ctx, "CreateMilestone", attrs...)
+	err := s.inner.CreateMilestone(ctx, ms, actor)
+	s.done(ctx, span, t, err, attrs...)
+	return err
+}
+
+func (s *InstrumentedStorage) GetMilestone(ctx context.Context, name string) (*types.Milestone, error) {
+	attrs := []attribute.KeyValue{attribute.String("bd.milestone.name", name)}
+	ctx, span, t := s.op(ctx, "GetMilestone", attrs...)
+	v, err := s.inner.GetMilestone(ctx, name)
+	s.done(ctx, span, t, err, attrs...)
+	return v, err
+}
+
+func (s *InstrumentedStorage) ListMilestones(ctx context.Context) ([]*types.Milestone, error) {
+	ctx, span, t := s.op(ctx, "ListMilestones")
+	v, err := s.inner.ListMilestones(ctx)
+	s.done(ctx, span, t, err)
+	return v, err
+}
+
+func (s *InstrumentedStorage) DeleteMilestone(ctx context.Context, name string, actor string) error {
+	attrs := []attribute.KeyValue{
+		attribute.String("bd.milestone.name", name),
+		attribute.String("bd.actor", actor),
+	}
+	ctx, span, t := s.op(ctx, "DeleteMilestone", attrs...)
+	err := s.inner.DeleteMilestone(ctx, name, actor)
+	s.done(ctx, span, t, err, attrs...)
+	return err
+}
+
 // ── Transactions ─────────────────────────────────────────────────────────────
 
 func (s *InstrumentedStorage) RunInTransaction(ctx context.Context, commitMsg string, fn func(tx storage.Transaction) error) error {
