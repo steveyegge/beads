@@ -217,6 +217,12 @@ create, update, show, or close operation).`,
 				updates["defer_until"] = t
 			}
 		}
+		// Milestone flag
+		if cmd.Flags().Changed("milestone") {
+			milestoneVal, _ := cmd.Flags().GetString("milestone")
+			updates["milestone"] = milestoneVal
+		}
+
 		// Ephemeral/persistent flags
 		// Note: storage layer uses "wisp" field name, maps to "ephemeral" column
 		ephemeralChanged := cmd.Flags().Changed("ephemeral")
@@ -593,6 +599,7 @@ func init() {
 	// Metadata flag (GH#1413)
 	updateCmd.Flags().String("metadata", "", "Set custom metadata (JSON string or @file.json to read from file)")
 	// Incremental metadata edits (GH#1406)
+	updateCmd.Flags().String("milestone", "", `Link issue to milestone (use "" to unlink)`)
 	updateCmd.Flags().StringArray("set-metadata", nil, "Set metadata key=value (repeatable, e.g., --set-metadata team=platform)")
 	updateCmd.Flags().StringArray("unset-metadata", nil, "Remove metadata key (repeatable, e.g., --unset-metadata team)")
 	updateCmd.ValidArgsFunction = issueIDCompletion

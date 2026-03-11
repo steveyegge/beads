@@ -623,6 +623,18 @@ var createCmd = &cobra.Command{
 			}
 		}
 
+		// Set milestone if specified
+		milestoneFlag, _ := cmd.Flags().GetString("milestone")
+		if milestoneFlag != "" {
+			if err := store.UpdateIssue(ctx, issue.ID, map[string]interface{}{
+				"milestone": milestoneFlag,
+			}, actor); err != nil {
+				WarnError("failed to set milestone: %v", err)
+			} else {
+				postCreateWrites = true
+			}
+		}
+
 		// Auto-add role_type/rig labels for agent beads (enables filtering queries)
 		// Check for gt:agent label to identify agent beads (Gas Town separation)
 		hasAgentLabel := false
@@ -829,6 +841,7 @@ func init() {
 	createCmd.Flags().String("due", "", "Due date/time. Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
 	createCmd.Flags().String("defer", "", "Defer until date (issue hidden from bd ready until then). Same formats as --due")
 	createCmd.Flags().String("metadata", "", "Set custom metadata (JSON string or @file.json to read from file)")
+	createCmd.Flags().String("milestone", "", "Link issue to milestone")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }

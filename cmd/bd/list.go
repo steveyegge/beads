@@ -674,6 +674,12 @@ var listCmd = &cobra.Command{
 			filter.Overdue = true
 		}
 
+		// Milestone filter
+		milestoneFlag, _ := cmd.Flags().GetString("milestone")
+		if cmd.Flags().Changed("milestone") {
+			filter.Milestone = &milestoneFlag
+		}
+
 		// Metadata filters (GH#1406)
 		metadataFieldFlags, _ := cmd.Flags().GetStringArray("metadata-field")
 		if len(metadataFieldFlags) > 0 {
@@ -968,6 +974,9 @@ func init() {
 	listCmd.Flags().Bool("tree", true, "Hierarchical tree format (default: true; use --flat to disable)")
 	listCmd.Flags().Bool("flat", false, "Disable tree format and use legacy flat list output")
 	listCmd.Flags().BoolP("watch", "w", false, "Watch for changes and auto-update display (implies --pretty)")
+
+	// Milestone filtering
+	listCmd.Flags().String("milestone", "", "Filter by milestone")
 
 	// Metadata filtering (GH#1406)
 	listCmd.Flags().StringArray("metadata-field", nil, "Filter by metadata field (key=value, repeatable)")
