@@ -61,6 +61,11 @@ To initialize and restore in one step, use: bd init && bd backup restore`,
 			return fmt.Errorf("no issues.jsonl found in %s\nThis doesn't look like a valid backup directory", dir)
 		}
 
+		// Validate schema of issues.jsonl before proceeding (GH#2492)
+		if err := validateIssueJSONLSchema(issuesPath); err != nil {
+			return fmt.Errorf("backup validation failed: %w", err)
+		}
+
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 		result, err := runBackupRestore(ctx, store, dir, dryRun)
@@ -102,13 +107,15 @@ func init() {
 
 // restoreResult tracks what a restore operation did.
 type restoreResult struct {
-	Issues       int `json:"issues"`
-	Comments     int `json:"comments"`
-	Dependencies int `json:"dependencies"`
-	Labels       int `json:"labels"`
-	Events       int `json:"events"`
-	Config       int `json:"config"`
-	Warnings     int `json:"warnings"`
+	Issues       int      `json:"issues"`
+	Comments     int      `json:"comments"`
+	Dependencies int      `json:"dependencies"`
+	Labels       int      `json:"labels"`
+	Events       int      `json:"events"`
+	Config       int      `json:"config"`
+	Warnings     int      `json:"warnings"`
+	Errors       int      `json:"errors"`
+	ErrorDetails []string `json:"error_details,omitempty"`
 }
 
 // runBackupRestore imports all JSONL backup tables into the Dolt store.
@@ -600,6 +607,51 @@ func readJSONLFile(path string) ([]json.RawMessage, error) {
 		return nil, fmt.Errorf("failed to scan %s: %w", path, err)
 	}
 	return lines, nil
+}
+
+// validateIssueJSONLSchema checks the first line of a JSONL file to verify it
+// contains expected issue fields. This prevents silent data corruption from
+// importing export files with incompatible schemas (GH#2492, GH#2465).
+//
+// Returns nil if the schema looks valid, or an error describing the mismatch.
+func validateIssueJSONLSchema(path string) error {
+	f, err := os.Open(path) //nolint:gosec // path is from trusted backup directory, not user-controlled
+	if err != nil {
+		return fmt.Errorf("cannot open %s: %w", path, err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
+	if !scanner.Scan() {
+		return nil // Empty file, nothing to validate
+	}
+
+	line := scanner.Bytes()
+	if len(line) == 0 {
+		return nil
+	}
+
+	// Parse first line as JSON object
+	var firstRow map[string]interface{}
+	if err := json.Unmarshal(line, &firstRow); err != nil {
+		return fmt.Errorf("first line of %s is not valid JSON: %w", path, err)
+	}
+
+	// Check for required issue fields
+	requiredFields := []string{"id", "title", "status"}
+	var missing []string
+	for _, field := range requiredFields {
+		if _, ok := firstRow[field]; !ok {
+			missing = append(missing, field)
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("issues.jsonl schema mismatch: missing required fields %v in first row. This file may be a bd export (different format) or corrupted", missing)
+	}
+
+	return nil
 }
 
 // parseTimeOrNow parses an RFC3339 time string, returning now if parsing fails.
