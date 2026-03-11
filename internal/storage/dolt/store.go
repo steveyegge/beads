@@ -1491,6 +1491,20 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 		)...),
 	)
 	defer func() { endSpan(span, retErr) }()
+
+	// GH#2474: Auto-commit pending changes before pull to prevent
+	// "cannot merge with uncommitted changes" errors. Store initialization
+	// (schema init, molecule loading, metadata writes) can dirty the working
+	// set before the user's pull command runs.
+	if !s.readOnly {
+		if err := s.Commit(ctx, "auto-commit before pull"); err != nil {
+			// "nothing to commit" is fine — working set is already clean
+			if !isDoltNothingToCommit(err) {
+				return fmt.Errorf("failed to commit pending changes before pull: %w", err)
+			}
+		}
+	}
+
 	creds := s.mainRemoteCredentials()
 	// Git-protocol remotes: use CLI to avoid MySQL connection timeout during transfer.
 	// Must check before remoteUser — Hosted Dolt SSH remotes have remoteUser set

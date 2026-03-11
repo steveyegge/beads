@@ -38,6 +38,16 @@ func (s *DoltStore) PushTo(ctx context.Context, peer string) error {
 // For git-protocol remotes, uses CLI `dolt pull` to avoid MySQL connection timeouts.
 // Returns any merge conflicts if present.
 func (s *DoltStore) PullFrom(ctx context.Context, peer string) ([]storage.Conflict, error) {
+	// GH#2474: Auto-commit pending changes before pull to prevent
+	// "cannot merge with uncommitted changes" errors.
+	if !s.readOnly {
+		if err := s.Commit(ctx, "auto-commit before pull"); err != nil {
+			if !isDoltNothingToCommit(err) {
+				return nil, fmt.Errorf("failed to commit pending changes before pull: %w", err)
+			}
+		}
+	}
+
 	var conflicts []storage.Conflict
 	if s.isPeerGitProtocolRemote(ctx, peer) {
 		err := s.withPeerCredentials(ctx, peer, func(creds *remoteCredentials) error {
