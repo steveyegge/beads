@@ -826,12 +826,20 @@ type Label struct {
 	Label   string `json:"label"`
 }
 
+// Comment type constants for categorizing comments
+const (
+	CommentTypeDecision = "decision"
+	CommentTypeHandoff  = "handoff"
+	CommentTypeNote     = "note"
+)
+
 // Comment represents a comment on an issue
 type Comment struct {
 	ID        int64     `json:"id"`
 	IssueID   string    `json:"issue_id"`
 	Author    string    `json:"author"`
 	Text      string    `json:"text"`
+	Type      string    `json:"type,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
