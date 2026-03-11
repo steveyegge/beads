@@ -44,7 +44,13 @@ Examples:
 		}
 		issueID = fullID
 
-		comments, err := store.GetIssueComments(ctx, issueID)
+		commentType, _ := cmd.Flags().GetString("type")
+		var comments []*types.Comment
+		if commentType != "" {
+			comments, err = store.GetIssueCommentsByType(ctx, issueID, commentType)
+		} else {
+			comments, err = store.GetIssueComments(ctx, issueID)
+		}
 		if err != nil {
 			FatalErrorRespectJSON("getting comments: %v", err)
 		}
@@ -74,8 +80,16 @@ Examples:
 			fmt.Printf("[%s] at %s\n", comment.Author, ts.Format("2006-01-02 15:04"))
 			rendered := ui.RenderMarkdown(comment.Text)
 			// TrimRight removes trailing newlines that Glamour adds, preventing extra blank lines
-			for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
-				fmt.Printf("  %s\n", line)
+			lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
+			if comment.Type != "" {
+				fmt.Printf("  [%s] %s\n", comment.Type, lines[0])
+				for _, line := range lines[1:] {
+					fmt.Printf("  %s\n", line)
+				}
+			} else {
+				for _, line := range lines {
+					fmt.Printf("  %s\n", line)
+				}
 			}
 			fmt.Println()
 		}
@@ -134,7 +148,8 @@ Examples:
 		}
 		issueID = fullID
 
-		comment, err := store.AddIssueComment(ctx, issueID, author, commentText)
+		commentType, _ := cmd.Flags().GetString("type")
+		comment, err := store.AddIssueComment(ctx, issueID, author, commentText, commentType)
 		if err != nil {
 			FatalErrorRespectJSON("adding comment: %v", err)
 		}
@@ -151,8 +166,10 @@ Examples:
 func init() {
 	commentsCmd.AddCommand(commentsAddCmd)
 	commentsCmd.Flags().Bool("local-time", false, "Show timestamps in local time instead of UTC")
+	commentsCmd.Flags().String("type", "", "Filter by comment type (decision, handoff, note)")
 	commentsAddCmd.Flags().StringP("file", "f", "", "Read comment text from file")
 	commentsAddCmd.Flags().StringP("author", "a", "", "Add author to comment")
+	commentsAddCmd.Flags().String("type", "", "Comment type (decision, handoff, note)")
 
 	// Issue ID completions
 	commentsCmd.ValidArgsFunction = issueIDCompletion

@@ -63,8 +63,9 @@ type Storage interface {
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
 
 	// Comments and events
-	AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
+	AddIssueComment(ctx context.Context, issueID, author, text, commentType string) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
+	GetIssueCommentsByType(ctx context.Context, issueID, commentType string) ([]*types.Comment, error)
 	GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error)
 	GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error)
 
@@ -162,6 +163,6 @@ type Transaction interface {
 
 	// Comment operations
 	AddComment(ctx context.Context, issueID, actor, comment string) error
-	ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error)
+	ImportIssueComment(ctx context.Context, issueID, author, text, commentType string, createdAt time.Time) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
 }

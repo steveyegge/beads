@@ -94,7 +94,7 @@ func (h *integrationTestHelper) addLabel(id, label string) {
 }
 
 func (h *integrationTestHelper) addComment(id, user, text string) *types.Comment {
-	comment, err := h.store.AddIssueComment(h.ctx, id, user, text)
+	comment, err := h.store.AddIssueComment(h.ctx, id, user, text, "")
 	if err != nil {
 		h.t.Fatalf("AddIssueComment failed: %v", err)
 	}

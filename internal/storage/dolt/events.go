@@ -80,13 +80,13 @@ func (s *DoltStore) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*ty
 }
 
 // AddIssueComment adds a comment to an issue (structured comment)
-func (s *DoltStore) AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
-	return s.ImportIssueComment(ctx, issueID, author, text, time.Now().UTC())
+func (s *DoltStore) AddIssueComment(ctx context.Context, issueID, author, text, commentType string) (*types.Comment, error) {
+	return s.ImportIssueComment(ctx, issueID, author, text, commentType, time.Now().UTC())
 }
 
 // ImportIssueComment adds a comment during import, preserving the original timestamp.
 // This prevents comment timestamp drift across import/export cycles.
-func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
+func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, text, commentType string, createdAt time.Time) (*types.Comment, error) {
 	// Verify issue exists — route to wisps table for active wisps
 	issueTable := "issues"
 	commentTable := "comments"
@@ -110,9 +110,9 @@ func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, tex
 	createdAt = createdAt.UTC()
 	//nolint:gosec // G201: table is hardcoded
 	result, err := s.execContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (issue_id, author, text, created_at)
-		VALUES (?, ?, ?, ?)
-	`, commentTable), issueID, author, text, createdAt)
+		INSERT INTO %s (issue_id, author, text, type, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, commentTable), issueID, author, text, commentType, createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add comment: %w", err)
 	}
@@ -127,6 +127,7 @@ func (s *DoltStore) ImportIssueComment(ctx context.Context, issueID, author, tex
 		IssueID:   issueID,
 		Author:    author,
 		Text:      text,
+		Type:      commentType,
 		CreatedAt: createdAt,
 	}, nil
 }
@@ -140,13 +141,35 @@ func (s *DoltStore) GetIssueComments(ctx context.Context, issueID string) ([]*ty
 
 	//nolint:gosec // G201: table is hardcoded
 	rows, err := s.queryContext(ctx, fmt.Sprintf(`
-		SELECT id, issue_id, author, text, created_at
+		SELECT id, issue_id, author, text, type, created_at
 		FROM %s
 		WHERE issue_id = ?
 		ORDER BY created_at ASC
 	`, table), issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get comments: %w", err)
+	}
+	defer rows.Close()
+
+	return scanComments(rows)
+}
+
+// GetIssueCommentsByType retrieves comments for an issue filtered by type.
+func (s *DoltStore) GetIssueCommentsByType(ctx context.Context, issueID, commentType string) ([]*types.Comment, error) {
+	table := "comments"
+	if s.isActiveWisp(ctx, issueID) {
+		table = "wisp_comments"
+	}
+
+	//nolint:gosec // G201: table is hardcoded
+	rows, err := s.queryContext(ctx, fmt.Sprintf(`
+		SELECT id, issue_id, author, text, type, created_at
+		FROM %s
+		WHERE issue_id = ? AND type = ?
+		ORDER BY created_at ASC
+	`, table), issueID, commentType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comments by type: %w", err)
 	}
 	defer rows.Close()
 
@@ -192,7 +215,7 @@ func (s *DoltStore) getCommentsForIDsInto(ctx context.Context, table string, ids
 
 		//nolint:gosec // G201: table is hardcoded, placeholders contains only ? markers
 		query := fmt.Sprintf(`
-			SELECT id, issue_id, author, text, created_at
+			SELECT id, issue_id, author, text, type, created_at
 			FROM %s
 			WHERE issue_id IN (%s)
 			ORDER BY issue_id, created_at ASC
@@ -205,7 +228,7 @@ func (s *DoltStore) getCommentsForIDsInto(ctx context.Context, table string, ids
 
 		for rows.Next() {
 			var c types.Comment
-			if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.CreatedAt); err != nil {
+			if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.Type, &c.CreatedAt); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("failed to scan comment: %w", err)
 			}
@@ -317,7 +340,7 @@ func scanComments(rows *sql.Rows) ([]*types.Comment, error) {
 	var comments []*types.Comment
 	for rows.Next() {
 		var c types.Comment
-		if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.Type, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan comment: %w", err)
 		}
 		comments = append(comments, &c)

@@ -309,13 +309,13 @@ func (s *InstrumentedStorage) GetEpicsEligibleForClosure(ctx context.Context) ([
 
 // ── Comments & events ────────────────────────────────────────────────────────
 
-func (s *InstrumentedStorage) AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
+func (s *InstrumentedStorage) AddIssueComment(ctx context.Context, issueID, author, text, commentType string) (*types.Comment, error) {
 	attrs := []attribute.KeyValue{
 		attribute.String("bd.issue.id", issueID),
 		attribute.String("bd.actor", author),
 	}
 	ctx, span, t := s.op(ctx, "AddIssueComment", attrs...)
-	v, err := s.inner.AddIssueComment(ctx, issueID, author, text)
+	v, err := s.inner.AddIssueComment(ctx, issueID, author, text, commentType)
 	s.done(ctx, span, t, err, attrs...)
 	return v, err
 }
@@ -324,6 +324,17 @@ func (s *InstrumentedStorage) GetIssueComments(ctx context.Context, issueID stri
 	attrs := []attribute.KeyValue{attribute.String("bd.issue.id", issueID)}
 	ctx, span, t := s.op(ctx, "GetIssueComments", attrs...)
 	v, err := s.inner.GetIssueComments(ctx, issueID)
+	s.done(ctx, span, t, err, attrs...)
+	return v, err
+}
+
+func (s *InstrumentedStorage) GetIssueCommentsByType(ctx context.Context, issueID, commentType string) ([]*types.Comment, error) {
+	attrs := []attribute.KeyValue{
+		attribute.String("bd.issue.id", issueID),
+		attribute.String("bd.comment.type", commentType),
+	}
+	ctx, span, t := s.op(ctx, "GetIssueCommentsByType", attrs...)
+	v, err := s.inner.GetIssueCommentsByType(ctx, issueID, commentType)
 	s.done(ctx, span, t, err, attrs...)
 	return v, err
 }

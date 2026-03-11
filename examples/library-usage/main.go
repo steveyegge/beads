@@ -90,7 +90,7 @@ func main() {
 
 	// Example 5: Add a comment
 	fmt.Println("\n=== Adding Comment ===")
-	comment, err := store.AddIssueComment(ctx, newIssue.ID, "library-example", "This is a programmatic comment")
+	comment, err := store.AddIssueComment(ctx, newIssue.ID, "library-example", "This is a programmatic comment", "")
 	if err != nil {
 		log.Fatalf("Failed to add comment: %v", err)
 	}

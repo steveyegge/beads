@@ -581,10 +581,13 @@ func (s *configStore) GetBlockedIssues(_ context.Context, _ types.WorkFilter) ([
 func (s *configStore) GetEpicsEligibleForClosure(_ context.Context) ([]*types.EpicStatus, error) {
 	return nil, nil
 }
-func (s *configStore) AddIssueComment(_ context.Context, _, _, _ string) (*types.Comment, error) {
+func (s *configStore) AddIssueComment(_ context.Context, _, _, _, _ string) (*types.Comment, error) {
 	return nil, nil
 }
 func (s *configStore) GetIssueComments(_ context.Context, _ string) ([]*types.Comment, error) {
+	return nil, nil
+}
+func (s *configStore) GetIssueCommentsByType(_ context.Context, _, _ string) ([]*types.Comment, error) {
 	return nil, nil
 }
 func (s *configStore) GetEvents(_ context.Context, _ string, _ int) ([]*types.Event, error) {

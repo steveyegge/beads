@@ -229,7 +229,7 @@ Examples:
 
 		// Add comment using AddIssueComment (issueID, author, text)
 		commentText := fmt.Sprintf("Response: %s", response)
-		_, err = targetStore.AddIssueComment(ctx, resolvedID, actor, commentText)
+		_, err = targetStore.AddIssueComment(ctx, resolvedID, actor, commentText, "")
 		if err != nil {
 			FatalErrorRespectJSON("adding comment: %v", err)
 		}

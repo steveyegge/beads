@@ -226,12 +226,16 @@ func (s *EmbeddedDoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*
 	panic("embeddeddolt: GetEpicsEligibleForClosure not implemented")
 }
 
-func (s *EmbeddedDoltStore) AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
+func (s *EmbeddedDoltStore) AddIssueComment(ctx context.Context, issueID, author, text, commentType string) (*types.Comment, error) {
 	panic("embeddeddolt: AddIssueComment not implemented")
 }
 
 func (s *EmbeddedDoltStore) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
 	panic("embeddeddolt: GetIssueComments not implemented")
+}
+
+func (s *EmbeddedDoltStore) GetIssueCommentsByType(ctx context.Context, issueID, commentType string) ([]*types.Comment, error) {
+	panic("embeddeddolt: GetIssueCommentsByType not implemented")
 }
 
 func (s *EmbeddedDoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error) {
@@ -509,7 +513,7 @@ func (s *EmbeddedDoltStore) AddComment(ctx context.Context, issueID, actor, comm
 	panic("embeddeddolt: AddComment not implemented")
 }
 
-func (s *EmbeddedDoltStore) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
+func (s *EmbeddedDoltStore) ImportIssueComment(ctx context.Context, issueID, author, text, commentType string, createdAt time.Time) (*types.Comment, error) {
 	panic("embeddeddolt: ImportIssueComment not implemented")
 }
 

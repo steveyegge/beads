@@ -768,7 +768,7 @@ func (t *doltTransaction) GetMetadata(ctx context.Context, key string) (string, 
 	return value, wrapQueryError("get metadata in tx", err)
 }
 
-func (t *doltTransaction) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
+func (t *doltTransaction) ImportIssueComment(ctx context.Context, issueID, author, text, commentType string, createdAt time.Time) (*types.Comment, error) {
 	_, err := t.GetIssue(ctx, issueID)
 	if err != nil {
 		return nil, err
@@ -782,9 +782,9 @@ func (t *doltTransaction) ImportIssueComment(ctx context.Context, issueID, autho
 	createdAt = createdAt.UTC()
 	//nolint:gosec // G201: table is hardcoded
 	res, err := t.tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (issue_id, author, text, created_at)
-		VALUES (?, ?, ?, ?)
-	`, table), issueID, author, text, createdAt)
+		INSERT INTO %s (issue_id, author, text, type, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, table), issueID, author, text, commentType, createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add comment: %w", err)
 	}
@@ -793,7 +793,7 @@ func (t *doltTransaction) ImportIssueComment(ctx context.Context, issueID, autho
 		return nil, fmt.Errorf("failed to get comment id: %w", err)
 	}
 
-	return &types.Comment{ID: id, IssueID: issueID, Author: author, Text: text, CreatedAt: createdAt}, nil
+	return &types.Comment{ID: id, IssueID: issueID, Author: author, Text: text, Type: commentType, CreatedAt: createdAt}, nil
 }
 
 func (t *doltTransaction) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
@@ -804,7 +804,7 @@ func (t *doltTransaction) GetIssueComments(ctx context.Context, issueID string) 
 
 	//nolint:gosec // G201: table is hardcoded
 	rows, err := t.tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT id, issue_id, author, text, created_at
+		SELECT id, issue_id, author, text, type, created_at
 		FROM %s
 		WHERE issue_id = ?
 		ORDER BY created_at ASC
@@ -816,7 +816,7 @@ func (t *doltTransaction) GetIssueComments(ctx context.Context, issueID string) 
 	var comments []*types.Comment
 	for rows.Next() {
 		var c types.Comment
-		if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.Type, &c.CreatedAt); err != nil {
 			return nil, wrapScanError("get comments in tx", err)
 		}
 		comments = append(comments, &c)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -35,7 +36,7 @@ func TestCommentsSuite(t *testing.T) {
 		}
 
 		t.Run("add comment", func(t *testing.T) {
-			comment, err := s.AddIssueComment(ctx, issue.ID, testUserAlice, "This is a test comment")
+			comment, err := s.AddIssueComment(ctx, issue.ID, testUserAlice, "This is a test comment", "")
 			if err != nil {
 				t.Fatalf("Failed to add comment: %v", err)
 			}
@@ -67,7 +68,7 @@ func TestCommentsSuite(t *testing.T) {
 		})
 
 		t.Run("multiple comments", func(t *testing.T) {
-			_, err := s.AddIssueComment(ctx, issue.ID, "bob", "Second comment")
+			_, err := s.AddIssueComment(ctx, issue.ID, "bob", "Second comment", "")
 			if err != nil {
 				t.Fatalf("Failed to add second comment: %v", err)
 			}
@@ -108,7 +109,7 @@ func TestCommentsSuite(t *testing.T) {
 		}
 
 		t.Run("comment added via storage API works", func(t *testing.T) {
-			comment, err := s.AddIssueComment(ctx, issue.ID, testUserAlice, "Test comment")
+			comment, err := s.AddIssueComment(ctx, issue.ID, testUserAlice, "Test comment", "")
 			if err != nil {
 				t.Fatalf("Failed to add comment: %v", err)
 			}
@@ -126,6 +127,78 @@ func TestCommentsSuite(t *testing.T) {
 				t.Fatalf("Expected 1 comment, got %d", len(comments))
 			}
 		})
+	})
+}
+
+func TestTypedComments(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+
+	issue := &types.Issue{
+		Title:     "Typed Comment Test",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+	}
+	if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+
+	t.Run("AddTypedComment", func(t *testing.T) {
+		comment, err := s.AddIssueComment(ctx, issue.ID, "alice", "Use JWT over sessions", types.CommentTypeDecision)
+		if err != nil {
+			t.Fatalf("AddIssueComment failed: %v", err)
+		}
+		if comment.Type != types.CommentTypeDecision {
+			t.Errorf("comment.Type = %q, want %q", comment.Type, types.CommentTypeDecision)
+		}
+	})
+
+	t.Run("AddUntypedComment", func(t *testing.T) {
+		comment, err := s.AddIssueComment(ctx, issue.ID, "bob", "General update", "")
+		if err != nil {
+			t.Fatalf("AddIssueComment failed: %v", err)
+		}
+		if comment.Type != "" {
+			t.Errorf("comment.Type = %q, want empty", comment.Type)
+		}
+	})
+
+	t.Run("GetCommentsByType", func(t *testing.T) {
+		comments, err := s.GetIssueCommentsByType(ctx, issue.ID, types.CommentTypeDecision)
+		if err != nil {
+			t.Fatalf("GetIssueCommentsByType failed: %v", err)
+		}
+		if len(comments) != 1 {
+			t.Errorf("got %d comments, want 1", len(comments))
+		}
+		if len(comments) > 0 && comments[0].Type != types.CommentTypeDecision {
+			t.Errorf("comment.Type = %q, want %q", comments[0].Type, types.CommentTypeDecision)
+		}
+	})
+
+	t.Run("GetAllCommentsReturnsType", func(t *testing.T) {
+		comments, err := s.GetIssueComments(ctx, issue.ID)
+		if err != nil {
+			t.Fatalf("GetIssueComments failed: %v", err)
+		}
+		if len(comments) < 2 {
+			t.Fatalf("got %d comments, want >= 2", len(comments))
+		}
+		found := false
+		for _, c := range comments {
+			if c.Type == types.CommentTypeDecision {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("decision comment type not found in GetIssueComments results")
+		}
 	})
 }
 

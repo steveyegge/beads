@@ -977,7 +977,7 @@ func TestDoltStoreComments(t *testing.T) {
 	}
 
 	// Add comments
-	comment1, err := store.AddIssueComment(ctx, issue.ID, "user1", "First comment")
+	comment1, err := store.AddIssueComment(ctx, issue.ID, "user1", "First comment", "")
 	if err != nil {
 		t.Fatalf("failed to add first comment: %v", err)
 	}
@@ -985,7 +985,7 @@ func TestDoltStoreComments(t *testing.T) {
 		t.Error("expected comment ID to be generated")
 	}
 
-	_, err = store.AddIssueComment(ctx, issue.ID, "user2", "Second comment")
+	_, err = store.AddIssueComment(ctx, issue.ID, "user2", "Second comment", "")
 	if err != nil {
 		t.Fatalf("failed to add second comment: %v", err)
 	}
