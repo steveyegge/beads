@@ -27,7 +27,7 @@ var milestoneCreateCmd = &cobra.Command{
 		targetStr, _ := cmd.Flags().GetString("target")
 		description, _ := cmd.Flags().GetString("description")
 
-		withStorage(rootCtx, store, dbPath, func(s *dolt.DoltStore) error {
+		if err := withStorage(rootCtx, store, dbPath, func(s *dolt.DoltStore) error {
 			ms := &types.Milestone{
 				Name:        name,
 				Description: description,
@@ -45,7 +45,9 @@ var milestoneCreateCmd = &cobra.Command{
 			}
 			fmt.Printf("Created milestone %q\n", name)
 			return nil
-		})
+		}); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
 	},
 }
 
@@ -54,7 +56,7 @@ var milestoneListCmd = &cobra.Command{
 	Short: "List all milestones",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		withStorage(rootCtx, store, dbPath, func(s *dolt.DoltStore) error {
+		if err := withStorage(rootCtx, store, dbPath, func(s *dolt.DoltStore) error {
 			milestones, err := s.ListMilestones(rootCtx)
 			if err != nil {
 				FatalErrorRespectJSON("%v", err)
@@ -83,7 +85,9 @@ var milestoneListCmd = &cobra.Command{
 				fmt.Println()
 			}
 			return nil
-		})
+		}); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
 	},
 }
 
@@ -94,7 +98,7 @@ var milestoneStatusCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
 
-		withStorage(rootCtx, store, dbPath, func(s *dolt.DoltStore) error {
+		if err := withStorage(rootCtx, store, dbPath, func(s *dolt.DoltStore) error {
 			ms, err := s.GetMilestone(rootCtx, name)
 			if err != nil {
 				FatalErrorRespectJSON("%v", err)
@@ -146,7 +150,9 @@ var milestoneStatusCmd = &cobra.Command{
 				fmt.Printf("  [%s] %s  %q  %s\n", check, issue.ID, issue.Title, issue.Status)
 			}
 			return nil
-		})
+		}); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
 	},
 }
 
@@ -158,13 +164,15 @@ var milestoneDeleteCmd = &cobra.Command{
 		CheckReadonly("milestone delete")
 		name := args[0]
 
-		withStorage(rootCtx, store, dbPath, func(s *dolt.DoltStore) error {
+		if err := withStorage(rootCtx, store, dbPath, func(s *dolt.DoltStore) error {
 			if err := s.DeleteMilestone(rootCtx, name, actor); err != nil {
 				FatalErrorRespectJSON("%v", err)
 			}
 			fmt.Printf("Deleted milestone %q\n", name)
 			return nil
-		})
+		}); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
 	},
 }
 
