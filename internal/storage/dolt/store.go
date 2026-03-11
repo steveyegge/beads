@@ -1487,6 +1487,10 @@ func (s *DoltStore) ForcePush(ctx context.Context) (retErr error) {
 // Passes branch explicitly to avoid "did not specify a branch" errors.
 // For git-protocol remotes (SSH, git+https://, git://), uses CLI `dolt pull` to avoid MySQL connection timeouts.
 // For non-SSH Hosted Dolt (remoteUser set), uses CALL DOLT_PULL with --user authentication.
+//
+// If the pull results in merge conflicts on the metadata table only (e.g., from
+// stale dolt_auto_push_* rows on multi-machine setups), the conflicts are
+// automatically resolved using "theirs" strategy (GH#2466).
 func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.pull",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -1526,7 +1530,7 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 	}
 	if s.remoteUser != "" {
 		return withEnvCredentials(creds, func() error {
-			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch); err != nil {
+			if err := s.pullWithAutoResolve(ctx, "CALL DOLT_PULL('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch); err != nil {
 				return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
 			}
 			if err := s.resetAutoIncrements(ctx); err != nil {
@@ -1535,13 +1539,120 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 			return nil
 		})
 	}
-	if err := s.execWithLongTimeout(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch); err != nil {
+	if err := s.pullWithAutoResolve(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch); err != nil {
 		return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
 	}
 	if err := s.resetAutoIncrements(ctx); err != nil {
 		return fmt.Errorf("failed to reset auto-increments after pull: %w", err)
 	}
 	return nil
+}
+
+// pullWithAutoResolve executes a DOLT_PULL query with long timeout and auto-resolves
+// metadata-only merge conflicts using "theirs" strategy. This handles the common case
+// where machine-local metadata rows (e.g., dolt_auto_push_*) diverge across clones
+// and cause recurring merge conflicts on pull (GH#2466).
+//
+// Dolt may report merge conflicts in two ways:
+//  1. DOLT_PULL itself returns an error (under autocommit)
+//  2. DOLT_PULL succeeds but tx.Commit() fails (conflicts in working set)
+//
+// This method handles both by checking for conflicts after the pull call
+// (whether it errored or not) and auto-resolving metadata-only conflicts.
+func (s *DoltStore) pullWithAutoResolve(ctx context.Context, query string, args ...any) error {
+	cfg, err := mysql.ParseDSN(s.connStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse DSN for long-timeout connection: %w", err)
+	}
+	cfg.ReadTimeout = 5 * time.Minute
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		return fmt.Errorf("failed to open long-timeout connection: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Allow commits with conflicts so we can inspect and resolve them.
+	if _, err := tx.ExecContext(ctx, "SET @@dolt_allow_commit_conflicts = 1"); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("failed to set dolt_allow_commit_conflicts: %w", err)
+	}
+
+	_, pullErr := tx.ExecContext(ctx, query, args...)
+
+	// Check for merge conflicts regardless of whether DOLT_PULL errored.
+	// Some Dolt versions error on conflicts, others leave them in the working set.
+	resolved, resolveErr := s.tryAutoResolveMetadataConflicts(ctx, tx)
+	if resolveErr != nil {
+		_ = tx.Rollback()
+		if pullErr != nil {
+			return pullErr
+		}
+		return resolveErr
+	}
+
+	if pullErr != nil && !resolved {
+		// Pull failed for a non-conflict reason, or conflicts include non-metadata tables.
+		_ = tx.Rollback()
+		return pullErr
+	}
+
+	return tx.Commit()
+}
+
+// tryAutoResolveMetadataConflicts checks if all merge conflicts are on the metadata
+// table and resolves them with "theirs" strategy. Returns (true, nil) if all conflicts
+// were resolved, (false, nil) if non-metadata conflicts exist, or (false, err) on error.
+func (s *DoltStore) tryAutoResolveMetadataConflicts(ctx context.Context, tx *sql.Tx) (bool, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT `table`, num_conflicts FROM dolt_conflicts")
+	if err != nil {
+		return false, fmt.Errorf("failed to query conflicts: %w", err)
+	}
+
+	type conflict struct {
+		table string
+		count int
+	}
+	var conflicts []conflict
+	for rows.Next() {
+		var c conflict
+		if err := rows.Scan(&c.table, &c.count); err != nil {
+			_ = rows.Close()
+			return false, fmt.Errorf("failed to scan conflict: %w", err)
+		}
+		conflicts = append(conflicts, c)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+
+	if len(conflicts) == 0 {
+		return false, nil // No conflicts to resolve — error was something else
+	}
+
+	// Only auto-resolve if ALL conflicts are on the metadata table.
+	for _, c := range conflicts {
+		if c.table != "metadata" {
+			return false, nil
+		}
+	}
+
+	// Resolve metadata conflicts with "theirs" — remote values win.
+	if _, err := tx.ExecContext(ctx, "CALL DOLT_CONFLICTS_RESOLVE('--theirs', 'metadata')"); err != nil {
+		return false, fmt.Errorf("failed to resolve metadata conflicts: %w", err)
+	}
+
+	// Commit the merge with resolved conflicts.
+	if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'auto-resolve metadata merge conflicts (GH#2466)')"); err != nil {
+		return false, fmt.Errorf("failed to commit resolved conflicts: %w", err)
+	}
+
+	return true, nil
 }
 
 func (s *DoltStore) resetAutoIncrements(ctx context.Context) error {
