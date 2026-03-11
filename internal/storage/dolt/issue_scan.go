@@ -14,6 +14,7 @@ const issueSelectColumns = `id, content_hash, title, description, design, accept
 	       status, priority, issue_type, assignee, estimated_minutes,
 	       created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id,
 	       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+	       closed_by_session,
 	       sender, ephemeral, wisp_type, pinned, is_template, crystallizes,
 	       await_type, await_id, timeout_ns, waiters,
 	       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
@@ -37,7 +38,7 @@ func scanIssueFrom(s issueScanner) (*types.Issue, error) {
 	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
 	var createdBy sql.NullString
 	var assignee, externalRef, specID, compactedAtCommit, owner sql.NullString
-	var contentHash, sourceRepo, closeReason sql.NullString
+	var contentHash, sourceRepo, closeReason, closedBySession sql.NullString
 	var workType, sourceSystem sql.NullString
 	var sender, wispType, molType, eventKind, actor, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
@@ -52,6 +53,7 @@ func scanIssueFrom(s issueScanner) (*types.Issue, error) {
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&createdAtStr, &createdBy, &owner, &updatedAtStr, &closedAt, &externalRef, &specID,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&closedBySession,
 		&sender, &ephemeral, &wispType, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
@@ -110,6 +112,9 @@ func scanIssueFrom(s issueScanner) (*types.Issue, error) {
 	}
 	if closeReason.Valid {
 		issue.CloseReason = closeReason.String
+	}
+	if closedBySession.Valid {
+		issue.ClosedBySession = closedBySession.String
 	}
 	if sender.Valid {
 		issue.Sender = sender.String
