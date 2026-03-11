@@ -826,7 +826,6 @@ type Label struct {
 	Label   string `json:"label"`
 }
 
-// Comment type constants for categorizing comments
 const (
 	CommentTypeDecision = "decision"
 	CommentTypeHandoff  = "handoff"
