@@ -16,18 +16,14 @@ buildGoModule {
   doCheck = false;
 
   # Go module dependencies hash - if build fails with hash mismatch, update with the "got:" value
-  vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  vendorHash = lib.fakeHash;
 
   # Relax go.mod version for Nix: nixpkgs Go may lag behind the latest
   # patch release, and GOTOOLCHAIN=auto can't download in the Nix sandbox.
   postPatch = ''
     goVer="$(go env GOVERSION | sed 's/^go//')"
-    sed -i "s/^go .*/go $goVer/" go.mod
+    go mod edit -go="$goVer"
   '';
-
-  # Allow patch-level toolchain upgrades when a dependency's minimum Go patch
-  # version is newer than nixpkgs' bundled patch version.
-  env.GOTOOLCHAIN = "auto";
 
   # Git is required for tests
   nativeBuildInputs = [ git ];
