@@ -13,6 +13,7 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 )
 
@@ -851,6 +852,40 @@ func runPostCheckoutHook(args []string) int {
 	if exitCode := runChainedHook("post-checkout", args); exitCode != 0 {
 		return exitCode
 	}
+
+	// Only check on branch checkout (flag=1), not file checkout (flag=0)
+	if len(args) >= 3 && args[2] == "1" {
+		// Check if a beads workspace exists here but the database is missing.
+		// This happens on fresh clones or new branches where .beads/metadata.json
+		// is committed but the Dolt data directory is gitignored.
+		// Note: FindBeadsDir() takes no arguments — uses cwd and BEADS_DIR env.
+		beadsDir := beads.FindBeadsDir()
+		if beadsDir != "" {
+			// Workspace found — check if the database is actually usable
+			metadataPath := filepath.Join(beadsDir, "metadata.json")
+			if _, metaErr := os.Stat(metadataPath); metaErr == nil {
+				cfg, cfgErr := configfile.Load(beadsDir)
+				if cfgErr != nil {
+					// Can't load config — skip warning to avoid false positives
+				} else if cfg != nil && cfg.IsDoltServerMode() {
+					// Server mode — database is remote, no local dir needed
+				} else {
+					var dbPath string
+					if cfg != nil {
+						dbPath = cfg.DatabasePath(beadsDir)
+					} else {
+						dbPath = filepath.Join(beadsDir, "dolt")
+					}
+					if _, doltErr := os.Stat(dbPath); os.IsNotExist(doltErr) {
+						fmt.Fprintf(os.Stderr, "beads: database not initialized on this branch.\n")
+						fmt.Fprintf(os.Stderr, "  Run 'bd init' to set up your local database.\n")
+						fmt.Fprintf(os.Stderr, "  Run 'bd doctor' to diagnose issues.\n")
+					}
+				}
+			}
+		}
+	}
+
 	return 0
 }
 
