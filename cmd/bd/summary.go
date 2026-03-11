@@ -73,7 +73,9 @@ func buildEpicSummary(ctx context.Context, s *dolt.DoltStore, epicID string) (*E
 	result.TotalCount = len(children)
 	// Find decision comments by checking DECISION: text prefix (legacy format).
 	comments, err := s.GetIssueComments(ctx, epicID)
-	if err == nil {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not fetch comments for %s: %v\n", epicID, err)
+	} else {
 		for _, c := range comments {
 			if len(c.Text) > 9 && c.Text[:9] == "DECISION:" {
 				result.Decisions = append(result.Decisions, c.Text)
@@ -243,6 +245,6 @@ func printSessionSummary(r *SessionSummaryResult) {
 
 func init() {
 	rootCmd.AddCommand(summaryCmd)
-	summaryCmd.Flags().String("since", "", "Show work closed since date (YYYY-MM-DD)")
+	summaryCmd.Flags().String("since", "", "Show work closed since date (YYYY-MM-DD, midnight UTC)")
 	summaryCmd.Flags().Bool("session", false, "Show current session's closed work")
 }

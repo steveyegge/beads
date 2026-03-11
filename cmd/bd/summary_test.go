@@ -112,6 +112,33 @@ func TestSummarySessionMode(t *testing.T) {
 	})
 }
 
+func TestSummaryEpicDecisionComments(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+
+	epic := &types.Issue{Title: "Auth System", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic, CreatedAt: time.Now()}
+	if err := s.CreateIssue(ctx, epic, "test"); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	if _, err := s.AddIssueComment(ctx, epic.ID, "test", "DECISION: Use JWT for auth"); err != nil {
+		t.Fatalf("AddIssueComment: %v", err)
+	}
+
+	result, err := buildEpicSummary(ctx, s, epic.ID)
+	if err != nil {
+		t.Fatalf("buildEpicSummary: %v", err)
+	}
+	if len(result.Decisions) != 1 {
+		t.Errorf("len(Decisions) = %d, want 1", len(result.Decisions))
+	}
+	if len(result.Decisions) > 0 && result.Decisions[0] != "DECISION: Use JWT for auth" {
+		t.Errorf("Decisions[0] = %q, want %q", result.Decisions[0], "DECISION: Use JWT for auth")
+	}
+}
+
 func TestSummaryJSONOutput(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
