@@ -548,7 +548,7 @@ func (s *configStore) SearchIssues(_ context.Context, _ string, _ types.IssueFil
 func (s *configStore) AddDependency(_ context.Context, _ *types.Dependency, _ string) error {
 	return nil
 }
-func (s *configStore) RemoveDependency(_ context.Context, _, _, _ string) error { return nil }
+func (s *configStore) RemoveDependency(_ context.Context, _, _, _, _ string) error { return nil }
 func (s *configStore) GetDependencies(_ context.Context, _ string) ([]*types.Issue, error) {
 	return nil, nil
 }

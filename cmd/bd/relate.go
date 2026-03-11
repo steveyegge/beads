@@ -162,11 +162,11 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 	// Remove relates-to dependency in both directions
 	// Per Decision 004, relates-to links are now stored in dependencies table
 	// Remove id1 -> id2
-	if err := store.RemoveDependency(ctx, id1, id2, actor); err != nil {
+	if err := store.RemoveDependency(ctx, id1, id2, actor, ""); err != nil {
 		return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id1, id2, err)
 	}
 	// Remove id2 -> id1 (bidirectional)
-	if err := store.RemoveDependency(ctx, id2, id1, actor); err != nil {
+	if err := store.RemoveDependency(ctx, id2, id1, actor, ""); err != nil {
 		return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id2, id1, err)
 	}
 

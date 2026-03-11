@@ -824,7 +824,7 @@ func TestDoltStoreDependencies(t *testing.T) {
 	}
 
 	// Remove dependency
-	if err := store.RemoveDependency(ctx, child.ID, parent.ID, "tester"); err != nil {
+	if err := store.RemoveDependency(ctx, child.ID, parent.ID, "tester", ""); err != nil {
 		t.Fatalf("failed to remove dependency: %v", err)
 	}
 

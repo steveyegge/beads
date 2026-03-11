@@ -662,13 +662,22 @@ func (t *doltTransaction) GetDependencyRecords(ctx context.Context, issueID stri
 	return deps, rows.Err()
 }
 
-// RemoveDependency removes a dependency within the transaction
-func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
+// RemoveDependency removes a dependency within the transaction.
+// If depType is non-empty, only the dependency with that specific type is removed.
+// If depType is empty, all dependencies between the pair are removed.
+func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string, depType string) error {
 	table := "dependencies"
 	if t.isActiveWisp(ctx, issueID) {
 		table = "wisp_dependencies"
 	}
 
+	if depType != "" {
+		//nolint:gosec // G201: table is hardcoded
+		_, err := t.tx.ExecContext(ctx, fmt.Sprintf(`
+			DELETE FROM %s WHERE issue_id = ? AND depends_on_id = ? AND type = ?
+		`, table), issueID, dependsOnID, depType)
+		return wrapExecError("remove dependency in tx", err)
+	}
 	//nolint:gosec // G201: table is hardcoded
 	_, err := t.tx.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s WHERE issue_id = ? AND depends_on_id = ?

@@ -163,11 +163,13 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 }
 
 // RemoveDependency removes a dependency between two issues.
+// If depType is non-empty, only the dependency with that specific type is removed.
+// If depType is empty, all dependencies between the pair are removed (backwards compat).
 // Uses an explicit transaction so writes persist when @@autocommit is OFF.
-func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
+func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string, depType string) error {
 	// Route to wisp_dependencies if the issue is an active wisp
 	if s.isActiveWisp(ctx, issueID) {
-		return s.removeWispDependency(ctx, issueID, dependsOnID)
+		return s.removeWispDependency(ctx, issueID, dependsOnID, depType)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -176,10 +178,18 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
-	`, issueID, dependsOnID); err != nil {
-		return fmt.Errorf("failed to remove dependency: %w", err)
+	if depType != "" {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ? AND type = ?
+		`, issueID, dependsOnID, depType); err != nil {
+			return fmt.Errorf("failed to remove dependency: %w", err)
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
+		`, issueID, dependsOnID); err != nil {
+			return fmt.Errorf("failed to remove dependency: %w", err)
+		}
 	}
 
 	s.invalidateBlockedIDsCache()

@@ -184,13 +184,13 @@ func (s *InstrumentedStorage) AddDependency(ctx context.Context, dep *types.Depe
 	return err
 }
 
-func (s *InstrumentedStorage) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
+func (s *InstrumentedStorage) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string, depType string) error {
 	attrs := []attribute.KeyValue{
 		attribute.String("bd.dep.from", issueID),
 		attribute.String("bd.dep.to", dependsOnID),
 	}
 	ctx, span, t := s.op(ctx, "RemoveDependency", attrs...)
-	err := s.inner.RemoveDependency(ctx, issueID, dependsOnID, actor)
+	err := s.inner.RemoveDependency(ctx, issueID, dependsOnID, actor, depType)
 	s.done(ctx, span, t, err, attrs...)
 	return err
 }

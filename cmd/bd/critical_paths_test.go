@@ -349,7 +349,7 @@ func TestAutoCloseCompletedMolecule(t *testing.T) {
 		}
 
 		// Reparent step 3: remove old parent dep, add new one to Epic B
-		if err := s.RemoveDependency(ctx, steps[2].ID, root.ID, "test"); err != nil {
+		if err := s.RemoveDependency(ctx, steps[2].ID, root.ID, "test", ""); err != nil {
 			t.Fatalf("Failed to remove old parent dep: %v", err)
 		}
 		if err := s.AddDependency(ctx, &types.Dependency{

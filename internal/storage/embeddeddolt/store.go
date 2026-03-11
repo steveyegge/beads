@@ -174,7 +174,7 @@ func (s *EmbeddedDoltStore) AddDependency(ctx context.Context, dep *types.Depend
 	panic("embeddeddolt: AddDependency not implemented")
 }
 
-func (s *EmbeddedDoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
+func (s *EmbeddedDoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string, depType string) error {
 	panic("embeddeddolt: RemoveDependency not implemented")
 }
 

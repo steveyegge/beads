@@ -399,7 +399,7 @@ create, update, show, or close operation).`,
 				}
 				for _, dep := range deps {
 					if dep.Type == types.DepParentChild {
-						if err := issueStore.RemoveDependency(ctx, result.ResolvedID, dep.DependsOnID, actor); err != nil {
+						if err := issueStore.RemoveDependency(ctx, result.ResolvedID, dep.DependsOnID, actor, ""); err != nil {
 							fmt.Fprintf(os.Stderr, "Error removing old parent dependency: %v\n", err)
 						}
 						break

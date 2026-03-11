@@ -48,7 +48,7 @@ const wispDependenciesSchema = `CREATE TABLE wisp_dependencies (
     created_by VARCHAR(255) DEFAULT '',
     metadata JSON DEFAULT (JSON_OBJECT()),
     thread_id VARCHAR(255) DEFAULT '',
-    PRIMARY KEY (issue_id, depends_on_id),
+    PRIMARY KEY (issue_id, depends_on_id, type),
     INDEX idx_wisp_dep_depends (depends_on_id)
 )`
 

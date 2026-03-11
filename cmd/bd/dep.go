@@ -508,7 +508,8 @@ var depRemoveCmd = &cobra.Command{
 		fullFromID := fromID
 		fullToID := toID
 
-		if err := fromStore.RemoveDependency(ctx, fullFromID, fullToID, actor); err != nil {
+		depType, _ := cmd.Flags().GetString("type")
+		if err := fromStore.RemoveDependency(ctx, fullFromID, fullToID, actor, depType); err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
 
@@ -1158,6 +1159,8 @@ func init() {
 	depTreeCmd.Flags().String("format", "", "Output format: 'mermaid' for Mermaid.js flowchart")
 	// Note: --type flag intentionally omitted from depTreeCmd — TreeNode lacks
 	// dependency type info so filtering is not possible. Use 'bd dep list --type' instead.
+
+	depRemoveCmd.Flags().String("type", "", "Remove only this dependency type (omit to remove all types for the pair)")
 
 	depListCmd.Flags().String("direction", "down", "Direction: 'down' (dependencies), 'up' (dependents)")
 	depListCmd.Flags().StringP("type", "t", "", "Filter by dependency type (e.g., tracks, blocks, parent-child)")

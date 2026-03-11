@@ -140,10 +140,10 @@ func TestRelateCommand(t *testing.T) {
 		}
 
 		// Simulate what bd unrelate does: remove both directions
-		if err := s.RemoveDependency(ctx, issue1.ID, issue2.ID, "test"); err != nil {
+		if err := s.RemoveDependency(ctx, issue1.ID, issue2.ID, "test", ""); err != nil {
 			t.Fatalf("RemoveDependency (1->2) failed: %v", err)
 		}
-		if err := s.RemoveDependency(ctx, issue2.ID, issue1.ID, "test"); err != nil {
+		if err := s.RemoveDependency(ctx, issue2.ID, issue1.ID, "test", ""); err != nil {
 			t.Fatalf("RemoveDependency (2->1) failed: %v", err)
 		}
 

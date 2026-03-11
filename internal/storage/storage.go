@@ -44,7 +44,7 @@ type Storage interface {
 
 	// Dependencies
 	AddDependency(ctx context.Context, dep *types.Dependency, actor string) error
-	RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error
+	RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string, depType string) error
 	GetDependencies(ctx context.Context, issueID string) ([]*types.Issue, error)
 	GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error)
 	GetDependenciesWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error)
@@ -144,7 +144,7 @@ type Transaction interface {
 
 	// Dependency operations
 	AddDependency(ctx context.Context, dep *types.Dependency, actor string) error
-	RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error
+	RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string, depType string) error
 	GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error)
 
 	// Label operations

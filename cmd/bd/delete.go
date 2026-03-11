@@ -189,14 +189,14 @@ Force: Delete and orphan dependents
 			}
 			// 2. Remove outgoing dependency links
 			for _, dep := range depRecords {
-				if err := tx.RemoveDependency(ctx, dep.IssueID, dep.DependsOnID, actor); err != nil {
+				if err := tx.RemoveDependency(ctx, dep.IssueID, dep.DependsOnID, actor, ""); err != nil {
 					return fmt.Errorf("remove dependency %s → %s: %w", dep.IssueID, dep.DependsOnID, err)
 				}
 				totalDepsRemoved++
 			}
 			// 3. Remove inbound dependency links
 			for _, dep := range dependents {
-				if err := tx.RemoveDependency(ctx, dep.ID, issueID, actor); err != nil {
+				if err := tx.RemoveDependency(ctx, dep.ID, issueID, actor, ""); err != nil {
 					return fmt.Errorf("remove dependency %s → %s: %w", dep.ID, issueID, err)
 				}
 				totalDepsRemoved++
@@ -428,7 +428,7 @@ func deleteBatchFallback(issueIDs []string, force bool, dryRun bool, cascade boo
 		depRecords, err := store.GetDependencyRecords(ctx, issueID)
 		if err == nil {
 			for _, dep := range depRecords {
-				if err := store.RemoveDependency(ctx, dep.IssueID, dep.DependsOnID, deleteActor); err == nil {
+				if err := store.RemoveDependency(ctx, dep.IssueID, dep.DependsOnID, deleteActor, ""); err == nil {
 					depsRemoved++
 				}
 			}
@@ -438,7 +438,7 @@ func deleteBatchFallback(issueIDs []string, force bool, dryRun bool, cascade boo
 		dependents, err := store.GetDependents(ctx, issueID)
 		if err == nil {
 			for _, dep := range dependents {
-				if err := store.RemoveDependency(ctx, dep.ID, issueID, deleteActor); err == nil {
+				if err := store.RemoveDependency(ctx, dep.ID, issueID, deleteActor, ""); err == nil {
 					depsRemoved++
 				}
 			}

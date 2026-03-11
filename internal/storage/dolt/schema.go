@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS dependencies (
     created_by VARCHAR(255) NOT NULL,
     metadata JSON DEFAULT (JSON_OBJECT()),
     thread_id VARCHAR(255) DEFAULT '',
-    PRIMARY KEY (issue_id, depends_on_id),
+    PRIMARY KEY (issue_id, depends_on_id, type),
     INDEX idx_dependencies_issue (issue_id),
     INDEX idx_dependencies_depends_on (depends_on_id),
     INDEX idx_dependencies_depends_on_type (depends_on_id, type),

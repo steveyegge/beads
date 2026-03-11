@@ -208,7 +208,7 @@ func remapDependencies(ctx context.Context, s *dolt.DoltStore, oldID, newID, tar
 
 	// Remove deps FROM the old ID (user needs to recreate in target rig)
 	for _, dep := range depsFrom {
-		if err := s.RemoveDependency(ctx, oldID, dep.DependsOnID, actor); err != nil {
+		if err := s.RemoveDependency(ctx, oldID, dep.DependsOnID, actor, ""); err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: failed to remove dep %s->%s: %v\n", oldID, dep.DependsOnID, err)
 		}
 	}
@@ -238,7 +238,7 @@ func remapDependencies(ctx context.Context, s *dolt.DoltStore, oldID, newID, tar
 			}
 
 			// Remove old dependency
-			if err := s.RemoveDependency(ctx, dependent.ID, oldID, actor); err != nil {
+			if err := s.RemoveDependency(ctx, dependent.ID, oldID, actor, ""); err != nil {
 				fmt.Fprintf(os.Stderr, "  warning: failed to remove dep %s->%s: %v\n", dependent.ID, oldID, err)
 				continue
 			}

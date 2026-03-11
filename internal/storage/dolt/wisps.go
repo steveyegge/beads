@@ -810,17 +810,27 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 }
 
 // removeWispDependency removes a dependency from wisp_dependencies.
-func (s *DoltStore) removeWispDependency(ctx context.Context, issueID, dependsOnID string) error {
+// If depType is non-empty, only the dependency with that specific type is removed.
+// If depType is empty, all dependencies between the pair are removed.
+func (s *DoltStore) removeWispDependency(ctx context.Context, issueID, dependsOnID string, depType string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM wisp_dependencies WHERE issue_id = ? AND depends_on_id = ?
-	`, issueID, dependsOnID); err != nil {
-		return fmt.Errorf("failed to remove wisp dependency: %w", err)
+	if depType != "" {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM wisp_dependencies WHERE issue_id = ? AND depends_on_id = ? AND type = ?
+		`, issueID, dependsOnID, depType); err != nil {
+			return fmt.Errorf("failed to remove wisp dependency: %w", err)
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM wisp_dependencies WHERE issue_id = ? AND depends_on_id = ?
+		`, issueID, dependsOnID); err != nil {
+			return fmt.Errorf("failed to remove wisp dependency: %w", err)
+		}
 	}
 
 	return wrapTransactionError("commit remove wisp dependency", tx.Commit())

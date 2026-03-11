@@ -219,7 +219,7 @@ func TestDependencySuite(t *testing.T) {
 		}
 
 		// Remove dependency
-		if err := s.RemoveDependency(ctx, "test-remove-1", "test-remove-2", "test"); err != nil {
+		if err := s.RemoveDependency(ctx, "test-remove-1", "test-remove-2", "test", ""); err != nil {
 			t.Fatalf("RemoveDependency failed: %v", err)
 		}
 
@@ -396,7 +396,7 @@ func TestDependencySuite(t *testing.T) {
 		}
 
 		// Try removing with non-existent IDs
-		err := s.RemoveDependency(ctx, "test-nonexistent-1", "test-nonexistent-2", "test")
+		err := s.RemoveDependency(ctx, "test-nonexistent-1", "test-nonexistent-2", "test", "")
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "FOREIGN KEY constraint failed") || strings.Contains(errMsg, "foreign key constraint failed") {
@@ -405,10 +405,10 @@ func TestDependencySuite(t *testing.T) {
 		}
 
 		// Remove the real dep, then try removing again
-		if err := s.RemoveDependency(ctx, "test-fk-remove-1", "test-fk-remove-2", "test"); err != nil {
+		if err := s.RemoveDependency(ctx, "test-fk-remove-1", "test-fk-remove-2", "test", ""); err != nil {
 			t.Fatalf("Failed to remove existing dependency: %v", err)
 		}
-		err = s.RemoveDependency(ctx, "test-fk-remove-1", "test-fk-remove-2", "test")
+		err = s.RemoveDependency(ctx, "test-fk-remove-1", "test-fk-remove-2", "test", "")
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "FOREIGN KEY") {
@@ -1460,6 +1460,74 @@ func TestDepListCrossRigRouting(t *testing.T) {
 	}
 
 	t.Log("Successfully resolved cross-rig dependencies via routing")
+}
+
+func TestRemoveDependencyByType(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+
+	issue1 := &types.Issue{
+		Title: "Remove Test A", Status: types.StatusOpen, Priority: 2,
+		IssueType: types.TypeTask, CreatedAt: time.Now(),
+	}
+	issue2 := &types.Issue{
+		Title: "Remove Test B", Status: types.StatusOpen, Priority: 2,
+		IssueType: types.TypeTask, CreatedAt: time.Now(),
+	}
+	for _, issue := range []*types.Issue{issue1, issue2} {
+		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("CreateIssue: %v", err)
+		}
+	}
+
+	// Add two dependency types
+	for _, dt := range []types.DependencyType{types.DepBlocks, types.DepCausedBy} {
+		if err := s.AddDependency(ctx, &types.Dependency{
+			IssueID: issue1.ID, DependsOnID: issue2.ID, Type: dt,
+		}, "test"); err != nil {
+			t.Fatalf("AddDependency %s: %v", dt, err)
+		}
+	}
+
+	t.Run("RemoveByType", func(t *testing.T) {
+		// Remove only blocks type
+		if err := s.RemoveDependency(ctx, issue1.ID, issue2.ID, "test", string(types.DepBlocks)); err != nil {
+			t.Fatalf("RemoveDependency: %v", err)
+		}
+		// caused-by should still exist
+		deps, err := s.GetDependencyRecords(ctx, issue1.ID)
+		if err != nil {
+			t.Fatalf("GetDependencyRecords: %v", err)
+		}
+		found := false
+		for _, d := range deps {
+			if d.DependsOnID == issue2.ID && d.Type == types.DepCausedBy {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("caused-by dep should still exist after removing blocks")
+		}
+	})
+
+	t.Run("RemoveAllTypes", func(t *testing.T) {
+		// Remove without type = remove all for pair
+		if err := s.RemoveDependency(ctx, issue1.ID, issue2.ID, "test", ""); err != nil {
+			t.Fatalf("RemoveDependency all: %v", err)
+		}
+		deps, err := s.GetDependencyRecords(ctx, issue1.ID)
+		if err != nil {
+			t.Fatalf("GetDependencyRecords: %v", err)
+		}
+		for _, d := range deps {
+			if d.DependsOnID == issue2.ID {
+				t.Errorf("expected no deps to %s, found type %s", issue2.ID, d.Type)
+			}
+		}
+	})
 }
 
 func TestCoexistingDependencyTypes(t *testing.T) {

@@ -378,7 +378,7 @@ func performMerge(targetID string, sourceIDs []string) map[string]interface{} {
 				}
 				childID := dep.Issue.ID
 				// Remove old parent-child link
-				if err := store.RemoveDependency(ctx, childID, sourceID, getActor()); err != nil {
+				if err := store.RemoveDependency(ctx, childID, sourceID, getActor(), ""); err != nil {
 					errors = append(errors, fmt.Sprintf("failed to remove parent link %s→%s: %v", childID, sourceID, err))
 					continue
 				}
