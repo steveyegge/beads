@@ -603,6 +603,44 @@ func TestDefaultConfigPortFileTakesPrecedence(t *testing.T) {
 	}
 }
 
+func TestReadPortFile_Empty(t *testing.T) {
+	// ReadPortFile on a directory with no port file should return 0.
+	dir := t.TempDir()
+	if p := ReadPortFile(dir); p != 0 {
+		t.Errorf("expected 0 for missing port file, got %d", p)
+	}
+}
+
+func TestReadPortFile_Valid(t *testing.T) {
+	dir := t.TempDir()
+	if err := writePortFile(dir, 12345); err != nil {
+		t.Fatal(err)
+	}
+	if p := ReadPortFile(dir); p != 12345 {
+		t.Errorf("expected 12345, got %d", p)
+	}
+}
+
+// TestReadPortFile_IgnoresConfigYaml verifies that ReadPortFile only reads
+// the port file, NOT config.yaml. This is the crux of the GH#2336 fix:
+// bd init uses ReadPortFile instead of DefaultConfig to avoid inheriting
+// another project's port from config.yaml or global config.
+func TestReadPortFile_IgnoresConfigYaml(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a config.yaml with a dolt port (simulating another project's config)
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("dolt:\n  port: 9999\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// ReadPortFile must return 0 — it should ONLY read the port file,
+	// not config.yaml. This prevents cross-project leakage during init.
+	if p := ReadPortFile(dir); p != 0 {
+		t.Errorf("ReadPortFile should ignore config.yaml, got port %d", p)
+	}
+}
+
 // --- Pre-v56 dolt database detection tests (GH#2137) ---
 
 func TestIsPreV56DoltDir_NoMarker(t *testing.T) {

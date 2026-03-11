@@ -288,6 +288,13 @@ func EnsurePortFile(beadsDir string, port int) error {
 	return writePortFile(beadsDir, port)
 }
 
+// ReadPortFile returns the port from the project's dolt-server.port file,
+// or 0 if the file doesn't exist or is invalid. Exported for use by bd init
+// to detect whether this project has its own running server (GH#2336).
+func ReadPortFile(beadsDir string) int {
+	return readPortFile(beadsDir)
+}
+
 // DefaultConfig returns config with sensible defaults.
 // Priority: env var > port file > config.yaml / global config > metadata.json.
 // Returns port 0 when no source provides a port, meaning Start() should

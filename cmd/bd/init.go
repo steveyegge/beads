@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -404,15 +405,29 @@ environment variable.`,
 		// Build config. Beads always uses dolt sql-server.
 		// AutoStart is always enabled during init — we need a server to initialize the database.
 		//
-		// Use doltserver.DefaultConfig to resolve the port via the standard chain
-		// (env var → port file → config.yaml). Port 0 means auto-start will
-		// allocate an ephemeral port (GH#2098, GH#2372).
-		doltDefaults := doltserver.DefaultConfig(beadsDir)
+		// Port resolution for init: use ONLY project-local sources (env var, port file)
+		// to prevent cross-project data leakage (GH#2336). DefaultConfig falls through
+		// to config.yaml / global config, which may resolve to another project's server
+		// because metadata.json doesn't exist yet during init. For fresh inits, port 0
+		// forces auto-start to allocate an ephemeral port for THIS project.
+		initPort := 0
+		if p := os.Getenv("BEADS_DOLT_SERVER_PORT"); p != "" {
+			if port, err := strconv.Atoi(p); err == nil && port > 0 {
+				initPort = port
+			}
+		}
+		if initPort == 0 {
+			initPort = doltserver.ReadPortFile(beadsDir)
+		}
+		// Shared server mode intentionally uses a common port for all projects.
+		if initPort == 0 && doltserver.IsSharedServerMode() {
+			initPort = doltserver.DefaultSharedServerPort
+		}
 		doltCfg := &dolt.Config{
 			Path:            storagePath,
 			BeadsDir:        beadsDir,
 			Database:        dbName,
-			ServerPort:      doltDefaults.Port,
+			ServerPort:      initPort,
 			CreateIfMissing: true, // bd init is the only path that should create databases
 			AutoStart:       os.Getenv("BEADS_DOLT_AUTO_START") != "0",
 		}
