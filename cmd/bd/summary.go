@@ -137,7 +137,7 @@ Modes:
 	Run: func(cmd *cobra.Command, args []string) {
 		sinceStr, _ := cmd.Flags().GetString("since")
 		sessionFlag, _ := cmd.Flags().GetBool("session")
-		withStorage(rootCtx, store, dbPath, func(s *dolt.DoltStore) error {
+		if err := withStorage(rootCtx, store, dbPath, func(s *dolt.DoltStore) error {
 			ctx := rootCtx
 			if len(args) == 1 {
 				result, err := buildEpicSummary(ctx, s, args[0])
@@ -185,7 +185,9 @@ Modes:
 			}
 			FatalErrorRespectJSON("specify an epic ID, --since=DATE, or --session")
 			return nil
-		})
+		}); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
 	},
 }
 
