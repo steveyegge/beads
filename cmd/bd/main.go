@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/subosito/gotenv"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
@@ -486,6 +487,14 @@ var rootCmd = &cobra.Command{
 		doltCfg := &dolt.Config{
 			ReadOnly: useReadOnly,
 			BeadsDir: beadsDir,
+		}
+
+		// Load per-project .env file (non-overriding: shell env wins).
+		// Enables per-project Dolt credentials without global env vars.
+		// See https://github.com/steveyegge/beads/issues/2520
+		envFile := filepath.Join(beadsDir, ".env")
+		if _, statErr := os.Stat(envFile); statErr == nil {
+			_ = gotenv.Load(envFile)
 		}
 
 		// Load config to get database name and server connection settings
