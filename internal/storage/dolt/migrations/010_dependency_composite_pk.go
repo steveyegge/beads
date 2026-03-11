@@ -47,6 +47,17 @@ func pkIncludesType(db *sql.DB, table string) bool {
 }
 
 func alterPKDirect(db *sql.DB, table string) error {
+	// Check for duplicates that would prevent the new composite PK
+	var dupCount int
+	//nolint:gosec // G202: table name from hardcoded list
+	if err := db.QueryRow("SELECT COUNT(*) FROM (SELECT issue_id, depends_on_id, type, COUNT(*) AS c FROM `" + table + "` GROUP BY issue_id, depends_on_id, type HAVING c > 1) AS dups").Scan(&dupCount); err != nil {
+		return fmt.Errorf("duplicate check: %w", err)
+	}
+	if dupCount > 0 {
+		// Duplicates exist — fall through to rename path which handles them
+		return fmt.Errorf("found %d duplicate (issue_id, depends_on_id, type) groups", dupCount)
+	}
+
 	//nolint:gosec // G202: table name from hardcoded list
 	if _, err := db.Exec("ALTER TABLE `" + table + "` DROP PRIMARY KEY"); err != nil {
 		return err
@@ -77,7 +88,7 @@ func alterPKViaRename(db *sql.DB, table string) error {
 	}
 
 	//nolint:gosec // G202: table names from hardcoded list
-	if _, err := db.Exec("INSERT INTO `" + newTable + "` SELECT * FROM `" + table + "`"); err != nil {
+	if _, err := db.Exec("INSERT IGNORE INTO `" + newTable + "` SELECT * FROM `" + table + "`"); err != nil {
 		db.Exec("DROP TABLE IF EXISTS `" + newTable + "`") //nolint:errcheck,gosec
 		return fmt.Errorf("copy data: %w", err)
 	}

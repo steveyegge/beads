@@ -443,3 +443,79 @@ func TestMigrateInfraToWisps_SchemaEvolution(t *testing.T) {
 		t.Errorf("Expected 0 issues, got %d", count)
 	}
 }
+
+func TestMigrateDependencyCompositePK(t *testing.T) {
+	db := openTestDoltBranch(t)
+
+	// Create dependencies table with OLD schema (no type in PK)
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS dependencies (
+		issue_id VARCHAR(255) NOT NULL,
+		depends_on_id VARCHAR(255) NOT NULL,
+		type VARCHAR(32) NOT NULL DEFAULT 'blocks',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		created_by VARCHAR(255) NOT NULL DEFAULT '',
+		metadata JSON DEFAULT (JSON_OBJECT()),
+		thread_id VARCHAR(255) DEFAULT '',
+		PRIMARY KEY (issue_id, depends_on_id),
+		INDEX idx_dependencies_issue (issue_id),
+		INDEX idx_dependencies_depends_on (depends_on_id)
+	)`)
+	if err != nil {
+		t.Fatalf("create dependencies table: %v", err)
+	}
+
+	// Insert a normal row
+	_, err = db.Exec(`INSERT INTO dependencies (issue_id, depends_on_id, type, created_by)
+		VALUES ('a', 'b', 'blocks', 'test')`)
+	if err != nil {
+		t.Fatalf("insert row: %v", err)
+	}
+
+	// Run migration
+	if err := MigrateDependencyCompositePK(db); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	// Verify PK now includes type
+	if !pkIncludesType(db, "dependencies") {
+		t.Fatal("PK should include type after migration")
+	}
+
+	// Verify data survived
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM dependencies").Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 row, got %d", count)
+	}
+
+	// Verify idempotent
+	if err := MigrateDependencyCompositePK(db); err != nil {
+		t.Fatalf("re-running migration should be idempotent: %v", err)
+	}
+}
+
+func TestMigrateDependencyCompositePK_AlreadyMigrated(t *testing.T) {
+	db := openTestDoltBranch(t)
+
+	// Create with NEW schema (type already in PK)
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS dependencies (
+		issue_id VARCHAR(255) NOT NULL,
+		depends_on_id VARCHAR(255) NOT NULL,
+		type VARCHAR(32) NOT NULL DEFAULT 'blocks',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		created_by VARCHAR(255) NOT NULL DEFAULT '',
+		metadata JSON DEFAULT (JSON_OBJECT()),
+		thread_id VARCHAR(255) DEFAULT '',
+		PRIMARY KEY (issue_id, depends_on_id, type)
+	)`)
+	if err != nil {
+		t.Fatalf("create dependencies table: %v", err)
+	}
+
+	// Should be a no-op
+	if err := MigrateDependencyCompositePK(db); err != nil {
+		t.Fatalf("migration should be idempotent: %v", err)
+	}
+}
