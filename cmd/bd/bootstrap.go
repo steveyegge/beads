@@ -212,7 +212,7 @@ func executeInitAction(ctx context.Context, plan BootstrapPlan, cfg *configfile.
 	if err != nil {
 		return fmt.Errorf("create database: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
 		return fmt.Errorf("set issue prefix: %w", err)
@@ -244,7 +244,7 @@ func executeRestoreAction(ctx context.Context, plan BootstrapPlan, cfg *configfi
 	if err != nil {
 		return fmt.Errorf("create database: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
 		return fmt.Errorf("set issue prefix: %w", err)
