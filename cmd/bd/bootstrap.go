@@ -1,15 +1,20 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
+	"github.com/steveyegge/beads/internal/storage/dolt"
+	"golang.org/x/term"
 )
 
 var bootstrapCmd = &cobra.Command{
@@ -77,7 +82,10 @@ Examples:
 		}
 
 		// Execute the plan
-		executeBootstrapPlan(plan, cfg)
+		if err := executeBootstrapPlan(plan, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Bootstrap failed: %v\n", err)
+			os.Exit(1)
+		}
 	},
 }
 
@@ -153,19 +161,120 @@ func printBootstrapPlan(plan BootstrapPlan) {
 	}
 }
 
-func executeBootstrapPlan(plan BootstrapPlan, cfg *configfile.Config) {
+// confirmPrompt asks the user to confirm an action. Returns true if the user
+// confirms or if stdin is not a terminal (non-interactive/CI contexts).
+func confirmPrompt(message string) bool {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return true
+	}
+	fmt.Fprintf(os.Stderr, "%s [Y/n] ", message)
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(strings.ToLower(line))
+	return line == "" || line == "y" || line == "yes"
+}
+
+func executeBootstrapPlan(plan BootstrapPlan, cfg *configfile.Config) error {
+	if !confirmPrompt("Proceed?") {
+		fmt.Fprintf(os.Stderr, "Aborted.\n")
+		return nil
+	}
+
+	ctx := context.Background()
+
 	switch plan.Action {
 	case "sync":
-		fmt.Printf("Syncing from %s...\n", plan.SyncRemote)
-		fmt.Printf("Run: bd init --prefix %s\n", inferPrefix(cfg))
-		fmt.Printf("(bd init detects sync.git-remote and bootstraps non-destructively)\n")
+		return executeSyncAction(ctx, plan, cfg)
 	case "restore":
-		fmt.Printf("Restoring from backup...\n")
-		fmt.Printf("Run: bd backup restore\n")
+		return executeRestoreAction(ctx, plan, cfg)
 	case "init":
-		fmt.Printf("Creating fresh database...\n")
-		fmt.Printf("Run: bd init --prefix %s\n", inferPrefix(cfg))
+		return executeInitAction(ctx, plan, cfg)
 	}
+	return nil
+}
+
+func executeInitAction(ctx context.Context, plan BootstrapPlan, cfg *configfile.Config) error {
+	doltDir := doltserver.ResolveDoltDir(plan.BeadsDir)
+	if err := os.MkdirAll(doltDir, 0o750); err != nil {
+		return fmt.Errorf("create dolt directory: %w", err)
+	}
+
+	prefix := inferPrefix(cfg)
+	dbName := cfg.GetDoltDatabase()
+
+	store, err := dolt.New(ctx, &dolt.Config{
+		Path:            doltDir,
+		Database:        dbName,
+		CreateIfMissing: true,
+		AutoStart:       true,
+		BeadsDir:        plan.BeadsDir,
+	})
+	if err != nil {
+		return fmt.Errorf("create database: %w", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
+		return fmt.Errorf("set issue prefix: %w", err)
+	}
+	if err := store.Commit(ctx, "bd bootstrap"); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Created fresh database with prefix %q\n", prefix)
+	return nil
+}
+
+func executeRestoreAction(ctx context.Context, plan BootstrapPlan, cfg *configfile.Config) error {
+	doltDir := doltserver.ResolveDoltDir(plan.BeadsDir)
+	if err := os.MkdirAll(doltDir, 0o750); err != nil {
+		return fmt.Errorf("create dolt directory: %w", err)
+	}
+
+	prefix := inferPrefix(cfg)
+	dbName := cfg.GetDoltDatabase()
+
+	store, err := dolt.New(ctx, &dolt.Config{
+		Path:            doltDir,
+		Database:        dbName,
+		CreateIfMissing: true,
+		AutoStart:       true,
+		BeadsDir:        plan.BeadsDir,
+	})
+	if err != nil {
+		return fmt.Errorf("create database: %w", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
+		return fmt.Errorf("set issue prefix: %w", err)
+	}
+	if err := store.Commit(ctx, "bd bootstrap: init"); err != nil {
+		return fmt.Errorf("commit init: %w", err)
+	}
+
+	result, err := runBackupRestore(ctx, store, plan.BackupDir, false)
+	if err != nil {
+		return fmt.Errorf("restore from backup: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Restored from backup: %d issues, %d comments, %d dependencies, %d labels\n",
+		result.Issues, result.Comments, result.Dependencies, result.Labels)
+	return nil
+}
+
+func executeSyncAction(ctx context.Context, plan BootstrapPlan, cfg *configfile.Config) error {
+	doltDir := doltserver.ResolveDoltDir(plan.BeadsDir)
+	dbName := cfg.GetDoltDatabase()
+
+	synced, err := dolt.BootstrapFromGitRemoteWithDB(ctx, doltDir, plan.SyncRemote, dbName)
+	if err != nil {
+		return fmt.Errorf("sync from remote: %w", err)
+	}
+	if synced {
+		fmt.Fprintf(os.Stderr, "Synced database from %s\n", plan.SyncRemote)
+	}
+	return nil
 }
 
 func inferPrefix(cfg *configfile.Config) string {
@@ -180,5 +289,4 @@ func inferPrefix(cfg *configfile.Config) string {
 func init() {
 	bootstrapCmd.Flags().Bool("dry-run", false, "Show what would be done without doing it")
 	rootCmd.AddCommand(bootstrapCmd)
-	readOnlyCommands["bootstrap"] = true
 }
