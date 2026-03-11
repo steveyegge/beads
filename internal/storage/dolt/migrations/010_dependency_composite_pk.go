@@ -64,7 +64,7 @@ func alterPKViaRename(db *sql.DB, table string) error {
 	// Get CREATE TABLE statement to recreate structure
 	var tblName, createSQL string
 	//nolint:gosec // G202: table name from hardcoded list
-	if err := db.QueryRow("SHOW CREATE TABLE `" + table + "`").Scan(&tblName, &createSQL); err != nil {
+	if err := db.QueryRow("SHOW CREATE TABLE `"+table+"`").Scan(&tblName, &createSQL); err != nil {
 		return fmt.Errorf("show create table: %w", err)
 	}
 
