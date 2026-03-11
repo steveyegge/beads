@@ -17,6 +17,58 @@ jobs:
       - name: Check all versions match
         run: ./scripts/check-versions.sh
 
+  # Check CLI docs are in sync with live command tree
+  check-cli-docs-freshness:
+    name: Check CLI docs freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build bd
+        run: CGO_ENABLED=0 go build -o bd ./cmd/bd/
+
+      - name: Generate CLI reference
+        run: ./bd help --all > /tmp/cli-ref.md
+
+      - name: Check docs/CLI_REFERENCE.md freshness
+        run: |
+          if ! diff -q docs/CLI_REFERENCE.md /tmp/cli-ref.md > /dev/null 2>&1; then
+            echo "CLI docs are out of sync!"
+            echo ""
+            echo "Run ./scripts/generate-cli-docs.sh to update them"
+            echo ""
+            echo "Diff:"
+            diff docs/CLI_REFERENCE.md /tmp/cli-ref.md || true
+            exit 1
+          fi
+          echo "CLI docs are up to date"
+
+      - name: Generate individual command docs
+        run: |
+          mkdir -p /tmp/cli-docs
+          ./bd help --list | while read -r cmd; do
+            ./bd help --doc "$cmd" > "/tmp/cli-docs/$cmd.md"
+          done
+
+      - name: Check website docs freshness
+        run: |
+          for f in website/docs/cli-reference/*.md; do
+            cmd=$(basename "$f" .md)
+            if [ -f "/tmp/cli-docs/$cmd.md" ]; then
+              if ! diff -q "$f" "/tmp/cli-docs/$cmd.md" > /dev/null 2>&1; then
+                echo "Website doc $f is out of sync"
+                echo "Run ./scripts/generate-cli-docs.sh to update"
+                exit 1
+              fi
+            fi
+          done
+          echo "Website CLI docs are up to date"
+
   # Fast check to catch accidental .beads/issues.jsonl changes from contributors
   check-no-beads-changes:
     name: Check for .beads changes

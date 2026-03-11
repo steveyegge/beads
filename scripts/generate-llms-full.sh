@@ -8,6 +8,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DOCS_DIR="$PROJECT_ROOT/website/docs"
 OUTPUT_FILE="$PROJECT_ROOT/website/static/llms-full.txt"
+BD="$PROJECT_ROOT/bd"
+
+# Ensure bd binary exists
+if [ ! -f "$BD" ]; then
+    echo "Building bd..."
+    cd "$PROJECT_ROOT"
+    CGO_ENABLED=0 go build -o bd ./cmd/bd/
+fi
 
 # Header
 cat > "$OUTPUT_FILE" << 'EOF'
@@ -42,8 +50,8 @@ if [ -f "$DOCS_DIR/intro.md" ]; then
     process_file "$DOCS_DIR/intro.md"
 fi
 
-# Process directories in logical order
-for dir in getting-started core-concepts architecture cli-reference workflows multi-agent integrations recovery reference; do
+# Process directories in logical order (conceptual docs only, skip cli-reference)
+for dir in getting-started core-concepts architecture workflows multi-agent integrations recovery reference; do
     if [ -d "$DOCS_DIR/$dir" ]; then
         # Process index first if exists
         if [ -f "$DOCS_DIR/$dir/index.md" ]; then
@@ -58,6 +66,20 @@ for dir in getting-started core-concepts architecture cli-reference workflows mu
         done
     fi
 done
+
+# Add live-generated CLI reference (replaces static cli-reference docs)
+cat >> "$OUTPUT_FILE" << 'EOF'
+---
+
+# CLI Command Reference
+
+> This section is auto-generated from the live bd command tree.
+> Run `bd help --all` to regenerate this section.
+
+EOF
+
+# Add the generated CLI reference
+$BD help --all >> "$OUTPUT_FILE"
 
 # Add footer
 cat >> "$OUTPUT_FILE" << 'EOF'
