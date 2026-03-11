@@ -1,0 +1,8 @@
+{"created_at":"2026-03-11T17:22:15Z","created_by":"MelsovCOZY","depends_on_id":"beads-00y","issue_id":"beads-00y.1","type":"parent-child"}
+{"created_at":"2026-03-11T17:22:15Z","created_by":"MelsovCOZY","depends_on_id":"beads-00y","issue_id":"beads-00y.2","type":"parent-child"}
+{"created_at":"2026-03-11T17:22:20Z","created_by":"MelsovCOZY","depends_on_id":"beads-00y.1","issue_id":"beads-00y.2","type":"blocks"}
+{"created_at":"2026-03-11T17:22:15Z","created_by":"MelsovCOZY","depends_on_id":"beads-00y","issue_id":"beads-00y.3","type":"parent-child"}
+{"created_at":"2026-03-11T17:22:15Z","created_by":"MelsovCOZY","depends_on_id":"beads-00y","issue_id":"beads-00y.4","type":"parent-child"}
+{"created_at":"2026-03-11T17:22:20Z","created_by":"MelsovCOZY","depends_on_id":"beads-00y.1","issue_id":"beads-00y.4","type":"blocks"}
+{"created_at":"2026-03-11T17:22:20Z","created_by":"MelsovCOZY","depends_on_id":"beads-00y.2","issue_id":"beads-00y.4","type":"blocks"}
+{"created_at":"2026-03-11T17:22:20Z","created_by":"MelsovCOZY","depends_on_id":"beads-00y.3","issue_id":"beads-00y.4","type":"blocks"}
