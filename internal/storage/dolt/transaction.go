@@ -604,21 +604,18 @@ func (t *doltTransaction) AddDependency(ctx context.Context, dep *types.Dependen
 		table = "wisp_dependencies"
 	}
 
-	// Check for existing dependency to prevent silent type overwrites.
-	var existingType string
+	// Check for existing dependency with the same (pair + type) combination.
+	// Different types between the same pair are allowed to coexist (composite PK migration 010).
+	var existingCount int
 	//nolint:gosec // G201: table is hardcoded
 	err := t.tx.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT type FROM %s WHERE issue_id = ? AND depends_on_id = ?
-	`, table), dep.IssueID, dep.DependsOnID).Scan(&existingType)
-	if err == nil {
-		if existingType == string(dep.Type) {
-			return nil // idempotent
-		}
-		return fmt.Errorf("dependency %s -> %s already exists with type %q (requested %q); remove it first with 'bd dep remove' then re-add",
-			dep.IssueID, dep.DependsOnID, existingType, dep.Type)
-	}
-	if err != nil && err != sql.ErrNoRows {
+		SELECT COUNT(*) FROM %s WHERE issue_id = ? AND depends_on_id = ? AND type = ?
+	`, table), dep.IssueID, dep.DependsOnID, dep.Type).Scan(&existingCount)
+	if err != nil {
 		return fmt.Errorf("failed to check existing dependency: %w", err)
+	}
+	if existingCount > 0 {
+		return nil // idempotent
 	}
 
 	//nolint:gosec // G201: table is hardcoded

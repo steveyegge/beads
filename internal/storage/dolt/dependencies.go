@@ -115,37 +115,32 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 		}
 	}
 
-	// Check for existing dependency between the same pair with a different type.
-	// Previously this was an upsert (ON DUPLICATE KEY UPDATE type = VALUES(type))
-	// which silently changed e.g. "blocks" to "caused-by", removing the blocking
-	// relationship without warning.
-	var existingType string
+	// Check for existing dependency with the same (pair + type) combination.
+	// If it exists, treat as idempotent (update metadata). Different types between
+	// the same pair are now allowed to coexist (composite PK migration 010).
+	var existingCount int
 	err = tx.QueryRowContext(ctx, `
-		SELECT type FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
-	`, dep.IssueID, dep.DependsOnID).Scan(&existingType)
-	if err == nil {
-		// Row exists
-		if existingType == string(dep.Type) {
-			// Same type — idempotent; update metadata in case it changed
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE dependencies SET metadata = ? WHERE issue_id = ? AND depends_on_id = ?
-			`, metadata, dep.IssueID, dep.DependsOnID); err != nil {
-				return fmt.Errorf("failed to update dependency metadata: %w", err)
-			}
-			if err := tx.Commit(); err != nil {
-				return fmt.Errorf("sql commit: %w", err)
-			}
-			// Record in Dolt version history (bd-2avi)
-			if _, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
-				"dependency: update metadata "+dep.IssueID+" -> "+dep.DependsOnID, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
-				return fmt.Errorf("dolt commit: %w", err)
-			}
-			return nil
-		}
-		return fmt.Errorf("dependency %s -> %s already exists with type %q (requested %q); remove it first with 'bd dep remove' then re-add",
-			dep.IssueID, dep.DependsOnID, existingType, dep.Type)
-	} else if !errors.Is(err, sql.ErrNoRows) {
+		SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND depends_on_id = ? AND type = ?
+	`, dep.IssueID, dep.DependsOnID, dep.Type).Scan(&existingCount)
+	if err != nil {
 		return fmt.Errorf("failed to check existing dependency: %w", err)
+	}
+	if existingCount > 0 {
+		// Same type — idempotent; update metadata in case it changed
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE dependencies SET metadata = ? WHERE issue_id = ? AND depends_on_id = ? AND type = ?
+		`, metadata, dep.IssueID, dep.DependsOnID, dep.Type); err != nil {
+			return fmt.Errorf("failed to update dependency metadata: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("sql commit: %w", err)
+		}
+		// Record in Dolt version history (bd-2avi)
+		if _, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
+			"dependency: update metadata "+dep.IssueID+" -> "+dep.DependsOnID, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
+			return fmt.Errorf("dolt commit: %w", err)
+		}
+		return nil
 	}
 
 	if _, err := tx.ExecContext(ctx, `

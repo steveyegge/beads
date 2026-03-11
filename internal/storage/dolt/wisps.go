@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -780,25 +779,24 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 		}
 	}
 
-	// Check for existing dependency to prevent silent type overwrites.
-	var existingType string
+	// Check for existing dependency with the same (pair + type) combination.
+	// If it exists, treat as idempotent (update metadata). Different types between
+	// the same pair are now allowed to coexist (composite PK migration 010).
+	var existingCount int
 	err = tx.QueryRowContext(ctx, `
-		SELECT type FROM wisp_dependencies WHERE issue_id = ? AND depends_on_id = ?
-	`, dep.IssueID, dep.DependsOnID).Scan(&existingType)
-	if err == nil {
-		if existingType == string(dep.Type) {
-			// Same type — idempotent; update metadata in case it changed
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE wisp_dependencies SET metadata = ? WHERE issue_id = ? AND depends_on_id = ?
-			`, metadata, dep.IssueID, dep.DependsOnID); err != nil {
-				return fmt.Errorf("failed to update wisp dependency metadata: %w", err)
-			}
-			return wrapTransactionError("commit add wisp dependency", tx.Commit())
-		}
-		return fmt.Errorf("dependency %s -> %s already exists with type %q (requested %q); remove it first with 'bd dep remove' then re-add",
-			dep.IssueID, dep.DependsOnID, existingType, dep.Type)
-	} else if !errors.Is(err, sql.ErrNoRows) {
+		SELECT COUNT(*) FROM wisp_dependencies WHERE issue_id = ? AND depends_on_id = ? AND type = ?
+	`, dep.IssueID, dep.DependsOnID, dep.Type).Scan(&existingCount)
+	if err != nil {
 		return fmt.Errorf("failed to check existing wisp dependency: %w", err)
+	}
+	if existingCount > 0 {
+		// Same type — idempotent; update metadata in case it changed
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE wisp_dependencies SET metadata = ? WHERE issue_id = ? AND depends_on_id = ? AND type = ?
+		`, metadata, dep.IssueID, dep.DependsOnID, dep.Type); err != nil {
+			return fmt.Errorf("failed to update wisp dependency metadata: %w", err)
+		}
+		return wrapTransactionError("commit add wisp dependency", tx.Commit())
 	}
 
 	if _, err := tx.ExecContext(ctx, `

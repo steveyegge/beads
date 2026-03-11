@@ -1461,3 +1461,89 @@ func TestDepListCrossRigRouting(t *testing.T) {
 
 	t.Log("Successfully resolved cross-rig dependencies via routing")
 }
+
+func TestCoexistingDependencyTypes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+
+	issue1 := &types.Issue{
+		Title: "Issue A", Status: types.StatusOpen, Priority: 2,
+		IssueType: types.TypeTask, CreatedAt: time.Now(),
+	}
+	issue2 := &types.Issue{
+		Title: "Issue B", Status: types.StatusOpen, Priority: 2,
+		IssueType: types.TypeTask, CreatedAt: time.Now(),
+	}
+	for _, issue := range []*types.Issue{issue1, issue2} {
+		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("CreateIssue: %v", err)
+		}
+	}
+
+	t.Run("TwoTypesCoexist", func(t *testing.T) {
+		// Add blocks dependency
+		if err := s.AddDependency(ctx, &types.Dependency{
+			IssueID: issue1.ID, DependsOnID: issue2.ID,
+			Type: types.DepBlocks,
+		}, "test"); err != nil {
+			t.Fatalf("AddDependency blocks: %v", err)
+		}
+
+		// Add caused-by between same pair — should succeed now
+		if err := s.AddDependency(ctx, &types.Dependency{
+			IssueID: issue1.ID, DependsOnID: issue2.ID,
+			Type: types.DepCausedBy,
+		}, "test"); err != nil {
+			t.Fatalf("AddDependency caused-by: %v (should allow coexisting types)", err)
+		}
+
+		// Verify both exist
+		deps, err := s.GetDependencyRecords(ctx, issue1.ID)
+		if err != nil {
+			t.Fatalf("GetDependencyRecords: %v", err)
+		}
+		typeSet := make(map[string]bool)
+		for _, d := range deps {
+			if d.DependsOnID == issue2.ID {
+				typeSet[string(d.Type)] = true
+			}
+		}
+		if !typeSet["blocks"] || !typeSet["caused-by"] {
+			t.Errorf("expected both blocks and caused-by, got %v", typeSet)
+		}
+	})
+
+	t.Run("SameTypeIdempotent", func(t *testing.T) {
+		// Adding same type again should be idempotent
+		if err := s.AddDependency(ctx, &types.Dependency{
+			IssueID: issue1.ID, DependsOnID: issue2.ID,
+			Type: types.DepBlocks,
+		}, "test"); err != nil {
+			t.Fatalf("idempotent AddDependency: %v", err)
+		}
+	})
+
+	t.Run("CycleDetectionWithMultipleEdgeTypes", func(t *testing.T) {
+		// issue1 blocks issue2 (already exists from TwoTypesCoexist)
+		// Adding issue2 blocks issue1 should still be rejected (cycle)
+		err := s.AddDependency(ctx, &types.Dependency{
+			IssueID: issue2.ID, DependsOnID: issue1.ID,
+			Type: types.DepBlocks,
+		}, "test")
+		if err == nil {
+			t.Error("expected cycle detection error, got nil")
+		}
+		// caused-by between same pair should NOT trigger cycle detection
+		// (only blocks type is checked for cycles)
+		err = s.AddDependency(ctx, &types.Dependency{
+			IssueID: issue2.ID, DependsOnID: issue1.ID,
+			Type: types.DepCausedBy,
+		}, "test")
+		if err != nil {
+			t.Fatalf("caused-by reverse should be allowed (no cycle check): %v", err)
+		}
+	})
+}
