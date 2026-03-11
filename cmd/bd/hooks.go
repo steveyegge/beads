@@ -13,6 +13,7 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 )
 
@@ -841,16 +842,45 @@ func runPrePushHook(args []string) int {
 	return 0
 }
 
-// runPostCheckoutHook runs chained hooks after branch checkout.
-// args: [previous-HEAD, new-HEAD, flag] where flag=1 for branch checkout
-// Returns 0 on success (or if not applicable).
+// runPostCheckoutHook warns when the database is missing after branch checkout.
+// args: [previous-HEAD, new-HEAD, flag] where flag=1 for branch checkout.
+// Never blocks git — always returns 0.
 //
 //nolint:unparam // Always returns 0 by design - warnings don't block checkouts
 func runPostCheckoutHook(args []string) int {
-	// Run chained hook first (if exists)
 	if exitCode := runChainedHook("post-checkout", args); exitCode != 0 {
 		return exitCode
 	}
+
+	// Only check on branch checkout (flag=1), not file checkout (flag=0)
+	if len(args) < 3 || args[2] != "1" {
+		return 0
+	}
+
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return 0
+	}
+
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return 0
+	}
+
+	// Server mode manages its own database lifecycle
+	if cfg.IsDoltServerMode() {
+		return 0
+	}
+
+	dbPath := cfg.DatabasePath(beadsDir)
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		return 0
+	}
+
+	fmt.Fprintf(os.Stderr, "beads: database not initialized on this branch.\n")
+	fmt.Fprintf(os.Stderr, "  Run 'bd bootstrap' to auto-detect and restore your database.\n")
+	fmt.Fprintf(os.Stderr, "  Run 'bd doctor' to diagnose issues.\n")
+
 	return 0
 }
 
