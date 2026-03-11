@@ -627,13 +627,16 @@ func installHooksWithOptions(hookNames []string, force bool, shared bool, chain 
 }
 
 func configureSharedHooksPath() error {
-	// Set git config core.hooksPath to .beads-hooks
-	// Note: This may run before .beads exists, so it uses git.GetRepoRoot() directly
+	// Set git config core.hooksPath to an absolute path pointing to .beads-hooks.
+	// Using an absolute path is critical for git worktrees (GH#2414):
+	// git resolves relative core.hooksPath relative to the working tree root.
+	// Note: This may run before .beads exists, so it uses git.GetRepoRoot() directly.
 	repoRoot := git.GetRepoRoot()
 	if repoRoot == "" {
 		return fmt.Errorf("not in a git repository")
 	}
-	cmd := exec.Command("git", "config", "core.hooksPath", ".beads-hooks")
+	absHooksPath := filepath.Join(repoRoot, ".beads-hooks")
+	cmd := exec.Command("git", "config", "core.hooksPath", absHooksPath)
 	cmd.Dir = repoRoot
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git config failed: %w (output: %s)", err, string(output))
@@ -642,12 +645,17 @@ func configureSharedHooksPath() error {
 }
 
 func configureBeadsHooksPath() error {
-	// Set git config core.hooksPath to .beads/hooks
+	// Set git config core.hooksPath to an absolute path pointing to .beads/hooks.
+	// Using an absolute path is critical for git worktrees (GH#2414):
+	// git resolves relative core.hooksPath relative to the working tree root,
+	// so in a worktree ".beads/hooks" would resolve to <worktree>/.beads/hooks/
+	// which doesn't exist — the hooks live in the main repo's .beads/hooks/.
 	repoRoot := git.GetRepoRoot()
 	if repoRoot == "" {
 		return fmt.Errorf("not in a git repository")
 	}
-	cmd := exec.Command("git", "config", "core.hooksPath", ".beads/hooks")
+	absHooksPath := filepath.Join(repoRoot, ".beads", "hooks")
+	cmd := exec.Command("git", "config", "core.hooksPath", absHooksPath)
 	cmd.Dir = repoRoot
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git config failed: %w (output: %s)", err, string(output))
@@ -734,7 +742,11 @@ func resetHooksPathIfBeadsManaged() error {
 	}
 
 	hooksPath := strings.TrimSpace(string(out))
-	if hooksPath == ".beads/hooks" || hooksPath == ".beads-hooks" {
+	// Match both relative (legacy) and absolute (GH#2414) beads hooks paths
+	absBeadsHooks := filepath.Join(repoRoot, ".beads", "hooks")
+	absSharedHooks := filepath.Join(repoRoot, ".beads-hooks")
+	if hooksPath == ".beads/hooks" || hooksPath == ".beads-hooks" ||
+		hooksPath == absBeadsHooks || hooksPath == absSharedHooks {
 		cmd = exec.Command("git", "config", "--unset", "core.hooksPath")
 		cmd.Dir = repoRoot
 		if output, err := cmd.CombinedOutput(); err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -683,6 +684,114 @@ func TestUninstallHooksRemovesEmptyFile(t *testing.T) {
 		// File should be removed entirely (only shebang left)
 		if _, err := os.Stat(preCommitPath); !os.IsNotExist(err) {
 			t.Error("hook file with only shebang should be removed entirely")
+		}
+	})
+}
+
+// TestConfigureBeadsHooksPath_AbsolutePath verifies that core.hooksPath is set to
+// an absolute path so that git worktrees can find the hooks directory (GH#2414).
+func TestConfigureBeadsHooksPath_AbsolutePath(t *testing.T) {
+	tmpDir := newGitRepo(t)
+	runInDir(t, tmpDir, func() {
+		// Create .beads/hooks/ directory
+		beadsHooksDir := filepath.Join(tmpDir, ".beads", "hooks")
+		if err := os.MkdirAll(beadsHooksDir, 0750); err != nil {
+			t.Fatalf("Failed to create .beads/hooks/: %v", err)
+		}
+
+		if err := configureBeadsHooksPath(); err != nil {
+			t.Fatalf("configureBeadsHooksPath() failed: %v", err)
+		}
+
+		// Read back core.hooksPath
+		out, err := exec.Command("git", "config", "--get", "core.hooksPath").Output()
+		if err != nil {
+			t.Fatalf("git config --get core.hooksPath failed: %v", err)
+		}
+		hooksPath := strings.TrimSpace(string(out))
+
+		// Must be absolute
+		if !filepath.IsAbs(hooksPath) {
+			t.Errorf("core.hooksPath should be absolute, got %q", hooksPath)
+		}
+
+		// Must point to .beads/hooks
+		if !strings.HasSuffix(hooksPath, filepath.Join(".beads", "hooks")) {
+			t.Errorf("core.hooksPath should end with .beads/hooks, got %q", hooksPath)
+		}
+	})
+}
+
+// TestInstallHooksBeads_WorktreeAccess verifies that hooks installed with --beads
+// are accessible from a git worktree (GH#2414).
+func TestInstallHooksBeads_WorktreeAccess(t *testing.T) {
+	tmpDir := newGitRepo(t)
+	runInDir(t, tmpDir, func() {
+		// Create .beads/ directory with metadata.json (needed for FindBeadsDir)
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatalf("Failed to create .beads/: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{}`), 0644); err != nil {
+			t.Fatalf("Failed to create metadata.json: %v", err)
+		}
+
+		// Install hooks with --beads
+		if err := installHooksWithOptions(managedHookNames, false, false, false, true); err != nil {
+			t.Fatalf("installHooksWithOptions(beads=true) failed: %v", err)
+		}
+
+		// Verify hooks exist in .beads/hooks/
+		for _, hookName := range managedHookNames {
+			hookPath := filepath.Join(beadsDir, "hooks", hookName)
+			if _, err := os.Stat(hookPath); err != nil {
+				t.Errorf("hook %s not found at %s", hookName, hookPath)
+			}
+		}
+
+		// Read core.hooksPath and verify it's absolute
+		out, err := exec.Command("git", "config", "--get", "core.hooksPath").Output()
+		if err != nil {
+			t.Fatalf("core.hooksPath not set after --beads install: %v", err)
+		}
+		hooksPath := strings.TrimSpace(string(out))
+		if !filepath.IsAbs(hooksPath) {
+			t.Errorf("core.hooksPath should be absolute for worktree compatibility, got %q", hooksPath)
+		}
+
+		// Create a worktree and verify hooks are accessible from it
+		worktreeDir := filepath.Join(t.TempDir(), "worktree")
+		cmd := exec.Command("git", "worktree", "add", worktreeDir, "-b", "test-worktree")
+		cmd.Dir = tmpDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git worktree add failed: %v\n%s", err, string(output))
+		}
+		defer func() {
+			exec.Command("git", "worktree", "remove", worktreeDir).Run()
+		}()
+
+		// From the worktree, core.hooksPath should resolve to the same hooks
+		cmd = exec.Command("git", "config", "--get", "core.hooksPath")
+		cmd.Dir = worktreeDir
+		wtOut, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("core.hooksPath not visible from worktree: %v", err)
+		}
+		wtHooksPath := strings.TrimSpace(string(wtOut))
+
+		if wtHooksPath != hooksPath {
+			t.Errorf("worktree core.hooksPath = %q, want %q", wtHooksPath, hooksPath)
+		}
+
+		// The hooks directory must actually exist at the resolved path
+		if _, err := os.Stat(wtHooksPath); err != nil {
+			t.Errorf("hooks directory not accessible from worktree at %q: %v", wtHooksPath, err)
+		}
+
+		// Verify a specific hook file exists
+		preCommitPath := filepath.Join(wtHooksPath, "pre-commit")
+		if _, err := os.Stat(preCommitPath); err != nil {
+			t.Errorf("pre-commit hook not accessible from worktree: %v", err)
 		}
 	})
 }
