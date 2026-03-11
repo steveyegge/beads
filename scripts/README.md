@@ -178,6 +178,40 @@ malicious due to heuristic detection. See `docs/ANTIVIRUS.md` for details.
 
 ---
 
+## docs-drift-runner.sh
+
+Runs a doc recipe, captures evidence artifacts, and reports documentation drift.
+
+### Usage
+
+```bash
+# Default CLI recipe + local bd binary
+./scripts/docs-drift-runner.sh
+
+# Explicit recipe, binary, and artifact output directory
+./scripts/docs-drift-runner.sh \
+  ./docs/recipes/cli-reference.recipe.yaml \
+  ./bd \
+  ./.amp/in/artifacts/docs-drift
+```
+
+### What It Does
+
+1. Loads a recipe from `docs/recipes/*.recipe.yaml`.
+2. Detects command-generation capabilities (`bd help --list`, `bd help --doc`) when available.
+3. Captures live CLI help output (`bd help --all`) as evidence.
+4. Compares generated outputs against checked-in docs and emits diff artifacts.
+5. Runs recipe-defined shell checks (for example `scripts/check-doc-flags.sh`).
+6. Produces `report.md` and `report.json` in the artifact directory.
+
+### Exit Codes
+
+- `0`: No drift detected and all shell checks passed.
+- `1`: Shell checks failed or recipe execution error.
+- `2`: Drift detected (artifacts include diffs).
+
+---
+
 ## Future Scripts
 
 Additional maintenance scripts may be added here as needed.

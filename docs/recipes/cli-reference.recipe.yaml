@@ -1,0 +1,59 @@
+version: 0
+id: cli-reference
+description: Branch-aware drift detection and regeneration recipe for CLI docs.
+owners:
+  - "@dev-tools"
+
+applies_to:
+  - "docs/CLI_REFERENCE.md"
+  - "website/docs/cli-reference/*.md"
+
+sources:
+  commands:
+    - name: combined_help
+      run: "bd help --all"
+      required: true
+    - name: command_list
+      run: "bd help --list"
+      required: false
+    - name: single_command_doc
+      run: "bd help --doc <command>"
+      required: false
+  files:
+    - "cmd/bd/**/*.go"
+    - "scripts/generate-cli-docs.sh"
+  refs:
+    baseline: "main"
+    watch:
+      - "feat/help-doc-generator"
+      - "origin/feature/help-all"
+
+generation:
+  mode: hybrid
+  preferred_path_when_available:
+    - "command_list"
+    - "single_command_doc"
+  fallback_path:
+    - "combined_help"
+  outputs:
+    - "docs/CLI_REFERENCE.md"
+    - "website/docs/cli-reference/*.md"
+
+validation:
+  shell_checks:
+    - "if [ -x ./scripts/check-doc-flags.sh ]; then ./scripts/check-doc-flags.sh ./bd; else echo 'SKIP: check-doc-flags.sh not present on this ref'; fi"
+  assertions:
+    - id: coverage_top_level_commands
+      description: Every top-level command present in help output is represented in CLI docs.
+      severity: error
+    - id: no_removed_sync_import
+      description: No references to removed sync/import workflows outside historical context.
+      severity: error
+    - id: examples_use_live_flags
+      description: Flag names used in examples are present in current help text.
+      severity: warn
+
+branch_policy:
+  on_watch_ref_change: run_recipe
+  nightly_compare_against_baseline: true
+  file_pr_or_issue_on_drift: true
