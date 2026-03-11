@@ -77,6 +77,7 @@ dolt:
 | `BEADS_DOLT_SERVER_PORT` | `3306` | Server port (MySQL protocol) |
 | `BEADS_DOLT_SERVER_USER` | `root` | MySQL username |
 | `BEADS_DOLT_SERVER_PASS` | (empty) | MySQL password |
+| `BEADS_DOLT_SHARED_SERVER` | (empty) | Shared server mode: `1` or `true` to enable |
 
 ### Server Lifecycle
 
@@ -85,12 +86,31 @@ dolt:
 bd doctor
 
 # Server auto-starts when needed
-# PID stored in: .beads/dolt/sql-server.pid
-# Logs written to: .beads/dolt/sql-server.log
+# PID stored in: .beads/dolt-server.pid
+# Logs written to: .beads/dolt-server.log
 
-# Manual stop (rarely needed)
-kill $(cat .beads/dolt/sql-server.pid)
+# Start/stop/status
+bd dolt start
+bd dolt stop
+bd dolt status
 ```
+
+### Shared Server Mode
+
+On multi-project machines, enable shared server mode to use a single Dolt server
+for all projects (instead of one server per project):
+
+```bash
+# Enable via config
+bd dolt set shared-server true
+
+# Or via environment variable (machine-wide)
+export BEADS_DOLT_SHARED_SERVER=1
+```
+
+Shared server state lives in `~/.beads/shared-server/` and uses port 3308 by default
+(avoiding conflict with Gas Town on 3307). Each project's data remains isolated in its
+own database (named by project prefix). See [DOLT.md](DOLT.md) for details.
 
 ## Sync Modes
 

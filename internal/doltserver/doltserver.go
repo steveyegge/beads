@@ -38,9 +38,65 @@ import (
 // port allocation when the TOCTOU race causes a bind failure.
 const maxEphemeralPortAttempts = 10
 
+// DefaultSharedServerPort is the default port for shared server mode.
+// Uses 3308 to avoid conflict with Gas Town which uses 3307.
+const DefaultSharedServerPort = 3308
+
+// IsSharedServerMode returns true if shared server mode is enabled.
+// Checks (in priority order):
+//  1. BEADS_DOLT_SHARED_SERVER env var ("1" or "true")
+//  2. dolt.shared-server in config.yaml
+//
+// Shared server mode means all projects on this machine share a single
+// dolt sql-server process at SharedServerDir(), each using its own
+// database (already unique via prefix-based naming in bd init).
+func IsSharedServerMode() bool {
+	if v := os.Getenv("BEADS_DOLT_SHARED_SERVER"); v == "1" || strings.EqualFold(v, "true") {
+		return true
+	}
+	return config.GetBool("dolt.shared-server")
+}
+
+// SharedServerDir returns the directory for shared server state files.
+// Returns ~/.beads/shared-server/ (created on first use).
+func SharedServerDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	dir := filepath.Join(home, ".beads", "shared-server")
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return "", fmt.Errorf("cannot create shared server directory %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// SharedDoltDir returns the dolt data directory for the shared server.
+// Returns ~/.beads/shared-server/dolt/ (created on first use).
+func SharedDoltDir() (string, error) {
+	serverDir, err := SharedServerDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(serverDir, "dolt")
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return "", fmt.Errorf("cannot create shared dolt directory %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
 // resolveServerDir returns the canonical server directory for dolt state files.
-// Returns beadsDir unchanged.
+// In shared server mode, returns ~/.beads/shared-server/ instead of the
+// project's .beads/ directory.
 func resolveServerDir(beadsDir string) string {
+	if IsSharedServerMode() {
+		dir, err := SharedServerDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: shared server directory unavailable, using per-project mode: %v\n", err)
+			return beadsDir
+		}
+		return dir
+	}
 	return beadsDir
 }
 
@@ -59,6 +115,16 @@ func ResolveServerDir(beadsDir string) string {
 // to avoid triggering the config.json → metadata.json migration side effect,
 // which would create files in the .beads/ directory unexpectedly.
 func ResolveDoltDir(beadsDir string) string {
+	// Shared server mode: use centralized dolt data directory
+	if IsSharedServerMode() {
+		dir, err := SharedDoltDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: shared dolt directory unavailable, using per-project mode: %v\n", err)
+		} else {
+			return dir
+		}
+	}
+
 	// Check env var first (highest priority)
 	if d := os.Getenv("BEADS_DOLT_DATA_DIR"); d != "" {
 		if filepath.IsAbs(d) {
@@ -227,6 +293,13 @@ func EnsurePortFile(beadsDir string, port int) error {
 // the server is listening on. Consulting it here ensures that commands
 // connecting to an already-running server use the correct port.
 func DefaultConfig(beadsDir string) *Config {
+	// In shared mode, use the shared server directory for port resolution
+	if IsSharedServerMode() {
+		if sharedDir, err := SharedServerDir(); err == nil {
+			beadsDir = sharedDir
+		}
+	}
+
 	cfg := &Config{
 		BeadsDir: beadsDir,
 		Host:     "127.0.0.1",
@@ -275,10 +348,12 @@ func DefaultConfig(beadsDir string) *Config {
 		}
 	}
 
-	// Port 0 means "no configured port" — Start() will allocate an
-	// ephemeral port from the OS. This replaces the old DerivePort
-	// hash-based fallback that suffered from birthday-problem collisions
-	// (GH#2098, GH#2372).
+	// Port 0 means "no configured port". In shared mode, use the fixed
+	// shared server port. In per-project mode, Start() will allocate an
+	// ephemeral port from the OS (GH#2098, GH#2372).
+	if cfg.Port == 0 && IsSharedServerMode() {
+		cfg.Port = DefaultSharedServerPort // 3308 - avoids Gas Town conflict on 3307
+	}
 
 	return cfg
 }
@@ -349,6 +424,11 @@ func IsRunning(beadsDir string) (*State, error) {
 // Returns the port the server is listening on.
 func EnsureRunning(beadsDir string) (int, error) {
 	serverDir := resolveServerDir(beadsDir)
+
+	// Inform when Gas Town is also running on this machine
+	if IsSharedServerMode() && os.Getenv("GT_ROOT") != "" {
+		fmt.Fprintf(os.Stderr, "Info: Gas Town detected (GT_ROOT set). Shared server uses port %d to avoid conflict.\n", DefaultSharedServerPort)
+	}
 
 	state, err := IsRunning(serverDir)
 	if err != nil {

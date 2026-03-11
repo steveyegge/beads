@@ -25,7 +25,7 @@ The MCP server automatically:
 - Auto-starts Dolt server if not running
 - Maintains complete database isolation
 
-**Architecture:**
+**Architecture (default):**
 ```
 MCP Server (one instance)
     ↓
@@ -33,6 +33,10 @@ Per-Project Dolt Servers (one per workspace)
     ↓
 Dolt Databases (complete isolation)
 ```
+
+With **shared server mode** enabled (`BEADS_DOLT_SHARED_SERVER=1`), all projects
+use a single Dolt server at `~/.beads/shared-server/`. Database isolation is
+maintained via per-project database names (based on project prefix).
 
 ### Multi-Repo Config Options
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 func TestAllocateEphemeralPort(t *testing.T) {
@@ -740,5 +741,134 @@ func TestEnsureDoltInit_WritesMarker(t *testing.T) {
 	markerPath := filepath.Join(doltDir, bdDoltMarker)
 	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
 		t.Error("expected .bd-dolt-ok marker to be written after successful dolt init")
+	}
+}
+
+// --- Shared Server Mode Tests (GH#2377) ---
+
+func TestIsSharedServerMode_Default(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
+	config.ResetForTesting()
+	if IsSharedServerMode() {
+		t.Error("expected per-project mode by default")
+	}
+}
+
+func TestIsSharedServerMode_EnvVar1(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+	if !IsSharedServerMode() {
+		t.Error("expected shared server mode with BEADS_DOLT_SHARED_SERVER=1")
+	}
+}
+
+func TestIsSharedServerMode_EnvVarTrue(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "true")
+	if !IsSharedServerMode() {
+		t.Error("expected shared server mode with BEADS_DOLT_SHARED_SERVER=true")
+	}
+}
+
+func TestIsSharedServerMode_EnvVarTRUE(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "TRUE")
+	if !IsSharedServerMode() {
+		t.Error("expected shared server mode with BEADS_DOLT_SHARED_SERVER=TRUE (case-insensitive)")
+	}
+}
+
+func TestIsSharedServerMode_EnvVar0(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "0")
+	config.ResetForTesting()
+	if IsSharedServerMode() {
+		t.Error("expected per-project mode with BEADS_DOLT_SHARED_SERVER=0")
+	}
+}
+
+func TestSharedServerDir(t *testing.T) {
+	dir, err := SharedServerDir()
+	if err != nil {
+		t.Fatalf("SharedServerDir: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	expected := filepath.Join(home, ".beads", "shared-server")
+	if dir != expected {
+		t.Errorf("SharedServerDir = %q, want %q", dir, expected)
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		t.Errorf("expected directory to exist: %s", dir)
+	}
+}
+
+func TestSharedDoltDir(t *testing.T) {
+	dir, err := SharedDoltDir()
+	if err != nil {
+		t.Fatalf("SharedDoltDir: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	expected := filepath.Join(home, ".beads", "shared-server", "dolt")
+	if dir != expected {
+		t.Errorf("SharedDoltDir = %q, want %q", dir, expected)
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		t.Errorf("expected directory to exist: %s", dir)
+	}
+}
+
+func TestResolveServerDir_PerProject(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
+	config.ResetForTesting()
+	result := resolveServerDir("/some/project/.beads")
+	if result != "/some/project/.beads" {
+		t.Errorf("expected per-project dir, got %s", result)
+	}
+}
+
+func TestResolveServerDir_SharedMode(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+	result := resolveServerDir("/some/project/.beads")
+	home, _ := os.UserHomeDir()
+	expected := filepath.Join(home, ".beads", "shared-server")
+	if result != expected {
+		t.Errorf("resolveServerDir with shared mode = %q, want %q", result, expected)
+	}
+}
+
+func TestDefaultConfig_SharedModeFixedPort(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	if cfg.Port != DefaultSharedServerPort {
+		t.Errorf("shared mode: expected port %d (DefaultSharedServerPort), got %d", DefaultSharedServerPort, cfg.Port)
+	}
+}
+
+func TestDefaultConfig_SharedModeGeneralPortOverrides(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "5000")
+	t.Setenv("GT_ROOT", "")
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	if cfg.Port != 5000 {
+		t.Errorf("BEADS_DOLT_SERVER_PORT should override shared mode default, got %d", cfg.Port)
+	}
+}
+
+func TestDefaultSharedServerPort_DiffersFromDefault(t *testing.T) {
+	if DefaultSharedServerPort == configfile.DefaultDoltServerPort {
+		t.Errorf("DefaultSharedServerPort (%d) must differ from DefaultDoltServerPort (%d) to avoid Gas Town conflict",
+			DefaultSharedServerPort, configfile.DefaultDoltServerPort)
+	}
+}
+
+func TestDefaultConfig_SharedModeBeadsDir(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+	cfg := DefaultConfig("/some/project/.beads")
+	home, _ := os.UserHomeDir()
+	expected := filepath.Join(home, ".beads", "shared-server")
+	if cfg.BeadsDir != expected {
+		t.Errorf("DefaultConfig.BeadsDir = %q, want %q", cfg.BeadsDir, expected)
 	}
 }

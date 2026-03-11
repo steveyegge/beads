@@ -33,8 +33,8 @@ func TestRunDoltHealthChecks_DoltBackendNoServer(t *testing.T) {
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "59998")
 
 	checks := RunDoltHealthChecks(tmpDir)
-	if len(checks) != 6 {
-		t.Fatalf("expected exactly 6 checks (consistent shape), got %d", len(checks))
+	if len(checks) != 7 {
+		t.Fatalf("expected exactly 7 checks (consistent shape), got %d", len(checks))
 	}
 
 	if checks[0].Name != "Dolt Connection" {
@@ -45,7 +45,7 @@ func TestRunDoltHealthChecks_DoltBackendNoServer(t *testing.T) {
 	}
 
 	// Verify placeholder checks for dimensions that require a connection
-	expectedNames := []string{"Dolt Connection", "Dolt Schema", "Dolt Issue Count", "Dolt Status", "Dolt Lock Health", "Phantom Databases"}
+	expectedNames := []string{"Dolt Connection", "Dolt Schema", "Dolt Issue Count", "Dolt Status", "Dolt Lock Health", "Phantom Databases", "Shared Server"}
 	for i, name := range expectedNames {
 		if checks[i].Name != name {
 			t.Errorf("checks[%d].Name = %q, want %q", i, checks[i].Name, name)
@@ -103,8 +103,8 @@ func TestServerMode_NoLockAcquired(t *testing.T) {
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "59999")
 
 	checks := RunDoltHealthChecks(tmpDir)
-	if len(checks) != 6 {
-		t.Fatalf("expected exactly 6 checks (consistent shape), got %d", len(checks))
+	if len(checks) != 7 {
+		t.Fatalf("expected exactly 7 checks, got %d", len(checks))
 	}
 
 	check := checks[0]

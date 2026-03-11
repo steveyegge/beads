@@ -226,25 +226,33 @@ cd ~/project2 && bd init --prefix proj2
 Each project gets its own `.beads/` directory with its own Dolt database. bd auto-discovers the correct database based on your current directory (walks up like git).
 
 **Multi-project scenarios work seamlessly:**
-- Multiple agents working on different projects simultaneously → No conflicts
-- Same machine, different repos → Each finds its own `.beads/*.db` automatically
-- Agents in subdirectories → bd walks up to find the project root (like git)
-- **Per-project Dolt servers** → Each project gets its own Dolt server (LSP model)
+- Multiple agents working on different projects simultaneously - no conflicts
+- Same machine, different repos - each finds its own `.beads/` automatically
+- Agents in subdirectories - bd walks up to find the project root (like git)
+- **Per-project Dolt servers** (default) - each project gets its own Dolt server
+- **Shared Dolt server** (opt-in) - all projects share a single server for reduced resource usage
 
 **Limitation:** Issues cannot reference issues in other projects. Each database is isolated by design. If you need cross-project tracking, initialize bd in a parent directory that contains both projects.
 
 **Example:** Multiple agents, multiple projects, same machine:
 ```bash
 # Agent 1 working on web app
-cd ~/work/webapp && bd ready --json    # Uses ~/work/webapp/.beads/webapp.db
+cd ~/work/webapp && bd ready --json    # Uses ~/work/webapp/.beads/ database "webapp"
 
 # Agent 2 working on API
-cd ~/work/api && bd ready --json       # Uses ~/work/api/.beads/api.db
+cd ~/work/api && bd ready --json       # Uses ~/work/api/.beads/ database "api"
 
-# No conflicts! Completely isolated databases and Dolt servers.
+# No conflicts! Completely isolated databases.
 ```
 
-**Architecture:** bd uses per-project Dolt servers (like LSP/language servers) for complete database isolation. See [ADVANCED.md](ADVANCED.md) for details.
+**Shared server mode** (recommended for machines with 2+ projects):
+```bash
+# Enable shared server - single Dolt process serves all projects
+export BEADS_DOLT_SHARED_SERVER=1   # add to shell profile for machine-wide
+# Or per-project: bd dolt set shared-server true
+```
+
+**Architecture:** By default, bd uses per-project Dolt servers (like LSP/language servers). With shared server mode enabled, a single server at `~/.beads/shared-server/` handles all projects, each using its own database. See [DOLT.md](DOLT.md) for details.
 
 ### What happens if two agents work on the same issue?
 
