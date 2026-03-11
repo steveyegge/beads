@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/gitlab"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/tracker"
@@ -425,7 +426,11 @@ func runGitLabSync(cmd *cobra.Command, args []string) error {
 // buildGitLabPullHooks creates PullHooks for GitLab-specific pull behavior.
 func buildGitLabPullHooks(ctx context.Context) *tracker.PullHooks {
 	prefix := "bd"
-	if store != nil {
+	// YAML config takes precedence — in shared-server mode the DB
+	// may belong to a different project (GH#2469).
+	if p := config.GetString("issue-prefix"); p != "" {
+		prefix = p
+	} else if store != nil {
 		if p, err := store.GetConfig(ctx, "issue_prefix"); err == nil && p != "" {
 			prefix = p
 		}

@@ -486,11 +486,14 @@ var createCmd = &cobra.Command{
 			// Validate prefix matches database prefix
 			ctx := rootCtx
 
-			// Get database prefix and allowed prefixes from config
+			// Get database prefix and allowed prefixes from config.
+			// YAML config takes precedence over DB — in shared-server mode the DB
+			// may belong to a different project (GH#2469).
 			var dbPrefix, allowedPrefixes string
-			dbPrefix, _ = store.GetConfig(ctx, "issue_prefix") // Best effort: empty prefix is a valid fallback
-			if dbPrefix == "" {
-				dbPrefix = config.GetString("issue-prefix")
+			if yamlPrefix := config.GetString("issue-prefix"); yamlPrefix != "" {
+				dbPrefix = yamlPrefix
+			} else {
+				dbPrefix, _ = store.GetConfig(ctx, "issue_prefix") // Best effort: empty prefix is a valid fallback
 			}
 			allowedPrefixes, _ = store.GetConfig(ctx, "allowed_prefixes") // Best effort: empty means no prefix restriction
 

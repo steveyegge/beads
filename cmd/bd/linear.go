@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -279,9 +280,15 @@ func buildLinearPullHooks(ctx context.Context) *tracker.PullHooks {
 			}
 		}
 
-		prefix, err := store.GetConfig(ctx, "issue_prefix")
-		if err != nil || prefix == "" {
-			prefix = "bd"
+		// YAML config takes precedence — in shared-server mode the DB
+		// may belong to a different project (GH#2469).
+		prefix := config.GetString("issue-prefix")
+		if prefix == "" {
+			var err error
+			prefix, err = store.GetConfig(ctx, "issue_prefix")
+			if err != nil || prefix == "" {
+				prefix = "bd"
+			}
 		}
 
 		hooks.GenerateID = func(_ context.Context, issue *types.Issue) error {

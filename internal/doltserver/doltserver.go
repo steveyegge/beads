@@ -439,6 +439,13 @@ func EnsureRunning(beadsDir string) (int, error) {
 		return state.Port, nil
 	}
 
+	// Clean up orphaned dolt sql-server processes before starting a new one.
+	// Without this, servers accumulate when parent processes crash or are
+	// force-killed without graceful shutdown (GH#2372).
+	if killed, err := KillStaleServers(serverDir); err == nil && len(killed) > 0 {
+		fmt.Fprintf(os.Stderr, "Info: cleaned up %d orphaned dolt sql-server process(es)\n", len(killed))
+	}
+
 	s, err := Start(serverDir)
 	if err != nil {
 		return 0, err
