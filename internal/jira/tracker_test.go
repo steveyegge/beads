@@ -594,6 +594,16 @@ func (s *configStore) GetAllEventsSince(_ context.Context, _ int64) ([]*types.Ev
 	return nil, nil
 }
 func (s *configStore) GetStatistics(_ context.Context) (*types.Statistics, error) { return nil, nil }
+func (s *configStore) CreateMilestone(_ context.Context, _ *types.Milestone, _ string) error {
+	return nil
+}
+func (s *configStore) GetMilestone(_ context.Context, _ string) (*types.Milestone, error) {
+	return nil, nil
+}
+func (s *configStore) ListMilestones(_ context.Context) ([]*types.Milestone, error) {
+	return nil, nil
+}
+func (s *configStore) DeleteMilestone(_ context.Context, _, _ string) error { return nil }
 func (s *configStore) RunInTransaction(_ context.Context, _ string, _ func(tx storage.Transaction) error) error {
 	return nil
 }
