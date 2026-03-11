@@ -1483,7 +1483,6 @@ func TestRemoveDependencyByType(t *testing.T) {
 		}
 	}
 
-	// Add two dependency types
 	for _, dt := range []types.DependencyType{types.DepBlocks, types.DepCausedBy} {
 		if err := s.AddDependency(ctx, &types.Dependency{
 			IssueID: issue1.ID, DependsOnID: issue2.ID, Type: dt,
@@ -1552,7 +1551,6 @@ func TestCoexistingDependencyTypes(t *testing.T) {
 	}
 
 	t.Run("TwoTypesCoexist", func(t *testing.T) {
-		// Add blocks dependency
 		if err := s.AddDependency(ctx, &types.Dependency{
 			IssueID: issue1.ID, DependsOnID: issue2.ID,
 			Type: types.DepBlocks,
@@ -1568,7 +1566,6 @@ func TestCoexistingDependencyTypes(t *testing.T) {
 			t.Fatalf("AddDependency caused-by: %v (should allow coexisting types)", err)
 		}
 
-		// Verify both exist
 		deps, err := s.GetDependencyRecords(ctx, issue1.ID)
 		if err != nil {
 			t.Fatalf("GetDependencyRecords: %v", err)
