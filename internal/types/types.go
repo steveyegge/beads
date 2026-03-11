@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+// Milestone represents a release checkpoint or progress marker.
+type Milestone struct {
+	Name        string     `json:"name"`
+	TargetDate  *time.Time `json:"target_date,omitempty"`
+	Description string     `json:"description,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CreatedBy   string     `json:"created_by"`
+}
+
 // Issue represents a trackable work item.
 // Fields are organized into logical groups for maintainability.
 type Issue struct {
@@ -29,6 +38,7 @@ type Issue struct {
 	Status    Status    `json:"status,omitempty"`
 	Priority  int       `json:"priority"` // No omitempty: 0 is valid (P0/critical)
 	IssueType IssueType `json:"issue_type,omitempty"`
+	Milestone string    `json:"milestone,omitempty"`
 
 	// ===== Assignment =====
 	Assignee         string `json:"assignee,omitempty"`
@@ -989,6 +999,9 @@ type IssueFilter struct {
 	DueAfter    *time.Time // Filter issues with due_at > this time
 	DueBefore   *time.Time // Filter issues with due_at < this time
 	Overdue     bool       // Filter issues where due_at < now AND status != closed
+
+	// Milestone filtering
+	Milestone *string // Filter by milestone name (nil = any)
 
 	// Metadata field filtering (GH#1406)
 	MetadataFields map[string]string // Top-level key=value equality; AND semantics (all must match)
