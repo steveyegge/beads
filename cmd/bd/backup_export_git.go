@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -289,27 +288,29 @@ func cleanupBackupExportGitWorktree(repoRoot, worktreeDir, tempRoot string, work
 }
 
 func gitRefExists(ctx context.Context, dir, ref string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", ref)
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return false, nil
-		}
+	exitCode, err := gitExitCodeInDir(ctx, dir, "show-ref", "--verify", "--quiet", ref)
+	if err != nil {
 		return false, fmt.Errorf("git show-ref %s: %w", ref, err)
+	}
+	if exitCode == 1 {
+		return false, nil
+	}
+	if exitCode != 0 {
+		return false, fmt.Errorf("git show-ref %s exited with code %d", ref, exitCode)
 	}
 	return true, nil
 }
 
 func gitHasCachedChanges(ctx context.Context, dir, pathspec string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet", "--", pathspec)
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return true, nil
-		}
+	exitCode, err := gitExitCodeInDir(ctx, dir, "diff", "--cached", "--quiet", "--", pathspec)
+	if err != nil {
 		return false, fmt.Errorf("git diff --cached %s: %w", pathspec, err)
+	}
+	if exitCode == 1 {
+		return true, nil
+	}
+	if exitCode != 0 {
+		return false, fmt.Errorf("git diff --cached %s exited with code %d", pathspec, exitCode)
 	}
 	return false, nil
 }
