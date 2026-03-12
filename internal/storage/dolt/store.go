@@ -109,6 +109,7 @@ type DoltStore struct {
 	branch         string // Current branch
 	remoteUser     string // Remote auth user for Hosted Dolt push/pull (optional)
 	remotePassword string // Remote auth password for Hosted Dolt push/pull (optional)
+	serverMode     bool   // true when connected to external dolt sql-server (not embedded)
 }
 
 // Config holds Dolt database configuration
@@ -650,6 +651,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		branch:         "main",
 		remoteUser:     cfg.RemoteUser,
 		remotePassword: cfg.RemotePassword,
+		serverMode:     true,
 		readOnly:       cfg.ReadOnly,
 	}
 
@@ -1542,6 +1544,13 @@ func (s *DoltStore) Push(ctx context.Context) (retErr error) {
 	// Credentials are passed directly to the subprocess via cmd.Env, avoiding
 	// process-wide env var races with concurrent goroutines.
 	if s.isGitProtocolRemote(ctx) {
+		return s.doltCLIPush(ctx, false, creds)
+	}
+	// Credential CLI routing: when credentials are set and server is external,
+	// route through CLI subprocess so credentials reach the dolt process via
+	// cmd.Env (applyToCmd). The SQL path's withEnvCredentials sets process-wide
+	// env vars that an external server cannot see.
+	if s.shouldUseCLIForCredentials(ctx) {
 		return s.doltCLIPush(ctx, false, creds)
 	}
 	if s.remoteUser != "" {
