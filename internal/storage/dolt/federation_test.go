@@ -436,7 +436,7 @@ func TestSyncCLIRemotesToSQL(t *testing.T) {
 
 	// Ensure cliDir exists with a dolt init so CLI remote commands work.
 	// In test mode, dbPath/database may not exist on the filesystem.
-	dir := store.cliDir()
+	dir := store.CLIDir()
 	if dir == "" {
 		t.Skip("no CLI dir available")
 	}

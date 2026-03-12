@@ -123,7 +123,7 @@ func (s *DoltStore) ListRemotes(ctx context.Context) ([]storage.RemoteInfo, erro
 // ignored because a missing remote will surface a clear error at push/pull time.
 // See GH#2315.
 func (s *DoltStore) syncCLIRemotesToSQL(ctx context.Context) {
-	dir := s.cliDir()
+	dir := s.CLIDir()
 	if dir == "" {
 		return
 	}
