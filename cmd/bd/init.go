@@ -442,14 +442,17 @@ environment variable.`,
 			doltCfg.ServerUser = serverUser
 		}
 
-		store, err := newDoltStore(ctx, doltCfg)
+		initLock, err := acquireEmbeddedLock(beadsDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to connect to dolt server: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		doltStore, ok := store.(*dolt.DoltStore)
-		if !ok {
-			panic(fmt.Sprintf("newDoltStore returned unexpected type %T", store))
+		defer initLock.Unlock()
+
+		store, err := newDoltStore(ctx, doltCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to open Dolt store: %v\n", err)
+			os.Exit(1)
 		}
 
 		// Configure the git remote in the Dolt store so bd dolt push/pull
@@ -631,7 +634,7 @@ environment variable.`,
 				_ = store.Close()
 				FatalError("--from-jsonl specified but %s does not exist", localJSONLPath)
 			}
-			issueCount, importErr := importFromLocalJSONL(ctx, doltStore, localJSONLPath)
+			issueCount, importErr := importFromLocalJSONL(ctx, store, localJSONLPath)
 			if importErr != nil {
 				_ = store.Close()
 				FatalError("failed to import from JSONL: %v", importErr)
@@ -674,7 +677,7 @@ environment variable.`,
 
 		// Run contributor wizard if --contributor flag is set or user chose contributor
 		if contributor {
-			if err := runContributorWizard(ctx, doltStore); err != nil {
+			if err := runContributorWizard(ctx, store); err != nil {
 				canceled := isCanceled(err)
 				if canceled {
 					fmt.Fprintln(os.Stderr, "Setup canceled.")
@@ -697,7 +700,7 @@ environment variable.`,
 
 		// Run team wizard if --team flag is set
 		if team {
-			if err := runTeamWizard(ctx, doltStore); err != nil {
+			if err := runTeamWizard(ctx, store); err != nil {
 				canceled := isCanceled(err)
 				if canceled {
 					fmt.Fprintln(os.Stderr, "Setup canceled.")
@@ -863,20 +866,24 @@ environment variable.`,
 			fmt.Printf("\n%s bd initialized successfully!\n\n", ui.RenderPass("✓"))
 		}
 		fmt.Printf("  Backend: %s\n", ui.RenderAccent(backend))
-		host := serverHost
-		if host == "" {
-			host = configfile.DefaultDoltServerHost
+		if isEmbeddedDolt {
+			fmt.Printf("  Mode: %s\n", ui.RenderAccent("embedded"))
+		} else {
+			host := serverHost
+			if host == "" {
+				host = configfile.DefaultDoltServerHost
+			}
+			port := serverPort
+			if port == 0 {
+				port = doltserver.DefaultConfig(beadsDir).Port
+			}
+			user := serverUser
+			if user == "" {
+				user = configfile.DefaultDoltServerUser
+			}
+			fmt.Printf("  Mode: %s\n", ui.RenderAccent("server"))
+			fmt.Printf("  Server: %s\n", ui.RenderAccent(fmt.Sprintf("%s@%s:%d", user, host, port)))
 		}
-		port := serverPort
-		if port == 0 {
-			port = doltserver.DefaultConfig(beadsDir).Port
-		}
-		user := serverUser
-		if user == "" {
-			user = configfile.DefaultDoltServerUser
-		}
-		fmt.Printf("  Mode: %s\n", ui.RenderAccent("server"))
-		fmt.Printf("  Server: %s\n", ui.RenderAccent(fmt.Sprintf("%s@%s:%d", user, host, port)))
 		fmt.Printf("  Database: %s\n", ui.RenderAccent(dbName))
 		fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
 		fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
@@ -893,27 +900,27 @@ environment variable.`,
 		}
 
 		// Run limited diagnostics to verify init succeeded.
-		// Uses runInitDiagnostics (not runDiagnostics) to only check things
-		// that should be true immediately after init — skips git-dependent,
-		// federation, and other post-setup checks that aren't applicable yet.
-		doctorResult := runInitDiagnostics(cwd)
-		// Check if there are any warnings or errors (not just critical failures)
-		hasIssues := false
-		for _, check := range doctorResult.Checks {
-			if check.Status != statusOK {
-				hasIssues = true
-				break
-			}
-		}
-		if hasIssues {
-			fmt.Printf("%s Setup incomplete. Some issues were detected:\n", ui.RenderWarn("⚠"))
-			// Show just the warnings/errors, not all checks
+		// Skipped in embedded mode: diagnostics use dolt.NewFromConfigWithOptions
+		// which auto-starts a dolt sql-server. Embedded init already validates
+		// the database via initSchema.
+		if !isEmbeddedDolt {
+			doctorResult := runInitDiagnostics(cwd)
+			hasIssues := false
 			for _, check := range doctorResult.Checks {
 				if check.Status != statusOK {
-					fmt.Printf("  • %s: %s\n", check.Name, check.Message)
+					hasIssues = true
+					break
 				}
 			}
-			fmt.Printf("\nRun %s to see details and fix these issues.\n\n", ui.RenderAccent("bd doctor --fix"))
+			if hasIssues {
+				fmt.Printf("%s Setup incomplete. Some issues were detected:\n", ui.RenderWarn("⚠"))
+				for _, check := range doctorResult.Checks {
+					if check.Status != statusOK {
+						fmt.Printf("  • %s: %s\n", check.Name, check.Message)
+					}
+				}
+				fmt.Printf("\nRun %s to see details and fix these issues.\n\n", ui.RenderAccent("bd doctor --fix"))
+			}
 		}
 	},
 }
@@ -1139,7 +1146,7 @@ func countExistingIssues(_ string) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})
+	store, err := newDoltStoreFromConfig(ctx, beadsDir)
 	if err != nil {
 		return 0, err
 	}
