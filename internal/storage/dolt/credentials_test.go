@@ -301,3 +301,42 @@ func TestCredentialCLIRoutingNoRemote(t *testing.T) {
 		t.Error("expected false when CLI remote does not exist")
 	}
 }
+
+// TestFederationCredentialCLIRouting verifies the shouldUseCLIForPeerCredentials guard
+// that controls CLI subprocess routing for federation PushTo, PullFrom, and Fetch
+// when peer credentials are resolved from the federation_peers table.
+func TestFederationCredentialCLIRouting(t *testing.T) {
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("dolt not installed, skipping credential routing test")
+	}
+
+	tests := []struct {
+		name        string
+		serverMode  bool
+		setupRemote bool
+		credsEmpty  bool
+		wantCLI     bool
+	}{
+		{"peer credentials+serverMode+remote", true, true, false, true},
+		{"no peer credentials", true, true, true, false},
+		{"no server mode (embedded)", false, true, false, false},
+		{"no CLI remote for peer", true, false, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := setupCredentialTestStore(t, "", "", tt.serverMode, tt.setupRemote)
+
+			var creds *remoteCredentials
+			if !tt.credsEmpty {
+				creds = &remoteCredentials{username: "peeruser", password: "peerpass"}
+			} else {
+				creds = &remoteCredentials{}
+			}
+
+			got := store.shouldUseCLIForPeerCredentials(context.Background(), "origin", creds)
+			if got != tt.wantCLI {
+				t.Errorf("shouldUseCLIForPeerCredentials() = %v, want %v", got, tt.wantCLI)
+			}
+		})
+	}
+}

@@ -472,6 +472,29 @@ func (s *DoltStore) withPeerCredentials(ctx context.Context, peerName string, fn
 // FederationPeer is an alias for storage.FederationPeer for convenience.
 type FederationPeer = storage.FederationPeer
 
+// shouldUseCLIForPeerCredentials returns true when federation operations for a
+// specific peer should use CLI subprocess routing instead of SQL path.
+// Called inside withPeerCredentials callback where creds are already resolved.
+//
+// Returns true when ALL conditions are met:
+//  1. Peer credentials exist (resolved from federation_peers table)
+//  2. Server is in server mode (not embedded)
+//  3. Local CLI directory is available
+//  4. The peer remote is configured in the local CLI directory
+func (s *DoltStore) shouldUseCLIForPeerCredentials(_ context.Context, peer string, creds *remoteCredentials) bool {
+	if creds.empty() {
+		return false // no credentials to pass
+	}
+	if !s.serverMode {
+		return false // embedded mode: withEnvCredentials works in-process
+	}
+	cliDir := s.CLIDir()
+	if cliDir == "" {
+		return false // no local directory for CLI operations
+	}
+	return doltutil.FindCLIRemote(cliDir, peer) != ""
+}
+
 // shouldUseCLIForCredentials returns true when CLI subprocess routing should
 // be used instead of SQL path for credential-bearing push/pull operations.
 //
