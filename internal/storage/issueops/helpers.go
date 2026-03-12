@@ -20,9 +20,10 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// IsWisp returns true if the issue is ephemeral or has a wisp-style ID.
+// IsWisp returns true if the issue should be routed to the wisps table.
+// Matches the DoltStore check: issue.Ephemeral || ID contains "-wisp-".
 func IsWisp(issue *types.Issue) bool {
-	return issue.Ephemeral
+	return issue.Ephemeral || strings.Contains(issue.ID, "-wisp-")
 }
 
 // TableRouting returns the issue and event table names for an issue,
