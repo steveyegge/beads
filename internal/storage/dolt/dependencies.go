@@ -135,10 +135,9 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 			if err := tx.Commit(); err != nil {
 				return fmt.Errorf("sql commit: %w", err)
 			}
-			// Record in Dolt version history (bd-2avi)
-			if _, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
-				"dependency: update metadata "+dep.IssueID+" -> "+dep.DependsOnID, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
-				return fmt.Errorf("dolt commit: %w", err)
+			// GH#2455: Use explicit DOLT_ADD to avoid sweeping up stale config changes.
+			if err := s.doltAddAndCommit(ctx, []string{"dependencies"}, "dependency: update metadata "+dep.IssueID+" -> "+dep.DependsOnID); err != nil {
+				return err
 			}
 			return nil
 		}
@@ -159,10 +158,9 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("sql commit: %w", err)
 	}
-	// Record in Dolt version history (bd-2avi)
-	if _, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
-		"dependency: add "+string(dep.Type)+" "+dep.IssueID+" -> "+dep.DependsOnID, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
-		return fmt.Errorf("dolt commit: %w", err)
+	// GH#2455: Use explicit DOLT_ADD to avoid sweeping up stale config changes.
+	if err := s.doltAddAndCommit(ctx, []string{"dependencies"}, "dependency: add "+string(dep.Type)+" "+dep.IssueID+" -> "+dep.DependsOnID); err != nil {
+		return err
 	}
 	return nil
 }
@@ -191,10 +189,9 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("sql commit: %w", err)
 	}
-	// Record in Dolt version history (bd-2avi)
-	if _, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
-		"dependency: remove "+issueID+" -> "+dependsOnID, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
-		return fmt.Errorf("dolt commit: %w", err)
+	// GH#2455: Use explicit DOLT_ADD to avoid sweeping up stale config changes.
+	if err := s.doltAddAndCommit(ctx, []string{"dependencies"}, "dependency: remove "+issueID+" -> "+dependsOnID); err != nil {
+		return err
 	}
 	return nil
 }

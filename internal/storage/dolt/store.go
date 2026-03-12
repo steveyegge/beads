@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -1193,20 +1194,74 @@ func (s *DoltStore) commitAuthorString() string {
 	return fmt.Sprintf("%s <%s>", s.committerName, s.committerEmail)
 }
 
-// Commit creates a Dolt commit with the given message
+// Commit creates a Dolt commit with the given message.
+//
+// Uses DOLT_COMMIT('-Am') to stage all dirty tables and commit. This is the
+// general-purpose commit used by maybeAutoCommit and callers that want to
+// commit all pending working set changes. Defense-in-depth for GH#2455:
+// snapshots issue_prefix before committing and restores it if corrupted
+// by stale working set changes from concurrent operations.
 func (s *DoltStore) Commit(ctx context.Context, message string) (retErr error) {
 	ctx, span := doltTracer.Start(ctx, "dolt.commit",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(s.doltSpanAttrs()...),
 	)
 	defer func() { endSpan(span, retErr) }()
+
+	// Pin a single connection so snapshot, commit, and restore all run
+	// on the same Dolt session. (GH#2455)
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection: %w", err)
+	}
+	defer conn.Close()
+
+	// Snapshot issue_prefix from HEAD before commit to detect corruption.
+	var prefixBefore string
+	_ = conn.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = 'issue_prefix'").Scan(&prefixBefore)
+
 	// NOTE: In SQL procedure mode, Dolt defaults author to the authenticated SQL user
 	// (e.g. root@localhost). Always pass an explicit author for deterministic history.
-	if _, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)", message, s.commitAuthorString()); err != nil {
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)", message, s.commitAuthorString()); err != nil {
 		if isDoltNothingToCommit(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to commit: %w", err)
+	}
+
+	// Verify issue_prefix wasn't corrupted by sweeping up stale working set changes.
+	if prefixBefore != "" {
+		var prefixAfter string
+		_ = conn.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = 'issue_prefix'").Scan(&prefixAfter)
+		if prefixAfter != prefixBefore {
+			// Restore the correct prefix and create a fix-up commit.
+			log.Printf("WARNING: issue_prefix corrupted by DOLT_COMMIT (%q -> %q), restoring (GH#2455)", prefixBefore, prefixAfter)
+			_, _ = conn.ExecContext(ctx, "UPDATE config SET value = ? WHERE `key` = 'issue_prefix'", prefixBefore)
+			_, _ = conn.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'fix: restore issue_prefix corrupted by stale working set (GH#2455)', '--author', ?)", s.commitAuthorString())
+		}
+	}
+
+	return nil
+}
+
+// doltAddAndCommit stages the specified tables and commits on a pinned
+// connection. This prevents DOLT_COMMIT('-Am') from sweeping up stale
+// working set changes from concurrent operations (GH#2455).
+func (s *DoltStore) doltAddAndCommit(ctx context.Context, tables []string, commitMsg string) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection: %w", err)
+	}
+	defer conn.Close()
+
+	for _, table := range tables {
+		if _, err := conn.ExecContext(ctx, "CALL DOLT_ADD(?)", table); err != nil {
+			return fmt.Errorf("dolt add %s: %w", table, err)
+		}
+	}
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_COMMIT('-m', ?, '--author', ?)",
+		commitMsg, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
+		return fmt.Errorf("dolt commit: %w", err)
 	}
 	return nil
 }

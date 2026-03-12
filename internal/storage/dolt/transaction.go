@@ -15,8 +15,21 @@ import (
 
 // doltTransaction implements storage.Transaction for Dolt
 type doltTransaction struct {
-	tx    *sql.Tx
-	store *DoltStore
+	tx          *sql.Tx
+	store       *DoltStore
+	dirtyTables map[string]bool // tracked tables modified during this transaction
+}
+
+// markDirty records that a tracked (non-dolt-ignored) table was modified.
+// Dolt-ignored tables (wisps, wisp_*) are skipped since they cannot be staged.
+func (t *doltTransaction) markDirty(table string) {
+	if table == "wisps" || strings.HasPrefix(table, "wisp_") {
+		return // dolt-ignored tables — never staged
+	}
+	if t.dirtyTables == nil {
+		t.dirtyTables = make(map[string]bool)
+	}
+	t.dirtyTables[table] = true
 }
 
 // isActiveWisp checks if an ID exists in the wisps table within the transaction.
@@ -45,7 +58,18 @@ func (s *DoltStore) RunInTransaction(ctx context.Context, commitMsg string, fn f
 }
 
 func (s *DoltStore) runDoltTransaction(ctx context.Context, commitMsg string, fn func(tx storage.Transaction) error) error {
-	sqlTx, err := s.db.BeginTx(ctx, nil)
+	// Pin a single connection for the entire operation: SQL transaction,
+	// config protection, and DOLT_COMMIT must all run on the same Dolt
+	// session. Each pool connection has an independent working set in Dolt
+	// SQL server mode, so mixing connections causes DOLT_COMMIT to see
+	// stale or unrelated changes. (GH#2455)
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection: %w", err)
+	}
+	defer conn.Close()
+
+	sqlTx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -75,11 +99,24 @@ func (s *DoltStore) runDoltTransaction(ctx context.Context, commitMsg string, fn
 		return fmt.Errorf("sql commit: %w", err)
 	}
 
-	// Create a Dolt version commit from the working set.
-	// Runs outside the transaction on a pool connection.
+	// Create a Dolt version commit from the working set on the SAME
+	// connection used by the transaction.
 	// "Nothing to commit" is benign (all writes to dolt-ignored tables).
+	//
+	// GH#2455: Use explicit DOLT_ADD for only the tables this transaction
+	// modified, then DOLT_COMMIT('-m') (without -A). The old '-Am' approach
+	// staged ALL dirty tables in the session's working set, sweeping up
+	// stale changes from concurrent operations (e.g., corrupting
+	// issue_prefix in the config table).
 	if commitMsg != "" {
-		_, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)",
+		// Stage only the tables this transaction actually modified.
+		for table := range tx.dirtyTables {
+			_, addErr := conn.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
+			if addErr != nil {
+				return fmt.Errorf("dolt add %s: %w", table, addErr)
+			}
+		}
+		_, err = conn.ExecContext(ctx, "CALL DOLT_COMMIT('-m', ?, '--author', ?)",
 			commitMsg, s.commitAuthorString())
 		if err != nil && !isDoltNothingToCommit(err) {
 			return fmt.Errorf("dolt commit: %w", err)
@@ -156,6 +193,7 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		return err
 	}
 
+	t.markDirty(table)
 	return insertIssueTxIntoTable(ctx, t.tx, table, issue)
 }
 
@@ -565,6 +603,9 @@ func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates ma
 	//nolint:gosec // G201: table is hardcoded, setClauses contains only column names
 	querySQL := fmt.Sprintf("UPDATE %s SET %s WHERE id = ?", table, strings.Join(setClauses, ", "))
 	_, err := t.tx.ExecContext(ctx, querySQL, args...)
+	if err == nil {
+		t.markDirty(table)
+	}
 	return wrapExecError("update issue in tx", err)
 }
 
@@ -581,6 +622,9 @@ func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason stri
 		UPDATE %s SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
 		WHERE id = ?
 	`, table), types.StatusClosed, now, now, reason, session, id)
+	if err == nil {
+		t.markDirty(table)
+	}
 	return wrapExecError("close issue in tx", err)
 }
 
@@ -593,6 +637,9 @@ func (t *doltTransaction) DeleteIssue(ctx context.Context, id string) error {
 
 	//nolint:gosec // G201: table is hardcoded
 	_, err := t.tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = ?", table), id)
+	if err == nil {
+		t.markDirty(table)
+	}
 	return wrapExecError("delete issue in tx", err)
 }
 
@@ -626,6 +673,9 @@ func (t *doltTransaction) AddDependency(ctx context.Context, dep *types.Dependen
 		INSERT INTO %s (issue_id, depends_on_id, type, created_at, created_by, thread_id)
 		VALUES (?, ?, ?, NOW(), ?, ?)
 	`, table), dep.IssueID, dep.DependsOnID, dep.Type, actor, dep.ThreadID)
+	if err == nil {
+		t.markDirty(table)
+	}
 	return wrapExecError("add dependency in tx", err)
 }
 
@@ -676,6 +726,9 @@ func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, depends
 	_, err := t.tx.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s WHERE issue_id = ? AND depends_on_id = ?
 	`, table), issueID, dependsOnID)
+	if err == nil {
+		t.markDirty(table)
+	}
 	return wrapExecError("remove dependency in tx", err)
 }
 
@@ -690,6 +743,9 @@ func (t *doltTransaction) AddLabel(ctx context.Context, issueID, label, actor st
 	_, err := t.tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT IGNORE INTO %s (issue_id, label) VALUES (?, ?)
 	`, table), issueID, label)
+	if err == nil {
+		t.markDirty(table)
+	}
 	return wrapExecError("add label in tx", err)
 }
 
@@ -727,6 +783,9 @@ func (t *doltTransaction) RemoveLabel(ctx context.Context, issueID, label, actor
 	_, err := t.tx.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s WHERE issue_id = ? AND label = ?
 	`, table), issueID, label)
+	if err == nil {
+		t.markDirty(table)
+	}
 	return wrapExecError("remove label in tx", err)
 }
 
@@ -736,6 +795,9 @@ func (t *doltTransaction) SetConfig(ctx context.Context, key, value string) erro
 		INSERT INTO config (`+"`key`"+`, value) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value)
 	`, key, value)
+	if err == nil {
+		t.markDirty("config")
+	}
 	return wrapExecError("set config in tx", err)
 }
 
@@ -755,6 +817,9 @@ func (t *doltTransaction) SetMetadata(ctx context.Context, key, value string) er
 		INSERT INTO metadata (`+"`key`"+`, value) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value)
 	`, key, value)
+	if err == nil {
+		t.markDirty("metadata")
+	}
 	return wrapExecError("set metadata in tx", err)
 }
 
@@ -788,6 +853,7 @@ func (t *doltTransaction) ImportIssueComment(ctx context.Context, issueID, autho
 	if err != nil {
 		return nil, fmt.Errorf("failed to add comment: %w", err)
 	}
+	t.markDirty(table)
 	id, err := res.LastInsertId()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get comment id: %w", err)
@@ -836,5 +902,8 @@ func (t *doltTransaction) AddComment(ctx context.Context, issueID, actor, commen
 		INSERT INTO %s (issue_id, event_type, actor, comment)
 		VALUES (?, ?, ?, ?)
 	`, table), issueID, types.EventCommented, actor, comment)
+	if err == nil {
+		t.markDirty(table)
+	}
 	return wrapExecError("add comment in tx", err)
 }
