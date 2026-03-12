@@ -1,6 +1,10 @@
 package dolt
 
 import (
+	"bytes"
+	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/configfile"
@@ -131,6 +135,62 @@ func TestApplyResolvedConfig(t *testing.T) {
 		wantPort := doltserver.DefaultConfig(beadsDir).Port
 		if cfg.ServerPort != wantPort {
 			t.Fatalf("ServerPort = %d, want %d", cfg.ServerPort, wantPort)
+		}
+	})
+
+	t.Run("warns when data-dir set in server mode (GH#2438)", func(t *testing.T) {
+		beadsDir := t.TempDir()
+		fileCfg := &configfile.Config{
+			Backend:      configfile.BackendDolt,
+			DoltMode:     configfile.DoltModeServer,
+			DoltDatabase: "beads_CodeWriter7",
+			DoltDataDir:  "/some/stale/path",
+		}
+		cfg := &Config{}
+
+		// Capture stderr to verify warning
+		oldStderr := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stderr = w
+
+		applyResolvedConfig(beadsDir, fileCfg, cfg)
+
+		w.Close()
+		os.Stderr = oldStderr
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		output := buf.String()
+		if !strings.Contains(output, "dolt_data_dir is set") {
+			t.Errorf("expected data-dir warning in server mode, got: %q", output)
+		}
+		if !strings.Contains(output, "server mode") {
+			t.Errorf("expected 'server mode' in warning, got: %q", output)
+		}
+	})
+
+	t.Run("no warning when data-dir empty in server mode", func(t *testing.T) {
+		beadsDir := t.TempDir()
+		fileCfg := &configfile.Config{
+			Backend:      configfile.BackendDolt,
+			DoltMode:     configfile.DoltModeServer,
+			DoltDatabase: "beads_CodeWriter7",
+		}
+		cfg := &Config{}
+
+		oldStderr := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stderr = w
+
+		applyResolvedConfig(beadsDir, fileCfg, cfg)
+
+		w.Close()
+		os.Stderr = oldStderr
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if buf.Len() > 0 {
+			t.Errorf("expected no warning when data-dir is empty, got: %q", buf.String())
 		}
 	})
 

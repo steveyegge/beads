@@ -121,6 +121,15 @@ func applyResolvedConfig(beadsDir string, fileCfg *configfile.Config, cfg *Confi
 		cfg.BeadsDir = beadsDir
 	}
 
+	// GH#2438: Warn if data-dir is set in server mode — it has no effect on
+	// which database the server uses and can cause silent DB context switches.
+	if fileCfg.DoltDataDir != "" && fileCfg.IsDoltServerMode() {
+		fmt.Fprintf(os.Stderr, "Warning: dolt_data_dir is set (%s) but Dolt is in server mode.\n", fileCfg.DoltDataDir)
+		fmt.Fprintf(os.Stderr, "In server mode, data-dir does not control which database is used.\n")
+		fmt.Fprintf(os.Stderr, "This may cause commands to operate on the wrong database.\n")
+		fmt.Fprintf(os.Stderr, "Fix: bd dolt set data-dir ''   (clear the data-dir setting)\n\n")
+	}
+
 	// Always apply database name from metadata.json (prefix-based naming, bd-u8rda).
 	if cfg.Database == "" {
 		cfg.Database = fileCfg.GetDoltDatabase()

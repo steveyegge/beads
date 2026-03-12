@@ -1045,6 +1045,19 @@ func setDoltConfig(key, value string, updateConfig bool) {
 		yamlKey = "dolt.user"
 
 	case "data-dir":
+		// GH#2438: In server mode, data-dir has no effect on which database
+		// the server connects to. Setting it silently switches the local
+		// resolution path without affecting the running server, causing
+		// commands to operate on the wrong (often empty) database.
+		if value != "" && cfg.IsDoltServerMode() {
+			fmt.Fprintf(os.Stderr, "Error: setting data-dir in server mode is not supported (GH#2438).\n")
+			fmt.Fprintf(os.Stderr, "In server mode, the database is determined by the 'database' config key,\n")
+			fmt.Fprintf(os.Stderr, "not the local data directory. Setting data-dir would silently disconnect\n")
+			fmt.Fprintf(os.Stderr, "from the configured database '%s'.\n", cfg.GetDoltDatabase())
+			fmt.Fprintf(os.Stderr, "\nTo change which database to use:\n")
+			fmt.Fprintf(os.Stderr, "  bd dolt set database <name>\n")
+			os.Exit(1)
+		}
 		if value == "" {
 			// Allow clearing the custom data dir (revert to default .beads/dolt)
 			cfg.DoltDataDir = ""

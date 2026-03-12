@@ -29,6 +29,21 @@ func runArtifactsCheck(path string, clean bool, yes bool) {
 	}
 
 	if jsonOutput {
+		// GH#2438: When --clean is also set, perform cleanup before outputting
+		// JSON. Previously, --json returned early and skipped the clean logic,
+		// so `bd doctor --check=artifacts --clean --json` would report findings
+		// but never delete them.
+		if clean && report.SafeDeleteCount > 0 {
+			if err := fix.ClassicArtifacts(path); err != nil {
+				FatalError("during cleanup: %v", err)
+			}
+			// Re-scan to show post-cleanup state
+			report, err = doctor.ScanForArtifacts(path)
+			if err != nil {
+				FatalError("re-scanning artifacts: %v", err)
+			}
+		}
+
 		result := map[string]interface{}{
 			"total_count":       report.TotalCount,
 			"safe_delete_count": report.SafeDeleteCount,
