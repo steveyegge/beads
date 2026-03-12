@@ -442,6 +442,13 @@ environment variable.`,
 			doltCfg.ServerUser = serverUser
 		}
 
+		initLock, err := acquireEmbeddedLock(beadsDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer initLock.Unlock()
+
 		store, err := newDoltStore(ctx, doltCfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to connect to dolt server: %v\n", err)

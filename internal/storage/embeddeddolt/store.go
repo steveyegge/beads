@@ -296,7 +296,31 @@ func (s *EmbeddedDoltStore) GetAllEventsSince(ctx context.Context, sinceID int64
 }
 
 func (s *EmbeddedDoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error) {
-	panic("embeddeddolt: GetStatistics not implemented")
+	stats := &types.Statistics{}
+	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT
+				COUNT(*) AS total,
+				COALESCE(SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN status = 'deferred' THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END), 0)
+			FROM issues
+		`).Scan(
+			&stats.TotalIssues,
+			&stats.OpenIssues,
+			&stats.InProgressIssues,
+			&stats.ClosedIssues,
+			&stats.DeferredIssues,
+			&stats.PinnedIssues,
+		)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("embeddeddolt: get statistics: %w", err)
+	}
+	stats.ReadyIssues = stats.OpenIssues
+	return stats, nil
 }
 
 func (s *EmbeddedDoltStore) SetConfig(ctx context.Context, key, value string) error {

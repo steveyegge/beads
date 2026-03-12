@@ -926,9 +926,9 @@ func TestEmbeddedInit(t *testing.T) {
 }
 
 // TestEmbeddedInitConcurrent launches 10 concurrent bd init processes against
-// the same directory to verify init is safe to run concurrently / is idempotent.
-// All processes should either succeed or fail gracefully — no panics, no
-// corrupted database, and the final state must be consistent.
+// the same directory to verify that the exclusive flock prevents concurrent
+// writers. Exactly one process should succeed; the rest must fail with the
+// single-writer lock error.
 func TestEmbeddedInitConcurrent(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
@@ -964,22 +964,30 @@ func TestEmbeddedInitConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 
-	// At least one must succeed; none should panic.
+	// Exactly one must succeed; the rest must fail with the lock error.
 	successes := 0
+	lockErrors := 0
 	for _, r := range results {
 		if strings.Contains(r.out, "panic") {
-			t.Errorf("goroutine %d panicked:\n%s", r.idx, r.out)
+			t.Errorf("process %d panicked:\n%s", r.idx, r.out)
 		}
 		if r.err == nil {
 			successes++
 		} else {
-			t.Logf("goroutine %d failed (non-fatal): %v\n%s", r.idx, r.err, r.out)
+			if strings.Contains(r.out, "one writer at a time") {
+				lockErrors++
+			} else {
+				t.Errorf("process %d failed with unexpected error: %v\n%s", r.idx, r.err, r.out)
+			}
 		}
 	}
-	if successes == 0 {
-		t.Fatal("all 10 concurrent bd init processes failed; at least one should succeed")
+	if successes != 1 {
+		t.Errorf("expected exactly 1 success, got %d", successes)
 	}
-	t.Logf("%d/%d processes succeeded", successes, N)
+	if lockErrors != N-1 {
+		t.Errorf("expected %d lock errors, got %d", N-1, lockErrors)
+	}
+	t.Logf("%d/%d succeeded, %d/%d got lock error", successes, N, lockErrors, N)
 
 	// After all processes finish, the database must be in a consistent state.
 	beadsDir := filepath.Join(dir, ".beads")
