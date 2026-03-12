@@ -882,6 +882,16 @@ environment variable.`,
 		fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
 		fmt.Printf("Run %s to get started.\n\n", ui.RenderAccent("bd quickstart"))
 
+		// Detect backup files from a previous session (GH#2327).
+		// This catches the branch-switch scenario: user ran bd init on a new
+		// branch and the database was created fresh, but backup JSONL files
+		// exist from a prior backup on this or another branch.
+		if !bootstrappedFromRemote && dolt.HasBackupFiles(beadsDir) {
+			fmt.Printf("  %s Backup files detected in .beads/backup/\n", ui.RenderWarn("!"))
+			fmt.Printf("    To restore issues from a previous backup, run:\n")
+			fmt.Printf("      %s\n\n", ui.RenderAccent("bd backup restore"))
+		}
+
 		// Run limited diagnostics to verify init succeeded.
 		// Uses runInitDiagnostics (not runDiagnostics) to only check things
 		// that should be true immediately after init — skips git-dependent,
