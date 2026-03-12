@@ -285,14 +285,15 @@ environment variable.`,
 			initDBDirAbs = filepath.Clean(initDBDir)
 		}
 
-		useLocalBeads := filepath.Clean(initDBDirAbs) == filepath.Clean(beadsDirAbs)
-
-		// Shared server mode: dolt data lives in ~/.beads/shared-server/dolt/
-		// (a different path tree), but the project still needs its local .beads/
-		// for metadata.json, config.yaml, .gitignore, etc.
-		if doltserver.IsSharedServerMode() {
-			useLocalBeads = true
-		}
+		// Always create local .beads/ when using default location (CWD/.beads).
+		// The local directory is needed for metadata.json, config.yaml, .gitignore,
+		// interactions.jsonl, and hooks — regardless of where dolt data lives.
+		// Only skip when BEADS_DIR explicitly points outside the project.
+		//
+		// Previous logic only created .beads/ when the dolt data dir was a
+		// subdirectory of .beads/, which broke server mode with external
+		// BEADS_DOLT_DATA_DIR or BEADS_DOLT_* env vars (GH#2519).
+		useLocalBeads := !hasExplicitBeadsDir || filepath.Clean(initDBDirAbs) == filepath.Clean(beadsDirAbs)
 
 		if useLocalBeads {
 			// Create .beads directory
