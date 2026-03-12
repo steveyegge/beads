@@ -451,7 +451,7 @@ environment variable.`,
 
 		store, err := newDoltStore(ctx, doltCfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to connect to dolt server: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: failed to open Dolt store: %v\n", err)
 			os.Exit(1)
 		}
 

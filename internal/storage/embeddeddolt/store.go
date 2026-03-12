@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -336,6 +337,11 @@ func (s *EmbeddedDoltStore) GetStatistics(ctx context.Context) (*types.Statistic
 }
 
 func (s *EmbeddedDoltStore) SetConfig(ctx context.Context, key, value string) error {
+	// Normalize issue_prefix: strip trailing hyphen to avoid double-hyphen IDs,
+	// matching DoltStore behavior.
+	if key == "issue_prefix" {
+		value = strings.TrimSuffix(value, "-")
+	}
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "REPLACE INTO config (`key`, value) VALUES (?, ?)", key, value)
 		return err
@@ -348,7 +354,10 @@ func (s *EmbeddedDoltStore) GetConfig(ctx context.Context, key string) (string, 
 		return tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", key).Scan(&value)
 	})
 	if err != nil {
-		return "", err
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("embeddeddolt: get config %q: %w", key, err)
 	}
 	return value, nil
 }
@@ -412,7 +421,7 @@ func (s *EmbeddedDoltStore) ListBranches(ctx context.Context) ([]string, error) 
 }
 
 func (s *EmbeddedDoltStore) Commit(ctx context.Context, message string) error {
-	return s.withConn(ctx, false, func(tx *sql.Tx) error {
+	return s.withConn(ctx, true, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "CALL DOLT_ADD('-A')"); err != nil {
 			return fmt.Errorf("dolt add: %w", err)
 		}
@@ -476,7 +485,7 @@ func (s *EmbeddedDoltStore) Diff(ctx context.Context, fromRef, toRef string) ([]
 // ---------------------------------------------------------------------------
 
 func (s *EmbeddedDoltStore) AddRemote(ctx context.Context, name, url string) error {
-	return s.withConn(ctx, false, func(tx *sql.Tx) error {
+	return s.withConn(ctx, true, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "CALL DOLT_REMOTE('add', ?, ?)", name, url)
 		return err
 	})
@@ -671,7 +680,10 @@ func (s *EmbeddedDoltStore) GetMetadata(ctx context.Context, key string) (string
 		return tx.QueryRowContext(ctx, "SELECT value FROM metadata WHERE `key` = ?", key).Scan(&value)
 	})
 	if err != nil {
-		return "", err
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("GetMetadata(%q): %w", key, err)
 	}
 	return value, nil
 }

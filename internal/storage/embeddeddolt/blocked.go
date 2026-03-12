@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -205,55 +206,80 @@ func evaluateWaitsForGates(
 }
 
 // getSpawnerChildren returns the child IDs for each spawner via parent-child
-// dependencies, plus the full set of child IDs seen.
+// dependencies, plus the full set of child IDs seen. Uses a batched IN query
+// per dep table to avoid N+1 round-trips.
 func getSpawnerChildren(ctx context.Context, tx *sql.Tx, spawnerIDs map[string]struct{}, depTables []string) (map[string][]string, map[string]struct{}, error) {
 	spawnerChildren := make(map[string][]string)
 	childIDs := make(map[string]struct{})
+	if len(spawnerIDs) == 0 {
+		return spawnerChildren, childIDs, nil
+	}
+
+	args := make([]any, 0, len(spawnerIDs))
+	for id := range spawnerIDs {
+		args = append(args, id)
+	}
+	placeholders := strings.Repeat("?,", len(args))
+	placeholders = placeholders[:len(placeholders)-1] // trim trailing comma
+
 	for _, depTable := range depTables {
-		for spawnerID := range spawnerIDs {
-			//nolint:gosec // G201: depTable is hardcoded
-			rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-				`SELECT issue_id FROM %s
-				 WHERE type = 'parent-child' AND depends_on_id = ?`, depTable), spawnerID)
-			if err != nil {
-				return nil, nil, fmt.Errorf("compute blocked IDs: children from %s: %w", depTable, err)
+		//nolint:gosec // G201: depTable is hardcoded to "dependencies" or "wisp_dependencies"
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
+			`SELECT issue_id, depends_on_id FROM %s
+			 WHERE type = 'parent-child' AND depends_on_id IN (%s)`, depTable, placeholders), args...)
+		if err != nil {
+			return nil, nil, fmt.Errorf("compute blocked IDs: children from %s: %w", depTable, err)
+		}
+		for rows.Next() {
+			var childID, spawnerID string
+			if err := rows.Scan(&childID, &spawnerID); err != nil {
+				rows.Close()
+				return nil, nil, fmt.Errorf("compute blocked IDs: scan child: %w", err)
 			}
-			for rows.Next() {
-				var childID string
-				if err := rows.Scan(&childID); err != nil {
-					rows.Close()
-					return nil, nil, fmt.Errorf("compute blocked IDs: scan child: %w", err)
-				}
-				spawnerChildren[spawnerID] = append(spawnerChildren[spawnerID], childID)
-				childIDs[childID] = struct{}{}
-			}
-			rows.Close()
-			if err := rows.Err(); err != nil {
-				return nil, nil, fmt.Errorf("compute blocked IDs: child rows from %s: %w", depTable, err)
-			}
+			spawnerChildren[spawnerID] = append(spawnerChildren[spawnerID], childID)
+			childIDs[childID] = struct{}{}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, nil, fmt.Errorf("compute blocked IDs: child rows from %s: %w", depTable, err)
 		}
 	}
 	return spawnerChildren, childIDs, nil
 }
 
 // getClosedChildren returns the subset of childIDs that have status "closed".
+// Uses a batched IN query per issue table to avoid N+1 round-trips.
 func getClosedChildren(ctx context.Context, tx *sql.Tx, childIDs map[string]struct{}, issueTables []string) (map[string]bool, error) {
 	closed := make(map[string]bool)
+	if len(childIDs) == 0 {
+		return closed, nil
+	}
+
+	args := make([]any, 0, len(childIDs))
+	for id := range childIDs {
+		args = append(args, id)
+	}
+	placeholders := strings.Repeat("?,", len(args))
+	placeholders = placeholders[:len(placeholders)-1]
+
 	for _, issueTbl := range issueTables {
-		for childID := range childIDs {
-			//nolint:gosec // G201: issueTbl is hardcoded
-			var status string
-			err := tx.QueryRowContext(ctx, fmt.Sprintf(
-				`SELECT status FROM %s WHERE id = ?`, issueTbl), childID).Scan(&status)
-			if err != nil {
-				if err == sql.ErrNoRows {
-					continue
-				}
-				return nil, fmt.Errorf("compute blocked IDs: child status: %w", err)
+		//nolint:gosec // G201: issueTbl is hardcoded to "issues" or "wisps"
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
+			`SELECT id FROM %s WHERE id IN (%s) AND status = 'closed'`, issueTbl, placeholders), args...)
+		if err != nil {
+			return nil, fmt.Errorf("compute blocked IDs: closed children from %s: %w", issueTbl, err)
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("compute blocked IDs: scan closed child: %w", err)
 			}
-			if status == "closed" {
-				closed[childID] = true
-			}
+			closed[id] = true
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("compute blocked IDs: closed child rows from %s: %w", issueTbl, err)
 		}
 	}
 	return closed, nil
