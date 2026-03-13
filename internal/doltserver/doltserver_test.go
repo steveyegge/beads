@@ -900,6 +900,78 @@ func TestDefaultSharedServerPort_DiffersFromDefault(t *testing.T) {
 	}
 }
 
+// TestHasExplicitPort verifies that hasExplicitPort correctly detects
+// when metadata.json has an explicit dolt_server_port configured.
+func TestHasExplicitPort(t *testing.T) {
+	t.Run("no_metadata_file", func(t *testing.T) {
+		dir := t.TempDir()
+		if hasExplicitPort(dir) {
+			t.Error("expected false when metadata.json doesn't exist")
+		}
+	})
+
+	t.Run("metadata_without_port", func(t *testing.T) {
+		dir := t.TempDir()
+		// Write metadata.json without dolt_server_port
+		if err := os.WriteFile(filepath.Join(dir, "metadata.json"),
+			[]byte(`{"backend":"dolt"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if hasExplicitPort(dir) {
+			t.Error("expected false when metadata.json has no dolt_server_port")
+		}
+	})
+
+	t.Run("metadata_with_explicit_port", func(t *testing.T) {
+		dir := t.TempDir()
+		// Write metadata.json with explicit dolt_server_port
+		if err := os.WriteFile(filepath.Join(dir, "metadata.json"),
+			[]byte(`{"backend":"dolt","dolt_server_port":13446}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if !hasExplicitPort(dir) {
+			t.Error("expected true when metadata.json has dolt_server_port")
+		}
+	})
+
+	t.Run("metadata_with_zero_port", func(t *testing.T) {
+		dir := t.TempDir()
+		// Write metadata.json with dolt_server_port=0 (not a real explicit port)
+		if err := os.WriteFile(filepath.Join(dir, "metadata.json"),
+			[]byte(`{"backend":"dolt","dolt_server_port":0}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if hasExplicitPort(dir) {
+			t.Error("expected false when dolt_server_port is 0")
+		}
+	})
+}
+
+// TestEnsureRunning_ExplicitPortSuppressesStart verifies that EnsureRunning
+// does not start a server when metadata.json has an explicit dolt_server_port,
+// indicating the server is externally managed (e.g. systemd). GH#2554.
+func TestEnsureRunning_ExplicitPortSuppressesStart(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+	t.Setenv("BEADS_TEST_MODE", "")
+	t.Setenv("GT_ROOT", "")
+
+	dir := t.TempDir()
+	// Write metadata.json with explicit port (simulating systemd-managed server)
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"),
+		[]byte(`{"backend":"dolt","dolt_server_port":13446}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := EnsureRunning(dir)
+	if err == nil {
+		t.Fatal("expected error when server not running and explicit port configured")
+	}
+	if !strings.Contains(err.Error(), "auto-start is suppressed") {
+		t.Errorf("expected 'auto-start is suppressed' in error, got: %v", err)
+	}
+}
+
 func TestDefaultConfig_SharedModeBeadsDir(t *testing.T) {
 	t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
