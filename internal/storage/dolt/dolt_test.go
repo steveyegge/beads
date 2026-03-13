@@ -981,7 +981,7 @@ func TestDoltStoreComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to add first comment: %v", err)
 	}
-	if comment1.ID == 0 {
+	if comment1.ID == "" {
 		t.Error("expected comment ID to be generated")
 	}
 
