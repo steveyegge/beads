@@ -726,7 +726,7 @@ var createCmd = &cobra.Command{
 		// and can be lost on push, sync, or server restart (GH#2009).
 		commitMsg := fmt.Sprintf("bd: create %s", issue.ID)
 		if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
-			WarnError("failed to commit: %v", err)
+			FatalError("failed to commit: %v", err)
 		}
 
 		// If issue was routed to a different repo, commit pending changes.
