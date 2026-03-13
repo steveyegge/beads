@@ -434,6 +434,15 @@ func IsRunning(beadsDir string) (*State, error) {
 // This is the main auto-start entry point. Thread-safe via file lock.
 // Returns the port the server is listening on.
 func EnsureRunning(beadsDir string) (int, error) {
+	port, _, err := EnsureRunningDetailed(beadsDir)
+	return port, err
+}
+
+// EnsureRunningDetailed is like EnsureRunning but also reports whether a new
+// server was started (startedByUs=true) vs. an already-running server was
+// adopted (startedByUs=false). Callers that need to clean up auto-started
+// servers (e.g. test teardown) should use this variant.
+func EnsureRunningDetailed(beadsDir string) (port int, startedByUs bool, err error) {
 	serverDir := resolveServerDir(beadsDir)
 
 	// Inform when Gas Town is also running on this machine
@@ -443,18 +452,18 @@ func EnsureRunning(beadsDir string) (int, error) {
 
 	state, err := IsRunning(serverDir)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if state.Running {
 		_ = EnsurePortFile(serverDir, state.Port)
-		return state.Port, nil
+		return state.Port, false, nil
 	}
 
 	s, err := Start(serverDir)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return s.Port, nil
+	return s.Port, true, nil
 }
 
 // Start explicitly starts a dolt sql-server for the project.
