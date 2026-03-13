@@ -1,10 +1,8 @@
 # RFC: UUID Primary Keys for Federation-Safe Events
 
 **Status**: Proposed
-**Author**: Trillium Smith
 **Date**: 2026-03-13
-**Branch**: `uuid-primary-keys` (commit `37b3df47`)
-**Beads**: me-hy83, me-slnt (epic)
+**Branch**: `uuid-primary-keys`
 
 ## Problem
 
@@ -26,46 +24,53 @@ vulnerable to this collision in any multi-clone deployment.
 ### How it happens
 
 ```
-1. Clone A (mini3) inserts events → gets IDs 4183, 4184, 4185...
-2. Cron sync: dolt_push from mini3 → mini2 (rows arrive on mini2)
-3. mini2's AUTO_INCREMENT counter does NOT advance past the pushed rows
-4. Clone B (macbook) writes to mini2 → AUTO_INCREMENT assigns 4183 → COLLISION
+1. Clone A inserts events → gets IDs 4183, 4184, 4185...
+2. Sync: dolt_push from Clone A → Clone B (rows arrive on Clone B)
+3. Clone B's AUTO_INCREMENT counter does NOT advance past the pushed rows
+4. Client writes to Clone B → AUTO_INCREMENT assigns 4183 → COLLISION
 ```
 
-### Observed state at time of discovery (2026-03-13)
+### Observed state at time of discovery
 
-| Node | Host | MAX(id) | COUNT(*) | AUTO_INCREMENT |
+In a 3-node federation (one primary, one satellite, one thin-client), the
+event counters had diverged significantly:
+
+| Node | Role | MAX(id) | COUNT(*) | AUTO_INCREMENT |
 |------|------|---------|----------|----------------|
-| macbook (thin client) | 127.0.0.1:3307 | 4090 | 2477 | 4091 |
-| mini2 (primary) | 100.111.197.110:3307 | 4198 | 3104 | 4199 |
-| mini3 (satellite) | 100.86.9.58:3307 | 4217 | 3123 | 4218 |
+| Node A | thin client | 4090 | 2477 | 4091 |
+| Node B | primary | 4198 | 3104 | 4199 |
+| Node C | satellite | 4217 | 3123 | 4218 |
+
+Rows pushed from the satellite to the primary occupied ID ranges that the
+primary's counter didn't know about. The thin client was even further behind.
 
 ### Impact
 
 - **ALL write operations blocked**: `bd create`, `bd update`, `bd close` fail
   on any node whose counter is behind
-- Every sync cycle re-introduces the gap (not a one-time fix)
-- Agent (polecat) work creates events on the server; macbook counter falls behind
-- Mail archival blocked (archive creates events)
-- Multiple agent sessions wasted debugging and working around the issue
-- 7+ sessions across 5 conversation IDs over a single day
+- Every sync cycle re-introduces the gap — not a one-time fix
+- Agents writing to one clone create events that collide on another clone
+- Operations that create events (archival, comments, status changes) all fail
+- The only workaround was "burning through" — retrying failed INSERTs ~24 times
+  to advance the counter past the gap, then repeating after every sync
 
-See [federation-uuid-evidence.md](federation-uuid-evidence.md) for full
-incident timeline with error logs and session references.
+See [federation-uuid-evidence.md](federation-uuid-evidence.md) for the full
+incident report.
 
 ### Prior mitigations (insufficient)
 
 **beads#2133** added `ALTER TABLE <tbl> AUTO_INCREMENT = MAX(id)+1` after every
-`DOLT_PULL` in `bd`'s pull code path. This works when `bd` does the pull, but
-fails when:
+`DOLT_PULL` in `bd`'s pull code path (`resetAutoIncrements`). This works when
+`bd` does the pull, but fails when:
 
-- Satellite cron scripts use raw `dolt_pull`/`dolt_push` via Docker exec
-- `gt` commands write independently of `bd`
+- External sync scripts use raw `dolt_pull`/`dolt_push` (e.g., cron-based
+  satellite sync via Docker exec)
+- Other tools write independently of `bd`
 - Two nodes write concurrently between syncs
 - Even within a single server, [dolthub/dolt#7702] documents AUTO_INCREMENT
   race conditions in concurrent transactions
 
-The band-aid (`resetAutoIncrements`) treats symptoms, not the root cause.
+The band-aid treats symptoms, not the root cause.
 
 ## Solution
 
@@ -99,8 +104,8 @@ we use [UUID v7][rfc9562] via `github.com/google/uuid`:
 | `comments` | `bd comment` |
 | `issue_snapshots` | Compaction |
 | `compaction_snapshots` | Compaction |
-| `wisp_events` | Polecat work lifecycle |
-| `wisp_comments` | Polecat annotations |
+| `wisp_events` | Wisp lifecycle events |
+| `wisp_comments` | Wisp annotations |
 
 Tables **NOT** changed: `issues`, `wisps`, `dependencies`, `labels`, `config`,
 `metadata`, etc. — these already use VARCHAR or composite PKs that are
@@ -166,12 +171,12 @@ drop / rename pattern:
 
 6. **Commit**: `DOLT_COMMIT('-Am', 'migration: UUID primary keys for ...')`
 
-### Migration discovery
+### Dolt DDL quirk
 
-A DDL quirk was discovered during implementation: `ALTER TABLE ... DROP PRIMARY
-KEY` fails on Dolt when the column has `AUTO_INCREMENT`. The workaround is to
-`MODIFY` the column to remove `AUTO_INCREMENT` first (step 4a above). This is
-not documented in Dolt's migration docs.
+`ALTER TABLE ... DROP PRIMARY KEY` fails on Dolt when the column has
+`AUTO_INCREMENT`. The workaround is to `MODIFY` the column to remove
+`AUTO_INCREMENT` first (step 4a above). This is not documented in Dolt's
+migration docs.
 
 ## Breaking changes
 
@@ -268,8 +273,9 @@ Key files:
 ## Testing
 
 - All existing tests pass with the UUID schema
-- Migration tested against 18 live databases across 3 nodes (macbook, mini2, mini3)
-- E2E federation test: create on mini3 → sync → write on mini2 → no Error 1062
+- Migration tested against 18 live databases across 3 nodes
+- E2E federation test: create on Clone A → sync → write on Clone B → no
+  Error 1062
 - Comment ordering verified: `ORDER BY created_at ASC, id ASC` provides
   deterministic output
 
@@ -279,7 +285,7 @@ Key files:
 - [dolthub/dolt#7702]: AUTO_INCREMENT race condition in concurrent transactions
 - [beads#2133]: Prior AUTO_INCREMENT reset band-aid (closed, insufficient)
 - [RFC 9562][rfc9562]: UUID v7 specification
-- [federation-uuid-evidence.md](federation-uuid-evidence.md): Full incident log
+- [federation-uuid-evidence.md](federation-uuid-evidence.md): Incident report
 
 [dolthub-uuid-blog]: https://www.dolthub.com/blog/2023-10-27-uuid-keys/
 [rfc9562]: https://www.rfc-editor.org/rfc/rfc9562
