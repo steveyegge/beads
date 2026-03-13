@@ -24,18 +24,20 @@ type dbQuerier interface {
 }
 
 // backupState tracks watermarks for incremental backup.
+type backupCounts struct {
+	Issues       int `json:"issues"`
+	Events       int `json:"events"`
+	Comments     int `json:"comments"`
+	Dependencies int `json:"dependencies"`
+	Labels       int `json:"labels"`
+	Config       int `json:"config"`
+}
+
 type backupState struct {
-	LastDoltCommit string    `json:"last_dolt_commit"`
-	LastEventID    int64     `json:"last_event_id"`
-	Timestamp      time.Time `json:"timestamp"`
-	Counts         struct {
-		Issues       int `json:"issues"`
-		Events       int `json:"events"`
-		Comments     int `json:"comments"`
-		Dependencies int `json:"dependencies"`
-		Labels       int `json:"labels"`
-		Config       int `json:"config"`
-	} `json:"counts"`
+	LastDoltCommit string       `json:"last_dolt_commit"`
+	LastEventID    int64        `json:"last_event_id"`
+	Timestamp      time.Time    `json:"timestamp"`
+	Counts         backupCounts `json:"counts"`
 }
 
 // backupDir returns the backup directory path, creating it if needed.

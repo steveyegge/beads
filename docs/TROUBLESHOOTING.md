@@ -443,12 +443,14 @@ bd config set sync.branch ""  # Disable sync branch feature
 For **physical database corruption** (disk failures, power loss, filesystem errors):
 
 ```bash
-# If corrupted, rebuild from a Dolt remote or from an export backup
+# If corrupted, rebuild from a Dolt remote or from a backup snapshot
 mv .beads/dolt .beads/dolt.backup
 bd init
 bd dolt pull    # Pull from Dolt remote if configured
-# Or re-initialize from a backup export:
-# bd init --from-jsonl
+# Or restore from a local backup snapshot:
+# bd backup restore
+# Or fetch one from a backup branch:
+# bd backup fetch-git
 ```
 
 For **logical consistency issues** (ID collisions from branch merges, parallel workers):
