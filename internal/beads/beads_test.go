@@ -543,6 +543,9 @@ func setupDetachedCommitBeadsWorktree(t *testing.T) (string, string, string) {
 	emptyTree := runGitInDir(t, tmpDir, "--git-dir", bareDir, "hash-object", "-t", "tree", "/dev/null")
 	initCommit := runGitInDir(t, tmpDir, "--git-dir", bareDir, "commit-tree", "-m", "Initial commit", emptyTree)
 	runGitInDir(t, tmpDir, "--git-dir", bareDir, "update-ref", "HEAD", initCommit)
+	// Explicitly create refs/heads/main so the worktree add works
+	// regardless of the system's init.defaultBranch setting.
+	runGitInDir(t, tmpDir, "--git-dir", bareDir, "update-ref", "refs/heads/main", initCommit)
 
 	runGitInDir(t, tmpDir, "--git-dir", bareDir, "worktree", "add", mainWorktreeDir, "main")
 
