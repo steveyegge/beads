@@ -16,8 +16,17 @@ func (s *EmbeddedDoltStore) CreateIssue(ctx context.Context, issue *types.Issue,
 	if issue == nil {
 		return fmt.Errorf("issue must not be nil")
 	}
+	// Route infra types to wisps, matching DoltStore.CreateIssue behavior.
+	if s.IsInfraTypeCtx(ctx, issue.IssueType) {
+		issue.Ephemeral = true
+	}
+
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
-		bc, err := issueops.NewBatchContext(ctx, tx, storage.BatchCreateOptions{})
+		// SkipPrefixValidation matches DoltStore.CreateIssue, which does not
+		// validate prefixes for explicit IDs on the single-issue path.
+		bc, err := issueops.NewBatchContext(ctx, tx, storage.BatchCreateOptions{
+			SkipPrefixValidation: true,
+		})
 		if err != nil {
 			return err
 		}
@@ -37,11 +46,19 @@ func (s *EmbeddedDoltStore) CreateIssuesWithFullOptions(ctx context.Context, iss
 		return nil
 	}
 
-	// All-ephemeral fast path: create each wisp individually.
+	// All-ephemeral fast path: create each wisp individually within
+	// its own transaction, threading opts through so that callers'
+	// SkipPrefixValidation / OrphanHandling settings are respected.
 	if issueops.AllEphemeral(issues) {
 		for _, issue := range issues {
 			issue.Ephemeral = true
-			if err := s.CreateIssue(ctx, issue, actor); err != nil {
+			if err := s.withConn(ctx, true, func(tx *sql.Tx) error {
+				bc, err := issueops.NewBatchContext(ctx, tx, opts)
+				if err != nil {
+					return err
+				}
+				return issueops.CreateIssueInTx(ctx, tx, bc, issue, actor)
+			}); err != nil {
 				return err
 			}
 		}

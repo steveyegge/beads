@@ -274,6 +274,8 @@ func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 }
 
 // PersistComments writes issue.Comments into the appropriate comments table.
+// Note: ON DUPLICATE KEY UPDATE is a no-op here since the comments table uses
+// an auto-increment PK. Kept for consistency with DoltStore (GH#2061).
 func PersistComments(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 	if len(issue.Comments) == 0 {
 		return nil
@@ -319,12 +321,16 @@ func PersistDependencies(ctx context.Context, tx *sql.Tx, issues []*types.Issue,
 			if err := tx.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s WHERE id = ?", lookupTable), dep.DependsOnID).Scan(&exists); err != nil {
 				continue
 			}
+			createdAt := dep.CreatedAt
+			if createdAt.IsZero() {
+				createdAt = time.Now().UTC()
+			}
 			//nolint:gosec // G201: table is determined by isWisp flag
 			_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 				INSERT INTO %s (issue_id, depends_on_id, type, created_by, created_at)
 				VALUES (?, ?, ?, ?, ?)
 				ON DUPLICATE KEY UPDATE type = type
-			`, depTable), dep.IssueID, dep.DependsOnID, dep.Type, actor, dep.CreatedAt)
+			`, depTable), dep.IssueID, dep.DependsOnID, dep.Type, actor, createdAt)
 			if err != nil {
 				return fmt.Errorf("failed to insert dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
 			}

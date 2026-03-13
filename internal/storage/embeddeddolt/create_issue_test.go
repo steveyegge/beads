@@ -730,6 +730,34 @@ func TestCreateIssue(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("infra_type_routes_to_wisps", func(t *testing.T) {
+		te := newTestEnv(t, "ir")
+		ctx := t.Context()
+
+		// "agent" is an infra type but not a built-in issue type,
+		// so it must be configured as a custom type to pass validation.
+		if err := te.store.SetConfig(ctx, "types.custom", "agent"); err != nil {
+			t.Fatalf("SetConfig: %v", err)
+		}
+
+		issue := &types.Issue{
+			Title:     "Agent wisp",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.IssueType("agent"),
+		}
+		if err := te.store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("CreateIssue: %v", err)
+		}
+
+		// Infra type should have been marked ephemeral and routed to wisps table.
+		if !issue.Ephemeral {
+			t.Fatal("expected issue.Ephemeral to be set for infra type")
+		}
+		te.assertRowExists(t, ctx, "wisps", issue.ID)
+		te.assertRowNotExists(t, ctx, "issues", issue.ID)
+	})
 }
 
 func TestCreateIssues(t *testing.T) {

@@ -556,14 +556,6 @@ func (s *EmbeddedDoltStore) GetCustomTypes(ctx context.Context) ([]string, error
 	panic("embeddeddolt: GetCustomTypes not implemented")
 }
 
-func (s *EmbeddedDoltStore) GetInfraTypes(ctx context.Context) map[string]bool {
-	panic("embeddeddolt: GetInfraTypes not implemented")
-}
-
-func (s *EmbeddedDoltStore) IsInfraTypeCtx(ctx context.Context, t types.IssueType) bool {
-	panic("embeddeddolt: IsInfraTypeCtx not implemented")
-}
-
 // ---------------------------------------------------------------------------
 // storage.CompactionStore
 // ---------------------------------------------------------------------------
