@@ -28,14 +28,9 @@ was stale and assigned IDs that already existed.
 the counter by 1 each time. ~24 failed attempts were needed to advance past
 the gap.
 
-**Key user insight**:
-> "We should be able to squish our beads together without needing to worry about
-> entry numbers. I thought that was the whole point of the system, different
-> agents could create different beads that would not conflict because of using a
-> hash instead of an incrementing id."
-
-While issue IDs are indeed hash-based and federation-safe, the `events` table
-was still using sequential integer IDs with auto_increment — the weak link.
+While issue IDs are hash-based and federation-safe by design, the `events`
+table was still using sequential integer IDs with auto_increment — the weak
+link in an otherwise collision-resistant system.
 
 ---
 
