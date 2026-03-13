@@ -283,7 +283,7 @@ func (s *EmbeddedDoltStore) GetEvents(ctx context.Context, issueID string, limit
 	panic("embeddeddolt: GetEvents not implemented")
 }
 
-func (s *EmbeddedDoltStore) GetAllEventsSince(ctx context.Context, sinceID int64) ([]*types.Event, error) {
+func (s *EmbeddedDoltStore) GetAllEventsSince(ctx context.Context, since time.Time) ([]*types.Event, error) {
 	panic("embeddeddolt: GetAllEventsSince not implemented")
 }
 

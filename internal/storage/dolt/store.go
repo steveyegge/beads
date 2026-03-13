@@ -1648,20 +1648,14 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 		if err := s.doltCLIPull(ctx, creds); err != nil {
 			return err
 		}
-		if err := s.resetAutoIncrements(ctx); err != nil {
-			return fmt.Errorf("failed to reset auto-increments after pull: %w", err)
-		}
 		return nil
 	}
-	// Credential CLI routing: mirrors git-protocol path including resetAutoIncrements.
+	// Credential CLI routing: mirrors git-protocol path.
 	// Skips pullWithAutoResolve (consistent with git-protocol Pull — CLI manages its
 	// own connections and conflict handling).
 	if s.shouldUseCLIForCredentials(ctx) {
 		if err := s.doltCLIPull(ctx, creds); err != nil {
 			return err
-		}
-		if err := s.resetAutoIncrements(ctx); err != nil {
-			return fmt.Errorf("failed to reset auto-increments after pull: %w", err)
 		}
 		return nil
 	}
@@ -1670,17 +1664,11 @@ func (s *DoltStore) Pull(ctx context.Context) (retErr error) {
 			if err := s.pullWithAutoResolve(ctx, "CALL DOLT_PULL('--user', ?, ?, ?)", s.remoteUser, s.remote, s.branch); err != nil {
 				return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
 			}
-			if err := s.resetAutoIncrements(ctx); err != nil {
-				return fmt.Errorf("failed to reset auto-increments after pull: %w", err)
-			}
 			return nil
 		})
 	}
 	if err := s.pullWithAutoResolve(ctx, "CALL DOLT_PULL(?, ?)", s.remote, s.branch); err != nil {
 		return fmt.Errorf("failed to pull from %s/%s: %w", s.remote, s.branch, err)
-	}
-	if err := s.resetAutoIncrements(ctx); err != nil {
-		return fmt.Errorf("failed to reset auto-increments after pull: %w", err)
 	}
 	return nil
 }
@@ -1795,31 +1783,6 @@ func (s *DoltStore) tryAutoResolveMetadataConflicts(ctx context.Context, tx *sql
 	return true, nil
 }
 
-func (s *DoltStore) resetAutoIncrements(ctx context.Context) error {
-	tables := []string{"events", "comments", "issue_snapshots", "compaction_snapshots", "wisp_events", "wisp_comments"}
-	for _, table := range tables {
-		var maxID int64
-		//nolint:gosec // G201: table is a hardcoded constant
-		err := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COALESCE(MAX(id), 0) FROM %s", table)).Scan(&maxID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			var mysqlErr *mysql.MySQLError
-			if errors.As(err, &mysqlErr) && mysqlErr.Number == 1146 {
-				continue
-			}
-			return fmt.Errorf("failed to query max id for %s: %w", table, err)
-		}
-		if maxID > 0 {
-			//nolint:gosec // G201: table is a hardcoded constant
-			if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT = %d", table, maxID+1)); err != nil {
-				return fmt.Errorf("failed to reset AUTO_INCREMENT for %s: %w", table, err)
-			}
-		}
-	}
-	return nil
-}
 
 // Branch creates a new branch
 func (s *DoltStore) Branch(ctx context.Context, name string) (retErr error) {
