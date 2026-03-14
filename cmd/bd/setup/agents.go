@@ -10,6 +10,9 @@ import (
 	"github.com/steveyegge/beads/internal/templates/agents"
 )
 
+// readFileBytesImpl is used in tests; avoids import cycle.
+var readFileBytesImpl = os.ReadFile
+
 // AGENTS.md integration markers for beads section
 const (
 	agentsBeginMarker = "<!-- BEGIN BEADS INTEGRATION -->"
@@ -34,6 +37,7 @@ type agentsIntegration struct {
 	setupCommand string
 	readHint     string
 	docsURL      string
+	profile      agents.Profile // "full" or "minimal"; empty defaults to "full"
 }
 
 func defaultAgentsEnv() agentsEnv {
@@ -44,10 +48,25 @@ func defaultAgentsEnv() agentsEnv {
 	}
 }
 
+// containsBeadsMarker returns true if content contains a BEGIN BEADS INTEGRATION marker
+// (either legacy or new format with metadata).
+func containsBeadsMarker(content string) bool {
+	return strings.Contains(content, "<!-- BEGIN BEADS INTEGRATION")
+}
+
+// resolveProfile returns the integration's profile, defaulting to full.
+func resolveProfile(integration agentsIntegration) agents.Profile {
+	if integration.profile != "" {
+		return integration.profile
+	}
+	return agents.ProfileFull
+}
+
 func installAgents(env agentsEnv, integration agentsIntegration) error {
 	_, _ = fmt.Fprintf(env.stdout, "Installing %s integration...\n", integration.name)
 
-	beadsSection := agents.EmbeddedBeadsSection()
+	profile := resolveProfile(integration)
+	beadsSection := agents.RenderSection(profile)
 
 	var currentContent string
 	data, err := os.ReadFile(env.agentsPath)
@@ -59,8 +78,8 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 	}
 
 	if currentContent != "" {
-		if strings.Contains(currentContent, agentsBeginMarker) {
-			newContent := updateBeadsSection(currentContent)
+		if containsBeadsMarker(currentContent) {
+			newContent := updateBeadsSectionWithProfile(currentContent, profile)
 			if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
 				_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
 				return err
@@ -75,7 +94,7 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 			_, _ = fmt.Fprintln(env.stdout, "✓ Added beads section to existing AGENTS.md")
 		}
 	} else {
-		newContent := createNewAgentsFile()
+		newContent := createNewAgentsFileWithProfile(profile)
 		if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
 			_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
 			return err
@@ -107,7 +126,7 @@ func checkAgents(env agentsEnv, integration agentsIntegration) error {
 	}
 
 	content := string(data)
-	if strings.Contains(content, agentsBeginMarker) {
+	if containsBeadsMarker(content) {
 		_, _ = fmt.Fprintf(env.stdout, "✓ %s integration installed: %s\n", integration.name, env.agentsPath)
 		_, _ = fmt.Fprintln(env.stdout, "  Beads section found in AGENTS.md")
 		return nil
@@ -130,7 +149,7 @@ func removeAgents(env agentsEnv, integration agentsIntegration) error {
 	}
 
 	content := string(data)
-	if !strings.Contains(content, agentsBeginMarker) {
+	if !containsBeadsMarker(content) {
 		_, _ = fmt.Fprintln(env.stdout, "No beads section found in AGENTS.md")
 		return nil
 	}
@@ -145,11 +164,18 @@ func removeAgents(env agentsEnv, integration agentsIntegration) error {
 	return nil
 }
 
-// updateBeadsSection replaces the beads section in existing content
+// updateBeadsSection replaces the beads section in existing content using the full profile.
+// Kept for backward compatibility with existing callers and tests.
 func updateBeadsSection(content string) string {
-	beadsSection := agents.EmbeddedBeadsSection()
+	return updateBeadsSectionWithProfile(content, agents.ProfileFull)
+}
 
-	start := strings.Index(content, agentsBeginMarker)
+// updateBeadsSectionWithProfile replaces the beads section with the given profile.
+// Handles both legacy markers (exact match) and new-format markers (prefix match with metadata).
+func updateBeadsSectionWithProfile(content string, profile agents.Profile) string {
+	beadsSection := agents.RenderSection(profile)
+
+	start := findBeginMarker(content)
 	end := strings.Index(content, agentsEndMarker)
 
 	if start == -1 || end == -1 || start > end {
@@ -170,7 +196,7 @@ func updateBeadsSection(content string) string {
 
 // removeBeadsSection removes the beads section from content
 func removeBeadsSection(content string) string {
-	start := strings.Index(content, agentsBeginMarker)
+	start := findBeginMarker(content)
 	end := strings.Index(content, agentsEndMarker)
 
 	if start == -1 || end == -1 || start > end {
@@ -196,9 +222,21 @@ func removeBeadsSection(content string) string {
 	return content[:start] + content[endOfEndMarker:]
 }
 
-// createNewAgentsFile creates a new AGENTS.md with a basic template
+// findBeginMarker returns the index of the BEGIN BEADS INTEGRATION marker in content,
+// matching both legacy (exact) and new (with metadata) formats via prefix match.
+// Returns -1 if not found.
+func findBeginMarker(content string) int {
+	return strings.Index(content, "<!-- BEGIN BEADS INTEGRATION")
+}
+
+// createNewAgentsFile creates a new AGENTS.md with a basic template using the full profile.
 func createNewAgentsFile() string {
-	beadsSection := agents.EmbeddedBeadsSection()
+	return createNewAgentsFileWithProfile(agents.ProfileFull)
+}
+
+// createNewAgentsFileWithProfile creates a new AGENTS.md with the given profile.
+func createNewAgentsFileWithProfile(profile agents.Profile) string {
+	beadsSection := agents.RenderSection(profile)
 
 	return `# Project Instructions for AI Agents
 

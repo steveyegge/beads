@@ -12,7 +12,7 @@ import (
 )
 
 func TestUpdateBeadsSection(t *testing.T) {
-	beadsSection := agents.EmbeddedBeadsSection()
+	beadsSection := agents.RenderSection(agents.ProfileFull)
 
 	tests := []struct {
 		name     string
@@ -135,12 +135,16 @@ func TestCreateNewAgentsFile(t *testing.T) {
 		t.Error("Missing header in new agents file")
 	}
 
-	if !strings.Contains(content, agentsBeginMarker) {
+	if !containsBeadsMarker(content) {
 		t.Error("Missing begin marker in new agents file")
 	}
 
 	if !strings.Contains(content, agentsEndMarker) {
 		t.Error("Missing end marker in new agents file")
+	}
+
+	if !strings.Contains(content, "profile:full") {
+		t.Error("Missing profile metadata in new agents file")
 	}
 
 	if !strings.Contains(content, "## Build & Test") {
@@ -183,7 +187,7 @@ func TestInstallFactoryCreatesNewFile(t *testing.T) {
 		t.Fatalf("failed to read AGENTS.md: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, agentsBeginMarker) || !strings.Contains(content, agentsEndMarker) {
+	if !containsBeadsMarker(content) || !strings.Contains(content, agentsEndMarker) {
 		t.Fatal("missing factory markers in new file")
 	}
 	if !strings.Contains(stdout.String(), "Factory.ai (Droid) integration installed") {
