@@ -29,6 +29,61 @@ const CanonicalDatabaseName = "beads.db"
 // RedirectFileName is the name of the file that redirects to another .beads directory
 const RedirectFileName = "redirect"
 
+// SourceDatabaseInfo contains the dolt_database name from a source .beads/metadata.json,
+// preserved across a redirect so that the source rig's database identity is not lost
+// when the redirect target has a different dolt_database (e.g., "hq" vs "lola").
+//
+// Bug context (bd-tui): In Gas Town, each rig has .beads/redirect pointing to the
+// town root .beads/. The source rig's metadata.json has dolt_database set to the rig
+// name (e.g., "lola"), but following the redirect loads the TARGET's metadata.json
+// which has dolt_database: "hq". This struct preserves the source database name so
+// callers can restore it after redirect resolution.
+type SourceDatabaseInfo struct {
+	// SourceDir is the original .beads directory (before redirect)
+	SourceDir string
+	// TargetDir is the resolved .beads directory (after redirect)
+	TargetDir string
+	// WasRedirected is true if a redirect was followed
+	WasRedirected bool
+	// SourceDatabase is dolt_database from the source metadata.json (raw field,
+	// NOT the env-var-aware GetDoltDatabase()). Empty if no source metadata exists
+	// or the source has no dolt_database configured.
+	SourceDatabase string
+}
+
+// ResolveRedirect follows a .beads/redirect file and captures the source rig's
+// dolt_database from metadata.json BEFORE following the redirect. This preserves
+// the source database identity across redirects.
+//
+// The env var BEADS_DOLT_SERVER_DATABASE still takes highest priority (handled by
+// GetDoltDatabase() in callers). This function only captures the raw config field
+// so callers can use it as an override when the env var is not set.
+//
+// Returns SourceDatabaseInfo with WasRedirected=true if a redirect was followed,
+// and SourceDatabase set to the source's dolt_database (if any).
+func ResolveRedirect(beadsDir string) SourceDatabaseInfo {
+	info := SourceDatabaseInfo{
+		SourceDir: beadsDir,
+		TargetDir: beadsDir,
+	}
+
+	// Read source metadata BEFORE following redirect to capture dolt_database.
+	// Use the raw DoltDatabase field (not GetDoltDatabase) so that the env var
+	// BEADS_DOLT_SERVER_DATABASE retains highest priority in callers.
+	if sourceCfg, err := configfile.Load(beadsDir); err == nil && sourceCfg != nil {
+		info.SourceDatabase = sourceCfg.DoltDatabase
+	}
+
+	// Follow redirect
+	resolved := FollowRedirect(beadsDir)
+	if resolved != beadsDir {
+		info.WasRedirected = true
+		info.TargetDir = resolved
+	}
+
+	return info
+}
+
 // FollowRedirect checks if a .beads directory contains a redirect file and follows it.
 // If a redirect file exists, it returns the target .beads directory path.
 // If no redirect exists or there's an error, it returns the original path unchanged.

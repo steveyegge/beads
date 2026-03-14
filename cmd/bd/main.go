@@ -412,6 +412,18 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
+		// Capture redirect info BEFORE FindDatabasePath() follows the redirect.
+		// This preserves the source rig's dolt_database across redirects (bd-tui).
+		// In Gas Town, each rig's .beads/metadata.json has dolt_database set to
+		// the rig name (e.g., "lola"), but following the redirect to the town root
+		// loads the target's metadata.json which has dolt_database: "hq".
+		redirectInfo := beads.GetRedirectInfo()
+		var sourceDoltDatabase string
+		if redirectInfo.IsRedirected && redirectInfo.LocalDir != "" {
+			rInfo := beads.ResolveRedirect(redirectInfo.LocalDir)
+			sourceDoltDatabase = rInfo.SourceDatabase
+		}
+
 		// Initialize database path
 		if dbPath == "" {
 			// Use public API to find database (same logic as extensions)
@@ -504,6 +516,19 @@ var rootCmd = &cobra.Command{
 			doltCfg.ServerTLS = cfg.GetDoltServerTLS()
 		}
 		doltCfg.SyncGitRemote = config.GetString("sync.git-remote")
+
+		// Preserve the source rig's dolt_database across redirects (bd-tui).
+		// When a redirect was followed, the config loaded above comes from the
+		// TARGET's metadata.json (e.g., dolt_database: "hq"). But the SOURCE
+		// rig's metadata.json had a different dolt_database (e.g., "lola").
+		// The env var BEADS_DOLT_SERVER_DATABASE takes highest priority, so
+		// only override if the env var is not set.
+		if sourceDoltDatabase != "" && os.Getenv("BEADS_DOLT_SERVER_DATABASE") == "" {
+			doltCfg.Database = sourceDoltDatabase
+			if os.Getenv("BD_DEBUG_ROUTING") != "" {
+				fmt.Fprintf(os.Stderr, "[routing] Preserved source dolt_database %q across redirect\n", sourceDoltDatabase)
+			}
+		}
 
 		// Auto-start: enabled by default.
 		// Can be disabled by explicit config or env var.
