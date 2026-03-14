@@ -379,17 +379,25 @@ func TestEmbeddedInit(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// --from-jsonl requires CreateIssuesWithFullOptions, not yet implemented.
-		cmd := exec.Command(bd, "init", "--prefix", "jl", "--from-jsonl", "--quiet")
-		cmd.Dir = dir
-		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err == nil {
-			t.Fatal("--from-jsonl should fail: CreateIssuesWithFullOptions not yet implemented")
+		runBDInit(t, bd, dir, "--prefix", "jl", "--from-jsonl")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		store, err := embeddeddolt.New(ctx, beadsDir, "jl", "main")
+		if err != nil {
+			t.Fatalf("embeddeddolt.New failed: %v", err)
 		}
-		combined := string(out)
-		if !strings.Contains(combined, "not implemented") && !strings.Contains(combined, "panic") {
-			t.Logf("--from-jsonl failed with: %s", combined)
+		defer store.Close()
+
+		for _, want := range issues {
+			got, err := store.GetIssue(ctx, want.ID)
+			if err != nil {
+				t.Fatalf("GetIssue(%q) failed: %v", want.ID, err)
+			}
+			if got.Title != want.Title {
+				t.Errorf("GetIssue(%q).Title = %q, want %q", want.ID, got.Title, want.Title)
+			}
 		}
 	})
 
