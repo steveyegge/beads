@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/steveyegge/beads/internal/templates/agents"
 )
 
 var (
@@ -120,6 +122,25 @@ func installGemini(env geminiEnv, project bool, stealth bool) error {
 		return err
 	}
 
+	// Install minimal beads section in AGENTS.md (Gemini reads this on session start).
+	// Hooks handle the heavy lifting via bd prime; AGENTS.md just needs a pointer.
+	agentsEnv := agentsEnv{
+		agentsPath: filepath.Join(env.projectDir, "AGENTS.md"),
+		stdout:     env.stdout,
+		stderr:     env.stderr,
+	}
+	geminiAgentsIntegration := agentsIntegration{
+		name:         "Gemini CLI",
+		setupCommand: "bd setup gemini",
+		profile:      agents.ProfileMinimal,
+	}
+	if project {
+		if err := installAgents(agentsEnv, geminiAgentsIntegration); err != nil {
+			// Non-fatal: hooks are already installed
+			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update AGENTS.md: %v\n", err)
+		}
+	}
+
 	_, _ = fmt.Fprintln(env.stdout, "\n✓ Gemini CLI integration installed")
 	_, _ = fmt.Fprintf(env.stdout, "  Settings: %s\n", settingsPath)
 	_, _ = fmt.Fprintln(env.stdout, "\nRestart Gemini CLI for changes to take effect.")
@@ -213,6 +234,23 @@ func removeGemini(env geminiEnv, project bool) error {
 	if err := env.writeFile(settingsPath, data); err != nil {
 		_, _ = fmt.Fprintf(env.stderr, "Error: write settings: %v\n", err)
 		return err
+	}
+
+	// Also remove beads section from AGENTS.md if project removal
+	if project {
+		agentsEnv := agentsEnv{
+			agentsPath: filepath.Join(env.projectDir, "AGENTS.md"),
+			stdout:     env.stdout,
+			stderr:     env.stderr,
+		}
+		geminiAgentsIntegration := agentsIntegration{
+			name:         "Gemini CLI",
+			setupCommand: "bd setup gemini",
+		}
+		if err := removeAgents(agentsEnv, geminiAgentsIntegration); err != nil {
+			// Non-fatal
+			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update AGENTS.md: %v\n", err)
+		}
 	}
 
 	_, _ = fmt.Fprintln(env.stdout, "✓ Gemini CLI hooks removed")
