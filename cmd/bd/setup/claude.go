@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/steveyegge/beads/internal/templates/agents"
 )
 
 var (
@@ -127,6 +129,25 @@ func installClaude(env claudeEnv, project bool, stealth bool) error {
 		return err
 	}
 
+	// Install minimal beads section in AGENTS.md (Claude reads this on session start).
+	// Hooks handle the heavy lifting via bd prime; AGENTS.md just needs a pointer.
+	agentsEnv := agentsEnv{
+		agentsPath: filepath.Join(env.projectDir, "AGENTS.md"),
+		stdout:     env.stdout,
+		stderr:     env.stderr,
+	}
+	claudeAgentsIntegration := agentsIntegration{
+		name:         "Claude Code",
+		setupCommand: "bd setup claude",
+		profile:      agents.ProfileMinimal,
+	}
+	if project {
+		if err := installAgents(agentsEnv, claudeAgentsIntegration); err != nil {
+			// Non-fatal: hooks are already installed
+			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update AGENTS.md: %v\n", err)
+		}
+	}
+
 	_, _ = fmt.Fprintln(env.stdout, "\n✓ Claude Code integration installed")
 	_, _ = fmt.Fprintf(env.stdout, "  Settings: %s\n", settingsPath)
 	_, _ = fmt.Fprintln(env.stdout, "\nRestart Claude Code for changes to take effect.")
@@ -219,6 +240,23 @@ func removeClaude(env claudeEnv, project bool) error {
 	if err := env.writeFile(settingsPath, data); err != nil {
 		_, _ = fmt.Fprintf(env.stderr, "Error: write settings: %v\n", err)
 		return err
+	}
+
+	// Also remove beads section from AGENTS.md if project removal
+	if project {
+		agentsEnv := agentsEnv{
+			agentsPath: filepath.Join(env.projectDir, "AGENTS.md"),
+			stdout:     env.stdout,
+			stderr:     env.stderr,
+		}
+		claudeAgentsIntegration := agentsIntegration{
+			name:         "Claude Code",
+			setupCommand: "bd setup claude",
+		}
+		if err := removeAgents(agentsEnv, claudeAgentsIntegration); err != nil {
+			// Non-fatal
+			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update AGENTS.md: %v\n", err)
+		}
 	}
 
 	_, _ = fmt.Fprintln(env.stdout, "✓ Claude hooks removed")
