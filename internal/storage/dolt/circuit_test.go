@@ -16,6 +16,12 @@ func TestCircuitBreaker_InitiallyAllows(t *testing.T) {
 	}
 }
 
+func TestMaybeNewCircuitBreaker_PortZeroDisabled(t *testing.T) {
+	if cb := maybeNewCircuitBreaker(0); cb != nil {
+		t.Fatalf("maybeNewCircuitBreaker(0) = %#v, want nil", cb)
+	}
+}
+
 func TestCircuitBreaker_TripsAfterThreshold(t *testing.T) {
 	t.Setenv("BEADS_TEST_MODE", "") // need real breaker behavior
 	cb := newTestCircuitBreaker(t)

@@ -56,6 +56,16 @@ type circuitBreaker struct {
 // ErrCircuitOpen is returned when the circuit breaker is open and rejecting requests.
 var ErrCircuitOpen = fmt.Errorf("dolt circuit breaker is open: server appears down, failing fast (cooldown %s)", circuitCooldown)
 
+// maybeNewCircuitBreaker returns a file-backed circuit breaker only for a
+// concrete port. Port 0 means "not yet resolved" during standalone auto-start,
+// and sharing breaker state on port 0 poisons every fresh init on the machine.
+func maybeNewCircuitBreaker(port int) *circuitBreaker {
+	if port <= 0 {
+		return nil
+	}
+	return newCircuitBreaker(port)
+}
+
 // newCircuitBreaker creates a circuit breaker for the given Dolt server port.
 func newCircuitBreaker(port int) *circuitBreaker {
 	return &circuitBreaker{
