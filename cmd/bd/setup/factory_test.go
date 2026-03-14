@@ -264,7 +264,8 @@ func TestCheckFactoryScenarios(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		env, stdout, _ := newFactoryTestEnv(t)
-		beadsSection := agents.EmbeddedBeadsSection()
+		// Use current rendered section (not legacy EmbeddedBeadsSection) so check reports "current"
+		beadsSection := agents.RenderSection(agents.ProfileFull)
 		if err := os.WriteFile(env.agentsPath, []byte(beadsSection), 0644); err != nil {
 			t.Fatalf("failed to seed file: %v", err)
 		}
@@ -273,6 +274,21 @@ func TestCheckFactoryScenarios(t *testing.T) {
 		}
 		if !strings.Contains(stdout.String(), "integration installed") {
 			t.Error("expected success output")
+		}
+	})
+
+	t.Run("stale legacy section", func(t *testing.T) {
+		env, stdout, _ := newFactoryTestEnv(t)
+		beadsSection := agents.EmbeddedBeadsSection()
+		if err := os.WriteFile(env.agentsPath, []byte(beadsSection), 0644); err != nil {
+			t.Fatalf("failed to seed file: %v", err)
+		}
+		err := checkFactory(env)
+		if !errors.Is(err, errBeadsSectionStale) {
+			t.Fatalf("expected errBeadsSectionStale, got %v", err)
+		}
+		if !strings.Contains(stdout.String(), "stale") {
+			t.Error("expected stale output")
 		}
 	})
 }

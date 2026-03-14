@@ -7,6 +7,23 @@
 
 The `bd setup` command uses a **recipe-based architecture** to configure beads integration with AI coding tools. Recipes define where workflow instructions are written—built-in recipes handle popular tools, and you can add custom recipes for any tool.
 
+### `bd prime` as SSOT
+
+`bd prime` is the **single source of truth** for operational workflow commands. The AGENTS.md beads section provides a pointer to `bd prime` for hook-enabled agents (Claude, Gemini) or the full command reference for hookless agents (Factory, Codex, Mux).
+
+### Profiles
+
+Each integration uses one of two **profiles** that control how much content is written to AGENTS.md:
+
+| Profile | Used By | Content |
+|---------|---------|---------|
+| `full` | Factory, Codex, Mux, OpenCode | Complete command reference, issue types, priorities, workflow |
+| `minimal` | Claude Code, Gemini CLI | Pointer to `bd prime`, quick reference only (~60% smaller) |
+
+Hook-enabled agents (Claude, Gemini) use the `minimal` profile because `bd prime` injects full context at session start. Hookless agents need the `full` profile because AGENTS.md is their only source of instructions.
+
+**Profile precedence:** If a file already has a `full` profile section and a `minimal` profile tool installs to the same file (e.g., via symlinks), the `full` profile is preserved to avoid information loss.
+
 ### Built-in Recipes
 
 | Recipe | Path | Integration Type |
@@ -74,7 +91,7 @@ Creates or updates `AGENTS.md` in your project root with:
 - Auto-sync explanation
 - Important rules for AI agents
 
-The beads section is wrapped in HTML comments (`<!-- BEGIN/END BEADS INTEGRATION -->`) for safe updates.
+The beads section is wrapped in HTML comments (`<!-- BEGIN/END BEADS INTEGRATION -->`) with metadata for safe updates. The begin marker includes profile and hash metadata (e.g., `<!-- BEGIN BEADS INTEGRATION profile:full hash:d4f96305 -->`) for freshness detection. Legacy markers without metadata are auto-upgraded on the next install or update.
 
 ### AGENTS.md Standard
 
@@ -94,7 +111,7 @@ Using AGENTS.md means one configuration file works across your entire AI tool ec
 
 | Flag | Description |
 |------|-------------|
-| `--check` | Check if beads section exists in AGENTS.md |
+| `--check` | Check if beads section exists and is current (reports `missing`, `stale`, or `current`) |
 | `--remove` | Remove beads section from AGENTS.md |
 
 ### Examples

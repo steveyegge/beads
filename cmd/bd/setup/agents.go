@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/templates/agents"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // readFileBytesImpl is used in tests; avoids import cycle.
@@ -22,6 +23,7 @@ const (
 var (
 	errAgentsFileMissing   = errors.New("agents file not found")
 	errBeadsSectionMissing = errors.New("beads section missing")
+	errBeadsSectionStale   = errors.New("beads section is stale")
 )
 
 const muxAgentInstructionsURL = "https://mux.coder.com/AGENTS.md"
@@ -66,16 +68,37 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 	_, _ = fmt.Fprintf(env.stdout, "Installing %s integration...\n", integration.name)
 
 	profile := resolveProfile(integration)
-	beadsSection := agents.RenderSection(profile)
+
+	// Resolve symlinks so that e.g. CLAUDE.md -> AGENTS.md writes to the real target.
+	// This uses the existing atomicWriteFile path which also calls ResolveForWrite,
+	// but we need the resolved path here to read the current content from the right place.
+	resolvedPath, err := utils.ResolveForWrite(env.agentsPath)
+	if err != nil {
+		_, _ = fmt.Fprintf(env.stderr, "Error: resolve path %s: %v\n", env.agentsPath, err)
+		return err
+	}
 
 	var currentContent string
-	data, err := os.ReadFile(env.agentsPath)
+	data, err := os.ReadFile(resolvedPath)
 	if err == nil {
 		currentContent = string(data)
 	} else if !os.IsNotExist(err) {
 		_, _ = fmt.Fprintf(env.stderr, "Error: failed to read %s: %v\n", env.agentsPath, err)
 		return err
 	}
+
+	// Profile precedence: if the file already has a full profile and we're
+	// requesting minimal, preserve full to avoid information loss (e.g. when
+	// CLAUDE.md is a symlink to AGENTS.md and both Claude and Codex target it).
+	if currentContent != "" && containsBeadsMarker(currentContent) {
+		existingProfile := existingBeadsProfile(currentContent)
+		if existingProfile == agents.ProfileFull && profile == agents.ProfileMinimal {
+			_, _ = fmt.Fprintf(env.stdout, "  ℹ File already has full profile; preserving (higher-information) content\n")
+			profile = agents.ProfileFull
+		}
+	}
+
+	beadsSection := agents.RenderSection(profile)
 
 	if currentContent != "" {
 		if containsBeadsMarker(currentContent) {
@@ -126,15 +149,34 @@ func checkAgents(env agentsEnv, integration agentsIntegration) error {
 	}
 
 	content := string(data)
-	if containsBeadsMarker(content) {
-		_, _ = fmt.Fprintf(env.stdout, "✓ %s integration installed: %s\n", integration.name, env.agentsPath)
-		_, _ = fmt.Fprintln(env.stdout, "  Beads section found in AGENTS.md")
+	if !containsBeadsMarker(content) {
+		_, _ = fmt.Fprintln(env.stdout, "⚠ AGENTS.md exists but no beads section found")
+		_, _ = fmt.Fprintf(env.stdout, "  Run: %s (to add beads section)\n", integration.setupCommand)
+		return errBeadsSectionMissing
+	}
+
+	// Section exists — check freshness via profile and hash
+	profile := resolveProfile(integration)
+	existingProf := existingBeadsProfile(content)
+
+	// Extract hash from marker
+	idx := findBeginMarker(content)
+	line := content[idx:]
+	if nl := strings.Index(line, "\n"); nl != -1 {
+		line = line[:nl]
+	}
+	meta := agents.ParseMarker(line)
+
+	currentHash := agents.CurrentHash(profile)
+	if meta != nil && meta.Hash == currentHash && existingProf == profile {
+		_, _ = fmt.Fprintf(env.stdout, "✓ %s integration installed: %s (current)\n", integration.name, env.agentsPath)
 		return nil
 	}
 
-	_, _ = fmt.Fprintln(env.stdout, "⚠ AGENTS.md exists but no beads section found")
-	_, _ = fmt.Fprintf(env.stdout, "  Run: %s (to add beads section)\n", integration.setupCommand)
-	return errBeadsSectionMissing
+	// Stale or legacy section
+	_, _ = fmt.Fprintf(env.stdout, "⚠ %s integration installed but stale: %s\n", integration.name, env.agentsPath)
+	_, _ = fmt.Fprintf(env.stdout, "  Run: %s (to update)\n", integration.setupCommand)
+	return errBeadsSectionStale
 }
 
 func removeAgents(env agentsEnv, integration agentsIntegration) error {
@@ -227,6 +269,27 @@ func removeBeadsSection(content string) string {
 // Returns -1 if not found.
 func findBeginMarker(content string) int {
 	return strings.Index(content, "<!-- BEGIN BEADS INTEGRATION")
+}
+
+// existingBeadsProfile extracts the profile from an existing beads section's
+// begin marker. Returns ProfileFull if the marker contains "profile:full" or
+// if it's a legacy marker (legacy sections contain full content).
+// Returns ProfileMinimal only if explicitly marked as such.
+func existingBeadsProfile(content string) agents.Profile {
+	idx := findBeginMarker(content)
+	if idx == -1 {
+		return agents.ProfileFull
+	}
+	line := content[idx:]
+	if nl := strings.Index(line, "\n"); nl != -1 {
+		line = line[:nl]
+	}
+	meta := agents.ParseMarker(line)
+	if meta == nil || meta.Profile == "" {
+		// Legacy marker — assume full (it contains all the content)
+		return agents.ProfileFull
+	}
+	return meta.Profile
 }
 
 // createNewAgentsFile creates a new AGENTS.md with a basic template using the full profile.
