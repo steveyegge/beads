@@ -519,7 +519,7 @@ This means bd found multiple `.beads` directories in your directory hierarchy. T
 
 **Symptom:** Every `bd` command fails with `dolt circuit breaker is open: server appears down, failing fast (cooldown 30s)`. This persists across repeated invocations.
 
-**Cause:** The circuit breaker tripped after repeated connection failures. Its state is stored in a file at `/tmp/beads-dolt-circuit-<port>.json` and shared across all `bd` processes. Once tripped, all commands are rejected until a successful probe resets it.
+**Cause:** The circuit breaker tripped after repeated connection failures. Its state is stored in a file at `/tmp/beads-dolt-circuit-<host>-<port>.json` (keyed on host:port) and shared across all `bd` processes. Once tripped, all commands to that specific host:port are rejected until a successful probe resets it.
 
 **Note:** `bd dolt status` checks the server's PID file, not whether the server is actually accepting connections. A "running" status does not guarantee the server is reachable on the expected port.
 
