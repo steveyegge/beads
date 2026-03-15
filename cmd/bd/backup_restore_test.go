@@ -40,7 +40,7 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	dbName := uniqueTestDBName(t)
 	testDBPath := filepath.Join(beadsDir, "dolt")
 	writeTestMetadata(t, testDBPath, dbName)
-	s := newTestStore(t, testDBPath)
+	s := newTestStoreWithPrefix(t, testDBPath, "dn")
 	store = s
 	storeMutex.Lock()
 	storeActive = true
@@ -104,7 +104,7 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	dbName2 := uniqueTestDBName(t)
 	testDBPath2 := filepath.Join(t.TempDir(), "dolt")
 	writeTestMetadata(t, testDBPath2, dbName2)
-	s2 := newTestStore(t, testDBPath2)
+	s2 := newTestStoreWithPrefix(t, testDBPath2, "rt")
 	store = s2
 	t.Cleanup(func() {
 		store = nil
@@ -212,7 +212,7 @@ func TestBackupRestoreDryRun(t *testing.T) {
 	dbName := uniqueTestDBName(t)
 	testDBPath := filepath.Join(t.TempDir(), "dolt")
 	writeTestMetadata(t, testDBPath, dbName)
-	s := newTestStore(t, testDBPath)
+	s := newTestStoreWithPrefix(t, testDBPath, "dry")
 	store = s
 	storeMutex.Lock()
 	storeActive = true
@@ -366,7 +366,7 @@ func TestBackupRestoreDependenciesWithoutMetadataDefaultsToEmptyObject(t *testin
 	dbName := uniqueTestDBName(t)
 	testDBPath := filepath.Join(t.TempDir(), "dolt")
 	writeTestMetadata(t, testDBPath, dbName)
-	s := newTestStore(t, testDBPath)
+	s := newTestStoreWithPrefix(t, testDBPath, "compat")
 	store = s
 	storeMutex.Lock()
 	storeActive = true
@@ -415,7 +415,7 @@ func TestBackupRestoreMissingDir(t *testing.T) {
 	dbName := uniqueTestDBName(t)
 	testDBPath := filepath.Join(t.TempDir(), "dolt")
 	writeTestMetadata(t, testDBPath, dbName)
-	s := newTestStore(t, testDBPath)
+	s := newTestStoreWithPrefix(t, testDBPath, "dn")
 	t.Cleanup(func() { _ = s.Close() })
 
 	ctx := context.Background()
@@ -460,7 +460,7 @@ func TestBackupRestoreDenormalized(t *testing.T) {
 	dbName := uniqueTestDBName(t)
 	testDBPath := filepath.Join(t.TempDir(), "dolt")
 	writeTestMetadata(t, testDBPath, dbName)
-	s := newTestStore(t, testDBPath)
+	s := newTestStoreWithPrefix(t, testDBPath, "dn")
 	store = s
 	storeMutex.Lock()
 	storeActive = true
@@ -531,6 +531,101 @@ func TestBackupRestoreDenormalized(t *testing.T) {
 	}
 	if len(deps) > 0 && deps[0].ID != "dn-1" {
 		t.Errorf("dn-2 depends_on = %q, want %q", deps[0].ID, "dn-1")
+	}
+}
+
+func TestBackupRestoreFiltersByIssuePrefix(t *testing.T) {
+	if testDoltServerPort == 0 {
+		t.Skip("Dolt test server not available")
+	}
+	if testutil.DoltContainerCrashed() {
+		t.Skipf("Dolt test server crashed: %v", testutil.DoltContainerCrashError())
+	}
+
+	ensureTestMode(t)
+	saved := saveAndRestoreGlobals(t)
+	_ = saved
+
+	tmpDir := t.TempDir()
+	backupPath := filepath.Join(tmpDir, "backup")
+	if err := os.MkdirAll(backupPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	issuesData := "" +
+		`{"id":"alpha-1","title":"Alpha issue","status":"open","priority":2,"issue_type":"task"}` + "\n" +
+		`{"id":"beta-1","title":"Beta issue","status":"open","priority":2,"issue_type":"task"}` + "\n"
+	if err := os.WriteFile(filepath.Join(backupPath, "issues.jsonl"), []byte(issuesData), 0600); err != nil {
+		t.Fatal(err)
+	}
+	labelsData := "" +
+		`{"issue_id":"alpha-1","label":"keep"}` + "\n" +
+		`{"issue_id":"beta-1","label":"drop"}` + "\n"
+	if err := os.WriteFile(filepath.Join(backupPath, "labels.jsonl"), []byte(labelsData), 0600); err != nil {
+		t.Fatal(err)
+	}
+	depsData := "" +
+		`{"issue_id":"alpha-1","depends_on_id":"alpha-root","type":"blocks","created_by":"tester","metadata":"{}"}` + "\n" +
+		`{"issue_id":"beta-1","depends_on_id":"beta-root","type":"blocks","created_by":"tester","metadata":"{}"}` + "\n"
+	if err := os.WriteFile(filepath.Join(backupPath, "dependencies.jsonl"), []byte(depsData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	dbName := uniqueTestDBName(t)
+	testDBPath := filepath.Join(t.TempDir(), "dolt")
+	writeTestMetadata(t, testDBPath, dbName)
+	s := newTestStoreWithPrefix(t, testDBPath, "alpha")
+	store = s
+	storeMutex.Lock()
+	storeActive = true
+	storeMutex.Unlock()
+	t.Cleanup(func() {
+		store = nil
+		storeMutex.Lock()
+		storeActive = false
+		storeMutex.Unlock()
+	})
+
+	ctx := context.Background()
+
+	result, err := runBackupRestore(ctx, s, backupPath, false)
+	if err != nil {
+		t.Fatalf("runBackupRestore: %v", err)
+	}
+
+	if result.Issues != 1 {
+		t.Fatalf("restored issues = %d, want 1", result.Issues)
+	}
+	if result.Labels != 1 {
+		t.Fatalf("restored labels = %d, want 1", result.Labels)
+	}
+	if result.Dependencies != 1 {
+		t.Fatalf("restored dependencies = %d, want 1", result.Dependencies)
+	}
+
+	if _, err := s.GetIssue(ctx, "alpha-1"); err != nil {
+		t.Fatalf("expected alpha-1 to be restored: %v", err)
+	}
+	if _, err := s.GetIssue(ctx, "beta-1"); err == nil {
+		t.Fatal("expected beta-1 to be filtered out")
+	}
+
+	labels, err := s.GetLabels(ctx, "alpha-1")
+	if err != nil {
+		t.Fatalf("get labels alpha-1: %v", err)
+	}
+	if len(labels) != 1 || labels[0] != "keep" {
+		t.Fatalf("alpha labels = %v, want [keep]", labels)
+	}
+
+	var depTarget string
+	if err := s.DB().QueryRowContext(ctx,
+		`SELECT depends_on_id FROM dependencies WHERE issue_id = ?`,
+		"alpha-1").Scan(&depTarget); err != nil {
+		t.Fatalf("query alpha dependency: %v", err)
+	}
+	if depTarget != "alpha-root" {
+		t.Fatalf("alpha depends_on = %q, want %q", depTarget, "alpha-root")
 	}
 }
 
