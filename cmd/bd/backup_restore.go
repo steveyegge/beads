@@ -33,6 +33,9 @@ This command:
 Use this after losing your Dolt database (machine crash, new clone, etc.)
 when you have JSONL backups on disk or in git.
 
+If your backup snapshots are stored in a git branch, use 'bd backup fetch-git'
+to fetch that branch into a temporary worktree and restore from it.
+
 The database must already be initialized (run 'bd init' first if needed).
 To initialize and restore in one step, use: bd init && bd backup restore`,
 	Args: cobra.MaximumNArgs(1),

@@ -24,6 +24,15 @@ type dbQuerier interface {
 }
 
 // backupState tracks watermarks for incremental backup.
+type backupCounts struct {
+	Issues       int `json:"issues"`
+	Events       int `json:"events"`
+	Comments     int `json:"comments"`
+	Dependencies int `json:"dependencies"`
+	Labels       int `json:"labels"`
+	Config       int `json:"config"`
+}
+
 type backupState struct {
 	LastDoltCommit string    `json:"last_dolt_commit"`
 	Timestamp      time.Time `json:"timestamp"`
