@@ -621,10 +621,10 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 // newServerMode creates a DoltStore connected to a running dolt sql-server.
 // This path is pure Go and does not require CGO.
 func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
-	breaker := newCircuitBreaker(cfg.ServerHost, cfg.ServerPort)
+	breaker := maybeNewCircuitBreaker(cfg.ServerHost, cfg.ServerPort)
 
 	// Circuit breaker: fail-fast if the server is known to be down.
-	if !breaker.Allow() {
+	if breaker != nil && !breaker.Allow() {
 		doltMetrics.circuitRejected.Add(ctx, 1)
 		return nil, ErrCircuitOpen
 	}
@@ -665,6 +665,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 				}
 				cfg.ServerPort = port
 				addr = net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort))
+				breaker = maybeNewCircuitBreaker(cfg.ServerHost, cfg.ServerPort)
 			}
 			// Retry connection with longer timeout (server just started)
 			conn, dialErr = net.DialTimeout("tcp", addr, 2*time.Second)
@@ -673,19 +674,25 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 				if autoStartedDir != "" {
 					_ = autoStartRelease(autoStartedDir)
 				}
-				breaker.RecordFailure()
+				if breaker != nil {
+					breaker.RecordFailure()
+				}
 				return nil, fmt.Errorf("Dolt server auto-started but still unreachable at %s: %w\n\n"+
 					"Check logs: %s", addr, dialErr, doltserver.LogPath(beadsDir))
 			}
 		} else {
-			breaker.RecordFailure()
+			if breaker != nil {
+				breaker.RecordFailure()
+			}
 			return nil, fmt.Errorf("Dolt server unreachable at %s: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start",
 				addr, dialErr)
 		}
 	}
 	_ = conn.Close()
 	// TCP dial succeeded — record success to reset the breaker
-	breaker.RecordSuccess()
+	if breaker != nil {
+		breaker.RecordSuccess()
+	}
 
 	// Server mode: connect via MySQL protocol to dolt sql-server
 	db, connStr, err := openServerConnection(ctx, cfg)
