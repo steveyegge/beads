@@ -21,7 +21,7 @@ created and existing issues are updated (upsert semantics).
 This command makes the git-tracked JSONL portable again — after 'git pull'
 brings new issues, 'bd import' loads them into the local Dolt database.
 
-EXAMPLES:
+	EXAMPLES:
   bd import                        # Import from .beads/issues.jsonl
   bd import backup.jsonl           # Import from a specific file
   bd import --dry-run              # Show what would be imported`,
