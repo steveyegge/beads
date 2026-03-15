@@ -70,6 +70,14 @@ Beads supports hierarchical IDs for epics:
 
 **Requirements:** Linux, FreeBSD, macOS, or Windows.
 
+### Security And Verification
+
+Before trusting any downloaded binary, verify its checksum against the release `checksums.txt`.
+
+On macOS, Gatekeeper behavior depends on the signature state of the binary. If you use the install script, review `scripts/install.sh` and prefer explicit verification steps before first run.
+
+See [docs/ANTIVIRUS.md](docs/ANTIVIRUS.md) for Windows AV false-positive guidance and verification workflow.
+
 ## 🌐 Community Tools
 
 See [docs/COMMUNITY_TOOLS.md](docs/COMMUNITY_TOOLS.md) for a curated list of community-built UIs, extensions, and integrations—including terminal interfaces, web UIs, editor extensions, and native apps.
