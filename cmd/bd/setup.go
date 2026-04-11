@@ -32,12 +32,14 @@ var setupCmd = &cobra.Command{
 	Long: `Setup integration files for AI editors and coding assistants.
 
 Recipes define where beads workflow instructions are written. Built-in recipes
-include cursor, claude, gemini, aider, factory, codex, mux, opencode, junie, windsurf, cody, and kilocode.
+include cursor, claude, copilot, gemini, aider, factory, codex, mux, opencode, junie, windsurf, cody, and kilocode.
 
 Examples:
   bd setup cursor          # Install Cursor IDE integration
   bd setup codex           # Install Codex skill + AGENTS.md guidance
   bd setup codex --global  # Install global Codex skill + global AGENTS.md guidance
+  bd setup copilot         # Install Copilot CLI global instructions
+  bd setup copilot --project  # Install Copilot CLI project hooks + instructions
   bd setup mux --project   # Install Mux workspace layer (.mux/AGENTS.md)
   bd setup mux --global    # Install Mux global layer (~/.mux/AGENTS.md)
   bd setup mux --project --global  # Install both Mux layers
@@ -206,6 +208,9 @@ func runRecipe(name string) {
 	case "claude":
 		runClaudeRecipe()
 		return
+	case "copilot":
+		runCopilotRecipe()
+		return
 	case "gemini":
 		runGeminiRecipe()
 		return
@@ -311,6 +316,18 @@ func runClaudeRecipe() {
 	setup.InstallClaude(setupGlobal, setupStealth)
 }
 
+func runCopilotRecipe() {
+	if setupCheck {
+		setup.CheckCopilot(setupProject, setupGlobal)
+		return
+	}
+	if setupRemove {
+		setup.RemoveCopilot(setupProject, setupGlobal)
+		return
+	}
+	setup.InstallCopilot(setupProject, setupGlobal, setupStealth)
+}
+
 func runGeminiRecipe() {
 	if setupCheck {
 		setup.CheckGemini()
@@ -408,6 +425,7 @@ func init() {
 	setupCmd.Flags().BoolVar(&setupProject, "project", false, "Install for this project only (gemini/mux)")
 	setupCmd.Flags().BoolVar(&setupGlobal, "global", false, "Install globally (claude/codex/mux; writes to ~/.claude/settings.json, $CODEX_HOME/AGENTS.md or ~/.codex/AGENTS.md, or ~/.mux/AGENTS.md)")
 	setupCmd.Flags().BoolVar(&setupStealth, "stealth", false, "Use stealth mode (claude/gemini)")
+	setupCmd.Flags().BoolVar(&setupStealth, "stealth", false, "Use stealth mode (claude/copilot/gemini)")
 
 	rootCmd.AddCommand(setupCmd)
 }
