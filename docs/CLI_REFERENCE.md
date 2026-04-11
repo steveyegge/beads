@@ -3580,6 +3580,8 @@ Examples:
   bd setup cursor          # Install Cursor IDE integration
   bd setup codex           # Install Codex skill + AGENTS.md guidance
   bd setup codex --global  # Install global Codex skill + global AGENTS.md guidance
+  bd setup copilot         # Install Copilot CLI global instructions
+  bd setup copilot --project  # Install Copilot CLI project hooks + instructions
   bd setup mux --project   # Install Mux workspace layer (.mux/AGENTS.md)
   bd setup mux --global    # Install Mux global layer (~/.mux/AGENTS.md)
   bd setup mux --project --global  # Install both Mux layers
@@ -3606,7 +3608,7 @@ bd setup [recipe] [flags]
       --print           Print the template to stdout
       --project         Install for this project only (gemini/mux)
       --remove          Remove the integration
-      --stealth         Use stealth mode (claude/gemini)
+      --stealth         Use stealth mode (claude/copilot/gemini)
 ```
 
 ### bd where
@@ -3615,6 +3617,12 @@ Show the active beads database location, including redirect information.
 
 	This command is useful for debugging when using redirects, to understand
 	which beads workspace is actually being used.
+
+See also:
+- [INSTALLING.md](INSTALLING.md#ide-and-editor-integrations) - Installation guide
+- [AIDER_INTEGRATION.md](AIDER_INTEGRATION.md) - Detailed Aider guide
+- [CLAUDE_INTEGRATION.md](CLAUDE_INTEGRATION.md) - Claude integration design
+- [COPILOT_CLI_INTEGRATION.md](COPILOT_CLI_INTEGRATION.md) - Copilot CLI integration guide
 
 Examples:
   bd where           # Show active beads location

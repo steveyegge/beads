@@ -18,14 +18,14 @@ The `bd setup` command uses a **recipe-based architecture** to configure beads i
 
 ### Profiles
 
-Each integration uses one of two **profiles** that control how much content is written to tool instruction files (`AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`):
+Each integration uses one of two **profiles** that control how much content is written to tool instruction files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or `.github/copilot-instructions.md`):
 
 | Profile | Used By | Content |
 |---------|---------|---------|
-| `full` | Factory, Mux, OpenCode | Complete command reference, issue types, priorities, workflow |
-| `minimal` | Claude Code, Gemini CLI | Pointer to `bd prime`, quick reference only (~60% smaller) |
+| `full` | Factory, Codex, Mux, OpenCode | Complete command reference, issue types, priorities, workflow |
+| `minimal` | Claude Code, GitHub Copilot CLI, Gemini CLI | Pointer to `bd prime`, quick reference only (~60% smaller) |
 
-Hook-enabled agents (Claude, Gemini) use the `minimal` profile because `bd prime` injects full context at session start. AGENTS-first agents use the `full` profile because their instruction file remains the primary integration surface. Skill-aware agents use `.agents/skills/beads/SKILL.md`, with project `AGENTS.md` or global `$CODEX_HOME/AGENTS.md`/`~/.codex/AGENTS.md` telling Codex when to use the skill.
+Hook-enabled agents (Claude, Copilot CLI, Gemini) use the `minimal` profile because `bd prime` injects full context at session start. AGENTS-first agents use the `full` profile because their instruction file remains the primary integration surface. Skill-aware agents use `.agents/skills/beads/SKILL.md`, with project `AGENTS.md` or global `$CODEX_HOME/AGENTS.md`/`~/.codex/AGENTS.md` telling Codex when to use the skill.
 
 **Profile precedence:** If a file already has a `full` profile section and a `minimal` profile tool installs to the same file (e.g., via symlinks), the `full` profile is preserved to avoid information loss.
 
@@ -37,8 +37,9 @@ Hook-enabled agents (Claude, Gemini) use the `minimal` profile because `bd prime
 | `windsurf` | `.windsurf/rules/beads.md` | Rules file |
 | `cody` | `.cody/rules/beads.md` | Rules file |
 | `kilocode` | `.kilocode/rules/beads.md` | Rules file |
-| `claude` | `~/.claude/settings.json` + `CLAUDE.md` | SessionStart hook + minimal section |
-| `gemini` | `~/.gemini/settings.json` + `GEMINI.md` | SessionStart hook + minimal section |
+| `claude` | `~/.claude/settings.json` + `CLAUDE.md` | SessionStart/PreCompact hooks + minimal section |
+| `copilot` | `~/.copilot/copilot-instructions.md` + `~/.copilot/hooks/beads-copilot.json` or `.github/hooks/beads-copilot.json` + `.github/copilot-instructions.md` | global hooks + instructions or project hooks + minimal section |
+| `gemini` | `~/.gemini/settings.json` + `GEMINI.md` | SessionStart/PreCompress hooks + minimal section |
 | `factory` | `AGENTS.md` | Marked section |
 | `codex` | `.agents/skills/beads/SKILL.md` + `AGENTS.md` | Beads agent skill + generated skill guidance |
 | `mux` | `AGENTS.md` | Marked section |
@@ -55,6 +56,8 @@ bd setup cursor     # Cursor IDE
 bd setup windsurf   # Windsurf
 bd setup kilocode   # Kilo Code
 bd setup claude     # Claude Code
+bd setup copilot    # GitHub Copilot CLI global instructions
+bd setup copilot --project  # GitHub Copilot CLI project hooks + instructions
 bd setup gemini     # Gemini CLI
 bd setup factory    # Factory.ai Droid
 bd setup codex      # Beads agent skill + AGENTS.md guidance
