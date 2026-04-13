@@ -1246,7 +1246,7 @@ func init() {
 }
 
 func selectedDoltBeadsDir() string {
-	beadsDir := beads.FindBeadsDir()
+	beadsDir := selectedNoDBBeadsDir(nil)
 	if beadsDir == "" {
 		return ""
 	}

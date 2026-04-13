@@ -706,6 +706,19 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
+		selectedNoDBCommand := isSelectedNoDBCommand(cmd)
+
+		// Commands that skip store initialization still need their config/env
+		// rebound to the selected workspace before they inspect server mode or
+		// other startup settings.
+		if selectedNoDBCommand {
+			prepareSelectedNoDBContext(selectedNoDBBeadsDir(cmd))
+			refreshBoundCommandConfig(cmd)
+			if _, err := getDoltAutoCommitMode(); err != nil {
+				FatalError("%v", err)
+			}
+		}
+
 		// GH#1093: Check noDbCommands BEFORE expensive operations
 		// to avoid spawning git subprocesses for simple commands
 		// like "bd version" that don't need database access.
