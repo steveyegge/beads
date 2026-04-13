@@ -792,15 +792,18 @@ var rootCmd = &cobra.Command{
 
 		// Commands that skip store initialization still need early config/env
 		// setup before they inspect server mode or per-project Dolt settings.
-		// Rebind them to the selected workspace so explicit --db / BEADS_DB
-		// targets behave consistently across doctor/bootstrap/context/dolt.
-		if skipsStoreInit {
+		// Explicit-target no-DB commands must bind to the selected workspace,
+		// while all other no-store commands preserve the historical ambient
+		// load-from-current-workspace behavior.
+		if selectedNoDBCommand {
 			prepareSelectedNoDBContext(selectedNoDBBeadsDir(cmd))
 			refreshBoundCommandConfig(cmd)
-			if beadsDir := os.Getenv("BEADS_DIR"); beadsDir == "" {
-				loadEnvironment()
-				loadServerModeFromConfig()
+			if _, err := getDoltAutoCommitMode(); err != nil {
+				FatalError("%v", err)
 			}
+		} else if skipsStoreInit {
+			loadEnvironment()
+			loadServerModeFromConfig()
 			if _, err := getDoltAutoCommitMode(); err != nil {
 				FatalError("%v", err)
 			}
