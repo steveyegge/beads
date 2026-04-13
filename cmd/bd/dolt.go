@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
@@ -1246,7 +1245,7 @@ func init() {
 }
 
 func selectedDoltBeadsDir() string {
-	beadsDir := beads.FindBeadsDir()
+	beadsDir := selectedNoDBBeadsDir(nil)
 	if beadsDir == "" {
 		return ""
 	}
