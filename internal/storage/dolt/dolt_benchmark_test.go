@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
@@ -1938,7 +1939,10 @@ func seedForSummaryBench(b *testing.B, store *DoltStore, totalN int) {
 			}
 			chunk = append(chunk, iss)
 		}
-		if err := store.CreateIssues(ctx, chunk, "bench"); err != nil {
+		if err := store.CreateIssuesWithFullOptions(ctx, chunk, "bench", storage.BatchCreateOptions{
+			OrphanHandling:       storage.OrphanAllow,
+			SkipPrefixValidation: true,
+		}); err != nil {
 			b.Fatalf("create perms batch %d: %v", start, err)
 		}
 		// Tag a subset of perms with labels so label hydration has work to do.
