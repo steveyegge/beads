@@ -80,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change.
 
 - **Release workflow uses the checked-in beads-release formula** — the old release shell path now delegates to the formula-backed release workflow with CI gates.
+- **perf(schema):** composite `(status, updated_at)` and standalone `defer_until` indexes on `issues` (migration 0033). Speeds up `bd stale` and `bd ready` on large rigs. First run after upgrade applies the migration — expect a one-time 10–25 s pause on rigs with >10K issues, with progress shown on stderr. Do not interrupt.
 
 ### Deprecated
 
