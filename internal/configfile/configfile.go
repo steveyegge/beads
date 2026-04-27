@@ -259,7 +259,14 @@ func (c *Config) IsDoltServerMode() bool {
 	if v := os.Getenv("BEADS_DOLT_SHARED_SERVER"); v == "1" || strings.EqualFold(v, "true") {
 		return true
 	}
-	return strings.ToLower(c.DoltMode) == DoltModeServer
+	if strings.ToLower(c.DoltMode) == DoltModeServer {
+		return true
+	}
+	// Fall back to config.yaml dolt.mode setting
+	if mode := config.GetYamlConfig("dolt.mode"); strings.EqualFold(mode, "server") {
+		return true
+	}
+	return false
 }
 
 func (c *Config) IsDoltProxiedServerMode() bool {
