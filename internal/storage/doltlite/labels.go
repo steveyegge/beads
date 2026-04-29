@@ -21,7 +21,7 @@ func (s *DoltliteStore) GetLabels(ctx context.Context, issueID string) ([]string
 
 func (s *DoltliteStore) AddLabel(ctx context.Context, issueID, label, actor string) error {
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
-		return issueops.AddLabelInTx(ctx, tx, "", "", issueID, label, actor)
+		return issueops.AddLabelInTxWithDialect(ctx, tx, "", "", issueID, label, actor, issueops.SQLDialectSQLite)
 	})
 }
 

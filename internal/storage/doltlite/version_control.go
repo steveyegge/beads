@@ -42,14 +42,18 @@ func (s *DoltliteStore) withDBConn(ctx context.Context, fn func(db versioncontro
 }
 
 func (s *DoltliteStore) Commit(ctx context.Context, message string) error {
-	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		if _, err := db.ExecContext(ctx, "SELECT dolt_add('-A')"); err != nil {
-			return fmt.Errorf("dolt add: %w", err)
-		}
-		if _, err := db.ExecContext(ctx, "SELECT dolt_commit('-m', ?)", message); err != nil {
-			return fmt.Errorf("dolt commit: %w", err)
-		}
-		return nil
+	return s.withExclusiveLock(ctx, func() error {
+		return s.withRetry(ctx, func() error {
+			return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
+				if _, err := db.ExecContext(ctx, "SELECT dolt_add('-A')"); err != nil {
+					return fmt.Errorf("dolt add: %w", err)
+				}
+				if _, err := db.ExecContext(ctx, "SELECT dolt_commit('-m', ?)", message); err != nil {
+					return fmt.Errorf("dolt commit: %w", err)
+				}
+				return nil
+			})
+		})
 	})
 }
 

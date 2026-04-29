@@ -13,9 +13,13 @@ import (
 // It queries the issues table, optionally merges wisps, and returns hydrated issues
 // with labels populated.
 func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	return SearchIssuesInTxWithDialect(ctx, tx, query, filter, SQLDialectDolt)
+}
+
+func SearchIssuesInTxWithDialect(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter, dialect SQLDialect) ([]*types.Issue, error) {
 	// Route ephemeral-only queries to wisps table.
 	if filter.Ephemeral != nil && *filter.Ephemeral {
-		results, err := searchTableInTx(ctx, tx, query, filter, WispsFilterTables)
+		results, err := searchTableInTx(ctx, tx, query, filter, WispsFilterTables, dialect)
 		if err != nil && !isTableNotExistError(err) {
 			return nil, fmt.Errorf("search wisps (ephemeral filter): %w", err)
 		}
@@ -25,7 +29,7 @@ func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter type
 		// Fall through: wisps table doesn't exist or returned no results
 	}
 
-	results, err := searchTableInTx(ctx, tx, query, filter, IssuesFilterTables)
+	results, err := searchTableInTx(ctx, tx, query, filter, IssuesFilterTables, dialect)
 	if err != nil {
 		return nil, fmt.Errorf("search issues: %w", err)
 	}
@@ -38,7 +42,7 @@ func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter type
 	// querying wisps here with Ephemeral=&false returns only NoHistory beads
 	// while correctly excluding true ephemeral wisps. (GH#3659)
 	if filter.Ephemeral == nil || !*filter.Ephemeral {
-		wispResults, wispErr := searchTableInTx(ctx, tx, query, filter, WispsFilterTables)
+		wispResults, wispErr := searchTableInTx(ctx, tx, query, filter, WispsFilterTables, dialect)
 		if wispErr != nil && !isTableNotExistError(wispErr) {
 			return nil, fmt.Errorf("search wisps (merge): %w", wispErr)
 		}
@@ -60,9 +64,9 @@ func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter type
 }
 
 // searchTableInTx runs a filtered search against a specific table set (issues or wisps).
-func searchTableInTx(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter, tables FilterTables) ([]*types.Issue, error) {
+func searchTableInTx(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter, tables FilterTables, dialect SQLDialect) ([]*types.Issue, error) {
 	fromSQL, labelWhere, labelArgs, labelDriven, filterForClauses := buildLabelDrivenSearch(filter, tables)
-	whereClauses, args, err := BuildIssueFilterClauses(query, filterForClauses, tables)
+	whereClauses, args, err := BuildIssueFilterClausesWithDialect(query, filterForClauses, tables, dialect)
 	if err != nil {
 		return nil, err
 	}

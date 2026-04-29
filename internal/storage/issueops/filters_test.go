@@ -431,6 +431,28 @@ func TestBuildIssueFilterClauses_WispsTables(t *testing.T) {
 	}
 }
 
+func TestBuildIssueFilterClauses_MetadataDialect(t *testing.T) {
+	t.Parallel()
+
+	filter := types.IssueFilter{
+		MetadataFields: map[string]string{"gc.routed_to": "gastown.boot"},
+	}
+	doltClauses, _, err := BuildIssueFilterClausesWithDialect("", filter, IssuesFilterTables, SQLDialectDolt)
+	if err != nil {
+		t.Fatalf("dolt clauses: %v", err)
+	}
+	sqliteClauses, _, err := BuildIssueFilterClausesWithDialect("", filter, IssuesFilterTables, SQLDialectSQLite)
+	if err != nil {
+		t.Fatalf("sqlite clauses: %v", err)
+	}
+	if !strings.Contains(strings.Join(doltClauses, " "), "JSON_UNQUOTE(JSON_EXTRACT") {
+		t.Fatalf("dolt metadata clauses = %v", doltClauses)
+	}
+	if !strings.Contains(strings.Join(sqliteClauses, " "), "json_extract(metadata, ?) = ?") {
+		t.Fatalf("sqlite metadata clauses = %v", sqliteClauses)
+	}
+}
+
 func TestBuildIssueFilterClauses_CombinedFilters(t *testing.T) {
 	t.Parallel()
 

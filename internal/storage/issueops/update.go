@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -126,17 +127,21 @@ type UpdateResult struct {
 //
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func UpdateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[string]interface{}, actor string) (*UpdateResult, error) {
-	return updateIssueInTx(ctx, tx, id, updates, actor, true)
+	return updateIssueInTxWithDialect(ctx, tx, id, updates, actor, true, SQLDialectDolt)
 }
 
 // UpdateIssueWithoutEventInTx applies normal update semantics without recording
 // an intermediate event. Demotion uses this to preserve the historical event
 // stream: create/update history is copied, then a single demotion event is added.
 func UpdateIssueWithoutEventInTx(ctx context.Context, tx *sql.Tx, id string, updates map[string]interface{}, actor string) (*UpdateResult, error) {
-	return updateIssueInTx(ctx, tx, id, updates, actor, false)
+	return updateIssueInTxWithDialect(ctx, tx, id, updates, actor, false, SQLDialectDolt)
 }
 
-func updateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[string]interface{}, actor string, recordEvent bool) (*UpdateResult, error) {
+func UpdateIssueInTxWithDialect(ctx context.Context, tx *sql.Tx, id string, updates map[string]interface{}, actor string, dialect SQLDialect) (*UpdateResult, error) {
+	return updateIssueInTxWithDialect(ctx, tx, id, updates, actor, true, dialect)
+}
+
+func updateIssueInTxWithDialect(ctx context.Context, tx *sql.Tx, id string, updates map[string]interface{}, actor string, recordEvent bool, dialect SQLDialect) (*UpdateResult, error) {
 	// Route to correct table.
 	isWisp := IsActiveWispInTx(ctx, tx, id)
 	issueTable, _, eventTable, _ := WispTableRouting(isWisp)
@@ -229,7 +234,7 @@ func updateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[str
 		newData, _ := json.Marshal(updates)
 		eventType := DetermineEventType(oldIssue, updates)
 
-		if err := RecordFullEventInTable(ctx, tx, eventTable, id, eventType, actor, string(oldData), string(newData)); err != nil {
+		if err := RecordFullEventInTableWithDialect(ctx, tx, eventTable, id, eventType, actor, string(oldData), string(newData), dialect); err != nil {
 			return nil, fmt.Errorf("failed to record event: %w", err)
 		}
 	}
@@ -241,6 +246,21 @@ func updateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[str
 //
 //nolint:gosec // G201: table is from WispTableRouting ("events" or "wisp_events")
 func RecordFullEventInTable(ctx context.Context, tx *sql.Tx, table, issueID string, eventType types.EventType, actor, oldValue, newValue string) error {
+	return RecordFullEventInTableWithDialect(ctx, tx, table, issueID, eventType, actor, oldValue, newValue, SQLDialectDolt)
+}
+
+func RecordFullEventInTableWithDialect(ctx context.Context, tx *sql.Tx, table, issueID string, eventType types.EventType, actor, oldValue, newValue string, dialect SQLDialect) error {
+	if dialect == SQLDialectSQLite {
+		_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO %s (id, issue_id, event_type, actor, old_value, new_value)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, table), uuid.Must(uuid.NewV7()).String(), issueID, eventType, actor, oldValue, newValue)
+		if err != nil {
+			return fmt.Errorf("record event in %s: %w", table, err)
+		}
+		return nil
+	}
+
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (issue_id, event_type, actor, old_value, new_value)
 		VALUES (?, ?, ?, ?, ?)

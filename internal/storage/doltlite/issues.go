@@ -37,7 +37,7 @@ func (s *DoltliteStore) UpdateIssue(ctx context.Context, id string, updates map[
 	}
 
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
-		_, err := issueops.UpdateIssueInTx(ctx, tx, id, updates, actor)
+		_, err := issueops.UpdateIssueInTxWithDialect(ctx, tx, id, updates, actor, issueops.SQLDialectSQLite)
 		return err
 	})
 }
@@ -71,7 +71,7 @@ func (s *DoltliteStore) UpdateIssueType(ctx context.Context, id string, issueTyp
 // Delegates SQL work to issueops; EmbeddedDolt auto-commits the transaction.
 func (s *DoltliteStore) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
-		_, err := issueops.CloseIssueInTx(ctx, tx, id, reason, actor, session)
+		_, err := issueops.CloseIssueInTxWithDialect(ctx, tx, id, reason, actor, session, issueops.SQLDialectSQLite)
 		return err
 	})
 }

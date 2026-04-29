@@ -51,6 +51,50 @@ func TestSmokeCreateGetCommit(t *testing.T) {
 	}
 }
 
+func TestSmokeLabels(t *testing.T) {
+	ctx := t.Context()
+	store, err := doltlite.New(ctx, filepath.Join(t.TempDir(), ".beads"), "beads", "main")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+
+	now := time.Now().UTC()
+	issue := &types.Issue{
+		ID:        "bd-label",
+		Title:     "doltlite labels",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Labels:    []string{"gc:session"},
+	}
+	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	if err := store.AddLabel(ctx, issue.ID, "agent:worker", "test"); err != nil {
+		t.Fatalf("AddLabel: %v", err)
+	}
+	labels, err := store.GetLabels(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("GetLabels: %v", err)
+	}
+	got := map[string]bool{}
+	for _, label := range labels {
+		got[label] = true
+	}
+	for _, want := range []string{"gc:session", "agent:worker"} {
+		if !got[want] {
+			t.Fatalf("labels = %v, missing %q", labels, want)
+		}
+	}
+}
+
 func TestSmokeVersionControl(t *testing.T) {
 	ctx := t.Context()
 	store, err := doltlite.New(ctx, filepath.Join(t.TempDir(), ".beads"), "beads", "main")

@@ -20,6 +20,10 @@ type CloseResult struct {
 //
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func CloseIssueInTx(ctx context.Context, tx *sql.Tx, id string, reason, actor, session string) (*CloseResult, error) {
+	return CloseIssueInTxWithDialect(ctx, tx, id, reason, actor, session, SQLDialectDolt)
+}
+
+func CloseIssueInTxWithDialect(ctx context.Context, tx *sql.Tx, id string, reason, actor, session string, dialect SQLDialect) (*CloseResult, error) {
 	isWisp := IsActiveWispInTx(ctx, tx, id)
 	issueTable, _, eventTable, _ := WispTableRouting(isWisp)
 
@@ -41,7 +45,7 @@ func CloseIssueInTx(ctx context.Context, tx *sql.Tx, id string, reason, actor, s
 		return nil, fmt.Errorf("issue not found: %s", id)
 	}
 
-	if err := RecordEventInTable(ctx, tx, eventTable, id, types.EventClosed, actor, reason); err != nil {
+	if err := RecordEventInTableWithDialect(ctx, tx, eventTable, id, types.EventClosed, actor, reason, dialect); err != nil {
 		return nil, fmt.Errorf("failed to record event: %w", err)
 	}
 

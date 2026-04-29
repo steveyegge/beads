@@ -20,8 +20,9 @@ import (
 var validIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 const (
-	commitName  = "beads"
-	commitEmail = "beads@local"
+	commitName         = "beads"
+	commitEmail        = "beads@local"
+	defaultBusyTimeout = 10000
 )
 
 // OpenSQL opens an doltlite database at dir. The returned cleanup
@@ -67,7 +68,7 @@ func buildDSN(dir, database string) (string, error) {
 	if os.PathSeparator == '\\' {
 		path = strings.ReplaceAll(path, `\`, `/`)
 	}
-	return path, nil
+	return fmt.Sprintf("%s?_busy_timeout=%d", path, defaultBusyTimeout), nil
 }
 
 func sqlStringLiteral(s string) string {

@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
@@ -96,11 +95,11 @@ func createIssueSQLite(ctx context.Context, tx *sql.Tx, bc *issueops.BatchContex
 		return err
 	}
 	if existingCount == 0 {
-		if err := recordEventSQLite(ctx, tx, eventTable, issue.ID, types.EventCreated, actor, ""); err != nil {
+		if err := issueops.RecordEventInTableWithDialect(ctx, tx, eventTable, issue.ID, types.EventCreated, actor, "", issueops.SQLDialectSQLite); err != nil {
 			return fmt.Errorf("failed to record event for %s: %w", issue.ID, err)
 		}
 	}
-	if err := issueops.PersistLabels(ctx, tx, issue); err != nil {
+	if err := issueops.PersistLabelsWithDialect(ctx, tx, issue, issueops.SQLDialectSQLite); err != nil {
 		return err
 	}
 	return issueops.PersistComments(ctx, tx, issue)
@@ -142,18 +141,6 @@ func insertIssueSQLite(ctx context.Context, tx *sql.Tx, table string, issue *typ
 	)
 	if err != nil {
 		return fmt.Errorf("insert issue into %s: %w", table, err)
-	}
-	return nil
-}
-
-func recordEventSQLite(ctx context.Context, tx *sql.Tx, table, issueID string, eventType types.EventType, actor, newValue string) error {
-	id := uuid.Must(uuid.NewV7()).String()
-	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (id, issue_id, event_type, actor, old_value, new_value)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, table), id, issueID, eventType, actor, "", newValue)
-	if err != nil {
-		return fmt.Errorf("record event in %s: %w", table, err)
 	}
 	return nil
 }

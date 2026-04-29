@@ -245,6 +245,10 @@ func InsertIssueIfNew(ctx context.Context, tx *sql.Tx, issueTable string, issue 
 }
 
 func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
+	return PersistLabelsWithDialect(ctx, tx, issue, SQLDialectDolt)
+}
+
+func PersistLabelsWithDialect(ctx context.Context, tx *sql.Tx, issue *types.Issue, dialect SQLDialect) error {
 	if len(issue.Labels) == 0 {
 		return nil
 	}
@@ -253,12 +257,16 @@ func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		labelTable = "wisp_labels"
 	}
 	for _, label := range issue.Labels {
-		//nolint:gosec // G201: table is determined by ephemeral flag
-		_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		insert := fmt.Sprintf(`
 			INSERT INTO %s (issue_id, label)
 			VALUES (?, ?)
 			ON DUPLICATE KEY UPDATE label = label
-		`, labelTable), issue.ID, label)
+		`, labelTable)
+		if dialect == SQLDialectSQLite {
+			insert = fmt.Sprintf(`INSERT OR IGNORE INTO %s (issue_id, label) VALUES (?, ?)`, labelTable)
+		}
+		//nolint:gosec // G201: table is determined by ephemeral flag
+		_, err := tx.ExecContext(ctx, insert, issue.ID, label)
 		if err != nil {
 			return fmt.Errorf("failed to insert label %q for %s: %w", label, issue.ID, err)
 		}

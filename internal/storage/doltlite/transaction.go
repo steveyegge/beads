@@ -62,14 +62,14 @@ func (t *embeddedTransaction) CreateIssues(ctx context.Context, issues []*types.
 func (t *embeddedTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	t.dirty.MarkDirty("issues")
 	t.dirty.MarkDirty("events")
-	_, err := issueops.UpdateIssueInTx(ctx, t.tx, id, updates, actor)
+	_, err := issueops.UpdateIssueInTxWithDialect(ctx, t.tx, id, updates, actor, issueops.SQLDialectSQLite)
 	return err
 }
 
 func (t *embeddedTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	t.dirty.MarkDirty("issues")
 	t.dirty.MarkDirty("events")
-	_, err := issueops.CloseIssueInTx(ctx, t.tx, id, reason, actor, session)
+	_, err := issueops.CloseIssueInTxWithDialect(ctx, t.tx, id, reason, actor, session, issueops.SQLDialectSQLite)
 	return err
 }
 
@@ -87,7 +87,7 @@ func (t *embeddedTransaction) GetIssue(ctx context.Context, id string) (*types.I
 }
 
 func (t *embeddedTransaction) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
-	return issueops.SearchIssuesInTx(ctx, t.tx, query, filter)
+	return issueops.SearchIssuesInTxWithDialect(ctx, t.tx, query, filter, issueops.SQLDialectSQLite)
 }
 
 func (t *embeddedTransaction) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
@@ -117,7 +117,7 @@ func (t *embeddedTransaction) GetDependencyRecords(ctx context.Context, issueID 
 
 func (t *embeddedTransaction) AddLabel(ctx context.Context, issueID, label, actor string) error {
 	t.dirty.MarkDirty("labels")
-	return issueops.AddLabelInTx(ctx, t.tx, "", "", issueID, label, actor)
+	return issueops.AddLabelInTxWithDialect(ctx, t.tx, "", "", issueID, label, actor, issueops.SQLDialectSQLite)
 }
 
 func (t *embeddedTransaction) RemoveLabel(ctx context.Context, issueID, label, actor string) error {

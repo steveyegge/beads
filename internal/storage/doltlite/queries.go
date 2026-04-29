@@ -16,7 +16,7 @@ func (s *DoltliteStore) GetReadyWork(ctx context.Context, filter types.WorkFilte
 	var result []*types.Issue
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
 		var err error
-		result, err = issueops.GetReadyWorkInTx(ctx, tx, filter, computeBlockedIDsWrapper)
+		result, err = issueops.GetReadyWorkInTxWithDialect(ctx, tx, filter, computeBlockedIDsWrapper, issueops.SQLDialectSQLite)
 		return err
 	})
 	return result, err

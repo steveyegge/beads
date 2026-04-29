@@ -131,8 +131,11 @@ func getLabelsIntoFromTable(ctx context.Context, tx *sql.Tx, labelTable string, 
 
 // AddLabelInTx adds a label to an issue and records an event within an existing
 // transaction. Automatically routes to wisp tables if the ID is an active wisp.
-// Uses INSERT IGNORE for idempotency.
 func AddLabelInTx(ctx context.Context, tx *sql.Tx, labelTable, eventTable, issueID, label, actor string) error {
+	return AddLabelInTxWithDialect(ctx, tx, labelTable, eventTable, issueID, label, actor, SQLDialectDolt)
+}
+
+func AddLabelInTxWithDialect(ctx context.Context, tx *sql.Tx, labelTable, eventTable, issueID, label, actor string, dialect SQLDialect) error {
 	if labelTable == "" || eventTable == "" {
 		isWisp := IsActiveWispInTx(ctx, tx, issueID)
 		_, lt, et, _ := WispTableRouting(isWisp)
@@ -143,14 +146,16 @@ func AddLabelInTx(ctx context.Context, tx *sql.Tx, labelTable, eventTable, issue
 			eventTable = et
 		}
 	}
+	insert := "INSERT IGNORE INTO %s (issue_id, label) VALUES (?, ?)"
+	if dialect == SQLDialectSQLite {
+		insert = "INSERT OR IGNORE INTO %s (issue_id, label) VALUES (?, ?)"
+	}
 	//nolint:gosec // G201: labelTable is from WispTableRouting ("labels" or "wisp_labels")
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT IGNORE INTO %s (issue_id, label) VALUES (?, ?)`, labelTable), issueID, label); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(insert, labelTable), issueID, label); err != nil {
 		return fmt.Errorf("add label: %w", err)
 	}
 	comment := "Added label: " + label
-	//nolint:gosec // G201: eventTable is from WispTableRouting ("events" or "wisp_events")
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (issue_id, event_type, actor, comment) VALUES (?, ?, ?, ?)`, eventTable),
-		issueID, types.EventLabelAdded, actor, comment); err != nil {
+	if err := RecordEventInTableWithDialect(ctx, tx, eventTable, issueID, types.EventLabelAdded, actor, comment, dialect); err != nil {
 		return fmt.Errorf("add label: record event: %w", err)
 	}
 	return nil

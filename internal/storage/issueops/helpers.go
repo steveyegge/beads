@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/storage"
@@ -105,6 +106,21 @@ func InsertIssueIntoTable(ctx context.Context, tx *sql.Tx, table string, issue *
 //
 //nolint:gosec // G201: table is a hardcoded constant ("events" or "wisp_events")
 func RecordEventInTable(ctx context.Context, tx *sql.Tx, table, issueID string, eventType types.EventType, actor, newValue string) error {
+	return RecordEventInTableWithDialect(ctx, tx, table, issueID, eventType, actor, newValue, SQLDialectDolt)
+}
+
+func RecordEventInTableWithDialect(ctx context.Context, tx *sql.Tx, table, issueID string, eventType types.EventType, actor, newValue string, dialect SQLDialect) error {
+	if dialect == SQLDialectSQLite {
+		_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO %s (id, issue_id, event_type, actor, old_value, new_value)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, table), uuid.Must(uuid.NewV7()).String(), issueID, eventType, actor, "", newValue)
+		if err != nil {
+			return fmt.Errorf("record event in %s: %w", table, err)
+		}
+		return nil
+	}
+
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (issue_id, event_type, actor, old_value, new_value)
 		VALUES (?, ?, ?, ?, ?)

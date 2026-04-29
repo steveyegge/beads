@@ -34,10 +34,9 @@ var _ storage.Compactor = (*DoltliteStore)(nil)
 // time the embedded engine's write lock is held, reducing contention when
 // multiple processes access the same database concurrently.
 //
-// The store holds an exclusive flock on the data directory for its entire
-// lifetime. This prevents concurrent processes from initializing the embedded
-// Dolt engine on the same directory, which causes a nil-pointer panic in
-// DoltDB.SetCrashOnFatalError (GH#2571).
+// Schema bootstrap is protected by a short exclusive flock. Normal operations
+// rely on doltlite's file-level locking and conflict detection so multiple bd
+// processes can read concurrently and serialize writes.
 type DoltliteStore struct {
 	dataDir       string
 	beadsDir      string
@@ -45,8 +44,6 @@ type DoltliteStore struct {
 	branch        string
 	credentialKey []byte
 	closed        atomic.Bool
-	lock          Unlocker // exclusive flock held for the store's lifetime
-	ownsLock      bool     // true when New acquired the lock (false when caller supplied it via WithLock)
 }
 
 // errClosed is returned when a method is called after Close.
@@ -59,10 +56,8 @@ type options struct {
 	lock Unlocker // pre-acquired lock; nil means New acquires its own
 }
 
-// WithLock passes a pre-acquired exclusive lock to New so it does not attempt
-// to acquire a second one. The caller retains ownership — Close will NOT
-// release a caller-supplied lock. This is used by bd init, which acquires the
-// lock earlier to protect pre-initialization steps.
+// WithLock passes a pre-acquired exclusive lock to New for schema bootstrap.
+// The caller retains ownership. Normal store operations do not hold this lock.
 func WithLock(lock Unlocker) Option {
 	return func(o *options) { o.lock = lock }
 }
@@ -71,12 +66,8 @@ func WithLock(lock Unlocker) Option {
 // beadsDir is the .beads/ root; the data directory is derived as <beadsDir>/doltlite/.
 // The database is created automatically if it doesn't exist (initSchema handles this).
 //
-// An exclusive flock is held on the data directory for the store's entire
-// lifetime. If another process already holds the lock, New queues with
-// exponential backoff until the lock becomes available or the context is
-// canceled, instead of panicking during concurrent engine initialization
-// (GH#2571). The lock is released when Close is called, unless a pre-acquired
-// lock was supplied via WithLock (in which case the caller is responsible for it).
+// Schema bootstrap is guarded by a short exclusive flock. After bootstrap, the
+// lock is released and normal operations use doltlite's own file-level locks.
 func New(ctx context.Context, beadsDir, database, branch string, opts ...Option) (*DoltliteStore, error) {
 	if database == "" {
 		return nil, fmt.Errorf("doltlite: database name must not be empty (caller should default to %q)", "beads")
@@ -98,17 +89,17 @@ func New(ctx context.Context, beadsDir, database, branch string, opts ...Option)
 		return nil, fmt.Errorf("doltlite: creating data directory: %w", err)
 	}
 
-	// Acquire an exclusive flock before initializing the embedded engine.
-	// Without this, concurrent processes race through NewConnector →
-	// DoltDB.SetCrashOnFatalError → newDatabase → CollectDBs and one of
-	// them panics with a nil-pointer dereference (GH#2571).
 	lock := o.lock
 	ownsLock := lock == nil
 	if ownsLock {
+		var err error
 		lock, err = WaitLock(ctx, dataDir)
 		if err != nil {
 			return nil, err
 		}
+	}
+	if lock != nil && ownsLock {
+		defer lock.Unlock()
 	}
 
 	s := &DoltliteStore{
@@ -116,14 +107,9 @@ func New(ctx context.Context, beadsDir, database, branch string, opts ...Option)
 		beadsDir: absBeadsDir,
 		database: database,
 		branch:   branch,
-		lock:     lock,
-		ownsLock: ownsLock,
 	}
 
 	if err := s.initSchema(ctx); err != nil {
-		if ownsLock {
-			lock.Unlock()
-		}
 		return nil, fmt.Errorf("doltlite: init schema: %w", err)
 	}
 
@@ -132,9 +118,6 @@ func New(ctx context.Context, beadsDir, database, branch string, opts ...Option)
 	// dolt_ignore prevents them from being committed. Server mode handles
 	// this in newServerMode(); embedded mode must do it here. (GH#3270)
 	if err := s.ensureIgnoredTables(ctx); err != nil {
-		if ownsLock {
-			lock.Unlock()
-		}
 		return nil, fmt.Errorf("doltlite: ensure ignored tables: %w", err)
 	}
 
@@ -145,6 +128,17 @@ func New(ctx context.Context, beadsDir, database, branch string, opts ...Option)
 // database or branch, begins an explicit SQL transaction, and passes it to fn.
 // This is used during initialization when the database may not yet exist.
 func (s *DoltliteStore) withRootConn(ctx context.Context, commit bool, fn func(tx *sql.Tx) error) (err error) {
+	if commit {
+		return s.withExclusiveLock(ctx, func() error {
+			return s.withRetry(ctx, func() error {
+				return s.withRootConnOnce(ctx, commit, fn)
+			})
+		})
+	}
+	return s.withRootConnOnce(ctx, commit, fn)
+}
+
+func (s *DoltliteStore) withRootConnOnce(ctx context.Context, commit bool, fn func(tx *sql.Tx) error) (err error) {
 	if s.closed.Load() {
 		err = errClosed
 		return
@@ -190,6 +184,17 @@ func (s *DoltliteStore) withRootConn(ctx context.Context, commit bool, fn func(t
 //
 // The database must already exist (created during initSchema).
 func (s *DoltliteStore) withConn(ctx context.Context, commit bool, fn func(tx *sql.Tx) error) (err error) {
+	if commit {
+		return s.withExclusiveLock(ctx, func() error {
+			return s.withRetry(ctx, func() error {
+				return s.withConnOnce(ctx, commit, fn)
+			})
+		})
+	}
+	return s.withConnOnce(ctx, commit, fn)
+}
+
+func (s *DoltliteStore) withConnOnce(ctx context.Context, commit bool, fn func(tx *sql.Tx) error) (err error) {
 	if s.closed.Load() {
 		err = errClosed
 		return
@@ -225,6 +230,45 @@ func (s *DoltliteStore) withConn(ctx context.Context, commit bool, fn func(tx *s
 
 	err = tx.Commit()
 	return
+}
+
+func (s *DoltliteStore) withRetry(ctx context.Context, fn func() error) error {
+	const maxAttempts = 5
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		if !isRetryableConcurrencyError(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(time.Duration(50*(1<<attempt)) * time.Millisecond):
+		}
+	}
+	return err
+}
+
+func (s *DoltliteStore) withExclusiveLock(ctx context.Context, fn func() error) error {
+	lock, err := WaitLock(ctx, s.dataDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	return fn()
+}
+
+func isRetryableConcurrencyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "sqlite_busy") ||
+		strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "another connection committed") ||
+		strings.Contains(msg, "please retry your transaction")
 }
 
 // initSchema creates the database (if needed) and runs all pending migrations,
@@ -426,19 +470,11 @@ func (s *DoltliteStore) GetAllEventsSince(ctx context.Context, since time.Time) 
 
 // RunInTransaction is implemented in transaction.go.
 
-// Close marks the store as closed, cleans up orphaned git-remote-cache
-// garbage, and releases the exclusive flock on the data directory (if the
-// store owns it). Subsequent method calls will return errClosed.
-// It is safe to call multiple times. When the lock was supplied by the caller
-// via WithLock, Close does NOT release it — the caller retains ownership.
+// Close marks the store as closed and cleans up orphaned git-remote-cache
+// garbage. Subsequent method calls will return errClosed.
 func (s *DoltliteStore) Close() error {
-	// Use CompareAndSwap so we only unlock once even if Close is called
-	// multiple times (the Lock.Unlock method panics on double-unlock).
 	if s.closed.CompareAndSwap(false, true) {
 		s.cleanGitRemoteCacheGarbage()
-		if s.lock != nil && s.ownsLock {
-			s.lock.Unlock()
-		}
 	}
 	return nil
 }

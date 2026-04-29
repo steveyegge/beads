@@ -24,6 +24,16 @@ func GetReadyWorkInTx(
 	filter types.WorkFilter,
 	computeBlockedFn func(ctx context.Context, tx *sql.Tx, includeWisps bool) ([]string, error),
 ) ([]*types.Issue, error) {
+	return GetReadyWorkInTxWithDialect(ctx, tx, filter, computeBlockedFn, SQLDialectDolt)
+}
+
+func GetReadyWorkInTxWithDialect(
+	ctx context.Context,
+	tx *sql.Tx,
+	filter types.WorkFilter,
+	computeBlockedFn func(ctx context.Context, tx *sql.Tx, includeWisps bool) ([]string, error),
+	dialect SQLDialect,
+) ([]*types.Issue, error) {
 	// Status filtering: default to open OR in_progress.
 	var statusClause string
 	if filter.Status != "" {
@@ -70,11 +80,11 @@ func GetReadyWorkInTx(
 	}
 	// Exclude future-deferred issues unless IncludeDeferred is set.
 	if !filter.IncludeDeferred {
-		whereClauses = append(whereClauses, "(defer_until IS NULL OR defer_until <= UTC_TIMESTAMP())")
+		whereClauses = append(whereClauses, "(defer_until IS NULL OR defer_until <= "+dialect.CurrentTimestamp()+")")
 	}
 	// Exclude children of future-deferred parents.
 	if !filter.IncludeDeferred {
-		deferredChildIDs, dcErr := getChildrenOfDeferredParentsInTx(ctx, tx)
+		deferredChildIDs, dcErr := getChildrenOfDeferredParentsInTxWithDialect(ctx, tx, dialect)
 		if dcErr != nil {
 			return nil, fmt.Errorf("get ready work: compute deferred parent children: %w", dcErr)
 		}
@@ -114,7 +124,7 @@ func GetReadyWorkInTx(
 		if descErr != nil {
 			return nil, fmt.Errorf("get parent descendants: %w", descErr)
 		}
-		parentClauses := []string{"(id LIKE CONCAT(?, '.%') AND id NOT IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child'))"}
+		parentClauses := []string{"(" + dialect.ChildIDLikeExpr() + " AND id NOT IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child'))"}
 		args = append(args, parentID)
 		for start := 0; start < len(descendantIDs); start += queryBatchSize {
 			end := start + queryBatchSize
@@ -130,7 +140,7 @@ func GetReadyWorkInTx(
 
 	// Molecule filtering: filter to direct children of the specified molecule.
 	if filter.MoleculeID != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND %s = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child')))", DepTargetExpr))
+		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND %s = ?) OR (%s AND id NOT IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child')))", DepTargetExpr, dialect.ChildIDLikeExpr()))
 		args = append(args, filter.MoleculeID, filter.MoleculeID)
 	}
 
@@ -139,7 +149,7 @@ func GetReadyWorkInTx(
 		if err := storage.ValidateMetadataKey(filter.HasMetadataKey); err != nil {
 			return nil, err
 		}
-		whereClauses = append(whereClauses, "JSON_EXTRACT(metadata, ?) IS NOT NULL")
+		whereClauses = append(whereClauses, dialect.MetadataExistsExpr())
 		args = append(args, storage.JSONMetadataPath(filter.HasMetadataKey))
 	}
 
@@ -154,7 +164,7 @@ func GetReadyWorkInTx(
 			if err := storage.ValidateMetadataKey(k); err != nil {
 				return nil, err
 			}
-			whereClauses = append(whereClauses, "JSON_UNQUOTE(JSON_EXTRACT(metadata, ?)) = ?")
+			whereClauses = append(whereClauses, dialect.MetadataEqualsExpr())
 			args = append(args, storage.JSONMetadataPath(k), filter.MetadataFields[k])
 		}
 	}
@@ -197,12 +207,11 @@ func GetReadyWorkInTx(
 	case types.SortPolicyPriority:
 		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
 	case types.SortPolicyHybrid, "":
-		recentCutoff := time.Now().UTC().Add(-48 * time.Hour)
+		recentCreatedAt := dialect.RecentCreatedAtExpr()
 		orderBySQL = `ORDER BY
-			CASE WHEN created_at >= ? THEN 0 ELSE 1 END ASC,
-			CASE WHEN created_at >= ? THEN priority ELSE 999 END ASC,
+			CASE WHEN created_at >= ` + recentCreatedAt + ` THEN 0 ELSE 1 END ASC,
+			CASE WHEN created_at >= ` + recentCreatedAt + ` THEN priority ELSE 999 END ASC,
 			created_at ASC, id ASC`
-		args = append(args, recentCutoff, recentCutoff)
 	default:
 		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
 	}
@@ -317,7 +326,7 @@ func getReadyWispsInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilter)
 	// Ready-only wisp predicates are applied after search, so avoid limiting
 	// before that filtering can drop non-ready candidates.
 	wispFilter.Limit = 0
-	wisps, err := searchTableInTx(ctx, tx, "", wispFilter, WispsFilterTables)
+	wisps, err := searchTableInTx(ctx, tx, "", wispFilter, WispsFilterTables, SQLDialectDolt)
 	if err != nil {
 		if isTableNotExistError(err) {
 			return nil, nil
@@ -546,8 +555,12 @@ func queryReadyIssueIDPage(ctx context.Context, tx *sql.Tx, query string, args [
 // getChildrenOfDeferredParentsInTx returns IDs of issues whose parent has a
 // future defer_until. Works within an existing transaction.
 //
-//nolint:gosec // G201: depTable is selected from a hardcoded list below.
+//nolint:gosec // G201: depTable and issueTable are selected from hardcoded lists below.
 func getChildrenOfDeferredParentsInTx(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	return getChildrenOfDeferredParentsInTxWithDialect(ctx, tx, SQLDialectDolt)
+}
+
+func getChildrenOfDeferredParentsInTxWithDialect(ctx context.Context, tx *sql.Tx, dialect SQLDialect) ([]string, error) {
 	hasDeferredParent := false
 	for _, issueTable := range []string{"issues", "wisps"} {
 		//nolint:gosec // G201: issueTable is hardcoded to "issues" or "wisps"
@@ -555,9 +568,9 @@ func getChildrenOfDeferredParentsInTx(ctx context.Context, tx *sql.Tx) ([]string
 		err := tx.QueryRowContext(ctx, fmt.Sprintf(`
 			SELECT 1 FROM %s
 			WHERE defer_until IS NOT NULL
-			  AND defer_until > UTC_TIMESTAMP()
+			  AND defer_until > %s
 			LIMIT 1
-		`, issueTable)).Scan(&exists)
+		`, issueTable, dialect.CurrentTimestamp())).Scan(&exists)
 		if err == nil {
 			hasDeferredParent = true
 			break
@@ -587,8 +600,8 @@ func getChildrenOfDeferredParentsInTx(ctx context.Context, tx *sql.Tx) ([]string
 				JOIN %s parent ON parent.id = dep.%s
 				WHERE dep.type = 'parent-child'
 				  AND parent.defer_until IS NOT NULL
-				  AND parent.defer_until > UTC_TIMESTAMP()
-			`, depTable, issueTable, targetCol))
+				  AND parent.defer_until > %s
+			`, depTable, issueTable, targetCol, dialect.CurrentTimestamp()))
 			if err != nil {
 				if depTable == "wisp_dependencies" && isTableNotExistError(err) {
 					break
