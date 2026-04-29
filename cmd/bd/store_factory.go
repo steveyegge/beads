@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/doltlite"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 )
 
@@ -50,6 +51,13 @@ func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, e
 		return dolt.New(ctx, cfg)
 	}
 	return embeddeddolt.Open(ctx, cfg.BeadsDir, cfg.Database, "main")
+}
+
+func newDoltliteStore(ctx context.Context, beadsDir, database string) (storage.DoltStorage, error) {
+	if database == "" {
+		database = configfile.DefaultDoltDatabase
+	}
+	return doltlite.New(ctx, beadsDir, database, "main")
 }
 
 // acquireEmbeddedLock acquires an exclusive flock on the embeddeddolt data
@@ -92,6 +100,9 @@ func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltS
 	}
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfig(ctx, beadsDir)
+	}
+	if err == nil && cfg != nil && cfg.IsDoltliteBackend() {
+		return newDoltliteStore(ctx, beadsDir, cfg.GetDoltDatabase())
 	}
 	database := configfile.DefaultDoltDatabase
 	if cfg != nil {
@@ -166,6 +177,9 @@ func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.D
 	}
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})
+	}
+	if err == nil && cfg != nil && cfg.IsDoltliteBackend() {
+		return newDoltliteStore(ctx, beadsDir, cfg.GetDoltDatabase())
 	}
 	database := configfile.DefaultDoltDatabase
 	if cfg != nil {

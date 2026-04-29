@@ -13,6 +13,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/dolthub/driver v1.88.1
 	github.com/go-sql-driver/mysql v1.9.3
+	github.com/mattn/go-sqlite3 v1.14.8
 	github.com/olebedev/when v1.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0

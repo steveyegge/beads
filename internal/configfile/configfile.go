@@ -181,7 +181,8 @@ func (c *Config) GetStaleClosedIssuesDays() int {
 
 // Backend constants
 const (
-	BackendDolt = "dolt"
+	BackendDolt     = "dolt"
+	BackendDoltlite = "doltlite"
 )
 
 // BackendCapabilities describes behavioral constraints for a storage backend.
@@ -199,8 +200,8 @@ type BackendCapabilities struct {
 }
 
 // CapabilitiesForBackend returns capabilities for a backend string.
-// Dolt is the only supported backend. Returns SingleProcessOnly=true by default;
-// use Config.GetCapabilities() to properly handle server mode.
+// Embedded Dolt and DoltLite are single-process-only; use
+// Config.GetCapabilities() to account for Dolt server/proxied-server mode.
 func CapabilitiesForBackend(_ string) BackendCapabilities {
 	return BackendCapabilities{SingleProcessOnly: true}
 }
@@ -216,9 +217,22 @@ func (c *Config) GetCapabilities() BackendCapabilities {
 	return CapabilitiesForBackend(backend)
 }
 
-// GetBackend returns the backend type. Always returns "dolt".
+// GetBackend returns the backend type. Missing/legacy values default to "dolt".
 func (c *Config) GetBackend() string {
+	if c != nil {
+		switch strings.ToLower(strings.TrimSpace(c.Backend)) {
+		case BackendDoltlite:
+			return BackendDoltlite
+		case BackendDolt, "":
+			return BackendDolt
+		}
+	}
 	return BackendDolt
+}
+
+// IsDoltliteBackend reports whether metadata explicitly selects DoltLite.
+func (c *Config) IsDoltliteBackend() bool {
+	return c.GetBackend() == BackendDoltlite
 }
 
 // Dolt mode constants

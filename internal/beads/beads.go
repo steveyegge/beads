@@ -432,6 +432,10 @@ func findDatabaseInBeadsDir(beadsDir string, _ bool) string {
 		if cfg.IsDoltServerMode() {
 			return cfg.DatabasePath(beadsDir)
 		}
+		doltlitePath := filepath.Join(beadsDir, "doltlite")
+		if info, err := os.Stat(doltlitePath); err == nil && info.IsDir() {
+			return doltlitePath
+		}
 		// For embedded Dolt, the engine stores data under .beads/embeddeddolt/,
 		// not .beads/dolt/. Check the actual embedded data directory first.
 		embeddedPath := filepath.Join(beadsDir, "embeddeddolt")
@@ -446,7 +450,11 @@ func findDatabaseInBeadsDir(beadsDir string, _ bool) string {
 		}
 	}
 
-	// Fall back: check if embeddeddolt or dolt directory exists without metadata.json
+	// Fall back: check if doltlite, embeddeddolt, or dolt directory exists without metadata.json
+	doltlitePath := filepath.Join(beadsDir, "doltlite")
+	if info, err := os.Stat(doltlitePath); err == nil && info.IsDir() {
+		return doltlitePath
+	}
 	embeddedPath := filepath.Join(beadsDir, "embeddeddolt")
 	if info, err := os.Stat(embeddedPath); err == nil && info.IsDir() {
 		return embeddedPath
@@ -594,8 +602,11 @@ func hasBeadsProjectFiles(beadsDir string) bool {
 		return true
 	}
 
-	// Check for Dolt database directory (server mode uses dolt/, embedded uses embeddeddolt/)
+	// Check for storage directories (server mode uses dolt/, embedded uses doltlite/ or embeddeddolt/)
 	if info, err := os.Stat(filepath.Join(beadsDir, "dolt")); err == nil && info.IsDir() {
+		return true
+	}
+	if info, err := os.Stat(filepath.Join(beadsDir, "doltlite")); err == nil && info.IsDir() {
 		return true
 	}
 	if info, err := os.Stat(filepath.Join(beadsDir, "embeddeddolt")); err == nil && info.IsDir() {
@@ -627,6 +638,9 @@ func hasBeadsProjectFiles(beadsDir string) bool {
 // return a broken directory, short-circuiting the shared-DB fallback.
 func hasBeadsDatabase(beadsDir string) bool {
 	if info, err := os.Stat(filepath.Join(beadsDir, "dolt")); err == nil && info.IsDir() {
+		return true
+	}
+	if info, err := os.Stat(filepath.Join(beadsDir, "doltlite")); err == nil && info.IsDir() {
 		return true
 	}
 	if info, err := os.Stat(filepath.Join(beadsDir, "embeddeddolt")); err == nil && info.IsDir() {

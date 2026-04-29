@@ -7,6 +7,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/doltlite"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 )
 
@@ -24,6 +25,13 @@ func OpenBestAvailable(ctx context.Context, beadsDir string) (Storage, error) {
 	cfg, err := configfile.Load(beadsDir)
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		store, err := dolt.NewFromConfig(ctx, beadsDir)
+		if err != nil {
+			return nil, err
+		}
+		return store, nil
+	}
+	if err == nil && cfg != nil && cfg.IsDoltliteBackend() {
+		store, err := doltlite.New(ctx, beadsDir, cfg.GetDoltDatabase(), "main")
 		if err != nil {
 			return nil, err
 		}
