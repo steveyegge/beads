@@ -35,6 +35,10 @@ func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, e
 	return dolt.New(ctx, cfg)
 }
 
+func newDoltliteStore(_ context.Context, _, _ string) (storage.DoltStorage, error) {
+	return nil, fmt.Errorf("doltlite requires a CGO build")
+}
+
 // acquireEmbeddedLock returns a no-op lock in non-CGO builds.
 func acquireEmbeddedLock(_ string, _ bool) (util.Unlocker, error) {
 	return util.NoopLock{}, nil
@@ -51,6 +55,9 @@ func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltS
 		// 		Database:      cfg.GetDoltDatabase(),
 		// 		ProxiedServer: true,
 		// 	})
+	}
+	if err == nil && cfg != nil && cfg.IsDoltliteBackend() {
+		return nil, fmt.Errorf("doltlite requires a CGO build")
 	}
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfig(ctx, beadsDir)
@@ -70,6 +77,9 @@ func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.D
 		// 	ProxiedServer: true,
 		// 	ReadOnly:      true,
 		// })
+	}
+	if err == nil && cfg != nil && cfg.IsDoltliteBackend() {
+		return nil, fmt.Errorf("doltlite requires a CGO build")
 	}
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})

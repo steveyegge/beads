@@ -17,6 +17,8 @@ import (
 //
 //   - Embedded mode (default): Opens via the CGo embedded Dolt engine.
 //   - Server mode: Connects to an external dolt sql-server via OpenFromConfig.
+//   - Doltlite mode: Opens a local doltlite database when metadata.json has
+//     backend="doltlite".
 //
 // The returned Storage must be closed when no longer needed.
 //

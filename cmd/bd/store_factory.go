@@ -98,6 +98,9 @@ func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltS
 		// 		ProxiedServer: true,
 		// 	})
 	}
+	if err == nil && cfg != nil && cfg.IsDoltliteBackend() {
+		return newDoltliteStore(ctx, beadsDir, cfg.GetDoltDatabase())
+	}
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfig(ctx, beadsDir)
 	}
@@ -174,6 +177,9 @@ func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.D
 		// 	ProxiedServer: true,
 		// 	ReadOnly:      true,
 		// })
+	}
+	if err == nil && cfg != nil && cfg.IsDoltliteBackend() {
+		return newDoltliteStore(ctx, beadsDir, cfg.GetDoltDatabase())
 	}
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})

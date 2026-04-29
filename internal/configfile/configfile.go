@@ -202,8 +202,13 @@ type BackendCapabilities struct {
 // CapabilitiesForBackend returns capabilities for a backend string.
 // Embedded Dolt and DoltLite are single-process-only; use
 // Config.GetCapabilities() to account for Dolt server/proxied-server mode.
-func CapabilitiesForBackend(_ string) BackendCapabilities {
-	return BackendCapabilities{SingleProcessOnly: true}
+func CapabilitiesForBackend(backend string) BackendCapabilities {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case BackendDolt, BackendDoltlite, "":
+		return BackendCapabilities{SingleProcessOnly: true}
+	default:
+		return BackendCapabilities{SingleProcessOnly: true}
+	}
 }
 
 // GetCapabilities returns the backend capabilities for this config.
