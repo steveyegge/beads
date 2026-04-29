@@ -17,7 +17,7 @@ import (
 // Delegates SQL work to issueops; EmbeddedDolt auto-commits the transaction.
 func (s *DoltliteStore) ClaimIssue(ctx context.Context, id string, actor string) error {
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
-		_, err := issueops.ClaimIssueInTx(ctx, tx, id, actor)
+		_, err := issueops.ClaimIssueInTxWithDialect(ctx, tx, id, actor, issueops.SQLDialectSQLite)
 		return err
 	})
 }

@@ -29,6 +29,14 @@ type ClaimResult struct {
 //
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func ClaimIssueInTx(ctx context.Context, tx *sql.Tx, id string, actor string) (*ClaimResult, error) {
+	return ClaimIssueInTxWithDialect(ctx, tx, id, actor, SQLDialectDolt)
+}
+
+// ClaimIssueInTxWithDialect atomically claims an issue using compare-and-swap
+// semantics while honoring backend-specific SQL differences.
+//
+//nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
+func ClaimIssueInTxWithDialect(ctx context.Context, tx *sql.Tx, id string, actor string, dialect SQLDialect) (*ClaimResult, error) {
 	isWisp := IsActiveWispInTx(ctx, tx, id)
 	issueTable, _, eventTable, _ := WispTableRouting(isWisp)
 
@@ -101,7 +109,7 @@ func ClaimIssueInTx(ctx context.Context, tx *sql.Tx, id string, actor string) (*
 	}
 	newData, _ := json.Marshal(newUpdates)
 
-	if err := RecordFullEventInTable(ctx, tx, eventTable, id, "claimed", actor, string(oldData), string(newData)); err != nil {
+	if err := RecordFullEventInTableWithDialect(ctx, tx, eventTable, id, "claimed", actor, string(oldData), string(newData), dialect); err != nil {
 		return nil, fmt.Errorf("failed to record claim event: %w", err)
 	}
 
