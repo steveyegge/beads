@@ -95,6 +95,69 @@ func TestSmokeLabels(t *testing.T) {
 	}
 }
 
+func TestSmokeChildIDAndDependencyUseSQLiteDialect(t *testing.T) {
+	ctx := t.Context()
+	store, err := doltlite.New(ctx, filepath.Join(t.TempDir(), ".beads"), "beads", "main")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+
+	now := time.Now().UTC()
+	parent := &types.Issue{
+		ID:        "bd-parent",
+		Title:     "parent",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	child := &types.Issue{
+		ID:        "bd-parent.1",
+		Title:     "child",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.CreateIssue(ctx, parent, "test"); err != nil {
+		t.Fatalf("CreateIssue parent: %v", err)
+	}
+	if err := store.CreateIssue(ctx, child, "test"); err != nil {
+		t.Fatalf("CreateIssue child: %v", err)
+	}
+
+	next, err := store.GetNextChildID(ctx, parent.ID)
+	if err != nil {
+		t.Fatalf("GetNextChildID: %v", err)
+	}
+	if next != "bd-parent.2" {
+		t.Fatalf("next child ID = %q, want bd-parent.2", next)
+	}
+
+	dep := &types.Dependency{
+		IssueID:     child.ID,
+		DependsOnID: parent.ID,
+		Type:        types.DepParentChild,
+	}
+	if err := store.AddDependency(ctx, dep, "test"); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+	deps, err := store.GetDependencyRecords(ctx, child.ID)
+	if err != nil {
+		t.Fatalf("GetDependencyRecords: %v", err)
+	}
+	if len(deps) != 1 || deps[0].DependsOnID != parent.ID || deps[0].Type != types.DepParentChild {
+		t.Fatalf("deps = %#v, want parent-child to %s", deps, parent.ID)
+	}
+}
+
 func TestSmokeVersionControl(t *testing.T) {
 	ctx := t.Context()
 	store, err := doltlite.New(ctx, filepath.Join(t.TempDir(), ".beads"), "beads", "main")

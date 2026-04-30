@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -43,6 +44,9 @@ type DoltliteStore struct {
 	database      string
 	branch        string
 	credentialKey []byte
+	dbMu          sync.Mutex
+	db            *sql.DB
+	dbCleanup     func() error
 	closed        atomic.Bool
 }
 
@@ -112,6 +116,9 @@ func New(ctx context.Context, beadsDir, database, branch string, opts ...Option)
 	if err := s.initSchema(ctx); err != nil {
 		return nil, fmt.Errorf("doltlite: init schema: %w", err)
 	}
+	if err := s.openPersistentDB(ctx); err != nil {
+		return nil, fmt.Errorf("doltlite: open database: %w", err)
+	}
 
 	// Ensure dolt_ignore'd wisp tables exist in the working set.
 	// After a clone or branch switch, these tables are absent because
@@ -122,6 +129,31 @@ func New(ctx context.Context, beadsDir, database, branch string, opts ...Option)
 	}
 
 	return s, nil
+}
+
+func (s *DoltliteStore) openPersistentDB(ctx context.Context) error {
+	s.dbMu.Lock()
+	defer s.dbMu.Unlock()
+	if s.db != nil {
+		return nil
+	}
+	db, cleanup, err := OpenSQL(ctx, s.dataDir, s.database, s.branch)
+	if err != nil {
+		return err
+	}
+	s.db = db
+	s.dbCleanup = cleanup
+	return nil
+}
+
+func (s *DoltliteStore) activeDB(ctx context.Context) (*sql.DB, func() error, error) {
+	s.dbMu.Lock()
+	db := s.db
+	s.dbMu.Unlock()
+	if db != nil {
+		return db, func() error { return nil }, nil
+	}
+	return OpenSQL(ctx, s.dataDir, s.database, s.branch)
 }
 
 // withRootConn opens a short-lived database connection without selecting any
@@ -202,7 +234,7 @@ func (s *DoltliteStore) withConnOnce(ctx context.Context, commit bool, fn func(t
 
 	var db *sql.DB
 	var cleanup func() error
-	db, cleanup, err = OpenSQL(ctx, s.dataDir, s.database, s.branch)
+	db, cleanup, err = s.activeDB(ctx)
 	if err != nil {
 		return
 	}
@@ -301,10 +333,7 @@ func (s *DoltliteStore) initSchema(ctx context.Context) error {
 		return err
 	}
 	if applied > 0 {
-		if _, err := db.ExecContext(ctx, "SELECT dolt_add('-A')"); err != nil {
-			return fmt.Errorf("dolt add after migrations: %w", err)
-		}
-		if _, err := db.ExecContext(ctx, "SELECT dolt_commit('-m', 'schema: apply migrations')"); err != nil {
+		if _, err := db.ExecContext(ctx, "SELECT dolt_commit('-A', '-m', 'schema: apply migrations')"); err != nil {
 			if !strings.Contains(err.Error(), "nothing to commit") {
 				return fmt.Errorf("dolt commit after migrations: %w", err)
 			}
@@ -474,6 +503,14 @@ func (s *DoltliteStore) GetAllEventsSince(ctx context.Context, since time.Time) 
 // garbage. Subsequent method calls will return errClosed.
 func (s *DoltliteStore) Close() error {
 	if s.closed.CompareAndSwap(false, true) {
+		s.dbMu.Lock()
+		cleanup := s.dbCleanup
+		s.db = nil
+		s.dbCleanup = nil
+		s.dbMu.Unlock()
+		if cleanup != nil {
+			_ = cleanup()
+		}
 		s.cleanGitRemoteCacheGarbage()
 	}
 	return nil

@@ -86,6 +86,8 @@ type AddDependencyOpts struct {
 	// that intentionally trade validation cost for bulk graph wiring speed.
 	SkipCycleCheck bool
 	TargetKind     *DepTargetKind
+	// Dialect selects SQL syntax for timestamp expressions.
+	Dialect SQLDialect
 }
 
 // AddDependencyInTx validates and inserts a dependency within an existing
@@ -133,6 +135,7 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	if metadata == "" {
 		metadata = "{}"
 	}
+	dialect := opts.Dialect
 
 	// Validate source issue exists and get its type.
 	var sourceType string
@@ -220,8 +223,8 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	//nolint:gosec // G201: writeTable from WispTableRouting; targetCol from DepTargetKind.Column()
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (issue_id, %s, type, created_at, created_by, metadata, thread_id)
-		VALUES (?, ?, ?, NOW(), ?, ?, ?)
-	`, writeTable, targetCol), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
+		VALUES (?, ?, ?, %s, ?, ?, ?)
+	`, writeTable, targetCol, dialect.CurrentTimestamp()), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
 	}
 	return nil

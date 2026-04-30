@@ -364,6 +364,10 @@ func PersistDependencies(ctx context.Context, tx *sql.Tx, issues []*types.Issue,
 }
 
 func ReconcileChildCounters(ctx context.Context, tx *sql.Tx, issues []*types.Issue) error {
+	return ReconcileChildCountersWithDialect(ctx, tx, issues, SQLDialectDolt)
+}
+
+func ReconcileChildCountersWithDialect(ctx context.Context, tx *sql.Tx, issues []*types.Issue, dialect SQLDialect) error {
 	type bucket struct {
 		maxChild int
 		isWisp   bool
@@ -408,10 +412,20 @@ func ReconcileChildCounters(ctx context.Context, tx *sql.Tx, issues []*types.Iss
 			table = "wisp_child_counters"
 		}
 		//nolint:gosec // G201: table is one of two hardcoded constants.
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		upsert := fmt.Sprintf(`
 			INSERT INTO %s (parent_id, last_child) VALUES (?, ?)
 			ON DUPLICATE KEY UPDATE last_child = GREATEST(last_child, ?)
-		`, table), parentID, b.maxChild, b.maxChild); err != nil {
+		`, table)
+		args := []any{parentID, b.maxChild, b.maxChild}
+		if dialect == SQLDialectSQLite {
+			upsert = fmt.Sprintf(`
+				INSERT INTO %s (parent_id, last_child) VALUES (?, ?)
+				ON CONFLICT(parent_id) DO UPDATE SET last_child = MAX(%s.last_child, excluded.last_child)
+			`, table, table)
+			args = []any{parentID, b.maxChild}
+		}
+		_, err := tx.ExecContext(ctx, upsert, args...)
+		if err != nil {
 			return fmt.Errorf("failed to reconcile child counter for %s: %w", parentID, err)
 		}
 	}

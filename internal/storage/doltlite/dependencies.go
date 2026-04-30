@@ -14,6 +14,7 @@ func (s *DoltliteStore) AddDependency(ctx context.Context, dep *types.Dependency
 	return s.withConn(ctx, true, func(tx *sql.Tx) error {
 		return issueops.AddDependencyInTx(ctx, tx, dep, actor, issueops.AddDependencyOpts{
 			IsCrossPrefix: types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID),
+			Dialect:       issueops.SQLDialectSQLite,
 		})
 	})
 }

@@ -99,6 +99,7 @@ func (t *embeddedTransaction) AddDependencyWithOptions(ctx context.Context, dep 
 	return issueops.AddDependencyInTx(ctx, t.tx, dep, actor, issueops.AddDependencyOpts{
 		IsCrossPrefix:  types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID),
 		SkipCycleCheck: addOpts.SkipCycleCheck,
+		Dialect:        issueops.SQLDialectSQLite,
 	})
 }
 

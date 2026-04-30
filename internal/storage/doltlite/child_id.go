@@ -13,7 +13,7 @@ func (s *DoltliteStore) GetNextChildID(ctx context.Context, parentID string) (st
 	var childID string
 	err := s.withConn(ctx, true, func(tx *sql.Tx) error {
 		var err error
-		childID, err = issueops.GetNextChildIDTx(ctx, tx, parentID)
+		childID, err = issueops.GetNextChildIDTxWithDialect(ctx, tx, parentID, issueops.SQLDialectSQLite)
 		return err
 	})
 	return childID, err

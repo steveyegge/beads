@@ -7,6 +7,10 @@ import (
 )
 
 func GetNextChildIDTx(ctx context.Context, tx *sql.Tx, parentID string) (string, error) {
+	return GetNextChildIDTxWithDialect(ctx, tx, parentID, SQLDialectDolt)
+}
+
+func GetNextChildIDTxWithDialect(ctx context.Context, tx *sql.Tx, parentID string, dialect SQLDialect) (string, error) {
 	counterTable, issueTable := "child_counters", "issues"
 	if IsActiveWispInTx(ctx, tx, parentID) {
 		counterTable, issueTable = "wisp_child_counters", "wisps"
@@ -24,11 +28,24 @@ func GetNextChildIDTx(ctx context.Context, tx *sql.Tx, parentID string) (string,
 	}
 
 	//nolint:gosec // G201: issueTable is one of two hardcoded constants.
+	// Check existing children to prevent overwrites after JSONL import (GH#2166).
+	// The counter may be stale if issues were imported without reconciling child_counters.
+	//
+	// We fetch direct child IDs and parse the numeric suffix in Go rather than
+	// using SQL CAST(SUBSTRING_INDEX(...) AS UNSIGNED), which silently returns 0
+	// for non-numeric ID suffixes (see GH#2721).
+	childLikeExpr := "id LIKE CONCAT(?, '.%')"
+	grandchildLikeExpr := "id NOT LIKE CONCAT(?, '.%.%')"
+	if dialect == SQLDialectSQLite {
+		childLikeExpr = "id LIKE (? || '.%')"
+		grandchildLikeExpr = "id NOT LIKE (? || '.%.%')"
+	}
+	//nolint:gosec // G201: issueTable is one of two hardcoded constants.
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id FROM %s
-		WHERE id LIKE CONCAT(?, '.%%')
-		  AND id NOT LIKE CONCAT(?, '.%%.%%')
-	`, issueTable), parentID, parentID)
+		WHERE %s
+		  AND %s
+	`, issueTable, childLikeExpr, grandchildLikeExpr), parentID, parentID)
 	if err != nil {
 		return "", fmt.Errorf("get next child ID: query existing children: %w", err)
 	}
@@ -51,10 +68,19 @@ func GetNextChildIDTx(ctx context.Context, tx *sql.Tx, parentID string) (string,
 	nextChild := lastChild + 1
 
 	//nolint:gosec // G201: counterTable is one of two hardcoded constants.
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+	upsert := fmt.Sprintf(`
 		INSERT INTO %s (parent_id, last_child) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE last_child = ?
-	`, counterTable), parentID, nextChild, nextChild); err != nil {
+	`, counterTable)
+	args := []any{parentID, nextChild, nextChild}
+	if dialect == SQLDialectSQLite {
+		upsert = fmt.Sprintf(`
+			INSERT INTO %s (parent_id, last_child) VALUES (?, ?)
+			ON CONFLICT(parent_id) DO UPDATE SET last_child = excluded.last_child
+		`, counterTable)
+		args = []any{parentID, nextChild}
+	}
+	if _, err := tx.ExecContext(ctx, upsert, args...); err != nil {
 		return "", fmt.Errorf("get next child ID: update counter: %w", err)
 	}
 
